@@ -1,0 +1,22 @@
+{
+  "schema": "llg.lsp.fixture/v1",
+  "name": "stdio-workspace",
+  "source_header": "// llg-lsp-fixture:",
+  "roots": [
+    {
+      "name": "root-a",
+      "path": "root-a",
+      "initial": true
+    },
+    {
+      "name": "root-b",
+      "path": "root-b",
+      "initial": true
+    },
+    {
+      "name": "root-c",
+      "path": "root-c",
+      "initial": false
+    }
+  ]
+}

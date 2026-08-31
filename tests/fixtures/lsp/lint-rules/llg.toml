@@ -1,0 +1,9 @@
+# Effective llg.toml for the lint-rules fixture root.
+schema_version = 1
+
+[sources]
+directories = ["."]
+include = ["**/*.v", "**/*.sv"]
+
+[lint]
+enabled = true

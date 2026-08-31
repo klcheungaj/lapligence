@@ -1,0 +1,12 @@
+{
+  "schema": "llg.lsp.fixture/v1",
+  "name": "module-explorer",
+  "source_header": "// llg-lsp-fixture:",
+  "roots": [
+    {
+      "name": "workspace",
+      "path": "workspace",
+      "initial": true
+    }
+  ]
+}

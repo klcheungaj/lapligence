@@ -1,0 +1,154 @@
+# ══════════════════════════════════════════════════════════════════════════════
+# PORTABILITY CAVEAT — read before expecting green checkmarks.
+#
+# The heavy part of this project is not the Rust code: build.rs drives a full
+# CMake build of vendored Surelog v1.86 + UHDM + ANTLR4 + Cap'n Proto and then
+# applies custom link logic. That pipeline has ONLY ever been validated on
+# x86_64 Linux with a fully-static musl toolchain. Concretely, build.rs today
+# assumes:
+#   * `patch(1)` on PATH for HOST-unix builds only — patches/*.patch are
+#     applied to vendor/Surelog before CMake runs (apply_surelog_patches is
+#     #[cfg(unix)] and shells out to GNU patch; git-apply is deliberately
+#     not used). Non-unix hosts skip patching with a cargo warning.
+#   * GNU-ld style `cargo:rustc-link-arg=-Wl,--wrap=malloc|free|…` flags for
+#     the mimalloc shim — emitted only on musl targets. MSVC's link.exe/
+#     lld-link and Apple ld64 do not implement --wrap.
+#   * Per-TARGET link branches keyed on the target env/os: musl targets take
+#     the static branch (static libstdc++/libsupc++/libgcc/libz, -static,
+#     ensure_static_archives driver probing — its failure hints even
+#     reference Alpine/apk); non-musl targets select per-OS (`dylib=c++/z`
+#     on macOS, CRT auto-link on Windows MSVC, glibc-style
+#     `dylib=stdc++/z/pthread` elsewhere). The macOS/Windows branches exist
+#     in build.rs but were never validated end-to-end.
+#
+# Expected status per leg:
+#   * linux-x86 / linux-arm64 : closest to working, but unvalidated in CI;
+#     arm64 additionally depends on the downloaded musl cross-toolchain
+#     shipping a static libstdc++ for its triple.
+#   * windows-x86             : PLACEHOLDER — build.rs has MSVC branches
+#     (/FI force-includes, /std:c++17, no --wrap → CRT malloc for C code)
+#     but they have never run against a real MSVC toolchain.
+#   * windows-arm64           : PLACEHOLDER, ESPECIALLY EXPERIMENTAL — same
+#     problems as windows-x86 plus a far less-exercised triple end-to-end.
+#   * macos-arm64             : PLACEHOLDER — a Darwin branch exists in
+#     build.rs (dylib=c++/z), but Apple-clang configure/link of the vendored
+#     CMake tree is unvalidated.
+#
+# Failures in the placeholder legs are expected and informative; fix the
+# platform branches in build.rs first.
+# ══════════════════════════════════════════════════════════════════════════════
+name: Build Binaries
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ${{ matrix.name }} (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 180
+    strategy:
+      # Experimental legs must not cancel the legs that matter.
+      fail-fast: false
+      matrix:
+        include:
+          # Native musl build on the amd64 runner: musl-tools provides the
+          # musl-gcc/musl-g++ wrappers around the host gcc.
+          - name: linux-x86
+            os: ubuntu-22.04
+            target: x86_64-unknown-linux-musl
+          # Deliberately cross-compiled FROM an amd64 runner rather than run on
+          # native arm runners (ubuntu-24.04-arm): the prebuilt musl.cc
+          # cross-toolchain provides aarch64-linux-musl-{gcc,g++} — exactly the
+          # compiler names build.rs derives from the target triple — including
+          # its own static libstdc++. Native arm runners would still need a
+          # musl sysroot assembled by hand.
+          - name: linux-arm64
+            os: ubuntu-22.04
+            target: aarch64-unknown-linux-musl
+          - name: windows-x86
+            os: windows-2022
+            target: x86_64-pc-windows-msvc
+          - name: windows-arm64
+            os: windows-2022
+            target: aarch64-pc-windows-msvc
+          - name: macos-arm64
+            os: macos-14
+            target: aarch64-apple-darwin
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # vendor/ holds the vendored Surelog/UHDM/ANTLR/capnproto sources
+          # that build.rs compiles; nothing builds without them.
+          submodules: recursive
+
+      - name: Install Rust toolchain (${{ matrix.target }})
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache cargo registry and build outputs
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      # cmake is preinstalled on all hosted runner images used above, so no
+      # explicit cmake bootstrap step is needed.
+
+      - name: Install musl toolchain (linux-x86, native wrappers)
+        if: matrix.name == 'linux-x86'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools musl-dev patch
+          echo "CC=musl-gcc"  >> "$GITHUB_ENV"
+          echo "CXX=musl-g++" >> "$GITHUB_ENV"
+
+      - name: Install musl cross-toolchain (linux-arm64, cross from amd64)
+        if: matrix.name == 'linux-arm64'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y curl tar patch
+          mkdir -p "$RUNNER_TEMP/musl"
+          curl -fsSL --retry 3 \
+            https://more.musl.cc/10/x86_64-linux-musl/aarch64-linux-musl-cross.tgz \
+            -o "$RUNNER_TEMP/musl/aarch64-linux-musl-cross.tgz"
+          tar -xzf "$RUNNER_TEMP/musl/aarch64-linux-musl-cross.tgz" -C "$RUNNER_TEMP/musl"
+          echo "$RUNNER_TEMP/musl/aarch64-linux-musl-cross/bin" >> "$GITHUB_PATH"
+          # The toolchain's binaries are named aarch64-linux-musl-{gcc,g++,…}
+          # (same names CC/CXX below use). rustc must link through that same
+          # driver; without this env it falls back to `cc` (the host glibc
+          # gcc), which cannot link a musl static binary.
+          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=aarch64-linux-musl-gcc" >> "$GITHUB_ENV"
+          echo "CC=aarch64-linux-musl-gcc"  >> "$GITHUB_ENV"
+          echo "CXX=aarch64-linux-musl-g++" >> "$GITHUB_ENV"
+
+      # build.rs applies Surelog patches only on unix HOSTS
+      # (apply_surelog_patches is #[cfg(unix)]); Windows hosts skip patching
+      # with a cargo warning, so no patch(1) bootstrap is needed here.
+
+      # macOS images ship patch(1) and a complete clang toolchain; nothing to
+      # install for the macos-arm64 leg.
+
+      - name: Build (release)
+        run: cargo build --release --bin llg --bin llg_sim --target ${{ matrix.target }}
+
+      - name: Upload artifacts (${{ matrix.name }})
+        uses: actions/upload-artifact@v4
+        with:
+          name: llg-${{ matrix.name }}-${{ matrix.target }}
+          if-no-files-found: error
+          # Unix legs produce ./llg ./llg_sim; Windows legs produce the
+          # .exe variants. Missing entries in a multi-path list are skipped,
+          # so one declaration serves every platform.
+          path: |
+            target/${{ matrix.target }}/release/llg
+            target/${{ matrix.target }}/release/llg_sim
+            target/${{ matrix.target }}/release/llg.exe
+            target/${{ matrix.target }}/release/llg_sim.exe

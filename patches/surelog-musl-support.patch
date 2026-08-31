@@ -1,0 +1,30 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 18f5b328a0..d2d1fb5c3d 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -45,7 +45,10 @@ option(
+   "Use googletest library from host instead of third_party" ${SURELOG_USE_HOST_ALL})
+ option(
+    SURELOG_WITH_TCMALLOC
+-   "Use tcmalloc if installed" ON)
++   "Use tcmalloc if installed" OFF)
++option(
++  SURELOG_USE_MUSL
++  "Compile and link against musl libc (set CMAKE_{C,CXX}_COMPILER to a musl cross-toolchain)" OFF)
+ option(
+   SURELOG_PATHID_DEBUG_ENABLED
+   "Enable PathId debugging" OFF)
+@@ -207,6 +210,13 @@ if(SURELOG_WITH_ZLIB)
+   endif()
+ endif()
+ 
++# musl: enforce fully static linking (compiler must be supplied via CMAKE_C/CXX_COMPILER)
++if(SURELOG_USE_MUSL AND UNIX AND NOT APPLE)
++  foreach(_link_type EXE SHARED)
++    string(APPEND CMAKE_${_link_type}_LINKER_FLAGS
++      " -static -static-libstdc++ -static-libgcc")
++  endforeach()
++endif()
+ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${TCMALLOC_COMPILE_OPTIONS} ${MY_CXX_WARNING_FLAGS}")
+ 
+ if(MSVC)

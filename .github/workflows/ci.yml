@@ -1,0 +1,52 @@
+# Lightweight PR gate: formatting + type/lint checks on ubuntu only.
+#
+# CAVEAT: there is no cheap way to lint this crate — even `cargo check --lib`
+# executes build.rs, i.e. a full native CMake build of vendored
+# Surelog/UHDM/ANTLR4/Cap'n Proto plus custom link steps. That native pipeline
+# has only ever been validated on x86_64-linux-musl (see the portability
+# caveat block in build-binaries.yml and the platform branches in build.rs:
+# patch(1) dependency, -Wl,--wrap flags, musl-only static linking). This job
+# therefore runs against glibc Ubuntu on a best-effort basis; full
+# multi-platform builds and tests are the job of build-binaries.yml.
+name: CI
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: check / fmt / clippy (ubuntu)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # build.rs compiles vendor/ directly; required for cargo check too.
+          submodules: recursive
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      # patch(1) is required by build.rs (Surelog submodule patches); cmake,
+      # g++ and zlib headers back the non-musl dynamic-link branch used here.
+      - name: Install native build prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y patch cmake g++ zlib1g-dev
+
+      # fmt first: it fails fast without paying for the native build.
+      - name: cargo fmt --check
+        run: cargo fmt --check
+
+      - name: cargo check --lib
+        run: cargo check --lib
+
+      - name: cargo clippy (-D warnings)
+        run: cargo clippy --lib -- -D warnings

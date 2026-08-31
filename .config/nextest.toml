@@ -1,0 +1,37 @@
+# cargo-nextest configuration, consumed by scripts/run-tests.sh.
+#
+# nextest executes every test case in its OWN process (unlike `cargo test`,
+# which runs one process per integration-test binary), so test binaries run
+# concurrently by default.  This is safe for this repository: every suite
+# that mutates process-global state (std::env::set_current_dir) serializes
+# internally through a mutex within its own binary, and temp directories are
+# keyed by std::process::id() — distinct under both models, because nextest
+# gives every test a fresh pid and plain cargo test gives every binary one.
+
+[profile.default]
+# Conservative: no automatic retries.  Flaky tests must fail loudly; if a
+# suite proves flaky under load, fix the race instead of masking it.
+retries = 0
+
+# Annotate tests that run longer than 5 minutes as slow (do not terminate).
+slow-timeout = { period = "300s" }
+
+# Keep output readable on failure while streaming failures as they happen.
+failure-output = "immediate-final"
+
+# Surelog-heavy suites (see the group below) get their own concurrency cap;
+# lighter suites (emit_decoupling, property_elab, …) run in the default
+# full-width pool.
+[test-groups]
+# Fixed cap rather than a CPU expression: Surelog compiles are memory-heavy
+# (hundreds of MB to ~1 GB RSS per test process), so bounding concurrent
+# heavy tests at 8 keeps total RSS sane even on very wide machines while
+# still giving a large speedup over the serial default.  Lower it on small
+# machines/RAM-constrained containers.
+surelog-heavy = { max-threads = 8 }
+
+# Route the heavyweight suites into the capped group.  Everything else
+# (emit_decoupling, property_elab, …) uses the default full-width pool.
+[[profile.default.overrides]]
+filter = "binary(/^sim_/) or binary(model_tests) or binary(elab_resolve) or binary(region_conformance) or binary(config_effect) or binary(lsp_stdio) or binary(shadowing) or binary(dump_tokens) or binary(parse_only) or binary(probe_bindings) or binary(lint_config_cli)"
+test-group = "surelog-heavy"

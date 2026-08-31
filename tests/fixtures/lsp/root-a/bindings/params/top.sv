@@ -1,0 +1,8 @@
+// llg-lsp-fixture: root-a/bindings/params/top.sv
+module p_ptop;
+  localparam int W = 1;
+  logic clk;
+  logic [7:0] t_q;
+
+  p_pchild #(.W(4), .D(W)) u_pp (.clk(clk), .q(t_q));
+endmodule

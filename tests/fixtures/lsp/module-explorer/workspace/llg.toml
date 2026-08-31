@@ -1,0 +1,11 @@
+schema_version = 1
+
+[sources]
+directories = ["."]
+include = ["**/*.sv"]
+
+[compile]
+top = "top"
+
+[lint]
+enabled = false
