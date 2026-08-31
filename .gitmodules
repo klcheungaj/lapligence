@@ -1,0 +1,6 @@
+[submodule "vendor/Surelog"]
+	path = vendor/Surelog
+	url = https://github.com/chipsalliance/Surelog.git
+[submodule "vendor/libaco"]
+	path = vendor/libaco
+	url = https://github.com/hnes/libaco.git
