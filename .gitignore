@@ -16,5 +16,6 @@ docs/*
 !.cargo
 !sim_features.md
 !lsp_safeguards.md
+!config.md
 skills-lock.json
 temp
