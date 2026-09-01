@@ -137,18 +137,18 @@ jobs:
       # install for the macos-arm64 leg.
 
       - name: Build (release)
-        run: cargo build --release --bin llg --bin llg_sim --target ${{ matrix.target }}
+        run: cargo build --release --bin llg_ls --bin llg --target ${{ matrix.target }}
 
       - name: Upload artifacts (${{ matrix.name }})
         uses: actions/upload-artifact@v4
         with:
           name: llg-${{ matrix.name }}-${{ matrix.target }}
           if-no-files-found: error
-          # Unix legs produce ./llg ./llg_sim; Windows legs produce the
+          # Unix legs produce ./llg_ls ./llg; Windows legs produce the
           # .exe variants. Missing entries in a multi-path list are skipped,
           # so one declaration serves every platform.
           path: |
+            target/${{ matrix.target }}/release/llg_ls
             target/${{ matrix.target }}/release/llg
-            target/${{ matrix.target }}/release/llg_sim
+            target/${{ matrix.target }}/release/llg_ls.exe
             target/${{ matrix.target }}/release/llg.exe
-            target/${{ matrix.target }}/release/llg_sim.exe

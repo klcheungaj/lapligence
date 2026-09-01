@@ -1,9 +1,9 @@
-//! llg_sim — Lapligence Verilog/SystemVerilog → C11 simulator driver.
+//! llg — Lapligence Verilog/SystemVerilog → C11 simulator driver.
 //!
 //! Usage:
 //!
 //! ```text
-//! llg_sim [generate options] [build options] <file.sv>...
+//! llg [generate options] [build options] <file.sv>...
 //! generate: --top <module>  --lint  --lint-json [<path>]  --lint-config <file>  --gen-only
 //! build:    --generator <backend>        # cmake -G backend (Ninja, "Unix Makefiles", ...)
 //! ```
@@ -61,7 +61,7 @@ fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.is_empty() {
         eprintln!(
-            "usage: llg_sim [generate options] [build options] <file.sv>...\n\
+            "usage: llg [generate options] [build options] <file.sv>...\n\
              generate: --top <module>  --lint  --lint-json [<path>]  --lint-config <file>  --gen-only\n\
              build:    --generator <backend>        # cmake -G backend (Ninja, \"Unix Makefiles\", ...)"
         );
@@ -83,7 +83,7 @@ fn main() {
             "--generator" | "-generator" => match it.next() {
                 Some(g) => generator = Some(g),
                 None => {
-                    eprintln!("llg_sim: --generator requires a backend name");
+                    eprintln!("llg: --generator requires a backend name");
                     std::process::exit(2);
                 }
             },
@@ -103,7 +103,7 @@ fn main() {
             "--lint-config" => match it.next() {
                 Some(p) => lint_config_path = Some(PathBuf::from(p)),
                 None => {
-                    eprintln!("llg_sim: --lint-config requires a file path");
+                    eprintln!("llg: --lint-config requires a file path");
                     std::process::exit(2);
                 }
             },
@@ -111,7 +111,7 @@ fn main() {
         }
     }
     if files.is_empty() {
-        eprintln!("llg_sim: no source files given");
+        eprintln!("llg: no source files given");
         std::process::exit(2);
     }
 
@@ -122,15 +122,15 @@ fn main() {
         let text = match std::fs::read_to_string(path) {
             Ok(t) => t,
             Err(e) => {
-                eprintln!("llg_sim: cannot read lint config {}: {e}", path.display());
+                eprintln!("llg: cannot read lint config {}: {e}", path.display());
                 std::process::exit(1);
             }
         };
         if let Err(errs) = lint_config.parse_toml(&text) {
             for e in &errs {
-                eprintln!("llg_sim: lint config: {e}");
+                eprintln!("llg: lint config: {e}");
             }
-            eprintln!("llg_sim: aborting due to lint config errors");
+            eprintln!("llg: aborting due to lint config errors");
             std::process::exit(1);
         }
     }
@@ -143,7 +143,7 @@ fn main() {
     }) {
         Ok(out) => out,
         Err(e) => {
-            eprintln!("llg_sim: compile failed to start: {e}");
+            eprintln!("llg: compile failed to start: {e}");
             std::process::exit(1);
         }
     };
@@ -158,7 +158,7 @@ fn main() {
         );
     }
     if !out.ok() {
-        eprintln!("llg_sim: surelog reported errors; aborting");
+        eprintln!("llg: surelog reported errors; aborting");
         std::process::exit(1);
     }
 
@@ -167,7 +167,7 @@ fn main() {
     let design = match out.uhdm_design() {
         Some(d) => d,
         None => {
-            eprintln!("llg_sim: no elaborated UHDM design");
+            eprintln!("llg: no elaborated UHDM design");
             std::process::exit(1);
         }
     };
@@ -190,7 +190,7 @@ fn main() {
             match &lint_json_path {
                 Some(path) => {
                     if let Err(e) = std::fs::write(path, format!("{json}\n")) {
-                        eprintln!("llg_sim: cannot write lint JSON {}: {e}", path.display());
+                        eprintln!("llg: cannot write lint JSON {}: {e}", path.display());
                         std::process::exit(1);
                     }
                 }
@@ -249,12 +249,12 @@ fn main() {
     let gen = match sim::codegen::generate(design) {
         Ok(g) => g,
         Err(e) => {
-            eprintln!("llg_sim: codegen error: {e}");
+            eprintln!("llg: codegen error: {e}");
             std::process::exit(1);
         }
     };
     for w in &gen.warnings {
-        eprintln!("llg_sim: warning: {w}");
+        eprintln!("llg: warning: {w}");
     }
 
     // 4. Write sources (+ CMakeLists.txt).  With --gen-only, stop here: the
@@ -263,10 +263,10 @@ fn main() {
     let model = [("model.c", gen.model_c.as_str())];
     if gen_only {
         if generator.is_some() {
-            eprintln!("llg_sim: warning: --generator ignored with --gen-only");
+            eprintln!("llg: warning: --generator ignored with --gen-only");
         }
         if let Err(e) = sim::build::generate_model_sources(&out_dir, &model) {
-            eprintln!("llg_sim: {e}");
+            eprintln!("llg: {e}");
             std::process::exit(1);
         }
         println!("{}", out_dir.display());
@@ -278,7 +278,7 @@ fn main() {
     let exe = match sim::build::build_model_cmake_with_opts(&out_dir, &model, &opts) {
         Ok(e) => e,
         Err(e) => {
-            eprintln!("llg_sim: {e}");
+            eprintln!("llg: {e}");
             std::process::exit(1);
         }
     };
@@ -287,7 +287,7 @@ fn main() {
     let status = match Command::new(&exe).status() {
         Ok(s) => s,
         Err(e) => {
-            eprintln!("llg_sim: failed to run {}: {e}", exe.display());
+            eprintln!("llg: failed to run {}: {e}", exe.display());
             std::process::exit(1);
         }
     };

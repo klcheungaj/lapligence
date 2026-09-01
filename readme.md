@@ -17,8 +17,8 @@ First build compiles the vendored Surelog/UHDM/ANTLR — expect it to be slow.
 ## Build
 
 ```sh
-cargo build --bin llg        # language server
-cargo build --bin llg_sim    # simulator driver
+cargo build --bin llg_ls     # language server
+cargo build --bin llg        # simulator driver
 cargo build --release         # everything, optimized
 ```
 
@@ -57,15 +57,15 @@ scripts/clean.sh --all       # also remove the currently selected surelog tree
 
 | Binary | Purpose |
 |---|---|
-| `llg` | Verilog/SV Language Server (stdio JSON-RPC) |
-| `llg_sim` | Simulator driver: compile → optimize → emit C → build → run |
+| `llg_ls` | Verilog/SV Language Server (stdio JSON-RPC) |
+| `llg` | Simulator driver: compile → optimize → emit C → build → run |
 | `elab_check` | Elaboration verifier (instance tree, ref binding, params) |
 | `helloworld` / `hellouhdm` / `llg_demo` | Raw Surelog/UHDM API demos |
 
-## Using the simulator (`llg_sim`)
+## Using the simulator (`llg`)
 
 ```sh
-llg_sim [generate options] [build options] [--top <module>] <file.sv>...
+llg [generate options] [build options] [--top <module>] <file.sv>...
 ```
 
 Generate-time options:
@@ -120,7 +120,7 @@ endmodule
 Run it:
 
 ```sh
-$ llg_sim --top tb tb.sv
+$ llg --top tb tb.sv
 cnt=5
 ```
 

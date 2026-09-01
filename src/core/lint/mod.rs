@@ -1,7 +1,7 @@
 //! core::lint — shared Verilog/SystemVerilog linter.
 //!
 //! Rule engine over the owned database + design model.  Consumed by the LSP
-//! (lint diagnostics) and the simulator (`llg_sim --lint` gate).  No VPI
+//! (lint diagnostics) and the simulator (`llg --lint` gate).  No VPI
 //! access, no raw FFI, no LSP dependencies.
 //!
 //! The default rule set lives in [`rules::default_rules`] and currently runs

@@ -69,8 +69,8 @@ src/
       llg_rt.h / llg_rt.c     — sv4_t 4-state ops + libaco event scheduler
       mod.rs                    — runtime_sources() / libaco_sources() / selftest / write_sim_sources
   bin/
-    llg/                       — LSP server binary (tower-lsp): main, lsp, features, workspace, logging, semantic_tokens
-    llg_sim.rs                 — simulator driver: compile → codegen → build → run (+ --lint / --lint-json)
+    llg_ls/                      — language-server binary (tower-lsp): main, lsp, features, workspace, logging, semantic_tokens
+    llg.rs                       — simulator driver: compile → codegen → build → run (+ --lint / --lint-json)
     elab_check.rs               — elaboration verifier tool
     hellouhdm.rs, helloworld.rs, llg_demo.rs — raw-API demos
   wrapper/                      — C wrapper (surelog_c_api.h/.cpp, mimalloc_shim.c)
@@ -94,8 +94,8 @@ tests/
 ```
 
 The lib crate contains **no** LSP-only dependencies (tower-lsp/tokio/dashmap
-stay in the `llg` bin). Those deps are optional behind the `lsp` cargo
-feature (default-on), and the `llg` bin has `required-features = ["lsp"]`;
+stay in the `llg_ls` bin). Those deps are optional behind the `lsp` cargo
+feature (default-on), and the `llg_ls` bin has `required-features = ["lsp"]`;
 `cargo build --lib --no-default-features` must compile without them. Bins
 consume the lib via `use llg::core::…` / `use llg::ffi::…` — do not
 reintroduce `#[path]` module includes in bins.
@@ -136,7 +136,7 @@ plan of record for the remaining work.
 - Static musl builds are the norm (`x86_64-unknown-linux-musl`); Linux and
   macOS are supported, Windows is not.
 - The C/C++ world is linked with mimalloc: binaries set the `#[global_allocator]`
-  at their final link point (see `src/bin/llg/main.rs` and
+  at their final link point (see `src/bin/llg_ls/main.rs` and
   `src/bin/helloworld.rs`), and `build.rs` + `mimalloc_shim.c` redirect C
   malloc/free via `--wrap`.
 - The native libs are linked via `#[link(name = "surelog_c_wrapper", kind =
@@ -146,13 +146,13 @@ plan of record for the remaining work.
   only because of these attributes.
 - Editing `src/wrapper/*` triggers a wrapper rebuild (fast); editing
   `vendor/Surelog` or its CMake config triggers a full Surelog rebuild (slow).
-- Build targets: `cargo build --bin llg` (LSP), `--bin llg_sim`
+- Build targets: `cargo build --bin llg_ls` (language server), `--bin llg`
   (simulator driver), `--bin elab_check` (elaboration verifier), plus the
   demo bins.
 - LSP-only dependencies (`tower-lsp`/`tokio`/`dashmap`) are optional,
-  gated behind the default-on `lsp` feature. They are used only by the `llg`
-  bin, which declares `required-features = ["lsp"]`; lib-only builds can
-  disable them with `--no-default-features`.
+  gated behind the default-on `lsp` feature. They are used only by the
+  `llg_ls` bin, which declares `required-features = ["lsp"]`; lib-only builds
+  can disable them with `--no-default-features`.
 - `sim::build` (the only model builder) honors `LLG_CC` (compiler program;
   falls back to `$CC`, then `cc`) and `LLG_CFLAGS` (extra flags appended to
   `-DCMAKE_C_FLAGS`) — useful for sanitizer-instrumented model runs.
@@ -160,7 +160,7 @@ plan of record for the remaining work.
   shared `memory_limit` safeguard (`LLG_MEMORY_LIMIT_MB`, plus
   `LLG_MEMORY_WARNING_PERCENT`/`LLG_MEMORY_POLL_MS`/
   `LLG_MEMORY_ADDRESS_SPACE_LIMIT`): the LSP also wires a memory sampler into
-  lifecycle logging, `llg_sim` reports status to stderr.  See
+  lifecycle logging, `llg` reports status to stderr.  See
   `docs/lsp_safeguards.md`.
 
 ---
@@ -276,14 +276,14 @@ function-local typespec ranges.
   recompile refreshes the URI from on-disk state.
 - Request memoization: read-only navigation results (definition/hover/
   references) and open-buffer isolated token streams are memoized in a small
-  bounded LRU (`bin/llg/request_cache.rs`) keyed on the exact inputs —
+  bounded LRU (`bin/llg_ls/request_cache.rs`) keyed on the exact inputs —
   request kind/parameters/position plus an analysis epoch that `commit_job`
   re-stamps whenever the served snapshot is replaced or cleared (buffer text
   and `-D` defines hash into the token-stream key).  Any edit, save or config
   hot reload therefore invalidates structurally at the next commit; identical
   repeats are answered from memory with presentation mapping applied per
   request.  Identical full-text `didChange`s are not rescheduled.
-- Module explorer (`src/bin/llg/module_explorer.rs`): the custom
+- Module explorer (`src/bin/llg_ls/module_explorer.rs`): the custom
   `llg/moduleExplorer` request reads only committed per-root `Analysis`
   snapshots.  An optional `workspaceUri` (also accepted as `rootUri`) filters
   one root; an empty object or omitted params returns a deterministic merged
@@ -500,13 +500,13 @@ an operand width is unknown (`width-mismatch` for assignments/port links,
 
 Configuration: `LintConfig` (per-rule `enabled` + `severity` override) is
 parsed from a hand-rolled `llg-lint.toml` reader (`LintConfig::parse_toml`)
-used by the simulator CLI (`llg_sim --lint-config <file>`).  The LSP does
+used by the simulator CLI (`llg --lint-config <file>`).  The LSP does
 not read `llg-lint.toml`; it derives each root's `LintConfig` from the
-`llg.toml` `[lint]` table (see `src/bin/llg/config.rs`).
+`llg.toml` `[lint]` table (see `src/bin/llg_ls/config.rs`).
 
 Consumers: the LSP merges findings into the published diagnostics with
 `source: "llg-lint"` (severity Error → `ERROR`, rule id as the diagnostic
-code); `llg_sim --lint` prints findings and aborts with exit code 1 on lint
+code); `llg --lint` prints findings and aborts with exit code 1 on lint
 errors before codegen; `--lint-json [file]` emits a machine-readable JSON
 report (see `core::lint::diags_to_json` for the schema).
 
@@ -514,7 +514,7 @@ report (see `core::lint::diags_to_json` for the schema).
 
 ## Simulator Architecture (v1)
 
-Flow: `llg_sim` (src/bin/llg_sim.rs) → `core::compile::compile` →
+Flow: `llg` (src/bin/llg.rs) → `core::compile::compile` →
 `sim::codegen::generate(uhdm_design)` (builds `core::db::Db` internally and
 lowers from the owned database — no VPI calls in the emitter) → `IrModel` →
 `sim::opt` passes → `sim::emit_c` C11 emission → write `target/sim/<design>/`

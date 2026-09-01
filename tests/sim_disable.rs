@@ -551,7 +551,7 @@ endmodule
 /// multi-byte).  The source-line recovery of the target identifier scans
 /// that line BYTE-wise: a character-based slice at a byte offset landing
 /// inside a multi-byte codepoint used to panic during Db::build (taking
-/// down LSP/llg_sim).  The design must compile and run correctly.
+/// down LSP/llg).  The design must compile and run correctly.
 #[test]
 fn disable_line_with_utf8_comment_recovers_target() {
     if !llg::sim::build::cmake_available() {

@@ -196,10 +196,10 @@ Measure the simulator pipeline on the default performance-design suite.
 Options:
   --design PATH       Measure one design; may be repeated.
   --runs N            Repetitions per design (default: 3).
-  --top MODULE        Pass --top MODULE to llg_sim.
-  --sim-bin PATH      Release llg_sim binary (default: target/release/llg_sim).
+  --top MODULE        Pass --top MODULE to llg.
+  --sim-bin PATH      Release llg binary (default: target/release/llg).
   --cc PATH           C compiler used for generated models (default: CC or cc).
-  --build             Build target/release/llg_sim before measuring (unmeasured).
+  --build             Build target/release/llg before measuring (unmeasured).
   --output PATH       Write the TSV report to PATH instead of stdout.
   --keep              Keep the per-run temporary directories and logs.
   -h, --help          Show this help.
@@ -224,7 +224,7 @@ fi
 declare -a designs=()
 runs=3
 top=
-sim_bin="$REPO_ROOT/target/release/llg_sim"
+sim_bin="$REPO_ROOT/target/release/llg"
 actual_cc=${LLG_BASELINE_CC:-${CC:-cc}}
 output_path=-
 build_sim=0
@@ -286,14 +286,14 @@ if ! [[ $runs =~ ^[1-9][0-9]*$ ]]; then
 fi
 
 if ((build_sim)); then
-    (cd -- "$REPO_ROOT" && cargo build --release --no-default-features --bin llg_sim)
+    (cd -- "$REPO_ROOT" && cargo build --release --no-default-features --bin llg)
 fi
 
 if [[ $sim_bin != /* ]]; then
     sim_bin="$base_cwd/$sim_bin"
 fi
 if [[ ! -x $sim_bin ]]; then
-    die "simulator binary is not executable: $sim_bin (run cargo build --release --no-default-features --bin llg_sim)"
+    die "simulator binary is not executable: $sim_bin (run cargo build --release --no-default-features --bin llg)"
 fi
 if [[ $actual_cc == */* && $actual_cc != /* ]]; then
     actual_cc="$base_cwd/$actual_cc"

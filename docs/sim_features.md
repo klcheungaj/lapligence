@@ -1,22 +1,22 @@
 # Simulator Feature Checklist — IEEE 1364 / IEEE 1800
 
 The authoritative list of simulation features defined by IEEE Std 1364 (Verilog)
-and IEEE Std 1800 (SystemVerilog) as they relate to the `llg_sim` simulator,
+and IEEE Std 1800 (SystemVerilog) as they relate to the `llg` simulator,
 each tagged with the revision that introduced it and ticked according to what
 the simulator supports today. When a feature lands **and is tested**, flip its
 marker here; do not tick from implementation alone. Priority order equals
 document order: Verilog-core features first, SystemVerilog additions after.
 
 Statuses were audited against `src/sim/codegen.rs`, `src/sim/AGENTS.md`,
-`src/bin/llg_sim.rs`, the regression suites in `tests/sim_*.rs`, and one-off
-end-to-end runs of `llg_sim` (marked **(probed)** below). Section numbers cite
+`src/bin/llg.rs`, the regression suites in `tests/sim_*.rs`, and one-off
+end-to-end runs of `llg` (marked **(probed)** below). Section numbers cite
 `docs/spec-reference-verilog.md` (§1364-2001 x.y) and
 `docs/spec-reference-sv.md` / `spec-reference-verification.md` (§1800-2009 y.z).
 
 ## Status markers
 
 - ✅ supported — test anchor in parens; `(probed)` = verified by a manual
-  `llg_sim` run during an audit, no dedicated regression test yet; no
+  `llg` run during an audit, no dedicated regression test yet; no
   parenthetical = **(suite-covered)**: exercised by one of the named suites
   during audits, without a single dedicated test
 - 🟨 partial / approximated — one-line caveat

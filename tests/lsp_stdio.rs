@@ -316,7 +316,7 @@ struct LspProcess {
 
 impl LspProcess {
     fn spawn(cwd: &Path) -> Self {
-        let mut child = Command::new(env!("CARGO_BIN_EXE_llg"))
+        let mut child = Command::new(env!("CARGO_BIN_EXE_llg_ls"))
             .current_dir(cwd)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -5226,7 +5226,7 @@ fn lsp_stdio_rename_is_prefix_collision_safe() {
 
 /// Spawn the server with lifecycle logging redirected to `log_file`.
 fn spawn_with_log_file(cwd: &Path, log_file: &Path) -> LspProcess {
-    let mut child = Command::new(env!("CARGO_BIN_EXE_llg"))
+    let mut child = Command::new(env!("CARGO_BIN_EXE_llg_ls"))
         .current_dir(cwd)
         .env("LLG_LOG", "debug")
         .env("LLG_LOG_FILE", log_file)
@@ -5386,7 +5386,7 @@ fn lsp_stdio_bursty_edits_debounce_into_bounded_fresh_analyses() {
 /// process TMPDIR set to `tmpdir` (so the shadow base nests under the watched
 /// globs of a workspace, reproducing the self-write feedback layout).
 fn spawn_with_log_file_and_tmpdir(cwd: &Path, log_file: &Path, tmpdir: &Path) -> LspProcess {
-    let mut child = Command::new(env!("CARGO_BIN_EXE_llg"))
+    let mut child = Command::new(env!("CARGO_BIN_EXE_llg_ls"))
         .current_dir(cwd)
         .env("LLG_LOG", "debug")
         .env("LLG_LOG_FILE", log_file)
@@ -5529,7 +5529,7 @@ fn lsp_stdio_ignores_own_shadow_writes_so_idle_stays_idle() {
 
 // ── Request memoization: repeat goto-definition serves from cache ────────────
 //
-// Contract (see `src/bin/llg/request_cache.rs`):
+// Contract (see `src/bin/llg_ls/request_cache.rs`):
 // * an identical repeat request (same uri + position, unchanged buffer
 //   content, unchanged analysis snapshot) returns the IDENTICAL result and is
 //   observable as a request-cache HIT through the `# request-cache:` line the

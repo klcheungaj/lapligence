@@ -66,7 +66,7 @@ struct Dump {
 
 impl Dump {
     fn run(root: &Path) -> Self {
-        let output = Command::new(env!("CARGO_BIN_EXE_llg"))
+        let output = Command::new(env!("CARGO_BIN_EXE_llg_ls"))
             .arg("--dump-tokens")
             .arg(root)
             .output()
@@ -306,7 +306,7 @@ fn syntax_broken_sibling_still_dumps_all_top_v_tokens() {
     // Unterminated module on purpose: Severity::Syntax ⇒ no UHDM.
     fs::write(root.join("broken.v"), "module broken(\n   input clk\n").expect("write broken.v");
 
-    let output = Command::new(env!("CARGO_BIN_EXE_llg"))
+    let output = Command::new(env!("CARGO_BIN_EXE_llg_ls"))
         .arg("--dump-tokens")
         .arg(&root)
         .output()
@@ -349,7 +349,7 @@ fn syntax_broken_sibling_still_dumps_all_top_v_tokens() {
 #[test]
 fn single_file_invocation_filters_rows() {
     let root = materialize_fixture();
-    let output = Command::new(env!("CARGO_BIN_EXE_llg"))
+    let output = Command::new(env!("CARGO_BIN_EXE_llg_ls"))
         .arg("--dump-tokens")
         .arg(root.join("m_b.sv"))
         .output()

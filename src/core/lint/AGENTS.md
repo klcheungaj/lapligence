@@ -8,7 +8,7 @@ A rule engine over the owned database + design model (`core::db::Db`,
 - The LSP runs the lint pass inside `features::analyze` and merges findings
   into the published diagnostics with `source: "llg-lint"` (severity
   `Error` → `ERROR`, rule id as the diagnostic `code`).
-- `llg_sim --lint` prints findings (`file:line:col: [SEVERITY] rule:
+- `llg --lint` prints findings (`file:line:col: [SEVERITY] rule:
   message`) and aborts with exit code 1 on lint errors before codegen.
   `--lint-config <path>` loads a `llg-lint.toml` (see below) that
   enables/disables rules and overrides severities for the pass.
@@ -111,7 +111,7 @@ Rules read only owned data — no VPI access, no raw FFI, no LSP dependencies.
   (`grep -rn "unsafe" src --include=*.rs | grep -v src/ffi` must be empty).
 - **No VPI access** — rules work on the owned `db`/`model` built by
   `core::db::Db::build`; `core::db` is the single VPI traversal point.
-- **No LSP dependencies** (tower-lsp/gag/dashmap stay in `src/bin/llg`).
+- **No LSP dependencies** (tower-lsp/gag/dashmap stay in `src/bin/llg_ls`).
 - Rules do not see `NodeKind::Gate` structural primitives yet, so a signal
   whose only readers are gate input terminals can still be flagged by
   `unused-signal` (known false positive until gate terminals join read
@@ -139,21 +139,21 @@ leading/trailing whitespace are ignored.  `enabled = true|false` and
 reported as a line-numbered parse error.  On any error the valid entries
 parsed so far are still applied (best-effort).
 
-Consumers: `llg_sim --lint --lint-config <path> <file.sv>...` loads the
+Consumers: `llg --lint --lint-config <path> <file.sv>...` loads the
 file (missing/malformed → error message + exit 1) and runs
-`lint_with_config`; `llg_sim --lint-json [<path>]` implies lint mode but is
+`lint_with_config`; `llg --lint-json [<path>]` implies lint mode but is
 report-only: it emits `diags_to_json` output on stdout (or writes it to
 `<path>` — the token after the flag is the output path when it does not start
 with `-`) instead of the human-readable lines, then exits without codegen or
 simulation (exit 0 clean, 1 on lint errors); when both `--lint` and
 `--lint-json` are given, `--lint-json` wins.  The LSP derives its
 `LintConfig` from each root's `llg.toml` `[lint]` table (see
-`src/bin/llg/config.rs::translate_lint`); it does not use this file format.
+`src/bin/llg_ls/config.rs::translate_lint`); it does not use this file format.
 
 ## Interactions
 
 - Below: `core::db` (`Db`), `core::model` (`DesignModel`), `core::elab`
   (value/width helpers used by `rules/analysis.rs`).
-- Above: `src/bin/llg/features.rs` (lint pass in `analyze`, merged into
-  `llg-lint` diagnostics), `src/bin/llg_sim.rs` (`--lint` gate before
+- Above: `src/bin/llg_ls/features.rs` (lint pass in `analyze`, merged into
+  `llg-lint` diagnostics), `src/bin/llg.rs` (`--lint` gate before
   codegen).

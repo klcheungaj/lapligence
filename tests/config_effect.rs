@@ -5,7 +5,7 @@
 //!
 //! These mirror what the LSP does per root: `config::compile_opts` turns
 //! `llg.toml` entries into verbatim Surelog arguments on `CompileOpts`
-//! (unit-tested in `src/bin/llg/config.rs`); here the compiled DESIGN must
+//! (unit-tested in `src/bin/llg_ls/config.rs`); here the compiled DESIGN must
 //! observably change, so the oracle is the owned `DesignModel` (resolved
 //! parameter values + the single kept conditional-generate branch).
 //!

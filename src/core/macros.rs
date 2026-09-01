@@ -40,7 +40,7 @@
 //!   whole token into the identifier.
 //!
 //! Conditional-directive grammar and failure semantics are shared with the
-//! inactive-region dimmer (`bin/llg/inactive_ranges.rs`) so macro hover can
+//! inactive-region dimmer (`bin/llg_ls/inactive_ranges.rs`) so macro hover can
 //! never contradict the editor's dimming: both accept ONE optional
 //! surrounding paren pair around a bare identifier (`` `ifdef (NAME) ``), and
 //! an unparseable condition fails safe as an always-active branch that can

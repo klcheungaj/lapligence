@@ -2778,7 +2778,7 @@ impl Builder {
     ///
     /// Parameterized `#P` needs no special case: empirically verified
     /// against Surelog v1.86 (probe design `a = #P b;` compiled + lowered
-    /// through llg_sim), the delay_control's position still lands exactly
+    /// through llg), the delay_control's position still lands exactly
     /// on the `#` token while the identifier goes elsewhere, so the scan
     /// finds no digit after the `#` → `UnresolvedDelay` → codegen rejects
     /// with "cannot determine the `#delay` value … (parameterized delays

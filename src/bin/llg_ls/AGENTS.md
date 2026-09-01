@@ -1,4 +1,4 @@
-# bin/llg — Verilog/SystemVerilog Language Server
+# bin/llg_ls — Verilog/SystemVerilog Language Server
 
 This document covers the LSP only.  Simulator discovery, configuration, and
 validation are outside the scope of this LSP work.
@@ -427,7 +427,7 @@ tower-lsp server (stdio) for VSCode-style editors, built on the shared core:
 ## Stdio integration-test acceptance
 
 `tests/lsp_stdio.rs` is the process-level acceptance suite.  It launches the
-`llg` binary and speaks only framed LSP JSON-RPC over stdio, covering default
+`llg_ls` binary and speaks only framed LSP JSON-RPC over stdio, covering default
 and overridden config files, config reload without restart, `.v`/`.sv`
 discovery with `.vh`/`.svh` include-only behavior, include/exclude precedence,
 independent multi-root scans, longest-root ownership transfer on workspace
@@ -489,7 +489,7 @@ severity = "error"
   `llg.toml` change; malformed configs retain the last-valid lint policy and
   publish a `llg-config` diagnostic against the TOML URI.
 - `llg-lint.toml` is not read by the LSP.  The simulator CLI
-  (`llg_sim --lint-config`) still uses its own `llg-lint.toml` reader in
+  (`llg --lint-config`) still uses its own `llg-lint.toml` reader in
   `core::lint`.
 
 ## Rename

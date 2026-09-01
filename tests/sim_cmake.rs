@@ -1,10 +1,10 @@
 //! Integration tests for the CMake-based model builder (`sim::build`) — the
-//! only supported model-build path — and the `llg_sim` driver's build-time
+//! only supported model-build path — and the `llg` driver's build-time
 //! `--generator` flag.
 //!
 //! Surelog writes `slpp_all/` into the process working directory, so the
 //! library-level cases run with the CWD pointed at a fresh PID-keyed temp dir;
-//! the driver-level cases spawn `llg_sim` with its own temp CWD instead.
+//! the driver-level cases spawn `llg` with its own temp CWD instead.
 //! Every test holds one shared mutex: besides serializing Surelog (like the
 //! other simulator suites), it also keeps the process-global `$LLG_CMAKE`
 //! mutation in `missing_cmake_error` from racing another test's
@@ -206,7 +206,7 @@ fn invalid_generator_error() {
     assert!(err.contains("cmake configure failed"), "error: {err}");
 }
 
-/// Driver default path: `llg_sim` without flags must build through CMake and
+/// Driver default path: `llg` without flags must build through CMake and
 /// produce the exact simulation output with exit 0.
 #[test]
 fn driver_default_uses_cmake() {
@@ -218,11 +218,11 @@ fn driver_default_uses_cmake() {
     let dir = fresh_dir("driver_default");
     std::fs::write(dir.join("counter.sv"), COUNTER_SV).expect("write source");
 
-    let output = Command::new(env!("CARGO_BIN_EXE_llg_sim"))
+    let output = Command::new(env!("CARGO_BIN_EXE_llg"))
         .args(["--top", "tb", "counter.sv"])
         .current_dir(&dir)
         .output()
-        .expect("llg_sim should start");
+        .expect("llg should start");
     let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
     let _ = std::fs::remove_dir_all(&dir);
 

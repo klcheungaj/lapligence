@@ -5,7 +5,7 @@
 //! emits a `CMakeLists.txt`, then runs
 //! `cmake -S <out_dir> -B <out_dir>/build ... && cmake --build
 //! <out_dir>/build --config Release`.  [`generate_model_sources`] performs
-//! only the first half (`llg_sim --gen-only`).  This module owns the
+//! only the first half (`llg --gen-only`).  This module owns the
 //! generated `CMakeLists.txt` and the cmake invocation.
 //!
 //! Rebuilds are deterministic (no disk accumulation in the output tree):
@@ -148,7 +148,7 @@ pub fn build_model_cmake_with_opts(
 /// Write the runtime + libaco sources plus `extra` (the generated `model.c`)
 /// and the generated `CMakeLists.txt` into `out_dir` — everything
 /// [`build_model_cmake_with_opts`] needs except actually invoking cmake.
-/// Used by `llg_sim --gen-only`.
+/// Used by `llg --gen-only`.
 ///
 /// The directory is left deterministic: after writing, entries that are not
 /// part of the current source set (and not the CMake `build/` directory) are

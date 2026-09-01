@@ -72,7 +72,7 @@ executables:
   runtime + libaco + extra sources into a build dir; consumed by the
   `build` module).
 
-Driver: `src/bin/llg_sim.rs` (compile → codegen(lowering → IR → opt → emit)
+Driver: `src/bin/llg.rs` (compile → codegen(lowering → IR → opt → emit)
 → build → run).
 
 ## Requirements

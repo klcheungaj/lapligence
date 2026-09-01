@@ -1,13 +1,13 @@
-//! CLI integration tests for `llg_sim --lint --lint-config <path>`.
+//! CLI integration tests for `llg --lint --lint-config <path>`.
 //!
-//! Each test drives the real `llg_sim` binary (via `CARGO_BIN_EXE_llg_sim`)
+//! Each test drives the real `llg` binary (via `CARGO_BIN_EXE_llg`)
 //! in a fresh temp dir, so Surelog's `slpp_all/` output and the generated
 //! `target/sim/` tree stay isolated per test.
 
 use std::path::Path;
 use std::process::Command;
 
-const SIM_BIN: &str = env!("CARGO_BIN_EXE_llg_sim");
+const SIM_BIN: &str = env!("CARGO_BIN_EXE_llg");
 
 /// Design with one `unused-signal` finding (`b` is never used; `a` is
 /// cont-assign driven and therefore exempt).  `$finish` lets the simulator
@@ -44,12 +44,12 @@ impl Drop for TempDir {
     }
 }
 
-fn run_llg_sim(dir: &Path, args: &[&str]) -> std::process::Output {
+fn run_llg(dir: &Path, args: &[&str]) -> std::process::Output {
     Command::new(SIM_BIN)
         .args(args)
         .current_dir(dir)
         .output()
-        .expect("llg_sim should start")
+        .expect("llg should start")
 }
 
 fn stderr(out: &std::process::Output) -> String {
@@ -63,7 +63,7 @@ fn cli_disabled_rule_suppresses_finding() {
     let dir = TempDir::new("disabled");
     dir.write("design.sv", UNUSED_SV);
     let cfg = dir.write("llg-lint.toml", "[rules.unused-signal]\nenabled = false\n");
-    let out = run_llg_sim(
+    let out = run_llg(
         &dir.path,
         &[
             "--lint",
@@ -90,7 +90,7 @@ fn cli_severity_override_promotes_finding_to_error() {
         "llg-lint.toml",
         "[rules.unused-signal]\nseverity = \"error\"\n",
     );
-    let out = run_llg_sim(
+    let out = run_llg(
         &dir.path,
         &[
             "--lint",
@@ -114,7 +114,7 @@ fn cli_missing_config_file_aborts() {
     let dir = TempDir::new("missing");
     dir.write("design.sv", UNUSED_SV);
     let missing = dir.path.join("does-not-exist.toml");
-    let out = run_llg_sim(
+    let out = run_llg(
         &dir.path,
         &[
             "--lint",
@@ -136,7 +136,7 @@ fn cli_malformed_config_aborts() {
     let dir = TempDir::new("malformed");
     dir.write("design.sv", UNUSED_SV);
     let cfg = dir.write("llg-lint.toml", "[rules.nope]\nenabled = true\n");
-    let out = run_llg_sim(
+    let out = run_llg(
         &dir.path,
         &[
             "--lint",
@@ -158,7 +158,7 @@ fn cli_malformed_config_aborts() {
 fn cli_lint_json_stdout_emits_json() {
     let dir = TempDir::new("json_stdout");
     dir.write("design.sv", UNUSED_SV);
-    let out = run_llg_sim(&dir.path, &["--lint-json", "--top", "unused", "design.sv"]);
+    let out = run_llg(&dir.path, &["--lint-json", "--top", "unused", "design.sv"]);
     let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
     let err = stderr(&out);
     assert!(out.status.success(), "stderr: {err}");
@@ -193,7 +193,7 @@ fn cli_lint_json_severity_override_exits_1() {
         "llg-lint.toml",
         "[rules.unused-signal]\nseverity = \"error\"\n",
     );
-    let out = run_llg_sim(
+    let out = run_llg(
         &dir.path,
         &[
             "--lint-json",
@@ -227,7 +227,7 @@ fn cli_lint_json_writes_file() {
     let dir = TempDir::new("json_file");
     dir.write("design.sv", UNUSED_SV);
     let report = dir.path.join("lint.json");
-    let out = run_llg_sim(
+    let out = run_llg(
         &dir.path,
         &[
             "--lint-json",
@@ -265,7 +265,7 @@ fn cli_lint_json_does_not_run_simulation() {
 endmodule
 "#,
     );
-    let out = run_llg_sim(&dir.path, &["--lint-json", "--top", "unused", "design.sv"]);
+    let out = run_llg(&dir.path, &["--lint-json", "--top", "unused", "design.sv"]);
     let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
     let err = stderr(&out);
     assert!(out.status.success(), "stderr: {err}");

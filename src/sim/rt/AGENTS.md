@@ -71,7 +71,7 @@ the generated `model.c` into a standalone executable and is deliberately
 ## Interactions
 
 - Above: `src/sim/codegen.rs` (emits calls into the runtime API),
-  `src/bin/llg_sim.rs` (builds model + runtime + libaco via
+  `src/bin/llg.rs` (builds model + runtime + libaco via
   `sim::build`), `tests/sim_counter.rs` (`sim_rt_selftest`).
 - Below: `vendor/libaco` (coroutine library, embedded and compiled with the
   model, never linked into Rust).

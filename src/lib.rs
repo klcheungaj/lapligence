@@ -2,7 +2,7 @@
 //! Surelog + UHDM.
 //!
 //! The crate is organised into two layers, both shared by the LSP server
-//! (`src/bin/llg/`) and the simulator tooling (`src/bin/elab_check.rs`):
+//! (`src/bin/llg_ls/`) and the simulator tooling (`src/bin/elab_check.rs`):
 //!
 //! - [`ffi`] — Rust↔C(++) FFI layer.  `ffi::surelog` manages Surelog compile
 //!   sessions (parse/compile/elaborate flags, structured diagnostics);

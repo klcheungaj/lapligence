@@ -2,7 +2,7 @@
 
 ## Purpose
 
-The common processing core used by both the LSP server (`src/bin/llg`) and
+The common processing core used by both the LSP server (`src/bin/llg_ls`) and
 the simulator (`src/sim/`):
 
 - `compile.rs` — unified Surelog pipeline: `CompileOpts`/`CompileOut`/`Diag`,
@@ -52,12 +52,12 @@ the simulator (`src/sim/`):
   includes are not followed and definitions do not leak across files — a
   lost value is possible, an invented one is not.  Pure Rust, no FFI, no
   LSP dependencies; built once per analysis commit (see
-  `src/bin/llg/features.rs::analyze_inner`), never inside a request.
+  `src/bin/llg_ls/features.rs::analyze_inner`), never inside a request.
 - `lint/` — shared rule engine over `db` + `model`: `LintRule`/`LintCtx`/
   `LintDiag` and a registry of 16 default rules (see
   `src/core/lint/rules/mod.rs::default_rules` for the authoritative list).
   Consumed by the LSP (lint diagnostics with source `llg-lint`) and
-  `llg_sim --lint`.
+  `llg --lint`.
 - `tokens.rs`, `vobject_types.rs` — VPI/parse-tree object collection and the
   node-type taxonomy for semantic highlighting.
 
@@ -66,7 +66,7 @@ the simulator (`src/sim/`):
 - **No `unsafe`** — all FFI access goes through `ffi`'s safe APIs
   (`vpi::read_value`, `iterate`/`handle`, `surelog::SessionBuilder`).
 - **No LSP-only dependencies** (tower-lsp/tokio/dashmap stay in
-  `src/bin/llg`).  Core token collection is silent so the LSP binary can
+  `src/bin/llg_ls`).  Core token collection is silent so the LSP binary can
   preserve stdout for framed JSON-RPC.
 - No panics in library code; `Result`/`Option` throughout.
 - The db is the **single VPI traversal point** — prefer extending `db` over
@@ -75,7 +75,7 @@ the simulator (`src/sim/`):
 ## Interactions
 
 - Below: `src/ffi/` (sessions, VPI).
-- Above: `src/sim/` (codegen consumes `db` + `model`), `src/bin/llg/`
+- Above: `src/sim/` (codegen consumes `db` + `model`), `src/bin/llg_ls/`
   (`features::analyze` builds `db` → `model` + tokens and runs `core::lint`),
-  `src/bin/llg_sim` (`--lint` gate runs `core::lint` before codegen),
+  `src/bin/llg.rs` (`--lint` gate runs `core::lint` before codegen),
   `src/bin/elab_check` (verifies elaboration via `compile` + `ffi`).
