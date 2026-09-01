@@ -130,14 +130,11 @@ impl<K: Eq + std::hash::Hash + Clone, V: Clone> MemoCache<K, V> {
     /// Clone of the stored value for `key`, refreshing its recency.
     pub(crate) fn get(&self, key: &K) -> Option<V> {
         let stamp = next_recency_stamp();
-        let hit = {
-            let mut inner = self.lock();
-            inner.map.get_mut(key).map(|(value, seen)| {
-                *seen = stamp;
-                value.clone()
-            })
-        };
         let mut inner = self.lock();
+        let hit = inner.map.get_mut(key).map(|(value, seen)| {
+            *seen = stamp;
+            value.clone()
+        });
         match hit {
             Some(value) => {
                 inner.hits += 1;
@@ -206,6 +203,8 @@ static NEXT_RECENCY_STAMP: AtomicU64 = AtomicU64::new(1);
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
 
     fn nav_key(uri: &str, line: u32, col: u32, epoch: u64) -> RequestKey {
         RequestKey::new(RequestKind::Definition, uri, line, col, epoch)
@@ -329,6 +328,51 @@ mod tests {
             "cache grew past capacity: {}",
             cache.len()
         );
+    }
+
+    #[test]
+    fn replacing_an_entry_releases_the_stale_value() {
+        #[derive(Clone)]
+        struct DropProbe(Arc<AtomicUsize>);
+
+        impl Drop for DropProbe {
+            fn drop(&mut self) {
+                self.0.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+
+        let drops = Arc::new(AtomicUsize::new(0));
+        let cache = MemoCache::new(1);
+        cache.put("same-key", DropProbe(Arc::clone(&drops)));
+        cache.put("same-key", DropProbe(Arc::clone(&drops)));
+
+        assert_eq!(cache.len(), 1);
+        assert_eq!(drops.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn concurrent_churn_never_exceeds_capacity() {
+        const CAPACITY: usize = 8;
+        let cache = Arc::new(MemoCache::new(CAPACITY));
+        let workers = (0..8)
+            .map(|worker| {
+                let cache = Arc::clone(&cache);
+                std::thread::spawn(move || {
+                    for item in 0..100 {
+                        let key = worker * 100 + item;
+                        cache.put(key, key);
+                        assert!(cache.len() <= CAPACITY);
+                        let _ = cache.get(&key);
+                    }
+                })
+            })
+            .collect::<Vec<_>>();
+
+        for worker in workers {
+            worker.join().expect("cache worker panicked");
+        }
+
+        assert!(cache.len() <= CAPACITY);
     }
 
     #[test]

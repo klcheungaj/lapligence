@@ -119,6 +119,22 @@ mod tests {
     }
 
     #[test]
+    fn idle_state_does_not_generate_recurring_work() {
+        let mut scheduler = SchedulerState::default();
+
+        // Timer/task completion callbacks may race with cancellation or root
+        // removal at the integration boundary. Replaying either callback
+        // while idle must remain a no-op: the state machine cannot re-arm
+        // itself and therefore cannot create an idle wakeup loop.
+        for _ in 0..100 {
+            assert_eq!(scheduler.timer_fired(), FireDecision::Ignore);
+            assert!(!scheduler.job_finished());
+            scheduler.cancel_pending();
+            assert!(scheduler.is_idle());
+        }
+    }
+
+    #[test]
     fn burst_of_ten_triggers_while_running_produces_one_followup_run() {
         let mut scheduler = SchedulerState::default();
         assert_eq!(scheduler.trigger(), TriggerDecision::ArmTimer);
@@ -134,6 +150,27 @@ mod tests {
         assert_eq!(scheduler.trigger(), TriggerDecision::Coalesce);
         assert_eq!(scheduler.timer_fired(), FireDecision::StartJob);
         assert!(!scheduler.job_finished());
+        assert!(scheduler.is_idle());
+    }
+
+    #[test]
+    fn burst_triggers_produce_exactly_one_run() {
+        let mut scheduler = SchedulerState::default();
+        let mut timers_armed = 0;
+        let mut jobs_started = 0;
+
+        for _ in 0..100 {
+            if scheduler.trigger() == TriggerDecision::ArmTimer {
+                timers_armed += 1;
+            }
+        }
+        if scheduler.timer_fired() == FireDecision::StartJob {
+            jobs_started += 1;
+        }
+        assert!(!scheduler.job_finished());
+
+        assert_eq!(timers_armed, 1);
+        assert_eq!(jobs_started, 1);
         assert!(scheduler.is_idle());
     }
 
