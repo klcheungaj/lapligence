@@ -15,7 +15,10 @@ tower-lsp server (stdio) for VSCode-style editors, built on the shared core:
   (spec exit code: 0 after `shutdown`) instead of hanging until stdin EOF.
 - `logging.rs` — low-overhead, configurable stderr/file logger.  `LLG_LOG`
   selects the level and `LLG_LOG_FILE` selects an append-only destination;
-  stdout is never used for logs.
+  stdout is never used for logs.  Also provides `LifecycleSpan`
+  request/notification/root-job/phase records with process-unique
+  `id`/`parent_id` correlation, plus an optional pluggable physical-memory
+  sampler.
 - `config.rs` — typed `llg.toml` v1 parsing (`LlgConfig`, `SourcesConfig`,
   `CompileConfig`), config loading with last-valid retention, safe defaults,
   source/include directory derivation, `CompileOpts` conversion and the
@@ -61,7 +64,10 @@ tower-lsp server (stdio) for VSCode-style editors, built on the shared core:
   pipeline entirely.  Identical full-text `didChange`s carry no input change
   and are NOT rescheduled (they would only churn epochs).  Cache access is
   mutex-guarded and stays outside the serialized lifecycle queue exactly
-  like the handlers themselves; presentation steps that depend on mutable
+  like the handlers themselves; `get` holds its lock across the hit lookup,
+  recency refresh and stats update, and a replaced entry releases the stale
+  value immediately (no retained `Analysis` is pinned).  Presentation steps
+  that depend on mutable
   backend state (shadow→real URI mapping, shared-file hover annotation)
   run AFTER the memoized value is fetched.  Aggregate hit/miss counters are
   surfaced on every `llg/dumpTokens` payload as a `# request-cache:` line
@@ -237,6 +243,12 @@ tower-lsp server (stdio) for VSCode-style editors, built on the shared core:
   partial/supplemented stream; only staging/session/task failures fall back to
   the cache, while a successful empty parse is authoritative. The request
   does not change diagnostics or navigation snapshots.
+  Open-buffer misses are single-flighted per `(uri, text, defines)` with a
+  bounded in-flight table; a captured revision that is no longer the
+  document's current snapshot is rejected before cache serving, flight
+  admission, and any parse-only Surelog work (re-checked inside the blocking
+  parse), so it never occupies a flight slot or starts an obsolete parse and
+  falls back to the committed project tokens with a stale outcome.
 
 ## Requirements
 
@@ -255,6 +267,9 @@ tower-lsp server (stdio) for VSCode-style editors, built on the shared core:
 - Lint findings from `core::lint` are merged into the published diagnostics
   with `source: "llg-lint"` (severity Error → `ERROR`, rule id as the code).
 - No `unsafe`; no `#[path]` includes (use `llg::core` / `llg::ffi`).
+- The server may install the shared process-memory guard
+  (`llg::memory_limit::install_with_logger`), wiring its sampler into
+  lifecycle logging; see `docs/lsp_safeguards.md`.
 
 ## Logging
 
@@ -264,6 +279,11 @@ tower-lsp server (stdio) for VSCode-style editors, built on the shared core:
 - `LLG_LOG_FILE` appends logs to the given path.  An empty, invalid, or
   unwritable path falls back to stderr.  Logs never use stdout, which is
   reserved for LSP framing.
+- At `info`/`debug`, `LifecycleSpan` records correlate a request/notification
+  to its coalesced root job and the analysis phases it started via process-
+  unique `id`/`parent_id`; each record carries root, generation, file count,
+  outcome, elapsed time, result cardinality, and a physical-memory sample
+  when a sampler is installed.
 
 ## Workspace discovery and lifecycle
 

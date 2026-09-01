@@ -6,8 +6,8 @@ Thin entry points over the `llg` library; all logic lives in the lib.
 
 | Binary | Source | Role |
 |---|---|---|
-| `llg` | `llg/` | Verilog/SV Language Server (tower-lsp over stdio) |
-| `llg_sim` | `llg_sim.rs` | Simulator driver: compile → codegen (lowering → IR → optimize → emit) → automatic CMake build (the only model builder; `--generator <backend>` selects the cmake `-G` backend, `--gen-only` stops after emitting sources + `CMakeLists.txt`) → run (`--lint` runs the shared linter before codegen; `--lint-json [<path>]` is a report-only mode that emits the lint report as one JSON object to stdout or a file and exits without simulating; `--lint-config <path>` loads a `llg-lint.toml` to enable/disable rules and override severities) |
+| `llg` | `llg/` | Verilog/SV Language Server (tower-lsp over stdio); installs the optional process-memory guard (`LLG_MEMORY_LIMIT_MB`) |
+| `llg_sim` | `llg_sim.rs` | Simulator driver: compile → codegen (lowering → IR → optimize → emit) → automatic CMake build (the only model builder; `--generator <backend>` selects the cmake `-G` backend, `--gen-only` stops after emitting sources + `CMakeLists.txt`) → run (`--lint` runs the shared linter before codegen; `--lint-json [<path>]` is a report-only mode that emits the lint report as one JSON object to stdout or a file and exits without simulating; `--lint-config <path>` loads a `llg-lint.toml` to enable/disable rules and override severities); installs the optional process-memory guard |
 | `elab_check` | `elab_check.rs` | Elaboration verifier (instance tree, ref binding, resolved params) |
 | `hellouhdm` / `helloworld` / `llg_demo` | — | Raw-API demos |
 
@@ -22,6 +22,9 @@ Thin entry points over the `llg` library; all logic lives in the lib.
 - The LSP logger is configurable through `LLG_LOG` and `LLG_LOG_FILE`; it
   writes only to stderr or a file, never stdout, because stdout carries LSP
   JSON-RPC frames.
+- Both frontends may install the shared process-memory guard
+  (`llg::memory_limit::install[_with_logger]`); its unsafe platform sampler
+  lives in `src/ffi/process_memory.rs`, not in the binaries.
 
 ## Interactions
 

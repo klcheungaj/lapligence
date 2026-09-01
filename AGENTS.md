@@ -35,10 +35,14 @@ only when required for performance, ABI stability, or legacy reasons.
 
 ```
 src/
-  lib.rs                        — crate root: `pub mod ffi; pub mod core; pub mod sim;`
+  lib.rs                        — crate root: `pub mod ffi; pub mod core; pub mod sim; pub mod memory_limit;`
+  memory_limit.rs               — shared process-memory safeguard (watchdog + optional native limit;
+                                  LLG_MEMORY_LIMIT_MB / LLG_MEMORY_WARNING_PERCENT / LLG_MEMORY_POLL_MS /
+                                  LLG_MEMORY_ADDRESS_SPACE_LIMIT); used by both frontends
   ffi/                          — shared FFI layer (Rust ↔ C++); the ONLY module allowed `unsafe`
     surelog.rs                  — Surelog session mgmt, SessionBuilder, structured Diag, owned parse-tree nodes
     vpi.rs                      — safe VPI wrapper + `read_value()` → owned `ValueData`
+    process_memory.rs           — platform-specific physical-footprint sampler (Linux/macOS/Windows)
   core/                         — shared processing layer (used by LSP AND simulator); unsafe-free
     compile.rs                  — unified compile pipeline (CompileOpts/CompileOut/Diag)
     db.rs                       — OWNED UHDM node database (single VPI walk; arena of Nodes)
@@ -152,6 +156,12 @@ plan of record for the remaining work.
 - `sim::build` (the only model builder) honors `LLG_CC` (compiler program;
   falls back to `$CC`, then `cc`) and `LLG_CFLAGS` (extra flags appended to
   `-DCMAKE_C_FLAGS`) — useful for sanitizer-instrumented model runs.
+- Both frontends can enforce a process-wide physical-memory budget via the
+  shared `memory_limit` safeguard (`LLG_MEMORY_LIMIT_MB`, plus
+  `LLG_MEMORY_WARNING_PERCENT`/`LLG_MEMORY_POLL_MS`/
+  `LLG_MEMORY_ADDRESS_SPACE_LIMIT`): the LSP also wires a memory sampler into
+  lifecycle logging, `llg_sim` reports status to stderr.  See
+  `docs/lsp_safeguards.md`.
 
 ---
 
@@ -415,6 +425,13 @@ function-local typespec ranges.
   current buffer's partial/supplemented stream; only staging/session/task
   failures fall back to cached tokens, and a successful empty stream is
   authoritative.
+  Identical open-buffer misses are single-flighted on `(uri, text, defines)`
+  with a bounded in-flight table; a captured revision that is no longer the
+  current document snapshot is rejected BEFORE cache serving, flight
+  admission, and any parse-only Surelog work (re-checked inside the blocking
+  parse), so a stale revision never occupies a flight slot or starts an
+  obsolete parse — it completes with a stale outcome on the committed cache
+  fallback.
   Connection-label highlighting: named PORT connection labels (`.clk` in
   `.clk(wa)`) and named PARAMETER override labels (`.W` in `child #(.W(4))`)
   carry the custom `connectionLabel` semantic-token MODIFIER on top of their
@@ -429,6 +446,10 @@ function-local typespec ranges.
 - `LLG_LOG=off|error|warn|info|debug|trace` controls low-overhead lifecycle
   logging; `LLG_LOG_FILE` selects an append-only file and logging is disabled
   below the configured level before formatting or writing messages.
+  Lifecycle records (`LifecycleSpan`) cover requests/notifications, root jobs
+  and analysis phases with process-unique `id`/`parent_id` correlation plus
+  root, generation, outcome, elapsed time, result cardinality, and a physical
+  memory sample when a sampler is installed.
 - Known v1 limitations: definition/references are binding-precise at captured
   reference positions (UHDM `vpiActual` targets plus named-connection
   folds — the port label navigates to the child module's port, the
@@ -689,6 +710,8 @@ writes sources + `CMakeLists.txt` only (`--gen-only`);
   ports are not duplicated as backing signals, concrete net kinds are kept,
   and packed ranges remain owned per elaborated instance without absorbing
   unpacked dimensions.
+- `tests/sim_memory_guard.rs` exercises the shared `memory_limit` safeguard
+  end-to-end via `LLG_MEMORY_LIMIT_MB`.
 - For FFI: prefer integration tests from the Rust side.
 
 ---

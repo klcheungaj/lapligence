@@ -9,6 +9,9 @@ C-ABI boundary (`src/wrapper/`):
   (parse/compile/elaborate/`-elabuhdm` flags), structured `Diag`/`Severity`.
 - `vpi.rs` — safe wrapper over the UHDM VPI traversal API: `iterate`/`handle`
   (with the `OwnedHandle` lifetime rule), `get`/`get_str`/`read_value`.
+- `process_memory.rs` — platform-specific physical-footprint sampler
+  (Linux/macOS/Windows) backing the shared `memory_limit` safeguard; the only
+  place `unsafe` platform calls live.
 
 ## Requirements
 
