@@ -488,6 +488,7 @@ dependencies = [
  "cc",
  "cmake",
  "dashmap 6.1.0",
+ "libc",
  "mimalloc",
  "num_enum",
  "proptest",
@@ -497,6 +498,7 @@ dependencies = [
  "toml",
  "tower",
  "tower-lsp",
+ "windows-sys",
 ]
 
 [[package]]

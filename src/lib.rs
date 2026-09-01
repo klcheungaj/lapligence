@@ -13,10 +13,13 @@
 //!   parameter/constant-expression resolver, and `core::tokens` /
 //!   `core::vobject_types` collect VPI + parse-tree objects for semantic
 //!   highlighting.
+//! - [`memory_limit`] provides the shared process-memory safeguard used by
+//!   both executable frontends.
 //!
 //! Binary targets consume the same modules; nothing LSP- or simulator-specific
 //! lives in this library.
 
 pub mod core;
 pub mod ffi;
+pub mod memory_limit;
 pub mod sim;
