@@ -147,6 +147,28 @@ struct CompileResult {
 /// saturated.
 const OPEN_TOKEN_FLIGHT_CAPACITY: usize = 32;
 type OpenTokenResult = std::result::Result<SemanticTokens, String>;
+const STALE_OPEN_TOKEN_ERROR: &str = "semantic-token request is no longer current";
+
+/// Check a captured open-buffer revision without retaining the backend state
+/// lock across any staging or frontend work.  The request can only use the
+/// isolated path while the same text is still the document's current
+/// snapshot; shutdown also makes an otherwise matching revision ineligible.
+fn open_document_is_current(
+    state: &Arc<Mutex<BackendState>>,
+    uri: &Url,
+    captured_text: &str,
+) -> bool {
+    if shutdown_requested() {
+        return false;
+    }
+    let state = state.lock().unwrap_or_else(|error| error.into_inner());
+    !state.shutting_down
+        && !shutdown_requested()
+        && state
+            .documents
+            .get(uri)
+            .is_some_and(|current_text| current_text == captured_text)
+}
 
 struct OpenTokenFlight {
     notify: Notify,
@@ -2122,11 +2144,12 @@ fn compute_semantic_tokens(
     analysis: Option<Arc<Analysis>>,
     paths: Vec<String>,
     open_document: Option<(PathBuf, String, Vec<String>)>,
+    current: impl Fn() -> bool,
     parent_id: Option<u64>,
 ) -> (Option<OpenTokenResult>, SemanticTokens) {
     let cached = cached_semantic_tokens(analysis.as_deref(), &paths);
     let fresh = open_document.map(|(real, text, defines)| {
-        let result = compute_open_document_semantic_tokens(real, text, defines, parent_id);
+        let result = compute_open_document_semantic_tokens(real, text, defines, current, parent_id);
         if let Err(error) = &result {
             crate::llg_debug!(
                 "semantic tokens: isolated collection failed before producing tokens: {error}"
@@ -2141,15 +2164,10 @@ fn compute_open_document_semantic_tokens(
     real: PathBuf,
     text: String,
     defines: Vec<String>,
+    current: impl Fn() -> bool,
     parent_id: Option<u64>,
 ) -> OpenTokenResult {
-    open_document_semantic_tokens_if_current(
-        &real,
-        &text,
-        &defines,
-        || !shutdown_requested(),
-        parent_id,
-    )
+    open_document_semantic_tokens_if_current(&real, &text, &defines, current, parent_id)
 }
 
 /// Memoization key of one open-buffer isolated token stream: document URI,
@@ -2170,9 +2188,16 @@ fn open_document_semantic_tokens_if_current(
     real: &Path,
     text: &str,
     defines: &[String],
-    current: impl FnOnce() -> bool,
+    current: impl Fn() -> bool,
     parent_id: Option<u64>,
 ) -> std::result::Result<SemanticTokens, String> {
+    // Reject an obsolete request before it waits for the staging lock.  The
+    // check after acquiring the lock closes the race with didChange while the
+    // request was waiting; both checks happen before any stage or frontend
+    // work is admitted.
+    if !current() {
+        return Err(STALE_OPEN_TOKEN_ERROR.to_owned());
+    }
     // Project jobs acquire these locks in the same order.  Holding the
     // staging lock through parse and cleanup also prevents shutdown from
     // deleting the process shadow base while Surelog reads this copy.
@@ -2180,7 +2205,7 @@ fn open_document_semantic_tokens_if_current(
         .lock()
         .unwrap_or_else(|error| error.into_inner());
     if !current() {
-        return Err("semantic-token request is no longer current".to_owned());
+        return Err(STALE_OPEN_TOKEN_ERROR.to_owned());
     }
     let stage = SemanticStage::new(real, text)
         .map_err(|error| format!("failed to stage open document: {error}"))?;
@@ -2190,7 +2215,14 @@ fn open_document_semantic_tokens_if_current(
         .to_str()
         .ok_or_else(|| "staged semantic source path is not UTF-8".to_owned())
         .and_then(|path| {
-            features::semantic_tokens_for_open_document_with_parent(path, defines, parent_id)
+            // A revision can change while the request-local stage is being
+            // written.  Check again immediately before entering Surelog so a
+            // stale buffer cannot start the expensive parse.
+            if !current() {
+                Err(STALE_OPEN_TOKEN_ERROR.to_owned())
+            } else {
+                features::semantic_tokens_for_open_document_with_parent(path, defines, parent_id)
+            }
         });
     clean_analysis_scratch();
     result
@@ -2856,12 +2888,18 @@ impl Backend {
                 open_document.0,
                 open_document.1,
                 open_document.2,
+                {
+                    let state = Arc::clone(&state);
+                    let uri = uri.clone();
+                    let captured_text = captured_text.clone();
+                    move || open_document_is_current(&state, &uri, &captured_text)
+                },
                 parent_id,
             );
-            let buffer_is_current = {
-                let state = state.lock().unwrap_or_else(|error| error.into_inner());
-                state.documents.get(&uri) == Some(&captured_text)
-            };
+            // Keep this post-compute check: a revision may change after the
+            // final pre-frontend check, so stale results must never enter the
+            // request cache.
+            let buffer_is_current = open_document_is_current(&state, &uri, &captured_text);
             if let Ok(tokens) = &result {
                 if buffer_is_current {
                     cache.put(key, tokens.clone());
@@ -3407,10 +3445,36 @@ impl LanguageServer for Backend {
         let token_key = open_document
             .as_ref()
             .map(|(_, text, defines)| open_token_cache_key(uri.as_str(), text, defines));
+        let captured_text = open_document.as_ref().map(|(_, text, _)| text.clone());
+        let fallback_analysis = analysis.clone();
+        let fallback_paths = paths.clone();
+
+        // The request released BackendState after capturing this text.  Do
+        // not even inspect/serve an open-buffer cache entry for an obsolete
+        // revision; it must fall back to the committed snapshot without
+        // acquiring a flight or starting isolated work.
+        if let Some(captured_text) = captured_text.as_deref() {
+            if !open_document_is_current(&self.state, &uri, captured_text) {
+                let tokens = cached_semantic_tokens(fallback_analysis.as_deref(), &fallback_paths);
+                request.complete("stale", tokens.data.len());
+                return Ok(Some(SemanticTokensResult::Tokens(tokens)));
+            }
+        }
         let request_id = request.id();
         let started = std::time::Instant::now();
         if let Some(key) = &token_key {
             if let Some(tokens) = self.open_token_cache.get(key) {
+                // didChange can race between the initial barrier and this
+                // cache read.  Validate again immediately before serving it.
+                let cache_is_current = captured_text
+                    .as_deref()
+                    .is_some_and(|text| open_document_is_current(&self.state, &uri, text));
+                if !cache_is_current {
+                    let tokens =
+                        cached_semantic_tokens(fallback_analysis.as_deref(), &fallback_paths);
+                    request.complete("stale", tokens.data.len());
+                    return Ok(Some(SemanticTokensResult::Tokens(tokens)));
+                }
                 crate::llg_trace!(
                     "semantic tokens: served from request cache elapsed_us={} uri={}",
                     started.elapsed().as_micros(),
@@ -3420,9 +3484,18 @@ impl LanguageServer for Backend {
                 return Ok(Some(SemanticTokensResult::Tokens(tokens)));
             }
         }
-        let captured_text = open_document.as_ref().map(|(_, text, _)| text.clone());
-        let fallback_analysis = analysis.clone();
-        let fallback_paths = paths.clone();
+
+        // Repeat the barrier after the cache miss and immediately before
+        // flight admission.  A stale revision therefore cannot consume a
+        // bounded flight slot merely because an edit landed during cache
+        // lookup.
+        if let Some(captured_text) = captured_text.as_deref() {
+            if !open_document_is_current(&self.state, &uri, captured_text) {
+                let tokens = cached_semantic_tokens(fallback_analysis.as_deref(), &fallback_paths);
+                request.complete("stale", tokens.data.len());
+                return Ok(Some(SemanticTokensResult::Tokens(tokens)));
+            }
+        }
         let lease = token_key
             .as_ref()
             .map(|key| self.open_token_flights.acquire(key.clone()));
@@ -3450,46 +3523,75 @@ impl LanguageServer for Backend {
                 // already cached, complete this short-lived flight from the
                 // cache instead of launching a duplicate parse.
                 if let Some(tokens) = self.open_token_cache.get(key) {
-                    leader.finish(Ok(tokens.clone()));
-                    let cached_analysis = fallback_analysis.clone();
-                    let cached_paths = fallback_paths.clone();
-                    let cached = tokio::task::spawn_blocking(move || {
-                        cached_semantic_tokens(cached_analysis.as_deref(), &cached_paths)
-                    })
-                    .await
-                    .unwrap_or_else(|_| {
-                        cached_semantic_tokens(fallback_analysis.as_deref(), &fallback_paths)
-                    });
-                    (Some(Ok(tokens)), cached, "cache-race")
+                    let cache_is_current = captured_text
+                        .as_deref()
+                        .is_some_and(|text| open_document_is_current(&self.state, &uri, text));
+                    if !cache_is_current {
+                        let error = STALE_OPEN_TOKEN_ERROR.to_owned();
+                        leader.finish(Err(error.clone()));
+                        (
+                            Some(Err(error)),
+                            cached_semantic_tokens(fallback_analysis.as_deref(), &fallback_paths),
+                            "stale",
+                        )
+                    } else {
+                        leader.finish(Ok(tokens.clone()));
+                        let cached_analysis = fallback_analysis.clone();
+                        let cached_paths = fallback_paths.clone();
+                        let cached = tokio::task::spawn_blocking(move || {
+                            cached_semantic_tokens(cached_analysis.as_deref(), &cached_paths)
+                        })
+                        .await
+                        .unwrap_or_else(|_| {
+                            cached_semantic_tokens(fallback_analysis.as_deref(), &fallback_paths)
+                        });
+                        (Some(Ok(tokens)), cached, "cache-race")
+                    }
                 } else {
                     match open_document {
                         Some(open_document) => {
                             let captured_text = captured_text
                                 .clone()
                                 .expect("open-document inputs always carry captured text");
-                            let coordinator = leader.detach();
-                            let flight = self.spawn_open_token_coordinator(
-                                coordinator,
-                                key.clone(),
-                                uri.clone(),
-                                captured_text,
-                                open_document,
-                                Some(request_id),
-                            );
-                            let fresh = Some(flight.wait().await);
-                            let cached_analysis = fallback_analysis.clone();
-                            let cached_paths = fallback_paths.clone();
-                            let cached = tokio::task::spawn_blocking(move || {
-                                cached_semantic_tokens(cached_analysis.as_deref(), &cached_paths)
-                            })
-                            .await
-                            .unwrap_or_else(|_| {
-                                cached_semantic_tokens(
-                                    fallback_analysis.as_deref(),
-                                    &fallback_paths,
+                            if !open_document_is_current(&self.state, &uri, &captured_text) {
+                                let error = STALE_OPEN_TOKEN_ERROR.to_owned();
+                                leader.finish(Err(error.clone()));
+                                (
+                                    Some(Err(error)),
+                                    cached_semantic_tokens(
+                                        fallback_analysis.as_deref(),
+                                        &fallback_paths,
+                                    ),
+                                    "stale",
                                 )
-                            });
-                            (fresh, cached, "computed")
+                            } else {
+                                let coordinator = leader.detach();
+                                let flight = self.spawn_open_token_coordinator(
+                                    coordinator,
+                                    key.clone(),
+                                    uri.clone(),
+                                    captured_text,
+                                    open_document,
+                                    Some(request_id),
+                                );
+                                let fresh = Some(flight.wait().await);
+                                let cached_analysis = fallback_analysis.clone();
+                                let cached_paths = fallback_paths.clone();
+                                let cached = tokio::task::spawn_blocking(move || {
+                                    cached_semantic_tokens(
+                                        cached_analysis.as_deref(),
+                                        &cached_paths,
+                                    )
+                                })
+                                .await
+                                .unwrap_or_else(|_| {
+                                    cached_semantic_tokens(
+                                        fallback_analysis.as_deref(),
+                                        &fallback_paths,
+                                    )
+                                });
+                                (fresh, cached, "computed")
+                            }
                         }
                         None => {
                             let error =
@@ -3519,8 +3621,22 @@ impl LanguageServer for Backend {
                 )
             }
             None => {
+                let current_state = Arc::clone(&self.state);
+                let current_uri = uri.clone();
+                let current_text = captured_text.clone();
                 let task = tokio::task::spawn_blocking(move || {
-                    compute_semantic_tokens(analysis, paths, open_document, Some(request_id))
+                    compute_semantic_tokens(
+                        analysis,
+                        paths,
+                        open_document,
+                        move || match current_text.as_deref() {
+                            Some(text) => {
+                                open_document_is_current(&current_state, &current_uri, text)
+                            }
+                            None => !shutdown_requested(),
+                        },
+                        Some(request_id),
+                    )
                 });
                 let result = task.await.unwrap_or_else(|error| {
                     crate::llg_debug!("semantic tokens: blocking task failed: {error}");
@@ -3533,8 +3649,13 @@ impl LanguageServer for Backend {
             }
         };
         let buffer_is_current = captured_text
-            .as_ref()
-            .is_some_and(|text| self.lock_state().documents.get(&uri) == Some(text));
+            .as_deref()
+            .is_some_and(|text| open_document_is_current(&self.state, &uri, text));
+        let outcome = if captured_text.is_some() && !buffer_is_current {
+            "stale"
+        } else {
+            outcome
+        };
         // Only successful fresh streams are memoized: failures fall back to
         // the project snapshot and must be retried on the next request.
         if let Some(Ok(fresh_tokens)) = &fresh {
@@ -4082,6 +4203,62 @@ mod tests {
             key,
             open_token_cache_key("file:///q.sv", "module m;\nendmodule", &defines_a),
             "uri is part of the key"
+        );
+    }
+
+    #[test]
+    fn open_token_freshness_barrier_rejects_stale_revision_before_admission() {
+        let uri = Url::parse("file:///tmp/llg-stale-open.sv").expect("document URI");
+        let state = Arc::new(Mutex::new(BackendState {
+            roots: BTreeMap::new(),
+            documents: BTreeMap::from([(uri.clone(), "current".to_owned())]),
+            dynamic_watched_files: false,
+            watchers_registered: false,
+            registered_watchers_digest: None,
+            initialized: true,
+            shutting_down: false,
+            pending_logs: Vec::new(),
+            merged: None,
+            initial_pending: BTreeSet::new(),
+            ready_sent: true,
+            dep_dependents: BTreeMap::new(),
+            published_shared: BTreeMap::new(),
+            next_generation: 0,
+        }));
+        let registry = Arc::new(OpenTokenFlightRegistry::new());
+
+        assert!(
+            !open_document_is_current(&state, &uri, "captured-before-edit"),
+            "an obsolete captured revision must fail the admission barrier"
+        );
+        if open_document_is_current(&state, &uri, "captured-before-edit") {
+            let _ = registry.acquire("stale-revision".to_owned());
+        }
+        assert_eq!(
+            registry.len(),
+            0,
+            "a stale revision must not acquire an open-token flight"
+        );
+
+        assert!(
+            open_document_is_current(&state, &uri, "current"),
+            "the current revision remains eligible for isolated tokens"
+        );
+        let leader = match registry.acquire("current-revision".to_owned()) {
+            OpenTokenFlightLease::Leader(leader) => leader,
+            _ => panic!("the current revision should be admitted when capacity is available"),
+        };
+        assert_eq!(registry.len(), 1);
+        drop(leader);
+        assert_eq!(registry.len(), 0);
+
+        state
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .shutting_down = true;
+        assert!(
+            !open_document_is_current(&state, &uri, "current"),
+            "shutdown makes an otherwise matching revision ineligible"
         );
     }
 
