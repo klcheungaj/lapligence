@@ -1,0 +1,9 @@
+# Exclude the shared build-cache folder from the main build context.
+# It is passed separately via --build-context build-cache=./build-cache
+build-cache/
+
+# Rust build output
+target/
+
+# Surelog in-tree build
+vendor/Surelog/build/
