@@ -333,7 +333,11 @@ fn apply_surelog_patches(repo: &Path, manifest_dir: &Path) {
         }
 
         let status = std::process::Command::new("patch")
-            .args(["-p1", "-s", "--forward"])
+            // Do not leave an untracked `CMakeLists.txt.orig` in the
+            // submodule when patch(1) has to apply a harmless offset.  The
+            // patch itself is tracked at the superproject level and is the
+            // reproducible source of these build-only changes.
+            .args(["-p1", "-s", "--forward", "--no-backup-if-mismatch"])
             .stdin(std::process::Stdio::from(
                 std::fs::File::open(&patch)
                     .unwrap_or_else(|e| panic!("failed to open patch {}: {e}", patch.display())),
