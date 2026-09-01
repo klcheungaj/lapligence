@@ -5,6 +5,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
+use tokio::sync::Notify;
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer};
@@ -86,6 +87,10 @@ struct RootState {
     /// unions for tracked-but-closed external files too).
     all_diagnostics: BTreeMap<PathBuf, Vec<Diagnostic>>,
     generation: u64,
+    /// Parent correlation for the next run.  A coalesced trigger replaces
+    /// this only when it carries a real request/notification ID; startup and
+    /// internal reschedules intentionally leave it absent.
+    pending_parent_id: Option<u64>,
     /// Debounce + latest-wins coalescing for this root's analysis runs (see
     /// [`SchedulerState`]); mutated only under the backend state lock.
     scheduler: SchedulerState,
@@ -119,6 +124,10 @@ struct BackendState {
 struct RootJob {
     key: RootKey,
     generation: u64,
+    /// Correlation ID of the request/notification that armed or refreshed
+    /// this coalesced run.  `None` is expected for startup/internal work;
+    /// coalesced triggers retain only the latest meaningful parent.
+    parent_id: Option<u64>,
     shadow: ShadowPaths,
     files: Vec<PathBuf>,
     open_documents: BTreeMap<PathBuf, String>,
@@ -129,6 +138,196 @@ struct CompileResult {
     analysis: Option<Analysis>,
     files: Vec<(PathBuf, String)>,
     include_deps: BTreeSet<PathBuf>,
+}
+
+/// Bound the number of open-document parses that can be retained in the
+/// single-flight table.  Entries live while the detached coordinator owns the
+/// parse and through cache publication, then are removed on success/failure;
+/// absent keys are refused and degraded to the fallback while the table is
+/// saturated.
+const OPEN_TOKEN_FLIGHT_CAPACITY: usize = 32;
+type OpenTokenResult = std::result::Result<SemanticTokens, String>;
+
+struct OpenTokenFlight {
+    notify: Notify,
+    result: Mutex<Option<OpenTokenResult>>,
+}
+
+impl OpenTokenFlight {
+    fn new() -> Self {
+        Self {
+            notify: Notify::new(),
+            result: Mutex::new(None),
+        }
+    }
+
+    fn result(&self) -> Option<OpenTokenResult> {
+        self.result
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .clone()
+    }
+
+    async fn wait(&self) -> OpenTokenResult {
+        loop {
+            // Register before checking the result.  This ordering prevents a
+            // leader's notify from landing between the check and await.
+            let notified = self.notify.notified();
+            if let Some(result) = self.result() {
+                return result;
+            }
+            notified.await;
+        }
+    }
+}
+
+struct OpenTokenFlightRegistry {
+    flights: Mutex<HashMap<String, Arc<OpenTokenFlight>>>,
+}
+
+enum OpenTokenFlightLease {
+    Leader(OpenTokenFlightLeader),
+    Follower(Arc<OpenTokenFlight>),
+    /// The bounded registry is saturated.  This request is refused a flight
+    /// and must use the already-available fallback instead of starting
+    /// another blocking parse.
+    Saturated,
+}
+
+struct OpenTokenFlightLeader {
+    registry: Arc<OpenTokenFlightRegistry>,
+    key: String,
+    flight: Arc<OpenTokenFlight>,
+    completed: bool,
+    detached: bool,
+}
+
+/// Completion owner for a detached open-document parse.  It is deliberately
+/// independent of the request future: cancelling the request only drops its
+/// waiter, while this owner remains in the blocking task until the result has
+/// been published and all followers have been woken.
+struct OpenTokenFlightCoordinator {
+    registry: Arc<OpenTokenFlightRegistry>,
+    key: String,
+    flight: Arc<OpenTokenFlight>,
+    completed: bool,
+}
+
+impl OpenTokenFlightRegistry {
+    fn new() -> Self {
+        Self {
+            flights: Mutex::new(HashMap::new()),
+        }
+    }
+
+    fn acquire(self: &Arc<Self>, key: String) -> OpenTokenFlightLease {
+        let mut flights = self
+            .flights
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        if let Some(flight) = flights.get(&key) {
+            return OpenTokenFlightLease::Follower(Arc::clone(flight));
+        }
+        if flights.len() >= OPEN_TOKEN_FLIGHT_CAPACITY {
+            return OpenTokenFlightLease::Saturated;
+        }
+        let flight = Arc::new(OpenTokenFlight::new());
+        flights.insert(key.clone(), Arc::clone(&flight));
+        OpenTokenFlightLease::Leader(OpenTokenFlightLeader {
+            registry: Arc::clone(self),
+            key,
+            flight,
+            completed: false,
+            detached: false,
+        })
+    }
+
+    fn remove(&self, key: &str, flight: &Arc<OpenTokenFlight>) {
+        let mut flights = self
+            .flights
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        if flights
+            .get(key)
+            .is_some_and(|current| Arc::ptr_eq(current, flight))
+        {
+            flights.remove(key);
+        }
+    }
+
+    #[cfg(test)]
+    fn len(&self) -> usize {
+        self.flights
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .len()
+    }
+}
+
+impl OpenTokenFlightLeader {
+    fn finish(&mut self, result: OpenTokenResult) {
+        OpenTokenFlightCoordinator {
+            registry: Arc::clone(&self.registry),
+            key: self.key.clone(),
+            flight: Arc::clone(&self.flight),
+            completed: false,
+        }
+        .finish(result);
+        self.completed = true;
+    }
+
+    /// Transfer completion ownership to a detached task before the request
+    /// reaches its first await.  The leader's Drop implementation therefore
+    /// cannot remove the flight while the parse is still running.
+    fn detach(&mut self) -> OpenTokenFlightCoordinator {
+        self.detached = true;
+        OpenTokenFlightCoordinator {
+            registry: Arc::clone(&self.registry),
+            key: self.key.clone(),
+            flight: Arc::clone(&self.flight),
+            completed: false,
+        }
+    }
+}
+
+impl Drop for OpenTokenFlightLeader {
+    fn drop(&mut self) {
+        if self.completed || self.detached {
+            return;
+        }
+        // This only covers cancellation before detachment (for example, a
+        // panic between acquisition and task submission).  Once detached,
+        // the coordinator owns completion and the request may be cancelled
+        // without exposing a second parser for the same key.
+        self.finish(Err("semantic-token leader cancelled".to_owned()));
+    }
+}
+
+impl OpenTokenFlightCoordinator {
+    fn finish(&mut self, result: OpenTokenResult) {
+        {
+            let mut stored = self
+                .flight
+                .result
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
+            *stored = Some(result);
+        }
+        // The caller must publish any successful cache result before invoking
+        // this method.  Keeping removal here makes the registry entry cover
+        // the entire compute→publish interval.
+        self.registry.remove(&self.key, &self.flight);
+        self.flight.notify.notify_waiters();
+        self.completed = true;
+    }
+}
+
+impl Drop for OpenTokenFlightCoordinator {
+    fn drop(&mut self) {
+        if !self.completed {
+            self.finish(Err("semantic-token coordinator cancelled".to_owned()));
+        }
+    }
 }
 
 /// Result of committing a compile result into the backend state.
@@ -187,7 +386,11 @@ pub struct Backend {
     /// Open-buffer isolated token streams keyed on (uri, buffer text,
     /// effective `-D` defines) — the exact inputs of the request-local
     /// parse-only run.
-    open_token_cache: MemoCache<String, SemanticTokens>,
+    open_token_cache: Arc<MemoCache<String, SemanticTokens>>,
+    /// In-flight keyed single-flight coordination for open-buffer semantic
+    /// token misses.  This is separate from the result cache so cache changes
+    /// owned by another module do not affect the bounded wait lifecycle.
+    open_token_flights: Arc<OpenTokenFlightRegistry>,
     /// Inactive-range results keyed on (uri, text digest, effective
     /// `[compile] defines`) — the exact inputs of the pure lexical scan.
     inactive_cache: MemoCache<String, Vec<crate::inactive_ranges::LineRange>>,
@@ -216,7 +419,8 @@ impl Backend {
             definition_cache: MemoCache::new(NAVIGATION_CACHE_CAPACITY),
             hover_cache: MemoCache::new(NAVIGATION_CACHE_CAPACITY),
             references_cache: MemoCache::new(NAVIGATION_CACHE_CAPACITY),
-            open_token_cache: MemoCache::new(TOKEN_CACHE_CAPACITY),
+            open_token_cache: Arc::new(MemoCache::new(TOKEN_CACHE_CAPACITY)),
+            open_token_flights: Arc::new(OpenTokenFlightRegistry::new()),
             inactive_cache: MemoCache::new(NAVIGATION_CACHE_CAPACITY),
         }
     }
@@ -275,6 +479,12 @@ impl Backend {
 
     fn path_to_uri(path: &Path) -> Option<Url> {
         Url::from_file_path(path).ok()
+    }
+
+    /// Capture only a request's document identity for logs.  Source text and
+    /// request payloads never enter lifecycle records.
+    fn log_uri_identity(uri: &Url) -> String {
+        uri.to_string()
     }
 
     fn roots_from_initialize(params: &InitializeParams) -> Vec<(PathBuf, String)> {
@@ -424,6 +634,7 @@ impl Backend {
                 published_digests: BTreeMap::new(),
                 all_diagnostics: BTreeMap::new(),
                 generation: 0,
+                pending_parent_id: None,
                 scheduler: SchedulerState::default(),
                 analysis_epoch: 0,
             },
@@ -669,9 +880,11 @@ impl Backend {
                 }
             }
             root.generation = generation;
+            let parent_id = root.pending_parent_id.take();
             jobs.push(RootJob {
                 key,
                 generation,
+                parent_id,
                 shadow: root.shadow.clone(),
                 files: files.into_iter().collect(),
                 open_documents,
@@ -682,9 +895,9 @@ impl Backend {
         jobs
     }
 
-    fn schedule_all(&self) {
+    fn schedule_all(&self, parent_id: Option<u64>) {
         let keys = self.lock_state().roots.keys().cloned().collect();
-        self.schedule_roots(keys);
+        self.schedule_roots_with_parent(keys, parent_id);
     }
 
     /// Request a re-analysis of the given roots.
@@ -694,12 +907,20 @@ impl Backend {
     /// during the quiet period are absorbed by it, and triggers landing while
     /// a job runs only mark the root dirty so completion owes exactly one
     /// follow-up run built from the latest state.
-    fn schedule_roots(&self, keys: Vec<RootKey>) {
+    /// Request a re-analysis while retaining the originating lifecycle ID
+    /// through the scheduler.  The scheduler still coalesces triggers; when
+    /// several meaningful notifications arrive, only the latest parent is
+    /// attached to the eventual run.  Internal/startup calls intentionally
+    /// pass `None` and are logged as having no originating request.
+    fn schedule_roots_with_parent(&self, keys: Vec<RootKey>, parent_id: Option<u64>) {
         let mut armed = Vec::new();
         {
             let mut state = self.lock_state();
             for key in keys {
                 if let Some(root) = state.roots.get_mut(&key) {
+                    if let Some(parent_id) = parent_id {
+                        root.pending_parent_id = Some(parent_id);
+                    }
                     if root.scheduler.trigger() == TriggerDecision::ArmTimer {
                         armed.push(key);
                     }
@@ -735,13 +956,30 @@ impl Backend {
     }
 
     fn compile_job(state: &Arc<Mutex<BackendState>>, job: RootJob) -> Option<CompileResult> {
+        let root_identity = job.key.to_string_lossy().into_owned();
+        let mut job_span = crate::logging::LifecycleSpan::analysis_with_parent(
+            "root-job",
+            || root_identity.clone(),
+            job.generation,
+            job.files.len(),
+            job.parent_id,
+        );
+        let mut staging_span = Some(crate::logging::LifecycleSpan::phase_with_parent(
+            "analysis.shadow_staging_preflight",
+            || root_identity.clone(),
+            job.generation,
+            job.files.len(),
+            Some(job_span.id()),
+        ));
         if !Self::job_current(state, &job) {
+            staging_span.as_mut().unwrap().outcome("stale");
             return None;
         }
         let _shadow_guard = shadow_staging_lock()
             .lock()
             .unwrap_or_else(|error| error.into_inner());
         if !Self::job_current(state, &job) {
+            staging_span.as_mut().unwrap().outcome("stale");
             return None;
         }
         job.shadow.cleanup();
@@ -767,6 +1005,7 @@ impl Backend {
         files.sort_by(|left, right| left.0.cmp(&right.0));
         files.dedup_by(|left, right| left.0 == right.0);
         if !Self::job_current(state, &job) {
+            staging_span.as_mut().unwrap().outcome("stale");
             return None;
         }
         let mut include_deps = BTreeSet::new();
@@ -775,6 +1014,7 @@ impl Backend {
         } else if let Some((file, message)) =
             preflight_include_isolation(&job.config, &files, &job.open_documents)
         {
+            staging_span.as_mut().unwrap().outcome("error");
             let mut analysis = Analysis::fatal_preflight(message);
             if let Some(diagnostic) = analysis.diagnostics.first_mut() {
                 // `fatal_preflight` deliberately has no source file.  Attach
@@ -786,6 +1026,7 @@ impl Backend {
             Some(analysis)
         } else {
             if !Self::job_current(state, &job) {
+                staging_span.as_mut().unwrap().outcome("stale");
                 return None;
             }
             let staged_deps =
@@ -797,10 +1038,42 @@ impl Backend {
                 job.shadow.base(),
             );
             if !Self::job_current(state, &job) {
+                staging_span.as_mut().unwrap().outcome("stale");
                 return None;
             }
-            Some(features::analyze_with_config(&opts, &job.lint_config))
+            if let Some(mut span) = staging_span.take() {
+                span.complete("ok", files.len() + include_deps.len());
+            }
+            Some(features::analyze_with_config_context_parent(
+                &opts,
+                &job.lint_config,
+                &root_identity,
+                job.generation,
+                Some(job_span.id()),
+            ))
         };
+        if !matches!(
+            analysis.as_ref().map(|a| a.outcome),
+            Some(features::AnalysisOutcome::Fatal)
+        ) {
+            if let Some(span) = staging_span.as_mut() {
+                span.complete("ok", files.len() + include_deps.len());
+            }
+        }
+        job_span.complete(
+            match analysis.as_ref().map(|analysis| analysis.outcome) {
+                None => "empty",
+                Some(features::AnalysisOutcome::Valid) => "ok",
+                Some(
+                    features::AnalysisOutcome::Fatal
+                    | features::AnalysisOutcome::Parse
+                    | features::AnalysisOutcome::Compile,
+                ) => "error",
+            },
+            analysis.as_ref().map_or(0, |analysis| {
+                analysis.diagnostics.len() + analysis.lint.len()
+            }),
+        );
         Some(CompileResult {
             analysis,
             files,
@@ -1204,19 +1477,28 @@ impl Backend {
     /// single `# error: <reason>` line so clients always have something to
     /// print instead of surfacing a JSON-RPC error.
     pub(crate) async fn dump_tokens(&self, params: DumpTokensParams) -> Result<DumpTokensResult> {
+        let mut request = crate::logging::LifecycleSpan::request("llg/dumpTokens", || {
+            Self::log_uri_identity(&params.uri)
+        });
         let resolved = {
             let state = self.lock_state();
             match Self::root_context(&state, &params.uri) {
                 None => Err("unknown document".to_owned()),
-                Some((root, _real, candidates)) => match root.last_good.clone() {
-                    None => Err("no analysis available yet for this document".to_owned()),
-                    Some(analysis) => Ok((analysis, candidates, root.descriptor.root.clone())),
-                },
+                Some((root, _real, candidates)) => {
+                    request.set_root(|| root.descriptor.id.clone());
+                    match root.last_good.clone() {
+                        None => Err("no analysis available yet for this document".to_owned()),
+                        Some(analysis) => Ok((analysis, candidates, root.descriptor.root.clone())),
+                    }
+                }
             }
         };
         let (analysis, candidates, display_root) = match resolved {
             Ok(parts) => parts,
-            Err(reason) => return Ok(dump_tokens_error(reason)),
+            Err(reason) => {
+                request.complete("no-data", 1);
+                return Ok(dump_tokens_error(reason));
+            }
         };
         let mut lines = tokio::task::spawn_blocking(move || {
             let rows = dump::collect_rows_for(&analysis, &display_root, &candidates);
@@ -1233,6 +1515,7 @@ impl Backend {
         .await
         .unwrap_or_else(|_| vec!["# error: dump task failed".to_owned()]);
         insert_cache_stats_line(&mut lines, self.cache_stats());
+        request.complete("ok", lines.len());
         Ok(DumpTokensResult { lines })
     }
 
@@ -1249,9 +1532,21 @@ impl Backend {
         &self,
         params: Option<ModuleExplorerParams>,
     ) -> Result<module_explorer::ExplorerSnapshot> {
+        let mut request = crate::logging::LifecycleSpan::request("llg/moduleExplorer", || {
+            params
+                .as_ref()
+                .and_then(|params| params.workspace_uri.as_ref())
+                .map(Self::log_uri_identity)
+                .unwrap_or_else(|| "workspace:*".to_owned())
+        });
         let root_filter = params
             .and_then(|params| params.workspace_uri)
             .and_then(|uri| Self::uri_to_path(&uri));
+        if let Some(root_filter) = &root_filter {
+            request.set_root(|| root_filter.to_string_lossy().into_owned());
+        } else {
+            request.set_root(|| "workspace".to_owned());
+        }
         let roots = {
             let state = self.lock_state();
             state
@@ -1271,7 +1566,7 @@ impl Backend {
                 })
                 .collect::<Vec<_>>()
         };
-        Ok(tokio::task::spawn_blocking(move || {
+        let snapshot = tokio::task::spawn_blocking(move || {
             // The request is one serialized response even when it combines
             // several workspace roots. Share the hierarchy budget across all
             // snapshots before merging them; allocating one budget per root
@@ -1298,7 +1593,9 @@ impl Backend {
                 modules: Vec::new(),
                 roots: Vec::new(),
             }
-        }))
+        });
+        request.complete("ok", snapshot.modules.len() + snapshot.roots.len());
+        Ok(snapshot)
     }
 
     /// Custom request `llg/inactiveRanges`: the zero-based inclusive line
@@ -1315,6 +1612,9 @@ impl Backend {
         &self,
         params: InactiveRangesParams,
     ) -> Result<InactiveRangesResult> {
+        let mut request = crate::logging::LifecycleSpan::request("llg/inactiveRanges", || {
+            Self::log_uri_identity(&params.uri)
+        });
         enum Source {
             Open(String),
             Disk(PathBuf),
@@ -1324,6 +1624,7 @@ impl Backend {
             match Self::root_context(&state, &params.uri) {
                 None => None,
                 Some((root, real, _candidates)) => {
+                    request.set_root(|| root.descriptor.id.clone());
                     let defines = root.descriptor.effective_config().compile.defines.clone();
                     let source = match state.documents.get(&params.uri) {
                         Some(text) => Source::Open(text.clone()),
@@ -1334,6 +1635,7 @@ impl Backend {
             }
         };
         let Some((source, defines)) = resolved else {
+            request.complete("no-data", 0);
             return Ok(InactiveRangesResult { ranges: Vec::new() });
         };
         let text = match source {
@@ -1342,7 +1644,10 @@ impl Backend {
                 match tokio::task::spawn_blocking(move || std::fs::read_to_string(path).ok()).await
                 {
                     Ok(Some(text)) => text,
-                    _ => return Ok(InactiveRangesResult { ranges: Vec::new() }),
+                    _ => {
+                        request.complete("no-data", 0);
+                        return Ok(InactiveRangesResult { ranges: Vec::new() });
+                    }
                 }
             }
         };
@@ -1352,6 +1657,7 @@ impl Backend {
         // requests short-circuit while edits or defines hot reloads miss.
         let key = inactive_ranges_cache_key(params.uri.as_str(), &text, &defines);
         if let Some(ranges) = self.inactive_cache.get(&key) {
+            request.complete("cache-hit", ranges.len());
             return Ok(InactiveRangesResult { ranges });
         }
         let ranges = tokio::task::spawn_blocking(move || {
@@ -1360,6 +1666,7 @@ impl Backend {
         .await
         .unwrap_or_default();
         self.inactive_cache.put(key, ranges.clone());
+        request.complete("ok", ranges.len());
         Ok(InactiveRangesResult { ranges })
     }
 }
@@ -1811,6 +2118,40 @@ fn cached_semantic_tokens(analysis: Option<&Analysis>, paths: &[String]) -> Sema
         .unwrap_or_else(empty_semantic_tokens)
 }
 
+fn compute_semantic_tokens(
+    analysis: Option<Arc<Analysis>>,
+    paths: Vec<String>,
+    open_document: Option<(PathBuf, String, Vec<String>)>,
+    parent_id: Option<u64>,
+) -> (Option<OpenTokenResult>, SemanticTokens) {
+    let cached = cached_semantic_tokens(analysis.as_deref(), &paths);
+    let fresh = open_document.map(|(real, text, defines)| {
+        let result = compute_open_document_semantic_tokens(real, text, defines, parent_id);
+        if let Err(error) = &result {
+            crate::llg_debug!(
+                "semantic tokens: isolated collection failed before producing tokens: {error}"
+            );
+        }
+        result
+    });
+    (fresh, cached)
+}
+
+fn compute_open_document_semantic_tokens(
+    real: PathBuf,
+    text: String,
+    defines: Vec<String>,
+    parent_id: Option<u64>,
+) -> OpenTokenResult {
+    open_document_semantic_tokens_if_current(
+        &real,
+        &text,
+        &defines,
+        || !shutdown_requested(),
+        parent_id,
+    )
+}
+
 /// Memoization key of one open-buffer isolated token stream: document URI,
 /// buffer text digest and effective `-D` defines.  These are exactly the
 /// inputs of the request-local `-parseonly` run, so any edit or defines
@@ -1830,6 +2171,7 @@ fn open_document_semantic_tokens_if_current(
     text: &str,
     defines: &[String],
     current: impl FnOnce() -> bool,
+    parent_id: Option<u64>,
 ) -> std::result::Result<SemanticTokens, String> {
     // Project jobs acquire these locks in the same order.  Holding the
     // staging lock through parse and cleanup also prevents shutdown from
@@ -1847,7 +2189,9 @@ fn open_document_semantic_tokens_if_current(
         .path
         .to_str()
         .ok_or_else(|| "staged semantic source path is not UTF-8".to_owned())
-        .and_then(|path| features::semantic_tokens_for_open_document(path, defines));
+        .and_then(|path| {
+            features::semantic_tokens_for_open_document_with_parent(path, defines, parent_id)
+        });
     clean_analysis_scratch();
     result
 }
@@ -2488,9 +2832,56 @@ fn preflight_include_isolation(
     }
     None
 }
+
+impl Backend {
+    /// Start an isolated open-document parse whose completion is detached
+    /// from the request future.  The blocking closure owns the coordinator,
+    /// so request cancellation cannot remove the flight while Surelog is
+    /// still running.  Successful cache publication happens before the
+    /// coordinator removes the registry entry and wakes followers.
+    fn spawn_open_token_coordinator(
+        &self,
+        mut coordinator: OpenTokenFlightCoordinator,
+        key: String,
+        uri: Url,
+        captured_text: String,
+        open_document: (PathBuf, String, Vec<String>),
+        parent_id: Option<u64>,
+    ) -> Arc<OpenTokenFlight> {
+        let flight = Arc::clone(&coordinator.flight);
+        let cache = Arc::clone(&self.open_token_cache);
+        let state = Arc::clone(&self.state);
+        let detached = tokio::task::spawn_blocking(move || {
+            let result = compute_open_document_semantic_tokens(
+                open_document.0,
+                open_document.1,
+                open_document.2,
+                parent_id,
+            );
+            let buffer_is_current = {
+                let state = state.lock().unwrap_or_else(|error| error.into_inner());
+                state.documents.get(&uri) == Some(&captured_text)
+            };
+            if let Ok(tokens) = &result {
+                if buffer_is_current {
+                    cache.put(key, tokens.clone());
+                }
+            }
+            coordinator.finish(result);
+        });
+        // The coordinator is deliberately detached.  Dropping this handle
+        // does not abort a started `spawn_blocking` task, and the coordinator
+        // remains responsible for waking followers on completion or panic.
+        drop(detached);
+        flight
+    }
+}
+
 #[tower_lsp::async_trait]
 impl LanguageServer for Backend {
     async fn initialize(&self, params: InitializeParams) -> Result<InitializeResult> {
+        let mut request =
+            crate::logging::LifecycleSpan::request("initialize", || "workspace".to_owned());
         let settings = params
             .initialization_options
             .clone()
@@ -2513,14 +2904,16 @@ impl LanguageServer for Backend {
             warnings.extend(root_warnings.iter().map(|error| error.message.clone()));
             roots.insert(path, root);
         }
+        let root_count = roots.len();
         {
             let mut state = self.lock_state();
             state.roots = roots;
             state.dynamic_watched_files = dynamic;
             state.pending_logs.extend(warnings);
         }
+        request.set_root(|| format!("roots={root_count}"));
         let _ = self.rescan().await;
-        Ok(InitializeResult {
+        let result = InitializeResult {
             capabilities: ServerCapabilities {
                 text_document_sync: Some(TextDocumentSyncCapability::Kind(
                     TextDocumentSyncKind::FULL,
@@ -2561,11 +2954,15 @@ impl LanguageServer for Backend {
                 name: "Lapligence".to_owned(),
                 version: Some(env!("CARGO_PKG_VERSION").to_owned()),
             }),
-        })
+        };
+        request.complete("ok", root_count);
+        Ok(result)
     }
 
     async fn initialized(&self, _: InitializedParams) {
-        let dynamic = {
+        let mut notification =
+            crate::logging::LifecycleSpan::notification("initialized", || "workspace".to_owned());
+        let (dynamic, root_count, pending_count) = {
             let mut state = self.lock_state();
             state.initialized = true;
             state.initial_pending = state.roots.keys().cloned().collect();
@@ -2575,14 +2972,19 @@ impl LanguageServer for Backend {
                 state.roots.len(),
                 state.initial_pending.len()
             );
-            state.dynamic_watched_files
+            (
+                state.dynamic_watched_files,
+                state.roots.len(),
+                state.initial_pending.len(),
+            )
         };
+        notification.set_root(|| format!("roots={root_count}"));
         self.flush_logs().await;
         self.publish_config_diagnostics().await;
         if dynamic {
             self.register_watchers().await;
         }
-        self.schedule_all();
+        self.schedule_all(Some(notification.id()));
         self.flush_logs().await;
         if self.mark_ready_if_empty() {
             self.client
@@ -2592,9 +2994,17 @@ impl LanguageServer for Backend {
                 )
                 .await;
         }
+        notification.complete("ok", pending_count);
     }
 
     async fn did_change_workspace_folders(&self, params: DidChangeWorkspaceFoldersParams) {
+        let added_count = params.event.added.len();
+        let removed_count = params.event.removed.len();
+        let mut notification = crate::logging::LifecycleSpan::notification(
+            "workspace/didChangeWorkspaceFolders",
+            || format!("added={added_count} removed={removed_count}"),
+        );
+        notification.set_root(|| "workspace".to_owned());
         let mut added_keys = BTreeSet::new();
         let removed_shadows = {
             let mut state = self.lock_state();
@@ -2667,13 +3077,22 @@ impl LanguageServer for Backend {
             };
             schedule.extend(remaining);
         }
-        self.schedule_roots(schedule.into_iter().collect());
+        let schedule: Vec<_> = schedule.into_iter().collect();
+        let schedule_count = schedule.len();
+        self.schedule_roots_with_parent(schedule, Some(notification.id()));
         self.register_watchers().await;
         self.publish_config_diagnostics().await;
         self.flush_logs().await;
+        notification.complete("ok", schedule_count);
     }
 
     async fn did_change_watched_files(&self, params: DidChangeWatchedFilesParams) {
+        let event_count = params.changes.len();
+        let mut notification =
+            crate::logging::LifecycleSpan::notification("workspace/didChangeWatchedFiles", || {
+                format!("events={event_count}")
+            });
+        notification.set_root(|| "workspace".to_owned());
         let mut config_roots = BTreeSet::new();
         let mut source_roots = BTreeSet::new();
         let mut dep_roots = BTreeSet::new();
@@ -2769,23 +3188,38 @@ impl LanguageServer for Backend {
             schedule.extend(source_roots);
             schedule.extend(config_roots);
             schedule.extend(dep_roots);
-            self.schedule_roots(schedule.into_iter().collect());
+            let schedule: Vec<_> = schedule.into_iter().collect();
+            let schedule_count = schedule.len();
+            self.schedule_roots_with_parent(schedule, Some(notification.id()));
             self.register_watchers().await;
             self.flush_logs().await;
+            notification.complete("ok", schedule_count);
         } else if !dep_roots.is_empty() {
             // Dependency-only events do not change discovery.
-            self.schedule_roots(dep_roots.into_iter().collect());
+            let schedule: Vec<_> = dep_roots.into_iter().collect();
+            let schedule_count = schedule.len();
+            self.schedule_roots_with_parent(schedule, Some(notification.id()));
             self.flush_logs().await;
+            notification.complete("ok", schedule_count);
+        } else {
+            notification.complete("no-op", 0);
         }
     }
 
     async fn did_change_configuration(&self, _params: DidChangeConfigurationParams) {
+        let mut notification =
+            crate::logging::LifecycleSpan::notification("workspace/didChangeConfiguration", || {
+                "workspace".to_owned()
+            });
         // Configuration lives in each root's `llg.toml`; the LSP
         // configuration surface is intentionally unused (the client sends
         // config *paths* in initializationOptions, never settings).
+        notification.complete("ignored", 0);
     }
 
     async fn shutdown(&self) -> Result<()> {
+        let mut request =
+            crate::logging::LifecycleSpan::request("shutdown", || "workspace".to_owned());
         mark_shutdown_requested();
         let shadows = {
             let mut state = self.lock_state();
@@ -2808,13 +3242,23 @@ impl LanguageServer for Backend {
         // before it reaches here.  The lifecycle interceptor in main.rs
         // performs the same cleanup for that shape, and both paths are
         // idempotent.
-        let _ = tokio::task::spawn_blocking(move || cleanup_shadow_state_blocking(shadows)).await;
+        let shadow_count = shadows.len();
+        let cleanup =
+            tokio::task::spawn_blocking(move || cleanup_shadow_state_blocking(shadows)).await;
+        request.complete(if cleanup.is_ok() { "ok" } else { "error" }, shadow_count);
         Ok(())
     }
 
     async fn did_open(&self, params: DidOpenTextDocumentParams) {
+        let mut notification =
+            crate::logging::LifecycleSpan::notification("textDocument/didOpen", || {
+                Self::log_uri_identity(&params.text_document.uri)
+            });
         let uri = params.text_document.uri;
         let root = Self::uri_to_path(&uri).and_then(|path| self.source_root(&path));
+        if let Some(root) = &root {
+            notification.set_root(|| root.to_string_lossy().into_owned());
+        }
         let initialized = {
             let mut state = self.lock_state();
             state.documents.insert(uri, params.text_document.text);
@@ -2822,14 +3266,22 @@ impl LanguageServer for Backend {
         };
         if initialized {
             if let Some(root) = root {
-                self.schedule_roots(vec![root]);
+                self.schedule_roots_with_parent(vec![root], Some(notification.id()));
             }
         }
+        notification.complete(if initialized { "scheduled" } else { "deferred" }, 1);
     }
 
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
+        let mut notification =
+            crate::logging::LifecycleSpan::notification("textDocument/didChange", || {
+                Self::log_uri_identity(&params.text_document.uri)
+            });
         let uri = params.text_document.uri;
         let root = Self::uri_to_path(&uri).and_then(|path| self.source_root(&path));
+        if let Some(root) = &root {
+            notification.set_root(|| root.to_string_lossy().into_owned());
+        }
         let (initialized, changed) = {
             let mut state = self.lock_state();
             let mut changed = false;
@@ -2846,15 +3298,32 @@ impl LanguageServer for Backend {
         // memoization epochs) without changing any input.
         if initialized && changed {
             if let Some(root) = root {
-                self.schedule_roots(vec![root]);
+                self.schedule_roots_with_parent(vec![root], Some(notification.id()));
             }
         }
+        notification.complete(
+            if initialized && changed {
+                "scheduled"
+            } else if changed {
+                "deferred"
+            } else {
+                "unchanged"
+            },
+            usize::from(changed),
+        );
     }
 
     async fn did_close(&self, params: DidCloseTextDocumentParams) {
+        let mut notification =
+            crate::logging::LifecycleSpan::notification("textDocument/didClose", || {
+                Self::log_uri_identity(&params.text_document.uri)
+            });
         let uri = params.text_document.uri;
         let root = Self::uri_to_path(&uri).and_then(|path| self.source_root(&path));
         let real = Self::uri_to_path(&uri);
+        if let Some(root) = &root {
+            notification.set_root(|| root.to_string_lossy().into_owned());
+        }
         let (initialized, shadow) = {
             let mut state = self.lock_state();
             state.documents.remove(&uri);
@@ -2879,21 +3348,27 @@ impl LanguageServer for Backend {
         // (unchanged payloads are suppressed by digest).
         if initialized {
             if let Some(root) = root {
-                self.schedule_roots(vec![root]);
+                self.schedule_roots_with_parent(vec![root], Some(notification.id()));
             }
         }
+        notification.complete(if initialized { "scheduled" } else { "deferred" }, 1);
     }
 
     async fn semantic_tokens_full(
         &self,
         params: SemanticTokensParams,
     ) -> Result<Option<SemanticTokensResult>> {
+        let mut request =
+            crate::logging::LifecycleSpan::request("textDocument/semanticTokens/full", || {
+                Self::log_uri_identity(&params.text_document.uri)
+            });
         let uri = params.text_document.uri;
         let (analysis, paths, open_document, shared_owner) = {
             let state = self.lock_state();
             let Some((root, real, paths)) = Self::root_context(&state, &uri) else {
                 return Ok(None);
             };
+            request.set_root(|| root.descriptor.id.clone());
             let analysis = root.last_good.clone();
             let open_document = state.documents.get(&uri).cloned().map(|text| {
                 let defines: Vec<String> = root
@@ -2932,6 +3407,7 @@ impl LanguageServer for Backend {
         let token_key = open_document
             .as_ref()
             .map(|(_, text, defines)| open_token_cache_key(uri.as_str(), text, defines));
+        let request_id = request.id();
         let started = std::time::Instant::now();
         if let Some(key) = &token_key {
             if let Some(tokens) = self.open_token_cache.get(key) {
@@ -2940,37 +3416,122 @@ impl LanguageServer for Backend {
                     started.elapsed().as_micros(),
                     uri
                 );
+                request.complete("cache-hit", tokens.data.len());
                 return Ok(Some(SemanticTokensResult::Tokens(tokens)));
             }
         }
         let captured_text = open_document.as_ref().map(|(_, text, _)| text.clone());
         let fallback_analysis = analysis.clone();
         let fallback_paths = paths.clone();
-        let parsed = tokio::task::spawn_blocking(move || {
-            let cached = cached_semantic_tokens(analysis.as_deref(), &paths);
-            let fresh = open_document.map(|(real, text, defines)| {
-                let result =
-                    open_document_semantic_tokens_if_current(&real, &text, &defines, || {
-                        !shutdown_requested()
+        let lease = token_key
+            .as_ref()
+            .map(|key| self.open_token_flights.acquire(key.clone()));
+        let (fresh, cached, outcome) = match lease {
+            Some(OpenTokenFlightLease::Follower(flight)) => {
+                let fresh = Some(flight.wait().await);
+                let cached_analysis = fallback_analysis.clone();
+                let cached_paths = fallback_paths.clone();
+                let cached = tokio::task::spawn_blocking(move || {
+                    cached_semantic_tokens(cached_analysis.as_deref(), &cached_paths)
+                })
+                .await
+                .unwrap_or_else(|_| {
+                    cached_semantic_tokens(fallback_analysis.as_deref(), &fallback_paths)
+                });
+                (fresh, cached, "single-flight")
+            }
+            Some(OpenTokenFlightLease::Leader(mut leader)) => {
+                let key = token_key
+                    .as_ref()
+                    .expect("a leader always has an open-document cache key");
+                // A request can miss the cache, then race a coordinator that
+                // publishes and removes its flight before this request calls
+                // `acquire`.  Recheck after becoming leader; if the result is
+                // already cached, complete this short-lived flight from the
+                // cache instead of launching a duplicate parse.
+                if let Some(tokens) = self.open_token_cache.get(key) {
+                    leader.finish(Ok(tokens.clone()));
+                    let cached_analysis = fallback_analysis.clone();
+                    let cached_paths = fallback_paths.clone();
+                    let cached = tokio::task::spawn_blocking(move || {
+                        cached_semantic_tokens(cached_analysis.as_deref(), &cached_paths)
+                    })
+                    .await
+                    .unwrap_or_else(|_| {
+                        cached_semantic_tokens(fallback_analysis.as_deref(), &fallback_paths)
                     });
-                if let Err(error) = &result {
-                    crate::llg_debug!(
-                        "semantic tokens: isolated collection failed before producing tokens for {}: {error}",
-                        real.display()
-                    );
+                    (Some(Ok(tokens)), cached, "cache-race")
+                } else {
+                    match open_document {
+                        Some(open_document) => {
+                            let captured_text = captured_text
+                                .clone()
+                                .expect("open-document inputs always carry captured text");
+                            let coordinator = leader.detach();
+                            let flight = self.spawn_open_token_coordinator(
+                                coordinator,
+                                key.clone(),
+                                uri.clone(),
+                                captured_text,
+                                open_document,
+                                Some(request_id),
+                            );
+                            let fresh = Some(flight.wait().await);
+                            let cached_analysis = fallback_analysis.clone();
+                            let cached_paths = fallback_paths.clone();
+                            let cached = tokio::task::spawn_blocking(move || {
+                                cached_semantic_tokens(cached_analysis.as_deref(), &cached_paths)
+                            })
+                            .await
+                            .unwrap_or_else(|_| {
+                                cached_semantic_tokens(
+                                    fallback_analysis.as_deref(),
+                                    &fallback_paths,
+                                )
+                            });
+                            (fresh, cached, "computed")
+                        }
+                        None => {
+                            let error =
+                                "open-document semantic-token inputs disappeared".to_owned();
+                            leader.finish(Err(error.clone()));
+                            (
+                                Some(Err(error)),
+                                cached_semantic_tokens(
+                                    fallback_analysis.as_deref(),
+                                    &fallback_paths,
+                                ),
+                                "no-document",
+                            )
+                        }
+                    }
                 }
-                result
-            });
-            (fresh, cached)
-        })
-        .await;
-        let (fresh, cached) = parsed.unwrap_or_else(|error| {
-            crate::llg_debug!("semantic tokens: blocking task failed: {error}");
-            (
-                None,
-                cached_semantic_tokens(fallback_analysis.as_deref(), &fallback_paths),
-            )
-        });
+            }
+            Some(OpenTokenFlightLease::Saturated) => {
+                // Saturation is a deliberate refusal: bypassing the bounded
+                // registry here would recreate the unbounded spawn_blocking
+                // queue this guard is meant to prevent.  Serve the project
+                // snapshot (or an empty authoritative-safe result) inline.
+                (
+                    None,
+                    cached_semantic_tokens(fallback_analysis.as_deref(), &fallback_paths),
+                    "saturated",
+                )
+            }
+            None => {
+                let task = tokio::task::spawn_blocking(move || {
+                    compute_semantic_tokens(analysis, paths, open_document, Some(request_id))
+                });
+                let result = task.await.unwrap_or_else(|error| {
+                    crate::llg_debug!("semantic tokens: blocking task failed: {error}");
+                    (
+                        None,
+                        cached_semantic_tokens(fallback_analysis.as_deref(), &fallback_paths),
+                    )
+                });
+                (result.0, result.1, "computed")
+            }
+        };
         let buffer_is_current = captured_text
             .as_ref()
             .is_some_and(|text| self.lock_state().documents.get(&uri) == Some(text));
@@ -2989,10 +3550,14 @@ impl LanguageServer for Backend {
             uri
         );
         let tokens = select_semantic_tokens(fresh, cached, buffer_is_current);
+        request.complete(outcome, tokens.data.len());
         Ok(Some(SemanticTokensResult::Tokens(tokens)))
     }
 
     async fn hover(&self, params: HoverParams) -> Result<Option<Hover>> {
+        let mut request = crate::logging::LifecycleSpan::request("textDocument/hover", || {
+            Self::log_uri_identity(&params.text_document_position_params.text_document.uri)
+        });
         let (analysis, epoch, paths, position, shared_owner) = {
             let state = self.lock_state();
             let Some((root, real, paths)) = Self::root_context(
@@ -3001,6 +3566,7 @@ impl LanguageServer for Backend {
             ) else {
                 return Ok(None);
             };
+            request.set_root(|| root.descriptor.id.clone());
             let Some(analysis) = root.last_good.clone() else {
                 return Ok(None);
             };
@@ -3036,9 +3602,18 @@ impl LanguageServer for Backend {
                 key.line,
                 key.character
             );
-            return Ok(self.annotate_hover(cached, shared_owner.as_deref()));
+            let value = self.annotate_hover(cached, shared_owner.as_deref());
+            request.complete(
+                if value.is_some() {
+                    "cache-hit"
+                } else {
+                    "no-data"
+                },
+                1,
+            );
+            return Ok(value);
         }
-        let mut value = tokio::task::spawn_blocking(move || {
+        let value = tokio::task::spawn_blocking(move || {
             paths.into_iter().find_map(|path| {
                 features::hover_at(&analysis, &path, position.line, position.character)
             })
@@ -3054,13 +3629,18 @@ impl LanguageServer for Backend {
             key.line,
             key.character
         );
-        Ok(self.annotate_hover(value, shared_owner.as_deref()))
+        let value = self.annotate_hover(value, shared_owner.as_deref());
+        request.complete(if value.is_some() { "ok" } else { "no-data" }, 1);
+        Ok(value)
     }
 
     async fn goto_definition(
         &self,
         params: GotoDefinitionParams,
     ) -> Result<Option<GotoDefinitionResponse>> {
+        let mut request = crate::logging::LifecycleSpan::request("textDocument/definition", || {
+            Self::log_uri_identity(&params.text_document_position_params.text_document.uri)
+        });
         let text_document = params.text_document_position_params.text_document;
         let position = params.text_document_position_params.position;
         let (analysis, epoch, paths) = {
@@ -3068,6 +3648,7 @@ impl LanguageServer for Backend {
             let Some((root, _, paths)) = Self::root_context(&state, &text_document.uri) else {
                 return Ok(None);
             };
+            request.set_root(|| root.descriptor.id.clone());
             let Some(analysis) = root.last_good.clone() else {
                 return Ok(None);
             };
@@ -3089,9 +3670,18 @@ impl LanguageServer for Backend {
                 key.line,
                 key.character
             );
-            return Ok(cached.map(|value| {
+            let value = cached.map(|value| {
                 GotoDefinitionResponse::Scalar(Self::map_location(&self.lock_state(), value))
-            }));
+            });
+            request.complete(
+                if value.is_some() {
+                    "cache-hit"
+                } else {
+                    "no-data"
+                },
+                1,
+            );
+            return Ok(value);
         }
         let value = tokio::task::spawn_blocking(move || {
             paths.into_iter().find_map(|path| {
@@ -3109,12 +3699,17 @@ impl LanguageServer for Backend {
             key.line,
             key.character
         );
-        Ok(value.map(|value| {
+        let value = value.map(|value| {
             GotoDefinitionResponse::Scalar(Self::map_location(&self.lock_state(), value))
-        }))
+        });
+        request.complete(if value.is_some() { "ok" } else { "no-data" }, 1);
+        Ok(value)
     }
 
     async fn references(&self, params: ReferenceParams) -> Result<Option<Vec<Location>>> {
+        let mut request = crate::logging::LifecycleSpan::request("textDocument/references", || {
+            Self::log_uri_identity(&params.text_document_position.text_document.uri)
+        });
         let (analysis, epoch, paths, position) = {
             let state = self.lock_state();
             let Some((root, _, paths)) =
@@ -3122,6 +3717,7 @@ impl LanguageServer for Backend {
             else {
                 return Ok(None);
             };
+            request.set_root(|| root.descriptor.id.clone());
             let Some(analysis) = root.last_good.clone() else {
                 return Ok(Some(Vec::new()));
             };
@@ -3151,7 +3747,9 @@ impl LanguageServer for Backend {
                 key.line,
                 key.character
             );
-            return Ok(Some(self.map_locations(&cached)));
+            let value = self.map_locations(&cached);
+            request.complete("cache-hit", value.len());
+            return Ok(Some(value));
         }
         let values = tokio::task::spawn_blocking(move || {
             paths
@@ -3178,19 +3776,26 @@ impl LanguageServer for Backend {
             key.line,
             key.character
         );
-        Ok(Some(self.map_locations(&values)))
+        let value = self.map_locations(&values);
+        request.complete("ok", value.len());
+        Ok(Some(value))
     }
 
     async fn prepare_rename(
         &self,
         params: TextDocumentPositionParams,
     ) -> Result<Option<PrepareRenameResponse>> {
+        let mut request =
+            crate::logging::LifecycleSpan::request("textDocument/prepareRename", || {
+                Self::log_uri_identity(&params.text_document.uri)
+            });
         let (analysis, paths, position) = {
             let state = self.lock_state();
             let Some((root, _, paths)) = Self::root_context(&state, &params.text_document.uri)
             else {
                 return Ok(None);
             };
+            request.set_root(|| root.descriptor.id.clone());
             let Some(analysis) = root.last_good.clone() else {
                 return Ok(None);
             };
@@ -3204,15 +3809,23 @@ impl LanguageServer for Backend {
         .await
         .ok()
         .flatten();
-        Ok(value.map(
+        let value = value.map(
             |(range, placeholder)| PrepareRenameResponse::RangeWithPlaceholder {
                 range,
                 placeholder,
             },
-        ))
+        );
+        request.complete(
+            if value.is_some() { "ok" } else { "no-data" },
+            usize::from(value.is_some()),
+        );
+        Ok(value)
     }
 
     async fn rename(&self, params: RenameParams) -> Result<Option<WorkspaceEdit>> {
+        let mut request = crate::logging::LifecycleSpan::request("textDocument/rename", || {
+            Self::log_uri_identity(&params.text_document_position.text_document.uri)
+        });
         let (analysis, paths, position, new_name) = {
             let state = self.lock_state();
             let Some((root, _, paths)) =
@@ -3220,6 +3833,7 @@ impl LanguageServer for Backend {
             else {
                 return Ok(None);
             };
+            request.set_root(|| root.descriptor.id.clone());
             let Some(analysis) = root.last_good.clone() else {
                 return Ok(None);
             };
@@ -3253,11 +3867,19 @@ impl LanguageServer for Backend {
         .ok()
         .flatten();
         match value {
-            Some(Ok(None)) | None => Ok(None),
-            Some(Err(message)) => Err(tower_lsp::jsonrpc::Error::invalid_params(message)),
+            Some(Ok(None)) | None => {
+                request.complete("no-data", 0);
+                Ok(None)
+            }
+            Some(Err(message)) => {
+                request.complete("error", 0);
+                Err(tower_lsp::jsonrpc::Error::invalid_params(message))
+            }
             Some(Ok(Some(edit))) => {
                 let state = self.lock_state();
-                Ok(Some(Backend::map_workspace_edit_uris(&state, edit)))
+                let edit = Backend::map_workspace_edit_uris(&state, edit);
+                request.complete("ok", 1);
+                Ok(Some(edit))
             }
         }
     }
@@ -3266,12 +3888,17 @@ impl LanguageServer for Backend {
         &self,
         params: DocumentSymbolParams,
     ) -> Result<Option<DocumentSymbolResponse>> {
+        let mut request =
+            crate::logging::LifecycleSpan::request("textDocument/documentSymbol", || {
+                Self::log_uri_identity(&params.text_document.uri)
+            });
         let (analysis, paths) = {
             let state = self.lock_state();
             let Some((root, _, paths)) = Self::root_context(&state, &params.text_document.uri)
             else {
                 return Ok(None);
             };
+            request.set_root(|| root.descriptor.id.clone());
             let Some(analysis) = root.last_good.clone() else {
                 return Ok(None);
             };
@@ -3287,8 +3914,11 @@ impl LanguageServer for Backend {
         .await
         .unwrap_or_default();
         if symbols.is_empty() {
+            request.complete("no-data", 0);
             Ok(None)
         } else {
+            let count = symbols.len();
+            request.complete("ok", count);
             Ok(Some(DocumentSymbolResponse::Nested(symbols)))
         }
     }
@@ -3297,38 +3927,47 @@ impl LanguageServer for Backend {
         &self,
         params: WorkspaceSymbolParams,
     ) -> Result<Option<Vec<SymbolInformation>>> {
+        let mut request =
+            crate::logging::LifecycleSpan::request("workspace/symbol", || "workspace".to_owned());
+        request.set_root(|| "workspace".to_owned());
         let analysis = {
             let state = self.lock_state();
             state.merged.clone()
         };
         let Some(analysis) = analysis else {
+            request.complete("no-data", 0);
             return Ok(Some(Vec::new()));
         };
         let query = params.query;
-        let query_for_log = query.clone();
+        let query_len = query.len();
         let mut values =
             tokio::task::spawn_blocking(move || features::workspace_symbols(&analysis, &query))
                 .await
                 .unwrap_or_default();
         crate::llg_trace!(
-            "workspace symbol query={:?} result_count={}",
-            query_for_log,
+            "workspace symbol query_len={} result_count={}",
+            query_len,
             values.len()
         );
         let state = self.lock_state();
         for value in &mut values {
             value.location = Self::map_location(&state, value.location.clone());
         }
+        request.complete("ok", values.len());
         Ok(Some(values))
     }
 
     async fn completion(&self, params: CompletionParams) -> Result<Option<CompletionResponse>> {
+        let mut request = crate::logging::LifecycleSpan::request("textDocument/completion", || {
+            Self::log_uri_identity(&params.text_document_position.text_document.uri)
+        });
         let uri = &params.text_document_position.text_document.uri;
         let (analysis, real, paths, position, text) = {
             let state = self.lock_state();
             let Some((root, real, paths)) = Self::root_context(&state, uri) else {
                 return Ok(None);
             };
+            request.set_root(|| root.descriptor.id.clone());
             let Some(analysis) = root.last_good.clone() else {
                 return Ok(None);
             };
@@ -3366,8 +4005,11 @@ impl LanguageServer for Backend {
         .await
         .unwrap_or_default();
         if values.is_empty() {
+            request.complete("no-data", 0);
             Ok(None)
         } else {
+            let count = values.len();
+            request.complete("ok", count);
             Ok(Some(CompletionResponse::Array(values)))
         }
     }
@@ -3375,6 +4017,7 @@ impl LanguageServer for Backend {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::AtomicUsize;
 
     /// The process-global shadow base is shared by every test in this binary.
     /// Tests that stage files and call `cleanup_process_shadow` must be
@@ -3440,6 +4083,157 @@ mod tests {
             open_token_cache_key("file:///q.sv", "module m;\nendmodule", &defines_a),
             "uri is part of the key"
         );
+    }
+
+    #[test]
+    fn open_token_flights_join_and_reclaim() {
+        let registry = Arc::new(OpenTokenFlightRegistry::new());
+        let leader = match registry.acquire("same-input".to_owned()) {
+            OpenTokenFlightLease::Leader(leader) => leader,
+            _ => panic!("first request must lead the flight"),
+        };
+        let leader_flight = Arc::clone(&leader.flight);
+        let follower = match registry.acquire("same-input".to_owned()) {
+            OpenTokenFlightLease::Follower(flight) => flight,
+            _ => panic!("identical request must join the existing flight"),
+        };
+        assert!(Arc::ptr_eq(&leader_flight, &follower));
+        assert_eq!(registry.len(), 1);
+
+        drop(leader);
+        assert!(leader_flight.result().is_some_and(|result| result.is_err()));
+        assert_eq!(registry.len(), 0);
+    }
+
+    #[test]
+    fn open_token_flights_refuse_overflow_without_a_second_parse() {
+        let registry = Arc::new(OpenTokenFlightRegistry::new());
+        let mut leaders = Vec::new();
+        let parses_started = AtomicUsize::new(0);
+        for index in 0..OPEN_TOKEN_FLIGHT_CAPACITY {
+            match registry.acquire(format!("input-{index}")) {
+                OpenTokenFlightLease::Leader(leader) => {
+                    // An admitted leader is the only lease that can start a
+                    // detached parse.  Keep each leader alive to hold the
+                    // registry at its capacity while exercising overflow.
+                    parses_started.fetch_add(1, Ordering::Relaxed);
+                    leaders.push(leader);
+                }
+                _ => panic!("flight registry capacity should admit each bounded key"),
+            }
+        }
+        assert_eq!(registry.len(), OPEN_TOKEN_FLIGHT_CAPACITY);
+        assert!(matches!(
+            registry.acquire("input-0".to_owned()),
+            OpenTokenFlightLease::Follower(_)
+        ));
+        assert!(matches!(
+            registry.acquire("overflow".to_owned()),
+            OpenTokenFlightLease::Saturated
+        ));
+        assert_eq!(
+            parses_started.load(Ordering::Relaxed),
+            OPEN_TOKEN_FLIGHT_CAPACITY,
+            "a saturated overflow key must not launch a second parse"
+        );
+
+        drop(leaders);
+        assert_eq!(registry.len(), 0);
+    }
+
+    #[test]
+    fn detached_token_coordinator_survives_leader_cancellation() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("test runtime");
+        runtime.block_on(async {
+            let registry = Arc::new(OpenTokenFlightRegistry::new());
+            let mut leader = match registry.acquire("cancelled-request".to_owned()) {
+                OpenTokenFlightLease::Leader(leader) => leader,
+                _ => panic!("first request must lead the flight"),
+            };
+            let flight = Arc::clone(&leader.flight);
+            let coordinator = leader.detach();
+            // The request future may be cancelled immediately after it
+            // submits the detached blocking parse.  Its Drop must not wake
+            // followers early or remove this still-running flight.
+            drop(leader);
+
+            let (started_tx, started_rx) = std::sync::mpsc::channel();
+            let (release_tx, release_rx) = std::sync::mpsc::channel();
+            let parse_count = Arc::new(AtomicUsize::new(0));
+            let parse_count_worker = Arc::clone(&parse_count);
+            let worker = tokio::task::spawn_blocking(move || {
+                parse_count_worker.fetch_add(1, Ordering::Relaxed);
+                started_tx.send(()).expect("worker started");
+                release_rx.recv().expect("worker release");
+                let mut coordinator = coordinator;
+                coordinator.finish(Ok(empty_semantic_tokens()));
+            });
+            // Dropping the join handle models request cancellation.  The
+            // blocking closure still owns the coordinator and must finish.
+            drop(worker);
+            started_rx.recv().expect("detached worker started");
+
+            let mut followers = Vec::new();
+            for _ in 0..8 {
+                match registry.acquire("cancelled-request".to_owned()) {
+                    OpenTokenFlightLease::Follower(follower) => followers.push(follower),
+                    _ => panic!("identical requests must join the detached flight"),
+                }
+            }
+            assert_eq!(registry.len(), 1);
+            assert_eq!(parse_count.load(Ordering::Relaxed), 1);
+            release_tx.send(()).expect("release worker");
+            for follower in followers {
+                assert!(follower.wait().await.is_ok());
+            }
+            assert!(flight.result().is_some_and(|result| result.is_ok()));
+            assert_eq!(registry.len(), 0);
+        });
+    }
+
+    #[test]
+    fn token_flight_stays_joinable_through_cache_publication() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("test runtime");
+        runtime.block_on(async {
+            let registry = Arc::new(OpenTokenFlightRegistry::new());
+            let mut leader = match registry.acquire("publication-race".to_owned()) {
+                OpenTokenFlightLease::Leader(leader) => leader,
+                _ => panic!("first request must lead the flight"),
+            };
+            let coordinator = leader.detach();
+            drop(leader);
+            let published = Arc::new(MemoCache::new(1));
+            let published_worker = Arc::clone(&published);
+            let (published_tx, published_rx) = std::sync::mpsc::channel();
+            let (release_tx, release_rx) = std::sync::mpsc::channel();
+            let worker = tokio::task::spawn_blocking(move || {
+                published_worker.put("publication-race".to_owned(), empty_semantic_tokens());
+                published_tx.send(()).expect("cache publication");
+                release_rx.recv().expect("coordinator release");
+                let mut coordinator = coordinator;
+                coordinator.finish(Ok(empty_semantic_tokens()));
+            });
+            drop(worker);
+            published_rx.recv().expect("published before completion");
+            assert!(published.get(&"publication-race".to_owned()).is_some());
+            // A request racing the publication boundary still joins the
+            // existing flight; it cannot become a second leader between the
+            // cache write and coordinator completion.
+            let follower = match registry.acquire("publication-race".to_owned()) {
+                OpenTokenFlightLease::Follower(follower) => follower,
+                _ => panic!("flight must remain registered through publication"),
+            };
+            assert_eq!(registry.len(), 1);
+            release_tx.send(()).expect("release coordinator");
+            assert!(follower.wait().await.is_ok());
+            assert_eq!(registry.len(), 0);
+        });
     }
 
     #[test]
@@ -3576,6 +4370,7 @@ mod tests {
                 published_digests: BTreeMap::new(),
                 all_diagnostics: BTreeMap::new(),
                 generation: 1,
+                pending_parent_id: None,
                 scheduler: SchedulerState::default(),
                 analysis_epoch: 0,
             },
@@ -3680,6 +4475,7 @@ mod tests {
                 published_digests: BTreeMap::new(),
                 all_diagnostics: BTreeMap::new(),
                 generation: 1,
+                pending_parent_id: None,
                 scheduler: SchedulerState::default(),
                 analysis_epoch: 0,
             },
@@ -3808,6 +4604,7 @@ mod tests {
                 published_digests: BTreeMap::new(),
                 all_diagnostics: BTreeMap::new(),
                 generation: 1,
+                pending_parent_id: None,
                 scheduler: SchedulerState::default(),
                 analysis_epoch: 0,
             },
@@ -4075,6 +4872,7 @@ mod tests {
             "module top; endmodule\n",
             &[],
             || false,
+            None,
         );
 
         // Assert
@@ -4217,6 +5015,7 @@ mod tests {
                 published_digests: BTreeMap::new(),
                 all_diagnostics: BTreeMap::new(),
                 generation: 0,
+                pending_parent_id: None,
                 scheduler: SchedulerState::default(),
                 analysis_epoch: 0,
             },
@@ -4278,6 +5077,7 @@ mod tests {
                 published_digests: BTreeMap::new(),
                 all_diagnostics: BTreeMap::new(),
                 generation: 0,
+                pending_parent_id: None,
                 scheduler: SchedulerState::default(),
                 analysis_epoch: 0,
             },
@@ -4399,6 +5199,7 @@ mod tests {
                 published_digests: BTreeMap::new(),
                 all_diagnostics: BTreeMap::new(),
                 generation: 0,
+                pending_parent_id: None,
                 scheduler: SchedulerState::default(),
                 analysis_epoch: 0,
             },
@@ -4418,6 +5219,7 @@ mod tests {
                 published_digests: BTreeMap::new(),
                 all_diagnostics: BTreeMap::new(),
                 generation: 0,
+                pending_parent_id: None,
                 scheduler: SchedulerState::default(),
                 analysis_epoch: 0,
             },
@@ -4582,6 +5384,7 @@ mod tests {
                 published_digests: BTreeMap::new(),
                 all_diagnostics: BTreeMap::from([(shared.to_path_buf(), vec![diag_a])]),
                 generation: 1,
+                pending_parent_id: None,
                 scheduler: SchedulerState::default(),
                 analysis_epoch: 0,
             },
@@ -4601,6 +5404,7 @@ mod tests {
                 published_digests: BTreeMap::new(),
                 all_diagnostics: BTreeMap::from([(shared.to_path_buf(), vec![diag_b])]),
                 generation: 1,
+                pending_parent_id: None,
                 scheduler: SchedulerState::default(),
                 analysis_epoch: 0,
             },

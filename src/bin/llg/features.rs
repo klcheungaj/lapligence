@@ -900,9 +900,56 @@ pub fn analyze(opts: &CompileOpts) -> Analysis {
 /// of the blocking compile (see that function for why this is required and
 /// why a single process-wide directory is used).
 pub fn analyze_with_config(opts: &CompileOpts, lint_cfg: &LintConfig) -> Analysis {
+    analyze_with_config_context(opts, lint_cfg, "-", 0)
+}
+
+/// Analyze with root/generation metadata used only for lifecycle logging.
+pub(crate) fn analyze_with_config_context(
+    opts: &CompileOpts,
+    lint_cfg: &LintConfig,
+    root: &str,
+    generation: u64,
+) -> Analysis {
+    analyze_with_config_context_parent(opts, lint_cfg, root, generation, None)
+}
+
+/// Analyze with an optional parent lifecycle ID supplied by the LSP job
+/// scheduler.  The parent is metadata only; all work remains serialized by
+/// the same Surelog/CWD guard as the ordinary entry point.
+pub(crate) fn analyze_with_config_context_parent(
+    opts: &CompileOpts,
+    lint_cfg: &LintConfig,
+    root: &str,
+    generation: u64,
+    parent_id: Option<u64>,
+) -> Analysis {
+    let mut analysis_span = crate::logging::LifecycleSpan::analysis_with_parent(
+        "workspace",
+        || root.to_owned(),
+        generation,
+        opts.files.len(),
+        parent_id,
+    );
+    let mut wait_span = crate::logging::LifecycleSpan::phase_with_parent(
+        "surelog.wait_global_mutex",
+        || root.to_owned(),
+        generation,
+        opts.files.len(),
+        Some(analysis_span.id()),
+    );
     let _guard = ANALYZE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    wait_span.outcome("ok");
+    drop(wait_span);
     let _cwd = ScratchCwd::enter(&analysis_scratch_dir());
-    analyze_inner(opts, lint_cfg)
+    let analysis = analyze_inner(opts, lint_cfg, root, generation, Some(analysis_span.id()));
+    analysis_span.complete(
+        match analysis.outcome {
+            AnalysisOutcome::Valid => "ok",
+            AnalysisOutcome::Fatal | AnalysisOutcome::Parse | AnalysisOutcome::Compile => "error",
+        },
+        analysis.diagnostics.len() + analysis.lint.len(),
+    );
+    analysis
 }
 
 /// The process-wide scratch directory Surelog writes its CWD-relative
@@ -954,13 +1001,30 @@ impl Drop for ScratchCwd {
     }
 }
 
-fn analyze_inner(opts: &CompileOpts, lint_cfg: &LintConfig) -> Analysis {
+fn analyze_inner(
+    opts: &CompileOpts,
+    lint_cfg: &LintConfig,
+    root: &str,
+    generation: u64,
+    parent_id: Option<u64>,
+) -> Analysis {
+    let files = opts.files.len();
+    let mut surelog_span = crate::logging::LifecycleSpan::phase_with_parent(
+        "surelog.session_construct_parse_compile_elaborate",
+        || root.to_owned(),
+        generation,
+        files,
+        parent_id,
+    );
     let out = match compile::compile(opts) {
         Ok(out) => out,
         Err(msg) => {
+            surelog_span.outcome("error");
             return Analysis::fatal_preflight(msg);
         }
     };
+    surelog_span.complete("ok", out.diagnostics.len());
+    drop(surelog_span);
 
     // `uhdm_design` / `design` are session-scoped: everything must be done
     // while `out` (and its session) is still alive, before we move the
@@ -970,10 +1034,19 @@ fn analyze_inner(opts: &CompileOpts, lint_cfg: &LintConfig) -> Analysis {
     // Capture the source graph before the session is dropped.  This is a
     // single parse-tree walk alongside the existing token/connection walks;
     // the owned result is the only source-graph data a request may read.
+    let mut graph_span = crate::logging::LifecycleSpan::phase_with_parent(
+        "analysis.source_graph",
+        || root.to_owned(),
+        generation,
+        files,
+        parent_id,
+    );
     let mut module_graph = design
         .as_ref()
         .map(collect_module_graph)
         .unwrap_or_default();
+    graph_span.complete("ok", module_graph.definitions.len());
+    drop(graph_span);
     let mut elaborated_type_ranges = Vec::new();
 
     // The db is owned and outlives the session, so the lint pass can run here
@@ -991,6 +1064,13 @@ fn analyze_inner(opts: &CompileOpts, lint_cfg: &LintConfig) -> Analysis {
     // (child port) with the actual positions (parent-scope declaration);
     // the parse fallback resolves the label against the recorded port
     // declarations and the actual against the parent scope.
+    let mut parse_facts_span = crate::logging::LifecycleSpan::phase_with_parent(
+        "analysis.parse_facts",
+        || root.to_owned(),
+        generation,
+        files,
+        parent_id,
+    );
     let conn_pairs = match design.as_ref() {
         Some(d) => scan_named_port_connections(d),
         None => Vec::new(),
@@ -999,75 +1079,126 @@ fn analyze_inner(opts: &CompileOpts, lint_cfg: &LintConfig) -> Analysis {
         Some(d) => scan_parse_enum_facts(d),
         None => ParseEnumFacts::default(),
     };
+    parse_facts_span.complete("ok", conn_pairs.len());
+    drop(parse_facts_span);
 
     let (model, lint_diags, db_built, db_error, tokens, uhdm_bindings, decl_details, connections) =
         match uhdm {
-            Some(h) => match llg::core::db::Db::build(h) {
-                Ok(db) => {
-                    elaborated_type_ranges = db
-                        .elaborated_type_ranges()
-                        .iter()
-                        .map(|entry| ModuleGraphElaboratedType {
-                            instance: entry.instance.clone(),
-                            name: entry.name.clone(),
-                            packed_ranges: entry
-                                .packed_ranges
-                                .iter()
-                                .map(|range| {
-                                    range.map(|range| ModuleGraphPackedRange {
-                                        left: range.left,
-                                        right: range.right,
+            Some(h) => {
+                let mut db_span = crate::logging::LifecycleSpan::phase_with_parent(
+                    "analysis.db_build",
+                    || root.to_owned(),
+                    generation,
+                    files,
+                    parent_id,
+                );
+                match llg::core::db::Db::build(h) {
+                    Ok(db) => {
+                        db_span.outcome("ok");
+                        drop(db_span);
+                        elaborated_type_ranges = db
+                            .elaborated_type_ranges()
+                            .iter()
+                            .map(|entry| ModuleGraphElaboratedType {
+                                instance: entry.instance.clone(),
+                                name: entry.name.clone(),
+                                packed_ranges: entry
+                                    .packed_ranges
+                                    .iter()
+                                    .map(|range| {
+                                        range.map(|range| ModuleGraphPackedRange {
+                                            left: range.left,
+                                            right: range.right,
+                                        })
                                     })
-                                })
-                                .collect(),
-                        })
-                        .collect();
-                    let model = llg::core::model::DesignModel::from_db(&db);
-                    let lint_diags = lint::lint_with_config(&db, &model, lint_cfg);
-                    let (tokens, uhdm_bindings, decl_details) = match design.as_ref() {
-                        Some(d) => tokens::collect_all_tokens(h, d),
-                        None => (Vec::new(), HashMap::new(), HashMap::new()),
-                    };
-                    // Elaborated analysis: DECL/REF classification comes from
-                    // the model + multi-view histogram; parse-side positions
-                    // must NOT override it (a use-before-decl would flip to
-                    // DECL).
-                    (
-                        model,
-                        lint_diags,
-                        true,
-                        None,
-                        tokens,
-                        uhdm_bindings,
-                        decl_details,
-                        ConnectionInputs {
-                            parse_decls: None,
-                            pairs: conn_pairs,
-                            fallback_bindings: HashMap::new(),
-                            parse_enum_decls: enum_facts.declarations.clone(),
-                            parse_enum_bindings: enum_facts.bindings.clone(),
-                            parse_enum_ref_positions: enum_facts.reference_positions.clone(),
-                            unresolved_enum_refs: enum_facts.unresolved_positions.clone(),
-                            parse_enum_tokens: enum_facts.synthetic_tokens.clone(),
-                        },
-                    )
+                                    .collect(),
+                            })
+                            .collect();
+                        let mut model_span = crate::logging::LifecycleSpan::phase_with_parent(
+                            "analysis.model_projection",
+                            || root.to_owned(),
+                            generation,
+                            files,
+                            parent_id,
+                        );
+                        let model = llg::core::model::DesignModel::from_db(&db);
+                        model_span.complete("ok", model.modules.len());
+                        drop(model_span);
+                        let mut lint_span = crate::logging::LifecycleSpan::phase_with_parent(
+                            "analysis.lint",
+                            || root.to_owned(),
+                            generation,
+                            files,
+                            parent_id,
+                        );
+                        let lint_diags = lint::lint_with_config(&db, &model, lint_cfg);
+                        lint_span.complete("ok", lint_diags.len());
+                        drop(lint_span);
+                        let mut token_span = crate::logging::LifecycleSpan::phase_with_parent(
+                            "analysis.token_collection",
+                            || root.to_owned(),
+                            generation,
+                            files,
+                            parent_id,
+                        );
+                        let (tokens, uhdm_bindings, decl_details) = match design.as_ref() {
+                            Some(d) => tokens::collect_all_tokens(h, d),
+                            None => (Vec::new(), HashMap::new(), HashMap::new()),
+                        };
+                        token_span.complete("ok", tokens.len());
+                        drop(token_span);
+                        // Elaborated analysis: DECL/REF classification comes from
+                        // the model + multi-view histogram; parse-side positions
+                        // must NOT override it (a use-before-decl would flip to
+                        // DECL).
+                        (
+                            model,
+                            lint_diags,
+                            true,
+                            None,
+                            tokens,
+                            uhdm_bindings,
+                            decl_details,
+                            ConnectionInputs {
+                                parse_decls: None,
+                                pairs: conn_pairs,
+                                fallback_bindings: HashMap::new(),
+                                parse_enum_decls: enum_facts.declarations.clone(),
+                                parse_enum_bindings: enum_facts.bindings.clone(),
+                                parse_enum_ref_positions: enum_facts.reference_positions.clone(),
+                                unresolved_enum_refs: enum_facts.unresolved_positions.clone(),
+                                parse_enum_tokens: enum_facts.synthetic_tokens.clone(),
+                            },
+                        )
+                    }
+                    Err(error) => {
+                        db_span.outcome("error");
+                        (
+                            empty_design(),
+                            Vec::new(),
+                            false,
+                            Some(error),
+                            Vec::new(),
+                            HashMap::new(),
+                            HashMap::new(),
+                            ConnectionInputs::default(),
+                        )
+                    }
                 }
-                Err(error) => (
-                    empty_design(),
-                    Vec::new(),
-                    false,
-                    Some(error),
-                    Vec::new(),
-                    HashMap::new(),
-                    HashMap::new(),
-                    ConnectionInputs::default(),
-                ),
-            },
+            }
             None => {
+                let mut fallback_span = crate::logging::LifecycleSpan::phase_with_parent(
+                    "analysis.parse_fallback",
+                    || root.to_owned(),
+                    generation,
+                    files,
+                    parent_id,
+                );
                 let (model, tokens, connections) = match design.as_ref() {
                     Some(d) => parse_tree_feature_parts(d, &conn_pairs, &enum_facts),
                     None => (empty_design(), Vec::new(), ConnectionInputs::default()),
                 };
+                fallback_span.complete("ok", tokens.len());
                 (
                     model,
                     Vec::new(),
@@ -1084,15 +1215,40 @@ fn analyze_inner(opts: &CompileOpts, lint_cfg: &LintConfig) -> Analysis {
     module_graph.elaborated_types = elaborated_type_ranges;
 
     let outcome = outcome_from_pipeline(&out, uhdm.is_some(), design.is_some(), db_built);
+    // `design` borrows from `out`, so release the last native borrow before moving
+    // the diagnostics field. Every borrowed Design/VPI value has now been converted
+    // to owned Rust data, making post-processing independent of the native session.
+    drop(design);
+
     let mut diagnostics = out.diagnostics;
     if let Some(error) = db_error {
         diagnostics.push(db_build_diagnostic(&error));
     }
+
+    // Release the native compiler/session before reading source files again or
+    // allocating the macro table and symbol index.
+    let mut drop_span = crate::logging::LifecycleSpan::phase_with_parent(
+        "surelog.session_drop",
+        || root.to_owned(),
+        generation,
+        files,
+        parent_id,
+    );
+    drop(out.session);
+    drop_span.outcome("ok");
+    drop(drop_span);
     // Macro table: config `[compile] defines` plus one conservative scan per
     // compiled file.  The files are read exactly as Surelog saw them (shadow
     // paths carry open-buffer text), so the table matches what preprocessing
     // consumed; unreadable files simply contribute no macro data.  Built
     // HERE — once per commit, never in a request.
+    let mut macro_span = crate::logging::LifecycleSpan::phase_with_parent(
+        "analysis.macro_table",
+        || root.to_owned(),
+        generation,
+        files,
+        parent_id,
+    );
     let macro_sources: Vec<(String, String)> = opts
         .files
         .iter()
@@ -1106,7 +1262,17 @@ fn analyze_inner(opts: &CompileOpts, lint_cfg: &LintConfig) -> Analysis {
         .iter()
         .map(|(path, text)| (path.as_str(), text.as_str()))
         .collect();
-    Analysis::new_with_outcome(
+    let macro_table = macros::build_table(&opts.defines, &macro_borrowed, None);
+    macro_span.complete("ok", macro_sources.len());
+    drop(macro_span);
+    let mut index_span = crate::logging::LifecycleSpan::phase_with_parent(
+        "analysis.symbol_index",
+        || root.to_owned(),
+        generation,
+        files,
+        parent_id,
+    );
+    let analysis = Analysis::new_with_outcome(
         outcome,
         diagnostics,
         model,
@@ -1114,11 +1280,23 @@ fn analyze_inner(opts: &CompileOpts, lint_cfg: &LintConfig) -> Analysis {
         lint_diags,
         uhdm_bindings,
         connections,
-    )
-    .with_macros(macros::build_table(&opts.defines, &macro_borrowed, None))
-    .with_decl_details(decl_details)
-    .with_module_graph(module_graph)
-    .with_configured_top(opts.top.clone())
+    );
+    index_span.complete("ok", analysis.index.decls.len());
+    drop(index_span);
+    let mut assembly_span = crate::logging::LifecycleSpan::phase_with_parent(
+        "analysis.assembly",
+        || root.to_owned(),
+        generation,
+        files,
+        parent_id,
+    );
+    let analysis = analysis
+        .with_macros(macro_table)
+        .with_decl_details(decl_details)
+        .with_module_graph(module_graph)
+        .with_configured_top(opts.top.clone());
+    assembly_span.complete("ok", analysis.tokens.len());
+    analysis
 }
 
 /// Build the owned source-level module graph while the Surelog parse tree is
@@ -6438,9 +6616,42 @@ pub fn semantic_tokens_for_open_document(
     file: &str,
     defines: &[String],
 ) -> Result<SemanticTokens, String> {
+    semantic_tokens_for_open_document_with_parent(file, defines, None)
+}
+
+/// Parent-aware variant used by an LSP semantic-token request.  Direct
+/// callers retain the wrapper above and intentionally produce a no-parent
+/// parse trace.
+pub(crate) fn semantic_tokens_for_open_document_with_parent(
+    file: &str,
+    defines: &[String],
+    parent_id: Option<u64>,
+) -> Result<SemanticTokens, String> {
+    let mut wait_span = crate::logging::LifecycleSpan::phase_with_parent(
+        "surelog.wait_global_mutex.parse_only",
+        || file.to_owned(),
+        0,
+        1,
+        parent_id,
+    );
     let _guard = ANALYZE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    wait_span.complete("ok", 0);
+    drop(wait_span);
     let _cwd = ScratchCwd::enter(&analysis_scratch_dir());
-    let parsed = compile::parse_only(file, defines)?;
+    let mut parse_span = crate::logging::LifecycleSpan::phase_with_parent(
+        "surelog.parse_only",
+        || file.to_owned(),
+        0,
+        1,
+        parent_id,
+    );
+    let parsed = match compile::parse_only(file, defines) {
+        Ok(parsed) => parsed,
+        Err(error) => {
+            parse_span.outcome("error");
+            return Err(error);
+        }
+    };
     let file_name = Path::new(file)
         .file_name()
         .and_then(|name| name.to_str())
@@ -6458,12 +6669,14 @@ pub fn semantic_tokens_for_open_document(
                         == Some(file_name)
             })
         });
-    Ok(tokens
+    let result = tokens
         .map(|tokens| semantic_tokens::encode(&tokens.nodes))
         .unwrap_or(SemanticTokens {
             result_id: None,
             data: Vec::new(),
-        }))
+        });
+    parse_span.complete("ok", result.data.len());
+    Ok(result)
 }
 
 // ── Hover ─────────────────────────────────────────────────────────────────────
