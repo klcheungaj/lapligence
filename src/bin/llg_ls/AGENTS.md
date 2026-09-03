@@ -20,12 +20,19 @@ tower-lsp server (stdio) for VSCode-style editors, built on the shared core:
   `id`/`parent_id` correlation, plus an optional pluggable physical-memory
   sampler.
 - `config.rs` — typed `llg.toml` v1 parsing (`LlgConfig`, `SourcesConfig`,
-  `CompileConfig`), config loading with last-valid retention, safe defaults,
+  `CompileConfig`, `AnalysisConfig`), config loading with last-valid retention,
+  safe defaults,
   source/include directory derivation, `CompileOpts` conversion and the
   `.v`/`.sv` compilation-unit predicate.  `compile.defines` (list of `NAME`
   / `NAME=VALUE`) and `[compile.param_overrides]` (`NAME` → string or
   integer value) become validated Surelog `-D`/`-P` arguments: integers are
   normalized to decimal strings, keys must be SystemVerilog identifiers.
+  `[analysis]` provides positive byte budgets for one input and the total
+  unique input set, defaulting to 1 MiB and 8 MiB. Literal includes resolve
+  beside the including file, then through source directories and
+  `compile.include_dirs` in configured order; readable closed inputs are
+  bounded-read during admission and the exact snapshot is reused for
+  isolation/staging.
   Structural errors reject the whole config atomically; a malformed define
   entry or an invalid/empty override key/value is dropped with a warning
   published against the TOML URI instead (first entry per duplicate define
@@ -239,7 +246,11 @@ tower-lsp server (stdio) for VSCode-style editors, built on the shared core:
   buffer as one request-local staged source via Surelog `-parseonly`
   (`-nocache -nobuiltin`), so project units and include contents do not enter
   that token stream.  Unopened documents continue to use the owner root's
-  cached project analysis. Frontend diagnostics retain the current buffer's
+  cached project analysis. The current open buffer is rejected as `too-large`
+  before cache-key construction or isolated parse admission when it exceeds
+  the owning root's `analysis.max_file_bytes`; the committed project token
+  stream (or empty fallback) is served without consuming a single-flight
+  slot. Frontend diagnostics retain the current buffer's
   partial/supplemented stream; only staging/session/task failures fall back to
   the cache, while a successful empty parse is authoritative. The request
   does not change diagnostics or navigation snapshots.
@@ -284,6 +295,19 @@ tower-lsp server (stdio) for VSCode-style editors, built on the shared core:
   unique `id`/`parent_id`; each record carries root, generation, file count,
   outcome, elapsed time, result cardinality, and a physical-memory sample
   when a sampler is installed.
+- At `debug`, targeted `event=` records bracket workspace discovery, scheduler
+  admission/debounce, input-budget and include staging, Surelog construction /
+  return / session drop, parse fallback, owned DB/model/token/lint/index
+  assembly, and root-job publication/completion.  `event=surelog.invoke`
+  includes argv_count, a bounded/redacted argv_repr, a fixed-width argv
+  fingerprint, and the configured parse, write-preprocessed-output, compile,
+  elaborate, UHDM-elaboration, mute, and quiet modes.  Flag names and
+  bounded paths remain visible; each argument is capped at 128 bytes and the
+  overall representation at 2048 bytes; -D/-P values are redacted.  Isolated
+  open-document parses emit the same record with their parse-only arguments.
+  NUL-rejected invocations are recorded as rejected with argv_count=0.
+  Records report counts and timings, never source contents or unbounded
+  token/item dumps.
 
 ## Workspace discovery and lifecycle
 
@@ -536,9 +560,15 @@ Unsaved buffers compile via the private per-process shadow tree
 (`llg-{pid}-{rand}` under the OS temp dir, see `features::shadow_path` /
 `lsp::ShadowPaths`): literal transitive includes resolve from staged disk
 files and open buffers, with open text taking precedence.  Literal include
-preflight cannot resolve macro-generated or dynamic include paths.  If
-staging fails (e.g. an unwritable shadow dir) the server falls back to the
-on-disk files.
+preflight cannot resolve macro-generated or dynamic include paths, so the LSP
+compile options contain only staged shadow include directories; missing or
+dynamic includes therefore produce frontend diagnostics instead of reading
+live, unmeasured files.  Once an input has been admitted by the byte budget, a
+root/include staging failure (e.g. an unwritable shadow dir) rejects the root
+with an input-staging diagnostic.  Discovered/root inputs that cannot produce a
+bounded snapshot are rejected with an input-snapshot diagnostic rather than
+using their real path; the separate dump/general path retains its intentional
+live include-directory behavior.
 Definitions are binding-precise at captured reference positions
 (`ref_bindings`: UHDM `vpiActual` targets plus named-connection folds —
 port-label side `via=label` to the child module's port, parameter-override

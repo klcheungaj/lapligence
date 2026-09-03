@@ -84,6 +84,10 @@ defines = ["WIDTH=8", "ENABLE_SIM"]
 [compile.param_overrides]
 W = 16
 
+[analysis]
+max_file_bytes = 1048576
+max_total_input_bytes = 8388608
+
 [lint]
 enabled = true
 
@@ -93,3 +97,53 @@ enabled = false
 [lint.rules.width-mismatch]
 severity = "error"
 ```
+
+## `[analysis]` — input-size safeguards
+
+- `max_file_bytes` (positive integer) — maximum UTF-8 buffer or on-disk byte
+  length of one unique compilation unit or resolved literal include. Default
+  `1048576` (1 MiB).
+- `max_total_input_bytes` (positive integer) — maximum sum of the measured
+  unique compilation units and resolved literal includes in one analysis.
+  Canonicalized paths are counted once, including include cycles. Default
+  `8388608` (8 MiB).
+
+Open UTF-8 buffer text is measured in preference to disk metadata. Discovery
+is unchanged, so files over either limit remain watched; the root analysis is
+rejected before staging or Surelog and publishes an `input-size-limit`
+diagnostic while retaining the last-good snapshot. Every discovered/root
+compilation unit must also produce a bounded UTF-8 snapshot; a missing or
+unreadable root produces an `input-snapshot` diagnostic and is never passed to
+Surelog on its live path. Open-buffer admission applies the same positive
+per-file bound before storing or scheduling the buffer, using the built-in
+default until a root-specific config is available. A rejected buffer is not
+used by a later compile.
+
+Literal includes are resolved beside the including file first, then in the
+configured source directories followed by `compile.include_dirs`, in the same
+order used for admission. A readable closed input is bounded-read once during
+admission and that exact text is reused for isolation and shadow staging. LSP
+compile options contain only the staged shadow include directories: this keeps
+literal includes working while missing or macro-generated/dynamic includes
+produce Surelog diagnostics instead of reading a live, unmeasured file. The
+separate dump/general compile-options path retains live include directories
+intentionally. Include or root staging failures are `input-staging`
+diagnostics and reject the root, so a file changing after admission cannot
+bypass either budget.
+
+Config reloads are bounded independently of the analysis budgets: at most
+`MAX_CONFIG_BYTES` (1 MiB) plus one byte is read from `llg.toml`. Oversized and
+invalid-UTF-8 config files are reported as bounded `io::Error` load failures
+and do not replace the last valid configuration.
+
+## LSP diagnostic logging
+
+Surelog invocation details are emitted only when LLG_LOG is set to debug or
+trace, through the normal stderr or LLG_LOG_FILE logger; stdout remains clean
+for JSON-RPC. Records include the accepted argv count, setter modes, a
+per-argument representation bounded to 128 bytes, an overall representation
+bounded to 2048 bytes, and a fixed-width fingerprint. Flag names and bounded
+file/include paths remain visible for diagnosis. Values on -D and -P
+arguments are replaced with <redacted>. A NUL-rejected argument is recorded
+as a rejected invocation with argv_count=0 and is never included in an
+accepted argv representation. Source contents are never logged.

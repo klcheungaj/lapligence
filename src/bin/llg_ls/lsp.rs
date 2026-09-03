@@ -1,5 +1,6 @@
 //! tower-lsp backend for the llg language server.
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -32,6 +33,9 @@ const WATCH_REGISTRATION_ID: &str = "llg-watched-files";
 /// The client-to-server initialization protocol version this server accepts.
 const CLIENT_PROTOCOL_VERSION: u32 = 1;
 type RootKey = PathBuf;
+type SharedText = Arc<String>;
+type OpenDocuments = BTreeMap<PathBuf, SharedText>;
+type OpenTokenDocument = (PathBuf, SharedText, Vec<String>);
 
 /// Set once the client's `shutdown` request has been handled; read by the
 /// lifecycle interceptor in `main.rs` to pick the spec-mandated process exit
@@ -97,7 +101,7 @@ struct RootState {
 }
 struct BackendState {
     roots: BTreeMap<RootKey, RootState>,
-    documents: BTreeMap<Url, String>,
+    documents: BTreeMap<Url, SharedText>,
     dynamic_watched_files: bool,
     watchers_registered: bool,
     /// Digest of the watcher options sent with the last successful
@@ -130,7 +134,11 @@ struct RootJob {
     parent_id: Option<u64>,
     shadow: ShadowPaths,
     files: Vec<PathBuf>,
-    open_documents: BTreeMap<PathBuf, String>,
+    /// Include dependencies from the last committed result.  A size-limit
+    /// preflight must retain these watchers while the last-good snapshot is
+    /// still being served.
+    previous_include_deps: BTreeSet<PathBuf>,
+    open_documents: OpenDocuments,
     lint_config: LintConfig,
     config: LlgConfig,
 }
@@ -138,6 +146,114 @@ struct CompileResult {
     analysis: Option<Analysis>,
     files: Vec<(PathBuf, String)>,
     include_deps: BTreeSet<PathBuf>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum InputSizeLimitKind {
+    PerFile,
+    Total,
+    Unreadable,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct InputSizeLimit {
+    path: PathBuf,
+    measured_bytes: u64,
+    configured_limit: u64,
+    kind: InputSizeLimitKind,
+    total_bytes: Option<u64>,
+}
+
+impl InputSizeLimit {
+    fn message(&self) -> String {
+        match self.kind {
+            InputSizeLimitKind::PerFile => format!(
+                "input-size-limit: {} measured {} bytes, exceeding max_file_bytes={} (per-file budget)",
+                self.path.display(),
+                self.measured_bytes,
+                self.configured_limit
+            ),
+            InputSizeLimitKind::Total => format!(
+                "input-size-limit: {} measured {} bytes; total unique input size is {} bytes, exceeding max_total_input_bytes={} (total budget)",
+                self.path.display(),
+                self.measured_bytes,
+                self.total_bytes.unwrap_or(self.measured_bytes),
+                self.configured_limit
+            ),
+            InputSizeLimitKind::Unreadable => format!(
+                "input-snapshot: {} could not be read as a bounded UTF-8 snapshot after observing {} bytes; compile rejected to preserve max_file_bytes={}",
+                self.path.display(),
+                self.measured_bytes,
+                self.configured_limit
+            ),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct InputBudgetFailure {
+    limit: InputSizeLimit,
+    /// Resolved dependencies seen before (and including) the offending input.
+    /// Keeping these paths lets a failed job preserve the last-good watch set.
+    include_deps: BTreeSet<PathBuf>,
+}
+
+/// Exact text snapshots captured during input-budget admission.  The lexical
+/// path and canonical identity are both retained so a file can be staged from
+/// the admitted bytes even if its on-disk spelling or symlink changes before
+/// staging begins.
+#[derive(Debug, Default)]
+struct InputSnapshots {
+    by_path: BTreeMap<PathBuf, Arc<String>>,
+    by_identity: BTreeMap<PathBuf, Arc<String>>,
+}
+
+impl InputSnapshots {
+    fn insert(&mut self, path: &Path, text: SharedText) {
+        self.by_path.insert(path.to_path_buf(), Arc::clone(&text));
+        self.by_identity.insert(input_identity(path), text);
+    }
+
+    fn text(&self, path: &Path) -> Option<&str> {
+        self.by_path
+            .get(path)
+            .map(|text| text.as_str())
+            .or_else(|| {
+                self.by_identity
+                    .get(&input_identity(path))
+                    .map(|text| text.as_str())
+            })
+    }
+}
+
+#[derive(Debug, Default)]
+struct InputBudget {
+    snapshots: InputSnapshots,
+}
+
+fn open_input_size_limit(path: &Path, text: &str, max_file_bytes: u64) -> Option<InputSizeLimit> {
+    let measured_bytes = text.len() as u64;
+    (measured_bytes > max_file_bytes).then(|| InputSizeLimit {
+        path: path.to_path_buf(),
+        measured_bytes,
+        configured_limit: max_file_bytes,
+        kind: InputSizeLimitKind::PerFile,
+        total_bytes: None,
+    })
+}
+
+/// Apply the open-buffer admission check used by the isolated semantic-token
+/// handler.  Keeping the tuple/options plumbing here makes the helper test
+/// exercise the same decision that must happen before cache-key construction
+/// and single-flight admission.
+fn open_token_size_limit(
+    open_document: Option<&(PathBuf, SharedText, Vec<String>)>,
+    max_file_bytes: Option<u64>,
+) -> Option<InputSizeLimit> {
+    let (Some((path, text, _)), Some(max_file_bytes)) = (open_document, max_file_bytes) else {
+        return None;
+    };
+    open_input_size_limit(path, text.as_str(), max_file_bytes)
 }
 
 /// Bound the number of open-document parses that can be retained in the
@@ -167,7 +283,7 @@ fn open_document_is_current(
         && state
             .documents
             .get(uri)
-            .is_some_and(|current_text| current_text == captured_text)
+            .is_some_and(|current_text| current_text.as_str() == captured_text)
 }
 
 struct OpenTokenFlight {
@@ -277,7 +393,6 @@ impl OpenTokenFlightRegistry {
         }
     }
 
-    #[cfg(test)]
     fn len(&self) -> usize {
         self.flights
             .lock()
@@ -362,6 +477,10 @@ struct CommitOutcome {
     /// once per such commit so newly resolved include deps get watched —
     /// including commits from roots that never reach strict validity.
     valid_commit: bool,
+    /// Whether this commit has a resolved include set that should be offered
+    /// to dynamic watchers, even when the analysis itself is Fatal (for
+    /// example, a size-limit rejection retaining the last-good snapshot).
+    watchers_refresh: bool,
     /// Whether the committed feature model changed the module explorer
     /// snapshot.  Diagnostics-only/fatal commits retain the existing model
     /// and do not cause clients to refetch it.
@@ -506,7 +625,7 @@ impl Backend {
     /// Capture only a request's document identity for logs.  Source text and
     /// request payloads never enter lifecycle records.
     fn log_uri_identity(uri: &Url) -> String {
-        uri.to_string()
+        crate::logging::bounded_field(uri.as_str())
     }
 
     fn roots_from_initialize(params: &InitializeParams) -> Vec<(PathBuf, String)> {
@@ -670,6 +789,12 @@ impl Backend {
     /// configured directories) surface as WARNING.  The full list is
     /// republished per URI, so warnings never accumulate across loads.
     async fn publish_config_diagnostics(&self) {
+        let started = std::time::Instant::now();
+        let root_count = self.lock_state().roots.len();
+        crate::llg_debug!(
+            "event=publish_config_diagnostics.begin roots={}",
+            root_count
+        );
         let publications: Vec<(Url, Vec<Diagnostic>)> = {
             let state = self.lock_state();
             state
@@ -719,13 +844,25 @@ impl Backend {
                 .collect()
         };
         for (uri, diagnostics) in publications {
+            let diagnostic_count = diagnostics.len();
             self.client
-                .publish_diagnostics(uri, diagnostics, None)
+                .publish_diagnostics(uri.clone(), diagnostics, None)
                 .await;
+            crate::llg_trace!(
+                "event=publish_config_diagnostics.item.end outcome=ok uri={} diagnostics={}",
+                uri,
+                diagnostic_count
+            );
         }
+        crate::llg_debug!(
+            "event=publish_config_diagnostics.end outcome=ok roots={} elapsed_us={}",
+            root_count,
+            started.elapsed().as_micros()
+        );
     }
 
     async fn rescan(&self) -> BTreeSet<RootKey> {
+        let started = std::time::Instant::now();
         let (descriptors, previous) = {
             let state = self.lock_state();
             (
@@ -741,6 +878,11 @@ impl Backend {
                     .collect::<BTreeMap<_, _>>(),
             )
         };
+        crate::llg_debug!(
+            "event=workspace.discovery.begin roots={} previous_file_sets={}",
+            descriptors.len(),
+            previous.len()
+        );
         let discovery_descriptors = descriptors.clone();
         let discovery = tokio::task::spawn_blocking(move || {
             Self::discover_snapshot(discovery_descriptors.values().cloned().collect())
@@ -751,6 +893,11 @@ impl Backend {
             warnings,
         }) = discovery
         else {
+            crate::llg_debug!(
+                "event=workspace.discovery.end outcome=error roots={} elapsed_us={}",
+                descriptors.len(),
+                started.elapsed().as_micros()
+            );
             self.lock_state()
                 .pending_logs
                 .push("workspace discovery task failed".to_owned());
@@ -764,9 +911,14 @@ impl Backend {
             .map(|(key, root)| (key.clone(), root.descriptor.clone()))
             .collect();
         if current_descriptors != descriptors {
-            crate::llg_debug!("discarding stale workspace discovery result");
+            crate::llg_debug!(
+                "event=workspace.discovery.end outcome=stale roots={} elapsed_us={}",
+                descriptors.len(),
+                started.elapsed().as_micros()
+            );
             return BTreeSet::new();
         }
+        let warning_count = warnings.len();
         state.pending_logs.extend(warnings);
         let mut changed = BTreeSet::new();
         for (key, root) in &mut state.roots {
@@ -775,18 +927,38 @@ impl Backend {
                 changed.insert(key.clone());
             }
         }
+        let discovered_files: usize = state.roots.values().map(|root| root.discovered.len()).sum();
+        crate::llg_debug!(
+            "event=workspace.discovery.end outcome=ok roots={} discovered_files={} changed_roots={} warnings={} elapsed_us={}",
+            state.roots.len(),
+            discovered_files,
+            changed.len(),
+            warning_count,
+            started.elapsed().as_micros()
+        );
         changed
     }
 
     fn discover_snapshot(descriptors: Vec<RootDescriptor>) -> RescanResult {
+        let started = std::time::Instant::now();
         let mut groups: BTreeMap<RootKey, BTreeSet<PathBuf>> = descriptors
             .iter()
             .map(|descriptor| (descriptor.root.clone(), BTreeSet::new()))
             .collect();
         let mut warnings = Vec::new();
         for descriptor in &descriptors {
+            crate::llg_debug!(
+                "event=workspace.discovery.root.begin root={} source_dirs={}",
+                descriptor.root.display(),
+                descriptor.effective_config().sources.directories.len()
+            );
             match workspace::discover_units(descriptor) {
                 Ok(files) => {
+                    crate::llg_debug!(
+                        "event=workspace.discovery.root.end outcome=ok root={} files={}",
+                        descriptor.root.display(),
+                        files.len()
+                    );
                     groups
                         .entry(descriptor.root.clone())
                         .or_default()
@@ -800,12 +972,26 @@ impl Backend {
                         error.kind(),
                         std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
                     ) => {}
-                Err(error) => warnings.push(format!(
-                    "workspace discovery failed for {}: {error}",
-                    descriptor.root.display()
-                )),
+                Err(error) => {
+                    crate::llg_debug!(
+                        "event=workspace.discovery.root.end outcome=error root={} error={}",
+                        descriptor.root.display(),
+                        error
+                    );
+                    warnings.push(format!(
+                        "workspace discovery failed for {}: {error}",
+                        descriptor.root.display()
+                    ));
+                }
             }
         }
+        crate::llg_debug!(
+            "event=workspace.discovery.task.end outcome=ok roots={} discovered_files={} warnings={} elapsed_us={}",
+            descriptors.len(),
+            groups.values().map(BTreeSet::len).sum::<usize>(),
+            warnings.len(),
+            started.elapsed().as_micros()
+        );
         RescanResult {
             discovered: groups,
             warnings,
@@ -847,6 +1033,7 @@ impl Backend {
     /// spawned debounce tasks (which cannot borrow `&Backend`) can call it.
     fn make_jobs(state: &Arc<Mutex<BackendState>>, keys: Vec<RootKey>) -> Vec<RootJob> {
         let mut state = state.lock().unwrap_or_else(|error| error.into_inner());
+        Self::purge_oversized_documents(&mut state);
         let documents = state.documents.clone();
         let descriptors: Vec<_> = state
             .roots
@@ -889,7 +1076,7 @@ impl Backend {
                 if owner.root != root.descriptor.root {
                     continue;
                 }
-                open_documents.insert(path.clone(), text.clone());
+                open_documents.insert(path.clone(), Arc::clone(text));
                 if config::is_compilation_unit(&path) {
                     // Same relative base as discovery time (source-dir-
                     // relative), falling back to the ownership-relative path
@@ -903,12 +1090,26 @@ impl Backend {
             }
             root.generation = generation;
             let parent_id = root.pending_parent_id.take();
+            let files: Vec<PathBuf> = files.into_iter().collect();
+            crate::llg_debug!(
+                "event=root_job.snapshot root={} generation={} files={} open_documents={} previous_include_deps={} defines={} param_overrides={} include_dirs={} parent_id={:?}",
+                root.descriptor.root.display(),
+                generation,
+                files.len(),
+                open_documents.len(),
+                root.include_deps.len(),
+                config.compile.defines.len(),
+                config.compile.param_overrides.len(),
+                config.compile.include_dirs.len(),
+                parent_id
+            );
             jobs.push(RootJob {
                 key,
                 generation,
                 parent_id,
                 shadow: root.shadow.clone(),
-                files: files.into_iter().collect(),
+                files,
+                previous_include_deps: root.include_deps.clone(),
                 open_documents,
                 lint_config: root.lint_config.clone(),
                 config,
@@ -936,6 +1137,8 @@ impl Backend {
     /// pass `None` and are logged as having no originating request.
     fn schedule_roots_with_parent(&self, keys: Vec<RootKey>, parent_id: Option<u64>) {
         let mut armed = Vec::new();
+        let requested = keys.len();
+        let mut coalesced = 0usize;
         {
             let mut state = self.lock_state();
             for key in keys {
@@ -943,12 +1146,20 @@ impl Backend {
                     if let Some(parent_id) = parent_id {
                         root.pending_parent_id = Some(parent_id);
                     }
-                    if root.scheduler.trigger() == TriggerDecision::ArmTimer {
-                        armed.push(key);
+                    match root.scheduler.trigger() {
+                        TriggerDecision::ArmTimer => armed.push(key),
+                        TriggerDecision::Coalesce => coalesced += 1,
                     }
                 }
             }
         }
+        crate::llg_debug!(
+            "event=scheduler.trigger requested={} armed={} coalesced={} parent_id={:?}",
+            requested,
+            armed.len(),
+            coalesced,
+            parent_id
+        );
         for key in armed {
             spawn_debounced_run(self.client.clone(), Arc::clone(&self.state), key);
         }
@@ -979,12 +1190,22 @@ impl Backend {
 
     fn compile_job(state: &Arc<Mutex<BackendState>>, job: RootJob) -> Option<CompileResult> {
         let root_identity = job.key.to_string_lossy().into_owned();
+        let job_started = std::time::Instant::now();
         let mut job_span = crate::logging::LifecycleSpan::analysis_with_parent(
             "root-job",
             || root_identity.clone(),
             job.generation,
             job.files.len(),
             job.parent_id,
+        );
+        crate::llg_debug!(
+            "event=root_job.frontend.begin root={} generation={} parent_id={:?} files={} open_documents={} previous_include_deps={}",
+            root_identity,
+            job.generation,
+            job.parent_id,
+            job.files.len(),
+            job.open_documents.len(),
+            job.previous_include_deps.len()
         );
         let mut staging_span = Some(crate::logging::LifecycleSpan::phase_with_parent(
             "analysis.shadow_staging_preflight",
@@ -995,6 +1216,12 @@ impl Backend {
         ));
         if !Self::job_current(state, &job) {
             staging_span.as_mut().unwrap().outcome("stale");
+            crate::llg_debug!(
+                "event=root_job.frontend.end outcome=stale root={} generation={} elapsed_us={}",
+                root_identity,
+                job.generation,
+                job_started.elapsed().as_micros()
+            );
             return None;
         }
         let _shadow_guard = shadow_staging_lock()
@@ -1002,8 +1229,96 @@ impl Backend {
             .unwrap_or_else(|error| error.into_inner());
         if !Self::job_current(state, &job) {
             staging_span.as_mut().unwrap().outcome("stale");
+            crate::llg_debug!(
+                "event=root_job.frontend.end outcome=stale-after-lock root={} generation={} elapsed_us={}",
+                root_identity,
+                job.generation,
+                job_started.elapsed().as_micros()
+            );
             return None;
         }
+        let budget_started = std::time::Instant::now();
+        let mut budget_span = crate::logging::LifecycleSpan::phase_with_parent(
+            "analysis.input_budget",
+            || root_identity.clone(),
+            job.generation,
+            job.files.len(),
+            Some(job_span.id()),
+        );
+        crate::llg_debug!(
+            "event=analysis.input_budget.begin root={} generation={} files={} open_documents={} max_file_bytes={} max_total_input_bytes={}",
+            root_identity,
+            job.generation,
+            job.files.len(),
+            job.open_documents.len(),
+            job.config.analysis.max_file_bytes,
+            job.config.analysis.max_total_input_bytes
+        );
+        let input_snapshots = match enforce_input_budget(
+            &job.config,
+            &job.files,
+            &job.open_documents,
+        ) {
+            Ok(budget) => {
+                let snapshot_files = budget.snapshots.by_path.len();
+                let snapshot_identities = budget.snapshots.by_identity.len();
+                budget_span.complete("admitted", snapshot_files);
+                crate::llg_debug!(
+                    "event=analysis.input_budget.end outcome=admitted root={} generation={} snapshots={} identities={} elapsed_us={}",
+                    root_identity,
+                    job.generation,
+                    snapshot_files,
+                    snapshot_identities,
+                    budget_started.elapsed().as_micros()
+                );
+                budget.snapshots
+            }
+            Err(failure) => {
+                let message = failure.limit.message();
+                let diagnostic_file = failure.limit.path.to_string_lossy().into_owned();
+                let measured_bytes = failure.limit.measured_bytes;
+                let total_bytes = failure.limit.total_bytes;
+                let failure_kind = match &failure.limit.kind {
+                    InputSizeLimitKind::PerFile => "per-file",
+                    InputSizeLimitKind::Total => "total",
+                    InputSizeLimitKind::Unreadable => "unreadable",
+                };
+                let include_deps_seen = failure.include_deps.len();
+                crate::llg_debug!(
+                    "event=analysis.input_budget.end outcome=rejected root={} generation={} kind={} path={} measured_bytes={} total_bytes={:?} include_deps={} elapsed_us={}",
+                    root_identity,
+                    job.generation,
+                    failure_kind,
+                    diagnostic_file,
+                    measured_bytes,
+                    total_bytes,
+                    include_deps_seen,
+                    budget_started.elapsed().as_micros()
+                );
+                let mut analysis = Analysis::fatal_preflight(message);
+                if let Some(diagnostic) = analysis.diagnostics.first_mut() {
+                    diagnostic.file = Some(diagnostic_file);
+                }
+                let mut include_deps = job.previous_include_deps;
+                include_deps.extend(failure.include_deps);
+                budget_span.complete("rejected", analysis.diagnostics.len());
+                staging_span.as_mut().unwrap().outcome("error");
+                job_span.complete("error", analysis.diagnostics.len());
+                crate::llg_debug!(
+                    "event=root_job.frontend.end outcome=input-budget-rejected root={} generation={} diagnostics={} include_deps={} elapsed_us={}",
+                    root_identity,
+                    job.generation,
+                    analysis.diagnostics.len(),
+                    include_deps.len(),
+                    job_started.elapsed().as_micros()
+                );
+                return Some(CompileResult {
+                    analysis: Some(analysis),
+                    files: compile_result_files(&job.files),
+                    include_deps,
+                });
+            }
+        };
         job.shadow.cleanup();
         // Reset the shared analysis scratch area: jobs are serialized behind
         // the shadow-staging lock, so the previous job's Surelog artifacts
@@ -1012,30 +1327,194 @@ impl Backend {
         // `features::analysis_scratch_dir`) so Surelog's side-effects never
         // land in the process CWD or any project/external tree.
         clean_analysis_scratch();
+        crate::llg_debug!(
+            "event=analysis.shadow_cleanup.end outcome=ok root={} generation={} elapsed_us={}",
+            root_identity,
+            job.generation,
+            job_started.elapsed().as_micros()
+        );
+        let stage_started = std::time::Instant::now();
+        let mut stage_span = crate::logging::LifecycleSpan::phase_with_parent(
+            "analysis.shadow_stage_inputs",
+            || root_identity.clone(),
+            job.generation,
+            job.files.len(),
+            Some(job_span.id()),
+        );
+        crate::llg_debug!(
+            "event=analysis.shadow_stage_inputs.begin root={} generation={} source_files={}",
+            root_identity,
+            job.generation,
+            job.files.len()
+        );
         let mut files = Vec::new();
+        let mut staged_files = 0usize;
+        let mut real_files = 0usize;
+        let mut skipped_files = 0usize;
         for real in &job.files {
             let real = real.clone();
-            let compiled = match source_text(&real, &job.open_documents) {
-                Some(text) => job.shadow.stage(&real, &text).unwrap_or(real.clone()),
-                None => real.clone(),
+            let compiled = match prepared_input_text(&real, &job.open_documents, &input_snapshots) {
+                Some(text) => {
+                    let staged = match job.shadow.stage(&real, text) {
+                        Ok(staged) => staged,
+                        Err(error) => {
+                            let message = format!(
+                                "input-staging: failed to stage {} from its admitted bounded snapshot; compile rejected to preserve the input budget: {error}",
+                                real.display()
+                            );
+                            crate::llg_debug!(
+                                "event=analysis.shadow_stage_inputs.end outcome=error root={} generation={} path={} error={} elapsed_us={}",
+                                root_identity,
+                                job.generation,
+                                real.display(),
+                                error,
+                                stage_started.elapsed().as_micros()
+                            );
+                            let mut analysis = Analysis::fatal_preflight(message);
+                            if let Some(diagnostic) = analysis.diagnostics.first_mut() {
+                                diagnostic.file = Some(real.to_string_lossy().into_owned());
+                            }
+                            stage_span.complete("error", analysis.diagnostics.len());
+                            staging_span.as_mut().unwrap().outcome("error");
+                            job_span.complete("error", analysis.diagnostics.len());
+                            job.shadow.cleanup();
+                            crate::llg_debug!(
+                                "event=root_job.frontend.end outcome=input-staging-rejected root={} generation={} diagnostics={} elapsed_us={}",
+                                root_identity,
+                                job.generation,
+                                analysis.diagnostics.len(),
+                                job_started.elapsed().as_micros()
+                            );
+                            return Some(CompileResult {
+                                analysis: Some(analysis),
+                                files: compile_result_files(&job.files),
+                                include_deps: job.previous_include_deps,
+                            });
+                        }
+                    };
+                    if staged != real {
+                        staged_files += 1;
+                    } else {
+                        real_files += 1;
+                    }
+                    staged
+                }
+                None => {
+                    let message = format!(
+                        "input-snapshot: root compilation unit {} has no admitted bounded snapshot; compile rejected to preserve the input budget",
+                        real.display()
+                    );
+                    crate::llg_debug!(
+                        "event=analysis.shadow_stage_inputs.file outcome=rejected root={} generation={} path={} reason=input-snapshot",
+                        root_identity,
+                        job.generation,
+                        real.display()
+                    );
+                    let mut analysis = Analysis::fatal_preflight(message);
+                    if let Some(diagnostic) = analysis.diagnostics.first_mut() {
+                        diagnostic.file = Some(real.to_string_lossy().into_owned());
+                    }
+                    stage_span.complete("error", analysis.diagnostics.len());
+                    staging_span.as_mut().unwrap().outcome("error");
+                    job_span.complete("error", analysis.diagnostics.len());
+                    job.shadow.cleanup();
+                    crate::llg_debug!(
+                        "event=root_job.frontend.end outcome=input-snapshot-rejected root={} generation={} diagnostics={} elapsed_us={}",
+                        root_identity,
+                        job.generation,
+                        analysis.diagnostics.len(),
+                        job_started.elapsed().as_micros()
+                    );
+                    return Some(CompileResult {
+                        analysis: Some(analysis),
+                        files: compile_result_files(&job.files),
+                        include_deps: job.previous_include_deps,
+                    });
+                }
             };
             let Some(compiled) = compiled.to_str().map(str::to_owned) else {
+                skipped_files += 1;
                 continue;
             };
             files.push((real, compiled));
         }
         files.sort_by(|left, right| left.0.cmp(&right.0));
         files.dedup_by(|left, right| left.0 == right.0);
+        stage_span.complete("ok", files.len());
+        crate::llg_debug!(
+            "event=analysis.shadow_stage_inputs.end outcome=ok root={} generation={} compiled_files={} staged_files={} real_files={} skipped_files={} elapsed_us={}",
+            root_identity,
+            job.generation,
+            files.len(),
+            staged_files,
+            real_files,
+            skipped_files,
+            stage_started.elapsed().as_micros()
+        );
+        drop(stage_span);
         if !Self::job_current(state, &job) {
             staging_span.as_mut().unwrap().outcome("stale");
+            crate::llg_debug!(
+                "event=root_job.frontend.end outcome=stale-after-input-stage root={} generation={} elapsed_us={}",
+                root_identity,
+                job.generation,
+                job_started.elapsed().as_micros()
+            );
             return None;
         }
         let mut include_deps = BTreeSet::new();
+        let include_preflight_started = std::time::Instant::now();
+        let mut include_preflight_span = crate::logging::LifecycleSpan::phase_with_parent(
+            "analysis.include_resolution_preflight",
+            || root_identity.clone(),
+            job.generation,
+            files.len(),
+            Some(job_span.id()),
+        );
+        crate::llg_debug!(
+            "event=analysis.include_resolution_preflight.begin root={} generation={} files={} snapshots={}",
+            root_identity,
+            job.generation,
+            files.len(),
+            input_snapshots.by_path.len()
+        );
+        let include_preflight = if files.is_empty() {
+            include_preflight_span.complete("empty", 0);
+            crate::llg_debug!(
+                "event=analysis.include_resolution_preflight.end outcome=empty root={} generation={} resolved=0 elapsed_us={}",
+                root_identity,
+                job.generation,
+                include_preflight_started.elapsed().as_micros()
+            );
+            None
+        } else {
+            let result = preflight_include_isolation(
+                &job.config,
+                &files,
+                &job.open_documents,
+                &input_snapshots,
+            );
+            let outcome = if result.is_some() { "rejected" } else { "ok" };
+            include_preflight_span.complete(outcome, usize::from(result.is_none()));
+            crate::llg_debug!(
+                "event=analysis.include_resolution_preflight.end outcome={} root={} generation={} resolved={} elapsed_us={}",
+                outcome,
+                root_identity,
+                job.generation,
+                usize::from(result.is_none()),
+                include_preflight_started.elapsed().as_micros()
+            );
+            result
+        };
+        drop(include_preflight_span);
         let analysis = if files.is_empty() {
             None
-        } else if let Some((file, message)) =
-            preflight_include_isolation(&job.config, &files, &job.open_documents)
-        {
+        } else if let Some((file, message)) = include_preflight {
+            // A preflight rejection happens before the dependency-stage pass
+            // can produce a new complete set.  Keep the prior watched set
+            // while the last-good analysis remains servable; this also keeps
+            // an unreadable discovered include observable for a later fix.
+            include_deps = job.previous_include_deps.clone();
             staging_span.as_mut().unwrap().outcome("error");
             let mut analysis = Analysis::fatal_preflight(message);
             if let Some(diagnostic) = analysis.diagnostics.first_mut() {
@@ -1049,30 +1528,122 @@ impl Backend {
         } else {
             if !Self::job_current(state, &job) {
                 staging_span.as_mut().unwrap().outcome("stale");
+                crate::llg_debug!(
+                    "event=root_job.frontend.end outcome=stale-before-include-stage root={} generation={} elapsed_us={}",
+                    root_identity,
+                    job.generation,
+                    job_started.elapsed().as_micros()
+                );
                 return None;
             }
-            let staged_deps =
-                stage_include_tree(&job.config, &files, &job.open_documents, &job.shadow);
+            let include_stage_started = std::time::Instant::now();
+            let mut include_stage_span = crate::logging::LifecycleSpan::phase_with_parent(
+                "analysis.include_stage",
+                || root_identity.clone(),
+                job.generation,
+                files.len(),
+                Some(job_span.id()),
+            );
+            crate::llg_debug!(
+                "event=analysis.include_stage.begin root={} generation={} files={}",
+                root_identity,
+                job.generation,
+                files.len()
+            );
+            let staged_deps = match stage_include_tree(
+                &job.config,
+                &files,
+                &job.open_documents,
+                &input_snapshots,
+                &job.shadow,
+            ) {
+                Ok(deps) => deps,
+                Err(failure) => {
+                    include_stage_span.complete("error", failure.dependencies.len());
+                    crate::llg_debug!(
+                        "event=analysis.include_stage.end outcome=error root={} generation={} path={} include_deps={} elapsed_us={} error_kind=input-staging",
+                        root_identity,
+                        job.generation,
+                        failure.path.display(),
+                        failure.dependencies.len(),
+                        include_stage_started.elapsed().as_micros()
+                    );
+                    let mut analysis = Analysis::fatal_preflight(failure.message);
+                    if let Some(diagnostic) = analysis.diagnostics.first_mut() {
+                        diagnostic.file = Some(failure.path.to_string_lossy().into_owned());
+                    }
+                    let mut include_deps = job.previous_include_deps;
+                    include_deps.extend(failure.dependencies);
+                    staging_span.as_mut().unwrap().outcome("error");
+                    job_span.complete("error", analysis.diagnostics.len());
+                    job.shadow.cleanup();
+                    crate::llg_debug!(
+                        "event=root_job.frontend.end outcome=input-include-staging-rejected root={} generation={} diagnostics={} include_deps={} elapsed_us={}",
+                        root_identity,
+                        job.generation,
+                        analysis.diagnostics.len(),
+                        include_deps.len(),
+                        job_started.elapsed().as_micros()
+                    );
+                    return Some(CompileResult {
+                        analysis: Some(analysis),
+                        files: compile_result_files(&job.files),
+                        include_deps,
+                    });
+                }
+            };
             include_deps = staged_deps;
-            let opts = config::compile_opts(
+            include_stage_span.complete("ok", include_deps.len());
+            crate::llg_debug!(
+                "event=analysis.include_stage.end outcome=ok root={} generation={} include_deps={} elapsed_us={}",
+                root_identity,
+                job.generation,
+                include_deps.len(),
+                include_stage_started.elapsed().as_micros()
+            );
+            drop(include_stage_span);
+            // The LSP compile path is isolated to admitted shadow inputs.
+            // Literal includes were staged above; omitting live `-I` paths
+            // also makes macro-generated/dynamic includes fail closed instead
+            // of allowing Surelog to read an unmeasured project file.
+            let opts = config::compile_opts_isolated(
                 &job.config,
                 files.iter().map(|(_, path)| path.clone()).collect(),
                 job.shadow.base(),
             );
             if !Self::job_current(state, &job) {
                 staging_span.as_mut().unwrap().outcome("stale");
+                crate::llg_debug!(
+                    "event=root_job.frontend.end outcome=stale-before-analysis root={} generation={} elapsed_us={}",
+                    root_identity,
+                    job.generation,
+                    job_started.elapsed().as_micros()
+                );
                 return None;
             }
             if let Some(mut span) = staging_span.take() {
                 span.complete("ok", files.len() + include_deps.len());
             }
-            Some(features::analyze_with_config_context_parent(
+            let analysis = features::analyze_with_config_context_parent(
                 &opts,
                 &job.lint_config,
                 &root_identity,
                 job.generation,
                 Some(job_span.id()),
-            ))
+            );
+            crate::llg_debug!(
+                "event=root_job.analysis.end outcome={:?} root={} generation={} diagnostics={} lint={} token_files={} declarations={} references={} elapsed_us={}",
+                analysis.outcome,
+                root_identity,
+                job.generation,
+                analysis.diagnostics.len(),
+                analysis.lint.len(),
+                analysis.tokens.len(),
+                analysis.index.decls.len(),
+                analysis.index.refs.len(),
+                job_started.elapsed().as_micros()
+            );
+            Some(analysis)
         };
         if !matches!(
             analysis.as_ref().map(|a| a.outcome),
@@ -1082,19 +1653,30 @@ impl Backend {
                 span.complete("ok", files.len() + include_deps.len());
             }
         }
-        job_span.complete(
-            match analysis.as_ref().map(|analysis| analysis.outcome) {
-                None => "empty",
-                Some(features::AnalysisOutcome::Valid) => "ok",
-                Some(
-                    features::AnalysisOutcome::Fatal
-                    | features::AnalysisOutcome::Parse
-                    | features::AnalysisOutcome::Compile,
-                ) => "error",
-            },
-            analysis.as_ref().map_or(0, |analysis| {
-                analysis.diagnostics.len() + analysis.lint.len()
-            }),
+        let job_outcome = match analysis.as_ref().map(|analysis| analysis.outcome) {
+            None => "empty",
+            Some(features::AnalysisOutcome::Valid) => "ok",
+            Some(
+                features::AnalysisOutcome::Fatal
+                | features::AnalysisOutcome::Parse
+                | features::AnalysisOutcome::Compile,
+            ) => "error",
+        };
+        let diagnostic_count = analysis
+            .as_ref()
+            .map_or(0, |analysis| analysis.diagnostics.len());
+        let lint_count = analysis.as_ref().map_or(0, |analysis| analysis.lint.len());
+        job_span.complete(job_outcome, diagnostic_count + lint_count);
+        crate::llg_debug!(
+            "event=root_job.frontend.end outcome={} root={} generation={} diagnostics={} lint={} files={} include_deps={} elapsed_us={}",
+            job_outcome,
+            root_identity,
+            job.generation,
+            diagnostic_count,
+            lint_count,
+            files.len(),
+            include_deps.len(),
+            job_started.elapsed().as_micros()
         );
         Some(CompileResult {
             analysis,
@@ -1163,6 +1745,7 @@ impl Backend {
             _ => false,
         };
         let mut result = result;
+        let watchers_refresh = usable || !result.include_deps.is_empty();
         root.include_deps = result.include_deps.clone();
         for file in root.discovered.iter().chain(&root.include_deps) {
             *tracker_counts.entry(file.clone()).or_default() += 1;
@@ -1297,6 +1880,7 @@ impl Backend {
                 .collect(),
             ready,
             valid_commit: usable,
+            watchers_refresh,
             module_explorer_changed,
         }
     }
@@ -1330,6 +1914,76 @@ impl Backend {
             .map(|root| root.descriptor.clone())
             .collect();
         workspace::owning_root_unfiltered(path, &roots).map(|owner| owner.root)
+    }
+
+    /// Return the positive per-file limit applicable to an open document.
+    /// Before initialization (or for a URI that is not owned by a root), use
+    /// the conservative built-in limit so admission never fails open.
+    fn document_max_file_bytes(state: &BackendState, uri: &Url) -> u64 {
+        let Some(path) = Self::uri_to_path(uri) else {
+            return config::DEFAULT_MAX_FILE_BYTES;
+        };
+        let descriptors: Vec<_> = state
+            .roots
+            .values()
+            .map(|root| root.descriptor.clone())
+            .collect();
+        workspace::owning_root_unfiltered(&path, &descriptors)
+            .and_then(|owner| state.roots.get(&owner.root))
+            .map(|root| root.descriptor.effective_config().analysis.max_file_bytes)
+            .filter(|limit| *limit > 0)
+            .unwrap_or(config::DEFAULT_MAX_FILE_BYTES)
+    }
+
+    /// Admit one complete client buffer without copying its contents.  The
+    /// size check runs before the text is wrapped in an `Arc` or stored.  A
+    /// rejected change leaves the previous admitted buffer in place, so a
+    /// later job can never observe the rejected text.
+    fn admit_document_text(
+        state: &mut BackendState,
+        uri: Url,
+        text: String,
+        replace_unchanged: bool,
+    ) -> std::result::Result<bool, InputSizeLimit> {
+        let max_file_bytes = Self::document_max_file_bytes(state, &uri);
+        let path = Self::uri_to_path(&uri).unwrap_or_else(|| PathBuf::from(uri.as_str()));
+        if let Some(limit) = open_input_size_limit(&path, &text, max_file_bytes) {
+            return Err(limit);
+        }
+
+        let changed = did_change_is_new_content(
+            state.documents.get(&uri).map(|current| current.as_str()),
+            &text,
+        );
+        if changed || replace_unchanged {
+            state.documents.insert(uri, Arc::new(text));
+        }
+        Ok(changed)
+    }
+
+    /// Drop buffers admitted under an older, larger bound before constructing
+    /// any job snapshot.  This covers config initialization/reload lowering a
+    /// limit after a buffer was already open, without copying its text.
+    fn purge_oversized_documents(state: &mut BackendState) {
+        let rejected: Vec<_> = state
+            .documents
+            .iter()
+            .filter_map(|(uri, text)| {
+                let max_file_bytes = Self::document_max_file_bytes(state, uri);
+                (text.len() as u64 > max_file_bytes)
+                    .then(|| (uri.clone(), text.len() as u64, max_file_bytes))
+            })
+            .collect();
+        for (uri, measured_bytes, max_file_bytes) in rejected {
+            if state.documents.remove(&uri).is_some() {
+                crate::llg_debug!(
+                    "event=document.admission outcome=rejected reason=too-large uri={} bytes={} max_file_bytes={}",
+                    crate::logging::bounded_field(uri.as_str()),
+                    measured_bytes,
+                    max_file_bytes
+                );
+            }
+        }
     }
 
     fn config_root(&self, path: &Path) -> Option<RootKey> {
@@ -1639,7 +2293,8 @@ impl Backend {
         });
         enum Source {
             Open(String),
-            Disk(PathBuf),
+            Disk(PathBuf, u64),
+            TooLarge(InputSizeLimit),
         }
         let resolved = {
             let state = self.lock_state();
@@ -1648,9 +2303,11 @@ impl Backend {
                 Some((root, real, _candidates)) => {
                     request.set_root(|| root.descriptor.id.clone());
                     let defines = root.descriptor.effective_config().compile.defines.clone();
+                    let max_file_bytes = root.descriptor.effective_config().analysis.max_file_bytes;
                     let source = match state.documents.get(&params.uri) {
-                        Some(text) => Source::Open(text.clone()),
-                        None => Source::Disk(real),
+                        Some(text) => open_input_size_limit(&real, text, max_file_bytes)
+                            .map_or_else(|| Source::Open(text.to_string()), Source::TooLarge),
+                        None => Source::Disk(real, max_file_bytes),
                     };
                     Some((source, defines))
                 }
@@ -1662,11 +2319,36 @@ impl Backend {
         };
         let text = match source {
             Source::Open(text) => text,
-            Source::Disk(path) => {
-                match tokio::task::spawn_blocking(move || std::fs::read_to_string(path).ok()).await
+            Source::TooLarge(limit) => {
+                crate::llg_debug!(
+                    "event=llg.inactive_ranges.source outcome=too-large path={} message={}",
+                    limit.path.display(),
+                    limit.message()
+                );
+                request.complete("too-large", 0);
+                return Ok(InactiveRangesResult { ranges: Vec::new() });
+            }
+            Source::Disk(path, max_file_bytes) => {
+                match tokio::task::spawn_blocking(move || {
+                    read_closed_input_snapshot(&path, max_file_bytes)
+                })
+                .await
                 {
-                    Ok(Some(text)) => text,
-                    _ => {
+                    Ok(Ok(text)) => text,
+                    Ok(Err(limit)) => {
+                        crate::llg_debug!(
+                            "event=llg.inactive_ranges.source outcome=unavailable path={} message={}",
+                            limit.path.display(),
+                            limit.message()
+                        );
+                        request.complete("no-data", 0);
+                        return Ok(InactiveRangesResult { ranges: Vec::new() });
+                    }
+                    Err(error) => {
+                        crate::llg_debug!(
+                            "event=llg.inactive_ranges.source outcome=task-error error={}",
+                            error
+                        );
                         request.complete("no-data", 0);
                         return Ok(InactiveRangesResult { ranges: Vec::new() });
                     }
@@ -1801,11 +2483,17 @@ fn insert_cache_stats_line(lines: &mut Vec<String>, (stats, entries): (CacheStat
 ///
 /// See [`Backend::register_watchers`] for the coalescing contract.
 async fn register_watchers_with(client: &Client, state: &Arc<Mutex<BackendState>>) {
+    let started = std::time::Instant::now();
     let dynamic = {
         let state = state.lock().unwrap_or_else(|error| error.into_inner());
         state.dynamic_watched_files
     };
+    crate::llg_debug!("event=watchers.registration.begin dynamic={}", dynamic);
     if !dynamic {
+        crate::llg_debug!(
+            "event=watchers.registration.end outcome=disabled elapsed_us={}",
+            started.elapsed().as_micros()
+        );
         return;
     }
     let options = {
@@ -1813,12 +2501,17 @@ async fn register_watchers_with(client: &Client, state: &Arc<Mutex<BackendState>
         watcher_options_from_state(&state)
     };
     let digest = options.to_string();
+    let digest_bytes = digest.len();
     {
         let state = state.lock().unwrap_or_else(|error| error.into_inner());
         if state.watchers_registered
             && state.registered_watchers_digest.as_deref() == Some(digest.as_str())
         {
-            crate::llg_debug!("watcher registration unchanged; skipped");
+            crate::llg_debug!(
+                "event=watchers.registration.end outcome=unchanged digest_bytes={} elapsed_us={}",
+                digest.len(),
+                started.elapsed().as_micros()
+            );
             return;
         }
     }
@@ -1832,12 +2525,18 @@ async fn register_watchers_with(client: &Client, state: &Arc<Mutex<BackendState>
             method: "workspace/didChangeWatchedFiles".to_owned(),
         };
         if let Err(error) = client.unregister_capability(vec![unregistration]).await {
+            crate::llg_debug!(
+                "event=watchers.unregistration.end outcome=error error={}",
+                error
+            );
             client
                 .log_message(
                     MessageType::WARNING,
                     format!("watched-file unregistration failed: {error}"),
                 )
                 .await;
+        } else {
+            crate::llg_trace!("event=watchers.unregistration.end outcome=ok");
         }
     }
     {
@@ -1863,6 +2562,18 @@ async fn register_watchers_with(client: &Client, state: &Arc<Mutex<BackendState>
                 format!("watched-file registration failed: {error}"),
             )
             .await;
+        crate::llg_debug!(
+            "event=watchers.registration.end outcome=error digest_bytes={} elapsed_us={} error={}",
+            digest_bytes,
+            started.elapsed().as_micros(),
+            error
+        );
+    } else {
+        crate::llg_debug!(
+            "event=watchers.registration.end outcome=ok digest_bytes={} elapsed_us={}",
+            digest_bytes,
+            started.elapsed().as_micros()
+        );
     }
 }
 
@@ -1877,6 +2588,12 @@ async fn register_watchers_with(client: &Client, state: &Arc<Mutex<BackendState>
 /// burst of N events yields at most two runs instead of N racing jobs.
 fn spawn_debounced_run(client: Client, state: Arc<Mutex<BackendState>>, key: RootKey) {
     tokio::spawn(async move {
+        let timer_started = std::time::Instant::now();
+        crate::llg_debug!(
+            "event=scheduler.debounce.begin root={} delay_ms={}",
+            key.display(),
+            RECOMPILE_DEBOUNCE.as_millis()
+        );
         // Async timer: unlike the previous per-trigger blocking sleep this
         // occupies no thread while waiting out the quiet period.
         tokio::time::sleep(RECOMPILE_DEBOUNCE).await;
@@ -1895,24 +2612,46 @@ fn spawn_debounced_run(client: Client, state: Arc<Mutex<BackendState>>, key: Roo
             }
         };
         if fire != FireDecision::StartJob {
-            crate::llg_debug!("debounced run cancelled root={}", key.display());
+            crate::llg_debug!(
+                "event=scheduler.debounce.end outcome=cancelled root={} decision={:?} elapsed_us={}",
+                key.display(),
+                fire,
+                timer_started.elapsed().as_micros()
+            );
             return;
         }
+        crate::llg_debug!(
+            "event=scheduler.debounce.end outcome=start_job root={} decision={:?} elapsed_us={}",
+            key.display(),
+            fire,
+            timer_started.elapsed().as_micros()
+        );
         let mut jobs = Backend::make_jobs(&state, vec![key.clone()]);
         let Some(job) = jobs.pop() else {
             // The root disappeared between the two locks; its scheduler died
             // with the RootState.
             return;
         };
+        let job_started = std::time::Instant::now();
+        let job_parent_id = job.parent_id;
+        let job_file_count = job.files.len();
+        let mut end_to_end_span = crate::logging::LifecycleSpan::analysis_with_parent(
+            "root-job.end_to_end",
+            || key.to_string_lossy().into_owned(),
+            job.generation,
+            job_file_count,
+            job_parent_id,
+        );
         crate::llg_debug!(
-            "job scheduled root={} generation={} files={}",
+            "event=root_job.begin root={} generation={} files={} parent_id={:?}",
             job.key.display(),
             job.generation,
-            job.files.len()
+            job.files.len(),
+            job.parent_id
         );
         let generation = job.generation;
         crate::llg_debug!(
-            "job compiling root={} generation={}",
+            "event=root_job.compile.begin phase=job_compiling job compiling root={} generation={}",
             key.display(),
             generation
         );
@@ -1920,6 +2659,13 @@ fn spawn_debounced_run(client: Client, state: Arc<Mutex<BackendState>>, key: Roo
         let result =
             tokio::task::spawn_blocking(move || Backend::compile_job(&compile_state, job)).await;
         let Ok(Some(result)) = result else {
+            end_to_end_span.outcome("stale-or-aborted");
+            crate::llg_debug!(
+                "event=root_job.end outcome=stale-or-aborted root={} generation={} elapsed_us={}",
+                key.display(),
+                generation,
+                job_started.elapsed().as_micros()
+            );
             // Aborted mid-flight (stale/shutdown): still release the slot so
             // a dirty marker from this window is honored.
             if Backend::finish_root_run(&state, &key) {
@@ -1927,13 +2673,42 @@ fn spawn_debounced_run(client: Client, state: Arc<Mutex<BackendState>>, key: Roo
             }
             return;
         };
+        crate::llg_debug!(
+            "event=root_job.compile.end outcome={} root={} generation={} diagnostics={} lint={} compiled_files={} include_deps={} elapsed_us={}",
+            result
+                .analysis
+                .as_ref()
+                .map_or("empty", |analysis| match analysis.outcome {
+                    features::AnalysisOutcome::Valid => "ok",
+                    features::AnalysisOutcome::Fatal
+                    | features::AnalysisOutcome::Parse
+                    | features::AnalysisOutcome::Compile => "error",
+                }),
+            key.display(),
+            generation,
+            result
+                .analysis
+                .as_ref()
+                .map_or(0, |analysis| analysis.diagnostics.len()),
+            result
+                .analysis
+                .as_ref()
+                .map_or(0, |analysis| analysis.lint.len()),
+            result.files.len(),
+            result.include_deps.len(),
+            job_started.elapsed().as_micros()
+        );
         let outcome = Backend::commit_job(&state, &key, generation, result);
         let ready = outcome.ready;
         crate::llg_debug!(
-            "job committed root={} generation={} ready={}",
+            "event=root_job.commit.end outcome=ok root={} generation={} publications={} ready={} valid_commit={} watchers_refresh={} module_explorer_changed={}",
             key.display(),
             generation,
-            ready
+            outcome.publications.len(),
+            ready,
+            outcome.valid_commit,
+            outcome.watchers_refresh,
+            outcome.module_explorer_changed
         );
         for (uri, diagnostics) in &outcome.publications {
             let lint_count = diagnostics
@@ -1949,13 +2724,19 @@ fn spawn_debounced_run(client: Client, state: Arc<Mutex<BackendState>>, key: Roo
             client
                 .publish_diagnostics(uri.clone(), diagnostics.clone(), None)
                 .await;
+            crate::llg_trace!(
+                "event=publish_diagnostics.end outcome=ok uri={} lint_rules={} total={}",
+                uri,
+                lint_count,
+                diagnostics.len()
+            );
         }
         if outcome.module_explorer_changed {
             client
                 .send_notification::<LlgModuleExplorerChanged>(ModuleExplorerChangedParams {})
                 .await;
         }
-        if outcome.valid_commit {
+        if outcome.valid_commit || outcome.watchers_refresh {
             // Re-register watchers now that resolved include dependencies are
             // known; unchanged watcher sets are coalesced away.
             register_watchers_with(&client, &state).await;
@@ -1971,7 +2752,24 @@ fn spawn_debounced_run(client: Client, state: Arc<Mutex<BackendState>>, key: Roo
         // Latest-wins coalescing: at most ONE debounced follow-up run when
         // triggers landed while this job executed.
         if Backend::finish_root_run(&state, &key) {
+            end_to_end_span.complete("ok-follow-up", outcome.publications.len());
+            crate::llg_debug!(
+                "event=root_job.end outcome=ok-follow-up root={} generation={} publications={} elapsed_us={}",
+                key.display(),
+                generation,
+                outcome.publications.len(),
+                job_started.elapsed().as_micros()
+            );
             spawn_debounced_run(client, state, key);
+        } else {
+            end_to_end_span.complete("ok", outcome.publications.len());
+            crate::llg_debug!(
+                "event=root_job.end outcome=ok root={} generation={} publications={} elapsed_us={}",
+                key.display(),
+                generation,
+                outcome.publications.len(),
+                job_started.elapsed().as_micros()
+            );
         }
     });
 }
@@ -2143,7 +2941,7 @@ fn cached_semantic_tokens(analysis: Option<&Analysis>, paths: &[String]) -> Sema
 fn compute_semantic_tokens(
     analysis: Option<Arc<Analysis>>,
     paths: Vec<String>,
-    open_document: Option<(PathBuf, String, Vec<String>)>,
+    open_document: Option<OpenTokenDocument>,
     current: impl Fn() -> bool,
     parent_id: Option<u64>,
 ) -> (Option<OpenTokenResult>, SemanticTokens) {
@@ -2162,7 +2960,7 @@ fn compute_semantic_tokens(
 
 fn compute_open_document_semantic_tokens(
     real: PathBuf,
-    text: String,
+    text: SharedText,
     defines: Vec<String>,
     current: impl Fn() -> bool,
     parent_id: Option<u64>,
@@ -2191,25 +2989,80 @@ fn open_document_semantic_tokens_if_current(
     current: impl Fn() -> bool,
     parent_id: Option<u64>,
 ) -> std::result::Result<SemanticTokens, String> {
+    let started = std::time::Instant::now();
+    crate::llg_debug!(
+        "event=semantic_tokens.open_parse.begin file={} bytes={} defines={} parent_id={:?}",
+        real.display(),
+        text.len(),
+        defines.len(),
+        parent_id
+    );
     // Reject an obsolete request before it waits for the staging lock.  The
     // check after acquiring the lock closes the race with didChange while the
     // request was waiting; both checks happen before any stage or frontend
     // work is admitted.
     if !current() {
+        crate::llg_debug!(
+            "event=semantic_tokens.open_parse.end outcome=stale-before-staging file={} elapsed_us={}",
+            real.display(),
+            started.elapsed().as_micros()
+        );
         return Err(STALE_OPEN_TOKEN_ERROR.to_owned());
     }
     // Project jobs acquire these locks in the same order.  Holding the
     // staging lock through parse and cleanup also prevents shutdown from
     // deleting the process shadow base while Surelog reads this copy.
+    let staging_wait_started = std::time::Instant::now();
+    crate::llg_debug!(
+        "event=semantic_tokens.staging_lock.begin file={} parent_id={:?}",
+        real.display(),
+        parent_id
+    );
     let _staging = shadow_staging_lock()
         .lock()
         .unwrap_or_else(|error| error.into_inner());
+    crate::llg_debug!(
+        "event=semantic_tokens.staging_lock.end outcome=acquired file={} elapsed_us={}",
+        real.display(),
+        staging_wait_started.elapsed().as_micros()
+    );
     if !current() {
+        crate::llg_debug!(
+            "event=semantic_tokens.open_parse.end outcome=stale-after-staging file={} elapsed_us={}",
+            real.display(),
+            started.elapsed().as_micros()
+        );
         return Err(STALE_OPEN_TOKEN_ERROR.to_owned());
     }
-    let stage = SemanticStage::new(real, text)
-        .map_err(|error| format!("failed to stage open document: {error}"))?;
+    let stage_started = std::time::Instant::now();
+    let stage = match SemanticStage::new(real, text) {
+        Ok(stage) => stage,
+        Err(error) => {
+            let error = format!("failed to stage open document: {error}");
+            crate::llg_debug!(
+                "event=semantic_tokens.open_stage.end outcome=error file={} elapsed_us={} error={}",
+                real.display(),
+                stage_started.elapsed().as_micros(),
+                error
+            );
+            crate::llg_debug!(
+                "event=semantic_tokens.open_parse.end outcome=error file={} token_count=0 elapsed_us={}",
+                real.display(),
+                started.elapsed().as_micros()
+            );
+            return Err(error);
+        }
+    };
+    crate::llg_debug!(
+        "event=semantic_tokens.open_stage.end outcome=ok file={} elapsed_us={}",
+        real.display(),
+        stage_started.elapsed().as_micros()
+    );
     clean_analysis_scratch();
+    crate::llg_trace!(
+        "event=semantic_tokens.open_stage.cleanup outcome=ok file={}",
+        real.display()
+    );
     let result = stage
         .path
         .to_str()
@@ -2219,12 +3072,24 @@ fn open_document_semantic_tokens_if_current(
             // written.  Check again immediately before entering Surelog so a
             // stale buffer cannot start the expensive parse.
             if !current() {
+                crate::llg_debug!(
+                    "event=semantic_tokens.open_parse.frontend outcome=stale-before-surelog file={} elapsed_us={}",
+                    real.display(),
+                    started.elapsed().as_micros()
+                );
                 Err(STALE_OPEN_TOKEN_ERROR.to_owned())
             } else {
                 features::semantic_tokens_for_open_document_with_parent(path, defines, parent_id)
             }
         });
     clean_analysis_scratch();
+    crate::llg_debug!(
+        "event=semantic_tokens.open_parse.end outcome={} file={} token_count={} elapsed_us={}",
+        if result.is_ok() { "ok" } else { "error" },
+        real.display(),
+        result.as_ref().map_or(0, |tokens| tokens.data.len()),
+        started.elapsed().as_micros()
+    );
     result
 }
 
@@ -2247,7 +3112,7 @@ fn select_semantic_tokens(
 /// Whether a full-text `didChange` actually carries new content.  Identical
 /// full-text changes (same document text re-sent, e.g. by editor save/format
 /// flows) must not reschedule the root: nothing the analysis reads changed.
-fn did_change_is_new_content(current: Option<&String>, next: &str) -> bool {
+fn did_change_is_new_content(current: Option<&str>, next: &str) -> bool {
     match current {
         Some(text) => text != next,
         None => true,
@@ -2687,15 +3552,6 @@ fn explicit_include_targets(source: &str) -> Vec<String> {
     targets
 }
 
-fn include_target_path(source: &Path, target: &str) -> PathBuf {
-    let target = Path::new(target);
-    if target.is_absolute() {
-        target.to_owned()
-    } else {
-        source.parent().unwrap_or(Path::new("/")).join(target)
-    }
-}
-
 /// Check both the lexical path and the resolved filesystem target against a
 /// set of allowed directories.  The lexical check intentionally runs first so
 /// a `..` escape is rejected even when a symlink happens to point back into an
@@ -2745,16 +3601,319 @@ fn is_under_any(dirs: &[PathBuf], path: &Path) -> bool {
         .any(|dir| workspace::root_relative_path(dir, path).is_some())
 }
 
-fn source_text(path: &Path, open_documents: &BTreeMap<PathBuf, String>) -> Option<String> {
-    open_documents
-        .get(path)
-        .cloned()
-        .or_else(|| {
-            std::fs::canonicalize(path)
-                .ok()
-                .and_then(|canonical| open_documents.get(&canonical).cloned())
-        })
-        .or_else(|| std::fs::read_to_string(path).ok())
+fn open_document_value<'a>(
+    path: &Path,
+    open_documents: &'a OpenDocuments,
+) -> Option<&'a SharedText> {
+    open_documents.get(path).or_else(|| {
+        std::fs::canonicalize(path)
+            .ok()
+            .and_then(|canonical| open_documents.get(&canonical))
+    })
+}
+
+fn open_document_text<'a>(path: &Path, open_documents: &'a OpenDocuments) -> Option<&'a str> {
+    open_document_value(path, open_documents).map(|text| text.as_str())
+}
+
+/// Return the byte length that can be measured without reading an input.
+/// Open UTF-8 buffers are authoritative; closed files use metadata so an
+/// over-limit input is rejected before any unbounded source read or staging.
+fn measured_input_bytes(path: &Path, open_documents: &OpenDocuments) -> Option<u64> {
+    open_document_text(path, open_documents)
+        .map(|text| text.len() as u64)
+        .or_else(|| std::fs::metadata(path).ok().map(|metadata| metadata.len()))
+}
+
+fn input_identity(path: &Path) -> PathBuf {
+    std::fs::canonicalize(path)
+        .ok()
+        .or_else(|| workspace::normalize_absolute_path(path))
+        .unwrap_or_else(|| path.to_path_buf())
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum IncludeResolutionError {
+    Unauthorized,
+    SnapshotUnavailable,
+}
+
+/// Resolve a literal include using the same search order as the `-I` arguments
+/// handed to Surelog: an absolute target is used as-is; a relative target is
+/// tried beside the including file first, then in each configured source or
+/// explicit include directory.  Each candidate goes through the existing
+/// lexical and symlink containment policy before it is accepted.
+fn resolve_include_target(
+    allowed: &[PathBuf],
+    source: &Path,
+    target: &str,
+    open_documents: &OpenDocuments,
+    snapshots: &InputSnapshots,
+) -> std::result::Result<Option<PathBuf>, ()> {
+    resolve_include_target_with_policy(allowed, source, target, open_documents, snapshots, false)
+        .map_err(|_| ())
+}
+
+fn resolve_admitted_include_target(
+    allowed: &[PathBuf],
+    source: &Path,
+    target: &str,
+    open_documents: &OpenDocuments,
+    snapshots: &InputSnapshots,
+) -> std::result::Result<Option<PathBuf>, IncludeResolutionError> {
+    resolve_include_target_with_policy(allowed, source, target, open_documents, snapshots, true)
+}
+
+fn resolve_include_target_with_policy(
+    allowed: &[PathBuf],
+    source: &Path,
+    target: &str,
+    open_documents: &OpenDocuments,
+    snapshots: &InputSnapshots,
+    require_snapshot: bool,
+) -> std::result::Result<Option<PathBuf>, IncludeResolutionError> {
+    let target = Path::new(target);
+    let mut candidates = Vec::new();
+    if target.is_absolute() {
+        candidates.push(target.to_owned());
+    } else {
+        candidates.push(
+            source
+                .parent()
+                .unwrap_or_else(|| Path::new(""))
+                .join(target),
+        );
+        candidates.extend(allowed.iter().map(|directory| directory.join(target)));
+    }
+
+    let mut seen = HashSet::new();
+    for candidate in candidates {
+        let Some(candidate) = workspace::normalize_absolute_path(&candidate) else {
+            continue;
+        };
+        if !seen.insert(candidate.clone()) {
+            continue;
+        }
+        match canonical_include_target(allowed, &candidate)
+            .map_err(|_| IncludeResolutionError::Unauthorized)?
+        {
+            Some(_) => {
+                if require_snapshot
+                    && prepared_input_text(&candidate, open_documents, snapshots).is_none()
+                {
+                    return Err(IncludeResolutionError::SnapshotUnavailable);
+                }
+                return Ok(Some(candidate));
+            }
+            // An open buffer can supply a file which does not exist on disk.
+            // It is still subject to the same lexical/symlink policy above;
+            // only the filesystem-existence part of resolution is replaced by
+            // the authoritative open text.
+            None if open_document_text(&candidate, open_documents).is_some()
+                || snapshots.text(&candidate).is_some() =>
+            {
+                return Ok(Some(candidate));
+            }
+            None => continue,
+        }
+    }
+    Ok(None)
+}
+
+/// Read a closed input with a bounded exact read.  The extra byte makes a
+/// file that grows after metadata measurement fail admission instead of
+/// allowing a later staging read to exceed the configured budget.
+fn read_closed_input_snapshot(
+    path: &Path,
+    max_file_bytes: u64,
+) -> std::result::Result<String, InputSizeLimit> {
+    let metadata_bytes = match std::fs::metadata(path) {
+        Ok(metadata) => {
+            let measured_bytes = metadata.len();
+            if measured_bytes > max_file_bytes {
+                return Err(InputSizeLimit {
+                    path: path.to_path_buf(),
+                    measured_bytes,
+                    configured_limit: max_file_bytes,
+                    kind: InputSizeLimitKind::PerFile,
+                    total_bytes: None,
+                });
+            }
+            Some(measured_bytes)
+        }
+        Err(_) => None,
+    };
+    let file = std::fs::File::open(path).map_err(|_| InputSizeLimit {
+        path: path.to_path_buf(),
+        measured_bytes: metadata_bytes.unwrap_or_default(),
+        configured_limit: max_file_bytes,
+        kind: InputSizeLimitKind::Unreadable,
+        total_bytes: None,
+    })?;
+    let mut bytes = Vec::new();
+    let read_limit = max_file_bytes.saturating_add(1);
+    file.take(read_limit)
+        .read_to_end(&mut bytes)
+        .map_err(|_| InputSizeLimit {
+            path: path.to_path_buf(),
+            measured_bytes: bytes.len() as u64,
+            configured_limit: max_file_bytes,
+            kind: InputSizeLimitKind::Unreadable,
+            total_bytes: None,
+        })?;
+    let measured_bytes = bytes.len() as u64;
+    if measured_bytes > max_file_bytes {
+        return Err(InputSizeLimit {
+            path: path.to_path_buf(),
+            measured_bytes,
+            configured_limit: max_file_bytes,
+            kind: InputSizeLimitKind::PerFile,
+            total_bytes: None,
+        });
+    }
+    String::from_utf8(bytes).map_err(|error| InputSizeLimit {
+        path: path.to_path_buf(),
+        measured_bytes: error.as_bytes().len() as u64,
+        configured_limit: max_file_bytes,
+        kind: InputSizeLimitKind::Unreadable,
+        total_bytes: None,
+    })
+}
+
+/// Return the exact admitted text, preferring the captured snapshot over any
+/// live document text.  Root compilation units must always have an admitted
+/// snapshot before they reach staging or Surelog.
+fn prepared_input_text<'a>(
+    path: &Path,
+    open_documents: &'a OpenDocuments,
+    snapshots: &'a InputSnapshots,
+) -> Option<&'a str> {
+    snapshots
+        .text(path)
+        .or_else(|| open_document_text(path, open_documents))
+}
+
+/// Check root compilation units and their resolved literal include graph
+/// before staging.  Every existing/open input is measured once by canonical
+/// identity; include cycles and alternate spellings therefore cannot inflate
+/// the total budget.  Readable closed inputs are retained as exact snapshots
+/// for the subsequent isolation and staging passes.  Every discovered root
+/// must yield a bounded UTF-8 snapshot; an unreadable or missing root is
+/// rejected before it can reach Surelog on its live real path.
+fn enforce_input_budget(
+    config: &LlgConfig,
+    files: &[PathBuf],
+    open_documents: &OpenDocuments,
+) -> std::result::Result<InputBudget, InputBudgetFailure> {
+    let allowed = config::include_dirs(config);
+    let mut pending: VecDeque<PathBuf> = files.iter().cloned().collect();
+    let mut visited = HashSet::new();
+    let mut include_deps = BTreeSet::new();
+    let mut total_bytes = 0u64;
+    let mut snapshots = InputSnapshots::default();
+
+    while let Some(source) = pending.pop_front() {
+        if !visited.insert(input_identity(&source)) {
+            continue;
+        }
+
+        let measured = measured_input_bytes(&source, open_documents);
+        let path = source.clone();
+        if measured.is_some_and(|measured_bytes| measured_bytes > config.analysis.max_file_bytes) {
+            let measured_bytes = measured.expect("measured bytes just checked");
+            return Err(InputBudgetFailure {
+                limit: InputSizeLimit {
+                    path,
+                    measured_bytes,
+                    configured_limit: config.analysis.max_file_bytes,
+                    kind: InputSizeLimitKind::PerFile,
+                    total_bytes: None,
+                },
+                include_deps,
+            });
+        }
+
+        let text = if let Some(text) = open_document_value(&source, open_documents) {
+            Arc::clone(text)
+        } else {
+            match read_closed_input_snapshot(&source, config.analysis.max_file_bytes) {
+                Ok(text) => Arc::new(text),
+                Err(limit) => {
+                    return Err(InputBudgetFailure {
+                        limit,
+                        include_deps,
+                    });
+                }
+            }
+        };
+        // Closed files are accounted from metadata as the non-reading
+        // measurement.  If the bounded snapshot observed growth after that
+        // metadata read, retain the larger exact byte count so the total
+        // budget cannot be bypassed by a file that grew during admission.
+        let measured_bytes = measured
+            .unwrap_or_else(|| text.len() as u64)
+            .max(text.len() as u64);
+        if measured_bytes > config.analysis.max_file_bytes {
+            return Err(InputBudgetFailure {
+                limit: InputSizeLimit {
+                    path,
+                    measured_bytes,
+                    configured_limit: config.analysis.max_file_bytes,
+                    kind: InputSizeLimitKind::PerFile,
+                    total_bytes: None,
+                },
+                include_deps,
+            });
+        }
+
+        let Some(next_total) = total_bytes.checked_add(measured_bytes) else {
+            return Err(InputBudgetFailure {
+                limit: InputSizeLimit {
+                    path,
+                    measured_bytes,
+                    configured_limit: config.analysis.max_total_input_bytes,
+                    kind: InputSizeLimitKind::Total,
+                    total_bytes: Some(u64::MAX),
+                },
+                include_deps,
+            });
+        };
+        if next_total > config.analysis.max_total_input_bytes {
+            return Err(InputBudgetFailure {
+                limit: InputSizeLimit {
+                    path,
+                    measured_bytes,
+                    configured_limit: config.analysis.max_total_input_bytes,
+                    kind: InputSizeLimitKind::Total,
+                    total_bytes: Some(next_total),
+                },
+                include_deps,
+            });
+        }
+        total_bytes = next_total;
+
+        snapshots.insert(&source, Arc::clone(&text));
+        for target in explicit_include_targets(text.as_str()) {
+            let Ok(Some(resolved)) =
+                resolve_include_target(&allowed, &source, &target, open_documents, &snapshots)
+            else {
+                continue;
+            };
+            if measured_input_bytes(&resolved, open_documents).is_some() {
+                include_deps.insert(resolved.clone());
+                pending.push_back(resolved);
+            }
+        }
+    }
+
+    Ok(InputBudget { snapshots })
+}
+
+fn compile_result_files(paths: &[PathBuf]) -> Vec<(PathBuf, String)> {
+    paths
+        .iter()
+        .map(|real| (real.clone(), real.to_string_lossy().into_owned()))
+        .collect()
 }
 
 fn attach_fileless_diagnostics(analysis: &mut Analysis, compiled_path: &str) {
@@ -2765,8 +3924,11 @@ fn attach_fileless_diagnostics(analysis: &mut Analysis, compiled_path: &str) {
     }
 }
 
-fn normalized_include_target(source: &Path, target: &str) -> Option<PathBuf> {
-    workspace::normalize_absolute_path(&include_target_path(source, target))
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct IncludeStageFailure {
+    path: PathBuf,
+    message: String,
+    dependencies: BTreeSet<PathBuf>,
 }
 
 /// Stage every resolved include dependency (from disk or an open buffer) into
@@ -2775,9 +3937,10 @@ fn normalized_include_target(source: &Path, target: &str) -> Option<PathBuf> {
 fn stage_include_tree(
     config: &LlgConfig,
     files: &[(PathBuf, String)],
-    open_documents: &BTreeMap<PathBuf, String>,
+    open_documents: &OpenDocuments,
+    snapshots: &InputSnapshots,
     shadow: &ShadowPaths,
-) -> BTreeSet<PathBuf> {
+) -> std::result::Result<BTreeSet<PathBuf>, IncludeStageFailure> {
     let allowed = config::include_dirs(config);
     let mut pending: Vec<PathBuf> = files.iter().map(|(real, _)| real.clone()).collect();
     let mut visited = HashSet::new();
@@ -2787,28 +3950,75 @@ fn stage_include_tree(
         if !visited.insert(identity) {
             continue;
         }
-        let Some(text) = source_text(&source, open_documents) else {
-            continue;
+        let Some(text) = prepared_input_text(&source, open_documents, snapshots) else {
+            return Err(IncludeStageFailure {
+                path: source.clone(),
+                message: format!(
+                    "input-staging: input {} has no admitted bounded snapshot; compile rejected to preserve the input budget",
+                    source.display()
+                ),
+                dependencies: deps,
+            });
         };
-        for target in explicit_include_targets(&text) {
-            let Some(resolved) = normalized_include_target(&source, &target) else {
-                continue;
+        for target in explicit_include_targets(text) {
+            let resolved = match resolve_admitted_include_target(
+                &allowed,
+                &source,
+                &target,
+                open_documents,
+                snapshots,
+            ) {
+                Ok(Some(resolved)) => resolved,
+                Ok(None) => continue,
+                Err(IncludeResolutionError::Unauthorized) => {
+                    return Err(IncludeStageFailure {
+                        path: source.clone(),
+                        message: format!(
+                            "input-staging: SystemVerilog include target {target:?} in {} escapes configured source/include directories",
+                            source.display()
+                        ),
+                        dependencies: deps,
+                    });
+                }
+                Err(IncludeResolutionError::SnapshotUnavailable) => {
+                    return Err(IncludeStageFailure {
+                        path: source.clone(),
+                        message: format!(
+                            "input-staging: resolved include target {target:?} in {} has no admitted bounded snapshot; compile rejected to preserve the input budget",
+                            source.display()
+                        ),
+                        dependencies: deps,
+                    });
+                }
             };
-            let Ok(_) = canonical_include_target(&allowed, &resolved) else {
-                continue;
-            };
-            let Some(nested_text) = source_text(&resolved, open_documents) else {
-                continue;
+            let Some(nested_text) = prepared_input_text(&resolved, open_documents, snapshots)
+            else {
+                return Err(IncludeStageFailure {
+                    path: resolved,
+                    message: format!(
+                        "input-staging: resolved include target {target:?} in {} has no admitted bounded snapshot; compile rejected to preserve the input budget",
+                        source.display()
+                    ),
+                    dependencies: deps,
+                });
             };
             // A missing on-disk file can still be supplied by an open buffer.
             // Existing files are copied too, so relative includes continue to
             // resolve from the shadow tree rather than the real source tree.
-            let _ = shadow.stage(&resolved, &nested_text);
             deps.insert(resolved.clone());
+            if let Err(error) = shadow.stage(&resolved, nested_text) {
+                return Err(IncludeStageFailure {
+                    path: resolved,
+                    message: format!(
+                        "input-staging: failed to stage include from its admitted bounded snapshot; compile rejected to preserve the input budget: {error}"
+                    ),
+                    dependencies: deps,
+                });
+            }
             pending.push(resolved);
         }
     }
-    deps
+    Ok(deps)
 }
 
 /// Reject include targets that escape every configured source/include
@@ -2817,7 +4027,8 @@ fn stage_include_tree(
 fn preflight_include_isolation(
     config: &LlgConfig,
     files: &[(PathBuf, String)],
-    open_documents: &BTreeMap<PathBuf, String>,
+    open_documents: &OpenDocuments,
+    snapshots: &InputSnapshots,
 ) -> Option<(String, String)> {
     let allowed = config::include_dirs(config);
     let mut pending: Vec<(PathBuf, String)> = files
@@ -2830,15 +4041,26 @@ fn preflight_include_isolation(
         if !visited.insert(identity) {
             continue;
         }
-        let text = source_text(&source, open_documents);
-        let Some(text) = text else { continue };
-        for target in explicit_include_targets(&text) {
-            let Some(resolved) = normalized_include_target(&source, &target) else {
-                continue;
-            };
-            let canonical = match canonical_include_target(&allowed, &resolved) {
-                Ok(canonical) => canonical,
-                Err(()) => {
+        let Some(text) = prepared_input_text(&source, open_documents, snapshots) else {
+            return Some((
+                diagnostic_file,
+                format!(
+                    "input-snapshot: input {} has no admitted bounded snapshot; compile rejected to preserve the input budget",
+                    source.display()
+                ),
+            ));
+        };
+        for target in explicit_include_targets(text) {
+            let resolved = match resolve_admitted_include_target(
+                &allowed,
+                &source,
+                &target,
+                open_documents,
+                snapshots,
+            ) {
+                Ok(Some(resolved)) => resolved,
+                Ok(None) => continue,
+                Err(IncludeResolutionError::Unauthorized) => {
                     return Some((
                         diagnostic_file.clone(),
                         format!(
@@ -2852,12 +4074,17 @@ fn preflight_include_isolation(
                         ),
                     ));
                 }
+                Err(IncludeResolutionError::SnapshotUnavailable) => {
+                    return Some((
+                        diagnostic_file.clone(),
+                        format!(
+                            "input-snapshot: resolved include target {target:?} in {} has no admitted bounded snapshot; compile rejected to preserve the input budget",
+                            source.display()
+                        ),
+                    ));
+                }
             };
-            if let Some(canonical) = canonical.as_ref() {
-                let _ = canonical;
-            }
-            let nested_text = source_text(&resolved, open_documents);
-            if nested_text.is_some() {
+            if prepared_input_text(&resolved, open_documents, snapshots).is_some() {
                 pending.push((resolved, diagnostic_file.clone()));
             }
         }
@@ -2876,14 +4103,26 @@ impl Backend {
         mut coordinator: OpenTokenFlightCoordinator,
         key: String,
         uri: Url,
-        captured_text: String,
-        open_document: (PathBuf, String, Vec<String>),
+        captured_text: SharedText,
+        open_document: OpenTokenDocument,
         parent_id: Option<u64>,
     ) -> Arc<OpenTokenFlight> {
         let flight = Arc::clone(&coordinator.flight);
         let cache = Arc::clone(&self.open_token_cache);
         let state = Arc::clone(&self.state);
+        let coordinator_started = std::time::Instant::now();
+        let file_for_log = crate::logging::enabled(crate::logging::Level::Debug)
+            .then(|| open_document.0.display().to_string());
+        let text_bytes = open_document.1.len();
+        let define_count = open_document.2.len();
         let detached = tokio::task::spawn_blocking(move || {
+            crate::llg_debug!(
+                "event=semantic_tokens.coordinator.begin file={} bytes={} defines={} parent_id={:?}",
+                file_for_log.as_deref().unwrap_or("-"),
+                text_bytes,
+                define_count,
+                parent_id
+            );
             let result = compute_open_document_semantic_tokens(
                 open_document.0,
                 open_document.1,
@@ -2892,7 +4131,7 @@ impl Backend {
                     let state = Arc::clone(&state);
                     let uri = uri.clone();
                     let captured_text = captured_text.clone();
-                    move || open_document_is_current(&state, &uri, &captured_text)
+                    move || open_document_is_current(&state, &uri, captured_text.as_str())
                 },
                 parent_id,
             );
@@ -2900,12 +4139,30 @@ impl Backend {
             // final pre-frontend check, so stale results must never enter the
             // request cache.
             let buffer_is_current = open_document_is_current(&state, &uri, &captured_text);
+            let token_count = result.as_ref().map_or(0, |tokens| tokens.data.len());
+            let mut cache_published = false;
             if let Ok(tokens) = &result {
                 if buffer_is_current {
                     cache.put(key, tokens.clone());
+                    cache_published = true;
                 }
             }
+            crate::llg_debug!(
+                "event=semantic_tokens.coordinator.publish outcome={} current={} cache_published={} token_count={} elapsed_us={}",
+                if result.is_ok() { "ok" } else { "error" },
+                buffer_is_current,
+                cache_published,
+                token_count,
+                coordinator_started.elapsed().as_micros()
+            );
             coordinator.finish(result);
+            crate::llg_debug!(
+                "event=semantic_tokens.coordinator.end outcome=complete current={} cache_published={} token_count={} elapsed_us={}",
+                buffer_is_current,
+                cache_published,
+                token_count,
+                coordinator_started.elapsed().as_micros()
+            );
         });
         // The coordinator is deliberately detached.  Dropping this handle
         // does not abort a started `spawn_blocking` task, and the coordinator
@@ -3297,17 +4554,31 @@ impl LanguageServer for Backend {
         if let Some(root) = &root {
             notification.set_root(|| root.to_string_lossy().into_owned());
         }
-        let initialized = {
+        let (initialized, admission) = {
             let mut state = self.lock_state();
-            state.documents.insert(uri, params.text_document.text);
-            state.initialized
+            let admission =
+                Self::admit_document_text(&mut state, uri.clone(), params.text_document.text, true);
+            (state.initialized, admission)
         };
-        if initialized {
-            if let Some(root) = root {
-                self.schedule_roots_with_parent(vec![root], Some(notification.id()));
+        match admission {
+            Ok(_) => {
+                if initialized {
+                    if let Some(root) = root {
+                        self.schedule_roots_with_parent(vec![root], Some(notification.id()));
+                    }
+                }
+                notification.complete(if initialized { "scheduled" } else { "deferred" }, 1);
+            }
+            Err(limit) => {
+                crate::llg_debug!(
+                    "event=document.admission outcome=rejected reason=too-large uri={} bytes={} max_file_bytes={}",
+                    crate::logging::bounded_field(uri.as_str()),
+                    limit.measured_bytes,
+                    limit.configured_limit
+                );
+                notification.complete("rejected-too-large", 0);
             }
         }
-        notification.complete(if initialized { "scheduled" } else { "deferred" }, 1);
     }
 
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
@@ -3320,16 +4591,29 @@ impl LanguageServer for Backend {
         if let Some(root) = &root {
             notification.set_root(|| root.to_string_lossy().into_owned());
         }
-        let (initialized, changed) = {
+        let (initialized, admission) = {
             let mut state = self.lock_state();
-            let mut changed = false;
-            if let Some(change) = params.content_changes.into_iter().last() {
-                changed = did_change_is_new_content(state.documents.get(&uri), &change.text);
-                if changed {
-                    state.documents.insert(uri.clone(), change.text);
-                }
+            let admission = params
+                .content_changes
+                .into_iter()
+                .last()
+                .map_or(Ok(false), |change| {
+                    Self::admit_document_text(&mut state, uri.clone(), change.text, false)
+                });
+            (state.initialized, admission)
+        };
+        let changed = match admission {
+            Ok(changed) => changed,
+            Err(limit) => {
+                crate::llg_debug!(
+                    "event=document.admission outcome=rejected reason=too-large uri={} bytes={} max_file_bytes={}",
+                    crate::logging::bounded_field(uri.as_str()),
+                    limit.measured_bytes,
+                    limit.configured_limit
+                );
+                notification.complete("rejected-too-large", 0);
+                return;
             }
-            (state.initialized, changed)
         };
         // Identical full-text changes carry no information: scheduling a run
         // for them would only churn the analysis (and with it the request
@@ -3401,7 +4685,7 @@ impl LanguageServer for Backend {
                 Self::log_uri_identity(&params.text_document.uri)
             });
         let uri = params.text_document.uri;
-        let (analysis, paths, open_document, shared_owner) = {
+        let (analysis, paths, open_document, max_file_bytes, shared_owner) = {
             let state = self.lock_state();
             let Some((root, real, paths)) = Self::root_context(&state, &uri) else {
                 return Ok(None);
@@ -3419,6 +4703,9 @@ impl LanguageServer for Backend {
                     .collect();
                 (real.clone(), text, defines)
             });
+            let max_file_bytes = open_document
+                .as_ref()
+                .map(|_| root.descriptor.effective_config().analysis.max_file_bytes);
             // Semantic-token policy: the owner root wins.  In v1 only the
             // owner holds token data for a shared file, so a stream comparison
             // is not possible; log the ownership decision instead.
@@ -3428,6 +4715,7 @@ impl LanguageServer for Backend {
                 analysis,
                 paths,
                 open_document,
+                max_file_bytes,
                 shared.then_some((owner_name, real)),
             )
         };
@@ -3437,14 +4725,6 @@ impl LanguageServer for Backend {
                 real.display()
             );
         }
-        // Memoize the request-local parse: the isolated stream is a pure
-        // function of (buffer text, -D defines), so a repeat request with
-        // unchanged inputs short-circuits the whole stage+parse pipeline.
-        // A config hot reload that changes `compile.defines` changes the key;
-        // other config edits do not affect a single-file `-parseonly` run.
-        let token_key = open_document
-            .as_ref()
-            .map(|(_, text, defines)| open_token_cache_key(uri.as_str(), text, defines));
         let captured_text = open_document.as_ref().map(|(_, text, _)| text.clone());
         let fallback_analysis = analysis.clone();
         let fallback_paths = paths.clone();
@@ -3460,6 +4740,32 @@ impl LanguageServer for Backend {
                 return Ok(Some(SemanticTokensResult::Tokens(tokens)));
             }
         }
+        if let Some(limit) = open_token_size_limit(open_document.as_ref(), max_file_bytes) {
+            // Recheck after measuring so a concurrent edit cannot turn a
+            // stale captured revision into a size-limit result.  This is
+            // deliberately before key construction, flight admission,
+            // staging, and spawn_blocking.
+            if let Some((_, text, _)) = open_document.as_ref() {
+                if !open_document_is_current(&self.state, &uri, text) {
+                    let tokens =
+                        cached_semantic_tokens(fallback_analysis.as_deref(), &fallback_paths);
+                    request.complete("stale", tokens.data.len());
+                    return Ok(Some(SemanticTokensResult::Tokens(tokens)));
+                }
+                crate::llg_debug!("semantic tokens rejected: {}", limit.message());
+                let tokens = cached_semantic_tokens(fallback_analysis.as_deref(), &fallback_paths);
+                request.complete("too-large", tokens.data.len());
+                return Ok(Some(SemanticTokensResult::Tokens(tokens)));
+            }
+        }
+        // Memoize the request-local parse: the isolated stream is a pure
+        // function of (buffer text, -D defines), so a repeat request with
+        // unchanged inputs short-circuits the whole stage+parse pipeline.
+        // A config hot reload that changes `compile.defines` changes the key;
+        // other config edits do not affect a single-file `-parseonly` run.
+        let token_key = open_document
+            .as_ref()
+            .map(|(_, text, defines)| open_token_cache_key(uri.as_str(), text, defines));
         let request_id = request.id();
         let started = std::time::Instant::now();
         if let Some(key) = &token_key {
@@ -3499,9 +4805,33 @@ impl LanguageServer for Backend {
         let lease = token_key
             .as_ref()
             .map(|key| self.open_token_flights.acquire(key.clone()));
+        if crate::logging::enabled(crate::logging::Level::Trace) {
+            let lease_kind = match lease.as_ref() {
+                Some(OpenTokenFlightLease::Leader(_)) => "leader",
+                Some(OpenTokenFlightLease::Follower(_)) => "follower",
+                Some(OpenTokenFlightLease::Saturated) => "saturated",
+                None => "no-flight",
+            };
+            crate::llg_trace!(
+                "event=semantic_tokens.flight_admission outcome={} uri={} key_present={} active_flights={}",
+                lease_kind,
+                uri,
+                token_key.is_some(),
+                self.open_token_flights.len()
+            );
+        }
         let (fresh, cached, outcome) = match lease {
             Some(OpenTokenFlightLease::Follower(flight)) => {
+                crate::llg_trace!(
+                    "event=semantic_tokens.flight_wait.begin outcome=follower uri={}",
+                    uri
+                );
                 let fresh = Some(flight.wait().await);
+                crate::llg_trace!(
+                    "event=semantic_tokens.flight_wait.end outcome=ready uri={} fresh_ok={}",
+                    uri,
+                    fresh.as_ref().is_some_and(|result| result.is_ok())
+                );
                 let cached_analysis = fallback_analysis.clone();
                 let cached_paths = fallback_paths.clone();
                 let cached = tokio::task::spawn_blocking(move || {
@@ -3514,6 +4844,11 @@ impl LanguageServer for Backend {
                 (fresh, cached, "single-flight")
             }
             Some(OpenTokenFlightLease::Leader(mut leader)) => {
+                crate::llg_debug!(
+                    "event=semantic_tokens.flight_leader.begin uri={} request_id={}",
+                    uri,
+                    request_id
+                );
                 let key = token_key
                     .as_ref()
                     .expect("a leader always has an open-document cache key");
@@ -3523,6 +4858,11 @@ impl LanguageServer for Backend {
                 // already cached, complete this short-lived flight from the
                 // cache instead of launching a duplicate parse.
                 if let Some(tokens) = self.open_token_cache.get(key) {
+                    crate::llg_trace!(
+                        "event=semantic_tokens.flight_leader.end outcome=cache-race uri={} token_count={}",
+                        uri,
+                        tokens.data.len()
+                    );
                     let cache_is_current = captured_text
                         .as_deref()
                         .is_some_and(|text| open_document_is_current(&self.state, &uri, text));
@@ -3566,6 +4906,11 @@ impl LanguageServer for Backend {
                                 )
                             } else {
                                 let coordinator = leader.detach();
+                                crate::llg_debug!(
+                            "event=semantic_tokens.flight_leader.detach outcome=compute uri={} request_id={}",
+                            uri,
+                            request_id
+                        );
                                 let flight = self.spawn_open_token_coordinator(
                                     coordinator,
                                     key.clone(),
@@ -3614,6 +4959,11 @@ impl LanguageServer for Backend {
                 // registry here would recreate the unbounded spawn_blocking
                 // queue this guard is meant to prevent.  Serve the project
                 // snapshot (or an empty authoritative-safe result) inline.
+                crate::llg_debug!(
+                    "event=semantic_tokens.flight_admission.end outcome=saturated uri={} active_flights={}",
+                    uri,
+                    self.open_token_flights.len()
+                );
                 (
                     None,
                     cached_semantic_tokens(fallback_analysis.as_deref(), &fallback_paths),
@@ -3621,6 +4971,10 @@ impl LanguageServer for Backend {
                 )
             }
             None => {
+                crate::llg_trace!(
+                    "event=semantic_tokens.flight_admission.end outcome=project-analysis uri={}",
+                    uri
+                );
                 let current_state = Arc::clone(&self.state);
                 let current_uri = uri.clone();
                 let current_text = captured_text.clone();
@@ -4083,7 +5437,12 @@ impl LanguageServer for Backend {
             Self::log_uri_identity(&params.text_document_position.text_document.uri)
         });
         let uri = &params.text_document_position.text_document.uri;
-        let (analysis, real, paths, position, text) = {
+        enum CompletionSource {
+            Open(String),
+            Disk(PathBuf, u64),
+            TooLarge(InputSizeLimit),
+        }
+        let (analysis, paths, position, source) = {
             let state = self.lock_state();
             let Some((root, real, paths)) = Self::root_context(&state, uri) else {
                 return Ok(None);
@@ -4092,18 +5451,47 @@ impl LanguageServer for Backend {
             let Some(analysis) = root.last_good.clone() else {
                 return Ok(None);
             };
+            let max_file_bytes = root.descriptor.effective_config().analysis.max_file_bytes;
+            let source = match state.documents.get(uri) {
+                Some(text) => open_input_size_limit(&real, text, max_file_bytes).map_or_else(
+                    || CompletionSource::Open(text.to_string()),
+                    CompletionSource::TooLarge,
+                ),
+                None => CompletionSource::Disk(real, max_file_bytes),
+            };
             (
                 analysis,
-                real,
                 paths,
                 params.text_document_position.position,
-                state.documents.get(uri).cloned(),
+                source,
             )
         };
+        let source_too_large = matches!(&source, CompletionSource::TooLarge(_));
         let values = tokio::task::spawn_blocking(move || {
-            let text = text
-                .or_else(|| std::fs::read_to_string(&real).ok())
-                .unwrap_or_default();
+            let text = match source {
+                CompletionSource::Open(text) => text,
+                CompletionSource::Disk(path, max_file_bytes) => {
+                    match read_closed_input_snapshot(&path, max_file_bytes) {
+                        Ok(text) => text,
+                        Err(error) => {
+                            crate::llg_debug!(
+                                "event=completion.source outcome=unavailable path={} message={}",
+                                error.path.display(),
+                                error.message()
+                            );
+                            return Vec::new();
+                        }
+                    }
+                }
+                CompletionSource::TooLarge(limit) => {
+                    crate::llg_debug!(
+                        "event=completion.source outcome=too-large path={} message={}",
+                        limit.path.display(),
+                        limit.message()
+                    );
+                    return Vec::new();
+                }
+            };
             let line = text
                 .lines()
                 .nth(position.line as usize)
@@ -4126,7 +5514,14 @@ impl LanguageServer for Backend {
         .await
         .unwrap_or_default();
         if values.is_empty() {
-            request.complete("no-data", 0);
+            request.complete(
+                if source_too_large {
+                    "too-large"
+                } else {
+                    "no-data"
+                },
+                0,
+            );
             Ok(None)
         } else {
             let count = values.len();
@@ -4165,18 +5560,110 @@ mod tests {
         config
     }
 
+    fn config_with_budget(
+        root: &Path,
+        source_dirs: Vec<PathBuf>,
+        max_file_bytes: u64,
+        max_total_input_bytes: u64,
+    ) -> LlgConfig {
+        let mut config = config_with_dirs(root, source_dirs);
+        config.analysis = config::AnalysisConfig {
+            max_file_bytes,
+            max_total_input_bytes,
+        };
+        config
+    }
+
+    fn empty_backend_state() -> BackendState {
+        BackendState {
+            roots: BTreeMap::new(),
+            documents: BTreeMap::new(),
+            dynamic_watched_files: false,
+            watchers_registered: false,
+            registered_watchers_digest: None,
+            initialized: false,
+            shutting_down: false,
+            pending_logs: Vec::new(),
+            merged: None,
+            initial_pending: BTreeSet::new(),
+            ready_sent: false,
+            dep_dependents: BTreeMap::new(),
+            published_shared: BTreeMap::new(),
+            next_generation: 0,
+        }
+    }
+
     #[test]
     fn did_change_suppresses_only_identical_full_text() {
         let tracked = "module a;\nendmodule\n".to_owned();
         assert!(did_change_is_new_content(None, "anything"), "first change");
         assert!(
-            did_change_is_new_content(Some(&tracked), "module b;\nendmodule\n"),
+            did_change_is_new_content(Some(tracked.as_str()), "module b;\nendmodule\n"),
             "real edit"
         );
         assert!(
-            !did_change_is_new_content(Some(&tracked), "module a;\nendmodule\n"),
+            !did_change_is_new_content(Some(tracked.as_str()), "module a;\nendmodule\n"),
             "identical full-text re-send must not reschedule"
         );
+    }
+
+    #[test]
+    fn document_admission_rejects_before_storage_and_reuses_shared_text() {
+        let uri = Url::parse("file:///tmp/llg-admission.sv").expect("document URI");
+        let mut state = empty_backend_state();
+        let oversized = "x".repeat(config::DEFAULT_MAX_FILE_BYTES as usize + 1);
+        let rejection = Backend::admit_document_text(&mut state, uri.clone(), oversized, true)
+            .expect_err("uninitialized documents use the conservative default limit");
+        assert_eq!(rejection.kind, InputSizeLimitKind::PerFile);
+        assert!(
+            state.documents.is_empty(),
+            "rejected text is never retained"
+        );
+
+        let accepted = "module m; endmodule\n".to_owned();
+        assert!(
+            Backend::admit_document_text(&mut state, uri.clone(), accepted, true)
+                .expect("admit document")
+        );
+        let stored = state
+            .documents
+            .get(&uri)
+            .expect("stored admitted text")
+            .clone();
+        assert!(!Backend::admit_document_text(
+            &mut state,
+            uri.clone(),
+            "module m; endmodule\n".to_owned(),
+            false,
+        )
+        .expect("identical didChange"));
+        assert!(Arc::ptr_eq(
+            &stored,
+            state
+                .documents
+                .get(&uri)
+                .expect("unchanged text remains shared")
+        ));
+    }
+
+    #[test]
+    fn admitted_snapshot_indexes_share_the_same_text_allocation() {
+        let path = PathBuf::from("/tmp/llg-shared-snapshot.sv");
+        let text = Arc::new("module m; endmodule\n".to_owned());
+        let mut snapshots = InputSnapshots::default();
+        snapshots.insert(&path, Arc::clone(&text));
+
+        assert!(Arc::ptr_eq(
+            &text,
+            snapshots.by_path.get(&path).expect("path snapshot")
+        ));
+        assert!(Arc::ptr_eq(
+            &text,
+            snapshots
+                .by_identity
+                .get(&input_identity(&path))
+                .expect("identity snapshot")
+        ));
     }
 
     #[test]
@@ -4207,11 +5694,425 @@ mod tests {
     }
 
     #[test]
+    fn oversized_open_token_buffer_is_rejected_before_flight_admission() {
+        let path = PathBuf::from("/tmp/llg-open-too-large.sv");
+        let open_document = (path.clone(), Arc::new("12345".to_owned()), Vec::new());
+        let limit =
+            open_token_size_limit(Some(&open_document), Some(4)).expect("over-limit buffer");
+        assert_eq!(limit.measured_bytes, 5);
+        assert!(limit.message().contains("max_file_bytes=4"));
+
+        // The semantic-token handler returns on this decision before it
+        // constructs a cache key or calls `OpenTokenFlightRegistry::acquire`.
+        let registry = Arc::new(OpenTokenFlightRegistry::new());
+        assert_eq!(registry.len(), 0);
+        let boundary_document = (path, Arc::new("1234".to_owned()), Vec::new());
+        assert!(open_token_size_limit(Some(&boundary_document), Some(4)).is_none());
+        assert!(open_token_size_limit(None, Some(4)).is_none());
+        assert_eq!(registry.len(), 0);
+    }
+
+    #[test]
+    fn closed_request_snapshot_is_bounded_and_reports_unreadable_inputs() {
+        let root = temp_root("request_snapshot");
+        std::fs::create_dir_all(&root).expect("create request snapshot root");
+        let source = root.join("request.sv");
+        std::fs::write(&source, b"12345").expect("write request source");
+
+        let failure =
+            read_closed_input_snapshot(&source, 4).expect_err("snapshot exceeds max file bytes");
+        assert_eq!(failure.kind, InputSizeLimitKind::PerFile);
+        assert_eq!(failure.measured_bytes, 5);
+
+        std::fs::write(&source, [0xff, 0xfe]).expect("write invalid UTF-8");
+        let failure =
+            read_closed_input_snapshot(&source, 4).expect_err("invalid UTF-8 is not a snapshot");
+        assert_eq!(failure.kind, InputSizeLimitKind::Unreadable);
+        assert!(failure.message().contains("input-snapshot"));
+
+        std::fs::remove_file(&source).expect("remove request source");
+        let failure =
+            read_closed_input_snapshot(&source, 4).expect_err("missing disk input is unavailable");
+        assert_eq!(failure.kind, InputSizeLimitKind::Unreadable);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn input_budget_allows_exact_file_boundary_and_rejects_over_limit() {
+        let root = temp_root("budget_boundary");
+        std::fs::create_dir_all(&root).expect("create budget root");
+        let source = root.join("top.sv");
+        std::fs::write(&source, b"1234").expect("write boundary source");
+        let config = config_with_budget(&root, vec![root.clone()], 4, 4);
+
+        assert!(
+            enforce_input_budget(&config, std::slice::from_ref(&source), &BTreeMap::new()).is_ok()
+        );
+
+        std::fs::write(&source, b"12345").expect("write over-limit source");
+        let failure =
+            enforce_input_budget(&config, std::slice::from_ref(&source), &BTreeMap::new())
+                .expect_err("one byte over the per-file boundary");
+        assert_eq!(failure.limit.kind, InputSizeLimitKind::PerFile);
+        assert_eq!(failure.limit.measured_bytes, 5);
+        assert!(failure
+            .limit
+            .message()
+            .contains(&source.display().to_string()));
+        assert!(failure.limit.message().contains("max_file_bytes=4"));
+        assert!(failure.limit.message().contains("per-file budget"));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn input_budget_rejects_a_missing_root_before_frontend_admission() {
+        let root = temp_root("budget_missing_root");
+        std::fs::create_dir_all(&root).expect("create budget root");
+        let source = root.join("missing.sv");
+        let config = config_with_budget(&root, vec![root.clone()], 4, 4);
+
+        let failure =
+            enforce_input_budget(&config, std::slice::from_ref(&source), &BTreeMap::new())
+                .expect_err("a missing root cannot be passed to Surelog on its live path");
+        assert_eq!(failure.limit.kind, InputSizeLimitKind::Unreadable);
+        assert_eq!(failure.limit.path, source);
+        assert!(failure.limit.message().contains("input-snapshot"));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn open_text_wins_over_larger_disk_metadata_for_budgeting() {
+        let root = temp_root("budget_open_wins");
+        std::fs::create_dir_all(&root).expect("create budget root");
+        let source = root.join("top.sv");
+        std::fs::write(&source, b"on-disk text is longer").expect("write disk source");
+        let config = config_with_budget(&root, vec![root.clone()], 4, 4);
+        let open = BTreeMap::from([(source.clone(), Arc::new("four".to_owned()))]);
+
+        assert!(enforce_input_budget(&config, std::slice::from_ref(&source), &open).is_ok());
+        let over = BTreeMap::from([(source.clone(), Arc::new("five!".to_owned()))]);
+        let failure = enforce_input_budget(&config, std::slice::from_ref(&source), &over)
+            .expect_err("open UTF-8 text exceeds the limit");
+        assert_eq!(failure.limit.measured_bytes, 5);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn input_budget_counts_unique_canonical_include_paths_once_through_cycles() {
+        let root = temp_root("budget_cycle");
+        std::fs::create_dir_all(&root).expect("create budget root");
+        let top = root.join("top.sv");
+        let first = root.join("first.inc");
+        let second = root.join("second.inc");
+        std::fs::write(&top, b"`include \"first.inc\"\n").expect("write top");
+        std::fs::write(&first, b"`include \"second.inc\"\n").expect("write first");
+        std::fs::write(&second, b"`include \"./first.inc\"\n").expect("write second");
+        let total = [&top, &first, &second]
+            .iter()
+            .map(|path| std::fs::metadata(path).expect("input metadata").len())
+            .sum();
+        let config = config_with_budget(&root, vec![root.clone()], total, total);
+
+        assert!(
+            enforce_input_budget(&config, std::slice::from_ref(&top), &BTreeMap::new()).is_ok()
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn input_budget_rejects_total_boundary_with_path_and_configured_limit() {
+        let root = temp_root("budget_total");
+        std::fs::create_dir_all(&root).expect("create budget root");
+        let top = root.join("top.sv");
+        let include = root.join("payload.inc");
+        std::fs::write(&top, b"`include \"payload.inc\"\n").expect("write top");
+        std::fs::write(&include, b"payload").expect("write include");
+        let top_bytes = std::fs::metadata(&top).expect("top metadata").len();
+        let include_bytes = std::fs::metadata(&include).expect("include metadata").len();
+        let limit = top_bytes + include_bytes - 1;
+        let config = config_with_budget(
+            &root,
+            vec![root.clone()],
+            top_bytes.max(include_bytes),
+            limit,
+        );
+
+        let failure = enforce_input_budget(&config, std::slice::from_ref(&top), &BTreeMap::new())
+            .expect_err("total input budget is exceeded");
+        assert_eq!(failure.limit.kind, InputSizeLimitKind::Total);
+        assert_eq!(failure.limit.total_bytes, Some(top_bytes + include_bytes));
+        assert!(failure
+            .limit
+            .message()
+            .contains(&include.display().to_string()));
+        assert!(failure
+            .limit
+            .message()
+            .contains(&format!("max_total_input_bytes={limit}")));
+        assert!(failure.limit.message().contains("total budget"));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn input_budget_resolves_compile_include_dir_and_counts_it() {
+        let _guard = SHADOW_TESTS_LOCK
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let root = temp_root("budget_include_dir");
+        let source_dir = root.join("src");
+        let include_dir = root.join("include");
+        std::fs::create_dir_all(&source_dir).expect("create source dir");
+        std::fs::create_dir_all(&include_dir).expect("create include dir");
+        let top = source_dir.join("top.sv");
+        let header = include_dir.join("search-only.inc");
+        let top_text = "`include \"search-only.inc\"\nmodule top; endmodule\n";
+        let header_text = "// include-search-only\n";
+        std::fs::write(&top, top_text).expect("write top");
+        std::fs::write(&header, header_text).expect("write header");
+        let top_bytes = top_text.len() as u64;
+        let header_bytes = header_text.len() as u64;
+
+        let mut config = config_with_budget(
+            &root,
+            vec![source_dir.clone()],
+            top_bytes.max(header_bytes),
+            top_bytes + header_bytes,
+        );
+        config.compile.include_dirs = vec![include_dir.clone()];
+        let files = vec![(top.clone(), top.to_string_lossy().into_owned())];
+        let budget = enforce_input_budget(&config, std::slice::from_ref(&top), &BTreeMap::new())
+            .expect("include-search directory input is admitted");
+        assert_eq!(
+            prepared_input_text(&header, &BTreeMap::new(), &budget.snapshots),
+            Some(header_text)
+        );
+        assert_eq!(
+            resolve_include_target(
+                &config::include_dirs(&config),
+                &top,
+                "search-only.inc",
+                &BTreeMap::new(),
+                &budget.snapshots,
+            )
+            .expect("resolve include")
+            .as_deref(),
+            Some(header.as_path())
+        );
+        assert!(
+            preflight_include_isolation(&config, &files, &BTreeMap::new(), &budget.snapshots)
+                .is_none()
+        );
+
+        let shadow = ShadowPaths::new();
+        shadow.stage(&top, top_text).expect("stage root");
+        let deps = stage_include_tree(
+            &config,
+            &files,
+            &BTreeMap::new(),
+            &budget.snapshots,
+            &shadow,
+        )
+        .expect("stage admitted include dependency");
+        assert!(
+            deps.contains(&header),
+            "include dependency is watched/staged"
+        );
+        let staged_header = shadow.shadow_path(&header).expect("staged header path");
+        assert_eq!(
+            std::fs::read_to_string(staged_header).expect("read staged header"),
+            header_text
+        );
+        shadow.cleanup();
+        features::cleanup_process_shadow();
+
+        config.analysis.max_total_input_bytes = top_bytes + header_bytes - 1;
+        let failure = enforce_input_budget(&config, std::slice::from_ref(&top), &BTreeMap::new())
+            .expect_err("include-search directory input exceeds total budget");
+        assert_eq!(failure.limit.kind, InputSizeLimitKind::Total);
+        assert_eq!(failure.limit.path, header);
+        assert!(failure.include_deps.contains(&header));
+        assert!(failure.limit.message().contains("total budget"));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn admitted_snapshots_are_reused_after_disk_and_open_text_changes() {
+        let _guard = SHADOW_TESTS_LOCK
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let root = temp_root("budget_snapshot");
+        std::fs::create_dir_all(&root).expect("create snapshot root");
+        let top = root.join("top.sv");
+        let header = root.join("payload.inc");
+        let original_top = "`include \"payload.inc\"\nmodule original; endmodule\n";
+        let original_header = "// admitted header\n";
+        std::fs::write(&top, original_top).expect("write original top");
+        std::fs::write(&header, original_header).expect("write original header");
+        let top_bytes = original_top.len() as u64;
+        let header_bytes = original_header.len() as u64;
+        let config = config_with_budget(
+            &root,
+            vec![root.clone()],
+            top_bytes.max(header_bytes),
+            top_bytes + header_bytes,
+        );
+        let files = vec![(top.clone(), top.to_string_lossy().into_owned())];
+        let budget = enforce_input_budget(&config, std::slice::from_ref(&top), &BTreeMap::new())
+            .expect("admit original inputs");
+
+        // If staging rereads disk, it would see both this changed root (with
+        // no include) and an over-limit header.  The admitted graph must use
+        // the exact bounded snapshots instead.
+        std::fs::write(&top, "module changed; endmodule\n").expect("change top after admission");
+        std::fs::write(
+            &header,
+            "x".repeat((top_bytes.max(header_bytes) + 32) as usize),
+        )
+        .expect("grow header after admission");
+
+        let changed_open_documents = BTreeMap::from([
+            (
+                top.clone(),
+                Arc::new("module open_changed; endmodule\n".to_owned()),
+            ),
+            (
+                header.clone(),
+                Arc::new("// changed open header\n".to_owned()),
+            ),
+        ]);
+        let shadow = ShadowPaths::new();
+        let admitted_top = prepared_input_text(&top, &changed_open_documents, &budget.snapshots)
+            .expect("admitted top snapshot");
+        assert_eq!(admitted_top, original_top);
+        shadow
+            .stage(&top, admitted_top)
+            .expect("stage admitted top");
+        let deps = stage_include_tree(
+            &config,
+            &files,
+            &changed_open_documents,
+            &budget.snapshots,
+            &shadow,
+        )
+        .expect("stage admitted include dependency");
+        assert!(deps.contains(&header));
+        assert_eq!(
+            std::fs::read_to_string(shadow.shadow_path(&top).expect("staged top"))
+                .expect("read staged top"),
+            original_top
+        );
+        assert_eq!(
+            std::fs::read_to_string(shadow.shadow_path(&header).expect("staged header"))
+                .expect("read staged header"),
+            original_header
+        );
+        shadow.cleanup();
+        features::cleanup_process_shadow();
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn oversized_compile_job_publishes_limit_and_retains_last_good_snapshot() {
+        let root = temp_root("budget_last_good");
+        std::fs::create_dir_all(&root).expect("create budget root");
+        let source = root.join("top.sv");
+        std::fs::write(&source, b"12345").expect("write over-limit source");
+        let config = config_with_budget(&root, vec![root.clone()], 4, 16);
+        let descriptor = RootDescriptor::from_absolute(&root)
+            .expect("root descriptor")
+            .with_config(Some(Arc::new(config.clone())));
+        let previous = Arc::new(features::empty_analysis());
+        let mut roots = BTreeMap::new();
+        roots.insert(
+            root.clone(),
+            RootState {
+                descriptor,
+                shadow: ShadowPaths::new(),
+                discovered: vec![source.clone()],
+                include_deps: BTreeSet::new(),
+                lint_config: LintConfig::default(),
+                config_errors: Vec::new(),
+                config_warnings: Vec::new(),
+                last_good: Some(Arc::clone(&previous)),
+                diagnostics: BTreeMap::new(),
+                published_digests: BTreeMap::new(),
+                all_diagnostics: BTreeMap::new(),
+                generation: 1,
+                pending_parent_id: None,
+                scheduler: SchedulerState::default(),
+                analysis_epoch: 0,
+            },
+        );
+        let state = Arc::new(Mutex::new(BackendState {
+            roots,
+            documents: BTreeMap::new(),
+            dynamic_watched_files: false,
+            watchers_registered: false,
+            registered_watchers_digest: None,
+            initialized: true,
+            shutting_down: false,
+            pending_logs: Vec::new(),
+            merged: None,
+            initial_pending: BTreeSet::new(),
+            ready_sent: true,
+            dep_dependents: BTreeMap::new(),
+            published_shared: BTreeMap::new(),
+            next_generation: 0,
+        }));
+        let job = RootJob {
+            key: root.clone(),
+            generation: 1,
+            parent_id: None,
+            shadow: ShadowPaths::new(),
+            files: vec![source.clone()],
+            previous_include_deps: BTreeSet::new(),
+            open_documents: BTreeMap::new(),
+            lint_config: LintConfig::default(),
+            config,
+        };
+
+        let result = Backend::compile_job(&state, job).expect("size-limit result");
+        let message = result
+            .analysis
+            .as_ref()
+            .expect("fatal size-limit analysis")
+            .diagnostics[0]
+            .message
+            .clone();
+        assert!(message.contains("input-size-limit"));
+        assert!(message.contains(&source.display().to_string()));
+        let outcome = Backend::commit_job(&state, &root, 1, result);
+        assert!(!outcome.valid_commit);
+        assert!(outcome.publications.iter().any(|(uri, diagnostics)| {
+            uri == &Url::from_file_path(&source).expect("source URI")
+                && diagnostics
+                    .iter()
+                    .any(|diagnostic| diagnostic.message.contains("input-size-limit"))
+        }));
+        let state = state.lock().unwrap_or_else(|error| error.into_inner());
+        assert!(Arc::ptr_eq(
+            state
+                .roots
+                .get(&root)
+                .expect("root state")
+                .last_good
+                .as_ref()
+                .expect("retained last-good snapshot"),
+            &previous
+        ));
+        assert_eq!(
+            state.roots.get(&root).expect("root state").discovered,
+            vec![source]
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn open_token_freshness_barrier_rejects_stale_revision_before_admission() {
         let uri = Url::parse("file:///tmp/llg-stale-open.sv").expect("document URI");
         let state = Arc::new(Mutex::new(BackendState {
             roots: BTreeMap::new(),
-            documents: BTreeMap::from([(uri.clone(), "current".to_owned())]),
+            documents: BTreeMap::from([(uri.clone(), Arc::new("current".to_owned()))]),
             dynamic_watched_files: false,
             watchers_registered: false,
             registered_watchers_digest: None,
@@ -4458,7 +6359,12 @@ mod tests {
 
         let config = config_with_dirs(&root, vec![source_dir.clone(), allowed_dir.clone()]);
         let files = vec![(top.clone(), top.to_string_lossy().into_owned())];
-        assert!(preflight_include_isolation(&config, &files, &BTreeMap::new()).is_none());
+        let budget = enforce_input_budget(&config, std::slice::from_ref(&top), &BTreeMap::new())
+            .expect("admit configured include");
+        assert!(
+            preflight_include_isolation(&config, &files, &BTreeMap::new(), &budget.snapshots)
+                .is_none()
+        );
 
         // Escape to a directory outside the configured set.
         std::fs::write(
@@ -4466,7 +6372,10 @@ mod tests {
             "`include \"../../outside.svh\"\nmodule top; endmodule\n",
         )
         .expect("write escape");
-        let failure = preflight_include_isolation(&config, &files, &BTreeMap::new());
+        let budget = enforce_input_budget(&config, std::slice::from_ref(&top), &BTreeMap::new())
+            .expect("admit escape for isolation preflight");
+        let failure =
+            preflight_include_isolation(&config, &files, &BTreeMap::new(), &budget.snapshots);
         assert!(failure.is_some_and(|(_, message)| message.contains("outside.svh")));
         let _ = std::fs::remove_dir_all(root);
     }
@@ -4486,10 +6395,18 @@ mod tests {
 
         let config = config_with_dirs(&root, vec![source_dir.clone()]);
         let files = vec![(top.clone(), top.to_string_lossy().into_owned())];
-        assert!(preflight_include_isolation(&config, &files, &BTreeMap::new()).is_none());
+        let budget = enforce_input_budget(&config, std::slice::from_ref(&top), &BTreeMap::new())
+            .expect("admit include cycle");
+        assert!(
+            preflight_include_isolation(&config, &files, &BTreeMap::new(), &budget.snapshots)
+                .is_none()
+        );
 
         std::fs::write(&nested, "`include \"../../outside.svh\"\n").expect("write escape");
-        let failure = preflight_include_isolation(&config, &files, &BTreeMap::new());
+        let budget = enforce_input_budget(&config, std::slice::from_ref(&top), &BTreeMap::new())
+            .expect("admit escape for isolation preflight");
+        let failure =
+            preflight_include_isolation(&config, &files, &BTreeMap::new(), &budget.snapshots);
         assert!(failure.is_some_and(|(_, message)| message.contains("outside.svh")));
         let _ = std::fs::remove_dir_all(root);
     }
@@ -4516,7 +6433,10 @@ mod tests {
 
         let config = config_with_dirs(&root, vec![source_dir.clone()]);
         let files = vec![(top.clone(), top.to_string_lossy().into_owned())];
-        let failure = preflight_include_isolation(&config, &files, &BTreeMap::new());
+        let budget = enforce_input_budget(&config, std::slice::from_ref(&top), &BTreeMap::new())
+            .expect("admit symlink for isolation preflight");
+        let failure =
+            preflight_include_isolation(&config, &files, &BTreeMap::new(), &budget.snapshots);
         assert!(failure.is_some_and(|(_, message)| message.contains("link.inc")));
         let _ = std::fs::remove_file(outside);
         let _ = std::fs::remove_dir_all(root);
@@ -4554,7 +6474,7 @@ mod tests {
         );
         let state = Arc::new(Mutex::new(BackendState {
             roots,
-            documents: BTreeMap::from([(uri.clone(), String::new())]),
+            documents: BTreeMap::from([(uri.clone(), Arc::new(String::new()))]),
             dynamic_watched_files: false,
             watchers_registered: false,
             registered_watchers_digest: None,
@@ -4789,7 +6709,7 @@ mod tests {
         let state = Arc::new(Mutex::new(BackendState {
             roots,
             // Only open.sv is open; closed.sv is never opened by the client.
-            documents: BTreeMap::from([(open_uri.clone(), String::new())]),
+            documents: BTreeMap::from([(open_uri.clone(), Arc::new(String::new()))]),
             dynamic_watched_files: false,
             watchers_registered: false,
             registered_watchers_digest: None,
@@ -4945,28 +6865,33 @@ mod tests {
         let mut open = BTreeMap::new();
         open.insert(
             top.clone(),
-            "`include \"defs.inc\"\nmodule unsaved_top; endmodule\n".to_owned(),
+            Arc::new("`include \"defs.inc\"\nmodule unsaved_top; endmodule\n".to_owned()),
         );
         open.insert(
             header.clone(),
-            "`include \"missing.inc\"\n// open text\n".to_owned(),
+            Arc::new("`include \"missing.inc\"\n// open text\n".to_owned()),
         );
         let shadow = ShadowPaths::new();
         let files = vec![(top.clone(), top.to_string_lossy().into_owned())];
         let config = config_with_dirs(&root, vec![root.clone()]);
-        assert!(preflight_include_isolation(&config, &files, &open).is_none());
-        shadow.stage(&top, &open[&top]).expect("stage open top");
-        let deps = stage_include_tree(&config, &files, &open, &shadow);
+        let budget = enforce_input_budget(&config, std::slice::from_ref(&top), &open)
+            .expect("admit open include graph");
+        assert!(preflight_include_isolation(&config, &files, &open, &budget.snapshots).is_none());
+        shadow
+            .stage(&top, open[&top].as_str())
+            .expect("stage open top");
+        let deps = stage_include_tree(&config, &files, &open, &budget.snapshots, &shadow)
+            .expect("stage admitted include dependency");
 
         let staged_top = shadow.shadow_path(&top).expect("staged top");
         let staged_header = shadow.shadow_path(&header).expect("staged header");
         assert_eq!(
             std::fs::read_to_string(staged_top).expect("read staged top"),
-            open[&top]
+            open[&top].as_str()
         );
         assert_eq!(
             std::fs::read_to_string(staged_header).expect("read staged header"),
-            open[&header]
+            open[&header].as_str()
         );
         assert!(deps.contains(&header));
         assert!(!shadow
@@ -4974,6 +6899,45 @@ mod tests {
             .is_some_and(|path| path.exists()));
         shadow.cleanup();
         features::cleanup_process_shadow();
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn include_staging_failure_rejects_instead_of_using_live_path() {
+        let _guard = SHADOW_TESTS_LOCK
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let root = temp_root("shadow_include_failure");
+        std::fs::create_dir_all(&root).expect("create include failure root");
+        let top = root.join("top.sv");
+        let header = root.join("defs.inc");
+        std::fs::write(&top, "\x60include \"defs.inc\"\nmodule top; endmodule\n")
+            .expect("write top");
+        std::fs::write(&header, "// bounded header\n").expect("write header");
+        let config = config_with_dirs(&root, vec![root.clone()]);
+        let files = vec![(top.clone(), top.to_string_lossy().into_owned())];
+        let budget = enforce_input_budget(&config, std::slice::from_ref(&top), &BTreeMap::new())
+            .expect("admit include graph");
+
+        let blocker = root.join("shadow-blocker");
+        std::fs::write(&blocker, "not a directory").expect("write shadow blocker");
+        let shadow = ShadowPaths {
+            base: blocker,
+            staged: Arc::new(Mutex::new(BTreeSet::new())),
+        };
+        let failure = stage_include_tree(
+            &config,
+            &files,
+            &BTreeMap::new(),
+            &budget.snapshots,
+            &shadow,
+        )
+        .expect_err("a staging I/O failure must reject the include stage");
+        assert_eq!(failure.path, header);
+        assert!(failure.message.contains("input-staging"));
+        assert!(failure.message.contains("admitted bounded snapshot"));
+        assert!(failure.dependencies.contains(&header));
+
         let _ = std::fs::remove_dir_all(root);
     }
 

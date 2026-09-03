@@ -27,6 +27,11 @@
 //! * `[compile.param_overrides]` maps top-level parameter names to string or
 //!   integer values, converted to Surelog `-PNAME=VALUE` arguments; integers
 //!   are normalized to their decimal string form.
+//! * `[analysis]` bounds each unique input file at 1 MiB by default and the
+//!   complete unique compilation-unit/include input set at 8 MiB.  Both
+//!   limits must be positive when configured.
+//! * Config reloads read at most [`MAX_CONFIG_BYTES`] plus one byte and reject
+//!   oversized or non-UTF-8 files without replacing the last valid config.
 //! * Structural errors (malformed TOML, unknown fields/versions, wrong
 //!   types) reject the whole config atomically.  Individual malformed
 //!   `defines` entries or `param_overrides` keys/values are dropped with a
@@ -43,7 +48,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
-use std::io;
+use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
@@ -69,6 +74,20 @@ pub const DEFAULT_EXCLUDE_GLOBS: [&str; 3] = ["slpp_all/**", ".git/**", "target/
 /// include patterns (same defaults as a missing config file).
 pub const DEFAULT_INCLUDE_GLOBS: [&str; 2] = ["**/*.v", "**/*.sv"];
 
+/// Conservative default maximum size of one unique analysis input in bytes.
+pub const DEFAULT_MAX_FILE_BYTES: u64 = 1024 * 1024;
+
+/// Conservative default maximum size of all unique analysis inputs in bytes.
+pub const DEFAULT_MAX_TOTAL_INPUT_BYTES: u64 = 8 * 1024 * 1024;
+
+/// Fixed maximum size of a configuration file read during reload.
+///
+/// Configuration is control-plane input, but it still arrives from a path
+/// selected by the client.  Keep its read bounded independently of the
+/// analysis input budgets so a malformed or unexpectedly large `llg.toml`
+/// cannot consume memory before TOML validation runs.
+pub const MAX_CONFIG_BYTES: u64 = 1024 * 1024;
+
 /// A validated, resolved `llg.toml`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct LlgConfig {
@@ -78,6 +97,7 @@ pub struct LlgConfig {
     pub base_dir: PathBuf,
     pub sources: SourcesConfig,
     pub compile: CompileConfig,
+    pub analysis: AnalysisConfig,
     pub lint: LintConfig,
 }
 
@@ -105,6 +125,25 @@ pub struct CompileConfig {
     /// module instances of the analysis (the explicit `top` or Surelog's
     /// auto-detected tops).
     pub param_overrides: BTreeMap<String, String>,
+}
+
+/// Byte budgets applied to the unique root compilation units and literal
+/// include dependencies admitted to an LSP analysis.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AnalysisConfig {
+    /// Maximum bytes in one unique input file.
+    pub max_file_bytes: u64,
+    /// Maximum bytes across all unique input files.
+    pub max_total_input_bytes: u64,
+}
+
+impl Default for AnalysisConfig {
+    fn default() -> Self {
+        Self {
+            max_file_bytes: DEFAULT_MAX_FILE_BYTES,
+            max_total_input_bytes: DEFAULT_MAX_TOTAL_INPUT_BYTES,
+        }
+    }
 }
 
 /// An error describing why a `llg.toml` failed to parse/validate.
@@ -151,6 +190,8 @@ struct RawConfig {
     #[serde(default)]
     compile: RawCompile,
     #[serde(default)]
+    analysis: RawAnalysis,
+    #[serde(default)]
     lint: RawLint,
 }
 
@@ -177,6 +218,15 @@ struct RawCompile {
     /// [`resolve_param_overrides`] so a wrong type yields a precise error.
     #[serde(default)]
     param_overrides: BTreeMap<String, toml::Value>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+struct RawAnalysis {
+    #[serde(default)]
+    max_file_bytes: Option<u64>,
+    #[serde(default)]
+    max_total_input_bytes: Option<u64>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -247,6 +297,7 @@ pub fn parse_config_detailed(base_dir: &Path, text: &str) -> Result<ParsedConfig
     let sources = resolve_sources(&base_dir, &raw.sources)?;
     let (compile, mut compile_warnings) = resolve_compile(&base_dir, &raw.compile)?;
     warnings.append(&mut compile_warnings);
+    let analysis = resolve_analysis(&raw.analysis)?;
     let lint = translate_lint(&raw.lint)?;
 
     Ok(ParsedConfig {
@@ -255,6 +306,7 @@ pub fn parse_config_detailed(base_dir: &Path, text: &str) -> Result<ParsedConfig
             base_dir,
             sources,
             compile,
+            analysis,
             lint,
         },
         warnings,
@@ -288,7 +340,9 @@ pub fn load_config(root: &Path) -> io::Result<ConfigLoad> {
 ///
 /// Relative paths inside the TOML resolve from the directory containing the
 /// file.  A missing file produces `config: None` with no errors; a malformed
-/// file is rejected atomically.
+/// file is rejected atomically.  Oversized and non-UTF-8 files remain read
+/// errors, matching the existing `io::Result` contract.  The file read is
+/// bounded to `MAX_CONFIG_BYTES` plus one byte.
 pub fn load_config_file(path: &Path) -> io::Result<ConfigLoad> {
     let path = workspace::normalize_absolute_path(path).ok_or_else(|| {
         io::Error::new(
@@ -296,7 +350,7 @@ pub fn load_config_file(path: &Path) -> io::Result<ConfigLoad> {
             "config path must be an absolute path",
         )
     })?;
-    match fs::read_to_string(&path) {
+    match read_config_text(&path) {
         Ok(text) => {
             let base = path.parent().unwrap_or(Path::new("/"));
             let (config, errors, warnings) = match parse_config_detailed(base, &text) {
@@ -324,6 +378,29 @@ pub fn load_config_file(path: &Path) -> io::Result<ConfigLoad> {
         }),
         Err(error) => Err(error),
     }
+}
+
+/// Read a config file with a fixed upper bound and validate its UTF-8 before
+/// handing it to the TOML parser.  The extra byte distinguishes an exactly
+/// full file from an oversized one without ever retaining more than the
+/// configured bound plus one byte.
+fn read_config_text(path: &Path) -> io::Result<String> {
+    let file = fs::File::open(path)?;
+    let mut bytes = Vec::with_capacity(MAX_CONFIG_BYTES as usize + 1);
+    file.take(MAX_CONFIG_BYTES.saturating_add(1))
+        .read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > MAX_CONFIG_BYTES {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("config file exceeds the maximum size of {MAX_CONFIG_BYTES} bytes"),
+        ));
+    }
+    String::from_utf8(bytes).map_err(|error| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("config file is not valid UTF-8: {error}"),
+        )
+    })
 }
 
 /// One warning per configured source/include directory that does not exist on
@@ -377,6 +454,7 @@ pub fn default_config(root: &Path) -> LlgConfig {
             defines: Vec::new(),
             param_overrides: BTreeMap::new(),
         },
+        analysis: AnalysisConfig::default(),
         lint: LintConfig::default(),
     }
 }
@@ -401,21 +479,52 @@ pub fn include_dirs(config: &LlgConfig) -> Vec<PathBuf> {
 
 /// Build a `CompileOpts` from a config and compiled file paths.
 ///
-/// `shadow_base` is the private per-process shadow tree; its mirror of every
-/// include-search directory is placed *ahead* of the real directory so unsaved
-/// header buffers win over on-disk headers.  `defines`/`include_dirs`/
-/// `param_overrides` are converted to validated Surelog `-D`/`-I`/`-P`
-/// arguments; there is no raw compiler-argument passthrough.
+/// `shadow_base` is the private per-process shadow tree; all shadow mirrors
+/// are emitted first in configured order, followed by all live directories in
+/// that same order, so a staged header cannot be preempted by a live fallback
+/// directory.  `defines`/`include_dirs`/`param_overrides` are converted to
+/// validated Surelog `-D`/`-I`/`-P` arguments; there is no raw compiler-argument
+/// passthrough.
 pub fn compile_opts(
     config: &LlgConfig,
     files: Vec<String>,
     shadow_base: &Path,
 ) -> llg::core::compile::CompileOpts {
+    compile_opts_with_include_dirs(config, files, shadow_base, true)
+}
+
+/// Build compile options for the LSP's admitted/staged input path.
+///
+/// This deliberately omits live source/include directories.  The LSP stages
+/// every admitted literal include into the private shadow tree; omitting live
+/// `-I` fallbacks also makes macro-generated or dynamic includes fail closed
+/// instead of letting Surelog read an unmeasured project file.  The general
+/// [`compile_opts`] path retains its live directories for dump/general flows
+/// that intentionally need them.
+pub fn compile_opts_isolated(
+    config: &LlgConfig,
+    files: Vec<String>,
+    shadow_base: &Path,
+) -> llg::core::compile::CompileOpts {
+    compile_opts_with_include_dirs(config, files, shadow_base, false)
+}
+
+fn compile_opts_with_include_dirs(
+    config: &LlgConfig,
+    files: Vec<String>,
+    shadow_base: &Path,
+    include_live_dirs: bool,
+) -> llg::core::compile::CompileOpts {
     let mut include_args = Vec::new();
-    for dir in include_dirs(config) {
+    let search_dirs = include_dirs(config);
+    for dir in &search_dirs {
         let shadow_dir = crate::features::shadow_path(&dir, shadow_base);
         include_args.push(format!("-I{}", shadow_dir.display()));
-        include_args.push(format!("-I{}", dir.display()));
+    }
+    if include_live_dirs {
+        for dir in &search_dirs {
+            include_args.push(format!("-I{}", dir.display()));
+        }
     }
     llg::core::compile::CompileOpts {
         files,
@@ -512,6 +621,25 @@ fn resolve_compile(
         },
         warnings,
     ))
+}
+
+fn resolve_analysis(raw: &RawAnalysis) -> Result<AnalysisConfig, ConfigError> {
+    let max_file_bytes = raw.max_file_bytes.unwrap_or(DEFAULT_MAX_FILE_BYTES);
+    if max_file_bytes == 0 {
+        return Err(ConfigError::new("analysis.max_file_bytes must be positive"));
+    }
+    let max_total_input_bytes = raw
+        .max_total_input_bytes
+        .unwrap_or(DEFAULT_MAX_TOTAL_INPUT_BYTES);
+    if max_total_input_bytes == 0 {
+        return Err(ConfigError::new(
+            "analysis.max_total_input_bytes must be positive",
+        ));
+    }
+    Ok(AnalysisConfig {
+        max_file_bytes,
+        max_total_input_bytes,
+    })
 }
 
 fn resolve_dir(base_dir: &Path, entry: &str, field: &str) -> Result<PathBuf, ConfigError> {
@@ -758,7 +886,10 @@ mod tests {
              include_dirs = [\"inc\", \"../vendor/inc\"]\n\
              defines = [\"SYNTHESIS\", \"WIDTH=8\"]\n\
              [compile.param_overrides]\n\
-             DEPTH = 1024\n",
+             DEPTH = 1024\n\
+             [analysis]\n\
+             max_file_bytes = 17\n\
+             max_total_input_bytes = 91\n",
         );
         let config = load.config.expect("valid config");
         assert_eq!(config.sources.directories[0], dir.join("rtl"));
@@ -770,6 +901,8 @@ mod tests {
         );
         assert_eq!(config.compile.defines, vec!["SYNTHESIS", "WIDTH=8"]);
         assert_eq!(config.compile.top.as_deref(), Some("top"));
+        assert_eq!(config.analysis.max_file_bytes, 17);
+        assert_eq!(config.analysis.max_total_input_bytes, 91);
         let opts = compile_opts(&config, vec!["top.sv".to_owned()], &root.join("shadow"));
         assert_eq!(opts.defines, vec!["-DSYNTHESIS", "-DWIDTH=8"]);
         assert_eq!(opts.param_overrides, vec!["-PDEPTH=1024"]);
@@ -799,6 +932,66 @@ mod tests {
         assert!(defaults.sources.include.iter().any(|p| p == "**/*.sv"));
         assert!(defaults.compile.param_overrides.is_empty());
         assert!(defaults.compile.defines.is_empty());
+        assert_eq!(defaults.analysis, AnalysisConfig::default());
+        assert_eq!(defaults.analysis.max_file_bytes, 1024 * 1024);
+        assert_eq!(defaults.analysis.max_total_input_bytes, 8 * 1024 * 1024);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn analysis_budgets_require_positive_integer_values_atomically() {
+        let root =
+            std::env::temp_dir().join(format!("llg_cfg_analysis_budget_{}", std::process::id()));
+        let valid = write_and_load(
+            &root,
+            "schema_version = 1\n\
+             [analysis]\n\
+             max_file_bytes = 1\n\
+             max_total_input_bytes = 2\n",
+        );
+        assert_eq!(
+            valid.config.expect("positive budget config").analysis,
+            AnalysisConfig {
+                max_file_bytes: 1,
+                max_total_input_bytes: 2,
+            }
+        );
+
+        let zero = write_and_load(
+            &root,
+            "schema_version = 1\n[analysis]\nmax_file_bytes = 0\n",
+        );
+        assert!(zero.config.is_none());
+        assert!(zero
+            .errors
+            .iter()
+            .any(|error| error.message.contains("max_file_bytes")
+                && error.message.contains("positive")));
+
+        let zero_total = write_and_load(
+            &root,
+            "schema_version = 1\n[analysis]\nmax_total_input_bytes = 0\n",
+        );
+        assert!(zero_total.config.is_none());
+        assert!(zero_total
+            .errors
+            .iter()
+            .any(|error| error.message.contains("max_total_input_bytes")
+                && error.message.contains("positive")));
+
+        let negative = write_and_load(
+            &root,
+            "schema_version = 1\n[analysis]\nmax_total_input_bytes = -1\n",
+        );
+        assert!(negative.config.is_none());
+        assert!(!negative.errors.is_empty());
+
+        let wrong_type = write_and_load(
+            &root,
+            "schema_version = 1\n[analysis]\nmax_file_bytes = \"1 MiB\"\n",
+        );
+        assert!(wrong_type.config.is_none());
+        assert!(!wrong_type.errors.is_empty());
         let _ = std::fs::remove_dir_all(root);
     }
 
@@ -832,6 +1025,37 @@ mod tests {
         let load = write_and_load(&root, "schema_version = 1\n[sources\n");
         assert!(load.config.is_none());
         assert!(load.errors.iter().any(|e| e.message.contains("malformed")));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn oversized_config_is_rejected_before_toml_parsing() {
+        let root = std::env::temp_dir().join(format!("llg_cfg_oversized_{}", std::process::id()));
+        let dir = root.join("proj");
+        std::fs::create_dir_all(&dir).expect("create config root");
+        let path = dir.join(CONFIG_FILE);
+        let bytes = vec![b'x'; MAX_CONFIG_BYTES as usize + 1];
+        std::fs::write(&path, bytes).expect("write oversized config");
+
+        let error = load_config_file(&path).expect_err("oversized config must be rejected");
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        assert!(error.to_string().contains("exceeds the maximum size"));
+        assert!(error.to_string().contains(&MAX_CONFIG_BYTES.to_string()));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn invalid_utf8_config_is_reported_without_unbounded_decoding() {
+        let root =
+            std::env::temp_dir().join(format!("llg_cfg_invalid_utf8_{}", std::process::id()));
+        let dir = root.join("proj");
+        std::fs::create_dir_all(&dir).expect("create config root");
+        let path = dir.join(CONFIG_FILE);
+        std::fs::write(&path, b"schema_version = 1\n\xff").expect("write invalid UTF-8 config");
+
+        let error = load_config_file(&path).expect_err("invalid UTF-8 must be rejected");
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        assert!(error.to_string().contains("not valid UTF-8"));
         let _ = std::fs::remove_dir_all(root);
     }
 
@@ -1028,6 +1252,84 @@ mod tests {
         let config = load.config.expect("config");
         let dirs = include_dirs(&config);
         assert_eq!(dirs, vec![dir.clone(), dir.join("rtl")]);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn compile_include_args_group_shadow_dirs_before_live_dirs() {
+        let root =
+            std::env::temp_dir().join(format!("llg_cfg_include_order_{}", std::process::id()));
+        let dir = root.join("proj");
+        for child in ["src_a", "src_b", "inc"] {
+            std::fs::create_dir_all(dir.join(child)).expect("create include directory");
+        }
+        let load = write_and_load(
+            &root,
+            "schema_version = 1\n\
+             [sources]\n\
+             directories = [\"src_a\", \"src_b\"]\n\
+             [compile]\n\
+             include_dirs = [\"inc\"]\n",
+        );
+        let config = load.config.expect("config");
+        let shadow_base = dir.join("shadow");
+        let search_dirs = include_dirs(&config);
+        let expected = search_dirs
+            .iter()
+            .map(|directory| {
+                format!(
+                    "-I{}",
+                    crate::features::shadow_path(directory, &shadow_base).display()
+                )
+            })
+            .chain(
+                search_dirs
+                    .iter()
+                    .map(|directory| format!("-I{}", directory.display())),
+            )
+            .collect::<Vec<_>>();
+
+        let opts = compile_opts(&config, vec!["top.sv".to_owned()], &shadow_base);
+        assert_eq!(opts.include_dirs, expected);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn isolated_compile_include_args_omit_live_dirs() {
+        let root =
+            std::env::temp_dir().join(format!("llg_cfg_isolated_include_{}", std::process::id()));
+        let dir = root.join("proj");
+        for child in ["src", "inc"] {
+            std::fs::create_dir_all(dir.join(child)).expect("create include directory");
+        }
+        let load = write_and_load(
+            &root,
+            "schema_version = 1\n\
+             [sources]\n\
+             directories = [\"src\"]\n\
+             [compile]\n\
+             include_dirs = [\"inc\"]\n",
+        );
+        let config = load.config.expect("config");
+        let shadow_base = dir.join("shadow");
+        let search_dirs = include_dirs(&config);
+        let expected_shadow = search_dirs
+            .iter()
+            .map(|directory| {
+                format!(
+                    "-I{}",
+                    crate::features::shadow_path(directory, &shadow_base).display()
+                )
+            })
+            .collect::<Vec<_>>();
+
+        let opts = compile_opts_isolated(&config, vec!["top.sv".to_owned()], &shadow_base);
+        assert_eq!(opts.include_dirs, expected_shadow);
+        for directory in search_dirs {
+            assert!(!opts
+                .include_dirs
+                .contains(&format!("-I{}", directory.display())));
+        }
         let _ = std::fs::remove_dir_all(root);
     }
 

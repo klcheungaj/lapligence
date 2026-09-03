@@ -750,6 +750,7 @@ mod tests {
                 defines: Vec::new(),
                 param_overrides: Default::default(),
             },
+            analysis: Default::default(),
             lint: Default::default(),
         };
         RootDescriptor::from_absolute(root)
@@ -872,6 +873,7 @@ mod tests {
                     defines: Vec::new(),
                     param_overrides: Default::default(),
                 },
+                analysis: Default::default(),
                 lint: Default::default(),
             };
             RootDescriptor::from_absolute(root)
@@ -1008,6 +1010,7 @@ mod tests {
                 defines: Vec::new(),
                 param_overrides: Default::default(),
             },
+            analysis: Default::default(),
             lint: Default::default(),
         };
         let descriptor = RootDescriptor::from_absolute(root.path())
