@@ -37,6 +37,46 @@ type SharedText = Arc<String>;
 type OpenDocuments = BTreeMap<PathBuf, SharedText>;
 type OpenTokenDocument = (PathBuf, SharedText, Vec<String>);
 
+/// Compiler-directive words mirrored from the shared macro scanner's
+/// `DIRECTIVE_KEYWORDS` table.  The scanner also lists `__FILE__` and
+/// `__LINE__` there so they are excluded from macro-usage reporting, but they
+/// are predefined expression macros rather than whole-line directives and
+/// therefore live in the separate table below.
+const SEMANTIC_DIRECTIVE_KEYWORDS: &[&str] = &[
+    "define",
+    "undef",
+    "undefineall",
+    "ifdef",
+    "ifndef",
+    "elsif",
+    "else",
+    "endif",
+    "include",
+    "timescale",
+    "resetall",
+    "default_nettype",
+    "line",
+    "begin_keywords",
+    "end_keywords",
+    "celldefine",
+    "endcelldefine",
+    "pragma",
+    "unconnected_drive",
+    "nounconnected_drive",
+    "accelerate",
+    "noaccelerate",
+    "default_decay_time",
+    "default_trireg_strength",
+    "delay_mode_distributed",
+    "delay_mode_path",
+    "delay_mode_unit",
+    "delay_mode_zero",
+];
+
+/// Entries present in the shared scanner's directive-exclusion table that
+/// must remain source text during isolated parsing.
+const SEMANTIC_PREDEFINED_EXPRESSION_MACROS: &[&str] = &["__FILE__", "__LINE__"];
+
 /// Set once the client's `shutdown` request has been handled; read by the
 /// lifecycle interceptor in `main.rs` to pick the spec-mandated process exit
 /// code (0 after `shutdown`, otherwise 1).
@@ -535,6 +575,32 @@ pub struct Backend {
     /// Inactive-range results keyed on (uri, text digest, effective
     /// `[compile] defines`) — the exact inputs of the pure lexical scan.
     inactive_cache: MemoCache<String, Vec<crate::inactive_ranges::LineRange>>,
+}
+
+struct ModuleExplorerTaskResult {
+    snapshot: module_explorer::ExplorerSnapshot,
+    outcome: &'static str,
+    error: Option<String>,
+}
+
+fn module_explorer_task_result(
+    result: std::result::Result<module_explorer::ExplorerSnapshot, tokio::task::JoinError>,
+) -> ModuleExplorerTaskResult {
+    match result {
+        Ok(snapshot) => ModuleExplorerTaskResult {
+            snapshot,
+            outcome: "ok",
+            error: None,
+        },
+        Err(error) => ModuleExplorerTaskResult {
+            snapshot: module_explorer::ExplorerSnapshot {
+                modules: Vec::new(),
+                roots: Vec::new(),
+            },
+            outcome: "error",
+            error: Some(error.to_string()),
+        },
+    }
 }
 
 impl Backend {
@@ -2242,7 +2308,7 @@ impl Backend {
                 })
                 .collect::<Vec<_>>()
         };
-        let snapshot = tokio::task::spawn_blocking(move || {
+        let task_result = tokio::task::spawn_blocking(move || {
             // The request is one serialized response even when it combines
             // several workspace roots. Share the hierarchy budget across all
             // snapshots before merging them; allocating one budget per root
@@ -2267,25 +2333,35 @@ impl Backend {
             );
             module_explorer::merge(snapshots)
         })
-        .await
-        .unwrap_or_else(|error| {
-            crate::llg_debug!("module explorer snapshot task failed: {error}");
-            module_explorer::ExplorerSnapshot {
-                modules: Vec::new(),
-                roots: Vec::new(),
-            }
-        });
-        crate::llg_debug!(
-            "event=module_explorer.snapshot.end outcome=ok modules={} roots={} truncated_modules={}",
-            snapshot.modules.len(),
-            snapshot.roots.len(),
-            snapshot
-                .modules
-                .iter()
-                .filter(|module| module.is_budget_truncated)
-                .count()
-        );
-        request.complete("ok", snapshot.modules.len() + snapshot.roots.len());
+        .await;
+        let ModuleExplorerTaskResult {
+            snapshot,
+            outcome,
+            error,
+        } = module_explorer_task_result(task_result);
+        let cardinality = snapshot.modules.len() + snapshot.roots.len();
+        let truncated_modules = snapshot
+            .modules
+            .iter()
+            .filter(|module| module.is_budget_truncated)
+            .count();
+        if let Some(error) = error {
+            crate::llg_error!(
+                "event=module_explorer.snapshot.end outcome=error error_kind=task error={} modules={} roots={} truncated_modules={}",
+                error,
+                snapshot.modules.len(),
+                snapshot.roots.len(),
+                truncated_modules
+            );
+        } else {
+            crate::llg_debug!(
+                "event=module_explorer.snapshot.end outcome=ok modules={} roots={} truncated_modules={}",
+                snapshot.modules.len(),
+                snapshot.roots.len(),
+                truncated_modules
+            );
+        }
+        request.complete(outcome, cardinality);
         Ok(snapshot)
     }
 
@@ -2921,7 +2997,8 @@ impl SemanticStage {
             .file_name()
             .unwrap_or_else(|| std::ffi::OsStr::new("document.sv"));
         let path = directory.join(file_name);
-        let parse_text = mask_semantic_preprocessor_directives(text, defines);
+        let masked = mask_semantic_preprocessor_directives(text, defines);
+        let parse_text = normalize_semantic_expression_macros_for_parse(&masked);
         if let Err(error) = std::fs::write(&path, parse_text) {
             let _ = std::fs::remove_dir_all(&directory);
             return Err(error);
@@ -2931,33 +3008,12 @@ impl SemanticStage {
 }
 
 /// Replace standalone compiler-directive lines with spaces while preserving
-/// every newline and character column. Surelog's `-parseonly` mode bypasses
+/// every newline and UTF-16 source column. Surelog's `-parseonly` mode bypasses
 /// preprocessing and otherwise diagnoses valid directives such as
 /// `` `include`` as parser syntax errors. Semantic-token collection is
 /// intentionally source-local, so masking the directives both avoids that
 /// false error and guarantees that includes are not consumed.
 fn mask_semantic_preprocessor_directives(text: &str, defines: &[String]) -> String {
-    const DIRECTIVES: &[&str] = &[
-        "celldefine",
-        "default_nettype",
-        "define",
-        "else",
-        "elsif",
-        "endcelldefine",
-        "endif",
-        "ifdef",
-        "ifndef",
-        "include",
-        "line",
-        "nounconnected_drive",
-        "pragma",
-        "resetall",
-        "timescale",
-        "unconnected_drive",
-        "undef",
-        "undefineall",
-    ];
-
     let inactive_defines = defines
         .iter()
         .map(|define| define.strip_prefix("-D").unwrap_or(define).to_owned())
@@ -2978,12 +3034,11 @@ fn mask_semantic_preprocessor_directives(text: &str, defines: &[String]) -> Stri
         let line_is_inactive = inactive.get(inactive_index).is_some_and(|range| {
             range.start_line <= line_index as u32 && line_index as u32 <= range.end_line
         });
-        let starts_directive =
-            semantic_directive_outside_comment(body, &mut in_block_comment, DIRECTIVES);
+        let starts_directive = semantic_directive_outside_comment(body, &mut in_block_comment);
         let directive = continuation || starts_directive;
         continuation = directive && body.trim_end().ends_with('\\');
         if directive || line_is_inactive {
-            output.extend(body.chars().map(|ch| if ch == '\t' { '\t' } else { ' ' }));
+            output.push_str(&mask_semantic_source_line(body));
         } else {
             output.push_str(body);
         }
@@ -2994,14 +3049,101 @@ fn mask_semantic_preprocessor_directives(text: &str, defines: &[String]) -> Stri
     output
 }
 
+/// Mask one source line without changing its line ending or LSP column
+/// accounting.  Source positions use UTF-16 code units, so a supplementary
+/// character becomes two spaces; tabs remain tabs just as they did before
+/// masking.  `\n` is normally handled by the caller, but preserving it here
+/// keeps this helper safe for direct use too.
+fn mask_semantic_source_line(line: &str) -> String {
+    let mut masked = String::with_capacity(line.len());
+    for ch in line.chars() {
+        match ch {
+            '\r' | '\n' | '\t' => masked.push(ch),
+            _ => {
+                for _ in 0..ch.len_utf16() {
+                    masked.push(' ');
+                }
+            }
+        }
+    }
+    masked
+}
+
+/// Surelog's parse-only mode does not run the preprocessor, so a raw
+/// backtick expression macro is rejected by the parser. Keep the expression
+/// macro line intact in the masker above, then remove only its backtick in the
+/// private staged parse copy; the identifier remains at the same byte and
+/// UTF-16 position and is syntactically valid as an expression operand.
+fn normalize_semantic_expression_macros_for_parse(text: &str) -> String {
+    let bytes = text.as_bytes();
+    let mut normalized = bytes.to_vec();
+    let mut index = 0usize;
+    let mut in_block_comment = false;
+    let mut in_string = false;
+    let mut escaped = false;
+
+    while index < bytes.len() {
+        if in_block_comment {
+            if bytes[index..].starts_with(b"*/") {
+                in_block_comment = false;
+                index += 2;
+            } else {
+                index += 1;
+            }
+            continue;
+        }
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if bytes[index] == b'\\' {
+                escaped = true;
+            } else if bytes[index] == b'"' {
+                in_string = false;
+            }
+            index += 1;
+            continue;
+        }
+        if bytes[index..].starts_with(b"//") {
+            index += 2;
+            while index < bytes.len() && bytes[index] != b'\n' {
+                index += 1;
+            }
+            continue;
+        }
+        if bytes[index..].starts_with(b"/*") {
+            in_block_comment = true;
+            index += 2;
+            continue;
+        }
+        if bytes[index] == b'"' {
+            in_string = true;
+            index += 1;
+            continue;
+        }
+        if bytes[index] == b'`'
+            && SEMANTIC_PREDEFINED_EXPRESSION_MACROS
+                .iter()
+                .any(|macro_name| {
+                    let name = macro_name.as_bytes();
+                    let rest = &bytes[index + 1..];
+                    rest.starts_with(name)
+                        && rest.get(name.len()).is_none_or(|next| {
+                            !next.is_ascii_alphanumeric() && !matches!(*next, b'_' | b'$')
+                        })
+                })
+        {
+            normalized[index] = b' ';
+        }
+        index += 1;
+    }
+
+    String::from_utf8(normalized).expect("macro normalization preserves source UTF-8")
+}
+
 /// Whether the first non-whitespace, non-comment token on this line is one
 /// of the directives masked for isolated semantic parsing. The block-comment
 /// state crosses lines, and quoted/comment text never starts a directive.
-fn semantic_directive_outside_comment(
-    line: &str,
-    in_block_comment: &mut bool,
-    directives: &[&str],
-) -> bool {
+fn semantic_directive_outside_comment(line: &str, in_block_comment: &mut bool) -> bool {
     let bytes = line.as_bytes();
     let mut index = 0usize;
     let mut saw_code = false;
@@ -3048,7 +3190,9 @@ fn semantic_directive_outside_comment(
             while end < bytes.len() && (bytes[end].is_ascii_alphanumeric() || bytes[end] == b'_') {
                 end += 1;
             }
-            directive = directives.contains(&&line[start..end]);
+            let keyword = &line[start..end];
+            directive = SEMANTIC_DIRECTIVE_KEYWORDS.contains(&keyword)
+                && !SEMANTIC_PREDEFINED_EXPRESSION_MACROS.contains(&keyword);
         }
         saw_code = true;
         if bytes[index] == b'"' {
@@ -3072,15 +3216,89 @@ fn empty_semantic_tokens() -> SemanticTokens {
     }
 }
 
-fn cached_semantic_tokens(analysis: Option<&Analysis>, paths: &[String]) -> SemanticTokens {
-    analysis
-        .and_then(|analysis| {
-            paths
-                .iter()
-                .map(|path| features::semantic_tokens_for(analysis, path))
-                .find(|tokens| !tokens.data.is_empty())
-        })
-        .unwrap_or_else(empty_semantic_tokens)
+fn cached_semantic_tokens(
+    analysis: Option<&Analysis>,
+    paths: &[String],
+    allow_filename_fallback: bool,
+) -> SemanticTokens {
+    let Some(analysis) = analysis else {
+        return empty_semantic_tokens();
+    };
+
+    // Check every exact/canonical alias before looking at any token list.  A
+    // project analysis for an open buffer normally contains the shadow path,
+    // while its diagnostic may carry the real path (or vice versa).  Looking
+    // up one candidate at a time would let the other alias, or a same-named
+    // file found by the compatibility fallback, resurrect partial tokens.
+    if paths
+        .iter()
+        .any(|path| cached_semantic_syntax_diagnostic_matches(analysis, path))
+    {
+        return empty_semantic_tokens();
+    }
+
+    // Prefer exact/canonical token paths.  Once an exact path entry exists,
+    // an empty stream is authoritative for that file and must not fall
+    // through to an unrelated same-basename file.
+    let mut found_exact = false;
+    for path in paths {
+        for file_tokens in &analysis.tokens {
+            if !cached_semantic_file_matches(&file_tokens.path, path) {
+                continue;
+            }
+            found_exact = true;
+            let tokens = crate::semantic_tokens::encode(&file_tokens.nodes);
+            if !tokens.data.is_empty() {
+                return tokens;
+            }
+        }
+    }
+    if found_exact || !allow_filename_fallback {
+        return empty_semantic_tokens();
+    }
+
+    // Preserve the historical basename lookup for closed/project requests,
+    // where Surelog can report a compatible path spelling.  It is disabled
+    // for open buffers so two files with the same basename cannot contaminate
+    // an isolated request's cache fallback.  Do not serve a partial stream
+    // from a fallback file that is itself syntax-invalid.
+    for path in paths {
+        let Some(file_name) = Path::new(path).file_name() else {
+            continue;
+        };
+        for file_tokens in &analysis.tokens {
+            if Path::new(&file_tokens.path).file_name() != Some(file_name)
+                || cached_semantic_syntax_diagnostic_matches(analysis, &file_tokens.path)
+            {
+                continue;
+            }
+            let tokens = crate::semantic_tokens::encode(&file_tokens.nodes);
+            if !tokens.data.is_empty() {
+                return tokens;
+            }
+        }
+    }
+    empty_semantic_tokens()
+}
+
+fn cached_semantic_file_matches(left: &str, right: &str) -> bool {
+    if Path::new(left) == Path::new(right) {
+        return true;
+    }
+    match (std::fs::canonicalize(left), std::fs::canonicalize(right)) {
+        (Ok(left), Ok(right)) => left == right,
+        _ => false,
+    }
+}
+
+fn cached_semantic_syntax_diagnostic_matches(analysis: &Analysis, path: &str) -> bool {
+    analysis.diagnostics.iter().any(|diagnostic| {
+        matches!(diagnostic.severity, llg::ffi::surelog::Severity::Syntax)
+            && diagnostic
+                .file
+                .as_deref()
+                .is_some_and(|diagnostic_file| cached_semantic_file_matches(diagnostic_file, path))
+    })
 }
 
 fn compute_semantic_tokens(
@@ -3090,7 +3308,7 @@ fn compute_semantic_tokens(
     current: impl Fn() -> bool,
     parent_id: Option<u64>,
 ) -> (Option<OpenTokenResult>, SemanticTokens) {
-    let cached = cached_semantic_tokens(analysis.as_deref(), &paths);
+    let cached = cached_semantic_tokens(analysis.as_deref(), &paths, open_document.is_none());
     let fresh = open_document.map(|(real, text, defines)| {
         let result = compute_open_document_semantic_tokens(real, text, defines, current, parent_id);
         if let Err(error) = &result {
@@ -3277,6 +3495,18 @@ pub(crate) fn emergency_shadow_cleanup() {
         .lock()
         .unwrap_or_else(|error| error.into_inner());
     features::cleanup_process_shadow();
+}
+
+/// Perform the final shadow sweep and terminate while still holding the
+/// staging lock. Keeping the lock through process exit closes the small race
+/// where a queued analysis could recreate the shadow base after cleanup but
+/// before [`std::process::exit`].
+pub(crate) fn emergency_shadow_cleanup_and_exit(code: i32) -> ! {
+    let _staging = shadow_staging_lock()
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    features::cleanup_process_shadow();
+    std::process::exit(code)
 }
 
 /// Remove every root's staged files plus the entire process shadow base.
@@ -4871,6 +5101,7 @@ impl LanguageServer for Backend {
             );
         }
         let captured_text = open_document.as_ref().map(|(_, text, _)| text.clone());
+        let allow_filename_fallback = captured_text.is_none();
         let fallback_analysis = analysis.clone();
         let fallback_paths = paths.clone();
 
@@ -4880,7 +5111,11 @@ impl LanguageServer for Backend {
         // acquiring a flight or starting isolated work.
         if let Some(captured_text) = captured_text.as_deref() {
             if !open_document_is_current(&self.state, &uri, captured_text) {
-                let tokens = cached_semantic_tokens(fallback_analysis.as_deref(), &fallback_paths);
+                let tokens = cached_semantic_tokens(
+                    fallback_analysis.as_deref(),
+                    &fallback_paths,
+                    allow_filename_fallback,
+                );
                 request.complete("stale", tokens.data.len());
                 return Ok(Some(SemanticTokensResult::Tokens(tokens)));
             }
@@ -4892,13 +5127,20 @@ impl LanguageServer for Backend {
             // staging, and spawn_blocking.
             if let Some((_, text, _)) = open_document.as_ref() {
                 if !open_document_is_current(&self.state, &uri, text) {
-                    let tokens =
-                        cached_semantic_tokens(fallback_analysis.as_deref(), &fallback_paths);
+                    let tokens = cached_semantic_tokens(
+                        fallback_analysis.as_deref(),
+                        &fallback_paths,
+                        allow_filename_fallback,
+                    );
                     request.complete("stale", tokens.data.len());
                     return Ok(Some(SemanticTokensResult::Tokens(tokens)));
                 }
                 crate::llg_debug!("semantic tokens rejected: {}", limit.message());
-                let tokens = cached_semantic_tokens(fallback_analysis.as_deref(), &fallback_paths);
+                let tokens = cached_semantic_tokens(
+                    fallback_analysis.as_deref(),
+                    &fallback_paths,
+                    allow_filename_fallback,
+                );
                 request.complete("too-large", tokens.data.len());
                 return Ok(Some(SemanticTokensResult::Tokens(tokens)));
             }
@@ -4921,8 +5163,11 @@ impl LanguageServer for Backend {
                     .as_deref()
                     .is_some_and(|text| open_document_is_current(&self.state, &uri, text));
                 if !cache_is_current {
-                    let tokens =
-                        cached_semantic_tokens(fallback_analysis.as_deref(), &fallback_paths);
+                    let tokens = cached_semantic_tokens(
+                        fallback_analysis.as_deref(),
+                        &fallback_paths,
+                        allow_filename_fallback,
+                    );
                     request.complete("stale", tokens.data.len());
                     return Ok(Some(SemanticTokensResult::Tokens(tokens)));
                 }
@@ -4942,7 +5187,11 @@ impl LanguageServer for Backend {
         // lookup.
         if let Some(captured_text) = captured_text.as_deref() {
             if !open_document_is_current(&self.state, &uri, captured_text) {
-                let tokens = cached_semantic_tokens(fallback_analysis.as_deref(), &fallback_paths);
+                let tokens = cached_semantic_tokens(
+                    fallback_analysis.as_deref(),
+                    &fallback_paths,
+                    allow_filename_fallback,
+                );
                 request.complete("stale", tokens.data.len());
                 return Ok(Some(SemanticTokensResult::Tokens(tokens)));
             }
@@ -4980,11 +5229,19 @@ impl LanguageServer for Backend {
                 let cached_analysis = fallback_analysis.clone();
                 let cached_paths = fallback_paths.clone();
                 let cached = tokio::task::spawn_blocking(move || {
-                    cached_semantic_tokens(cached_analysis.as_deref(), &cached_paths)
+                    cached_semantic_tokens(
+                        cached_analysis.as_deref(),
+                        &cached_paths,
+                        allow_filename_fallback,
+                    )
                 })
                 .await
                 .unwrap_or_else(|_| {
-                    cached_semantic_tokens(fallback_analysis.as_deref(), &fallback_paths)
+                    cached_semantic_tokens(
+                        fallback_analysis.as_deref(),
+                        &fallback_paths,
+                        allow_filename_fallback,
+                    )
                 });
                 (fresh, cached, "single-flight")
             }
@@ -5016,7 +5273,11 @@ impl LanguageServer for Backend {
                         leader.finish(Err(error.clone()));
                         (
                             Some(Err(error)),
-                            cached_semantic_tokens(fallback_analysis.as_deref(), &fallback_paths),
+                            cached_semantic_tokens(
+                                fallback_analysis.as_deref(),
+                                &fallback_paths,
+                                allow_filename_fallback,
+                            ),
                             "stale",
                         )
                     } else {
@@ -5024,11 +5285,19 @@ impl LanguageServer for Backend {
                         let cached_analysis = fallback_analysis.clone();
                         let cached_paths = fallback_paths.clone();
                         let cached = tokio::task::spawn_blocking(move || {
-                            cached_semantic_tokens(cached_analysis.as_deref(), &cached_paths)
+                            cached_semantic_tokens(
+                                cached_analysis.as_deref(),
+                                &cached_paths,
+                                allow_filename_fallback,
+                            )
                         })
                         .await
                         .unwrap_or_else(|_| {
-                            cached_semantic_tokens(fallback_analysis.as_deref(), &fallback_paths)
+                            cached_semantic_tokens(
+                                fallback_analysis.as_deref(),
+                                &fallback_paths,
+                                allow_filename_fallback,
+                            )
                         });
                         (Some(Ok(tokens)), cached, "cache-race")
                     }
@@ -5046,6 +5315,7 @@ impl LanguageServer for Backend {
                                     cached_semantic_tokens(
                                         fallback_analysis.as_deref(),
                                         &fallback_paths,
+                                        allow_filename_fallback,
                                     ),
                                     "stale",
                                 )
@@ -5071,6 +5341,7 @@ impl LanguageServer for Backend {
                                     cached_semantic_tokens(
                                         cached_analysis.as_deref(),
                                         &cached_paths,
+                                        allow_filename_fallback,
                                     )
                                 })
                                 .await
@@ -5078,6 +5349,7 @@ impl LanguageServer for Backend {
                                     cached_semantic_tokens(
                                         fallback_analysis.as_deref(),
                                         &fallback_paths,
+                                        allow_filename_fallback,
                                     )
                                 });
                                 (fresh, cached, "computed")
@@ -5092,6 +5364,7 @@ impl LanguageServer for Backend {
                                 cached_semantic_tokens(
                                     fallback_analysis.as_deref(),
                                     &fallback_paths,
+                                    allow_filename_fallback,
                                 ),
                                 "no-document",
                             )
@@ -5111,7 +5384,11 @@ impl LanguageServer for Backend {
                 );
                 (
                     None,
-                    cached_semantic_tokens(fallback_analysis.as_deref(), &fallback_paths),
+                    cached_semantic_tokens(
+                        fallback_analysis.as_deref(),
+                        &fallback_paths,
+                        allow_filename_fallback,
+                    ),
                     "saturated",
                 )
             }
@@ -5141,7 +5418,11 @@ impl LanguageServer for Backend {
                     crate::llg_debug!("semantic tokens: blocking task failed: {error}");
                     (
                         None,
-                        cached_semantic_tokens(fallback_analysis.as_deref(), &fallback_paths),
+                        cached_semantic_tokens(
+                            fallback_analysis.as_deref(),
+                            &fallback_paths,
+                            allow_filename_fallback,
+                        ),
                     )
                 });
                 (result.0, result.1, "computed")
@@ -5719,6 +6000,22 @@ mod tests {
         config
     }
 
+    fn semantic_token_file(path: &Path, line: u32) -> llg::core::tokens::FileTokens {
+        let path = path.to_string_lossy().into_owned();
+        llg::core::tokens::FileTokens {
+            path: path.clone(),
+            nodes: vec![llg::ffi::surelog::VObjectInfo {
+                line,
+                col: 1,
+                end_line: line,
+                end_col: 2,
+                vpi_type: llg::ffi::vpi::vpiModule,
+                name: Some("m".to_owned()),
+                file: path,
+            }],
+        }
+    }
+
     fn empty_backend_state() -> BackendState {
         BackendState {
             roots: BTreeMap::new(),
@@ -5836,6 +6133,123 @@ mod tests {
             open_token_cache_key("file:///q.sv", "module m;\nendmodule", &defines_a),
             "uri is part of the key"
         );
+    }
+
+    #[test]
+    fn cached_semantic_tokens_syntax_error_blocks_real_shadow_alias_fallbacks() {
+        // Arrange
+        let real = PathBuf::from("/tmp/llg-lsp-token-alias/src/thing.sv");
+        let shadow = PathBuf::from("/tmp/llg-lsp-token-alias-shadow/src/thing.sv");
+        let paths = vec![
+            shadow.to_string_lossy().into_owned(),
+            real.to_string_lossy().into_owned(),
+        ];
+        let mut analysis = features::empty_analysis();
+        analysis.tokens.push(semantic_token_file(&shadow, 4));
+        analysis.diagnostics.push(llg::ffi::surelog::Diag {
+            severity: llg::ffi::surelog::Severity::Syntax,
+            file: Some(real.to_string_lossy().into_owned()),
+            line: 4,
+            col: 1,
+            message: "incomplete declaration".to_owned(),
+        });
+
+        // Act
+        let cached = cached_semantic_tokens(Some(&analysis), &paths, false);
+
+        // Assert: the real-path diagnostic suppresses the shadow-path token
+        // before any alternate-path lookup can serve it.
+        assert!(cached.data.is_empty());
+
+        // Repeat with the diagnostic and token aliases reversed.  Both
+        // aliases are relevant to the same open document.
+        analysis.tokens.clear();
+        analysis.tokens.push(semantic_token_file(&real, 4));
+        analysis.diagnostics[0].file = Some(shadow.to_string_lossy().into_owned());
+        let cached = cached_semantic_tokens(Some(&analysis), &paths, false);
+        assert!(cached.data.is_empty());
+    }
+
+    #[test]
+    fn cached_semantic_tokens_checks_canonical_aliases_before_fallback() {
+        // Arrange
+        let root = temp_root("token_canonical_alias");
+        let source_dir = root.join("src");
+        std::fs::create_dir_all(&source_dir).expect("create canonical alias root");
+        let real = source_dir.join("thing.sv");
+        let lexical_alias = source_dir.join(".").join("thing.sv");
+        std::fs::write(&real, "module m; endmodule\n").expect("write canonical alias source");
+        let mut analysis = features::empty_analysis();
+        analysis.tokens.push(semantic_token_file(&real, 4));
+        analysis.diagnostics.push(llg::ffi::surelog::Diag {
+            severity: llg::ffi::surelog::Severity::Syntax,
+            file: Some(lexical_alias.to_string_lossy().into_owned()),
+            line: 4,
+            col: 1,
+            message: "incomplete declaration".to_owned(),
+        });
+
+        // Act
+        let cached = cached_semantic_tokens(
+            Some(&analysis),
+            &[real.to_string_lossy().into_owned()],
+            false,
+        );
+
+        // Assert
+        assert!(cached.data.is_empty());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn cached_semantic_tokens_isolates_same_basename_files_and_preserves_closed_fallbacks() {
+        // Arrange
+        let left = PathBuf::from("/tmp/llg-lsp-token-left/dup.sv");
+        let right = PathBuf::from("/tmp/llg-lsp-token-right/dup.sv");
+        let mut analysis = features::empty_analysis();
+        analysis.tokens.push(semantic_token_file(&left, 2));
+        analysis.tokens.push(semantic_token_file(&right, 20));
+        analysis.diagnostics.push(llg::ffi::surelog::Diag {
+            severity: llg::ffi::surelog::Severity::Syntax,
+            file: Some(left.to_string_lossy().into_owned()),
+            line: 2,
+            col: 1,
+            message: "incomplete declaration".to_owned(),
+        });
+
+        // Act / Assert: the invalid left file is empty, while the valid
+        // right file's exact path still returns its own token stream.
+        let left_tokens = cached_semantic_tokens(
+            Some(&analysis),
+            &[left.to_string_lossy().into_owned()],
+            false,
+        );
+        assert!(left_tokens.data.is_empty());
+        let right_tokens = cached_semantic_tokens(
+            Some(&analysis),
+            &[right.to_string_lossy().into_owned()],
+            false,
+        );
+        assert_eq!(right_tokens.data.len(), 1);
+        assert_eq!(right_tokens.data[0].delta_line, 19);
+
+        // An open-buffer fallback never guesses from another same-basename
+        // file.  The closed/project compatibility path retains the historic
+        // basename lookup when no exact entry exists.
+        analysis.diagnostics.clear();
+        let missing = PathBuf::from("/tmp/llg-lsp-token-missing/dup.sv");
+        let open_fallback = cached_semantic_tokens(
+            Some(&analysis),
+            &[missing.to_string_lossy().into_owned()],
+            false,
+        );
+        assert!(open_fallback.data.is_empty());
+        let closed_fallback = cached_semantic_tokens(
+            Some(&analysis),
+            &[missing.to_string_lossy().into_owned()],
+            true,
+        );
+        assert_eq!(closed_fallback.data.len(), 1);
     }
 
     #[test]
@@ -6820,6 +7234,34 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn module_explorer_task_failure_uses_error_outcome_and_empty_snapshot() {
+        // Arrange: a panic in the blocking worker is surfaced as a JoinError.
+        let task = tokio::task::spawn_blocking(|| -> module_explorer::ExplorerSnapshot {
+            panic!("intentional module-explorer task failure");
+        });
+
+        // Act
+        let result = module_explorer_task_result(task.await);
+
+        // Assert: task failure is not indistinguishable from a valid empty
+        // workspace, while the fallback remains protocol-safe.
+        assert_eq!(result.outcome, "error");
+        assert!(
+            result.error.is_some(),
+            "JoinError must be retained for logging"
+        );
+        assert!(result.snapshot.modules.is_empty());
+        assert!(result.snapshot.roots.is_empty());
+
+        let empty_workspace = module_explorer_task_result(Ok(module_explorer::ExplorerSnapshot {
+            modules: Vec::new(),
+            roots: Vec::new(),
+        }));
+        assert_eq!(empty_workspace.outcome, "ok");
+        assert!(empty_workspace.error.is_none());
+    }
+
     #[test]
     fn commit_job_publishes_closed_files_and_suppresses_unchanged_payloads() {
         use llg::ffi::surelog::{Diag, Severity};
@@ -7190,6 +7632,239 @@ mod tests {
         for (original, replacement) in source_lines.iter().zip(masked_lines) {
             assert_eq!(original.chars().count(), replacement.chars().count());
         }
+    }
+
+    #[test]
+    fn semantic_parse_masks_begin_keywords_and_delay_directives() {
+        // Arrange: these compiler directives are valid in a preprocessed
+        // source file but are not accepted by the request-local parse-only
+        // path. The continuation also must not leak into the parser.
+        let source = concat!(
+            "  `begin_keywords \"1800-2012\" \\\r\n",
+            "    \"1800-2017\"\r\n",
+            "`end_keywords\r\n",
+            "`accelerate\r\n",
+            "`noaccelerate\r\n",
+            "`default_decay_time 0\r\n",
+            "`default_trireg_strength (strong1, strong0)\r\n",
+            "`delay_mode_distributed\r\n",
+            "`delay_mode_path\r\n",
+            "`delay_mode_unit\r\n",
+            "`delay_mode_zero\r\n",
+            "module top;\r\n",
+            "endmodule\r\n",
+        );
+
+        // Act
+        let masked = mask_semantic_preprocessor_directives(source, &[]);
+        let lines = masked.lines().collect::<Vec<_>>();
+
+        // Assert
+        for line in &lines[..11] {
+            assert!(line.trim().is_empty(), "directive was not masked: {line:?}");
+        }
+        assert_eq!(lines[11], "module top;");
+        assert_eq!(lines[12], "endmodule");
+        assert_eq!(source.len(), masked.len(), "CRLF bytes must be retained");
+        assert_eq!(
+            source.encode_utf16().count(),
+            masked.encode_utf16().count(),
+            "masked text must retain UTF-16 positions"
+        );
+        assert_eq!(
+            source.matches("\r\n").count(),
+            masked.matches("\r\n").count()
+        );
+    }
+
+    #[test]
+    fn semantic_parse_accepts_masked_compiler_directives() {
+        // Arrange
+        let _guard = SHADOW_TESTS_LOCK
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let root = temp_root("semantic_directives");
+        std::fs::create_dir_all(&root).expect("create semantic test root");
+        let path = root.join("directives.sv");
+        let source = concat!(
+            "`begin_keywords \"1800-2012\"\n",
+            "`end_keywords\n",
+            "`accelerate\n",
+            "`default_decay_time 0\n",
+            "`delay_mode_distributed\n",
+            "`delay_mode_path\n",
+            "`delay_mode_unit\n",
+            "`delay_mode_zero\n",
+            "module top;\n",
+            "endmodule\n",
+        );
+        let masked = mask_semantic_preprocessor_directives(source, &[]);
+        std::fs::write(&path, masked).expect("write masked semantic source");
+
+        // Act
+        let tokens = features::semantic_tokens_for_open_document(
+            path.to_str().expect("UTF-8 test path"),
+            &[],
+        );
+        features::cleanup_process_shadow();
+        let _ = std::fs::remove_dir_all(root);
+
+        // Assert: the valid module survives parse-only collection, so the
+        // directive lines did not become false syntax errors.
+        let tokens = tokens.expect("masked compiler directives must parse");
+        assert!(!tokens.data.is_empty(), "module tokens should be collected");
+    }
+
+    #[test]
+    fn semantic_parse_masks_every_shared_directive_keyword() {
+        // Arrange / Act / Assert: exercise the local classifier against the
+        // complete compiler-directive keyword set mirrored from
+        // core::macros. The scanner-only predefined expression macros are
+        // covered separately because they must remain parseable source.
+        for keyword in SEMANTIC_DIRECTIVE_KEYWORDS {
+            let source = format!("  `{keyword} argument\r\nmodule top;\r\nendmodule\r\n");
+            let masked = mask_semantic_preprocessor_directives(&source, &[]);
+            let first_line = masked.lines().next().expect("directive line");
+
+            assert!(
+                first_line.trim().is_empty(),
+                "shared directive `{keyword}` was not masked: {first_line:?}"
+            );
+            assert_eq!(
+                source.len(),
+                masked.len(),
+                "byte positions changed for `{keyword}`"
+            );
+            assert_eq!(
+                source.encode_utf16().count(),
+                masked.encode_utf16().count(),
+                "UTF-16 positions changed for `{keyword}`"
+            );
+            assert_eq!(
+                source.matches("\r\n").count(),
+                masked.matches("\r\n").count(),
+                "line endings changed for `{keyword}`"
+            );
+            assert!(masked.contains("module top;"));
+        }
+    }
+
+    #[test]
+    fn semantic_parse_keeps_predefined_expression_macros_in_multiline_localparams() {
+        // Arrange
+        assert_eq!(
+            SEMANTIC_PREDEFINED_EXPRESSION_MACROS,
+            &["__FILE__", "__LINE__"]
+        );
+        for keyword in SEMANTIC_PREDEFINED_EXPRESSION_MACROS {
+            assert!(
+                !SEMANTIC_DIRECTIVE_KEYWORDS.contains(keyword),
+                "predefined expression macro `{keyword}` must not be a whole-line directive"
+            );
+        }
+        let source = concat!(
+            "module top;\n",
+            "  localparam string source_file =\n",
+            "    `__FILE__;\n",
+            "  localparam int source_line =\n",
+            "    `__LINE__;\n",
+            "  `include \"not-consumed.svh\"\n",
+            "endmodule\n",
+        );
+
+        // Act
+        let masked = mask_semantic_preprocessor_directives(source, &[]);
+        let source_lines = source.lines().collect::<Vec<_>>();
+        let masked_lines = masked.lines().collect::<Vec<_>>();
+
+        // Assert: macro-use lines retain their source text, while the actual
+        // compiler directive remains masked.
+        assert_eq!(masked_lines[2], source_lines[2]);
+        assert_eq!(masked_lines[4], source_lines[4]);
+        assert!(masked_lines[5].trim().is_empty());
+        assert_eq!(source.len(), masked.len());
+        assert_eq!(source.encode_utf16().count(), masked.encode_utf16().count());
+
+        let prefixed = "`__FILE__SUFFIX `__LINE__WIDTH\n";
+        assert_eq!(
+            normalize_semantic_expression_macros_for_parse(prefixed),
+            prefixed,
+            "longer user macro identifiers must not match predefined names by prefix"
+        );
+
+        // Also exercise the isolated parser over the staged source.  The
+        // request-local copy keeps the macro lines nonblank while replacing
+        // only their backtick for Surelog's raw parse-only grammar.
+        let _guard = SHADOW_TESTS_LOCK
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let path = temp_root("semantic_predefined_expression_macros").join("predefined.sv");
+        let stage = SemanticStage::new(&path, source, &[]).expect("stage semantic macro source");
+        let tokens = features::semantic_tokens_for_open_document(
+            stage.path.to_str().expect("UTF-8 staged path"),
+            &[],
+        );
+        drop(stage);
+        features::cleanup_process_shadow();
+        let tokens = tokens.expect("predefined expression macros must parse in isolation");
+        assert!(!tokens.data.is_empty(), "module tokens should be collected");
+    }
+
+    #[test]
+    fn semantic_parse_masks_only_directives_outside_strings_and_comments() {
+        // Arrange
+        let source = concat!(
+            "localparam string text = \"`begin_keywords\";\r\n",
+            "// `delay_mode_zero\r\n",
+            "/* `accelerate\r\n",
+            "   `end_keywords */\r\n",
+            "  `delay_mode_zero\r\n",
+            "module top;\r\n",
+            "endmodule\r\n",
+        );
+
+        // Act
+        let masked = mask_semantic_preprocessor_directives(source, &[]);
+        let source_lines = source.lines().collect::<Vec<_>>();
+        let masked_lines = masked.lines().collect::<Vec<_>>();
+
+        // Assert
+        assert_eq!(&masked_lines[..4], &source_lines[..4]);
+        assert!(masked_lines[4].trim().is_empty());
+        assert_eq!(&masked_lines[5..], &source_lines[5..]);
+    }
+
+    #[test]
+    fn semantic_parse_masks_inactive_unicode_lines_without_changing_utf16_positions() {
+        // Arrange: the inactive body contains a supplementary character, so
+        // scalar-count preservation alone would move an LSP UTF-16 column.
+        let source = concat!(
+            "`ifdef UNUSED\r\n",
+            "😀 must not reach parse-only\r\n",
+            "`endif\r\n",
+            "module top;\r\n",
+            "endmodule\r\n",
+        );
+
+        // Act
+        let masked = mask_semantic_preprocessor_directives(source, &[]);
+
+        // Assert
+        assert_eq!(
+            source.encode_utf16().count(),
+            masked.encode_utf16().count(),
+            "inactive masking must preserve UTF-16 coordinates"
+        );
+        assert_eq!(
+            source.matches("\r\n").count(),
+            masked.matches("\r\n").count()
+        );
+        assert_eq!(
+            masked.lines().nth(3),
+            Some("module top;"),
+            "active source after an inactive branch must remain unchanged"
+        );
+        assert_eq!(masked.lines().nth(4), Some("endmodule"));
     }
 
     #[test]

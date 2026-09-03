@@ -92,7 +92,10 @@ tower-lsp server (stdio) for VSCode-style editors, built on the shared core:
   module definitions.  Its shared response budget reserves useful prefixes
   for both hierarchy roots and module definitions before optional typed
   contents consume the remaining slots, so truncation cannot leave either
-  side of a valid source graph empty.
+  side of a valid source graph empty. Multi-workspace requests partition both
+  root and module-catalog slots deterministically; unused catalog capacity
+  rolls forward, while each workspace retains a local truncation-marker
+  reservation.
   A committed model replacement or clear emits the
   empty-params `llg/moduleExplorerChanged` notification so clients refetch;
   diagnostics-only/fatal commits that retain the served model do not emit it.

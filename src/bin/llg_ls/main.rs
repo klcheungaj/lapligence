@@ -33,6 +33,8 @@ mod conditional_conformance;
 
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
 use std::time::Duration;
 
@@ -61,9 +63,113 @@ const EXIT_GRACE: Duration = Duration::from_millis(300);
 ///   `exit` arrives, so the wrapper schedules termination: a short grace
 ///   period, a final temp-tree sweep on the blocking pool, then
 ///   `std::process::exit` with the spec-mandated code (0 after `shutdown`,
-///   otherwise 1).
+///   otherwise 1).  The main future retains the task if the transport returns
+///   early because stdin reached EOF, so runtime shutdown cannot cancel it.
 struct LifecycleService<S> {
     inner: S,
+    exit: ExitCoordinator,
+}
+
+#[derive(Clone)]
+struct ExitCoordinator {
+    state: Arc<ExitState>,
+}
+
+struct ExitState {
+    requested: AtomicBool,
+    task: Mutex<Option<tokio::task::JoinHandle<()>>>,
+}
+
+impl ExitCoordinator {
+    fn new() -> Self {
+        Self {
+            state: Arc::new(ExitState {
+                requested: AtomicBool::new(false),
+                task: Mutex::new(None),
+            }),
+        }
+    }
+
+    fn request(&self) {
+        // LSP clients should send one exit notification, but accepting a
+        // duplicate must not create two independent process terminators.
+        if self.state.requested.swap(true, Ordering::SeqCst) {
+            return;
+        }
+
+        let task = tokio::spawn(async {
+            tokio::time::sleep(EXIT_GRACE).await;
+            let code = i32::from(!lsp::shutdown_requested());
+            let cleanup = tokio::task::spawn_blocking(move || -> ! {
+                lsp::emergency_shadow_cleanup_and_exit(code)
+            })
+            .await;
+            match cleanup {
+                Ok(never) => match never {},
+                Err(error) => {
+                    // A blocking task normally cannot be cancelled after it
+                    // starts. If the pool rejects it before that point, keep
+                    // the same cleanup/exit guarantee on this runtime thread.
+                    crate::llg_error!("event=exit.cleanup outcome=task-error error={}", error);
+                    lsp::emergency_shadow_cleanup_and_exit(code);
+                }
+            }
+        });
+        *self
+            .state
+            .task
+            .lock()
+            .unwrap_or_else(|error| error.into_inner()) = Some(task);
+    }
+
+    fn requested(&self) -> bool {
+        self.state.requested.load(Ordering::SeqCst)
+    }
+
+    /// Keep the runtime alive until the scheduled process terminator has run.
+    /// This is needed when `serve` returns because stdin closed immediately
+    /// after the exit notification.
+    async fn finish_after_serve(&self) -> ! {
+        let task = self
+            .state
+            .task
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .take();
+        if let Some(task) = task {
+            match task.await {
+                Ok(()) => {
+                    // The scheduled task only returns if its blocking cleanup
+                    // unexpectedly failed; retry below before returning from
+                    // main so exit cannot silently become a normal EOF.
+                    crate::llg_error!("event=exit.cleanup outcome=returned-before-exit");
+                }
+                Err(error) => {
+                    // A panic or cancellation is likewise repaired by the
+                    // single fallback below. No lock is held across await.
+                    crate::llg_error!("event=exit.cleanup outcome=join-error error={}", error);
+                }
+            }
+        }
+
+        let code = i32::from(!lsp::shutdown_requested());
+        match tokio::task::spawn_blocking(move || -> ! {
+            lsp::emergency_shadow_cleanup_and_exit(code)
+        })
+        .await
+        {
+            Ok(never) => match never {},
+            Err(error) => {
+                // Preserve the lock-through-exit guarantee even if the
+                // fallback could not be submitted to the blocking pool.
+                crate::llg_error!(
+                    "event=exit.cleanup outcome=fallback-task-error error={}",
+                    error
+                );
+                lsp::emergency_shadow_cleanup_and_exit(code);
+            }
+        }
+    }
 }
 
 impl<S> Service<Request> for LifecycleService<S>
@@ -95,8 +201,8 @@ where
             has_params
         );
         match req.method() {
-            "shutdown" => schedule_shutdown(),
-            "exit" => schedule_exit(),
+            "shutdown" if req.id().is_some() => schedule_shutdown(),
+            "exit" => schedule_exit(&self.exit),
             _ => {}
         }
         let future = self.inner.call(req);
@@ -131,16 +237,8 @@ fn schedule_shutdown() {
     });
 }
 
-fn schedule_exit() {
-    tokio::spawn(async move {
-        tokio::time::sleep(EXIT_GRACE).await;
-        // Final idempotent sweep: guarantees no `<tmp>/llg-{pid}-*` tree
-        // survives even if a late job re-created one after the shutdown
-        // cleanup.
-        let _ = tokio::task::spawn_blocking(lsp::emergency_shadow_cleanup).await;
-        let code = i32::from(!lsp::shutdown_requested());
-        std::process::exit(code);
-    });
+fn schedule_exit(exit: &ExitCoordinator) {
+    exit.request();
 }
 
 fn memory_log(level: llg::memory_limit::LogLevel, message: std::fmt::Arguments<'_>) {
@@ -183,7 +281,14 @@ async fn main() {
         .custom_method("llg/moduleExplorer", lsp::Backend::module_explorer)
         .finish();
 
+    let exit = ExitCoordinator::new();
     tower_lsp::Server::new(stdin, stdout, socket)
-        .serve(LifecycleService { inner: service })
+        .serve(LifecycleService {
+            inner: service,
+            exit: exit.clone(),
+        })
         .await;
+    if exit.requested() {
+        exit.finish_after_serve().await;
+    }
 }

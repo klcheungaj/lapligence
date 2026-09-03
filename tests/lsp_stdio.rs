@@ -475,6 +475,10 @@ impl LspProcess {
         }
     }
 
+    fn close_stdin(&mut self) {
+        self.stdin.take();
+    }
+
     fn wait_for_server_request(&mut self, method: &str) -> Result<Value, String> {
         let deadline = Instant::now() + REQUEST_TIMEOUT;
         loop {
@@ -3288,6 +3292,91 @@ fn lsp_stdio_exit_terminates_promptly_and_removes_temp_shadow_tree() {
     assert!(
         remaining.is_empty(),
         "no llg-{pid}-* shadow tree may remain after a clean exit: {remaining:?}"
+    );
+}
+
+fn assert_exit_after_immediate_stdin_close(shutdown_first: bool) {
+    let fixture = FixtureTree::new();
+    let root_a = fixture.root("root-a");
+    let mut client = LspProcess::spawn(&fixture.root);
+    client
+        .initialize(&[("root-a", &root_a)], default_init_options())
+        .expect("initialize immediate-EOF lifecycle workspace");
+
+    let path = root_a.join("navigation").join("snapshot.sv");
+    let valid = fs::read_to_string(&path).expect("read snapshot fixture");
+    client.open(&path, &valid).expect("open snapshot source");
+    let uri = file_uri(&path);
+    wait_for_diagnostics(&mut client, &uri, has_no_severity_1);
+
+    let pid = client.pid();
+    let staged = tmp_llg_shadow_dirs_for(pid);
+    assert_eq!(
+        staged.len(),
+        1,
+        "exactly one llg-{pid}-* shadow tree must exist before EOF exit: {staged:?}"
+    );
+
+    if shutdown_first {
+        // Use the conventional params:null request shape. The wrapper records
+        // shutdown before tower-lsp may reject that shape, which is the same
+        // lifecycle path used by real clients.
+        let _ = client.request("shutdown", Value::Null);
+    }
+    client
+        .send_notification("exit", Value::Null)
+        .expect("send exit notification before closing stdin");
+    client.close_stdin();
+
+    let code = client
+        .wait_for_exit_code(Duration::from_secs(10))
+        .unwrap_or_else(|| panic!("server did not exit after exit+immediate EOF"));
+    assert_eq!(
+        code,
+        if shutdown_first { 0 } else { 1 },
+        "exit+immediate EOF returned the wrong lifecycle status"
+    );
+
+    let remaining = tmp_llg_shadow_dirs_for(pid);
+    assert!(
+        remaining.is_empty(),
+        "no llg-{pid}-* shadow tree may remain after exit+immediate EOF: {remaining:?}"
+    );
+}
+
+#[test]
+fn lsp_stdio_exit_and_immediate_stdin_close_without_shutdown_returns_one() {
+    assert_exit_after_immediate_stdin_close(false);
+}
+
+#[test]
+fn lsp_stdio_exit_and_immediate_stdin_close_after_shutdown_returns_zero() {
+    assert_exit_after_immediate_stdin_close(true);
+}
+
+#[test]
+fn lsp_stdio_shutdown_notification_does_not_authorize_zero_exit_status() {
+    let fixture = FixtureTree::new();
+    let root_a = fixture.root("root-a");
+    let mut client = LspProcess::spawn(&fixture.root);
+    client
+        .initialize(&[("root-a", &root_a)], default_init_options())
+        .expect("initialize notification-shaped shutdown workspace");
+
+    client
+        .send_notification("shutdown", Value::Null)
+        .expect("send invalid shutdown notification");
+    client
+        .send_notification("exit", Value::Null)
+        .expect("send exit notification");
+    client.close_stdin();
+
+    let code = client
+        .wait_for_exit_code(Duration::from_secs(10))
+        .unwrap_or_else(|| panic!("server did not exit after shutdown notification + exit"));
+    assert_eq!(
+        code, 1,
+        "a notification-shaped shutdown must not count as a shutdown request"
     );
 }
 
