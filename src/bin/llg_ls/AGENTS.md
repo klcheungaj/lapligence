@@ -295,6 +295,10 @@ tower-lsp server (stdio) for VSCode-style editors, built on the shared core:
   unique `id`/`parent_id`; each record carries root, generation, file count,
   outcome, elapsed time, result cardinality, and a physical-memory sample
   when a sampler is installed.
+- At `trace`, the transport wrapper records every decoded inbound request or
+  notification (`event=transport.receive`) and its completed dispatch
+  (`event=transport.dispatch.end`) with bounded method/id metadata,
+  parameter presence, and response/notification/error outcome.
 - At `debug`, targeted `event=` records bracket workspace discovery, scheduler
   admission/debounce, input-budget and include staging, Surelog construction /
   return / session drop, parse fallback, owned DB/model/token/lint/index

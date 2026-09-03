@@ -62,6 +62,20 @@ scripts/clean.sh --all       # also remove the currently selected surelog tree
 | `elab_check` | Elaboration verifier (instance tree, ref binding, params) |
 | `helloworld` / `hellouhdm` / `llg_demo` | Raw Surelog/UHDM API demos |
 
+## Language-server safeguards and tracing
+
+The LSP applies per-root `[analysis]` limits of 1 MiB per unique input file
+and 8 MiB across unique source/include inputs by default. Override them in
+`llg.toml` when a project needs larger files. The process-wide memory safeguard
+is opt-in through `LLG_MEMORY_LIMIT_MB`; it measures the complete `llg_ls` or
+`llg` process and terminates immediately at the configured physical-memory
+ceiling. See [docs/lsp_safeguards.md](docs/lsp_safeguards.md) for the
+cross-platform behavior and all environment variables.
+
+For request-to-Surelog diagnostics, run with `LLG_LOG=debug` (or `trace` for
+every transport message) and optionally set `LLG_LOG_FILE`. Logs always go to
+stderr/the configured file, never stdout, so stdio JSON-RPC remains valid.
+
 ## Using the simulator (`llg`)
 
 ```sh

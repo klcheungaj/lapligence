@@ -147,3 +147,9 @@ file/include paths remain visible for diagnosis. Values on -D and -P
 arguments are replaced with <redacted>. A NUL-rejected argument is recorded
 as a rejected invocation with argv_count=0 and is never included in an
 accepted argv representation. Source contents are never logged.
+
+At `LLG_LOG=trace`, the transport wrapper also records every decoded request
+or notification (`event=transport.receive`) and its completed dispatch
+(`event=transport.dispatch.end`). This distinguishes time spent in JSON-RPC
+transport/handler dispatch from time spent in the asynchronous root job. The
+method, id, parameter-presence flag, and outcome are bounded and escaped.
