@@ -743,6 +743,11 @@ impl Db {
     pub fn elaborated_type_ranges(&self) -> &[ElaboratedTypeRanges] {
         &self.elaborated_type_ranges
     }
+
+    /// Number of owned nodes captured by the canonical VPI walk.
+    pub fn node_count(&self) -> usize {
+        self.nodes.len()
+    }
 }
 
 // ── VPI traversal helpers ─────────────────────────────────────────────────────

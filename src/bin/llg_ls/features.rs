@@ -21,7 +21,8 @@
 //!   dropped inside [`analyze`] before the result returns.
 
 use std::borrow::Borrow;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
@@ -201,6 +202,108 @@ pub(crate) struct ModuleGraphGenerateScope {
     pub nested: Vec<ModuleGraphGenerateScope>,
 }
 
+type GraphInstanceKey = (String, String, Option<String>, u32, u32);
+type GraphScopeKey = (String, u32, u32);
+type GraphDefinitionLineRanges = HashMap<String, HashMap<String, BTreeMap<u32, u32>>>;
+
+/// Transient keyed state used while assembling one source graph.  The public
+/// graph deliberately keeps ordered vectors for stable explorer output; these
+/// sets/maps make duplicate checks independent of the number of entries
+/// already collected for a module.
+struct GraphAssemblyIndexes {
+    ports: Vec<HashSet<(String, Option<String>)>>,
+    params: Vec<HashSet<(String, Option<String>)>>,
+    signals: Vec<HashSet<(String, Option<String>)>>,
+    children: Vec<HashSet<GraphInstanceKey>>,
+    generated_scopes: Vec<HashMap<Vec<GraphScopeKey>, usize>>,
+    generated_children: Vec<HashMap<Vec<GraphScopeKey>, HashSet<GraphInstanceKey>>>,
+}
+
+impl GraphAssemblyIndexes {
+    fn new(definition_count: usize) -> Self {
+        Self {
+            ports: vec![HashSet::new(); definition_count],
+            params: vec![HashSet::new(); definition_count],
+            signals: vec![HashSet::new(); definition_count],
+            children: vec![HashSet::new(); definition_count],
+            generated_scopes: (0..definition_count).map(|_| HashMap::new()).collect(),
+            generated_children: (0..definition_count).map(|_| HashMap::new()).collect(),
+        }
+    }
+}
+
+fn graph_definition_line_ranges(
+    definitions: &[ModuleGraphDefinition],
+) -> GraphDefinitionLineRanges {
+    let mut ranges = HashMap::new();
+    for definition in definitions {
+        let Some(file) = definition.file.as_deref() else {
+            continue;
+        };
+        insert_graph_definition_line_range(
+            &mut ranges,
+            file,
+            clean_name(&definition.name),
+            definition.line,
+            definition.end_line,
+        );
+    }
+    ranges
+}
+
+fn insert_graph_definition_line_range(
+    ranges: &mut GraphDefinitionLineRanges,
+    file: &str,
+    name: &str,
+    start: u32,
+    end: u32,
+) {
+    let end = if end == 0 { u32::MAX } else { end };
+    if end < start {
+        return;
+    }
+    let spans = ranges
+        .entry(file.to_owned())
+        .or_default()
+        .entry(name.to_owned())
+        .or_default();
+    let mut merged_start = start;
+    let mut merged_end = end;
+    if let Some((&previous_start, &previous_end)) = spans.range(..=start).next_back() {
+        if previous_end.saturating_add(1) >= start {
+            merged_start = previous_start;
+            merged_end = merged_end.max(previous_end);
+            spans.remove(&previous_start);
+        }
+    }
+    loop {
+        let Some((&next_start, &next_end)) = spans.range(merged_start..).next() else {
+            break;
+        };
+        if next_start > merged_end.saturating_add(1) {
+            break;
+        }
+        spans.remove(&next_start);
+        merged_end = merged_end.max(next_end);
+    }
+    spans.insert(merged_start, merged_end);
+}
+
+fn graph_definition_line_is_retained(
+    ranges: &GraphDefinitionLineRanges,
+    file: &str,
+    name: &str,
+    line: u32,
+) -> bool {
+    let Some(spans) = ranges.get(file).and_then(|by_name| by_name.get(name)) else {
+        return false;
+    };
+    spans
+        .range(..=line)
+        .next_back()
+        .is_some_and(|(_, end)| line <= *end)
+}
+
 /// Stable source identity shared by the graph and explorer definition IDs.
 pub(crate) fn module_graph_definition_id(
     name: &str,
@@ -344,13 +447,18 @@ impl Analysis {
     pub fn new_with_outcome(
         outcome: AnalysisOutcome,
         diagnostics: Vec<Diag>,
-        model: DesignModel,
-        tokens: Vec<FileTokens>,
+        mut model: DesignModel,
+        mut tokens: Vec<FileTokens>,
         lint: Vec<LintDiag>,
-        uhdm_bindings: RefBindings,
-        connections: ConnectionInputs,
+        mut uhdm_bindings: RefBindings,
+        mut connections: ConnectionInputs,
     ) -> Analysis {
-        let mut tokens = tokens;
+        normalize_feature_positions(
+            &mut model,
+            &mut tokens,
+            &mut uhdm_bindings,
+            &mut connections,
+        );
         append_synthetic_tokens(&mut tokens, &connections.parse_enum_tokens);
         let index = SymbolIndex::from_parts(
             &model,
@@ -414,7 +522,14 @@ impl Analysis {
     /// so hover can render bound targets whose declaration has no indexed
     /// entry.  Production pipeline only; hand-built analyses have no UHDM
     /// behind them and keep the model-derived details.
-    fn with_decl_details(mut self, details: tokens::DeclDetails) -> Analysis {
+    fn with_decl_details(mut self, mut details: tokens::DeclDetails) -> Analysis {
+        let maps = FeatureSourceMaps::from_parts(
+            &self.model,
+            &self.tokens,
+            &self.ref_bindings,
+            &ConnectionInputs::default(),
+        );
+        normalize_decl_details(&maps, &mut details);
         // Ports/nets/vars only: their model detail is a NAME-only lookup and
         // is exactly what breaks under inner-scope shadowing.  Parameters
         // keep the model detail — it carries the resolved value and the
@@ -607,6 +722,472 @@ pub(crate) struct ConnectionInputs {
     pub parse_enum_tokens: Vec<VObjectInfo>,
 }
 
+/// Source facts needed to translate a raw Surelog column into an LSP UTF-16
+/// column.  Only files containing non-ASCII text are retained: for ASCII the
+/// scalar, UTF-16, and byte columns are identical and no map is needed.
+#[derive(Debug)]
+struct FeatureSourceMap {
+    source: String,
+    line_starts: Vec<usize>,
+}
+
+impl FeatureSourceMap {
+    fn new(source: String) -> Self {
+        let line_starts = graph_line_starts(&source);
+        Self {
+            source,
+            line_starts,
+        }
+    }
+
+    fn line_bounds(&self, line: u32) -> Option<(usize, usize)> {
+        let index = usize::try_from(line.checked_sub(1)?).ok()?;
+        let start = *self.line_starts.get(index)?;
+        let mut end = self
+            .line_starts
+            .get(index + 1)
+            .copied()
+            .unwrap_or(self.source.len());
+        while end > start && matches!(self.source.as_bytes().get(end - 1), Some(b'\n' | b'\r')) {
+            end -= 1;
+        }
+        Some((start, end))
+    }
+
+    fn scalar_offset(&self, line: u32, character: usize) -> Option<usize> {
+        let (start, end) = self.line_bounds(line)?;
+        let text = self.source.get(start..end)?;
+        text.char_indices()
+            .nth(character)
+            .map(|(offset, _)| start + offset)
+            .or_else(|| (character == text.chars().count()).then_some(end))
+    }
+
+    fn utf16_offset(&self, line: u32, character: usize) -> Option<usize> {
+        let (start, end) = self.line_bounds(line)?;
+        let text = self.source.get(start..end)?;
+        let mut units = 0usize;
+        for (offset, value) in text.char_indices() {
+            if units == character {
+                return Some(start + offset);
+            }
+            units += value.len_utf16();
+            if units > character {
+                return None;
+            }
+        }
+        (units == character).then_some(end)
+    }
+
+    fn byte_offset(&self, line: u32, character: usize) -> Option<usize> {
+        let (start, end) = self.line_bounds(line)?;
+        let offset = start.checked_add(character)?;
+        (offset <= end && self.source.is_char_boundary(offset)).then_some(offset)
+    }
+
+    /// Choose the coordinate interpretation whose byte offset actually starts
+    /// `name`.  The UTF-16 candidate is preferred for tokens produced by the
+    /// source-local scanner; raw Surelog scalar/byte columns win when those are
+    /// the only candidates matching the source text.
+    fn offset_for(&self, line: u32, col: u32, name: Option<&str>) -> Option<usize> {
+        let character = usize::try_from(col.checked_sub(1)?).ok()?;
+        let utf16 = self.utf16_offset(line, character);
+        let scalar = self.scalar_offset(line, character);
+        let byte = self.byte_offset(line, character);
+        [utf16, scalar, byte]
+            .into_iter()
+            .flatten()
+            .find(|offset| {
+                name.is_some_and(|name| {
+                    self.source
+                        .get(*offset..)
+                        .is_some_and(|tail| tail.starts_with(name))
+                })
+            })
+            .or(scalar)
+            .or(byte)
+            .or(utf16)
+    }
+
+    fn lsp_column(&self, line: u32, col: u32, name: Option<&str>) -> u32 {
+        let Some(offset) = self.offset_for(line, col, name) else {
+            return col;
+        };
+        let Some((start, _)) = self.line_bounds(line) else {
+            return col;
+        };
+        self.source
+            .get(start..offset)
+            .map_or(col, |prefix| prefix.encode_utf16().count() as u32 + 1)
+    }
+
+    fn normalize_1based(&self, line: u32, col: u32, name: Option<&str>) -> (u32, u32) {
+        (line, self.lsp_column(line, col, name))
+    }
+
+    fn normalize_0based(&self, line: u32, col: u32, name: Option<&str>) -> (u32, u32) {
+        let (line1, col1) =
+            self.normalize_1based(line.saturating_add(1), col.saturating_add(1), name);
+        (line1.saturating_sub(1), col1.saturating_sub(1))
+    }
+}
+
+#[derive(Debug, Default)]
+struct FeatureSourceMaps {
+    by_file: HashMap<String, FeatureSourceMap>,
+}
+
+impl FeatureSourceMaps {
+    fn get(&self, file: &str) -> Option<&FeatureSourceMap> {
+        self.by_file.get(file)
+    }
+
+    fn from_parts(
+        model: &DesignModel,
+        tokens: &[FileTokens],
+        bindings: &RefBindings,
+        connections: &ConnectionInputs,
+    ) -> Self {
+        let mut paths = BTreeSet::new();
+        for file_tokens in tokens {
+            paths.insert(file_tokens.path.clone());
+            for node in &file_tokens.nodes {
+                paths.insert(node.file.clone());
+            }
+        }
+        collect_model_source_paths(model, &mut paths);
+        for ((file, _, _), target) in bindings {
+            paths.insert(file.clone());
+            paths.insert(target.file.clone());
+        }
+        for pair in &connections.pairs {
+            paths.insert(pair.file.clone());
+        }
+        for (file, _, _) in connections
+            .parse_decls
+            .iter()
+            .flatten()
+            .chain(connections.parse_enum_ref_positions.iter())
+            .chain(connections.unresolved_enum_refs.iter())
+        {
+            paths.insert(file.clone());
+        }
+        for declaration in &connections.parse_enum_decls {
+            paths.insert(declaration.file.clone());
+        }
+        for ((file, _, _), target) in &connections.fallback_bindings {
+            paths.insert(file.clone());
+            paths.insert(target.file.clone());
+        }
+        for ((file, _, _), target) in &connections.parse_enum_bindings {
+            paths.insert(file.clone());
+            paths.insert(target.file.clone());
+        }
+        for node in &connections.parse_enum_tokens {
+            paths.insert(node.file.clone());
+        }
+
+        let by_file = paths
+            .into_iter()
+            .filter_map(|file| {
+                let source = std::fs::read_to_string(&file).ok()?;
+                (!source.is_ascii()).then(|| (file, FeatureSourceMap::new(source)))
+            })
+            .collect();
+        Self { by_file }
+    }
+}
+
+fn collect_model_source_paths(model: &DesignModel, paths: &mut BTreeSet<String>) {
+    for module in &model.modules {
+        if let Some(file) = &module.file {
+            paths.insert(file.clone());
+        }
+    }
+    for package in &model.packages {
+        if let Some(file) = &package.file {
+            paths.insert(file.clone());
+        }
+        for constant in &package.enum_consts {
+            if let Some(file) = &constant.file {
+                paths.insert(file.clone());
+            }
+        }
+    }
+    for class in &model.classes {
+        if let Some(file) = &class.file {
+            paths.insert(file.clone());
+        }
+        for method in &class.methods {
+            if let Some(file) = &method.file {
+                paths.insert(file.clone());
+            }
+        }
+    }
+    collect_instance_source_paths(&model.top_instances, paths);
+}
+
+fn collect_instance_source_paths(instances: &[InstanceModel], paths: &mut BTreeSet<String>) {
+    for instance in instances {
+        if let Some(file) = &instance.file {
+            paths.insert(file.clone());
+        }
+        for function in &instance.funcs {
+            if let Some(file) = &function.file {
+                paths.insert(file.clone());
+            }
+        }
+        collect_instance_source_paths(&instance.children, paths);
+    }
+}
+
+fn feature_token_names(
+    tokens: &[FileTokens],
+    synthetic: &[VObjectInfo],
+) -> HashMap<(String, u32, u32), String> {
+    let mut names = HashMap::new();
+    for node in tokens
+        .iter()
+        .flat_map(|file| file.nodes.iter())
+        .chain(synthetic)
+    {
+        let Some(name) = node.name.as_deref().filter(|name| !name.is_empty()) else {
+            continue;
+        };
+        names
+            .entry((node.file.clone(), node.line, node.col))
+            .or_insert_with(|| name.to_owned());
+    }
+    names
+}
+
+fn normalize_vobject_positions(
+    maps: &FeatureSourceMaps,
+    fallback_file: Option<&str>,
+    nodes: &mut [VObjectInfo],
+) {
+    for node in nodes {
+        let Some(map) = maps
+            .get(&node.file)
+            .or_else(|| fallback_file.and_then(|file| maps.get(file)))
+        else {
+            continue;
+        };
+        let old_line = node.line;
+        let old_col = node.col;
+        let name = node.name.as_deref().filter(|name| !name.is_empty());
+        let (line, col) = map.normalize_1based(old_line, old_col, name);
+        node.line = line;
+        node.col = col;
+        if let Some(name) = name {
+            if node.end_line == old_line {
+                node.end_line = line;
+                node.end_col = col.saturating_add(lsp_name_len(name));
+                continue;
+            }
+        }
+        if node.end_line != 0 && node.end_col != 0 {
+            let (end_line, end_col) = map.normalize_1based(node.end_line, node.end_col, None);
+            node.end_line = end_line;
+            node.end_col = end_col;
+        }
+    }
+}
+
+fn normalize_one_based_positions(
+    maps: &FeatureSourceMaps,
+    positions: &mut HashSet<(String, u32, u32)>,
+    names: &HashMap<(String, u32, u32), String>,
+) {
+    let old = std::mem::take(positions);
+    *positions = old
+        .into_iter()
+        .map(|(file, line, col)| {
+            let name = names.get(&(file.clone(), line, col)).map(String::as_str);
+            let (line, col) = maps
+                .get(&file)
+                .map_or((line, col), |map| map.normalize_1based(line, col, name));
+            (file, line, col)
+        })
+        .collect();
+}
+
+fn normalize_zero_based_positions(
+    maps: &FeatureSourceMaps,
+    positions: &mut HashSet<(String, u32, u32)>,
+    names: &HashMap<(String, u32, u32), String>,
+) {
+    let old = std::mem::take(positions);
+    *positions = old
+        .into_iter()
+        .map(|(file, line, col)| {
+            let name = names
+                .get(&(file.clone(), line.saturating_add(1), col.saturating_add(1)))
+                .map(String::as_str);
+            let (line, col) = maps
+                .get(&file)
+                .map_or((line, col), |map| map.normalize_0based(line, col, name));
+            (file, line, col)
+        })
+        .collect();
+}
+
+fn normalize_ref_bindings(
+    maps: &FeatureSourceMaps,
+    names: &HashMap<(String, u32, u32), String>,
+    bindings: &mut RefBindings,
+) {
+    let old = std::mem::take(bindings);
+    let mut normalized = HashMap::with_capacity(old.len());
+    for ((file, line, col), mut target) in old {
+        let reference_name = names
+            .get(&(file.clone(), line.saturating_add(1), col.saturating_add(1)))
+            .map(String::as_str)
+            .or(Some(target.name.as_str()));
+        let (line, col) = maps.get(&file).map_or((line, col), |map| {
+            map.normalize_0based(line, col, reference_name)
+        });
+        if let Some(map) = maps.get(&target.file) {
+            (target.line0, target.col0) =
+                map.normalize_0based(target.line0, target.col0, Some(&target.name));
+        }
+        normalized.insert((file, line, col), target);
+    }
+    *bindings = normalized;
+}
+
+fn normalize_connection_inputs(
+    maps: &FeatureSourceMaps,
+    names: &HashMap<(String, u32, u32), String>,
+    connections: &mut ConnectionInputs,
+) {
+    for pair in &mut connections.pairs {
+        if let Some(map) = maps.get(&pair.file) {
+            pair.label = map.normalize_1based(pair.label.0, pair.label.1, Some(&pair.label_name));
+            if let (Some(position), Some(name)) = (pair.actual, pair.actual_name.as_deref()) {
+                pair.actual = Some(map.normalize_1based(position.0, position.1, Some(name)));
+            }
+        }
+    }
+    if let Some(positions) = &mut connections.parse_decls {
+        normalize_one_based_positions(maps, positions, names);
+    }
+    for declaration in &mut connections.parse_enum_decls {
+        if let Some(map) = maps.get(&declaration.file) {
+            (declaration.line1, declaration.col1) =
+                map.normalize_1based(declaration.line1, declaration.col1, Some(&declaration.name));
+        }
+    }
+    normalize_zero_based_positions(maps, &mut connections.parse_enum_ref_positions, names);
+    normalize_zero_based_positions(maps, &mut connections.unresolved_enum_refs, names);
+    normalize_ref_bindings(maps, names, &mut connections.fallback_bindings);
+    normalize_ref_bindings(maps, names, &mut connections.parse_enum_bindings);
+    normalize_vobject_positions(maps, None, &mut connections.parse_enum_tokens);
+}
+
+fn normalize_model_positions(maps: &FeatureSourceMaps, model: &mut DesignModel) {
+    for module in &mut model.modules {
+        if let Some(file) = module.file.as_deref().and_then(|file| maps.get(file)) {
+            (module.line, module.col) =
+                file.normalize_1based(module.line, module.col, Some(clean_name(&module.name)));
+            if module.end_line != 0 && module.end_col != 0 {
+                (module.end_line, module.end_col) =
+                    file.normalize_1based(module.end_line, module.end_col, None);
+            }
+        }
+    }
+    for package in &mut model.packages {
+        if let Some(path) = package.file.as_deref().and_then(|file| maps.get(file)) {
+            (package.line, package.col) =
+                path.normalize_1based(package.line, package.col, Some(clean_name(&package.name)));
+        }
+        for constant in &mut package.enum_consts {
+            if let Some(path) = constant.file.as_deref().and_then(|file| maps.get(file)) {
+                (constant.line, constant.col) =
+                    path.normalize_1based(constant.line, constant.col, Some(&constant.name));
+            }
+        }
+    }
+    for class in &mut model.classes {
+        if let Some(path) = class.file.as_deref().and_then(|file| maps.get(file)) {
+            (class.line, class.col) =
+                path.normalize_1based(class.line, class.col, Some(clean_name(&class.name)));
+        }
+        for method in &mut class.methods {
+            if let Some(path) = method.file.as_deref().and_then(|file| maps.get(file)) {
+                (method.line, method.col) =
+                    path.normalize_1based(method.line, method.col, Some(clean_name(&method.name)));
+            }
+        }
+        if let Some(path) = class.file.as_deref().and_then(|file| maps.get(file)) {
+            for field in &mut class.fields {
+                (field.line, field.col) =
+                    path.normalize_1based(field.line, field.col, Some(&field.name));
+            }
+        }
+    }
+    normalize_instance_positions(maps, &mut model.top_instances);
+}
+
+fn normalize_instance_positions(maps: &FeatureSourceMaps, instances: &mut [InstanceModel]) {
+    for instance in instances {
+        if let Some(path) = instance.file.as_deref().and_then(|file| maps.get(file)) {
+            (instance.line, instance.col) = path.normalize_1based(
+                instance.line,
+                instance.col,
+                Some(clean_name(&instance.name)),
+            );
+        }
+        for function in &mut instance.funcs {
+            if let Some(path) = function.file.as_deref().and_then(|file| maps.get(file)) {
+                (function.line, function.col) = path.normalize_1based(
+                    function.line,
+                    function.col,
+                    Some(clean_name(&function.name)),
+                );
+            }
+        }
+        normalize_instance_positions(maps, &mut instance.children);
+    }
+}
+
+fn normalize_feature_positions(
+    model: &mut DesignModel,
+    tokens: &mut [FileTokens],
+    uhdm_bindings: &mut RefBindings,
+    connections: &mut ConnectionInputs,
+) {
+    let maps = FeatureSourceMaps::from_parts(model, tokens, uhdm_bindings, connections);
+    let names = feature_token_names(tokens, &connections.parse_enum_tokens);
+    normalize_model_positions(&maps, model);
+    for file_tokens in tokens {
+        normalize_vobject_positions(&maps, Some(&file_tokens.path), &mut file_tokens.nodes);
+    }
+    normalize_connection_inputs(&maps, &names, connections);
+    normalize_ref_bindings(&maps, &names, uhdm_bindings);
+}
+
+fn declaration_detail_name(detail: &str) -> Option<&str> {
+    detail
+        .split_whitespace()
+        .last()
+        .map(|name| name.trim_matches(|character: char| matches!(character, ',' | ';' | ')')))
+        .filter(|name| !name.is_empty())
+}
+
+fn normalize_decl_details(maps: &FeatureSourceMaps, details: &mut tokens::DeclDetails) {
+    let old = std::mem::take(details);
+    *details = old
+        .into_iter()
+        .map(|((file, line, col), detail)| {
+            let position = maps.get(&file).map_or((line, col), |map| {
+                map.normalize_1based(line, col, declaration_detail_name(&detail))
+            });
+            ((file, position.0, position.1), detail)
+        })
+        .collect();
+}
+
 /// The final `Analysis.ref_bindings` map.
 ///
 /// Insertion order defines collision resolution (later insert wins, except
@@ -786,6 +1367,89 @@ fn select_parent_scope_position(
     ranked.into_iter().next()
 }
 
+fn first_position_at_or_after_line(
+    positions: &[ActualCandidatePos],
+    mut low: usize,
+    mut high: usize,
+    line0: u32,
+) -> usize {
+    while low < high {
+        let middle = low + (high - low) / 2;
+        if positions[middle].0 < line0 {
+            low = middle + 1;
+        } else {
+            high = middle;
+        }
+    }
+    low
+}
+
+fn first_position_after_line(
+    positions: &[ActualCandidatePos],
+    mut low: usize,
+    mut high: usize,
+    line0: u32,
+) -> usize {
+    while low < high {
+        let middle = low + (high - low) / 2;
+        if positions[middle].0 <= line0 {
+            low = middle + 1;
+        } else {
+            high = middle;
+        }
+    }
+    low
+}
+
+/// The parse-fallback variant of [`select_parent_scope_position`].  Its
+/// candidate list is pre-sorted once per file/name by [`ParseFallbackIndex`],
+/// so selecting the nearest declaration uses binary searches and borrows a
+/// slice instead of allocating, filtering, and sorting for every connection.
+fn select_parent_scope_position_sorted(
+    positions: &[ActualCandidatePos],
+    spans: &[ModuleSpan0],
+    inst_line0: u32,
+) -> Option<ActualCandidatePos> {
+    if positions.is_empty() {
+        return None;
+    }
+    let scope = spans
+        .iter()
+        .filter(|span| span.contains(inst_line0))
+        .min_by_key(|span| (span.len(), span.first0));
+    let (pool_start, pool_end) = match scope {
+        Some(span) => {
+            let inside_start =
+                first_position_at_or_after_line(positions, 0, positions.len(), span.first0);
+            let inside_end = span.last0.map_or(inside_start, |last0| {
+                first_position_after_line(positions, inside_start, positions.len(), last0)
+            });
+            if inside_start < inside_end {
+                (inside_start, inside_end)
+            } else {
+                (0, positions.len())
+            }
+        }
+        None => (0, positions.len()),
+    };
+    if pool_start >= pool_end {
+        return None;
+    }
+
+    let above_end = first_position_after_line(positions, pool_start, pool_end, inst_line0);
+    if above_end > pool_start {
+        // The old ranking chooses the smallest column on the nearest line.
+        let chosen_line = positions[above_end - 1].0;
+        let chosen = first_position_at_or_after_line(positions, pool_start, above_end, chosen_line);
+        Some(positions[chosen])
+    } else {
+        // Positions are sorted by line and then column, matching the old
+        // `(line > inst_line, distance, column)` ranking for below-only
+        // candidates.
+        Some(positions[pool_start])
+    }
+}
+
 /// Build the parent-scope binding target for one connection ACTUAL
 /// (UHDM mode): candidates come from the symbol index, the kind from
 /// [`SymKind`] via [`kind_label`].
@@ -871,6 +1535,179 @@ fn db_build_diagnostic(error: &str) -> Diag {
         col: 0,
         message: format!("UHDM database build failed: {error}"),
     }
+}
+
+fn token_node_count(tokens: &[FileTokens]) -> usize {
+    tokens.iter().map(|file| file.nodes.len()).sum()
+}
+
+fn token_cardinality(tokens: &[FileTokens]) -> usize {
+    if crate::logging::enabled(crate::logging::Level::Debug) {
+        token_node_count(tokens)
+    } else {
+        tokens.len()
+    }
+}
+
+const SURELOG_LOG_ARG_MAX: usize = 128;
+const SURELOG_LOG_ARGV_MAX: usize = 2_048;
+const SURELOG_LOG_ERROR_MAX: usize = 256;
+
+fn bounded_log_text(value: &str, max_bytes: usize) -> String {
+    let mut result = String::new();
+    let mut truncated = false;
+    for character in value.chars() {
+        let escaped = match character {
+            '\n' => "\\n".to_owned(),
+            '\r' => "\\r".to_owned(),
+            '\t' => "\\t".to_owned(),
+            character if character.is_control() => "?".to_owned(),
+            character => character.to_string(),
+        };
+        if result.len().saturating_add(escaped.len()) > max_bytes {
+            truncated = true;
+            break;
+        }
+        result.push_str(&escaped);
+    }
+    if truncated {
+        if max_bytes < 3 {
+            return ".".repeat(max_bytes);
+        }
+        while result.len().saturating_add(3) > max_bytes {
+            result.pop();
+        }
+        result.push_str("...");
+    }
+    result
+}
+
+fn bounded_surelog_arg(arg: &str) -> String {
+    let (prefix, payload) = if let Some(payload) = arg.strip_prefix("-D") {
+        ("-D", Some(payload))
+    } else if let Some(payload) = arg.strip_prefix("-P") {
+        ("-P", Some(payload))
+    } else if let Some(payload) = arg.strip_prefix("-I") {
+        ("-I", Some(payload))
+    } else if let Some(payload) = arg.strip_prefix("+incdir+") {
+        ("+incdir+", Some(payload))
+    } else {
+        return bounded_log_text(arg, SURELOG_LOG_ARG_MAX);
+    };
+
+    if matches!(prefix, "-D" | "-P") {
+        let payload = payload.expect("define/parameter prefix always has a payload");
+        let (name, has_value) = payload
+            .split_once('=')
+            .map_or((payload, false), |(name, _)| (name, true));
+        let name = bounded_log_text(name, SURELOG_LOG_ARG_MAX.saturating_sub(16));
+        let value_suffix = if has_value { "=<redacted>" } else { "" };
+        return bounded_log_text(
+            &format!("{prefix}{name}{value_suffix}"),
+            SURELOG_LOG_ARG_MAX,
+        );
+    }
+
+    bounded_log_text(
+        &format!(
+            "{prefix}{}",
+            bounded_log_text(payload.unwrap_or_default(), SURELOG_LOG_ARG_MAX)
+        ),
+        SURELOG_LOG_ARG_MAX,
+    )
+}
+
+fn surelog_argv_log_details(argv: &[String]) -> (String, String) {
+    let mut representation = String::from("[");
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    let mut redact_next_value = false;
+    for (index, arg) in argv.iter().enumerate() {
+        let safe_arg = if redact_next_value {
+            redact_next_value = false;
+            "<redacted>".to_owned()
+        } else {
+            let safe_arg = bounded_surelog_arg(arg);
+            redact_next_value = matches!(arg.as_str(), "-D" | "-P");
+            safe_arg
+        };
+        index.hash(&mut hasher);
+        safe_arg.hash(&mut hasher);
+        let separator = if index == 0 { "" } else { "," };
+        let addition = format!("{separator}{safe_arg:?}");
+        if representation
+            .len()
+            .saturating_add(addition.len())
+            .saturating_add(1) // reserve the closing bracket
+            > SURELOG_LOG_ARGV_MAX
+        {
+            while representation.len().saturating_add(5) > SURELOG_LOG_ARGV_MAX {
+                representation.pop();
+            }
+            representation.push_str(",...");
+            break;
+        }
+        representation.push_str(&addition);
+    }
+    representation.push(']');
+    (representation, format!("{:016x}", hasher.finish()))
+}
+
+/// Emit the native Surelog configuration only when debug logging is enabled.
+/// The invocation builder is intentionally called inside the guard: the
+/// normal compile path uses the same ordered visitor without allocating this
+/// diagnostic copy. Values from '-D'/'-P' are redacted; paths and all other
+/// fields are escaped and bounded by the constants above.
+fn log_surelog_invocation(
+    kind: &str,
+    invocation: &compile::SurelogInvocation,
+    root: &str,
+    generation: u64,
+    parent_id: Option<u64>,
+) {
+    if !crate::logging::enabled(crate::logging::Level::Debug) {
+        return;
+    }
+    let setters = invocation.setters;
+    let (argv_repr, argv_fingerprint) = surelog_argv_log_details(&invocation.argv);
+    let root = bounded_log_text(root, SURELOG_LOG_ARG_MAX);
+    crate::llg_debug!(
+        "event=surelog.invoke kind={} root={} generation={} parent_id={:?} argv_count={} argv_repr={} argv_fingerprint={} setters=parse:{} write_pp_output:{} compile:{} elaborate:{} elab_uhdm:{} mute:{} quiet:{}",
+        kind,
+        root,
+        generation,
+        parent_id,
+        invocation.argv.len(),
+        argv_repr,
+        argv_fingerprint,
+        setters.parse,
+        setters.write_pp_output,
+        setters.compile,
+        setters.elaborate,
+        setters.elab_uhdm,
+        setters.mute_stdout,
+        setters.quiet,
+    );
+}
+
+fn log_surelog_invocation_rejected(
+    kind: &str,
+    error: &str,
+    root: &str,
+    generation: u64,
+    parent_id: Option<u64>,
+) {
+    if !crate::logging::enabled(crate::logging::Level::Debug) {
+        return;
+    }
+    let root = bounded_log_text(root, SURELOG_LOG_ARG_MAX);
+    crate::llg_debug!(
+        "event=surelog.invoke kind={} root={} generation={} parent_id={:?} outcome=rejected argv_count=0 argv_repr=[] argv_fingerprint=none error={}",
+        kind,
+        root,
+        generation,
+        parent_id,
+        bounded_log_text(error, SURELOG_LOG_ERROR_MAX),
+    );
 }
 
 /// Serialises [`analyze`] calls: Surelog's global C++ singletons are not
@@ -1016,14 +1853,59 @@ fn analyze_inner(
         files,
         parent_id,
     );
+    let surelog_started = std::time::Instant::now();
+    crate::llg_debug!(
+        "event=surelog.session_construct.begin root={} generation={} parent_id={:?} files={}",
+        root,
+        generation,
+        parent_id,
+        files
+    );
+    if crate::logging::enabled(crate::logging::Level::Debug) {
+        match compile::compile_invocation(opts) {
+            Ok(invocation) => {
+                log_surelog_invocation("compile", &invocation, root, generation, parent_id)
+            }
+            Err(error) => {
+                log_surelog_invocation_rejected("compile", &error, root, generation, parent_id)
+            }
+        }
+    }
     let out = match compile::compile(opts) {
         Ok(out) => out,
         Err(msg) => {
+            crate::llg_debug!(
+                "event=surelog.session_construct.end outcome=error root={} generation={} parent_id={:?} elapsed_us={} error={}",
+                root,
+                generation,
+                parent_id,
+                surelog_started.elapsed().as_micros(),
+                bounded_log_text(&msg, SURELOG_LOG_ERROR_MAX)
+            );
             surelog_span.outcome("error");
             return Analysis::fatal_preflight(msg);
         }
     };
-    surelog_span.complete("ok", out.diagnostics.len());
+    crate::llg_debug!(
+        "event=surelog.session_construct.end outcome=ok root={} generation={} parent_id={:?} diagnostics={} elapsed_us={}",
+        root,
+        generation,
+        parent_id,
+        out.diagnostics.len(),
+        surelog_started.elapsed().as_micros()
+    );
+    crate::llg_debug!(
+        "event=surelog.compile.return outcome={} root={} generation={} diagnostics={} ok={} uhdm={} design={} elapsed_us={}",
+        if out.ok() { "ok" } else { "error" },
+        root,
+        generation,
+        out.diagnostics.len(),
+        out.ok(),
+        out.uhdm_design().is_some(),
+        out.design().is_some(),
+        surelog_started.elapsed().as_micros()
+    );
+    surelog_span.complete(if out.ok() { "ok" } else { "error" }, out.diagnostics.len());
     drop(surelog_span);
 
     // `uhdm_design` / `design` are session-scoped: everything must be done
@@ -1041,11 +1923,26 @@ fn analyze_inner(
         files,
         parent_id,
     );
+    let graph_started = std::time::Instant::now();
+    crate::llg_debug!(
+        "event=analysis.source_graph.begin root={} generation={} files={}",
+        root,
+        generation,
+        files
+    );
     let mut module_graph = design
         .as_ref()
         .map(collect_module_graph)
         .unwrap_or_default();
     graph_span.complete("ok", module_graph.definitions.len());
+    crate::llg_debug!(
+        "event=analysis.source_graph.end outcome=ok root={} generation={} definitions={} elaborated_types={} elapsed_us={}",
+        root,
+        generation,
+        module_graph.definitions.len(),
+        module_graph.elaborated_types.len(),
+        graph_started.elapsed().as_micros()
+    );
     drop(graph_span);
     let mut elaborated_type_ranges = Vec::new();
 
@@ -1071,6 +1968,13 @@ fn analyze_inner(
         files,
         parent_id,
     );
+    let parse_facts_started = std::time::Instant::now();
+    crate::llg_debug!(
+        "event=analysis.parse_facts.begin root={} generation={} design={}",
+        root,
+        generation,
+        design.is_some()
+    );
     let conn_pairs = match design.as_ref() {
         Some(d) => scan_named_port_connections(d),
         None => Vec::new(),
@@ -1080,6 +1984,16 @@ fn analyze_inner(
         None => ParseEnumFacts::default(),
     };
     parse_facts_span.complete("ok", conn_pairs.len());
+    crate::llg_debug!(
+        "event=analysis.parse_facts.end outcome=ok root={} generation={} connections={} enum_decls={} enum_bindings={} enum_unresolved={} elapsed_us={}",
+        root,
+        generation,
+        conn_pairs.len(),
+        enum_facts.declarations.len(),
+        enum_facts.bindings.len(),
+        enum_facts.unresolved_positions.len(),
+        parse_facts_started.elapsed().as_micros()
+    );
     drop(parse_facts_span);
 
     let (model, lint_diags, db_built, db_error, tokens, uhdm_bindings, decl_details, connections) =
@@ -1092,9 +2006,27 @@ fn analyze_inner(
                     files,
                     parent_id,
                 );
+                let db_started = std::time::Instant::now();
+                crate::llg_debug!(
+                    "event=analysis.db_build.begin root={} generation={} uhdm=true",
+                    root,
+                    generation
+                );
                 match llg::core::db::Db::build(h) {
                     Ok(db) => {
-                        db_span.outcome("ok");
+                        db_span.complete("ok", db.node_count());
+                        crate::llg_debug!(
+                            "event=analysis.db_build.end outcome=ok root={} generation={} nodes={} tops={} flat_modules={} packages={} classes={} type_ranges={} elapsed_us={}",
+                            root,
+                            generation,
+                            db.node_count(),
+                            db.tops.len(),
+                            db.flat_modules.len(),
+                            db.packages.len(),
+                            db.classes.len(),
+                            db.elaborated_type_ranges().len(),
+                            db_started.elapsed().as_micros()
+                        );
                         drop(db_span);
                         elaborated_type_ranges = db
                             .elaborated_type_ranges()
@@ -1121,8 +2053,19 @@ fn analyze_inner(
                             files,
                             parent_id,
                         );
+                        let model_started = std::time::Instant::now();
                         let model = llg::core::model::DesignModel::from_db(&db);
-                        model_span.complete("ok", model.modules.len());
+                        model_span.complete("ok", model.modules.len() + model.top_instances.len());
+                        crate::llg_debug!(
+                            "event=analysis.model.end outcome=ok root={} generation={} modules={} tops={} packages={} classes={} elapsed_us={}",
+                            root,
+                            generation,
+                            model.modules.len(),
+                            model.top_instances.len(),
+                            model.packages.len(),
+                            model.classes.len(),
+                            model_started.elapsed().as_micros()
+                        );
                         drop(model_span);
                         let mut lint_span = crate::logging::LifecycleSpan::phase_with_parent(
                             "analysis.lint",
@@ -1131,8 +2074,16 @@ fn analyze_inner(
                             files,
                             parent_id,
                         );
+                        let lint_started = std::time::Instant::now();
                         let lint_diags = lint::lint_with_config(&db, &model, lint_cfg);
                         lint_span.complete("ok", lint_diags.len());
+                        crate::llg_debug!(
+                            "event=analysis.lint.end outcome=ok root={} generation={} findings={} elapsed_us={}",
+                            root,
+                            generation,
+                            lint_diags.len(),
+                            lint_started.elapsed().as_micros()
+                        );
                         drop(lint_span);
                         let mut token_span = crate::logging::LifecycleSpan::phase_with_parent(
                             "analysis.token_collection",
@@ -1141,11 +2092,23 @@ fn analyze_inner(
                             files,
                             parent_id,
                         );
+                        let tokens_started = std::time::Instant::now();
                         let (tokens, uhdm_bindings, decl_details) = match design.as_ref() {
                             Some(d) => tokens::collect_all_tokens(h, d),
                             None => (Vec::new(), HashMap::new(), HashMap::new()),
                         };
-                        token_span.complete("ok", tokens.len());
+                        let token_count = token_cardinality(&tokens);
+                        token_span.complete("ok", token_count);
+                        crate::llg_debug!(
+                            "event=analysis.tokens.end outcome=ok root={} generation={} files={} nodes={} bindings={} decl_details={} elapsed_us={}",
+                            root,
+                            generation,
+                            tokens.len(),
+                            token_count,
+                            uhdm_bindings.len(),
+                            decl_details.len(),
+                            tokens_started.elapsed().as_micros()
+                        );
                         drop(token_span);
                         // Elaborated analysis: DECL/REF classification comes from
                         // the model + multi-view histogram; parse-side positions
@@ -1173,6 +2136,13 @@ fn analyze_inner(
                     }
                     Err(error) => {
                         db_span.outcome("error");
+                        crate::llg_debug!(
+                            "event=analysis.db_build.end outcome=error root={} generation={} error={} elapsed_us={}",
+                            root,
+                            generation,
+                            error,
+                            db_started.elapsed().as_micros()
+                        );
                         (
                             empty_design(),
                             Vec::new(),
@@ -1194,11 +2164,36 @@ fn analyze_inner(
                     files,
                     parent_id,
                 );
+                crate::llg_debug!(
+                    "event=analysis.parse_fallback.begin root={} generation={} files={}",
+                    root,
+                    generation,
+                    files
+                );
+                let fallback_started = std::time::Instant::now();
                 let (model, tokens, connections) = match design.as_ref() {
-                    Some(d) => parse_tree_feature_parts(d, &conn_pairs, &enum_facts),
+                    Some(d) => parse_tree_feature_parts(
+                        d,
+                        &conn_pairs,
+                        &enum_facts,
+                        root,
+                        generation,
+                        parent_id,
+                    ),
                     None => (empty_design(), Vec::new(), ConnectionInputs::default()),
                 };
-                fallback_span.complete("ok", tokens.len());
+                let token_count = token_cardinality(&tokens);
+                fallback_span.complete("ok", token_count);
+                crate::llg_debug!(
+                    "event=analysis.parse_fallback.end outcome=ok root={} generation={} modules={} token_files={} token_nodes={} bindings={} elapsed_us={}",
+                    root,
+                    generation,
+                    model.modules.len(),
+                    tokens.len(),
+                    token_count,
+                    connections.fallback_bindings.len(),
+                    fallback_started.elapsed().as_micros()
+                );
                 (
                     model,
                     Vec::new(),
@@ -1214,7 +2209,8 @@ fn analyze_inner(
 
     module_graph.elaborated_types = elaborated_type_ranges;
 
-    let outcome = outcome_from_pipeline(&out, uhdm.is_some(), design.is_some(), db_built);
+    let has_design = design.is_some();
+    let outcome = outcome_from_pipeline(&out, uhdm.is_some(), has_design, db_built);
     // `design` borrows from `out`, so release the last native borrow before moving
     // the diagnostics field. Every borrowed Design/VPI value has now been converted
     // to owned Rust data, making post-processing independent of the native session.
@@ -1234,8 +2230,23 @@ fn analyze_inner(
         files,
         parent_id,
     );
+    let session_drop_started = std::time::Instant::now();
+    crate::llg_debug!(
+        "event=surelog.session_drop.begin root={} generation={} diagnostics={} uhdm={} design={}",
+        root,
+        generation,
+        diagnostics.len(),
+        uhdm.is_some(),
+        has_design
+    );
     drop(out.session);
-    drop_span.outcome("ok");
+    drop_span.complete("ok", diagnostics.len());
+    crate::llg_debug!(
+        "event=surelog.session_drop.end outcome=ok root={} generation={} elapsed_us={}",
+        root,
+        generation,
+        session_drop_started.elapsed().as_micros()
+    );
     drop(drop_span);
     // Macro table: config `[compile] defines` plus one conservative scan per
     // compiled file.  The files are read exactly as Surelog saw them (shadow
@@ -1249,6 +2260,7 @@ fn analyze_inner(
         files,
         parent_id,
     );
+    let macro_started = std::time::Instant::now();
     let macro_sources: Vec<(String, String)> = opts
         .files
         .iter()
@@ -1264,6 +2276,15 @@ fn analyze_inner(
         .collect();
     let macro_table = macros::build_table(&opts.defines, &macro_borrowed, None);
     macro_span.complete("ok", macro_sources.len());
+    crate::llg_debug!(
+        "event=analysis.macro_table.end outcome=ok root={} generation={} source_files={} config_defines={} empty={} elapsed_us={}",
+        root,
+        generation,
+        macro_sources.len(),
+        macro_table.config_defines(),
+        macro_table.is_empty(),
+        macro_started.elapsed().as_micros()
+    );
     drop(macro_span);
     let mut index_span = crate::logging::LifecycleSpan::phase_with_parent(
         "analysis.symbol_index",
@@ -1272,6 +2293,7 @@ fn analyze_inner(
         files,
         parent_id,
     );
+    let index_started = std::time::Instant::now();
     let analysis = Analysis::new_with_outcome(
         outcome,
         diagnostics,
@@ -1282,6 +2304,16 @@ fn analyze_inner(
         connections,
     );
     index_span.complete("ok", analysis.index.decls.len());
+    crate::llg_debug!(
+        "event=analysis.symbol_index.end outcome=ok root={} generation={} declarations={} references={} bindings={} lint={} elapsed_us={}",
+        root,
+        generation,
+        analysis.index.decls.len(),
+        analysis.index.refs.len(),
+        analysis.ref_bindings.len(),
+        analysis.lint.len(),
+        index_started.elapsed().as_micros()
+    );
     drop(index_span);
     let mut assembly_span = crate::logging::LifecycleSpan::phase_with_parent(
         "analysis.assembly",
@@ -1290,12 +2322,26 @@ fn analyze_inner(
         files,
         parent_id,
     );
+    let assembly_started = std::time::Instant::now();
     let analysis = analysis
         .with_macros(macro_table)
         .with_decl_details(decl_details)
         .with_module_graph(module_graph)
         .with_configured_top(opts.top.clone());
     assembly_span.complete("ok", analysis.tokens.len());
+    crate::llg_debug!(
+        "event=analysis.assembly.end outcome=ok root={} generation={} outcome_analysis={:?} diagnostics={} lint={} token_files={} token_nodes={} declarations={} references={} elapsed_us={}",
+        root,
+        generation,
+        analysis.outcome,
+        analysis.diagnostics.len(),
+        analysis.lint.len(),
+        analysis.tokens.len(),
+        token_node_count(&analysis.tokens),
+        analysis.index.decls.len(),
+        analysis.index.refs.len(),
+        assembly_started.elapsed().as_micros()
+    );
     analysis
 }
 
@@ -1311,15 +2357,16 @@ fn collect_module_graph(design: &llg::ffi::surelog::Design) -> ModuleGraph {
         path: String,
         file_id: u32,
         nodes: Vec<llg::ffi::surelog::ParseNode>,
-        source: Option<String>,
+        source: Option<GraphSourceIndex>,
     }
 
     let (parse_tokens, _) = tokens::collect_parse_tokens(design);
-    let mut token_types: HashMap<(String, u32, u32), i32> = HashMap::new();
+    let mut token_types: HashMap<&str, HashMap<(u32, u32), i32>> = HashMap::new();
     for file in &parse_tokens {
+        let file_types = token_types.entry(file.path.as_str()).or_default();
         for node in &file.nodes {
-            token_types
-                .entry((file.path.clone(), node.line, node.col))
+            file_types
+                .entry((node.line, node.col))
                 .or_insert(node.vpi_type);
         }
     }
@@ -1337,7 +2384,9 @@ fn collect_module_graph(design: &llg::ffi::surelog::Design) -> ModuleGraph {
         // This is analysis-time source recovery, not request-time access.  It
         // is used only for optional declaration detail strings and never for
         // graph membership or parsing decisions.
-        let source = std::fs::read_to_string(&path).ok();
+        let source = std::fs::read_to_string(&path)
+            .ok()
+            .map(GraphSourceIndex::new);
         files.push(GraphFile {
             path,
             file_id,
@@ -1345,6 +2394,14 @@ fn collect_module_graph(design: &llg::ffi::surelog::Design) -> ModuleGraph {
             source,
         });
     }
+    let source_by_path: HashMap<&str, &GraphSourceIndex> = files
+        .iter()
+        .filter_map(|file| {
+            file.source
+                .as_ref()
+                .map(|source| (file.path.as_str(), source))
+        })
+        .collect();
 
     let mut graph = ModuleGraph::default();
     let mut owners: HashMap<(usize, usize), usize> = HashMap::new();
@@ -1409,10 +2466,11 @@ fn collect_module_graph(design: &llg::ffi::surelog::Design) -> ModuleGraph {
                 declaration
             };
             let end_line = anchor.end_line.max(anchor.line);
-            let end_col = if anchor.end_col == 0 {
-                anchor.col.saturating_add(name.chars().count() as u16) as u32
+            let col = graph_lsp_column(file.source.as_ref(), anchor.line, anchor.col as u32, None);
+            let end_col = if end_line == anchor.line {
+                col.saturating_add(lsp_name_len(&name))
             } else {
-                anchor.end_col as u32
+                graph_lsp_column(file.source.as_ref(), end_line, anchor.end_col as u32, None)
             };
             let key = (
                 file.path.clone(),
@@ -1420,22 +2478,16 @@ fn collect_module_graph(design: &llg::ffi::surelog::Design) -> ModuleGraph {
                 anchor.line,
                 anchor.col as u32,
             );
-            if seen_definitions.contains(&key) {
+            if !seen_definitions.insert(key) {
                 continue;
             }
             let definition_index = graph.definitions.len();
-            seen_definitions.insert(key);
             graph.definitions.push(ModuleGraphDefinition {
-                id: module_graph_definition_id(
-                    &name,
-                    Some(file.path.as_str()),
-                    anchor.line,
-                    anchor.col as u32,
-                ),
+                id: module_graph_definition_id(&name, Some(file.path.as_str()), anchor.line, col),
                 name,
                 file: Some(file.path.clone()),
                 line: anchor.line,
-                col: anchor.col as u32,
+                col,
                 end_line,
                 end_col,
                 ports: Vec::new(),
@@ -1453,12 +2505,16 @@ fn collect_module_graph(design: &llg::ffi::surelog::Design) -> ModuleGraph {
         }
     }
 
+    let mut retained_definition_ranges = graph_definition_line_ranges(&graph.definitions);
+
     // A parse-token module is a safe final fallback for a malformed tree that
     // retained the name token but lost its enclosing declaration node.  It is
     // an empty definition (no guessed edges).  The token often also appears
     // inside a real `paModule_declaration`, so deduplicate by the retained
     // source span before adding it; distinct same-named declarations in one
-    // file remain distinct when their spans do not overlap.
+    // file remain distinct when their spans do not overlap.  The keyed range
+    // index keeps this fallback linear in the number of module tokens instead
+    // of scanning every retained definition for each token.
     for file in &parse_tokens {
         for node in &file.nodes {
             if node.vpi_type != vpi::vpiModule
@@ -1467,33 +2523,33 @@ fn collect_module_graph(design: &llg::ffi::surelog::Design) -> ModuleGraph {
                 continue;
             }
             let name = clean_name(node.name.as_deref().unwrap_or_default()).to_owned();
-            if graph.definitions.iter().any(|definition| {
-                definition.file.as_deref() == Some(file.path.as_str())
-                    && clean_name(&definition.name) == name
-                    && node.line >= definition.line
-                    && (definition.end_line == 0 || node.line <= definition.end_line)
-            }) {
+            if graph_definition_line_is_retained(
+                &retained_definition_ranges,
+                &file.path,
+                &name,
+                node.line,
+            ) {
                 continue;
             }
             let key = (file.path.clone(), name.clone(), node.line, node.col);
             if !seen_definitions.insert(key) {
                 continue;
             }
-            let end_col = node
-                .end_col
-                .max(node.col.saturating_add(name.chars().count() as u32));
+            let end_line = node.end_line.max(node.line);
+            let source = source_by_path.get(file.path.as_str()).copied();
+            let col = graph_lsp_column(source, node.line, node.col, Some(&name));
+            let end_col = if end_line == node.line {
+                col.saturating_add(lsp_name_len(&name))
+            } else {
+                graph_lsp_column(source, end_line, node.end_col, None)
+            };
             graph.definitions.push(ModuleGraphDefinition {
-                id: module_graph_definition_id(
-                    &name,
-                    Some(file.path.as_str()),
-                    node.line,
-                    node.col,
-                ),
-                name,
+                id: module_graph_definition_id(&name, Some(file.path.as_str()), node.line, col),
+                name: name.clone(),
                 file: Some(file.path.clone()),
                 line: node.line,
-                col: node.col,
-                end_line: node.end_line.max(node.line),
+                col,
+                end_line,
                 end_col,
                 ports: Vec::new(),
                 params: Vec::new(),
@@ -1501,34 +2557,85 @@ fn collect_module_graph(design: &llg::ffi::surelog::Design) -> ModuleGraph {
                 children: Vec::new(),
                 generated_scopes: Vec::new(),
             });
+            insert_graph_definition_line_range(
+                &mut retained_definition_ranges,
+                &file.path,
+                &name,
+                node.line,
+                end_line,
+            );
         }
     }
 
+    let mut assembly_indexes = GraphAssemblyIndexes::new(graph.definitions.len());
+
     // Attribute nodes whose parent links do not reach a retained module root
     // by source range.  We choose only a single containing definition; ties
-    // are left unresolved instead of guessing across duplicate ranges.
-    for (file_index, file) in files.iter().enumerate() {
-        for (node_index, node) in file.nodes.iter().enumerate() {
-            if node.file_id != file.file_id || owners.contains_key(&(file_index, node_index)) {
-                continue;
-            }
-            let mut candidates = graph
-                .definitions
-                .iter()
-                .enumerate()
-                .filter(|(_, definition)| {
-                    definition.file.as_deref() == Some(file.path.as_str())
-                        && node.line >= definition.line
-                        && (definition.end_line == 0 || node.line <= definition.end_line)
-                })
-                .collect::<Vec<_>>();
-            candidates.sort_by_key(|(_, definition)| {
-                (
+    // are left unresolved instead of guessing across duplicate ranges.  The
+    // span index keeps this malformed-tree fallback from testing every
+    // definition for every node (the common case is a single active module
+    // span per file).
+    let mut definition_spans_by_file: HashMap<&str, Vec<GraphDefinitionSpan>> = HashMap::new();
+    for (definition_index, definition) in graph.definitions.iter().enumerate() {
+        let Some(file) = definition.file.as_deref() else {
+            continue;
+        };
+        definition_spans_by_file
+            .entry(file)
+            .or_default()
+            .push(GraphDefinitionSpan {
+                definition_index,
+                start_line: definition.line,
+                end_line: if definition.end_line == 0 {
+                    u32::MAX
+                } else {
+                    definition.end_line
+                },
+                rank: (
                     definition.end_line.saturating_sub(definition.line),
                     definition.id.clone(),
-                )
+                    definition_index,
+                ),
             });
-            if let Some((definition_index, _)) = candidates.first() {
+    }
+    for spans in definition_spans_by_file.values_mut() {
+        spans.sort_by_key(|span| (span.start_line, span.end_line, span.definition_index));
+    }
+    for (file_index, file) in files.iter().enumerate() {
+        let Some(spans) = definition_spans_by_file.get(file.path.as_str()) else {
+            continue;
+        };
+        let mut node_indices = file
+            .nodes
+            .iter()
+            .enumerate()
+            .filter(|(node_index, node)| {
+                node.file_id == file.file_id && !owners.contains_key(&(file_index, *node_index))
+            })
+            .map(|(node_index, _)| node_index)
+            .collect::<Vec<_>>();
+        node_indices.sort_by_key(|index| graph_position(&file.nodes[*index], *index));
+
+        let mut next_span = 0usize;
+        let mut active_by_end = BTreeSet::new();
+        let mut active_by_rank = BTreeSet::new();
+        for node_index in node_indices {
+            let line = file.nodes[node_index].line;
+            while next_span < spans.len() && spans[next_span].start_line <= line {
+                let span = &spans[next_span];
+                active_by_end.insert((span.end_line, next_span));
+                active_by_rank.insert(span.rank.clone());
+                next_span += 1;
+            }
+            while let Some(&(end_line, span_index)) = active_by_end.first() {
+                if end_line >= line {
+                    break;
+                }
+                active_by_end.remove(&(end_line, span_index));
+                let span = &spans[span_index];
+                active_by_rank.remove(&span.rank);
+            }
+            if let Some((_, _, definition_index)) = active_by_rank.first() {
                 owners.insert((file_index, node_index), *definition_index);
             }
         }
@@ -1539,6 +2646,7 @@ fn collect_module_graph(design: &llg::ffi::surelog::Design) -> ModuleGraph {
     // instance names, connection labels, and nested function/task locals, so
     // only declaration identifiers become explorer contents.
     for (file_index, file) in files.iter().enumerate() {
+        let mut declaration_facts = GraphDeclarationFactsCache::default();
         for (node_index, node) in file.nodes.iter().enumerate() {
             if node.file_id != file.file_id
                 || node.type_id != VObjectType::slStringConst as u16
@@ -1553,95 +2661,116 @@ fn collect_module_graph(design: &llg::ffi::surelog::Design) -> ModuleGraph {
             let Some(name) = node.symbol_name.as_deref().filter(|name| !name.is_empty()) else {
                 continue;
             };
-            let Some(declaration_kind) = graph_declaration_kind(&file.nodes, node_index) else {
+            let Some((declaration_root, declaration_kind)) =
+                graph_declaration_kind(&file.nodes, node_index, &mut declaration_facts)
+            else {
                 continue;
             };
-            let Some(token_type) =
-                token_types.get(&(file.path.clone(), node.line, node.col as u32))
+            let Some(token_type) = token_types
+                .get(file.path.as_str())
+                .and_then(|types| types.get(&(node.line, node.col as u32)))
             else {
                 continue;
             };
             if !graph_token_matches_declaration(*token_type, &declaration_kind) {
                 continue;
             }
-            let Some(declaration_root) = graph_declaration_root(&file.nodes, node_index) else {
-                continue;
-            };
+            let declaration_facts = declaration_facts.facts(&file.nodes, declaration_root);
+            let source_parts = file.source.as_ref().and_then(|source| {
+                graph_type_prefix(
+                    Some(source),
+                    Some(&file.nodes[declaration_root]),
+                    node.line,
+                    node.col as u32,
+                    name,
+                )
+            });
             let ty = graph_type_info(
                 &file.nodes,
                 declaration_root,
-                file.source.as_deref(),
+                &declaration_facts.type_info,
+                file.source.as_ref(),
+                source_parts.as_ref(),
                 node.line,
                 node.col as u32,
                 name,
             );
-            let location = Some(graph_declaration_location(&file.path, node, name));
+            let location = Some(graph_declaration_location(
+                &file.path,
+                file.source.as_ref(),
+                node,
+                name,
+            ));
             let graph_display = graph_type_display(
-                file.source.as_deref(),
+                file.source.as_ref(),
                 &file.nodes[declaration_root],
                 node.line,
                 node.col as u32,
                 name,
                 &ty,
                 &declaration_kind,
+                source_parts.as_ref(),
             );
             let display_type = graph_display.text;
             let display_shape = graph_display.shape;
             let detail = graph_declaration_detail(
-                file.source.as_deref(),
+                file.source.as_ref(),
                 node.line,
                 node.col as u32,
                 name,
                 &ty,
                 &declaration_kind,
             );
-            let definition = &mut graph.definitions[definition_index];
             match declaration_kind {
                 GraphDeclarationKind::Port(direction) => {
-                    if !definition
-                        .ports
-                        .iter()
-                        .any(|port| port.name == name && port.detail.as_ref() == detail.as_ref())
+                    if assembly_indexes.ports[definition_index]
+                        .insert((name.to_owned(), detail.clone()))
                     {
-                        definition.ports.push(ModuleGraphPort {
-                            name: name.to_owned(),
-                            direction,
-                            ty,
-                            detail,
-                            location,
-                            display_type,
-                            display_shape,
-                        });
+                        graph.definitions[definition_index]
+                            .ports
+                            .push(ModuleGraphPort {
+                                name: name.to_owned(),
+                                direction,
+                                ty,
+                                detail,
+                                location,
+                                display_type,
+                                display_shape,
+                            });
                     }
                 }
                 GraphDeclarationKind::Parameter(local) => {
-                    if !definition.params.iter().any(|parameter| {
-                        parameter.name == name && parameter.detail.as_ref() == detail.as_ref()
-                    }) {
-                        definition.params.push(ModuleGraphParameter {
-                            name: name.to_owned(),
-                            ty,
-                            local,
-                            detail,
-                            location,
-                            display_type,
-                            display_shape,
-                        });
+                    if assembly_indexes.params[definition_index]
+                        .insert((name.to_owned(), detail.clone()))
+                    {
+                        graph.definitions[definition_index]
+                            .params
+                            .push(ModuleGraphParameter {
+                                name: name.to_owned(),
+                                ty,
+                                local,
+                                detail,
+                                location,
+                                display_type,
+                                display_shape,
+                            });
                     }
                 }
                 GraphDeclarationKind::Signal(kind) => {
-                    if !definition.signals.iter().any(|signal| {
-                        signal.name == name && signal.detail.as_ref() == detail.as_ref()
-                    }) {
-                        definition.signals.push(ModuleGraphSignal {
-                            name: name.to_owned(),
-                            kind,
-                            ty,
-                            detail,
-                            location,
-                            display_type,
-                            display_shape,
-                        });
+                    if assembly_indexes.signals[definition_index]
+                        .insert((name.to_owned(), detail.clone()))
+                    {
+                        graph.definitions[definition_index]
+                            .signals
+                            .push(ModuleGraphSignal {
+                                name: name.to_owned(),
+                                kind,
+                                ty,
+                                detail,
+                                location,
+                                display_type,
+                                display_shape,
+                            });
                     }
                 }
             }
@@ -1690,19 +2819,30 @@ fn collect_module_graph(design: &llg::ffi::surelog::Design) -> ModuleGraph {
                     module_type: clean_name(&module_type).to_owned(),
                     file: Some(file.path.clone()),
                     line: file.nodes[name_index].line,
-                    col: file.nodes[name_index].col as u32,
+                    col: graph_lsp_column(
+                        file.source.as_ref(),
+                        file.nodes[name_index].line,
+                        file.nodes[name_index].col as u32,
+                        file.nodes[name_index].symbol_name.as_deref(),
+                    ),
                 };
-                let scopes = graph_generate_ancestors(&file.nodes, inst_index);
+                let mut scopes = graph_generate_ancestors(&file.nodes, inst_index);
+                for scope in &mut scopes {
+                    scope.col = graph_lsp_column(file.source.as_ref(), scope.line, scope.col, None);
+                }
                 if scopes.is_empty() {
                     graph_push_instance(
                         &mut graph.definitions[parent_definition].children,
+                        &mut assembly_indexes.children[parent_definition],
                         instance,
                     );
                 } else {
                     graph_push_generated_instance(
-                        &mut graph.definitions[parent_definition].generated_scopes,
+                        parent_definition,
+                        &mut graph.definitions[parent_definition],
                         &scopes,
                         instance,
+                        &mut assembly_indexes,
                     );
                 }
             }
@@ -1758,6 +2898,600 @@ enum GraphDeclarationKind {
     Port(Direction),
     Parameter(bool),
     Signal(String),
+}
+
+#[derive(Debug, Clone)]
+struct GraphDefinitionSpan {
+    definition_index: usize,
+    start_line: u32,
+    end_line: u32,
+    rank: (u32, String, usize),
+}
+
+/// Facts that are shared by every declarator under one parse-tree declaration
+/// root.  Keeping the subtree walk here makes compact declarations such as
+/// `logic a, b, c;` linear in the root size rather than repeating the same
+/// traversal for every name.
+#[derive(Debug, Clone)]
+struct GraphDeclarationSubtreeFacts {
+    type_info: TypeInfo,
+    direction: Direction,
+    net_kind: String,
+    variable_kind: String,
+}
+
+#[derive(Debug, Default)]
+struct GraphDeclarationFactsCache {
+    by_root: HashMap<usize, GraphDeclarationSubtreeFacts>,
+    #[cfg(test)]
+    subtree_walks: usize,
+}
+
+impl GraphDeclarationFactsCache {
+    fn facts(
+        &mut self,
+        nodes: &[llg::ffi::surelog::ParseNode],
+        root: usize,
+    ) -> &GraphDeclarationSubtreeFacts {
+        if !self.by_root.contains_key(&root) {
+            #[cfg(test)]
+            {
+                self.subtree_walks += 1;
+            }
+            self.by_root
+                .insert(root, graph_declaration_subtree_facts(nodes, root));
+        }
+        self.by_root
+            .get(&root)
+            .expect("declaration facts inserted above")
+    }
+}
+
+/// Byte ranges and character boundaries for one source line.  The
+/// declaration recovery pass asks for the same line repeatedly when an ANSI
+/// header or a compact declaration contains many names, so these facts are
+/// built once instead of rescanning the line for every name.
+#[derive(Debug)]
+struct GraphLineMetadata {
+    start: usize,
+    end: usize,
+    /// Number of Unicode scalar values in the line, excluding its line break.
+    character_count: usize,
+    /// Relative byte offsets for every `GRAPH_CHARACTER_CHECKPOINT_STRIDE`
+    /// scalar values on a non-ASCII line.  ASCII lines use the direct byte
+    /// offset path and keep this empty, avoiding one entry per character.
+    character_checkpoints: Vec<usize>,
+    clause_start_offsets: Vec<(usize, char)>,
+    clause_end_offsets: Vec<usize>,
+}
+
+const GRAPH_CHARACTER_CHECKPOINT_STRIDE: usize = 64;
+
+/// Immutable, per-file source facts used by the source graph.
+///
+/// The original text is retained for exact detail/type spelling.  `masked`
+/// has the same byte length as the original and replaces comment bytes with
+/// spaces, so structural scans can walk it without repeatedly rebuilding
+/// comment ranges.  `stripped` retains the historical one-space-per-comment
+/// character form used for declaration-line details; unlike `masked`, it is
+/// not required to preserve byte offsets.
+#[derive(Debug)]
+struct GraphSourceIndex {
+    source: String,
+    masked: String,
+    stripped: String,
+    line_starts: Vec<usize>,
+    source_lines: Vec<GraphLineMetadata>,
+    stripped_lines: Vec<GraphLineMetadata>,
+    comment_ranges: Vec<(usize, usize)>,
+    declaration_boundary_events: Vec<(usize, usize)>,
+    delimiter_state_events: Vec<(usize, GraphDelimiterState)>,
+    commas_by_state: HashMap<GraphDelimiterState, Vec<usize>>,
+    declaration_tail_events_by_state: HashMap<GraphDelimiterState, Vec<usize>>,
+    equals_by_state: HashMap<GraphDelimiterState, Vec<usize>>,
+}
+
+impl GraphSourceIndex {
+    fn new(source: String) -> Self {
+        let comment_ranges = graph_comment_ranges(&source);
+        let masked = mask_graph_comments(&source, &comment_ranges);
+        let stripped = strip_graph_comments_with_ranges(&source, &comment_ranges);
+        let line_starts = graph_line_starts(&source);
+        let stripped_line_starts = graph_line_starts(&stripped);
+        let source_lines = graph_line_metadata(&source, &line_starts, false, false);
+        let stripped_lines = graph_line_metadata(&stripped, &stripped_line_starts, true, true);
+        let syntax = graph_source_syntax_facts(&masked);
+        Self {
+            source,
+            masked,
+            stripped,
+            line_starts,
+            source_lines,
+            stripped_lines,
+            comment_ranges,
+            declaration_boundary_events: syntax.declaration_boundary_events,
+            delimiter_state_events: syntax.delimiter_state_events,
+            commas_by_state: syntax.commas_by_state,
+            declaration_tail_events_by_state: syntax.declaration_tail_events_by_state,
+            equals_by_state: syntax.equals_by_state,
+        }
+    }
+
+    fn line_start(&self, line: u32) -> Option<usize> {
+        graph_indexed_line_start(&self.line_starts, &self.source, line)
+    }
+
+    fn source_line(&self, line: u32) -> Option<&GraphLineMetadata> {
+        let line_index = usize::try_from(line.checked_sub(1)?).ok()?;
+        self.source_lines.get(line_index)
+    }
+
+    fn stripped_line(&self, line: u32) -> Option<&GraphLineMetadata> {
+        let line_index = usize::try_from(line.checked_sub(1)?).ok()?;
+        self.stripped_lines.get(line_index)
+    }
+
+    fn stripped_line_text(&self, line: u32) -> Option<&str> {
+        let line = self.stripped_line(line)?;
+        if line.start == self.stripped.len()
+            && (self.stripped.is_empty() || self.stripped.ends_with('\n'))
+        {
+            return None;
+        }
+        Some(&self.stripped[line.start..line.end])
+    }
+
+    fn line_text(&self, line: u32) -> Option<&str> {
+        self.stripped_line_text(line)
+    }
+
+    fn stripped_position_offset(&self, line: u32, col: u32) -> Option<usize> {
+        let line = self.stripped_line(line)?;
+        let character = usize::try_from(col.checked_sub(1)?).ok()?;
+        graph_line_character_offset(&self.stripped, line, character)
+    }
+
+    fn position_offset(&self, line: u32, col: u32) -> Option<usize> {
+        let line = self.source_line(line)?;
+        let character = usize::try_from(col.checked_sub(1)?).ok()?;
+        graph_line_character_offset(&self.source, line, character)
+    }
+
+    fn comment_cursor_at(&self, offset: usize) -> GraphCommentCursor<'_> {
+        GraphCommentCursor::at_offset(&self.comment_ranges, offset)
+    }
+
+    fn delimiter_state_at(&self, offset: usize) -> GraphDelimiterState {
+        let mut low = 0;
+        let mut high = self.delimiter_state_events.len();
+        while low < high {
+            let middle = low + (high - low) / 2;
+            if self.delimiter_state_events[middle].0 <= offset {
+                low = middle + 1;
+            } else {
+                high = middle;
+            }
+        }
+        self.delimiter_state_events
+            .get(low.saturating_sub(1))
+            .map_or_else(GraphDelimiterState::default, |(_, state)| *state)
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+struct GraphDelimiterState {
+    square: usize,
+    paren: usize,
+    brace: usize,
+}
+
+impl GraphDelimiterState {
+    fn is_zero(self) -> bool {
+        self.square == 0 && self.paren == 0 && self.brace == 0
+    }
+
+    fn increment(&mut self, delimiter: char) {
+        match delimiter {
+            '[' => self.square += 1,
+            '(' => self.paren += 1,
+            '{' => self.brace += 1,
+            _ => {}
+        }
+    }
+
+    fn decrement_open(&mut self, delimiter: char) {
+        match delimiter {
+            '[' => self.square = self.square.saturating_sub(1),
+            '(' => self.paren = self.paren.saturating_sub(1),
+            '{' => self.brace = self.brace.saturating_sub(1),
+            _ => {}
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct GraphDelimiterFrame {
+    character: char,
+    offset: usize,
+    previous_boundary: Option<usize>,
+    previous_tops: [Option<usize>; 3],
+}
+
+fn graph_delimiter_slot(delimiter: char) -> Option<usize> {
+    match delimiter {
+        '[' => Some(0),
+        '(' => Some(1),
+        '{' => Some(2),
+        _ => None,
+    }
+}
+
+#[derive(Debug)]
+struct GraphSourceSyntaxFacts {
+    declaration_boundary_events: Vec<(usize, usize)>,
+    delimiter_state_events: Vec<(usize, GraphDelimiterState)>,
+    commas_by_state: HashMap<GraphDelimiterState, Vec<usize>>,
+    declaration_tail_events_by_state: HashMap<GraphDelimiterState, Vec<usize>>,
+    equals_by_state: HashMap<GraphDelimiterState, Vec<usize>>,
+}
+
+fn graph_line_starts(text: &str) -> Vec<usize> {
+    let mut starts = vec![0];
+    starts.extend(
+        text.bytes()
+            .enumerate()
+            .filter_map(|(offset, byte)| (byte == b'\n').then_some(offset + 1)),
+    );
+    starts
+}
+
+fn graph_line_metadata(
+    text: &str,
+    starts: &[usize],
+    trim_carriage_return: bool,
+    collect_separators: bool,
+) -> Vec<GraphLineMetadata> {
+    starts
+        .iter()
+        .enumerate()
+        .map(|(index, &start)| {
+            // The next line starts immediately after its `\n`; retaining the
+            // preceding `\r` here preserves the old source-position behavior
+            // for CRLF input.  Stripped display lines opt out of that byte.
+            let raw_end = starts
+                .get(index + 1)
+                .copied()
+                .map_or(text.len(), |next| next.saturating_sub(1));
+            let end = if trim_carriage_return
+                && raw_end > start
+                && text.as_bytes().get(raw_end - 1) == Some(&b'\r')
+            {
+                raw_end - 1
+            } else {
+                raw_end
+            };
+            let (character_count, character_checkpoints) =
+                graph_line_character_metadata(&text[start..end]);
+            let (clause_start_offsets, clause_end_offsets) = if collect_separators {
+                let mut starts = Vec::new();
+                let mut ends = Vec::new();
+                for (offset, character) in text[start..end].char_indices() {
+                    let offset = start + offset;
+                    if matches!(character, ';' | ',' | '(') {
+                        starts.push((offset, character));
+                    }
+                    if matches!(character, ';' | ',' | ')') {
+                        ends.push(offset);
+                    }
+                }
+                (starts, ends)
+            } else {
+                (Vec::new(), Vec::new())
+            };
+            GraphLineMetadata {
+                start,
+                end,
+                character_count,
+                character_checkpoints,
+                clause_start_offsets,
+                clause_end_offsets,
+            }
+        })
+        .collect()
+}
+
+fn graph_line_character_metadata(line: &str) -> (usize, Vec<usize>) {
+    if line.is_ascii() {
+        return (line.len(), Vec::new());
+    }
+
+    let mut character_count = 0;
+    let mut character_checkpoints = Vec::new();
+    for (offset, _) in line.char_indices() {
+        if character_count % GRAPH_CHARACTER_CHECKPOINT_STRIDE == 0 {
+            character_checkpoints.push(offset);
+        }
+        character_count += 1;
+    }
+    (character_count, character_checkpoints)
+}
+
+fn graph_line_character_offset(
+    text: &str,
+    line: &GraphLineMetadata,
+    character: usize,
+) -> Option<usize> {
+    if character > line.character_count {
+        return None;
+    }
+    if character == line.character_count {
+        return Some(line.end);
+    }
+    if line.character_checkpoints.is_empty() {
+        // ASCII lines have one byte per scalar value, so no metadata is
+        // necessary for the common case.
+        return Some(line.start + character);
+    }
+
+    let checkpoint_character =
+        character / GRAPH_CHARACTER_CHECKPOINT_STRIDE * GRAPH_CHARACTER_CHECKPOINT_STRIDE;
+    let checkpoint = *line
+        .character_checkpoints
+        .get(character / GRAPH_CHARACTER_CHECKPOINT_STRIDE)?;
+    if checkpoint_character == character {
+        return Some(line.start + checkpoint);
+    }
+    text.get(line.start + checkpoint..line.end)?
+        .char_indices()
+        .nth(character - checkpoint_character)
+        .map(|(offset, _)| line.start + checkpoint + offset)
+}
+
+fn graph_indexed_line_start(starts: &[usize], text: &str, line: u32) -> Option<usize> {
+    if line == 0 {
+        return None;
+    }
+    let index = usize::try_from(line - 1).ok()?;
+    starts.get(index).copied().or_else(|| {
+        (index == starts.len() && !text.is_empty() && !text.ends_with('\n')).then_some(text.len())
+    })
+}
+
+fn graph_masked_delimiter_events(masked: &str) -> Vec<(usize, char)> {
+    let mut events = Vec::new();
+    let mut in_string = false;
+    let mut escaped_string_character = false;
+    let mut escaped_identifier = false;
+
+    for (offset, character) in masked.char_indices() {
+        if in_string {
+            if escaped_string_character {
+                escaped_string_character = false;
+            } else if character == '\\' {
+                escaped_string_character = true;
+            } else if character == '"' {
+                in_string = false;
+            }
+            continue;
+        }
+        if escaped_identifier {
+            if character.is_whitespace() {
+                escaped_identifier = false;
+            }
+            continue;
+        }
+        if character == '"' {
+            in_string = true;
+            escaped_string_character = false;
+            continue;
+        }
+        if character == '\\' {
+            escaped_identifier = true;
+            continue;
+        }
+        if matches!(
+            character,
+            '[' | ']' | '(' | ')' | '{' | '}' | ',' | ';' | '='
+        ) {
+            events.push((offset, character));
+        }
+    }
+    events
+}
+
+fn graph_matching_openers(events: &[(usize, char)]) -> HashSet<usize> {
+    let mut matched = HashSet::new();
+    let mut stack: Vec<GraphDelimiterFrame> = Vec::new();
+    let mut top: [Option<usize>; 3] = [None; 3];
+    for &(offset, character) in events {
+        if let Some(expected_open) = match character {
+            ']' => Some('['),
+            ')' => Some('('),
+            '}' => Some('{'),
+            _ => None,
+        } {
+            let Some(slot) = graph_delimiter_slot(expected_open) else {
+                continue;
+            };
+            if let Some(index) = top[slot] {
+                matched.insert(stack[index].offset);
+                top = stack[index].previous_tops;
+                stack.truncate(index);
+            }
+        } else if matches!(character, '[' | '(' | '{') {
+            let Some(slot) = graph_delimiter_slot(character) else {
+                continue;
+            };
+            let frame = GraphDelimiterFrame {
+                character,
+                offset,
+                previous_boundary: None,
+                previous_tops: top,
+            };
+            stack.push(frame);
+            top[slot] = Some(stack.len() - 1);
+        }
+    }
+    matched
+}
+
+/// Record reusable source-structure facts in one per-file preprocessing pass.
+/// Parenthesized regions temporarily select the opening parenthesis for the
+/// malformed-node declaration fallback; semicolons at the outer level replace
+/// that boundary.  The comma index is keyed by the delimiter nesting state at
+/// each comma, which lets a declaration slice that starts inside an ANSI port
+/// or parameter list find its first/last relative top-level comma by binary
+/// search without rescanning or allocating a comma vector.
+fn graph_source_syntax_facts(masked: &str) -> GraphSourceSyntaxFacts {
+    let delimiter_events = graph_masked_delimiter_events(masked);
+    let matched_openers = graph_matching_openers(&delimiter_events);
+    let mut declaration_boundary_events = vec![(0, 0)];
+    let mut delimiter_state_events = vec![(0, GraphDelimiterState::default())];
+    let mut commas_by_state: HashMap<GraphDelimiterState, Vec<usize>> = HashMap::new();
+    let mut declaration_tail_events_by_state: HashMap<GraphDelimiterState, Vec<usize>> =
+        HashMap::new();
+    let mut equals_by_state: HashMap<GraphDelimiterState, Vec<usize>> = HashMap::new();
+    let mut current_boundary = 0usize;
+    let mut state = GraphDelimiterState::default();
+    let mut stack: Vec<GraphDelimiterFrame> = Vec::new();
+    let mut top: [Option<usize>; 3] = [None; 3];
+
+    for &(offset, character) in &delimiter_events {
+        let end = offset + character.len_utf8();
+        if matches!(character, ')' | ',' | ';' | '=') {
+            declaration_tail_events_by_state
+                .entry(state)
+                .or_default()
+                .push(offset);
+        }
+        if character == '=' {
+            equals_by_state.entry(state).or_default().push(offset);
+        }
+        match character {
+            '[' | '(' | '{' => {
+                let previous_boundary =
+                    (character == '(' && state.is_zero()).then_some(current_boundary);
+                let Some(slot) = graph_delimiter_slot(character) else {
+                    continue;
+                };
+                let frame = GraphDelimiterFrame {
+                    character,
+                    offset,
+                    previous_boundary,
+                    previous_tops: top,
+                };
+                stack.push(frame);
+                top[slot] = Some(stack.len() - 1);
+                state.increment(character);
+                delimiter_state_events.push((end, state));
+                if previous_boundary.is_some() {
+                    current_boundary = end;
+                    declaration_boundary_events.push((end, current_boundary));
+                }
+            }
+            ']' | ')' | '}' => {
+                let Some(expected_open) = (match character {
+                    ']' => Some('['),
+                    ')' => Some('('),
+                    '}' => Some('{'),
+                    _ => None,
+                }) else {
+                    continue;
+                };
+                let Some(slot) = graph_delimiter_slot(expected_open) else {
+                    continue;
+                };
+                let Some(index) = top[slot] else {
+                    // Unmatched closers are ignored rather than changing a
+                    // later declaration's nesting state.
+                    continue;
+                };
+                while stack.len() > index + 1 {
+                    let frame = stack.pop().expect("delimiter stack is non-empty");
+                    state.decrement_open(frame.character);
+                }
+                let frame = stack.pop().expect("matching delimiter is on the stack");
+                top = frame.previous_tops;
+                state.decrement_open(frame.character);
+                delimiter_state_events.push((end, state));
+                if let Some(previous_boundary) = frame.previous_boundary {
+                    current_boundary = previous_boundary;
+                    declaration_boundary_events.push((end, current_boundary));
+                }
+            }
+            ',' => {
+                commas_by_state.entry(state).or_default().push(offset);
+            }
+            '=' => {}
+            ';' => {
+                let malformed_open = stack
+                    .iter()
+                    .any(|frame| !matched_openers.contains(&frame.offset));
+                if state.is_zero() || malformed_open {
+                    if !state.is_zero() {
+                        stack.clear();
+                        state = GraphDelimiterState::default();
+                        delimiter_state_events.push((end, state));
+                    }
+                    current_boundary = end;
+                    declaration_boundary_events.push((end, current_boundary));
+                }
+            }
+            _ => unreachable!("graph delimiter event is structural"),
+        }
+    }
+
+    GraphSourceSyntaxFacts {
+        declaration_boundary_events,
+        delimiter_state_events,
+        commas_by_state,
+        declaration_tail_events_by_state,
+        equals_by_state,
+    }
+}
+
+/// Compatibility helper for focused tests and the declaration-start fallback.
+/// Production callers use the facts retained in [`GraphSourceIndex`], so this
+/// wrapper is never rerun once per declaration.
+#[cfg(test)]
+fn graph_declaration_boundary_events(masked: &str) -> Vec<(usize, usize)> {
+    graph_source_syntax_facts(masked).declaration_boundary_events
+}
+
+fn mask_graph_comments(text: &str, ranges: &[(usize, usize)]) -> String {
+    let mut masked = Vec::with_capacity(text.len());
+    let mut cursor = 0usize;
+    for (offset, byte) in text.bytes().enumerate() {
+        while cursor < ranges.len() && offset >= ranges[cursor].1 {
+            cursor += 1;
+        }
+        let in_comment = ranges
+            .get(cursor)
+            .is_some_and(|(start, end)| *start <= offset && offset < *end);
+        masked.push(if in_comment && !matches!(byte, b'\r' | b'\n') {
+            b' '
+        } else {
+            byte
+        });
+    }
+    String::from_utf8(masked).expect("comment masking preserves source UTF-8")
+}
+
+fn strip_graph_comments_with_ranges(text: &str, ranges: &[(usize, usize)]) -> String {
+    let mut stripped = String::with_capacity(text.len());
+    let mut cursor = GraphCommentCursor::new(ranges);
+    for (offset, character) in text.char_indices() {
+        if cursor.contains(offset) {
+            if matches!(character, '\n' | '\r') {
+                stripped.push(character);
+            } else {
+                stripped.push(' ');
+            }
+        } else {
+            stripped.push(character);
+        }
+    }
+    stripped
 }
 
 fn graph_node_type(
@@ -1854,10 +3588,107 @@ fn graph_has_ancestor(
         .any(wanted)
 }
 
+fn graph_declaration_subtree_facts(
+    nodes: &[llg::ffi::surelog::ParseNode],
+    declaration_root: usize,
+) -> GraphDeclarationSubtreeFacts {
+    use llg::core::vobject_types::VObjectType;
+
+    let mut type_info = TypeInfo::default();
+    let mut direction = Direction::None;
+    let mut net_kind = None;
+    let mut has_reg = false;
+    for index in graph_subtree_indices(nodes, declaration_root) {
+        match graph_node_type(nodes, nodes[index].type_id) {
+            Some(VObjectType::paInput_declaration | VObjectType::paPortDir_Inp)
+                if direction == Direction::None =>
+            {
+                direction = Direction::Input;
+            }
+            Some(VObjectType::paOutput_declaration | VObjectType::paPortDir_Out)
+                if direction == Direction::None =>
+            {
+                direction = Direction::Output;
+            }
+            Some(VObjectType::paInout_declaration | VObjectType::paPortDir_Inout)
+                if direction == Direction::None =>
+            {
+                direction = Direction::Inout;
+            }
+            Some(VObjectType::paNetType_Wire | VObjectType::paWIRE) if net_kind.is_none() => {
+                net_kind = Some("wire".to_owned());
+            }
+            Some(VObjectType::paNetType_Wand | VObjectType::paWAND) if net_kind.is_none() => {
+                net_kind = Some("wand".to_owned());
+            }
+            Some(VObjectType::paNetType_Wor | VObjectType::paWOR) if net_kind.is_none() => {
+                net_kind = Some("wor".to_owned());
+            }
+            Some(VObjectType::paNetType_Tri | VObjectType::paTRI) if net_kind.is_none() => {
+                net_kind = Some("tri".to_owned());
+            }
+            Some(VObjectType::paNetType_Tri0 | VObjectType::paTRI0) if net_kind.is_none() => {
+                net_kind = Some("tri0".to_owned());
+            }
+            Some(VObjectType::paNetType_Tri1 | VObjectType::paTRI1) if net_kind.is_none() => {
+                net_kind = Some("tri1".to_owned());
+            }
+            Some(VObjectType::paNetType_Uwire | VObjectType::paUWIRE) if net_kind.is_none() => {
+                net_kind = Some("uwire".to_owned());
+            }
+            Some(VObjectType::paNetType_Supply0 | VObjectType::paSUPPLY0) if net_kind.is_none() => {
+                net_kind = Some("supply0".to_owned());
+            }
+            Some(VObjectType::paNetType_Supply1 | VObjectType::paSUPPLY1) if net_kind.is_none() => {
+                net_kind = Some("supply1".to_owned());
+            }
+            Some(VObjectType::paREG) => {
+                has_reg = true;
+            }
+            Some(VObjectType::paLOGIC) => type_info.kind = "logic".to_owned(),
+            Some(VObjectType::paBIT) => type_info.kind = "bit".to_owned(),
+            Some(VObjectType::paINT) => type_info.kind = "int".to_owned(),
+            Some(VObjectType::paINTEGER) => type_info.kind = "integer".to_owned(),
+            Some(VObjectType::paLONGINT) => type_info.kind = "longint".to_owned(),
+            Some(VObjectType::paBYTE) => type_info.kind = "byte".to_owned(),
+            Some(VObjectType::paSHORTINT) => type_info.kind = "shortint".to_owned(),
+            Some(VObjectType::paTIME) => type_info.kind = "time".to_owned(),
+            Some(VObjectType::paREAL) => type_info.kind = "real".to_owned(),
+            Some(VObjectType::paSHORTREAL) => type_info.kind = "shortreal".to_owned(),
+            Some(VObjectType::paSTRING) => type_info.kind = "string".to_owned(),
+            Some(VObjectType::paENUM | VObjectType::paEnum_keyword) => {
+                type_info.kind = "enum".to_owned();
+            }
+            Some(VObjectType::paSTRUCT | VObjectType::paStruct_keyword) => {
+                type_info.kind = "struct".to_owned();
+            }
+            Some(VObjectType::paUNION | VObjectType::paUnion_keyword) => {
+                type_info.kind = "union".to_owned();
+            }
+            Some(VObjectType::paSIGNED | VObjectType::paSigning_Signed) => {
+                type_info.signed = true;
+            }
+            _ => {}
+        }
+    }
+
+    GraphDeclarationSubtreeFacts {
+        type_info,
+        direction,
+        net_kind: net_kind.unwrap_or_else(|| "wire".to_owned()),
+        variable_kind: if has_reg {
+            "reg".to_owned()
+        } else {
+            "var".to_owned()
+        },
+    }
+}
+
 fn graph_declaration_kind(
     nodes: &[llg::ffi::surelog::ParseNode],
     start: usize,
-) -> Option<GraphDeclarationKind> {
+    cache: &mut GraphDeclarationFactsCache,
+) -> Option<(usize, GraphDeclarationKind)> {
     use llg::core::vobject_types::VObjectType;
 
     // A declaration node is encountered before its enclosing function/task or
@@ -1924,7 +3755,7 @@ fn graph_declaration_kind(
             | VObjectType::paInput_declaration
             | VObjectType::paOutput_declaration
             | VObjectType::paInout_declaration => {
-                let direction = graph_direction(nodes, current);
+                let direction = cache.facts(nodes, current).direction;
                 Some(GraphDeclarationKind::Port(direction))
             }
             VObjectType::paParameter_declaration
@@ -1937,21 +3768,21 @@ fn graph_declaration_kind(
             VObjectType::paLocal_parameter_declaration => {
                 Some(GraphDeclarationKind::Parameter(true))
             }
-            VObjectType::paNet_declaration | VObjectType::paNet_decl_assignment => {
-                Some(GraphDeclarationKind::Signal(graph_net_kind(nodes, current)))
-            }
+            VObjectType::paNet_declaration | VObjectType::paNet_decl_assignment => Some(
+                GraphDeclarationKind::Signal(cache.facts(nodes, current).net_kind.clone()),
+            ),
             VObjectType::paData_declaration
             | VObjectType::paVariable_declaration
             | VObjectType::paVariable_decl_assignment => Some(GraphDeclarationKind::Signal(
-                graph_variable_kind(nodes, current),
+                cache.facts(nodes, current).variable_kind.clone(),
             )),
             VObjectType::paModule_declaration
             | VObjectType::paModule_ansi_header
             | VObjectType::paModule_nonansi_header => return None,
             _ => None,
         };
-        if declaration.is_some() {
-            return declaration;
+        if let Some(declaration) = declaration {
+            return Some((current, declaration));
         }
         current = nodes[current].parent_index as usize;
         if current == 0 {
@@ -1959,33 +3790,6 @@ fn graph_declaration_kind(
         }
     }
     None
-}
-
-fn graph_declaration_root(nodes: &[llg::ffi::surelog::ParseNode], start: usize) -> Option<usize> {
-    use llg::core::vobject_types::VObjectType;
-    graph_ancestors(nodes, start).into_iter().find(|index| {
-        matches!(
-            graph_node_type(nodes, nodes[*index].type_id),
-            Some(
-                VObjectType::paPort_declaration
-                    | VObjectType::paAnsi_port_declaration
-                    | VObjectType::paNet_port_header
-                    | VObjectType::paVariable_port_header
-                    | VObjectType::paInput_declaration
-                    | VObjectType::paOutput_declaration
-                    | VObjectType::paInout_declaration
-                    | VObjectType::paParameter_declaration
-                    | VObjectType::paParameter_port_declaration
-                    | VObjectType::paLocal_parameter_declaration
-                    | VObjectType::paParam_assignment
-                    | VObjectType::paNet_declaration
-                    | VObjectType::paNet_decl_assignment
-                    | VObjectType::paData_declaration
-                    | VObjectType::paVariable_declaration
-                    | VObjectType::paVariable_decl_assignment
-            )
-        )
-    })
 }
 
 fn graph_token_matches_declaration(token_type: i32, kind: &GraphDeclarationKind) -> bool {
@@ -2014,86 +3818,45 @@ fn graph_token_matches_declaration(token_type: i32, kind: &GraphDeclarationKind)
     }
 }
 
-fn graph_direction(nodes: &[llg::ffi::surelog::ParseNode], declaration_root: usize) -> Direction {
-    use llg::core::vobject_types::VObjectType;
-    for index in graph_subtree_indices(nodes, declaration_root) {
-        match graph_node_type(nodes, nodes[index].type_id) {
-            Some(VObjectType::paInput_declaration | VObjectType::paPortDir_Inp) => {
-                return Direction::Input
-            }
-            Some(VObjectType::paOutput_declaration | VObjectType::paPortDir_Out) => {
-                return Direction::Output
-            }
-            Some(VObjectType::paInout_declaration | VObjectType::paPortDir_Inout) => {
-                return Direction::Inout
-            }
-            _ => {}
-        }
-    }
-    Direction::None
-}
-
 fn graph_type_info(
     nodes: &[llg::ffi::surelog::ParseNode],
     declaration_root: usize,
-    source: Option<&str>,
+    base_type: &TypeInfo,
+    source: Option<&GraphSourceIndex>,
+    source_parts: Option<&GraphSourceTypeParts>,
     line: u32,
     col: u32,
     name: &str,
 ) -> TypeInfo {
-    use llg::core::vobject_types::VObjectType;
-    let mut ty = TypeInfo::default();
-    for index in graph_subtree_indices(nodes, declaration_root) {
-        match graph_node_type(nodes, nodes[index].type_id) {
-            Some(VObjectType::paLOGIC) => ty.kind = "logic".to_owned(),
-            Some(VObjectType::paBIT) => ty.kind = "bit".to_owned(),
-            Some(VObjectType::paINT) => ty.kind = "int".to_owned(),
-            Some(VObjectType::paINTEGER) => ty.kind = "integer".to_owned(),
-            Some(VObjectType::paLONGINT) => ty.kind = "longint".to_owned(),
-            Some(VObjectType::paBYTE) => ty.kind = "byte".to_owned(),
-            Some(VObjectType::paSHORTINT) => ty.kind = "shortint".to_owned(),
-            Some(VObjectType::paTIME) => ty.kind = "time".to_owned(),
-            Some(VObjectType::paREAL) => ty.kind = "real".to_owned(),
-            Some(VObjectType::paSHORTREAL) => ty.kind = "shortreal".to_owned(),
-            Some(VObjectType::paSTRING) => ty.kind = "string".to_owned(),
-            Some(VObjectType::paENUM) | Some(VObjectType::paEnum_keyword) => {
-                ty.kind = "enum".to_owned()
-            }
-            Some(VObjectType::paSTRUCT) | Some(VObjectType::paStruct_keyword) => {
-                ty.kind = "struct".to_owned()
-            }
-            Some(VObjectType::paUNION) | Some(VObjectType::paUnion_keyword) => {
-                ty.kind = "union".to_owned()
-            }
-            Some(VObjectType::paSIGNED) | Some(VObjectType::paSigning_Signed) => ty.signed = true,
-            _ => {}
-        }
-    }
+    let mut ty = base_type.clone();
     // Some parse trees retain the declaration structure but omit the
     // primitive type keyword from the VObject subtree.  Recover only the
     // standard, unambiguous keywords before the declaration identifier from
     // the source line captured during analysis.  This keeps declaration-only
     // contents typed without trying to resolve user-defined types or doing
     // any request-time file access.
-    if let Some(source_ty) =
-        graph_source_type_info(source, nodes.get(declaration_root), line, col, name)
-    {
+    let recovered_parts = if source_parts.is_none() {
+        source.and_then(|source| {
+            graph_type_prefix(Some(source), nodes.get(declaration_root), line, col, name)
+        })
+    } else {
+        None
+    };
+    let parts = source_parts.or(recovered_parts.as_ref());
+    if let Some(source_ty) = graph_source_type_info(parts) {
         if source_ty.kind != "other" {
             ty.kind = source_ty.kind;
         }
         ty.signed |= source_ty.signed;
     }
     if ty.width.is_none() {
-        ty.width = graph_width_from_source(source, nodes.get(declaration_root), line, col, name);
+        ty.width = graph_width_from_source(parts);
     }
     // A scalar primitive has a useful known width even when its parse-tree
     // typespec did not expose one.  A ranged declaration whose bounds remain
     // symbolic must stay unknown; treating it as a scalar would cause the
     // explorer to replace the symbolic range with `[0:0]`.
-    if ty.width.is_none()
-        && !graph_type_prefix(source, nodes.get(declaration_root), line, col, name)
-            .is_some_and(|parts| !parts.packed_dimensions.is_empty())
-    {
+    if ty.width.is_none() && !parts.is_some_and(|parts| !parts.packed_dimensions.is_empty()) {
         ty.width = match ty.kind.as_str() {
             "logic" | "bit" => Some(1),
             "byte" => Some(8),
@@ -2106,20 +3869,19 @@ fn graph_type_info(
     ty
 }
 
-fn graph_source_type_info(
-    source: Option<&str>,
-    declaration: Option<&llg::ffi::surelog::ParseNode>,
-    line: u32,
-    col: u32,
-    name: &str,
-) -> Option<TypeInfo> {
-    let parts = graph_type_prefix(source, declaration, line, col, name)?;
-    let (ty, saw_decl_qualifier) = graph_source_type_words(&parts.base);
+fn graph_source_type_info(parts: Option<&GraphSourceTypeParts>) -> Option<TypeInfo> {
+    let parts = parts?;
+    let (ty, saw_decl_qualifier) = graph_source_type_words_clean(&parts.base);
     (ty.kind != "other" || saw_decl_qualifier).then_some(ty)
 }
 
+#[cfg(test)]
 fn graph_source_type_words(text: &str) -> (TypeInfo, bool) {
     let text = strip_hdl_comments(text);
+    graph_source_type_words_clean(&text)
+}
+
+fn graph_source_type_words_clean(text: &str) -> (TypeInfo, bool) {
     let mut ty = TypeInfo::default();
     let mut saw_decl_qualifier = false;
     let mut saw_net_or_reg = false;
@@ -2215,55 +3977,13 @@ fn graph_source_words(text: &str) -> Vec<String> {
     words
 }
 
-fn graph_net_kind(nodes: &[llg::ffi::surelog::ParseNode], declaration_root: usize) -> String {
-    use llg::core::vobject_types::VObjectType;
-    for index in graph_subtree_indices(nodes, declaration_root) {
-        let Some(ty) = graph_node_type(nodes, nodes[index].type_id) else {
-            continue;
-        };
-        let kind = match ty {
-            VObjectType::paNetType_Wire | VObjectType::paWIRE => "wire",
-            VObjectType::paNetType_Wand | VObjectType::paWAND => "wand",
-            VObjectType::paNetType_Wor | VObjectType::paWOR => "wor",
-            VObjectType::paNetType_Tri | VObjectType::paTRI => "tri",
-            VObjectType::paNetType_Tri0 | VObjectType::paTRI0 => "tri0",
-            VObjectType::paNetType_Tri1 | VObjectType::paTRI1 => "tri1",
-            VObjectType::paNetType_Uwire | VObjectType::paUWIRE => "uwire",
-            VObjectType::paNetType_Supply0 | VObjectType::paSUPPLY0 => "supply0",
-            VObjectType::paNetType_Supply1 | VObjectType::paSUPPLY1 => "supply1",
-            _ => continue,
-        };
-        return kind.to_owned();
-    }
-    "wire".to_owned()
-}
-
-fn graph_variable_kind(nodes: &[llg::ffi::surelog::ParseNode], declaration_root: usize) -> String {
-    use llg::core::vobject_types::VObjectType;
-    if graph_subtree_indices(nodes, declaration_root)
-        .into_iter()
-        .filter_map(|index| graph_node_type(nodes, nodes[index].type_id))
-        .any(|ty| ty == VObjectType::paREG)
-    {
-        "reg".to_owned()
-    } else {
-        "var".to_owned()
-    }
-}
-
-fn graph_width_from_source(
-    source: Option<&str>,
-    declaration: Option<&llg::ffi::surelog::ParseNode>,
-    line: u32,
-    col: u32,
-    name: &str,
-) -> Option<u32> {
-    let parts = graph_type_prefix(source, declaration, line, col, name)?;
+fn graph_width_from_source(parts: Option<&GraphSourceTypeParts>) -> Option<u32> {
+    let parts = parts?;
     if parts.packed_dimensions.is_empty() {
         return None;
     }
     let mut width = 1u64;
-    for dimension in parts.packed_dimensions {
+    for dimension in &parts.packed_dimensions {
         let expression = dimension.strip_prefix('[')?.strip_suffix(']')?;
         let (high, low) = expression.split_once(':')?;
         let high = high.trim().parse::<i128>().ok()?;
@@ -2276,6 +3996,7 @@ fn graph_width_from_source(
 
 fn graph_declaration_location(
     file: &str,
+    source: Option<&GraphSourceIndex>,
     node: &llg::ffi::surelog::ParseNode,
     name: &str,
 ) -> ModuleGraphLocation {
@@ -2284,15 +4005,16 @@ fn graph_declaration_location(
     } else {
         node.end_line
     };
-    let end_col = if node.end_col == 0 || (end_line == node.line && node.end_col <= node.col) {
-        node.col as u32 + name.chars().count() as u32
+    let col = graph_lsp_column(source, node.line, node.col as u32, Some(name));
+    let end_col = if end_line == node.line {
+        col.saturating_add(lsp_name_len(name))
     } else {
-        node.end_col as u32
+        graph_lsp_column(source, end_line, node.end_col as u32, None)
     };
     ModuleGraphLocation {
         file: file.to_owned(),
         line: node.line,
-        col: node.col as u32,
+        col,
         end_line,
         end_col,
     }
@@ -2325,7 +4047,7 @@ struct GraphTypeDisplay {
 /// different lines.  The result is captured during analysis; request code
 /// only consumes the resulting owned string and shape.
 fn graph_type_prefix(
-    source: Option<&str>,
+    source: Option<&GraphSourceIndex>,
     declaration: Option<&llg::ffi::surelog::ParseNode>,
     line: u32,
     col: u32,
@@ -2339,33 +4061,38 @@ fn graph_type_prefix(
         col.saturating_add(name.chars().count() as u32),
     )
     .filter(|offset| *offset >= name_start)
-    .unwrap_or_else(|| name_start.saturating_add(name.len()).min(source.len()));
+    .unwrap_or_else(|| {
+        name_start
+            .saturating_add(name.len())
+            .min(source.source.len())
+    });
 
     let declaration_start = declaration
         .and_then(|node| source_position_offset(source, node.line, node.col as u32))
         .filter(|offset| *offset < name_start)
         .or_else(|| graph_source_declaration_start(source, name_start))
         .or_else(|| source_line_start(source, line))?;
-    let before_name = source.get(declaration_start..name_start)?.trim();
-    if before_name.is_empty() {
+    let (prefix_start, prefix_end) =
+        graph_trim_range(&source.source, declaration_start, name_start);
+    if prefix_start >= prefix_end {
         return None;
     }
-    let type_prefix = graph_select_type_prefix(before_name);
-    if type_prefix.is_empty() {
+    let (type_start, type_end) = graph_select_type_prefix_index(source, prefix_start, prefix_end);
+    if type_start >= type_end {
         return None;
     }
 
-    let packed_dimensions = graph_bracket_dimensions(&type_prefix);
-    let base = remove_bracket_dimensions(&type_prefix);
+    let packed_spans = graph_bracket_spans_index(source, type_start, type_end);
+    let packed_dimensions = graph_bracket_dimensions_index(source, &packed_spans);
+    let base = remove_bracket_dimensions_index(source, type_start, type_end, &packed_spans);
 
     let tail_end = graph_declaration_tail_end(source, name_end);
-    let after_name = source.get(name_end..tail_end)?;
-    let unpacked_dimensions = graph_bracket_dimensions(
-        graph_top_level_equals(after_name).map_or(after_name, |offset| &after_name[..offset]),
-    );
+    let unpacked_end = graph_top_level_equals_index(source, name_end, tail_end).unwrap_or(tail_end);
+    let unpacked_spans = graph_bracket_spans_index(source, name_end, unpacked_end);
+    let unpacked_dimensions = graph_bracket_dimensions_index(source, &unpacked_spans);
 
     Some(GraphSourceTypeParts {
-        base: normalize_graph_type_display(&base),
+        base: normalize_graph_lexical_whitespace_masked(&base),
         packed_dimensions,
         unpacked_dimensions,
     })
@@ -2374,64 +4101,180 @@ fn graph_type_prefix(
 /// Parse nodes for declarators commonly begin at the identifier rather than
 /// at the declaration keyword.  Walk back to the nearest statement/header
 /// boundary so the source type can span lines before that identifier.
-fn graph_source_declaration_start(source: &str, name_start: usize) -> Option<usize> {
-    let comment_ranges = graph_comment_ranges(&source[..name_start]);
-    let mut square = 0usize;
-    let mut paren = 0usize;
-    let mut brace = 0usize;
-    for (offset, character) in source[..name_start].char_indices().rev() {
-        if graph_offset_is_in_comment(&comment_ranges, offset) {
-            continue;
-        }
-        match character {
-            ']' => square += 1,
-            '[' => square = square.saturating_sub(1),
-            ')' => paren += 1,
-            '(' if paren > 0 => paren -= 1,
-            '(' if square == 0 && brace == 0 => return Some(offset + character.len_utf8()),
-            '}' => brace += 1,
-            '{' => brace = brace.saturating_sub(1),
-            ';' if square == 0 && paren == 0 && brace == 0 => {
-                return Some(offset + character.len_utf8())
-            }
-            _ => {}
+fn graph_source_declaration_start(source: &GraphSourceIndex, name_start: usize) -> Option<usize> {
+    source.masked.get(..name_start)?;
+    let mut low = 0;
+    let mut high = source.declaration_boundary_events.len();
+    while low < high {
+        let middle = low + (high - low) / 2;
+        if source.declaration_boundary_events[middle].0 <= name_start {
+            low = middle + 1;
+        } else {
+            high = middle;
         }
     }
-    Some(0)
+    source
+        .declaration_boundary_events
+        .get(low.saturating_sub(1))
+        .map(|(_, boundary)| *boundary)
+        .or(Some(0))
 }
 
-/// Select the type-bearing part of the declaration prefix.  For a later
-/// declarator in `logic [7:0] first, second`, the local fragment contains only
-/// `second`; use the first fragment and remove its earlier declarator name so
-/// the inherited type remains available.
-fn graph_select_type_prefix(prefix: &str) -> String {
-    let commas = graph_top_level_commas(prefix);
-    let Some(&last_comma) = commas.last() else {
-        return prefix.trim().to_owned();
+fn graph_trim_range(source: &str, start: usize, end: usize) -> (usize, usize) {
+    let text = &source[start..end];
+    let trimmed_start = start + text.len() - text.trim_start().len();
+    let trimmed = &source[trimmed_start..end];
+    (trimmed_start, trimmed_start + trimmed.trim_end().len())
+}
+
+fn graph_select_type_prefix_index(
+    source: &GraphSourceIndex,
+    start: usize,
+    end: usize,
+) -> (usize, usize) {
+    let (start, end) = graph_trim_range(&source.source, start, end);
+    let (first_comma, last_comma) = graph_top_level_commas_index(source, start, end);
+    let Some(last_comma) = last_comma else {
+        return (start, end);
     };
-    let local = prefix[last_comma + 1..].trim();
-    let (_, has_type_word) = graph_source_type_words(local);
-    if has_type_word || strip_hdl_comments(local).contains('[') {
-        return local.to_owned();
+    let local = graph_trim_range(&source.source, last_comma + 1, end);
+    let (_, has_type_word) = graph_source_type_words_clean(&source.masked[local.0..local.1]);
+    if has_type_word || source.masked[local.0..local.1].contains('[') {
+        return local;
     }
-    let first_end = commas[0];
-    strip_trailing_declarator_name(prefix[..first_end].trim())
+    let first = graph_trim_range(&source.source, start, first_comma.unwrap_or(last_comma));
+    graph_strip_trailing_declarator_name_index(source, first.0, first.1)
 }
 
-fn strip_trailing_declarator_name(text: &str) -> String {
-    let text = text.trim_end();
+fn graph_strip_trailing_declarator_name_index(
+    source: &GraphSourceIndex,
+    start: usize,
+    end: usize,
+) -> (usize, usize) {
+    let (start, end) = graph_trim_range(&source.source, start, end);
+    let text = &source.source[start..end];
     let Some((separator, character)) = text
         .char_indices()
         .rev()
         .find(|(_, character)| character.is_whitespace())
     else {
-        return text.to_owned();
+        return (start, end);
     };
     let token_start = separator + character.len_utf8();
     if token_start >= text.len() || !text[token_start..].chars().all(is_identifier_character) {
-        return text.to_owned();
+        return (start, end);
     }
-    text[..separator].trim_end().to_owned()
+    let (_, prefix_end) = graph_trim_range(&source.source, start, start + separator);
+    (start, prefix_end)
+}
+
+fn graph_top_level_commas_index(
+    source: &GraphSourceIndex,
+    start: usize,
+    end: usize,
+) -> (Option<usize>, Option<usize>) {
+    let state = source.delimiter_state_at(start);
+    let Some(commas) = source.commas_by_state.get(&state) else {
+        return (None, None);
+    };
+    let first_index = commas.partition_point(|offset| *offset < start);
+    let end_index = commas.partition_point(|offset| *offset < end);
+    if first_index >= end_index {
+        return (None, None);
+    }
+    (Some(commas[first_index]), Some(commas[end_index - 1]))
+}
+
+fn graph_bracket_spans_index(
+    source: &GraphSourceIndex,
+    start: usize,
+    end: usize,
+) -> Vec<(usize, usize)> {
+    let mut spans = Vec::new();
+    let mut bracket_start = None;
+    let mut depth = 0usize;
+    let mut escaped_identifier = false;
+    let mut in_string = false;
+    let mut escaped_string_character = false;
+    for (offset, character) in source.masked[start..end].char_indices() {
+        let index = start + offset;
+        if in_string {
+            if escaped_string_character {
+                escaped_string_character = false;
+            } else if character == '\\' {
+                escaped_string_character = true;
+            } else if character == '"' {
+                in_string = false;
+            }
+            continue;
+        }
+        if escaped_identifier {
+            if character.is_whitespace() {
+                escaped_identifier = false;
+            }
+            continue;
+        }
+        if character == '"' {
+            in_string = true;
+            escaped_string_character = false;
+            continue;
+        }
+        if character == '\\' {
+            escaped_identifier = true;
+            continue;
+        }
+        match character {
+            '[' if depth == 0 => {
+                bracket_start = Some(index);
+                depth = 1;
+            }
+            '[' if depth > 0 => depth += 1,
+            ']' if depth > 0 => {
+                depth -= 1;
+                if depth == 0 {
+                    if let Some(bracket_start) = bracket_start.take() {
+                        spans.push((bracket_start, index + 1));
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    spans
+}
+
+fn graph_bracket_dimensions_index(
+    source: &GraphSourceIndex,
+    spans: &[(usize, usize)],
+) -> Vec<String> {
+    spans
+        .iter()
+        .map(|(start, end)| {
+            format!(
+                "[{}]",
+                normalize_symbolic_expression_index(source, start + 1, end - 1)
+            )
+        })
+        .collect()
+}
+
+fn remove_bracket_dimensions_index(
+    source: &GraphSourceIndex,
+    start: usize,
+    end: usize,
+    spans: &[(usize, usize)],
+) -> String {
+    if spans.is_empty() {
+        return source.masked[start..end].to_owned();
+    }
+    let mut result = String::new();
+    let mut cursor = start;
+    for (span_start, span_end) in spans {
+        result.push_str(&source.masked[cursor..*span_start]);
+        cursor = *span_end;
+    }
+    result.push_str(&source.masked[cursor..end]);
+    result
 }
 
 fn graph_comment_ranges(text: &str) -> Vec<(usize, usize)> {
@@ -2505,15 +4348,55 @@ fn graph_comment_ranges(text: &str) -> Vec<(usize, usize)> {
     ranges
 }
 
+/// Forward-only membership cursor for the sorted, non-overlapping ranges
+/// produced by [`graph_comment_ranges`].  Source graph scans are monotonic,
+/// so advancing this cursor avoids a range walk for every source character.
+#[derive(Debug, Clone, Copy)]
+struct GraphCommentCursor<'a> {
+    ranges: &'a [(usize, usize)],
+    next: usize,
+}
+
+impl<'a> GraphCommentCursor<'a> {
+    fn new(ranges: &'a [(usize, usize)]) -> Self {
+        Self { ranges, next: 0 }
+    }
+
+    fn at_offset(ranges: &'a [(usize, usize)], offset: usize) -> Self {
+        let mut low = 0;
+        let mut high = ranges.len();
+        while low < high {
+            let middle = low + (high - low) / 2;
+            if ranges[middle].1 <= offset {
+                low = middle + 1;
+            } else {
+                high = middle;
+            }
+        }
+        Self { ranges, next: low }
+    }
+
+    fn contains(&mut self, offset: usize) -> bool {
+        while self.next < self.ranges.len() && offset >= self.ranges[self.next].1 {
+            self.next += 1;
+        }
+        self.ranges
+            .get(self.next)
+            .is_some_and(|(start, end)| *start <= offset && offset < *end)
+    }
+}
+
 /// Replace comments with safe whitespace while preserving line terminators,
 /// strings, escaped identifiers, and character-column positions.  The raw
 /// comment ranges are still useful to bracket/structure scanners because
 /// those scanners need offsets into the original source text.
+#[cfg(test)]
 fn strip_hdl_comments(text: &str) -> String {
     let comment_ranges = graph_comment_ranges(text);
     let mut stripped = String::with_capacity(text.len());
+    let mut comment_cursor = GraphCommentCursor::new(&comment_ranges);
     for (index, character) in text.char_indices() {
-        if graph_offset_is_in_comment(&comment_ranges, index) {
+        if comment_cursor.contains(index) {
             if matches!(character, '\n' | '\r') {
                 stripped.push(character);
             } else {
@@ -2526,57 +4409,14 @@ fn strip_hdl_comments(text: &str) -> String {
     stripped
 }
 
-fn graph_offset_is_in_comment(ranges: &[(usize, usize)], offset: usize) -> bool {
-    ranges
-        .iter()
-        .any(|(start, end)| *start <= offset && offset < *end)
-}
-
 fn is_identifier_character(character: char) -> bool {
     character.is_ascii_alphanumeric() || matches!(character, '_' | '$')
 }
 
-fn graph_top_level_commas(text: &str) -> Vec<usize> {
-    let comment_ranges = graph_comment_ranges(text);
-    let mut commas = Vec::new();
-    let mut square = 0usize;
-    let mut paren = 0usize;
-    let mut brace = 0usize;
-    for (index, character) in text.char_indices() {
-        if graph_offset_is_in_comment(&comment_ranges, index) {
-            continue;
-        }
-        match character {
-            '[' => square += 1,
-            ']' => square = square.saturating_sub(1),
-            '(' => paren += 1,
-            ')' => paren = paren.saturating_sub(1),
-            '{' => brace += 1,
-            '}' => brace = brace.saturating_sub(1),
-            ',' if square == 0 && paren == 0 && brace == 0 => commas.push(index),
-            _ => {}
-        }
-    }
-    commas
-}
-
-fn remove_bracket_dimensions(text: &str) -> String {
-    let spans = graph_bracket_spans(text);
-    if spans.is_empty() {
-        return text.to_owned();
-    }
-    let mut result = String::new();
-    let mut cursor = 0;
-    for (start, end, _) in spans {
-        result.push_str(&text[cursor..start]);
-        cursor = end;
-    }
-    result.push_str(&text[cursor..]);
-    result
-}
-
+#[cfg(test)]
 fn graph_bracket_spans(text: &str) -> Vec<(usize, usize, String)> {
     let comment_ranges = graph_comment_ranges(text);
+    let mut comment_cursor = GraphCommentCursor::new(&comment_ranges);
     let mut spans = Vec::new();
     let mut start = None;
     let mut depth = 0usize;
@@ -2584,7 +4424,7 @@ fn graph_bracket_spans(text: &str) -> Vec<(usize, usize, String)> {
     let mut in_string = false;
     let mut escaped_string_character = false;
     for (index, character) in text.char_indices() {
-        if graph_offset_is_in_comment(&comment_ranges, index) {
+        if comment_cursor.contains(index) {
             continue;
         }
         if in_string {
@@ -2636,6 +4476,7 @@ fn graph_bracket_spans(text: &str) -> Vec<(usize, usize, String)> {
     spans
 }
 
+#[cfg(test)]
 fn normalize_graph_type_display(text: &str) -> String {
     let spans = graph_bracket_spans(text);
     if spans.is_empty() {
@@ -2682,8 +4523,10 @@ fn normalize_graph_type_display(text: &str) -> String {
 /// Collapse source whitespace outside strings and escaped identifiers while
 /// keeping those lexical units intact.  Comments are treated as separators,
 /// so their contents cannot cause an active token to be joined to a neighbor.
+#[cfg(test)]
 fn normalize_graph_lexical_whitespace(text: &str) -> String {
     let comment_ranges = graph_comment_ranges(text);
+    let mut comment_cursor = GraphCommentCursor::new(&comment_ranges);
     let mut normalized = String::new();
     let mut pending_space = false;
     let mut escaped_identifier = false;
@@ -2691,7 +4534,7 @@ fn normalize_graph_lexical_whitespace(text: &str) -> String {
     let mut escaped_string_character = false;
 
     for (index, character) in text.char_indices() {
-        if graph_offset_is_in_comment(&comment_ranges, index) {
+        if comment_cursor.contains(index) {
             pending_space = true;
             continue;
         }
@@ -2734,81 +4577,17 @@ fn normalize_graph_lexical_whitespace(text: &str) -> String {
     normalized
 }
 
-fn source_line_start(source: &str, line: u32) -> Option<usize> {
-    if line == 0 {
-        return None;
-    }
-    let mut current = 1;
-    let mut offset = 0;
-    for segment in source.split_inclusive('\n') {
-        if current == line {
-            return Some(offset);
-        }
-        offset += segment.len();
-        current += 1;
-    }
-    (current == line).then_some(offset)
-}
-
-/// Convert a 1-based source line/character position into a UTF-8 byte offset.
-/// Surelog's parse columns are character-based, while source slicing is
-/// byte-based.
-fn source_position_offset(source: &str, line: u32, col: u32) -> Option<usize> {
-    let line_start = source_line_start(source, line)?;
-    let line_end = source[line_start..]
-        .find('\n')
-        .map_or(source.len(), |offset| line_start + offset);
-    let line_text = &source[line_start..line_end];
-    let character = col.checked_sub(1)? as usize;
-    line_text
-        .char_indices()
-        .nth(character)
-        .map(|(offset, _)| line_start + offset)
-        .or_else(|| (character == line_text.chars().count()).then_some(line_end))
-}
-
-/// Find the end of the current declarator tail, including multiline unpacked
-/// dimensions but excluding an initializer or the next declarator/port.
-fn graph_declaration_tail_end(source: &str, start: usize) -> usize {
-    let comment_ranges = graph_comment_ranges(&source[start..]);
-    let mut square = 0usize;
-    let mut paren = 0usize;
-    let mut brace = 0usize;
-    for (offset, character) in source[start..].char_indices() {
-        if graph_offset_is_in_comment(&comment_ranges, offset) {
-            continue;
-        }
-        match character {
-            '[' => square += 1,
-            ']' => square = square.saturating_sub(1),
-            '(' => paren += 1,
-            ')' if square == 0 && paren == 0 && brace == 0 => return start + offset,
-            ')' => paren = paren.saturating_sub(1),
-            '{' => brace += 1,
-            '}' => brace = brace.saturating_sub(1),
-            ';' | ',' | '=' if square == 0 && paren == 0 && brace == 0 => {
-                return start + offset;
-            }
-            _ => {}
-        }
-    }
-    source.len()
-}
-
-fn graph_top_level_equals(text: &str) -> Option<usize> {
-    let comment_ranges = graph_comment_ranges(text);
-    let mut square = 0usize;
-    let mut paren = 0usize;
-    let mut brace = 0usize;
+/// Comment-free counterpart used with [`GraphSourceIndex::masked`].
+fn normalize_graph_lexical_whitespace_clean(text: &str) -> String {
+    let mut normalized = String::new();
+    let mut pending_space = false;
     let mut escaped_identifier = false;
     let mut in_string = false;
     let mut escaped_string_character = false;
 
-    for (index, character) in text.char_indices() {
-        if graph_offset_is_in_comment(&comment_ranges, index) {
-            continue;
-        }
+    for character in text.chars() {
         if in_string {
+            normalized.push(character);
             if escaped_string_character {
                 escaped_string_character = false;
             } else if character == '\\' {
@@ -2820,35 +4599,142 @@ fn graph_top_level_equals(text: &str) -> Option<usize> {
         }
         if escaped_identifier {
             if character.is_whitespace() {
+                pending_space = true;
                 escaped_identifier = false;
+            } else {
+                normalized.push(character);
             }
             continue;
         }
-        if character == '"' {
-            in_string = true;
-            escaped_string_character = false;
+        if character.is_whitespace() {
+            pending_space = true;
             continue;
         }
+        if pending_space && !normalized.is_empty() {
+            normalized.push(' ');
+        }
+        pending_space = false;
+        normalized.push(character);
         if character == '\\' {
             escaped_identifier = true;
-            continue;
-        }
-        if character == '=' && square == 0 && paren == 0 && brace == 0 {
-            return Some(index);
-        }
-        match character {
-            '[' => square += 1,
-            ']' => square = square.saturating_sub(1),
-            '(' => paren += 1,
-            ')' => paren = paren.saturating_sub(1),
-            '{' => brace += 1,
-            '}' => brace = brace.saturating_sub(1),
-            _ => {}
+        } else if character == '"' {
+            in_string = true;
+            escaped_string_character = false;
         }
     }
-    None
+    normalized
 }
 
+fn normalize_graph_lexical_whitespace_masked(text: &str) -> String {
+    normalize_graph_lexical_whitespace_clean(text)
+}
+
+fn source_line_start(source: &GraphSourceIndex, line: u32) -> Option<usize> {
+    source.line_start(line)
+}
+
+/// Convert a 1-based source line/character position into a UTF-8 byte offset.
+/// Surelog's parse columns are character-based, while source slicing is
+/// byte-based.
+fn source_position_offset(source: &GraphSourceIndex, line: u32, col: u32) -> Option<usize> {
+    source.position_offset(line, col)
+}
+
+/// Convert a graph source column to a 1-based UTF-16 column for owned graph
+/// locations.  Parse columns are not consistent across all Surelog paths when
+/// non-ASCII text precedes a token, so an available name is used to choose the
+/// scalar, UTF-16, or byte interpretation that actually starts that name.
+fn graph_lsp_column(
+    source: Option<&GraphSourceIndex>,
+    line: u32,
+    col: u32,
+    name: Option<&str>,
+) -> u32 {
+    let Some(source) = source else {
+        return col;
+    };
+    let Some(line_info) = source.source_line(line) else {
+        return col;
+    };
+    let Some(raw_character) = col
+        .checked_sub(1)
+        .and_then(|value| usize::try_from(value).ok())
+    else {
+        return col;
+    };
+    let scalar = graph_line_character_offset(&source.source, line_info, raw_character);
+    let utf16 = graph_line_utf16_offset(&source.source, line_info, raw_character);
+    let byte = (raw_character <= line_info.end.saturating_sub(line_info.start))
+        .then_some(line_info.start + raw_character);
+
+    let offset = [utf16, scalar, byte]
+        .into_iter()
+        .flatten()
+        .find(|offset| {
+            name.is_some_and(|name| {
+                source
+                    .source
+                    .get(*offset..)
+                    .is_some_and(|tail| tail.starts_with(name))
+            })
+        })
+        .or(scalar)
+        .or(byte)
+        .or(utf16);
+    let Some(offset) = offset else {
+        return col;
+    };
+    let Some(prefix) = source.source.get(line_info.start..offset) else {
+        return col;
+    };
+    prefix.encode_utf16().count() as u32 + 1
+}
+
+fn graph_line_utf16_offset(
+    text: &str,
+    line: &GraphLineMetadata,
+    character: usize,
+) -> Option<usize> {
+    let line_text = text.get(line.start..line.end)?;
+    let mut units = 0usize;
+    for (offset, value) in line_text.char_indices() {
+        if units == character {
+            return Some(line.start + offset);
+        }
+        units += value.len_utf16();
+        if units > character {
+            return None;
+        }
+    }
+    (units == character).then_some(line.end)
+}
+
+/// Find the end of the current declarator tail, including multiline unpacked
+/// dimensions but excluding an initializer or the next declarator/port.
+fn graph_declaration_tail_end(source: &GraphSourceIndex, start: usize) -> usize {
+    let state = source.delimiter_state_at(start);
+    source
+        .declaration_tail_events_by_state
+        .get(&state)
+        .and_then(|events| {
+            let index = events.partition_point(|offset| *offset < start);
+            events.get(index).copied()
+        })
+        .unwrap_or(source.source.len())
+}
+
+fn graph_top_level_equals_index(
+    source: &GraphSourceIndex,
+    start: usize,
+    end: usize,
+) -> Option<usize> {
+    let state = source.delimiter_state_at(start);
+    let equals = source.equals_by_state.get(&state)?;
+    let index = equals.partition_point(|offset| *offset < start);
+    equals.get(index).copied().filter(|offset| *offset < end)
+}
+
+#[cfg(test)]
 fn graph_bracket_dimensions(prefix: &str) -> Vec<String> {
     graph_bracket_spans(prefix)
         .into_iter()
@@ -2861,8 +4747,28 @@ fn graph_bracket_dimensions(prefix: &str) -> Vec<String> {
 /// lexical tokens is retained.  In particular, an escaped identifier owns all
 /// characters up to its terminating whitespace, so that separator must never
 /// be discarded.
+#[cfg(test)]
 fn normalize_symbolic_expression(expression: &str) -> String {
     let comment_ranges = graph_comment_ranges(expression);
+    let mut comment_cursor = GraphCommentCursor::new(&comment_ranges);
+    normalize_symbolic_expression_with_cursor(expression, 0, &mut comment_cursor)
+}
+
+fn normalize_symbolic_expression_index(
+    source: &GraphSourceIndex,
+    start: usize,
+    end: usize,
+) -> String {
+    let expression = &source.source[start..end];
+    let mut comment_cursor = source.comment_cursor_at(start);
+    normalize_symbolic_expression_with_cursor(expression, start, &mut comment_cursor)
+}
+
+fn normalize_symbolic_expression_with_cursor(
+    expression: &str,
+    base_offset: usize,
+    comment_cursor: &mut GraphCommentCursor<'_>,
+) -> String {
     let chars = expression.chars().collect::<Vec<_>>();
     let mut normalized = String::new();
     let mut pending_space = false;
@@ -2873,7 +4779,7 @@ fn normalize_symbolic_expression(expression: &str) -> String {
     let mut escaped_string_character = false;
 
     for (index, (byte_offset, character)) in expression.char_indices().enumerate() {
-        if graph_offset_is_in_comment(&comment_ranges, byte_offset) {
+        if comment_cursor.contains(base_offset + byte_offset) {
             pending_space = true;
             pending_comment = true;
             continue;
@@ -3083,15 +4989,22 @@ fn operator_pair_requires_separator(previous: char, next: char) -> bool {
 /// while the shape tells the explorer which suffix dimensions must remain
 /// unpacked when a committed instance width replaces the packed portion.
 fn graph_type_display(
-    source: Option<&str>,
+    source: Option<&GraphSourceIndex>,
     declaration: &llg::ffi::surelog::ParseNode,
     line: u32,
     col: u32,
     name: &str,
     ty: &TypeInfo,
     declaration_kind: &GraphDeclarationKind,
+    source_parts: Option<&GraphSourceTypeParts>,
 ) -> GraphTypeDisplay {
-    let parts = graph_type_prefix(source, Some(declaration), line, col, name);
+    let recovered_parts = if source_parts.is_none() {
+        source
+            .and_then(|source| graph_type_prefix(Some(source), Some(declaration), line, col, name))
+    } else {
+        None
+    };
+    let parts = source_parts.or(recovered_parts.as_ref());
     let shape = parts
         .as_ref()
         .map_or_else(ModuleGraphTypeShape::default, |parts| {
@@ -3138,7 +5051,7 @@ fn graph_type_display(
 }
 
 fn graph_display_base(text: &str) -> Option<String> {
-    let normalized = normalize_graph_lexical_whitespace(text);
+    let normalized = normalize_graph_lexical_whitespace_clean(text);
     let base = normalized
         .split_whitespace()
         .filter(|word| {
@@ -3153,7 +5066,7 @@ fn graph_display_base(text: &str) -> Option<String> {
 }
 
 fn graph_parameter_display_base(text: &str) -> Option<String> {
-    let normalized = normalize_graph_lexical_whitespace(text);
+    let normalized = normalize_graph_lexical_whitespace_clean(text);
     let base = normalized
         .split_whitespace()
         .filter(|word| {
@@ -3168,7 +5081,7 @@ fn graph_parameter_display_base(text: &str) -> Option<String> {
 }
 
 fn graph_declaration_detail(
-    source: Option<&str>,
+    source: Option<&GraphSourceIndex>,
     line: u32,
     col: u32,
     name: &str,
@@ -3194,49 +5107,55 @@ fn graph_declaration_detail(
             format!("{} {} {}", signal_kind, ty.render(), name)
         }
     };
-    let line_text = source
-        .and_then(|source| {
-            let stripped = strip_hdl_comments(source);
-            line.checked_sub(1)
-                .and_then(|line| stripped.lines().nth(line as usize))
-                .map(str::to_owned)
-        })
-        .filter(|text| !text.trim().is_empty());
-    let Some(line_text) = line_text else {
+    let Some(source) = source else {
         return Some(fallback);
     };
+    let Some(line_info) = source.stripped_line(line) else {
+        return Some(fallback);
+    };
+    let line_text = &source.stripped[line_info.start..line_info.end];
+    if line_text.trim().is_empty() {
+        return Some(fallback);
+    }
 
     // Keep only the declaration clause containing this identifier.  In an
     // ANSI header, using the entire source line would turn
     // `module m #(parameter int W)(input logic clk)` into a parameter detail
     // that also contains the port declaration.  The identifier column gives
     // us a safe split even when names repeat elsewhere on the line.
-    let name_offset = line_text
-        .char_indices()
-        .nth(col.saturating_sub(1) as usize)
-        .map(|(offset, _)| offset)
-        .unwrap_or(line_text.len());
-    let before_name = &line_text[..name_offset];
-    let clause_start = before_name
-        .char_indices()
-        .rev()
-        .find(|(_, character)| matches!(character, ';' | ',' | '('))
-        .map(|(offset, character)| offset + character.len_utf8())
-        .unwrap_or(0);
-    let after_name = &line_text[name_offset..];
-    let clause_end = after_name
-        .char_indices()
-        .skip(name.len())
-        .find(|(_, character)| matches!(character, ';' | ',' | ')'))
-        .map(|(offset, _)| name_offset + offset)
-        .unwrap_or(line_text.len());
+    let name_start = source
+        .stripped_position_offset(line, col)
+        .unwrap_or(line_info.end)
+        .min(line_info.end);
+    let separator_before = line_info
+        .clause_start_offsets
+        .partition_point(|(offset, _)| *offset < name_start);
+    let clause_start = separator_before
+        .checked_sub(1)
+        .and_then(|index| line_info.clause_start_offsets.get(index))
+        .map_or(line_info.start, |(offset, character)| {
+            offset + character.len_utf8()
+        })
+        .saturating_sub(line_info.start);
+    let name_end = source
+        .stripped_position_offset(line, col.saturating_add(name.chars().count() as u32))
+        .filter(|offset| *offset >= name_start)
+        .unwrap_or_else(|| name_start.saturating_add(name.len()).min(line_info.end));
+    let separator_after = line_info
+        .clause_end_offsets
+        .partition_point(|offset| *offset < name_end);
+    let clause_end = line_info
+        .clause_end_offsets
+        .get(separator_after)
+        .map_or(line_info.end, |offset| *offset)
+        .saturating_sub(line_info.start);
     let candidate = line_text[clause_start..clause_end].trim();
     // A later declarator in `logic a, b;` has only `b` in its local clause;
     // do not mistake that identifier-only fragment for a complete type. Use
     // the typed fallback, which was recovered from the declaration prefix,
     // unless the candidate itself contains a recognized declaration word.
     Some(
-        if candidate.contains(name) && graph_source_type_words(candidate).1 {
+        if candidate.contains(name) && graph_source_type_words_clean(candidate).1 {
             candidate.to_owned()
         } else {
             fallback
@@ -3258,7 +5177,7 @@ fn graph_instantiation_type(
     root: usize,
     file_id: u32,
     path: &str,
-    token_types: &HashMap<(String, u32, u32), i32>,
+    token_types: &HashMap<&str, HashMap<(u32, u32), i32>>,
 ) -> Option<String> {
     use llg::core::vobject_types::VObjectType;
     use llg::ffi::vpi;
@@ -3272,7 +5191,9 @@ fn graph_instantiation_type(
         })
         .filter_map(|index| {
             let node = &nodes[index];
-            (token_types.get(&(path.to_owned(), node.line, node.col as u32))
+            (token_types
+                .get(path)
+                .and_then(|types| types.get(&(node.line, node.col as u32)))
                 == Some(&vpi::uhdmclass_defn))
             .then(|| {
                 node.symbol_name
@@ -3351,39 +5272,106 @@ fn graph_generate_name(
     format!("generate@{}:{}", nodes[root].line, nodes[root].col)
 }
 
-fn graph_push_instance(target: &mut Vec<ModuleGraphInstance>, instance: ModuleGraphInstance) {
-    if !target.iter().any(|existing| {
-        existing.name == instance.name
-            && existing.module_type == instance.module_type
-            && existing.file == instance.file
-            && existing.line == instance.line
-            && existing.col == instance.col
-    }) {
+fn graph_instance_key(instance: &ModuleGraphInstance) -> GraphInstanceKey {
+    (
+        instance.name.clone(),
+        instance.module_type.clone(),
+        instance.file.clone(),
+        instance.line,
+        instance.col,
+    )
+}
+
+fn graph_push_instance(
+    target: &mut Vec<ModuleGraphInstance>,
+    keys: &mut HashSet<GraphInstanceKey>,
+    instance: ModuleGraphInstance,
+) {
+    if keys.insert(graph_instance_key(&instance)) {
         target.push(instance);
     }
 }
 
+fn graph_scope_key(scope: &ModuleGraphGenerateScope) -> GraphScopeKey {
+    (scope.name.clone(), scope.line, scope.col)
+}
+
+fn graph_scope_indices(
+    indexes: &HashMap<Vec<GraphScopeKey>, usize>,
+    path: &[GraphScopeKey],
+) -> Option<Vec<usize>> {
+    let mut result = Vec::with_capacity(path.len());
+    for depth in 1..=path.len() {
+        result.push(*indexes.get(&path[..depth].to_vec())?);
+    }
+    Some(result)
+}
+
+fn graph_generated_scope_mut<'a>(
+    scopes: &'a mut [ModuleGraphGenerateScope],
+    indices: &[usize],
+) -> Option<&'a mut ModuleGraphGenerateScope> {
+    let (index, rest) = indices.split_first()?;
+    let scope = scopes.get_mut(*index)?;
+    if rest.is_empty() {
+        Some(scope)
+    } else {
+        graph_generated_scope_mut(&mut scope.nested, rest)
+    }
+}
+
 fn graph_push_generated_instance(
-    scopes: &mut Vec<ModuleGraphGenerateScope>,
+    definition_index: usize,
+    definition: &mut ModuleGraphDefinition,
     path: &[ModuleGraphGenerateScope],
     instance: ModuleGraphInstance,
+    indexes: &mut GraphAssemblyIndexes,
 ) {
-    let Some(first) = path.first() else {
+    if path.is_empty() {
         return;
-    };
-    let Some(scope) = scopes.iter_mut().find(|scope| {
-        scope.name == first.name && scope.line == first.line && scope.col == first.col
-    }) else {
-        let mut scope = first.clone();
+    }
+
+    let path_keys = path.iter().map(graph_scope_key).collect::<Vec<_>>();
+    for depth in 0..path.len() {
+        let prefix = path_keys[..=depth].to_vec();
+        if indexes.generated_scopes[definition_index].contains_key(&prefix) {
+            continue;
+        }
+        let mut scope = path[depth].clone();
         scope.children.clear();
         scope.nested.clear();
-        scopes.push(scope);
-        return graph_push_generated_instance(scopes, path, instance);
-    };
-    if path.len() == 1 {
-        graph_push_instance(&mut scope.children, instance);
-    } else {
-        graph_push_generated_instance(&mut scope.nested, &path[1..], instance);
+        let scope_index = if depth == 0 {
+            definition.generated_scopes.push(scope);
+            definition.generated_scopes.len() - 1
+        } else {
+            let parent_indices = graph_scope_indices(
+                &indexes.generated_scopes[definition_index],
+                &path_keys[..depth],
+            )
+            .expect("generated scope parent is inserted before its child");
+            let parent =
+                graph_generated_scope_mut(&mut definition.generated_scopes, &parent_indices)
+                    .expect("generated scope parent index remains valid");
+            parent.nested.push(scope);
+            parent.nested.len() - 1
+        };
+        indexes.generated_scopes[definition_index].insert(prefix, scope_index);
+    }
+
+    let instance_key = graph_instance_key(&instance);
+    let is_new = indexes.generated_children[definition_index]
+        .entry(path_keys.clone())
+        .or_default()
+        .insert(instance_key);
+    if !is_new {
+        return;
+    }
+    let scope_indices =
+        graph_scope_indices(&indexes.generated_scopes[definition_index], &path_keys)
+            .expect("generated scope path is inserted before its children");
+    if let Some(scope) = graph_generated_scope_mut(&mut definition.generated_scopes, &scope_indices)
+    {
+        scope.children.push(instance);
     }
 }
 
@@ -3460,16 +5448,53 @@ fn parse_tree_feature_parts(
     design: &llg::ffi::surelog::Design,
     conn_pairs: &[NamedPortConn],
     enum_facts: &ParseEnumFacts,
+    root: &str,
+    generation: u64,
+    parent_id: Option<u64>,
 ) -> (DesignModel, Vec<FileTokens>, ConnectionInputs) {
     use std::collections::{HashMap, HashSet};
 
+    let mut token_span = crate::logging::LifecycleSpan::phase_with_parent(
+        "analysis.parse_fallback.tokens",
+        || root.to_owned(),
+        generation,
+        design.file_content_count() as usize,
+        parent_id,
+    );
+    let token_started = std::time::Instant::now();
+    crate::llg_debug!(
+        "event=analysis.parse_fallback.tokens.begin root={} generation={} files={}",
+        root,
+        generation,
+        design.file_content_count()
+    );
     let (tokens, parse_decls) = tokens::collect_parse_tokens(design);
+    let token_count = token_cardinality(&tokens);
+    token_span.complete("ok", token_count);
+    crate::llg_debug!(
+        "event=analysis.parse_fallback.tokens.end outcome=ok root={} generation={} token_files={} token_nodes={} declarations={} elapsed_us={}",
+        root,
+        generation,
+        tokens.len(),
+        token_count,
+        parse_decls.len(),
+        token_started.elapsed().as_micros()
+    );
+    drop(token_span);
 
     // Modules-only model from the surviving tokens: every `vpiModule`-typed
     // token IS a module-name identifier under a module header (the classifier
     // emits that type only for header ancestors).  Positions are 1-based,
     // matching the model convention; Surelog's builtin classes live in a
     // virtual `builtin.sv` and are skipped like everywhere else.
+    let mut model_span = crate::logging::LifecycleSpan::phase_with_parent(
+        "analysis.parse_fallback.model",
+        || root.to_owned(),
+        generation,
+        tokens.len(),
+        parent_id,
+    );
+    let model_started = std::time::Instant::now();
     let mut modules: Vec<ModuleDef> = Vec::new();
     let mut seen: HashSet<(String, u32, u32)> = HashSet::new();
     for ft in &tokens {
@@ -3488,7 +5513,7 @@ fn parse_tree_feature_parts(
             }
             // The token spans the identifier only; keep a sane end position
             // even if the parse node's end fields are unset or degenerate.
-            let len = name.chars().count() as u32;
+            let len = lsp_name_len(&name);
             let name_end_col = node.col.saturating_add(len);
             let (end_line, end_col) = if node.end_line > node.line
                 || (node.end_line == node.line && node.end_col >= name_end_col)
@@ -3507,6 +5532,15 @@ fn parse_tree_feature_parts(
             });
         }
     }
+    model_span.complete("ok", modules.len());
+    crate::llg_debug!(
+        "event=analysis.parse_fallback.model.end outcome=ok root={} generation={} modules={} elapsed_us={}",
+        root,
+        generation,
+        modules.len(),
+        model_started.elapsed().as_micros()
+    );
+    drop(model_span);
 
     // ── Fallback connection bindings ────────────────────────────────────
     // Resolve every parsed named connection: the LABEL binds to the child
@@ -3518,25 +5552,32 @@ fn parse_tree_feature_parts(
     // (`select_parent_scope_position`).  Connections whose instantiation
     // type or label cannot be resolved are skipped silently; positional
     // matching for unnamed connections stays out of scope.
-    let nodes_by_file: HashMap<&str, &[VObjectInfo]> = tokens
-        .iter()
-        .map(|ft| (ft.path.as_str(), ft.nodes.as_slice()))
-        .collect();
-    let ports = declared_ports_by_module(&parse_decls, &nodes_by_file, &modules);
-    let params = declared_params_by_module(&parse_decls, &nodes_by_file, &modules);
+    let mut binding_span = crate::logging::LifecycleSpan::phase_with_parent(
+        "analysis.parse_fallback.bindings",
+        || root.to_owned(),
+        generation,
+        conn_pairs.len(),
+        parent_id,
+    );
+    let binding_started = std::time::Instant::now();
+    crate::llg_debug!(
+        "event=analysis.parse_fallback.bindings.begin root={} generation={} connections={}",
+        root,
+        generation,
+        conn_pairs.len()
+    );
+    let fallback_index = ParseFallbackIndex::new(&tokens, &parse_decls, &modules);
+    let ports = declared_ports_by_module(&fallback_index);
+    let params = declared_params_by_module(&fallback_index);
     let mut fallback_bindings: RefBindings = HashMap::new();
     for pair in conn_pairs {
         let Some(inst_type) = pair.inst_type.as_deref() else {
             continue;
         };
         let child_decl = match pair.kind {
-            ConnKind::Port => ports
-                .iter()
-                .find(|p| p.module == inst_type && p.name == pair.label_name)
+            ConnKind::Port => find_fallback_port(ports, inst_type, &pair.label_name)
                 .map(|p| ("port", p.file.clone(), p.line1, p.col1)),
-            ConnKind::Param => params
-                .iter()
-                .find(|p| p.module == inst_type && p.name == pair.label_name)
+            ConnKind::Param => find_fallback_param(params, inst_type, &pair.label_name)
                 .map(|p| ("parameter", p.file.clone(), p.line1, p.col1)),
         };
         let Some((kind_label, decl_file, decl_line1, decl_col1)) = child_decl else {
@@ -3563,9 +5604,7 @@ fn parse_tree_feature_parts(
             (pair.actual, pair.actual_name.as_deref())
         {
             let actual_target = fallback_actual_target(
-                &parse_decls,
-                &nodes_by_file,
-                &modules,
+                &fallback_index,
                 &pair.file,
                 pair.label.0.saturating_sub(1),
                 actual_name,
@@ -3582,6 +5621,15 @@ fn parse_tree_feature_parts(
             }
         }
     }
+    binding_span.complete("ok", fallback_bindings.len());
+    crate::llg_debug!(
+        "event=analysis.parse_fallback.bindings.end outcome=ok root={} generation={} bindings={} elapsed_us={}",
+        root,
+        generation,
+        fallback_bindings.len(),
+        binding_started.elapsed().as_micros()
+    );
+    drop(binding_span);
 
     (
         DesignModel {
@@ -3608,44 +5656,29 @@ fn parse_tree_feature_parts(
 /// Resolve a connection ACTUAL to its parent-scope declaration in the
 /// parse-fallback mode and build its binding target.
 ///
-/// Candidates are the recorded parse declaration positions (`parse_decls`)
-/// in the instantiating file whose node carries the actual identifier text;
-/// the shared containment rule ([`select_parent_scope_position`]) picks the
-/// winner using the parsed module body spans, with the label line as the
-/// instantiation-line proxy.  The target kind is derived from the parse-node
-/// type at the chosen position (ports / parameters / nets / variables).
+/// Candidates are looked up by actual identifier name in the per-file
+/// [`ParseFallbackIndex`].  The shared containment rule picks the winner using
+/// the parsed module body spans, with the label line as the instantiation-line
+/// proxy.  The target kind is derived from the parse-node type at the chosen
+/// position (ports / parameters / nets / variables).
 fn fallback_actual_target(
-    parse_decls: &ParseDeclPositions,
-    nodes_by_file: &HashMap<&str, &[VObjectInfo]>,
-    modules: &[ModuleDef],
+    fallback_index: &ParseFallbackIndex<'_>,
     inst_file: &str,
     label_line0: u32,
     actual_name: &str,
 ) -> Option<DeclTarget> {
-    let nodes = nodes_by_file.get(inst_file)?;
-    let positions: Vec<ActualCandidatePos> = parse_decls
-        .iter()
-        .filter(|(file, line1, col1)| {
-            file == inst_file
-                && nodes.iter().any(|n| {
-                    n.line == *line1 && n.col == *col1 && n.name.as_deref() == Some(actual_name)
-                })
-        })
-        .map(|(_, line1, col1)| (line1.saturating_sub(1), col1.saturating_sub(1)))
-        .collect();
-    let spans: Vec<ModuleSpan0> = modules
-        .iter()
-        .filter(|m| m.file.as_deref() == Some(inst_file))
-        .map(|m| ModuleSpan0 {
-            first0: m.line.saturating_sub(1),
-            // Parsed module spans always carry a computed end line.
-            last0: Some(m.end_line.saturating_sub(1)),
-        })
-        .collect();
-    let (line0, col0) = select_parent_scope_position(&positions, &spans, label_line0)?;
-    let node = nodes
-        .iter()
-        .find(|n| n.line == line0 + 1 && n.col == col0 + 1)?;
+    let file_index = fallback_index.files.get(inst_file)?;
+    let positions = file_index.actual_positions_by_name.get(actual_name)?;
+    let (line0, col0) =
+        select_parent_scope_position_sorted(positions, &file_index.spans, label_line0)?;
+    let position = file_index.positions.get(&(line0 + 1, col0 + 1))?;
+    // Several classifier tokens can legitimately share one source position.
+    // The old fallback selected the node whose name matched the actual, so
+    // retain that detail while restricting the search to this one position.
+    let node_index = std::iter::once(position.first_node)
+        .chain(position.additional_nodes.iter().flatten().copied())
+        .find(|index| file_index.nodes[*index].name.as_deref() == Some(actual_name))?;
+    let node = &file_index.nodes[node_index];
     Some(DeclTarget {
         name: actual_name.to_owned(),
         kind: fallback_decl_kind(node.vpi_type).to_owned(),
@@ -3702,145 +5735,274 @@ struct FallbackParamDecl {
     col1: u32,
 }
 
-/// Module-header lines per file, sorted by line (`file → [(line1, name)]`).
-///
-/// Shared attribution source for [`declared_ports_by_module`] and
-/// [`declared_params_by_module`].
-fn module_headers_by_file(modules: &[ModuleDef]) -> HashMap<String, Vec<(u32, String)>> {
-    let mut headers: HashMap<String, Vec<(u32, String)>> = HashMap::new();
-    for m in modules {
-        if let Some(f) = m.file.as_deref() {
-            headers
-                .entry(f.to_owned())
-                .or_default()
-                .push((m.line, clean_name(&m.name).to_owned()));
-        }
-    }
-    for list in headers.values_mut() {
-        list.sort_by_key(|(line, _)| *line);
-    }
-    headers
+#[derive(Debug)]
+struct ParseFallbackPositionInfo {
+    first_node: usize,
+    port_node: Option<usize>,
+    parameter_node: Option<usize>,
+    additional_nodes: Option<Vec<usize>>,
 }
 
-/// The module owning the declaration at `file`:`line1` (last header at or
-/// before the line), if any.
-fn owning_module<'a>(
-    headers: &'a HashMap<String, Vec<(u32, String)>>,
-    file: &str,
-    line1: u32,
-) -> Option<&'a str> {
-    headers.get(file).and_then(|list| {
-        list.iter()
-            .rev()
-            .find(|(hline, _)| *hline <= line1)
-            .map(|(_, name)| name.as_str())
-    })
+struct ParseFallbackFileIndex<'a> {
+    nodes: &'a [VObjectInfo],
+    positions: HashMap<(u32, u32), ParseFallbackPositionInfo>,
+    actual_positions_by_name: HashMap<String, Vec<ActualCandidatePos>>,
+    headers: Vec<(u32, String)>,
+    spans: Vec<ModuleSpan0>,
+}
+
+struct ParseFallbackIndex<'a> {
+    files: HashMap<&'a str, ParseFallbackFileIndex<'a>>,
+    ports: Vec<FallbackPortDecl>,
+    params: Vec<FallbackParamDecl>,
+}
+
+fn fallback_port_type(vpi_type: i32) -> bool {
+    matches!(
+        vpi_type,
+        llg::ffi::vpi::vpiPort
+            | llg::ffi::vpi::TOKEN_PORT_INPUT
+            | llg::ffi::vpi::TOKEN_PORT_OUTPUT
+            | llg::ffi::vpi::TOKEN_PORT_INOUT
+    )
+}
+
+impl<'a> ParseFallbackIndex<'a> {
+    /// Build all parse-fallback position, name, header, and span indexes in
+    /// linear passes over the already-owned token/declaration data.  The
+    /// resulting maps are reused for every named connection in the fallback
+    /// analysis; no connection performs a declaration-by-node scan.
+    fn new(
+        tokens: &'a [FileTokens],
+        parse_decls: &ParseDeclPositions,
+        modules: &[ModuleDef],
+    ) -> Self {
+        let mut files: HashMap<&'a str, ParseFallbackFileIndex<'a>> = HashMap::new();
+        for file_tokens in tokens {
+            let mut positions = HashMap::with_capacity(file_tokens.nodes.len());
+            for (node_index, node) in file_tokens.nodes.iter().enumerate() {
+                let entry =
+                    positions
+                        .entry((node.line, node.col))
+                        .or_insert(ParseFallbackPositionInfo {
+                            first_node: node_index,
+                            port_node: None,
+                            parameter_node: None,
+                            additional_nodes: None,
+                        });
+                if entry.first_node != node_index {
+                    entry
+                        .additional_nodes
+                        .get_or_insert_with(Vec::new)
+                        .push(node_index);
+                }
+                if entry.port_node.is_none() && fallback_port_type(node.vpi_type) {
+                    entry.port_node = Some(node_index);
+                }
+                if entry.parameter_node.is_none() && node.vpi_type == llg::ffi::vpi::vpiParameter {
+                    entry.parameter_node = Some(node_index);
+                }
+            }
+            files.insert(
+                file_tokens.path.as_str(),
+                ParseFallbackFileIndex {
+                    nodes: file_tokens.nodes.as_slice(),
+                    positions,
+                    actual_positions_by_name: HashMap::new(),
+                    headers: Vec::new(),
+                    spans: Vec::new(),
+                },
+            );
+        }
+
+        for module in modules {
+            let Some(file) = module.file.as_deref() else {
+                continue;
+            };
+            let Some(file_index) = files.get_mut(file) else {
+                continue;
+            };
+            file_index
+                .headers
+                .push((module.line, clean_name(&module.name).to_owned()));
+            // Parsed module spans always carry a computed end line.  Keep
+            // the same inclusive coordinates used by the former fallback.
+            file_index.spans.push(ModuleSpan0 {
+                first0: module.line.saturating_sub(1),
+                last0: Some(module.end_line.saturating_sub(1)),
+            });
+        }
+        for file_index in files.values_mut() {
+            file_index.headers.sort_by_key(|(line, _)| *line);
+        }
+
+        // HashSet iteration is intentionally unordered.  Sort each file's
+        // declaration positions once so header attribution and all later
+        // nearest-scope lookups are deterministic and linear/binary-searchable.
+        let mut declarations_by_file: HashMap<&str, Vec<(u32, u32)>> = HashMap::new();
+        for (file, line1, col1) in parse_decls {
+            declarations_by_file
+                .entry(file.as_str())
+                .or_default()
+                .push((*line1, *col1));
+        }
+
+        let mut ports = Vec::new();
+        let mut params = Vec::new();
+        for (file, mut declarations) in declarations_by_file {
+            declarations.sort_unstable();
+            let Some(file_index) = files.get_mut(file) else {
+                continue;
+            };
+            let nodes = file_index.nodes;
+            let positions = &file_index.positions;
+            let headers = &file_index.headers;
+            let actual_positions_by_name = &mut file_index.actual_positions_by_name;
+            let mut next_header = 0usize;
+            let mut current_header = None;
+
+            for (line1, col1) in declarations {
+                while next_header < headers.len() && headers[next_header].0 <= line1 {
+                    current_header = Some(next_header);
+                    next_header += 1;
+                }
+                let Some(position) = positions.get(&(line1, col1)) else {
+                    continue;
+                };
+                let actual_position = (line1.saturating_sub(1), col1.saturating_sub(1));
+                let node_indices = std::iter::once(position.first_node)
+                    .chain(position.additional_nodes.iter().flatten().copied());
+                for node_index in node_indices {
+                    let Some(actual_name) =
+                        nodes[node_index].name.as_deref().filter(|n| !n.is_empty())
+                    else {
+                        continue;
+                    };
+                    if let Some(entry) = actual_positions_by_name.get_mut(actual_name) {
+                        if entry.last().copied() != Some(actual_position) {
+                            entry.push(actual_position);
+                        }
+                    } else {
+                        actual_positions_by_name
+                            .insert(actual_name.to_owned(), vec![actual_position]);
+                    }
+                }
+                let Some(header_index) = current_header else {
+                    continue;
+                };
+                let module = headers[header_index].1.as_str();
+
+                if let Some(node_index) = position.port_node {
+                    let node = &nodes[node_index];
+                    if let Some(name) = node.name.as_deref().filter(|n| !n.is_empty()) {
+                        ports.push(FallbackPortDecl {
+                            module: module.to_owned(),
+                            name: name.to_owned(),
+                            file: file.to_owned(),
+                            line1,
+                            col1,
+                        });
+                    }
+                }
+                if let Some(node_index) = position.parameter_node {
+                    let node = &nodes[node_index];
+                    if let Some(name) = node.name.as_deref().filter(|n| !n.is_empty()) {
+                        params.push(FallbackParamDecl {
+                            module: module.to_owned(),
+                            name: name.to_owned(),
+                            file: file.to_owned(),
+                            line1,
+                            col1,
+                        });
+                    }
+                }
+            }
+        }
+
+        for positions in files
+            .values_mut()
+            .flat_map(|file_index| file_index.actual_positions_by_name.values_mut())
+        {
+            positions.sort_unstable();
+        }
+        ports.sort_by(|a, b| {
+            (&a.module, &a.name, &a.file, a.line1, a.col1)
+                .cmp(&(&b.module, &b.name, &b.file, b.line1, b.col1))
+        });
+        params.sort_by(|a, b| {
+            (&a.module, &a.name, &a.file, a.line1, a.col1)
+                .cmp(&(&b.module, &b.name, &b.file, b.line1, b.col1))
+        });
+        Self {
+            files,
+            ports,
+            params,
+        }
+    }
 }
 
 /// Collect the direction-typed port declaration positions recorded by
-/// [`collect_parse_tokens`], attributing each to its enclosing module.
-///
-/// Attribution is positional: a port declaration belongs to the last module
-/// header at or before its line within the same file (`modules` supplies the
-/// header lines).  Only `TOKEN_PORT_*`-typed positions count, so nets/regs/
-/// parameters never masquerade as ports; results are sorted by
-/// `(module, file, line, col)` so lookups are deterministic.
-fn declared_ports_by_module(
-    parse_decls: &ParseDeclPositions,
-    nodes_by_file: &HashMap<&str, &[VObjectInfo]>,
-    modules: &[ModuleDef],
-) -> Vec<FallbackPortDecl> {
-    let headers = module_headers_by_file(modules);
-
-    let mut out: Vec<FallbackPortDecl> = Vec::new();
-    for (file, line1, col1) in parse_decls {
-        let Some(nodes) = nodes_by_file.get(file.as_str()) else {
-            continue;
-        };
-        let Some(module) = owning_module(&headers, file.as_str(), *line1) else {
-            continue;
-        };
-        let Some(node) = nodes.iter().find(|n| {
-            n.line == *line1
-                && n.col == *col1
-                && matches!(
-                    n.vpi_type,
-                    // Parse-tree port declarations classify as `vpiPort`
-                    // (`paPort_declaration`/`paAnsi_port_declaration`
-                    // ancestors); the direction-specific TOKEN_PORT_* types
-                    // exist only in elaborated analyses.
-                    llg::ffi::vpi::vpiPort
-                        | llg::ffi::vpi::TOKEN_PORT_INPUT
-                        | llg::ffi::vpi::TOKEN_PORT_OUTPUT
-                        | llg::ffi::vpi::TOKEN_PORT_INOUT
-                )
-        }) else {
-            continue;
-        };
-        let Some(name) = node.name.as_deref().filter(|n| !n.is_empty()) else {
-            continue;
-        };
-        out.push(FallbackPortDecl {
-            module: module.to_owned(),
-            name: name.to_owned(),
-            file: file.clone(),
-            line1: *line1,
-            col1: *col1,
-        });
-    }
-    out.sort_by(|a, b| {
-        (&a.module, &a.file, a.line1, a.col1).cmp(&(&b.module, &b.file, b.line1, b.col1))
-    });
-    out
+/// [`collect_parse_tokens`], attributing each to its enclosing module.  The
+/// expensive attribution pass is performed once by [`ParseFallbackIndex`].
+fn declared_ports_by_module<'a>(index: &'a ParseFallbackIndex<'_>) -> &'a [FallbackPortDecl] {
+    &index.ports
 }
 
 /// Collect the parameter declaration positions recorded by
-/// [`collect_parse_tokens`], attributing each to its enclosing module.
-///
-/// Same positional attribution as [`declared_ports_by_module`]; only
-/// `vpiParameter`-typed DECL positions count.  Connection LABELS share the
-/// `vpiParameter` token type but are never recorded in `parse_decls`
-/// (the classifier marks them non-declarations), so they cannot masquerade
-/// as declarations here.  Results are sorted by `(module, file, line, col)`
-/// so lookups are deterministic.
-fn declared_params_by_module(
-    parse_decls: &ParseDeclPositions,
-    nodes_by_file: &HashMap<&str, &[VObjectInfo]>,
-    modules: &[ModuleDef],
-) -> Vec<FallbackParamDecl> {
-    use llg::ffi::vpi;
+/// [`collect_parse_tokens`], attributing each to its enclosing module.  The
+/// positions and type checks are pre-indexed by [`ParseFallbackIndex`].
+fn declared_params_by_module<'a>(index: &'a ParseFallbackIndex<'_>) -> &'a [FallbackParamDecl] {
+    &index.params
+}
 
-    let headers = module_headers_by_file(modules);
-
-    let mut out: Vec<FallbackParamDecl> = Vec::new();
-    for (file, line1, col1) in parse_decls {
-        let Some(nodes) = nodes_by_file.get(file.as_str()) else {
-            continue;
-        };
-        let Some(module) = owning_module(&headers, file.as_str(), *line1) else {
-            continue;
-        };
-        let Some(node) = nodes
-            .iter()
-            .find(|n| n.line == *line1 && n.col == *col1 && n.vpi_type == vpi::vpiParameter)
-        else {
-            continue;
-        };
-        let Some(name) = node.name.as_deref().filter(|n| !n.is_empty()) else {
-            continue;
-        };
-        out.push(FallbackParamDecl {
-            module: module.to_owned(),
-            name: name.to_owned(),
-            file: file.clone(),
-            line1: *line1,
-            col1: *col1,
-        });
+fn find_fallback_port<'a>(
+    declarations: &'a [FallbackPortDecl],
+    module: &str,
+    name: &str,
+) -> Option<&'a FallbackPortDecl> {
+    let mut low = 0;
+    let mut high = declarations.len();
+    while low < high {
+        let middle = low + (high - low) / 2;
+        let ordering = declarations[middle]
+            .module
+            .as_str()
+            .cmp(module)
+            .then_with(|| declarations[middle].name.as_str().cmp(name));
+        if ordering == std::cmp::Ordering::Less {
+            low = middle + 1;
+        } else {
+            high = middle;
+        }
     }
-    out.sort_by(|a, b| {
-        (&a.module, &a.file, a.line1, a.col1).cmp(&(&b.module, &b.file, b.line1, b.col1))
-    });
-    out
+    declarations
+        .get(low)
+        .filter(|declaration| declaration.module == module && declaration.name == name)
+}
+
+fn find_fallback_param<'a>(
+    declarations: &'a [FallbackParamDecl],
+    module: &str,
+    name: &str,
+) -> Option<&'a FallbackParamDecl> {
+    let mut low = 0;
+    let mut high = declarations.len();
+    while low < high {
+        let middle = low + (high - low) / 2;
+        let ordering = declarations[middle]
+            .module
+            .as_str()
+            .cmp(module)
+            .then_with(|| declarations[middle].name.as_str().cmp(name));
+        if ordering == std::cmp::Ordering::Less {
+            low = middle + 1;
+        } else {
+            high = middle;
+        }
+    }
+    declarations
+        .get(low)
+        .filter(|declaration| declaration.module == module && declaration.name == name)
 }
 /// Scan Surelog's parse tree for named connections and return one
 /// [`NamedPortConn`] per `paNamed_port_connection` /
@@ -5101,16 +7263,33 @@ impl SymbolIndex {
         let tokens_by_file: HashMap<&str, &FileTokens> =
             tokens.iter().map(|ft| (ft.path.as_str(), ft)).collect();
 
+        // The syntax-fallback declaration set is a HashSet, so walking it
+        // directly cannot reuse the token order.  Build the same-position
+        // lookup once over the owned token stream; this replaces one
+        // `nodes.iter().find` scan per declaration while preserving the old
+        // first-node-at-position choice.
+        let parse_nodes_by_position = parse_decls.map(|_| {
+            let mut nodes_by_position: HashMap<(&str, u32, u32), &llg::ffi::surelog::VObjectInfo> =
+                HashMap::with_capacity(tokens.iter().map(|ft| ft.nodes.len()).sum());
+            for file_tokens in tokens_by_file.values() {
+                for node in &file_tokens.nodes {
+                    nodes_by_position
+                        .entry((file_tokens.path.as_str(), node.line, node.col))
+                        .or_insert(node);
+                }
+            }
+            nodes_by_position
+        });
+
         // ── Parse-fallback declaration seeds ────────────────────────────────
         // Seed the name sets from the collector's recorded declaration
         // positions so `classify_token` accepts them despite the absent
         // instance data.
         if let Some(decl_positions) = parse_decls {
             for (file, line1, col1) in decl_positions {
-                let Some(ft) = tokens_by_file.get(file.as_str()) else {
-                    continue;
-                };
-                let Some(node) = ft.nodes.iter().find(|n| n.line == *line1 && n.col == *col1)
+                let Some(node) = parse_nodes_by_position
+                    .as_ref()
+                    .and_then(|nodes| nodes.get(&(file.as_str(), *line1, *col1)))
                 else {
                     continue;
                 };
@@ -5148,7 +7327,7 @@ impl SymbolIndex {
                 .map(|n| (n.line, n.col))
                 .unwrap_or((m.line, m.col));
             let name = clean_name(&m.name).to_owned();
-            let len = name.chars().count() as u32;
+            let len = lsp_name_len(&name);
             let line = line1.saturating_sub(1);
             let col = col1.saturating_sub(1);
             decls.push(SymEntry {
@@ -5180,7 +7359,7 @@ impl SymbolIndex {
                 .map(|n| (n.line, n.col))
                 .unwrap_or((p.line, p.col));
             let name = clean_name(&p.name).to_owned();
-            let len = name.chars().count() as u32;
+            let len = lsp_name_len(&name);
             let line = line1.saturating_sub(1);
             let col = col1.saturating_sub(1);
             decls.push(SymEntry {
@@ -5224,7 +7403,7 @@ impl SymbolIndex {
                     continue;
                 };
                 let name = clean_name(&param.name).to_owned();
-                let len = name.chars().count() as u32;
+                let len = lsp_name_len(&name);
                 let line = line1.saturating_sub(1);
                 let col = col1.saturating_sub(1);
                 decls.push(SymEntry {
@@ -5243,7 +7422,7 @@ impl SymbolIndex {
             }
             for ec in &p.enum_consts {
                 let name = clean_name(&ec.name).to_owned();
-                let len = name.chars().count() as u32;
+                let len = lsp_name_len(&name);
                 let line = ec.line.saturating_sub(1);
                 let col = ec.col.saturating_sub(1);
                 decls.push(SymEntry {
@@ -5288,7 +7467,7 @@ impl SymbolIndex {
                 .map(|n| (n.line, n.col))
                 .unwrap_or((c.line, c.col));
             let name = clean_name(&c.name).to_owned();
-            let len = name.chars().count() as u32;
+            let len = lsp_name_len(&name);
             let line = line1.saturating_sub(1);
             let col = col1.saturating_sub(1);
             decls.push(SymEntry {
@@ -5311,7 +7490,7 @@ impl SymbolIndex {
                     continue;
                 };
                 let mname = clean_name(&m.name).to_owned();
-                let mlen = mname.chars().count() as u32;
+                let mlen = lsp_name_len(&mname);
                 let mline = m.line.saturating_sub(1);
                 let mcol = m.col.saturating_sub(1);
                 decls.push(SymEntry {
@@ -5352,7 +7531,7 @@ impl SymbolIndex {
             // Class fields reuse `SymKind::Var` (no dedicated Field kind).
             for f in &c.fields {
                 let fname = clean_name(&f.name).to_owned();
-                let flen = fname.chars().count() as u32;
+                let flen = lsp_name_len(&fname);
                 let fline = f.line.saturating_sub(1);
                 let fcol = f.col.saturating_sub(1);
                 decls.push(SymEntry {
@@ -5398,7 +7577,7 @@ impl SymbolIndex {
                         })
                         .map(|n| (n.line, n.col))
                         .unwrap_or((i.line, i.col));
-                    let len = name.chars().count() as u32;
+                    let len = lsp_name_len(&name);
                     let line = line1.saturating_sub(1);
                     let col = col1.saturating_sub(1);
                     let def = clean_name(&i.def_name).to_owned();
@@ -5446,7 +7625,7 @@ impl SymbolIndex {
             for f in &inst.funcs {
                 let Some(file) = f.file.clone() else { continue };
                 let name = clean_name(&f.name).to_owned();
-                let len = name.chars().count() as u32;
+                let len = lsp_name_len(&name);
                 let line = f.line.saturating_sub(1);
                 let col = f.col.saturating_sub(1);
                 decls.push(SymEntry {
@@ -5493,7 +7672,7 @@ impl SymbolIndex {
                 line: key.1,
                 col: key.2,
                 end_line: key.1,
-                end_col: key.2.saturating_add(parsed.name.chars().count() as u32),
+                end_col: key.2.saturating_add(lsp_name_len(&parsed.name)),
                 is_decl: true,
                 scope: parsed.scope.clone(),
                 detail: Some(format!("enum constant {}", parsed.name)),
@@ -5588,7 +7767,7 @@ impl SymbolIndex {
                         port_label_candidates.push(cand);
                     }
                 }
-                let len = name.chars().count() as u32;
+                let len = lsp_name_len(name);
                 let line = n.line.saturating_sub(1);
                 let col = n.col.saturating_sub(1);
                 let scope = enclosing_scope(&scope_providers, &ft.path, n.line);
@@ -5738,7 +7917,7 @@ impl SymbolIndex {
             if e.line != line {
                 continue;
             }
-            let len = e.name.chars().count();
+            let len = lsp_name_len(&e.name) as usize;
             if col >= e.col && col < e.col.saturating_add(len as u32) && len > best_len {
                 best = Some(e);
                 best_len = len;
@@ -6032,9 +8211,7 @@ fn port_label_candidate(
         })
         .max_by_key(|(_, d)| d.col)
     {
-        let min_label_col = inst
-            .col
-            .saturating_add(inst.name.chars().count() as u32 + 2);
+        let min_label_col = inst.col.saturating_add(lsp_name_len(&inst.name) + 2);
         if col >= min_label_col {
             let def_name = instance_def.get(&idx)?.clone();
             return Some(PortLabelCandidate {
@@ -6138,7 +8315,7 @@ fn resolve_port_label(
     }
     // No indexed declaration: synthesize one (reusing an existing entry at
     // the anchor position, e.g. from a previous label of the same port).
-    let module_name_len = clean_name(&module.name).chars().count() as u32;
+    let module_name_len = lsp_name_len(clean_name(&module.name));
     let port_idx = inst
         .ports
         .iter()
@@ -6153,7 +8330,7 @@ fn resolve_port_label(
     {
         return Some((key, idx));
     }
-    let len = cand.name.chars().count() as u32;
+    let len = lsp_name_len(&cand.name);
     let idx = decls.len();
     decls.push(SymEntry {
         name: cand.name.clone(),
@@ -6243,7 +8420,7 @@ fn resolve_param_override(
     }
     // No indexed declaration: synthesize one (reusing an existing entry at
     // the anchor position, e.g. from a previous label of the same parameter).
-    let module_name_len = scope.chars().count() as u32;
+    let module_name_len = lsp_name_len(&scope);
     let param_idx = inst.params.iter().position(|p| p.name == name).unwrap_or(0) as u32;
     let line0 = module.line.saturating_sub(1);
     let col0 = module.col.saturating_sub(1) + module_name_len + PARAM_SYNTH_COL_STRIDE + param_idx;
@@ -6254,7 +8431,7 @@ fn resolve_param_override(
     {
         return Some((key, idx));
     }
-    let len = name.chars().count() as u32;
+    let len = lsp_name_len(name);
     let idx = decls.len();
     decls.push(SymEntry {
         name: name.to_owned(),
@@ -6627,6 +8804,12 @@ pub(crate) fn semantic_tokens_for_open_document_with_parent(
     defines: &[String],
     parent_id: Option<u64>,
 ) -> Result<SemanticTokens, String> {
+    let wait_started = std::time::Instant::now();
+    crate::llg_debug!(
+        "event=surelog.parse_only.wait.begin file={} parent_id={:?}",
+        file,
+        parent_id
+    );
     let mut wait_span = crate::logging::LifecycleSpan::phase_with_parent(
         "surelog.wait_global_mutex.parse_only",
         || file.to_owned(),
@@ -6636,6 +8819,11 @@ pub(crate) fn semantic_tokens_for_open_document_with_parent(
     );
     let _guard = ANALYZE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     wait_span.complete("ok", 0);
+    crate::llg_debug!(
+        "event=surelog.parse_only.wait.end outcome=ok file={} elapsed_us={}",
+        file,
+        wait_started.elapsed().as_micros()
+    );
     drop(wait_span);
     let _cwd = ScratchCwd::enter(&analysis_scratch_dir());
     let mut parse_span = crate::logging::LifecycleSpan::phase_with_parent(
@@ -6645,13 +8833,90 @@ pub(crate) fn semantic_tokens_for_open_document_with_parent(
         1,
         parent_id,
     );
+    let parse_started = std::time::Instant::now();
+    crate::llg_debug!(
+        "event=surelog.parse_only.session_construct.begin file={} parent_id={:?}",
+        file,
+        parent_id
+    );
+    if crate::logging::enabled(crate::logging::Level::Debug) {
+        match compile::parse_only_invocation(file, defines) {
+            Ok(invocation) => log_surelog_invocation("parse_only", &invocation, file, 0, parent_id),
+            Err(error) => log_surelog_invocation_rejected("parse_only", &error, file, 0, parent_id),
+        }
+    }
     let parsed = match compile::parse_only(file, defines) {
         Ok(parsed) => parsed,
         Err(error) => {
+            crate::llg_debug!(
+                "event=surelog.parse_only.return outcome=error file={} parent_id={:?} elapsed_us={} error={}",
+                file,
+                parent_id,
+                parse_started.elapsed().as_micros(),
+                bounded_log_text(&error, SURELOG_LOG_ERROR_MAX)
+            );
             parse_span.outcome("error");
             return Err(error);
         }
     };
+    let token_count = token_cardinality(&parsed.tokens);
+    let diagnostic_count = parsed.diagnostics.len();
+    crate::llg_debug!(
+        "event=surelog.parse_only.return outcome=ok file={} parent_id={:?} diagnostics={} token_files={} token_nodes={} elapsed_us={}",
+        file,
+        parent_id,
+        diagnostic_count,
+        parsed.tokens.len(),
+        token_count,
+        parse_started.elapsed().as_micros()
+    );
+    crate::llg_debug!(
+        "event=surelog.parse_only.diagnostics.end outcome=extracted file={} parent_id={:?} diagnostics={} error_like={} elapsed_us={}",
+        file,
+        parent_id,
+        diagnostic_count,
+        parsed
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| {
+                matches!(
+                    diagnostic.severity,
+                    Severity::Fatal | Severity::Syntax | Severity::Error
+                )
+            })
+            .count(),
+        parse_started.elapsed().as_micros()
+    );
+    crate::llg_debug!(
+        "event=analysis.parse_only.token_collection.end outcome=collected file={} parent_id={:?} parsed_nodes={} supplemented_nodes={} token_files={} token_nodes={}",
+        file,
+        parent_id,
+        parsed.parsed_token_count,
+        parsed.supplemented_token_count,
+        parsed.tokens.len(),
+        token_count,
+    );
+    crate::llg_debug!(
+        "event=analysis.parse_only.source_supplementation.end outcome=completed file={} parent_id={:?} supplemented_nodes={}",
+        file,
+        parent_id,
+        parsed.supplemented_token_count,
+    );
+    crate::llg_debug!(
+        "event=surelog.parse_only.session_drop.end outcome=complete file={} parent_id={:?}",
+        file,
+        parent_id
+    );
+    parse_span.complete("ok", token_count);
+    drop(parse_span);
+    let mut encode_span = crate::logging::LifecycleSpan::phase_with_parent(
+        "analysis.parse_only_token_encoding",
+        || file.to_owned(),
+        0,
+        1,
+        parent_id,
+    );
+    let encode_started = std::time::Instant::now();
     let file_name = Path::new(file)
         .file_name()
         .and_then(|name| name.to_str())
@@ -6675,7 +8940,14 @@ pub(crate) fn semantic_tokens_for_open_document_with_parent(
             result_id: None,
             data: Vec::new(),
         });
-    parse_span.complete("ok", result.data.len());
+    encode_span.complete("ok", result.data.len());
+    crate::llg_debug!(
+        "event=analysis.parse_only_token_encoding.end outcome=ok file={} token_count={} elapsed_us={}",
+        file,
+        result.data.len(),
+        encode_started.elapsed().as_micros()
+    );
+    drop(encode_span);
     Ok(result)
 }
 
@@ -6815,8 +9087,8 @@ pub fn hover_at(a: &Analysis, file: &str, line: u32, col: u32) -> Option<Hover> 
         .or_else(|| clicked.and_then(|e| a.ref_bindings.get(&(file.to_string(), line, e.col))));
     if let Some(target) = bound {
         let anchor_len = clicked
-            .map(|e| e.name.chars().count())
-            .unwrap_or_else(|| target.name.chars().count());
+            .map(|e| lsp_name_len(&e.name))
+            .unwrap_or_else(|| lsp_name_len(&target.name));
         let range_col = clicked.map(|e| e.col).unwrap_or(col);
         if let Some(hover) = hover_for_target(a, target, line, range_col, anchor_len as u32) {
             return Some(hover);
@@ -6848,7 +9120,7 @@ pub fn hover_at(a: &Analysis, file: &str, line: u32, col: u32) -> Option<Hover> 
             });
         }
         if let Some(detail) = detail {
-            let len = e.name.chars().count() as u32;
+            let len = lsp_name_len(&e.name);
             let range = Range::new(
                 Position::new(e.line, e.col),
                 Position::new(e.line, e.col + len),
@@ -7020,8 +9292,12 @@ fn hover_fallback(a: &Analysis, file: &str, line: u32, col: u32) -> Option<Hover
     let node = token_at(a, file, line, col)?;
     let name = node.name.as_deref()?;
     let detail = hover_detail(a, file, name)?;
-    let len = name.chars().count() as u32;
-    let range = Range::new(Position::new(line, col), Position::new(line, col + len));
+    let len = lsp_name_len(name);
+    let start_col = node.col.saturating_sub(1);
+    let range = Range::new(
+        Position::new(line, start_col),
+        Position::new(line, start_col + len),
+    );
     Some(Hover {
         contents: HoverContents::Markup(MarkupContent {
             kind: MarkupKind::Markdown,
@@ -7300,7 +9576,7 @@ pub fn definition_at(a: &Analysis, file: &str, line: u32, col: u32) -> Option<Lo
 fn ref_target_location(t: &DeclTarget) -> Location {
     let uri = Url::from_file_path(&t.file)
         .unwrap_or_else(|_| Url::parse("untitled:llg").expect("static URL is valid"));
-    let len = t.name.chars().count() as u32;
+    let len = lsp_name_len(&t.name);
     Location {
         uri,
         range: Range::new(
@@ -7347,7 +9623,7 @@ fn definition_fallback(a: &Analysis, file: &str, line: u32, col: u32) -> Option<
     if let Some((l1, c1)) =
         nearest_declaration(a, file, name, line, skip_self_label(a, file, line, col))
     {
-        return Some(location(file, l1, c1, name.chars().count()));
+        return Some(location(file, l1, c1, lsp_name_len(name) as usize));
     }
 
     a.model
@@ -7509,7 +9785,7 @@ fn shadow_aware_reference_locations(
                 line: *bline,
                 col: *bcol,
                 end_line: *bline,
-                end_col: bcol.saturating_add(e.name.chars().count() as u32),
+                end_col: bcol.saturating_add(lsp_name_len(&e.name)),
                 is_decl: false,
                 scope: None,
                 detail: None,
@@ -7543,7 +9819,7 @@ fn references_fallback_with_options(
                 && (include_declaration || !is_declaration_vpi_type(n.vpi_type))
                 && seen.insert((n.line, n.col))
             {
-                out.push(location(file, n.line, n.col, name.chars().count()));
+                out.push(location(file, n.line, n.col, lsp_name_len(name) as usize));
             }
         }
     }
@@ -7639,7 +9915,7 @@ pub fn document_symbols(a: &Analysis, file: &str) -> Vec<DocumentSymbol> {
 #[allow(deprecated)] // `DocumentSymbol::deprecated` is deprecated in lsp-types
 fn func_symbol(f: &FuncDef) -> DocumentSymbol {
     let name = clean_name(&f.name).to_owned();
-    let len = name.chars().count() as u32;
+    let len = lsp_name_len(&name);
     let line = f.line.saturating_sub(1);
     let col = f.col.saturating_sub(1);
     let range = Range::new(Position::new(line, col), Position::new(line, col + len));
@@ -7658,7 +9934,7 @@ fn func_symbol(f: &FuncDef) -> DocumentSymbol {
 #[allow(deprecated)] // `DocumentSymbol::deprecated` is deprecated in lsp-types
 fn module_symbol(a: &Analysis, file: &str, m: &ModuleDef) -> DocumentSymbol {
     let name = clean_name(&m.name).to_owned();
-    let len = name.chars().count() as u32;
+    let len = lsp_name_len(&name);
     let start_line = m.line.saturating_sub(1);
     let start_col = m.col.saturating_sub(1);
     let range = Range::new(
@@ -7684,7 +9960,7 @@ fn module_symbol(a: &Analysis, file: &str, m: &ModuleDef) -> DocumentSymbol {
 #[allow(deprecated)] // `DocumentSymbol::deprecated` is deprecated in lsp-types
 fn package_symbol(p: &PackageDef) -> DocumentSymbol {
     let name = clean_name(&p.name).to_owned();
-    let len = name.chars().count() as u32;
+    let len = lsp_name_len(&name);
     let line = p.line.saturating_sub(1);
     let col = p.col.saturating_sub(1);
     let range = Range::new(Position::new(line, col), Position::new(line, col + len));
@@ -7705,7 +9981,7 @@ fn package_symbol(p: &PackageDef) -> DocumentSymbol {
 #[allow(deprecated)] // `DocumentSymbol::deprecated` is deprecated in lsp-types
 fn class_symbol(a: &Analysis, file: &str, c: &ClassDef) -> DocumentSymbol {
     let name = clean_name(&c.name).to_owned();
-    let len = name.chars().count() as u32;
+    let len = lsp_name_len(&name);
     let line = c.line.saturating_sub(1);
     let col = c.col.saturating_sub(1);
     let range = Range::new(Position::new(line, col), Position::new(line, col + len));
@@ -7758,7 +10034,7 @@ fn class_children_fallback(c: &ClassDef, file: &str) -> Option<Vec<DocumentSymbo
     }
     for f in &c.fields {
         let name = clean_name(&f.name).to_owned();
-        let len = name.chars().count() as u32;
+        let len = lsp_name_len(&name);
         let line = f.line.saturating_sub(1);
         let col = f.col.saturating_sub(1);
         let range = Range::new(Position::new(line, col), Position::new(line, col + len));
@@ -7955,7 +10231,7 @@ fn module_instance_children(a: &Analysis, file: &str, def_scope: &str) -> Vec<Do
 /// over the instance name, `detail` = instantiated module type.
 #[allow(deprecated)] // `DocumentSymbol::deprecated` is deprecated in lsp-types
 fn instance_child_symbol(d: &SymEntry, type_text: Option<&str>) -> DocumentSymbol {
-    let len = d.name.chars().count() as u32;
+    let len = lsp_name_len(&d.name);
     let range = Range::new(
         Position::new(d.line, d.col),
         Position::new(d.line, d.col + len),
@@ -7975,7 +10251,7 @@ fn instance_child_symbol(d: &SymEntry, type_text: Option<&str>) -> DocumentSymbo
 /// Build a `DocumentSymbol` for a declaration entry.
 #[allow(deprecated)] // `DocumentSymbol::deprecated` is deprecated in lsp-types
 fn child_symbol_from_entry(d: &SymEntry) -> DocumentSymbol {
-    let len = d.name.chars().count() as u32;
+    let len = lsp_name_len(&d.name);
     let range = Range::new(
         Position::new(d.line, d.col),
         Position::new(d.line, d.col + len),
@@ -8103,7 +10379,7 @@ fn child_symbol(a: &Analysis, file: &str, name: &str, kind: SymbolKind) -> Optio
         })?;
     let line = node.line.saturating_sub(1);
     let col = node.col.saturating_sub(1);
-    let len = name.chars().count() as u32;
+    let len = lsp_name_len(name);
     let range = Range::new(Position::new(line, col), Position::new(line, col + len));
     Some(DocumentSymbol {
         name: name.to_owned(),
@@ -8331,9 +10607,9 @@ const KEYWORDS: &[&str] = &[
 ];
 
 /// The identifier prefix immediately before the cursor: the longest trailing
-/// run of alphanumeric/`_` characters on the line before byte offset `col`.
+/// run of alphanumeric/`_` characters on the line before UTF-16 offset `col`.
 fn prefix_before_cursor(line: &str, col: u32) -> String {
-    let col = (col as usize).min(line.len());
+    let col = utf16_byte_offset(line, col);
     let before = line.get(..col).unwrap_or(line);
     before
         .chars()
@@ -8349,7 +10625,7 @@ fn prefix_before_cursor(line: &str, col: u32) -> String {
 /// scope name and the (possibly partial) item identifier after `::`.  `None`
 /// when there is no `::` with an identifier before it on the line.
 fn package_scope_prefix(line: &str, col: u32) -> Option<(String, String)> {
-    let col = (col as usize).min(line.len());
+    let col = utf16_byte_offset(line, col);
     let before = line.get(..col).unwrap_or(line);
     let pkg_end = before.rfind("::")?;
     let item_start = pkg_end + 2;
@@ -8372,6 +10648,31 @@ fn package_scope_prefix(line: &str, col: u32) -> Option<(String, String)> {
 }
 
 // ── Internal helpers ──────────────────────────────────────────────────────────
+
+/// Length of an identifier in the coordinate unit required by LSP: UTF-16
+/// code units, not Unicode scalar values or UTF-8 bytes.
+fn lsp_name_len(name: &str) -> u32 {
+    name.encode_utf16().count() as u32
+}
+
+/// Convert a 0-based LSP UTF-16 column into a UTF-8 byte offset at a char
+/// boundary.  A position in the middle of a supplementary character is
+/// rounded to that character's start, which is the only safe slice boundary.
+fn utf16_byte_offset(line: &str, col: u32) -> usize {
+    let target = col as usize;
+    let mut units = 0usize;
+    for (offset, ch) in line.char_indices() {
+        if units >= target {
+            return offset;
+        }
+        let next = units + ch.len_utf16();
+        if target < next {
+            return offset;
+        }
+        units = next;
+    }
+    line.len()
+}
 
 /// Strip a Surelog library prefix (`lib@name` → `name`) from a design name.
 ///
@@ -8428,7 +10729,7 @@ fn token_at<'a>(a: &'a Analysis, file: &str, line: u32, col: u32) -> Option<&'a 
         return None;
     }
     if let Some(found) = candidates.iter().find(|n| {
-        let len = n.name.as_deref().map_or(0, |s| s.chars().count()) as u32;
+        let len = n.name.as_deref().map_or(0, lsp_name_len);
         col1 >= n.col && col1 < n.col.saturating_add(len)
     }) {
         return Some(found);
@@ -8437,8 +10738,8 @@ fn token_at<'a>(a: &'a Analysis, file: &str, line: u32, col: u32) -> Option<&'a 
         let dx = (i64::from(x.col) - i64::from(col1)).abs();
         let dy = (i64::from(y.col) - i64::from(col1)).abs();
         dx.cmp(&dy).then_with(|| {
-            let lx = x.name.as_deref().map_or(0, |s| s.chars().count());
-            let ly = y.name.as_deref().map_or(0, |s| s.chars().count());
+            let lx = x.name.as_deref().map_or(0, |s| lsp_name_len(s) as usize);
+            let ly = y.name.as_deref().map_or(0, |s| lsp_name_len(s) as usize);
             ly.cmp(&lx)
         })
     });
@@ -8569,7 +10870,7 @@ fn location(file: &str, line1: u32, col1: u32, len: usize) -> Location {
 fn entry_location(e: &SymEntry) -> Location {
     let uri = Url::from_file_path(&e.file)
         .unwrap_or_else(|_| Url::parse("untitled:llg").expect("static URL is valid"));
-    let len = e.name.chars().count() as u32;
+    let len = lsp_name_len(&e.name);
     Location {
         uri,
         range: Range::new(
@@ -8590,19 +10891,24 @@ fn module_def_location(a: &Analysis, m: &ModuleDef) -> Option<Location> {
         return Some(entry_location(d));
     }
     let file = m.file.as_deref()?;
-    let len = clean_name(&m.name).chars().count();
+    let len = lsp_name_len(clean_name(&m.name)) as usize;
     Some(location(file, m.line, m.col, len))
 }
 
 fn package_location(p: &PackageDef) -> Option<Location> {
     let file = p.file.as_deref()?;
-    let len = clean_name(&p.name).chars().count();
+    let len = lsp_name_len(clean_name(&p.name)) as usize;
     Some(location(file, p.line, p.col, len))
 }
 
 fn instance_location(i: &InstanceModel) -> Option<Location> {
     let file = i.file.as_deref()?;
-    Some(location(file, i.line, i.col, i.name.chars().count()))
+    Some(location(
+        file,
+        i.line,
+        i.col,
+        lsp_name_len(&i.name) as usize,
+    ))
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -8632,6 +10938,125 @@ mod tests {
             .lock()
             .unwrap_or_else(|e| e.into_inner());
         (surelog, shadow)
+    }
+
+    #[test]
+    fn graph_assembly_indexes_keep_large_declaration_and_instance_sets_keyed() {
+        let mut indexes = GraphAssemblyIndexes::new(1);
+        let mut definition = ModuleGraphDefinition {
+            id: "m|/tmp/m.sv|1|1".to_owned(),
+            name: "m".to_owned(),
+            file: Some("/tmp/m.sv".to_owned()),
+            line: 1,
+            col: 1,
+            end_line: 20_000,
+            end_col: 1,
+            ports: Vec::new(),
+            params: Vec::new(),
+            signals: Vec::new(),
+            children: Vec::new(),
+            generated_scopes: Vec::new(),
+        };
+
+        for index in 0..4_096 {
+            assert!(indexes.ports[0].insert((format!("p{index}"), None)));
+            assert!(indexes.params[0].insert((format!("P{index}"), None)));
+            assert!(indexes.signals[0].insert((format!("s{index}"), None)));
+            let instance = ModuleGraphInstance {
+                name: format!("u{index}"),
+                module_type: "child".to_owned(),
+                file: definition.file.clone(),
+                line: index + 1,
+                col: 1,
+            };
+            graph_push_instance(
+                &mut definition.children,
+                &mut indexes.children[0],
+                instance.clone(),
+            );
+            graph_push_instance(&mut definition.children, &mut indexes.children[0], instance);
+        }
+
+        let path = vec![
+            ModuleGraphGenerateScope {
+                name: "g_outer".to_owned(),
+                file: definition.file.clone(),
+                line: 2,
+                col: 1,
+                children: Vec::new(),
+                nested: Vec::new(),
+            },
+            ModuleGraphGenerateScope {
+                name: "g_inner".to_owned(),
+                file: definition.file.clone(),
+                line: 3,
+                col: 1,
+                children: Vec::new(),
+                nested: Vec::new(),
+            },
+        ];
+        for index in 0..4_096 {
+            let instance = ModuleGraphInstance {
+                name: format!("gu{index}"),
+                module_type: "generated_child".to_owned(),
+                file: definition.file.clone(),
+                line: index + 1,
+                col: 2,
+            };
+            graph_push_generated_instance(
+                0,
+                &mut definition,
+                &path,
+                instance.clone(),
+                &mut indexes,
+            );
+            graph_push_generated_instance(0, &mut definition, &path, instance, &mut indexes);
+        }
+
+        assert_eq!(indexes.ports[0].len(), 4_096);
+        assert_eq!(indexes.params[0].len(), 4_096);
+        assert_eq!(indexes.signals[0].len(), 4_096);
+        assert_eq!(definition.children.len(), 4_096);
+        assert_eq!(
+            definition.children.first().map(|child| child.name.as_str()),
+            Some("u0")
+        );
+        assert_eq!(
+            definition.children.last().map(|child| child.name.as_str()),
+            Some("u4095")
+        );
+        assert_eq!(definition.generated_scopes.len(), 1);
+        assert_eq!(definition.generated_scopes[0].nested.len(), 1);
+        assert_eq!(
+            definition.generated_scopes[0].nested[0].children.len(),
+            4_096
+        );
+    }
+
+    #[test]
+    fn surelog_invocation_log_details_are_bounded_and_redacted() {
+        let argv = vec![
+            "llg".to_owned(),
+            "-D".to_owned(),
+            "SECRET=separate-value".to_owned(),
+            "-P".to_owned(),
+            "WIDTH=999999".to_owned(),
+            "-DSECRET=do-not-log-this-value".to_owned(),
+            format!("-I{}", "include/".to_owned() + &"nested/".repeat(64)),
+            "top.sv".to_owned(),
+        ];
+        let (representation, fingerprint) = surelog_argv_log_details(&argv);
+
+        assert!(representation.len() <= SURELOG_LOG_ARGV_MAX);
+        assert!(representation.contains("-DSECRET=<redacted>"));
+        assert!(!representation.contains("do-not-log-this-value"));
+        assert!(!representation.contains("separate-value"));
+        assert!(!representation.contains("999999"));
+        assert!(representation.contains("-I"));
+        assert_eq!(fingerprint.len(), 16);
+        assert!(fingerprint
+            .chars()
+            .all(|character| character.is_ascii_hexdigit()));
     }
 
     /// Restores the process CWD and removes the temp dir even when the body
@@ -8862,6 +11287,177 @@ mod tests {
             bindings,
             ConnectionInputs::default(),
         )
+    }
+
+    #[test]
+    fn navigation_ranges_use_utf16_after_supplementary_text() {
+        let dir = std::env::temp_dir().join(format!(
+            "llg-features-utf16-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system clock after epoch")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).expect("create temporary source directory");
+        let _guard = TempDirGuard {
+            dir: dir.clone(),
+            orig: std::env::current_dir().expect("current directory"),
+        };
+        let path = dir.join("unicode.sv");
+        let file = path.to_string_lossy().into_owned();
+        let source = "module top;\nlogic /* 😀 */ data;\nassign data = data;\nendmodule\n";
+        std::fs::write(&path, source).expect("write temporary source");
+
+        let ty = TypeInfo {
+            kind: "logic".to_owned(),
+            width: Some(1),
+            signed: false,
+            type_name: None,
+        };
+        let model = DesignModel {
+            design_name: "top".to_owned(),
+            top_instances: vec![InstanceModel {
+                name: "top".to_owned(),
+                def_name: "top".to_owned(),
+                full_name: "top".to_owned(),
+                file: Some(file.clone()),
+                line: 1,
+                col: 1,
+                ports: Vec::new(),
+                signals: vec![SignalModel {
+                    name: "data".to_owned(),
+                    kind: "wire".to_owned(),
+                    ty: ty.clone(),
+                }],
+                params: Vec::new(),
+                gen_scopes: Vec::new(),
+                funcs: Vec::new(),
+                children: Vec::new(),
+            }],
+            modules: vec![ModuleDef {
+                name: "top".to_owned(),
+                file: Some(file.clone()),
+                line: 1,
+                col: 1,
+                end_line: 4,
+                end_col: 1,
+            }],
+            packages: Vec::new(),
+            classes: Vec::new(),
+        };
+        let token = |line: u32, col: u32, vpi_type: i32| VObjectInfo {
+            line,
+            col,
+            end_line: line,
+            end_col: col + 4,
+            vpi_type,
+            name: Some("data".to_owned()),
+            file: file.clone(),
+        };
+        let tokens = vec![FileTokens {
+            path: file.clone(),
+            nodes: vec![
+                VObjectInfo {
+                    line: 1,
+                    col: 8,
+                    end_line: 1,
+                    end_col: 12,
+                    vpi_type: llg::ffi::vpi::vpiModule,
+                    name: Some("top".to_owned()),
+                    file: file.clone(),
+                },
+                // Scalar column 15 points at `data`; the emoji in the comment
+                // adds one extra UTF-16 code unit before the identifier.
+                token(2, 15, llg::ffi::vpi::vpiNet),
+                token(2, 15, llg::ffi::vpi::vpiNet),
+                token(3, 8, llg::ffi::vpi::vpiRefObj),
+                token(3, 15, llg::ffi::vpi::vpiRefObj),
+            ],
+        }];
+        let analysis = Analysis::new(Vec::new(), model, tokens, Vec::new());
+
+        let declaration = analysis
+            .tokens
+            .iter()
+            .flat_map(|file_tokens| file_tokens.nodes.iter())
+            .find(|node| node.name.as_deref() == Some("data") && node.line == 2)
+            .expect("normalized declaration token");
+        assert_eq!(declaration.col, 16);
+        assert_eq!(declaration.end_col, 20);
+        assert_eq!(
+            FeatureSourceMap::new("😀data\nwire \\escaped😀name ;\n".to_owned()).normalize_1based(
+                1,
+                2,
+                Some("data")
+            ),
+            (1, 3),
+            "a supplementary character before a name consumes two UTF-16 units"
+        );
+        assert_eq!(lsp_name_len("escaped😀name"), 13);
+
+        let entry = analysis
+            .index
+            .entry_at(&file, 1, 15)
+            .expect("data declaration at UTF-16 column");
+        assert_eq!(
+            entry_location(entry).range,
+            Range::new(Position::new(1, 15), Position::new(1, 19),)
+        );
+        assert!(token_at(&analysis, &file, 1, 15).is_some());
+
+        let hover = hover_at(&analysis, &file, 1, 15).expect("hover on data");
+        assert_eq!(
+            hover.range,
+            Some(Range::new(Position::new(1, 15), Position::new(1, 19)))
+        );
+        let fallback_hover = hover_fallback(&analysis, &file, 1, 16).expect("fallback hover");
+        assert_eq!(
+            fallback_hover.range,
+            Some(Range::new(Position::new(1, 15), Position::new(1, 19)))
+        );
+
+        let definition = definition_at(&analysis, &file, 2, 7).expect("definition of data use");
+        assert_eq!(definition.range.start, Position::new(1, 15));
+        assert_eq!(definition.range.end, Position::new(1, 19));
+
+        let references = references_at(&analysis, &file, 1, 15);
+        let reference_starts: HashSet<_> = references
+            .iter()
+            .map(|location| (location.range.start.line, location.range.start.character))
+            .collect();
+        assert!(reference_starts.contains(&(1, 15)));
+        assert!(reference_starts.contains(&(2, 7)));
+        assert!(reference_starts.contains(&(2, 14)));
+
+        let (rename_range, placeholder) = crate::rename::prepare_rename(&analysis, &file, 1, 15)
+            .expect("rename on data declaration");
+        assert_eq!(placeholder, "data");
+        assert_eq!(
+            rename_range,
+            Range::new(Position::new(1, 15), Position::new(1, 19))
+        );
+
+        let semantic = semantic_tokens_for(&analysis, &file);
+        let mut line = 0u32;
+        let mut col = 0u32;
+        let mut found_data = false;
+        for token in semantic.data {
+            line += token.delta_line;
+            col = if token.delta_line == 0 {
+                col + token.delta_start
+            } else {
+                token.delta_start
+            };
+            if (line, col) == (1, 15) {
+                assert_eq!(token.length, 4);
+                found_data = true;
+            }
+        }
+        assert!(
+            found_data,
+            "semantic token must use the UTF-16 declaration column"
+        );
     }
 
     #[test]
@@ -10378,6 +12974,595 @@ mod tests {
     }
 
     #[test]
+    fn graph_source_index_reuses_comment_and_unicode_line_facts() {
+        let source = concat!(
+            "module Ω;\r\n",
+            "// ignored [bracket]\r\n",
+            "logic [7:0] λ /* ignored ; , [ ] */;\r\n",
+            "string text = \"// not a comment /* [ ] */\";\r\n",
+            r"wire \name//not-comment/*also-not-comment */ ;",
+            "\r\nendmodule\r\n",
+        );
+        let index = GraphSourceIndex::new(source.to_owned());
+
+        assert_eq!(index.source, source);
+        assert_eq!(index.masked.len(), source.len());
+        assert_eq!(index.stripped, strip_hdl_comments(source));
+        assert_eq!(index.comment_ranges.len(), 2);
+        assert!(index
+            .comment_ranges
+            .iter()
+            .all(|(start, end)| source[*start..*end].starts_with("//")
+                || source[*start..*end].starts_with("/*")));
+        assert!(!index.masked.contains("ignored ; , [ ]"));
+        assert!(index.masked.contains(r#""// not a comment /* [ ] */""#));
+        assert!(index
+            .masked
+            .contains(r"\name//not-comment/*also-not-comment */"));
+
+        let logic_start = source.find("logic").expect("logic line");
+        let lambda_start = source.find('λ').expect("unicode declaration name");
+        let lambda_col = "logic [7:0] ".chars().count() as u32 + 1;
+        assert_eq!(
+            index.line_starts,
+            vec![
+                0,
+                source.find("// ignored").expect("comment line"),
+                logic_start,
+                source.find("string text").expect("string line"),
+                source.find(r"wire \name").expect("escaped identifier line"),
+                source.find("endmodule").expect("endmodule line"),
+                source.len(),
+            ]
+        );
+        assert_eq!(index.line_start(3), Some(logic_start));
+        assert_eq!(index.line_start(7), Some(source.len()));
+        assert_eq!(index.line_start(8), None);
+        assert_eq!(index.line_text(1), Some("module Ω;"));
+        assert!(index
+            .line_text(3)
+            .is_some_and(|line| line.starts_with("logic [7:0] λ") && !line.contains("ignored")));
+        assert_eq!(index.line_text(7), None);
+        assert_eq!(
+            source_position_offset(&index, 3, lambda_col),
+            Some(lambda_start)
+        );
+        assert_eq!(index.position_offset(3, lambda_col), Some(lambda_start));
+
+        let declaration = llg::ffi::surelog::ParseNode {
+            line: 3,
+            col: 1,
+            end_line: 3,
+            end_col: 1,
+            type_id: 0,
+            file_id: 0,
+            parent_index: 0,
+            child_index: 0,
+            sibling_index: 0,
+            symbol_name: None,
+        };
+        let parts = graph_type_prefix(Some(&index), Some(&declaration), 3, lambda_col, "λ")
+            .expect("indexed source type");
+        assert_eq!(parts.base, "logic");
+        assert_eq!(parts.packed_dimensions, vec!["[7:0]"]);
+        assert!(parts.unpacked_dimensions.is_empty());
+
+        let detail = graph_declaration_detail(
+            Some(&index),
+            3,
+            lambda_col,
+            "λ",
+            &TypeInfo {
+                kind: "logic".to_owned(),
+                width: Some(8),
+                signed: false,
+                type_name: None,
+            },
+            &GraphDeclarationKind::Signal("var".to_owned()),
+        );
+        assert_eq!(detail.as_deref(), Some("logic [7:0] λ"));
+    }
+
+    #[test]
+    fn graph_source_index_handles_many_same_line_declarations() {
+        let count = 2_048;
+        let mut source = String::from("logic [7:0] ");
+        let mut declarations = Vec::with_capacity(count);
+        for index in 0..count {
+            if index > 0 {
+                source.push_str(", ");
+            }
+            let name = format!("signal_{index}");
+            let col = source.chars().count() as u32 + 1;
+            declarations.push((name.clone(), col));
+            source.push_str(&name);
+        }
+        source.push_str(";\n");
+
+        let index = GraphSourceIndex::new(source.clone());
+        assert_eq!(index.line_text(1), Some(source.trim_end_matches('\n')));
+        assert_eq!(
+            index.source_lines[0].character_count,
+            source.trim_end_matches('\n').chars().count()
+        );
+        assert!(index.source_lines[0].character_checkpoints.is_empty());
+        assert!(index.stripped_lines[0].character_checkpoints.is_empty());
+        for (name, col) in declarations {
+            let offset = index
+                .position_offset(1, col)
+                .expect("same-line declaration position");
+            assert_eq!(&source[offset..offset + name.len()], name);
+            let detail = graph_declaration_detail(
+                Some(&index),
+                1,
+                col,
+                &name,
+                &TypeInfo {
+                    kind: "logic".to_owned(),
+                    width: Some(8),
+                    signed: false,
+                    type_name: None,
+                },
+                &GraphDeclarationKind::Signal("var".to_owned()),
+            )
+            .expect("same-line declaration detail");
+            assert!(detail.contains(&name), "detail {detail:?} misses {name}");
+        }
+    }
+
+    #[test]
+    fn graph_source_index_keeps_ascii_metadata_sparse_at_scale() {
+        let source = "x".repeat(8 * 1024 * 1024);
+        let index = GraphSourceIndex::new(source.clone());
+
+        assert_eq!(index.source_lines.len(), 1);
+        assert_eq!(index.stripped_lines.len(), 1);
+        assert_eq!(index.source_lines[0].character_count, source.len());
+        assert_eq!(index.stripped_lines[0].character_count, source.len());
+        assert!(
+            index.source_lines[0].character_checkpoints.is_empty(),
+            "ASCII source must not allocate one offset per character"
+        );
+        assert!(
+            index.stripped_lines[0].character_checkpoints.is_empty(),
+            "ASCII stripped source must not allocate one offset per character"
+        );
+    }
+
+    #[test]
+    fn graph_declaration_facts_are_cached_per_root_for_many_names() {
+        use llg::core::vobject_types::VObjectType;
+
+        const NAME_COUNT: usize = 512;
+        let mut nodes = vec![llg::ffi::surelog::ParseNode {
+            line: 1,
+            col: 1,
+            end_line: 1,
+            end_col: 1,
+            type_id: 0,
+            file_id: 0,
+            parent_index: 0,
+            child_index: 0,
+            sibling_index: 0,
+            symbol_name: None,
+        }];
+        nodes.push(llg::ffi::surelog::ParseNode {
+            line: 1,
+            col: 1,
+            end_line: 1,
+            end_col: 1,
+            type_id: VObjectType::paData_declaration as u16,
+            file_id: 1,
+            parent_index: 0,
+            child_index: 2,
+            sibling_index: 0,
+            symbol_name: None,
+        });
+        for index in 0..NAME_COUNT {
+            nodes.push(llg::ffi::surelog::ParseNode {
+                line: 1,
+                col: (index + 2) as u16,
+                end_line: 1,
+                end_col: (index + 3) as u16,
+                type_id: VObjectType::slStringConst as u16,
+                file_id: 1,
+                parent_index: 1,
+                child_index: 0,
+                sibling_index: if index + 1 == NAME_COUNT {
+                    0
+                } else {
+                    (index + 3) as u32
+                },
+                symbol_name: Some(format!("name_{index}")),
+            });
+        }
+
+        let mut cache = GraphDeclarationFactsCache::default();
+        for index in 2..nodes.len() {
+            let (root, kind) = graph_declaration_kind(&nodes, index, &mut cache)
+                .expect("each declarator belongs to the data declaration");
+            assert_eq!(root, 1);
+            assert_eq!(kind, GraphDeclarationKind::Signal("var".to_owned()));
+        }
+        assert_eq!(cache.by_root.len(), 1);
+        assert_eq!(cache.subtree_walks, 1);
+    }
+
+    #[test]
+    fn graph_fallback_module_lookup_uses_keyed_line_ranges() {
+        let count = 2_048;
+        let definitions = (0..count)
+            .map(|index| ModuleGraphDefinition {
+                id: format!("module-{index}"),
+                name: format!("module_{index}"),
+                file: Some("/x/modules.sv".to_owned()),
+                line: (index * 2 + 1) as u32,
+                col: 1,
+                end_line: (index * 2 + 1) as u32,
+                end_col: 1,
+                ports: Vec::new(),
+                params: Vec::new(),
+                signals: Vec::new(),
+                children: Vec::new(),
+                generated_scopes: Vec::new(),
+            })
+            .collect::<Vec<_>>();
+        let ranges = graph_definition_line_ranges(&definitions);
+        for index in 0..count {
+            let name = format!("module_{index}");
+            let line = (index * 2 + 1) as u32;
+            assert!(graph_definition_line_is_retained(
+                &ranges,
+                "/x/modules.sv",
+                &name,
+                line
+            ));
+            assert!(!graph_definition_line_is_retained(
+                &ranges,
+                "/x/modules.sv",
+                &name,
+                line + 1
+            ));
+        }
+        assert!(!graph_definition_line_is_retained(
+            &ranges,
+            "/x/other.sv",
+            "module_0",
+            1
+        ));
+    }
+
+    #[test]
+    fn graph_declaration_boundary_index_matches_reverse_fallback() {
+        fn reverse_boundary(text: &str, name_start: usize) -> Option<usize> {
+            let prefix = text.get(..name_start)?;
+            let mut square = 0usize;
+            let mut paren = 0usize;
+            let mut brace = 0usize;
+            for (offset, character) in prefix.char_indices().rev() {
+                match character {
+                    ']' => square += 1,
+                    '[' => square = square.saturating_sub(1),
+                    ')' => paren += 1,
+                    '(' if paren > 0 => paren -= 1,
+                    '(' if square == 0 && brace == 0 => return Some(offset + 1),
+                    '}' => brace += 1,
+                    '{' => brace = brace.saturating_sub(1),
+                    ';' if square == 0 && paren == 0 && brace == 0 => return Some(offset + 1),
+                    _ => {}
+                }
+            }
+            Some(0)
+        }
+
+        let source = concat!(
+            "module m #(parameter int W) (input logic p);\r\n",
+            "logic [7:0] value; /* ignored ; ( ) */\r\n",
+            "always @ (value) begin\r\n",
+            "  value = value;\r\n",
+            "end\r\nendmodule\r\n",
+        );
+        let index = GraphSourceIndex::new(source.to_owned());
+        let mut offsets = source
+            .char_indices()
+            .map(|(offset, _)| offset)
+            .collect::<Vec<_>>();
+        offsets.push(source.len());
+        for offset in offsets {
+            assert_eq!(
+                graph_source_declaration_start(&index, offset),
+                reverse_boundary(&index.masked, offset),
+                "boundary at byte offset {offset}"
+            );
+        }
+    }
+
+    #[test]
+    fn graph_declaration_boundaries_ignore_quoted_and_escaped_delimiters() {
+        let source = concat!(
+            "module m;\r\n",
+            "// ignored ( [ { ; , ] } )\r\n",
+            "logic quote = \"( [ { ; , ) ] }\";\r\n",
+            r"logic \escaped([;,{)]} name;",
+            "\r\n",
+            "logic broken( [7:0] later;\r\n",
+            "logic after;\r\n",
+            "endmodule\r\n",
+        );
+        let index = GraphSourceIndex::new(source.to_owned());
+        let events = graph_declaration_boundary_events(&index.masked);
+
+        let module_end = source.find("module m;").expect("module") + "module m;".len();
+        let quote_name = source.find("quote").expect("quoted initializer");
+        let escaped_name = source.find(r"\escaped").expect("escaped identifier");
+        let escaped_tail = source.find("name;").expect("escaped identifier tail");
+        let string_start = source.find('"').expect("string");
+        let string_end =
+            string_start + 1 + source[string_start + 1..].find('"').expect("string end");
+        let quote_semicolon = string_end + source[string_end..].find(';').expect("quote semicolon");
+        assert_eq!(
+            graph_source_declaration_start(&index, quote_name),
+            Some(module_end)
+        );
+        assert_eq!(
+            graph_source_declaration_start(&index, escaped_name),
+            Some(quote_semicolon + 1)
+        );
+        assert_eq!(
+            graph_source_declaration_start(&index, escaped_tail),
+            Some(quote_semicolon + 1)
+        );
+
+        let broken_start = source.find("logic broken").expect("malformed declaration");
+        let broken_open = broken_start + source[broken_start..].find('(').expect("open paren");
+        let later_name = source.find("later").expect("later declaration token");
+        let broken_semicolon = later_name + source[later_name..].find(';').expect("semicolon");
+        let after_name = source.find("after").expect("later declaration");
+        assert_eq!(
+            graph_source_declaration_start(&index, later_name),
+            Some(broken_open + 1),
+            "a balanced bracket inside the malformed parenthesized clause is local"
+        );
+        assert_eq!(
+            graph_source_declaration_start(&index, after_name),
+            Some(broken_semicolon + 1),
+            "an unmatched opener must not poison later declarations"
+        );
+
+        assert!(events
+            .iter()
+            .all(|(offset, _)| !(*offset >= string_start && *offset < string_end)));
+        let escaped_start = escaped_name;
+        let escaped_end = escaped_tail;
+        assert!(events
+            .iter()
+            .all(|(offset, _)| !(*offset >= escaped_start && *offset < escaped_end)));
+        assert!(index
+            .line_starts
+            .windows(2)
+            .any(|pair| pair[1] > pair[0] && &source[pair[1] - 2..pair[1]] == "\r\n"));
+    }
+
+    #[test]
+    fn graph_source_index_reuses_top_level_comma_facts_at_scale() {
+        fn source_with_declarations(count: usize) -> String {
+            let mut source = String::from(
+                "module m #(parameter int P = 1, parameter int Q = 2) (input logic p, q);\r\n",
+            );
+            for index in 0..count {
+                source.push_str(&format!(
+                    "logic [7:0] first_{index}, second_{index} = 1;\r\n"
+                ));
+            }
+            source.push_str("endmodule\r\n");
+            source
+        }
+
+        fn assert_indexed_declarations(source: &str, count: usize) {
+            let index = GraphSourceIndex::new(source.to_owned());
+            let zero_state = GraphDelimiterState::default();
+            assert_eq!(
+                index.commas_by_state.get(&zero_state).map_or(0, Vec::len),
+                count,
+                "each declaration comma is indexed once at its nesting state"
+            );
+            let header_state = GraphDelimiterState {
+                paren: 1,
+                ..GraphDelimiterState::default()
+            };
+            assert_eq!(
+                index.commas_by_state.get(&header_state).map_or(0, Vec::len),
+                2,
+                "ANSI parameter and port separators share the parenthesis state"
+            );
+
+            for declaration_index in 0..count {
+                let marker = format!("logic [7:0] first_{declaration_index}");
+                let start = source.find(&marker).expect("declaration marker");
+                let end = start + source[start..].find(';').expect("declaration semicolon");
+                let comma = start + source[start..end].find(',').expect("declarator comma");
+                assert_eq!(
+                    graph_top_level_commas_index(&index, start, end),
+                    (Some(comma), Some(comma))
+                );
+                let (type_start, type_end) = graph_select_type_prefix_index(&index, start, end);
+                assert_eq!(&source[type_start..type_end], "logic [7:0]");
+            }
+        }
+
+        let n = 32;
+        let source_n = source_with_declarations(n);
+        let source_2n = source_with_declarations(2 * n);
+        assert_indexed_declarations(&source_n, n);
+        assert_indexed_declarations(&source_2n, 2 * n);
+    }
+
+    #[test]
+    fn parse_fallback_indexes_declarations_and_actuals_at_scale() {
+        fn fixture(
+            count: usize,
+        ) -> (
+            Vec<FileTokens>,
+            ParseDeclPositions,
+            Vec<ModuleDef>,
+            String,
+            u32,
+        ) {
+            let file = "/x/fallback.sv".to_owned();
+            let child_end = (2 * count + 1) as u32;
+            let parent_line = child_end + 1;
+            let parent_end = parent_line + count as u32 + 1;
+            let mut nodes = Vec::with_capacity(3 * count);
+            let mut declarations = ParseDeclPositions::new();
+            let mut add = |line: u32, col: u32, vpi_type: i32, name: String| {
+                declarations.insert((file.clone(), line, col));
+                nodes.push(VObjectInfo {
+                    line,
+                    col,
+                    end_line: line,
+                    end_col: col + name.chars().count() as u32,
+                    vpi_type,
+                    name: Some(name),
+                    file: file.clone(),
+                });
+            };
+
+            for index in 0..count {
+                add(
+                    2 + index as u32,
+                    3,
+                    llg::ffi::vpi::vpiPort,
+                    format!("port_{index}"),
+                );
+                add(
+                    count as u32 + 2 + index as u32,
+                    5,
+                    llg::ffi::vpi::vpiParameter,
+                    format!("PARAM_{index}"),
+                );
+                add(
+                    parent_line + 1 + index as u32,
+                    7,
+                    llg::ffi::vpi::vpiNet,
+                    format!("signal_{index}"),
+                );
+            }
+
+            let tokens = vec![FileTokens {
+                path: file.clone(),
+                nodes,
+            }];
+            let modules = vec![
+                ModuleDef {
+                    name: "child".to_owned(),
+                    file: Some(file.clone()),
+                    line: 1,
+                    col: 1,
+                    end_line: child_end,
+                    end_col: 1,
+                },
+                ModuleDef {
+                    name: "parent".to_owned(),
+                    file: Some(file.clone()),
+                    line: parent_line,
+                    col: 1,
+                    end_line: parent_end,
+                    end_col: 1,
+                },
+            ];
+            (tokens, declarations, modules, file, parent_line - 1)
+        }
+
+        for count in [16, 32] {
+            let (tokens, declarations, modules, file, parent_line0) = fixture(count);
+            let index = ParseFallbackIndex::new(&tokens, &declarations, &modules);
+            let ports = declared_ports_by_module(&index);
+            let params = declared_params_by_module(&index);
+            assert_eq!(ports.len(), count);
+            assert_eq!(params.len(), count);
+            assert_eq!(
+                index
+                    .files
+                    .get(file.as_str())
+                    .expect("file index")
+                    .actual_positions_by_name
+                    .len(),
+                3 * count
+            );
+
+            for declaration_index in 0..count {
+                let port_name = format!("port_{declaration_index}");
+                let param_name = format!("PARAM_{declaration_index}");
+                assert_eq!(
+                    find_fallback_port(ports, "child", &port_name)
+                        .map(|decl| (decl.line1, decl.col1)),
+                    Some((2 + declaration_index as u32, 3))
+                );
+                assert_eq!(
+                    find_fallback_param(params, "child", &param_name)
+                        .map(|decl| (decl.line1, decl.col1)),
+                    Some((count as u32 + 2 + declaration_index as u32, 5))
+                );
+                let actual_name = format!("signal_{declaration_index}");
+                let target = fallback_actual_target(
+                    &index,
+                    &file,
+                    parent_line0 + declaration_index as u32 + 1,
+                    &actual_name,
+                )
+                .expect("parent actual target");
+                assert_eq!(
+                    (target.line0, target.col0, target.kind.as_str()),
+                    (parent_line0 + declaration_index as u32 + 1, 6, "net")
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn parse_fallback_actual_kind_matches_duplicate_position_name() {
+        let file = "/x/fallback-duplicate.sv".to_owned();
+        let tokens = vec![FileTokens {
+            path: file.clone(),
+            nodes: vec![
+                VObjectInfo {
+                    line: 4,
+                    col: 2,
+                    end_line: 4,
+                    end_col: 7,
+                    vpi_type: llg::ffi::vpi::vpiNet,
+                    name: Some("decoy".to_owned()),
+                    file: file.clone(),
+                },
+                VObjectInfo {
+                    line: 4,
+                    col: 2,
+                    end_line: 4,
+                    end_col: 8,
+                    vpi_type: llg::ffi::vpi::vpiParameter,
+                    name: Some("actual".to_owned()),
+                    file: file.clone(),
+                },
+            ],
+        }];
+        let mut declarations = ParseDeclPositions::new();
+        declarations.insert((file.clone(), 4, 2));
+        let modules = vec![ModuleDef {
+            name: "parent".to_owned(),
+            file: Some(file.clone()),
+            line: 1,
+            col: 1,
+            end_line: 10,
+            end_col: 1,
+        }];
+        let index = ParseFallbackIndex::new(&tokens, &declarations, &modules);
+
+        let target = fallback_actual_target(&index, &file, 5, "actual").expect("actual target");
+        assert_eq!(target.kind, "parameter");
+        assert_eq!((target.line0, target.col0), (3, 1));
+    }
+
+    #[test]
     fn graph_display_type_preserves_qualified_port_types() {
         let ty = TypeInfo {
             kind: "logic".to_owned(),
@@ -10393,6 +13578,7 @@ mod tests {
             ("input linkage signed bus_t", "linkage signed bus_t"),
         ] {
             let source = format!("{prefix} p;");
+            let source_index = GraphSourceIndex::new(source.clone());
             let name_col = source.find("p;").expect("port name") as u32 + 1;
             let declaration = llg::ffi::surelog::ParseNode {
                 line: 1,
@@ -10407,13 +13593,14 @@ mod tests {
                 symbol_name: None,
             };
             let display = graph_type_display(
-                Some(&source),
+                Some(&source_index),
                 &declaration,
                 1,
                 name_col,
                 "p",
                 &ty,
                 &GraphDeclarationKind::Port(Direction::Input),
+                None,
             );
             assert_eq!(display.text.as_deref(), Some(expected), "{prefix}");
         }
@@ -10422,6 +13609,7 @@ mod tests {
     #[test]
     fn graph_display_type_preserves_brackets_inside_quoted_dimension() {
         let source = r#"logic [MODE == "A ] B" ? 7 : 3:0] payload;"#;
+        let source_index = GraphSourceIndex::new(source.to_owned());
         let name_col = source.find("payload").expect("payload name") as u32 + 1;
         let declaration = llg::ffi::surelog::ParseNode {
             line: 1,
@@ -10436,7 +13624,7 @@ mod tests {
             symbol_name: None,
         };
         let display = graph_type_display(
-            Some(source),
+            Some(&source_index),
             &declaration,
             1,
             name_col,
@@ -10448,6 +13636,7 @@ mod tests {
                 type_name: None,
             },
             &GraphDeclarationKind::Signal("var".to_owned()),
+            None,
         );
 
         assert_eq!(display.shape.packed_dimensions, 1);
@@ -10461,6 +13650,7 @@ mod tests {
     #[test]
     fn graph_display_type_preserves_unpacked_dimension_operators() {
         let source = r#"logic [1:0] payload [MODE == "A ] B" ? 1 : 0];"#;
+        let source_index = GraphSourceIndex::new(source.to_owned());
         let name_col = source.find("payload").expect("payload name") as u32 + 1;
         let declaration = llg::ffi::surelog::ParseNode {
             line: 1,
@@ -10475,7 +13665,7 @@ mod tests {
             symbol_name: None,
         };
         let display = graph_type_display(
-            Some(source),
+            Some(&source_index),
             &declaration,
             1,
             name_col,
@@ -10487,6 +13677,7 @@ mod tests {
                 type_name: None,
             },
             &GraphDeclarationKind::Signal("var".to_owned()),
+            None,
         );
 
         assert_eq!(display.shape.packed_dimensions, 1);
@@ -10520,6 +13711,7 @@ mod tests {
     #[test]
     fn graph_bracket_dimensions_preserve_comments_and_active_tokens() {
         let line_source = "logic [P // ignored ]\n + 1:0] payload;";
+        let line_source_index = GraphSourceIndex::new(line_source.to_owned());
         let line_spans = graph_bracket_spans(line_source);
         assert_eq!(line_spans.len(), 1);
         assert_eq!(line_spans[0].2, "P // ignored ]\n + 1:0");
@@ -10566,7 +13758,7 @@ mod tests {
         };
         let name_col = 9;
         let display = graph_type_display(
-            Some(line_source),
+            Some(&line_source_index),
             &declaration,
             2,
             name_col,
@@ -10578,6 +13770,7 @@ mod tests {
                 type_name: None,
             },
             &GraphDeclarationKind::Signal("var".to_owned()),
+            None,
         );
         assert_eq!(display.shape.packed_dimensions, 1);
         assert_eq!(display.text.as_deref(), Some("logic [P +1:0]"));
@@ -10586,6 +13779,7 @@ mod tests {
     #[test]
     fn graph_display_ignores_leading_line_comment_before_wire() {
         let source = "module Foo();\n\n// This is a line comment\nwire start;\n\nendmodule";
+        let source_index = GraphSourceIndex::new(source.to_owned());
         let declaration = llg::ffi::surelog::ParseNode {
             line: 3,
             col: 1,
@@ -10599,7 +13793,7 @@ mod tests {
             symbol_name: None,
         };
         let display = graph_type_display(
-            Some(source),
+            Some(&source_index),
             &declaration,
             4,
             6,
@@ -10611,6 +13805,7 @@ mod tests {
                 type_name: None,
             },
             &GraphDeclarationKind::Signal("wire".to_owned()),
+            None,
         );
 
         assert_eq!(display.text.as_deref(), Some("wire"));
