@@ -76,6 +76,17 @@ For request-to-Surelog diagnostics, run with `LLG_LOG=debug` (or `trace` for
 every transport message) and optionally set `LLG_LOG_FILE`. Logs always go to
 stderr/the configured file, never stdout, so stdio JSON-RPC remains valid.
 
+Open-buffer semantic tokens are served from the current unsaved text only
+when that text has no syntax diagnostics; incomplete syntax returns an empty
+token stream instead of unstable partial highlighting or stale cached colors.
+Inactive conditional branches and non-lexical compiler-directive lines are
+position-preservingly masked for this isolated parse so valid directives such
+as `` `include`` do not become false syntax errors, and include contents are
+not read by the request.
+The custom `llg/moduleExplorer` response is bounded as well, but reserves
+capacity for useful hierarchy roots and module definitions before optional
+port/parameter/signal contents can consume the remaining response budget.
+
 ## Using the simulator (`llg`)
 
 ```sh

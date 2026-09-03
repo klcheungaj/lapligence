@@ -89,7 +89,11 @@ tower-lsp server (stdio) for VSCode-style editors, built on the shared core:
   and returns a deterministic multi-root recursive instance snapshot, module
   definitions and typed contents.  Elaborated generate scopes retain their
   direct instance children; syntax-fallback analyses still expose parsed
-  module definitions.  A committed model replacement or clear emits the
+  module definitions.  Its shared response budget reserves useful prefixes
+  for both hierarchy roots and module definitions before optional typed
+  contents consume the remaining slots, so truncation cannot leave either
+  side of a valid source graph empty.
+  A committed model replacement or clear emits the
   empty-params `llg/moduleExplorerChanged` notification so clients refetch;
   diagnostics-only/fatal commits that retain the served model do not emit it.
 - `features.rs` — pure feature logic over `Analysis`
@@ -242,18 +246,24 @@ tower-lsp server (stdio) for VSCode-style editors, built on the shared core:
   (`core::tokens::classify_identifier_ancestor`), so the marking holds in
   BOTH serving paths below; `dumpTokens` rows render it naturally in
   `sym=…/connectionLabel`.
-  `textDocument/semanticTokens/full` parses an open document's exact current
-  buffer as one request-local staged source via Surelog `-parseonly`
-  (`-nocache -nobuiltin`), so project units and include contents do not enter
-  that token stream.  Unopened documents continue to use the owner root's
-  cached project analysis. The current open buffer is rejected as `too-large`
+  `textDocument/semanticTokens/full` parses an open document's current buffer
+  as one request-local staged source via Surelog `-parseonly` (`-nocache
+  -nobuiltin`). Inactive conditional branches (under the effective defines)
+  plus non-lexical compiler-directive lines and their continuations are masked
+  with position-preserving whitespace first because parse-only mode otherwise
+  reports valid directives such as `` `include`` as syntax errors; project
+  units and include contents do not enter that token stream. Unopened
+  documents continue to use the owner root's cached project analysis. The
+  current open buffer is rejected as `too-large`
   before cache-key construction or isolated parse admission when it exceeds
   the owning root's `analysis.max_file_bytes`; the committed project token
   stream (or empty fallback) is served without consuming a single-flight
-  slot. Frontend diagnostics retain the current buffer's
-  partial/supplemented stream; only staging/session/task failures fall back to
-  the cache, while a successful empty parse is authoritative. The request
-  does not change diagnostics or navigation snapshots.
+  slot. A syntax diagnostic for the current buffer produces an authoritative
+  empty stream, avoiding unstable partial highlighting while syntax is
+  incomplete. Only staging/session/task failures fall back to the cache;
+  valid unsaved buffers still use the isolated parse result, and a successful
+  empty parse is authoritative. The request does not change diagnostics or
+  navigation snapshots.
   Open-buffer misses are single-flighted per `(uri, text, defines)` with a
   bounded in-flight table; a captured revision that is no longer the
   document's current snapshot is rejected before cache serving, flight

@@ -19,6 +19,10 @@ the LSP has an additional process-level stdio acceptance suite.
   successful analyses, dep events routed to every dependent root,
   shared-file aggregation (identical findings once; conflicting findings
   labeled `[<root-name>]`; owner-wins semantic tokens/hover labeling),
+  syntax-invalid open buffers returning an authoritative empty semantic-token
+  stream, module-type navigation remaining distinct from a same-named
+  instance identifier, and hierarchy roots surviving module-content budget
+  truncation,
   per-root lint configuration, unsaved source/header buffers, project-wide
   diagnostics published for never-opened files (and refreshed when such a
   file is fixed on disk via a watched-file event), include

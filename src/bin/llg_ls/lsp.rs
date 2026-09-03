@@ -2248,18 +2248,23 @@ impl Backend {
             // snapshots before merging them; allocating one budget per root
             // would allow the merged JSON to exceed the server-side cap.
             let mut budget = module_explorer::new_response_budget();
-            let snapshots = roots.into_iter().map(|(root_id, shadow, analysis)| {
-                let mut snapshot = module_explorer::snapshot_analysis_with_budget(
-                    &root_id,
-                    &analysis,
-                    |path| shadow.real_path(path).or_else(|| Some(path.to_path_buf())),
-                    &mut budget,
-                );
-                module_explorer::remap_uris(&mut snapshot, |path| {
-                    shadow.real_path(path).or_else(|| Some(path.to_path_buf()))
-                });
-                snapshot
-            });
+            budget.prepare_workspaces();
+            let workspace_count = roots.len();
+            let snapshots = roots.into_iter().enumerate().map(
+                |(workspace_index, (root_id, shadow, analysis))| {
+                    budget.begin_workspace(workspace_count - workspace_index);
+                    let mut snapshot = module_explorer::snapshot_analysis_with_budget(
+                        &root_id,
+                        &analysis,
+                        |path| shadow.real_path(path).or_else(|| Some(path.to_path_buf())),
+                        &mut budget,
+                    );
+                    module_explorer::remap_uris(&mut snapshot, |path| {
+                        shadow.real_path(path).or_else(|| Some(path.to_path_buf()))
+                    });
+                    snapshot
+                },
+            );
             module_explorer::merge(snapshots)
         })
         .await
@@ -2270,6 +2275,16 @@ impl Backend {
                 roots: Vec::new(),
             }
         });
+        crate::llg_debug!(
+            "event=module_explorer.snapshot.end outcome=ok modules={} roots={} truncated_modules={}",
+            snapshot.modules.len(),
+            snapshot.roots.len(),
+            snapshot
+                .modules
+                .iter()
+                .filter(|module| module.is_budget_truncated)
+                .count()
+        );
         request.complete("ok", snapshot.modules.len() + snapshot.roots.len());
         Ok(snapshot)
     }
@@ -2896,7 +2911,7 @@ struct SemanticStage {
 }
 
 impl SemanticStage {
-    fn new(real: &Path, text: &str) -> std::io::Result<Self> {
+    fn new(real: &Path, text: &str, defines: &[String]) -> std::io::Result<Self> {
         let id = NEXT_SEMANTIC_STAGE_ID.fetch_add(1, Ordering::Relaxed);
         let directory = features::process_shadow_base()
             .join("semantic")
@@ -2906,12 +2921,142 @@ impl SemanticStage {
             .file_name()
             .unwrap_or_else(|| std::ffi::OsStr::new("document.sv"));
         let path = directory.join(file_name);
-        if let Err(error) = std::fs::write(&path, text) {
+        let parse_text = mask_semantic_preprocessor_directives(text, defines);
+        if let Err(error) = std::fs::write(&path, parse_text) {
             let _ = std::fs::remove_dir_all(&directory);
             return Err(error);
         }
         Ok(Self { directory, path })
     }
+}
+
+/// Replace standalone compiler-directive lines with spaces while preserving
+/// every newline and character column. Surelog's `-parseonly` mode bypasses
+/// preprocessing and otherwise diagnoses valid directives such as
+/// `` `include`` as parser syntax errors. Semantic-token collection is
+/// intentionally source-local, so masking the directives both avoids that
+/// false error and guarantees that includes are not consumed.
+fn mask_semantic_preprocessor_directives(text: &str, defines: &[String]) -> String {
+    const DIRECTIVES: &[&str] = &[
+        "celldefine",
+        "default_nettype",
+        "define",
+        "else",
+        "elsif",
+        "endcelldefine",
+        "endif",
+        "ifdef",
+        "ifndef",
+        "include",
+        "line",
+        "nounconnected_drive",
+        "pragma",
+        "resetall",
+        "timescale",
+        "unconnected_drive",
+        "undef",
+        "undefineall",
+    ];
+
+    let inactive_defines = defines
+        .iter()
+        .map(|define| define.strip_prefix("-D").unwrap_or(define).to_owned())
+        .collect::<Vec<_>>();
+    let inactive = crate::inactive_ranges::inactive_line_ranges(text, &inactive_defines);
+    let mut inactive_index = 0usize;
+    let mut output = String::with_capacity(text.len());
+    let mut continuation = false;
+    let mut in_block_comment = false;
+    for (line_index, line) in text.split_inclusive('\n').enumerate() {
+        let body = line.strip_suffix('\n').unwrap_or(line);
+        while inactive
+            .get(inactive_index)
+            .is_some_and(|range| range.end_line < line_index as u32)
+        {
+            inactive_index += 1;
+        }
+        let line_is_inactive = inactive.get(inactive_index).is_some_and(|range| {
+            range.start_line <= line_index as u32 && line_index as u32 <= range.end_line
+        });
+        let starts_directive =
+            semantic_directive_outside_comment(body, &mut in_block_comment, DIRECTIVES);
+        let directive = continuation || starts_directive;
+        continuation = directive && body.trim_end().ends_with('\\');
+        if directive || line_is_inactive {
+            output.extend(body.chars().map(|ch| if ch == '\t' { '\t' } else { ' ' }));
+        } else {
+            output.push_str(body);
+        }
+        if line.ends_with('\n') {
+            output.push('\n');
+        }
+    }
+    output
+}
+
+/// Whether the first non-whitespace, non-comment token on this line is one
+/// of the directives masked for isolated semantic parsing. The block-comment
+/// state crosses lines, and quoted/comment text never starts a directive.
+fn semantic_directive_outside_comment(
+    line: &str,
+    in_block_comment: &mut bool,
+    directives: &[&str],
+) -> bool {
+    let bytes = line.as_bytes();
+    let mut index = 0usize;
+    let mut saw_code = false;
+    let mut in_string = false;
+    let mut escaped = false;
+    let mut directive = false;
+
+    while index < bytes.len() {
+        if *in_block_comment {
+            if bytes[index..].starts_with(b"*/") {
+                *in_block_comment = false;
+                index += 2;
+            } else {
+                index += 1;
+            }
+            continue;
+        }
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if bytes[index] == b'\\' {
+                escaped = true;
+            } else if bytes[index] == b'"' {
+                in_string = false;
+            }
+            index += 1;
+            continue;
+        }
+        if bytes[index..].starts_with(b"//") {
+            break;
+        }
+        if bytes[index..].starts_with(b"/*") {
+            *in_block_comment = true;
+            index += 2;
+            continue;
+        }
+        if bytes[index].is_ascii_whitespace() {
+            index += 1;
+            continue;
+        }
+        if !saw_code && bytes[index] == b'`' {
+            let start = index + 1;
+            let mut end = start;
+            while end < bytes.len() && (bytes[end].is_ascii_alphanumeric() || bytes[end] == b'_') {
+                end += 1;
+            }
+            directive = directives.contains(&&line[start..end]);
+        }
+        saw_code = true;
+        if bytes[index] == b'"' {
+            in_string = true;
+        }
+        index += 1;
+    }
+    directive
 }
 
 impl Drop for SemanticStage {
@@ -3035,7 +3180,7 @@ fn open_document_semantic_tokens_if_current(
         return Err(STALE_OPEN_TOKEN_ERROR.to_owned());
     }
     let stage_started = std::time::Instant::now();
-    let stage = match SemanticStage::new(real, text) {
+    let stage = match SemanticStage::new(real, text, defines) {
         Ok(stage) => stage,
         Err(error) => {
             let error = format!("failed to stage open document: {error}");
@@ -3098,10 +3243,10 @@ fn select_semantic_tokens(
     cached: SemanticTokens,
     buffer_is_current: bool,
 ) -> SemanticTokens {
-    // `parse_only` returns Ok with any frontend diagnostics, so a current
-    // syntax-error buffer still uses its partial/supplemented token stream.
-    // The cache is used only when staging/session work (or the blocking task)
-    // fails before producing a result; a successful empty result is valid.
+    // The isolated parse returns an authoritative empty result when the
+    // current buffer has a syntax error.  The cache is used only when
+    // staging/session work (or the blocking task) fails before producing a
+    // result; a successful empty result must therefore remain authoritative.
     if buffer_is_current {
         fresh.and_then(std::result::Result::ok).unwrap_or(cached)
     } else {
@@ -7022,6 +7167,64 @@ mod tests {
             !base.exists(),
             "rejected semantic work recreated the process shadow base"
         );
+    }
+
+    #[test]
+    fn semantic_parse_masks_directives_without_shifting_source_positions() {
+        // Arrange
+        let source = "  `include \"defs.svh\"\nmodule top;\n`define VALUE \\\n+  1\nlogic `WIDTH data;\nendmodule\n";
+
+        // Act
+        let masked = mask_semantic_preprocessor_directives(source, &[]);
+        let source_lines = source.lines().collect::<Vec<_>>();
+        let masked_lines = masked.lines().collect::<Vec<_>>();
+
+        // Assert
+        assert_eq!(masked_lines.len(), source_lines.len());
+        assert!(masked_lines[0].trim().is_empty());
+        assert_eq!(masked_lines[1], "module top;");
+        assert!(masked_lines[2].trim().is_empty());
+        assert!(masked_lines[3].trim().is_empty());
+        assert_eq!(masked_lines[4], "logic `WIDTH data;");
+        assert_eq!(masked_lines[5], "endmodule");
+        for (original, replacement) in source_lines.iter().zip(masked_lines) {
+            assert_eq!(original.chars().count(), replacement.chars().count());
+        }
+    }
+
+    #[test]
+    fn semantic_parse_masks_inactive_conditional_branches() {
+        // Arrange: the inactive branch is deliberately incomplete and would
+        // create a false syntax error if both branch bodies reached Surelog.
+        let source = "`ifdef ACTIVE\nmodule top;\n`else\nmodule broken(\n`endif\nendmodule\n";
+
+        // Act
+        let masked = mask_semantic_preprocessor_directives(source, &["-DACTIVE=1".to_owned()]);
+        let lines = masked.lines().collect::<Vec<_>>();
+
+        // Assert
+        assert!(lines[0].trim().is_empty());
+        assert_eq!(lines[1], "module top;");
+        assert!(lines[2].trim().is_empty());
+        assert!(lines[3].trim().is_empty());
+        assert!(lines[4].trim().is_empty());
+        assert_eq!(lines[5], "endmodule");
+        for (original, replacement) in source.lines().zip(lines) {
+            assert_eq!(original.chars().count(), replacement.chars().count());
+        }
+    }
+
+    #[test]
+    fn semantic_parse_does_not_mask_directives_inside_block_comments() {
+        // Arrange: erasing the apparent directive line would also erase the
+        // closing delimiter and turn valid source into an unterminated comment.
+        let source = "/* documentation\n`include \"not-real.svh\" */\nmodule top;\nendmodule\n";
+
+        // Act
+        let masked = mask_semantic_preprocessor_directives(source, &[]);
+
+        // Assert
+        assert_eq!(masked, source);
     }
 
     #[test]

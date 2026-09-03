@@ -295,8 +295,12 @@ function-local typespec ranges.
   hierarchy-based IDs, typed ports/parameters/signals, declaration locations,
   elaborated or declaration-only content, and generate-scope boundaries
   (including direct children and nested scopes).  Duplicate definitions,
-  cycles, and the bounded response budget are represented with marker flags;
-  the explorer must not guess a definition or expand without a safe identity.
+  cycles, and the bounded response budget are represented with marker flags.
+  Response accounting reserves useful prefixes for both hierarchy roots and
+  module definitions before optional port/parameter/signal contents consume
+  the remaining budget, so a large hierarchy or declaration cannot empty the
+  other half of a valid snapshot; the explorer must not guess a definition or
+  expand without a safe identity.
   A servable committed model/source-graph/top change or a cleared snapshot
   sends the empty-params `llg/moduleExplorerChanged` notification so clients
   refetch.  Fatal or diagnostics-only commits that retain the served snapshot
@@ -418,13 +422,18 @@ function-local typespec ranges.
   escape every configured directory.  The server never writes into project
   or external trees.
   Semantic-token requests for an open document use a separate request-local
-  staged copy and Surelog parse-only mode, parsing exactly that buffer without
-  preprocessing project units or include contents.  This path does not
+  staged copy and Surelog parse-only mode. Inactive conditional-compilation
+  branches plus non-lexical compiler-directive lines (and directive
+  continuations) are replaced with position-preserving spaces because
+  `-parseonly` otherwise misdiagnoses valid directives such as `` `include``;
+  project units and include contents are never consumed. This path does not
   publish diagnostics or update the retained project analysis; unopened
-  documents use cached project tokens.  Frontend diagnostics still return the
-  current buffer's partial/supplemented stream; only staging/session/task
-  failures fall back to cached tokens, and a successful empty stream is
-  authoritative.
+  documents use cached project tokens.  Any syntax diagnostic for the current
+  buffer returns an authoritative empty token stream, preventing unstable
+  partial highlighting while the user edits incomplete syntax. Only
+  staging/session/task failures fall back to cached tokens; valid unsaved
+  buffers still use their isolated parse result, and a successful empty stream
+  is authoritative.
   Identical open-buffer misses are single-flighted on `(uri, text, defines)`
   with a bounded in-flight table; a captured revision that is no longer the
   current document snapshot is rejected BEFORE cache serving, flight

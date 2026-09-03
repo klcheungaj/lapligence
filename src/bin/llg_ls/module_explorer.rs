@@ -191,6 +191,38 @@ fn snapshot_with_budget(
 ) -> ExplorerSnapshot {
     let instances = collect_instances_bounded(&model.top_instances);
 
+    let mut definition_ids: Vec<(String, String)> = model
+        .modules
+        .iter()
+        .map(|module| {
+            (
+                clean_name(&module.name).to_owned(),
+                module_id(root_id, module),
+            )
+        })
+        .collect();
+    // Duplicate module names are legal across source files.  Pick the same
+    // definition for an instance regardless of how the model happened to
+    // order those declarations.
+    definition_ids.sort();
+    let mut roots: Vec<ExplorerInstance> = Vec::new();
+    for instance in &model.top_instances {
+        if !budget.can_take_root() {
+            if let Some(last) = roots.last_mut() {
+                last.is_budget_truncated = true;
+            }
+            break;
+        }
+        roots.push(instance_node(
+            root_id,
+            instance,
+            &definition_ids,
+            budget,
+            0,
+            true,
+        ));
+    }
+
     let mut module_indices = (0..model.modules.len()).collect::<Vec<_>>();
     module_indices.sort_by(|left, right| {
         module_id(root_id, &model.modules[*left]).cmp(&module_id(root_id, &model.modules[*right]))
@@ -216,31 +248,6 @@ fn snapshot_with_budget(
             representative,
             budget,
         ));
-        if budget.should_stop() {
-            break;
-        }
-    }
-
-    let mut definition_ids: Vec<(String, String)> = model
-        .modules
-        .iter()
-        .map(|module| {
-            (
-                clean_name(&module.name).to_owned(),
-                module_id(root_id, module),
-            )
-        })
-        .collect();
-    // Duplicate module names are legal across source files.  Pick the same
-    // definition for an instance regardless of how the model happened to
-    // order those declarations.
-    definition_ids.sort();
-    let mut roots = Vec::new();
-    for instance in &model.top_instances {
-        if budget.should_stop() {
-            break;
-        }
-        roots.push(instance_node(root_id, instance, &definition_ids, budget, 0));
     }
 
     modules.sort_by(|left, right| left.id.cmp(&right.id));
@@ -283,38 +290,6 @@ where
 
     let catalog = GraphCatalog::new(root_id, &analysis.module_graph, &source_map);
     let instances = collect_instances_bounded(&analysis.model.top_instances);
-    let mut module_indices = (0..catalog.definitions.len()).collect::<Vec<_>>();
-    module_indices.sort_by(|left, right| catalog.ids[*left].cmp(&catalog.ids[*right]));
-    let mut modules = Vec::new();
-    for index in module_indices {
-        if !take_module_record(root_id, &mut modules, budget) {
-            break;
-        }
-        let definition = &catalog.definitions[index];
-        let representative = instances
-            .iter()
-            .copied()
-            .filter(|instance| {
-                matches!(catalog.resolve(&instance.def_name), GraphResolution::Unique(i) if i == index)
-            })
-            .min_by(|left, right| {
-                clean_name(&left.full_name)
-                    .cmp(clean_name(&right.full_name))
-                    .then(left.name.cmp(&right.name))
-            });
-        modules.push(graph_module(
-            root_id,
-            definition,
-            catalog.ids[index].clone(),
-            representative,
-            &catalog,
-            budget,
-        ));
-        if budget.should_stop() {
-            break;
-        }
-    }
-    modules.sort_by(|left, right| left.id.cmp(&right.id));
 
     let topology = graph_topology(&catalog);
     let root_definitions = topology.roots.clone();
@@ -366,9 +341,12 @@ where
         &represented_top_instances,
     );
 
-    let mut roots = Vec::new();
+    let mut roots: Vec<ExplorerInstance> = Vec::new();
     for (definition_index, elaborated) in occurrences {
-        if budget.should_stop() {
+        if !budget.can_take_root() {
+            if let Some(last) = roots.last_mut() {
+                last.is_budget_truncated = true;
+            }
             break;
         }
         let (instance_name, module_type, hierarchy, file, line, col, end_line, end_col) =
@@ -414,7 +392,7 @@ where
             };
         let resolution = catalog.resolve(&module_type);
         let mut active = Vec::new();
-        roots.push(graph_instance_node(
+        let Some(root) = graph_instance_node(
             root_id,
             &catalog,
             &source_map,
@@ -432,11 +410,21 @@ where
             &mut active,
             budget,
             0,
-        ));
+            true,
+        ) else {
+            if let Some(last) = roots.last_mut() {
+                last.is_budget_truncated = true;
+            }
+            break;
+        };
+        roots.push(root);
     }
 
     for component in topology.cycle_components {
-        if budget.should_stop() {
+        if !budget.can_take_root() {
+            if let Some(last) = roots.last_mut() {
+                last.is_budget_truncated = true;
+            }
             break;
         }
         if let Some(cycle_root) = graph_cycle_root(
@@ -451,6 +439,36 @@ where
         }
     }
     roots.sort_by(|left, right| left.id.cmp(&right.id));
+
+    let mut module_indices = (0..catalog.definitions.len()).collect::<Vec<_>>();
+    module_indices.sort_by(|left, right| catalog.ids[*left].cmp(&catalog.ids[*right]));
+    let mut modules = Vec::new();
+    for index in module_indices {
+        if !take_module_record(root_id, &mut modules, budget) {
+            break;
+        }
+        let definition = &catalog.definitions[index];
+        let representative = instances
+            .iter()
+            .copied()
+            .filter(|instance| {
+                matches!(catalog.resolve(&instance.def_name), GraphResolution::Unique(i) if i == index)
+            })
+            .min_by(|left, right| {
+                clean_name(&left.full_name)
+                    .cmp(clean_name(&right.full_name))
+                    .then(left.name.cmp(&right.name))
+            });
+        modules.push(graph_module(
+            root_id,
+            definition,
+            catalog.ids[index].clone(),
+            representative,
+            &catalog,
+            budget,
+        ));
+    }
+    modules.sort_by(|left, right| left.id.cmp(&right.id));
     ExplorerSnapshot { modules, roots }
 }
 
@@ -578,10 +596,10 @@ fn take_module_record(
     modules: &mut Vec<ExplorerModule>,
     budget: &mut InstanceBudget,
 ) -> bool {
-    if budget.take_regular() {
+    if budget.take_module() {
         return true;
     }
-    if budget.take_budget_marker() {
+    if budget.take_module_marker() {
         modules.push(budget_module_marker(root_id));
     }
     false
@@ -1138,7 +1156,8 @@ where
         &mut active,
         budget,
         0,
-    );
+        true,
+    )?;
     root.is_cycle_root = true;
     Some(root)
 }
@@ -1181,7 +1200,8 @@ fn graph_instance_node<F>(
     active: &mut Vec<usize>,
     budget: &mut InstanceBudget,
     depth: usize,
-) -> ExplorerInstance
+    root: bool,
+) -> Option<ExplorerInstance>
 where
     F: Fn(&Path) -> Option<PathBuf>,
 {
@@ -1238,18 +1258,26 @@ where
         // budget slot. A cycle at the budget boundary is still a cycle.
         if active.contains(&definition_index) {
             node.is_cycle_truncated = true;
-            budget.take_terminal();
-            return node;
+            return budget.take_terminal().then_some(node);
         }
     }
     if depth >= MAX_SAFE_HIERARCHY_DEPTH {
-        budget.mark_budget_truncated(&mut node);
-        return node;
+        return budget.take_budget_marker().then(|| {
+            node.is_budget_truncated = true;
+            node
+        });
     }
 
-    if !budget.take_regular() {
-        budget.mark_budget_truncated(&mut node);
-        return node;
+    let budget_slot = if root {
+        budget.take_root()
+    } else {
+        budget.take_regular()
+    };
+    if !budget_slot {
+        return budget.take_budget_marker().then(|| {
+            node.is_budget_truncated = true;
+            node
+        });
     }
 
     let content_hierarchy = elaborated
@@ -1315,7 +1343,13 @@ where
     }
     node.is_budget_truncated = content_truncated;
     if budget.should_stop() {
-        return node;
+        let omitted_descendants = elaborated.is_some_and(|instance| {
+            !instance.children.is_empty() || !instance.gen_scopes.is_empty()
+        }) || source_definition.is_some_and(|definition| {
+            !definition.children.is_empty() || !definition.generated_scopes.is_empty()
+        });
+        node.is_budget_truncated |= omitted_descendants;
+        return Some(node);
     }
 
     let Some(definition_index) = (match resolution {
@@ -1330,7 +1364,7 @@ where
                     }
                     let child_type = clean_name(&child.def_name).to_owned();
                     let child_resolution = catalog.resolve(&child_type);
-                    node.children.push(graph_instance_node(
+                    let Some(child_node) = graph_instance_node(
                         root_id,
                         catalog,
                         source_map,
@@ -1350,14 +1384,19 @@ where
                         active,
                         budget,
                         depth.saturating_add(1),
-                    ));
+                        false,
+                    ) else {
+                        node.is_budget_truncated = true;
+                        break;
+                    };
+                    node.children.push(child_node);
                     if budget.should_stop() {
                         break;
                     }
                 }
             }
         }
-        return node;
+        return Some(node);
     };
 
     active.push(definition_index);
@@ -1370,7 +1409,7 @@ where
             }
             let child_type = clean_name(&child.def_name).to_owned();
             let child_resolution = catalog.resolve(&child_type);
-            node.children.push(graph_instance_node(
+            let Some(child_node) = graph_instance_node(
                 root_id,
                 catalog,
                 source_map,
@@ -1390,7 +1429,12 @@ where
                 active,
                 budget,
                 depth.saturating_add(1),
-            ));
+                false,
+            ) else {
+                node.is_budget_truncated = true;
+                break;
+            };
+            node.children.push(child_node);
             if budget.should_stop() {
                 break;
             }
@@ -1411,6 +1455,7 @@ where
                 ) {
                     Some(generated) => node.generated_scopes.push(generated),
                     None => {
+                        node.is_budget_truncated = true;
                         append_graph_budget_marker(
                             root_id,
                             &hierarchy,
@@ -1438,7 +1483,7 @@ where
                 }) {
                     continue;
                 }
-                node.children.push(graph_source_child(
+                let Some(child_node) = graph_source_child(
                     root_id,
                     catalog,
                     source_map,
@@ -1449,7 +1494,11 @@ where
                     active,
                     budget,
                     depth,
-                ));
+                ) else {
+                    node.is_budget_truncated = true;
+                    break;
+                };
+                node.children.push(child_node);
                 if budget.should_stop() {
                     break;
                 }
@@ -1481,6 +1530,7 @@ where
                     ) {
                         Some(generated) => node.generated_scopes.push(generated),
                         None => {
+                            node.is_budget_truncated = true;
                             append_graph_budget_marker(
                                 root_id,
                                 &hierarchy,
@@ -1525,7 +1575,7 @@ where
             if budget.should_stop() {
                 break;
             }
-            node.children.push(graph_source_child(
+            let Some(child_node) = graph_source_child(
                 root_id,
                 catalog,
                 source_map,
@@ -1536,7 +1586,11 @@ where
                 active,
                 budget,
                 depth,
-            ));
+            ) else {
+                node.is_budget_truncated = true;
+                break;
+            };
+            node.children.push(child_node);
             if budget.should_stop() {
                 break;
             }
@@ -1558,6 +1612,7 @@ where
                 ) {
                     Some(generated) => node.generated_scopes.push(generated),
                     None => {
+                        node.is_budget_truncated = true;
                         append_graph_budget_marker(
                             root_id,
                             &hierarchy,
@@ -1578,7 +1633,7 @@ where
     node.children.sort_by(|left, right| left.id.cmp(&right.id));
     node.generated_scopes
         .sort_by(|left, right| left.id.cmp(&right.id));
-    node
+    Some(node)
 }
 
 fn graph_source_child<F>(
@@ -1592,7 +1647,7 @@ fn graph_source_child<F>(
     active: &mut Vec<usize>,
     budget: &mut InstanceBudget,
     depth: usize,
-) -> ExplorerInstance
+) -> Option<ExplorerInstance>
 where
     F: Fn(&Path) -> Option<PathBuf>,
 {
@@ -1616,6 +1671,7 @@ where
         active,
         budget,
         depth.saturating_add(1),
+        false,
     )
 }
 
@@ -1697,6 +1753,7 @@ where
         parameter,
     );
     if depth >= MAX_SAFE_HIERARCHY_DEPTH {
+        is_budget_truncated = true;
         append_graph_budget_marker(root_id, &hierarchy, source_map, &mut children, budget);
         return Some(ExplorerGenerateScope {
             id,
@@ -1712,7 +1769,7 @@ where
             break;
         }
         let child_type = clean_name(&child.def_name).to_owned();
-        children.push(graph_instance_node(
+        let Some(child_node) = graph_instance_node(
             root_id,
             catalog,
             source_map,
@@ -1732,7 +1789,12 @@ where
             active,
             budget,
             depth.saturating_add(1),
-        ));
+            false,
+        ) else {
+            is_budget_truncated = true;
+            break;
+        };
+        children.push(child_node);
         if budget.should_stop() {
             break;
         }
@@ -1770,12 +1832,13 @@ where
     let id = graph_scope_id(root_id, parent_id, &scope.name, "", scope.line, scope.col);
     let hierarchy = graph_child_hierarchy(parent_hierarchy, &scope.name);
     let mut children = Vec::new();
+    let mut is_budget_truncated = false;
     if depth >= MAX_SAFE_HIERARCHY_DEPTH {
         append_graph_budget_marker(root_id, &hierarchy, source_map, &mut children, budget);
         return Some(ExplorerGenerateScope {
             id,
             name: scope.name.clone(),
-            is_budget_truncated: false,
+            is_budget_truncated: true,
             params: Vec::new(),
             children,
             nested_scopes: Vec::new(),
@@ -1785,7 +1848,7 @@ where
         if budget.should_stop() {
             break;
         }
-        children.push(graph_source_child(
+        let Some(child_node) = graph_source_child(
             root_id,
             catalog,
             source_map,
@@ -1796,7 +1859,11 @@ where
             active,
             budget,
             depth,
-        ));
+        ) else {
+            is_budget_truncated = true;
+            break;
+        };
+        children.push(child_node);
         if budget.should_stop() {
             break;
         }
@@ -1820,6 +1887,7 @@ where
             ) {
                 Some(generated) => nested_scopes.push(generated),
                 None => {
+                    is_budget_truncated = true;
                     append_graph_budget_marker(
                         root_id,
                         &hierarchy,
@@ -1839,7 +1907,7 @@ where
     Some(ExplorerGenerateScope {
         id,
         name: scope.name.clone(),
-        is_budget_truncated: false,
+        is_budget_truncated,
         params: Vec::new(),
         children,
         nested_scopes,
@@ -1890,6 +1958,7 @@ fn merge_source_scope<F>(
     let hierarchy = graph_child_hierarchy(parent_hierarchy, &elaborated.name);
     let parent_id = elaborated.id.clone();
     if depth >= MAX_SAFE_HIERARCHY_DEPTH {
+        elaborated.is_budget_truncated = true;
         append_graph_budget_marker(
             root_id,
             &hierarchy,
@@ -1909,7 +1978,7 @@ fn merge_source_scope<F>(
         }) {
             continue;
         }
-        elaborated.children.push(graph_source_child(
+        let Some(child_node) = graph_source_child(
             root_id,
             catalog,
             source_map,
@@ -1920,7 +1989,11 @@ fn merge_source_scope<F>(
             active,
             budget,
             depth,
-        ));
+        ) else {
+            elaborated.is_budget_truncated = true;
+            break;
+        };
+        elaborated.children.push(child_node);
         if budget.should_stop() {
             break;
         }
@@ -1961,6 +2034,7 @@ fn merge_source_scope<F>(
                 ) {
                     Some(generated) => elaborated.nested_scopes.push(generated),
                     None => {
+                        elaborated.is_budget_truncated = true;
                         append_graph_budget_marker(
                             root_id,
                             &hierarchy,
@@ -2217,6 +2291,18 @@ pub(crate) fn remap_uris(snapshot: &mut ExplorerSnapshot, map: impl Fn(&Path) ->
 }
 
 const MAX_INSTANCE_NODES: usize = 10_000;
+/// Keep one hierarchy slot out of the ordinary catalog budget. Additional
+/// roots consume ordinary slots when available, but this floor lets the first
+/// root survive a catalog/content truncation in a shared response.
+const GUARANTEED_HIERARCHY_ROOT_SLOTS: usize = 1;
+/// The complete workspace response can contain several analysis roots. Keep
+/// a small bounded pool for their first hierarchy records without taking a
+/// material share of the module catalog budget.
+const RESPONSE_HIERARCHY_ROOT_SLOTS: usize = 64;
+/// Keep enough definition records for ordinary editor workspaces even when a
+/// very large hierarchy consumes every ordinary response slot. One reserved
+/// slot is retained for an explicit module-catalog truncation marker.
+const RESPONSE_MODULE_CATALOG_SLOTS: usize = 256;
 /// Independent from the serialized-node budget, this guard bounds native
 /// call-stack use while walking malformed source/elaboration trees. Normal
 /// hierarchies rarely approach it; a deeper hierarchy is represented by the
@@ -2231,7 +2317,11 @@ const GRAPH_TERMINAL_SLOTS: usize = 2;
 /// accounting details while still allowing it to share one budget across
 /// independent analysis roots.
 pub(crate) fn new_response_budget() -> InstanceBudget {
-    InstanceBudget::new(GRAPH_TERMINAL_SLOTS)
+    InstanceBudget::with_reserved_slots(
+        GRAPH_TERMINAL_SLOTS,
+        RESPONSE_HIERARCHY_ROOT_SLOTS,
+        RESPONSE_MODULE_CATALOG_SLOTS,
+    )
 }
 
 fn is_false(value: &bool) -> bool {
@@ -2245,17 +2335,40 @@ fn is_false(value: &bool) -> bool {
 pub(crate) struct InstanceBudget {
     remaining: usize,
     terminal_slots: usize,
+    hierarchy_root_slots: usize,
+    future_hierarchy_root_slots: usize,
+    module_catalog_slots: usize,
     stopped: bool,
     budget_marker_emitted: bool,
+    module_marker_emitted: bool,
 }
 
 impl InstanceBudget {
     fn new(terminal_slots: usize) -> Self {
+        Self::with_reserved_slots(terminal_slots, GUARANTEED_HIERARCHY_ROOT_SLOTS, 2)
+    }
+
+    fn with_reserved_slots(
+        terminal_slots: usize,
+        hierarchy_root_slots: usize,
+        module_catalog_slots: usize,
+    ) -> Self {
+        let terminal_slots = terminal_slots.min(MAX_INSTANCE_NODES);
+        let hierarchy_root_slots =
+            hierarchy_root_slots.min(MAX_INSTANCE_NODES.saturating_sub(terminal_slots));
         Self {
             remaining: MAX_INSTANCE_NODES,
-            terminal_slots: terminal_slots.min(MAX_INSTANCE_NODES),
+            terminal_slots,
+            hierarchy_root_slots,
+            future_hierarchy_root_slots: 0,
+            module_catalog_slots: module_catalog_slots.min(
+                MAX_INSTANCE_NODES
+                    .saturating_sub(terminal_slots)
+                    .saturating_sub(hierarchy_root_slots),
+            ),
             stopped: false,
             budget_marker_emitted: false,
+            module_marker_emitted: false,
         }
     }
 
@@ -2263,16 +2376,118 @@ impl InstanceBudget {
         self.stopped || self.remaining == 0
     }
 
+    fn reserved_root_slots(&self) -> usize {
+        self.hierarchy_root_slots
+            .saturating_add(self.future_hierarchy_root_slots)
+    }
+
+    /// Divide the root reserve across a known set of workspace snapshots.
+    /// Call [`Self::begin_workspace`] before serializing each one.
+    pub(crate) fn prepare_workspaces(&mut self) {
+        self.future_hierarchy_root_slots = self
+            .future_hierarchy_root_slots
+            .saturating_add(self.hierarchy_root_slots);
+        self.hierarchy_root_slots = 0;
+    }
+
+    /// Assign a fair share of the still-reserved hierarchy roots to the next
+    /// workspace. Unused capacity from the previous workspace is returned to
+    /// the pool before the split.
+    pub(crate) fn begin_workspace(&mut self, remaining_workspaces: usize) {
+        self.future_hierarchy_root_slots = self
+            .future_hierarchy_root_slots
+            .saturating_add(self.hierarchy_root_slots);
+        self.hierarchy_root_slots = 0;
+        if remaining_workspaces == 0 || self.future_hierarchy_root_slots == 0 {
+            return;
+        }
+        let quota = self
+            .future_hierarchy_root_slots
+            .div_ceil(remaining_workspaces);
+        self.future_hierarchy_root_slots -= quota;
+        self.hierarchy_root_slots = quota;
+    }
+
     fn take_regular(&mut self) -> bool {
-        if self.stopped || self.remaining <= self.terminal_slots {
+        if self.stopped
+            || self.remaining
+                <= self
+                    .terminal_slots
+                    .saturating_add(self.reserved_root_slots())
+                    .saturating_add(self.module_catalog_slots)
+        {
             return false;
         }
         self.remaining -= 1;
         true
     }
 
+    fn can_take_root(&self) -> bool {
+        (self.hierarchy_root_slots > 0
+            && self.remaining
+                > self
+                    .future_hierarchy_root_slots
+                    .saturating_add(self.module_catalog_slots))
+            || (!self.stopped
+                && self.remaining
+                    > self
+                        .terminal_slots
+                        .saturating_add(self.future_hierarchy_root_slots)
+                        .saturating_add(self.module_catalog_slots))
+    }
+
+    fn take_root(&mut self) -> bool {
+        if !self.stopped
+            && self.remaining
+                > self
+                    .terminal_slots
+                    .saturating_add(self.reserved_root_slots())
+                    .saturating_add(self.module_catalog_slots)
+        {
+            self.remaining -= 1;
+            return true;
+        }
+        if self.hierarchy_root_slots > 0
+            && self.remaining
+                > self
+                    .future_hierarchy_root_slots
+                    .saturating_add(self.module_catalog_slots)
+        {
+            self.remaining -= 1;
+            self.hierarchy_root_slots -= 1;
+            return true;
+        }
+        false
+    }
+
+    fn take_module(&mut self) -> bool {
+        if !self.stopped
+            && self.remaining
+                > self
+                    .terminal_slots
+                    .saturating_add(self.reserved_root_slots())
+                    .saturating_add(self.module_catalog_slots)
+        {
+            self.remaining -= 1;
+            return true;
+        }
+        // Keep the last catalog slot for an explicit marker if there are more
+        // definitions than the reserved prefix can represent.
+        if self.module_catalog_slots > 1 && self.remaining > self.reserved_root_slots() {
+            self.remaining -= 1;
+            self.module_catalog_slots -= 1;
+            return true;
+        }
+        false
+    }
+
     fn take_terminal(&mut self) -> bool {
-        if self.stopped || self.remaining == 0 {
+        if self.stopped
+            || self.remaining
+                <= self
+                    .reserved_root_slots()
+                    .saturating_add(self.module_catalog_slots)
+        {
             self.stopped = true;
             return false;
         }
@@ -2291,22 +2506,45 @@ impl InstanceBudget {
         }
         // A truncation marker is itself a serialized hierarchy node. It may
         // consume an ordinary slot while there is room, or one of the
-        // reserved terminal slots at the normal budget boundary.
-        if self.remaining > self.terminal_slots {
+        // reserved terminal slots at the normal budget boundary. Do not
+        // consume the final hierarchy slot: a later root must remain
+        // representable even when this marker stops ordinary traversal.
+        let ordinary_slots = self.remaining.saturating_sub(
+            self.terminal_slots
+                .saturating_add(self.reserved_root_slots())
+                .saturating_add(self.module_catalog_slots),
+        );
+        if ordinary_slots > 0 {
             self.remaining -= 1;
-        } else {
+        } else if self.terminal_slots > 0 {
             self.remaining -= 1;
             self.terminal_slots = self.terminal_slots.saturating_sub(1);
+        } else if self.hierarchy_root_slots > 1 {
+            // A cycle may have consumed every terminal slot before ordinary
+            // traversal reaches its boundary. Spend one extra root slot for
+            // the marker, but retain a root floor for the response.
+            self.remaining -= 1;
+            self.hierarchy_root_slots -= 1;
+        } else {
+            self.stopped = true;
+            return false;
         }
         self.budget_marker_emitted = true;
         self.stopped = true;
         true
     }
 
-    fn mark_budget_truncated(&mut self, node: &mut ExplorerInstance) {
-        if self.take_budget_marker() {
-            node.is_budget_truncated = true;
+    fn take_module_marker(&mut self) -> bool {
+        if self.module_marker_emitted
+            || self.module_catalog_slots == 0
+            || self.remaining <= self.reserved_root_slots()
+        {
+            return false;
         }
+        self.remaining -= 1;
+        self.module_catalog_slots -= 1;
+        self.module_marker_emitted = true;
+        true
     }
 }
 
@@ -2409,6 +2647,7 @@ fn instance_node(
     definition_ids: &[(String, String)],
     budget: &mut InstanceBudget,
     depth: usize,
+    root: bool,
 ) -> ExplorerInstance {
     let id = instance_id(root_id, instance);
     if depth >= MAX_SAFE_HIERARCHY_DEPTH {
@@ -2416,13 +2655,20 @@ fn instance_node(
         budget.take_budget_marker();
         return node;
     }
-    if !budget.take_regular() {
+    let budget_slot = if root {
+        budget.take_root()
+    } else {
+        budget.take_regular()
+    };
+    if !budget_slot {
         let node = compatibility_budget_marker(root_id, instance, definition_ids);
         budget.take_budget_marker();
         return node;
     }
 
     let mut children = Vec::new();
+    let omitted_descendants =
+        budget.should_stop() && (!instance.children.is_empty() || !instance.gen_scopes.is_empty());
     for child in &instance.children {
         if budget.should_stop() {
             break;
@@ -2433,6 +2679,7 @@ fn instance_node(
             definition_ids,
             budget,
             depth.saturating_add(1),
+            false,
         ));
         if budget.should_stop() {
             break;
@@ -2471,7 +2718,7 @@ fn instance_node(
         instance_name: instance.name.clone(),
         module_type: clean_name(&instance.def_name).to_owned(),
         definition_id: find_definition_id(definition_ids, &instance.def_name),
-        is_budget_truncated: content_truncated,
+        is_budget_truncated: content_truncated || omitted_descendants,
         is_cycle_truncated: false,
         is_ambiguous: false,
         is_cycle_root: false,
@@ -2527,6 +2774,7 @@ fn generate_scope(
             definition_ids,
             budget,
             depth.saturating_add(1),
+            false,
         ));
         if budget.should_stop() {
             break;
@@ -3828,8 +4076,8 @@ mod tests {
         assert_eq!(result.roots.len(), 2);
         assert!(scopes < MAX_INSTANCE_NODES);
         assert!(total <= MAX_INSTANCE_NODES);
-        assert_eq!(budget_markers, 1);
-        assert_eq!(instance_stats(&result.roots).1, 1);
+        assert_eq!(budget_markers, 2);
+        assert_eq!(instance_stats(&result.roots).1, 2);
     }
 
     #[test]
@@ -3858,12 +4106,15 @@ mod tests {
         let first_analysis = graph_analysis(Vec::new(), vec![first], None);
         let second_analysis = graph_analysis(Vec::new(), vec![second], None);
         let mut budget = new_response_budget();
+        budget.prepare_workspaces();
+        budget.begin_workspace(2);
         let first_snapshot = snapshot_analysis_with_budget(
             "first-root",
             &first_analysis,
             identity_source,
             &mut budget,
         );
+        budget.begin_workspace(1);
         let second_snapshot = snapshot_analysis_with_budget(
             "second-root",
             &second_analysis,
@@ -4229,7 +4480,7 @@ mod tests {
     }
 
     #[test]
-    fn response_budget_bounds_module_content_arrays() {
+    fn response_budget_preserves_a_hierarchy_root_before_large_module_content() {
         let mut definition = source_definition("large", "/workspace/large.sv", 1, Vec::new());
         definition.signals = (0..(MAX_INSTANCE_NODES * 2))
             .map(|index| ModuleGraphSignal {
@@ -4245,15 +4496,24 @@ mod tests {
         let analysis = graph_analysis(vec![definition], Vec::new(), None);
 
         let result = snapshot_analysis("root", &analysis, identity_source);
-        assert_eq!(result.modules.len(), 1);
-        assert!(result.modules[0].is_budget_truncated);
-        assert!(result.modules[0].signals.len() < MAX_INSTANCE_NODES);
-        assert!(result.roots.is_empty());
+        let root = result
+            .roots
+            .iter()
+            .find(|root| root.module_type == "large")
+            .expect("large module hierarchy root");
+        assert!(root.definition_id.is_some());
+        assert!(!root.is_ambiguous);
+        assert!(root.is_budget_truncated);
+        assert!(root.signals.len() < MAX_INSTANCE_NODES);
+        assert!(
+            result.modules.iter().any(|module| module.name == "large"),
+            "hierarchy expansion must leave a usable module catalog prefix"
+        );
         assert!(serialized_response_work(&result) <= MAX_INSTANCE_NODES);
     }
 
     #[test]
-    fn response_budget_marks_truncated_declaration_only_catalog() {
+    fn response_budget_keeps_a_huge_root_catalog_bounded_and_visible() {
         let definitions = (0..(MAX_INSTANCE_NODES * 2))
             .map(|index| {
                 source_definition(
@@ -4271,12 +4531,291 @@ mod tests {
             .modules
             .iter()
             .any(|module| module.is_budget_truncated));
+        let root = result
+            .roots
+            .first()
+            .expect("one source root survives the catalog budget");
+        assert!(root.definition_id.is_some());
         assert!(result.modules.len() <= MAX_INSTANCE_NODES);
         assert!(serialized_response_work(&result) <= MAX_INSTANCE_NODES);
     }
 
     #[test]
-    fn response_budget_bounds_large_catalog_across_analysis_roots() {
+    fn response_budget_keeps_later_workspace_roots_after_catalog_truncation() {
+        let mut first_definition = source_definition("first", "/workspace/first.sv", 1, Vec::new());
+        first_definition.signals = (0..(MAX_INSTANCE_NODES * 2))
+            .map(|index| ModuleGraphSignal {
+                name: format!("signal_{index}"),
+                kind: "wire".to_owned(),
+                ty: ty("logic", Some(1)),
+                detail: None,
+                location: None,
+                display_type: None,
+                display_shape: ModuleGraphTypeShape::default(),
+            })
+            .collect();
+        let first_analysis = graph_analysis(vec![first_definition], Vec::new(), None);
+        let second_analysis = graph_analysis(
+            vec![
+                source_definition(
+                    "second",
+                    "/workspace/second.sv",
+                    1,
+                    vec![source_instance("u_leaf", "second_leaf", 2)],
+                ),
+                source_definition("second_leaf", "/workspace/second_leaf.sv", 1, Vec::new()),
+            ],
+            Vec::new(),
+            None,
+        );
+
+        let mut budget = new_response_budget();
+        budget.prepare_workspaces();
+        budget.begin_workspace(2);
+        let first = snapshot_analysis_with_budget(
+            "first-root",
+            &first_analysis,
+            identity_source,
+            &mut budget,
+        );
+        budget.begin_workspace(1);
+        let second = snapshot_analysis_with_budget(
+            "second-root",
+            &second_analysis,
+            identity_source,
+            &mut budget,
+        );
+        let merged = merge([first, second]);
+
+        assert!(serialized_response_work(&merged) <= MAX_INSTANCE_NODES);
+        let first_root = merged
+            .roots
+            .iter()
+            .find(|root| root.module_type == "first")
+            .expect("first workspace root");
+        assert!(first_root.is_budget_truncated);
+        assert!(merged
+            .roots
+            .iter()
+            .any(|root| root.module_type == "first" && root.definition_id.is_some()));
+        let second_root = merged
+            .roots
+            .iter()
+            .find(|root| root.module_type == "second")
+            .expect("later workspace root");
+        assert!(second_root.definition_id.is_some());
+        assert!(second_root.children.is_empty());
+        assert!(
+            second_root.is_budget_truncated,
+            "an omitted child must be represented as hierarchy truncation"
+        );
+    }
+
+    #[test]
+    fn repeated_cycle_terminals_preserve_a_later_workspace_root_slot() {
+        // Arrange
+        let mut budget = new_response_budget();
+        budget.prepare_workspaces();
+        budget.begin_workspace(2);
+        assert!(budget.take_root(), "first workspace root");
+
+        // Act: model an early workspace containing enough cycle leaves to
+        // consume every non-root slot.
+        while budget.take_terminal() {}
+
+        // Assert: stopping cycle expansion must leave the reserved capacity
+        // available to a later workspace hierarchy root.
+        budget.begin_workspace(1);
+        assert!(budget.take_root(), "later workspace root reservation");
+    }
+
+    #[test]
+    fn exhausted_cycle_leaves_stay_accounted_and_preserve_later_workspace_root() {
+        let cycle_children = (0..(MAX_INSTANCE_NODES * 2))
+            .map(|index| source_instance(&format!("u_cycle_{index}"), "cycle", index as u32 + 2))
+            .collect();
+        let first_analysis = graph_analysis(
+            vec![source_definition(
+                "cycle",
+                "/workspace/cycle.sv",
+                1,
+                cycle_children,
+            )],
+            Vec::new(),
+            None,
+        );
+        let second_analysis = graph_analysis(
+            vec![source_definition(
+                "second",
+                "/workspace/second.sv",
+                1,
+                Vec::new(),
+            )],
+            Vec::new(),
+            None,
+        );
+        let mut budget = new_response_budget();
+        budget.prepare_workspaces();
+        budget.begin_workspace(2);
+        let first = snapshot_analysis_with_budget(
+            "first-root",
+            &first_analysis,
+            identity_source,
+            &mut budget,
+        );
+        budget.begin_workspace(1);
+        let second = snapshot_analysis_with_budget(
+            "second-root",
+            &second_analysis,
+            identity_source,
+            &mut budget,
+        );
+        let merged = merge([first, second]);
+
+        assert!(serialized_response_work(&merged) <= MAX_INSTANCE_NODES);
+        assert!(merged.roots.iter().any(|root| root.is_cycle_root));
+        assert!(merged.roots.iter().any(|root| root.module_type == "second"));
+    }
+
+    #[test]
+    fn omitted_generate_scope_marks_parent_at_regular_budget_boundary() {
+        let mut definition = source_definition("top", "/workspace/top.sv", 1, Vec::new());
+        let ordinary_content_slots =
+            MAX_INSTANCE_NODES - GRAPH_TERMINAL_SLOTS - GUARANTEED_HIERARCHY_ROOT_SLOTS - 2 - 1;
+        definition.signals = (0..ordinary_content_slots)
+            .map(|index| ModuleGraphSignal {
+                name: format!("signal_{index}"),
+                kind: "wire".to_owned(),
+                ty: ty("logic", Some(1)),
+                detail: None,
+                location: None,
+                display_type: None,
+                display_shape: ModuleGraphTypeShape::default(),
+            })
+            .collect();
+        definition.generated_scopes.push(ModuleGraphGenerateScope {
+            name: "late_scope".to_owned(),
+            file: definition.file.clone(),
+            line: ordinary_content_slots as u32 + 2,
+            col: 1,
+            children: Vec::new(),
+            nested: Vec::new(),
+        });
+        let analysis = graph_analysis(vec![definition], Vec::new(), None);
+
+        let result = snapshot_analysis("root", &analysis, identity_source);
+
+        let root = result.roots.first().expect("top hierarchy root");
+        assert!(root.generated_scopes.is_empty());
+        assert!(
+            root.is_budget_truncated,
+            "omitting a generate scope must mark its containing instance"
+        );
+        assert!(serialized_response_work(&result) <= MAX_INSTANCE_NODES);
+    }
+
+    #[test]
+    fn depth_limited_scope_merge_is_explicit_without_a_marker_slot() {
+        let analysis = graph_analysis(
+            vec![source_definition("top", "/workspace/top.sv", 1, Vec::new())],
+            Vec::new(),
+            None,
+        );
+        let catalog = GraphCatalog::new("root", &analysis.module_graph, &identity_source);
+        let represented = HashSet::new();
+        let lookup = SourceElaborationLookup::new(&catalog, &[], &represented);
+        let source = ModuleGraphGenerateScope {
+            name: "nested".to_owned(),
+            file: Some("/workspace/top.sv".to_owned()),
+            line: 2,
+            col: 1,
+            children: Vec::new(),
+            nested: Vec::new(),
+        };
+        let mut elaborated = ExplorerGenerateScope {
+            id: "scope:root:top.nested".to_owned(),
+            name: "nested".to_owned(),
+            is_budget_truncated: false,
+            params: Vec::new(),
+            children: Vec::new(),
+            nested_scopes: Vec::new(),
+        };
+        let mut budget = InstanceBudget::new(GRAPH_TERMINAL_SLOTS);
+        budget.stopped = true;
+        budget.budget_marker_emitted = true;
+
+        merge_source_scope(
+            "root",
+            &catalog,
+            &identity_source,
+            "top",
+            0,
+            &mut elaborated,
+            &source,
+            &lookup,
+            &mut Vec::new(),
+            &mut budget,
+            MAX_SAFE_HIERARCHY_DEPTH,
+        );
+
+        assert!(elaborated.is_budget_truncated);
+        assert!(elaborated.children.is_empty());
+    }
+
+    #[test]
+    fn oversized_first_workspace_cannot_consume_later_workspace_root_quota() {
+        let first_definitions = (0..(MAX_INSTANCE_NODES * 2))
+            .map(|index| {
+                source_definition(
+                    &format!("first_{index}"),
+                    &format!("/workspace/first_{index}.sv"),
+                    index as u32 + 1,
+                    Vec::new(),
+                )
+            })
+            .collect();
+        let first_analysis = graph_analysis(first_definitions, Vec::new(), None);
+        let second_analysis = graph_analysis(
+            vec![source_definition(
+                "second",
+                "/workspace/second.sv",
+                1,
+                Vec::new(),
+            )],
+            Vec::new(),
+            None,
+        );
+        let mut budget = new_response_budget();
+        budget.prepare_workspaces();
+        budget.begin_workspace(2);
+        let first = snapshot_analysis_with_budget(
+            "first-root",
+            &first_analysis,
+            identity_source,
+            &mut budget,
+        );
+        budget.begin_workspace(1);
+        let second = snapshot_analysis_with_budget(
+            "second-root",
+            &second_analysis,
+            identity_source,
+            &mut budget,
+        );
+        let merged = merge([first, second]);
+
+        assert!(serialized_response_work(&merged) <= MAX_INSTANCE_NODES);
+        assert!(merged
+            .roots
+            .iter()
+            .any(|root| root.module_type == "second" && root.definition_id.is_some()));
+        assert!(merged
+            .roots
+            .iter()
+            .any(|root| root.module_type.starts_with("first_") && root.is_budget_truncated));
+    }
+
+    #[test]
+    fn response_budget_keeps_catalog_and_hierarchy_bounded_across_analysis_roots() {
         let make_analysis = |prefix: &str| {
             let definitions = (0..6_000)
                 .map(|index| {
@@ -4293,12 +4832,15 @@ mod tests {
         let first_analysis = make_analysis("first");
         let second_analysis = make_analysis("second");
         let mut budget = new_response_budget();
+        budget.prepare_workspaces();
+        budget.begin_workspace(2);
         let first = snapshot_analysis_with_budget(
             "first-root",
             &first_analysis,
             identity_source,
             &mut budget,
         );
+        budget.begin_workspace(1);
         let second = snapshot_analysis_with_budget(
             "second-root",
             &second_analysis,
@@ -4310,7 +4852,18 @@ mod tests {
         assert!(serialized_response_work(&merged) <= MAX_INSTANCE_NODES);
         assert!(merged.modules.len() < 12_000);
         assert!(merged.modules.len() <= MAX_INSTANCE_NODES);
-        assert!(merged.roots.iter().any(|root| root.is_budget_truncated));
+        assert!(merged
+            .modules
+            .iter()
+            .any(|module| module.is_budget_truncated));
+        assert!(merged
+            .roots
+            .iter()
+            .any(|root| root.module_type.starts_with("first_") && root.definition_id.is_some()));
+        assert!(merged
+            .roots
+            .iter()
+            .any(|root| root.module_type.starts_with("second_") && root.definition_id.is_some()));
     }
 
     #[test]
@@ -5047,8 +5600,10 @@ mod tests {
             vec![source_instance("u_top", "top", 2)],
         );
         let mut top = source_definition("top", "/workspace/top.sv", 1, Vec::new());
-        // Three module records are serialized before hierarchy expansion, so
-        // leave those slots available when placing the cycle at the boundary.
+        // Hierarchy roots are serialized before module records. Leave enough
+        // ordinary slots to place the cycle at the boundary, then include two
+        // trailing siblings so the third becomes the one explicit remainder
+        // marker.
         for index in 0..(MAX_INSTANCE_NODES - 7) {
             top.children.push(source_instance(
                 &format!("u_leaf_{index}"),
@@ -5065,6 +5620,16 @@ mod tests {
             "u_after",
             "leaf",
             MAX_INSTANCE_NODES as u32 + 3,
+        ));
+        top.children.push(source_instance(
+            "u_after_second",
+            "leaf",
+            MAX_INSTANCE_NODES as u32 + 4,
+        ));
+        top.children.push(source_instance(
+            "u_after_third",
+            "leaf",
+            MAX_INSTANCE_NODES as u32 + 5,
         ));
         let leaf = source_definition("leaf", "/workspace/leaf.sv", 1, Vec::new());
         let analysis = graph_analysis(vec![parent, top, leaf], Vec::new(), Some("top"));

@@ -2949,10 +2949,9 @@ fn lsp_stdio_semantic_tokens_use_current_open_buffer_and_cached_unopened_snapsho
         "opened file did not use the current in-memory module position: {opened_positions:?}"
     );
 
-    // A syntax-broken current buffer still uses its partial/supplemented
-    // parse-only tokens.  It must not fall back merely because diagnostics
-    // exist; the cached project module is on line 1, while this one is on
-    // line 5.
+    // A syntax-broken current buffer must produce no semantic tokens.  In
+    // particular, it must neither expose a partial parse-only stream nor
+    // fall back to the last valid project snapshot.
     let syntax_buffer =
         format!("{SOURCE_HEADER} semantic-current/opened.sv\n\n\n\n\nmodule SyntaxOnly;\n");
     client
@@ -2964,15 +2963,34 @@ fn lsp_stdio_semantic_tokens_use_current_open_buffer_and_cached_unopened_snapsho
             json!({ "textDocument": { "uri": file_uri(&opened) } }),
         )
         .expect("request syntax-broken opened semantic tokens");
-    let syntax_positions = semantic_token_positions(&syntax_tokens);
     assert!(
-        syntax_positions.contains(&(5, 0)),
-        "syntax-broken current buffer returned cached tokens instead of its current partial stream: {syntax_positions:?}"
+        semantic_token_positions(&syntax_tokens).is_empty(),
+        "syntax-broken current buffer returned semantic tokens: {syntax_tokens}"
+    );
+
+    // A later complete revision must not be pinned to the cached empty result
+    // from the broken text: the text hash changes and valid unsaved
+    // highlighting becomes available again immediately.
+    let recovered_buffer = format!(
+        "{SOURCE_HEADER} semantic-current/opened.sv\n\nmodule RecoveredOpened;\n  logic recovered_signal;\nendmodule\n"
+    );
+    client
+        .change(&opened, 3, &recovered_buffer)
+        .expect("repair opened semantic-token buffer");
+    let recovered_tokens = client
+        .request(
+            "textDocument/semanticTokens/full",
+            json!({ "textDocument": { "uri": file_uri(&opened) } }),
+        )
+        .expect("request repaired opened semantic tokens");
+    assert!(
+        !semantic_token_positions(&recovered_tokens).is_empty(),
+        "repaired current buffer did not recover semantic tokens: {recovered_tokens}"
     );
 
     // Act: replace the token-bearing open buffer with whitespace only.
     client
-        .change(&opened, 3, " \n\t\n")
+        .change(&opened, 4, " \n\t\n")
         .expect("change opened buffer to whitespace");
     let empty_opened_tokens = client
         .request(
@@ -3690,6 +3708,69 @@ fn lsp_stdio_goto_definition_is_binding_precise() {
     let (uri, start) = single_location(&response, "definition at m_a use (last character)");
     assert_eq!(uri, file_uri(&ma_path), "m_a last-char click → m_a decl");
     assert_eq!(start, ma_decl_start);
+    assert_no_shadow_uris(&response);
+    client.shutdown();
+}
+
+/// A module type and an instance identifier occupy different namespaces for
+/// navigation.  In the original `foo.v` regression, `Bar Bar(...)` caused a
+/// later `Bar u_bar(...)` type reference to jump to the first instance name
+/// instead of the `module Bar` declaration.
+#[test]
+fn lsp_stdio_goto_definition_module_type_ignores_same_named_instance() {
+    // Arrange
+    let fixture = FixtureTree::new();
+    let root_a = fixture.root("root-a");
+    let source_path = root_a.join("navigation").join("foo.v");
+    let source_text = fs::read_to_string(&source_path).expect("read foo.v regression fixture");
+    let source_uri = file_uri(&source_path);
+    let expected_module = position_at(&source_text, "module Bar", "module ".len());
+
+    let mut client = LspProcess::spawn(fixture.base());
+    client
+        .initialize(&[("root-a", &root_a)], default_init_options())
+        .expect("initialize module-instance collision workspace");
+    client
+        .open(&source_path, &source_text)
+        .expect("open foo.v regression fixture");
+    wait_for_diagnostics(&mut client, &source_uri, has_no_severity_1);
+
+    // Act + Assert: both module-type occurrences resolve to the module
+    // declaration, including the occurrence whose adjacent instance name is
+    // also `Bar`.
+    for (needle, offset) in [("Bar Bar(", 0), ("Bar u_bar(", 0)] {
+        let response = client
+            .request(
+                "textDocument/definition",
+                json!({
+                    "textDocument": { "uri": source_uri },
+                    "position": position_at(&source_text, needle, offset)
+                }),
+            )
+            .unwrap_or_else(|error| panic!("definition request at {needle}: {error}"));
+        let (uri, start) = single_location(&response, "definition at module type");
+        assert_eq!(uri, source_uri, "{needle} must resolve within foo.v");
+        assert_eq!(
+            start, expected_module,
+            "{needle} must resolve to module Bar"
+        );
+        assert_no_shadow_uris(&response);
+    }
+
+    // Control: navigation on the same-named instance identifier still uses
+    // the established instance-to-module definition behavior.
+    let response = client
+        .request(
+            "textDocument/definition",
+            json!({
+                "textDocument": { "uri": source_uri },
+                "position": position_at(&source_text, "Bar Bar(", "Bar ".len())
+            }),
+        )
+        .expect("definition request at same-named instance identifier");
+    let (uri, start) = single_location(&response, "definition at instance name");
+    assert_eq!(uri, source_uri);
+    assert_eq!(start, expected_module);
     assert_no_shadow_uris(&response);
     client.shutdown();
 }

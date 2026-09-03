@@ -7951,11 +7951,13 @@ impl SymbolIndex {
     ///    coordinate, including class scopes and imported bare members.
     /// 4. A reference resolves to: the same-named declaration in the same
     ///    scope, else the same-named declaration in the same file nearest by
-    ///    line, else any same-named declaration in the workspace.  Scanned
-    ///    parameter-override labels that failed rule 1 are excluded: their
-    ///    namespace is the INSTANTIATED module, so a same-name declaration of
-    ///    the instantiating scope or an arbitrary workspace match is wrong by
-    ///    construction — they resolve to nothing instead.
+    ///    line, else any same-named declaration in the workspace.  Module-type
+    ///    references apply that order only to module declarations, so an
+    ///    instance with the same name cannot capture the type reference.
+    ///    Scanned parameter-override labels that failed rule 1 are excluded:
+    ///    their namespace is the INSTANTIATED module, so a same-name
+    ///    declaration of the instantiating scope or an arbitrary workspace
+    ///    match is wrong by construction — they resolve to nothing instead.
     /// 5. Any other declaration resolves to itself.
     pub fn resolve<'a>(&'a self, e: &'a SymEntry) -> Vec<&'a SymEntry> {
         // Named connection labels resolve to the child module's port /
@@ -8049,11 +8051,17 @@ impl SymbolIndex {
             return vec![e];
         }
         // Reference: in-scope declaration first, then same-file, then
-        // workspace-wide.
+        // workspace-wide.  Module-type references occupy the module namespace;
+        // ordinary identifier references retain the historical name-only
+        // behavior.
+        let module_type_reference = e.kind == SymKind::Module;
         if let Some(indices) = self.decls_by_name.get(&e.name) {
             let in_scope: Vec<&SymEntry> = indices
                 .iter()
-                .filter(|&&i| self.decls[i].scope == e.scope)
+                .filter(|&&i| {
+                    self.decls[i].scope == e.scope
+                        && (!module_type_reference || self.decls[i].kind == SymKind::Module)
+                })
                 .map(|&i| &self.decls[i])
                 .collect();
             if !in_scope.is_empty() {
@@ -8061,14 +8069,21 @@ impl SymbolIndex {
             }
             let mut same_file: Vec<&SymEntry> = indices
                 .iter()
-                .filter(|&&i| self.decls[i].file == e.file)
+                .filter(|&&i| {
+                    self.decls[i].file == e.file
+                        && (!module_type_reference || self.decls[i].kind == SymKind::Module)
+                })
                 .map(|&i| &self.decls[i])
                 .collect();
             same_file.sort_by_key(|d| d.line.abs_diff(e.line));
             if !same_file.is_empty() {
                 return same_file;
             }
-            let all: Vec<&SymEntry> = indices.iter().map(|&i| &self.decls[i]).collect();
+            let all: Vec<&SymEntry> = indices
+                .iter()
+                .filter(|&&i| !module_type_reference || self.decls[i].kind == SymKind::Module)
+                .map(|&i| &self.decls[i])
+                .collect();
             if !all.is_empty() {
                 return all;
             }
@@ -8764,15 +8779,41 @@ pub fn lsp_diagnostics_with_fallback(
 
 /// Encode the semantic tokens for `file` from the cached token lists.
 ///
-/// Matching is by exact path, falling back to a filename-only match when the
-/// paths differ only in normalisation (symlinks, separators).
+/// Token-list matching retains its compatibility filename fallback. A syntax
+/// diagnostic, however, is associated only by an exact or successfully
+/// canonicalized path: a same-named file elsewhere in the workspace must not
+/// suppress this file's tokens. A matching syntax diagnostic makes the empty
+/// result authoritative.
 pub fn semantic_tokens_for(a: &Analysis, file: &str) -> SemanticTokens {
+    if a.diagnostics.iter().any(|diagnostic| {
+        matches!(diagnostic.severity, Severity::Syntax)
+            && diagnostic
+                .file
+                .as_deref()
+                .is_some_and(|diagnostic_file| semantic_file_matches(diagnostic_file, file))
+    }) {
+        return empty_semantic_tokens();
+    }
     match file_tokens(a, file) {
         Some(ft) => semantic_tokens::encode(&ft.nodes),
-        None => SemanticTokens {
-            result_id: None,
-            data: Vec::new(),
-        },
+        None => empty_semantic_tokens(),
+    }
+}
+
+fn empty_semantic_tokens() -> SemanticTokens {
+    SemanticTokens {
+        result_id: None,
+        data: Vec::new(),
+    }
+}
+
+fn semantic_file_matches(left: &str, right: &str) -> bool {
+    if Path::new(left) == Path::new(right) {
+        return true;
+    }
+    match (std::fs::canonicalize(left), std::fs::canonicalize(right)) {
+        (Ok(left), Ok(right)) => left == right,
+        _ => false,
     }
 }
 
@@ -8783,8 +8824,9 @@ pub fn semantic_tokens_for(a: &Analysis, file: &str) -> SemanticTokens {
 /// Surelog's parse-only mode behind the same process-wide lock and scratch-CWD
 /// guard as project analysis, then drops the session before returning owned
 /// LSP data.  The caller owns staging and cleanup of `file`.  Frontend syntax
-/// diagnostics do not make this return an error: the current parse tree,
-/// including source-local supplementation, remains authoritative.
+/// diagnostics do not make this return an error.  Instead, any syntax
+/// diagnostic produces an authoritative empty stream so an incomplete edit
+/// cannot expose unstable partial highlighting or fall back to stale tokens.
 #[allow(dead_code)] // compatibility wrapper; production uses the parent-aware variant
 pub fn semantic_tokens_for_open_document(
     file: &str,
@@ -8858,6 +8900,26 @@ pub(crate) fn semantic_tokens_for_open_document_with_parent(
     };
     let token_count = token_cardinality(&parsed.tokens);
     let diagnostic_count = parsed.diagnostics.len();
+    let syntax_error_count = parsed
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| matches!(diagnostic.severity, Severity::Syntax))
+        .count();
+    if syntax_error_count > 0 && crate::logging::enabled(crate::logging::Level::Debug) {
+        let first_syntax = parsed
+            .diagnostics
+            .iter()
+            .find(|diagnostic| matches!(diagnostic.severity, Severity::Syntax))
+            .map(|diagnostic| bounded_log_text(&diagnostic.message, SURELOG_LOG_ERROR_MAX))
+            .unwrap_or_else(|| "-".to_owned());
+        crate::llg_debug!(
+            "event=surelog.parse_only.syntax_error file={} parent_id={:?} count={} first_message={}",
+            file,
+            parent_id,
+            syntax_error_count,
+            first_syntax
+        );
+    }
     crate::llg_debug!(
         "event=surelog.parse_only.return outcome=ok file={} parent_id={:?} diagnostics={} token_files={} token_nodes={} elapsed_us={}",
         file,
@@ -8931,17 +8993,26 @@ pub(crate) fn semantic_tokens_for_open_document_with_parent(
                         == Some(file_name)
             })
         });
-    let result = tokens
-        .map(|tokens| semantic_tokens::encode(&tokens.nodes))
-        .unwrap_or(SemanticTokens {
-            result_id: None,
-            data: Vec::new(),
-        });
-    encode_span.complete("ok", result.data.len());
+    let result = if syntax_error_count > 0 {
+        empty_semantic_tokens()
+    } else {
+        tokens
+            .map(|tokens| semantic_tokens::encode(&tokens.nodes))
+            .unwrap_or_else(empty_semantic_tokens)
+    };
+    let outcome = if syntax_error_count > 0 {
+        "syntax-error"
+    } else {
+        "ok"
+    };
+    encode_span.complete(outcome, result.data.len());
     crate::llg_debug!(
-        "event=analysis.parse_only_token_encoding.end outcome=ok file={} token_count={} elapsed_us={}",
+        "event=analysis.parse_only_token_encoding.end outcome={} file={} token_count={} syntax_errors={} suppressed_token_nodes={} elapsed_us={}",
+        outcome,
         file,
         result.data.len(),
+        syntax_error_count,
+        if syntax_error_count > 0 { token_count } else { 0 },
         encode_started.elapsed().as_micros()
     );
     drop(encode_span);
@@ -14046,6 +14117,44 @@ mod tests {
         assert!(!tokens.data.is_empty());
     }
 
+    #[test]
+    fn semantic_tokens_are_empty_for_a_file_with_a_syntax_error() {
+        // Arrange
+        let mut analysis = sample_analysis();
+        analysis.diagnostics.push(Diag {
+            severity: Severity::Syntax,
+            file: Some("/x/top.sv".to_owned()),
+            line: 1,
+            col: 1,
+            message: "incomplete module".to_owned(),
+        });
+
+        // Act
+        let tokens = semantic_tokens_for(&analysis, "/x/top.sv");
+
+        // Assert
+        assert!(tokens.data.is_empty());
+    }
+
+    #[test]
+    fn semantic_tokens_remain_available_when_another_file_has_a_syntax_error() {
+        // Arrange
+        let mut analysis = sample_analysis();
+        analysis.diagnostics.push(Diag {
+            severity: Severity::Syntax,
+            file: Some("/other/top.sv".to_owned()),
+            line: 1,
+            col: 1,
+            message: "incomplete module".to_owned(),
+        });
+
+        // Act
+        let tokens = semantic_tokens_for(&analysis, "/x/top.sv");
+
+        // Assert
+        assert!(!tokens.data.is_empty());
+    }
+
     /// Exercises the full compile+model+tokens pipeline against a checked-in
     /// SystemVerilog file.  Skips gracefully when the file is missing.
     #[test]
@@ -14846,6 +14955,127 @@ mod tests {
             classes: Vec::new(),
         };
         Analysis::new(Vec::new(), model, vec![a_file, b_file], Vec::new())
+    }
+
+    /// Hand-built analysis for two `Bar` instantiations inside `Foo`:
+    /// `Bar Bar(...)` and `Bar u_bar(...)`.  The first instance deliberately
+    /// shares its name with the module type so the type-reference resolver's
+    /// scope and kind behavior can be tested independently from Surelog.
+    fn module_type_instance_collision_analysis() -> Analysis {
+        use llg::ffi::vpi;
+
+        let mut analysis = cross_file_analysis();
+        analysis.model.design_name = "Foo".to_owned();
+        analysis.model.modules[0].name = "Bar".to_owned();
+        analysis.model.modules.push(ModuleDef {
+            name: "Foo".to_owned(),
+            file: Some("/x/b.sv".to_owned()),
+            line: 1,
+            col: 8,
+            end_line: 4,
+            end_col: 12,
+        });
+        {
+            let top = &mut analysis.model.top_instances[0];
+            top.name = "Foo".to_owned();
+            top.def_name = "Foo".to_owned();
+            top.full_name = "Foo".to_owned();
+
+            let first = &mut top.children[0];
+            first.name = "Bar".to_owned();
+            first.def_name = "Bar".to_owned();
+            first.full_name = "Foo.Bar".to_owned();
+
+            let mut second = first.clone();
+            second.name = "u_bar".to_owned();
+            second.full_name = "Foo.u_bar".to_owned();
+            second.line = 2;
+            second.col = 7;
+            top.children.push(second);
+        }
+
+        for file_tokens in &mut analysis.tokens {
+            for node in &mut file_tokens.nodes {
+                if file_tokens.path == "/x/a.sv"
+                    && node.vpi_type == vpi::vpiModule
+                    && node.name.as_deref() == Some("m")
+                {
+                    node.name = Some("Bar".to_owned());
+                }
+                if file_tokens.path == "/x/b.sv" {
+                    if node.vpi_type == vpi::vpiModule && node.name.as_deref() == Some("top") {
+                        node.name = Some("Foo".to_owned());
+                    }
+                    if node.vpi_type == vpi::uhdmclass_defn && node.name.as_deref() == Some("m") {
+                        node.name = Some("Bar".to_owned());
+                    }
+                    if node.vpi_type == vpi::uhdmlogic_var && node.name.as_deref() == Some("u0") {
+                        node.name = Some("Bar".to_owned());
+                    }
+                }
+            }
+        }
+        let b_file = analysis
+            .tokens
+            .iter_mut()
+            .find(|file_tokens| file_tokens.path == "/x/b.sv")
+            .expect("collision fixture file");
+        b_file.nodes.extend([
+            VObjectInfo {
+                line: 2,
+                col: 3,
+                end_line: 2,
+                end_col: 6,
+                vpi_type: vpi::uhdmclass_defn,
+                name: Some("Bar".to_owned()),
+                file: "/x/b.sv".to_owned(),
+            },
+            VObjectInfo {
+                line: 2,
+                col: 7,
+                end_line: 2,
+                end_col: 12,
+                vpi_type: vpi::uhdmlogic_var,
+                name: Some("u_bar".to_owned()),
+                file: "/x/b.sv".to_owned(),
+            },
+        ]);
+        analysis.index = SymbolIndex::build(&analysis);
+        analysis
+    }
+
+    #[test]
+    fn module_type_definition_ignores_same_named_instance_in_scope() {
+        // Arrange
+        let analysis = module_type_instance_collision_analysis();
+
+        // Act
+        let first_type = definition_at(&analysis, "/x/b.sv", 0, 12);
+        let second_type = definition_at(&analysis, "/x/b.sv", 1, 2);
+
+        // Assert
+        for location in [first_type, second_type] {
+            let location = location.expect("module type definition");
+            assert_eq!(location.uri, Url::from_file_path("/x/a.sv").unwrap());
+            assert_eq!(location.range.start, Position::new(0, 7));
+        }
+    }
+
+    #[test]
+    fn instance_name_definition_still_resolves_when_name_matches_module_type() {
+        // Arrange
+        let analysis = module_type_instance_collision_analysis();
+
+        // Act
+        let colliding_instance = definition_at(&analysis, "/x/b.sv", 0, 14);
+        let ordinary_instance = definition_at(&analysis, "/x/b.sv", 1, 6);
+
+        // Assert
+        for location in [colliding_instance, ordinary_instance] {
+            let location = location.expect("instance definition");
+            assert_eq!(location.uri, Url::from_file_path("/x/a.sv").unwrap());
+            assert_eq!(location.range.start, Position::new(0, 7));
+        }
     }
 
     /// Hand-built two-file `Analysis` for a multi-line instantiation:
