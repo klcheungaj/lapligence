@@ -24,6 +24,8 @@ the LSP has an additional process-level stdio acceptance suite.
   instance identifier, and hierarchy roots surviving module-content budget
   truncation,
   per-root lint configuration, unsaved source/header buffers, project-wide
+  diagnostics for every shared careless-mistake rule (with the same registry
+  exercised through the simulator's `--lint-json` CLI),
   diagnostics published for never-opened files (and refreshed when such a
   file is fixed on disk via a watched-file event), include
   authorization under configured directories, last-good navigation during

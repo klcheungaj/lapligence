@@ -4985,6 +4985,76 @@ fn lsp_stdio_publishes_new_lint_rules_and_honors_config() {
     client.shutdown();
 }
 
+#[test]
+fn lsp_stdio_publishes_expanded_careless_mistake_rules_and_honors_config() {
+    let fixture = FixtureTree::new();
+    let root = fixture.root("lint-rules");
+    let path = root.join("src").join("careless_more.sv");
+    let uri = file_uri(&path);
+    let rule_ids = [
+        "undriven-signal",
+        "incomplete-sensitivity-list",
+        "out-of-range-select",
+        "xz-logical-equality",
+        "duplicate-case-item",
+    ];
+
+    let mut client = LspProcess::spawn(&fixture.root);
+    client
+        .initialize(&[("lint-rules", &root)], default_init_options())
+        .expect("initialize expanded lint-rules workspace");
+    client
+        .open(
+            &path,
+            &fs::read_to_string(&path).expect("read expanded careless fixture"),
+        )
+        .expect("open expanded careless fixture");
+
+    let diagnostics = wait_for_diagnostics(&mut client, &uri, |params| {
+        rule_ids.iter().all(|rule| has_lint_rule(params, rule))
+    });
+    for rule in rule_ids {
+        assert_eq!(
+            lint_severity(&diagnostics, rule),
+            Some(2),
+            "{rule} should publish as a warning: {diagnostics:?}"
+        );
+    }
+    assert_no_shadow_uris(&diagnostics);
+
+    let config_path = root.join(CONFIG_FILE);
+    fs::write(
+        &config_path,
+        "schema_version = 1\n\
+         [sources]\n\
+         directories = [\".\"]\n\
+         include = [\"**/*.v\", \"**/*.sv\"]\n\
+         [lint]\n\
+         enabled = true\n\
+         [lint.rules.out-of-range-select]\n\
+         enabled = false\n",
+    )
+    .expect("disable out-of-range-select");
+    client
+        .send_watch_event(&config_path, 2)
+        .expect("send expanded lint config watch event");
+    let updated = wait_for_diagnostics(&mut client, &uri, |params| {
+        !has_lint_rule(params, "out-of-range-select")
+            && rule_ids
+                .iter()
+                .filter(|rule| **rule != "out-of-range-select")
+                .all(|rule| has_lint_rule(params, rule))
+    });
+    assert!(!has_lint_rule(&updated, "out-of-range-select"));
+    for rule in rule_ids
+        .iter()
+        .filter(|rule| **rule != "out-of-range-select")
+    {
+        assert_eq!(lint_severity(&updated, rule), Some(2));
+    }
+    client.shutdown();
+}
+
 // ── textDocument/prepareRename + textDocument/rename ────────────────────────
 //
 // Rename reuses the find-references machinery, so the acceptance surface is:

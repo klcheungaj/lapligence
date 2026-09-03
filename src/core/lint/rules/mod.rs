@@ -10,41 +10,50 @@ pub mod case_default;
 pub mod casez;
 pub mod combloop;
 pub mod comparison_width;
+pub mod duplicate_case;
 pub mod if_latch;
 pub mod implicit_net;
 pub mod latch;
 pub mod mixed_assign;
 pub mod multidriver;
 pub mod nba_in_comb;
+pub mod select_range;
+pub mod sensitivity;
 pub mod style;
 pub mod unconnected_port;
+pub mod undriven;
 pub mod unused;
 pub mod unused_param;
 pub mod width;
+pub mod xz_comparison;
 
 pub use blocking_in_ff::BlockingInFFRule;
 pub use case_default::CaseDefaultMissingRule;
 pub use casez::CasezMisuseRule;
 pub use combloop::CombinationalLoopRule;
 pub use comparison_width::ComparisonWidthRule;
+pub use duplicate_case::DuplicateCaseItemRule;
 pub use if_latch::IfLatchRule;
 pub use implicit_net::ImplicitNetRule;
 pub use latch::IncompleteCaseRule;
 pub use mixed_assign::MixedAssignRule;
 pub use multidriver::MultiDriverRule;
 pub use nba_in_comb::NbaInCombRule;
+pub use select_range::OutOfRangeSelectRule;
+pub use sensitivity::IncompleteSensitivityListRule;
 pub use style::StyleRule;
 pub use unconnected_port::UnconnectedPortRule;
+pub use undriven::UndrivenSignalRule;
 pub use unused::UnusedSignalRule;
 pub use unused_param::UnusedParameterRule;
 pub use width::WidthMismatchRule;
+pub use xz_comparison::XzLogicalEqualityRule;
 
 /// The default rule set, in run order.
 ///
-/// The original 14 rules keep their historical order; newer rules are
-/// appended at the end (`unconnected-port`, then `mixed-assignments`) so the
-/// run order of existing rules — and therefore the relative order of their
-/// findings — stays stable across releases.
+/// The original 16 rules keep their historical order. Newer rules are
+/// appended so the run order of existing rules — and therefore the relative
+/// order of their findings — stays stable across releases.
 pub fn default_rules() -> Vec<Box<dyn crate::core::lint::LintRule>> {
     vec![
         Box::new(UnusedSignalRule),
@@ -63,6 +72,11 @@ pub fn default_rules() -> Vec<Box<dyn crate::core::lint::LintRule>> {
         Box::new(ComparisonWidthRule),
         Box::new(UnconnectedPortRule),
         Box::new(MixedAssignRule),
+        Box::new(UndrivenSignalRule),
+        Box::new(IncompleteSensitivityListRule),
+        Box::new(OutOfRangeSelectRule),
+        Box::new(XzLogicalEqualityRule),
+        Box::new(DuplicateCaseItemRule),
     ]
 }
 

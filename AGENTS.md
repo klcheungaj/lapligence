@@ -50,7 +50,7 @@ src/
     model.rs                    — owned DesignModel, projected from db via `from_db`;
                                   generated scopes retain concrete identities and direct
                                   children, and signals retain net kinds
-    lint/                       — shared rule engine + 16 default rules (LintRule/LintCtx/
+    lint/                       — shared rule engine + 21 default rules (LintRule/LintCtx/
                                   LintDiag/registry/LintConfig)
     tokens.rs                   — VPI + parse-tree object collection (semantic tokens)
     macros.rs                   — preprocessor macro tables for macro-usage hover
@@ -299,8 +299,11 @@ function-local typespec ranges.
   Response accounting reserves useful prefixes for both hierarchy roots and
   module definitions before optional port/parameter/signal contents consume
   the remaining budget, so a large hierarchy or declaration cannot empty the
-  other half of a valid snapshot; the explorer must not guess a definition or
-  expand without a safe identity.
+  other half of a valid snapshot. Multi-workspace requests partition both
+  root and module-catalog capacity deterministically, with unused catalog
+  capacity rolling forward, so an oversized earlier workspace cannot starve
+  later roots. The explorer must not guess a definition or expand without a
+  safe identity.
   A servable committed model/source-graph/top change or a cleared snapshot
   sends the empty-params `llg/moduleExplorerChanged` notification so clients
   refetch.  Fatal or diagnostics-only commits that retain the served snapshot
@@ -488,13 +491,15 @@ function-local typespec ranges.
 `core::lint` — shared rule engine over the owned db + design model.  Rules
 implement `LintRule` (`id`/`description`/`check(ctx)`); `LintCtx` hands each
 rule the `Db` + `DesignModel`; findings are `LintDiag` (rule id, severity,
-file, 1-based line/col, message).  The registry runs 16 default rules in a
+file, 1-based line/col, message).  The registry runs 21 default rules in a
 stable order: `unused-signal`, `width-mismatch`, `incomplete-case`,
 `combinational-loop`, `multi-driver`, `casez-misuse`, `if-latch`,
 `naming-style`, `blocking-in-always_ff`, `nba-in-always_comb`,
 `unused-parameter`, `implicit-net`, `case-default-missing`,
-`comparison-width-mismatch`, `unconnected-port`, `mixed-assignments`.  No VPI
-access, no raw FFI, no LSP dependencies.
+`comparison-width-mismatch`, `unconnected-port`, `mixed-assignments`,
+`undriven-signal`, `incomplete-sensitivity-list`, `out-of-range-select`,
+`xz-logical-equality`, `duplicate-case-item`.  No VPI access, no raw FFI, no
+LSP dependencies.
 
 New-rule notes: `implicit-net` flags nets Surelog auto-created from
 undeclared identifiers (signature in the owned db: a net whose type info has

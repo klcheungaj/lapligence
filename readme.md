@@ -103,6 +103,12 @@ Generate-time options:
   `target/sim/<design>` (prints the directory), then exit without
   configuring/building/running
 
+The 21-rule shared registry is also used by the language server, including
+checks for undriven signals, incomplete sensitivity lists, out-of-range
+selects, X/Z logical equality, and duplicate exact-case labels. See
+[`src/core/lint/readme.md`](src/core/lint/readme.md) for rule and configuration
+details.
+
 Build-time options:
 
 - `--generator <backend>` — cmake `-G` backend (e.g. `Ninja`,

@@ -178,15 +178,20 @@ pub enum NodeKind {
     /// `vpiHighConn` object, an explicitly-empty `.p()` has one that is a
     /// zero-operand `vpiOperation` with `VpiOpType == vpiNullOp`, and an
     /// expression/constant connection (`.p(a & b)`, `.p(4'd0)`) has a real
-    /// object that simply does not resolve to a single net/var.  `high_present` is true for any
-    /// `vpiHighConn` object; `high_open` marks the explicit-empty `.p()`
-    /// marker.  A port is unconnected iff `!high_present || high_open`.
+    /// object that simply does not resolve to a single net/var.
+    /// `high_present` is true for any `vpiHighConn` object; `high_open` marks
+    /// the explicit-empty `.p()` marker. A port is unconnected iff
+    /// `!high_present || high_open`.
     /// `` `.* `` and `.name` shorthand connections produce ordinary resolved
     /// refs (`high: Some`) — no special handling anywhere downstream.
     Port {
         direction: Direction,
         high: Option<NodeId>,
         low: Option<NodeId>,
+        /// Arena root of the present, non-open `vpiHighConn` expression.
+        /// Direct references are retained here as well as in `high`; the
+        /// resolved target remains available to existing model/codegen users.
+        high_expr: Option<NodeId>,
         /// A `vpiHighConn` object exists on this port (signal ref,
         /// expression, constant, or the explicit-empty marker).
         high_present: bool,
@@ -1306,6 +1311,26 @@ impl Builder {
                 direction,
                 high,
                 low,
+                high_expr: None,
+                high_present,
+                high_open,
+            },
+        );
+        // Keep the full high-side expression owned by the port.  This is a
+        // separate view from `high`: direct refs still resolve to their
+        // declaration target, while operations and other expressions retain
+        // every operand for consumers that need parent-side reads.
+        let high_expr = match high_conn.as_ref() {
+            Some(conn) if !high_open => Some(self.walk_node(conn.raw(), Some(id))?),
+            _ => None,
+        };
+        self.set_kind(
+            id,
+            NodeKind::Port {
+                direction,
+                high,
+                low,
+                high_expr,
                 high_present,
                 high_open,
             },
@@ -1321,28 +1346,15 @@ impl Builder {
             );
             kids.push(cid);
         }
-        // An array-element high connection (`.cnt(cnts[i])`) resolves `high`
-        // to the array node; the connection's select expression is captured as
-        // a child so `sim::codegen` can address the element when emitting
-        // port links.
-        if let Some(sel) = self.array_high_conn_select(h, high) {
-            kids.push(sel);
+        // Keep the connection expression in the child list as well as in the
+        // port variant so the owned tree remains reachable.  In particular,
+        // codegen uses a captured array-select child to address unpacked array
+        // elements in port links.
+        if let Some(expr) = high_expr {
+            kids.push(expr);
         }
         self.set_children(id, kids);
         Ok(id)
-    }
-
-    /// When the port's high connection selects into an unpacked array (the
-    /// resolved `high` target is an `Array` node — e.g. `.cnt(cnts[i])`), walk
-    /// the connection's select expression and return it as a child of the
-    /// port.  `None` for plain-signal, interface and non-array connections.
-    fn array_high_conn_select(&mut self, h: VpiHandle, high: Option<NodeId>) -> Option<NodeId> {
-        let target = high?;
-        if !matches!(self.nodes[target.0 as usize].kind, NodeKind::Array { .. }) {
-            return None;
-        }
-        let hc = child(vpi::vpiHighConn, h)?;
-        self.walk_node(hc.raw(), None).ok()
     }
 
     /// Resolve a port connection reference to its arena node (may be `None`).

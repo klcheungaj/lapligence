@@ -13,6 +13,8 @@
 //!   target), while select indices/bounds on the LHS still count as reads.
 //! - `force`/`release`/`deassign` LHS objects count as writes (the signal is
 //!   used), but do not contribute reads.
+//! - `collect_driver_writes` is the active-driver variant used by rules that
+//!   must distinguish `force` from `release`/`deassign`.
 
 #![allow(non_upper_case_globals)] // vpi op-type constants are lowercase by convention
 
@@ -251,6 +253,18 @@ pub fn collect_writes(db: &Db, root: NodeId) -> Vec<NodeId> {
     out
 }
 
+/// Every signal actively driven in the tree rooted at `root`.
+///
+/// This has the same whole-object behavior as [`collect_writes`], including
+/// selected LHS expressions, but deliberately excludes `release` and
+/// `deassign`: those statements cancel a driver rather than establish one.
+pub fn collect_driver_writes(db: &Db, root: NodeId) -> Vec<NodeId> {
+    let mut out = Vec::new();
+    let mut seen = HashSet::new();
+    walk_driver_writes(db, root, &mut seen, &mut out);
+    out
+}
+
 fn walk_reads(db: &Db, node: NodeId, seen: &mut HashSet<NodeId>, out: &mut Vec<NodeId>) {
     match db.node_kind(node) {
         NodeKind::Stmt(StmtKind::Assign { .. })
@@ -313,6 +327,18 @@ fn add_read(db: &Db, node: NodeId, seen: &mut HashSet<NodeId>, out: &mut Vec<Nod
                 }
             }
         }
+        NodeKind::Expr(ExprKind::HierPath { refs, .. }) => {
+            if let Some(t) = refs
+                .iter()
+                .rev()
+                .flatten()
+                .find(|target| is_signal(db, **target))
+            {
+                if seen.insert(*t) {
+                    out.push(*t);
+                }
+            }
+        }
         _ => {}
     }
 }
@@ -337,8 +363,61 @@ fn walk_writes(db: &Db, node: NodeId, seen: &mut HashSet<NodeId>, out: &mut Vec<
     }
 }
 
+fn walk_driver_writes(db: &Db, node: NodeId, seen: &mut HashSet<NodeId>, out: &mut Vec<NodeId>) {
+    match db.node_kind(node) {
+        NodeKind::Stmt(StmtKind::Assign { .. })
+        | NodeKind::Stmt(StmtKind::ProcContAssign { .. })
+        | NodeKind::Stmt(StmtKind::Force { .. })
+        | NodeKind::ContAssign { .. } => {
+            if let Some(lhs) = db.node(node).children.first() {
+                add_driver_lhs_write(db, *lhs, seen, out);
+            }
+            return;
+        }
+        NodeKind::Stmt(StmtKind::Release { .. }) | NodeKind::Stmt(StmtKind::Deassign { .. }) => {
+            return;
+        }
+        _ => {}
+    }
+    for c in &db.node(node).children {
+        walk_driver_writes(db, *c, seen, out);
+    }
+}
+
 fn add_lhs_write(db: &Db, lhs: NodeId, seen: &mut HashSet<NodeId>, out: &mut Vec<NodeId>) {
     if let Some(sig) = signal_of_ref(db, lhs) {
+        if seen.insert(sig) {
+            out.push(sig);
+        }
+    }
+}
+
+/// Resolve a writable expression to its whole declared object.
+///
+/// Unlike [`signal_of_ref`], this helper also follows unpacked
+/// [`ExprKind::ArraySelect`] bases and hierarchical-path endpoints.  A write
+/// to any selected bit or element therefore drives the complete owning
+/// object, which is the conservative granularity used by the linter.
+pub fn driver_signal_of_lhs(db: &Db, id: NodeId) -> Option<NodeId> {
+    match db.node_kind(id) {
+        NodeKind::Expr(
+            ExprKind::BitSelect { base, .. }
+            | ExprKind::PartSelect { base, .. }
+            | ExprKind::IndexedPartSelect { base, .. }
+            | ExprKind::ArraySelect { base, .. },
+        ) => driver_signal_of_lhs(db, *base),
+        NodeKind::Expr(ExprKind::HierPath { refs, .. }) => refs
+            .iter()
+            .rev()
+            .flatten()
+            .copied()
+            .find(|target| is_signal(db, *target)),
+        _ => signal_of_ref(db, id),
+    }
+}
+
+fn add_driver_lhs_write(db: &Db, lhs: NodeId, seen: &mut HashSet<NodeId>, out: &mut Vec<NodeId>) {
+    if let Some(sig) = driver_signal_of_lhs(db, lhs) {
         if seen.insert(sig) {
             out.push(sig);
         }
@@ -604,6 +683,232 @@ pub fn port_link_drivers(db: &Db) -> HashMap<NodeId, u32> {
     out
 }
 
+/// Signals driven by a connected port link, without counting top-level
+/// external ports or ports already classified as unconnected.
+///
+/// This set intentionally has different semantics from [`port_link_drivers`],
+/// whose historical counts are used by `multi-driver` and include every
+/// resolved side.  It is the active-flow view needed by `undriven-signal`.
+pub fn connected_port_link_drivers(db: &Db) -> HashSet<NodeId> {
+    let mut out = HashSet::new();
+    for (id, _) in iter_instances(db) {
+        let is_top = matches!(db.node_kind(id), NodeKind::ModuleInst { is_top: true, .. });
+        if is_top {
+            continue;
+        }
+        for c in &db.node(id).children {
+            let NodeKind::Port {
+                direction,
+                high,
+                low,
+                ..
+            } = db.node_kind(*c)
+            else {
+                continue;
+            };
+            if port_unconnected(db, *c) {
+                continue;
+            }
+            match direction {
+                Direction::Input => {
+                    if let Some(sig) = low {
+                        out.insert(*sig);
+                    }
+                }
+                Direction::Output => {
+                    if let Some(sig) = high {
+                        out.insert(*sig);
+                    }
+                }
+                Direction::Inout => {
+                    if let Some(sig) = low {
+                        out.insert(*sig);
+                    }
+                    if let Some(sig) = high {
+                        out.insert(*sig);
+                    }
+                }
+                Direction::None => {}
+            }
+        }
+    }
+    out
+}
+
+/// Signals read through a connected port link, without counting top-level
+/// external ports or ports already classified as unconnected.  Input and
+/// inout high connections use the owned expression tree when available, with
+/// the resolved `high` target retained as a direct-connection fallback.
+pub fn port_link_reads(db: &Db) -> HashSet<NodeId> {
+    let mut out = HashSet::new();
+    for (id, _) in iter_instances(db) {
+        let is_top = matches!(db.node_kind(id), NodeKind::ModuleInst { is_top: true, .. });
+        if is_top {
+            continue;
+        }
+        for c in &db.node(id).children {
+            let NodeKind::Port {
+                direction,
+                high,
+                high_expr,
+                low,
+                ..
+            } = db.node_kind(*c)
+            else {
+                continue;
+            };
+            if port_unconnected(db, *c) {
+                continue;
+            }
+            match direction {
+                Direction::Input => {
+                    if let Some(expr) = high_expr {
+                        out.extend(collect_reads(db, *expr));
+                    }
+                    if let Some(sig) = high {
+                        out.insert(*sig);
+                    }
+                }
+                Direction::Output => {
+                    if let Some(sig) = low {
+                        out.insert(*sig);
+                    }
+                }
+                Direction::Inout => {
+                    if let Some(sig) = low {
+                        out.insert(*sig);
+                    }
+                    if let Some(expr) = high_expr {
+                        out.extend(collect_reads(db, *expr));
+                    }
+                    if let Some(sig) = high {
+                        out.insert(*sig);
+                    }
+                }
+                Direction::None => {}
+            }
+        }
+    }
+    out
+}
+
+/// Backing signals of external top-level input and inout ports.
+pub fn top_external_port_signals(db: &Db) -> HashSet<NodeId> {
+    let mut out = HashSet::new();
+    for (id, _) in iter_instances(db) {
+        if !matches!(db.node_kind(id), NodeKind::ModuleInst { is_top: true, .. }) {
+            continue;
+        }
+        for c in &db.node(id).children {
+            let NodeKind::Port { direction, low, .. } = db.node_kind(*c) else {
+                continue;
+            };
+            if matches!(direction, Direction::Input | Direction::Inout) {
+                if let Some(sig) = low {
+                    out.insert(*sig);
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Signals backing a child port whose parent-side connection is absent or
+/// explicitly open.  `unconnected-port` owns these cases, so another rule
+/// must not repeat them as undriven child formals.
+pub fn unconnected_port_signals(db: &Db) -> HashSet<NodeId> {
+    let mut out = HashSet::new();
+    for (id, _) in iter_instances(db) {
+        if matches!(db.node_kind(id), NodeKind::ModuleInst { is_top: true, .. }) {
+            continue;
+        }
+        for c in &db.node(id).children {
+            if !port_unconnected(db, *c) {
+                continue;
+            }
+            let NodeKind::Port { high, low, .. } = db.node_kind(*c) else {
+                continue;
+            };
+            if let Some(sig) = high {
+                out.insert(*sig);
+            }
+            if let Some(sig) = low {
+                out.insert(*sig);
+            }
+        }
+    }
+    out
+}
+
+/// Signals read by input/inout terminals of captured structural primitives.
+/// Primitive-array objects are skipped because the database has no terminal
+/// expressions for their members.
+pub fn gate_terminal_reads(db: &Db) -> HashSet<NodeId> {
+    let mut out = HashSet::new();
+    for id in all_nodes(db) {
+        let NodeKind::Gate { class, terms, .. } = db.node_kind(id) else {
+            continue;
+        };
+        if *class == crate::core::db::PrimClass::Array {
+            continue;
+        }
+        for term in terms {
+            if matches!(term.direction, vpi::vpiInput | vpi::vpiInout) {
+                out.extend(collect_reads(db, term.expr));
+                if let Some(sig) = read_signal_of_expr(db, term.expr) {
+                    out.insert(sig);
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Resolve a terminal expression's final signal when its expression is a
+/// hierarchical path.  Ordinary refs/selects are already covered by
+/// `collect_reads`; this narrow supplement keeps gate input activity visible
+/// without changing that shared helper's existing semantics.
+fn read_signal_of_expr(db: &Db, id: NodeId) -> Option<NodeId> {
+    match db.node_kind(id) {
+        NodeKind::Expr(
+            ExprKind::BitSelect { base, .. }
+            | ExprKind::PartSelect { base, .. }
+            | ExprKind::IndexedPartSelect { base, .. }
+            | ExprKind::ArraySelect { base, .. },
+        ) => read_signal_of_expr(db, *base),
+        NodeKind::Expr(ExprKind::HierPath { refs, .. }) => refs
+            .iter()
+            .rev()
+            .flatten()
+            .find_map(|target| read_signal_of_expr(db, *target)),
+        _ => signal_of_ref(db, id),
+    }
+}
+
+/// Signals driven by output/inout terminals of captured structural
+/// primitives.  Primitive-array objects are skipped because their terminal
+/// expressions are unavailable.
+pub fn gate_terminal_drivers(db: &Db) -> HashSet<NodeId> {
+    let mut out = HashSet::new();
+    for id in all_nodes(db) {
+        let NodeKind::Gate { class, terms, .. } = db.node_kind(id) else {
+            continue;
+        };
+        if *class == crate::core::db::PrimClass::Array {
+            continue;
+        }
+        for term in terms {
+            if !matches!(term.direction, vpi::vpiOutput | vpi::vpiInout) {
+                continue;
+            }
+            if let Some(sig) = driver_signal_of_lhs(db, term.expr) {
+                out.insert(sig);
+            }
+        }
+    }
+    out
+}
+
 /// True for `always_comb` / `always @*` processes (combinational).  Latches
 /// (`always_latch`) and explicit event controls are not combinational.
 pub fn is_comb_process(db: &Db, id: NodeId) -> bool {
@@ -822,6 +1127,145 @@ mod tests {
             "output port drives the parent net"
         );
         assert_eq!(drivers[&out_b], 1);
+    }
+
+    #[test]
+    fn connected_port_activity_maps_source_and_skips_open_ports() {
+        let db = db_of(
+            "module child(input wire a, output wire b); endmodule \
+             module top; wire in_a, out_b; \
+             child connected (.a(in_a), .b(out_b)); \
+             child open (.b(out_b)); endmodule",
+        );
+        let connected = iter_instances(&db)
+            .find(|(_, path)| path == "top.connected")
+            .map(|(id, _)| id)
+            .expect("connected child instance");
+        let open = iter_instances(&db)
+            .find(|(_, path)| path == "top.open")
+            .map(|(id, _)| id)
+            .expect("open child instance");
+        let connected_input =
+            db.node(connected)
+                .children
+                .iter()
+                .find_map(|c| match db.node_kind(*c) {
+                    NodeKind::Port { low: Some(low), .. } if db.node(*c).name == "a" => Some(*low),
+                    _ => None,
+                });
+        let open_input = db
+            .node(open)
+            .children
+            .iter()
+            .find_map(|c| match db.node_kind(*c) {
+                NodeKind::Port { low: Some(low), .. } if db.node(*c).name == "a" => Some(*low),
+                _ => None,
+            });
+        let connected_output =
+            db.node(connected)
+                .children
+                .iter()
+                .find_map(|c| match db.node_kind(*c) {
+                    NodeKind::Port { low: Some(low), .. } if db.node(*c).name == "b" => Some(*low),
+                    _ => None,
+                });
+        let in_a = find_signal(&db, "in_a");
+        let out_b = find_signal(&db, "out_b");
+        let reads = port_link_reads(&db);
+        let drivers = connected_port_link_drivers(&db);
+
+        assert!(reads.contains(&in_a), "connected input actual is read");
+        assert!(reads.contains(&connected_output.expect("connected output low")));
+        assert!(drivers.contains(&connected_input.expect("connected input low")));
+        assert!(
+            drivers.contains(&out_b),
+            "connected output actual is driven"
+        );
+        assert!(open_input.is_some(), "open input has a backing signal");
+        assert!(
+            !drivers.contains(&open_input.expect("open input low")),
+            "unconnected input is not an active port-link driver"
+        );
+    }
+
+    #[test]
+    fn captures_named_and_positional_high_connection_expressions() {
+        let db = db_of(
+            "module child(input wire i); endmodule \
+             module top; logic named_floating, positional_floating; \
+             child named (.i(named_floating & 1'b1)); \
+             child positional (positional_floating | 1'b0); endmodule",
+        );
+        let port_for = |path: &str| {
+            let instance = iter_instances(&db)
+                .find(|(_, instance_path)| instance_path == path)
+                .map(|(id, _)| id)
+                .expect("child instance");
+            db.node(instance)
+                .children
+                .iter()
+                .copied()
+                .find(|child| {
+                    db.node(*child).name == "i"
+                        && matches!(db.node_kind(*child), NodeKind::Port { .. })
+                })
+                .expect("child input port")
+        };
+        let named_port = port_for("top.named");
+        let positional_port = port_for("top.positional");
+        let high_expr = |port: NodeId| match db.node_kind(port) {
+            NodeKind::Port {
+                high,
+                high_expr: Some(expr),
+                high_present,
+                high_open,
+                ..
+            } => {
+                assert!(high.is_none(), "an operation has no direct high target");
+                assert!(*high_present, "the expression is a present connection");
+                assert!(!*high_open, "the expression is not an open connection");
+                *expr
+            }
+            _ => panic!("expected captured high expression"),
+        };
+        let named_expr = high_expr(named_port);
+        let positional_expr = high_expr(positional_port);
+        assert!(matches!(
+            db.node_kind(named_expr),
+            NodeKind::Expr(ExprKind::Operation { .. })
+        ));
+        assert!(matches!(
+            db.node_kind(positional_expr),
+            NodeKind::Expr(ExprKind::Operation { .. })
+        ));
+        assert!(db.node(named_port).children.contains(&named_expr));
+        assert!(db.node(positional_port).children.contains(&positional_expr));
+
+        let named_floating = find_signal(&db, "named_floating");
+        let positional_floating = find_signal(&db, "positional_floating");
+        let reads = port_link_reads(&db);
+        assert!(reads.contains(&named_floating), "named actual is read");
+        assert!(
+            reads.contains(&positional_floating),
+            "positional actual is read"
+        );
+        assert_eq!(reads.len(), 2, "each actual is collected once");
+        let drivers = connected_port_link_drivers(&db);
+        assert!(!drivers.contains(&named_floating));
+        assert!(!drivers.contains(&positional_floating));
+    }
+
+    #[test]
+    fn gate_terminal_activity_maps_input_and_output_terms() {
+        let db = db_of("module t; wire a, b, y; and g(y, a, b); endmodule");
+        let a = find_signal(&db, "a");
+        let b = find_signal(&db, "b");
+        let y = find_signal(&db, "y");
+        let reads = gate_terminal_reads(&db);
+        let drivers = gate_terminal_drivers(&db);
+        assert!(reads.contains(&a), "gate input a is read");
+        assert!(reads.contains(&b), "gate input b is read");
+        assert!(drivers.contains(&y), "gate output y is driven");
     }
 
     /// All top-level cont assigns, in capture order.

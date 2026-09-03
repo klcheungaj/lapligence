@@ -22,7 +22,10 @@ the simulator (`src/sim/`):
   at lowering time), interface instances (actuals and per-port copies),
   their modports/io_decls,
   and interface-port connections (`IfaceConn` children), so `sim` can emit
-  interface link processes.  Packages (`uhdmallPackages`) carry their items as
+  interface link processes. Ordinary ports retain both the historical direct
+  `high` target and an owned `high_expr` tree for expression-valued actuals,
+  so consumers can recover parent-side reads after the Surelog session ends.
+  Packages (`uhdmallPackages`) carry their items as
   children: parameters (values resolved via `elab::Resolver`), enum constants
   of the package's enum typedefs, and package functions/tasks
   (`NodeKind::FuncTask`).  Classes (`uhdmallClasses`, `Db::classes`) are
@@ -54,7 +57,7 @@ the simulator (`src/sim/`):
   LSP dependencies; built once per analysis commit (see
   `src/bin/llg_ls/features.rs::analyze_inner`), never inside a request.
 - `lint/` — shared rule engine over `db` + `model`: `LintRule`/`LintCtx`/
-  `LintDiag` and a registry of 16 default rules (see
+  `LintDiag` and a registry of 21 default rules (see
   `src/core/lint/rules/mod.rs::default_rules` for the authoritative list).
   Consumed by the LSP (lint diagnostics with source `llg-lint`) and
   `llg --lint`.

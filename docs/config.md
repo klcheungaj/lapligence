@@ -67,6 +67,11 @@ Default rules (enabled; find `[lint.rules.<id>]` snippets below):
 | `comparison-width-mismatch` | comparisons (`==`, `<`, …) with differing known widths |
 | `unconnected-port` | instance ports left unconnected |
 | `mixed-assignments` | blocking and non-blocking assignments in one process |
+| `undriven-signal` | signals that are read but have no known source |
+| `incomplete-sensitivity-list` | explicit level-sensitive blocks missing a body input |
+| `out-of-range-select` | statically provable packed or unpacked select overflow |
+| `xz-logical-equality` | `==`/`!=` used directly with an X/Z literal |
+| `duplicate-case-item` | repeated literal labels in an exact `case` |
 
 ```toml
 schema_version = 1

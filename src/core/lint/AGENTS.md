@@ -78,7 +78,8 @@ Rules read only owned data — no VPI access, no raw FFI, no LSP dependencies.
     unconnected — omitted from the connection list, positional gaps, and
     explicitly-empty `.p()` connections — uniformly at Warning.  The db
     captures per-port high-connection presence facts (`high_present`,
-    `high_open`) because a resolved `high: None` alone is ambiguous:
+    `high_open`) and an owned `high_expr` tree because a resolved `high: None`
+    alone is ambiguous:
     omitted ports have no `vpiHighConn`, `.p()` is a `vpiNullOp` operation
     marker (zero operands), and expression/constant connections
     (`.i(a & b)`, `.v(4'd0)`) are real objects that count as connected.
@@ -99,6 +100,32 @@ Rules read only owned data — no VPI access, no raw FFI, no LSP dependencies.
     `nba-in-always_comb` (kind-vs-block-type mismatches): no suppression,
     the diagnoses differ and this rule also covers block kinds the other
     two never check (plain level-sensitive always, initial/final).
+  - `undriven.rs` — `undriven-signal`: flags a declared signal that is read
+    but has no active procedural/continuous driver, declaration initializer,
+    connected output/inout flow, or primitive output terminal. Top-level
+    external inputs/inouts, explicitly open child ports, implicit nets,
+    intrinsic pull/supply nets, and synthesized interface copies are skipped.
+    Input/inout actual expressions are read through the owned port
+    `high_expr`, while the historical direct `high` target remains available
+    to model/codegen consumers.
+  - `sensitivity.rs` — `incomplete-sensitivity-list`: flags a plain explicit
+    level-sensitive `always @(...)` when a directly read input is absent.
+    A local written earlier on every represented path is treated as a
+    temporary; uncertain control flow and partial/selected writes fail safe
+    by keeping the signal as an input dependency. Identical findings from
+    cloned module instances are source-deduplicated.
+    Edge, named-event, mixed/complex, implicit `@*`, special `always_*`, and
+    nested timing-control forms are skipped when correctness cannot be proven.
+  - `select_range.rs` — `out-of-range-select`: checks statically known bit,
+    part, indexed-part, and unpacked-array selectors against owned elaborated
+    bounds. Dynamic selectors, unresolved ranges, and ambiguous
+    multidimensional packed shapes are intentionally quiet.
+  - `xz_comparison.rs` — `xz-logical-equality`: flags `==`/`!=` with a direct
+    X/Z/? literal operand (including transparent casts); case/wildcard
+    equality, parameter references, and nonliteral expressions are skipped.
+  - `duplicate_case.rs` — `duplicate-case-item`: flags every later exact
+    captured literal repeated in one exact `case`. Wildcard cases and
+    nonliteral/equivalent-but-differently-represented expressions are skipped.
   - `analysis.rs` — shared owned-db helpers: read/write collection,
     expression-width computation, scope/instance iteration, port-link
     bookkeeping (deterministic, deduped, first-encounter order),
@@ -112,10 +139,9 @@ Rules read only owned data — no VPI access, no raw FFI, no LSP dependencies.
 - **No VPI access** — rules work on the owned `db`/`model` built by
   `core::db::Db::build`; `core::db` is the single VPI traversal point.
 - **No LSP dependencies** (tower-lsp/gag/dashmap stay in `src/bin/llg_ls`).
-- Rules do not see `NodeKind::Gate` structural primitives yet, so a signal
-  whose only readers are gate input terminals can still be flagged by
-  `unused-signal` (known false positive until gate terminals join read
-  collection).
+- `unused-signal` still uses its historical activity model, but
+  `undriven-signal` additionally accounts for captured structural primitive
+  input/output terminals and expression-valued port actuals.
 
 ## Configuration (`llg-lint.toml`)
 

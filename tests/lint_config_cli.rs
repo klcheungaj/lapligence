@@ -20,6 +20,33 @@ const UNUSED_SV: &str = r#"module unused;
 endmodule
 "#;
 
+const CARELESS_MORE_SV: &str = r#"module careless_more (
+    input logic a,
+    input logic b,
+    input logic [7:0] bus,
+    input logic [1:0] sel,
+    output logic sensitivity_result,
+    output logic case_result,
+    output logic floating_result,
+    output logic range_result,
+    output logic xz_result
+);
+    logic floating;
+    assign floating_result = floating;
+    always @(a) sensitivity_result = a & b;
+    assign range_result = bus[8];
+    assign xz_result = (a == 1'bx);
+    always_comb begin
+        case (sel)
+            2'd0: case_result = 1'b0;
+            2'd1: case_result = 1'b1;
+            2'd1: case_result = a;
+            default: case_result = b;
+        endcase
+    end
+endmodule
+"#;
+
 struct TempDir {
     path: std::path::PathBuf,
 }
@@ -277,4 +304,56 @@ endmodule
         !stdout.contains("SIM-OUTPUT"),
         "simulation must not run: {stdout}"
     );
+}
+
+#[test]
+fn cli_lint_json_exposes_expanded_shared_rules_and_severity_override() {
+    let dir = TempDir::new("expanded_rules");
+    dir.write("design.sv", CARELESS_MORE_SV);
+    let cfg = dir.write(
+        "llg-lint.toml",
+        "[rules.duplicate-case-item]\nseverity = \"error\"\n",
+    );
+    let out = run_llg(
+        &dir.path,
+        &[
+            "--lint-json",
+            "--lint-config",
+            cfg.to_str().unwrap(),
+            "--top",
+            "careless_more",
+            "design.sv",
+        ],
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
+    let err = stderr(&out);
+    let report: serde_json::Value = serde_json::from_str(&stdout).expect("valid lint JSON");
+
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "stderr: {err}\nstdout: {stdout}"
+    );
+    for rule in [
+        "undriven-signal",
+        "incomplete-sensitivity-list",
+        "out-of-range-select",
+        "xz-logical-equality",
+        "duplicate-case-item",
+    ] {
+        assert!(
+            stdout.contains(&format!("\"rule\": \"{rule}\"")),
+            "missing {rule}: {stdout}"
+        );
+    }
+    let duplicate = report["diagnostics"]
+        .as_array()
+        .and_then(|diags| {
+            diags
+                .iter()
+                .find(|diag| diag["rule"] == "duplicate-case-item")
+        })
+        .expect("duplicate-case-item diagnostic");
+    assert_eq!(duplicate["severity"], "error", "report: {report}");
+    assert!(stdout.contains("\"errors\": 1"), "stdout: {stdout}");
 }
