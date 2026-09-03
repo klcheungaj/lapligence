@@ -22,6 +22,7 @@ use std::time::Instant;
 const LOG_LEVEL_ENV: &str = "LLG_LOG";
 const LOG_FILE_ENV: &str = "LLG_LOG_FILE";
 const DEFAULT_LOG_LEVEL: Level = Level::Warn;
+const BOUNDED_FIELD_MAX_BYTES: usize = 128;
 
 static LOGGER: OnceLock<Logger> = OnceLock::new();
 static NEXT_CORRELATION_ID: AtomicU64 = AtomicU64::new(1);
@@ -71,6 +72,35 @@ pub(crate) fn enabled(level: Level) -> bool {
         .get_or_init(Logger::from_environment)
         .level
         .allows(level)
+}
+
+/// Bound a value before it is included in a lifecycle record.  Transport
+/// metadata can originate in a client request, so it must not be allowed to
+/// turn debug logging into another unbounded allocation.
+pub(crate) fn bounded_field(value: &str) -> String {
+    let mut result = String::new();
+    let mut truncated = false;
+    for character in value.chars() {
+        let escaped = match character {
+            '\n' => "\\n".to_owned(),
+            '\r' => "\\r".to_owned(),
+            '\t' => "\\t".to_owned(),
+            character if character.is_control() => "?".to_owned(),
+            character => character.to_string(),
+        };
+        if result.len().saturating_add(escaped.len()) > BOUNDED_FIELD_MAX_BYTES {
+            truncated = true;
+            break;
+        }
+        result.push_str(&escaped);
+    }
+    if truncated {
+        while result.len().saturating_add(3) > BOUNDED_FIELD_MAX_BYTES {
+            result.pop();
+        }
+        result.push_str("...");
+    }
+    result
 }
 
 /// Register a cheap, non-blocking current-process memory sampler.

@@ -54,6 +54,35 @@ pub struct CompileOpts {
     pub quiet: bool,
 }
 
+/// Surelog command-line parser modes configured through the C API setters.
+///
+/// These values are kept separate from [`SurelogInvocation::argv`] because
+/// the corresponding switches do not appear in the argument vector handed to
+/// Surelog.  `quiet` is included here as the logical mode even though its
+/// `-noinfo`/`-nonote` representation is part of `argv`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SurelogSetterModes {
+    pub parse: bool,
+    pub write_pp_output: bool,
+    pub compile: bool,
+    pub elaborate: bool,
+    pub elab_uhdm: bool,
+    pub mute_stdout: bool,
+    pub quiet: bool,
+}
+
+/// Exact Surelog invocation description used by the LSP diagnostic logger.
+///
+/// `argv` includes the program name (`llg`) at index zero, matching the
+/// vector passed to the native command-line parser.  It contains only the
+/// explicit strings accepted by [`surelog::SessionBuilder::add_arg`];
+/// setter-configured modes are reported in [`setters`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SurelogInvocation {
+    pub argv: Vec<String>,
+    pub setters: SurelogSetterModes,
+}
+
 impl Default for CompileOpts {
     fn default() -> Self {
         CompileOpts {
@@ -68,6 +97,168 @@ impl Default for CompileOpts {
             quiet: true,
         }
     }
+}
+
+fn compile_setter_modes(opts: &CompileOpts) -> SurelogSetterModes {
+    SurelogSetterModes {
+        parse: true,
+        write_pp_output: true,
+        compile: true,
+        elaborate: opts.elaborate,
+        elab_uhdm: opts.elab_uhdm,
+        mute_stdout: opts.mute_stdout,
+        quiet: opts.quiet,
+    }
+}
+
+/// Visit the explicit compile arguments in the exact order used by
+/// [`compile`].  Keeping construction here avoids the logged representation
+/// drifting from the native invocation while allowing the normal compile
+/// path to avoid an extra allocation.
+fn visit_compile_args(opts: &CompileOpts, mut visit: impl FnMut(&str) -> bool) -> bool {
+    for arg in ["-nocache"] {
+        if !visit(arg) {
+            return false;
+        }
+    }
+    if opts.quiet {
+        for arg in ["-noinfo", "-nonote"] {
+            if !visit(arg) {
+                return false;
+            }
+        }
+    }
+    for arg in opts
+        .defines
+        .iter()
+        .chain(&opts.include_dirs)
+        .chain(&opts.param_overrides)
+        .chain(&opts.files)
+    {
+        if !visit(arg) {
+            return false;
+        }
+    }
+    if let Some(top) = &opts.top {
+        for arg in ["-top", top.as_str()] {
+            if !visit(arg) {
+                return false;
+            }
+        }
+    }
+    true
+}
+
+fn compile_argument_nul_error(arg: &str) -> String {
+    format!("surelog compile argument contains NUL: {arg:?}")
+}
+
+fn add_compile_args(
+    builder: &mut surelog::SessionBuilder,
+    opts: &CompileOpts,
+) -> Result<(), String> {
+    let mut rejected_arg = None;
+    if visit_compile_args(opts, |arg| {
+        if builder.add_arg(arg) {
+            true
+        } else {
+            rejected_arg = Some(arg.to_owned());
+            false
+        }
+    }) {
+        Ok(())
+    } else {
+        Err(compile_argument_nul_error(
+            rejected_arg.as_deref().unwrap_or_default(),
+        ))
+    }
+}
+
+/// Return the exact explicit argv and setter modes for a full compile run.
+pub fn compile_invocation(opts: &CompileOpts) -> Result<SurelogInvocation, String> {
+    let mut argv = vec!["llg".to_owned()];
+    let mut rejected_arg = None;
+    if !visit_compile_args(opts, |arg| {
+        if arg.contains('\0') {
+            rejected_arg = Some(arg.to_owned());
+            false
+        } else {
+            argv.push(arg.to_owned());
+            true
+        }
+    }) {
+        return Err(compile_argument_nul_error(
+            rejected_arg.as_deref().unwrap_or_default(),
+        ));
+    }
+    Ok(SurelogInvocation {
+        argv,
+        setters: compile_setter_modes(opts),
+    })
+}
+
+fn parse_only_setter_modes() -> SurelogSetterModes {
+    SurelogSetterModes {
+        parse: false,
+        write_pp_output: false,
+        compile: false,
+        elaborate: false,
+        elab_uhdm: false,
+        mute_stdout: true,
+        quiet: true,
+    }
+}
+
+/// Visit the explicit parse-only arguments in the exact order used by
+/// [`parse_only`].
+fn visit_parse_only_args(
+    file: &str,
+    defines: &[String],
+    mut visit: impl FnMut(&str) -> bool,
+) -> bool {
+    for arg in ["-parseonly", "-nocache", "-nobuiltin", "-noinfo", "-nonote"] {
+        if !visit(arg) {
+            return false;
+        }
+    }
+    for define in defines {
+        if !visit(define) {
+            return false;
+        }
+    }
+    visit(file)
+}
+
+/// Return the exact explicit argv and setter modes for an isolated parse.
+pub fn parse_only_invocation(file: &str, defines: &[String]) -> Result<SurelogInvocation, String> {
+    let mut argv = vec!["llg".to_owned()];
+    let mut rejected_arg = None;
+    if !visit_parse_only_args(file, defines, |arg| {
+        if arg.contains('\0') {
+            rejected_arg = Some(arg.to_owned());
+            false
+        } else {
+            argv.push(arg.to_owned());
+            true
+        }
+    }) {
+        let rejected_arg = rejected_arg.as_deref().unwrap_or_default();
+        if rejected_arg == file {
+            return Err("surelog parse-only source path contains NUL".to_owned());
+        }
+        if defines.iter().any(|define| define == rejected_arg) {
+            return Err(format!(
+                "surelog parse-only define contains NUL: {rejected_arg:?}"
+            ));
+        }
+        return Err(format!(
+            "surelog parse-only argument contains NUL: {rejected_arg:?}"
+        ));
+    }
+    Ok(SurelogInvocation {
+        argv,
+        setters: parse_only_setter_modes(),
+    })
 }
 
 /// The outcome of a [`compile`] run: the owning session plus a snapshot of
@@ -91,6 +282,12 @@ pub struct ParseOnlyOut {
     /// Parse-tree semantic-token inputs.  `-parseonly` bypasses preprocessing,
     /// so this contains only the requested source file.
     pub tokens: Vec<FileTokens>,
+    /// Number of token nodes collected directly from Surelog before source
+    /// supplementation.
+    pub parsed_token_count: usize,
+    /// Number of token nodes added by the source-local module-boundary
+    /// supplement.
+    pub supplemented_token_count: usize,
 }
 
 impl CompileOut {
@@ -126,47 +323,37 @@ pub fn compile(opts: &CompileOpts) -> Result<CompileOut, String> {
     let _guard = SURELOG_LOCK
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let setters = compile_setter_modes(opts);
     let mut builder = surelog::SessionBuilder::new()
         .ok_or_else(|| "surelog: failed to initialise session".to_string())?;
     // write_pp_output is required for the full pipeline (Surelog's `-parse`
     // flag enables it implicitly); the design is empty without it.
-    builder.set_parse().set_write_pp_output().set_compile();
+    if setters.parse {
+        builder.set_parse();
+    }
+    if setters.write_pp_output {
+        builder.set_write_pp_output();
+    }
+    if setters.compile {
+        builder.set_compile();
+    }
     // `-nocache`: Surelog's compilation cache is UNSAFE for repeated
     // sessions inside one process — cached payloads carry file references
     // from the session that produced them, so from the third sequential
     // compile on, `vpiFile` strings (and anything derived from them, like
     // the source-text recovery of `#N` delays and `disable` targets) point
     // at earlier sessions' paths.  Correctness over cache speed.
-    builder.add_arg("-nocache");
-    if opts.elaborate {
+    if setters.elaborate {
         builder.set_elaborate();
     }
-    if opts.elab_uhdm {
+    if setters.elab_uhdm {
         builder.set_elab_uhdm();
     }
-    if opts.mute_stdout {
+    if setters.mute_stdout {
         builder.set_mute_stdout();
     }
-    if opts.quiet {
-        // -noinfo/-nonote filter *info* and *note* messages only; errors and
-        // warnings always stay in the container so diagnostics stay useful.
-        builder.add_arg("-noinfo");
-        builder.add_arg("-nonote");
-    }
 
-    for arg in opts
-        .defines
-        .iter()
-        .chain(&opts.include_dirs)
-        .chain(&opts.param_overrides)
-        .chain(&opts.files)
-    {
-        builder.add_arg(arg);
-    }
-    if let Some(top) = &opts.top {
-        builder.add_arg("-top");
-        builder.add_arg(top);
-    }
+    add_compile_args(&mut builder, opts)?;
 
     let session = builder
         .build()
@@ -191,21 +378,31 @@ pub fn parse_only(file: &str, defines: &[String]) -> Result<ParseOnlyOut, String
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     let mut builder = surelog::SessionBuilder::new()
         .ok_or_else(|| "surelog: failed to initialise parse-only session".to_string())?;
-    builder.set_mute_stdout();
-    for arg in ["-parseonly", "-nocache", "-nobuiltin", "-noinfo", "-nonote"] {
-        if !builder.add_arg(arg) {
-            return Err(format!("surelog parse-only argument contains NUL: {arg:?}"));
-        }
+    let setters = parse_only_setter_modes();
+    if setters.mute_stdout {
+        builder.set_mute_stdout();
     }
-    for define in defines {
-        if !builder.add_arg(define) {
+    let mut rejected_arg = None;
+    if !visit_parse_only_args(file, defines, |arg| {
+        if builder.add_arg(arg) {
+            true
+        } else {
+            rejected_arg = Some(arg.to_owned());
+            false
+        }
+    }) {
+        let rejected_arg = rejected_arg.unwrap_or_default();
+        if rejected_arg == file {
+            return Err("surelog parse-only source path contains NUL".to_owned());
+        }
+        if defines.iter().any(|define| define == &rejected_arg) {
             return Err(format!(
-                "surelog parse-only define contains NUL: {define:?}"
+                "surelog parse-only define contains NUL: {rejected_arg:?}"
             ));
         }
-    }
-    if !builder.add_arg(file) {
-        return Err("surelog parse-only source path contains NUL".to_owned());
+        return Err(format!(
+            "surelog parse-only argument contains NUL: {rejected_arg:?}"
+        ));
     }
 
     let session = builder
@@ -216,11 +413,148 @@ pub fn parse_only(file: &str, defines: &[String]) -> Result<ParseOnlyOut, String
         .design()
         .map(|design| tokens::collect_parse_tokens(&design).0)
         .unwrap_or_default();
+    let parsed_token_count = tokens.iter().map(|file| file.nodes.len()).sum();
     if let Ok(source) = std::fs::read_to_string(file) {
         tokens::supplement_source_local_module_tokens(file, &source, &mut tokens);
     }
+    let token_count: usize = tokens.iter().map(|file| file.nodes.len()).sum();
+    let supplemented_token_count = token_count.saturating_sub(parsed_token_count);
+    // The returned value owns no session-scoped data.  Drop explicitly so the
+    // LSP's post-return log can distinguish native teardown from token
+    // encoding, and so this guarantee remains obvious if the result grows.
+    drop(session);
     Ok(ParseOnlyOut {
         diagnostics,
         tokens,
+        parsed_token_count,
+        supplemented_token_count,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{compile_invocation, parse_only_invocation, CompileOpts, SurelogSetterModes};
+
+    #[test]
+    fn compile_invocation_matches_surelog_argument_order_and_setters() {
+        let opts = CompileOpts {
+            files: vec!["shadow/top.sv".to_owned(), "shadow/child.sv".to_owned()],
+            top: Some("top".to_owned()),
+            defines: vec!["-DDEBUG=1".to_owned()],
+            param_overrides: vec!["-PWIDTH=8".to_owned()],
+            include_dirs: vec!["-Ishadow/inc".to_owned(), "-Ireal/inc".to_owned()],
+            ..Default::default()
+        };
+
+        let invocation = compile_invocation(&opts).expect("valid compile arguments");
+
+        assert_eq!(
+            invocation.argv,
+            vec![
+                "llg",
+                "-nocache",
+                "-noinfo",
+                "-nonote",
+                "-DDEBUG=1",
+                "-Ishadow/inc",
+                "-Ireal/inc",
+                "-PWIDTH=8",
+                "shadow/top.sv",
+                "shadow/child.sv",
+                "-top",
+                "top",
+            ]
+        );
+        assert_eq!(
+            invocation.setters,
+            SurelogSetterModes {
+                parse: true,
+                write_pp_output: true,
+                compile: true,
+                elaborate: true,
+                elab_uhdm: true,
+                mute_stdout: true,
+                quiet: true,
+            }
+        );
+    }
+
+    #[test]
+    fn compile_invocation_omits_disabled_quiet_and_top_arguments() {
+        let opts = CompileOpts {
+            files: vec!["top.sv".to_owned()],
+            elaborate: false,
+            elab_uhdm: false,
+            mute_stdout: false,
+            quiet: false,
+            ..Default::default()
+        };
+
+        let invocation = compile_invocation(&opts).expect("valid compile arguments");
+
+        assert_eq!(invocation.argv, vec!["llg", "-nocache", "top.sv"]);
+        assert_eq!(
+            invocation.setters,
+            SurelogSetterModes {
+                parse: true,
+                write_pp_output: true,
+                compile: true,
+                elaborate: false,
+                elab_uhdm: false,
+                mute_stdout: false,
+                quiet: false,
+            }
+        );
+    }
+
+    #[test]
+    fn parse_only_invocation_includes_flags_defines_and_file_in_order() {
+        let invocation = parse_only_invocation(
+            "/tmp/shadow/open.sv",
+            &["-DDEBUG".to_owned(), "-DWIDTH=8".to_owned()],
+        )
+        .expect("valid parse-only arguments");
+
+        assert_eq!(
+            invocation.argv,
+            vec![
+                "llg",
+                "-parseonly",
+                "-nocache",
+                "-nobuiltin",
+                "-noinfo",
+                "-nonote",
+                "-DDEBUG",
+                "-DWIDTH=8",
+                "/tmp/shadow/open.sv",
+            ]
+        );
+        assert_eq!(
+            invocation.setters,
+            SurelogSetterModes {
+                parse: false,
+                write_pp_output: false,
+                compile: false,
+                elaborate: false,
+                elab_uhdm: false,
+                mute_stdout: true,
+                quiet: true,
+            }
+        );
+    }
+
+    #[test]
+    fn invocation_rejects_nul_without_claiming_the_argument() {
+        let opts = CompileOpts {
+            files: vec!["top\0.sv".to_owned()],
+            ..Default::default()
+        };
+
+        let error = compile_invocation(&opts).expect_err("NUL must be rejected");
+        assert!(error.contains("NUL"));
+        assert!(error.contains("top\\0.sv"));
+
+        let error = parse_only_invocation("open\0.sv", &[]).expect_err("NUL must be rejected");
+        assert_eq!(error, "surelog parse-only source path contains NUL");
+    }
 }

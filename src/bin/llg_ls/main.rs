@@ -31,6 +31,8 @@ mod workspace;
 #[cfg(test)]
 mod conditional_conformance;
 
+use std::future::Future;
+use std::pin::Pin;
 use std::task::{Context, Poll};
 use std::time::Duration;
 
@@ -67,24 +69,52 @@ struct LifecycleService<S> {
 impl<S> Service<Request> for LifecycleService<S>
 where
     S: Service<Request, Response = Option<Response>> + Send + 'static,
-    S::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
-    S::Future: Send,
+    S::Error: Into<Box<dyn std::error::Error + Send + Sync>> + 'static,
+    S::Future: Send + 'static,
 {
     type Response = Option<Response>;
     type Error = S::Error;
-    type Future = S::Future;
+    type Future = Pin<Box<dyn Future<Output = Result<Option<Response>, S::Error>> + Send>>;
 
     fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         self.inner.poll_ready(cx)
     }
 
     fn call(&mut self, req: Request) -> Self::Future {
+        let method = logging::bounded_field(req.method());
+        let request_id = req
+            .id()
+            .map(ToString::to_string)
+            .map(|id| logging::bounded_field(&id))
+            .unwrap_or_else(|| "-".to_owned());
+        let has_params = req.params().is_some();
+        crate::llg_trace!(
+            "event=transport.receive method={} id={} has_params={}",
+            method,
+            request_id,
+            has_params
+        );
         match req.method() {
             "shutdown" => schedule_shutdown(),
             "exit" => schedule_exit(),
             _ => {}
         }
-        self.inner.call(req)
+        let future = self.inner.call(req);
+        Box::pin(async move {
+            let result = future.await;
+            let outcome = match &result {
+                Ok(Some(_)) => "response",
+                Ok(None) => "notification",
+                Err(_) => "error",
+            };
+            crate::llg_trace!(
+                "event=transport.dispatch.end method={} id={} outcome={}",
+                method,
+                request_id,
+                outcome
+            );
+            result
+        })
     }
 }
 
