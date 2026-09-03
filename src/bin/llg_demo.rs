@@ -9,7 +9,6 @@
 
 use llg::core::tokens;
 use llg::ffi::surelog;
-use llg::ffi::vpi;
 
 fn visit_instance(inst: &surelog::ModuleInstance<'_>) {
     let path = inst.full_path_name();

@@ -996,7 +996,7 @@ mod tests {
             "`endif\n",
             "x = `SHOWN;\n",
         );
-        let (usages, decls, _) = scan_one(&[], undefined);
+        let (_usages, decls, _) = scan_one(&[], undefined);
         assert_eq!(decls.len(), 1);
         assert_eq!(decls[0].definition.name, "SHOWN");
 

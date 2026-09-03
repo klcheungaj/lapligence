@@ -357,41 +357,6 @@ impl LspProcess {
         self.request_with_timeout(method, params, REQUEST_TIMEOUT)
     }
 
-    /// Send a request WITHOUT a `params` member (the exact wire shape
-    /// tower-lsp's parameterless built-ins accept).
-    fn request_no_params(&mut self, method: &str) -> Result<Value, String> {
-        let id = json!(self.next_id);
-        self.next_id += 1;
-        self.send_message(json!({
-            "jsonrpc": "2.0",
-            "id": id,
-            "method": method,
-        }))?;
-
-        let deadline = Instant::now() + REQUEST_TIMEOUT;
-        loop {
-            if let Some(index) = self
-                .orphan_responses
-                .iter()
-                .position(|message| message.get("id") == Some(&id))
-            {
-                let message = self.orphan_responses.remove(index);
-                if let Some(error) = message.get("error") {
-                    return Err(format!("LSP request {method} failed: {error}"));
-                }
-                return Ok(message.get("result").cloned().unwrap_or(Value::Null));
-            }
-            let message = self.receive_until(deadline)?;
-            if message.get("id") == Some(&id) && message.get("method").is_none() {
-                if let Some(error) = message.get("error") {
-                    return Err(format!("LSP request {method} failed: {error}"));
-                }
-                return Ok(message.get("result").cloned().unwrap_or(Value::Null));
-            }
-            self.route_unsolicited(message)?;
-        }
-    }
-
     fn request_with_timeout(
         &mut self,
         method: &str,
@@ -878,7 +843,6 @@ fn semantic_token_positions(result: &Value) -> Vec<(u64, u64)> {
 struct SemanticRow {
     line: u64,
     character: u64,
-    length: u64,
     token_type: String,
     modifiers: Vec<String>,
 }
@@ -927,7 +891,6 @@ fn semantic_token_rows(
         rows.push(SemanticRow {
             line,
             character,
-            length: token[2].as_u64().expect("semantic token length"),
             token_type: legend_types[type_index].clone(),
             modifiers: legend_modifiers
                 .iter()
@@ -5554,7 +5517,7 @@ fn memo_cache_stats(client: &mut LspProcess, uri: &str) -> (u64, u64) {
         .unwrap_or_else(|| {
             panic!("dumpTokens must carry a # request-cache: stats line: {lines:?}")
         });
-    let mut parse = |marker: &str| -> u64 {
+    let parse = |marker: &str| -> u64 {
         stats_line
             .split_whitespace()
             .find_map(|part| part.strip_prefix(marker))

@@ -175,8 +175,6 @@ pub struct ConfigLoad {
     /// that were dropped instead of failing the load.  Reported once per load
     /// against the TOML URI; they never fail the load.
     pub warnings: Vec<ConfigError>,
-    /// Whether the config file existed on disk.
-    pub present: bool,
 }
 
 // ── Raw TOML shape ───────────────────────────────────────────────────────────
@@ -313,29 +311,6 @@ pub fn parse_config_detailed(base_dir: &Path, text: &str) -> Result<ParsedConfig
     })
 }
 
-/// Parse `text` as a `llg.toml` relative to `base_dir` (the directory
-/// containing the config file).  On any error the whole config is rejected.
-/// Soft entry-level warnings are available from [`parse_config_detailed`].
-pub fn parse_config(base_dir: &Path, text: &str) -> Result<LlgConfig, ConfigError> {
-    Ok(parse_config_detailed(base_dir, text)?.config)
-}
-
-/// Load and parse `<root>/llg.toml`.
-///
-/// A missing file produces a present `ConfigLoad` with `config: None` (callers
-/// apply safe defaults).  A malformed file is rejected atomically with its
-/// errors.  I/O errors other than "not found" propagate as `Err`.
-pub fn load_config(root: &Path) -> io::Result<ConfigLoad> {
-    let root = workspace::normalize_absolute_path(root).ok_or_else(|| {
-        io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "config root must be an absolute path",
-        )
-    })?;
-    let path = root.join(CONFIG_FILE);
-    load_config_file(&path)
-}
-
 /// Load and parse the config file at an explicit absolute path.
 ///
 /// Relative paths inside the TOML resolve from the directory containing the
@@ -366,7 +341,6 @@ pub fn load_config_file(path: &Path) -> io::Result<ConfigLoad> {
                 config,
                 errors,
                 warnings,
-                present: true,
             })
         }
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(ConfigLoad {
@@ -374,7 +348,6 @@ pub fn load_config_file(path: &Path) -> io::Result<ConfigLoad> {
             config: None,
             errors: Vec::new(),
             warnings: Vec::new(),
-            present: false,
         }),
         Err(error) => Err(error),
     }
@@ -866,7 +839,7 @@ mod tests {
         std::fs::create_dir_all(&dir).expect("create config root");
         let path = dir.join(CONFIG_FILE);
         std::fs::write(&path, text).expect("write config");
-        load_config(&dir).expect("load config")
+        load_config_file(&dir.join(CONFIG_FILE)).expect("load config")
     }
 
     #[test]
@@ -922,8 +895,7 @@ mod tests {
         let root = std::env::temp_dir().join(format!("llg_cfg_missing_{}", std::process::id()));
         let dir = root.join("proj");
         std::fs::create_dir_all(&dir).expect("create dir");
-        let load = load_config(&dir).expect("load missing config");
-        assert!(!load.present);
+        let load = load_config_file(&dir.join(CONFIG_FILE)).expect("load missing config");
         assert!(load.config.is_none());
         assert!(load.errors.is_empty());
         let defaults = default_config(&dir);
@@ -1472,7 +1444,7 @@ mod tests {
              include_dirs = [\"vendor/inc\"]\n",
         )
         .expect("write config");
-        let load = load_config(&dir).expect("load config");
+        let load = load_config_file(&dir.join(CONFIG_FILE)).expect("load config");
         assert!(load.config.is_some(), "missing directories are non-fatal");
         assert!(load.errors.is_empty());
         assert_eq!(load.warnings.len(), 2, "one warning per missing directory");

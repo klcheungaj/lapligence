@@ -110,10 +110,6 @@ fn visit_inst(mi: VpiHandle) {
     }
 }
 
-fn t_of(h: VpiHandle) -> std::os::raw::c_int {
-    vpi::obj_type(h)
-}
-
 #[test]
 fn probe_bindings() {
     in_temp_dir(|| {

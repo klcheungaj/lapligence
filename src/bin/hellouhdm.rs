@@ -185,7 +185,7 @@ fn main() {
                 let end_column = vpi::get(vpi::vpiEndColumnNo, sub_h);
                 let def_name = vpi::get_str(vpi::vpiDefName, sub_h);
                 let obj_name = vpi::obj_name(sub_h);
-                result.push_str(&format!("\n    \\_ net stmt, def name:{def_name}, obj name:{obj_name}, start={sub_line}:{column}, end={end_line}:{end_column}"));
+                result.push_str(&format!("\n    \\_ net stmt, file:{sub_file}, def name:{def_name}, obj name:{obj_name}, start={sub_line}:{column}, end={end_line}:{end_column}"));
             }
 
             for sub_h in vpi::iterate(vpi::vpiParameters, obj_h)

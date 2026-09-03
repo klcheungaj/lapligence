@@ -457,6 +457,16 @@ fn build_surelog_wrapper(manifest_dir: &Path) {
             .flag("-std=c++17");
     }
 
+    // Surelog/UHDM's generated listener interface intentionally provides
+    // no-op virtual methods whose parameters are unused.  The wrapper must
+    // include those headers, so suppress only the corresponding warning for
+    // this translation unit rather than mutating generated/vendor sources.
+    if is_msvc {
+        wrapper.flag("/wd4100");
+    } else {
+        wrapper.flag("-Wno-unused-parameter");
+    }
+
     // Preprocessor defines: `.define` renders per-toolchain (-D vs /D),
     // unlike raw `-D` flags.
     wrapper

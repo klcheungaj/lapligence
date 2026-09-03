@@ -320,13 +320,9 @@ pub(crate) fn module_graph_definition_id(
 
 impl AnalysisOutcome {
     /// Whether this outcome contains a usable feature snapshot.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn is_valid(self) -> bool {
         matches!(self, Self::Valid)
-    }
-
-    /// Alias for callers that describe a valid pass as a successful pass.
-    pub fn is_success(self) -> bool {
-        self.is_valid()
     }
 }
 
@@ -403,6 +399,7 @@ impl Analysis {
     ///
     /// Passes an empty UHDM binding map — hand-built analyses have no
     /// elaborated design behind them, matching the parse-tree fallback shape.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn new(
         diagnostics: Vec<Diag>,
         model: DesignModel,
@@ -571,13 +568,9 @@ impl Analysis {
     }
 
     /// Whether this analysis is a valid replacement for a retained snapshot.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn is_valid(&self) -> bool {
         self.outcome.is_valid()
-    }
-
-    /// Whether this analysis completed successfully.
-    pub fn is_success(&self) -> bool {
-        self.outcome.is_success()
     }
 
     /// Whether this analysis carries servable navigation data.
@@ -1721,6 +1714,7 @@ static ANALYZE_LOCK: Mutex<()> = Mutex::new(());
 /// The Surelog session is dropped before returning.  This never panics: if the
 /// compile step itself fails to start, the returned [`Analysis`] carries a
 /// single synthetic fatal [`Diag`] with no file, an empty model, and no tokens.
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn analyze(opts: &CompileOpts) -> Analysis {
     analyze_with_config(opts, &LintConfig::default())
 }
@@ -3031,6 +3025,7 @@ impl GraphSourceIndex {
         self.stripped_lines.get(line_index)
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     fn stripped_line_text(&self, line: u32) -> Option<&str> {
         let line = self.stripped_line(line)?;
         if line.start == self.stripped.len()
@@ -3041,6 +3036,7 @@ impl GraphSourceIndex {
         Some(&self.stripped[line.start..line.end])
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     fn line_text(&self, line: u32) -> Option<&str> {
         self.stripped_line_text(line)
     }
@@ -8789,6 +8785,7 @@ pub fn semantic_tokens_for(a: &Analysis, file: &str) -> SemanticTokens {
 /// LSP data.  The caller owns staging and cleanup of `file`.  Frontend syntax
 /// diagnostics do not make this return an error: the current parse tree,
 /// including source-local supplementation, remains authoritative.
+#[allow(dead_code)] // compatibility wrapper; production uses the parent-aware variant
 pub fn semantic_tokens_for_open_document(
     file: &str,
     defines: &[String],
@@ -9640,6 +9637,7 @@ fn definition_fallback(a: &Analysis, file: &str, line: u32, col: u32) -> Option<
 /// the entry to its declaration and collects every reference that resolves to
 /// the same declaration across the whole workspace; when the index has
 /// nothing, the v1 same-file name-based search applies.
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn references_at(a: &Analysis, file: &str, line: u32, col: u32) -> Vec<Location> {
     references_at_with_options(a, file, line, col, true)
 }

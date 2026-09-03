@@ -204,7 +204,7 @@ fn parse_only_classifies_connection_labels_and_leaves_actuals_plain() {
     assert_eq!(parsed.tokens.len(), 1, "only the requested file parses");
     let tokens = &parsed.tokens[0];
 
-    /// Synthetic type of the identifier token at 1-based `(line, col)`.
+    // Synthetic type of the identifier token at 1-based `(line, col)`.
     let type_at = |line: u32, col: u32| -> i32 {
         tokens
             .nodes

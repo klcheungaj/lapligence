@@ -178,6 +178,7 @@ pub(crate) struct ExplorerSnapshot {
 }
 
 /// Build one root-scoped snapshot from an already committed model.
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn snapshot(root_id: &str, model: &DesignModel) -> ExplorerSnapshot {
     let mut budget = InstanceBudget::new(COMPATIBILITY_TERMINAL_SLOTS);
     snapshot_with_budget(root_id, model, &mut budget)
@@ -250,6 +251,7 @@ fn snapshot_with_budget(
 /// Build the production snapshot from one committed analysis.  The source
 /// graph was captured during that analysis; this function only joins it with
 /// retained elaborated instances and never parses or reads a project file.
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn snapshot_analysis<F>(
     root_id: &str,
     analysis: &Analysis,
@@ -2220,6 +2222,7 @@ const MAX_INSTANCE_NODES: usize = 10_000;
 /// hierarchies rarely approach it; a deeper hierarchy is represented by the
 /// single shared truncation marker even when node budget remains.
 const MAX_SAFE_HIERARCHY_DEPTH: usize = 64;
+#[cfg_attr(not(test), allow(dead_code))]
 const COMPATIBILITY_TERMINAL_SLOTS: usize = 1;
 const GRAPH_TERMINAL_SLOTS: usize = 2;
 

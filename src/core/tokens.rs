@@ -1049,7 +1049,6 @@ fn decl_kind_label(t: i32) -> &'static str {
         | vpi::vpiNetBit
         | vpi::vpiReg
         | vpi::vpiRegBit
-        | vpi::vpiLogicNet
         | vpi::uhdmnet
         | vpi::uhdmlogic_net => "net",
         vpi::vpiModule | vpi::uhdmmodule_inst | vpi::uhdminterface_inst => "module",

@@ -170,10 +170,6 @@ impl<K: Eq + std::hash::Hash + Clone, V: Clone> MemoCache<K, V> {
         self.lock().map.len()
     }
 
-    pub(crate) fn is_empty(&self) -> bool {
-        self.lock().map.is_empty()
-    }
-
     pub(crate) fn stats(&self) -> CacheStats {
         let inner = self.lock();
         CacheStats {

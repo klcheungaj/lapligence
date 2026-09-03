@@ -16,6 +16,7 @@ use std::sync::Arc;
 use crate::config::{self, LlgConfig};
 
 /// Source extensions accepted by workspace discovery.
+#[allow(dead_code)] // retained as the documented discovery extension set
 pub const SOURCE_EXTENSIONS: [&str; 4] = ["v", "sv", "vh", "svh"];
 
 /// The kind of Verilog source represented by a discovered file.
@@ -70,6 +71,7 @@ pub fn classify_source_file_event(path: &Path) -> SourceFileEvent {
 /// This lexical path check intentionally does not consult discovery filters:
 /// the config file controls source discovery and must remain observable even
 /// when the root excludes its directory from source scans.
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn is_root_config_path(root: &Path, path: &Path) -> bool {
     let Some(root) = normalize_absolute_path(root) else {
         return false;
@@ -97,6 +99,7 @@ pub fn is_effective_config_path(path: &Path, roots: &[RootDescriptor]) -> bool {
 }
 
 /// Whether `path` is a source file supported by discovery.
+#[allow(dead_code)] // retained as a public path-classification helper
 pub fn is_source_file(path: &Path) -> bool {
     SourceFileKind::from_path(path).is_some()
 }
@@ -339,10 +342,6 @@ impl RootDescriptor {
         self
     }
 
-    pub fn path(&self) -> &Path {
-        &self.root
-    }
-
     /// The effective config: the last-valid one, or safe defaults when none
     /// has ever loaded.
     pub fn effective_config(&self) -> LlgConfig {
@@ -350,10 +349,6 @@ impl RootDescriptor {
             .as_deref()
             .cloned()
             .unwrap_or_else(|| config::default_config(&self.root))
-    }
-
-    pub fn config(&self) -> Option<&LlgConfig> {
-        self.config.as_deref()
     }
 
     /// Discovery filters derived from the effective config.
@@ -440,6 +435,7 @@ pub fn owning_root_unfiltered(path: &Path, roots: &[RootDescriptor]) -> Option<R
 }
 
 /// Alias for callers that use the noun form.
+#[allow(dead_code)] // retained as a compatibility alias for workspace callers
 pub fn owning_root(path: &Path, roots: &[RootDescriptor]) -> Option<RootOwnership> {
     owner_for_path(path, roots)
 }
