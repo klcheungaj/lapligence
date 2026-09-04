@@ -30,7 +30,7 @@ impl LintRule for WidthMismatchRule {
             match db.node_kind(id) {
                 NodeKind::Stmt(StmtKind::Assign { .. }) | NodeKind::ContAssign { .. } => {
                     let node = db.node(id);
-                    if let (Some(lhs), Some(rhs)) = (node.children.get(0), node.children.get(1)) {
+                    if let (Some(lhs), Some(rhs)) = (node.children.first(), node.children.get(1)) {
                         let Some(name) = signal_of_ref(db, *lhs).map(|s| db.node(s).name.clone())
                         else {
                             continue; // concat/other non-signal LHS: not named

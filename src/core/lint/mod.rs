@@ -5,13 +5,15 @@
 //! access, no raw FFI, no LSP dependencies.
 //!
 //! The default rule set lives in [`rules::default_rules`] and currently runs
-//! 21 rules in a stable order (`unused-signal`, `width-mismatch`,
+//! 24 rules in a stable order (`unused-signal`, `width-mismatch`,
 //! `incomplete-case`, `combinational-loop`, `multi-driver`, `casez-misuse`,
 //! `if-latch`, `naming-style`, `blocking-in-always_ff`, `nba-in-always_comb`,
 //! `unused-parameter`, `implicit-net`, `case-default-missing`,
 //! `comparison-width-mismatch`, `unconnected-port`, `mixed-assignments`,
 //! `undriven-signal`, `incomplete-sensitivity-list`, `out-of-range-select`,
-//! `xz-logical-equality`, `duplicate-case-item`);
+//! `xz-logical-equality`, `duplicate-case-item`,
+//! `empty-implicit-sensitivity`, `assignment-in-condition`,
+//! `casex-statement`);
 //! treat that registry as the source of truth rather than this list.
 
 pub mod rules;
@@ -479,6 +481,9 @@ mod tests {
                 "out-of-range-select",
                 "xz-logical-equality",
                 "duplicate-case-item",
+                "empty-implicit-sensitivity",
+                "assignment-in-condition",
+                "casex-statement",
             ]
         );
         for rule in registry.all() {

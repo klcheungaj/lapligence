@@ -101,11 +101,11 @@ fn strongly_connected_components(edges: &[(NodeId, NodeId)], nodes: &[NodeId]) -
         adj.entry(*r).or_default().push(*w);
         rev.entry(*w).or_default().push(*r);
     }
-    for (_, ns) in adj.iter_mut() {
+    for ns in adj.values_mut() {
         ns.sort_by_key(|n| n.0);
         ns.dedup();
     }
-    for (_, ns) in rev.iter_mut() {
+    for ns in rev.values_mut() {
         ns.sort_by_key(|n| n.0);
         ns.dedup();
     }

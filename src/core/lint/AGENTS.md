@@ -33,8 +33,8 @@ Rules read only owned data — no VPI access, no raw FFI, no LSP dependencies.
   - `parse_toml(text)` — hand-parses a `llg-lint.toml` (no serde/toml
     deps); returns `Err(Vec<String>)` with human-readable line-numbered
     messages, keeping the valid entries parsed so far (best-effort).
-- `LintRegistry` — `default_rules()`, `all()`, `lint(ctx, config)`; the
-  default rule set runs in a stable order, skipping disabled rules and
+- `LintRegistry` — `default_rules()`, `all()`, `lint(ctx, config)`; the 24
+  default rules run in a stable order, skipping disabled rules and
   applying severity overrides.
 - `lint(db, model)` — convenience: run every default rule over a db + model
   with the default config.
@@ -126,6 +126,19 @@ Rules read only owned data — no VPI access, no raw FFI, no LSP dependencies.
   - `duplicate_case.rs` — `duplicate-case-item`: flags every later exact
     captured literal repeated in one exact `case`. Wildcard cases and
     nonliteral/equivalent-but-differently-represented expressions are skipped.
+  - `empty_sensitivity.rs` — `empty-implicit-sensitivity`: flags a plain
+    `always @*` / `always @(*)` whose body writes at least one resolved signal
+    but has no resolved signal reads. `always_comb`, explicit event lists,
+    calls, opaque/unresolved nodes, and nested timing controls are skipped;
+    cloned elaborated instances are source-deduplicated.
+  - `assignment_condition.rs` — `assignment-in-condition`: flags a captured
+    `vpiAssignmentOp` consumed as an `if`, `while`, `for`, `wait`, or ternary
+    truth predicate. Nested operations are traversed, but explicit equality
+    and relational expressions form a boundary; standalone assignments and
+    `repeat`/`case`/event expressions are outside the rule.
+  - `casex_statement.rs` — `casex-statement`: flags every `casex` in a process
+    or function/task body. Exact `case` and `casez` remain quiet, and cloned
+    elaborated instances are source-deduplicated.
   - `analysis.rs` — shared owned-db helpers: read/write collection,
     expression-width computation, scope/instance iteration, port-link
     bookkeeping (deterministic, deduped, first-encounter order),

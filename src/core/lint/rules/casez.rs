@@ -145,7 +145,7 @@ fn pattern_of(db: &Db, id: NodeId) -> Option<Vec<Bit>> {
             continue;
         }
         if matches!(c, 'x' | 'X' | 'z' | 'Z' | '?') {
-            out.extend(std::iter::repeat(Bit::Wild).take(bits_per_digit as usize));
+            out.extend(std::iter::repeat_n(Bit::Wild, bits_per_digit as usize));
             continue;
         }
         let v = c.to_digit(16)?;
@@ -164,7 +164,7 @@ fn pattern_of(db: &Db, id: NodeId) -> Option<Vec<Bit>> {
     let declared = size.max(out.len() as i32) as usize;
     if out.len() < declared {
         let mut padded = Vec::with_capacity(declared);
-        padded.extend(std::iter::repeat(Bit::Known(false)).take(declared - out.len()));
+        padded.extend(std::iter::repeat_n(Bit::Known(false), declared - out.len()));
         padded.extend(out);
         out = padded;
     }

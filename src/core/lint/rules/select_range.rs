@@ -466,7 +466,7 @@ fn eval_integer(db: &Db, id: NodeId) -> Option<i128> {
 fn value_to_i128(value: &ValueData) -> Option<i128> {
     match value {
         ValueData::Int(value) => Some(*value as i128),
-        ValueData::UInt(value) => i128::try_from(*value).ok(),
+        ValueData::UInt(value) => Some(i128::from(*value)),
         ValueData::Bin(digits) => parse_radix(digits, 2),
         ValueData::Oct(digits) => parse_radix(digits, 8),
         ValueData::Hex(digits) => parse_radix(digits, 16),

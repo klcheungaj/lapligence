@@ -20,6 +20,19 @@ const UNUSED_SV: &str = r#"module unused;
 endmodule
 "#;
 
+/// Delays are intentionally present: Surelog v1.87 may consume their UHDM
+/// relationships during a VPI walk, so human lint and codegen must share one
+/// owned database rather than traversing the live design twice.
+const DELAYED_SV: &str = r#"module delayed;
+    logic value = 1'b0;
+    initial begin
+        #3 value = 1'b1;
+        $display("value=%0d time=%0t", value, $time);
+        #2 $finish;
+    end
+endmodule
+"#;
+
 const CARELESS_MORE_SV: &str = r#"module careless_more (
     input logic a,
     input logic b,
@@ -42,6 +55,31 @@ const CARELESS_MORE_SV: &str = r#"module careless_more (
             2'd1: case_result = 1'b1;
             2'd1: case_result = a;
             default: case_result = b;
+        endcase
+    end
+endmodule
+"#;
+
+const CARELESS_CONTROL_SV: &str = r#"module careless_control (
+    input logic a,
+    input logic b,
+    input logic [1:0] sel,
+    output logic empty_result,
+    output logic condition_result,
+    output logic casex_result
+);
+    logic condition_lhs;
+    always @(*) empty_result = 1'b0;
+    always_comb begin
+        if ((condition_lhs = b))
+            condition_result = 1'b1;
+        else
+            condition_result = 1'b0;
+    end
+    always_comb begin
+        casex (sel)
+            2'b1x: casex_result = 1'b1;
+            default: casex_result = 1'b0;
         endcase
     end
 endmodule
@@ -105,6 +143,16 @@ fn cli_disabled_rule_suppresses_finding() {
     assert!(out.status.success(), "stderr: {err}");
     assert!(!err.contains("unused-signal"), "finding suppressed: {err}");
     assert!(err.contains("lint: clean"), "stderr: {err}");
+}
+
+#[test]
+fn human_lint_reuses_delay_metadata_for_codegen() {
+    let dir = TempDir::new("delayed_single_db");
+    dir.write("design.sv", DELAYED_SV);
+    let out = run_llg(&dir.path, &["--lint", "--top", "delayed", "design.sv"]);
+    let err = stderr(&out);
+    assert!(out.status.success(), "stderr: {err}");
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "value=1 time=3\n");
 }
 
 /// Overriding a rule's severity to `error` promotes its findings; the lint
@@ -356,4 +404,78 @@ fn cli_lint_json_exposes_expanded_shared_rules_and_severity_override() {
         .expect("duplicate-case-item diagnostic");
     assert_eq!(duplicate["severity"], "error", "report: {report}");
     assert!(stdout.contains("\"errors\": 1"), "stdout: {stdout}");
+}
+
+#[test]
+fn cli_lint_json_exposes_control_rules_and_honors_config() {
+    let dir = TempDir::new("control_rules");
+    dir.write("design.sv", CARELESS_CONTROL_SV);
+
+    let baseline = run_llg(
+        &dir.path,
+        &["--lint-json", "--top", "careless_control", "design.sv"],
+    );
+    let baseline_stdout = String::from_utf8_lossy(&baseline.stdout).into_owned();
+    let baseline_stderr = stderr(&baseline);
+    assert!(baseline.status.success(), "stderr: {baseline_stderr}");
+    let baseline_report: serde_json::Value =
+        serde_json::from_str(&baseline_stdout).expect("valid baseline lint JSON");
+    for rule in [
+        "empty-implicit-sensitivity",
+        "assignment-in-condition",
+        "casex-statement",
+    ] {
+        let diag = baseline_report["diagnostics"]
+            .as_array()
+            .and_then(|diags| diags.iter().find(|diag| diag["rule"] == rule))
+            .unwrap_or_else(|| panic!("missing {rule}: {baseline_report}"));
+        assert_eq!(diag["severity"], "warning", "{rule}: {baseline_report}");
+        assert!(
+            diag["file"]
+                .as_str()
+                .is_some_and(|file| file.ends_with("/design.sv")),
+            "{rule} should retain the real source path: {baseline_report}"
+        );
+    }
+
+    let cfg = dir.write(
+        "llg-lint.toml",
+        "[rules.empty-implicit-sensitivity]\n\
+         enabled = false\n\
+         [rules.casex-statement]\n\
+         severity = \"error\"\n",
+    );
+    let configured = run_llg(
+        &dir.path,
+        &[
+            "--lint-json",
+            "--lint-config",
+            cfg.to_str().unwrap(),
+            "--top",
+            "careless_control",
+            "design.sv",
+        ],
+    );
+    let configured_stdout = String::from_utf8_lossy(&configured.stdout).into_owned();
+    let configured_stderr = stderr(&configured);
+    let configured_report: serde_json::Value =
+        serde_json::from_str(&configured_stdout).expect("valid configured lint JSON");
+    assert_eq!(
+        configured.status.code(),
+        Some(1),
+        "stderr: {configured_stderr}\nstdout: {configured_stdout}"
+    );
+    assert!(
+        configured_report["diagnostics"]
+            .as_array()
+            .is_some_and(|diags| diags
+                .iter()
+                .all(|diag| diag["rule"] != "empty-implicit-sensitivity")),
+        "disabled rule remained: {configured_report}"
+    );
+    let casex = configured_report["diagnostics"]
+        .as_array()
+        .and_then(|diags| diags.iter().find(|diag| diag["rule"] == "casex-statement"))
+        .expect("configured casex-statement diagnostic");
+    assert_eq!(casex["severity"], "error", "{configured_report}");
 }

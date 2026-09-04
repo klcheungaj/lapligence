@@ -304,7 +304,7 @@ fn analyze_stmt(db: &Db, root: NodeId, incoming: &HashSet<NodeId>) -> DefiniteAs
             | StmtKind::Wait { .. }
             | StmtKind::Fork { .. }
             | StmtKind::Foreach
-            | StmtKind::Other,
+            | StmtKind::Unsupported { .. },
         ) => conservative_flow(db, root, incoming),
         NodeKind::Stmt(StmtKind::Force { .. } | StmtKind::ProcContAssign { .. }) => {
             analyze_assignment(db, root, false, incoming)
@@ -323,7 +323,7 @@ fn analyze_stmt(db: &Db, root: NodeId, incoming: &HashSet<NodeId>) -> DefiniteAs
         }
         NodeKind::Stmt(StmtKind::Return { value: None })
         | NodeKind::Stmt(
-            StmtKind::Null
+            StmtKind::Empty
             | StmtKind::EventTrigger { .. }
             | StmtKind::WaitFork
             | StmtKind::DisableFork

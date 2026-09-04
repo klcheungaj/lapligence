@@ -80,9 +80,8 @@ impl LintRule for CaseDefaultMissingRule {
 /// (functions/tasks) are not in that domain.
 fn in_comb_or_latch_process(db: &Db, mut cur: NodeId) -> bool {
     loop {
-        match db.node_kind(cur) {
-            NodeKind::Process { .. } => return is_comb_or_latch_process(db, cur),
-            _ => {}
+        if let NodeKind::Process { .. } = db.node_kind(cur) {
+            return is_comb_or_latch_process(db, cur);
         }
         match db.node(cur).parent {
             Some(p) => cur = p,

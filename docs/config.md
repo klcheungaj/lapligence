@@ -72,6 +72,9 @@ Default rules (enabled; find `[lint.rules.<id>]` snippets below):
 | `out-of-range-select` | statically provable packed or unpacked select overflow |
 | `xz-logical-equality` | `==`/`!=` used directly with an X/Z literal |
 | `duplicate-case-item` | repeated literal labels in an exact `case` |
+| `empty-implicit-sensitivity` | `always @*` blocks that write but have no resolved body reads |
+| `assignment-in-condition` | assignment expressions used as truth predicates |
+| `casex-statement` | `casex` statements, which can hide X/Z selector mistakes |
 
 ```toml
 schema_version = 1

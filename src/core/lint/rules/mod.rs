@@ -5,12 +5,15 @@
 //! [`crate::core::lint::LintRegistry::default_rules`] in a stable order.
 
 pub mod analysis;
+pub mod assignment_condition;
 pub mod blocking_in_ff;
 pub mod case_default;
+pub mod casex_statement;
 pub mod casez;
 pub mod combloop;
 pub mod comparison_width;
 pub mod duplicate_case;
+pub mod empty_sensitivity;
 pub mod if_latch;
 pub mod implicit_net;
 pub mod latch;
@@ -27,12 +30,15 @@ pub mod unused_param;
 pub mod width;
 pub mod xz_comparison;
 
+pub use assignment_condition::AssignmentInConditionRule;
 pub use blocking_in_ff::BlockingInFFRule;
 pub use case_default::CaseDefaultMissingRule;
+pub use casex_statement::CasexStatementRule;
 pub use casez::CasezMisuseRule;
 pub use combloop::CombinationalLoopRule;
 pub use comparison_width::ComparisonWidthRule;
 pub use duplicate_case::DuplicateCaseItemRule;
+pub use empty_sensitivity::EmptyImplicitSensitivityRule;
 pub use if_latch::IfLatchRule;
 pub use implicit_net::ImplicitNetRule;
 pub use latch::IncompleteCaseRule;
@@ -77,6 +83,9 @@ pub fn default_rules() -> Vec<Box<dyn crate::core::lint::LintRule>> {
         Box::new(OutOfRangeSelectRule),
         Box::new(XzLogicalEqualityRule),
         Box::new(DuplicateCaseItemRule),
+        Box::new(EmptyImplicitSensitivityRule),
+        Box::new(AssignmentInConditionRule),
+        Box::new(CasexStatementRule),
     ]
 }
 

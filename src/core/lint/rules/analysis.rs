@@ -226,7 +226,7 @@ fn bits_needed(v: u128) -> u32 {
     if v == 0 {
         1
     } else {
-        (128 - v.leading_zeros()) as u32
+        128 - v.leading_zeros()
     }
 }
 
@@ -274,7 +274,7 @@ fn walk_reads(db: &Db, node: NodeId, seen: &mut HashSet<NodeId>, out: &mut Vec<N
             if let Some(rhs) = db.node(node).children.get(1) {
                 walk_reads(db, *rhs, seen, out);
             }
-            if let Some(lhs) = db.node(node).children.get(0) {
+            if let Some(lhs) = db.node(node).children.first() {
                 walk_lhs_select_reads(db, *lhs, seen, out);
             }
             return;
@@ -320,11 +320,9 @@ fn add_read(db: &Db, node: NodeId, seen: &mut HashSet<NodeId>, out: &mut Vec<Nod
                 out.push(node);
             }
         }
-        NodeKind::Expr(ExprKind::Ref { target }) => {
-            if let Some(t) = target {
-                if is_signal(db, *t) && seen.insert(*t) {
-                    out.push(*t);
-                }
+        NodeKind::Expr(ExprKind::Ref { target: Some(t) }) => {
+            if is_signal(db, *t) && seen.insert(*t) {
+                out.push(*t);
             }
         }
         NodeKind::Expr(ExprKind::HierPath { refs, .. }) => {
@@ -351,7 +349,7 @@ fn walk_writes(db: &Db, node: NodeId, seen: &mut HashSet<NodeId>, out: &mut Vec<
         | NodeKind::Stmt(StmtKind::Release { .. })
         | NodeKind::Stmt(StmtKind::Deassign { .. })
         | NodeKind::ContAssign { .. } => {
-            if let Some(lhs) = db.node(node).children.get(0) {
+            if let Some(lhs) = db.node(node).children.first() {
                 add_lhs_write(db, *lhs, seen, out);
             }
             return;
@@ -436,6 +434,34 @@ pub fn all_nodes(db: &Db) -> Vec<NodeId> {
     let mut out = Vec::new();
     for top in &db.tops {
         walk(db, *top, &mut out);
+    }
+    out
+}
+
+/// Every node reachable from all independent design roots.  Package and
+/// class definitions are not descendants of elaborated top instances, so
+/// source-oriented rules that promise function/task coverage must use this
+/// traversal rather than [`all_nodes`].
+pub fn all_design_nodes(db: &Db) -> Vec<NodeId> {
+    fn walk(db: &Db, id: NodeId, seen: &mut HashSet<NodeId>, out: &mut Vec<NodeId>) {
+        if !seen.insert(id) {
+            return;
+        }
+        out.push(id);
+        for child in &db.node(id).children {
+            walk(db, *child, seen, out);
+        }
+    }
+
+    let mut seen = HashSet::new();
+    let mut out = Vec::new();
+    for root in db
+        .tops
+        .iter()
+        .chain(db.packages.iter())
+        .chain(db.classes.iter())
+    {
+        walk(db, *root, &mut seen, &mut out);
     }
     out
 }
@@ -543,31 +569,27 @@ pub fn iface_copy_instances(db: &Db) -> HashSet<NodeId> {
     fn walk_wired(db: &Db, inst: NodeId, out: &mut HashSet<NodeId>) {
         for c in &db.node(inst).children {
             match db.node_kind(*c) {
-                NodeKind::Port { low, .. } => {
-                    if let Some(l) = low {
-                        match db.node_kind(*l) {
-                            NodeKind::ModPort => {
-                                if let Some(iface) = db.node(*l).parent {
-                                    if matches!(
-                                        db.node_kind(iface),
-                                        NodeKind::ModuleInst {
-                                            is_interface: true,
-                                            ..
-                                        }
-                                    ) {
-                                        out.insert(iface);
-                                    }
+                NodeKind::Port { low: Some(l), .. } => match db.node_kind(*l) {
+                    NodeKind::ModPort => {
+                        if let Some(iface) = db.node(*l).parent {
+                            if matches!(
+                                db.node_kind(iface),
+                                NodeKind::ModuleInst {
+                                    is_interface: true,
+                                    ..
                                 }
+                            ) {
+                                out.insert(iface);
                             }
-                            NodeKind::ModuleInst {
-                                is_interface: true, ..
-                            } => {
-                                out.insert(*l);
-                            }
-                            _ => {}
                         }
                     }
-                }
+                    NodeKind::ModuleInst {
+                        is_interface: true, ..
+                    } => {
+                        out.insert(*l);
+                    }
+                    _ => {}
+                },
                 NodeKind::ModuleInst { .. } => walk_wired(db, *c, out),
                 NodeKind::GenScopeArray => {
                     for gs in &db.node(*c).children {
@@ -673,10 +695,8 @@ pub fn port_link_drivers(db: &Db) -> HashMap<NodeId, u32> {
                 }
                 Direction::None => (None, None),
             };
-            for side in [a, b] {
-                if let Some(sig) = side {
-                    *out.entry(sig).or_insert(0) += 1;
-                }
+            for sig in [a, b].into_iter().flatten() {
+                *out.entry(sig).or_insert(0) += 1;
             }
         }
     }
@@ -940,9 +960,8 @@ pub fn is_comb_or_latch_process(db: &Db, id: NodeId) -> bool {
 /// True when the tree rooted at `root` contains an `@*` event control
 /// (`EventControl { implicit: true }`).
 pub fn has_implicit_event(db: &Db, root: NodeId) -> bool {
-    match db.node_kind(root) {
-        NodeKind::Stmt(StmtKind::EventControl { implicit: true, .. }) => return true,
-        _ => {}
+    if let NodeKind::Stmt(StmtKind::EventControl { implicit: true, .. }) = db.node_kind(root) {
+        return true;
     }
     db.node(root)
         .children

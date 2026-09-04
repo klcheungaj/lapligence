@@ -828,7 +828,7 @@ fn semantic_token_positions(result: &Value) -> Vec<(u64, u64)> {
     let mut line = 0;
     let mut character = 0;
     let mut positions = Vec::with_capacity(data.len() / 5);
-    for token in data.chunks_exact(5) {
+    for token in data.as_chunks::<5>().0 {
         let delta_line = token[0].as_u64().expect("semantic token deltaLine");
         let delta_start = token[1].as_u64().expect("semantic token deltaStart");
         if delta_line == 0 {
@@ -881,7 +881,7 @@ fn semantic_token_rows(
     let mut line = 0;
     let mut character = 0;
     let mut rows = Vec::with_capacity(data.len() / 5);
-    for token in data.chunks_exact(5) {
+    for token in data.as_chunks::<5>().0 {
         let delta_line = token[0].as_u64().expect("semantic token deltaLine");
         let delta_start = token[1].as_u64().expect("semantic token deltaStart");
         if delta_line == 0 {
@@ -2094,7 +2094,7 @@ fn lsp_stdio_arbitrary_extension_include_dep_changes() {
 
     // Enable unused-signal so the macro flip is observable in diagnostics.
     fs::write(
-        &root_a.join(CONFIG_FILE),
+        root_a.join(CONFIG_FILE),
         "schema_version = 1\n\
          [sources]\n\
          directories = [\".\"]\n\
@@ -2204,17 +2204,15 @@ fn lsp_stdio_dep_change_refreshes_every_dependent_root() {
         // The external dir is a configured include directory of both roots,
         // so the include target is authorized for either of them.
         fs::write(
-            &root.join(CONFIG_FILE),
-            format!(
-                "schema_version = 1\n\
+            root.join(CONFIG_FILE),
+            "schema_version = 1\n\
                  [sources]\n\
                  directories = [\".\"]\n\
                  include = [\"**/*.v\", \"**/*.sv\"]\n\
                  [compile]\n\
                  include_dirs = [\"../ext-shared\"]\n\
                  [lint]\n\
-                 enabled = true\n"
-            ),
+                 enabled = true\n",
         )
         .expect("write cross-root config");
         let top = src.join("top.sv");
@@ -2387,7 +2385,7 @@ fn lsp_stdio_error_project_still_serves_features() {
     let src = root.join("src");
     fs::create_dir_all(&src).expect("create err-proj root");
     fs::write(
-        &root.join(CONFIG_FILE),
+        root.join(CONFIG_FILE),
         "schema_version = 1\n\
          [sources]\n\
          directories = [\".\"]\n\
@@ -2469,7 +2467,7 @@ fn lsp_stdio_syntax_error_still_serves_declarations() {
     let src = root.join("src");
     fs::create_dir_all(&src).expect("create decl-fallback root");
     fs::write(
-        &root.join(CONFIG_FILE),
+        root.join(CONFIG_FILE),
         "schema_version = 1\n\
          [sources]\n\
          directories = [\".\"]\n\
@@ -2562,7 +2560,7 @@ fn lsp_stdio_fatal_analysis_stays_featureless() {
     let src = root.join("src");
     fs::create_dir_all(&src).expect("create fatal fixture root");
     fs::write(
-        &root.join(CONFIG_FILE),
+        root.join(CONFIG_FILE),
         "schema_version = 1\n\
          [sources]\n\
          directories = [\".\"]\n\
@@ -2735,7 +2733,7 @@ fn lsp_stdio_shared_external_file_aggregates_labeled_findings() {
             ""
         };
         fs::write(
-            &root.join(CONFIG_FILE),
+            root.join(CONFIG_FILE),
             format!(
                 "schema_version = 1\n\
                  [sources]\n\
@@ -4346,9 +4344,9 @@ fn lsp_stdio_parse_fallback_binds_param_overrides_to_child_params() {
     client.open(&tb_path, tb_text).expect("open tb_fb2");
 
     // Expected bind targets, computed from the fixture texts.
-    let pw_decl = position_at(&child_text, "parameter int PW", 14);
-    let pd_decl = position_at(&child_text, "parameter int PD", 14);
-    let wa_decl = position_at(&tb_text, "logic wa", 6);
+    let pw_decl = position_at(child_text, "parameter int PW", 14);
+    let pd_decl = position_at(child_text, "parameter int PD", 14);
+    let wa_decl = position_at(tb_text, "logic wa", 6);
     let bind_field = |target: &Value, name: &str, kind: &str| {
         format!(
             "bind=fb_pchild.sv:{}:{}[{name},{kind}]",
@@ -5052,6 +5050,76 @@ fn lsp_stdio_publishes_expanded_careless_mistake_rules_and_honors_config() {
     {
         assert_eq!(lint_severity(&updated, rule), Some(2));
     }
+    client.shutdown();
+}
+
+#[test]
+fn lsp_stdio_publishes_control_lint_batch_and_honors_config() {
+    let fixture = FixtureTree::new();
+    let root = fixture.root("lint-rules");
+    let path = root.join("src").join("careless_control.sv");
+    let uri = file_uri(&path);
+    let rule_ids = [
+        "empty-implicit-sensitivity",
+        "assignment-in-condition",
+        "casex-statement",
+    ];
+
+    let mut client = LspProcess::spawn(&fixture.root);
+    client
+        .initialize(&[("lint-rules", &root)], default_init_options())
+        .expect("initialize control lint workspace");
+    client
+        .open(
+            &path,
+            &fs::read_to_string(&path).expect("read control lint fixture"),
+        )
+        .expect("open control lint fixture");
+
+    let diagnostics = wait_for_diagnostics(&mut client, &uri, |params| {
+        rule_ids.iter().all(|rule| has_lint_rule(params, rule))
+    });
+    assert_eq!(
+        diagnostics.get("uri").and_then(Value::as_str),
+        Some(uri.as_str()),
+        "diagnostics must retain the real workspace URI: {diagnostics:?}"
+    );
+    for rule in rule_ids {
+        assert_eq!(
+            lint_severity(&diagnostics, rule),
+            Some(2),
+            "{rule} should publish as a warning: {diagnostics:?}"
+        );
+    }
+    assert_no_shadow_uris(&diagnostics);
+
+    let config_path = root.join(CONFIG_FILE);
+    fs::write(
+        &config_path,
+        "schema_version = 1\n\
+         [sources]\n\
+         directories = [\".\"]\n\
+         include = [\"**/*.v\", \"**/*.sv\"]\n\
+         [lint]\n\
+         enabled = true\n\
+         [lint.rules.empty-implicit-sensitivity]\n\
+         enabled = false\n\
+         [lint.rules.casex-statement]\n\
+         severity = \"error\"\n",
+    )
+    .expect("update control lint config");
+    client
+        .send_watch_event(&config_path, 2)
+        .expect("send control lint config watch event");
+    let updated = wait_for_diagnostics(&mut client, &uri, |params| {
+        !has_lint_rule(params, "empty-implicit-sensitivity")
+            && has_lint_rule(params, "assignment-in-condition")
+            && lint_severity(params, "casex-statement") == Some(1)
+    });
+    assert!(!has_lint_rule(&updated, "empty-implicit-sensitivity"));
+    assert_eq!(lint_severity(&updated, "assignment-in-condition"), Some(2));
+    assert_eq!(lint_severity(&updated, "casex-statement"), Some(1));
+    assert_no_shadow_uris(&updated);
     client.shutdown();
 }
 

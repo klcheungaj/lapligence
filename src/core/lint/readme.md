@@ -7,7 +7,7 @@ depend on LSP types.
 
 ## Default rules
 
-All rules are enabled by default. Each finding has a stable rule ID and a
+All 24 rules are enabled by default. Each finding has a stable rule ID and a
 default severity that can be overridden by either frontend.
 
 | Rule | Detects |
@@ -33,6 +33,9 @@ default severity that can be overridden by either frontend.
 | `out-of-range-select` | statically provable packed or unpacked select overflow |
 | `xz-logical-equality` | `==`/`!=` used directly with an X/Z literal |
 | `duplicate-case-item` | repeated literal labels in an exact case |
+| `empty-implicit-sensitivity` | plain `always @*` blocks that write but have no resolved body signal reads |
+| `assignment-in-condition` | assignment expressions consumed as truth predicates |
+| `casex-statement` | `casex` statements in process and function/task bodies |
 
 The registry in `rules/mod.rs` is authoritative. Rules deliberately skip
 uncertain cases instead of guessing; see `AGENTS.md` in this directory for
