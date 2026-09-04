@@ -38,7 +38,7 @@ final blocks ≤ 1024.
 | § | Area | Verilog ✅ | Verilog 🟨 | Verilog ❌ | SV ✅ | SV 🟨 | SV ❌ |
 |---|---|---:|---:|---:|---:|---:|---:|
 | 1 | Lexical & preprocessing | 10 | 0 | 0 | 0 | 1 | 1 |
-| 2 | Data types | 9 | 2 | 5 | 4 | 2 | 5 |
+| 2 | Data types | 10 | 1 | 5 | 4 | 2 | 5 |
 | 3 | Modules & hierarchy | 8 | 1 | 1 | 1 | 1 | 1 |
 | 4 | Scheduling & processes | 8 | 1 | 0 | 7 | 1 | 1 |
 | 5 | Procedural statements | 17 | 2 | 1 | 2 | 1 | 4 |
@@ -46,9 +46,9 @@ final blocks ≤ 1024.
 | 7 | Expressions & operators | 17 | 2 | 1 | 1 | 0 | 6 |
 | 8 | Continuous assign & structural | 5 | 4 | 7 | 0 | 0 | 0 |
 | 9 | Functions & tasks | 4 | 0 | 5 | 3 | 0 | 1 |
-| 10 | System tasks & functions | 8 | 1 | 18 | 1 | 0 | 8 |
+| 10 | System tasks & functions | 9 | 1 | 17 | 1 | 0 | 8 |
 | 11 | Compiler directives affecting sim | 5 | 0 | 0 | 4 | 0 | 0 |
-| — | **Total** | **93** | **14** | **41** | **23** | **6** | **27** |
+| — | **Total** | **95** | **13** | **40** | **23** | **6** | **27** |
 
 In-section ⬜ items (not counted above): §3 configurations [V], ref ports /
 default port values, extern/nested modules [SV] · §4 fine-grain process control
@@ -86,7 +86,7 @@ Verilog era:
 - ✅ **time variables** 64-bit unsigned storage — §1364-2001 3.9 **[1995]** (sim_counter.rs)
 - ✅ **wire/tri nets** — §1364-2001 3.7 **[1995]** tri resolution inside inout net groups (sim_inout.rs); plain tri behaves like wire
 - ✅ **memories/unpacked arrays N-D** element bit/part selects, guarded OOB→X — §1364-2001 3.10 **[1995]** (sim_memory.rs); multi-dim slices & element indexed-part-selects rejected
-- 🟨 **Net declaration assignment** `wire w = expr;` — §1364-2001 3.6 **[1995]** constant RHS only; dynamic RHS declarations are rejected instead of becoming continuous drivers
+- ✅ **Net declaration assignment** `wire w = expr;` — §1364-2001 3.6 **[1995]** behaves as a continuous driver for constant and dynamic RHS expressions, using the same event-driven run-once/sensitivity-loop IR as an explicit `assign` (sim_net_decl.rs); dynamic reads of unpacked arrays and unsupported resolved-net classes are rejected explicitly
 - ✅ **Variable declaration initializers** scalar `reg x = 0;`, `logic l = 1'b0;`, `int x = P+1;` — §1364-2001 6.2.1 **[2001]** constant RHS only, non-constant rejected (sim_varinit.rs, sim_geninit.rs)
 - ✅ **Parameters** override + propagation — §1364-2001 3.11.1 **[1995]** (elab_resolve.rs)
 - ✅ **localparam** — §1364-2001 3.11.2 **[2001]**
@@ -184,7 +184,7 @@ Verilog era:
 - 🟨 **Condition event expressions** `@(a && b)` — §1364-2001 9.7.2 **[1995]** wait on body read set instead of condition operands
 - ✅ **Intra-assignment timing** `a = #5 b;` / `a <= #5 b;` — §1364-2001 9.7.7 **[1995]** (sim_delay.rs) RHS evaluated immediately into a temp, LHS updated after the scaled delay; event/repeat forms rejected; the executing process suspends across the window for both kinds (v1 approximation)
 - ❌ **Repeat event control** `repeat (n) @ev` — §1364-2001 9.7.7 **[1995]** clean codegen rejection
-- ✅ **Named events** `event ev; -> ev; @ ev;` — §1364-1995 §9.7.3 **[1995]** (sim_events.rs) trigger wakes ALL current waiters (registration order), edge-triggered (no latch); mixed or-lists `@(a or ev)` lower to ONE atomic wait (`llg_wait_mixed`); zero-delay trigger loops trip the runtime guard (sim_events.rs); 🟨 caveats: non-blocking `->>` lowered identically to `->` (Surelog v1.86 reports `vpiBlocking=1` for both forms, so the distinction is lost) and block-local event declarations inside begin blocks behave as ordinary 1-bit logic vars (Surelog models them as logic vars); event arrays and hierarchical event references are rejected by the Surelog frontend before codegen
+- ✅ **Named events** `event ev; -> ev; @ ev;` — §1364-1995 §9.7.3 **[1995]** (sim_events.rs, re-run with Surelog v1.87) trigger wakes ALL current waiters (registration order), edge-triggered (no latch); mixed or-lists `@(a or ev)` lower to ONE atomic wait (`llg_wait_mixed`); zero-delay trigger loops trip the runtime guard (sim_events.rs); 🟨 caveats: non-blocking `->>` lowers identically to `->` because v1.87 still reports `vpiBlocking=1` for both forms, and block-local event declarations behave as ordinary 1-bit logic vars; event arrays and hierarchical event references are rejected by the frontend before codegen
 - ✅ **Procedural continuous assign/deassign** — §1364-2001 9.3.1 **[1995]** (sim_force.rs) `assign <reg> = expr;` lowers to a per-site enable-guarded process plus an immediate blocking write; `deassign` clears the enable only (the variable KEEPS its last value); RHS changes propagate while assigned and re-executing the same `assign` statement re-enables the site; while assigned, ordinary procedural writes to the target (blocking AND non-blocking) still take effect immediately, and the guard re-drives from the CURRENT rhs on its next wake (an RHS-read or enable change — it never wakes on changes of the target itself); sites are pre-scanned over every process body before any body lowers, so a `deassign` resolves its site regardless of process/source order; `force` keeps priority over an active PCA, `release` restores it. Clean rejects: net targets (variables only; Surelog models module-level `reg` as Net with net_type vpiReg, which counts as a variable), selects/part-selects/array elements, hierarchical targets, real variables (v1 scope), and multiple active sites on one variable (deterministic static reject — reuse one site through control flow)
 
 SystemVerilog era:
@@ -239,7 +239,7 @@ Verilog era:
 
 SystemVerilog era:
 
-- ✅ **Static casts** `int'(e)`, `signed'()`, `unsigned'()`, size casts `n'(e)` — §1800-2009 6.24.1 **[SV-2005]** (sim_counter.rs `sim_static_casts`) value-preserving: widening extends by the SOURCE's signedness (`sv4_cast`/IR `Convert`; §10.7 assignment padding follows the RHS too, so `int'(8'hFF)`=255 and a signed RHS sign-extends into wider unsigned targets). Surelog v1.86 omits `vpiSigned` on based constants, so codegen recovers the `'s` marker from the literal's source token; size-cast targets remain degraded to int(32) unsigned by the frontend
+- ✅ **Static casts** `int'(e)`, `signed'()`, `unsigned'()`, size casts `n'(e)` — §1800-2009 6.24.1 **[SV-2005]** (sim_counter.rs `sim_static_casts`, re-run with Surelog v1.87) value-preserving: widening extends by the SOURCE's signedness (`sv4_cast`/IR `Convert`; §10.7 assignment padding follows the RHS too, so `int'(8'hFF)`=255 and a signed RHS sign-extends into wider unsigned targets). v1.87 still omits `vpiSigned` on based constants, so codegen recovers the `'s` marker from the literal's source token; size-cast targets remain degraded to int(32) unsigned by the frontend
 - ❌ **Increment/decrement** `++ --` — §1800-2009 11.4.2 **[SV-2005]** rejected "unsupported statement" (probed)
 - ❌ **Assignment operators** `+= -= *= /= %= &= |= ^= <<= >>= …` — §1800-2009 11.4.1 **[SV-2005]** rejected (probed)
 - ❌ **Wildcard equality** `==? !=?` — §1800-2009 11.4.6 **[SV-2005]**
@@ -255,7 +255,7 @@ Verilog era:
 - ✅ **Multiple/comma-form continuous assigns** — §1364-2001 6.1.2 **[1995]**
 - 🟨 **Multiple drivers on one net** — §1364-2001 6.1 **[1995]** no strength resolution; last write wins (probed)
 - 🟨 **Delay on continuous assign** `assign #d lhs = rhs;` — §1364-2001 6.1.3 **[1995]** (sim_delay.rs) constant/parameter delays and t=0 wait; inertial pulse rejection is not implemented, tracked by an ignored `DELAY-BUG` conformance case
-- ❌ **Strength on continuous assign/gates** — §1364-2001 6.1.4/7.1.2 **[1995]** drive-strength specs on gates rejected with a clear message (Surelog v1.86 never populates gate strengths, so the reject is defensive)
+- ❌ **Strength on continuous assign/gates** — §1364-2001 6.1.4/7.1.2 **[1995]** nonzero drive-strength properties are rejected when the frontend exposes them; silent property loss was observed on v1.86 and remains unverified on v1.87
 - ✅ **Logic gates** `and nand or nor xor xnor buf not` — §1364-2001 7.2–7.3 **[1995]** (sim_gates.rs) one comb process per gate, SensLoop over the input read set; n-input gates reduce left-to-right, nand/nor/xnor negate after the full reduce; vector gates are bitwise; v1 requires equal terminal widths
 - ✅ **Tri-state buffers** `bufif0 bufif1 notif0 notif1` — §1364-2001 7.4 Table 7-5 **[1995]** (sim_gates.rs) lowered to `sv4_mux(en, data|data, Z)` / `sv4_mux(en, Z, ~(data|data))` — the passing arm is z→x-normalized with `data|data` (per-bit), so an ENABLED gate turns a data-Z into X like buf/not while known bits pass unchanged; a DISABLED gate drives Z; unknown enable yields all-X unless both branches match
 - ❌ **MOS/CMOS switches** `nmos pmos cmos rnmos rpmos rcmos` — §1364-2001 7.5–7.7 **[1995]** rejected with a clear message ("switch/transistor primitive … not supported")
@@ -333,10 +333,10 @@ Control / misc:
 - ❌ **Conversion** `$realtobits/$bitstoreal` — §1364-2001 17.8 **[2001]** unsupported-function reject
 - ❌ **Plusargs** `$test$plusargs/$value$plusargs` — §1364-2001 17.10 **[1995]** unsupported-task reject
 
-VCD:
+Waveforms:
 
-- 🟨 **$dumpfile/$dumpvars/$dumpon/$dumpoff/$dumplimit** skipped with warning — §1364-2001 ch18 **[1995]** no VCD written
-- ❌ **$dumpall/$dumpflush** — §1364-2001 ch18 **[1995]** unsupported-task reject, hard-rejected unlike the warned $dump* siblings above
+- 🟨 **$dumpfile/$dumpvars/$dumpon/$dumpoff/$dumplimit** to VCD or FST — §1364-2001 ch18 **[1995]** `$dumpfile` selects the format by `.vcd`/`.fst`; packed signals, unpacked-array elements, real values, X/Z, aliases, hierarchy, timescale, dump activation, and size limits are emitted by a separate OS writer thread through a bounded lossless SPSC ring (sim_waveform.rs). `$dumpvars` currently warns and dumps all registered storage because depth/scope/variable filtering is not yet implemented; array elements use stable flattened linear indices.
+- ✅ **$dumpall/$dumpflush** — §1364-2001 ch18 **[1995]** snapshots and synchronous flush barriers work for both VCD and FST (sim_waveform.rs; runtime self-test)
 - ❌ **$dumpports extended VCD** — §1364-2001 18.3 **[2001]** unsupported-task reject
 
 SystemVerilog era:

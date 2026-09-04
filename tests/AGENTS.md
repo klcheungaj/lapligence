@@ -34,9 +34,20 @@ the LSP has an additional process-level stdio acceptance suite.
 - Fixtures live under `tests/fixtures/lsp/`, use schema
   `llg.lsp.fixture/v1`, ship an effective `llg.toml` per root, and source
   files retain the `// llg-lsp-fixture:` header.
+- Shared lint additions need one source fixture containing both triggering and
+  nearby quiet controls, plus simulator CLI JSON and LSP publication/config
+  coverage for the same stable rule IDs.
 
 ## Surelog integration
 
 Tests that invoke Surelog must run from a fresh temporary working directory,
 because Surelog writes `slpp_all/`. Clean up temporary trees after each test.
 Prefer the shared Rust compile/session APIs and keep assertions deterministic.
+Use `compile_checked` for execution/elaboration success paths. Tests of error
+reporting may call raw `compile` to prove partial results remain inspectable,
+then assert that `compile_checked` withholds the failed session.
+
+`sim_waveform.rs` covers the full HDL-to-generated-model VCD/FST path,
+including dump controls, X/Z and real values, hierarchy, timestamps, and final
+blocks. The lower-level waveform runtime self-test owns ring wrap/backpressure,
+flush acknowledgement, aliases, and reopening FST output with libfst's reader.

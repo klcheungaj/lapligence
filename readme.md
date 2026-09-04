@@ -103,9 +103,10 @@ Generate-time options:
   `target/sim/<design>` (prints the directory), then exit without
   configuring/building/running
 
-The 21-rule shared registry is also used by the language server, including
+The 24-rule shared registry is also used by the language server, including
 checks for undriven signals, incomplete sensitivity lists, out-of-range
-selects, X/Z logical equality, and duplicate exact-case labels. See
+selects, X/Z logical equality, duplicate exact-case labels, empty implicit
+sensitivity, assignment expressions in conditions, and `casex`. See
 [`src/core/lint/readme.md`](src/core/lint/readme.md) for rule and configuration
 details.
 
@@ -117,6 +118,16 @@ Build-time options:
 CMake is the only supported model builder; it runs automatically after C
 emission. Exit codes: `0` success · `1` errors · `2` usage error. The
 simulator's exit code is propagated.
+
+Waveforms are enabled from HDL with `$dumpfile("trace.vcd")` or
+`$dumpfile("trace.fst")` plus `$dumpvars`. Waveform-enabled generated models
+need zlib and a thread library discoverable by CMake; all GTKWave libfst source
+is emitted from the repository, with no build-time download. A dedicated
+writer thread consumes a bounded lossless ring so the simulation scheduler
+does not perform compression or file I/O. `$dumpon`, `$dumpoff`, `$dumpall`,
+`$dumpflush`, and `$dumplimit` are supported; `$dumpvars` depth/scope filtering
+is not yet implemented and currently dumps all user-visible storage with a
+warning.
 
 Environment variables:
 

@@ -19,3 +19,36 @@ End-to-end behavior is covered by `tests/sim_*.rs`, scheduling by
 `tests/emit_decoupling.rs`. `docs/sim_features.md` is the detailed support
 matrix; unsupported accepted syntax must fail clearly or be documented as an
 explicit approximation.
+
+Waveform controls lower into IR and enable an otherwise-absent generated-model
+component. `$dumpfile` chooses VCD or FST by extension; `$dumpvars`, `$dumpon`,
+`$dumpoff`, `$dumpall`, `$dumpflush`, and `$dumplimit` feed one bounded,
+lossless SPSC ring from the single simulation OS thread to a dedicated writer
+thread. The writer exclusively owns the file and GTKWave libfst context, so
+simulation coroutines never race an encoder or perform file I/O. Normal models
+without waveform tasks neither compile libfst nor create a writer thread.
+Generated waveform builds require CMake Threads and zlib; bundled libfst,
+FastLZ, and LZ4 sources are emitted locally without network downloads.
+
+The thread abstraction has POSIX and Win32 implementations, but this does not
+remove the simulator's existing native-Windows blockers in libaco/generated C;
+Windows FST remains an experimental MinGW-oriented path. `$dumpvars` selection
+arguments currently produce one warning and dump all registered user storage.
+Unpacked arrays are exposed as flattened `[linear_index]` variables.
+Hierarchy component boundaries use an internal non-source control delimiter,
+so dots inside escaped identifiers never become false scopes. Punctuation in
+serialized VCD/FST component names is encoded reversibly and without name
+collisions. VCD and FST metadata use a fixed date field for reproducible
+output.
+
+True-net declaration assignments (`wire w = expr;`) are continuous drivers,
+not startup initializers. They reuse the ordinary event-driven continuous-
+assignment IR: constant RHS expressions run once and dynamic RHS expressions
+wait on a precomputed, deduplicated sensitivity set. Variable declaration
+initializers remain startup writes. Unknown executable UHDM statements must
+reach codegen as `StmtKind::Unsupported` and fail with source context; only
+`StmtKind::Empty` may lower to a no-op.
+
+Use `generate_from_db_with_opts` when emitting more than one optimization
+variant from the same elaborated design. It reuses the single owned `Db`,
+avoiding repeated VPI walks and frontend iterator-lifetime assumptions.

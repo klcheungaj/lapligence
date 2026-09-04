@@ -15,7 +15,7 @@ and sharing a common processing layer.
   completion, references, rename (`textDocument/rename` +
   `textDocument/prepareRename`), and a custom read-only module explorer
   snapshot.
-- **Frontend**: the vendored Surelog v1.86 (`vendor/Surelog`) parses Verilog/SV
+- **Frontend**: the vendored Surelog v1.87 (`vendor/Surelog`) parses Verilog/SV
   and produces an elaborated UHDM database, accessed through a small C wrapper
   (`src/wrapper/surelog_c_api.{h,cpp}`) and safe Rust FFI/VPI modules.
 - **References**: `vendor/synlig` (Surelog→Yosys frontend, same
@@ -44,13 +44,14 @@ src/
     vpi.rs                      — safe VPI wrapper + `read_value()` → owned `ValueData`
     process_memory.rs           — platform-specific physical-footprint sampler (Linux/macOS/Windows)
   core/                         — shared processing layer (used by LSP AND simulator); unsafe-free
-    compile.rs                  — unified compile pipeline (CompileOpts/CompileOut/Diag)
+    compile.rs                  — unified compile pipeline (raw + checked contracts;
+                                  CompileOpts/CompileOut/CompileError/Diag)
     db.rs                       — OWNED UHDM node database (single VPI walk; arena of Nodes)
     elab.rs                     — 4-state Value math + parameter/expr resolver (Resolver)
     model.rs                    — owned DesignModel, projected from db via `from_db`;
                                   generated scopes retain concrete identities and direct
                                   children, and signals retain net kinds
-    lint/                       — shared rule engine + 21 default rules (LintRule/LintCtx/
+    lint/                       — shared rule engine + 24 default rules (LintRule/LintCtx/
                                   LintDiag/registry/LintConfig)
     tokens.rs                   — VPI + parse-tree object collection (semantic tokens)
     macros.rs                   — preprocessor macro tables for macro-usage hover
@@ -132,7 +133,7 @@ plan of record for the remaining work.
 ## Tooling & Build
 
 - **Build system**: Rust `cargo` (with `build.rs` driving a `cmake` build of
-  Surelog v1.86 + UHDM + ANTLR), C++ via cmake.
+  Surelog v1.87 + UHDM + ANTLR), C++ via cmake.
 - Static musl builds are the norm (`x86_64-unknown-linux-musl`); Linux and
   macOS are supported, Windows is not.
 - The C/C++ world is linked with mimalloc: binaries set the `#[global_allocator]`
@@ -165,7 +166,7 @@ plan of record for the remaining work.
 
 ---
 
-## The Elaboration Pipeline (verified against Surelog v1.86)
+## The Elaboration Pipeline (verified against Surelog v1.87)
 
 The mandatory frontend flow is **parse + compile + elaborate + `-elabuhdm`** —
 set all of: `set_parse()`, `set_write_pp_output()`, `set_compile()`,
@@ -235,8 +236,10 @@ function-local typespec ranges.
   distinguish by object type (`vpiInitial`).
 - Concat operands may be reversed (Surelog sets `vpiReordered`); respect it.
 - `indexed_part_select` uses `vpiBaseExpr`/`vpiWidthExpr`, not `vpiIndex`/`vpiSize`.
-- Surelog prefixes names with the library, e.g. `work@param_top` — strip the
-  `lib@` prefix for display and source matching (SV identifiers can't contain `@`).
+- Surelog prefixes top design-unit names with the library, e.g.
+  `work@param_top` — strip that known top-level `lib@` qualifier for display
+  and source matching. Do not apply this rule to arbitrary `vpiName` values:
+  an escaped SystemVerilog source identifier can legally contain `@`.
 - `-nowarning` **removes** warnings from the error container at add-time (not
   just at print time); `-noinfo` still leaks one `CM0023` info diagnostic.
 - Driving flags via setters requires `set_write_pp_output()`; without it the
@@ -491,14 +494,15 @@ function-local typespec ranges.
 `core::lint` — shared rule engine over the owned db + design model.  Rules
 implement `LintRule` (`id`/`description`/`check(ctx)`); `LintCtx` hands each
 rule the `Db` + `DesignModel`; findings are `LintDiag` (rule id, severity,
-file, 1-based line/col, message).  The registry runs 21 default rules in a
+file, 1-based line/col, message).  The registry runs 24 default rules in a
 stable order: `unused-signal`, `width-mismatch`, `incomplete-case`,
 `combinational-loop`, `multi-driver`, `casez-misuse`, `if-latch`,
 `naming-style`, `blocking-in-always_ff`, `nba-in-always_comb`,
 `unused-parameter`, `implicit-net`, `case-default-missing`,
 `comparison-width-mismatch`, `unconnected-port`, `mixed-assignments`,
 `undriven-signal`, `incomplete-sensitivity-list`, `out-of-range-select`,
-`xz-logical-equality`, `duplicate-case-item`.  No VPI access, no raw FFI, no
+`xz-logical-equality`, `duplicate-case-item`, `empty-implicit-sensitivity`,
+`assignment-in-condition`, `casex-statement`.  No VPI access, no raw FFI, no
 LSP dependencies.
 
 New-rule notes: `implicit-net` flags nets Surelog auto-created from
@@ -528,7 +532,7 @@ report (see `core::lint::diags_to_json` for the schema).
 
 ## Simulator Architecture (v1)
 
-Flow: `llg` (src/bin/llg.rs) → `core::compile::compile` →
+Flow: `llg` (src/bin/llg.rs) → `core::compile::compile_checked` →
 `sim::codegen::generate(uhdm_design)` (builds `core::db::Db` internally and
 lowers from the owned database — no VPI calls in the emitter) → `IrModel` →
 `sim::opt` passes → `sim::emit_c` C11 emission → write `target/sim/<design>/`
@@ -599,7 +603,7 @@ writes sources + `CMakeLists.txt` only (`--gen-only`);
     silent truncation in `sv4_concat` is a real bug, keep the checks.
   - `for_stmt` in UHDM: `vpiForInitStmt`/`vpiForIncStmt` (not vpiStmt/
     vpiElseStmt) for init/incr, `vpiCondition` = condition, `vpiStmt` = body.
-  - `delay_control` values are NOT exposed via VPI in Surelog v1.86 — the
+  - `delay_control` values are NOT exposed via VPI in Surelog v1.87 — the
     `core::db` build recovers `#N` from the source line the delay_control
     points at (`StmtKind::DelayControl { ticks }`); timescale scaling happens
     in the codegen.
@@ -611,14 +615,21 @@ writes sources + `CMakeLists.txt` only (`--gen-only`);
   `$display` `%f`/`%e`/`%g`.  `shortreal` rounds through `float`; real-to-packed
   conversion rounds to nearest (halves away from zero) and targets at most 64
   bits.  Unsupported real contexts fail during codegen; see `src/sim/readme.md`.
-- **v1 rejects**: `deassign` (requires procedural continuous assignments);
-  `$dump*`/`$displayon`/`$displayoff` (warn + skip); `disable <label>;`
+- **v1 rejects**: `$dumpports` extended VCD; `$displayon`/`$displayoff`
+  (warn + skip); cross-process `disable <label>;`
   (only `disable fork;` is supported); string signals/parameters; real ports,
   arrays, function/task types, continuous/combinational processes, and
   double-aware scheduling/monitoring contexts; vectors wider than 1024 bits;
   fractional delays (`#0.5`); fork/join inside a function/task body; recursive
   delay-bearing tasks; task calls inside function bodies; select/part-select
   LHS drivers on inout net members.
+- **Waveforms**: `$dumpfile` selects `.vcd` or `.fst`; `$dumpvars`, `$dumpon`,
+  `$dumpoff`, `$dumpall`, `$dumpflush`, and `$dumplimit` lower through IR.
+  Generated waveform models use a dedicated POSIX/Win32 writer thread and a
+  bounded lossless SPSC ring whose sole producer is the simulation OS thread;
+  the writer owns all file/libfst state. `$dumpvars` filtering is a documented
+  approximation (arguments warn, then all registered user storage is dumped).
+  Normal models omit the waveform runtime and GTKWave libfst sources entirely.
 
 ---
 
@@ -680,7 +691,9 @@ writes sources + `CMakeLists.txt` only (`--gen-only`);
   (`tests/`); new code should include tests unless clearly trivial.
 - Integration tests that run Surelog must `std::env::set_current_dir` to a
   fresh temp dir (Surelog writes `slpp_all/` into the CWD) and clean up
-  afterwards. Use `SessionBuilder` / `compile::compile` from the lib.
+  afterwards. Execution/elaboration tests should use
+  `compile::compile_checked`; use raw `compile::compile` only when a test must
+  inspect partial frontend results or diagnostics, as the LSP does.
 - `tests/elaboration/run_elab_check.sh` is the elaboration regression suite
   (runs `elab_check` over the test designs; ref binding must stay 100% and
   resolved parameter values must match the expected outputs).

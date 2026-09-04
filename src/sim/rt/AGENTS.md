@@ -40,6 +40,23 @@ the generated `model.c` into a standalone executable and is deliberately
   visibility, ping-pong, directly observed nested `join_none` lifetimes, empty
   fork-group finalization, and cumulative process slot reuse).  Compiled and run by `tests/sim_counter.rs`
   `sim_rt_selftest`.
+- `llg_wave.h` / `llg_wave.c` — optional VCD/FST waveform runtime. The one OS
+  simulation thread is the sole producer of a bounded SPSC ring and a
+  dedicated POSIX/Win32 writer thread is the sole consumer and file owner.
+  Events own their values, publication uses release/acquire ordering, full and
+  empty waits use condition variables, `$dumpflush` is an acknowledged FIFO
+  barrier, and close is an in-band event followed by join. Never add a second
+  producer without replacing this contract or assigning it a separate SPSC
+  ring. Registration names use ASCII unit separator (`0x1f`) between
+  hierarchy components; it cannot occur in a source identifier. The writer
+  reversibly encodes punctuation per component, preventing escaped dots from
+  becoming scopes and preventing serialized-name collisions.
+- `gtkwave/` — pinned GTKWave libfst writer/reader plus its FastLZ/LZ4 support
+  and license/provenance files. It is emitted and compiled only for models
+  containing waveform controls. FST compression uses zlib and libfst's own
+  internal parallel mode stays disabled because `llg_wave.c` owns threading.
+- `llg_wave_selftest.c` — forces ring wrap/backpressure, checks the VCD flush
+  barrier, writes both formats, and reopens the FST with the official reader.
 
 ## Embedding
 
@@ -47,6 +64,8 @@ the generated `model.c` into a standalone executable and is deliberately
   - `runtime_sources()` → `(llg_rt.h, llg_rt.c)`;
   - `libaco_sources()` → `(aco.h, aco.c, acosw.S)` from `vendor/libaco`;
   - `selftest_source()` → `llg_rt_selftest.c`.
+  - `waveform_sources()` / `waveform_selftest_source()` → the optional
+    waveform runtime, libfst snapshot, and standalone waveform self-test.
 - `sim::build::generate_model_sources` / `build_model_cmake[_with_opts]`
   write the runtime + libaco sources (plus `aco_assert_override.h`) and the
   extra sources (generated model or selftest) into a build directory and
@@ -57,6 +76,10 @@ the generated `model.c` into a standalone executable and is deliberately
 
 - C11; the model-build line is `cc -std=c11 -O2 -Wall -Wno-unused-function`
   and must stay warning-clean.
+- Waveform builds additionally require CMake's `Threads::Threads` and zlib.
+  Thread calls are hidden behind a narrow POSIX/Win32 layer; do not use C11
+  `<threads.h>` as the Windows portability boundary. The overall generated
+  simulator still has independent native-Windows/libaco limitations.
 - The runtime is **timescale-agnostic**: it runs in integer design-precision
   ticks; the codegen scales `#N` delays and `$time`/`%t` reads per the
   calling module's `timescale` before calling `llg_wait_time`/`llg_time`.

@@ -5,9 +5,12 @@
 The common processing core used by both the LSP server (`src/bin/llg_ls`) and
 the simulator (`src/sim/`):
 
-- `compile.rs` — unified Surelog pipeline: `CompileOpts`/`CompileOut`/`Diag`,
-  plus a single-source `parse_only` path that returns owned parse-tree tokens
-  without preprocessing, compilation, elaboration, builtins, or cache reuse.
+- `compile.rs` — unified Surelog pipeline: raw `compile` returns partial
+  frontend results plus `CompileOut` diagnostics for the LSP, while
+  `compile_checked` returns `CompileError` and withholds failed sessions from
+  execution/elaboration consumers. A single-source `parse_only` path returns
+  owned parse-tree tokens without preprocessing, compilation, elaboration,
+  builtins, or cache reuse.
 - `tokens.rs` — UHDM and parse-tree token collection. Isolated parse-only
   results are supplemented from the supplied source buffer for literal module
   boundaries when unresolved macros damage Surelog's tree. The source-local
@@ -57,7 +60,7 @@ the simulator (`src/sim/`):
   LSP dependencies; built once per analysis commit (see
   `src/bin/llg_ls/features.rs::analyze_inner`), never inside a request.
 - `lint/` — shared rule engine over `db` + `model`: `LintRule`/`LintCtx`/
-  `LintDiag` and a registry of 21 default rules (see
+  `LintDiag` and a registry of 24 default rules (see
   `src/core/lint/rules/mod.rs::default_rules` for the authoritative list).
   Consumed by the LSP (lint diagnostics with source `llg-lint`) and
   `llg --lint`.
@@ -74,6 +77,9 @@ the simulator (`src/sim/`):
 - No panics in library code; `Result`/`Option` throughout.
 - The db is the **single VPI traversal point** — prefer extending `db` over
   adding new VPI walks.
+- Missing bodies and `vpiNullStmt` lower to `StmtKind::Empty`; every unknown
+  executable statement is retained as `StmtKind::Unsupported { vpi_type }`
+  so simulator codegen rejects it instead of silently emitting a no-op.
 
 ## Interactions
 
@@ -81,4 +87,4 @@ the simulator (`src/sim/`):
 - Above: `src/sim/` (codegen consumes `db` + `model`), `src/bin/llg_ls/`
   (`features::analyze` builds `db` → `model` + tokens and runs `core::lint`),
   `src/bin/llg.rs` (`--lint` gate runs `core::lint` before codegen),
-  `src/bin/elab_check` (verifies elaboration via `compile` + `ffi`).
+  `src/bin/elab_check` (verifies elaboration via `compile_checked` + `ffi`).

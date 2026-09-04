@@ -79,19 +79,27 @@ Driver: `src/bin/llg.rs` (compile → codegen(lowering → IR → opt → emit)
 
 - **No `unsafe`** (all UHDM access is through `core::db`, which is safe).
 - **No direct VPI calls** outside the `generate` entry's db build.
+- Multi-variant consumers should build `core::db::Db` once and call
+  `generate_from_db_with_opts`; do not traverse the same live VPI design once
+  per optimizer configuration.
 - libaco is **not** a Rust dependency: it is compiled together with the
   generated C model at model-build time.
-- Declaration initializers are supported and applied in `main()` before any
-  process runs (a process writing the signal at t=0 overrides the
-  initializer), in this order: unpacked-array fills, then scalar `reg`/`wire`
-  fills (`wire w = 1'b1;`, `reg y = 0;` — Surelog models these as
-  `vpiNetDeclAssign` continuous assignments), then scalar VARIABLE fills
+- Declaration initializers are supported. True-net declaration assignments
+  (`wire w = expr;`, including dynamic RHS expressions) lower through the
+  same event-driven `RunOnce`/`SensLoop` process path as explicit continuous
+  assignments. Variable initializers are applied in `main()` before any
+  process runs (a process writing the variable at t=0 overrides the
+  initializer), in this order: unpacked-array fills, then scalar `reg` fills
+  (`reg y = 0;` — Surelog models this as a `vpiNetDeclAssign`), then scalar
+  VARIABLE fills
   (`logic l = 1'b0;`, `int x = 5;`, `logic [7:0] v = 8'ha5;` — the init lives
   on the var's `vpiExpr`, captured by `core::db` in `Db::vars_init` and folded
   to a constant by the codegen; parameter references like `int y = P + 1;`
   resolve through the collected parameter values).  Initializers whose RHS is
-  not a constant expression (`logic z = a;`) are rejected — v1 is
-  constant-only.  Processes inside
+  not a constant expression (`logic z = a;`) are rejected. Dynamic true-net
+  drivers that read unpacked arrays, and unsupported resolved-net classes,
+  are rejected because their sensitivity/resolution cannot yet be represented.
+  Processes inside
   generate scopes are supported (genvar references inline to the gen-scope
   parameter values).  Module instances inside generate scopes are supported
   too: each per-iteration instance gets its own path (`top.g[0].u`), its
@@ -134,7 +142,7 @@ Driver: `src/bin/llg.rs` (compile → codegen(lowering → IR → opt → emit)
    inout-net driver path applies automatically).  Hierarchical write
    targets may carry a trailing select (`top.u0.sig[3:0]`,
    `top.u0.sig[2]`, `top.u0.sig[3 +: 4]`) with constant integer
-   indices/bounds only; Surelog v1.86's elaborated model drops part-select
+   indices/bounds only; Surelog v1.87's elaborated model drops part-select
    bounds and only keeps constant bit-select indices (in the object name),
    so the trailing select is recovered from the node name / source line —
    variable or expression indices/bounds are rejected with a clear error.
@@ -142,8 +150,11 @@ Driver: `src/bin/llg.rs` (compile → codegen(lowering → IR → opt → emit)
    the select); `%d` prints signed values as negatives (two's
   complement over the value's width) when the value's `is_signed` is set,
   and `-<unsized decimal literal>` (e.g. `-3`) is emitted signed per the
-  LRM; `$dump*` / `$displayon` / `$displayoff` remain skipped with a
-  warning; procedural `force sig = expr;` / `release sig;` are supported on
+   LRM; `$dumpfile`/`$dumpvars`/`$dumpon`/`$dumpoff`/`$dumpall`/
+   `$dumpflush`/`$dumplimit` emit asynchronous VCD or FST waveforms (the
+   `$dumpvars` depth/scope arguments currently warn and conservatively select
+   all registered user storage); `$displayon` / `$displayoff` remain skipped
+   with a warning; procedural `force sig = expr;` / `release sig;` are supported on
   whole signals only (while forced, procedural blocking and non-blocking
   writes to the signal are ignored; `release` restores the value saved at
   force time — drivers that changed while forced are not re-evaluated, a
