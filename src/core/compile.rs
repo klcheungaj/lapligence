@@ -1,12 +1,13 @@
 //! compile — unified Surelog compilation pipeline shared by the LSP and the
 //! simulator.  High-level facade over `surelog::SessionBuilder`.
 //!
-//! Surelog work enters through [`compile`] or [`parse_only`].  The full
-//! pipeline returns [`CompileOut::session`], which owns every C++ object and
-//! must be used (and dropped) on the calling thread.  The parse-only path
-//! collects owned parse-tree tokens and drops its session before returning.
-//! Frontend problems come back as [`Diag`]s, not as errors — the `Result` is
-//! reserved for session-construction failures.
+//! Surelog work enters through [`compile`], [`compile_checked`], or
+//! [`parse_only`].  The full pipeline returns [`CompileOut::session`], which
+//! owns every C++ object and must be used (and dropped) on the calling thread.
+//! Execution and elaboration consumers should use [`compile_checked`], which
+//! never returns a session when blocking frontend diagnostics were reported.
+//! The raw [`compile`] API retains diagnostics in [`CompileOut`] so diagnostic
+//! consumers such as the LSP can inspect partial frontend results.
 
 use crate::core::tokens::{self, FileTokens};
 use crate::ffi::surelog;
@@ -271,6 +272,71 @@ pub struct CompileOut {
     pub diagnostics: Vec<Diag>,
 }
 
+/// Failure from [`compile_checked`].
+///
+/// Session startup failures contain the message returned by the raw
+/// [`compile`] API.  Frontend failures own every diagnostic from the run,
+/// including warnings and informational records that accompanied a blocking
+/// fatal, syntax, or error diagnostic.  No failed Surelog session is retained.
+#[derive(Debug, Clone, PartialEq)]
+pub enum CompileError {
+    /// Surelog could not validate the invocation or start a session.
+    SessionStart(String),
+    /// Surelog started but reported at least one blocking frontend diagnostic.
+    FrontendDiagnostics(Vec<Diag>),
+}
+
+impl CompileError {
+    /// Return the session-start message, if session creation failed.
+    pub fn session_start_message(&self) -> Option<&str> {
+        match self {
+            Self::SessionStart(message) => Some(message),
+            Self::FrontendDiagnostics(_) => None,
+        }
+    }
+
+    /// Return all owned frontend diagnostics, or `None` for startup failures.
+    pub fn diagnostics(&self) -> Option<&[Diag]> {
+        match self {
+            Self::SessionStart(_) => None,
+            Self::FrontendDiagnostics(diagnostics) => Some(diagnostics),
+        }
+    }
+
+    /// Consume the error and return all frontend diagnostics, if present.
+    pub fn into_diagnostics(self) -> Option<Vec<Diag>> {
+        match self {
+            Self::SessionStart(_) => None,
+            Self::FrontendDiagnostics(diagnostics) => Some(diagnostics),
+        }
+    }
+}
+
+impl std::fmt::Display for CompileError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::SessionStart(message) => f.write_str(message),
+            Self::FrontendDiagnostics(diagnostics) => {
+                let blocking = diagnostics
+                    .iter()
+                    .filter(|diagnostic| {
+                        matches!(
+                            diagnostic.severity,
+                            Severity::Fatal | Severity::Syntax | Severity::Error
+                        )
+                    })
+                    .count();
+                write!(
+                    f,
+                    "surelog reported {blocking} blocking frontend diagnostic(s)"
+                )
+            }
+        }
+    }
+}
+
+impl std::error::Error for CompileError {}
+
 /// Owned result of a single-file Surelog parse-only run.
 ///
 /// Unlike [`CompileOut`], this result does not expose the session: parse-tree
@@ -363,6 +429,28 @@ pub fn compile(opts: &CompileOpts) -> Result<CompileOut, String> {
         session,
         diagnostics,
     })
+}
+
+/// Compile + elaborate, returning a session only when the frontend is clean.
+///
+/// Unlike raw [`compile`], this is the contract for consumers that execute or
+/// inspect elaborated UHDM.  Fatal, syntax, and error diagnostics produce
+/// [`CompileError::FrontendDiagnostics`] containing the complete owned
+/// diagnostic snapshot.  The corresponding Surelog session is dropped before
+/// the error is returned.  Warnings, notes, and informational diagnostics do
+/// not block a successful result.
+pub fn compile_checked(opts: &CompileOpts) -> Result<CompileOut, CompileError> {
+    let out = compile(opts).map_err(CompileError::SessionStart)?;
+    if out.ok() {
+        return Ok(out);
+    }
+
+    let CompileOut {
+        session,
+        diagnostics,
+    } = out;
+    drop(session);
+    Err(CompileError::FrontendDiagnostics(diagnostics))
 }
 
 /// Parse exactly one source file without preprocessing, compilation,

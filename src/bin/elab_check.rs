@@ -314,32 +314,40 @@ fn main() {
 
     // Unified pipeline: parse + compile + elaborate + `-elabuhdm` with
     // structured diagnostics (see src/compile.rs).
-    let out = match compile::compile(&compile::CompileOpts {
+    let out = match compile::compile_checked(&compile::CompileOpts {
         files: rest,
         top,
         ..Default::default()
     }) {
         Ok(out) => out,
-        Err(e) => {
+        Err(compile::CompileError::SessionStart(e)) => {
             eprintln!("{e}");
             std::process::exit(1);
         }
-    };
-
-    // Surelog reported fatal/syntax/error diagnostics → print and abort.
-    if !out.ok() {
-        for d in &out.diagnostics {
-            eprintln!(
-                "{:?}: {}:{}:{} {}",
-                d.severity,
-                d.file.as_deref().unwrap_or(""),
-                d.line,
-                d.col,
-                d.message
-            );
+        Err(compile::CompileError::FrontendDiagnostics(diagnostics)) => {
+            for d in &diagnostics {
+                eprintln!(
+                    "{:?}: {}:{}:{} {}",
+                    d.severity,
+                    d.file.as_deref().unwrap_or(""),
+                    d.line,
+                    d.col,
+                    d.message
+                );
+            }
+            eprintln!("surelog reported errors; aborting");
+            std::process::exit(1);
         }
-        eprintln!("surelog reported errors; aborting");
-        std::process::exit(1);
+    };
+    for diagnostic in &out.diagnostics {
+        eprintln!(
+            "{:?}: {}:{}:{} {}",
+            diagnostic.severity,
+            diagnostic.file.as_deref().unwrap_or(""),
+            diagnostic.line,
+            diagnostic.col,
+            diagnostic.message
+        );
     }
 
     // ── 1. Surelog Design API: instance tree ──────────────────────────────

@@ -136,14 +136,28 @@ fn main() {
     }
 
     // 1. Surelog parse + compile + elaborate + -elabuhdm.
-    let out = match compile::compile(&compile::CompileOpts {
+    let out = match compile::compile_checked(&compile::CompileOpts {
         files,
         top,
         ..Default::default()
     }) {
         Ok(out) => out,
-        Err(e) => {
+        Err(compile::CompileError::SessionStart(e)) => {
             eprintln!("llg: compile failed to start: {e}");
+            std::process::exit(1);
+        }
+        Err(compile::CompileError::FrontendDiagnostics(diagnostics)) => {
+            for d in &diagnostics {
+                eprintln!(
+                    "{:?}: {}:{}:{} {}",
+                    d.severity,
+                    d.file.as_deref().unwrap_or(""),
+                    d.line,
+                    d.col,
+                    d.message
+                );
+            }
+            eprintln!("llg: surelog reported errors; aborting");
             std::process::exit(1);
         }
     };
@@ -157,10 +171,6 @@ fn main() {
             d.message
         );
     }
-    if !out.ok() {
-        eprintln!("llg: surelog reported errors; aborting");
-        std::process::exit(1);
-    }
 
     // 2. Lint gate (--lint mode): build the owned db + model, print findings,
     //    and abort on lint errors before codegen.
@@ -171,6 +181,7 @@ fn main() {
             std::process::exit(1);
         }
     };
+    let mut codegen_db = None;
     if lint_mode {
         let db = match llg::core::db::Db::build(design) {
             Ok(db) => db,
@@ -242,11 +253,19 @@ fn main() {
             if errors > 0 {
                 std::process::exit(1);
             }
+            // Surelog v1.87 exposes relationships whose contents may be
+            // consumed by a VPI traversal.  Reuse this owned snapshot for
+            // codegen instead of walking the live design a second time.
+            codegen_db = Some(db);
         }
     }
 
     // 3. Codegen.
-    let gen = match sim::codegen::generate(design) {
+    let generated = match &codegen_db {
+        Some(db) => sim::codegen::generate_from_db_with_opts(db, &sim::opt::OptConfig::default()),
+        None => sim::codegen::generate(design),
+    };
+    let gen = match generated {
         Ok(g) => g,
         Err(e) => {
             eprintln!("llg: codegen error: {e}");
@@ -259,7 +278,7 @@ fn main() {
 
     // 4. Write sources (+ CMakeLists.txt).  With --gen-only, stop here: the
     //    emitted directory is the output, nothing is configured or run.
-    let out_dir = PathBuf::from("target/sim").join(&gen_name(&gen));
+    let out_dir = PathBuf::from("target/sim").join(gen_name(&gen));
     let model = [("model.c", gen.model_c.as_str())];
     if gen_only {
         if generator.is_some() {
