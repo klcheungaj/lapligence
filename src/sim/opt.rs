@@ -158,7 +158,7 @@ fn const_to_value(c: &IrConst) -> Option<Value> {
 }
 
 fn value_to_const(v: &Value) -> IrConst {
-    let nlimbs = ((v.width() + 63) / 64).max(1);
+    let nlimbs = v.width().div_ceil(64).max(1);
     let mut bits = vec![0u64; nlimbs];
     let mut x = vec![0u64; nlimbs];
     let mut z = vec![0u64; nlimbs];
@@ -350,6 +350,7 @@ fn walk_stmt_mut(s: &mut IrStmt, f: &mut impl FnMut(&mut IrExpr)) {
                 walk_expr_mut(e, f);
             }
         }
+        IrStmt::WaveLimit(limit) => walk_expr_mut(limit, f),
         IrStmt::Call(call) => {
             walk_call_args_mut(&mut call.args, f);
             // Temp initializers and copy-out select indices are expression
@@ -1107,8 +1108,16 @@ fn mark_unused_storage(model: &mut IrModel) {
             rw.write(*sig);
         }
     }
-    let flags: Vec<bool> = (0..model.signals.len())
-        .map(|i| !rw.reads.contains(&i) && !rw.writes.contains(&i))
+    let waveform = model.waveform;
+    let flags: Vec<bool> = model
+        .signals
+        .iter()
+        .enumerate()
+        .map(|(i, sig)| {
+            !(waveform && sig.hdl_name.is_some())
+                && !rw.reads.contains(&i)
+                && !rw.writes.contains(&i)
+        })
         .collect();
     for (sig, omit) in model.signals.iter_mut().zip(flags) {
         sig.omit = omit;
@@ -1275,6 +1284,7 @@ fn collect_stmt_rw(s: &IrStmt, model: &IrModel, rw: &mut Rw) {
                 collect_expr_reads(e, model, rw);
             }
         }
+        IrStmt::WaveLimit(limit) => collect_expr_reads(limit, model, rw),
         IrStmt::Call(call) => collect_call_rw(call, model, rw),
         IrStmt::Return { value: Some(value) } => collect_expr_reads(value, model, rw),
         _ => {}
@@ -1560,6 +1570,7 @@ mod tests {
         (0..n)
             .map(|i| IrSignal {
                 c_name: format!("G_s{i}"),
+                hdl_name: Some(format!("t.s{i}")),
                 ty: IrType::Packed {
                     width: 8,
                     signed: false,
@@ -1574,6 +1585,7 @@ mod tests {
         IrModel {
             design_name: "t".to_string(),
             precision_ps: 1,
+            waveform: false,
             signals,
             net_groups: Vec::new(),
             arrays: Vec::new(),
@@ -2193,6 +2205,22 @@ mod tests {
         assert!(!m.signals[1].omit, "written signal stays");
         assert!(!m.signals[2].omit, "read signal stays");
         assert!(!m.signals[3].omit, "sensitivity-read signal stays");
+    }
+
+    #[test]
+    fn waveform_keeps_user_storage_but_not_synthesized_storage() {
+        let mut signals = sigs(2);
+        signals[1].hdl_name = None;
+        let mut m = model_with(Vec::new(), signals);
+        m.waveform = true;
+
+        run(&mut m, &storage_only());
+
+        assert!(!m.signals[0].omit, "waveform-visible user signal stays");
+        assert!(
+            m.signals[1].omit,
+            "unreferenced synthesized signal is omitted"
+        );
     }
 
     #[test]

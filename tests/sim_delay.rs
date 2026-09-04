@@ -729,18 +729,12 @@ endmodule
     let orig_cwd = std::env::current_dir().expect("current dir");
     std::env::set_current_dir(&dir).expect("chdir to temp dir");
 
-    fn build_and_run(dir: &std::path::Path, cfg: &OptConfig) -> Result<String, String> {
-        let out = compile::compile(&compile::CompileOpts {
-            files: vec![dir.join("tb.sv").to_string_lossy().into_owned()],
-            top: Some("tb".to_string()),
-            ..Default::default()
-        })
-        .map_err(|e| format!("compile: {e}"))?;
-        if !out.ok() {
-            return Err(format!("compile diagnostics: {:?}", out.diagnostics));
-        }
-        let design = out.uhdm_design().ok_or("no UHDM design")?;
-        let gen = sim::codegen::generate_with_opts(design, cfg)?;
+    fn build_and_run(
+        dir: &std::path::Path,
+        db: &llg::core::db::Db,
+        cfg: &OptConfig,
+    ) -> Result<String, String> {
+        let gen = sim::codegen::generate_from_db_with_opts(db, cfg)?;
         let exe = sim::build::build_model_cmake_with_opts(
             dir,
             &[("model.c", gen.model_c.as_str())],
@@ -760,8 +754,35 @@ endmodule
         Ok(String::from_utf8_lossy(&output.stdout).into_owned())
     }
 
-    let on = (|| build_and_run(&dir, &OptConfig::default()))();
-    let off = (|| build_and_run(&dir, &OptConfig::none()))();
+    // Compile once and lower the same owned frontend snapshot with both
+    // optimizer configurations. Surelog v1.87 does not reliably start a
+    // second full session in the same process, and recompilation is not part
+    // of the behavior this differential test is intended to compare.
+    let out = compile::compile_checked(&compile::CompileOpts {
+        files: vec![src_path.to_string_lossy().into_owned()],
+        top: Some("tb".to_string()),
+        ..Default::default()
+    })
+    .map_err(|e| format!("compile: {e}"));
+    let (on, off) = match out {
+        Ok(out) => {
+            let database = out
+                .uhdm_design()
+                .ok_or_else(|| "no UHDM design".to_string())
+                .and_then(llg::core::db::Db::build);
+            match database {
+                Ok(database) => (
+                    build_and_run(&dir, &database, &OptConfig::default()),
+                    build_and_run(&dir, &database, &OptConfig::none()),
+                ),
+                Err(error) => (Err(error.to_string()), Err(error.to_string())),
+            }
+        }
+        Err(error) => {
+            let message = error.to_string();
+            (Err(message.clone()), Err(message))
+        }
+    };
 
     std::env::set_current_dir(&orig_cwd).expect("restore cwd");
     let _ = std::fs::remove_dir_all(&dir);

@@ -7,6 +7,9 @@
 
 #include "llg_rt.h"
 #include "aco.h"
+#ifdef LLG_WAVEFORM
+#include "llg_wave.h"
+#endif
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -1546,6 +1549,9 @@ static void sig_write(sv4_t* target, sv4_t value) {
     }
     if (target->width == value.width && sv4_same(*target, value)) return;
     *target = value;
+#ifdef LLG_WAVEFORM
+    llg_wave_changed_sv4(target, &value, g.now);
+#endif
     llg_wait_t* w = g.waiters;
     while (w) {
         llg_wait_t* next = w->next;
@@ -1564,6 +1570,20 @@ static void sig_write(sv4_t* target, sv4_t value) {
         if (wake) wake_proc(w->proc);
         w = next;
     }
+}
+
+// Real equality is bitwise: repeated NaNs with the same payload are
+// suppressed, while changes in NaN payload and signed zero are observable.
+static void real_write(double* target, double value) {
+    uint64_t old_bits;
+    uint64_t new_bits;
+    memcpy(&old_bits, target, sizeof(old_bits));
+    memcpy(&new_bits, &value, sizeof(new_bits));
+    if (old_bits == new_bits) return;
+    *target = value;
+#ifdef LLG_WAVEFORM
+    llg_wave_changed_real(target, value, g.now);
+#endif
 }
 
 // ── Procedural force / release ───────────────────────────────────────────────
@@ -1893,7 +1913,7 @@ void llg_nba_d(double* target, double value) {
 }
 
 void llg_ba_d(double* target, double value) {
-    *target = value;
+    real_write(target, value);
 }
 
 // ── Collapsed inout nets ──────────────────────────────────────────────────────
@@ -1956,7 +1976,7 @@ static void commit_nbas(void) {
             p->nba_head = n->next;
             if (!p->nba_head) p->nba_tail = NULL;
             if (n->is_real) {
-                *n->real_target = n->real_value;
+                real_write(n->real_target, n->real_value);
             } else if (!llg_is_forced(n->target)) {
                 sig_write(n->target, n->value);
             }

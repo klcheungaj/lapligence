@@ -464,10 +464,10 @@ pub enum StmtKind {
         lhs: NodeId,
         rhs: NodeId,
     },
-    /// `;` empty statement.  Defined by the VPI/UHDM type system
-    /// (`vpiNullStmt`), but never emitted by Surelog v1.86 elaboration,
-    /// which drops null statements from the design.
-    Null,
+    /// An intentionally empty statement or a placeholder for a missing
+    /// function/task/control body.  This is distinct from an executable VPI
+    /// statement type that the simulator does not implement.
+    Empty,
     /// `return [expr];` — the optional value is captured as a child node
     /// (under `vpiCondition` in UHDM); a bare `return;` has no children.
     Return {
@@ -514,7 +514,12 @@ pub enum StmtKind {
     /// `foreach (...)` loop. Captured distinctly so consumers reject or
     /// implement it explicitly instead of mistaking it for an empty body.
     Foreach,
-    Other,
+    /// An executable statement object recognized by VPI but not modelled by
+    /// the owned database.  Keeping the raw type lets consumers reject it
+    /// explicitly instead of silently treating it as an empty statement.
+    Unsupported {
+        vpi_type: i32,
+    },
 }
 
 /// Intra-assignment control of a procedural assignment (`a = #5 b;`).
@@ -912,7 +917,7 @@ impl Builder {
         let replace = self
             .elaborated_type_ranges
             .get(&key)
-            .map_or(true, |existing| {
+            .is_none_or(|existing| {
                 let existing_known = existing.iter().filter(|range| range.is_some()).count();
                 let known = packed_ranges.iter().filter(|range| range.is_some()).count();
                 (known, packed_ranges.len()) > (existing_known, existing.len())
@@ -1612,14 +1617,15 @@ impl Builder {
             let ty = self.type_info_of(rv.raw());
             // Key the return var by the function name; its own (buggy)
             // full name equals the function's full name.
-            let mut rprops = CommonProps::default();
-            rprops.name = props.name.clone();
-            rprops.full_name = props.full_name.clone();
-            rprops.file = props.file.clone();
-            rprops.line = props.line;
-            rprops.col = props.col;
-            rprops.end_line = props.end_line;
-            rprops.end_col = props.end_col;
+            let rprops = CommonProps {
+                name: props.name.clone(),
+                full_name: props.full_name.clone(),
+                file: props.file.clone(),
+                line: props.line,
+                col: props.col,
+                end_line: props.end_line,
+                end_col: props.end_col,
+            };
             let rv_id = self.register(Some(id), &rprops, NodeKind::Var { ty: ty.clone() });
             self.index
                 .insert((vpi::obj_type(rv.raw()), props.full_name.clone()), rv_id);
@@ -1656,7 +1662,7 @@ impl Builder {
             }
             kids.push(aid);
         }
-        // Body statement.  Surelog v1.86 emits no `vpiStmt` for an empty
+        // Body statement.  Surelog emits no `vpiStmt` for an empty
         // function/task body (`function void vf(...); endfunction`), so a
         // placeholder empty statement is registered to keep a body child
         // present (codegen picks the last statement child of the function).
@@ -1665,7 +1671,7 @@ impl Builder {
             None => kids.push(self.register(
                 Some(id),
                 &CommonProps::default(),
-                NodeKind::Stmt(StmtKind::Other),
+                NodeKind::Stmt(StmtKind::Empty),
             )),
         }
         self.set_children(id, kids);
@@ -1721,21 +1727,31 @@ impl Builder {
         );
         let mut kids: Vec<NodeId> = Vec::new();
         if let Some(lhs) = child(vpi::vpiLhs, h) {
-            // A declaration initializer on an unpacked array (`reg [7:0] m
-            // [0:3] = '{…}` — Surelog models the array as an `array_net` and
-            // the pattern as this net-decl-assign) has the array object itself
-            // as its LHS; resolve it to the captured Array node so codegen can
-            // apply the pattern as an array init.
+            // A net-declaration assignment's LHS is the declaration object
+            // itself in Surelog v1.87, not necessarily a ref wrapper. Bind it
+            // to the declaration already captured in the owning scope so the
+            // owned DB preserves whether this targets a net, variable, or
+            // unpacked array. The array full-name fallback also covers older
+            // frontend shapes whose direct object identity differs.
             let full = vpi::obj_full_name(lhs.raw());
-            let lhs_id = if is_array_type(vpi::obj_type(lhs.raw())) && !full.is_empty() {
-                match self.array_by_fullname(&full) {
-                    Some(arr) => self.register(
-                        Some(id),
-                        &CommonProps::default(),
-                        NodeKind::Expr(ExprKind::Ref { target: Some(arr) }),
-                    ),
-                    None => self.walk_node(lhs.raw(), Some(id))?,
+            let declaration = if net_decl {
+                if is_array_type(vpi::obj_type(lhs.raw())) && !full.is_empty() {
+                    self.array_by_fullname(&full)
+                } else {
+                    self.resolve_direct(lhs.raw())
+                        .or_else(|| self.resolve_ref(lhs.raw()))
                 }
+            } else {
+                None
+            };
+            let lhs_id = if let Some(target) = declaration {
+                self.register(
+                    Some(id),
+                    &CommonProps::default(),
+                    NodeKind::Expr(ExprKind::Ref {
+                        target: Some(target),
+                    }),
+                )
             } else {
                 self.walk_node(lhs.raw(), Some(id))?
             };
@@ -1988,15 +2004,15 @@ impl Builder {
 
     // ── Statements and expressions ─────────────────────────────────────────
 
-    /// Walk the `vpiStmt` child of `h`, or a placeholder empty statement when
-    /// there is none (mirrors codegen's leniency for empty loop bodies).
+    /// Walk the `vpiStmt` child of `h`, or an explicit empty placeholder when
+    /// there is none.
     fn walk_opt_stmt(&mut self, h: VpiHandle, parent: Option<NodeId>) -> Result<NodeId, String> {
         match child(vpi::vpiStmt, h) {
             Some(s) => self.walk_node(s.raw(), parent),
             None => Ok(self.register(
                 parent,
                 &CommonProps::default(),
-                NodeKind::Stmt(StmtKind::Other),
+                NodeKind::Stmt(StmtKind::Empty),
             )),
         }
     }
@@ -2237,9 +2253,7 @@ impl Builder {
                 );
             }
             vpi::vpiNullStmt => {
-                // Unreachable in Surelog v1.86 (null statements are dropped
-                // during elaboration), kept for the VPI type system.
-                self.set_stmt(id, StmtKind::Null);
+                self.set_stmt(id, StmtKind::Empty);
             }
             vpi::vpiReturnStmt => {
                 // `return [expr];` — the value lives under `vpiCondition`;
@@ -2535,7 +2549,7 @@ impl Builder {
                 if other == vpi::vpiForeachStmt {
                     self.set_stmt(id, StmtKind::Foreach);
                 } else if is_stmt_type(other) {
-                    self.set_stmt(id, StmtKind::Other);
+                    self.set_stmt(id, StmtKind::Unsupported { vpi_type: other });
                 } else if is_expr_type(other) {
                     self.set_expr(id, ExprKind::Other);
                 }
@@ -3137,7 +3151,9 @@ fn is_ident_byte(b: u8) -> bool {
 fn is_stmt_type(t: c_int) -> bool {
     matches!(
         t,
-        vpi::vpiReturnStmt
+        vpi::vpiUnsupportedStmt
+            | vpi::vpiReturnStmt
+            | vpi::vpiDoWhile
             | vpi::vpiRepeatControl
             | vpi::vpiOrderedWait
             | vpi::vpiForeachStmt
@@ -3151,4 +3167,15 @@ fn is_stmt_type(t: c_int) -> bool {
 /// Expression-like object types not modelled explicitly.
 fn is_expr_type(t: c_int) -> bool {
     matches!(t, vpi::vpiUnsupportedExpr)
+}
+
+#[cfg(test)]
+mod statement_type_tests {
+    use super::*;
+
+    #[test]
+    fn explicit_unsupported_statement_uses_statement_lowering_path() {
+        assert!(is_stmt_type(vpi::vpiUnsupportedStmt));
+        assert!(!is_stmt_type(vpi::vpiUnsupportedExpr));
+    }
 }

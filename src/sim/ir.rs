@@ -643,6 +643,21 @@ pub enum IrStmt {
     },
     /// `$monitoron` (true) / `$monitoroff` (false).
     MonitorEnable(bool),
+    /// `$dumpfile("path")` — the literal HDL string, escaped by the backend.
+    WaveFile(String),
+    /// `$dumpvars(...)`; scope/depth filtering is currently conservative and
+    /// all registered storage is dumped.
+    WaveDumpVars,
+    /// `$dumpon`.
+    WaveOn,
+    /// `$dumpoff`.
+    WaveOff,
+    /// `$dumpall`.
+    WaveDumpAll,
+    /// `$dumpflush`.
+    WaveFlush,
+    /// `$dumplimit(expr)`; lowering guarantees a packed expression.
+    WaveLimit(IrExpr),
     /// `$finish`.
     Finish,
     /// `$printtimescale` for a module whose unit/precision and instance path
@@ -776,6 +791,10 @@ pub enum IrInitStep {
 #[derive(Clone, Debug, PartialEq)]
 pub struct IrSignal {
     pub c_name: String,
+    /// Original HDL hierarchy, with ASCII unit-separator bytes between path
+    /// components. `None` marks synthesized storage that must not be
+    /// waveform-visible (for example PCA enable bits).
+    pub hdl_name: Option<String>,
     pub ty: IrType,
     /// For members of a collapsed inout-net group: `(group index, driver
     /// slot)`.  `c_name` is then `<net>.resolved`.
@@ -801,6 +820,8 @@ pub struct IrNetGroup {
 #[derive(Clone, Debug, PartialEq)]
 pub struct IrArray {
     pub c_name: String,
+    /// Original HDL hierarchical name (before C-identifier sanitization).
+    pub hdl_name: String,
     pub elem_width: u32,
     pub signed: bool,
     /// `(left, right)` per declared dimension, in declaration order.
@@ -823,6 +844,8 @@ pub struct IrModel {
     pub design_name: String,
     /// Design time precision in ps (scheduler tick unit).
     pub precision_ps: u64,
+    /// At least one waveform-control system task was lowered.
+    pub waveform: bool,
     pub signals: Vec<IrSignal>,
     pub net_groups: Vec<IrNetGroup>,
     pub arrays: Vec<IrArray>,

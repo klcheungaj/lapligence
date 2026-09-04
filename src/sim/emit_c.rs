@@ -23,7 +23,7 @@ use crate::sim::ir::{
 
 /// Number of 64-bit limbs covering [`LLG_MAX_WIDTH`] bits.  Keep in sync with
 /// `LLG_LIMBS` in `src/sim/rt/llg_rt.h` (16).
-pub(crate) const LLG_LIMBS: usize = (LLG_MAX_WIDTH as usize + 63) / 64;
+pub(crate) const LLG_LIMBS: usize = (LLG_MAX_WIDTH as usize).div_ceil(64);
 
 /// Strip the `lib@` prefix Surelog puts on top-instance names.
 pub(crate) fn strip_lib(name: &str) -> String {
@@ -64,8 +64,19 @@ pub(crate) fn escaped_char(c: char) -> String {
         '\\' => "\\\\".to_string(),
         '\n' => "\\n".to_string(),
         '\t' => "\\t".to_string(),
+        '\r' => "\\r".to_string(),
+        c if c.is_ascii_control() => format!("\\{:03o}", c as u32),
         _ => c.to_string(),
     }
+}
+
+fn c_string_literal(value: &str) -> String {
+    let mut out = String::from("\"");
+    for ch in value.chars() {
+        out.push_str(&escaped_char(ch));
+    }
+    out.push('"');
+    out
 }
 
 /// The Verilog `timescale string for a value in ps (e.g. 1000 ps → "1ns").
@@ -121,9 +132,9 @@ pub(crate) fn emit_const(c: &IrConst) -> String {
         let z = c.z.first().copied().unwrap_or(0);
         format!("SV4_INIT({b}ULL, {x}ULL, {z}ULL, {}, {signed})", c.width)
     } else {
-        let mut bs = vec![0u64; LLG_LIMBS];
-        let mut xs = vec![0u64; LLG_LIMBS];
-        let mut zs = vec![0u64; LLG_LIMBS];
+        let mut bs = [0u64; LLG_LIMBS];
+        let mut xs = [0u64; LLG_LIMBS];
+        let mut zs = [0u64; LLG_LIMBS];
         let nb = c.bits.len().min(LLG_LIMBS);
         let nx = c.x.len().min(LLG_LIMBS);
         let nz = c.z.len().min(LLG_LIMBS);
@@ -200,11 +211,11 @@ pub(crate) fn round_shortreal(code: String, shortreal: bool) -> String {
 /// limbs beyond the width are zero.  A brace initializer (not a function
 /// call) so the generated C stays a valid static initializer.
 pub(crate) fn emit_all_x_init(width: u32) -> String {
-    let nlimbs = (width as usize + 63) / 64;
+    let nlimbs = (width as usize).div_ceil(64);
     let mut xz = Vec::with_capacity(LLG_LIMBS);
     for i in 0..LLG_LIMBS {
         xz.push(if i < nlimbs {
-            if i == nlimbs - 1 && width % 64 != 0 {
+            if i == nlimbs - 1 && !width.is_multiple_of(64) {
                 (1u64 << (width % 64)) - 1
             } else {
                 u64::MAX
@@ -225,11 +236,11 @@ pub(crate) fn emit_all_x_init(width: u32) -> String {
 /// [`emit_all_x_init`] (the `SV4_Z` macro clamps to 64 bits, so wide nets use
 /// this brace initializer to stay a valid static initializer).
 pub(crate) fn emit_all_z_init(width: u32) -> String {
-    let nlimbs = (width as usize + 63) / 64;
+    let nlimbs = (width as usize).div_ceil(64);
     let mut zz = Vec::with_capacity(LLG_LIMBS);
     for i in 0..LLG_LIMBS {
         zz.push(if i < nlimbs {
-            if i == nlimbs - 1 && width % 64 != 0 {
+            if i == nlimbs - 1 && !width.is_multiple_of(64) {
                 (1u64 << (width % 64)) - 1
             } else {
                 u64::MAX
@@ -1309,6 +1320,21 @@ pub fn render_stmt(ctx: &RCtx<'_>, st: &crate::sim::ir::IrStmt) -> Result<String
         IrStmt::MonitorEnable(on) => {
             format!("    llg_monitor_set({});\n", (*on) as u8)
         }
+        IrStmt::WaveFile(path) => {
+            format!(
+                "    llg_wave_file({}, llg_time());\n",
+                c_string_literal(path)
+            )
+        }
+        IrStmt::WaveDumpVars => "    llg_wave_dumpvars(llg_time());\n".to_string(),
+        IrStmt::WaveOn => "    llg_wave_on(llg_time());\n".to_string(),
+        IrStmt::WaveOff => "    llg_wave_off(llg_time());\n".to_string(),
+        IrStmt::WaveDumpAll => "    llg_wave_dumpall(llg_time());\n".to_string(),
+        IrStmt::WaveFlush => "    llg_wave_flush(llg_time());\n".to_string(),
+        IrStmt::WaveLimit(limit) => format!(
+            "    llg_wave_limit(sv4_to_u64({}), llg_time());\n",
+            render_expr(ctx, limit)?.code
+        ),
         IrStmt::Finish => "    llg_rt_finish();\n".to_string(),
         IrStmt::PrintTimescale {
             unit_ps,
@@ -1524,8 +1550,15 @@ pub fn render(model: &IrModel) -> Result<String, String> {
         "// llg-generated C11 model for design `{}`\n",
         model.design_name
     );
+    if model.waveform {
+        out.push_str("#define LLG_WAVEFORM 1\n");
+    }
+    out.push_str("#include \"llg_rt.h\"\n");
+    if model.waveform {
+        out.push_str("#include \"llg_wave.h\"\n");
+    }
     out.push_str(
-        "#include \"llg_rt.h\"\n\n#include <stdio.h>\n#include <math.h>\n\n\
+        "\n#include <stdio.h>\n#include <math.h>\n\n\
          /* signals start all-X; driven by processes and link processes */\n",
     );
     render_signal_decls(model, &mut out);
@@ -1536,6 +1569,16 @@ pub fn render(model: &IrModel) -> Result<String, String> {
         out.push_str(&format!("sv4_t {}[{}];\n", a.c_name, a.total));
     }
     out.push('\n');
+    if model.waveform {
+        out.push_str(
+            "static uint64_t llg_wave_final_time;\n\
+             static void llg_wave_capture_final_time(llg_proc_t* self) {\n\
+             \x20   llg_wave_final_time = llg_time();\n\
+             \x20   llg_proc_done(self);\n\
+             \x20   return;\n\
+             }\n\n",
+        );
+    }
     // Functions/tasks become static C functions (prototypes first so bodies
     // may call each other regardless of declaration order), emitted before
     // any process code references them.
@@ -1875,8 +1918,57 @@ fn render_main(model: &IrModel) -> Result<String, String> {
             }
         }
     }
+    if model.waveform {
+        out.push_str(&format!(
+            "    if (llg_wave_model_init({}ULL) != 0) return 1;\n",
+            model.precision_ps
+        ));
+        for sig in &model.signals {
+            let Some(hdl_name) = &sig.hdl_name else {
+                continue;
+            };
+            if sig.omit {
+                continue;
+            }
+            let registration = match sig.ty {
+                IrType::Packed { width, .. } => format!(
+                    "llg_wave_register_sv4({}, &{}, {})",
+                    c_string_literal(hdl_name),
+                    sig.c_name,
+                    width
+                ),
+                IrType::Real { .. } => format!(
+                    "llg_wave_register_real({}, &{})",
+                    c_string_literal(hdl_name),
+                    sig.c_name
+                ),
+            };
+            out.push_str(&format!("    if ({registration} != 0) return 1;\n"));
+        }
+        for array in &model.arrays {
+            for index in 0..array.total {
+                let hdl_name = format!("{}[{index}]", array.hdl_name);
+                out.push_str(&format!(
+                    "    if (llg_wave_register_sv4({}, &{}[{}], {}) != 0) return 1;\n",
+                    c_string_literal(&hdl_name),
+                    array.c_name,
+                    index,
+                    array.elem_width
+                ));
+            }
+        }
+    }
     for (fname, label) in model.spawn_list() {
         out.push_str(&format!("    llg_spawn({fname}, \"{label}\");\n"));
+    }
+    // Capture scheduler exit time before user finals. Finals cannot advance
+    // time, and registering this first also preserves the timestamp if a
+    // user final calls `$finish` and stops the remaining final queue.
+    if model.waveform {
+        out.push_str(
+            "    llg_spawn_final(llg_wave_capture_final_time, \
+             \"llg.wave.capture_final_time\");\n",
+        );
     }
     // Final blocks (`final begin … end`, SV 1800-2005 §10.7) register with
     // the runtime and run after the main scheduler loop exits.
@@ -1890,9 +1982,155 @@ fn render_main(model: &IrModel) -> Result<String, String> {
         out.push_str(&format!("    llg_spawn_final({fname}, \"{label}\");\n"));
     }
     out.push_str("    llg_rt_run();\n");
-    if !model.final_spawns.is_empty() {
+    if !model.final_spawns.is_empty() || model.waveform {
         out.push_str("    llg_rt_run_finals();\n");
     }
-    out.push_str("    return 0;\n}\n");
+    if model.waveform {
+        out.push_str("    return llg_wave_close(llg_wave_final_time);\n}\n");
+    } else {
+        out.push_str("    return 0;\n}\n");
+    }
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::sim::ir::{
+        IrArray, IrConst, IrExpr, IrExprKind, IrProcess, IrShape, IrSignal, IrStmt,
+    };
+
+    fn packed_const(value: u64) -> IrExpr {
+        IrExpr::new(
+            IrExprKind::Const(IrConst {
+                bits: vec![value],
+                x: vec![0],
+                z: vec![0],
+                width: 64,
+                signed: false,
+                real: None,
+                fill: None,
+            }),
+            64,
+            false,
+            None,
+        )
+    }
+
+    #[test]
+    fn non_waveform_model_has_no_waveform_integration() {
+        let c = render(&IrModel {
+            design_name: "plain".to_string(),
+            ..IrModel::default()
+        })
+        .unwrap();
+
+        assert!(!c.contains("#define LLG_WAVEFORM 1"));
+        assert!(!c.contains("llg_wave.h"));
+        assert!(!c.contains("llg_wave_model_init"));
+        assert!(c.ends_with("    return 0;\n}\n"));
+    }
+
+    #[test]
+    fn waveform_model_emits_controls_hierarchy_and_final_time_close() {
+        let controls = vec![
+            IrStmt::WaveFile("trace\\\"name.vcd".to_string()),
+            IrStmt::WaveDumpVars,
+            IrStmt::WaveOn,
+            IrStmt::WaveOff,
+            IrStmt::WaveDumpAll,
+            IrStmt::WaveFlush,
+            IrStmt::WaveLimit(packed_const(4096)),
+        ];
+        let model = IrModel {
+            design_name: "top".to_string(),
+            precision_ps: 10,
+            waveform: true,
+            signals: vec![
+                IrSignal {
+                    c_name: "G_top_g_0__value".to_string(),
+                    hdl_name: Some("top\u{1f}g[0]\u{1f}value".to_string()),
+                    ty: IrType::Packed {
+                        width: 12,
+                        signed: false,
+                    },
+                    net_driver: None,
+                    omit: false,
+                },
+                IrSignal {
+                    c_name: "g_net_0.resolved".to_string(),
+                    hdl_name: Some("top\u{1f}alias".to_string()),
+                    ty: IrType::Packed {
+                        width: 1,
+                        signed: false,
+                    },
+                    net_driver: Some((0, 0)),
+                    omit: false,
+                },
+                IrSignal {
+                    c_name: "D_top_r".to_string(),
+                    hdl_name: Some("top\u{1f}r".to_string()),
+                    ty: IrType::Real { shortreal: false },
+                    net_driver: None,
+                    omit: false,
+                },
+                IrSignal {
+                    c_name: "G_top_pca$0_en".to_string(),
+                    hdl_name: None,
+                    ty: IrType::Packed {
+                        width: 1,
+                        signed: false,
+                    },
+                    net_driver: None,
+                    omit: false,
+                },
+            ],
+            net_groups: vec![crate::sim::ir::IrNetGroup {
+                c_name: "g_net_0".to_string(),
+                width: 1,
+                signed: false,
+                n_drivers: 1,
+            }],
+            arrays: vec![IrArray {
+                c_name: "G_top_mem".to_string(),
+                hdl_name: "top\u{1f}mem".to_string(),
+                elem_width: 8,
+                signed: false,
+                dims: vec![(1, 0)],
+                total: 2,
+            }],
+            processes: vec![IrProcess {
+                c_name: "p_top_initial_0".to_string(),
+                label: "top.initial".to_string(),
+                shape: IrShape::RunOnce,
+                pre_fns: Vec::new(),
+                body: controls,
+            }],
+            spawns: vec!["p_top_initial_0".to_string()],
+            ..IrModel::default()
+        };
+
+        let c = render(&model).unwrap();
+
+        assert_eq!(c.matches("#define LLG_WAVEFORM 1").count(), 1);
+        assert!(c.contains("#include \"llg_wave.h\""));
+        assert!(c.contains("llg_wave_file(\"trace\\\\\\\"name.vcd\", llg_time());"));
+        assert!(c.contains("llg_wave_dumpvars(llg_time());"));
+        assert!(c.contains("llg_wave_on(llg_time());"));
+        assert!(c.contains("llg_wave_off(llg_time());"));
+        assert!(c.contains("llg_wave_dumpall(llg_time());"));
+        assert!(c.contains("llg_wave_flush(llg_time());"));
+        assert!(c.contains("llg_wave_limit(sv4_to_u64("));
+        assert!(c.contains("llg_wave_model_init(10ULL)"));
+        assert!(
+            c.contains("llg_wave_register_sv4(\"top\\037g[0]\\037value\", &G_top_g_0__value, 12)")
+        );
+        assert!(c.contains("llg_wave_register_sv4(\"top\\037alias\", &g_net_0.resolved, 1)"));
+        assert!(c.contains("llg_wave_register_real(\"top\\037r\", &D_top_r)"));
+        assert!(!c.contains("llg_wave_register_sv4(\"G_top_pca$0_en"));
+        assert!(c.contains("llg_wave_register_sv4(\"top\\037mem[0]\", &G_top_mem[0], 8)"));
+        assert!(c.contains("llg_wave_register_sv4(\"top\\037mem[1]\", &G_top_mem[1], 8)"));
+        assert!(c.contains("llg_spawn_final(llg_wave_capture_final_time"));
+        assert!(c.contains("return llg_wave_close(llg_wave_final_time);"));
+    }
 }

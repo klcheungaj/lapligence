@@ -1,7 +1,8 @@
 //! Optimization on/off differential harness.
 //!
-//! For each design: one Surelog compile, then `codegen::generate_with_opts`
-//! twice — once with [`sim::opt::OptConfig::default`] (all passes) and once
+//! For each design: one Surelog compile and one owned-DB build, then
+//! `codegen::generate_from_db_with_opts` twice — once with
+//! [`sim::opt::OptConfig::default`] (all passes) and once
 //! with `OptConfig::none` — building BOTH models with the CMake builder
 //! (`sim::build::build_model_cmake`) and running both executables.  The two
 //! stdouts must be byte-identical: every optimization pass must be
@@ -30,21 +31,21 @@ fn run_both(sv: &str, top: &str, tag: &str) -> Result<(String, String), String> 
     std::env::set_current_dir(&dir).expect("chdir to temp dir");
     let result = (|| -> Result<(String, String), String> {
         // 1. Surelog compile + elaborate (once).
-        let out = compile::compile(&compile::CompileOpts {
+        let out = compile::compile_checked(&compile::CompileOpts {
             files: vec![src.to_string_lossy().into_owned()],
             top: Some(top.to_string()),
             ..Default::default()
         })
         .map_err(|e| format!("compile: {e}"))?;
-        if !out.ok() {
-            return Err(format!("compile diagnostics: {:?}", out.diagnostics));
-        }
         let design = out.uhdm_design().ok_or("no UHDM design")?;
+        let database = llg::core::db::Db::build(design)?;
 
-        // 2. Both configurations from the same elaborated design handle.
-        let opt_on = sim::codegen::generate_with_opts(design, &OptConfig::default())
+        // 2. Both configurations from one owned DB. Besides avoiding a second
+        // VPI walk, this keeps differential generation independent of
+        // consumable frontend iterator relationships.
+        let opt_on = sim::codegen::generate_from_db_with_opts(&database, &OptConfig::default())
             .map_err(|e| format!("codegen(opt-on): {e}"))?;
-        let opt_off = sim::codegen::generate_with_opts(design, &OptConfig::none())
+        let opt_off = sim::codegen::generate_from_db_with_opts(&database, &OptConfig::none())
             .map_err(|e| format!("codegen(opt-off): {e}"))?;
 
         // 3. Build both models into separate directories (CMake).
@@ -523,7 +524,6 @@ endmodule
 }
 
 /// Structural gate network: n-input gates, a delayed `not`, an enable gate,
-
 /// pullup/pulldown constant drivers, and an always_ff sampling gate outputs.
 /// The gate processes are composed from the same IR shapes as continuous
 /// assignments (SensLoop + whole-signal writes), but this pins that the
@@ -573,4 +573,32 @@ module tb;
 endmodule
 "#;
     assert_differential(sv, "tb", "gates");
+}
+
+/// Dynamic true-net declaration assignments share the ordinary continuous
+/// assignment IR shape. Optimization must preserve both their precomputed
+/// sensitivity reads and four-state/vector assignment context.
+#[test]
+fn diff_dynamic_true_net_declaration_assignment() {
+    if !llg::sim::build::cmake_available() {
+        eprintln!("SKIP: cmake not available");
+        return;
+    }
+    let sv = r#"// llg-test-fixture: tests/sim_opt_differential.rs/net_decl.sv
+module tb;
+    logic [7:0] a = 8'h7f;
+    logic [7:0] b = 8'h01;
+    wire [8:0] sum = a + b;
+    wire [15:0] bits = {a, b};
+    initial begin
+        $display("%h %b", sum, bits);
+        a = 8'hff;
+        #1 $display("%h %b", sum, bits);
+        b = 8'b10xz0011;
+        #1 $display("%h %b", sum, bits);
+        $finish;
+    end
+endmodule
+"#;
+    assert_differential(sv, "tb", "net_decl");
 }

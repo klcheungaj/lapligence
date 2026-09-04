@@ -40,7 +40,8 @@ use std::process::Command;
 use std::sync::OnceLock;
 
 /// The generated project file.  `{SOURCES}` is replaced with the actual
-/// source list (`model.c llg_rt.c aco.c acosw.S`); everything else is fixed.
+/// source list (`model.c llg_rt.c aco.c acosw.S`, plus waveform/libfst C
+/// files when enabled); everything else is fixed.
 /// ASM is enabled because libaco's context switch lives in `acosw.S`.
 const CMAKELISTS_TEMPLATE: &str = r#"cmake_minimum_required(VERSION 3.16)
 project(llg_sim_model C ASM)
@@ -52,8 +53,16 @@ endif()
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 include_directories(${CMAKE_SOURCE_DIR})
 add_executable(sim {SOURCES})
-target_link_libraries(sim m)
+if(NOT MSVC)
+  target_link_libraries(sim PRIVATE m)
+endif()
+{WAVE_SETUP}
 "#;
+
+const WAVE_CMAKE: &str = r#"find_package(Threads REQUIRED)
+find_package(ZLIB REQUIRED)
+target_link_libraries(sim PRIVATE Threads::Threads ZLIB::ZLIB)
+target_compile_definitions(sim PRIVATE LLG_WAVEFORM=1 FST_CONFIG_INCLUDE=\"fst_config.h\")"#;
 
 /// Options for [`build_model_cmake_with_opts`].
 #[derive(Default, Clone)]
@@ -155,8 +164,12 @@ pub fn build_model_cmake_with_opts(
 /// deleted, so artifacts of earlier runs never accumulate.
 pub fn generate_model_sources(out_dir: &Path, extra: &[(&str, &str)]) -> Result<(), String> {
     super::write_sim_sources(out_dir, extra)?;
-    write_cmakelists(out_dir, extra)?;
-    prune_stale_entries(out_dir, extra);
+    let waveform = waveform_enabled(extra);
+    if waveform {
+        super::rt::write_waveform_sources(out_dir)?;
+    }
+    write_cmakelists(out_dir, extra, waveform)?;
+    prune_stale_entries(out_dir, extra, waveform);
     Ok(())
 }
 
@@ -179,7 +192,7 @@ const FIXED_SOURCE_NAMES: [&str; 7] = [
 /// (e.g. empty) paths, `/`, and shallow roots like `/tmp` are rejected, while
 /// real callers (`target/sim/<design>`, tempdir subdirectories) are
 /// unaffected.
-fn prune_stale_entries(out_dir: &Path, extra: &[(&str, &str)]) {
+fn prune_stale_entries(out_dir: &Path, extra: &[(&str, &str)], waveform: bool) {
     let canonical = match out_dir.canonicalize() {
         Ok(p) => p,
         Err(_) => return,
@@ -190,6 +203,9 @@ fn prune_stale_entries(out_dir: &Path, extra: &[(&str, &str)]) {
         return;
     }
     let mut expected: Vec<&str> = FIXED_SOURCE_NAMES.to_vec();
+    if waveform {
+        expected.extend(super::rt::waveform_sources().iter().map(|(name, _)| *name));
+    }
     expected.extend(extra.iter().map(|(name, _)| *name));
     let Ok(entries) = std::fs::read_dir(out_dir) else {
         return;
@@ -231,17 +247,29 @@ fn remove_dir_all_quiet(dir: &Path) {
 }
 
 /// Emit `CMakeLists.txt` for the source set `extra` (+ runtime + libaco).
-fn write_cmakelists(out_dir: &Path, extra: &[(&str, &str)]) -> Result<(), String> {
+fn write_cmakelists(out_dir: &Path, extra: &[(&str, &str)], waveform: bool) -> Result<(), String> {
     let mut sources: Vec<&str> = extra
         .iter()
         .map(|(name, _)| *name)
         .filter(|name| name.ends_with(".c") || name.ends_with(".S"))
         .collect();
     sources.extend(["llg_rt.c", "aco.c", "acosw.S"]);
-    let cmakelists = CMAKELISTS_TEMPLATE.replace("{SOURCES}", &sources.join(" "));
+    if waveform {
+        sources.extend(["llg_wave.c", "fstapi.c", "fastlz.c", "lz4.c"]);
+    }
+    let cmakelists = CMAKELISTS_TEMPLATE
+        .replace("{SOURCES}", &sources.join(" "))
+        .replace("{WAVE_SETUP}", if waveform { WAVE_CMAKE } else { "" });
     let cmakelists_path = out_dir.join("CMakeLists.txt");
     std::fs::write(&cmakelists_path, cmakelists)
         .map_err(|e| format!("write {}: {e}", cmakelists_path.display()))
+}
+
+fn waveform_enabled(extra: &[(&str, &str)]) -> bool {
+    extra.iter().any(|(_, text)| {
+        text.lines()
+            .any(|line| line.trim_end() == "#define LLG_WAVEFORM 1")
+    })
 }
 
 /// Whether a usable cmake exists (`$LLG_CMAKE` or `cmake --version`).
@@ -382,4 +410,55 @@ fn sorted_entries(dir: &Path) -> Option<Vec<PathBuf>> {
         .collect();
     paths.sort();
     Some(paths)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    #[test]
+    fn waveform_runtime_selftest() {
+        if !cmake_available() {
+            eprintln!("SKIP: cmake not available");
+            return;
+        }
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        let unique = NEXT.fetch_add(1, Ordering::Relaxed);
+        let dir =
+            std::env::temp_dir().join(format!("llg-wave-selftest-{}-{unique}", std::process::id()));
+        let result = (|| {
+            let exe = build_model_cmake(
+                &dir,
+                &[(
+                    "llg_wave_selftest.c",
+                    super::super::rt::waveform_selftest_source(),
+                )],
+            )?;
+            let output = Command::new(&exe)
+                .current_dir(&dir)
+                .output()
+                .map_err(|e| format!("run {}: {e}", exe.display()))?;
+            if !output.status.success() {
+                return Err(format!(
+                    "waveform selftest failed:\n{}",
+                    String::from_utf8_lossy(&output.stderr)
+                ));
+            }
+            generate_model_sources(&dir, &[("plain.c", "int main(void) { return 0; }\n")])?;
+            if dir.join("llg_wave.c").exists() {
+                return Err("ordinary source generation retained waveform files".to_string());
+            }
+            let cmake = std::fs::read_to_string(dir.join("CMakeLists.txt"))
+                .map_err(|e| format!("read generated CMakeLists.txt: {e}"))?;
+            if cmake.contains("find_package(Threads") || cmake.contains("find_package(ZLIB") {
+                return Err("ordinary source generation retained waveform dependencies".to_string());
+            }
+            Ok::<_, String>(())
+        })();
+        let _ = std::fs::remove_dir_all(&dir);
+        if let Err(error) = result {
+            panic!("{error}");
+        }
+    }
 }

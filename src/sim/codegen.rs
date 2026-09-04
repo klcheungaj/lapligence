@@ -1,4 +1,4 @@
-//! codegen — lower an elaborated UHDM design (Surelog v1.86 `-elabuhdm`) to a
+//! codegen — lower an elaborated UHDM design (Surelog v1.87 `-elabuhdm`) to a
 //! C11 model for the `llg` runtime (`crate::sim::rt`).
 //!
 //! # Pipeline
@@ -14,9 +14,10 @@
 //!   elements becomes a flat `sv4_t G_<path>_<name>[N]` (product of the
 //!   dimension sizes) with
 //!   indexed access lowered to guarded element reads/writes (out-of-range or
-//!   unknown indices read X / no-op) and declaration initializers — array
-//!   patterns and scalar `net = value` at declaration — applied in `main()`
-//!   before any process runs;
+//!   unknown indices read X / no-op) and declaration initializers. Array
+//!   patterns and scalar variable initializers are applied in `main()` before
+//!   any process runs; true-net declaration assignments use the same
+//!   event-driven processes as explicit continuous assignments;
 //! - every parameter becomes an inline packed or real constant (`SV4_*` up to
 //!   64 packed bits, `sv4_from_limbs` beyond — see [`emit_const`]) whose values
 //!   come from the database, resolved through `core::elab::Resolver`; the
@@ -119,9 +120,10 @@
 //! expression select indices/bounds, select LHS or
 //! nonblocking assignment on a collapsed inout-net member (the group scan
 //! normally skips such groups with a warning before emission; these errors
-//! are a backstop), declaration
-//! initializers whose RHS is not a constant expression (`net = expr` or
-//! `var = expr` at declaration — `logic z = a;` is rejected), and unknown
+//! are a backstop), variable declaration initializers whose RHS is not a
+//! constant expression (`logic z = a;` is rejected), true-net declaration
+//! assignments that read unpacked arrays or use unsupported resolved-net
+//! classes, and unknown
 //! `$display`/`$monitor`/`$strobe` format specifiers (`%s` in
 //! monitors/strobes).  Structural primitives outside the supported builtin
 //! set are rejected with explicit messages: switch/transistor primitives,
@@ -133,9 +135,10 @@
 //! dimension bounds that are not plain constants (an implicit `[N]` size —
 //! declare `[0:N-1]` explicitly), array slices (partial indexing of a
 //! multi-dimensional array), indexed part-selects on an array element, and
-//! non-constant declaration-initializer elements.  Constructs that cannot
-//! corrupt state (`$dump*`, `$displayon`/`$displayoff`, …) are skipped with a
-//! warning.
+//! non-constant declaration-initializer elements. `$displayon`/
+//! `$displayoff` are skipped with a warning. Waveform controls (`$dumpfile`/
+//! `$dumpvars`/`$dumpon`/`$dumpoff`/`$dumpall`/`$dumpflush`/`$dumplimit`)
+//! lower explicitly into the IR.
 //! Interface instances are captured by the database walk (actuals and
 //! per-port copies), including inside generate scopes.  Interface body
 //! processes (always/initial/always_comb blocks inside an interface
@@ -150,13 +153,12 @@
 //! old handle-walking codegen read, so a few v1 behaviors changed (none are
 //! exercised by the test suite):
 //!
-//! - Declaration initializers are applied in `main()` before any process runs,
-//!   in this order: unpacked-array fills, then scalar net-decl fills
-//!   (`wire x = 1;`, `reg y = 0;` — captured via the `vpiNetDeclAssign` flag,
-//!   `ContAssign { net_decl: true }`), then scalar variable fills (`logic
-//!   l = 1'b0;`, `int x = 5;` — captured on the var's `vpiExpr` in
-//!   `Db::vars_init`).  An initializer whose RHS is not a constant expression
-//!   is rejected with an `Err` (v1 is constant-only).
+//! - Array and scalar variable declaration initializers are applied in
+//!   `main()` before any process runs. `reg y = 0` arrives through
+//!   `ContAssign { net_decl: true }`; `logic l = 0`/`int x = 5` arrive through
+//!   `Db::vars_init`. True-net forms (`wire`/`tri`/logic-net) are continuous
+//!   drivers: constant RHSs run once and dynamic RHSs use a precomputed,
+//!   deduplicated sensitivity set.
 //! - Port connections through a bit/part select are linked on the base signal
 //!   instead of being warned and skipped (the connection's select-ness is not
 //!   captured; `high`/`low` resolve to the base net/var).
@@ -298,11 +300,19 @@ pub fn generate_with_opts(
     cfg: &crate::sim::opt::OptConfig,
 ) -> Result<GeneratedModel, String> {
     let db = Db::build(design)?;
-    generate_db_cfg(&db, cfg)
+    generate_from_db_with_opts(&db, cfg)
 }
 
-/// Lowering pipeline: db walk → collection → IR build → optimize → render.
-fn generate_db_cfg(db: &Db, cfg: &crate::sim::opt::OptConfig) -> Result<GeneratedModel, String> {
+/// Lower an already-owned database with an explicit optimization
+/// configuration.
+///
+/// Reuse this entry point when producing multiple variants of one elaborated
+/// design. It avoids repeated VPI traversal and is robust to frontend
+/// relationships that can be consumed while building the owned database.
+pub fn generate_from_db_with_opts(
+    db: &Db,
+    cfg: &crate::sim::opt::OptConfig,
+) -> Result<GeneratedModel, String> {
     let mut cg = Codegen::new(db);
     cg.collect_iface_copies();
     let tops = cg.collect_design()?;
@@ -498,6 +508,18 @@ enum MemberWrite {
     Select,
 }
 
+/// Declaration kind targeted by a `vpiNetDeclAssign`. Surelog uses that
+/// marker for both true-net continuous drivers and legacy reg declaration
+/// initializers, whose simulator scheduling is intentionally different.
+#[derive(Copy, Clone)]
+enum NetDeclTarget {
+    Array,
+    Variable,
+    TrueNet,
+    UnsupportedNet(i32),
+    Unknown,
+}
+
 struct Codegen<'a> {
     db: &'a Db,
     warnings: Vec<String>,
@@ -515,9 +537,9 @@ struct Codegen<'a> {
     signals: Vec<SignalInfo>,
     /// Net/Var arena node → lowered signal info (all instances + gen scopes).
     sig_globals: HashMap<NodeId, SignalInfo>,
-    /// (net C name, driver slot, constant) declaration-initializer fills for
-    /// collapsed-net members (`wire w = 1'b1;` on a grouped net), applied in
-    /// `main()` via `llg_net_write` before any process runs.
+    /// Legacy storage for scalar declaration-initializer fills that need a
+    /// collapsed-net driver slot. True-net declarations now lower as
+    /// continuous processes, so ordinary wire/tri entries do not use it.
     net_inits: Vec<(String, usize, IrConst)>,
     /// All lowered arrays, in collection order (deterministic emission).
     arrays: Vec<ArrayInfo>,
@@ -528,7 +550,7 @@ struct Codegen<'a> {
     /// NamedEvent arena node → lowered event info.
     event_globals: HashMap<NodeId, EventInfo>,
     /// (signal info, constant) declaration-initializer fills for scalar
-    /// signals (`wire w = 1'b1;`, `reg y = 0;`), applied in `main()` before
+    /// variable-like net objects (`reg y = 0;`), applied in `main()` before
     /// any process runs (mirrors the array declaration-initializer handling).
     scalar_inits: Vec<(SignalInfo, IrConst)>,
     /// (signal info, constant) declaration-initializer fills for scalar
@@ -536,8 +558,9 @@ struct Codegen<'a> {
     /// l = 1'b0;`, `int x = 5;` — captured in `Db::vars_init`), applied in
     /// `main()` after the net-decl fills and before any process runs.
     var_inits: Vec<(SignalInfo, IrConst)>,
-    /// ContAssign arena nodes already collected as scalar declaration
-    /// initializers; skipped at emission.
+    /// ContAssign arena nodes already collected as scalar variable
+    /// declaration initializers; skipped at emission. True-net declaration
+    /// assignments remain event-driven continuous-assignment processes.
     scalar_init_ca: HashSet<NodeId>,
     /// instance/gen-scope path → (array name → info), for name fallback.
     scope_array_names: HashMap<String, HashMap<String, ArrayInfo>>,
@@ -596,6 +619,9 @@ struct Codegen<'a> {
     /// emission order — spawned into [`IrModel::final_spawns`] instead of
     /// the t=0 spawn list.
     final_procs: Vec<String>,
+    /// Whether the one model-wide `$dumpvars` filtering approximation warning
+    /// has already been emitted.
+    warned_dumpvars_filtering: bool,
 }
 
 impl<'a> Codegen<'a> {
@@ -637,6 +663,7 @@ impl<'a> Codegen<'a> {
             pca_sites: HashMap::new(),
             pca_seq: 0,
             final_procs: Vec::new(),
+            warned_dumpvars_filtering: false,
         }
     }
 
@@ -1004,7 +1031,7 @@ fn scale_delay_ticks(
 
 /// Skip ASCII whitespace at the start of `s`.
 fn skip_ws(s: &str) -> &str {
-    s.trim_start_matches(|c: char| c == ' ' || c == '\t')
+    s.trim_start_matches([' ', '\t'])
 }
 
 // ── Constant reading ──────────────────────────────────────────────────────────
@@ -1116,11 +1143,11 @@ fn dec_str_to_limbs(s: &str) -> Vec<u64> {
 
 /// Drop limbs above `width` and mask the top partial limb.
 fn truncate_limbs(limbs: &mut Vec<u64>, width: u32) {
-    let n = (width as usize + 63) / 64;
+    let n = (width as usize).div_ceil(64);
     if limbs.len() > n {
         limbs.truncate(n);
     }
-    if width % 64 != 0 {
+    if !width.is_multiple_of(64) {
         if let Some(top) = limbs.last_mut() {
             *top &= (1u64 << (width % 64)) - 1;
         }
@@ -1138,8 +1165,8 @@ fn parse_radix(s: &str, base_bits: usize, size: i32) -> Result<IrConst, String> 
     for ch in s.chars() {
         let c = ch.to_ascii_lowercase();
         match c {
-            'x' => vec.extend(std::iter::repeat(2u8).take(base_bits)),
-            'z' | '?' => vec.extend(std::iter::repeat(3u8).take(base_bits)),
+            'x' => vec.extend(std::iter::repeat_n(2u8, base_bits)),
+            'z' | '?' => vec.extend(std::iter::repeat_n(3u8, base_bits)),
             _ => {
                 let d = c.to_digit(16).unwrap_or(0);
                 for i in (0..base_bits).rev() {
@@ -1166,7 +1193,7 @@ fn parse_radix(s: &str, base_bits: usize, size: i32) -> Result<IrConst, String> 
     if vec.len() > LLG_MAX_WIDTH as usize {
         return Err(format!("constant wider than {LLG_MAX_WIDTH} bits"));
     }
-    let nlimbs = (vec.len() + 63) / 64;
+    let nlimbs = vec.len().div_ceil(64);
     let mut bits = vec![0u64; nlimbs];
     let mut x = vec![0u64; nlimbs];
     let mut z = vec![0u64; nlimbs];
@@ -1193,7 +1220,7 @@ fn val_to_const(v: &elab::Value) -> Result<IrConst, String> {
     if v.width() > LLG_MAX_WIDTH as usize {
         return Err(format!("parameter wider than {LLG_MAX_WIDTH} bits"));
     }
-    let nlimbs = (v.width() + 63) / 64;
+    let nlimbs = v.width().div_ceil(64);
     let mut bits = vec![0u64; nlimbs];
     let mut x = vec![0u64; nlimbs];
     let mut z = vec![0u64; nlimbs];
@@ -1342,31 +1369,27 @@ impl<'a> Codegen<'a> {
     fn collect_iface_copies_in(&self, inst: NodeId, copies: &mut HashSet<NodeId>) {
         for c in &self.node(inst).children {
             match self.kind(*c) {
-                NodeKind::Port { low, .. } => {
-                    if let Some(l) = low {
-                        match self.kind(*l) {
-                            NodeKind::ModPort => {
-                                if let Some(iface) = self.node(*l).parent {
-                                    if matches!(
-                                        self.kind(iface),
-                                        NodeKind::ModuleInst {
-                                            is_interface: true,
-                                            ..
-                                        }
-                                    ) {
-                                        copies.insert(iface);
-                                    }
+                NodeKind::Port { low: Some(l), .. } => match self.kind(*l) {
+                    NodeKind::ModPort => {
+                        if let Some(iface) = self.node(*l).parent {
+                            if matches!(
+                                self.kind(iface),
+                                NodeKind::ModuleInst {
+                                    is_interface: true,
+                                    ..
                                 }
+                            ) {
+                                copies.insert(iface);
                             }
-                            NodeKind::ModuleInst {
-                                is_interface: true, ..
-                            } => {
-                                copies.insert(*l);
-                            }
-                            _ => {}
                         }
                     }
-                }
+                    NodeKind::ModuleInst {
+                        is_interface: true, ..
+                    } => {
+                        copies.insert(*l);
+                    }
+                    _ => {}
+                },
                 NodeKind::ModuleInst { .. } => self.collect_iface_copies_in(*c, copies),
                 NodeKind::GenScopeArray => {
                     for gs in &self.node(*c).children {
@@ -1432,6 +1455,7 @@ impl<'a> Codegen<'a> {
                     };
                     self.model.signals.push(IrSignal {
                         c_name: info.global.clone(),
+                        hdl_name: Some(self.waveform_name(nid)),
                         ty: if info.real {
                             IrType::Real {
                                 shortreal: info.shortreal,
@@ -1452,10 +1476,8 @@ impl<'a> Codegen<'a> {
                         .or_default()
                         .insert(name, info);
                 }
-                NodeKind::Param { value, .. } => {
-                    if let Some(v) = value {
-                        self.param_vals.insert(nid, v.clone());
-                    }
+                NodeKind::Param { value: Some(v), .. } => {
+                    self.param_vals.insert(nid, v.clone());
                 }
                 NodeKind::NamedEvent => {
                     let name = self.node(nid).name.clone();
@@ -1477,11 +1499,9 @@ impl<'a> Codegen<'a> {
                 // [0:3] = '{…}` — Surelog models the pattern as a
                 // net-decl-assign continuous assignment whose LHS is the
                 // array).  Applied to the array's `ArrayInfo`; the assignment
-                // itself is skipped at emission.  A scalar initializer
-                // (`wire w = 1'b1;`, `reg y = 0;`) is collected into
-                // `scalar_inits` and applied in `main()` the same way; an
-                // initializer that is neither is left for `emit_cont_assign`
-                // to reject.
+                // itself is skipped at emission. A scalar reg initializer is
+                // collected into `scalar_inits`; true nets stay available to
+                // `emit_cont_assign` as continuous drivers.
                 NodeKind::ContAssign {
                     net_decl: true,
                     delay: _,
@@ -1506,7 +1526,13 @@ impl<'a> Codegen<'a> {
                         if let Some(vi) = self.arrays.iter_mut().find(|vi| vi.global == ai.global) {
                             vi.init = Some(vals);
                         }
-                    } else if let Some((info, c)) = self.scalar_decl_init(path, nid)? {
+                    } else if matches!(self.net_decl_target(nid), NetDeclTarget::Variable) {
+                        let (info, c) = self.scalar_decl_init(path, nid)?.ok_or_else(|| {
+                            format!(
+                                "variable declaration initializer is not a constant expression \
+                                 in `{path}`"
+                            )
+                        })?;
                         self.scalar_inits.push((info, c));
                         self.scalar_init_ca.insert(nid);
                     }
@@ -1709,6 +1735,7 @@ impl<'a> Codegen<'a> {
                     };
                     self.model.signals.push(IrSignal {
                         c_name: info.global.clone(),
+                        hdl_name: Some(self.waveform_name(nid)),
                         ty: if info.real {
                             IrType::Real {
                                 shortreal: info.shortreal,
@@ -1729,10 +1756,8 @@ impl<'a> Codegen<'a> {
                         .or_default()
                         .insert(name, info);
                 }
-                NodeKind::Param { value, .. } => {
-                    if let Some(v) = value {
-                        self.param_vals.insert(nid, v.clone());
-                    }
+                NodeKind::Param { value: Some(v), .. } => {
+                    self.param_vals.insert(nid, v.clone());
                 }
                 NodeKind::NamedEvent => {
                     let name = self.node(nid).name.clone();
@@ -1772,7 +1797,13 @@ impl<'a> Codegen<'a> {
                         if let Some(vi) = self.arrays.iter_mut().find(|vi| vi.global == ai.global) {
                             vi.init = Some(vals);
                         }
-                    } else if let Some((info, c)) = self.scalar_decl_init(&gs_path, nid)? {
+                    } else if matches!(self.net_decl_target(nid), NetDeclTarget::Variable) {
+                        let (info, c) = self.scalar_decl_init(&gs_path, nid)?.ok_or_else(|| {
+                            format!(
+                                "variable declaration initializer is not a constant expression \
+                                 in `{gs_path}`"
+                            )
+                        })?;
                         self.scalar_inits.push((info, c));
                         self.scalar_init_ca.insert(nid);
                     }
@@ -2057,6 +2088,39 @@ impl<'a> Codegen<'a> {
         }
     }
 
+    /// Full HDL hierarchy for waveform metadata, with ASCII unit-separator
+    /// bytes between components.  The separator is not legal inside a source
+    /// identifier, unlike `.`, so an escaped identifier such as `\a.b` cannot
+    /// be mistaken for two scopes by the C waveform runtime.  Generate-scope
+    /// spelling is retained verbatim (`g[0]`, not `g_0_`).
+    fn waveform_name(&self, id: NodeId) -> String {
+        const SEPARATOR: &str = "\u{1f}";
+
+        let mut parts = vec![self.node(id).name.clone()];
+        let mut current = self.node(id).parent;
+        while let Some(scope_id) = current {
+            let scope = self.node(scope_id);
+            if matches!(
+                scope.kind,
+                NodeKind::ModuleInst { .. } | NodeKind::GenScopeArray | NodeKind::GenScope
+            ) {
+                // Surelog library-qualifies top design units (`work@tb`).
+                // Other `vpiName` components are source identifiers, where
+                // `@` is legal in an escaped spelling and must be preserved.
+                let name = match &scope.kind {
+                    NodeKind::ModuleInst { is_top: true, .. } => strip_lib(&scope.name),
+                    _ => scope.name.clone(),
+                };
+                if !name.is_empty() {
+                    parts.push(name);
+                }
+            }
+            current = scope.parent;
+        }
+        parts.reverse();
+        parts.join(SEPARATOR)
+    }
+
     /// The reason a candidate inout-net group cannot be supported, from a
     /// design-wide scan of every write targeting its members: `None` when
     /// every write is a whole-signal (blocking or continuous) driver.
@@ -2065,7 +2129,7 @@ impl<'a> Codegen<'a> {
         for id in self.design_nodes() {
             match self.kind(id) {
                 NodeKind::ContAssign { .. } => {
-                    let Some(lhs) = self.node(id).children.get(0).copied() else {
+                    let Some(lhs) = self.node(id).children.first().copied() else {
                         continue;
                     };
                     match self.member_write_kind(lhs, &member_set) {
@@ -2082,7 +2146,7 @@ impl<'a> Codegen<'a> {
                     blocking: true,
                     delay: _,
                 }) => {
-                    let Some(lhs) = self.node(id).children.get(0).copied() else {
+                    let Some(lhs) = self.node(id).children.first().copied() else {
                         continue;
                     };
                     match self.member_write_kind(lhs, &member_set) {
@@ -2099,7 +2163,7 @@ impl<'a> Codegen<'a> {
                     blocking: false,
                     delay: _,
                 }) => {
-                    let Some(lhs) = self.node(id).children.get(0).copied() else {
+                    let Some(lhs) = self.node(id).children.first().copied() else {
                         continue;
                     };
                     if self.member_write_base(lhs, &member_set).is_some() {
@@ -2126,7 +2190,7 @@ impl<'a> Codegen<'a> {
         match self.kind(lhs) {
             NodeKind::Net { .. } if member_set.contains(&lhs) => MemberWrite::Whole,
             NodeKind::Expr(ExprKind::Ref { target }) => match target {
-                Some(t) if member_set.contains(&t) => MemberWrite::Whole,
+                Some(t) if member_set.contains(t) => MemberWrite::Whole,
                 _ => MemberWrite::None,
             },
             NodeKind::Expr(
@@ -2232,6 +2296,31 @@ impl<'a> Codegen<'a> {
             .and_then(|lhs| self.ref_array_target(lhs))
     }
 
+    /// Classify the declaration object on the LHS of a net-declaration
+    /// assignment. `wire`, `tri`, and SV `logic` nets are true continuous
+    /// drivers; `reg` and variable objects retain declaration-initializer
+    /// behavior. Unpacked arrays stay on the dedicated initializer path.
+    fn net_decl_target(&self, ca: NodeId) -> NetDeclTarget {
+        let Some(lhs) = self.node(ca).children.first().copied() else {
+            return NetDeclTarget::Unknown;
+        };
+        let target = match self.kind(lhs) {
+            NodeKind::Expr(ExprKind::Ref { target }) => *target,
+            NodeKind::Net { .. } | NodeKind::Var { .. } | NodeKind::Array { .. } => Some(lhs),
+            _ => None,
+        };
+        match target.map(|target| self.kind(target)) {
+            Some(NodeKind::Array { .. }) => NetDeclTarget::Array,
+            Some(NodeKind::Var { .. }) => NetDeclTarget::Variable,
+            Some(NodeKind::Net { net_type, .. }) => match *net_type {
+                vpi::vpiWire | vpi::vpiTri | vpi::vpiNet => NetDeclTarget::TrueNet,
+                vpi::vpiReg => NetDeclTarget::Variable,
+                other => NetDeclTarget::UnsupportedNet(other),
+            },
+            _ => NetDeclTarget::Unknown,
+        }
+    }
+
     /// The declaration-initializer constants of a `vpiNetDeclAssign`
     /// continuous assignment whose LHS resolves to an unpacked array
     /// (`reg [7:0] m [0:3] = '{…}`), or `None` when the assignment is not an
@@ -2259,20 +2348,15 @@ impl<'a> Codegen<'a> {
         Ok(Some((target, vals)))
     }
 
-    /// The declaration-initializer constant of a `vpiNetDeclAssign`
-    /// continuous assignment whose LHS is a plain scalar signal
-    /// (`wire w = 1'b1;`, `reg y = 0;` — Surelog models the initializer as a
-    /// net-decl-assign whose LHS is the net/var object itself), or `None`
-    /// when the assignment is not a plain scalar initializer (an array
-    /// initializer is handled by `cont_assign_array_init`; anything else —
-    /// a select LHS or a non-constant RHS — falls through to the emission
-    /// error path).
+    /// The declaration-initializer constant of a `vpiNetDeclAssign` whose LHS
+    /// is a scalar variable-like object (`reg y = 0`). The caller classifies
+    /// the target first; true nets never enter this constant-only path.
     fn scalar_decl_init(
         &self,
         path: &str,
         ca: NodeId,
     ) -> Result<Option<(SignalInfo, IrConst)>, String> {
-        let lhs = match self.node(ca).children.get(0) {
+        let lhs = match self.node(ca).children.first() {
             Some(l) => *l,
             None => return Ok(None),
         };
@@ -2419,6 +2503,7 @@ impl<'a> Codegen<'a> {
             .product::<u64>();
         self.model.arrays.push(crate::sim::ir::IrArray {
             c_name: global_name(path, name),
+            hdl_name: self.waveform_name(node),
             elem_width,
             signed: ty.signed,
             dims: dims.clone(),
@@ -2555,6 +2640,9 @@ impl<'a> Codegen<'a> {
     /// `(is_task, return width/signed, (io_decl node, is_output) in formal
     /// order)` of a FuncTask node.  The return width is `None` for void
     /// functions and tasks.
+    // The tuple mirrors UHDM's function/task signature without introducing a
+    // public one-off type solely for this private lowering boundary.
+    #[allow(clippy::type_complexity)]
     fn func_info(
         &self,
         ft: NodeId,
@@ -2620,7 +2708,7 @@ impl<'a> Codegen<'a> {
     /// The body statement of a function/task definition: the last child that
     /// is not the return variable or a formal argument (children are laid out
     /// in fixed order — return var, formals, then the body).  An empty body is
-    /// captured by the database walk as a `StmtKind::Other` placeholder, so
+    /// captured by the database walk as a `StmtKind::Empty` placeholder, so
     /// this always finds a body when the children exist.
     fn func_body(&self, ft: NodeId) -> Option<NodeId> {
         self.node(ft).children.iter().rev().copied().find(|c| {
@@ -2795,7 +2883,7 @@ impl<'a> Codegen<'a> {
                 .collect()
         };
         let no_entry = format!("function `{}` has no model entry", self.node(ft).name);
-        let entry = self.model.funcs.get_mut(meta_ir).ok_or_else(|| no_entry)?;
+        let entry = self.model.funcs.get_mut(meta_ir).ok_or(no_entry)?;
         entry.locals = ir_locals;
         entry.pre_fns = pre_fns;
         entry.body = body_stmts;
@@ -3326,7 +3414,7 @@ impl<'a> Codegen<'a> {
         let stmt = self
             .node(proc)
             .children
-            .get(0)
+            .first()
             .copied()
             .ok_or_else(|| format!("process without statement in `{path}`"))?;
         let mut nodes = Vec::new();
@@ -3497,21 +3585,32 @@ impl<'a> Codegen<'a> {
             delay: _,
         } = self.kind(ca)
         {
-            // A declaration initializer on an unpacked array (`reg [7:0] m
-            // [0:3] = '{…}`) or a plain scalar signal (`wire w = 1'b1;`,
-            // `reg y = 0;`) is applied in `main()` at collection time; no
-            // process is emitted for it.
+            // Array and variable declaration initializers are applied in
+            // `main()` at collection time. True-net declarations continue
+            // below and use the ordinary event-driven continuous-assignment
+            // path, including RunOnce for a constant RHS.
             if self.cont_assign_array_target(ca).is_some() || self.scalar_init_ca.contains(&ca) {
                 return Ok(());
             }
-            return Err(format!(
-                "declaration initializer (`net = value` at declaration) in `{path}` \
-                 is not supported"
-            ));
+            match self.net_decl_target(ca) {
+                NetDeclTarget::TrueNet => {}
+                NetDeclTarget::UnsupportedNet(net_type) => {
+                    return Err(format!(
+                        "net declaration assignment in `{path}` targets unsupported net type \
+                         {net_type} (only wire/tri/logic nets are supported)"
+                    ));
+                }
+                NetDeclTarget::Array | NetDeclTarget::Variable | NetDeclTarget::Unknown => {
+                    return Err(format!(
+                        "declaration initializer (`net = value` at declaration) in `{path}` \
+                         is not supported"
+                    ));
+                }
+            }
         }
         let lhs = node
             .children
-            .get(0)
+            .first()
             .copied()
             .ok_or_else(|| format!("continuous assignment without LHS in `{path}`"))?;
         let rhs = node
@@ -3521,6 +3620,14 @@ impl<'a> Codegen<'a> {
             .ok_or_else(|| format!("continuous assignment without RHS in `{path}`"))?;
         // Callee resolution in the RHS needs the owning instance.
         self.inst = inst;
+        if matches!(self.kind(ca), NodeKind::ContAssign { net_decl: true, .. })
+            && self.contains_unpacked_array(rhs, &mut HashSet::new())
+        {
+            return Err(format!(
+                "net declaration assignment in `{path}` reads an unpacked array, whose \
+                 continuous sensitivity cannot be represented"
+            ));
+        }
         let lh = self.lower_lhs(path, lhs)?;
         let rhs_ir = self.lower_expr(path, rhs)?;
         let rhs_ir = apply_lhs_assignment_context(&self.model, &lh, rhs_ir);
@@ -3603,6 +3710,42 @@ impl<'a> Codegen<'a> {
         Ok(())
     }
 
+    /// Whether an expression (including a called function body) reaches an
+    /// unpacked array. Array element storage is not representable in an
+    /// `IrShape::SensLoop` read set, so declaration drivers reject it rather
+    /// than becoming stale after the first evaluation.
+    fn contains_unpacked_array(&self, node: NodeId, visited: &mut HashSet<NodeId>) -> bool {
+        if !visited.insert(node) {
+            return false;
+        }
+        match self.kind(node) {
+            NodeKind::Array { .. } | NodeKind::Expr(ExprKind::ArraySelect { .. }) => return true,
+            NodeKind::Expr(ExprKind::Ref {
+                target: Some(target),
+            }) if matches!(self.kind(*target), NodeKind::Array { .. }) => {
+                return true;
+            }
+            NodeKind::FuncCall {
+                name,
+                is_task,
+                callee,
+            } => {
+                if let Ok(func) = self.resolve_callee(self.inst, name, *is_task, *callee) {
+                    if let Some(body) = self.func_body(func) {
+                        if self.contains_unpacked_array(body, visited) {
+                            return true;
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+        self.node(node)
+            .children
+            .iter()
+            .any(|child| self.contains_unpacked_array(*child, visited))
+    }
+
     /// Allocate the 1-bit enable signal of one procedural continuous
     /// assignment site (`G_<path>_pca$<n>_en`).  Enables are ordinary IR
     /// signals on purpose: the optimizer's read/write collectors, branch
@@ -3619,6 +3762,7 @@ impl<'a> Codegen<'a> {
         let ir = self.model.signals.len();
         self.model.signals.push(IrSignal {
             c_name,
+            hdl_name: None,
             ty: IrType::Packed {
                 width: 1,
                 signed: false,
@@ -4350,7 +4494,7 @@ impl<'a> Codegen<'a> {
                 let stmt = self
                     .node(proc)
                     .children
-                    .get(0)
+                    .first()
                     .copied()
                     .ok_or_else(|| format!("process without statement in `{path}`"))?;
                 (kind, stmt)
@@ -4455,7 +4599,7 @@ impl<'a> Codegen<'a> {
                 if let Some(rhs) = self.node(node).children.get(1) {
                     self.walk_read_signals(scope_path, *rhs, seen, visited, out)?;
                 }
-                if let Some(lhs) = self.node(node).children.get(0) {
+                if let Some(lhs) = self.node(node).children.first() {
                     self.walk_lhs_select_reads(scope_path, *lhs, seen, visited, out)?;
                 }
                 return Ok(());
@@ -4562,12 +4706,10 @@ impl<'a> Codegen<'a> {
                     }
                 }
             }
-            NodeKind::Expr(ExprKind::Ref { target }) => {
-                if let Some(t) = target {
-                    if let Some(info) = self.signal_of(*t) {
-                        if seen.insert(info.global.clone()) {
-                            out.push(info.global.clone());
-                        }
+            NodeKind::Expr(ExprKind::Ref { target: Some(t) }) => {
+                if let Some(info) = self.signal_of(*t) {
+                    if seen.insert(info.global.clone()) {
+                        out.push(info.global.clone());
                     }
                 }
             }
@@ -4620,11 +4762,9 @@ impl<'a> Codegen<'a> {
                     return Ok((info.global.clone(), info.clone()));
                 }
             }
-            NodeKind::Expr(ExprKind::Ref { target }) => {
-                if let Some(t) = target {
-                    if let Some(info) = self.signal_of(*t) {
-                        return Ok((info.global.clone(), info.clone()));
-                    }
+            NodeKind::Expr(ExprKind::Ref { target: Some(t) }) => {
+                if let Some(info) = self.signal_of(*t) {
+                    return Ok((info.global.clone(), info.clone()));
                 }
             }
             NodeKind::Expr(ExprKind::HierPath { .. }) => {
@@ -4656,11 +4796,9 @@ impl<'a> Codegen<'a> {
                     return Ok((info.global.clone(), info.clone()));
                 }
             }
-            NodeKind::Expr(ExprKind::Ref { target }) => {
-                if let Some(t) = target {
-                    if let Some(info) = self.signal_of(*t) {
-                        return Ok((info.global.clone(), info.clone()));
-                    }
+            NodeKind::Expr(ExprKind::Ref { target: Some(t) }) => {
+                if let Some(info) = self.signal_of(*t) {
+                    return Ok((info.global.clone(), info.clone()));
                 }
             }
             NodeKind::Expr(ExprKind::HierPath { .. }) => {
@@ -5141,8 +5279,8 @@ fn parse_radix_val(s: &str, base_bits: usize, size: i32) -> elab::Value {
     for ch in s.chars() {
         let c = ch.to_ascii_lowercase();
         match c {
-            'x' => bits.extend(std::iter::repeat(Bit::X).take(base_bits)),
-            'z' => bits.extend(std::iter::repeat(Bit::Z).take(base_bits)),
+            'x' => bits.extend(std::iter::repeat_n(Bit::X, base_bits)),
+            'z' => bits.extend(std::iter::repeat_n(Bit::Z, base_bits)),
             _ => {
                 let d = c.to_digit(16).unwrap_or(0);
                 for i in (0..base_bits).rev() {
@@ -5163,7 +5301,7 @@ fn parse_radix_val(s: &str, base_bits: usize, size: i32) -> elab::Value {
     if size > 0 {
         let width = size as usize;
         if bits.len() < width {
-            bits.splice(0..0, std::iter::repeat(Bit::Zero).take(width - bits.len()));
+            bits.splice(0..0, std::iter::repeat_n(Bit::Zero, width - bits.len()));
         } else if bits.len() > width {
             bits = bits[bits.len() - width..].to_vec();
         }
@@ -5620,10 +5758,10 @@ impl EmitCtx<'_, '_> {
                     scale_delay_ticks(v, unit_ps, self.cg.design_precision_ps, &self.path)?;
                 self.saw_wait = true;
                 let mut out = vec![IrStmt::Delay { ticks: scaled }];
-                // The body may be a `Stmt(Other)` placeholder for a bare
+                // The body may be a `Stmt(Empty)` placeholder for a bare
                 // `#N;`; skip it.
-                if let Some(s) = self.cg.node(h).children.get(0) {
-                    if !matches!(self.cg.kind(*s), NodeKind::Stmt(StmtKind::Other)) {
+                if let Some(s) = self.cg.node(h).children.first() {
+                    if !matches!(self.cg.kind(*s), NodeKind::Stmt(StmtKind::Empty)) {
                         out.extend(self.lower_stmt(*s)?);
                     }
                 }
@@ -5729,10 +5867,10 @@ impl EmitCtx<'_, '_> {
                 self.saw_wait = true;
                 // The body is optional (`wait (cond);`); the database walk
                 // captures it as a child only when Surelog emits a `vpiStmt`.
-                // Skip the `Other` placeholder like the delay/event controls.
+                // Skip the `Empty` placeholder like the delay/event controls.
                 let mut body = Vec::new();
                 if let Some(b) = self.cg.node(h).children.get(1) {
-                    if !matches!(self.cg.kind(*b), NodeKind::Stmt(StmtKind::Other)) {
+                    if !matches!(self.cg.kind(*b), NodeKind::Stmt(StmtKind::Empty)) {
                         body = self.lower_stmt(*b)?;
                     }
                 }
@@ -5746,7 +5884,7 @@ impl EmitCtx<'_, '_> {
             NodeKind::Stmt(StmtKind::Release { .. }) => Ok(vec![self.lower_release(h)?]),
             NodeKind::Stmt(StmtKind::ProcContAssign { .. }) => self.lower_proc_cont_assign(h),
             NodeKind::Stmt(StmtKind::Deassign { lhs }) => self.lower_deassign(*lhs),
-            NodeKind::Stmt(StmtKind::Null) => Ok(vec![IrStmt::Nop]),
+            NodeKind::Stmt(StmtKind::Empty) => Ok(vec![IrStmt::Nop]),
             NodeKind::Stmt(StmtKind::Return { value }) => Ok(vec![self.lower_return(*value)?]),
             NodeKind::Stmt(StmtKind::Fork {
                 join_kind,
@@ -5792,9 +5930,15 @@ impl EmitCtx<'_, '_> {
                 }
                 Ok(vec![self.lower_task_call(h, name, *is_task, *callee)?])
             }
-            // Placeholder body for empty constructs (an empty function/task
-            // body, a bare `#N;` or loop body): a no-op.
-            NodeKind::Stmt(StmtKind::Other) => Ok(vec![IrStmt::Nop]),
+            NodeKind::Stmt(StmtKind::Unsupported { vpi_type }) => {
+                let node = self.cg.node(h);
+                let file = node.file.as_deref().unwrap_or("<unknown>");
+                Err(format!(
+                    "unsupported executable statement VPI type {vpi_type} at \
+                     {file}:{}:{} in `{}`",
+                    node.line, node.col, self.path
+                ))
+            }
             other => Err(format!(
                 "unsupported statement in `{}` (node kind {other:?})",
                 self.path
@@ -5825,7 +5969,7 @@ impl EmitCtx<'_, '_> {
             .cg
             .node(h)
             .children
-            .get(0)
+            .first()
             .copied()
             .ok_or_else(|| "assignment without LHS".to_string())?;
         let rhs = self
@@ -5876,7 +6020,7 @@ impl EmitCtx<'_, '_> {
             .cg
             .node(h)
             .children
-            .get(0)
+            .first()
             .copied()
             .ok_or_else(|| "assignment without LHS".to_string())?;
         let rhs = self
@@ -5934,7 +6078,7 @@ impl EmitCtx<'_, '_> {
             _ => unreachable!("non-event-control passed to lower_event_control"),
         };
         let body = body.ok_or_else(|| "event_control without body".to_string())?;
-        let spec_pairs = self.lower_event_specs(&specs)?;
+        let spec_pairs = self.lower_event_specs(specs)?;
         let wait = if implicit || spec_pairs.is_empty() {
             // @* / always_comb without explicit sensitivity, or a condition
             // that produced no specs: wait on the body's read set.
@@ -5946,9 +6090,9 @@ impl EmitCtx<'_, '_> {
         };
         self.saw_wait = true;
         let mut out = vec![wait];
-        // The body may be a `Stmt(Other)` placeholder for a bare
+        // The body may be a `Stmt(Empty)` placeholder for a bare
         // `@(posedge clk);`; skip it.
-        if !matches!(self.cg.kind(body), NodeKind::Stmt(StmtKind::Other)) {
+        if !matches!(self.cg.kind(body), NodeKind::Stmt(StmtKind::Empty)) {
             out.extend(self.lower_stmt(body)?);
         }
         Ok(out)
@@ -6182,7 +6326,7 @@ impl EmitCtx<'_, '_> {
             .cg
             .node(h)
             .children
-            .get(0)
+            .first()
             .copied()
             .ok_or_else(|| "force without LHS".to_string())?;
         let rhs = self
@@ -6239,7 +6383,7 @@ impl EmitCtx<'_, '_> {
             .cg
             .node(h)
             .children
-            .get(0)
+            .first()
             .copied()
             .ok_or_else(|| "release without LHS".to_string())?;
         let lh = self.cg.lower_lhs(&self.path, lhs)?;
@@ -6340,7 +6484,7 @@ impl EmitCtx<'_, '_> {
                 .cg
                 .node(*n)
                 .children
-                .get(0)
+                .first()
                 .copied()
                 .ok_or_else(|| "procedural continuous assignment without LHS".to_string())?;
             let (sig_idx, _) = self.pca_target(lhs, "assign")?;
@@ -6390,7 +6534,7 @@ impl EmitCtx<'_, '_> {
             .cg
             .node(h)
             .children
-            .get(0)
+            .first()
             .copied()
             .ok_or_else(|| "procedural continuous assignment without LHS".to_string())?;
         let rhs = self
@@ -6613,6 +6757,78 @@ impl EmitCtx<'_, '_> {
             }
             "$monitoron" => Ok(vec![IrStmt::MonitorEnable(true)]),
             "$monitoroff" => Ok(vec![IrStmt::MonitorEnable(false)]),
+            "$dumpfile" => {
+                if args.len() != 1 {
+                    return Err(format!(
+                        "$dumpfile requires exactly one literal string argument in `{}`",
+                        self.path
+                    ));
+                }
+                let path = match self.cg.kind(args[0]) {
+                    NodeKind::Expr(ExprKind::Constant {
+                        const_type: vpi::vpiStringConst,
+                        value: ValueData::Str(path),
+                        ..
+                    }) => path.clone(),
+                    _ => {
+                        return Err(format!(
+                            "$dumpfile requires a literal string argument in `{}`",
+                            self.path
+                        ))
+                    }
+                };
+                let lower_path = path.to_ascii_lowercase();
+                if !lower_path.ends_with(".vcd") && !lower_path.ends_with(".fst") {
+                    return Err(format!(
+                        "$dumpfile path must end in .vcd or .fst in `{}`",
+                        self.path
+                    ));
+                }
+                self.cg.model.waveform = true;
+                Ok(vec![IrStmt::WaveFile(path)])
+            }
+            "$dumpvars" => {
+                if !args.is_empty() && !self.cg.warned_dumpvars_filtering {
+                    self.cg.warnings.push(
+                        "$dumpvars depth/scope filtering is not yet implemented; dumping all \
+                         registered storage"
+                            .to_string(),
+                    );
+                    self.cg.warned_dumpvars_filtering = true;
+                }
+                self.cg.model.waveform = true;
+                Ok(vec![IrStmt::WaveDumpVars])
+            }
+            "$dumpon" | "$dumpoff" | "$dumpall" | "$dumpflush" => {
+                if !args.is_empty() {
+                    return Err(format!("{name} takes no arguments in `{}`", self.path));
+                }
+                self.cg.model.waveform = true;
+                Ok(vec![match name {
+                    "$dumpon" => IrStmt::WaveOn,
+                    "$dumpoff" => IrStmt::WaveOff,
+                    "$dumpall" => IrStmt::WaveDumpAll,
+                    "$dumpflush" => IrStmt::WaveFlush,
+                    _ => unreachable!(),
+                }])
+            }
+            "$dumplimit" => {
+                if args.len() != 1 {
+                    return Err(format!(
+                        "$dumplimit requires exactly one packed expression in `{}`",
+                        self.path
+                    ));
+                }
+                let limit = self.cg.lower_expr(&self.path, args[0])?;
+                if limit.is_real() {
+                    return Err(format!(
+                        "$dumplimit requires a packed expression, not real, in `{}`",
+                        self.path
+                    ));
+                }
+                self.cg.model.waveform = true;
+                Ok(vec![IrStmt::WaveLimit(limit)])
+            }
             "$finish" => Ok(vec![IrStmt::Finish]),
             "$printtimescale" => {
                 let ts = self.cg.timescale_of_node(h);
@@ -6622,8 +6838,7 @@ impl EmitCtx<'_, '_> {
                     label: self.path.clone(),
                 }])
             }
-            "$displayon" | "$displayoff" | "$dumpvars" | "$dumpfile" | "$dumpon" | "$dumpoff"
-            | "$dumplimit" => {
+            "$displayon" | "$displayoff" => {
                 self.cg.warnings.push(format!(
                     "{name} in `{}` skipped (not supported in v1)",
                     self.path
@@ -7989,8 +8204,8 @@ impl<'a> Codegen<'a> {
             }
             vpiConcatOp => {
                 let mut parts = Vec::new();
-                for i in 0..operands.len() {
-                    parts.push(op!(i));
+                for operand in operands {
+                    parts.push(self.lower_expr(scope_path, *operand)?);
                 }
                 if reordered {
                     parts.reverse();
@@ -8029,8 +8244,8 @@ impl<'a> Codegen<'a> {
                     c.bits.first().copied().unwrap_or(0)
                 };
                 let mut pat_parts = Vec::new();
-                for i in 1..operands.len() {
-                    pat_parts.push(op!(i));
+                for operand in operands.iter().skip(1) {
+                    pat_parts.push(self.lower_expr(scope_path, *operand)?);
                 }
                 if pat_parts.is_empty() {
                     return Err(format!("empty replication in `{scope_path}`"));
@@ -8266,7 +8481,7 @@ fn bitneg_full_width(a: IrExpr) -> IrExpr {
 /// A constant with every bit set to 1 or 0 over `width` bits (pullup/
 /// pulldown drivers).
 fn const_bits_expr(width: u32, ones: bool) -> IrExpr {
-    let nlimbs = ((width as usize) + 63) / 64;
+    let nlimbs = (width as usize).div_ceil(64);
     let limb = if ones { u64::MAX } else { 0 };
     let mut bits = vec![limb; nlimbs];
     let tail = width as usize % 64;
@@ -8292,7 +8507,7 @@ fn const_bits_expr(width: u32, ones: bool) -> IrExpr {
 /// An all-Z constant over `width` bits (`sv4_mux`'s disabled branch of
 /// enable gates).
 fn const_z_expr(width: u32) -> IrExpr {
-    let nlimbs = ((width as usize) + 63) / 64;
+    let nlimbs = (width as usize).div_ceil(64);
     let mut z = vec![u64::MAX; nlimbs];
     let tail = width as usize % 64;
     if tail != 0 {

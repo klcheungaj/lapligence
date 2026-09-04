@@ -11,7 +11,7 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 
 use llg::core::{compile, db, elab, model};
-use llg::ffi::surelog;
+use llg::ffi::{surelog, vpi};
 
 static SURELOG_LOCK: Mutex<()> = Mutex::new(());
 
@@ -308,11 +308,74 @@ fn db_owns_ordered_packed_ranges_per_elaborated_instance() {
 }
 
 #[test]
+fn db_owns_dynamic_net_declaration_assignment_shape() {
+    in_temp_dir(|| {
+        let source = PathBuf::from("net_decl_shape.sv");
+        std::fs::write(
+            &source,
+            "// llg-test-fixture: tests/model_tests.rs/net_decl_shape.sv\n\
+             module net_decl_shape(input logic [7:0] a, b, output logic [7:0] out);\n\
+             wire [7:0] y = a + b;\n\
+             assign out = y;\n\
+             endmodule\n",
+        )
+        .expect("write net-declaration source");
+        let opts = compile::CompileOpts {
+            files: vec![source.to_string_lossy().into_owned()],
+            top: Some("net_decl_shape".to_owned()),
+            ..Default::default()
+        };
+        let (_out, database) = compile_and_db(opts);
+
+        let declaration_assignments = (0..database.node_count())
+            .map(|index| db::NodeId(index as u32))
+            .filter(|id| {
+                matches!(
+                    database.node_kind(*id),
+                    db::NodeKind::ContAssign { net_decl: true, .. }
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            declaration_assignments.len(),
+            1,
+            "the dynamic declaration must remain distinguishable from plain assigns"
+        );
+
+        let assignment = database.node(declaration_assignments[0]);
+        assert_eq!(assignment.children.len(), 2, "owned LHS and RHS required");
+        let lhs_target = match database.node_kind(assignment.children[0]) {
+            db::NodeKind::Expr(db::ExprKind::Ref {
+                target: Some(target),
+            }) => *target,
+            other => panic!("unexpected declaration-assignment LHS: {other:?}"),
+        };
+        assert!(
+            matches!(
+                database.node_kind(lhs_target),
+                db::NodeKind::Net {
+                    net_type: vpi::vpiWire | vpi::vpiNet,
+                    ..
+                }
+            ),
+            "declaration LHS must resolve to the owned true-net declaration: {:?}",
+            database.node_kind(lhs_target)
+        );
+        assert!(
+            matches!(
+                database.node_kind(assignment.children[1]),
+                db::NodeKind::Expr(db::ExprKind::Operation { .. })
+            ),
+            "dynamic RHS must remain an owned expression tree"
+        );
+    });
+}
+
+#[test]
 fn compile_diagnostics() {
     in_temp_dir(|| {
         // `assign w = ;` is a real syntax error in this Surelog version.
-        let bad = PathBuf::from(std::env::temp_dir())
-            .join(format!("llg_bad_syntax_{}.sv", std::process::id()));
+        let bad = std::env::temp_dir().join(format!("llg_bad_syntax_{}.sv", std::process::id()));
         std::fs::write(&bad, "module bad;\n  wire w;\n  assign w = ;\nendmodule\n")
             .expect("write bad file");
         let bad_path = bad.to_string_lossy().into_owned();
