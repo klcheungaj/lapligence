@@ -227,6 +227,9 @@ impl LifecycleSpan {
         )
     }
 
+    // One internal constructor centralizes all optional lifecycle dimensions;
+    // public helpers supply the meaningful subsets and avoid formatting work.
+    #[allow(clippy::too_many_arguments)]
     fn start<I, R>(
         level: Level,
         kind: &'static str,

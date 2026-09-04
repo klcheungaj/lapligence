@@ -304,7 +304,7 @@ fn apply_event(
     spans: &mut Vec<(u32, u32)>,
 ) {
     fn visible(stack: &[Frame]) -> bool {
-        stack.last().map_or(true, |frame| frame.segment_visible)
+        stack.last().is_none_or(|frame| frame.segment_visible)
     }
     fn close_segment(frame: &mut Frame, until: u32, spans: &mut Vec<(u32, u32)>) {
         if !frame.segment_visible && until >= frame.segment_start {

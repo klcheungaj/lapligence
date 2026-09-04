@@ -226,17 +226,18 @@ endmodule
     assert_eq!(stdout, "w=1 r=a v=0\nw=1 r=a v=1\n");
 }
 
-/// A scalar declaration initializer whose RHS is not a plain constant (it
-/// references a signal) must still be rejected with the declaration-
-/// initializer error, not silently mis-emitted.
+/// A scalar variable declaration initializer whose RHS is not a constant
+/// expression must still be rejected. Unlike a true-net declaration
+/// assignment, this is initialization rather than a continuous driver.
 #[test]
-fn sim_scalar_decl_init_nonconst_rejected() {
+fn sim_variable_decl_init_nonconst_rejected() {
     let _guard = SURELOG_LOCK.lock().unwrap();
     let dir = std::env::temp_dir().join(format!("llg_sim_declnc_{}", std::process::id()));
     std::fs::create_dir_all(&dir).expect("create temp dir");
-    let sv = r#"module tb;
+    let sv = r#"// llg-test-fixture: tests/sim_geninit.rs/nonconst.sv
+module tb;
     reg a;
-    wire w = a;
+    reg w = a;
     initial $finish;
 endmodule
 "#;
@@ -260,7 +261,7 @@ endmodule
     std::env::set_current_dir(&orig_cwd).expect("restore cwd");
     let _ = std::fs::remove_dir_all(&dir);
 
-    let err = result.expect_err("codegen must reject non-constant declaration initializers");
+    let err = result.expect_err("codegen must reject non-constant variable initializers");
     assert!(
         err.contains("declaration initializer"),
         "unexpected error: {err}"

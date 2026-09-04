@@ -120,8 +120,9 @@ fn small_value_strategy() -> impl Strategy<Value = Value> {
 // contexts).  Shifts are different: only an unknown shift amount produces
 // all-X; unknown LHS bits are shifted positionally and covered by focused
 // unit/runtime vectors below.
-const ALL_X_OPS: [(&str, fn(&Value, &Value) -> Value); 3] =
-    [("add", add), ("sub", sub), ("mul", mul)];
+type BinaryValueOp = fn(&Value, &Value) -> Value;
+
+const ALL_X_OPS: [(&str, BinaryValueOp); 3] = [("add", add), ("sub", sub), ("mul", mul)];
 
 fn check_all_x(name: &str, op: fn(&Value, &Value) -> Value, a: &Value, b: &Value) -> String {
     let r = op(a, b);

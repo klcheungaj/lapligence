@@ -240,60 +240,53 @@ pub fn encode(nodes: &[VObjectInfo]) -> SemanticTokens {
 fn token_type_for(vpi_type: i32) -> Option<(u32, u32)> {
     use llg::ffi::vpi;
 
-    let token_type: Option<u32>;
     let mut token_modifiers: u32;
-    match vpi_type {
+    let token_type: Option<u32> = match vpi_type {
         // ── Scope / namespace types ───────────────────────────────────────────
         // module definition
-        vpi::vpiModule => token_type = Some(TT_NAMESPACE),
+        vpi::vpiModule => Some(TT_NAMESPACE),
         // module instantiation (synthetic type set by VObjectType.rs walker)
-        vpi::uhdmmodule_inst => token_type = Some(TT_NAMESPACE),
+        vpi::uhdmmodule_inst => Some(TT_NAMESPACE),
         // package definitions
-        vpi::uhdmpackage => token_type = Some(TT_NAMESPACE),
+        vpi::uhdmpackage => Some(TT_NAMESPACE),
 
         // ── Interface ─────────────────────────────────────────────────────────
         // UHDM represents interface definitions as interface_inst objects.
-        vpi::uhdminterface_inst => token_type = Some(TT_INTERFACE),
+        vpi::uhdminterface_inst => Some(TT_INTERFACE),
 
         // ── Class definitions ─────────────────────────────────────────────────
-        vpi::uhdmclass_defn => token_type = Some(TT_CLASS),
+        vpi::uhdmclass_defn => Some(TT_CLASS),
 
         // ── Enum typespecs and constants ──────────────────────────────────────
-        vpi::uhdmenum_typespec => token_type = Some(TT_ENUM),
-        vpi::uhdmenum_const => token_type = Some(TT_ENUM_MEMBER),
+        vpi::uhdmenum_typespec => Some(TT_ENUM),
+        vpi::uhdmenum_const => Some(TT_ENUM_MEMBER),
 
         // ── Struct / union typespecs ──────────────────────────────────────────
-        vpi::uhdmstruct_typespec | vpi::uhdmunion_typespec => token_type = Some(TT_STRUCT),
+        vpi::uhdmstruct_typespec | vpi::uhdmunion_typespec => Some(TT_STRUCT),
 
         // ── Functions and tasks ───────────────────────────────────────────────
-        vpi::vpiFunction | vpi::vpiTask | vpi::uhdmfunction | vpi::uhdmtask => {
-            token_type = Some(TT_FUNCTION)
-        }
+        vpi::vpiFunction | vpi::vpiTask | vpi::uhdmfunction | vpi::uhdmtask => Some(TT_FUNCTION),
 
         // ── Parameters ────────────────────────────────────────────────────────
-        vpi::vpiParameter | vpi::vpiSpecParam | vpi::uhdmparameter => {
-            token_type = Some(TT_PROPERTY)
-        }
+        vpi::vpiParameter | vpi::vpiSpecParam | vpi::uhdmparameter => Some(TT_PROPERTY),
 
         // ── Ports — direction-specific synthetic types ─────────────────────────
         // Input ports: treated as read-only, shown like parameters.
-        vpi::TOKEN_PORT_INPUT => token_type = Some(TT_PARAMETER),
+        vpi::TOKEN_PORT_INPUT => Some(TT_PARAMETER),
         // Output and inout ports: writable, shown as variables.
-        vpi::TOKEN_PORT_OUTPUT | vpi::TOKEN_PORT_INOUT => token_type = Some(TT_VARIABLE),
+        vpi::TOKEN_PORT_OUTPUT | vpi::TOKEN_PORT_INOUT => Some(TT_VARIABLE),
         // Generic port fallback (direction unknown).
-        vpi::vpiPort | vpi::vpiPortBit => token_type = Some(TT_VARIABLE),
+        vpi::vpiPort | vpi::vpiPortBit => Some(TT_VARIABLE),
 
         // ── Nets — by net type ────────────────────────────────────────────────
         // wire / logic_net / tri / supply / …
-        vpi::vpiNet | vpi::vpiNetBit | vpi::uhdmlogic_net | vpi::uhdmnet => {
-            token_type = Some(TT_VARIABLE)
-        }
+        vpi::vpiNet | vpi::vpiNetBit | vpi::uhdmlogic_net | vpi::uhdmnet => Some(TT_VARIABLE),
 
         // ── Registers ─────────────────────────────────────────────────────────
-        vpi::vpiReg | vpi::vpiRegBit => token_type = Some(TT_VARIABLE),
+        vpi::vpiReg | vpi::vpiRegBit => Some(TT_VARIABLE),
 
         // ── Standard VPI variable types ───────────────────────────────────────
-        vpi::vpiIntegerVar | vpi::vpiRealVar | vpi::vpiTimeVar => token_type = Some(TT_VARIABLE),
+        vpi::vpiIntegerVar | vpi::vpiRealVar | vpi::vpiTimeVar => Some(TT_VARIABLE),
 
         // ── UHDM-specific variable types ──────────────────────────────────────
         // vpiLogicVar (3009) is the UHDM extension selector; uhdmlogic_var
@@ -305,12 +298,12 @@ fn token_type_for(vpi_type: i32) -> Option<(u32, u32)> {
         | vpi::uhdmbit_var
         | vpi::uhdmbyte_var
         | vpi::uhdmshort_int_var
-        | vpi::uhdmlong_int_var => token_type = Some(TT_VARIABLE),
+        | vpi::uhdmlong_int_var => Some(TT_VARIABLE),
 
         // ── Signal references (uses in expressions) ───────────────────────────
         // uhdmref_obj covers references to nets, regs, ports, and variables.
         // uhdmref_var covers variable-specific references (UHDM extension).
-        vpi::uhdmref_obj | vpi::uhdmref_var | vpi::vpiRefObj => token_type = Some(TT_VARIABLE),
+        vpi::uhdmref_obj | vpi::uhdmref_var | vpi::vpiRefObj => Some(TT_VARIABLE),
 
         // ── Named-connection labels (LSP-internal synthetic types) ───────────
         // The label keeps the base type it historically rendered with — port
@@ -318,8 +311,8 @@ fn token_type_for(vpi_type: i32) -> Option<(u32, u32)> {
         // labels as `property` — so stock themes show today's colors; the
         // `connectionLabel` modifier is what themes style to distinguish
         // labels from connected signals.
-        vpi::TOKEN_PORT_CONN_LABEL => token_type = Some(TT_FUNCTION),
-        vpi::TOKEN_PARAM_CONN_LABEL => token_type = Some(TT_PROPERTY),
+        vpi::TOKEN_PORT_CONN_LABEL => Some(TT_FUNCTION),
+        vpi::TOKEN_PARAM_CONN_LABEL => Some(TT_PROPERTY),
 
         // ── Parse-tree keyword VObjectType (PARSE_OFFSET = 100_000) ───────────────
         //
@@ -331,7 +324,7 @@ fn token_type_for(vpi_type: i32) -> Option<(u32, u32)> {
             || t == VObjectTypeShifted::ppMacroInstanceWithArgs
             || t == VObjectTypeShifted::ppMacro_definition =>
         {
-            token_type = Some(TT_MACRO)
+            Some(TT_MACRO)
         }
 
         // Scope / module-boundary keywords
@@ -353,13 +346,13 @@ fn token_type_for(vpi_type: i32) -> Option<(u32, u32)> {
             || t == VObjectTypeShifted::paGENERATE
             || t == VObjectTypeShifted::paENDGENERATE =>
         {
-            token_type = Some(TT_KEYWORD)
+            Some(TT_KEYWORD)
         }
 
         // Port direction keywords
-        t if t == VObjectTypeShifted::paINPUT => token_type = Some(TT_MODIFIER),
-        t if t == VObjectTypeShifted::paOUTPUT => token_type = Some(TT_MODIFIER),
-        t if t == VObjectTypeShifted::paINOUT => token_type = Some(TT_MODIFIER),
+        t if t == VObjectTypeShifted::paINPUT => Some(TT_MODIFIER),
+        t if t == VObjectTypeShifted::paOUTPUT => Some(TT_MODIFIER),
+        t if t == VObjectTypeShifted::paINOUT => Some(TT_MODIFIER),
 
         // Net-type keywords
         t if t == VObjectTypeShifted::paWIRE
@@ -376,7 +369,7 @@ fn token_type_for(vpi_type: i32) -> Option<(u32, u32)> {
             || t == VObjectTypeShifted::paSUPPLY1
             || t == VObjectTypeShifted::paREG =>
         {
-            token_type = Some(TT_KEYWORD)
+            Some(TT_KEYWORD)
         }
 
         // Data-type keywords
@@ -401,7 +394,7 @@ fn token_type_for(vpi_type: i32) -> Option<(u32, u32)> {
             || t == VObjectTypeShifted::paTYPEDEF
             || t == VObjectTypeShifted::paTYPE =>
         {
-            token_type = Some(TT_KEYWORD)
+            Some(TT_KEYWORD)
         }
 
         // Qualifier / modifier keywords
@@ -409,7 +402,7 @@ fn token_type_for(vpi_type: i32) -> Option<(u32, u32)> {
             || t == VObjectTypeShifted::paLOCALPARAM
             || t == VObjectTypeShifted::paDEFPARAM =>
         {
-            token_type = Some(TT_KEYWORD)
+            Some(TT_KEYWORD)
         }
 
         t if t == VObjectTypeShifted::paSTATIC
@@ -418,22 +411,22 @@ fn token_type_for(vpi_type: i32) -> Option<(u32, u32)> {
             || t == VObjectTypeShifted::paEXTENDS
             || t == VObjectTypeShifted::paIMPLEMENTS =>
         {
-            token_type = Some(TT_MODIFIER)
+            Some(TT_MODIFIER)
         }
 
         t if t == VObjectTypeShifted::paAssignment_pattern_key
             || t == VObjectTypeShifted::paStructure_pattern_key =>
         {
-            token_type = Some(TT_KEYWORD)
+            Some(TT_KEYWORD)
         }
 
-        t if t == VObjectTypeShifted::ppComment => token_type = Some(TT_COMMENT),
+        t if t == VObjectTypeShifted::ppComment => Some(TT_COMMENT),
 
         // Typedef declaration names (parse-tree origin).
-        vpi::TOKEN_TYPEDEF_NAME => token_type = Some(TT_TYPE),
+        vpi::TOKEN_TYPEDEF_NAME => Some(TT_TYPE),
 
-        _ => token_type = None,
-    }
+        _ => None,
+    };
 
     match vpi_type {
         // Parameters and input ports are read-only.  The parameter-override
@@ -465,7 +458,7 @@ fn token_type_for(vpi_type: i32) -> Option<(u32, u32)> {
         token_modifiers |= 1 << TM_CONNECTION_LABEL;
     }
 
-    return token_type.map(|tt| (tt, token_modifiers));
+    token_type.map(|tt| (tt, token_modifiers))
 }
 
 #[cfg(test)]

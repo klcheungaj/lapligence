@@ -970,7 +970,7 @@ mod tests {
             "unborn base must not canonicalize-match unrelated files"
         );
         // Once the base exists, its staged copies match through symlinks.
-        fs::create_dir_all(&unborn_base.join("a")).expect("create base");
+        fs::create_dir_all(unborn_base.join("a")).expect("create base");
         let staged = unborn_base.join("a").join("top.sv");
         fs::write(&staged, "module top;\nendmodule\n").expect("write staged copy");
         let link = real.join("link");

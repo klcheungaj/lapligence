@@ -179,9 +179,7 @@ fn read_environment_value(name: &'static str, warnings: &mut Vec<ConfigWarning>)
 }
 
 fn parse_limit(value: Option<&str>, warnings: &mut Vec<ConfigWarning>) -> Option<u64> {
-    let Some(value) = value else {
-        return None;
-    };
+    let value = value?;
     let Some(mebibytes) = value.trim().parse::<u64>().ok() else {
         warnings.push(ConfigWarning {
             variable: MEMORY_LIMIT_ENV,

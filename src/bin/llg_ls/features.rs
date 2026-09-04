@@ -276,10 +276,7 @@ fn insert_graph_definition_line_range(
             spans.remove(&previous_start);
         }
     }
-    loop {
-        let Some((&next_start, &next_end)) = spans.range(merged_start..).next() else {
-            break;
-        };
+    while let Some((&next_start, &next_end)) = spans.range(merged_start..).next() {
         if next_start > merged_end.saturating_add(1) {
             break;
         }
@@ -1215,7 +1212,9 @@ fn merged_ref_bindings(
     // Pairing map: 0-based label position → (0-based actual position, actual
     // identifier text).  Both sides of a connection live in the instantiating
     // file.
-    let mut actual_of: HashMap<(String, u32, u32), ((u32, u32), String)> = HashMap::new();
+    type SourcePosition = (String, u32, u32);
+    type ActualBinding = ((u32, u32), String);
+    let mut actual_of: HashMap<SourcePosition, ActualBinding> = HashMap::new();
     for pair in &connections.pairs {
         if let (Some((line0, col0)), Some(name)) = (pair.actual, pair.actual_name.as_deref()) {
             actual_of.insert(
@@ -2208,7 +2207,7 @@ fn analyze_inner(
     // `design` borrows from `out`, so release the last native borrow before moving
     // the diagnostics field. Every borrowed Design/VPI value has now been converted
     // to owned Rust data, making post-processing independent of the native session.
-    drop(design);
+    let _ = design;
 
     let mut diagnostics = out.diagnostics;
     if let Some(error) = db_error {
@@ -2927,14 +2926,13 @@ impl GraphDeclarationFactsCache {
         nodes: &[llg::ffi::surelog::ParseNode],
         root: usize,
     ) -> &GraphDeclarationSubtreeFacts {
-        if !self.by_root.contains_key(&root) {
+        self.by_root.entry(root).or_insert_with(|| {
             #[cfg(test)]
             {
                 self.subtree_walks += 1;
             }
-            self.by_root
-                .insert(root, graph_declaration_subtree_facts(nodes, root));
-        }
+            graph_declaration_subtree_facts(nodes, root)
+        });
         self.by_root
             .get(&root)
             .expect("declaration facts inserted above")
@@ -3814,6 +3812,9 @@ fn graph_token_matches_declaration(token_type: i32, kind: &GraphDeclarationKind)
     }
 }
 
+// The arguments are independent parse/source facts; collecting them into a
+// mutable context object would make this pure type-recovery helper less clear.
+#[allow(clippy::too_many_arguments)]
 fn graph_type_info(
     nodes: &[llg::ffi::surelog::ParseNode],
     declaration_root: usize,
@@ -3881,7 +3882,7 @@ fn graph_source_type_words_clean(text: &str) -> (TypeInfo, bool) {
     let mut ty = TypeInfo::default();
     let mut saw_decl_qualifier = false;
     let mut saw_net_or_reg = false;
-    for word in graph_source_words(&text) {
+    for word in graph_source_words(text) {
         let word = word.to_ascii_lowercase();
         match word.as_str() {
             "input" | "output" | "inout" | "parameter" | "localparam" | "var" | "const" | "ref"
@@ -4984,6 +4985,9 @@ fn operator_pair_requires_separator(previous: char, next: char) -> bool {
 /// source graph keeps packed and unpacked dimensions in declaration order,
 /// while the shape tells the explorer which suffix dimensions must remain
 /// unpacked when a committed instance width replaces the packed portion.
+// Keep the structured type, source spelling, and declaration coordinates
+// explicit at this analysis boundary.
+#[allow(clippy::too_many_arguments)]
 fn graph_type_display(
     source: Option<&GraphSourceIndex>,
     declaration: &llg::ffi::surelog::ParseNode,
@@ -5509,7 +5513,7 @@ fn parse_tree_feature_parts(
             }
             // The token spans the identifier only; keep a sane end position
             // even if the parse node's end fields are unset or degenerate.
-            let len = lsp_name_len(&name);
+            let len = lsp_name_len(name);
             let name_end_col = node.col.saturating_add(len);
             let (end_line, end_col) = if node.end_line > node.line
                 || (node.end_line == node.line && node.end_col >= name_end_col)
@@ -6048,16 +6052,16 @@ pub(crate) fn scan_named_port_connections(
                 break;
             }
             match VObjectType::try_from(nodes[idx].type_id) {
-                Ok(t) if t == VObjectType::paNamed_port_connection => {
+                Ok(VObjectType::paNamed_port_connection) => {
                     return LeafOwner::Connection(cur, ConnKind::Port);
                 }
-                Ok(t) if t == VObjectType::paNamed_parameter_assignment => {
+                Ok(VObjectType::paNamed_parameter_assignment) => {
                     return LeafOwner::Connection(cur, ConnKind::Param);
                 }
-                Ok(t) if t == VObjectType::paModule_instantiation => {
+                Ok(VObjectType::paModule_instantiation) => {
                     return LeafOwner::Instantiation(cur);
                 }
-                Ok(t) if t == VObjectType::paName_of_instance => return LeafOwner::Ignored,
+                Ok(VObjectType::paName_of_instance) => return LeafOwner::Ignored,
                 _ => cur = nodes[idx].parent_index,
             }
         }
@@ -6136,7 +6140,7 @@ pub(crate) fn scan_named_port_connections(
                 continue;
             };
             let actual = leaves.get(1).map(|&(line, col, _)| (line, col));
-            let actual_name = leaves.get(1).map(|&(_, _, ref name)| name.clone());
+            let actual_name = leaves.get(1).map(|(_, _, name)| name.clone());
             // The instantiation type comes from the nearest enclosing
             // `paModule_instantiation`'s own (first) identifier leaf.
             let inst_type = enclosing_instantiation(&nodes, conn_idx)
@@ -6276,7 +6280,7 @@ fn scan_parse_enum_facts(design: &llg::ffi::surelog::Design) -> ParseEnumFacts {
             .filter(|name| !name.is_empty())
     }
 
-    fn scope_at<'a>(scopes: &'a [ScopeSpan], line: u32) -> Option<&'a ScopeSpan> {
+    fn scope_at(scopes: &[ScopeSpan], line: u32) -> Option<&ScopeSpan> {
         scopes
             .iter()
             .filter(|scope| scope.start_line <= line && line <= scope.end_line)
@@ -6376,7 +6380,8 @@ fn scan_parse_enum_facts(design: &llg::ffi::surelog::Design) -> ParseEnumFacts {
     let mut import_positions = HashSet::new();
     let mut qualifier_positions = HashSet::new();
     let mut scopes_by_file: HashMap<String, Vec<ScopeSpan>> = HashMap::new();
-    let mut leaves_by_file: HashMap<String, Vec<(u32, String, u32, u32, bool)>> = HashMap::new();
+    type EnumLeaf = (u32, String, u32, u32, bool);
+    let mut leaves_by_file: HashMap<String, Vec<EnumLeaf>> = HashMap::new();
 
     // First pass: retain exact parse declarations, scope spans, imports, and
     // all source-local identifier leaves.  Later passes can then resolve
@@ -8646,7 +8651,7 @@ fn decl_detail(model: &DesignModel, kind: SymKind, name: &str) -> Option<String>
 /// chosen flavor: under divergent per-instance overrides an arbitrary
 /// instance's number would be a guess, so the value is cleared instead
 /// ([`format_param`] then renders without a value).
-fn param_display_model<'m>(insts: &[&'m InstanceModel], name: &str) -> Option<ParamModel> {
+fn param_display_model(insts: &[&InstanceModel], name: &str) -> Option<ParamModel> {
     fn direct<'m>(insts: &[&'m InstanceModel], name: &str, local: bool) -> Vec<&'m ParamModel> {
         insts
             .iter()
@@ -9158,7 +9163,7 @@ pub fn hover_at(a: &Analysis, file: &str, line: u32, col: u32) -> Option<Hover> 
             .map(|e| lsp_name_len(&e.name))
             .unwrap_or_else(|| lsp_name_len(&target.name));
         let range_col = clicked.map(|e| e.col).unwrap_or(col);
-        if let Some(hover) = hover_for_target(a, target, line, range_col, anchor_len as u32) {
+        if let Some(hover) = hover_for_target(a, target, line, range_col, anchor_len) {
             return Some(hover);
         }
     }
@@ -10761,10 +10766,7 @@ fn clean_name(name: &str) -> &str {
 /// string and reports them under this path, which never exists on disk;
 /// declarations there are skipped so goto-definition cannot dead-end.
 fn builtin_file(file: &str) -> bool {
-    Path::new(file)
-        .file_name()
-        .and_then(|n| n.to_str())
-        .map_or(false, |n| n == "builtin.sv")
+    Path::new(file).file_name().and_then(|n| n.to_str()) == Some("builtin.sv")
 }
 
 /// The token list for `file`, by exact path with a filename fallback.
@@ -10792,7 +10794,7 @@ fn token_at<'a>(a: &'a Analysis, file: &str, line: u32, col: u32) -> Option<&'a 
     let mut candidates: Vec<&VObjectInfo> = ft
         .nodes
         .iter()
-        .filter(|n| n.line == line1 && n.name.as_deref().map_or(false, |s| !s.is_empty()))
+        .filter(|n| n.line == line1 && n.name.as_deref().is_some_and(|s| !s.is_empty()))
         .collect();
     if candidates.is_empty() {
         return None;
@@ -10850,7 +10852,7 @@ fn skip_self_label(a: &Analysis, file: &str, line: u32, col: u32) -> Option<(u32
             | vpi::vpiTask
             | vpi::vpiParameter
     );
-    is_label_flavor.then(|| (node.line, node.col))
+    is_label_flavor.then_some((node.line, node.col))
 }
 
 /// The same-file port/signal/parameter declaration of `name` nearest to
@@ -14191,11 +14193,7 @@ mod tests {
             .model
             .modules
             .iter()
-            .find(|m| {
-                m.file
-                    .as_deref()
-                    .map_or(false, |f| f.ends_with("params.sv"))
-            })
+            .find(|m| m.file.as_deref().is_some_and(|f| f.ends_with("params.sv")))
             .and_then(|m| m.file.clone())
             .unwrap_or_else(|| path_str.clone());
         let syms = document_symbols(&a, &file);

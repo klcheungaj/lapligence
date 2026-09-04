@@ -12,7 +12,16 @@
 //! All VPI functions are in the `uhdm` static library (already linked via
 //! `build.rs`); no extra `#[link]` attribute is needed.
 
-#![allow(non_upper_case_globals, non_camel_case_types, dead_code)]
+// VPI handles are opaque C tokens: these wrappers pass them back to UHDM but
+// never dereference them in Rust. Multiple `#[link]` attributes are required
+// to make every native archive propagate through the Rust library target.
+#![allow(
+    non_upper_case_globals,
+    non_camel_case_types,
+    dead_code,
+    clippy::duplicated_attributes,
+    clippy::not_unsafe_ptr_arg_deref
+)]
 
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_double, c_float, c_int, c_short, c_uint, c_void};
@@ -2087,7 +2096,7 @@ pub fn read_value(expr: VpiHandle) -> ValueData {
                     let words = if size <= 0 {
                         1
                     } else {
-                        ((size as usize + 31) / 32).min(2).max(1)
+                        (size as usize).div_ceil(32).clamp(1, 2)
                     };
                     let mut vec = Vec::with_capacity(words);
                     for i in 0..words {

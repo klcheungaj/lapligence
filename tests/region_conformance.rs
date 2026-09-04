@@ -71,9 +71,9 @@ fn run_design(sv: &str, tag: &str) -> Result<(String, String), String> {
 }
 
 /// 1. NBA semantics: RHS sampled when the NBA statement executes; LHS updated
-/// in the NBA region.  A blocking read in the same process (and in a second
-/// process in the same active pass) must see the OLD value; a process woken
-/// by the NBA commit must see the NEW value.
+///    in the NBA region.  A blocking read in the same process (and in a second
+///    process in the same active pass) must see the OLD value; a process woken
+///    by the NBA commit must see the NEW value.
 const NBA_VISIBILITY_SV: &str = r#"`timescale 1ns/1ns
 module tb;
     reg a = 1'b0;
@@ -133,9 +133,9 @@ fn region_nba_visibility() {
 }
 
 /// 2. `#0` must move the continuation to the INACTIVE region, which runs
-/// BETWEEN the active region and the NBA region.  A `#0` process must
-/// therefore read the PRE-NBA value of a signal NBA-assigned earlier in the
-/// same time step.
+///    BETWEEN the active region and the NBA region.  A `#0` process must
+///    therefore read the PRE-NBA value of a signal NBA-assigned earlier in the
+///    same time step.
 const ZERO_DELAY_INACTIVE_SV: &str = r#"`timescale 1ns/1ns
 module tb;
     reg a = 1'b0;
@@ -166,10 +166,10 @@ fn region_zero_delay_inactive() {
 }
 
 /// 3. Multi-process variant of the `#0`-vs-NBA ordering: the `#0` process
-/// (second initial) runs after the first initial in the same time step, so it
-/// must see the first initial's NBAs only if the NBA region has already
-/// committed them.  LRM says the inactive region (and therefore the `#0`
-/// process) runs BEFORE the NBA region.
+///    (second initial) runs after the first initial in the same time step, so it
+///    must see the first initial's NBAs only if the NBA region has already
+///    committed them.  LRM says the inactive region (and therefore the `#0`
+///    process) runs BEFORE the NBA region.
 const ZERO_DELAY_MULTI_PROC_SV: &str = r#"`timescale 1ns/1ns
 module tb;
     reg a = 1'b0, b = 1'b0;
@@ -203,8 +203,8 @@ fn region_zero_delay_multi_proc() {
 }
 
 /// 4. NBA commits re-trigger the active region until the design quiesces:
-/// a flop plus two comb stages chained through NBAs settles over three NBA
-/// commits in one time step, all before time advances.
+///    a flop plus two comb stages chained through NBAs settles over three NBA
+///    commits in one time step, all before time advances.
 ///
 /// Note: the original spec sketch used three `always @(posedge clk)` blocks
 /// in a ring; those processes are sensitive only to `clk`, so a posedge would
@@ -278,8 +278,8 @@ fn region_multi_delta_settle() {
 }
 
 /// 5. Blocking writes in one active pass are FIFO in process spawn order:
-/// two initials writing the same signal, each displaying immediately after
-/// its own write, plus a `#1` observer showing last-write-wins.
+///    two initials writing the same signal, each displaying immediately after
+///    its own write, plus a `#1` observer showing last-write-wins.
 const BLOCKING_ORDER_FIFO_SV: &str = r#"`timescale 1ns/1ns
 module tb;
     reg a;
@@ -328,9 +328,9 @@ fn region_blocking_order_fifo() {
 }
 
 /// 6. An edge waiter on a signal driven by an NBA in the same time step must
-/// see the edge only AFTER the NBA region commits: the writer's own display
-/// (same active pass as the NBA record) reads the pre-NBA value, and the
-/// waiter's display (same time step, post-commit) reads the new value.
+///    see the edge only AFTER the NBA region commits: the writer's own display
+///    (same active pass as the NBA record) reads the pre-NBA value, and the
+///    waiter's display (same time step, post-commit) reads the new value.
 const WAIT_EDGE_NBA_COMMIT_SV: &str = r#"`timescale 1ns/1ns
 module tb;
     reg clk;
@@ -379,10 +379,10 @@ fn region_wait_edge_nba_commit() {
 }
 
 /// 7. An infinite zero-delay loop (`always begin #0; end`) must be stopped by
-/// the runtime's zero-loop guard (LLG_ZERO_LOOP_LIMIT region passes within
-/// one time step), not hang the simulation.  The runtime prints
-/// "llg: zero-delay loop detected at time 0" to stderr, breaks out of the
-/// region loop and main returns 0 (exit success).
+///    the runtime's zero-loop guard (LLG_ZERO_LOOP_LIMIT region passes within
+///    one time step), not hang the simulation.  The runtime prints
+///    "llg: zero-delay loop detected at time 0" to stderr, breaks out of the
+///    region loop and main returns 0 (exit success).
 const ZERO_DELAY_LOOP_GUARD_SV: &str = r#"`timescale 1ns/1ns
 module tb;
     always begin
@@ -419,9 +419,9 @@ fn region_zero_delay_loop_guard() {
 }
 
 /// 8. Fork/join + delta timing: the parent resumes after `join` in the ACTIVE
-/// region, BEFORE the NBA region commits the children's NBAs — so a plain
-/// $display right after `join` reads the pre-NBA values.  The children's NBAs
-/// are committed before the end of the time step, which a $strobe observes.
+///    region, BEFORE the NBA region commits the children's NBAs — so a plain
+///    $display right after `join` reads the pre-NBA values.  The children's NBAs
+///    are committed before the end of the time step, which a $strobe observes.
 ///
 /// This pins the LRM-correct behavior: fork children's NBAs are NOT visible
 /// to the parent immediately after `join`; they become visible only through a

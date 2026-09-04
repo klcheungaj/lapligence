@@ -649,9 +649,10 @@ endmodule
             return Err(format!("compile diagnostics: {:?}", out.diagnostics));
         }
         let design = out.uhdm_design().ok_or("no UHDM design")?;
-        let on = sim::codegen::generate_with_opts(design, &OptConfig::default())
+        let db = llg::core::db::Db::build(design).map_err(|e| format!("db: {e}"))?;
+        let on = sim::codegen::generate_from_db_with_opts(&db, &OptConfig::default())
             .map_err(|e| format!("codegen(opt-on): {e}"))?;
-        let off = sim::codegen::generate_with_opts(design, &OptConfig::none())
+        let off = sim::codegen::generate_from_db_with_opts(&db, &OptConfig::none())
             .map_err(|e| format!("codegen(opt-off): {e}"))?;
         let on_out = run_variant(&dir, "opt_on", &on.model_c)?;
         let off_out = run_variant(&dir, "opt_off", &off.model_c)?;

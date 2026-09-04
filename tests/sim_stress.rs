@@ -4,26 +4,26 @@
 //!
 //! Designs:
 //!   1. `stress_fifo_push_pop`      — DEPTH=4/DW=8 FIFO (head/tail pointers,
-//!                                    full/empty flags, registered read) with a
-//!                                    push/pop/overrun/underrun testbench.
+//!      full/empty flags, registered read) with a
+//!      push/pop/overrun/underrun testbench.
 //!   2. `stress_cpu_lite_datapath`  — 4-bit ALU + 2-reg register file + FSM
-//!                                    controller executing a tiny program
-//!                                    (load/add/sub/and/or/eq), synch reset.
+//!      controller executing a tiny program
+//!      (load/add/sub/and/or/eq), synch reset.
 //!   3. `stress_uart_shift_baud_ps` — 8-bit shift register + DIV-based baud
-//!                                    generator transmitting 0xA5 LSB-first
-//!                                    (start + 8 data + stop-ish), with a
-//!                                    receiver-side reassembly in the testbench.
-//!                                    `stress_uart_shift_baud` is the same
-//!                                    design reading the shift bit through a
-//!                                    bit-select instead of a part-select.
+//!      generator transmitting 0xA5 LSB-first
+//!      (start + 8 data + stop-ish), with a
+//!      receiver-side reassembly in the testbench.
+//!      `stress_uart_shift_baud` is the same
+//!      design reading the shift bit through a
+//!      bit-select instead of a part-select.
 //!   4. `stress_wide_comb_tree`     — 64-bit adder chain + 4-way mux +
-//!                                    casez priority encoder + reduction XOR,
-//!                                    all combinational.
+//!      casez priority encoder + reduction XOR,
+//!      all combinational.
 //!   5. `stress_gen_loop_instances` — parameterized module instantiated in a
-//!                                    generate loop with per-iteration WIDTH,
-//!                                    proving per-iteration parameter
-//!                                    propagation and that instances inside
-//!                                    generate scopes run.
+//!      generate loop with per-iteration WIDTH,
+//!      proving per-iteration parameter
+//!      propagation and that instances inside
+//!      generate scopes run.
 //!
 //! Surelog writes `slpp_all/` into the process working directory, so each test
 //! runs with the CWD pointed at a fresh temp dir (serialized through a mutex,

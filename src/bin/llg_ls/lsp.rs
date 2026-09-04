@@ -2206,9 +2206,8 @@ impl Backend {
     fn reload_root_config(&self, key: &RootKey, config_path: &Path) -> bool {
         let (config, errors, warnings) = Self::load_root_config(key, config_path);
         let mut state = self.lock_state();
-        let changed =
-            reload_root_config_in_state(&mut state, key, config_path, config, &errors, &warnings);
-        changed
+
+        reload_root_config_in_state(&mut state, key, config_path, config, &errors, &warnings)
     }
 
     /// Custom request `llg/dumpTokens`: serve the same formatted token-dump
@@ -7569,7 +7568,7 @@ mod tests {
 
         let shadow = ShadowPaths::new();
         let staged = shadow.stage(&source, text).expect("stage");
-        assert!(staged.starts_with(&features::process_shadow_base()));
+        assert!(staged.starts_with(features::process_shadow_base()));
         assert_eq!(
             std::fs::read_to_string(&source).expect("project source unchanged"),
             text

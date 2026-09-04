@@ -519,7 +519,7 @@ pub fn bit_xor(a: &Value, b: &Value) -> Value {
 pub fn bit_xnor(a: &Value, b: &Value) -> Value {
     let x = bit_xor(a, b);
     Value {
-        bits: x.bits.into_iter().map(|b| bit_neg_one(b)).collect(),
+        bits: x.bits.into_iter().map(bit_neg_one).collect(),
         signed: x.signed,
         fill: None,
     }
@@ -554,7 +554,7 @@ pub fn minus(a: &Value) -> Value {
 }
 
 fn logical_bit(a: &Value) -> Bit {
-    if a.bits.iter().any(|bit| *bit == Bit::One) {
+    if a.bits.contains(&Bit::One) {
         Bit::One
     } else if a.is_unknown() {
         Bit::X
@@ -593,7 +593,7 @@ pub fn log_or(a: &Value, b: &Value) -> Value {
 
 /// Unary reduction AND (`&`); a known zero dominates X/Z.
 pub fn unary_and(a: &Value) -> Value {
-    if a.bits.iter().any(|bit| *bit == Bit::Zero) {
+    if a.bits.contains(&Bit::Zero) {
         Value::from_u64(0, 1, false)
     } else if a.is_unknown() {
         bit_x()
@@ -614,7 +614,7 @@ pub fn unary_nand(a: &Value) -> Value {
 
 /// Unary reduction OR (`|`); a known one dominates X/Z.
 pub fn unary_or(a: &Value) -> Value {
-    if a.bits.iter().any(|bit| *bit == Bit::One) {
+    if a.bits.contains(&Bit::One) {
         Value::from_u64(1, 1, false)
     } else if a.is_unknown() {
         bit_x()
@@ -700,7 +700,7 @@ fn shift(a: &Value, b: &Value, right: bool, arith: bool) -> Value {
         v
     } else {
         let mut v = bits[sh..].to_vec();
-        v.extend(std::iter::repeat(Bit::Zero).take(sh));
+        v.extend(std::iter::repeat_n(Bit::Zero, sh));
         v
     };
     Value {
@@ -864,11 +864,7 @@ pub fn cond(sel: &Value, a: &Value, b: &Value) -> Value {
     let ra = a.resize(w, signed);
     let rb = b.resize(w, signed);
     if !sel.is_unknown() {
-        return if sel.bits.iter().any(|bit| *bit == Bit::One) {
-            ra
-        } else {
-            rb
-        };
+        return if sel.bits.contains(&Bit::One) { ra } else { rb };
     }
     let bits = ra
         .bits
@@ -1655,10 +1651,8 @@ impl Resolver {
         }
         let name = vpi::obj_name(sel);
         if !name.is_empty() {
-            if let Ok(v) = self.resolve_param(sc, resolved, in_progress, &name) {
-                if let Val::Bits(b) = v {
-                    return Ok(b);
-                }
+            if let Ok(Val::Bits(b)) = self.resolve_param(sc, resolved, in_progress, &name) {
+                return Ok(b);
             }
         }
         Err(ElabError::Unsupported(format!(
@@ -1977,6 +1971,9 @@ impl Resolver {
     /// (a bare `return;` yields the function-name variable's value), and
     /// `Ok(None)` when execution falls off the end of a block.  `ret_name` is
     /// the function name for non-void functions (`None` for void).
+    // The interpreter threads separate immutable scope/declaration context and
+    // mutable parameter/frame state; bundling them would obscure ownership.
+    #[allow(clippy::too_many_arguments)]
     fn eval_func_stmt(
         &self,
         sc: &Scope,
@@ -2202,8 +2199,8 @@ fn parse_radix(s: &str, base_bits: usize, size: c_int) -> Value {
     for ch in s.chars() {
         let c = ch.to_ascii_lowercase();
         match c {
-            'x' => bits.extend(std::iter::repeat(Bit::X).take(base_bits)),
-            'z' => bits.extend(std::iter::repeat(Bit::Z).take(base_bits)),
+            'x' => bits.extend(std::iter::repeat_n(Bit::X, base_bits)),
+            'z' => bits.extend(std::iter::repeat_n(Bit::Z, base_bits)),
             _ => {
                 let d = c.to_digit(16).unwrap_or(0);
                 for i in (0..base_bits).rev() {
@@ -2224,7 +2221,7 @@ fn parse_radix(s: &str, base_bits: usize, size: c_int) -> Value {
     if size > 0 {
         let width = size as usize;
         if bits.len() < width {
-            bits.splice(0..0, std::iter::repeat(Bit::Zero).take(width - bits.len()));
+            bits.splice(0..0, std::iter::repeat_n(Bit::Zero, width - bits.len()));
         } else if bits.len() > width {
             bits = bits[bits.len() - width..].to_vec();
         }

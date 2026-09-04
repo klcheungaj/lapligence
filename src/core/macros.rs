@@ -341,7 +341,7 @@ impl<'a> Scan<'a> {
     }
 
     fn active(&self) -> bool {
-        self.conds.last().map_or(true, |frame| frame.active)
+        self.conds.last().is_none_or(|frame| frame.active)
     }
 
     /// Consume up to and including the next newline, honoring backslash-newline
@@ -861,8 +861,7 @@ mod tests {
         // After `undef even the config-seeded macro is gone (LRM semantics).
         let later = usages
             .iter()
-            .filter(|u| u.line0 == 3)
-            .next()
+            .find(|u| u.line0 == 3)
             .expect("post-undef usage");
         assert!(later.definition.is_none(), "undef removes config seeds");
     }

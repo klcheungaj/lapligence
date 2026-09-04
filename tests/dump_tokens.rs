@@ -608,8 +608,8 @@ fn data_row_to_json(row: &str) -> Value {
         .iter()
         .find_map(|field| field.strip_prefix("bind="))
         .expect("bind field");
-    let via_label = fields.iter().any(|field| *field == "via=label");
-    let via_connection = fields.iter().any(|field| *field == "via=connection");
+    let via_label = fields.contains(&"via=label");
+    let via_connection = fields.contains(&"via=connection");
     let binding = binding_to_json(bind_raw, via_label, via_connection);
 
     json!({
@@ -722,7 +722,7 @@ fn scan_scope_spans(source: &str) -> Vec<ScopeSpan> {
             span.last_line = index as u32;
         }
     }
-    closed.extend(open.drain(..));
+    closed.append(&mut open);
     closed.sort_by_key(|span| (span.first_line, span.last_line));
     closed
 }
@@ -733,7 +733,7 @@ fn enclosing_scope_name(spans: &[ScopeSpan], line: u32) -> String {
     let mut best: Option<&ScopeSpan> = None;
     for span in spans {
         if span.first_line <= line && line <= span.last_line {
-            let tighter = best.map_or(true, |best: &ScopeSpan| {
+            let tighter = best.is_none_or(|best: &ScopeSpan| {
                 span.last_line - span.first_line < best.last_line - best.first_line
             });
             if tighter {

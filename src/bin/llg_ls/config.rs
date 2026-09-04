@@ -491,7 +491,7 @@ fn compile_opts_with_include_dirs(
     let mut include_args = Vec::new();
     let search_dirs = include_dirs(config);
     for dir in &search_dirs {
-        let shadow_dir = crate::features::shadow_path(&dir, shadow_base);
+        let shadow_dir = crate::features::shadow_path(dir, shadow_base);
         include_args.push(format!("-I{}", shadow_dir.display()));
     }
     if include_live_dirs {
@@ -846,7 +846,7 @@ mod tests {
     fn valid_config_resolves_paths_from_config_dir() {
         let root = std::env::temp_dir().join(format!("llg_cfg_valid_{}", std::process::id()));
         let dir = root.join("proj");
-        std::fs::create_dir_all(&dir.join("rtl")).expect("create rtl");
+        std::fs::create_dir_all(dir.join("rtl")).expect("create rtl");
         let load = write_and_load(
             &root,
             "schema_version = 1\n\

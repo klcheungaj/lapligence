@@ -1201,6 +1201,9 @@ fn graph_definition_children(
     }
 }
 
+// Hierarchy expansion keeps source identity, elaborated identity, cycle state,
+// and response-budget state explicit because each has distinct semantics.
+#[allow(clippy::too_many_arguments)]
 fn graph_instance_node<F>(
     root_id: &str,
     catalog: &GraphCatalog<'_>,
@@ -1654,6 +1657,7 @@ where
     Some(node)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn graph_source_child<F>(
     root_id: &str,
     catalog: &GraphCatalog<'_>,
@@ -1755,6 +1759,7 @@ fn mark_graph_scope_truncated<F>(
     append_graph_budget_marker(root_id, hierarchy, source_map, children, budget);
 }
 
+#[allow(clippy::too_many_arguments)]
 fn graph_elaborated_scope<F>(
     root_id: &str,
     catalog: &GraphCatalog<'_>,
@@ -1858,6 +1863,7 @@ where
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 fn graph_source_scope<F>(
     root_id: &str,
     catalog: &GraphCatalog<'_>,
@@ -2050,6 +2056,7 @@ fn source_scope_is_unrepresented(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn merge_source_scope<F>(
     root_id: &str,
     catalog: &GraphCatalog<'_>,
@@ -2189,6 +2196,7 @@ fn merge_source_scope<F>(
         .sort_by(|left, right| left.id.cmp(&right.id));
 }
 
+#[allow(clippy::too_many_arguments)]
 fn graph_instance_id<F>(
     root_id: &str,
     definition_id: Option<&str>,
@@ -2789,7 +2797,7 @@ impl<'a> InstanceWalkFrame<'a> {
 /// Collect representative instances without recursive calls or an
 /// unbounded pending list.  The traversal order matches the old pre-order:
 /// direct children come before generated-scope children.
-fn collect_instances_bounded<'a>(roots: &'a [InstanceModel]) -> Vec<&'a InstanceModel> {
+fn collect_instances_bounded(roots: &[InstanceModel]) -> Vec<&InstanceModel> {
     let mut out = Vec::new();
     let mut root_index = 0;
     let mut stack = Vec::new();

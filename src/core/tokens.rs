@@ -155,6 +155,7 @@ pub fn collect_vpi_tokens(design: VpiHandle) -> Vec<FileTokens> {
 /// - Macro usages: `` `TICK_DEFINE ``, `` `MY_MACRO(...) ``
 /// - Declaration name identifiers: module, class, package, net, port, … names
 ///   (classified by their ancestor declaration-context node in the parse tree)
+///
 /// Declaration-site positions recorded by [`collect_parse_tokens`]:
 /// `(file path, 1-based line, 1-based column)` for every identifier the
 /// parse-tree classifier marked as a DECLARATION.  Threading this set into
@@ -725,13 +726,13 @@ pub fn classify_identifier_ancestor(
             {
                 return Some((vpi::vpiModule, true));
             }
-            Ok(t) if t == VObjectType::paClass_declaration => {
+            Ok(VObjectType::paClass_declaration) => {
                 return Some((vpi::uhdmclass_defn, true));
             }
-            Ok(t) if t == VObjectType::paModule_instantiation => {
+            Ok(VObjectType::paModule_instantiation) => {
                 return Some((vpi::uhdmclass_defn, false));
             }
-            Ok(t) if t == VObjectType::paPackage_declaration => {
+            Ok(VObjectType::paPackage_declaration) => {
                 return Some((vpi::uhdmpackage, true));
             }
             Ok(t)
@@ -773,7 +774,7 @@ pub fn classify_identifier_ancestor(
             {
                 return Some((vpi::vpiParameter, true));
             }
-            Ok(t) if t == VObjectType::paNamed_parameter_assignment => {
+            Ok(VObjectType::paNamed_parameter_assignment) => {
                 return Some((vpi::TOKEN_PARAM_CONN_LABEL, false));
             }
             Ok(t)
@@ -785,10 +786,10 @@ pub fn classify_identifier_ancestor(
             {
                 return Some((vpi::uhdmlogic_var, true));
             }
-            Ok(t) if t == VObjectType::paType_declaration => {
+            Ok(VObjectType::paType_declaration) => {
                 return Some((vpi::TOKEN_TYPEDEF_NAME, true));
             }
-            Ok(t) if t == VObjectType::paEnum_name_declaration => {
+            Ok(VObjectType::paEnum_name_declaration) => {
                 return Some((vpi::uhdmenum_const, true));
             }
             // Connection labels carry dedicated LSP-internal synthetic types
@@ -799,10 +800,10 @@ pub fn classify_identifier_ancestor(
             // reference sites by construction (`is_decl == false`): a port
             // label names the child module's port, an override label the
             // child's parameter.
-            Ok(t) if t == VObjectType::paNamed_port_connection => {
+            Ok(VObjectType::paNamed_port_connection) => {
                 return Some((vpi::TOKEN_PORT_CONN_LABEL, false));
             }
-            Ok(t) if t == VObjectType::paStructure_pattern_key => {
+            Ok(VObjectType::paStructure_pattern_key) => {
                 return Some((VObjectTypeShifted::paStructure_pattern_key.into(), false));
             }
             // slStringConst usually means the signal is used before declaration.
@@ -1192,7 +1193,7 @@ fn range_width(ts: VpiHandle) -> Option<u32> {
         any = true;
         let left = range_bound(vpi::vpiLeftRange, r)?;
         let right = range_bound(vpi::vpiRightRange, r)?;
-        total = total.saturating_mul((left - right).unsigned_abs() as u64 + 1);
+        total = total.saturating_mul((left - right).unsigned_abs() + 1);
     }
     if any {
         Some(total.min(u32::MAX as u64) as u32)
@@ -1206,7 +1207,7 @@ fn range_width(ts: VpiHandle) -> Option<u32> {
 fn range_bound(rel: i32, r: VpiHandle) -> Option<i64> {
     let b = vpi::handle(rel, r)?;
     match vpi::read_value(b.raw()) {
-        crate::ffi::vpi::ValueData::Int(v) => Some(v as i64),
+        crate::ffi::vpi::ValueData::Int(v) => Some(v),
         crate::ffi::vpi::ValueData::UInt(v) => Some(v as i64),
         crate::ffi::vpi::ValueData::Scalar(v) => Some(v as i64),
         _ => None,

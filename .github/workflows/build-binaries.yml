@@ -2,7 +2,7 @@
 # PORTABILITY CAVEAT — read before expecting green checkmarks.
 #
 # The heavy part of this project is not the Rust code: build.rs drives a full
-# CMake build of vendored Surelog v1.86 + UHDM + ANTLR4 + Cap'n Proto and then
+# CMake build of vendored Surelog v1.87 + UHDM + ANTLR4 + Cap'n Proto and then
 # applies custom link logic. That pipeline has ONLY ever been validated on
 # x86_64 Linux with a fully-static musl toolchain. Concretely, build.rs today
 # assumes:

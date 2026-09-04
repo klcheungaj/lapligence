@@ -468,10 +468,8 @@ fn instance_from_db(db: &db::Db, id: NodeId) -> InstanceModel {
     let children = node
         .children
         .iter()
-        .filter_map(|c| {
-            matches!(db.node_kind(*c), db::NodeKind::ModuleInst { .. })
-                .then(|| instance_from_db(db, *c))
-        })
+        .filter(|&c| matches!(db.node_kind(*c), db::NodeKind::ModuleInst { .. }))
+        .map(|c| instance_from_db(db, *c))
         .collect();
 
     InstanceModel {
@@ -708,10 +706,8 @@ fn gen_scopes_from_db(db: &db::Db, gsa_id: NodeId) -> Vec<GenScopeModel> {
             let children = scope
                 .children
                 .iter()
-                .filter_map(|c| {
-                    matches!(db.node_kind(*c), db::NodeKind::ModuleInst { .. })
-                        .then(|| instance_from_db(db, *c))
-                })
+                .filter(|&c| matches!(db.node_kind(*c), db::NodeKind::ModuleInst { .. }))
+                .map(|c| instance_from_db(db, *c))
                 .collect();
             GenScopeModel {
                 name,

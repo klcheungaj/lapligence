@@ -1,3 +1,7 @@
+// `uhdm_elaborate` accepts an opaque handle owned by a live Surelog session;
+// the wrapper passes that token to C++ and does not dereference it in Rust.
+#![allow(clippy::not_unsafe_ptr_arg_deref)]
+
 use std::ffi::{CStr, CString};
 use std::marker::PhantomData;
 use std::os::raw::{c_char, c_int, c_uint, c_void};
@@ -937,7 +941,7 @@ mod tests {
         let design = session.design();
         // Both are still in scope here — OK.
         let _ = design.as_ref().map(|d| d.top_instance_count());
-        drop(design);
+        let _ = design;
         drop(session);
         // Reversed drop order is now safe because `design` is gone first.
     }

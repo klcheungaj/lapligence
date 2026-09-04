@@ -590,8 +590,8 @@ endmodule
     //   data=2a at 5
     //   a set at 9
 
-    // House pattern (sim_opt_differential): ONE Surelog compile; both
-    // configurations generate from the same elaborated design handle.
+    // House pattern (sim_opt_differential): ONE Surelog compile and owned DB;
+    // both configurations generate from that immutable snapshot.
     let dir = std::env::temp_dir().join(format!("llg_sim_events_optparity_{}", std::process::id()));
     std::fs::create_dir_all(&dir).expect("create temp dir");
     let src = dir.join("tb.sv");
@@ -610,9 +610,10 @@ endmodule
             return Err(format!("compile diagnostics: {:?}", out.diagnostics));
         }
         let design = out.uhdm_design().ok_or("no UHDM design")?;
-        let opt_on = sim::codegen::generate_with_opts(design, &OptConfig::default())
+        let db = llg::core::db::Db::build(design).map_err(|e| format!("db: {e}"))?;
+        let opt_on = sim::codegen::generate_from_db_with_opts(&db, &OptConfig::default())
             .map_err(|e| format!("codegen(opt-on): {e}"))?;
-        let opt_off = sim::codegen::generate_with_opts(design, &OptConfig::none())
+        let opt_off = sim::codegen::generate_from_db_with_opts(&db, &OptConfig::none())
             .map_err(|e| format!("codegen(opt-off): {e}"))?;
 
         let run_variant = |name: &str, model_c: &str| -> Result<String, String> {

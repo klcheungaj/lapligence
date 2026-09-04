@@ -729,7 +729,7 @@ fn ensure_static_archives(drivers: &[String], required: &[&str], tolerated: &[&s
             if path.is_absolute() && path.exists() {
                 // Drivers may answer with unnormalized paths containing `..`
                 // runs; collapse them so the emitted -L is clean.
-                let canonical = path.canonicalize().unwrap_or_else(|_| path);
+                let canonical = path.canonicalize().unwrap_or(path);
                 resolved = canonical.parent().map(|p| p.to_path_buf());
                 break;
             }
