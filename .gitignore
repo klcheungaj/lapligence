@@ -14,6 +14,7 @@ slpp_all
 build-cache/
 
 docs/*
+/persistence
 !.cargo
 !sim_features.md
 !config.md
