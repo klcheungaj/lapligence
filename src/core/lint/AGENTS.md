@@ -47,103 +47,20 @@ Rules read only owned data — no VPI access, no raw FFI, no LSP dependencies.
   `line`/`col` are 1-based.  Strings are JSON-escaped: `"` → `\"`, `\` →
   `\\`, and control characters U+0000..U+001F use `\b`/`\f`/`\n`/`\r`/`\t`
   or `\u00xx`.
-- `rules/` — one file per rule plus shared helpers:
-  - `unused.rs` — `unused-signal`
-  - `width.rs` — `width-mismatch`
-  - `latch.rs` — `incomplete-case`
-  - `combloop.rs` — `combinational-loop`
-  - `multidriver.rs` — `multi-driver`
-  - `casez.rs` — `casez-misuse`
-  - `if_latch.rs` — `if-latch`
-  - `style.rs` — `naming-style`
-  - `implicit_net.rs` — `implicit-net`: flags nets Surelog auto-created from
-    undeclared identifiers.  Signature in the owned db: a [`NodeKind::Net`]
-    whose type info carries no typespec (kind `"other"`) — every declared
-    net/var gets one; the auto-created `logic_net` does not, and its position
-    is the creating use site.  Undeclared identifiers in other positions are
-    not seen here: procedural LHS uses are Surelog elaboration errors
-    ("Illegal lhs of type wire"), plain expression uses leave an unbound ref
-    without a net object, and `` `default_nettype none`` makes Surelog report
-    "Illegal implicit net" itself.
-  - `case_default.rs` — `case-default-missing`: case/casex/casez without a
-    default arm OUTSIDE the incomplete-case domain (which owns the exact
-    case in combinational/latch processes): casex/casez anywhere, exact case
-    in edge-sensitive/initial/final processes and in function/task bodies.
-    Skips statements already in the incomplete-case domain so one location
-    is never reported by both rules.
-  - `comparison_width.rs` — `comparison-width-mismatch`: comparisons (`==`,
-    `!=`, `<`, `<=`, `>`, `>=`, `===`, `!==`) whose operands both have known
-    self-determined widths that differ; skips when either width is unknown.
-  - `unconnected_port.rs` — `unconnected-port`: flags instance ports left
-    unconnected — omitted from the connection list, positional gaps, and
-    explicitly-empty `.p()` connections — uniformly at Warning.  The db
-    captures per-port high-connection presence facts (`high_present`,
-    `high_open`) and an owned `high_expr` tree because a resolved `high: None`
-    alone is ambiguous:
-    omitted ports have no `vpiHighConn`, `.p()` is a `vpiNullOp` operation
-    marker (zero operands), and expression/constant connections
-    (`.i(a & b)`, `.v(4'd0)`) are real objects that count as connected.
-    `` `.* ``/`.name` shorthand resolve to ordinary refs.  Ports whose
-    declaration carries a default value that the instantiation leaves
-    omitted are NOT flagged: Surelog binds the default expression as the
-    port's high connection.  Top instances and Surelog's SYNTHESIZED
-    per-port copy interface instances (`analysis::iface_copy_instances` —
-    the `low`-reachable clones plus their unwired same-(parent, name)
-    twins) are skipped; findings sit at the instantiation site (the instance
-    node), messages name the hierarchical display path, positions are
-    clamped to the 1-based contract.
-  - `mixed_assign.rs` — `mixed-assignments`: one Error per process whose
-    statement body contains BOTH blocking (`=`) and non-blocking (`<=`)
-    assignments ([`StmtKind::Assign`] only; proc-cont assign, force/release
-    and declaration initializers are ignored), positioned at the process
-    keyword.  Deliberate overlap with `blocking-in-always_ff` /
-    `nba-in-always_comb` (kind-vs-block-type mismatches): no suppression,
-    the diagnoses differ and this rule also covers block kinds the other
-    two never check (plain level-sensitive always, initial/final).
-  - `undriven.rs` — `undriven-signal`: flags a declared signal that is read
-    but has no active procedural/continuous driver, declaration initializer,
-    connected output/inout flow, or primitive output terminal. Top-level
-    external inputs/inouts, explicitly open child ports, implicit nets,
-    intrinsic pull/supply nets, and synthesized interface copies are skipped.
-    Input/inout actual expressions are read through the owned port
-    `high_expr`, while the historical direct `high` target remains available
-    to model/codegen consumers.
-  - `sensitivity.rs` — `incomplete-sensitivity-list`: flags a plain explicit
-    level-sensitive `always @(...)` when a directly read input is absent.
-    A local written earlier on every represented path is treated as a
-    temporary; uncertain control flow and partial/selected writes fail safe
-    by keeping the signal as an input dependency. Identical findings from
-    cloned module instances are source-deduplicated.
-    Edge, named-event, mixed/complex, implicit `@*`, special `always_*`, and
-    nested timing-control forms are skipped when correctness cannot be proven.
-  - `select_range.rs` — `out-of-range-select`: checks statically known bit,
-    part, indexed-part, and unpacked-array selectors against owned elaborated
-    bounds. Dynamic selectors, unresolved ranges, and ambiguous
-    multidimensional packed shapes are intentionally quiet.
-  - `xz_comparison.rs` — `xz-logical-equality`: flags `==`/`!=` with a direct
-    X/Z/? literal operand (including transparent casts); case/wildcard
-    equality, parameter references, and nonliteral expressions are skipped.
-  - `duplicate_case.rs` — `duplicate-case-item`: flags every later exact
-    captured literal repeated in one exact `case`. Wildcard cases and
-    nonliteral/equivalent-but-differently-represented expressions are skipped.
-  - `empty_sensitivity.rs` — `empty-implicit-sensitivity`: flags a plain
-    `always @*` / `always @(*)` whose body writes at least one resolved signal
-    but has no resolved signal reads. `always_comb`, explicit event lists,
-    calls, opaque/unresolved nodes, and nested timing controls are skipped;
-    cloned elaborated instances are source-deduplicated.
-  - `assignment_condition.rs` — `assignment-in-condition`: flags a captured
-    `vpiAssignmentOp` consumed as an `if`, `while`, `for`, `wait`, or ternary
-    truth predicate. Nested operations are traversed, but explicit equality
-    and relational expressions form a boundary; standalone assignments and
-    `repeat`/`case`/event expressions are outside the rule.
-  - `casex_statement.rs` — `casex-statement`: flags every `casex` in a process
-    or function/task body. Exact `case` and `casez` remain quiet, and cloned
-    elaborated instances are source-deduplicated.
-  - `analysis.rs` — shared owned-db helpers: read/write collection,
-    expression-width computation, scope/instance iteration, port-link
-    bookkeeping (deterministic, deduped, first-encounter order),
-    unconnected-port classification (`port_unconnected`), synthesized
-    per-port interface-copy identification (`iface_copy_instances`).
+
+Rule-specific behavior and helper responsibilities live in
+[rules/AGENTS.md](rules/AGENTS.md).
+
+## Default registry
+
+Stable order: `unused-signal`, `width-mismatch`, `incomplete-case`,
+`combinational-loop`, `multi-driver`, `casez-misuse`, `if-latch`,
+`naming-style`, `blocking-in-always_ff`, `nba-in-always_comb`,
+`unused-parameter`, `implicit-net`, `case-default-missing`,
+`comparison-width-mismatch`, `unconnected-port`, `mixed-assignments`,
+`undriven-signal`, `incomplete-sensitivity-list`, `out-of-range-select`,
+`xz-logical-equality`, `duplicate-case-item`, `empty-implicit-sensitivity`,
+`assignment-in-condition`, `casex-statement`.
 
 ## Requirements
 
@@ -151,7 +68,7 @@ Rules read only owned data — no VPI access, no raw FFI, no LSP dependencies.
   (`grep -rn "unsafe" src --include=*.rs | grep -v src/ffi` must be empty).
 - **No VPI access** — rules work on the owned `db`/`model` built by
   `core::db::Db::build`; `core::db` is the single VPI traversal point.
-- **No LSP dependencies** (tower-lsp/gag/dashmap stay in `src/bin/llg_ls`).
+- **No LSP dependencies** (tower-lsp/tokio/dashmap stay in `src/bin/llg_ls`).
 - `unused-signal` still uses its historical activity model, but
   `undriven-signal` additionally accounts for captured structural primitive
   input/output terminals and expression-valued port actuals.

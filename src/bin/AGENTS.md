@@ -1,33 +1,32 @@
-# bin — executables
+# Executables
 
-## Purpose
+Keep frontend-independent logic in the library. Bins use `llg::core`,
+`llg::ffi`, and `llg::sim` imports; no `#[path]` includes or `unsafe`.
+LSP-only tower-lsp/tokio/dashmap code stays in `llg_ls`.
 
-Thin entry points over the `llg` library; all logic lives in the lib.
+| Binary | Role |
+| --- | --- |
+| `llg_ls` (`llg_ls/`) | tower-lsp stdio language server; [guide](llg_ls/AGENTS.md) |
+| `llg` (`llg.rs`) | Simulator: compile → lower/IR/opt/emit → automatic CMake build → run |
+| `elab_check` (`elab_check.rs`) | Verifies instance tree, reference bindings, resolved parameters through core compile/elab and FFI |
+| `hellouhdm`, `helloworld`, `llg_demo` | Raw-API demos |
 
-| Binary | Source | Role |
-|---|---|---|
-| `llg_ls` | `llg_ls/` | Verilog/SV Language Server (tower-lsp over stdio); installs the optional process-memory guard (`LLG_MEMORY_LIMIT_MB`) |
-| `llg` | `llg.rs` | Simulator driver: compile → codegen (lowering → IR → optimize → emit) → automatic CMake build (the only model builder; `--generator <backend>` selects the cmake `-G` backend, `--gen-only` stops after emitting sources + `CMakeLists.txt`) → run (`--lint` runs the shared linter before codegen; `--lint-json [<path>]` is a report-only mode that emits the lint report as one JSON object to stdout or a file and exits without simulating; `--lint-config <path>` loads a `llg-lint.toml` to enable/disable rules and override severities); installs the optional process-memory guard |
-| `elab_check` | `elab_check.rs` | Elaboration verifier (instance tree, ref binding, resolved params) |
-| `hellouhdm` / `helloworld` / `llg_demo` | — | Raw-API demos |
+## Simulator driver
 
-## Requirements
+- `--generator <backend>` selects CMake `-G`; `--gen-only` stops after model
+  sources + `CMakeLists.txt`. CMake is the only model builder; see
+  [../sim/AGENTS.md](../sim/AGENTS.md) for compiler/flags/environment selection.
+- `--lint` runs the shared linter before codegen and exits 1 on lint errors.
+  `--lint-config <path>` loads `llg-lint.toml` rule enable/severity settings.
+- `--lint-json [<path>]` is report-only: one JSON object to stdout or file,
+  exiting without codegen/simulation. It wins over `--lint`; see
+  [../core/lint/AGENTS.md](../core/lint/AGENTS.md) for schema and exit behavior.
 
-- Consume the lib via `use llg::core::…` / `use llg::ffi::…` /
-  `use llg::sim::…` — **no `#[path]` module includes**.
-- `unsafe` is only permitted in `src/ffi/`; binaries need none.
-- The `llg_ls` binary is the **only** place tower-lsp/tokio/dashmap are used.
-- Binaries set the mimalloc `#[global_allocator]` at their final link point
-  (currently `llg_ls` and `helloworld`; see `src/bin/llg_ls/main.rs`).
-- The LSP logger is configurable through `LLG_LOG` and `LLG_LOG_FILE`; it
-  writes only to stderr or a file, never stdout, because stdout carries LSP
-  JSON-RPC frames.
-- Both frontends may install the shared process-memory guard
-  (`llg::memory_limit::install[_with_logger]`); its unsafe platform sampler
-  lives in `src/ffi/process_memory.rs`, not in the binaries.
+## Startup and process state
 
-## Interactions
-
-- `llg_ls` → `llg::core` (compile, db, model, tokens) + `llg::ffi`.
-- `llg` → `llg::core::compile` + `llg::sim` (codegen, rt).
-- `elab_check` → `llg::core::compile` + `llg::ffi` (+ `llg::core::elab`).
+Binaries set mimalloc's `#[global_allocator]` at final link (see `llg_ls/main.rs`
+and `helloworld.rs`). Both frontends may install
+`llg::memory_limit::install[_with_logger]`; policy, defaults, native behavior,
+and generated-child limits are in [../AGENTS.md](../AGENTS.md).
+Platform calls stay in `ffi/process_memory.rs`. The LSP logger uses `LLG_LOG`
+and `LLG_LOG_FILE`, never stdout (the framed JSON-RPC transport).

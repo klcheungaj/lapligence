@@ -1,53 +1,141 @@
-# tests — repository validation
+# Repository validation
 
-## Scope
+Prefer Rust unit and integration tests, including Rust-side FFI probes.
+Tests must be deterministic. Surelog writes `slpp_all/` into its CWD and has
+process-global C++ state: use `std::env::set_current_dir` to a fresh temporary
+directory, clean up afterward, and serialize execution (`--test-threads=1`).
+Use `compile_checked` for successful execution/elaboration. Raw `compile` is
+for tests inspecting partial results/diagnostics; assert that the checked
+contract withholds a failed session.
 
-Tests cover both the shared Surelog/UHDM processing layer and the simulator;
-the LSP has an additional process-level stdio acceptance suite.
+## LSP acceptance and fixtures
 
-## LSP acceptance tests
+`lsp_stdio.rs` launches **`llg_ls`** and speaks only framed standard LSP JSON-RPC;
+never parse/depend on stdout debug output. Cover these contracts:
 
-- `lsp_stdio.rs` must speak only framed standard LSP JSON-RPC over the `llg`
-  process's stdio.  Never parse or depend on debug output from stdout.
-- Cover the new contract: per-root `llg.toml` config (default and
-  client-supplied overrides via `llg.configFiles`), config reload without
-  restart, `.v`/`.sv` compilation-unit discovery with `.vh`/`.svh`
-  include-only behavior, include/exclude precedence, independent multi-root
-  ownership, longest-root ownership transfer on workspace folder add/remove,
-  standard watched-file notifications (config files, `.v`/`.sv` units, and
-  resolved arbitrary-extension include dependencies) re-registered after
-  successful analyses, dep events routed to every dependent root,
-  shared-file aggregation (identical findings once; conflicting findings
-  labeled `[<root-name>]`; owner-wins semantic tokens/hover labeling),
-  syntax-invalid open buffers returning an authoritative empty semantic-token
-  stream, module-type navigation remaining distinct from a same-named
-  instance identifier, and hierarchy roots surviving module-content budget
-  truncation,
-  per-root lint configuration, unsaved source/header buffers, project-wide
-  diagnostics for every shared careless-mistake rule (with the same registry
-  exercised through the simulator's `--lint-json` CLI),
-  diagnostics published for never-opened files (and refreshed when such a
-  file is fixed on disk via a watched-file event), include
-  authorization under configured directories, last-good navigation during
-  failed compiles, read-only shadow staging, and no Surelog artifacts
-  (`slpp_all/`, logs) inside a workspace used as the server CWD.
-- Fixtures live under `tests/fixtures/lsp/`, use schema
-  `llg.lsp.fixture/v1`, ship an effective `llg.toml` per root, and source
-  files retain the `// llg-lsp-fixture:` header.
-- Shared lint additions need one source fixture containing both triggering and
-  nearby quiet controls, plus simulator CLI JSON and LSP publication/config
-  coverage for the same stable rule IDs.
+- Default and client-overridden per-root `llg.toml`, `llg.configFiles`, hot
+  reload without restart, `llg/configChanged` only on changed parsed configs,
+  per-root lint policies and independent multi-root scans.
+- `.v`/`.sv` compilation units, include-only headers/arbitrary extensions,
+  include/exclude precedence, longest-root ownership transfer on workspace
+  add/remove, and dynamic config/source/include watchers re-registered after
+  feature-data-bearing commits. Dependency events refresh every dependent root.
+- Shared-file diagnostic unions: identical findings once, distinct findings
+  labeled `[<root-name>]`; owner-wins semantic tokens and hover labeling.
+  Publish never-opened files, refresh on watched disk fixes and clear stale
+  findings. Shared careless-mistake rules have project-wide diagnostic coverage
+  and the same stable IDs exercised through simulator `--lint-json`.
+- Unsaved source/header buffers, configured-directory include authorization
+  and rejected escapes, last-good navigation after failed compiles, read-only
+  staging and no Surelog artifacts (`slpp_all/`, logs) in server workspace CWD.
+- Feature serving for non-syntax error projects with surviving UHDM, and
+  declaration-level document/workspace symbols/hover for syntax-broken roots
+  (e.g. an unterminated sibling module). Fatal-only roots are feature-less;
+  watched fixes upgrade analyses. Syntax-invalid current open buffers yield
+  authoritative empty semantic tokens.
+- Binding-precise instance-scope navigation; named port/parameter LABELS bind
+  to child declarations while ACTUALS/override RHS stay in parent scope.
+  Cover single/multiline forms and syntax-fallback bindings with `dumpTokens`
+  `bind=` as oracle. Module-type navigation stays distinct from same-named
+  instance identifiers. Parse-backed enum navigation also has wire coverage.
+- Module explorer: configured-top/source-graph roots, recursive children and
+  leaves, declaration fallback, typed contents, no shadow URIs, and useful
+  hierarchy roots surviving module-content budget truncation.
 
-## Surelog integration
+Fixtures use `fixtures/lsp/test.json`, schema `llg.lsp.fixture/v1`, an
+effective `llg.toml` per root, and `// llg-lsp-fixture:` source headers. Keep
+the dedicated `fixtures/lsp/module-explorer/` manifest/header convention in
+sync with its suite. Shared lint additions need one fixture with triggering
+and nearby quiet controls, simulator CLI JSON, and LSP publication/config
+coverage for the same rule IDs.
 
-Tests that invoke Surelog must run from a fresh temporary working directory,
-because Surelog writes `slpp_all/`. Clean up temporary trees after each test.
-Prefer the shared Rust compile/session APIs and keep assertions deterministic.
-Use `compile_checked` for execution/elaboration success paths. Tests of error
-reporting may call raw `compile` to prove partial results remain inspectable,
-then assert that `compile_checked` withholds the failed session.
+## Suite map
 
-`sim_waveform.rs` covers the full HDL-to-generated-model VCD/FST path,
-including dump controls, X/Z and real values, hierarchy, timestamps, and final
-blocks. The lower-level waveform runtime self-test owns ring wrap/backpressure,
-flush acknowledgement, aliases, and reopening FST output with libfst's reader.
+- `elab_resolve.rs` exercises `core::elab`; `config_effect.rs` observes
+  configured `-D` ifdef/elsif selection and top-level `-P` parameter-driven
+  generate branches through the owned `DesignModel`.
+- `elaboration/run_elab_check.sh` is the elaboration regression suite
+  (runs `elab_check` over the test designs; ref binding must stay 100% and
+  resolved parameter values must match the expected outputs).
+- `sim_counter.rs` is the simulator regression suite: compiles + runs
+  real designs end-to-end (codegen → `cc` → execute) and asserts exact stdout
+  (hand-simulated traces, documented in the test), plus the C runtime
+  self-test (`llg_rt_selftest.c`, sv4 vectors + scheduler checks).
+- `region_conformance.rs` pins the IEEE 1800 §4 scheduling-region
+  semantics (active/inactive `#0`/NBA ordering, multi-delta settle, fork/join
+  timing); a `// REGION-BUG:` case means the scheduler deviates.
+- `property_elab.rs` runs proptest properties over `core::elab::Value`
+  (X-propagation, resize/concat round-trips, casez/casex truth tables) and
+  hosts the generator for the deterministic C vector table checked by
+  `llg_rt_selftest.c` — keep elab.rs and the runtime semantically in sync.
+- `sim_*.rs` are the per-feature simulator suites (counter, function,
+  fork, memory, interface, interface_body, casez, monitor, timescale, stress,
+  geninit, varinit, wait, force, hier, inout): each compiles a design,
+  codegens, builds the C model through `sim::build::build_model_cmake`, runs
+  it and asserts the exact stdout.  Model-building suites require cmake and
+  skip gracefully (`SKIP: cmake not available`) when
+  `sim::build::cmake_available()` is false.
+- `emit_decoupling.rs` pins the pipeline shape with architectural
+  greps: `sim::emit_c` consumes only IR types (no `core::db`/`ffi`/`vpi`/
+  `unsafe`/`VpiHandle`), and `sim::codegen` builds an `IrModel` instead of
+  emitting runtime C calls directly.
+- `sim_opt_differential.rs` runs designs twice — once with
+  `OptConfig::default()` (all passes) and once with `OptConfig::none()` —
+  building both models via `sim::build::build_model_cmake` and asserting
+  byte-identical stdout.
+- `sim_cmake.rs` covers the build path (5 cases: library-level
+  end-to-end CMake build, explicit `CmakeBuildOpts` generator backend,
+  invalid-generator configure error, driver default, missing-cmake
+  actionable error); skips gracefully when cmake is absent.
+- `model_tests.rs` covers the explorer-facing model projection: formal
+  ports are not duplicated as backing signals, concrete net kinds are kept,
+  and packed ranges remain owned per elaborated instance without absorbing
+  unpacked dimensions.
+- `sim_memory_guard.rs` exercises the shared `memory_limit` safeguard
+  end-to-end via `LLG_MEMORY_LIMIT_MB`.
+- `sim_waveform.rs` covers HDL→VCD/FST dump controls, X/Z and real values,
+  hierarchy, timestamps and final blocks. The waveform runtime self-test owns
+  ring wrap/backpressure, flush acknowledgement, aliases and FST reader reopening.
+
+## Safeguard validation
+
+Contracts live in [../src/AGENTS.md](../src/AGENTS.md) (shared process memory
+and review checklist), [LSP backend](../src/bin/llg_ls/lsp/AGENTS.md)
+(input admission/staging/config), and [LSP guide](../src/bin/llg_ls/AGENTS.md)
+(request limits, cache backpressure, explorer serialization and logging).
+Keep these aligned with `memory_limit.rs`, `ffi/process_memory.rs`,
+`llg_ls/config.rs`, `lsp/handlers.rs` and its children, and `module_explorer.rs`.
+The driver startup integration probe is `sim_memory_guard.rs`.
+
+```sh
+cargo test --lib memory_limit::tests -- --test-threads=1
+cargo test --lib ffi::process_memory -- --test-threads=1
+cargo test --test sim_memory_guard -- --test-threads=1
+cargo test --bin llg_ls input_budget -- --test-threads=1
+cargo test --bin llg_ls oversized -- --test-threads=1
+cargo test --bin llg_ls response_budget -- --test-threads=1
+```
+
+## CI and release gate
+
+[ci.yml](../.github/workflows/ci.yml) runs on Ubuntu. Before release, run its
+complete serialized `lint` gate:
+
+```sh
+cargo fmt --check
+cargo check --all-targets --all-features
+cargo check --lib --no-default-features
+cargo clippy --all-targets --all-features -- -D warnings
+cargo test --all-features -- --test-threads=1
+```
+
+The PR/manual `generated-runtime-sanitizers` job has a 180-minute limit and
+runs `runtime_boundaries` plus `sim_counter` with GCC ASan/UBSan. This checks
+generated C/runtime memory safety, not LSP admission. The 15-minute
+`dependency-audit` job runs `cargo audit` on those triggers and Mondays at
+04:17 UTC. Neither uploads reports; workflow logs are evidence.
+
+[build-binaries.yml](../.github/workflows/build-binaries.yml) produces release
+binaries on tags/manual dispatch. Windows/macOS legs remain placeholders/
+untested: the root native pipeline is validated only on x86_64-linux-musl.
+Keep platform claims aligned with local `persistence/platforms.md` evidence.

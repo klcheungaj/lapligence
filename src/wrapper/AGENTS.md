@@ -18,7 +18,13 @@ Rust (`src/ffi/`) never sees C++ directly:
 - Strings crossing the boundary are `malloc`'d on the C side and freed with
   `sl_free_string`; `SL_Diag` carries its own malloc'd strings. Ownership is
   documented at each function.
-- Follow the existing naming/style conventions; minimize includes.
+- Match the C++ standard configured in `CMakeLists.txt`. Follow existing
+  naming/formatting; minimize includes and keep implementation details out
+  of public headers.
+- Prefer RAII, smart pointers and references over raw owning pointers. Do not
+  introduce exceptions unless the existing code already uses them; none may
+  cross the C ABI. Rust panics/generics cannot cross either.
+- Document ownership at every boundary; clarify uncertain assumptions.
 
 ## Interactions
 

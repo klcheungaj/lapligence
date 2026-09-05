@@ -58,6 +58,21 @@ the generated `model.c` into a standalone executable and is deliberately
 - `llg_wave_selftest.c` — forces ring wrap/backpressure, checks the VCD flush
   barrier, writes both formats, and reopens the FST with the official reader.
 
+## Scheduling and value details
+
+`sv4_t` has `uint64_t bits[16], x[16], z[16]`, `uint16_t width`, and
+`int8_t is_signed`. Keep these operations aligned with `core::elab::Value`;
+[../../../tests/AGENTS.md](../../../tests/AGENTS.md) describes property/vector checks.
+
+One coroutine runs each always/initial (including generated scopes),
+continuous assignment and port link; fork branches use `llg_fork`. Active
+coroutines are FIFO; NBA commits per-process `llg_nba` lists, re-iterating to
+quiescence before advancing time, and stops on `$finish` or deadlock.
+Per-waiter last-seen values detect posedge 0→1, 0→X, X→1 (negedge mirrored).
+`llg_wait_any` uses snapshots; event or-lists require atomic
+`llg_wait_any_events`, never sequential waits. See the lowering guide for
+force/release and inout resolution approximations.
+
 ## Embedding
 
 - All sources are embedded as strings via `include_str!` in `mod.rs`:
