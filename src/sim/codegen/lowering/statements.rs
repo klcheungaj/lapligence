@@ -312,7 +312,14 @@ impl EmitCtx<'_, '_> {
                             self.path
                         ));
                     }
-                    self.lower_delayed_assignment(h, *blocking, *ticks)
+                    let unit_ps = self.cg.timescale_of_node(h).unit_ps;
+                    let scaled = scale_delay_ticks(
+                        *ticks,
+                        unit_ps,
+                        self.cg.design_precision_ps,
+                        &self.path,
+                    )?;
+                    self.lower_delayed_assignment(h, *blocking, scaled)
                 }
                 Some(IntraControl::Expression(expression)) => {
                     if self.in_final {
@@ -322,8 +329,8 @@ impl EmitCtx<'_, '_> {
                             self.path
                         ));
                     }
-                    let ticks = self.cg.procedural_delay_ticks(h, expression)?;
-                    self.lower_delayed_assignment(h, *blocking, ticks)
+                    let scaled = self.cg.procedural_delay_ticks(h, expression)?;
+                    self.lower_delayed_assignment(h, *blocking, scaled)
                 }
                 Some(IntraControl::EventOrRepeat) => Err(format!(
                     "intra-assignment event/repeat control (`@(…)` or \
@@ -359,8 +366,11 @@ impl EmitCtx<'_, '_> {
                         self.path
                     ));
                 }
-                let v = match (ticks, expression) {
-                    (Some(t), _) => *t,
+                let scaled = match (ticks, expression) {
+                    (Some(t), _) => {
+                        let unit_ps = self.cg.timescale_of_node(h).unit_ps;
+                        scale_delay_ticks(*t, unit_ps, self.cg.design_precision_ps, &self.path)?
+                    }
                     (None, Some(expression)) => self.cg.procedural_delay_ticks(h, expression)?,
                     (None, None) => {
                         let file = self.cg.node(h).file.clone().unwrap_or_default();
@@ -370,11 +380,6 @@ impl EmitCtx<'_, '_> {
                         ));
                     }
                 };
-                // `#N` is in the CALLING module's time unit; scale to the
-                // design precision (the scheduler tick unit) before waiting.
-                let unit_ps = self.cg.timescale_of_node(h).unit_ps;
-                let scaled =
-                    scale_delay_ticks(v, unit_ps, self.cg.design_precision_ps, &self.path)?;
                 self.saw_wait = true;
                 let mut out = vec![IrStmt::Delay { ticks: scaled }];
                 // The body may be a `Stmt(Empty)` placeholder for a bare
@@ -834,7 +839,7 @@ impl EmitCtx<'_, '_> {
         &mut self,
         h: NodeId,
         blocking: bool,
-        ticks_raw: u64,
+        scaled_ticks: u64,
     ) -> Result<Vec<IrStmt>, String> {
         if self.func.is_some() && self.inline.is_none() {
             return Err(format!(
@@ -870,11 +875,6 @@ impl EmitCtx<'_, '_> {
                 self.path
             ));
         }
-        // `#N` is in the CALLING module's time unit; scale to the design
-        // precision (the scheduler tick unit), exactly like a `#N` statement.
-        let unit_ps = self.cg.timescale_of_node(h).unit_ps;
-        let scaled =
-            scale_delay_ticks(ticks_raw, unit_ps, self.cg.design_precision_ps, &self.path)?;
         self.saw_wait = true;
         // The temp name is unique per assignment node; each site's Block keeps
         // re-declarations (loops, repeated task inlining) out of one C scope.
@@ -887,7 +887,9 @@ impl EmitCtx<'_, '_> {
                 signed: s,
                 init: Some(Box::new(rhs_ir)),
             },
-            IrStmt::Delay { ticks: scaled },
+            IrStmt::Delay {
+                ticks: scaled_ticks,
+            },
             IrStmt::Assign {
                 lhs: lh,
                 rhs: IrExpr::new(IrExprKind::LocalRead(tmp), w, s, None),

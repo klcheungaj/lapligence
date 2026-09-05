@@ -517,73 +517,52 @@ endmodule
     assert_eq!(stdout, "t=2 a=1\n", "stdout: {stdout}");
 }
 
-/// (g) Non-plain-integer intra-assignment delay literals — fractional
-/// (`a = #0.5 b;`) and unit-suffixed (`a = #5ns b;`) lex as ONE `#…`
-/// source token. Grabbing only the
-/// leading digits would silently mis-time legal Verilog (`#0.5`→0,
-/// `#5ns`→5, verified by probe before the fix), so each form must
-/// end in the same clean reject family as unrecoverable `#P`.
+/// (g) Fractional and unit-suffixed intra-assignment delays retain their
+/// complete source token and each RHS is captured before its 500ps delay.
 #[test]
-fn sim_intra_delay_non_integer_literal_forms_rejected() {
+fn sim_intra_delay_fractional_and_unit_literals() {
     if !llg::sim::build::cmake_available() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    for (tag, delay) in [("frac", "#0.5"), ("unit", "#5ns")] {
-        let sv = format!(
-            r#"module tb;
+    let sv = r#"`timescale 1ns/1ps
+module tb;
     reg [7:0] a, b;
 
     initial begin
         b = 8'd1;
-        a = {delay} b;
+        a = #0.5 b;
+        b = 8'd2;
+        a = #500ps b;
         $display("t=%0t a=%0d", $time, a);
     end
 endmodule
-"#
-        );
-        let result = codegen_result(&sv, tag).expect("compile should succeed");
-        match result {
-            Ok(_) => panic!("codegen should reject intra-assignment delay `{delay}`"),
-            Err(e) => assert!(
-                e.contains("cannot evaluate procedural"),
-                "unexpected codegen error for `{delay}`: {e}"
-            ),
-        }
-    }
+"#;
+    let stdout = run_sim(sv, "intra_fractional_literals").expect("simulation should run");
+    assert_eq!(stdout, "t=1 a=2\n", "stdout: {stdout}");
 }
 
-/// (h) The remaining non-integer literal forms on statement-level delays
-/// (`#0.5 …;`, `#5ns …;`) are clean rejects — the
-/// statement path recovers ticks from the source line and must not
-/// truncate to the leading digit run.
+/// (h) Statement delays accept both a bare fixed-point value in the calling
+/// module's unit and an explicit physical time literal.
 #[test]
-fn sim_stmt_delay_non_integer_literal_forms_rejected() {
+fn sim_stmt_delay_fractional_and_unit_literals() {
     if !llg::sim::build::cmake_available() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    for (tag, delay) in [("frac", "#0.5"), ("unit", "#5ns")] {
-        let sv = format!(
-            r#"module tb;
+    let sv = r#"`timescale 1ns/1ps
+module tb;
     reg [7:0] a;
 
     initial begin
-        {delay} a = 8'd7;
+        #0.5 a = 8'd7;
+        #500ps a = 8'd9;
         $display("t=%0t a=%0d", $time, a);
     end
 endmodule
-"#
-        );
-        let result = codegen_result(&sv, &format!("stmt_{tag}")).expect("compile should succeed");
-        match result {
-            Ok(_) => panic!("codegen should reject statement delay `{delay}`"),
-            Err(e) => assert!(
-                e.contains("cannot evaluate procedural"),
-                "unexpected codegen error for `{delay}`: {e}"
-            ),
-        }
-    }
+"#;
+    let stdout = run_sim(sv, "stmt_fractional_literals").expect("simulation should run");
+    assert_eq!(stdout, "t=1 a=9\n", "stdout: {stdout}");
 }
 
 /// Procedural delay controls accept elaborated parameters, parenthesized

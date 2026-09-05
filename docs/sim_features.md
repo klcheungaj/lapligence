@@ -37,18 +37,18 @@ final blocks ≤ 1024.
 
 | § | Area | Verilog ✅ | Verilog 🟨 | Verilog ❌ | SV ✅ | SV 🟨 | SV ❌ |
 |---|---|---:|---:|---:|---:|---:|---:|
-| 1 | Lexical & preprocessing | 10 | 0 | 0 | 0 | 1 | 1 |
+| 1 | Lexical & preprocessing | 10 | 0 | 0 | 0 | 2 | 0 |
 | 2 | Data types | 10 | 1 | 5 | 5 | 2 | 4 |
 | 3 | Modules & hierarchy | 8 | 1 | 1 | 2 | 1 | 0 |
 | 4 | Scheduling & processes | 8 | 1 | 0 | 7 | 1 | 1 |
 | 5 | Procedural statements | 17 | 2 | 1 | 4 | 3 | 0 |
-| 6 | Timing controls | 2 | 2 | 2 | 0 | 0 | 0 |
+| 6 | Timing controls | 2 | 3 | 1 | 0 | 0 | 0 |
 | 7 | Expressions & operators | 18 | 2 | 0 | 2 | 2 | 3 |
 | 8 | Continuous assign & structural | 5 | 4 | 7 | 0 | 0 | 0 |
 | 9 | Functions & tasks | 4 | 0 | 5 | 3 | 0 | 1 |
 | 10 | System tasks & functions | 11 | 2 | 14 | 3 | 0 | 6 |
 | 11 | Compiler directives affecting sim | 5 | 0 | 0 | 4 | 0 | 0 |
-| — | **Total** | **98** | **15** | **35** | **30** | **10** | **16** |
+| — | **Total** | **98** | **16** | **34** | **30** | **11** | **15** |
 
 In-section ⬜ items (not counted above): §3 configurations [V], ref ports /
 default port values, extern/nested modules [SV] · §4 fine-grain process control
@@ -74,7 +74,7 @@ Verilog era:
 SystemVerilog era:
 
 - 🟨 **Fill literals** `'0/'1/'x/'z` — §1800-2009 5.7.1 **[SV-2005]** honored only as entire RHS of assignment; in subexpressions act as 1-bit
-- ❌ **Time literals** `2.1ns` — §1800-2009 5.8 **[SV-2005]** delays are integer ticks only
+- 🟨 **Time literals** `2.1ns` — §1800-2009 5.8 **[SV-2005]** fixed-point literals with `s/ms/us/ns/ps/fs` suffixes work in procedural and intra-assignment delays, rounded to module precision before scheduler scaling (sim_time_literals.rs); general expression/value positions and scientific notation remain unsupported, and scheduler precision remains at least 1ps
 
 ## 2. Data types
 
@@ -204,8 +204,8 @@ Verilog era:
 - ✅ **#delay integer literal**, timescale-scaled — §1364-2001 9.7.1 **[1995]** (sim_timescale.rs)
 - ✅ **@\* / @(\*) implicit sensitivity** from body read set — §1364-2001 9.7.5 **[2001]**
 - 🟨 **Comb sensitivity to array elements** — §1364-2001 9.7.5 **[2001]** wakes on index signals only, not array writes
-- ❌ **Fractional delays** `#0.5` — §1364-2001 9.7.1 **[1995]** clean codegen reject ("cannot determine the `#delay` value"), not a silent `#0` (sim_delay.rs)
-- 🟨 **Expression/parameter delays** `#(expr)` / `#P`, underscored `#10_000` and unit-suffixed `#5ns` literals — §1364-2001 9.7.1 **[1995]** resolved integer parameters, decimal literals, and bounded constant arithmetic/bitwise expressions work in statement and intra-assignment delays (sim_delay.rs); mixed-width/context-sensitive signed arithmetic, dynamic values, based literals, logical/comparison/ternary expressions, system functions, fractional and unit-suffixed delays remain rejected
+- 🟨 **Fractional delays** `#0.5` — §1364-2001 9.7.1 **[1995]** nonnegative fixed-point procedural and intra-assignment literals, including parentheses, round to the calling module's precision before global tick conversion (sim_delay.rs, sim_time_literals.rs); real expressions/parameters, scientific notation, fractional continuous/gate delays, and sub-ps scheduling remain unsupported
+- 🟨 **Expression/parameter delays** `#(expr)` / `#P`, underscored `#10_000` and unit-suffixed `#5ns` literals — §1364-2001 9.7.1 **[1995]** resolved integer parameters, decimal literals, bounded integer arithmetic/bitwise expressions, and fixed-point/unit-suffixed literals work in statement and intra-assignment delays (sim_delay.rs, sim_time_literals.rs); mixed-width/context-sensitive signed arithmetic, dynamic values, based literals, logical/comparison/ternary expressions, system functions, and arithmetic containing real/time literals remain rejected
 - ❌ **min:typ:max delays** `#(1:2:3)` — §1364-2001 4.3 **[1995]**
 
 SystemVerilog era:

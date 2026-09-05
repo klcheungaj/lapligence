@@ -106,6 +106,8 @@ coverage for the same rule IDs.
   equality/case-inside, and lexical loop declarations/fixed-array foreach.
   `sim_delay.rs` covers the source-recovered constant delay subset and its
   explicit rejection boundaries.
+  `sim_time_literals.rs` checks fixed-point/unit-suffixed delays and local
+  precision rounding before global scheduling, with optimizer parity.
 
 ## Safeguard validation
 

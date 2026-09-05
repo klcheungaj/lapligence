@@ -81,6 +81,171 @@ pub(super) fn eval_delay_expression(
     })
 }
 
+/// A source-recovered procedural delay after constant folding but before it
+/// is converted to the design-wide scheduler precision.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum ProceduralDelay {
+    /// An integer expression measured in the calling module's time unit.
+    ModuleUnitTicks(u64),
+    /// A real or time literal already rounded to the calling module's time
+    /// precision, measured in precision-sized quanta.
+    ModulePrecisionTicks(u64),
+}
+
+impl ProceduralDelay {
+    pub(super) fn ticks_and_unit_ps(self, timescale: Timescale) -> (u64, u64) {
+        match self {
+            Self::ModuleUnitTicks(ticks) => (ticks, timescale.unit_ps),
+            Self::ModulePrecisionTicks(ticks) => (ticks, timescale.precision_ps),
+        }
+    }
+}
+
+/// Fold a procedural delay, additionally recognizing the literal forms whose
+/// value must be rounded to the calling module's precision before scheduling
+/// (IEEE 1800-2009 §3.14.1 and §5.8).
+pub(super) fn eval_procedural_delay(
+    expression: &str,
+    timescale: Timescale,
+    parameter: impl FnMut(&str) -> Option<DelayValue>,
+) -> Result<ProceduralDelay, String> {
+    let literal = strip_wrapping_parentheses(expression);
+    if let Some(result) = parse_real_or_time_literal(literal, timescale) {
+        return result.map(ProceduralDelay::ModulePrecisionTicks);
+    }
+    eval_delay_expression(expression, parameter).map(ProceduralDelay::ModuleUnitTicks)
+}
+
+fn strip_wrapping_parentheses(mut expression: &str) -> &str {
+    for _ in 0..256 {
+        expression = expression.trim();
+        let bytes = expression.as_bytes();
+        if bytes.first() != Some(&b'(') || bytes.last() != Some(&b')') {
+            return expression;
+        }
+        let mut depth = 0usize;
+        let mut closes_at_end = false;
+        for (index, byte) in bytes.iter().enumerate() {
+            match byte {
+                b'(' => depth += 1,
+                b')' => {
+                    let Some(next) = depth.checked_sub(1) else {
+                        return expression;
+                    };
+                    depth = next;
+                    if depth == 0 {
+                        closes_at_end = index + 1 == bytes.len();
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        if !closes_at_end {
+            return expression;
+        }
+        expression = &expression[1..expression.len() - 1];
+    }
+    expression
+}
+
+/// Parse a fixed-point delay, optionally followed immediately by an explicit
+/// time unit. Plain integers are left to the integer-expression evaluator.
+fn parse_real_or_time_literal(
+    expression: &str,
+    timescale: Timescale,
+) -> Option<Result<u64, String>> {
+    let expression = expression.trim();
+    let bytes = expression.as_bytes();
+    let mut offset = 0usize;
+    let mut digits = String::new();
+    while let Some(byte) = bytes.get(offset) {
+        if byte.is_ascii_digit() {
+            digits.push(char::from(*byte));
+            offset += 1;
+        } else if *byte == b'_' {
+            offset += 1;
+        } else {
+            break;
+        }
+    }
+    if digits.is_empty() {
+        return None;
+    }
+
+    let mut fractional_digits = 0usize;
+    let fixed_point = bytes.get(offset) == Some(&b'.');
+    if fixed_point {
+        offset += 1;
+        let fraction_start = digits.len();
+        while let Some(byte) = bytes.get(offset) {
+            if byte.is_ascii_digit() {
+                digits.push(char::from(*byte));
+                offset += 1;
+            } else if *byte == b'_' {
+                offset += 1;
+            } else {
+                break;
+            }
+        }
+        fractional_digits = digits.len() - fraction_start;
+        if fractional_digits == 0 {
+            return Some(Err(
+                "fractional procedural delay requires digits after `.`".to_string()
+            ));
+        }
+    }
+
+    let suffix = &expression[offset..];
+    let explicit_unit_fs = match suffix {
+        "" => None,
+        "s" => Some(1_000_000_000_000_000u128),
+        "ms" => Some(1_000_000_000_000u128),
+        "us" => Some(1_000_000_000u128),
+        "ns" => Some(1_000_000u128),
+        "ps" => Some(1_000u128),
+        "fs" => Some(1u128),
+        _ => return None,
+    };
+    if !fixed_point && explicit_unit_fs.is_none() {
+        return None;
+    }
+
+    Some((|| {
+        let numerator = digits.parse::<u128>().map_err(|_| {
+            "real/time literal in procedural delay exceeds 128-bit precision".to_string()
+        })?;
+        let denominator = (0..fractional_digits).try_fold(1u128, |value, _| {
+            value.checked_mul(10).ok_or_else(|| {
+                "real/time literal in procedural delay exceeds 128-bit fractional precision"
+                    .to_string()
+            })
+        })?;
+        let literal_unit_fs = explicit_unit_fs.unwrap_or(u128::from(timescale.unit_ps) * 1_000);
+        // The scheduler's current timescale representation clamps fs units to
+        // one ps, so the same effective precision is used for local rounding.
+        let precision_fs = u128::from(timescale.precision_ps) * 1_000;
+        let physical_numerator = numerator.checked_mul(literal_unit_fs).ok_or_else(|| {
+            "real/time literal in procedural delay exceeds the supported range".to_string()
+        })?;
+        let precision_denominator = denominator.checked_mul(precision_fs).ok_or_else(|| {
+            "real/time literal in procedural delay exceeds the supported range".to_string()
+        })?;
+        let whole = physical_numerator / precision_denominator;
+        let remainder = physical_numerator % precision_denominator;
+        // All supported literals are nonnegative. Round to nearest, with an
+        // exact half rounded up (away from zero), without floating-point loss.
+        let rounded = if remainder >= precision_denominator - remainder {
+            whole.checked_add(1)
+        } else {
+            Some(whole)
+        }
+        .ok_or_else(|| "rounded procedural delay exceeds the supported range".to_string())?;
+        u64::try_from(rounded)
+            .map_err(|_| "rounded procedural delay exceeds the 64-bit tick range".to_string())
+    })())
+}
+
 #[derive(Clone, Copy, Debug)]
 pub(super) struct DelayValue {
     raw: u128,
@@ -395,6 +560,66 @@ mod tests {
                     .flatten()
             }),
             Ok(1006)
+        );
+    }
+
+    #[test]
+    fn rounds_real_and_time_literals_to_local_precision() {
+        let timescale = Timescale {
+            unit_ps: 1_000,
+            precision_ps: 100,
+        };
+        assert_eq!(
+            eval_procedural_delay("2.75", timescale, |_| None),
+            Ok(ProceduralDelay::ModulePrecisionTicks(28))
+        );
+        assert_eq!(
+            eval_procedural_delay("2.15ns", timescale, |_| None),
+            Ok(ProceduralDelay::ModulePrecisionTicks(22))
+        );
+        assert_eq!(
+            eval_procedural_delay("((2.15ns))", timescale, |_| None),
+            Ok(ProceduralDelay::ModulePrecisionTicks(22))
+        );
+        assert_eq!(
+            eval_procedural_delay("50ps", timescale, |_| None),
+            Ok(ProceduralDelay::ModulePrecisionTicks(1))
+        );
+    }
+
+    #[test]
+    fn scales_every_time_literal_suffix_and_rounds_fs_threshold() {
+        let timescale = Timescale {
+            unit_ps: 1_000,
+            precision_ps: 1,
+        };
+        for (literal, expected) in [
+            ("499fs", 0),
+            ("500fs", 1),
+            ("1ps", 1),
+            ("2ns", 2_000),
+            ("3us", 3_000_000),
+            ("4ms", 4_000_000_000),
+            ("5s", 5_000_000_000_000),
+        ] {
+            assert_eq!(
+                eval_procedural_delay(literal, timescale, |_| None),
+                Ok(ProceduralDelay::ModulePrecisionTicks(expected)),
+                "literal {literal}"
+            );
+        }
+    }
+
+    #[test]
+    fn keeps_integer_expressions_in_module_units() {
+        assert_eq!(
+            eval_procedural_delay("1_000", Timescale::DEFAULT, |_| None),
+            Ok(ProceduralDelay::ModuleUnitTicks(1_000))
+        );
+        assert!(
+            eval_procedural_delay("1.0 + 1.0", Timescale::DEFAULT, |_| None)
+                .unwrap_err()
+                .contains("unsupported token")
         );
     }
 

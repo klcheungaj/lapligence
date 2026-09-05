@@ -199,11 +199,17 @@ before C compilation. `tests/sim_real.rs` pins support and rejection messages.
   preserves operand widths/signedness for its accepted subset, with at most
   128-bit operands and 256 parser steps; final ticks must fit a nonnegative
   `u64`. Mixed-width arithmetic and outer signedness changes affecting an
-  already-computed operand are rejected until full context propagation exists. Runtime-valued,
-  fractional, unit-suffixed, based-literal, logical/comparison/ternary and
-  system-function forms are rejected explicitly. Timescale scaling follows
-  evaluation. Sub-picosecond (fs) units still clamp up to 1 ps in the
-  ps-integer representation. See `tests/sim_delay.rs`.
+  already-computed operand are rejected until full context propagation exists.
+  Nonnegative fixed-point literals and literals suffixed with `s/ms/us/ns/ps/fs`
+  additionally work in procedural/intra-assignment delays, including enclosing
+  parentheses. Exact decimal-rational arithmetic rounds to the calling module's
+  precision (nearest, halves upward) before conversion to global scheduler ticks;
+  check both evaluation and scaling overflow. Runtime values, real parameters,
+  scientific notation, arithmetic containing real/time literals, based literals,
+  logical/comparison/ternary and system-function forms remain unsupported.
+  General time-literal value expressions are not implemented. Sub-picosecond
+  timescale precision still clamps up to 1 ps in the ps-integer representation.
+  See `tests/sim_delay.rs` and `tests/sim_time_literals.rs`.
 
 ## Unpacked arrays and memories
 

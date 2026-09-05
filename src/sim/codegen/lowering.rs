@@ -187,7 +187,9 @@
 //!   a TIMESCALEMOD-style warning), and `$time` returns the current time in
 //!   the calling module's unit.  The scheduler runs in design-precision ticks
 //!   (the finest precision across the design), so the runtime itself is
-//!   timescale-agnostic.
+//!   timescale-agnostic. Fixed-point/unit-suffixed procedural delay literals
+//!   first round to local module precision; real expressions and sub-ps
+//!   scheduler precision remain unsupported.
 //! - Unsized fill literals (`'1`) are filled correctly only when they are the
 //!   entire RHS of an assignment; inside expressions they act as 1-bit values.
 //! - Generate-block processes are supported: processes inside gen scopes are
@@ -202,8 +204,9 @@
 //!   into a temp immediately and apply it after the scaled delay; the
 //!   executing process suspends across the window for BOTH assignment kinds
 //!   (LRM 1364-1995 §9.7.4 lets a nonblocking assignment continue without
-//!   blocking — v1 approximation).  Event/repeat-controlled and
-//!   parameterized forms are rejected.  Continuous-assignment delays
+//!   blocking — v1 approximation). Event/repeat-controlled forms are rejected;
+//!   bounded integer parameter expressions and fixed-point/time literals work.
+//!   Continuous-assignment delays
 //!   (`assign #N lhs = rhs;`) delay every write by N after the triggering
 //!   rhs change, including at t=0; there is no pulse filtering — each wake
 //!   writes the CURRENT rhs value D later (warned).
@@ -212,7 +215,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use super::timescale::{eval_delay_expression, parse_timescale, DelayValue, Timescale};
+use super::timescale::{eval_procedural_delay, parse_timescale, DelayValue, Timescale};
 use super::CodegenError;
 use crate::core::db::{
     CaseKind as DbCaseKind, ConstantType, Db, Direction as DbDirection, EventSpec, ExprKind,
@@ -714,8 +717,13 @@ impl<'a> Codegen<'a> {
     /// Fold a procedural delay recovered from source text. Identifier lookup
     /// follows the owned parent chain so generate-local parameters shadow
     /// parameters in their enclosing module instance.
-    fn procedural_delay_ticks(&self, delay_node: NodeId, expression: &str) -> Result<u64, String> {
-        eval_delay_expression(expression, |name| {
+    fn procedural_delay_ticks(
+        &mut self,
+        delay_node: NodeId,
+        expression: &str,
+    ) -> Result<u64, String> {
+        let timescale = self.timescale_of_node(delay_node);
+        let delay = eval_procedural_delay(expression, timescale, |name| {
             let mut scope = Some(delay_node);
             while let Some(node_id) = scope {
                 for child in &self.node(node_id).children {
@@ -746,7 +754,14 @@ impl<'a> Codegen<'a> {
                 "cannot evaluate procedural `#({expression})` in `{}`: {error}",
                 self.instance_path_of(self.inst)
             )
-        })
+        })?;
+        let (ticks, unit_ps) = delay.ticks_and_unit_ps(timescale);
+        scale_delay_ticks(
+            ticks,
+            unit_ps,
+            self.design_precision_ps,
+            &self.instance_path_of(self.inst),
+        )
     }
 
     /// Resolve a hierarchical reference read (`a.b.sig`, or the 2-part
