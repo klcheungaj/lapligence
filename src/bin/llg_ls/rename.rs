@@ -209,6 +209,30 @@ pub fn prepare_rename(a: &Analysis, file: &str, line: u32, col: u32) -> Option<(
     Some((range, e.name.clone()))
 }
 
+/// An invalid replacement identifier in a rename request.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RenameError {
+    Keyword(String),
+    InvalidIdentifier(String),
+}
+
+impl std::fmt::Display for RenameError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Keyword(name) => write!(
+                f,
+                "cannot rename to `{name}`: `{name}` is a SystemVerilog keyword"
+            ),
+            Self::InvalidIdentifier(name) => write!(
+                f,
+                "cannot rename to `{name}`: expected a plain identifier ([A-Za-z_][A-Za-z0-9_$]*)"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for RenameError {}
+
 /// Compute the workspace edit renaming the symbol at the 0-based `(line, col)`
 /// cursor to `new_name`.
 ///
@@ -225,17 +249,16 @@ pub fn rename(
     line: u32,
     col: u32,
     new_name: &str,
-) -> Result<Option<WorkspaceEdit>, String> {
+) -> Result<Option<WorkspaceEdit>, RenameError> {
     if rename_target(a, file, line, col).is_none() {
         return Ok(None);
     }
     if !is_valid_identifier(new_name) {
-        let reason = if is_sv_keyword(new_name) {
-            format!("`{new_name}` is a SystemVerilog keyword")
+        return Err(if is_sv_keyword(new_name) {
+            RenameError::Keyword(new_name.to_owned())
         } else {
-            "expected a plain identifier ([A-Za-z_][A-Za-z0-9_$]*)".to_owned()
-        };
-        return Err(format!("cannot rename to `{new_name}`: {reason}"));
+            RenameError::InvalidIdentifier(new_name.to_owned())
+        });
     }
     // Same computation as textDocument/references with includeDeclaration —
     // spans come straight from the indexed entries (start column + name
@@ -549,7 +572,10 @@ mod tests {
         let a = prefix_analysis();
         for bad in ["1abc", "a-b", "", "clk#"] {
             let err = rename(&a, "/x/ren.sv", 0, 21, bad).expect_err(bad);
-            assert!(err.contains(bad), "error should name the offender: {err}");
+            assert!(
+                err.to_string().contains(bad),
+                "error should name the offender: {err}"
+            );
         }
     }
 
@@ -559,11 +585,11 @@ mod tests {
         for keyword in ["module", "always_comb", "wire", "default"] {
             let err = rename(&a, "/x/ren.sv", 0, 21, keyword).expect_err(keyword);
             assert!(
-                err.contains("is a SystemVerilog keyword"),
+                err.to_string().contains("is a SystemVerilog keyword"),
                 "error should say why: {err}"
             );
             assert!(
-                err.contains(keyword),
+                err.to_string().contains(keyword),
                 "error should name the offender: {err}"
             );
         }

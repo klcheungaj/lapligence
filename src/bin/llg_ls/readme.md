@@ -15,3 +15,9 @@ Presentation does not read files, so it also works for staged unsaved buffers.
 Stdout is reserved for JSON-RPC. Filesystem inputs are untrusted, project trees
 are read-only, and all compiler side effects must remain under the private
 process shadow directory.
+
+`main.rs` declares the binary modules and selects the runner; `transport.rs`
+owns stdio service construction, lifecycle interception, diagnostic dump mode,
+and the process-memory guard. The `features.rs` and `lsp.rs` entry modules
+retain the existing call paths while their child modules separate analysis and
+request processing from state, staging, scheduling, and wire handlers.

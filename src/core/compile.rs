@@ -16,6 +16,52 @@ use std::sync::Mutex;
 
 pub use crate::ffi::surelog::{Diag, Severity};
 
+/// Stage at which Surelog rejected an invocation before diagnostics existed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum StartupErrorKind {
+    InvalidArgument,
+    Initialization,
+    Start,
+}
+
+/// Failure preparing or starting Surelog, separate from HDL diagnostics.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StartupError {
+    kind: StartupErrorKind,
+    message: String,
+}
+
+impl StartupError {
+    fn new(kind: StartupErrorKind, message: impl Into<String>) -> Self {
+        Self {
+            kind,
+            message: message.into(),
+        }
+    }
+
+    pub fn kind(&self) -> StartupErrorKind {
+        self.kind
+    }
+
+    pub fn message(&self) -> &str {
+        &self.message
+    }
+
+    /// Compatibility for diagnostic assertions; recovery should match `kind`.
+    pub fn contains(&self, pattern: &str) -> bool {
+        self.message.contains(pattern)
+    }
+}
+
+impl std::fmt::Display for StartupError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for StartupError {}
+
 /// Serializes every Surelog session in this process.
 ///
 /// Surelog keeps process-global C++ singletons (its `FileSystem` captures the
@@ -150,14 +196,17 @@ fn visit_compile_args(opts: &CompileOpts, mut visit: impl FnMut(&str) -> bool) -
     true
 }
 
-fn compile_argument_nul_error(arg: &str) -> String {
-    format!("surelog compile argument contains NUL: {arg:?}")
+fn compile_argument_nul_error(arg: &str) -> StartupError {
+    StartupError::new(
+        StartupErrorKind::InvalidArgument,
+        format!("surelog compile argument contains NUL: {arg:?}"),
+    )
 }
 
 fn add_compile_args(
     builder: &mut surelog::SessionBuilder,
     opts: &CompileOpts,
-) -> Result<(), String> {
+) -> Result<(), StartupError> {
     let mut rejected_arg = None;
     if visit_compile_args(opts, |arg| {
         if builder.add_arg(arg) {
@@ -176,7 +225,7 @@ fn add_compile_args(
 }
 
 /// Return the exact explicit argv and setter modes for a full compile run.
-pub fn compile_invocation(opts: &CompileOpts) -> Result<SurelogInvocation, String> {
+pub fn compile_invocation(opts: &CompileOpts) -> Result<SurelogInvocation, StartupError> {
     let mut argv = vec!["llg".to_owned()];
     let mut rejected_arg = None;
     if !visit_compile_args(opts, |arg| {
@@ -231,7 +280,10 @@ fn visit_parse_only_args(
 }
 
 /// Return the exact explicit argv and setter modes for an isolated parse.
-pub fn parse_only_invocation(file: &str, defines: &[String]) -> Result<SurelogInvocation, String> {
+pub fn parse_only_invocation(
+    file: &str,
+    defines: &[String],
+) -> Result<SurelogInvocation, StartupError> {
     let mut argv = vec!["llg".to_owned()];
     let mut rejected_arg = None;
     if !visit_parse_only_args(file, defines, |arg| {
@@ -245,15 +297,20 @@ pub fn parse_only_invocation(file: &str, defines: &[String]) -> Result<SurelogIn
     }) {
         let rejected_arg = rejected_arg.as_deref().unwrap_or_default();
         if rejected_arg == file {
-            return Err("surelog parse-only source path contains NUL".to_owned());
-        }
-        if defines.iter().any(|define| define == rejected_arg) {
-            return Err(format!(
-                "surelog parse-only define contains NUL: {rejected_arg:?}"
+            return Err(StartupError::new(
+                StartupErrorKind::InvalidArgument,
+                "surelog parse-only source path contains NUL",
             ));
         }
-        return Err(format!(
-            "surelog parse-only argument contains NUL: {rejected_arg:?}"
+        if defines.iter().any(|define| define == rejected_arg) {
+            return Err(StartupError::new(
+                StartupErrorKind::InvalidArgument,
+                format!("surelog parse-only define contains NUL: {rejected_arg:?}"),
+            ));
+        }
+        return Err(StartupError::new(
+            StartupErrorKind::InvalidArgument,
+            format!("surelog parse-only argument contains NUL: {rejected_arg:?}"),
         ));
     }
     Ok(SurelogInvocation {
@@ -281,7 +338,7 @@ pub struct CompileOut {
 #[derive(Debug, Clone, PartialEq)]
 pub enum CompileError {
     /// Surelog could not validate the invocation or start a session.
-    SessionStart(String),
+    SessionStart(StartupError),
     /// Surelog started but reported at least one blocking frontend diagnostic.
     FrontendDiagnostics(Vec<Diag>),
 }
@@ -290,7 +347,7 @@ impl CompileError {
     /// Return the session-start message, if session creation failed.
     pub fn session_start_message(&self) -> Option<&str> {
         match self {
-            Self::SessionStart(message) => Some(message),
+            Self::SessionStart(error) => Some(error.message()),
             Self::FrontendDiagnostics(_) => None,
         }
     }
@@ -315,7 +372,7 @@ impl CompileError {
 impl std::fmt::Display for CompileError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::SessionStart(message) => f.write_str(message),
+            Self::SessionStart(error) => error.fmt(f),
             Self::FrontendDiagnostics(diagnostics) => {
                 let blocking = diagnostics
                     .iter()
@@ -335,7 +392,14 @@ impl std::fmt::Display for CompileError {
     }
 }
 
-impl std::error::Error for CompileError {}
+impl std::error::Error for CompileError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::SessionStart(error) => Some(error),
+            Self::FrontendDiagnostics(_) => None,
+        }
+    }
+}
 
 /// Owned result of a single-file Surelog parse-only run.
 ///
@@ -385,13 +449,17 @@ impl CompileOut {
 /// (e.g. a bad argument); compilation problems are reported through
 /// `CompileOut::diagnostics`.  All Surelog work happens inside this call —
 /// the returned session must be used (and dropped) on the calling thread.
-pub fn compile(opts: &CompileOpts) -> Result<CompileOut, String> {
+pub fn compile(opts: &CompileOpts) -> Result<CompileOut, StartupError> {
     let _guard = SURELOG_LOCK
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     let setters = compile_setter_modes(opts);
-    let mut builder = surelog::SessionBuilder::new()
-        .ok_or_else(|| "surelog: failed to initialise session".to_string())?;
+    let mut builder = surelog::SessionBuilder::new().ok_or_else(|| {
+        StartupError::new(
+            StartupErrorKind::Initialization,
+            "surelog: failed to initialise session",
+        )
+    })?;
     // write_pp_output is required for the full pipeline (Surelog's `-parse`
     // flag enables it implicitly); the design is empty without it.
     if setters.parse {
@@ -421,9 +489,9 @@ pub fn compile(opts: &CompileOpts) -> Result<CompileOut, String> {
 
     add_compile_args(&mut builder, opts)?;
 
-    let session = builder
-        .build()
-        .ok_or_else(|| "surelog compile failed to start".to_string())?;
+    let session = builder.build().ok_or_else(|| {
+        StartupError::new(StartupErrorKind::Start, "surelog compile failed to start")
+    })?;
     let diagnostics = session.diagnostics();
     Ok(CompileOut {
         session,
@@ -460,12 +528,16 @@ pub fn compile_checked(opts: &CompileOpts) -> Result<CompileOut, CompileError> {
 /// parser.  Consequently, `` `include `` files and macro expansions are not
 /// consumed, preserving the source file's original positions.  `defines`
 /// accepts the same validated `-D...` arguments as [`CompileOpts::defines`].
-pub fn parse_only(file: &str, defines: &[String]) -> Result<ParseOnlyOut, String> {
+pub fn parse_only(file: &str, defines: &[String]) -> Result<ParseOnlyOut, StartupError> {
     let _guard = SURELOG_LOCK
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let mut builder = surelog::SessionBuilder::new()
-        .ok_or_else(|| "surelog: failed to initialise parse-only session".to_string())?;
+    let mut builder = surelog::SessionBuilder::new().ok_or_else(|| {
+        StartupError::new(
+            StartupErrorKind::Initialization,
+            "surelog: failed to initialise parse-only session",
+        )
+    })?;
     let setters = parse_only_setter_modes();
     if setters.mute_stdout {
         builder.set_mute_stdout();
@@ -481,21 +553,29 @@ pub fn parse_only(file: &str, defines: &[String]) -> Result<ParseOnlyOut, String
     }) {
         let rejected_arg = rejected_arg.unwrap_or_default();
         if rejected_arg == file {
-            return Err("surelog parse-only source path contains NUL".to_owned());
-        }
-        if defines.iter().any(|define| define == &rejected_arg) {
-            return Err(format!(
-                "surelog parse-only define contains NUL: {rejected_arg:?}"
+            return Err(StartupError::new(
+                StartupErrorKind::InvalidArgument,
+                "surelog parse-only source path contains NUL",
             ));
         }
-        return Err(format!(
-            "surelog parse-only argument contains NUL: {rejected_arg:?}"
+        if defines.iter().any(|define| define == &rejected_arg) {
+            return Err(StartupError::new(
+                StartupErrorKind::InvalidArgument,
+                format!("surelog parse-only define contains NUL: {rejected_arg:?}"),
+            ));
+        }
+        return Err(StartupError::new(
+            StartupErrorKind::InvalidArgument,
+            format!("surelog parse-only argument contains NUL: {rejected_arg:?}"),
         ));
     }
 
-    let session = builder
-        .build()
-        .ok_or_else(|| "surelog parse-only failed to start".to_string())?;
+    let session = builder.build().ok_or_else(|| {
+        StartupError::new(
+            StartupErrorKind::Start,
+            "surelog parse-only failed to start",
+        )
+    })?;
     let diagnostics = session.diagnostics();
     let mut tokens = session
         .design()
@@ -521,7 +601,10 @@ pub fn parse_only(file: &str, defines: &[String]) -> Result<ParseOnlyOut, String
 
 #[cfg(test)]
 mod tests {
-    use super::{compile_invocation, parse_only_invocation, CompileOpts, SurelogSetterModes};
+    use super::{
+        compile_invocation, parse_only_invocation, CompileError, CompileOpts, StartupErrorKind,
+        SurelogSetterModes,
+    };
 
     #[test]
     fn compile_invocation_matches_surelog_argument_order_and_setters() {
@@ -643,6 +726,18 @@ mod tests {
         assert!(error.contains("top\\0.sv"));
 
         let error = parse_only_invocation("open\0.sv", &[]).expect_err("NUL must be rejected");
-        assert_eq!(error, "surelog parse-only source path contains NUL");
+        assert_eq!(error.kind(), StartupErrorKind::InvalidArgument);
+        assert_eq!(
+            error.message(),
+            "surelog parse-only source path contains NUL"
+        );
+
+        let checked = CompileError::SessionStart(error.clone());
+        assert_eq!(checked.session_start_message(), Some(error.message()));
+        assert_eq!(
+            std::error::Error::source(&checked).unwrap().to_string(),
+            error.to_string()
+        );
+        assert!(checked.diagnostics().is_none());
     }
 }
