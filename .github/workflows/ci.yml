@@ -1,4 +1,5 @@
-# Lightweight PR gate: formatting + type/lint checks on ubuntu only.
+# PR gate for formatting, every Rust target/feature combination, and the
+# repository's native-backed unit/integration tests on Ubuntu.
 #
 # CAVEAT: there is no cheap way to lint this crate — even `cargo check --lib`
 # executes build.rs, i.e. a full native CMake build of vendored
@@ -6,8 +7,8 @@
 # has only ever been validated on x86_64-linux-musl (see the portability
 # caveat block in build-binaries.yml and the platform branches in build.rs:
 # patch(1) dependency, -Wl,--wrap flags, musl-only static linking). This job
-# therefore runs against glibc Ubuntu on a best-effort basis; full
-# multi-platform builds and tests are the job of build-binaries.yml.
+# therefore runs against glibc Ubuntu; platform release builds remain the job
+# of build-binaries.yml.
 name: CI
 
 on:
@@ -19,7 +20,7 @@ permissions:
 
 jobs:
   lint:
-    name: check / fmt / clippy (ubuntu)
+    name: check / fmt / clippy / test (ubuntu)
     runs-on: ubuntu-22.04
     timeout-minutes: 180
     steps:
@@ -45,8 +46,16 @@ jobs:
       - name: cargo fmt --check
         run: cargo fmt --check
 
-      - name: cargo check --lib
-        run: cargo check --lib
+      - name: cargo check (all targets and features)
+        run: cargo check --all-targets --all-features
+
+      - name: cargo check (minimal library features)
+        run: cargo check --lib --no-default-features
 
       - name: cargo clippy (-D warnings)
-        run: cargo clippy --lib -- -D warnings
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      # Surelog and several boundary tests change process-global state (CWD and
+      # C++ singletons), so unit tests in one executable must not overlap.
+      - name: cargo test
+        run: cargo test --all-features -- --test-threads=1
