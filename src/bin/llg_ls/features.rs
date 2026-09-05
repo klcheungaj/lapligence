@@ -1770,7 +1770,18 @@ pub(crate) fn analyze_with_config_context_parent(
     let _guard = ANALYZE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     wait_span.outcome("ok");
     drop(wait_span);
-    let _cwd = ScratchCwd::enter(&analysis_scratch_dir());
+    let scratch = analysis_scratch_dir();
+    let _cwd = match ScratchCwd::enter(&scratch) {
+        Ok(cwd) => cwd,
+        Err(error) => {
+            let message = format!(
+                "cannot establish the Surelog analysis scratch directory {}: {error}",
+                scratch.display()
+            );
+            analysis_span.complete("error", 1);
+            return Analysis::fatal_preflight(message);
+        }
+    };
     let analysis = analyze_inner(opts, lint_cfg, root, generation, Some(analysis_span.id()));
     analysis_span.complete(
         match analysis.outcome {
@@ -1804,29 +1815,34 @@ pub fn analysis_scratch_dir() -> std::path::PathBuf {
 /// Guard that parks the process CWD inside a scratch directory and restores
 /// the previous directory on drop (including on panic/unwind).
 ///
-/// On failure to create or enter the scratch dir the guard is a no-op and
-/// analysis runs with the inherited CWD, matching the pre-containment
-/// behavior instead of failing the job.
+/// Entering the directory is fail-closed: callers must not invoke Surelog
+/// unless this guard was constructed successfully, because Surelog writes
+/// preprocessing artifacts into the process CWD.
 struct ScratchCwd {
     previous: Option<PathBuf>,
 }
 
 impl ScratchCwd {
-    fn enter(scratch: &Path) -> Self {
-        let previous = std::env::current_dir().ok();
-        let redirected = previous.is_some()
-            && std::fs::create_dir_all(scratch).is_ok()
-            && std::env::set_current_dir(scratch).is_ok();
-        Self {
-            previous: if redirected { previous } else { None },
-        }
+    fn enter(scratch: &Path) -> std::io::Result<Self> {
+        let previous = std::env::current_dir()?;
+        std::fs::create_dir_all(scratch)?;
+        std::env::set_current_dir(scratch)?;
+        Ok(Self {
+            previous: Some(previous),
+        })
     }
 }
 
 impl Drop for ScratchCwd {
     fn drop(&mut self) {
         if let Some(previous) = self.previous.take() {
-            let _ = std::env::set_current_dir(previous);
+            if let Err(error) = std::env::set_current_dir(&previous) {
+                crate::llg_error!(
+                    "event=surelog.restore_cwd outcome=error path={} error={}",
+                    previous.display(),
+                    error
+                );
+            }
         }
     }
 }
@@ -1905,6 +1921,7 @@ fn analyze_inner(
     // while `out` (and its session) is still alive, before we move the
     // owned diagnostics out at the end.
     let uhdm = out.uhdm_design();
+    let has_uhdm = uhdm.is_some();
     let design = out.design();
     // Capture the source graph before the session is dropped.  This is a
     // single parse-tree walk alongside the existing token/connection walks;
@@ -2203,11 +2220,9 @@ fn analyze_inner(
     module_graph.elaborated_types = elaborated_type_ranges;
 
     let has_design = design.is_some();
-    let outcome = outcome_from_pipeline(&out, uhdm.is_some(), has_design, db_built);
-    // `design` borrows from `out`, so release the last native borrow before moving
-    // the diagnostics field. Every borrowed Design/VPI value has now been converted
-    // to owned Rust data, making post-processing independent of the native session.
-    let _ = design;
+    let outcome = outcome_from_pipeline(&out, has_uhdm, has_design, db_built);
+    // Every borrowed Design/VPI value has now been converted to owned Rust
+    // data; their last uses are above, so the native session borrow ends here.
 
     let mut diagnostics = out.diagnostics;
     if let Some(error) = db_error {
@@ -2229,7 +2244,7 @@ fn analyze_inner(
         root,
         generation,
         diagnostics.len(),
-        uhdm.is_some(),
+        has_uhdm,
         has_design
     );
     drop(out.session);
@@ -8869,7 +8884,13 @@ pub(crate) fn semantic_tokens_for_open_document_with_parent(
         wait_started.elapsed().as_micros()
     );
     drop(wait_span);
-    let _cwd = ScratchCwd::enter(&analysis_scratch_dir());
+    let scratch = analysis_scratch_dir();
+    let _cwd = ScratchCwd::enter(&scratch).map_err(|error| {
+        format!(
+            "cannot establish the Surelog parse-only scratch directory {}: {error}",
+            scratch.display()
+        )
+    })?;
     let mut parse_span = crate::logging::LifecycleSpan::phase_with_parent(
         "surelog.parse_only",
         || file.to_owned(),
@@ -14677,6 +14698,28 @@ mod tests {
 
         cleanup_process_shadow();
         let _ = std::fs::remove_dir_all(fixture);
+    }
+
+    #[test]
+    fn scratch_cwd_rejects_an_unusable_directory_without_changing_cwd() {
+        let _guards = analysis_guards();
+        let fixture =
+            std::env::temp_dir().join(format!("llg_scratch_failure_probe_{}", std::process::id()));
+        std::fs::create_dir_all(&fixture).expect("create fixture tree");
+        let blocker = fixture.join("not-a-directory");
+        std::fs::write(&blocker, "block nested directory creation").expect("write blocking file");
+        let before = std::env::current_dir().expect("current dir before failed enter");
+
+        let error = ScratchCwd::enter(&blocker.join("scratch"))
+            .err()
+            .expect("a path below a regular file must be rejected");
+
+        assert_ne!(error.kind(), std::io::ErrorKind::NotFound);
+        assert_eq!(
+            std::env::current_dir().expect("current dir after failed enter"),
+            before
+        );
+        std::fs::remove_dir_all(fixture).expect("remove fixture tree");
     }
 
     /// Regression: the `module` declaration keyword must be tokenized the
