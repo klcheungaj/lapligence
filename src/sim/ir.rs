@@ -324,9 +324,13 @@ pub enum IrRealUnOp {
 pub enum IrSysFunc {
     /// `$clog2(x)` → `sv4_clog2(code)` (32-bit unsigned).
     Clog2(Box<IrExpr>),
-    /// `$time` scaled to the calling module's unit:
-    /// `sv4_from_u64(llg_time() * precision_ps / unit_ps, 64, 0)`.
-    Time { precision_ps: u64, unit_ps: u64 },
+    /// `$time`/`$stime` scaled to the calling module's unit.  `width` is 64
+    /// for `$time` and 32 for `$stime` (which truncates modulo 2^32).
+    Time {
+        precision_ps: u64,
+        unit_ps: u64,
+        width: u32,
+    },
     /// `$bits(x)` → `SV4_C(width, 32)` (32-bit signed).
     Bits(Box<IrExpr>),
 }

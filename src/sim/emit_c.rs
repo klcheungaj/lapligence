@@ -673,12 +673,13 @@ pub fn render_expr(ctx: &RCtx<'_>, e: &IrExpr) -> Result<RenderedExpr, String> {
             IrSysFunc::Time {
                 precision_ps,
                 unit_ps,
+                width,
             } => RenderedExpr {
                 code: format!(
-                    "sv4_from_u64(llg_time() * {} / {}, 64, 0)",
-                    precision_ps, unit_ps
+                    "sv4_from_u64(llg_time() * {} / {}, {}, 0)",
+                    precision_ps, unit_ps, width
                 ),
-                width: 64,
+                width: *width,
                 signed: false,
                 fill: None,
             },

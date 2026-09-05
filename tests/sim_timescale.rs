@@ -1,6 +1,6 @@
 //! End-to-end simulator tests for timescale-aware delays: `#N` delays scale
-//! by the calling module's `timescale unit`, and `$time` returns the current
-//! time in the calling module's unit.
+//! by the calling module's `timescale unit`, and `$time`/`$stime` return the
+//! current time in the calling module's unit.
 //!
 //! The scheduler runs in design-precision ticks (the finest precision across
 //! the design); the codegen scales `#N` up to ticks and `$time` down to the
@@ -16,6 +16,31 @@ use llg::core::compile;
 use llg::sim;
 
 static SURELOG_LOCK: Mutex<()> = Mutex::new(());
+
+#[test]
+fn stime_is_the_32_bit_form_of_time() {
+    if !llg::sim::build::cmake_available() {
+        eprintln!("SKIP: cmake not available");
+        return;
+    }
+    let _guard = SURELOG_LOCK.lock().unwrap();
+    let stdout = run_design(
+        "stime",
+        &[(
+            "tb.sv",
+            "`timescale 1ns/1ns\n\
+             module tb;\n\
+                 initial begin\n\
+                     #4294967298;\n\
+                     $display(\"time=%0d stime=%0d\", $time, $stime);\n\
+                     $finish;\n\
+                 end\n\
+             endmodule\n",
+        )],
+    )
+    .expect("simulation should run");
+    assert_eq!(stdout, "time=4294967298 stime=2\n");
+}
 
 /// Compile `sv` in a fresh temp dir, run the simulator, and return its stdout
 /// (the hand-simulated trace is documented per test).

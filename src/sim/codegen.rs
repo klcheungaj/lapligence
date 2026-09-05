@@ -8585,7 +8585,7 @@ impl<'a> Codegen<'a> {
         }
     }
 
-    /// Lower system-function expressions ($clog2/$time/$bits/$signed/
+    /// Lower system-function expressions ($clog2/$time/$stime/$bits/$signed/
     /// $unsigned); timescale scaling happens here.
     fn lower_sys_func_expr(
         &mut self,
@@ -8613,17 +8613,20 @@ impl<'a> Codegen<'a> {
                     None,
                 ))
             }
-            "$time" => {
-                // `$time` returns the current time in the CALLING module's
-                // time unit; `llg_time()` is in design-precision ticks
-                // (1 tick = design_precision_ps ps), so now_ps = now * P.
+            "$time" | "$stime" => {
+                // Both functions return the current time in the CALLING
+                // module's unit; `$stime` is the 32-bit form. `llg_time()` is
+                // in design-precision ticks (1 tick = design_precision_ps
+                // ps), so now_ps = now * P.
                 let unit_ps = self.timescale_of_node(call).unit_ps;
+                let width = if name == "$stime" { 32 } else { 64 };
                 Ok(IrExpr::new(
                     IrExprKind::SysFunc(IrSysFunc::Time {
                         precision_ps: self.design_precision_ps,
                         unit_ps,
+                        width,
                     }),
-                    64,
+                    width,
                     false,
                     None,
                 ))
