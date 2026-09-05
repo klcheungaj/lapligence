@@ -19,14 +19,20 @@ use llg::core::compile;
 use llg::core::elab;
 use llg::ffi::surelog;
 use llg::ffi::vpi;
-use llg::ffi::vpi::VpiHandle;
+use llg::ffi::vpi::{OwnedHandle, VpiHandle};
 
 // ── VPI constants (SV additions used by the UHDM model) ──────────────────────
 
 const VPI_ELABORATED: c_int = vpi::vpiElaborated;
 
-fn iter<'session>(type_: c_int, obj: VpiHandle<'session>) -> Vec<VpiHandle<'session>> {
+fn iter<'session>(type_: c_int, obj: VpiHandle<'session>) -> Vec<OwnedHandle<'session>> {
     vpi::iterate(type_, obj)
+        .map(|it| it.collect())
+        .unwrap_or_default()
+}
+
+fn owned_iter<'session>(type_: c_int, obj: &OwnedHandle<'session>) -> Vec<OwnedHandle<'session>> {
+    obj.iterate(type_)
         .map(|it| it.collect())
         .unwrap_or_default()
 }
@@ -48,7 +54,7 @@ where
 {
     if let Some(it) = vpi::iterate(rel, obj) {
         for h in it {
-            f(h);
+            f(h.raw());
         }
     } else if let Some(h) = vpi::handle(rel, obj) {
         // `h` (OwnedHandle) stays alive until `f` returns.
@@ -109,8 +115,8 @@ struct RefStats {
 struct InstStats<'session> {
     full_name: String,
     def_name: String,
-    /// Raw VPI handle of the module instance (valid for the whole walk).
-    handle: VpiHandle<'session>,
+    /// Owned VPI handle of the module instance (valid for the whole walk).
+    handle: OwnedHandle<'session>,
     ports: usize,
     nets: usize,
     vars: usize,
@@ -133,10 +139,12 @@ struct InstStats<'session> {
 }
 
 impl<'session> InstStats<'session> {
-    fn new(mi: VpiHandle<'session>) -> Self {
+    fn new(mi: OwnedHandle<'session>) -> Self {
+        let full_name = vpi::obj_full_name(mi.raw());
+        let def_name = vpi::get_str(vpi::vpiDefName, mi.raw());
         Self {
-            full_name: vpi::obj_full_name(mi),
-            def_name: vpi::get_str(vpi::vpiDefName, mi),
+            full_name,
+            def_name,
             handle: mi,
             ports: 0,
             nets: 0,
@@ -156,10 +164,11 @@ impl<'session> InstStats<'session> {
     }
 }
 
-fn visit_module_inst<'session>(mi: VpiHandle<'session>) -> InstStats<'session> {
+fn visit_module_inst<'session>(mi: OwnedHandle<'session>) -> InstStats<'session> {
     let mut s = InstStats::new(mi);
 
-    for port in iter(vpi::vpiPort, mi) {
+    for port in owned_iter(vpi::vpiPort, &s.handle) {
+        let port = port.raw();
         s.ports += 1;
         if child_handle(vpi::vpiHighConn, port).is_none() {
             s.ports_missing_high_conn += 1;
@@ -169,14 +178,14 @@ fn visit_module_inst<'session>(mi: VpiHandle<'session>) -> InstStats<'session> {
         }
     }
 
-    s.nets += iter(vpi::vpiNet, mi).len();
-    s.vars += iter(vpi::vpiVariables, mi).len();
-    s.params += iter(vpi::vpiParameter, mi).len();
+    s.nets += owned_iter(vpi::vpiNet, &s.handle).len();
+    s.vars += owned_iter(vpi::vpiVariables, &s.handle).len();
+    s.params += owned_iter(vpi::vpiParameter, &s.handle).len();
 
     // Parameter assignments: count how many RHS are not plain constants.
-    for pa in iter(vpi::vpiParamAssign, mi) {
+    for pa in owned_iter(vpi::vpiParamAssign, &s.handle) {
         s.param_assigns += 1;
-        let rhs_is_constant = child_handle(vpi::vpiRhs, pa)
+        let rhs_is_constant = child_handle(vpi::vpiRhs, pa.raw())
             .map(|h| vpi::obj_type(h.raw()) == vpi::vpiConstant)
             .unwrap_or(false);
         if !rhs_is_constant {
@@ -184,14 +193,15 @@ fn visit_module_inst<'session>(mi: VpiHandle<'session>) -> InstStats<'session> {
         }
     }
 
-    s.cont_assigns += iter(vpi::vpiContAssign, mi).len();
+    s.cont_assigns += owned_iter(vpi::vpiContAssign, &s.handle).len();
 
     // Ranges: every net/var/param typespec range must fold to constants.
-    for obj in iter(vpi::vpiNet, mi)
+    for obj in owned_iter(vpi::vpiNet, &s.handle)
         .into_iter()
-        .chain(iter(vpi::vpiVariables, mi))
-        .chain(iter(vpi::vpiParameter, mi))
+        .chain(owned_iter(vpi::vpiVariables, &s.handle))
+        .chain(owned_iter(vpi::vpiParameter, &s.handle))
     {
+        let obj = obj.raw();
         if let Some(ts) = child_handle(vpi::vpiTypespec, obj) {
             if let Some(range) = child_handle(vpi::vpiRange, ts.raw()) {
                 let l = child_handle(vpi::vpiLeftRange, range.raw())
@@ -207,7 +217,8 @@ fn visit_module_inst<'session>(mi: VpiHandle<'session>) -> InstStats<'session> {
         }
     }
 
-    for proc in iter(vpi::vpiProcess, mi) {
+    for proc in owned_iter(vpi::vpiProcess, &s.handle) {
+        let proc = proc.raw();
         s.processes += 1;
         // initial/final blocks don't need a sensitivity list.  Surelog gives
         // every process vpiAlwaysType=1 (vpiAlways), so distinguish by the
@@ -233,10 +244,10 @@ fn visit_module_inst<'session>(mi: VpiHandle<'session>) -> InstStats<'session> {
         }
     }
 
-    s.gen_scopes += iter(vpi::vpiGenScopeArray, mi).len();
+    s.gen_scopes += owned_iter(vpi::vpiGenScopeArray, &s.handle).len();
 
     // Instance tree: children via vpiModule relationship.
-    for child in iter(vpi::vpiModule, mi) {
+    for child in owned_iter(vpi::vpiModule, &s.handle) {
         s.children.push(visit_module_inst(child));
     }
 
@@ -288,7 +299,7 @@ fn print_tree(s: &InstStats, depth: usize, resolver: &mut elab::Resolver) {
             s.unfolded_param_exprs
         );
     }
-    print_resolved_params(s.handle, &ind, resolver);
+    print_resolved_params(s.handle.raw(), &ind, resolver);
     for c in &s.children {
         print_tree(c, depth + 1, resolver);
     }
@@ -310,9 +321,16 @@ fn print_resolved_params(handle: VpiHandle, ind: &str, resolver: &mut elab::Reso
         };
     print_scope("", handle, ind, resolver);
     for gsa in iter(vpi::vpiGenScopeArray, handle) {
-        for gs in iter(vpi::vpiGenScope, gsa) {
-            print_scope("", gs, ind, resolver);
+        for gs in iter(vpi::vpiGenScope, gsa.raw()) {
+            print_scope("", gs.raw(), ind, resolver);
         }
+    }
+}
+
+fn count_instance_refs(stats: &InstStats<'_>, total: &mut RefStats) {
+    count_refs(stats.handle.raw(), total);
+    for child in &stats.children {
+        count_instance_refs(child, total);
     }
 }
 
@@ -399,15 +417,10 @@ fn main() {
     let top_modules = iter(vpi::uhdmtopModules, design_h);
     println!("top modules: {}", top_modules.len());
     let mut resolver = elab::Resolver::new();
-    for top in &top_modules {
-        let stats = visit_module_inst(*top);
+    for top in top_modules {
+        let stats = visit_module_inst(top);
         print_tree(&stats, 0, &mut resolver);
-        // Walk the whole tree for ref-binding stats.
-        let mut stack = vec![*top];
-        while let Some(h) = stack.pop() {
-            count_refs(h, &mut total_refs);
-            stack.extend(iter(vpi::vpiModule, h));
-        }
+        count_instance_refs(&stats, &mut total_refs);
     }
 
     println!(

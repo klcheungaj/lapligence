@@ -1882,7 +1882,7 @@ unsafe extern "C" {
 /// An owned VPI handle that calls `vpi_release_handle` on drop.
 ///
 /// Handles obtained from `vpi_handle_by_name`, `vpi_handle` (1-to-1 nav),
-/// `vpi_register_cb`, and partial `VpiIter` drops are owning handles and
+/// `vpi_register_cb`, and every successful `vpi_scan` are owning handles and
 /// should be wrapped with this type.
 pub struct OwnedHandle<'session>(VpiHandle<'session>);
 
@@ -1929,6 +1929,15 @@ impl<'session> OwnedHandle<'session> {
         // allocated relationship wrapper owned by the caller.
         OwnedHandle::from_raw(unsafe { vpi_handle(type_, self.0.as_raw()) })
     }
+
+    /// Iterate an independently owned 1-to-many relationship.
+    ///
+    /// Unlike calling [`iterate`] with [`Self::raw`], the returned iterator
+    /// retains the original Surelog-session brand. This is useful when its
+    /// owned results must outlive the borrow of `self`.
+    pub fn iterate(&self, type_: PLI_INT32) -> Option<VpiIter<'session>> {
+        iterate(type_, self.0)
+    }
 }
 
 impl Drop for OwnedHandle<'_> {
@@ -1945,11 +1954,12 @@ impl Drop for OwnedHandle<'_> {
 
 /// An iterator over a 1-to-many VPI relationship (from `vpi_iterate`).
 ///
-/// Yields raw `VpiHandle` values. The underlying iterator handle is released
-/// automatically if the iterator is dropped before exhaustion.
+/// Every successful scan allocates an independent handle, so the iterator
+/// yields [`OwnedHandle`] values. The underlying iterator handle is released
+/// when `VpiIter` is dropped, whether iteration stops early or reaches EOF.
 pub struct VpiIter<'session> {
     iter_handle: RawVpiHandle,
-    done: bool,
+    exhausted: bool,
     session: PhantomData<&'session ()>,
 }
 
@@ -1957,7 +1967,7 @@ impl VpiIter<'_> {
     fn new(iter_handle: RawVpiHandle) -> Self {
         Self {
             iter_handle,
-            done: false,
+            exhausted: false,
             session: PhantomData,
         }
     }
@@ -1965,9 +1975,9 @@ impl VpiIter<'_> {
 
 impl Drop for VpiIter<'_> {
     fn drop(&mut self) {
-        // vpi_scan frees the iterator when it returns null; if not done yet
-        // we must free it ourselves.
-        if !self.done && !self.iter_handle.is_null() {
+        if !self.iter_handle.is_null() {
+            // SAFETY: `VpiIter` uniquely owns the non-null iterator wrapper
+            // returned by `vpi_iterate` and releases it exactly once here.
             unsafe {
                 vpi_release_handle(self.iter_handle);
             }
@@ -1976,25 +1986,19 @@ impl Drop for VpiIter<'_> {
 }
 
 impl<'session> Iterator for VpiIter<'session> {
-    /// Raw handles from `vpi_scan` are borrowed from the design model and
-    /// must not be freed by the caller.
-    type Item = VpiHandle<'session>;
+    type Item = OwnedHandle<'session>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.done || self.iter_handle.is_null() {
+        if self.exhausted || self.iter_handle.is_null() {
             return None;
         }
-        // SAFETY: `iter_handle` is a live iterator created for `'session`.
-        let h = unsafe { vpi_scan(self.iter_handle) };
-        if h.is_null() {
-            // vpi_scan freed the iterator; mark done so Drop skips it.
-            self.done = true;
-            None
-        } else {
-            // SAFETY: scanned objects are borrowed from the same UHDM session
-            // as the iterator that produced them.
-            Some(unsafe { VpiHandle::from_raw(h) })
+        // SAFETY: `iter_handle` remains a live iterator until `Drop`; the
+        // returned allocation is either null at EOF or uniquely caller-owned.
+        let next = OwnedHandle::from_raw(unsafe { vpi_scan(self.iter_handle) });
+        if next.is_none() {
+            self.exhausted = true;
         }
+        next
     }
 }
 

@@ -43,19 +43,19 @@ fn inst_visit(obj_h: VpiHandle, margin: &str) -> String {
 
     if ty == vpi::vpiModule || ty == vpi::vpiGenScope {
         for sub_h in vpi::iterate(vpi::vpiModule, obj_h).into_iter().flatten() {
-            res.push_str(&inst_visit(sub_h, &deeper));
+            res.push_str(&inst_visit(sub_h.raw(), &deeper));
         }
         for sub_h in vpi::iterate(vpi::vpiGenScopeArray, obj_h)
             .into_iter()
             .flatten()
         {
-            res.push_str(&inst_visit(sub_h, &deeper));
+            res.push_str(&inst_visit(sub_h.raw(), &deeper));
         }
     }
 
     if ty == vpi::vpiGenScopeArray {
         for sub_h in vpi::iterate(vpi::vpiGenScope, obj_h).into_iter().flatten() {
-            res.push_str(&inst_visit(sub_h, &deeper));
+            res.push_str(&inst_visit(sub_h.raw(), &deeper));
         }
     }
 
@@ -127,6 +127,7 @@ fn main() {
             .into_iter()
             .flatten()
         {
+            let obj_h = obj_h.raw();
             if vpi::obj_type(obj_h) != vpi::vpiModule {
                 result.push_str("ERROR: this is not a module\n");
             }
@@ -150,6 +151,7 @@ fn main() {
             ));
 
             for sub_h in vpi::iterate(vpi::vpiProcess, obj_h).into_iter().flatten() {
+                let sub_h = sub_h.raw();
                 let sub_file = vpi::obj_file(sub_h);
                 let sub_line = vpi::get(vpi::vpiLineNo, sub_h);
                 result.push_str(&format!(
@@ -161,6 +163,7 @@ fn main() {
                 .into_iter()
                 .flatten()
             {
+                let sub_h = sub_h.raw();
                 let sub_file = vpi::obj_file(sub_h);
                 let sub_line = vpi::get(vpi::vpiLineNo, sub_h);
                 result.push_str(&format!(
@@ -169,6 +172,7 @@ fn main() {
             }
 
             for sub_h in vpi::iterate(vpi::vpiNets, obj_h).into_iter().flatten() {
+                let sub_h = sub_h.raw();
                 let sub_file = vpi::obj_file(sub_h);
                 let sub_line = vpi::get(vpi::vpiLineNo, sub_h);
                 let sub_char = vpi::get(vpi::vpiSize, sub_h);
@@ -178,6 +182,7 @@ fn main() {
             }
 
             for sub_h in vpi::iterate(vpi::vpiNet, obj_h).into_iter().flatten() {
+                let sub_h = sub_h.raw();
                 let sub_file = vpi::obj_file(sub_h);
                 let sub_line = vpi::get(vpi::vpiLineNo, sub_h);
                 let column: i32 = vpi::get(vpi::vpiColumnNo, sub_h);
@@ -192,6 +197,7 @@ fn main() {
                 .into_iter()
                 .flatten()
             {
+                let sub_h = sub_h.raw();
                 let sub_file = vpi::obj_file(sub_h);
                 let sub_line = vpi::get(vpi::vpiLineNo, sub_h);
                 result.push_str(&format!(
@@ -200,6 +206,7 @@ fn main() {
             }
 
             for sub_h in vpi::iterate(vpi::vpiLogicVar, obj_h).into_iter().flatten() {
+                let sub_h = sub_h.raw();
                 let sub_file = vpi::obj_file(sub_h);
                 let sub_line = vpi::get(vpi::vpiLineNo, sub_h);
                 result.push_str(&format!(
@@ -207,6 +214,7 @@ fn main() {
                 ));
             }
             for sub_h in vpi::iterate(vpi::vpiNetType, obj_h).into_iter().flatten() {
+                let sub_h = sub_h.raw();
                 let sub_file = vpi::obj_file(sub_h);
                 let sub_line = vpi::get(vpi::vpiLineNo, sub_h);
                 result.push_str(&format!(
@@ -214,6 +222,7 @@ fn main() {
                 ));
             }
             for sub_h in vpi::iterate(vpi::vpiWire, obj_h).into_iter().flatten() {
+                let sub_h = sub_h.raw();
                 let sub_file = vpi::obj_file(sub_h);
                 let sub_line = vpi::get(vpi::vpiLineNo, sub_h);
                 result.push_str(&format!(
@@ -221,6 +230,7 @@ fn main() {
                 ));
             }
             for sub_h in vpi::iterate(vpi::vpiReg, obj_h).into_iter().flatten() {
+                let sub_h = sub_h.raw();
                 let sub_file = vpi::obj_file(sub_h);
                 let sub_line = vpi::get(vpi::vpiLineNo, sub_h);
                 result.push_str(&format!(
@@ -228,6 +238,7 @@ fn main() {
                 ));
             }
             for sub_h in vpi::iterate(vpi::vpiRegBit, obj_h).into_iter().flatten() {
+                let sub_h = sub_h.raw();
                 let sub_file = vpi::obj_file(sub_h);
                 let sub_line = vpi::get(vpi::vpiLineNo, sub_h);
                 result.push_str(&format!(
@@ -235,6 +246,7 @@ fn main() {
                 ));
             }
             for sub_h in vpi::iterate(vpi::vpiDriver, obj_h).into_iter().flatten() {
+                let sub_h = sub_h.raw();
                 let sub_file = vpi::obj_file(sub_h);
                 let sub_line = vpi::get(vpi::vpiLineNo, sub_h);
                 result.push_str(&format!(
@@ -242,6 +254,7 @@ fn main() {
                 ));
             }
             for sub_h in vpi::iterate(vpi::vpiVariables, obj_h).into_iter().flatten() {
+                let sub_h = sub_h.raw();
                 let sub_file = vpi::obj_file(sub_h);
                 let sub_line = vpi::get(vpi::vpiLineNo, sub_h);
                 result.push_str(&format!(
@@ -249,6 +262,7 @@ fn main() {
                 ));
             }
             for sub_h in vpi::iterate(vpi::vpiRegArray, obj_h).into_iter().flatten() {
+                let sub_h = sub_h.raw();
                 let sub_file = vpi::obj_file(sub_h);
                 let sub_line = vpi::get(vpi::vpiLineNo, sub_h);
                 result.push_str(&format!(
@@ -265,7 +279,7 @@ fn main() {
             .into_iter()
             .flatten()
         {
-            result.push_str(&inst_visit(top_h, ""));
+            result.push_str(&inst_visit(top_h.raw(), ""));
         }
 
         println!("{result}");

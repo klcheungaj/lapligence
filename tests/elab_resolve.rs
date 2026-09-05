@@ -127,22 +127,26 @@ fn resolve(design: vpi::VpiHandle<'_>, inst: &str) -> HashMap<String, elab::Val>
     let h = find_instance(design, inst);
     let mut resolver = elab::Resolver::new();
     resolver
-        .scope_params(h)
+        .scope_params(h.raw())
         .expect("resolve parameters")
         .into_iter()
         .collect()
 }
 
-fn collect_instances<'session>(design: vpi::VpiHandle<'session>) -> Vec<vpi::VpiHandle<'session>> {
+fn collect_instances<'session>(
+    design: vpi::VpiHandle<'session>,
+) -> Vec<vpi::OwnedHandle<'session>> {
     let mut out = Vec::new();
     if let Some(tops) = vpi::iterate(vpi::uhdmtopModules, design) {
         for top in tops {
             let mut stack = vec![top];
             while let Some(h) = stack.pop() {
+                let children = h
+                    .iterate(vpi::vpiModule)
+                    .map(|children| children.collect::<Vec<_>>())
+                    .unwrap_or_default();
                 out.push(h);
-                if let Some(children) = vpi::iterate(vpi::vpiModule, h) {
-                    stack.extend(children);
-                }
+                stack.extend(children);
             }
         }
     }
@@ -152,10 +156,10 @@ fn collect_instances<'session>(design: vpi::VpiHandle<'session>) -> Vec<vpi::Vpi
 fn find_instance<'session>(
     design: vpi::VpiHandle<'session>,
     name: &str,
-) -> vpi::VpiHandle<'session> {
+) -> vpi::OwnedHandle<'session> {
     collect_instances(design)
         .into_iter()
-        .find(|h| vpi::obj_name(*h) == name)
+        .find(|h| vpi::obj_name(h.raw()) == name)
         .unwrap_or_else(|| panic!("instance {name} not found"))
 }
 
@@ -232,13 +236,29 @@ fn resolves_param_top_instances() {
 }
 
 #[test]
+fn iterator_results_survive_eof_and_early_iterator_drop() {
+    with_design("param_top", PARAMS_SV, true, |design| {
+        let mut tops = vpi::iterate(vpi::uhdmtopModules, design).expect("top iterator");
+        let top = tops.next().expect("top module");
+        assert!(tops.next().is_none(), "expected one elaborated top");
+        drop(tops);
+        assert!(vpi::obj_name(top.raw()).ends_with("param_top"));
+
+        let mut children = top.iterate(vpi::vpiModule).expect("child iterator");
+        let child = children.next().expect("child module");
+        drop(children);
+        assert!(matches!(vpi::obj_name(child.raw()).as_str(), "u0" | "u1"));
+    });
+}
+
+#[test]
 fn cycle_detected() {
     // check_errors = false: Surelog reports EL0542 "Expression loop" errors
     // but still emits the UHDM design, which is exactly what we want to probe.
     with_design("cyc_top", CYCLE_SV, false, |design| {
         let h = find_instance(design, "u");
         let mut resolver = elab::Resolver::new();
-        let result = resolver.scope_params(h);
+        let result = resolver.scope_params(h.raw());
         assert!(
             result.is_err(),
             "cyclic parameters must fail to resolve, got {} params",

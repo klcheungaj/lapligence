@@ -721,18 +721,22 @@ impl Db {
         let design_name = vpi::get_str(vpi::vpiName, design);
         let mut b = Builder::default();
         for top in iter(vpi::uhdmtopModules, design) {
+            let top = top.raw();
             let id = b.walk_module_inst(top, None, None)?;
             b.tops.push(id);
         }
         for m in iter(vpi::uhdmallModules, design) {
+            let m = m.raw();
             let id = b.walk_flat_module(m, None)?;
             b.flat_modules.push(id);
         }
         for p in iter(vpi::uhdmallPackages, design) {
+            let p = p.raw();
             let id = b.walk_package(p, None)?;
             b.packages.push(id);
         }
         for c in iter(vpi::uhdmallClasses, design) {
+            let c = c.raw();
             let id = b.walk_class_defn(c, None)?;
             b.classes.push(id);
         }
@@ -818,7 +822,7 @@ impl Db {
 
 // ── VPI traversal helpers ─────────────────────────────────────────────────────
 
-fn iter(type_: c_int, obj: VpiHandle) -> Vec<VpiHandle> {
+fn iter(type_: c_int, obj: VpiHandle) -> Vec<OwnedHandle> {
     vpi::iterate(type_, obj)
         .map(|it| it.collect())
         .unwrap_or_default()
@@ -1001,7 +1005,7 @@ impl Builder {
             iter(element_relation, object)
                 .into_iter()
                 .next()
-                .and_then(|element| child(vpi::vpiTypespec, element))
+                .and_then(|element| element.child(vpi::vpiTypespec))
                 .or_else(|| child(vpi::vpiTypespec, object))
         } else {
             child(vpi::vpiTypespec, object).or_else(|| child(vpi::vpiTypedef, object))
@@ -1050,6 +1054,7 @@ impl Builder {
         }
 
         for range in iter(vpi::vpiRange, typespec) {
+            let range = range.raw();
             let left = self.range_bound(vpi::vpiLeftRange, range);
             let right = self.range_bound(vpi::vpiRightRange, range);
             ranges.push(
@@ -1140,6 +1145,7 @@ impl Builder {
         // those duplicate element nets are skipped below.
         let mut array_names: HashSet<String> = HashSet::new();
         for v in iter(vpi::vpiVariables, h) {
+            let v = v.raw();
             if is_array_type(vpi::obj_type(v)) {
                 let full = vpi::obj_full_name(v);
                 if !full.is_empty() {
@@ -1148,6 +1154,7 @@ impl Builder {
             }
         }
         for a in iter(vpi::vpiArrayNet, h) {
+            let a = a.raw();
             let full = vpi::obj_full_name(a);
             if !full.is_empty() {
                 array_names.insert(full);
@@ -1156,6 +1163,7 @@ impl Builder {
         // Nets/vars/params are indexed before everything that references them
         // (port connections, expression operands, modport io_decls).
         for net in iter(vpi::vpiNet, h) {
+            let net = net.raw();
             let full = vpi::obj_full_name(net);
             if array_names.contains(&full) {
                 continue; // element net of an unpacked array
@@ -1164,6 +1172,7 @@ impl Builder {
             kids.push(self.walk_net(net, Some(id))?);
         }
         for var in iter(vpi::vpiVariables, h) {
+            let var = var.raw();
             if is_array_type(vpi::obj_type(var)) {
                 self.capture_elaborated_type_ranges(h, var);
                 kids.push(self.walk_array(var, Some(id), false)?);
@@ -1173,6 +1182,7 @@ impl Builder {
             }
         }
         for arr in iter(vpi::vpiArrayNet, h) {
+            let arr = arr.raw();
             self.capture_elaborated_type_ranges(h, arr);
             kids.push(self.walk_array(arr, Some(id), true)?);
         }
@@ -1181,24 +1191,25 @@ impl Builder {
         // the declarations beneath each enum `vpiTypedef`, while uses are
         // ref objects whose `vpiActual` points back to those constants.
         for ts in iter(vpi::vpiTypedef, h) {
+            let ts = ts.raw();
             if vpi::obj_type(ts) != vpi::vpiEnumTypespec {
                 continue;
             }
             for ec in iter(vpi::vpiEnumConst, ts) {
-                kids.push(self.walk_enum_const(ec, Some(id))?);
+                kids.push(self.walk_enum_const(ec.raw(), Some(id))?);
             }
         }
         // Named events (`event ev;`) are indexed before anything that
         // references them (trigger statements inside process bodies resolve
         // by name against these captures).
         for ne in iter(vpi::vpiNamedEvent, h) {
-            kids.push(self.walk_named_event(ne, Some(id))?);
+            kids.push(self.walk_named_event(ne.raw(), Some(id))?);
         }
         // Functions/tasks are captured before anything that calls them
         // (param_assign RHS calls, process bodies, nested function bodies),
         // so `FuncCall.callee` resolution finds the per-instance clone.
         for tf in iter(vpi::vpiTaskFunc, h) {
-            kids.push(self.walk_task_func(tf, Some(id))?);
+            kids.push(self.walk_task_func(tf.raw(), Some(id))?);
         }
         // Parameters: resolved values; a resolution failure leaves every
         // parameter of this instance with `value: None` (never fails).
@@ -1209,6 +1220,7 @@ impl Builder {
             .into_iter()
             .collect::<HashMap<String, Val>>();
         for p in iter(vpi::vpiParameter, h) {
+            let p = p.raw();
             let value = resolved.get(&vpi::obj_name(p)).cloned();
             self.capture_elaborated_type_ranges(h, p);
             kids.push(self.walk_param(p, Some(id), value)?);
@@ -1216,42 +1228,43 @@ impl Builder {
         // Modports (interface instances only) are indexed before ports so
         // interface port `low` connections resolve to the copy's modport.
         for mp in iter(vpi::vpiModport, h) {
-            kids.push(self.walk_modport(mp, Some(id))?);
+            kids.push(self.walk_modport(mp.raw(), Some(id))?);
         }
         // Child instances come before ports: an interface port's `low` (the
         // per-port copy) and a plain port's `low` (the child-side signal)
         // live inside the child and must be captured first.
         for iface in iter(vpi::vpiInterface, h) {
-            kids.push(self.walk_module_inst(iface, Some(props.file.as_str()), Some(id))?);
+            kids.push(self.walk_module_inst(iface.raw(), Some(props.file.as_str()), Some(id))?);
         }
         for c in iter(vpi::vpiModule, h) {
-            kids.push(self.walk_module_inst(c, Some(props.file.as_str()), Some(id))?);
+            kids.push(self.walk_module_inst(c.raw(), Some(props.file.as_str()), Some(id))?);
         }
         for port in iter(vpi::vpiPort, h) {
+            let port = port.raw();
             self.capture_elaborated_type_ranges(h, port);
             kids.push(self.walk_port(port, Some(id))?);
         }
         for pa in iter(vpi::vpiParamAssign, h) {
-            kids.push(self.walk_param_assign(pa, Some(id))?);
+            kids.push(self.walk_param_assign(pa.raw(), Some(id))?);
         }
         for proc in iter(vpi::vpiProcess, h) {
-            kids.push(self.walk_process(proc, Some(id))?);
+            kids.push(self.walk_process(proc.raw(), Some(id))?);
         }
         for ca in iter(vpi::vpiContAssign, h) {
-            kids.push(self.walk_cont_assign(ca, Some(id))?);
+            kids.push(self.walk_cont_assign(ca.raw(), Some(id))?);
         }
         // Structural primitives (gates, enable gates, pullup/pulldown,
         // switch/transistor primitives, UDP instances) and their arrays, in
         // document order after the continuous assignments.  Gate terminals
         // reference nets/vars captured above.
         for p in iter(vpi::vpiPrimitive, h) {
-            kids.push(self.walk_primitive(p, Some(id))?);
+            kids.push(self.walk_primitive(p.raw(), Some(id))?);
         }
         for pa in iter(vpi::vpiPrimitiveArray, h) {
-            kids.push(self.walk_primitive_array(pa, Some(id))?);
+            kids.push(self.walk_primitive_array(pa.raw(), Some(id))?);
         }
         for gsa in iter(vpi::vpiGenScopeArray, h) {
-            kids.push(self.walk_gen_scope_array(gsa, Some(id))?);
+            kids.push(self.walk_gen_scope_array(gsa.raw(), Some(id))?);
         }
         self.set_children(id, kids);
         Ok(id)
@@ -1279,11 +1292,12 @@ impl Builder {
         );
         let mut kids = Vec::new();
         for ts in iter(vpi::vpiTypedef, h) {
+            let ts = ts.raw();
             if vpi::obj_type(ts) != vpi::vpiEnumTypespec {
                 continue;
             }
             for ec in iter(vpi::vpiEnumConst, ts) {
-                kids.push(self.walk_enum_const(ec, Some(id))?);
+                kids.push(self.walk_enum_const(ec.raw(), Some(id))?);
             }
         }
         self.set_children(id, kids);
@@ -1320,6 +1334,7 @@ impl Builder {
             Err(_) => HashMap::new(),
         };
         for p in iter(vpi::vpiParameter, h) {
+            let p = p.raw();
             let value = resolved.get(&vpi::obj_name(p)).cloned();
             kids.push(self.walk_param(p, Some(id), value)?);
         }
@@ -1327,16 +1342,17 @@ impl Builder {
         // (Surelog v1.86 emits each enum typedef as an `enum_typespec` with
         // one `vpiEnumConst` per enumerator, in declaration order).
         for ts in iter(vpi::vpiTypedef, h) {
+            let ts = ts.raw();
             if vpi::obj_type(ts) != vpi::vpiEnumTypespec {
                 continue;
             }
             for ec in iter(vpi::vpiEnumConst, ts) {
-                kids.push(self.walk_enum_const(ec, Some(id))?);
+                kids.push(self.walk_enum_const(ec.raw(), Some(id))?);
             }
         }
         // Functions/tasks declared directly in the package.
         for tf in iter(vpi::vpiTaskFunc, h) {
-            kids.push(self.walk_task_func(tf, Some(id))?);
+            kids.push(self.walk_task_func(tf.raw(), Some(id))?);
         }
         self.set_children(id, kids);
         Ok(id)
@@ -1363,10 +1379,10 @@ impl Builder {
         self.index_node(h, &props, id);
         let mut kids: Vec<NodeId> = Vec::new();
         for v in iter(vpi::vpiVariables, h) {
-            kids.push(self.walk_var(v, Some(id))?);
+            kids.push(self.walk_var(v.raw(), Some(id))?);
         }
         for m in iter(vpi::vpiMethod, h) {
-            kids.push(self.walk_task_func(m, Some(id))?);
+            kids.push(self.walk_task_func(m.raw(), Some(id))?);
         }
         self.set_children(id, kids);
         Ok(id)
@@ -1492,6 +1508,7 @@ impl Builder {
                 let mut names: Vec<String> = Vec::new();
                 let mut actual: Option<NodeId> = None;
                 for a in iter(vpi::vpiActual, hc.raw()) {
+                    let a = a.raw();
                     let n = vpi::obj_name(a);
                     if !n.is_empty() {
                         names.push(n);
@@ -1541,7 +1558,7 @@ impl Builder {
         }
         let mut kids: Vec<NodeId> = Vec::new();
         for io in iter(vpi::vpiIODecl, h) {
-            kids.push(self.walk_io_decl(io, Some(id))?);
+            kids.push(self.walk_io_decl(io.raw(), Some(id))?);
         }
         self.set_children(id, kids);
         Ok(id)
@@ -1644,11 +1661,12 @@ impl Builder {
             .into_iter()
             .next();
         let ty = match el {
-            Some(e) => self.type_info_of(e),
+            Some(e) => self.type_info_of(e.raw()),
             None => self.type_info_of(h),
         };
         let mut dims: Vec<Option<(i32, i32)>> = Vec::new();
         for r in iter(vpi::vpiRange, h) {
+            let r = r.raw();
             let left = self.range_bound(vpi::vpiLeftRange, r);
             let right = self.range_bound(vpi::vpiRightRange, r);
             dims.push(match (left, right) {
@@ -1728,6 +1746,7 @@ impl Builder {
         }
         // Formal arguments, in declaration order.
         for io in iter(vpi::vpiIODecl, h) {
+            let io = io.raw();
             let direction = match vpi::get(vpi::vpiDirection, io) {
                 vpi::vpiInput => Direction::Input,
                 vpi::vpiOutput => Direction::Output,
@@ -1908,6 +1927,7 @@ impl Builder {
         );
         let mut terms: Vec<GateTerm> = Vec::new();
         for t in iter(vpi::vpiPrimTerm, h) {
+            let t = t.raw();
             let direction = vpi::get(vpi::vpiDirection, t);
             let term_index = vpi::get(vpi::vpiTermIndex, t);
             let expr = child(vpi::vpiExpr, t).ok_or_else(|| {
@@ -2009,7 +2029,7 @@ impl Builder {
         let id = self.register(parent, &props, NodeKind::GenScopeArray);
         let mut kids: Vec<NodeId> = Vec::new();
         for gs in iter(vpi::vpiGenScope, h) {
-            kids.push(self.walk_gen_scope(gs, Some(id))?);
+            kids.push(self.walk_gen_scope(gs.raw(), Some(id))?);
         }
         self.set_children(id, kids);
         Ok(id)
@@ -2024,17 +2044,19 @@ impl Builder {
         };
         let mut kids: Vec<NodeId> = Vec::new();
         for p in iter(vpi::vpiParameter, h) {
+            let p = p.raw();
             let value = resolved.get(&vpi::obj_name(p)).cloned();
             self.capture_elaborated_type_ranges(h, p);
             kids.push(self.walk_param(p, Some(id), value)?);
         }
         for pa in iter(vpi::vpiParamAssign, h) {
-            kids.push(self.walk_param_assign(pa, Some(id))?);
+            kids.push(self.walk_param_assign(pa.raw(), Some(id))?);
         }
         // Array handling mirrors `walk_module_inst`: skip the duplicate
         // module-level element nets, walk array_vars/array_nets as arrays.
         let mut array_names: HashSet<String> = HashSet::new();
         for v in iter(vpi::vpiVariables, h) {
+            let v = v.raw();
             if is_array_type(vpi::obj_type(v)) {
                 let full = vpi::obj_full_name(v);
                 if !full.is_empty() {
@@ -2043,12 +2065,14 @@ impl Builder {
             }
         }
         for a in iter(vpi::vpiArrayNet, h) {
+            let a = a.raw();
             let full = vpi::obj_full_name(a);
             if !full.is_empty() {
                 array_names.insert(full);
             }
         }
         for net in iter(vpi::vpiNet, h) {
+            let net = net.raw();
             let full = vpi::obj_full_name(net);
             if array_names.contains(&full) {
                 continue; // element net of an unpacked array
@@ -2057,6 +2081,7 @@ impl Builder {
             kids.push(self.walk_net(net, Some(id))?);
         }
         for var in iter(vpi::vpiVariables, h) {
+            let var = var.raw();
             if is_array_type(vpi::obj_type(var)) {
                 self.capture_elaborated_type_ranges(h, var);
                 kids.push(self.walk_array(var, Some(id), false)?);
@@ -2066,35 +2091,36 @@ impl Builder {
             }
         }
         for arr in iter(vpi::vpiArrayNet, h) {
+            let arr = arr.raw();
             self.capture_elaborated_type_ranges(h, arr);
             kids.push(self.walk_array(arr, Some(id), true)?);
         }
         // Named events elaborated per generate iteration (see
         // `walk_module_inst`); indexed before the scope's processes.
         for ne in iter(vpi::vpiNamedEvent, h) {
-            kids.push(self.walk_named_event(ne, Some(id))?);
+            kids.push(self.walk_named_event(ne.raw(), Some(id))?);
         }
         // Instances inside generate scopes (per-iteration interface instances,
         // nested modules) are captured so their signals and ports resolve.
         for iface in iter(vpi::vpiInterface, h) {
-            kids.push(self.walk_module_inst(iface, Some(props.file.as_str()), Some(id))?);
+            kids.push(self.walk_module_inst(iface.raw(), Some(props.file.as_str()), Some(id))?);
         }
         for c in iter(vpi::vpiModule, h) {
-            kids.push(self.walk_module_inst(c, Some(props.file.as_str()), Some(id))?);
+            kids.push(self.walk_module_inst(c.raw(), Some(props.file.as_str()), Some(id))?);
         }
         for ca in iter(vpi::vpiContAssign, h) {
-            kids.push(self.walk_cont_assign(ca, Some(id))?);
+            kids.push(self.walk_cont_assign(ca.raw(), Some(id))?);
         }
         // Structural primitives elaborated per generate iteration (see
         // `walk_module_inst`).
         for p in iter(vpi::vpiPrimitive, h) {
-            kids.push(self.walk_primitive(p, Some(id))?);
+            kids.push(self.walk_primitive(p.raw(), Some(id))?);
         }
         for pa in iter(vpi::vpiPrimitiveArray, h) {
-            kids.push(self.walk_primitive_array(pa, Some(id))?);
+            kids.push(self.walk_primitive_array(pa.raw(), Some(id))?);
         }
         for proc in iter(vpi::vpiProcess, h) {
-            kids.push(self.walk_process(proc, Some(id))?);
+            kids.push(self.walk_process(proc.raw(), Some(id))?);
         }
         self.set_children(id, kids);
         Ok(id)
@@ -2136,16 +2162,16 @@ impl Builder {
                 // here — they arrive as ordinary 1-bit `logic_var`s under the
                 // block's `vpiVariables` (see [`NodeKind::NamedEvent`]).
                 for ne in iter(vpi::vpiNamedEvent, h) {
-                    kids.push(self.walk_named_event(ne, Some(id))?);
+                    kids.push(self.walk_named_event(ne.raw(), Some(id))?);
                 }
                 // Locals declared inside the block (function/task bodies,
                 // named blocks) are captured as Var children so refs resolve
                 // and `sim::codegen` can hoist their declarations.
                 for v in iter(vpi::vpiVariables, h) {
-                    kids.push(self.walk_var(v, Some(id))?);
+                    kids.push(self.walk_var(v.raw(), Some(id))?);
                 }
                 for s in iter(vpi::vpiStmt, h) {
-                    kids.push(self.walk_node(s, Some(id))?);
+                    kids.push(self.walk_node(s.raw(), Some(id))?);
                 }
                 self.set_children(id, kids);
                 // Index named begin blocks so `disable <label>` targets
@@ -2196,9 +2222,10 @@ impl Builder {
                 let mut kids = vec![sel_id];
                 let mut items = Vec::new();
                 for item in iter(vpi::vpiCaseItem, h) {
+                    let item = item.raw();
                     let mut exprs = Vec::new();
                     for e in iter(vpi::vpiExpr, item) {
-                        let eid = self.walk_node(e, Some(id))?;
+                        let eid = self.walk_node(e.raw(), Some(id))?;
                         kids.push(eid);
                         exprs.push(eid);
                     }
@@ -2219,7 +2246,7 @@ impl Builder {
                 let mut kids: Vec<NodeId> = Vec::new();
                 let mut init = Vec::new();
                 for s in iter(vpi::vpiForInitStmt, h) {
-                    let sid = self.walk_node(s, Some(id))?;
+                    let sid = self.walk_node(s.raw(), Some(id))?;
                     kids.push(sid);
                     init.push(sid);
                 }
@@ -2229,7 +2256,7 @@ impl Builder {
                 kids.push(cond_id);
                 let mut incr = Vec::new();
                 for s in iter(vpi::vpiForIncStmt, h) {
-                    let sid = self.walk_node(s, Some(id))?;
+                    let sid = self.walk_node(s.raw(), Some(id))?;
                     kids.push(sid);
                     incr.push(sid);
                 }
@@ -2401,7 +2428,7 @@ impl Builder {
                 );
                 let mut branches = Vec::new();
                 for b in iter(vpi::vpiStmt, h) {
-                    branches.push(self.walk_node(b, Some(id))?);
+                    branches.push(self.walk_node(b.raw(), Some(id))?);
                 }
                 self.set_children(id, branches.clone());
                 self.set_stmt(
@@ -2479,7 +2506,7 @@ impl Builder {
                 let mut operands = Vec::new();
                 let mut kids: Vec<NodeId> = Vec::new();
                 for o in iter(vpi::vpiOperand, h) {
-                    let oid = self.walk_node(o, Some(id))?;
+                    let oid = self.walk_node(o.raw(), Some(id))?;
                     kids.push(oid);
                     operands.push(oid);
                 }
@@ -2529,7 +2556,7 @@ impl Builder {
                     let mut kids = vec![base];
                     let mut indices = Vec::new();
                     for i in idxs {
-                        let iid = self.walk_node(i, Some(id))?;
+                        let iid = self.walk_node(i.raw(), Some(id))?;
                         kids.push(iid);
                         indices.push(iid);
                     }
@@ -2596,6 +2623,7 @@ impl Builder {
                 // path element; each ref_obj's own `vpiActual` is the
                 // concrete target.
                 for a in iter(vpi::vpiActual, h) {
+                    let a = a.raw();
                     let n = vpi::obj_name(a);
                     if !n.is_empty() {
                         parts.push(n);
@@ -2610,7 +2638,7 @@ impl Builder {
                 let name = vpi::obj_name(h);
                 let mut kids: Vec<NodeId> = Vec::new();
                 for a in iter(vpi::vpiArgument, h) {
-                    kids.push(self.walk_node(a, Some(id))?);
+                    kids.push(self.walk_node(a.raw(), Some(id))?);
                 }
                 self.set_children(id, kids);
                 self.set_kind(id, NodeKind::SysCall { name });
@@ -2634,7 +2662,7 @@ impl Builder {
                 .and_then(|c| self.resolve_direct(c.raw()));
                 let mut kids: Vec<NodeId> = Vec::new();
                 for a in iter(vpi::vpiArgument, h) {
-                    kids.push(self.walk_node(a, Some(id))?);
+                    kids.push(self.walk_node(a.raw(), Some(id))?);
                 }
                 self.set_children(id, kids);
                 self.set_kind(
@@ -2652,7 +2680,7 @@ impl Builder {
                 let mut kids: Vec<NodeId> = Vec::new();
                 for rel in OTHER_CHILD_RELS {
                     for c in iter(rel, h) {
-                        kids.push(self.walk_node(c, Some(id))?);
+                        kids.push(self.walk_node(c.raw(), Some(id))?);
                     }
                     if let Some(c) = child(rel, h) {
                         kids.push(self.walk_node(c.raw(), Some(id))?);
@@ -2714,16 +2742,21 @@ impl Builder {
         let mut implicit = false;
         match child(vpi::vpiCondition, h) {
             Some(cond) => {
-                let mut stack = vec![cond.raw()];
-                while let Some(node) = stack.pop() {
+                let mut stack = vec![cond];
+                while let Some(node_handle) = stack.pop() {
+                    let node = node_handle.raw();
                     let nt = vpi::obj_type(node);
                     if nt == vpi::vpiOperation {
                         let op = vpi::get(vpi::vpiOpType, node);
                         match op {
-                            vpi::vpiEventOrOp => stack.extend(iter(vpi::vpiOperand, node)),
+                            vpi::vpiEventOrOp => {
+                                if let Some(operands) = node_handle.iterate(vpi::vpiOperand) {
+                                    stack.extend(operands);
+                                }
+                            }
                             vpi::vpiPosedgeOp | vpi::vpiNegedgeOp => {
                                 if let Some(sig) = iter(vpi::vpiOperand, node).into_iter().next() {
-                                    let sid = self.walk_node(sig, Some(id))?;
+                                    let sid = self.walk_node(sig.raw(), Some(id))?;
                                     kids.push(sid);
                                     specs.push(EventSpec::Edge {
                                         sig: sid,
@@ -3183,8 +3216,8 @@ impl Builder {
         let mut any = false;
         for r in iter(vpi::vpiRange, ts) {
             any = true;
-            let l = self.range_bound(vpi::vpiLeftRange, r)?;
-            let rr = self.range_bound(vpi::vpiRightRange, r)?;
+            let l = self.range_bound(vpi::vpiLeftRange, r.raw())?;
+            let rr = self.range_bound(vpi::vpiRightRange, r.raw())?;
             let dim = (l - rr).abs() + 1;
             total = total.saturating_mul(dim as u64);
         }

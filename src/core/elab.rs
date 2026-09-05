@@ -14,12 +14,11 @@
 //! expression (operations, selects, casts, `$clog2` / `$bits`, …) in the
 //! context of a scope.
 //!
-//! Handle-lifetime rule (a real bug class in this codebase): raw handles from
-//! `vpi::iterate` are borrowed and fine to pass around, but handles from
-//! `vpi::handle(...)` are `OwnedHandle` values that free the wrapper on drop.
-//! Whenever a child handle is needed for the duration of a recursive
-//! evaluation, keep the `OwnedHandle` alive in a local and use `.raw()` for
-//! nested calls — never store a raw pointer extracted from an `OwnedHandle`.
+//! Handle-lifetime rule (a real bug class in this codebase): handles from
+//! `vpi::iterate` and `vpi::handle(...)` are `OwnedHandle` values that free
+//! their wrappers on drop. Whenever an owned handle is needed for recursive
+//! evaluation, keep it alive in a local and use `.raw()` for nested calls —
+//! never store a raw pointer extracted from an `OwnedHandle`.
 
 #![allow(non_upper_case_globals)]
 
@@ -1104,7 +1103,7 @@ impl std::error::Error for ElabError {}
 enum ParamSrc<'session> {
     /// Value read from the `parameter` object itself (gen-scope params,
     /// params without a `param_assign`).
-    OwnValue(VpiHandle<'session>),
+    OwnValue,
     /// Value obtained by evaluating the `param_assign` RHS expression.  The
     /// `OwnedHandle` is stored (not the raw pointer) so the wrapper stays
     /// alive for the whole evaluation; a raw pointer extracted from a dropped
@@ -1114,8 +1113,8 @@ enum ParamSrc<'session> {
 
 /// One parameter declaration in a scope.
 struct ParamEntry<'session> {
-    /// Raw handle to the `parameter` object (for typespec sizing).
-    handle: VpiHandle<'session>,
+    /// Owned handle to the `parameter` object (for value and typespec reads).
+    handle: OwnedHandle<'session>,
     src: ParamSrc<'session>,
 }
 
@@ -1130,9 +1129,9 @@ impl<'session> Scope<'session> {
     fn build(scope: VpiHandle<'session>) -> Result<Scope<'session>, ElabError> {
         let mut assigns: HashMap<String, OwnedHandle<'session>> = HashMap::new();
         for pa in iter(vpi::vpiParamAssign, scope) {
-            if let Some(lhs) = child(vpi::vpiLhs, pa) {
+            if let Some(lhs) = pa.child(vpi::vpiLhs) {
                 let name = vpi::obj_name(lhs.raw());
-                if let Some(rhs) = child(vpi::vpiRhs, pa) {
+                if let Some(rhs) = pa.child(vpi::vpiRhs) {
                     assigns.insert(name, rhs);
                 }
             }
@@ -1141,10 +1140,10 @@ impl<'session> Scope<'session> {
         let mut params: Vec<(String, ParamEntry<'session>)> = Vec::new();
         let mut by_name: HashMap<String, usize> = HashMap::new();
         for p in iter(vpi::vpiParameter, scope) {
-            let name = vpi::obj_name(p);
+            let name = vpi::obj_name(p.raw());
             let src = match assigns.remove(&name) {
                 Some(rhs) => ParamSrc::AssignExpr(rhs),
-                None => ParamSrc::OwnValue(p),
+                None => ParamSrc::OwnValue,
             };
             let idx = params.len();
             by_name.insert(name.clone(), idx);
@@ -1156,7 +1155,7 @@ impl<'session> Scope<'session> {
 
 // ── VPI traversal helpers ─────────────────────────────────────────────────────
 
-fn iter<'session>(type_: c_int, obj: VpiHandle<'session>) -> Vec<VpiHandle<'session>> {
+fn iter<'session>(type_: c_int, obj: VpiHandle<'session>) -> Vec<OwnedHandle<'session>> {
     vpi::iterate(type_, obj)
         .map(|it| it.collect())
         .unwrap_or_default()
@@ -1257,7 +1256,7 @@ impl Resolver {
             ParamSrc::AssignExpr(h) => {
                 self.eval_expr_ctx(sc, resolved, in_progress, &frame, h.raw())?
             }
-            ParamSrc::OwnValue(h) => read_value(*h)?,
+            ParamSrc::OwnValue => read_value(sc.params[idx].1.handle.raw())?,
         };
         in_progress.remove(name);
         let val = self.resize_to_declared(sc, resolved, in_progress, idx, val)?;
@@ -1275,7 +1274,7 @@ impl Resolver {
         idx: usize,
         val: Val,
     ) -> Result<Val, ElabError> {
-        let handle = sc.params[idx].1.handle;
+        let handle = sc.params[idx].1.handle.raw();
         match self.declared_of(sc, resolved, in_progress, handle)? {
             DeclaredType::Packed(width, signed) => match val {
                 // Assignment into the declared parameter type pads by the
@@ -1425,8 +1424,8 @@ impl Resolver {
         let mut any = false;
         for r in iter(vpi::vpiRange, ts) {
             any = true;
-            let l = self.range_bound(sc, resolved, in_progress, vpi::vpiLeftRange, r)?;
-            let rr = self.range_bound(sc, resolved, in_progress, vpi::vpiRightRange, r)?;
+            let l = self.range_bound(sc, resolved, in_progress, vpi::vpiLeftRange, r.raw())?;
+            let rr = self.range_bound(sc, resolved, in_progress, vpi::vpiRightRange, r.raw())?;
             let dim = checked_inclusive_width(l, rr, "typespec range")?;
             total = total.saturating_mul(dim as u64);
         }
@@ -1631,7 +1630,8 @@ impl Resolver {
         op: VpiHandle,
     ) -> Result<Val, ElabError> {
         let otype = vpi::get(vpi::vpiOpType, op);
-        let ops: Vec<VpiHandle> = iter(vpi::vpiOperand, op);
+        let op_handles = iter(vpi::vpiOperand, op);
+        let ops: Vec<VpiHandle> = op_handles.iter().map(OwnedHandle::raw).collect();
         let vals: Vec<Val> = ops
             .iter()
             .map(|h| self.eval_expr_ctx(sc, resolved, in_progress, frame, *h))
@@ -1997,7 +1997,8 @@ impl Resolver {
         call: VpiHandle,
     ) -> Result<Val, ElabError> {
         let name = vpi::obj_name(call);
-        let args: Vec<VpiHandle> = iter(vpi::vpiArgument, call);
+        let arg_handles = iter(vpi::vpiArgument, call);
+        let args: Vec<VpiHandle> = arg_handles.iter().map(OwnedHandle::raw).collect();
         match name.as_str() {
             "$clog2" => {
                 let a = self.op_bits(sc, resolved, in_progress, frame, &args, 0)?;
@@ -2061,8 +2062,10 @@ impl Resolver {
         }
         in_progress.insert(fname.clone());
 
-        let io: Vec<VpiHandle> = iter(vpi::vpiIODecl, func);
-        let args: Vec<VpiHandle> = iter(vpi::vpiArgument, call);
+        let io_handles = iter(vpi::vpiIODecl, func);
+        let io: Vec<VpiHandle> = io_handles.iter().map(OwnedHandle::raw).collect();
+        let arg_handles = iter(vpi::vpiArgument, call);
+        let args: Vec<VpiHandle> = arg_handles.iter().map(OwnedHandle::raw).collect();
 
         let mut callee_frame: HashMap<String, Val> = HashMap::new();
         let mut decl: HashMap<String, (usize, bool)> = HashMap::new();
@@ -2173,6 +2176,7 @@ impl Resolver {
     ) -> Result<(), ElabError> {
         if matches!(vpi::obj_type(stmt), vpi::vpiBegin | vpi::vpiNamedBegin) {
             for v in iter(vpi::vpiVariables, stmt) {
+                let v = v.raw();
                 let name = vpi::obj_name(v);
                 if decl.contains_key(&name) {
                     continue;
@@ -2186,7 +2190,7 @@ impl Resolver {
                 frame.insert(name.clone(), Val::Bits(all_x(w, s)));
             }
             for s in iter(vpi::vpiStmt, stmt) {
-                self.collect_func_locals(sc, resolved, in_progress, frame, decl, s)?;
+                self.collect_func_locals(sc, resolved, in_progress, frame, decl, s.raw())?;
             }
         }
         Ok(())
@@ -2213,9 +2217,15 @@ impl Resolver {
         match vpi::obj_type(stmt) {
             vpi::vpiBegin | vpi::vpiNamedBegin => {
                 for s in iter(vpi::vpiStmt, stmt) {
-                    if let Some(v) =
-                        self.eval_func_stmt(sc, resolved, in_progress, frame, decl, ret_name, s)?
-                    {
+                    if let Some(v) = self.eval_func_stmt(
+                        sc,
+                        resolved,
+                        in_progress,
+                        frame,
+                        decl,
+                        ret_name,
+                        s.raw(),
+                    )? {
                         return Ok(Some(v));
                     }
                 }
@@ -2270,20 +2280,24 @@ impl Resolver {
                         ))
                     }
                 };
-                let mut default: Option<VpiHandle> = None;
+                let mut default: Option<OwnedHandle> = None;
                 for item in iter(vpi::vpiCaseItem, stmt) {
-                    let exprs: Vec<VpiHandle> = iter(vpi::vpiExpr, item);
+                    let exprs: Vec<OwnedHandle> = item
+                        .iterate(vpi::vpiExpr)
+                        .map(|expressions| expressions.collect())
+                        .unwrap_or_default();
                     if exprs.is_empty() {
                         default = Some(item);
                         continue;
                     }
                     for e in exprs {
-                        let ev = match self.eval_expr_ctx(sc, resolved, in_progress, frame, e)? {
-                            Val::Bits(b) => b,
-                            Val::Str(_) | Val::Real(_) => continue,
-                        };
+                        let ev =
+                            match self.eval_expr_ctx(sc, resolved, in_progress, frame, e.raw())? {
+                                Val::Bits(b) => b,
+                                Val::Str(_) | Val::Real(_) => continue,
+                            };
                         if case_eq(&sel, &ev).to_u64() == Some(1) {
-                            return match child(vpi::vpiStmt, item) {
+                            return match child(vpi::vpiStmt, item.raw()) {
                                 Some(body) => self.eval_func_stmt(
                                     sc,
                                     resolved,
@@ -2299,7 +2313,7 @@ impl Resolver {
                     }
                 }
                 if let Some(d) = default {
-                    return match child(vpi::vpiStmt, d) {
+                    return match child(vpi::vpiStmt, d.raw()) {
                         Some(body) => self.eval_func_stmt(
                             sc,
                             resolved,

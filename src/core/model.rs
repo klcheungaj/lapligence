@@ -780,8 +780,8 @@ fn range_width(ts: VpiHandle) -> Option<u32> {
     let mut any = false;
     for r in iter(vpi::vpiRange, ts) {
         any = true;
-        let l = vpi::handle(vpi::vpiLeftRange, r);
-        let rr = vpi::handle(vpi::vpiRightRange, r);
+        let l = vpi::handle(vpi::vpiLeftRange, r.raw());
+        let rr = vpi::handle(vpi::vpiRightRange, r.raw());
         // Borrow the OwnedHandles so they stay alive while the raw bound
         // handles below are read (a raw pointer from a dropped OwnedHandle
         // would have been released already).
@@ -812,7 +812,7 @@ fn struct_width(ts: VpiHandle) -> Option<u32> {
     let mut total: u64 = 0;
     let mut any = false;
     for m in iter(vpi::vpiTypespecMember, ts) {
-        let mts = vpi::handle(vpi::vpiTypespec, m)?;
+        let mts = vpi::handle(vpi::vpiTypespec, m.raw())?;
         let (w, _) = typespec_info(mts.raw())?;
         total = total.saturating_add(w as u64);
         any = true;
@@ -838,8 +838,8 @@ fn const_i128(h: VpiHandle) -> Option<i128> {
     }
 }
 
-/// Collect raw child handles of a 1-to-many relationship.
-fn iter(type_: i32, obj: VpiHandle) -> Vec<VpiHandle> {
+/// Collect owned child handles of a 1-to-many relationship.
+fn iter(type_: i32, obj: VpiHandle) -> Vec<OwnedHandle> {
     vpi::iterate(type_, obj)
         .map(|it| it.collect())
         .unwrap_or_default()

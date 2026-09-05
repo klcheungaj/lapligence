@@ -23,7 +23,7 @@ fn in_temp_dir<R>(f: impl FnOnce() -> R) -> R {
 fn each_child<F: FnMut(VpiHandle)>(rel: std::os::raw::c_int, obj: VpiHandle, f: &mut F) {
     if let Some(it) = vpi::iterate(rel, obj) {
         for h in it {
-            f(h);
+            f(h.raw());
         }
     } else if let Some(h) = vpi::handle(rel, obj) {
         f(h.raw());
@@ -77,6 +77,7 @@ fn visit_inst(mi: VpiHandle) {
     println!("INST {}", describe(mi));
     // Ports with high/low conns.
     for port in vpi::iterate(vpi::vpiPort, mi).into_iter().flatten() {
+        let port = port.raw();
         println!("  PORT {}", describe(port));
         if let Some(high) = vpi::handle(vpi::vpiHighConn, port) {
             println!("    HIGH {}", describe(high.raw()));
@@ -91,6 +92,7 @@ fn visit_inst(mi: VpiHandle) {
         }
     }
     for assign in vpi::iterate(vpi::vpiContAssign, mi).into_iter().flatten() {
+        let assign = assign.raw();
         println!("  CONT_ASSIGN {}", describe(assign));
         if let Some(lhs) = vpi::handle(vpi::vpiLhs, assign) {
             println!("    LHS-tree:");
@@ -102,11 +104,12 @@ fn visit_inst(mi: VpiHandle) {
         }
     }
     for proc in vpi::iterate(vpi::vpiProcess, mi).into_iter().flatten() {
+        let proc = proc.raw();
         println!("  PROCESS {}", describe(proc));
         each_child(vpi::vpiStmt, proc, &mut |st| walk_expr(st, 0));
     }
     for child in vpi::iterate(vpi::vpiModule, mi).into_iter().flatten() {
-        visit_inst(child);
+        visit_inst(child.raw());
     }
 }
 
@@ -151,7 +154,7 @@ fn probe_bindings() {
             .into_iter()
             .flatten()
         {
-            visit_inst(top);
+            visit_inst(top.raw());
         }
 
         // Also check what uhdmallModules yields (what tokens.rs walks).
@@ -160,12 +163,15 @@ fn probe_bindings() {
             .into_iter()
             .flatten()
         {
+            let m = m.raw();
             println!("ALLMOD {}", describe(m));
             for proc in vpi::iterate(vpi::vpiProcess, m).into_iter().flatten() {
+                let proc = proc.raw();
                 println!("  DEFPROCESS {}", describe(proc));
                 each_child(vpi::vpiStmt, proc, &mut |st| walk_expr(st, 0));
             }
             for port in vpi::iterate(vpi::vpiPort, m).into_iter().flatten() {
+                let port = port.raw();
                 println!("  DEFPORT {}", describe(port));
                 if let Some(low) = vpi::handle(vpi::vpiLowConn, port) {
                     println!("    LOW {}", describe(low.raw()));
@@ -181,7 +187,11 @@ fn probe_bindings() {
             .into_iter()
             .flatten()
         {
-            for r in vpi::iterate(vpi::uhdmref_obj, top).into_iter().flatten() {
+            for r in vpi::iterate(vpi::uhdmref_obj, top.raw())
+                .into_iter()
+                .flatten()
+            {
+                let r = r.raw();
                 println!("SCOPEREF {}", describe(r));
                 if let Some(a) = vpi::handle(vpi::vpiActual, r) {
                     println!("   -> {}", describe(a.raw()));

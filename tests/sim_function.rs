@@ -438,18 +438,18 @@ endmodule
             .ok_or("no top modules")?
             .next()
             .ok_or("no top module")?;
-        let proc = vpi::iterate(vpi::vpiProcess, top)
+        let proc = vpi::iterate(vpi::vpiProcess, top.raw())
             .ok_or("no process")?
             .next()
             .ok_or("no process")?;
         // always_comb with a single assignment: the process statement *is* the
         // assignment.  Keep the owned handles alive while their raw pointers
         // are in use.
-        let stmt_owned = vpi::handle(vpi::vpiStmt, proc).ok_or("no process stmt")?;
+        let stmt_owned = vpi::handle(vpi::vpiStmt, proc.raw()).ok_or("no process stmt")?;
         let rhs_owned = vpi::handle(vpi::vpiRhs, stmt_owned.raw()).ok_or("no RHS")?;
         let mut resolver = elab::Resolver::new();
         resolver
-            .eval_expr(top, rhs_owned.raw())
+            .eval_expr(top.raw(), rhs_owned.raw())
             .map_err(|e| format!("eval: {e}"))
     })();
     std::env::set_current_dir(&orig_cwd).expect("restore cwd");

@@ -1189,8 +1189,8 @@ fn range_width(ts: VpiHandle) -> Option<u32> {
     let mut any = false;
     for r in vpi::iterate(vpi::vpiRange, ts).into_iter().flatten() {
         any = true;
-        let left = range_bound(vpi::vpiLeftRange, r)?;
-        let right = range_bound(vpi::vpiRightRange, r)?;
+        let left = range_bound(vpi::vpiLeftRange, r.raw())?;
+        let right = range_bound(vpi::vpiRightRange, r.raw())?;
         total = total.saturating_mul((left - right).unsigned_abs() + 1);
     }
     if any {
@@ -1254,7 +1254,7 @@ const REF_DESCENT_RELS: &[i32] = &[
 fn each_rel<F: FnMut(VpiHandle)>(rel: i32, obj: VpiHandle, f: &mut F) {
     if let Some(it) = vpi::iterate(rel, obj) {
         for h in it {
-            f(h);
+            f(h.raw());
         }
     } else if let Some(h) = vpi::handle(rel, obj) {
         // `h` (OwnedHandle) stays alive until `f` returns.
@@ -1381,14 +1381,14 @@ fn walk_scope(
         .into_iter()
         .flatten()
     {
-        maybe_emit(h, result);
+        maybe_emit(h.raw(), result);
     }
     // Non-top child module instances are emitted as `uhdmmodule_inst` so that
     // editors can highlight instantiations differently from module definitions.
     for h in vpi::iterate(vpi::vpiModule, scope_h).into_iter().flatten() {
-        maybe_emit_as(h, vpi::uhdmmodule_inst, result);
-        walk_port_high_conns(h, result, bindings, details, seen);
-        walk_instance_param_overrides(h, result, bindings, details, seen);
+        maybe_emit_as(h.raw(), vpi::uhdmmodule_inst, result);
+        walk_port_high_conns(h.raw(), result, bindings, details, seen);
+        walk_instance_param_overrides(h.raw(), result, bindings, details, seen);
     }
 
     // ── Ports (with direction-specific token types) ────────────────────────────
@@ -1396,7 +1396,7 @@ fn walk_scope(
     // be coloured differently.  Falls back to generic `vpiPort` when direction
     // information is unavailable.
     for h in vpi::iterate(vpi::vpiPort, scope_h).into_iter().flatten() {
-        let dir = vpi::get(vpi::vpiDirection, h);
+        let dir = vpi::get(vpi::vpiDirection, h.raw());
         let synthetic = if dir == vpi::vpiInput {
             vpi::TOKEN_PORT_INPUT
         } else if dir == vpi::vpiOutput {
@@ -1406,14 +1406,14 @@ fn walk_scope(
         } else {
             vpi::vpiPort
         };
-        maybe_emit_as(h, synthetic, result);
-        record_decl_detail(h, direction_text(dir), details);
+        maybe_emit_as(h.raw(), synthetic, result);
+        record_decl_detail(h.raw(), direction_text(dir), details);
     }
 
     // ── Nets (wire / logic_net) ───────────────────────────────────────────────
     for h in vpi::iterate(vpi::vpiNet, scope_h).into_iter().flatten() {
-        maybe_emit(h, result);
-        record_decl_detail(h, None, details);
+        maybe_emit(h.raw(), result);
+        record_decl_detail(h.raw(), None, details);
     }
 
     // ── Parameter ─────────────────────────────────────────────────────────────
@@ -1421,8 +1421,8 @@ fn walk_scope(
         .into_iter()
         .flatten()
     {
-        maybe_emit(h, result);
-        record_decl_detail(h, None, details);
+        maybe_emit(h.raw(), result);
+        record_decl_detail(h.raw(), None, details);
     }
 
     // ── Logic variables (UHDM extension iterator) ─────────────────────────────
@@ -1430,8 +1430,8 @@ fn walk_scope(
         .into_iter()
         .flatten()
     {
-        maybe_emit(h, result);
-        record_decl_detail(h, None, details);
+        maybe_emit(h.raw(), result);
+        record_decl_detail(h.raw(), None, details);
     }
 
     // ── Other variables (int_var, real_var, …) ────────────────────────────────
@@ -1439,8 +1439,8 @@ fn walk_scope(
         .into_iter()
         .flatten()
     {
-        maybe_emit(h, result);
-        record_decl_detail(h, None, details);
+        maybe_emit(h.raw(), result);
+        record_decl_detail(h.raw(), None, details);
     }
 
     // ── Parameters (UHDM extension iterator) ──────────────────────────────────
@@ -1448,17 +1448,17 @@ fn walk_scope(
         .into_iter()
         .flatten()
     {
-        maybe_emit(h, result);
-        record_decl_detail(h, None, details);
+        maybe_emit(h.raw(), result);
+        record_decl_detail(h.raw(), None, details);
     }
 
     // ── Continuous assignments — collect signal references from LHS / RHS ──────
     for vpi_type in [vpi::vpiContAssign, vpi::vpiParamAssign] {
         for assign_h in vpi::iterate(vpi_type, scope_h).into_iter().flatten() {
-            if let Some(lhs) = vpi::handle(vpi::vpiLhs, assign_h) {
+            if let Some(lhs) = vpi::handle(vpi::vpiLhs, assign_h.raw()) {
                 walk_expr(lhs.raw(), result, bindings, details, seen);
             }
-            if let Some(rhs) = vpi::handle(vpi::vpiRhs, assign_h) {
+            if let Some(rhs) = vpi::handle(vpi::vpiRhs, assign_h.raw()) {
                 walk_expr(rhs.raw(), result, bindings, details, seen);
             }
         }
@@ -1466,7 +1466,7 @@ fn walk_scope(
 
     // ── Processes (always/initial) — collect references from their bodies ──────
     for proc_h in vpi::iterate(vpi::vpiProcess, scope_h).into_iter().flatten() {
-        each_rel(vpi::vpiStmt, proc_h, &mut |stmt| {
+        each_rel(vpi::vpiStmt, proc_h.raw(), &mut |stmt| {
             walk_expr(stmt, result, bindings, details, seen);
         });
     }
@@ -1481,8 +1481,8 @@ fn walk_scope(
         .into_iter()
         .flatten()
     {
-        walk_scope(h, result, bindings, details, seen);
-        each_rel(vpi::vpiStmt, h, &mut |stmt| {
+        walk_scope(h.raw(), result, bindings, details, seen);
+        each_rel(vpi::vpiStmt, h.raw(), &mut |stmt| {
             walk_expr(stmt, result, bindings, details, seen);
         });
     }
@@ -1492,7 +1492,7 @@ fn walk_scope(
         .into_iter()
         .flatten()
     {
-        walk_scope(h, result, bindings, details, seen);
+        walk_scope(h.raw(), result, bindings, details, seen);
     }
 
     // ── Generate scopes (gen_scope_array → gen_scope) ──────────────────────────
@@ -1506,8 +1506,11 @@ fn walk_scope(
         .into_iter()
         .flatten()
     {
-        for gs in vpi::iterate(vpi::vpiGenScope, gsa).into_iter().flatten() {
-            walk_scope(gs, result, bindings, details, seen);
+        for gs in vpi::iterate(vpi::vpiGenScope, gsa.raw())
+            .into_iter()
+            .flatten()
+        {
+            walk_scope(gs.raw(), result, bindings, details, seen);
         }
     }
 
@@ -1515,7 +1518,7 @@ fn walk_scope(
         .into_iter()
         .flatten()
     {
-        emit_ref(h, result, bindings);
+        emit_ref(h.raw(), result, bindings);
     }
 }
 
@@ -1557,15 +1560,15 @@ fn walk_block_scope_objects(
         vpi::vpiVariables,
     ] {
         for h in vpi::iterate(rel, block_h).into_iter().flatten() {
-            maybe_emit(h, result);
-            record_decl_detail(h, None, details);
+            maybe_emit(h.raw(), result);
+            record_decl_detail(h.raw(), None, details);
         }
     }
     for h in vpi::iterate(vpi::vpiInternalScope, block_h)
         .into_iter()
         .flatten()
     {
-        walk_scope(h, result, bindings, details, seen);
+        walk_scope(h.raw(), result, bindings, details, seen);
     }
 }
 
@@ -1586,7 +1589,7 @@ fn walk_port_high_conns(
     seen: &mut HashSet<ScopeKey>,
 ) {
     for port in vpi::iterate(vpi::vpiPort, h).into_iter().flatten() {
-        if let Some(high) = vpi::handle(vpi::vpiHighConn, port) {
+        if let Some(high) = vpi::handle(vpi::vpiHighConn, port.raw()) {
             walk_expr(high.raw(), result, bindings, details, seen);
         }
     }
@@ -1612,10 +1615,10 @@ fn walk_instance_param_overrides(
     seen: &mut HashSet<ScopeKey>,
 ) {
     for pa in vpi::iterate(vpi::vpiParamAssign, h).into_iter().flatten() {
-        if vpi::get(vpi::vpiOverriden, pa) == 0 {
+        if vpi::get(vpi::vpiOverriden, pa.raw()) == 0 {
             continue;
         }
-        if let Some(rhs) = vpi::handle(vpi::vpiRhs, pa) {
+        if let Some(rhs) = vpi::handle(vpi::vpiRhs, pa.raw()) {
             walk_expr(rhs.raw(), result, bindings, details, seen);
         }
     }
@@ -1635,7 +1638,7 @@ fn walk_design(
         .into_iter()
         .flatten()
     {
-        walk_scope(h, result, bindings, details, &mut seen);
+        walk_scope(h.raw(), result, bindings, details, &mut seen);
     }
 
     // All interface definitions.
@@ -1643,7 +1646,7 @@ fn walk_design(
         .into_iter()
         .flatten()
     {
-        walk_scope(h, result, bindings, details, &mut seen);
+        walk_scope(h.raw(), result, bindings, details, &mut seen);
     }
 
     // All package definitions.
@@ -1651,7 +1654,7 @@ fn walk_design(
         .into_iter()
         .flatten()
     {
-        walk_scope(h, result, bindings, details, &mut seen);
+        walk_scope(h.raw(), result, bindings, details, &mut seen);
     }
 
     // All class definitions.
@@ -1659,7 +1662,7 @@ fn walk_design(
         .into_iter()
         .flatten()
     {
-        walk_scope(h, result, bindings, details, &mut seen);
+        walk_scope(h.raw(), result, bindings, details, &mut seen);
     }
 
     // All program definitions (SystemVerilog programs).
@@ -1667,7 +1670,7 @@ fn walk_design(
         .into_iter()
         .flatten()
     {
-        walk_scope(h, result, bindings, details, &mut seen);
+        walk_scope(h.raw(), result, bindings, details, &mut seen);
     }
 
     // Generate scopes hang off the ELABORATED INSTANCE tree (`uhdmallModules`
@@ -1688,19 +1691,22 @@ fn walk_design(
             .into_iter()
             .flatten()
         {
-            for gs in vpi::iterate(vpi::vpiGenScope, gsa).into_iter().flatten() {
-                walk_scope(gs, result, bindings, details, seen);
+            for gs in vpi::iterate(vpi::vpiGenScope, gsa.raw())
+                .into_iter()
+                .flatten()
+            {
+                walk_scope(gs.raw(), result, bindings, details, seen);
             }
         }
         for child in vpi::iterate(vpi::vpiModule, inst).into_iter().flatten() {
-            walk_instance_gen_scopes(child, result, bindings, details, seen);
+            walk_instance_gen_scopes(child.raw(), result, bindings, details, seen);
         }
     }
     for top in vpi::iterate(vpi::uhdmtopModules, design)
         .into_iter()
         .flatten()
     {
-        walk_instance_gen_scopes(top, result, bindings, details, &mut seen);
+        walk_instance_gen_scopes(top.raw(), result, bindings, details, &mut seen);
     }
 }
 
