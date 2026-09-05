@@ -465,7 +465,19 @@ impl<'a> Codegen<'a> {
     pub(super) fn const_of_node(&self, node: NodeId) -> Result<IrConst, String> {
         match self.kind(node) {
             NodeKind::Expr(ExprKind::Constant { value, size, .. }) => {
-                let mut c = read_const_from(value, *size)?;
+                let mut c = if let Some(fill) = self.source_fill_literal(node) {
+                    IrConst {
+                        bits: vec![(fill == 1) as u64],
+                        x: vec![(fill == 2) as u64],
+                        z: vec![(fill == 3) as u64],
+                        width: 1,
+                        signed: false,
+                        real: None,
+                        fill: Some(fill),
+                    }
+                } else {
+                    read_const_from(value, *size)?
+                };
                 let (signed, literal_width) = self.signed_based_literal_info(node);
                 if signed {
                     if let Some(width) = literal_width {
@@ -505,7 +517,7 @@ impl<'a> Codegen<'a> {
                 if a.is_real() || b.is_real() {
                     return Ok(real_bin_expr(IrRealBinOp::Add, a, b));
                 }
-                Ok(common_bin_expr(IrBinOp::Add, a, b))
+                common_bin_expr_with_context(IrBinOp::Add, a, b, scope_path)
             }
             vpiSubOp => {
                 let a = op!(0);
@@ -513,7 +525,7 @@ impl<'a> Codegen<'a> {
                 if a.is_real() || b.is_real() {
                     return Ok(real_bin_expr(IrRealBinOp::Sub, a, b));
                 }
-                Ok(common_bin_expr(IrBinOp::Sub, a, b))
+                common_bin_expr_with_context(IrBinOp::Sub, a, b, scope_path)
             }
             vpiMultOp => {
                 let a = op!(0);
@@ -521,7 +533,7 @@ impl<'a> Codegen<'a> {
                 if a.is_real() || b.is_real() {
                     return Ok(real_bin_expr(IrRealBinOp::Mul, a, b));
                 }
-                Ok(common_bin_expr(IrBinOp::Mul, a, b))
+                common_bin_expr_with_context(IrBinOp::Mul, a, b, scope_path)
             }
             vpiDivOp | vpiModOp | vpiPowerOp => {
                 let a = op!(0);
@@ -548,7 +560,7 @@ impl<'a> Codegen<'a> {
                     _ => IrBinOp::Pow,
                 };
                 if matches!(f, IrBinOp::Div | IrBinOp::Mod) {
-                    Ok(common_bin_expr(f, a, b))
+                    common_bin_expr_with_context(f, a, b, scope_path)
                 } else {
                     let (width, signed) = (a.width, a.signed);
                     Ok(IrExpr::new(
@@ -571,7 +583,7 @@ impl<'a> Codegen<'a> {
                         "bitwise operation on real value in `{scope_path}` is not supported"
                     ));
                 }
-                Ok(common_bin_expr(IrBinOp::BitAnd, a, b))
+                common_bin_expr_with_context(IrBinOp::BitAnd, a, b, scope_path)
             }
             vpiBitOrOp => {
                 let a = op!(0);
@@ -581,7 +593,7 @@ impl<'a> Codegen<'a> {
                         "bitwise operation on real value in `{scope_path}` is not supported"
                     ));
                 }
-                Ok(common_bin_expr(IrBinOp::BitOr, a, b))
+                common_bin_expr_with_context(IrBinOp::BitOr, a, b, scope_path)
             }
             vpiBitXorOp => {
                 let a = op!(0);
@@ -591,7 +603,7 @@ impl<'a> Codegen<'a> {
                         "bitwise operation on real value in `{scope_path}` is not supported"
                     ));
                 }
-                Ok(common_bin_expr(IrBinOp::BitXor, a, b))
+                common_bin_expr_with_context(IrBinOp::BitXor, a, b, scope_path)
             }
             vpiBitXNorOp => {
                 let a = op!(0);
@@ -601,7 +613,7 @@ impl<'a> Codegen<'a> {
                         "bitwise operation on real value in `{scope_path}` is not supported"
                     ));
                 }
-                Ok(common_bin_expr(IrBinOp::BitXNor, a, b))
+                common_bin_expr_with_context(IrBinOp::BitXNor, a, b, scope_path)
             }
             vpiLogAndOp => {
                 let a = op!(0);
@@ -616,12 +628,12 @@ impl<'a> Codegen<'a> {
             vpiEqOp => {
                 let a = op!(0);
                 let b = op!(1);
-                Ok(cmp_expr_ir(IrBinOp::Eq, a, b))
+                common_cmp_expr_ir(IrBinOp::Eq, a, b, scope_path)
             }
             vpiNeqOp => {
                 let a = op!(0);
                 let b = op!(1);
-                Ok(cmp_expr_ir(IrBinOp::Neq, a, b))
+                common_cmp_expr_ir(IrBinOp::Neq, a, b, scope_path)
             }
             vpiCaseEqOp => {
                 let a = op!(0);
@@ -631,7 +643,7 @@ impl<'a> Codegen<'a> {
                         "case equality on real value in `{scope_path}` is not supported"
                     ));
                 }
-                Ok(cmp_expr_ir(IrBinOp::CaseEq, a, b))
+                common_cmp_expr_ir(IrBinOp::CaseEq, a, b, scope_path)
             }
             vpiCaseNeqOp => {
                 let a = op!(0);
@@ -641,7 +653,7 @@ impl<'a> Codegen<'a> {
                         "case equality on real value in `{scope_path}` is not supported"
                     ));
                 }
-                Ok(cmp_expr_ir(IrBinOp::CaseNeq, a, b))
+                common_cmp_expr_ir(IrBinOp::CaseNeq, a, b, scope_path)
             }
             vpiWildEqOp | vpiWildNeqOp => {
                 let a = op!(0);
@@ -665,22 +677,22 @@ impl<'a> Codegen<'a> {
             vpiLtOp => {
                 let a = op!(0);
                 let b = op!(1);
-                Ok(cmp_expr_ir(IrBinOp::Lt, a, b))
+                common_cmp_expr_ir(IrBinOp::Lt, a, b, scope_path)
             }
             vpiLeOp => {
                 let a = op!(0);
                 let b = op!(1);
-                Ok(cmp_expr_ir(IrBinOp::Le, a, b))
+                common_cmp_expr_ir(IrBinOp::Le, a, b, scope_path)
             }
             vpiGtOp => {
                 let a = op!(0);
                 let b = op!(1);
-                Ok(cmp_expr_ir(IrBinOp::Gt, a, b))
+                common_cmp_expr_ir(IrBinOp::Gt, a, b, scope_path)
             }
             vpiGeOp => {
                 let a = op!(0);
                 let b = op!(1);
-                Ok(cmp_expr_ir(IrBinOp::Ge, a, b))
+                common_cmp_expr_ir(IrBinOp::Ge, a, b, scope_path)
             }
             vpiLShiftOp | vpiRShiftOp | vpiArithLShiftOp | vpiArithRShiftOp => {
                 let a = op!(0);
@@ -716,6 +728,14 @@ impl<'a> Codegen<'a> {
                     (REAL_EXPR_WIDTH, true)
                 } else {
                     (maxw(&a, &b), a.signed && b.signed)
+                };
+                let (a, b) = if w == REAL_EXPR_WIDTH {
+                    (a, b)
+                } else {
+                    (
+                        checked_operand_with_context(a, w, s, scope_path, "conditional context")?,
+                        checked_operand_with_context(b, w, s, scope_path, "conditional context")?,
+                    )
                 };
                 Ok(IrExpr::new(
                     IrExprKind::Mux {

@@ -37,7 +37,7 @@ final blocks ≤ 1024.
 
 | § | Area | Verilog ✅ | Verilog 🟨 | Verilog ❌ | SV ✅ | SV 🟨 | SV ❌ |
 |---|---|---:|---:|---:|---:|---:|---:|
-| 1 | Lexical & preprocessing | 10 | 0 | 0 | 0 | 2 | 0 |
+| 1 | Lexical & preprocessing | 10 | 0 | 0 | 1 | 1 | 0 |
 | 2 | Data types | 10 | 1 | 5 | 5 | 2 | 4 |
 | 3 | Modules & hierarchy | 8 | 1 | 1 | 2 | 1 | 0 |
 | 4 | Scheduling & processes | 8 | 1 | 0 | 7 | 1 | 1 |
@@ -48,7 +48,7 @@ final blocks ≤ 1024.
 | 9 | Functions & tasks | 4 | 0 | 5 | 3 | 0 | 1 |
 | 10 | System tasks & functions | 11 | 2 | 14 | 3 | 0 | 6 |
 | 11 | Compiler directives affecting sim | 5 | 0 | 0 | 4 | 0 | 0 |
-| — | **Total** | **98** | **16** | **34** | **30** | **11** | **15** |
+| — | **Total** | **98** | **16** | **34** | **31** | **10** | **15** |
 
 In-section ⬜ items (not counted above): §3 configurations [V], ref ports /
 default port values, extern/nested modules [SV] · §4 fine-grain process control
@@ -73,7 +73,7 @@ Verilog era:
 
 SystemVerilog era:
 
-- 🟨 **Fill literals** `'0/'1/'x/'z` — §1800-2009 5.7.1 **[SV-2005]** honored only as entire RHS of assignment; in subexpressions act as 1-bit
+- ✅ **Fill literals** `'0/'1/'x/'z` — §1800-2009 5.7.1 **[SV-2005]** context sizing in supported packed arithmetic/bitwise expressions, comparisons, conditional branches, assignments, function arguments, and case/casez/casex; self-determined concatenation/replication operands remain one bit (sim_fill_literals.rs, optimization on/off)
 - 🟨 **Time literals** `2.1ns` — §1800-2009 5.8 **[SV-2005]** fixed-point literals with `s/ms/us/ns/ps/fs` suffixes work in procedural and intra-assignment delays, rounded to module precision before scheduler scaling (sim_time_literals.rs); general expression/value positions and scientific notation remain unsupported, and scheduler precision remains at least 1ps
 
 ## 2. Data types

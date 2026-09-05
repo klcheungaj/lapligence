@@ -1018,7 +1018,7 @@ impl EmitCtx<'_, '_> {
             .first()
             .copied()
             .ok_or_else(|| "case without selector".to_string())?;
-        let sel_ir = self.cg.lower_expr(&self.path, sel)?;
+        let mut sel_ir = self.cg.lower_expr(&self.path, sel)?;
         if sel_ir.is_real() {
             return Err(format!(
                 "real-valued case selectors are not supported in `{}`",
@@ -1029,6 +1029,8 @@ impl EmitCtx<'_, '_> {
             return self.lower_case_inside(items, sel_ir);
         }
         let mut ir_items = Vec::with_capacity(items.len());
+        let mut common_width = sel_ir.width;
+        let mut common_signed = sel_ir.signed;
         for item in items.iter() {
             let mut exprs = Vec::with_capacity(item.exprs.len());
             for e in &item.exprs {
@@ -1039,6 +1041,8 @@ impl EmitCtx<'_, '_> {
                         self.path
                     ));
                 }
+                common_width = common_width.max(c.width);
+                common_signed &= c.signed;
                 exprs.push(c);
             }
             let mut body = Vec::new();
@@ -1046,6 +1050,28 @@ impl EmitCtx<'_, '_> {
                 body = self.lower_stmt(s)?;
             }
             ir_items.push(IrCaseItem { exprs, body });
+        }
+        // Ordinary case/casez/casex operands share one context-determined
+        // maximum width. This is especially visible for an unbased unsized
+        // fill selector: case ('1) with four- and eight-bit items compares an
+        // eight-bit all-ones value against every item (LRM 1800-2009 §12.5).
+        sel_ir = checked_operand_with_context(
+            sel_ir,
+            common_width,
+            common_signed,
+            &self.path,
+            "case comparison context",
+        )?;
+        for item in &mut ir_items {
+            for expr in &mut item.exprs {
+                *expr = checked_operand_with_context(
+                    expr.clone(),
+                    common_width,
+                    common_signed,
+                    &self.path,
+                    "case comparison context",
+                )?;
+            }
         }
         Ok(vec![IrStmt::Case {
             sel: sel_ir,

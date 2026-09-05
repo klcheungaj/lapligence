@@ -108,6 +108,8 @@ coverage for the same rule IDs.
   explicit rejection boundaries.
   `sim_time_literals.rs` checks fixed-point/unit-suffixed delays and local
   precision rounding before global scheduling, with optimizer parity.
+  `sim_fill_literals.rs` checks context-determined fills through expressions
+  and case operands, self-determined boundaries, and wide-operation rejection.
 
 ## Safeguard validation
 

@@ -140,6 +140,16 @@ X/Z remain distinct for display, literal equality and casez/casex matching
 (LRM 12.5.1); Z behaves as X in other expression contexts (LRM 11.4.5), with
 identity/copy operations preserving it. See runtime value contracts.
 
+Unbased unsized fills (`'0/'1/'x/'z`) expand in context-determined packed
+operands, including arithmetic/bitwise expressions, comparisons, conditional
+branches, assignments, and function arguments. Ordinary case/casez/casex
+selectors and items share the maximum operand width and common signedness.
+Concatenation/replication operands and other self-determined positions stay
+one bit. If Surelog loses the fill marker, source recovery requires an exact
+two-character literal span; never reinterpret a folded compound expression
+from its first token. Context widening must still reject nested division,
+modulo, and power beyond 64 bits. See `tests/sim_fill_literals.rs`.
+
 Wildcard equality (`==?`/`!=?`) treats only RHS X/Z bits as wildcards after
 common-width and signedness conversion. A known mismatch wins over an unknown
 LHS bit at another position; otherwise an unmasked LHS X/Z yields X. Real

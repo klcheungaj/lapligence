@@ -190,8 +190,8 @@
 //!   timescale-agnostic. Fixed-point/unit-suffixed procedural delay literals
 //!   first round to local module precision; real expressions and sub-ps
 //!   scheduler precision remain unsupported.
-//! - Unsized fill literals (`'1`) are filled correctly only when they are the
-//!   entire RHS of an assignment; inside expressions they act as 1-bit values.
+//! - Unsized fill literals propagate through packed expression and case
+//!   contexts; self-determined concatenation/replication operands stay one bit.
 //! - Generate-block processes are supported: processes inside gen scopes are
 //!   emitted exactly like instance processes, with genvar references inlined
 //!   to the gen-scope parameter values.  Gen-scope continuous assignments and
@@ -837,6 +837,29 @@ impl<'a> Codegen<'a> {
             return (false, None);
         };
         (true, based_literal_width(token))
+    }
+
+    /// Recover an unbased unsized fill literal from its source spelling.
+    /// Surelog can constant-fold a fill used below an operator or in a case
+    /// item into an ordinary sized 0/1/X/Z constant, losing `vpiSize == -1`.
+    fn source_fill_literal(&self, node: NodeId) -> Option<u8> {
+        let node = self.node(node);
+        if let Some(fill) = fill_literal_token(&node.name) {
+            return Some(fill);
+        }
+        // Folded compound constants can inherit the compound expression's
+        // starting column. Only a two-character source span identifies the
+        // constant itself as the fill token.
+        if node.end_line != node.line || node.end_col != node.col.saturating_add(2) {
+            return None;
+        }
+        let (file, line) = (node.file.as_deref()?, node.line);
+        if line == 0 {
+            return None;
+        }
+        let content = std::fs::read_to_string(file).ok()?;
+        let text = content.lines().nth(line as usize - 1)?;
+        fill_literal_token_at(text, node.col)
     }
 
     /// Parse the timescale of every distinct source file referenced by the
@@ -1779,6 +1802,9 @@ fn apply_assignment_expression_width(expr: IrExpr, width: u32) -> IrExpr {
     }
 }
 
+/// Propagate a packed expression context into operators whose operands are
+/// context-determined. Concatenation/replication operands, shift counts,
+/// logical operands, and select indices deliberately remain self-determined.
 fn expression_operand_with_context(expr: IrExpr, width: u32, signed: bool) -> IrExpr {
     match expr.kind {
         IrExprKind::Bin { op, a, b } if is_context_binary(op) => IrExpr::new(
@@ -1835,15 +1861,15 @@ fn expression_operand_with_context(expr: IrExpr, width: u32, signed: bool) -> Ir
     }
 }
 
-/// Apply wildcard-equality operand context while preserving the runtime's
-/// explicit 64-bit limit for division, modulo and power. Context propagation
-/// can widen a nested limited operation after its ordinary lowering-time
-/// width check, so reject that shape before it reaches C emission.
-fn wildcard_operand_with_context(
+/// Apply packed operand context while preserving the runtime's explicit
+/// 64-bit limit for division, modulo and power. Context propagation can widen
+/// a nested limited operation after its ordinary lowering-time width check.
+fn checked_operand_with_context(
     expr: IrExpr,
     width: u32,
     signed: bool,
     scope_path: &str,
+    context: &str,
 ) -> Result<IrExpr, String> {
     fn reaches_limited_op(expr: &IrExpr) -> bool {
         match &expr.kind {
@@ -1871,10 +1897,25 @@ fn wildcard_operand_with_context(
 
     if width > 64 && reaches_limited_op(&expr) {
         return Err(format!(
-            "wide division/modulo/power not yet supported (wildcard comparison context wider than 64 bits) in `{scope_path}`"
+            "wide division/modulo/power not yet supported ({context} wider than 64 bits) in `{scope_path}`"
         ));
     }
     Ok(expression_operand_with_context(expr, width, signed))
+}
+
+fn wildcard_operand_with_context(
+    expr: IrExpr,
+    width: u32,
+    signed: bool,
+    scope_path: &str,
+) -> Result<IrExpr, String> {
+    checked_operand_with_context(
+        expr,
+        width,
+        signed,
+        scope_path,
+        "wildcard comparison context",
+    )
 }
 
 /// A context-determined packed arithmetic/bitwise node. Any unsigned operand
@@ -1892,6 +1933,57 @@ fn common_bin_expr(op: IrBinOp, a: IrExpr, b: IrExpr) -> IrExpr {
         s,
         None,
     )
+}
+
+fn common_bin_expr_with_context(
+    op: IrBinOp,
+    a: IrExpr,
+    b: IrExpr,
+    scope_path: &str,
+) -> Result<IrExpr, String> {
+    let (width, signed) = (a.width.max(b.width), a.signed && b.signed);
+    Ok(IrExpr::new(
+        IrExprKind::Bin {
+            op,
+            a: Box::new(checked_operand_with_context(
+                a,
+                width,
+                signed,
+                scope_path,
+                "arithmetic/bitwise context",
+            )?),
+            b: Box::new(checked_operand_with_context(
+                b,
+                width,
+                signed,
+                scope_path,
+                "arithmetic/bitwise context",
+            )?),
+        },
+        width,
+        signed,
+        None,
+    ))
+}
+
+/// A comparison/equality node after applying the common packed operand type.
+/// Its result remains one-bit unsigned.
+fn common_cmp_expr_ir(
+    op: IrBinOp,
+    a: IrExpr,
+    b: IrExpr,
+    scope_path: &str,
+) -> Result<IrExpr, String> {
+    if a.is_real() || b.is_real() {
+        return Ok(cmp_expr_ir(op, a, b));
+    }
+    let width = a.width.max(b.width);
+    let signed = a.signed && b.signed;
+    Ok(cmp_expr_ir(
+        op,
+        checked_operand_with_context(a, width, signed, scope_path, "comparison context")?,
+        checked_operand_with_context(b, width, signed, scope_path, "comparison context")?,
+    ))
 }
 
 /// Internal binary node for already-shaped structural expressions.
@@ -2014,6 +2106,52 @@ fn signed_based_literal_token_at(line: &str, col: u32) -> Option<&str> {
         }
         if start < end && is_signed_based_literal(&line[start..end]) {
             return Some(&line[start..end]);
+        }
+    }
+    None
+}
+
+fn fill_literal_token(text: &str) -> Option<u8> {
+    let bytes = text.trim().as_bytes();
+    if bytes.len() != 2 || bytes[0] != b'\'' {
+        return None;
+    }
+    match bytes[1].to_ascii_lowercase() {
+        b'0' => Some(0),
+        b'1' => Some(1),
+        b'x' => Some(2),
+        b'z' => Some(3),
+        _ => None,
+    }
+}
+
+fn fill_literal_token_at(line: &str, col: u32) -> Option<u8> {
+    let bytes = line.as_bytes();
+    let base = col.saturating_sub(1) as usize;
+    for pos in [
+        base,
+        col as usize,
+        base.saturating_sub(1),
+        base.saturating_add(1),
+    ] {
+        for start in [pos, pos.saturating_sub(1)] {
+            let Some(token) = bytes.get(start..start.saturating_add(2)) else {
+                continue;
+            };
+            if start > 0 && (bytes[start - 1].is_ascii_alphanumeric() || bytes[start - 1] == b'_') {
+                continue;
+            }
+            if bytes
+                .get(start + 2)
+                .is_some_and(|next| next.is_ascii_alphanumeric() || *next == b'_')
+            {
+                continue;
+            }
+            if let Ok(token) = std::str::from_utf8(token) {
+                if let Some(fill) = fill_literal_token(token) {
+                    return Some(fill);
+                }
+            }
         }
     }
     None
