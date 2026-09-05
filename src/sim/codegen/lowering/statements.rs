@@ -297,6 +297,17 @@ impl EmitCtx<'_, '_> {
                     }
                     self.lower_delayed_assignment(h, *blocking, *ticks)
                 }
+                Some(IntraControl::Expression(expression)) => {
+                    if self.in_final {
+                        return Err(format!(
+                            "intra-assignment delay inside a final block in `{}` is not \
+                             allowed (no timing controls in final)",
+                            self.path
+                        ));
+                    }
+                    let ticks = self.cg.procedural_delay_ticks(h, expression)?;
+                    self.lower_delayed_assignment(h, *blocking, ticks)
+                }
                 Some(IntraControl::EventOrRepeat) => Err(format!(
                     "intra-assignment event/repeat control (`@(…)` or \
                      `repeat (n) @(…)`) in `{}` is not supported in v1",
@@ -312,7 +323,7 @@ impl EmitCtx<'_, '_> {
                     ))
                 }
             },
-            NodeKind::Stmt(StmtKind::DelayControl { ticks }) => {
+            NodeKind::Stmt(StmtKind::DelayControl { ticks, expression }) => {
                 if self.in_final {
                     return Err(format!(
                         "`#delay` inside a final block in `{}` is not allowed \
@@ -331,14 +342,14 @@ impl EmitCtx<'_, '_> {
                         self.path
                     ));
                 }
-                let v = match ticks {
-                    Some(t) => *t,
-                    None => {
+                let v = match (ticks, expression) {
+                    (Some(t), _) => *t,
+                    (None, Some(expression)) => self.cg.procedural_delay_ticks(h, expression)?,
+                    (None, None) => {
                         let file = self.cg.node(h).file.clone().unwrap_or_default();
                         let line = self.cg.node(h).line;
                         return Err(format!(
-                            "cannot determine the `#delay` value at {file}:{line} \
-                             (parameterized delays are not supported in v1)"
+                            "cannot determine the `#delay` value at {file}:{line}"
                         ));
                     }
                 };

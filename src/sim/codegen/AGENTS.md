@@ -28,9 +28,9 @@ contracts. `lower_expr`/`lower_stmt`/`lower_lhs` produce typed IR only.
 - `for_stmt` in UHDM: `vpiForInitStmt`/`vpiForIncStmt` (not vpiStmt/
   vpiElseStmt) for init/incr, `vpiCondition` = condition, `vpiStmt` = body.
 - `delay_control` values are NOT exposed via VPI in Surelog v1.87 — the
-  `core::db` build recovers `#N` from the source line the delay_control
-  points at (`StmtKind::DelayControl { ticks }`); timescale scaling happens
-  in the codegen.
+  `core::db` build recovers integer ticks or the delay expression spelling
+  from source (`StmtKind::DelayControl { ticks, expression }`). Constant
+  expression evaluation and timescale scaling happen in codegen.
 - Generated C uses GNU statement-expressions `({ ... })` for select-LHS
   write-back (gcc/clang OK, not strict ISO C).
 
@@ -185,10 +185,18 @@ before C compilation. `tests/sim_real.rs` pins support and rejection messages.
   directive), so 1 tick = design_precision ps.  The runtime itself stays
   timescale-agnostic (`llg_wait_time` receives already-scaled ticks), so no
   runtime change was needed.
-- `core::db` keeps `StmtKind::DelayControl` ticks as the raw `#N` integer;
-  scaling happens in the codegen.  Sub-picosecond (fs) units clamp up to 1 ps
-  in the ps-integer representation; fractional delays (`#0.5`) remain
-  unsupported.
+- `core::db` retains raw `#N` ticks or source-recovered constant-expression
+  spelling. Statement and intra-assignment delays accept resolved integer
+  parameters, decimal literals with underscores, parentheses, unary `+/-/~`,
+  arithmetic `+`, `-`, `*`, `/`, `%`, shifts `<<`/`>>`, and bitwise `&/^/|`. Evaluation
+  preserves operand widths/signedness for its accepted subset, with at most
+  128-bit operands and 256 parser steps; final ticks must fit a nonnegative
+  `u64`. Mixed-width arithmetic and outer signedness changes affecting an
+  already-computed operand are rejected until full context propagation exists. Runtime-valued,
+  fractional, unit-suffixed, based-literal, logical/comparison/ternary and
+  system-function forms are rejected explicitly. Timescale scaling follows
+  evaluation. Sub-picosecond (fs) units still clamp up to 1 ps in the
+  ps-integer representation. See `tests/sim_delay.rs`.
 
 ## Unpacked arrays and memories
 

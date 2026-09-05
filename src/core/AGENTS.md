@@ -37,6 +37,9 @@ the simulator (`src/sim/`):
   (`vpiVariables` — ordinary variables, so `walk_var` is reused) and methods
   (`vpiMethod` — the class's task_func relationship, NOT `vpiTaskFunc`; the
   constructor is a function named `new`).
+  Delay controls retain raw ticks or source spelling where Surelog lacks an
+  expression relationship; supported evaluation forms are defined in the
+  [simulator lowering guide](../sim/codegen/AGENTS.md).
 - `elab.rs` — 4-state `Value` math + parameter/expression resolver
   (`Resolver`), used by the db build (and tests).
   Wildcard equality, bit-vector queries, and real/integer/IEEE-bit conversions

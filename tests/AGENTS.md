@@ -100,6 +100,8 @@ coverage for the same rule IDs.
   and `sim_wildcard_eq.rs` compare optimized/unoptimized execution for
   packed strings, bit queries, numeric conversions, and wildcard
   equality/case-inside.
+  `sim_delay.rs` covers the source-recovered constant delay subset and its
+  explicit rejection boundaries.
 
 ## Safeguard validation
 

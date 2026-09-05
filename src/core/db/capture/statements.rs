@@ -155,43 +155,121 @@ impl Builder {
         Ok(())
     }
 
-    pub(in crate::core::db) fn recover_delay_ticks(&self, dc: VpiHandle) -> Option<u64> {
+    pub(in crate::core::db) fn recover_delay_source(&self, dc: VpiHandle) -> Option<String> {
+        self.recover_delay_source_impl(dc)
+    }
+
+    fn recover_assignment_delay_source(
+        &self,
+        assignment: VpiHandle,
+        dc: VpiHandle,
+    ) -> Option<String> {
+        let file = vpi::obj_file(dc);
+        let line = vpi::obj_line(dc).max(1) as usize;
+        let content = std::fs::read_to_string(file).ok()?;
+        let line_start = content
+            .match_indices('\n')
+            .take(line.saturating_sub(1))
+            .last()
+            .map_or(0, |(index, _)| index + 1);
+        let line_end = content[line_start..]
+            .find('\n')
+            .map_or(content.len(), |index| line_start + index);
+        let dc_col = vpi::get(vpi::vpiColumnNo, dc).max(1) as usize - 1;
+        let dc_offset = line_start.saturating_add(dc_col);
+        if content.as_bytes().get(dc_offset) == Some(&b'#') {
+            return Self::delay_source_after_hash(&content, dc_offset);
+        }
+
+        // Surelog points some identifier-valued controls (`#P`) at the
+        // assignment instead of at '#'. In that shape, accept '#' only when
+        // it is the first token after this assignment's operator.
+        let assignment_col = vpi::get(vpi::vpiColumnNo, assignment).max(1) as usize - 1;
+        let anchor = line_start.saturating_add(assignment_col).min(line_end);
+        let statement_end = content[anchor..line_end]
+            .find(';')
+            .map_or(line_end, |index| anchor + index);
+        let assignment_operator = anchor + content[anchor..statement_end].find('=')?;
+        let mut control = assignment_operator + 1;
+        while matches!(content.as_bytes().get(control), Some(b' ') | Some(b'\t')) {
+            control += 1;
+        }
+        (content.as_bytes().get(control) == Some(&b'#'))
+            .then(|| Self::delay_source_after_hash(&content, control))
+            .flatten()
+    }
+
+    fn recover_delay_source_impl(&self, dc: VpiHandle) -> Option<String> {
         let file = vpi::obj_file(dc);
         if file.is_empty() {
             return None;
         }
-        let line = vpi::obj_line(dc);
+        let line = vpi::obj_line(dc).max(1) as usize;
         let content = std::fs::read_to_string(&file).ok()?;
-        let text = content.lines().nth(line.max(1) as usize - 1)?;
-        let mut chars = text.chars().peekable();
-        while let Some(c) = chars.next() {
-            if c != '#' {
-                continue;
+        let line_start = content
+            .match_indices('\n')
+            .take(line.saturating_sub(1))
+            .last()
+            .map_or(0, |(index, _)| index + 1);
+        let line_end = content[line_start..]
+            .find('\n')
+            .map_or(content.len(), |index| line_start + index);
+        let col = vpi::get(vpi::vpiColumnNo, dc).max(1) as usize - 1;
+        let preferred = line_start.saturating_add(col);
+        let bytes = content.as_bytes();
+        let preceding_token_hash = || {
+            let mut cursor = preferred.min(line_end);
+            while cursor > line_start
+                && matches!(bytes[cursor - 1], b'0'..=b'9' | b'a'..=b'z' | b'A'..=b'Z' | b'_' | b'$' | b'\'' | b'.')
+            {
+                cursor -= 1;
             }
-            while matches!(chars.peek(), Some(' ') | Some('\t')) {
-                chars.next();
+            while cursor > line_start && matches!(bytes[cursor - 1], b' ' | b'\t') {
+                cursor -= 1;
             }
-            let mut digits = String::new();
-            while let Some(&d) = chars.peek() {
-                if d.is_ascii_digit() {
-                    digits.push(d);
-                    chars.next();
-                } else {
-                    break;
-                }
-            }
-            if !digits.is_empty() {
-                // Only a plain integer literal is a recoverable tick count;
-                // see the docstring for the rejected continuations.
-                match chars.peek() {
-                    Some('.') | Some('_') => return None,
-                    Some(c) if c.is_ascii_alphabetic() => return None,
+            (cursor > line_start && bytes[cursor - 1] == b'#').then_some(cursor - 1)
+        };
+        let hash = if bytes.get(preferred) == Some(&b'#') {
+            preferred
+        } else if let Some(hash) = preceding_token_hash() {
+            hash
+        } else {
+            line_start + content[line_start..line_end].find('#')?
+        };
+        Self::delay_source_after_hash(&content, hash)
+    }
+
+    fn delay_source_after_hash(content: &str, hash: usize) -> Option<String> {
+        let bytes = content.as_bytes();
+        let mut start = hash + 1;
+        while matches!(
+            bytes.get(start),
+            Some(b' ') | Some(b'\t') | Some(b'\r') | Some(b'\n')
+        ) {
+            start += 1;
+        }
+        if bytes.get(start) == Some(&b'(') {
+            let mut depth = 0usize;
+            for index in start..bytes.len() {
+                match bytes[index] {
+                    b'(' => depth += 1,
+                    b')' => {
+                        depth = depth.checked_sub(1)?;
+                        if depth == 0 {
+                            return Some(content[start + 1..index].trim().to_string());
+                        }
+                    }
                     _ => {}
                 }
-                return digits.parse().ok();
             }
+            return None;
         }
-        None
+        let mut end = start;
+        while matches!(bytes.get(end), Some(c) if c.is_ascii_alphanumeric() || matches!(c, b'_' | b'$' | b'\'' | b'.'))
+        {
+            end += 1;
+        }
+        (end > start).then(|| content[start..end].to_string())
     }
 
     pub(in crate::core::db) fn recover_disable_target_name(&self, h: VpiHandle) -> Option<String> {
@@ -274,52 +352,15 @@ impl Builder {
             return Some(IntraControl::EventOrRepeat);
         }
         let dc = child(vpi::vpiDelayControl, h)?;
-        let file = vpi::obj_file(dc.raw());
-        if file.is_empty() {
-            return Some(IntraControl::UnresolvedDelay);
-        }
-        let line = vpi::obj_line(dc.raw()).max(1) as usize;
-        // Columns are 1-based.
-        let col = vpi::get(vpi::vpiColumnNo, dc.raw()).max(1) as u32;
-        let text = std::fs::read_to_string(&file)
-            .ok()
-            .and_then(|content| content.lines().nth(line - 1).map(str::to_string));
-        let Some(text) = text else {
-            return Some(IntraControl::UnresolvedDelay);
-        };
-        // A '#' exactly at the recorded column marks a delay control; parse
-        // the integer after it (whitespace allowed), like recover_delay_ticks.
-        let bytes = text.as_bytes();
-        let at_hash = col >= 1 && (col as usize) <= bytes.len() && bytes[col as usize - 1] == b'#';
-        if !at_hash {
-            return Some(IntraControl::EventOrRepeat);
-        }
-        let mut i = col as usize; // byte index just past '#'
-        while matches!(bytes.get(i), Some(b' ') | Some(b'\t')) {
-            i += 1;
-        }
-        let mut end = i;
-        while matches!(bytes.get(end), Some(d) if d.is_ascii_digit()) {
-            end += 1;
-        }
-        if end == i {
-            return Some(IntraControl::UnresolvedDelay);
-        }
-        // A digit run followed by `.`, `_` or a letter is a fractional,
-        // underscore-separated or unit-suffixed literal (`#0.5`, `#1_0`,
-        // `#5ns`) — not a plain integer tick count; reject instead of
-        // silently truncating to the leading digits.
-        if let Some(&c) = bytes.get(end) {
-            if c == b'.' || c == b'_' || c.is_ascii_alphabetic() {
-                return Some(IntraControl::UnresolvedDelay);
-            }
-        }
-        match std::str::from_utf8(&bytes[i..end])
-            .ok()
-            .and_then(|digits| digits.parse().ok())
-        {
-            Some(ticks) => Some(IntraControl::Ticks(ticks)),
-            None => Some(IntraControl::UnresolvedDelay),
+        let source = self.recover_assignment_delay_source(h, dc.raw());
+        match source {
+            Some(source) if source.bytes().all(|byte| byte.is_ascii_digit()) => source
+                .parse()
+                .ok()
+                .map(IntraControl::Ticks)
+                .or(Some(IntraControl::UnresolvedDelay)),
+            Some(source) => Some(IntraControl::Expression(source)),
+            None => Some(IntraControl::EventOrRepeat),
         }
     }
 }

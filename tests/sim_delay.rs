@@ -1,8 +1,9 @@
 //! End-to-end simulator tests for delayed assignments: intra-assignment
 //! delays (`a = #5 b;`, `a <= #5 b;` — LRM 1364-1995 §9.7.4) and
 //! continuous-assignment delays (`assign #2 y = a;` — §1364-1995 §6.1.3),
-//! plus the clean codegen rejections for the event/repeat/parameterized
-//! forms.  Surelog compile → codegen → CMake build → run, asserting exact
+//! procedural parameter/constant-expression delays, plus clean codegen
+//! rejections for event/repeat/dynamic forms. Surelog compile → codegen →
+//! CMake build → run, asserting exact
 //! stdout against hand-simulated traces.
 //!
 //! Surelog writes `slpp_all/` into the process working directory, so the
@@ -27,15 +28,12 @@ fn codegen_result(
     sim_harness::with_surelog_temp_cwd(tag, |dir| {
         let src = dir.join("tb.sv");
         std::fs::write(&src, sv).map_err(|error| format!("write source: {error}"))?;
-        let out = compile::compile(&compile::CompileOpts {
+        let out = compile::compile_checked(&compile::CompileOpts {
             files: vec![src.to_string_lossy().into_owned()],
             top: Some("tb".to_string()),
             ..Default::default()
         })
         .map_err(|e| format!("compile: {e}"))?;
-        if !out.ok() {
-            return Err(format!("compile diagnostics: {:?}", out.diagnostics));
-        }
         let design = out.uhdm_design().ok_or("no UHDM design")?;
         Ok(sim::codegen::generate(design).map_err(|error| error.to_string()))
     })
@@ -408,6 +406,39 @@ endmodule
     );
 }
 
+/// A prior delay on the same source line must not make an event-controlled
+/// intra-assignment look like it carries that earlier `#` token.
+#[test]
+fn sim_intra_event_after_same_line_delay_rejected() {
+    if !llg::sim::build::cmake_available() {
+        eprintln!("SKIP: cmake not available");
+        return;
+    }
+    for (tag, statement) in [
+        ("prior", "#1; a = @(posedge clk) b;"),
+        ("following", "a = @(posedge clk) b; #1 $finish;"),
+        ("outer", "#1 a = @(posedge clk) b;"),
+    ] {
+        let sv = format!(
+            r#"module tb;
+    reg a, b, clk;
+    initial begin {statement} end
+endmodule
+"#
+        );
+        let result =
+            codegen_result(&sv, &format!("same_line_event_{tag}")).expect("compile should succeed");
+        let error = match result {
+            Ok(_) => panic!("event-controlled intra-assignment `{tag}` should be rejected"),
+            Err(error) => error,
+        };
+        assert!(
+            error.contains("intra-assignment event/repeat control"),
+            "unexpected codegen error for `{tag}`: {error}"
+        );
+    }
+}
+
 /// (g) Repeat-form intra-assignment (`a = repeat(2) @(posedge clk) b;`)
 /// produces the same clean rejection family as the event form.
 #[test]
@@ -437,45 +468,60 @@ endmodule
     );
 }
 
-/// (g) A parameterized intra-assignment delay (`a = #P b;`) cannot be
-/// recovered from source and fails with the same parameterized-delay message
-/// family as undeterminable `#N` statements.
+/// Parameter and arithmetic-expression intra-assignment delays are folded
+/// against the elaborated instance parameters before timescale scaling.
 #[test]
-fn sim_intra_delay_parameterized_form_rejected() {
+fn sim_intra_delay_parameterized_expression() {
     if !llg::sim::build::cmake_available() {
         eprintln!("SKIP: cmake not available");
         return;
     }
     let sv = r#"module tb;
     reg a, b;
-    parameter P = 3;
+    parameter P = 2;
 
     initial begin
+        b = 1'b1;
         a = #P b;
+        $display("t=%0t a=%b", $time, a);
+        a = #(P + 1) 1'b0;
+        $display("t=%0t a=%b", $time, a);
     end
 endmodule
 "#;
 
-    let result = codegen_result(sv, "par").expect("compile should succeed");
-    let err = match result {
-        Ok(_) => panic!("codegen should reject parameterized intra-assignment delays"),
-        Err(e) => e,
-    };
-    assert!(
-        err.contains("cannot determine the `#delay` value"),
-        "unexpected codegen error: {err}"
-    );
-    assert!(
-        err.contains("(parameterized delays are not supported in v1)"),
-        "unexpected codegen error: {err}"
-    );
+    let stdout = run_sim(sv, "par").expect("simulation should run");
+    assert_eq!(stdout, "t=2 a=1\nt=5 a=0\n", "stdout: {stdout}");
+}
+
+/// A delay control starting on the line after its assignment operator keeps
+/// using the delay-control object's exact source position.
+#[test]
+fn sim_intra_delay_multiline_literal() {
+    if !llg::sim::build::cmake_available() {
+        eprintln!("SKIP: cmake not available");
+        return;
+    }
+    let sv = r#"module tb;
+    reg a, b;
+    initial begin
+        b = 1'b1;
+        a =
+            #2 b;
+        $display("t=%0t a=%b", $time, a);
+    end
+endmodule
+"#;
+
+    let stdout = run_sim(sv, "multiline_intra_delay").expect("simulation should run");
+    assert_eq!(stdout, "t=2 a=1\n", "stdout: {stdout}");
 }
 
 /// (g) Non-plain-integer intra-assignment delay literals — fractional
-/// (`a = #0.5 b;`), underscore-separated (`a = #1_0 b;`) and unit-suffixed
-/// (`a = #5ns b;`) — lex as ONE `#…` source token.  Grabbing only the
+/// (`a = #0.5 b;`) and unit-suffixed (`a = #5ns b;`) lex as ONE `#…`
+/// source token. Grabbing only the
 /// leading digits would silently mis-time legal Verilog (`#0.5`→0,
-/// `#1_0`→1, `#5ns`→5, verified by probe before the fix), so each form must
+/// `#5ns`→5, verified by probe before the fix), so each form must
 /// end in the same clean reject family as unrecoverable `#P`.
 #[test]
 fn sim_intra_delay_non_integer_literal_forms_rejected() {
@@ -483,7 +529,7 @@ fn sim_intra_delay_non_integer_literal_forms_rejected() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    for (tag, delay) in [("frac", "#0.5"), ("uscore", "#1_0"), ("unit", "#5ns")] {
+    for (tag, delay) in [("frac", "#0.5"), ("unit", "#5ns")] {
         let sv = format!(
             r#"module tb;
     reg [7:0] a, b;
@@ -500,15 +546,15 @@ endmodule
         match result {
             Ok(_) => panic!("codegen should reject intra-assignment delay `{delay}`"),
             Err(e) => assert!(
-                e.contains("cannot determine the `#delay` value"),
+                e.contains("cannot evaluate procedural"),
                 "unexpected codegen error for `{delay}`: {e}"
             ),
         }
     }
 }
 
-/// (h) The same non-integer literal forms on statement-level delays
-/// (`#0.5 …;`, `#10_000 …;`, `#5ns …;`) are clean rejects too — the
+/// (h) The remaining non-integer literal forms on statement-level delays
+/// (`#0.5 …;`, `#5ns …;`) are clean rejects — the
 /// statement path recovers ticks from the source line and must not
 /// truncate to the leading digit run.
 #[test]
@@ -517,7 +563,7 @@ fn sim_stmt_delay_non_integer_literal_forms_rejected() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    for (tag, delay) in [("frac", "#0.5"), ("uscore", "#10_000"), ("unit", "#5ns")] {
+    for (tag, delay) in [("frac", "#0.5"), ("unit", "#5ns")] {
         let sv = format!(
             r#"module tb;
     reg [7:0] a;
@@ -533,11 +579,149 @@ endmodule
         match result {
             Ok(_) => panic!("codegen should reject statement delay `{delay}`"),
             Err(e) => assert!(
-                e.contains("cannot determine the `#delay` value"),
+                e.contains("cannot evaluate procedural"),
                 "unexpected codegen error for `{delay}`: {e}"
             ),
         }
     }
+}
+
+/// Procedural delay controls accept elaborated parameters, parenthesized
+/// constant arithmetic, and underscore-separated decimal integers (Verilog
+/// 1364-2001 §9.7.1).
+#[test]
+fn sim_stmt_delay_constant_expressions() {
+    if !llg::sim::build::cmake_available() {
+        eprintln!("SKIP: cmake not available");
+        return;
+    }
+    let sv = r#"module tb;
+    parameter integer P = 2;
+    parameter [31:0] WRAP = 32'hffff_ffff;
+
+    initial begin
+        #P $display("t=%0t parameter", $time);
+        #(P * 2 + 1) $display("t=%0t expression", $time);
+        #1_000 $display("t=%0t underscore", $time);
+        #(WRAP + 1) $display("t=%0t width-wrap", $time);
+    end
+endmodule
+"#;
+
+    let stdout = run_sim(sv, "stmt_expr").expect("simulation should run");
+    assert_eq!(
+        stdout, "t=2 parameter\nt=7 expression\nt=1007 underscore\nt=1007 width-wrap\n",
+        "stdout: {stdout}"
+    );
+}
+
+/// Signed negative parameter delays are rejected before scale conversion.
+#[test]
+fn sim_stmt_negative_parameter_delay_rejected() {
+    if !llg::sim::build::cmake_available() {
+        eprintln!("SKIP: cmake not available");
+        return;
+    }
+    let sv = r#"module tb;
+    parameter signed N = -1;
+    initial #N $finish;
+endmodule
+"#;
+
+    let result = codegen_result(sv, "negative_stmt_delay").expect("compile should succeed");
+    let error = match result {
+        Ok(_) => panic!("negative procedural delay should be rejected"),
+        Err(error) => error,
+    };
+    assert!(
+        error.contains("negative or exceeds 64 bits"),
+        "unexpected codegen error: {error}"
+    );
+}
+
+/// Nested mixed-width arithmetic must not be eagerly folded: Verilog widens
+/// `(A+B)` from four to five bits through the outer `+ C`, preserving its
+/// carry and producing 16. The source-only evaluator rejects this form until
+/// it can propagate the complete expression context.
+#[test]
+fn sim_stmt_mixed_width_delay_expression_rejected() {
+    if !llg::sim::build::cmake_available() {
+        eprintln!("SKIP: cmake not available");
+        return;
+    }
+    let sv = r#"module tb;
+    parameter logic [3:0] A = 15;
+    parameter logic [3:0] B = 1;
+    parameter logic [4:0] C = 0;
+    initial #((A + B) + C) $finish;
+endmodule
+"#;
+
+    let result = codegen_result(sv, "mixed_width_stmt_delay").expect("compile should succeed");
+    let error = match result {
+        Ok(_) => panic!("mixed-width procedural delay should be rejected"),
+        Err(error) => error,
+    };
+    assert!(
+        error.contains("full Verilog context propagation"),
+        "unexpected codegen error: {error}"
+    );
+}
+
+/// A mixed-signedness outer expression can reinterpret an already-computed
+/// child. With unsigned outer context, `4'sb1000 / 2` must be treated as
+/// unsigned 8/2 rather than eagerly folded as signed -8/2.
+#[test]
+fn sim_stmt_nested_mixed_signedness_delay_rejected() {
+    if !llg::sim::build::cmake_available() {
+        eprintln!("SKIP: cmake not available");
+        return;
+    }
+    let sv = r#"module tb;
+    parameter logic signed [3:0] A = -8;
+    parameter logic signed [3:0] B = 2;
+    parameter logic        [3:0] C = 0;
+    initial #((A / B) + C) $finish;
+endmodule
+"#;
+
+    let result = codegen_result(sv, "mixed_sign_stmt_delay").expect("compile should succeed");
+    let error = match result {
+        Ok(_) => panic!("nested mixed-signedness procedural delay should be rejected"),
+        Err(error) => error,
+    };
+    assert!(
+        error.contains("mixed signedness") && error.contains("full Verilog context propagation"),
+        "unexpected codegen error: {error}"
+    );
+}
+
+/// Signal-dependent delay expressions need a runtime-valued delay IR and are
+/// rejected explicitly by the current constant-expression path.
+#[test]
+fn sim_stmt_dynamic_delay_expression_rejected() {
+    if !llg::sim::build::cmake_available() {
+        eprintln!("SKIP: cmake not available");
+        return;
+    }
+    let sv = r#"module tb;
+    reg [7:0] delay;
+    initial begin
+        delay = 2;
+        #(delay + 1) $finish;
+    end
+endmodule
+"#;
+
+    let result = codegen_result(sv, "dynamic_delay").expect("compile should succeed");
+    let error = match result {
+        Ok(_) => panic!("dynamic delay expression should be rejected"),
+        Err(error) => error,
+    };
+    assert!(
+        error.contains("is not a resolved integer parameter"),
+        "unexpected codegen error: {error}"
+    );
 }
 
 /// (i) A negative parameter value folded into a continuous-assignment delay

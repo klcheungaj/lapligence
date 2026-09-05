@@ -187,10 +187,18 @@ impl Builder {
             }
             vpi::vpiEventControl => self.walk_event_control(h, id)?,
             vpi::vpiDelayControl => {
-                let ticks = self.recover_delay_ticks(h);
+                let source = self.recover_delay_source(h);
+                let ticks = source.as_deref().and_then(|source| {
+                    source
+                        .bytes()
+                        .all(|byte| byte.is_ascii_digit())
+                        .then(|| source.parse().ok())
+                        .flatten()
+                });
+                let expression = ticks.is_none().then_some(source).flatten();
                 let body = self.walk_opt_stmt(h, Some(id))?;
                 self.set_children(id, vec![body]);
-                self.set_stmt(id, StmtKind::DelayControl { ticks });
+                self.set_stmt(id, StmtKind::DelayControl { ticks, expression });
             }
             vpi::vpiEventStmt => {
                 // `-> ev;` / `->> ev;` — the target named_event is resolved
@@ -338,7 +346,7 @@ impl Builder {
                 // search does not climb out of the intermediate statements
                 // and the UHDM keeps neither a `vpiExpr` nor a name — the
                 // identifier is then recovered from the source line (same
-                // strategy as `recover_delay_ticks`) and matched against the
+                // strategy as `recover_delay_source`) and matched against the
                 // enclosing scope chain.  The resolved node is kept in the
                 // variant only — see the `Disable` docs for why it is not a
                 // child.

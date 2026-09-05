@@ -212,7 +212,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use super::timescale::{parse_timescale, Timescale};
+use super::timescale::{eval_delay_expression, parse_timescale, DelayValue, Timescale};
 use super::CodegenError;
 use crate::core::db::{
     CaseKind as DbCaseKind, ConstantType, Db, Direction as DbDirection, EventSpec, ExprKind,
@@ -699,6 +699,44 @@ impl<'a> Codegen<'a> {
             }
             _ => None,
         }
+    }
+
+    /// Fold a procedural delay recovered from source text. Identifier lookup
+    /// follows the owned parent chain so generate-local parameters shadow
+    /// parameters in their enclosing module instance.
+    fn procedural_delay_ticks(&self, delay_node: NodeId, expression: &str) -> Result<u64, String> {
+        eval_delay_expression(expression, |name| {
+            let mut scope = Some(delay_node);
+            while let Some(node_id) = scope {
+                for child in &self.node(node_id).children {
+                    if self.node(*child).name != name {
+                        continue;
+                    }
+                    if let Some(Val::Bits(value)) = self.param_vals.get(child) {
+                        let (declared_width, declared_signed) = match self.kind(*child) {
+                            NodeKind::Param { ty, .. } => (ty.width, Some(ty.signed)),
+                            _ => (None, None),
+                        };
+                        let width = declared_width.or_else(|| u32::try_from(value.width()).ok())?;
+                        return value.to_u128().and_then(|raw| {
+                            DelayValue::from_raw(
+                                raw,
+                                width,
+                                declared_signed.unwrap_or(value.signed),
+                            )
+                        });
+                    }
+                }
+                scope = self.node(node_id).parent;
+            }
+            None
+        })
+        .map_err(|error| {
+            format!(
+                "cannot evaluate procedural `#({expression})` in `{}`: {error}",
+                self.instance_path_of(self.inst)
+            )
+        })
     }
 
     /// Resolve a hierarchical reference read (`a.b.sig`, or the 2-part

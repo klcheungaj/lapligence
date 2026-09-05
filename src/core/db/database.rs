@@ -575,6 +575,11 @@ pub enum StmtKind {
     },
     DelayControl {
         ticks: Option<u64>,
+        /// Source spelling of a non-literal delay expression. Surelog v1.87
+        /// exposes no VPI expression relationship for procedural delays, so
+        /// constant expressions are recovered from the source before the
+        /// frontend session is released.
+        expression: Option<String>,
     },
     /// `-> ev;` / `->> ev;` — trigger a named event.  The `blocking` property
     /// is captured verbatim but is NOT reliable in Surelog v1.86 output
@@ -689,9 +694,11 @@ pub enum IntraControl {
     /// `#N` — the tick count recovered from the source line at the recorded
     /// column (same recovery strategy as [`StmtKind::DelayControl`]).
     Ticks(u64),
-    /// A `#` whose value could not be recovered from source (`#P`,
-    /// `#(a + b)`, `#0.5`) — rejected by the simulator like parameterized
-    /// statement delays.
+    /// A source-recovered delay expression (`#P`, `#(P + 1)`, or an
+    /// underscore-separated integer) for codegen-time constant folding.
+    Expression(String),
+    /// A `#` whose source spelling could not be recovered. Rejected by the
+    /// simulator rather than silently dropping the timing control.
     UnresolvedDelay,
     /// Event-controlled or repeat form (`@(...)`, `repeat (n) @(...)`) — no
     /// `#` at the recorded position.  Rejected by the simulator.

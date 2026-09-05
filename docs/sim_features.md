@@ -42,13 +42,13 @@ final blocks ≤ 1024.
 | 3 | Modules & hierarchy | 8 | 1 | 1 | 2 | 1 | 0 |
 | 4 | Scheduling & processes | 8 | 1 | 0 | 7 | 1 | 1 |
 | 5 | Procedural statements | 17 | 2 | 1 | 4 | 1 | 2 |
-| 6 | Timing controls | 2 | 1 | 3 | 0 | 0 | 0 |
+| 6 | Timing controls | 2 | 2 | 2 | 0 | 0 | 0 |
 | 7 | Expressions & operators | 18 | 2 | 0 | 2 | 2 | 3 |
 | 8 | Continuous assign & structural | 5 | 4 | 7 | 0 | 0 | 0 |
 | 9 | Functions & tasks | 4 | 0 | 5 | 3 | 0 | 1 |
 | 10 | System tasks & functions | 11 | 2 | 14 | 3 | 0 | 6 |
 | 11 | Compiler directives affecting sim | 5 | 0 | 0 | 4 | 0 | 0 |
-| — | **Total** | **98** | **14** | **36** | **30** | **8** | **18** |
+| — | **Total** | **98** | **15** | **35** | **30** | **8** | **18** |
 
 In-section ⬜ items (not counted above): §3 configurations [V], ref ports /
 default port values, extern/nested modules [SV] · §4 fine-grain process control
@@ -205,7 +205,7 @@ Verilog era:
 - ✅ **@\* / @(\*) implicit sensitivity** from body read set — §1364-2001 9.7.5 **[2001]**
 - 🟨 **Comb sensitivity to array elements** — §1364-2001 9.7.5 **[2001]** wakes on index signals only, not array writes
 - ❌ **Fractional delays** `#0.5` — §1364-2001 9.7.1 **[1995]** clean codegen reject ("cannot determine the `#delay` value"), not a silent `#0` (sim_delay.rs)
-- ❌ **Expression/parameter delays** `#(expr)` / `#P`, underscored `#10_000` and unit-suffixed `#5ns` literals — §1364-2001 9.7.1 **[1995]** clean rejects; only plain integer-literal ticks are recovered from source text (sim_delay.rs)
+- 🟨 **Expression/parameter delays** `#(expr)` / `#P`, underscored `#10_000` and unit-suffixed `#5ns` literals — §1364-2001 9.7.1 **[1995]** resolved integer parameters, decimal literals, and bounded constant arithmetic/bitwise expressions work in statement and intra-assignment delays (sim_delay.rs); mixed-width/context-sensitive signed arithmetic, dynamic values, based literals, logical/comparison/ternary expressions, system functions, fractional and unit-suffixed delays remain rejected
 - ❌ **min:typ:max delays** `#(1:2:3)` — §1364-2001 4.3 **[1995]**
 
 SystemVerilog era:
