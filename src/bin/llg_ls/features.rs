@@ -8759,7 +8759,7 @@ pub fn lsp_diagnostics_with_fallback(
             code: None,
             code_description: None,
             source: Some("surelog".to_owned()),
-            message: d.message.clone(),
+            message: llg::core::diagnostics::user_message(d),
             related_information: None,
             tags: None,
             data: None,
@@ -13994,6 +13994,28 @@ mod tests {
         assert!(pre.iter().any(|i| i.label == "add"), "items: {pre:?}");
         // The model and index-backed sources must not double-list a function.
         assert_eq!(all.iter().filter(|i| i.label == "add").count(), 1);
+    }
+
+    #[test]
+    fn parser_diagnostics_are_explained_without_changing_location_or_raw_message() {
+        let raw = Diag {
+            severity: Severity::Syntax,
+            file: Some("/x/debug_TEMPLATE.v".to_owned()),
+            line: 2,
+            col: 22,
+            message: "Syntax error: no viable alternative at input 'edb_top edb_top_inst ('"
+                .to_owned(),
+        };
+        let a = Analysis::new(vec![raw.clone()], empty_design(), Vec::new(), Vec::new());
+        let map = lsp_diagnostics(&a);
+        let diagnostics = &map["/x/debug_TEMPLATE.v"];
+        assert_eq!(diagnostics.len(), 1);
+        assert!(diagnostics[0].message.contains("instantiation template"));
+        assert!(!diagnostics[0].message.contains("no viable alternative"));
+        assert_eq!(diagnostics[0].severity, Some(DiagnosticSeverity::ERROR));
+        assert_eq!(diagnostics[0].source.as_deref(), Some("surelog"));
+        assert_eq!(diagnostics[0].range.start, Position::new(1, 21));
+        assert_eq!(a.diagnostics[0], raw);
     }
 
     #[test]
