@@ -11,7 +11,7 @@
 
 use std::collections::HashSet;
 
-use crate::core::db::{Db, ExprKind, NodeId, NodeKind};
+use crate::core::db::{Db, ExprKind, NodeId, NodeKind, Operation};
 use crate::core::elab::{Bit, Val, Value};
 use crate::core::lint::rules::analysis::{all_nodes, scope_path};
 use crate::core::lint::{LintCtx, LintDiag, LintRule, LintSeverity};
@@ -114,7 +114,7 @@ impl SelectViolation {
 fn check_bit_or_array_select(db: &Db, base: NodeId, index: NodeId) -> Option<SelectViolation> {
     let object = declaration_object(db, base)?;
     if matches!(db.node_kind(object), NodeKind::Array { .. }) {
-        if let Some(meta) = db.arrays.get(&object) {
+        if let Some(meta) = db.array_meta(object) {
             let bounds = meta.dims.first().copied().flatten()?;
             let value = eval_integer(db, index)?;
             if !within(value, bounds.0 as i128, bounds.1 as i128) {
@@ -201,7 +201,7 @@ fn check_indexed_part_select(
 /// documented one-extra-index form, the packed select of the array element.
 fn check_array_select(db: &Db, base: NodeId, indices: &[NodeId]) -> Option<SelectViolation> {
     let object = declaration_object(db, base)?;
-    let meta = db.arrays.get(&object)?;
+    let meta = db.array_meta(object)?;
 
     for (dimension, bounds) in meta.dims.iter().enumerate() {
         let Some(index) = indices.get(dimension) else {
@@ -331,7 +331,7 @@ fn nested_array_element_selects(db: &Db, ids: &[NodeId]) -> HashSet<NodeId> {
         let Some(object) = declaration_object(db, *base) else {
             continue;
         };
-        let Some(meta) = db.arrays.get(&object) else {
+        let Some(meta) = db.array_meta(object) else {
             continue;
         };
         if indices.len() != meta.dims.len() + 1 {
@@ -453,9 +453,9 @@ fn eval_integer(db: &Db, id: NodeId) -> Option<i128> {
         },
         NodeKind::Expr(ExprKind::Operation { op, operands, .. }) if operands.len() == 1 => {
             let value = eval_integer(db, operands[0])?;
-            match *op {
-                vpi::vpiPlusOp => Some(value),
-                vpi::vpiMinusOp => value.checked_neg(),
+            match op {
+                Operation::UnaryPlus => Some(value),
+                Operation::UnaryMinus => value.checked_neg(),
                 _ => None,
             }
         }

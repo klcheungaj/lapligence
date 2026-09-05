@@ -15,12 +15,13 @@
 //!
 use std::collections::{BTreeSet, HashSet};
 
-use crate::core::db::{Db, EventSpec, ExprKind, NodeId, NodeKind, ProcessKind, StmtKind};
+use crate::core::db::{
+    AlwaysKind, Db, EventSpec, ExprKind, NodeId, NodeKind, ProcessKind, StmtKind,
+};
 use crate::core::lint::rules::analysis::{
     all_nodes, collect_reads, driver_signal_of_lhs, is_signal,
 };
 use crate::core::lint::{LintCtx, LintDiag, LintRule, LintSeverity};
-use crate::ffi::vpi::vpiAlways;
 
 /// Warns when a plain level-sensitive `always` reads a signal that is absent
 /// from its explicit any-change sensitivity list.
@@ -47,7 +48,7 @@ impl LintRule for IncompleteSensitivityListRule {
             else {
                 continue;
             };
-            if *always_type != vpiAlways {
+            if *always_type != AlwaysKind::Always {
                 continue;
             }
 
@@ -246,8 +247,8 @@ fn analyze_declaration(
     incoming: &HashSet<NodeId>,
 ) -> DefiniteAssignmentFlow {
     let initializer = match db.node_kind(declaration) {
-        NodeKind::Var { .. } => db.vars_init.get(&declaration).copied(),
-        NodeKind::Array { .. } => db.arrays.get(&declaration).and_then(|meta| meta.init),
+        NodeKind::Var { .. } => db.var_initializer(declaration),
+        NodeKind::Array { .. } => db.array_meta(declaration).and_then(|meta| meta.init),
         _ => None,
     };
     let Some(initializer) = initializer else {

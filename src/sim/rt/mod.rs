@@ -46,10 +46,16 @@ pub fn waveform_sources() -> &'static [(&'static str, &'static str)] {
 }
 
 /// Write optional waveform sources into a generated model directory.
-pub(crate) fn write_waveform_sources(out_dir: &std::path::Path) -> Result<(), String> {
+pub(crate) fn write_waveform_sources(
+    out_dir: &std::path::Path,
+) -> Result<(), super::build::BuildError> {
     for (name, content) in waveform_sources() {
         let path = out_dir.join(name);
-        std::fs::write(&path, content).map_err(|e| format!("write {}: {e}", path.display()))?;
+        std::fs::write(&path, content).map_err(|source| super::build::BuildError::Io {
+            action: "write",
+            path,
+            source,
+        })?;
     }
     Ok(())
 }

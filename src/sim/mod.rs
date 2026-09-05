@@ -28,8 +28,15 @@ use std::path::Path;
 /// Create `out_dir` and write the runtime + libaco sources plus `extra`
 /// (e.g. the generated `model.c`) into it.  Shared by
 /// [`build::generate_model_sources`] / [`build::build_model_cmake_with_opts`].
-pub(crate) fn write_sim_sources(out_dir: &Path, extra: &[(&str, &str)]) -> Result<(), String> {
-    std::fs::create_dir_all(out_dir).map_err(|e| format!("create {}: {e}", out_dir.display()))?;
+pub(crate) fn write_sim_sources(
+    out_dir: &Path,
+    extra: &[(&str, &str)],
+) -> Result<(), build::BuildError> {
+    std::fs::create_dir_all(out_dir).map_err(|source| build::BuildError::Io {
+        action: "create",
+        path: out_dir.to_path_buf(),
+        source,
+    })?;
 
     let (rt_h, rt_c) = rt::runtime_sources();
     let (aco_h, aco_c, aco_s) = rt::libaco_sources();
@@ -48,7 +55,11 @@ pub(crate) fn write_sim_sources(out_dir: &Path, extra: &[(&str, &str)]) -> Resul
 
     for (name, content) in &files {
         let path = out_dir.join(name);
-        std::fs::write(&path, content).map_err(|e| format!("write {}: {e}", path.display()))?;
+        std::fs::write(&path, content).map_err(|source| build::BuildError::Io {
+            action: "write",
+            path,
+            source,
+        })?;
     }
     Ok(())
 }

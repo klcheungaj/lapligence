@@ -56,7 +56,7 @@ struct Validator<'db> {
 
 impl Validator<'_> {
     fn validate(&self) -> Result<(), DbValidationError> {
-        for (index, node) in self.db.nodes.iter().enumerate() {
+        for (index, node) in self.db.nodes().iter().enumerate() {
             let path = format!("nodes[{index}]");
             if let Some(parent) = node.parent {
                 self.node(parent, &format!("{path}.parent"))?;
@@ -69,20 +69,20 @@ impl Validator<'_> {
             }
         }
 
-        self.validate_roots(&self.db.tops, "tops", |kind| {
+        self.validate_roots(self.db.tops(), "tops", |kind| {
             matches!(kind, NodeKind::ModuleInst { is_top: true, .. })
         })?;
-        self.validate_roots(&self.db.flat_modules, "flat_modules", |kind| {
+        self.validate_roots(self.db.flat_modules(), "flat_modules", |kind| {
             matches!(kind, NodeKind::ModuleInst { .. })
         })?;
-        self.validate_roots(&self.db.packages, "packages", |kind| {
+        self.validate_roots(self.db.packages(), "packages", |kind| {
             matches!(kind, NodeKind::Package)
         })?;
-        self.validate_roots(&self.db.classes, "classes", |kind| {
+        self.validate_roots(self.db.classes(), "classes", |kind| {
             matches!(kind, NodeKind::ClassDef)
         })?;
 
-        for (array, metadata) in &self.db.arrays {
+        for (array, metadata) in self.db.arrays() {
             let node = self.node(*array, &format!("arrays[{}]", array.0))?;
             if !matches!(node.kind, NodeKind::Array { .. }) {
                 return self.fail(
@@ -95,7 +95,7 @@ impl Validator<'_> {
             }
         }
 
-        for (variable, init) in &self.db.vars_init {
+        for (variable, init) in self.db.var_initializers() {
             let node = self.node(*variable, &format!("vars_init[{}]", variable.0))?;
             if !matches!(node.kind, NodeKind::Var { .. }) {
                 return self.fail(
@@ -107,7 +107,7 @@ impl Validator<'_> {
         }
 
         let mut range_keys = HashSet::new();
-        for (index, entry) in self.db.elaborated_type_ranges.iter().enumerate() {
+        for (index, entry) in self.db.elaborated_type_ranges().iter().enumerate() {
             if entry.instance.is_empty() || entry.name.is_empty() {
                 return self.fail(
                     format!("elaborated_type_ranges[{index}]"),
@@ -150,7 +150,7 @@ impl Validator<'_> {
     }
 
     fn node(&self, id: NodeId, path: &str) -> Result<&super::Node, DbValidationError> {
-        self.db.nodes.get(id.0 as usize).ok_or_else(|| {
+        self.db.nodes().get(id.index()).ok_or_else(|| {
             DbValidationError::new(path, format!("node index {} is out of bounds", id.0))
         })
     }
@@ -166,28 +166,16 @@ impl Validator<'_> {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
-
     use super::*;
 
     fn empty_db() -> Db {
-        Db {
-            nodes: Vec::new(),
-            tops: Vec::new(),
-            flat_modules: Vec::new(),
-            packages: Vec::new(),
-            classes: Vec::new(),
-            design_name: "test".to_string(),
-            arrays: HashMap::new(),
-            vars_init: HashMap::new(),
-            elaborated_type_ranges: Vec::new(),
-        }
+        Db::empty_for_validation_test()
     }
 
     #[test]
     fn rejects_an_out_of_bounds_root() {
         let mut db = empty_db();
-        db.tops.push(NodeId(0));
+        db.push_top_for_validation_test(NodeId(0));
 
         let error = db.validate().expect_err("invalid root must fail");
         assert_eq!(error.path(), "tops[0]");

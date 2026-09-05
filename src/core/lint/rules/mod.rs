@@ -160,7 +160,7 @@ pub(crate) mod tests {
 
     /// The arena node of a named signal declared in the top instance.
     pub(crate) fn find_signal(db: &Db, name: &str) -> NodeId {
-        for top in &db.tops {
+        for top in db.tops() {
             for c in &db.node(*top).children {
                 if db.node(*c).name == name
                     && matches!(

@@ -1,9 +1,14 @@
 # Simulator module
 
-This directory implements the simulator-specific half of LLG. `codegen.rs`
-lowers the owned `core::db` design into typed IR, `opt.rs` applies conservative
-IR passes, `emit_c.rs` renders the IR as a C11 model, and `build.rs` builds that
-model with the embedded runtime and libaco sources from `rt/`.  Model rebuilds
+This directory implements the simulator-specific half of LLG. `codegen.rs`,
+`emit_c.rs`, and `opt.rs` are narrow public facades: their implementation
+modules live in the matching directories and separate lowering, time-scale,
+naming, expression, statement, model, and pass concerns. `codegen` lowers the
+owned `core::db` design into typed IR, `opt` applies conservative IR passes,
+`emit_c` renders the IR as a C11 model, and `build.rs` builds that model with
+the embedded runtime and libaco sources from `rt/`. Public lowering and
+rendering failures use `CodegenError` and `EmitError`, so callers do not need
+to classify module failures by parsing strings. Model rebuilds
 are deterministic: stale entries in the output directory are pruned and an
 incompatible CMake build tree (missing cache or generator mismatch) is
 discarded so cmake reconfigures cleanly instead of failing.
@@ -12,6 +17,13 @@ The module must remain free of `unsafe` and direct VPI access. Extend
 `core::db` when lowering needs additional UHDM data; the C emitter consumes IR
 only. CMake is the sole model builder, and runtime behavior must stay aligned
 with `core::elab::Value` through the property vectors and C runtime self-test.
+IR table and representation fields are private to the simulator implementation. Public
+constructors validate local invariants, immutable accessors expose phase
+outputs, and `IrModel::validate` plus its detached-node validation helpers
+guard lowering, optimization, and rendering boundaries. External tools can
+assemble a nonempty model in `IrModelParts` and pass it to
+`IrModel::from_parts`; the parts are explicitly untrusted staging data and a
+model is returned only after complete cross-table validation succeeds.
 
 End-to-end behavior is covered by `tests/sim_*.rs`, scheduling by
 `tests/region_conformance.rs`, optimizer equivalence by

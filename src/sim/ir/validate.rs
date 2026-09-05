@@ -12,7 +12,7 @@ pub struct IrValidationError {
 }
 
 impl IrValidationError {
-    fn new(path: impl Into<String>, detail: impl Into<String>) -> Self {
+    pub(super) fn new(path: impl Into<String>, detail: impl Into<String>) -> Self {
         Self {
             path: path.into(),
             detail: detail.into(),
@@ -51,6 +51,45 @@ impl IrModel {
     /// the C emitter may then index the model tables without defensive checks.
     pub fn validate(&self) -> Result<(), IrValidationError> {
         Validator { model: self }.validate()
+    }
+
+    /// Validate a detached expression against this model's index tables.
+    pub fn validate_expr(
+        &self,
+        expression: &IrExpr,
+        function: Option<&IrFunc>,
+    ) -> Result<(), IrValidationError> {
+        Validator { model: self }.validate_expr(
+            expression,
+            function.map_or(&[], IrFunc::formals),
+            "expr",
+        )
+    }
+
+    /// Validate a detached statement against this model's index tables.
+    pub fn validate_stmt(
+        &self,
+        statement: &IrStmt,
+        function: Option<&IrFunc>,
+    ) -> Result<(), IrValidationError> {
+        Validator { model: self }.validate_stmts(
+            std::slice::from_ref(statement),
+            function.map_or(&[], IrFunc::formals),
+            "stmt",
+        )
+    }
+
+    /// Validate a detached helper function against this model's index tables.
+    pub fn validate_pre_fn(
+        &self,
+        pre_fn: &IrPreFn,
+        function: Option<&IrFunc>,
+    ) -> Result<(), IrValidationError> {
+        Validator { model: self }.validate_pre_fns(
+            std::slice::from_ref(pre_fn),
+            function.map_or(&[], IrFunc::formals),
+            "pre_fn",
+        )
     }
 }
 
@@ -137,14 +176,14 @@ impl Validator<'_> {
             for (local_idx, local) in func.locals.iter().enumerate() {
                 self.validate_width(local.width, &format!("{path}.locals[{local_idx}].width"))?;
             }
-            self.validate_pre_fns(&func.pre_fns, func.formals.len(), &path)?;
-            self.validate_stmts(&func.body, func.formals.len(), &format!("{path}.body"))?;
+            self.validate_pre_fns(&func.pre_fns, &func.formals, &path)?;
+            self.validate_stmts(&func.body, &func.formals, &format!("{path}.body"))?;
         }
 
         for (idx, process) in self.model.processes.iter().enumerate() {
             let path = format!("processes[{idx}]");
-            self.validate_pre_fns(&process.pre_fns, 0, &path)?;
-            self.validate_stmts(&process.body, 0, &format!("{path}.body"))?;
+            self.validate_pre_fns(&process.pre_fns, &[], &path)?;
+            self.validate_stmts(&process.body, &[], &format!("{path}.body"))?;
         }
 
         for (idx, step) in self.model.init_steps.iter().enumerate() {
@@ -219,7 +258,7 @@ impl Validator<'_> {
         if tail != 0 {
             let outside = !((1u64 << tail) - 1);
             for (name, values) in [("bits", &value.bits), ("x", &value.x), ("z", &value.z)] {
-                if values.last().copied().unwrap_or(0) & outside != 0 {
+                if values.get(limbs - 1).copied().unwrap_or(0) & outside != 0 {
                     return self.fail(
                         format!("{path}.{name}"),
                         "high limb contains bits outside the declared width",
@@ -230,7 +269,7 @@ impl Validator<'_> {
         Ok(())
     }
 
-    fn validate_expr(&self, expr: &IrExpr, formals: usize, path: &str) -> ValidationResult {
+    fn validate_expr(&self, expr: &IrExpr, formals: &[IrFormal], path: &str) -> ValidationResult {
         if expr.width > LLG_MAX_WIDTH {
             return self.fail(
                 format!("{path}.width"),
@@ -240,20 +279,63 @@ impl Validator<'_> {
         if expr.fill.is_some_and(|fill| fill > 3) {
             return self.fail(format!("{path}.fill"), "fill marker must be in 0..=3");
         }
+        if expr.width == 0 && expr.fill.is_some() {
+            return self.fail(
+                format!("{path}.fill"),
+                "real expression carries a packed fill marker",
+            );
+        }
         match &expr.kind {
-            IrExprKind::Const(value) => self.validate_const(value, &format!("{path}.const"))?,
+            IrExprKind::Const(value) => {
+                self.validate_const(value, &format!("{path}.const"))?;
+                if value.width != expr.width
+                    || value.signed != expr.signed
+                    || value.fill != expr.fill
+                {
+                    return self.fail(path, "constant payload type disagrees with expression type");
+                }
+            }
             IrExprKind::SigRead(idx) => {
-                self.model.signals.get(*idx).ok_or_else(|| {
+                let signal = self.model.signals.get(*idx).ok_or_else(|| {
                     IrValidationError::new(path, format!("signal index {idx} is out of bounds"))
                 })?;
+                if signal.ty.width() != expr.width || signal.ty.signed() != expr.signed {
+                    return self.fail(path, "signal type disagrees with expression type");
+                }
             }
             IrExprKind::LocalRead(_) => {}
             IrExprKind::FormalRead(idx) => {
-                if *idx >= formals {
-                    return self.fail(path, format!("formal index {idx} is out of bounds"));
+                let formal = formals.get(*idx).ok_or_else(|| {
+                    IrValidationError::new(path, format!("formal index {idx} is out of bounds"))
+                })?;
+                if formal.width != expr.width || formal.signed != expr.signed {
+                    return self.fail(path, "formal type disagrees with expression type");
                 }
             }
-            IrExprKind::CallFn(call) => self.validate_call_expr(call, formals, path)?,
+            IrExprKind::CallFn(call) => {
+                self.validate_call_expr(call, formals, path)?;
+                let callee = &self.model.funcs[call.f];
+                match callee.ret {
+                    Some(ret) => {
+                        if call.void_x {
+                            return self.fail(path, "value-returning call is marked as void");
+                        }
+                        if ret.width() != expr.width || ret.signed() != expr.signed {
+                            return self
+                                .fail(path, "callee return type disagrees with expression type");
+                        }
+                    }
+                    None => {
+                        if !call.void_x {
+                            return self.fail(path, "void call used as a value is not marked as X");
+                        }
+                        if expr.width != 1 || expr.signed || expr.fill.is_some() {
+                            return self
+                                .fail(path, "void-call fallback must be a 1-bit unsigned X");
+                        }
+                    }
+                }
+            }
             IrExprKind::Bin { a, b, .. } | IrExprKind::RealBin { a, b, .. } => {
                 self.validate_expr(a, formals, &format!("{path}.a"))?;
                 self.validate_expr(b, formals, &format!("{path}.b"))?;
@@ -351,7 +433,7 @@ impl Validator<'_> {
     fn validate_call_expr(
         &self,
         call: &IrCallExpr,
-        formals: usize,
+        formals: &[IrFormal],
         path: &str,
     ) -> ValidationResult {
         self.validate_call_target(call.f, &call.args, formals, path)?;
@@ -373,7 +455,7 @@ impl Validator<'_> {
         &self,
         function: usize,
         args: &[IrCallArg],
-        formals: usize,
+        formals: &[IrFormal],
         path: &str,
     ) -> ValidationResult {
         let callee = self.model.funcs.get(function).ok_or_else(|| {
@@ -389,15 +471,49 @@ impl Validator<'_> {
                 ),
             );
         }
-        for (idx, arg) in args.iter().enumerate() {
-            if let IrCallArg::Val(expr) = arg {
-                self.validate_expr(expr, formals, &format!("{path}.args[{idx}]"))?;
+        let parameter_order = callee
+            .formals
+            .iter()
+            .filter(|formal| formal.is_out)
+            .chain(callee.formals.iter().filter(|formal| !formal.is_out));
+        for (idx, (arg, formal)) in args.iter().zip(parameter_order).enumerate() {
+            let arg_path = format!("{path}.args[{idx}]");
+            match arg {
+                IrCallArg::Val(_) if formal.is_out => {
+                    return self.fail(arg_path, "output/inout formal requires an address argument");
+                }
+                IrCallArg::Val(expr) => {
+                    self.validate_expr(expr, formals, &arg_path)?;
+                    if expr.width != formal.width || expr.signed != formal.signed {
+                        return self
+                            .fail(arg_path, "input argument type disagrees with its formal");
+                    }
+                }
+                IrCallArg::OutAddr(_) | IrCallArg::OutTemp { .. } if !formal.is_out => {
+                    return self.fail(arg_path, "input formal requires a value argument");
+                }
+                IrCallArg::OutTemp {
+                    init: Some(init), ..
+                } => {
+                    if init.width != formal.width || init.signed != formal.signed {
+                        return self.fail(
+                            format!("{arg_path}.init"),
+                            "output/inout temp initializer type disagrees with its formal",
+                        );
+                    }
+                }
+                IrCallArg::OutAddr(_) | IrCallArg::OutTemp { init: None, .. } => {}
             }
         }
         Ok(())
     }
 
-    fn validate_elem_sel(&self, sel: &IrElemSel, formals: usize, path: &str) -> ValidationResult {
+    fn validate_elem_sel(
+        &self,
+        sel: &IrElemSel,
+        formals: &[IrFormal],
+        path: &str,
+    ) -> ValidationResult {
         match sel {
             IrElemSel::Whole => Ok(()),
             IrElemSel::Part(left, right) => self.validate_select_width(*left, *right, path),
@@ -416,7 +532,7 @@ impl Validator<'_> {
         Ok(())
     }
 
-    fn validate_lhs(&self, lhs: &IrLhs, formals: usize, path: &str) -> ValidationResult {
+    fn validate_lhs(&self, lhs: &IrLhs, formals: &[IrFormal], path: &str) -> ValidationResult {
         match lhs {
             IrLhs::Whole(signal) | IrLhs::Part(signal, ..) => {
                 if *signal >= self.model.signals.len() {
@@ -460,14 +576,19 @@ impl Validator<'_> {
         Ok(())
     }
 
-    fn validate_stmts(&self, stmts: &[IrStmt], formals: usize, path: &str) -> ValidationResult {
+    fn validate_stmts(
+        &self,
+        stmts: &[IrStmt],
+        formals: &[IrFormal],
+        path: &str,
+    ) -> ValidationResult {
         for (idx, stmt) in stmts.iter().enumerate() {
             self.validate_stmt(stmt, formals, &format!("{path}[{idx}]"))?;
         }
         Ok(())
     }
 
-    fn validate_stmt(&self, stmt: &IrStmt, formals: usize, path: &str) -> ValidationResult {
+    fn validate_stmt(&self, stmt: &IrStmt, formals: &[IrFormal], path: &str) -> ValidationResult {
         match stmt {
             IrStmt::Block(body) | IrStmt::Forever { body } => {
                 self.validate_stmts(body, formals, &format!("{path}.body"))?;
@@ -578,14 +699,26 @@ impl Validator<'_> {
                 self.validate_call_target(call.f, &call.args, formals, path)?;
                 let callee = &self.model.funcs[call.f];
                 for (idx, (_, formal, init)) in call.temps.iter().enumerate() {
-                    if *formal >= callee.formals.len() {
-                        return self.fail(
+                    let formal_ty = callee.formals.get(*formal).ok_or_else(|| {
+                        IrValidationError::new(
                             format!("{path}.temps[{idx}]"),
                             format!("formal index {formal} is out of bounds"),
+                        )
+                    })?;
+                    if !formal_ty.is_out {
+                        return self.fail(
+                            format!("{path}.temps[{idx}]"),
+                            "call temp refers to an input formal",
                         );
                     }
                     if let Some(init) = init {
                         self.validate_expr(init, formals, &format!("{path}.temps[{idx}].init"))?;
+                        if init.width != formal_ty.width || init.signed != formal_ty.signed {
+                            return self.fail(
+                                format!("{path}.temps[{idx}].init"),
+                                "call temp initializer type disagrees with its formal",
+                            );
+                        }
                     }
                 }
                 for (idx, (lhs, _, width, _)) in call.copyouts.iter().enumerate() {
@@ -621,7 +754,7 @@ impl Validator<'_> {
     fn validate_pre_fns(
         &self,
         pre_fns: &[IrPreFn],
-        formals: usize,
+        formals: &[IrFormal],
         path: &str,
     ) -> ValidationResult {
         for (idx, pre_fn) in pre_fns.iter().enumerate() {
@@ -711,21 +844,18 @@ mod tests {
     use super::*;
 
     fn valid_model() -> IrModel {
-        IrModel {
-            design_name: "top".to_string(),
-            precision_ps: 1,
-            signals: vec![IrSignal {
-                c_name: "sig".to_string(),
-                hdl_name: Some("sig".to_string()),
-                ty: IrType::Packed {
-                    width: 1,
-                    signed: false,
-                },
-                net_driver: None,
-                omit: false,
-            }],
-            ..IrModel::default()
-        }
+        let mut model = IrModel::new("top".to_string(), 1).unwrap();
+        model.signals = vec![IrSignal {
+            c_name: "sig".to_string(),
+            hdl_name: Some("sig".to_string()),
+            ty: IrType::Packed {
+                width: 1,
+                signed: false,
+            },
+            net_driver: None,
+            omit: false,
+        }];
+        model
     }
 
     #[test]
@@ -767,5 +897,171 @@ mod tests {
     #[test]
     fn accepts_a_minimal_well_formed_model() {
         valid_model().validate().expect("minimal model is valid");
+    }
+
+    #[test]
+    fn constructors_reject_invalid_local_invariants() {
+        assert!(IrModel::new("top".to_string(), 0).is_err());
+        assert!(IrType::packed(0, false).is_err());
+        assert!(IrExpr::try_new(IrExprKind::Fill(4), 1, false, Some(4)).is_err());
+        assert!(IrArray::new("a".into(), "a".into(), 8, false, Vec::new()).is_err());
+        assert!(IrNetGroup::new("n".into(), 1, false, 0).is_err());
+    }
+
+    #[test]
+    fn packed_constructor_checks_the_declared_high_limb() {
+        let value = IrConst::packed(vec![u64::MAX, 1], vec![], vec![], 65, false, None)
+            .expect("bit 64 is inside a 65-bit value");
+        assert_eq!(value.bits(), &[u64::MAX, 1]);
+
+        let error = IrConst::packed(vec![0, 2], vec![], vec![], 65, false, None)
+            .expect_err("bit 65 lies outside a 65-bit value");
+        assert_eq!(error.path(), "const.bits");
+    }
+
+    #[test]
+    fn public_parts_build_a_nonempty_valid_model() {
+        let signal = IrSignal::new(
+            "sig".to_string(),
+            Some("top.sig".to_string()),
+            IrType::packed(1, false).unwrap(),
+            None,
+        )
+        .unwrap();
+        let model = IrModel::from_parts(
+            "top".to_string(),
+            1,
+            IrModelParts {
+                signals: vec![signal],
+                ..IrModelParts::default()
+            },
+        )
+        .expect("a nonempty valid model must be constructible through the public API");
+        assert_eq!(model.signals().len(), 1);
+        assert_eq!(model.signal(0).hdl_name(), Some("top.sig"));
+    }
+
+    #[test]
+    fn public_parts_reject_invalid_cross_table_references() {
+        let process = IrProcess::new(
+            "proc".to_string(),
+            "top.initial".to_string(),
+            IrShape::RunOnce,
+            Vec::new(),
+            vec![IrStmt::Release { sig: 0 }],
+        );
+        let error = IrModel::from_parts(
+            "top".to_string(),
+            1,
+            IrModelParts {
+                processes: vec![process],
+                spawns: vec!["proc".to_string()],
+                ..IrModelParts::default()
+            },
+        )
+        .expect_err("a model cannot reference a missing signal");
+        assert_eq!(error.path(), "processes[0].body[0]");
+    }
+
+    #[test]
+    fn detached_nested_expression_checks_exact_formal_type() {
+        let context = IrFunc::new(
+            "context".to_string(),
+            None,
+            vec![IrFormal::new(false, 8, true).unwrap()],
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        );
+        let expression = IrExpr::new(
+            IrExprKind::Bin {
+                op: IrBinOp::Add,
+                a: Box::new(IrExpr::new(IrExprKind::FormalRead(0), 4, false, None)),
+                b: Box::new(IrExpr::new(
+                    IrExprKind::Const(
+                        IrConst::packed(vec![1], vec![], vec![], 4, false, None).unwrap(),
+                    ),
+                    4,
+                    false,
+                    None,
+                )),
+            },
+            4,
+            false,
+            None,
+        );
+
+        let error = valid_model()
+            .validate_expr(&expression, Some(&context))
+            .expect_err("a nested formal read must carry the formal's exact type");
+        assert_eq!(error.path(), "expr.a");
+        assert!(error.detail().contains("formal type"));
+    }
+
+    #[test]
+    fn call_arguments_follow_output_then_input_parameter_order() {
+        let callee = IrFunc::new(
+            "callee".to_string(),
+            Some(IrType::packed(1, false).unwrap()),
+            vec![
+                IrFormal::new(false, 8, false).unwrap(),
+                IrFormal::new(true, 16, true).unwrap(),
+            ],
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        );
+        let model = IrModel::from_parts(
+            "top".to_string(),
+            1,
+            IrModelParts {
+                funcs: vec![callee],
+                ..IrModelParts::default()
+            },
+        )
+        .unwrap();
+        let input = IrExpr::new(
+            IrExprKind::Const(IrConst::packed(vec![7], vec![], vec![], 8, false, None).unwrap()),
+            8,
+            false,
+            None,
+        );
+        let valid = IrExpr::new(
+            IrExprKind::CallFn(Box::new(IrCallExpr::new(
+                0,
+                vec![
+                    IrCallArg::OutAddr("&out".to_string()),
+                    IrCallArg::Val(input.clone()),
+                ],
+                IrDepth::PROC,
+                false,
+            ))),
+            1,
+            false,
+            None,
+        );
+        model
+            .validate_expr(&valid, None)
+            .expect("C-order output then input arguments are valid");
+
+        let invalid = IrExpr::new(
+            IrExprKind::CallFn(Box::new(IrCallExpr::new(
+                0,
+                vec![
+                    IrCallArg::Val(input),
+                    IrCallArg::OutAddr("&out".to_string()),
+                ],
+                IrDepth::PROC,
+                false,
+            ))),
+            1,
+            false,
+            None,
+        );
+        let error = model
+            .validate_expr(&invalid, None)
+            .expect_err("argument variants must agree with formal directions");
+        assert_eq!(error.path(), "expr.args[0]");
+        assert!(error.detail().contains("address argument"));
     }
 }

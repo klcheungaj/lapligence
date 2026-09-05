@@ -4,10 +4,9 @@
 //! intentionally does not evaluate expressions or normalize radix,
 //! signedness, casts, widths, or extensions.
 
-use crate::core::db::{Db, ExprKind, NodeId, NodeKind, StmtKind};
+use crate::core::db::{CaseKind, Db, ExprKind, NodeId, NodeKind, StmtKind};
 use crate::core::lint::rules::analysis::all_nodes;
 use crate::core::lint::{LintCtx, LintDiag, LintRule, LintSeverity};
-use crate::ffi::vpi::vpiCaseExact;
 
 /// Warns about every later literal expression repeated in an exact `case`.
 pub struct DuplicateCaseItemRule;
@@ -30,7 +29,7 @@ impl LintRule for DuplicateCaseItemRule {
             let NodeKind::Stmt(StmtKind::Case { case_type, items }) = db.node_kind(case) else {
                 continue;
             };
-            if *case_type != vpiCaseExact {
+            if *case_type != CaseKind::Exact {
                 continue;
             }
 

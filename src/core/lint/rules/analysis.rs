@@ -20,8 +20,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::core::db::{Db, ExprKind, NodeId, NodeKind, StmtKind};
-use crate::core::model::Direction;
+use crate::core::db::{AlwaysKind, Db, Direction, ExprKind, NodeId, NodeKind, StmtKind};
 use crate::ffi::vpi::{self, ValueData};
 
 /// True when `id` is a net, variable or array node.
@@ -90,7 +89,9 @@ pub fn expr_width(db: &Db, id: NodeId) -> Option<u32> {
             expr_width(db, *width_expr)
         }
         NodeKind::Expr(ExprKind::Cast { ty, .. }) => ty.width,
-        NodeKind::Expr(ExprKind::Operation { op, operands, .. }) => op_width(db, *op, operands),
+        NodeKind::Expr(ExprKind::Operation { op, operands, .. }) => {
+            op_width(db, op.as_raw(), operands)
+        }
         _ => None,
     }
 }
@@ -432,7 +433,7 @@ pub fn all_nodes(db: &Db) -> Vec<NodeId> {
         }
     }
     let mut out = Vec::new();
-    for top in &db.tops {
+    for top in db.tops() {
         walk(db, *top, &mut out);
     }
     out
@@ -456,10 +457,10 @@ pub fn all_design_nodes(db: &Db) -> Vec<NodeId> {
     let mut seen = HashSet::new();
     let mut out = Vec::new();
     for root in db
-        .tops
+        .tops()
         .iter()
-        .chain(db.packages.iter())
-        .chain(db.classes.iter())
+        .chain(db.packages().iter())
+        .chain(db.classes().iter())
     {
         walk(db, *root, &mut seen, &mut out);
     }
@@ -487,7 +488,7 @@ pub fn iter_instances(db: &Db) -> impl Iterator<Item = (NodeId, String)> + '_ {
         }
     }
     let mut out = Vec::new();
-    for top in &db.tops {
+    for top in db.tops() {
         walk_scopes(db, *top, &mut out);
     }
     out.into_iter()
@@ -605,7 +606,7 @@ pub fn iface_copy_instances(db: &Db) -> HashSet<NodeId> {
 
     let mut wired = HashSet::new();
     let mut groups = HashMap::new();
-    for top in &db.tops {
+    for top in db.tops() {
         walk_wired(db, *top, &mut wired);
         collect_iface_groups(db, *top, &mut groups);
     }
@@ -693,7 +694,9 @@ pub fn port_link_drivers(db: &Db) -> HashMap<NodeId, u32> {
                         (*low, *high)
                     }
                 }
-                Direction::None => (None, None),
+                Direction::Mixed | Direction::None | Direction::Ref | Direction::Unknown(_) => {
+                    (None, None)
+                }
             };
             for sig in [a, b].into_iter().flatten() {
                 *out.entry(sig).or_insert(0) += 1;
@@ -748,7 +751,7 @@ pub fn connected_port_link_drivers(db: &Db) -> HashSet<NodeId> {
                         out.insert(*sig);
                     }
                 }
-                Direction::None => {}
+                Direction::Mixed | Direction::None | Direction::Ref | Direction::Unknown(_) => {}
             }
         }
     }
@@ -805,7 +808,7 @@ pub fn port_link_reads(db: &Db) -> HashSet<NodeId> {
                         out.insert(*sig);
                     }
                 }
-                Direction::None => {}
+                Direction::Mixed | Direction::None | Direction::Ref | Direction::Unknown(_) => {}
             }
         }
     }
@@ -873,7 +876,7 @@ pub fn gate_terminal_reads(db: &Db) -> HashSet<NodeId> {
             continue;
         }
         for term in terms {
-            if matches!(term.direction, vpi::vpiInput | vpi::vpiInout) {
+            if matches!(term.direction, Direction::Input | Direction::Inout) {
                 out.extend(collect_reads(db, term.expr));
                 if let Some(sig) = read_signal_of_expr(db, term.expr) {
                     out.insert(sig);
@@ -918,7 +921,7 @@ pub fn gate_terminal_drivers(db: &Db) -> HashSet<NodeId> {
             continue;
         }
         for term in terms {
-            if !matches!(term.direction, vpi::vpiOutput | vpi::vpiInout) {
+            if !matches!(term.direction, Direction::Output | Direction::Inout) {
                 continue;
             }
             if let Some(sig) = driver_signal_of_lhs(db, term.expr) {
@@ -936,7 +939,7 @@ pub fn is_comb_process(db: &Db, id: NodeId) -> bool {
         kind: crate::core::db::ProcessKind::Always { always_type },
     } = db.node_kind(id)
     {
-        if *always_type == vpi::vpiAlwaysComb {
+        if *always_type == AlwaysKind::Comb {
             return true;
         }
     }
@@ -950,7 +953,7 @@ pub fn is_comb_or_latch_process(db: &Db, id: NodeId) -> bool {
         kind: crate::core::db::ProcessKind::Always { always_type },
     } = db.node_kind(id)
     {
-        if *always_type == vpi::vpiAlwaysComb || *always_type == vpi::vpiAlwaysLatch {
+        if matches!(always_type, AlwaysKind::Comb | AlwaysKind::Latch) {
             return true;
         }
     }
@@ -995,7 +998,7 @@ mod tests {
 
     /// First top-level continuous assignment of the design.
     fn top_cont_assign(db: &Db) -> NodeId {
-        for top in &db.tops {
+        for top in db.tops() {
             for c in &db.node(*top).children {
                 if matches!(db.node_kind(*c), NodeKind::ContAssign { .. }) {
                     return *c;
@@ -1037,7 +1040,7 @@ mod tests {
         let b = find_signal(&db, "b");
         // The process writes only `a`.
         let proc = db
-            .tops
+            .tops()
             .iter()
             .flat_map(|t| db.node(*t).children.clone())
             .find(|c| matches!(db.node_kind(*c), NodeKind::Process { .. }))
@@ -1055,7 +1058,7 @@ mod tests {
         let db = db_of("module t; logic clk, x; always @(posedge clk) x <= 1'b0; endmodule");
         let clk = find_signal(&db, "clk");
         let proc = db
-            .tops
+            .tops()
             .iter()
             .flat_map(|t| db.node(*t).children.clone())
             .find(|c| matches!(db.node_kind(*c), NodeKind::Process { .. }))
@@ -1119,7 +1122,7 @@ mod tests {
             "expected top + 4 gen scopes, got {}",
             insts.len()
         );
-        assert_eq!(insts[0].0, db.tops[0], "top first");
+        assert_eq!(insts[0].0, db.tops()[0], "top first");
         // Every gen scope path starts with the top name.
         for (_id, path) in &insts[1..] {
             assert!(path.starts_with("t."), "gen scope path {path:?}");
@@ -1289,7 +1292,7 @@ mod tests {
 
     /// All top-level cont assigns, in capture order.
     fn top_cont_assigns(db: &Db) -> Vec<NodeId> {
-        db.tops
+        db.tops()
             .iter()
             .flat_map(|t| db.node(*t).children.clone())
             .filter(|c| matches!(db.node_kind(*c), NodeKind::ContAssign { .. }))

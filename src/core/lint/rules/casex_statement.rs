@@ -2,10 +2,9 @@
 
 use std::collections::HashSet;
 
-use crate::core::db::{Db, NodeId, NodeKind, StmtKind};
+use crate::core::db::{CaseKind, Db, NodeId, NodeKind, StmtKind};
 use crate::core::lint::rules::analysis::all_design_nodes;
 use crate::core::lint::{LintCtx, LintDiag, LintRule, LintSeverity};
-use crate::ffi::vpi::vpiCaseX;
 
 /// Warns for each source-level `casex` statement in a process, function, or
 /// task body. Exact `case` and `casez` are outside this rule.
@@ -29,7 +28,7 @@ impl LintRule for CasexStatementRule {
             let NodeKind::Stmt(StmtKind::Case { case_type, .. }) = db.node_kind(case) else {
                 continue;
             };
-            if *case_type != vpiCaseX || !has_executable_owner(db, case) {
+            if *case_type != CaseKind::X || !has_executable_owner(db, case) {
                 continue;
             }
             let node = db.node(case);
@@ -111,7 +110,10 @@ mod tests {
             })
             .collect::<Vec<_>>();
         assert_eq!(flavors.len(), 3);
-        assert_eq!(flavors.iter().filter(|kind| **kind == vpiCaseX).count(), 1);
+        assert_eq!(
+            flavors.iter().filter(|kind| **kind == CaseKind::X).count(),
+            1
+        );
     }
 
     #[test]

@@ -14,10 +14,10 @@
 //! values) participate; `x`, `z` and `?` digits are wildcards.  Item pairs
 //! where either side is not a literal are skipped.
 
-use crate::core::db::{Db, ExprKind, NodeId, NodeKind, StmtKind};
+use crate::core::db::{CaseKind, Db, ExprKind, NodeId, NodeKind, StmtKind};
 use crate::core::lint::rules::analysis::all_nodes;
 use crate::core::lint::{LintCtx, LintDiag, LintRule, LintSeverity};
-use crate::ffi::vpi::{vpiCaseX, vpiCaseZ, ValueData};
+use crate::ffi::vpi::ValueData;
 
 /// Warns about overlapping wildcard items and constant selectors in
 /// `casez`/`casex` statements.
@@ -52,7 +52,7 @@ impl LintRule for CasezMisuseRule {
 /// Every `casez`/`casex` statement in the tree rooted at `root`.
 fn collect_wildcard_cases(db: &Db, root: NodeId, out: &mut Vec<NodeId>) {
     if let NodeKind::Stmt(StmtKind::Case { case_type, .. }) = db.node_kind(root) {
-        if *case_type == vpiCaseX || *case_type == vpiCaseZ {
+        if matches!(case_type, CaseKind::X | CaseKind::Z) {
             out.push(root);
         }
     }

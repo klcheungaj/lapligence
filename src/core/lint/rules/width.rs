@@ -6,10 +6,9 @@
 //! narrower) is allowed and reported as Info.  Widths that cannot be computed
 //! (unsized literals, unknown types, function calls, …) are skipped.
 
-use crate::core::db::{Db, NodeId, NodeKind, StmtKind};
+use crate::core::db::{Db, Direction, NodeId, NodeKind, StmtKind};
 use crate::core::lint::rules::analysis::{all_nodes, expr_width, object_width, signal_of_ref};
 use crate::core::lint::{LintCtx, LintDiag, LintRule, LintSeverity};
-use crate::core::model::Direction;
 
 /// Warns when an assignment's LHS and RHS widths differ.
 pub struct WidthMismatchRule;
@@ -54,7 +53,11 @@ impl LintRule for WidthMismatchRule {
                     let (lhs, rhs) = match direction {
                         Direction::Input => (*low, *high),
                         Direction::Output => (*high, *low),
-                        Direction::Inout | Direction::None => (None, None),
+                        Direction::Inout
+                        | Direction::Mixed
+                        | Direction::None
+                        | Direction::Ref
+                        | Direction::Unknown(_) => (None, None),
                     };
                     let (Some(lhs), Some(rhs)) = (lhs, rhs) else {
                         continue;

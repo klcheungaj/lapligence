@@ -6,10 +6,9 @@
 //! Full dataflow analysis (a signal assigned in only one branch) is deferred;
 //! v1 flags the conservative, easy-to-detect form.
 
-use crate::core::db::{Db, NodeId, NodeKind, StmtKind};
+use crate::core::db::{CaseKind, Db, NodeId, NodeKind, StmtKind};
 use crate::core::lint::rules::analysis::{all_nodes, is_comb_or_latch_process};
 use crate::core::lint::{LintCtx, LintDiag, LintRule, LintSeverity};
-use crate::ffi::vpi::vpiCaseExact;
 
 /// Warns about `case` statements without a `default` in comb processes.
 pub struct IncompleteCaseRule;
@@ -59,7 +58,7 @@ fn collect_cases_without_default(db: &Db, root: NodeId, out: &mut Vec<NodeId>) {
         case_type, items, ..
     }) = db.node_kind(root)
     {
-        if *case_type == vpiCaseExact && !items.iter().any(|it| it.exprs.is_empty()) {
+        if *case_type == CaseKind::Exact && !items.iter().any(|it| it.exprs.is_empty()) {
             out.push(root);
         }
     }

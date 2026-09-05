@@ -40,7 +40,7 @@ impl LintRule for ComparisonWidthRule {
             let NodeKind::Expr(ExprKind::Operation { op, operands, .. }) = db.node_kind(id) else {
                 continue;
             };
-            if !is_comparison(*op) {
+            if !is_comparison(op.as_raw()) {
                 continue;
             }
             let (Some(lhs), Some(rhs)) = (operands.first(), operands.get(1)) else {

@@ -13,10 +13,9 @@
 //! Findings are positioned at the assignment statement.  `always_latch` and
 //! level-sensitive/implicit event controls (`@*`) are not checked.
 
-use crate::core::db::{Db, EventSpec, NodeId, NodeKind, ProcessKind, StmtKind};
+use crate::core::db::{AlwaysKind, Db, EventSpec, NodeId, NodeKind, ProcessKind, StmtKind};
 use crate::core::lint::rules::analysis::{all_nodes, scope_path};
 use crate::core::lint::{LintCtx, LintDiag, LintRule, LintSeverity};
-use crate::ffi::vpi::{vpiAlways, vpiAlwaysFF};
 
 /// Warns about blocking assignments in always_ff / edge-sensitive always.
 pub struct BlockingInFFRule;
@@ -70,10 +69,10 @@ fn ff_label(db: &Db, id: NodeId) -> Option<&'static str> {
     else {
         return None;
     };
-    if *always_type == vpiAlwaysFF {
+    if *always_type == AlwaysKind::FlipFlop {
         return Some("always_ff");
     }
-    if *always_type == vpiAlways && has_edge_event(db, id) {
+    if *always_type == AlwaysKind::Always && has_edge_event(db, id) {
         return Some("edge-sensitive always");
     }
     None

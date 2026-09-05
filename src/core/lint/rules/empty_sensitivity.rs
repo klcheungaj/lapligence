@@ -8,10 +8,9 @@
 
 use std::collections::HashSet;
 
-use crate::core::db::{Db, ExprKind, NodeId, NodeKind, ProcessKind, StmtKind};
+use crate::core::db::{AlwaysKind, Db, ExprKind, NodeId, NodeKind, ProcessKind, StmtKind};
 use crate::core::lint::rules::analysis::{all_nodes, collect_reads, collect_writes, is_signal};
 use crate::core::lint::{LintCtx, LintDiag, LintRule, LintSeverity};
-use crate::ffi::vpi::vpiAlways;
 
 /// Warns when a plain implicit-sensitivity block writes signals but has no
 /// trustworthy resolved signal reads from which to derive sensitivity.
@@ -38,7 +37,7 @@ impl LintRule for EmptyImplicitSensitivityRule {
             else {
                 continue;
             };
-            if *always_type != vpiAlways {
+            if *always_type != AlwaysKind::Always {
                 continue;
             }
 

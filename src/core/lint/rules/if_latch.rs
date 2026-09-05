@@ -25,12 +25,11 @@
 
 use std::collections::HashSet;
 
-use crate::core::db::{Db, NodeId, NodeKind, ProcessKind, StmtKind};
+use crate::core::db::{AlwaysKind, Db, NodeId, NodeKind, ProcessKind, StmtKind};
 use crate::core::lint::rules::analysis::{
     all_nodes, has_implicit_event, has_timing_control, scope_path, signal_of_ref,
 };
 use crate::core::lint::{LintCtx, LintDiag, LintRule, LintSeverity};
-use crate::ffi::vpi::{vpiAlwaysComb, vpiAlwaysLatch};
 
 /// Warns about signals that may be left unassigned in a comb process (latch
 /// inference).
@@ -93,7 +92,7 @@ fn is_latch_candidate(db: &Db, id: NodeId) -> bool {
         kind: ProcessKind::Always { always_type },
     } = db.node_kind(id)
     {
-        if *always_type == vpiAlwaysComb || *always_type == vpiAlwaysLatch {
+        if matches!(always_type, AlwaysKind::Comb | AlwaysKind::Latch) {
             return !has_timing_control(db, id);
         }
     }

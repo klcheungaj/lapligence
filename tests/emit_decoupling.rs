@@ -7,26 +7,44 @@
 //! `core::db (lowering) → IrModel → optimization passes → C11 emit backend`
 //! pipeline shape, in the spirit of the repo's other grep-based invariants.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-fn sim_src(file: &str) -> String {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("src/sim")
-        .join(file);
-    std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display()))
+fn sim_sources(entry: &str) -> Vec<(PathBuf, String)> {
+    let sim_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/sim");
+    let mut sources = Vec::new();
+    collect_rust_sources(&sim_dir.join(format!("{entry}.rs")), &mut sources);
+    collect_rust_sources(&sim_dir.join(entry), &mut sources);
+    sources.sort_by(|left, right| left.0.cmp(&right.0));
+    sources
+}
+
+fn collect_rust_sources(path: &Path, sources: &mut Vec<(PathBuf, String)>) {
+    if path.is_dir() {
+        for entry in std::fs::read_dir(path)
+            .unwrap_or_else(|error| panic!("cannot read {}: {error}", path.display()))
+        {
+            let entry = entry.expect("read simulator source entry");
+            collect_rust_sources(&entry.path(), sources);
+        }
+    } else if path.extension().and_then(|extension| extension.to_str()) == Some("rs") {
+        let source = std::fs::read_to_string(path)
+            .unwrap_or_else(|error| panic!("cannot read {}: {error}", path.display()));
+        sources.push((path.to_path_buf(), source));
+    }
 }
 
 /// `emit_c.rs` is a pure IR consumer: no database access, no Surelog/VPI
 /// bindings, no `unsafe`.
 #[test]
 fn emit_c_consumes_only_ir() {
-    let src = sim_src("emit_c.rs");
-    for banned in ["core::db", "crate::ffi", "vpi", "unsafe", "VpiHandle"] {
-        assert!(
-            !src.contains(banned),
-            "src/sim/emit_c.rs must not reference `{banned}`: the C11 \
-             backend consumes only `crate::sim::ir` types"
-        );
+    for (path, source) in sim_sources("emit_c") {
+        for banned in ["core::db", "crate::ffi", "vpi", "unsafe", "VpiHandle"] {
+            assert!(
+                !source.contains(banned),
+                "{} must not reference `{banned}`: the C11 backend consumes only IR types",
+                path.display()
+            );
+        }
     }
 }
 
@@ -34,41 +52,46 @@ fn emit_c_consumes_only_ir() {
 /// backend.
 #[test]
 fn codegen_builds_ir_not_c_text() {
-    let src = sim_src("codegen.rs");
-    for banned in [
-        "llg_spawn(",
-        "llg_ba(",
-        "llg_ba_d(",
-        "llg_nba(",
-        "llg_nba_d(",
-        "llg_net_write(",
-        "llg_wait_time(",
-        "llg_wait_any(",
-        "llg_wait_any_events(",
-        "llg_fork(",
-        "llg_join(",
-        "llg_force(",
-        "llg_release(",
-        "llg_display(",
-        "llg_monitor(",
-        "llg_strobe(",
-        "llg_rt_run(",
-        "static void p_",
-    ] {
-        assert!(
-            !src.contains(banned),
-            "src/sim/codegen.rs must not emit runtime C text containing \
-             `{banned}`: emission belongs to `crate::sim::emit_c`"
-        );
+    let codegen = sim_sources("codegen");
+    for (path, source) in &codegen {
+        for banned in [
+            "llg_spawn(",
+            "llg_ba(",
+            "llg_ba_d(",
+            "llg_nba(",
+            "llg_nba_d(",
+            "llg_net_write(",
+            "llg_wait_time(",
+            "llg_wait_any(",
+            "llg_wait_any_events(",
+            "llg_fork(",
+            "llg_join(",
+            "llg_force(",
+            "llg_release(",
+            "llg_display(",
+            "llg_monitor(",
+            "llg_strobe(",
+            "llg_rt_run(",
+            "static void p_",
+        ] {
+            assert!(
+                !source.contains(banned),
+                "{} must not emit runtime C text containing `{banned}`: emission belongs to emit_c",
+                path.display()
+            );
+        }
     }
     // The pipeline seam exists on both sides.
     assert!(
-        src.contains("generate_with_opts"),
+        codegen
+            .iter()
+            .any(|(_, source)| source.contains("generate_with_opts")),
         "generate_with_opts must expose the optimizer configuration"
     );
-    let emit = sim_src("emit_c.rs");
+    let emit = sim_sources("emit_c");
     assert!(
-        emit.contains("pub fn render(model: &IrModel)"),
+        emit.iter().any(|(_, source)| source
+            .contains("pub fn render(model: &IrModel) -> Result<String, EmitError>")),
         "the backend entry point renders a complete IrModel"
     );
 }

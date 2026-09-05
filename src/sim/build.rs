@@ -81,8 +81,6 @@ pub struct CmakeBuildOpts {
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum BuildError {
-    /// An embedded runtime or generated model source could not be written.
-    SourceGeneration(String),
     /// A direct filesystem operation in this module failed.
     Io {
         action: &'static str,
@@ -112,7 +110,6 @@ impl BuildError {
 impl fmt::Display for BuildError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::SourceGeneration(detail) => f.write_str(detail),
             Self::Io {
                 action,
                 path,
@@ -237,10 +234,10 @@ pub fn build_model_cmake_with_opts(
 /// part of the current source set (and not the CMake `build/` directory) are
 /// deleted, so artifacts of earlier runs never accumulate.
 pub fn generate_model_sources(out_dir: &Path, extra: &[(&str, &str)]) -> Result<(), BuildError> {
-    super::write_sim_sources(out_dir, extra).map_err(BuildError::SourceGeneration)?;
+    super::write_sim_sources(out_dir, extra)?;
     let waveform = waveform_enabled(extra);
     if waveform {
-        super::rt::write_waveform_sources(out_dir).map_err(BuildError::SourceGeneration)?;
+        super::rt::write_waveform_sources(out_dir)?;
     }
     write_cmakelists(out_dir, extra, waveform)?;
     prune_stale_entries(out_dir, extra, waveform);

@@ -14,7 +14,6 @@ use crate::core::lint::rules::analysis::{
     top_external_port_signals, unconnected_port_signals,
 };
 use crate::core::lint::{LintCtx, LintDiag, LintRule, LintSeverity};
-use crate::ffi::vpi;
 
 /// Warns about a signal that is read but has no known active driver.
 pub struct UndrivenSignalRule;
@@ -112,11 +111,11 @@ fn design_activity(db: &Db) -> (HashSet<NodeId>, HashSet<NodeId>) {
     // Variable and array declaration initializers are not process or
     // continuous-assignment nodes.  They are still active drivers, and their
     // expressions can contain reads of other captured signals.
-    for (signal, init) in &db.vars_init {
+    for (signal, init) in db.var_initializers() {
         drivers.insert(*signal);
         reads.extend(collect_reads(db, *init));
     }
-    for (signal, meta) in &db.arrays {
+    for (signal, meta) in db.arrays() {
         if let Some(init) = meta.init {
             drivers.insert(*signal);
             reads.extend(collect_reads(db, init));
@@ -165,7 +164,10 @@ fn has_intrinsic_net_driver(db: &Db, id: NodeId) -> bool {
         NodeKind::Net { net_type, .. }
             if matches!(
                 *net_type,
-                vpi::vpiTri0 | vpi::vpiTri1 | vpi::vpiSupply0 | vpi::vpiSupply1
+                crate::core::db::NetType::Tri0
+                    | crate::core::db::NetType::Tri1
+                    | crate::core::db::NetType::Supply0
+                    | crate::core::db::NetType::Supply1
             )
     )
 }

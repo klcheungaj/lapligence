@@ -9,10 +9,9 @@
 
 use std::collections::HashSet;
 
-use crate::core::db::{Db, ExprKind, NodeId, NodeKind, StmtKind};
+use crate::core::db::{Db, ExprKind, NodeId, NodeKind, Operation, StmtKind};
 use crate::core::lint::rules::analysis::all_design_nodes;
 use crate::core::lint::{LintCtx, LintDiag, LintRule, LintSeverity};
-use crate::ffi::vpi;
 
 /// Warns about assignment expressions consumed as truth predicates.
 pub struct AssignmentInConditionRule;
@@ -40,7 +39,7 @@ impl LintRule for AssignmentInConditionRule {
                     collect_predicate_assignments(db, *cond, &mut assignments);
                 }
                 NodeKind::Expr(ExprKind::Operation { op, operands, .. })
-                    if *op == vpi::vpiConditionOp =>
+                    if *op == Operation::Conditional =>
                 {
                     if let Some(cond) = operands.first() {
                         collect_predicate_assignments(db, *cond, &mut assignments);
@@ -78,7 +77,7 @@ impl LintRule for AssignmentInConditionRule {
 fn collect_predicate_assignments(db: &Db, expression: NodeId, out: &mut Vec<NodeId>) {
     match db.node_kind(expression) {
         NodeKind::Expr(ExprKind::Operation { op, operands, .. }) => {
-            if *op == vpi::vpiAssignmentOp {
+            if *op == Operation::Assignment {
                 out.push(expression);
                 return;
             }
@@ -121,19 +120,19 @@ fn collect_predicate_assignments(db: &Db, expression: NodeId, out: &mut Vec<Node
     }
 }
 
-fn is_comparison_boundary(op: i32) -> bool {
+fn is_comparison_boundary(op: Operation) -> bool {
     matches!(
         op,
-        vpi::vpiEqOp
-            | vpi::vpiNeqOp
-            | vpi::vpiCaseEqOp
-            | vpi::vpiCaseNeqOp
-            | vpi::vpiWildEqOp
-            | vpi::vpiWildNeqOp
-            | vpi::vpiGtOp
-            | vpi::vpiGeOp
-            | vpi::vpiLtOp
-            | vpi::vpiLeOp
+        Operation::Equal
+            | Operation::NotEqual
+            | Operation::CaseEqual
+            | Operation::CaseNotEqual
+            | Operation::WildEqual
+            | Operation::WildNotEqual
+            | Operation::Greater
+            | Operation::GreaterEqual
+            | Operation::Less
+            | Operation::LessEqual
     )
 }
 
@@ -184,7 +183,7 @@ mod tests {
             .expect("Surelog v1.87 must expose the if condition");
         assert!(matches!(
             db.node_kind(cond),
-            NodeKind::Expr(ExprKind::Operation { op, .. }) if *op == vpi::vpiAssignmentOp
+            NodeKind::Expr(ExprKind::Operation { op, .. }) if *op == Operation::Assignment
         ));
     }
 

@@ -17,10 +17,9 @@
 //! Statements already in the `incomplete-case` domain are skipped so a single
 //! location is never reported by both rules.
 
-use crate::core::db::{Db, NodeId, NodeKind, StmtKind};
+use crate::core::db::{CaseKind, Db, NodeId, NodeKind, StmtKind};
 use crate::core::lint::rules::analysis::{all_nodes, is_comb_or_latch_process};
 use crate::core::lint::{LintCtx, LintDiag, LintRule, LintSeverity};
-use crate::ffi::vpi::{vpiCaseExact, vpiCaseX, vpiCaseZ};
 
 /// Warns about case statements without a default arm outside the
 /// `incomplete-case` domain.
@@ -45,15 +44,13 @@ impl LintRule for CaseDefaultMissingRule {
             if items.iter().any(|it| it.exprs.is_empty()) {
                 continue; // has a default arm
             }
-            if *case_type == vpiCaseExact && in_comb_or_latch_process(db, id) {
+            if *case_type == CaseKind::Exact && in_comb_or_latch_process(db, id) {
                 continue; // incomplete-case's domain: exact case in a comb process
             }
             let node = db.node(id);
-            // Equality checks rather than a match: the lowercase vpi constants
-            // would trip the non-upper-case glob-pattern lint.
-            let kind = if *case_type == vpiCaseX {
+            let kind = if *case_type == CaseKind::X {
                 "casex"
-            } else if *case_type == vpiCaseZ {
+            } else if *case_type == CaseKind::Z {
                 "casez"
             } else {
                 "case"

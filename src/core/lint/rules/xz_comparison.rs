@@ -9,7 +9,7 @@
 
 #![allow(non_upper_case_globals)] // VPI operator/scalar constants use this style.
 
-use crate::core::db::{Db, ExprKind, NodeId, NodeKind};
+use crate::core::db::{Db, ExprKind, NodeId, NodeKind, Operation};
 use crate::core::lint::rules::analysis::all_nodes;
 use crate::core::lint::{LintCtx, LintDiag, LintRule, LintSeverity};
 use crate::ffi::vpi::{self, ValueData};
@@ -34,7 +34,7 @@ impl LintRule for XzLogicalEqualityRule {
             let NodeKind::Expr(ExprKind::Operation { op, operands, .. }) = db.node_kind(id) else {
                 continue;
             };
-            if !matches!(*op, vpi::vpiEqOp | vpi::vpiNeqOp) {
+            if !matches!(op, Operation::Equal | Operation::NotEqual) {
                 continue;
             }
             let (Some(left), Some(right)) = (operands.first(), operands.get(1)) else {

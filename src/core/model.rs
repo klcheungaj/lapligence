@@ -317,20 +317,28 @@ impl DesignModel {
     /// Fully owned: the returned model shares nothing with the database or
     /// the VPI session it was built from.
     pub fn from_db(db: &db::Db) -> DesignModel {
-        let top_instances = db.tops.iter().map(|id| instance_from_db(db, *id)).collect();
+        let top_instances = db
+            .tops()
+            .iter()
+            .map(|id| instance_from_db(db, *id))
+            .collect();
         let modules = db
-            .flat_modules
+            .flat_modules()
             .iter()
             .map(|id| module_def_from_db(db, *id))
             .collect();
         let packages = db
-            .packages
+            .packages()
             .iter()
             .map(|id| package_from_db(db, *id))
             .collect();
-        let classes = db.classes.iter().map(|id| class_from_db(db, *id)).collect();
+        let classes = db
+            .classes()
+            .iter()
+            .map(|id| class_from_db(db, *id))
+            .collect();
         DesignModel {
-            design_name: db.design_name.clone(),
+            design_name: db.design_name().to_owned(),
             top_instances,
             modules,
             packages,
@@ -501,7 +509,7 @@ fn func_args_from_db(db: &db::Db, ft_id: NodeId) -> Vec<FuncArgDef> {
                 default,
             } => Some(FuncArgDef {
                 name: db.node(*c).name.clone(),
-                direction: *direction,
+                direction: model_direction(*direction),
                 ty: ty.clone(),
                 has_default: default.is_some(),
             }),
@@ -510,21 +518,33 @@ fn func_args_from_db(db: &db::Db, ft_id: NodeId) -> Vec<FuncArgDef> {
         .collect()
 }
 
-fn net_kind(net_type: i32) -> &'static str {
+fn net_kind(net_type: db::NetType) -> &'static str {
     match net_type {
-        vpi::vpiWire => "wire",
-        vpi::vpiWand => "wand",
-        vpi::vpiWor => "wor",
-        vpi::vpiTri => "tri",
-        vpi::vpiTri0 => "tri0",
-        vpi::vpiTri1 => "tri1",
-        vpi::vpiTriReg => "trireg",
-        vpi::vpiTriAnd => "triand",
-        vpi::vpiTriOr => "trior",
-        vpi::vpiSupply0 => "supply0",
-        vpi::vpiSupply1 => "supply1",
-        vpi::vpiUwire => "uwire",
+        db::NetType::Wire => "wire",
+        db::NetType::Wand => "wand",
+        db::NetType::Wor => "wor",
+        db::NetType::Tri => "tri",
+        db::NetType::Tri0 => "tri0",
+        db::NetType::Tri1 => "tri1",
+        db::NetType::TriReg => "trireg",
+        db::NetType::TriAnd => "triand",
+        db::NetType::TriOr => "trior",
+        db::NetType::Supply0 => "supply0",
+        db::NetType::Supply1 => "supply1",
+        db::NetType::Uwire => "uwire",
         _ => "net",
+    }
+}
+
+fn model_direction(direction: db::Direction) -> Direction {
+    match direction {
+        db::Direction::Input => Direction::Input,
+        db::Direction::Output => Direction::Output,
+        db::Direction::Inout => Direction::Inout,
+        db::Direction::Mixed
+        | db::Direction::None
+        | db::Direction::Ref
+        | db::Direction::Unknown(_) => Direction::None,
     }
 }
 
@@ -654,7 +674,7 @@ fn clean_name(name: &str) -> &str {
 fn port_from_db(db: &db::Db, id: NodeId) -> PortModel {
     let node = db.node(id);
     let (direction, low) = match &node.kind {
-        db::NodeKind::Port { direction, low, .. } => (*direction, *low),
+        db::NodeKind::Port { direction, low, .. } => (model_direction(*direction), *low),
         _ => (Direction::None, None),
     };
     // The port's type is the type of the net/var its low connection binds to

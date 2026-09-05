@@ -11,7 +11,7 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 
 use llg::core::{compile, db, elab, model};
-use llg::ffi::{surelog, vpi};
+use llg::ffi::surelog;
 
 static SURELOG_LOCK: Mutex<()> = Mutex::new(());
 
@@ -327,8 +327,8 @@ fn db_owns_dynamic_net_declaration_assignment_shape() {
         };
         let (_out, database) = compile_and_db(opts);
 
-        let declaration_assignments = (0..database.node_count())
-            .map(|index| db::NodeId(index as u32))
+        let declaration_assignments = database
+            .node_ids()
             .filter(|id| {
                 matches!(
                     database.node_kind(*id),
@@ -354,7 +354,7 @@ fn db_owns_dynamic_net_declaration_assignment_shape() {
             matches!(
                 database.node_kind(lhs_target),
                 db::NodeKind::Net {
-                    net_type: vpi::vpiWire | vpi::vpiNet,
+                    net_type: db::NetType::Wire | db::NetType::Logic,
                     ..
                 }
             ),

@@ -29,6 +29,17 @@ pub use validate::IrValidationError;
 /// `src/sim/rt/llg_rt.h`.
 pub const LLG_MAX_WIDTH: u32 = 1024;
 
+fn validate_width(path: &str, width: u32) -> Result<(), IrValidationError> {
+    if (1..=LLG_MAX_WIDTH).contains(&width) {
+        Ok(())
+    } else {
+        Err(IrValidationError::new(
+            path,
+            format!("packed width {width} is outside 1..={LLG_MAX_WIDTH}"),
+        ))
+    }
+}
+
 /// A lowered storage type.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum IrType {
@@ -42,6 +53,12 @@ pub enum IrType {
 }
 
 impl IrType {
+    /// Construct a packed type whose width fits the simulator runtime.
+    pub fn packed(width: u32, signed: bool) -> Result<Self, IrValidationError> {
+        validate_width("type.width", width)?;
+        Ok(Self::Packed { width, signed })
+    }
+
     /// Packed width, or 0 for real types.
     pub fn width(&self) -> u32 {
         match self {
@@ -65,13 +82,102 @@ impl IrType {
 /// unsized fill literal (0/1/2=x/3=z).
 #[derive(Clone, Debug)]
 pub struct IrConst {
-    pub bits: Vec<u64>,
-    pub x: Vec<u64>,
-    pub z: Vec<u64>,
-    pub width: u32,
-    pub signed: bool,
-    pub real: Option<f64>,
-    pub fill: Option<u8>,
+    pub(in crate::sim) bits: Vec<u64>,
+    pub(in crate::sim) x: Vec<u64>,
+    pub(in crate::sim) z: Vec<u64>,
+    pub(in crate::sim) width: u32,
+    pub(in crate::sim) signed: bool,
+    pub(in crate::sim) real: Option<f64>,
+    pub(in crate::sim) fill: Option<u8>,
+}
+
+impl IrConst {
+    /// Construct and validate a packed four-state constant.
+    pub fn packed(
+        bits: Vec<u64>,
+        x: Vec<u64>,
+        z: Vec<u64>,
+        width: u32,
+        signed: bool,
+        fill: Option<u8>,
+    ) -> Result<Self, IrValidationError> {
+        validate_width("const.width", width)?;
+        if fill.is_some_and(|value| value > 3) {
+            return Err(IrValidationError::new(
+                "const.fill",
+                "fill marker must be in 0..=3",
+            ));
+        }
+        let limbs = width.div_ceil(64) as usize;
+        for (name, values) in [("bits", &bits), ("x", &x), ("z", &z)] {
+            if values.len() > limbs {
+                return Err(IrValidationError::new(
+                    format!("const.{name}"),
+                    format!("{} limbs exceed the {limbs}-limb width", values.len()),
+                ));
+            }
+        }
+        for index in 0..limbs {
+            if x.get(index).copied().unwrap_or(0) & z.get(index).copied().unwrap_or(0) != 0 {
+                return Err(IrValidationError::new("const.x", "X and Z masks overlap"));
+            }
+        }
+        if !width.is_multiple_of(64) {
+            let outside = !((1u64 << (width % 64)) - 1);
+            for (name, values) in [("bits", &bits), ("x", &x), ("z", &z)] {
+                if values.get(limbs - 1).copied().unwrap_or(0) & outside != 0 {
+                    return Err(IrValidationError::new(
+                        format!("const.{name}"),
+                        "high limb contains bits outside the declared width",
+                    ));
+                }
+            }
+        }
+        Ok(Self {
+            bits,
+            x,
+            z,
+            width,
+            signed,
+            real: None,
+            fill,
+        })
+    }
+
+    /// Construct a real constant.
+    pub fn real(value: f64) -> Self {
+        Self {
+            bits: Vec::new(),
+            x: Vec::new(),
+            z: Vec::new(),
+            width: 0,
+            signed: false,
+            real: Some(value),
+            fill: None,
+        }
+    }
+
+    pub fn bits(&self) -> &[u64] {
+        &self.bits
+    }
+    pub fn x_mask(&self) -> &[u64] {
+        &self.x
+    }
+    pub fn z_mask(&self) -> &[u64] {
+        &self.z
+    }
+    pub fn width(&self) -> u32 {
+        self.width
+    }
+    pub fn signed(&self) -> bool {
+        self.signed
+    }
+    pub fn real_value(&self) -> Option<f64> {
+        self.real
+    }
+    pub fn fill(&self) -> Option<u8> {
+        self.fill
+    }
 }
 
 impl PartialEq for IrConst {
@@ -212,14 +318,19 @@ pub enum IrExprKind {
 /// decisions the pre-IR emitter encoded into its rendered strings).
 #[derive(Clone, Debug, PartialEq)]
 pub struct IrExpr {
-    pub kind: IrExprKind,
-    pub width: u32,
-    pub signed: bool,
-    pub fill: Option<u8>,
+    pub(in crate::sim) kind: IrExprKind,
+    pub(in crate::sim) width: u32,
+    pub(in crate::sim) signed: bool,
+    pub(in crate::sim) fill: Option<u8>,
 }
 
 impl IrExpr {
-    pub fn new(kind: IrExprKind, width: u32, signed: bool, fill: Option<u8>) -> IrExpr {
+    pub(in crate::sim) fn new(
+        kind: IrExprKind,
+        width: u32,
+        signed: bool,
+        fill: Option<u8>,
+    ) -> IrExpr {
         IrExpr {
             kind,
             width,
@@ -228,11 +339,53 @@ impl IrExpr {
         }
     }
 
+    /// Construct an expression after checking its local width/fill contract.
+    /// Cross-table references are checked by [`IrModel::validate`].
+    pub fn try_new(
+        kind: IrExprKind,
+        width: u32,
+        signed: bool,
+        fill: Option<u8>,
+    ) -> Result<IrExpr, IrValidationError> {
+        if width > LLG_MAX_WIDTH {
+            return Err(IrValidationError::new(
+                "expr.width",
+                format!("expression width {width} exceeds {LLG_MAX_WIDTH}"),
+            ));
+        }
+        if fill.is_some_and(|value| value > 3) {
+            return Err(IrValidationError::new(
+                "expr.fill",
+                "fill marker must be in 0..=3",
+            ));
+        }
+        if width == 0 && fill.is_some() {
+            return Err(IrValidationError::new(
+                "expr.fill",
+                "real expression carries a packed fill marker",
+            ));
+        }
+        Ok(IrExpr::new(kind, width, signed, fill))
+    }
+
+    pub fn kind(&self) -> &IrExprKind {
+        &self.kind
+    }
+    pub fn width(&self) -> u32 {
+        self.width
+    }
+    pub fn signed(&self) -> bool {
+        self.signed
+    }
+    pub fn fill(&self) -> Option<u8> {
+        self.fill
+    }
+
     /// A packed value expression resized to `(width, signed)` — the IR form of
     /// `sv4_resize(expr, w, s)` for non-real sources.  The extension follows
     /// the TARGET signedness; only use where that matches the LRM (same-width
     /// retags).  Assignment/cast conversion needs [`Self::convert_to`].
-    pub fn resize_to(a: IrExpr, width: u32, signed: bool) -> IrExpr {
+    pub(in crate::sim) fn resize_to(a: IrExpr, width: u32, signed: bool) -> IrExpr {
         if let Some(f) = a.fill {
             return IrExpr::new(IrExprKind::Fill(f), width, signed, Some(f));
         }
@@ -244,7 +397,7 @@ impl IrExpr {
     /// the SOURCE's signedness (LRM 1800-2009 §6.24.1 casts, §10.7/§11.8.3
     /// assignment padding), narrowing truncates, and the result carries the
     /// target tag.
-    pub fn convert_to(a: IrExpr, width: u32, signed: bool) -> IrExpr {
+    pub(in crate::sim) fn convert_to(a: IrExpr, width: u32, signed: bool) -> IrExpr {
         if let Some(f) = a.fill {
             return IrExpr::new(IrExprKind::Fill(f), width, signed, Some(f));
         }
@@ -397,12 +550,38 @@ pub enum IrCallArg {
 #[derive(Clone, Debug, PartialEq)]
 pub struct IrCallExpr {
     /// Callee index into [`IrModel::funcs`].
-    pub f: usize,
-    pub args: Vec<IrCallArg>,
+    pub(in crate::sim) f: usize,
+    pub(in crate::sim) args: Vec<IrCallArg>,
     /// Recursion depth argument at the call site.
-    pub depth: IrDepth,
+    pub(in crate::sim) depth: IrDepth,
     /// Void callee used as a value: yield all-X (warning issued at lowering).
-    pub void_x: bool,
+    pub(in crate::sim) void_x: bool,
+}
+
+impl IrCallExpr {
+    /// Create a call-expression staging value. The containing model validates
+    /// the function index, arguments, and formal bindings.
+    pub fn new(f: usize, args: Vec<IrCallArg>, depth: IrDepth, void_x: bool) -> Self {
+        Self {
+            f,
+            args,
+            depth,
+            void_x,
+        }
+    }
+
+    pub fn function_index(&self) -> usize {
+        self.f
+    }
+    pub fn args(&self) -> &[IrCallArg] {
+        &self.args
+    }
+    pub fn depth(&self) -> IrDepth {
+        self.depth
+    }
+    pub fn yields_x_for_void(&self) -> bool {
+        self.void_x
+    }
 }
 
 /// A function/task call used in statement position: the temp declarations
@@ -411,15 +590,50 @@ pub struct IrCallExpr {
 /// unit rendered as a single indented block.
 #[derive(Clone, Debug, PartialEq)]
 pub struct IrCall {
-    pub f: usize,
-    pub args: Vec<IrCallArg>,
-    pub depth: IrDepth,
+    pub(in crate::sim) f: usize,
+    pub(in crate::sim) args: Vec<IrCallArg>,
+    pub(in crate::sim) depth: IrDepth,
     /// `(temp name, formal index, init)` triples declared right before the
     /// call; `init` is `None` for outputs (all-X temp sized by the formal)
     /// and the actual's current value for inouts.
-    pub temps: Vec<(String, usize, Option<IrExpr>)>,
+    pub(in crate::sim) temps: Vec<(String, usize, Option<IrExpr>)>,
     /// Copy-outs after the call: `(actual LHS, temp name, width, signed)`.
-    pub copyouts: Vec<(IrLhs, String, u32, bool)>,
+    pub(in crate::sim) copyouts: Vec<(IrLhs, String, u32, bool)>,
+}
+
+impl IrCall {
+    /// Create a statement-call staging value for validation by its model.
+    pub fn new(
+        f: usize,
+        args: Vec<IrCallArg>,
+        depth: IrDepth,
+        temps: Vec<(String, usize, Option<IrExpr>)>,
+        copyouts: Vec<(IrLhs, String, u32, bool)>,
+    ) -> Self {
+        Self {
+            f,
+            args,
+            depth,
+            temps,
+            copyouts,
+        }
+    }
+
+    pub fn function_index(&self) -> usize {
+        self.f
+    }
+    pub fn args(&self) -> &[IrCallArg] {
+        &self.args
+    }
+    pub fn depth(&self) -> IrDepth {
+        self.depth
+    }
+    pub fn temps(&self) -> &[(String, usize, Option<IrExpr>)] {
+        &self.temps
+    }
+    pub fn copyouts(&self) -> &[(IrLhs, String, u32, bool)] {
+        &self.copyouts
+    }
 }
 
 /// Recursion depth argument of a call site: `"0"` in process contexts,
@@ -428,9 +642,9 @@ pub struct IrCall {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct IrDepth {
     /// `true` when the innermost non-inline scope is a C function body.
-    pub func_base: bool,
+    pub(in crate::sim) func_base: bool,
     /// Number of enclosing inlined task bodies.
-    pub nest: u32,
+    pub(in crate::sim) nest: u32,
 }
 
 impl IrDepth {
@@ -462,6 +676,14 @@ impl IrDepth {
             s = format!("({s}) + 1");
         }
         s
+    }
+
+    pub fn is_function_based(&self) -> bool {
+        self.func_base
+    }
+
+    pub fn inline_nesting(&self) -> u32 {
+        self.nest
     }
 }
 
@@ -517,8 +739,21 @@ impl IrCaseKind {
 /// wherever it appears in item order).
 #[derive(Clone, Debug, PartialEq)]
 pub struct IrCaseItem {
-    pub exprs: Vec<IrExpr>,
-    pub body: Vec<IrStmt>,
+    pub(in crate::sim) exprs: Vec<IrExpr>,
+    pub(in crate::sim) body: Vec<IrStmt>,
+}
+
+impl IrCaseItem {
+    pub fn new(exprs: Vec<IrExpr>, body: Vec<IrStmt>) -> Self {
+        Self { exprs, body }
+    }
+
+    pub fn expressions(&self) -> &[IrExpr] {
+        &self.exprs
+    }
+    pub fn body(&self) -> &[IrStmt] {
+        &self.body
+    }
 }
 
 /// Event-control edge kinds (`LLG_EV_POSEDGE`/`LLG_EV_NEGEDGE`/`LLG_EV_ANY`).
@@ -739,12 +974,49 @@ pub enum IrShape {
 /// block, or fork branch group host).  Push order equals spawn order.
 #[derive(Clone, Debug, PartialEq)]
 pub struct IrProcess {
-    pub c_name: String,
+    pub(in crate::sim) c_name: String,
     /// Spawn label (`tb.u.assign`, `top.initial`, …).
-    pub label: String,
-    pub shape: IrShape,
-    pub pre_fns: Vec<IrPreFn>,
-    pub body: Vec<IrStmt>,
+    pub(in crate::sim) label: String,
+    pub(in crate::sim) shape: IrShape,
+    pub(in crate::sim) pre_fns: Vec<IrPreFn>,
+    pub(in crate::sim) body: Vec<IrStmt>,
+}
+
+impl IrProcess {
+    /// Create a process staging value. Cross-table references in `shape`,
+    /// helper functions, and statements are validated when the containing
+    /// model is built with [`IrModel::from_parts`].
+    pub fn new(
+        c_name: String,
+        label: String,
+        shape: IrShape,
+        pre_fns: Vec<IrPreFn>,
+        body: Vec<IrStmt>,
+    ) -> Self {
+        Self {
+            c_name,
+            label,
+            shape,
+            pre_fns,
+            body,
+        }
+    }
+
+    pub fn c_name(&self) -> &str {
+        &self.c_name
+    }
+    pub fn label(&self) -> &str {
+        &self.label
+    }
+    pub fn shape(&self) -> &IrShape {
+        &self.shape
+    }
+    pub fn pre_fns(&self) -> &[IrPreFn] {
+        &self.pre_fns
+    }
+    pub fn body(&self) -> &[IrStmt] {
+        &self.body
+    }
 }
 
 /// A formal argument of a lowered function/task.
@@ -753,34 +1025,96 @@ pub struct IrFormal {
     /// `true` for output/inout formals (passed as `sv4_t* o{idx}`); `false`
     /// for inputs (passed by value as `sv4_t a{idx}`).  Indices are the
     /// formal's declaration position.
-    pub is_out: bool,
-    pub width: u32,
-    pub signed: bool,
+    pub(in crate::sim) is_out: bool,
+    pub(in crate::sim) width: u32,
+    pub(in crate::sim) signed: bool,
+}
+
+impl IrFormal {
+    pub fn new(is_out: bool, width: u32, signed: bool) -> Result<Self, IrValidationError> {
+        validate_width("formal.width", width)?;
+        Ok(Self {
+            is_out,
+            width,
+            signed,
+        })
+    }
+
+    pub fn is_out(&self) -> bool {
+        self.is_out
+    }
+    pub fn width(&self) -> u32 {
+        self.width
+    }
+    pub fn signed(&self) -> bool {
+        self.signed
+    }
 }
 
 /// A function/task local (`_l{n}` or `_i{site}_{n}`), all-X initialized.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct IrLocal {
-    pub c_name: String,
-    pub width: u32,
-    pub signed: bool,
+    pub(in crate::sim) c_name: String,
+    pub(in crate::sim) width: u32,
+    pub(in crate::sim) signed: bool,
+}
+
+impl IrLocal {
+    pub fn new(c_name: String, width: u32, signed: bool) -> Result<Self, IrValidationError> {
+        validate_width("local.width", width)?;
+        Ok(Self {
+            c_name,
+            width,
+            signed,
+        })
+    }
+
+    pub fn c_name(&self) -> &str {
+        &self.c_name
+    }
+    pub fn width(&self) -> u32 {
+        self.width
+    }
+    pub fn signed(&self) -> bool {
+        self.signed
+    }
 }
 
 /// A lowered function or delay-free task: a static C function with a
 /// recursion-depth guard.
 #[derive(Clone, Debug, PartialEq)]
 pub struct IrFunc {
-    pub c_name: String,
+    pub(in crate::sim) c_name: String,
     /// Return type; `None` for tasks and void functions.
-    pub ret: Option<IrType>,
-    pub formals: Vec<IrFormal>,
+    pub(in crate::sim) ret: Option<IrType>,
+    pub(in crate::sim) formals: Vec<IrFormal>,
     /// In emission order (node-id sorted at lowering).
-    pub locals: Vec<IrLocal>,
-    pub pre_fns: Vec<IrPreFn>,
-    pub body: Vec<IrStmt>,
+    pub(in crate::sim) locals: Vec<IrLocal>,
+    pub(in crate::sim) pre_fns: Vec<IrPreFn>,
+    pub(in crate::sim) body: Vec<IrStmt>,
 }
 
 impl IrFunc {
+    /// Create a function/task staging value. Formal/local constructors check
+    /// widths; the containing model checks body and call references.
+    pub fn new(
+        c_name: String,
+        ret: Option<IrType>,
+        formals: Vec<IrFormal>,
+        locals: Vec<IrLocal>,
+        pre_fns: Vec<IrPreFn>,
+        body: Vec<IrStmt>,
+    ) -> Self {
+        Self {
+            c_name,
+            ret,
+            formals,
+            locals,
+            pre_fns,
+            body,
+        }
+    }
+
     /// The all-X return initializer used by the recursion guard
     /// (`sv4_x(w, s)`), empty for void functions/tasks.
     pub fn ret_x(&self) -> String {
@@ -788,6 +1122,25 @@ impl IrFunc {
             Some(IrType::Packed { width, signed }) => format!("sv4_x({width}, {})", signed as u8),
             _ => String::new(),
         }
+    }
+
+    pub fn c_name(&self) -> &str {
+        &self.c_name
+    }
+    pub fn ret(&self) -> Option<IrType> {
+        self.ret
+    }
+    pub fn formals(&self) -> &[IrFormal] {
+        &self.formals
+    }
+    pub fn locals(&self) -> &[IrLocal] {
+        &self.locals
+    }
+    pub fn pre_fns(&self) -> &[IrPreFn] {
+        &self.pre_fns
+    }
+    pub fn body(&self) -> &[IrStmt] {
+        &self.body
     }
 }
 
@@ -815,18 +1168,54 @@ pub enum IrInitStep {
 /// One lowered signal (or real companion): a global `sv4_t`/`double`.
 #[derive(Clone, Debug, PartialEq)]
 pub struct IrSignal {
-    pub c_name: String,
+    pub(in crate::sim) c_name: String,
     /// Original HDL hierarchy, with ASCII unit-separator bytes between path
     /// components. `None` marks synthesized storage that must not be
     /// waveform-visible (for example PCA enable bits).
-    pub hdl_name: Option<String>,
-    pub ty: IrType,
+    pub(in crate::sim) hdl_name: Option<String>,
+    pub(in crate::sim) ty: IrType,
     /// For members of a collapsed inout-net group: `(group index, driver
     /// slot)`.  `c_name` is then `<net>.resolved`.
-    pub net_driver: Option<(usize, usize)>,
+    pub(in crate::sim) net_driver: Option<(usize, usize)>,
     /// Storage pruning marker (`unused_storage` pass): the declaration is
     /// skipped when set.  Indices are NEVER remapped.
-    pub omit: bool,
+    pub(in crate::sim) omit: bool,
+}
+
+impl IrSignal {
+    pub fn new(
+        c_name: String,
+        hdl_name: Option<String>,
+        ty: IrType,
+        net_driver: Option<(usize, usize)>,
+    ) -> Result<Self, IrValidationError> {
+        if let IrType::Packed { width, .. } = ty {
+            validate_width("signal.ty", width)?;
+        }
+        Ok(Self {
+            c_name,
+            hdl_name,
+            ty,
+            net_driver,
+            omit: false,
+        })
+    }
+
+    pub fn c_name(&self) -> &str {
+        &self.c_name
+    }
+    pub fn hdl_name(&self) -> Option<&str> {
+        self.hdl_name.as_deref()
+    }
+    pub fn ty(&self) -> IrType {
+        self.ty
+    }
+    pub fn net_driver(&self) -> Option<(usize, usize)> {
+        self.net_driver
+    }
+    pub fn is_omitted(&self) -> bool {
+        self.omit
+    }
 }
 
 /// A collapsed inout-net group: one resolved simulated net with one driver
@@ -835,24 +1224,115 @@ pub struct IrSignal {
 pub struct IrNetGroup {
     /// C name of the `llg_net_t` global (e.g. `g_net_0`); driver cells are
     /// `{c_name}_d{i}`.
-    pub c_name: String,
-    pub width: u32,
-    pub signed: bool,
-    pub n_drivers: usize,
+    pub(in crate::sim) c_name: String,
+    pub(in crate::sim) width: u32,
+    pub(in crate::sim) signed: bool,
+    pub(in crate::sim) n_drivers: usize,
+}
+
+impl IrNetGroup {
+    pub fn new(
+        c_name: String,
+        width: u32,
+        signed: bool,
+        n_drivers: usize,
+    ) -> Result<Self, IrValidationError> {
+        validate_width("net_group.width", width)?;
+        if n_drivers == 0 {
+            return Err(IrValidationError::new(
+                "net_group.n_drivers",
+                "net group has no drivers",
+            ));
+        }
+        Ok(Self {
+            c_name,
+            width,
+            signed,
+            n_drivers,
+        })
+    }
+
+    pub fn c_name(&self) -> &str {
+        &self.c_name
+    }
+    pub fn width(&self) -> u32 {
+        self.width
+    }
+    pub fn signed(&self) -> bool {
+        self.signed
+    }
+    pub fn driver_count(&self) -> usize {
+        self.n_drivers
+    }
 }
 
 /// A lowered unpacked array: flat `sv4_t` storage plus linearization data.
 #[derive(Clone, Debug, PartialEq)]
 pub struct IrArray {
-    pub c_name: String,
+    pub(in crate::sim) c_name: String,
     /// Original HDL hierarchical name (before C-identifier sanitization).
-    pub hdl_name: String,
-    pub elem_width: u32,
-    pub signed: bool,
+    pub(in crate::sim) hdl_name: String,
+    pub(in crate::sim) elem_width: u32,
+    pub(in crate::sim) signed: bool,
     /// `(left, right)` per declared dimension, in declaration order.
-    pub dims: Vec<(i32, i32)>,
+    pub(in crate::sim) dims: Vec<(i32, i32)>,
     /// Total element count (product of dimension sizes).
-    pub total: u64,
+    pub(in crate::sim) total: u64,
+}
+
+impl IrArray {
+    pub fn new(
+        c_name: String,
+        hdl_name: String,
+        elem_width: u32,
+        signed: bool,
+        dims: Vec<(i32, i32)>,
+    ) -> Result<Self, IrValidationError> {
+        validate_width("array.elem_width", elem_width)?;
+        if dims.is_empty() {
+            return Err(IrValidationError::new(
+                "array.dims",
+                "array has no dimensions",
+            ));
+        }
+        let mut total = 1u64;
+        for (index, (left, right)) in dims.iter().copied().enumerate() {
+            let extent = (i64::from(left) - i64::from(right)).unsigned_abs() + 1;
+            total = total.checked_mul(extent).ok_or_else(|| {
+                IrValidationError::new(
+                    format!("array.dims[{index}]"),
+                    "dimension product overflows u64",
+                )
+            })?;
+        }
+        Ok(Self {
+            c_name,
+            hdl_name,
+            elem_width,
+            signed,
+            dims,
+            total,
+        })
+    }
+
+    pub fn c_name(&self) -> &str {
+        &self.c_name
+    }
+    pub fn hdl_name(&self) -> &str {
+        &self.hdl_name
+    }
+    pub fn elem_width(&self) -> u32 {
+        self.elem_width
+    }
+    pub fn signed(&self) -> bool {
+        self.signed
+    }
+    pub fn dims(&self) -> &[(i32, i32)] {
+        &self.dims
+    }
+    pub fn total(&self) -> u64 {
+        self.total
+    }
 }
 
 /// A lowered named event (`event ev;`): a global `llg_event_t` with its own
@@ -860,38 +1340,139 @@ pub struct IrArray {
 /// storage); every declared event is emitted unconditionally.
 #[derive(Clone, Debug, PartialEq)]
 pub struct IrEvent {
-    pub c_name: String,
+    pub(in crate::sim) c_name: String,
+}
+
+impl IrEvent {
+    pub fn new(c_name: String) -> Self {
+        Self { c_name }
+    }
+    pub fn c_name(&self) -> &str {
+        &self.c_name
+    }
 }
 
 /// The complete lowered model: input to optimization and C11 emission.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct IrModel {
-    pub design_name: String,
+    pub(in crate::sim) design_name: String,
     /// Design time precision in ps (scheduler tick unit).
-    pub precision_ps: u64,
+    pub(in crate::sim) precision_ps: u64,
     /// At least one waveform-control system task was lowered.
+    pub(in crate::sim) waveform: bool,
+    pub(in crate::sim) signals: Vec<IrSignal>,
+    pub(in crate::sim) net_groups: Vec<IrNetGroup>,
+    pub(in crate::sim) arrays: Vec<IrArray>,
+    pub(in crate::sim) events: Vec<IrEvent>,
+    pub(in crate::sim) funcs: Vec<IrFunc>,
+    /// Comb drivers, then links, then always/initial processes — push order
+    /// equals spawn order.
+    pub(in crate::sim) processes: Vec<IrProcess>,
+    pub(in crate::sim) init_steps: Vec<IrInitStep>,
+    /// Spawned function names in spawn order (labels resolve through
+    /// `processes`).  Final-block processes are NOT in this list; they run
+    /// after the scheduler exits (see `final_spawns`).
+    pub(in crate::sim) spawns: Vec<String>,
+    /// Final-block process function names (`final begin … end`, SV
+    /// 1800-2005 §10.7) in spawn order.  The backend registers them via
+    /// `llg_spawn_final` and runs them with `llg_rt_run_finals()` AFTER
+    /// `llg_rt_run()` returns ($finish / deadlock / no future events).
+    pub(in crate::sim) final_spawns: Vec<String>,
+}
+
+/// Staging tables for constructing an [`IrModel`].
+///
+/// These fields deliberately carry no invariant by themselves. Pass the
+/// completed value to [`IrModel::from_parts`], which validates every table
+/// index, storage shape, process registration, and nested IR node before it
+/// returns an invariant-bearing model.
+#[derive(Clone, Debug, Default)]
+pub struct IrModelParts {
     pub waveform: bool,
     pub signals: Vec<IrSignal>,
     pub net_groups: Vec<IrNetGroup>,
     pub arrays: Vec<IrArray>,
     pub events: Vec<IrEvent>,
     pub funcs: Vec<IrFunc>,
-    /// Comb drivers, then links, then always/initial processes — push order
-    /// equals spawn order.
     pub processes: Vec<IrProcess>,
     pub init_steps: Vec<IrInitStep>,
-    /// Spawned function names in spawn order (labels resolve through
-    /// `processes`).  Final-block processes are NOT in this list; they run
-    /// after the scheduler exits (see `final_spawns`).
     pub spawns: Vec<String>,
-    /// Final-block process function names (`final begin … end`, SV
-    /// 1800-2005 §10.7) in spawn order.  The backend registers them via
-    /// `llg_spawn_final` and runs them with `llg_rt_run_finals()` AFTER
-    /// `llg_rt_run()` returns ($finish / deadlock / no future events).
     pub final_spawns: Vec<String>,
 }
 
 impl IrModel {
+    /// Start an incrementally lowered model with a valid scheduler precision.
+    pub fn new(design_name: String, precision_ps: u64) -> Result<Self, IrValidationError> {
+        Self::from_parts(design_name, precision_ps, IrModelParts::default())
+    }
+
+    /// Build a complete model and validate all representation invariants.
+    pub fn from_parts(
+        design_name: String,
+        precision_ps: u64,
+        parts: IrModelParts,
+    ) -> Result<Self, IrValidationError> {
+        if precision_ps == 0 {
+            return Err(IrValidationError::new(
+                "precision_ps",
+                "scheduler precision must be non-zero",
+            ));
+        }
+        let model = Self {
+            design_name,
+            precision_ps,
+            waveform: parts.waveform,
+            signals: parts.signals,
+            net_groups: parts.net_groups,
+            arrays: parts.arrays,
+            events: parts.events,
+            funcs: parts.funcs,
+            processes: parts.processes,
+            init_steps: parts.init_steps,
+            spawns: parts.spawns,
+            final_spawns: parts.final_spawns,
+        };
+        model.validate()?;
+        Ok(model)
+    }
+
+    pub fn design_name(&self) -> &str {
+        &self.design_name
+    }
+    pub fn precision_ps(&self) -> u64 {
+        self.precision_ps
+    }
+    pub fn waveform_enabled(&self) -> bool {
+        self.waveform
+    }
+    pub fn signals(&self) -> &[IrSignal] {
+        &self.signals
+    }
+    pub fn net_groups(&self) -> &[IrNetGroup] {
+        &self.net_groups
+    }
+    pub fn arrays(&self) -> &[IrArray] {
+        &self.arrays
+    }
+    pub fn events(&self) -> &[IrEvent] {
+        &self.events
+    }
+    pub fn funcs(&self) -> &[IrFunc] {
+        &self.funcs
+    }
+    pub fn processes(&self) -> &[IrProcess] {
+        &self.processes
+    }
+    pub fn init_steps(&self) -> &[IrInitStep] {
+        &self.init_steps
+    }
+    pub fn spawns(&self) -> &[String] {
+        &self.spawns
+    }
+    pub fn final_spawns(&self) -> &[String] {
+        &self.final_spawns
+    }
+
     pub fn signal(&self, idx: usize) -> &IrSignal {
         &self.signals[idx]
     }
