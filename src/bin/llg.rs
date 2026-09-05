@@ -52,20 +52,36 @@ use std::process::Command;
 use llg::core::compile;
 use llg::sim;
 
-fn main() {
-    // Keep this guard in scope for the complete simulator-driver lifetime:
-    // frontend compilation, linting, codegen, model build, and child launch.
+#[derive(Debug)]
+struct DriverOptions {
+    top: Option<String>,
+    files: Vec<String>,
+    lint_mode: bool,
+    lint_json_mode: bool,
+    lint_json_path: Option<PathBuf>,
+    lint_config_path: Option<PathBuf>,
+    generator: Option<String>,
+    gen_only: bool,
+}
+
+fn main() -> std::process::ExitCode {
     let memory_report = llg::memory_limit::install();
     let _memory_guard = memory_report.guard;
+    let code = match parse_args(std::env::args().skip(1).collect()) {
+        Ok(options) => run(options),
+        Err(code) => code,
+    };
+    std::process::ExitCode::from(code as u8)
+}
 
-    let args: Vec<String> = std::env::args().skip(1).collect();
+fn parse_args(args: Vec<String>) -> Result<DriverOptions, i32> {
     if args.is_empty() {
         eprintln!(
             "usage: llg [generate options] [build options] <file.sv>...\n\
              generate: --top <module>  --lint  --lint-json [<path>]  --lint-config <file>  --gen-only\n\
              build:    --generator <backend>        # cmake -G backend (Ninja, \"Unix Makefiles\", ...)"
         );
-        std::process::exit(2);
+        return Err(2);
     }
 
     let mut top: Option<String> = None;
@@ -84,7 +100,7 @@ fn main() {
                 Some(g) => generator = Some(g),
                 None => {
                     eprintln!("llg: --generator requires a backend name");
-                    std::process::exit(2);
+                    return Err(2);
                 }
             },
             "--gen-only" | "-gen-only" => gen_only = true,
@@ -104,7 +120,7 @@ fn main() {
                 Some(p) => lint_config_path = Some(PathBuf::from(p)),
                 None => {
                     eprintln!("llg: --lint-config requires a file path");
-                    std::process::exit(2);
+                    return Err(2);
                 }
             },
             _ => files.push(a),
@@ -112,9 +128,32 @@ fn main() {
     }
     if files.is_empty() {
         eprintln!("llg: no source files given");
-        std::process::exit(2);
+        return Err(2);
     }
 
+    Ok(DriverOptions {
+        top,
+        files,
+        lint_mode,
+        lint_json_mode,
+        lint_json_path,
+        lint_config_path,
+        generator,
+        gen_only,
+    })
+}
+
+fn run(options: DriverOptions) -> i32 {
+    let DriverOptions {
+        top,
+        files,
+        lint_mode,
+        lint_json_mode,
+        lint_json_path,
+        lint_config_path,
+        generator,
+        gen_only,
+    } = options;
     // 0. Optional lint config: read + parse before compiling so a missing or
     //    malformed file aborts fast and with a clear message.
     let mut lint_config = llg::core::lint::LintConfig::new();
@@ -123,7 +162,7 @@ fn main() {
             Ok(t) => t,
             Err(e) => {
                 eprintln!("llg: cannot read lint config {}: {e}", path.display());
-                std::process::exit(1);
+                return 1;
             }
         };
         if let Err(errs) = lint_config.parse_toml(&text) {
@@ -131,7 +170,7 @@ fn main() {
                 eprintln!("llg: lint config: {e}");
             }
             eprintln!("llg: aborting due to lint config errors");
-            std::process::exit(1);
+            return 1;
         }
     }
 
@@ -144,7 +183,7 @@ fn main() {
         Ok(out) => out,
         Err(compile::CompileError::SessionStart(e)) => {
             eprintln!("llg: compile failed to start: {e}");
-            std::process::exit(1);
+            return 1;
         }
         Err(compile::CompileError::FrontendDiagnostics(diagnostics)) => {
             for d in &diagnostics {
@@ -158,7 +197,7 @@ fn main() {
                 );
             }
             eprintln!("llg: surelog reported errors; aborting");
-            std::process::exit(1);
+            return 1;
         }
     };
     for d in &out.diagnostics {
@@ -178,7 +217,7 @@ fn main() {
         Some(d) => d,
         None => {
             eprintln!("llg: no elaborated UHDM design");
-            std::process::exit(1);
+            return 1;
         }
     };
     let mut codegen_db = None;
@@ -187,7 +226,7 @@ fn main() {
             Ok(db) => db,
             Err(e) => {
                 eprintln!("lint: db build failed: {e}");
-                std::process::exit(1);
+                return 1;
             }
         };
         let model = llg::core::model::DesignModel::from_db(&db);
@@ -202,7 +241,7 @@ fn main() {
                 Some(path) => {
                     if let Err(e) = std::fs::write(path, format!("{json}\n")) {
                         eprintln!("llg: cannot write lint JSON {}: {e}", path.display());
-                        std::process::exit(1);
+                        return 1;
                     }
                 }
                 None => println!("{json}"),
@@ -212,9 +251,9 @@ fn main() {
                 .filter(|d| d.severity == llg::core::lint::LintSeverity::Error)
                 .count();
             if errors > 0 {
-                std::process::exit(1);
+                return 1;
             }
-            std::process::exit(0);
+            return 0;
         } else {
             let mut errors = 0usize;
             let mut warnings = 0usize;
@@ -251,7 +290,7 @@ fn main() {
                 eprintln!("lint: {errors} error(s), {warnings} warning(s)");
             }
             if errors > 0 {
-                std::process::exit(1);
+                return 1;
             }
             // Surelog v1.87 exposes relationships whose contents may be
             // consumed by a VPI traversal.  Reuse this owned snapshot for
@@ -269,7 +308,7 @@ fn main() {
         Ok(g) => g,
         Err(e) => {
             eprintln!("llg: codegen error: {e}");
-            std::process::exit(1);
+            return 1;
         }
     };
     for w in &gen.warnings {
@@ -286,10 +325,10 @@ fn main() {
         }
         if let Err(e) = sim::build::generate_model_sources(&out_dir, &model) {
             eprintln!("llg: {e}");
-            std::process::exit(1);
+            return 1;
         }
         println!("{}", out_dir.display());
-        std::process::exit(0);
+        return 0;
     }
 
     // 5. Build the model with CMake (the only supported builder).
@@ -298,7 +337,7 @@ fn main() {
         Ok(e) => e,
         Err(e) => {
             eprintln!("llg: {e}");
-            std::process::exit(1);
+            return 1;
         }
     };
 
@@ -307,10 +346,10 @@ fn main() {
         Ok(s) => s,
         Err(e) => {
             eprintln!("llg: failed to run {}: {e}", exe.display());
-            std::process::exit(1);
+            return 1;
         }
     };
-    std::process::exit(status.code().unwrap_or(1));
+    status.code().unwrap_or(1)
 }
 
 /// Directory name for the generated model (the design name, sanitized).

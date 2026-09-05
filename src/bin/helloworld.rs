@@ -34,8 +34,11 @@ fn visit_instance(inst: &surelog::ModuleInstance<'_>) {
 
 // ── main ─────────────────────────────────────────────────────────────────────
 
-fn main() {
-    let args: Vec<String> = std::env::args().collect();
+fn main() -> std::process::ExitCode {
+    std::process::ExitCode::from(run(std::env::args().collect()) as u8)
+}
+
+fn run(args: Vec<String>) -> i32 {
     let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
 
     let mut exit_code: i32 = 0;
@@ -103,5 +106,5 @@ fn main() {
     // Shut down — Drop order matters: compiler before clp/errors/symbol_table.
     drop(compiler);
 
-    std::process::exit(exit_code);
+    exit_code
 }

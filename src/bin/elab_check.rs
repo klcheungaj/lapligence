@@ -334,11 +334,14 @@ fn count_instance_refs(stats: &InstStats<'_>, total: &mut RefStats) {
     }
 }
 
-fn main() {
-    let args: Vec<String> = std::env::args().skip(1).collect();
+fn main() -> std::process::ExitCode {
+    std::process::ExitCode::from(run(std::env::args().skip(1).collect()) as u8)
+}
+
+fn run(args: Vec<String>) -> i32 {
     if args.is_empty() {
         eprintln!("usage: elab_check [surelog args...] file.sv");
-        std::process::exit(2);
+        return 2;
     }
 
     // Split off `-top <module>`; everything else goes through to Surelog
@@ -364,7 +367,7 @@ fn main() {
         Ok(out) => out,
         Err(compile::CompileError::SessionStart(e)) => {
             eprintln!("{e}");
-            std::process::exit(1);
+            return 1;
         }
         Err(compile::CompileError::FrontendDiagnostics(diagnostics)) => {
             for d in &diagnostics {
@@ -378,7 +381,7 @@ fn main() {
                 );
             }
             eprintln!("surelog reported errors; aborting");
-            std::process::exit(1);
+            return 1;
         }
     };
     for diagnostic in &out.diagnostics {
@@ -405,7 +408,7 @@ fn main() {
     // ── 2. UHDM VPI: elaborated model ─────────────────────────────────────
     let Some(design_h) = out.uhdm_design() else {
         eprintln!("no UHDM design handle");
-        std::process::exit(1);
+        return 1;
     };
     println!("\n== UHDM elaborated model ==");
     println!(
@@ -436,6 +439,7 @@ fn main() {
 
     // `out` (and with it the surelog session) dropped here: compiler, clp,
     // errors and symbol_table are freed in the correct order.
+    0
 }
 
 fn print_surelog_inst(inst: &surelog::ModuleInstance<'_>, depth: usize) {

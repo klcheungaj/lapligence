@@ -87,7 +87,6 @@ fn run(args: Vec<String>) -> i32 {
     exit_code
 }
 
-fn main() {
-    let args: Vec<String> = std::env::args().collect();
-    std::process::exit(run(args));
+fn main() -> std::process::ExitCode {
+    std::process::ExitCode::from(run(std::env::args().collect()) as u8)
 }

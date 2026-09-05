@@ -64,8 +64,11 @@ fn inst_visit(obj_h: VpiHandle, margin: &str) -> String {
 
 // ── main ─────────────────────────────────────────────────────────────────────
 
-fn main() {
-    let args: Vec<String> = std::env::args().collect();
+fn main() -> std::process::ExitCode {
+    std::process::ExitCode::from(run(std::env::args().collect()) as u8)
+}
+
+fn run(args: Vec<String>) -> i32 {
     let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
 
     let mut exit_code = 0i32;
@@ -288,5 +291,5 @@ fn main() {
     // Drop order: compiler must be dropped before clp / errors / symbol_table.
     drop(compiler);
 
-    std::process::exit(exit_code);
+    exit_code
 }
