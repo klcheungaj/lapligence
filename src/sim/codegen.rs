@@ -1650,9 +1650,8 @@ impl<'a> Codegen<'a> {
                     "string/class signals are not supported: `{name}` in `{path}`"
                 ))
             }
-            "int" | "integer" | "time" | "longint" | "byte" | "shortint" | "logic" | "bit" => {
-                ty.width.unwrap_or(1)
-            }
+            "int" | "integer" | "time" | "longint" | "byte" | "shortint" | "logic" | "bit"
+            | "enum" => ty.width.unwrap_or(1),
             _ => {
                 return Err(format!(
                     "unsupported typespec type for signal `{name}` in `{path}`"
@@ -2142,10 +2141,7 @@ impl<'a> Codegen<'a> {
                         }
                     }
                 }
-                NodeKind::Stmt(StmtKind::Assign {
-                    blocking: true,
-                    delay: _,
-                }) => {
+                NodeKind::Stmt(StmtKind::Assign { blocking: true, .. }) => {
                     let Some(lhs) = self.node(id).children.first().copied() else {
                         continue;
                     };
@@ -2160,8 +2156,7 @@ impl<'a> Codegen<'a> {
                     }
                 }
                 NodeKind::Stmt(StmtKind::Assign {
-                    blocking: false,
-                    delay: _,
+                    blocking: false, ..
                 }) => {
                     let Some(lhs) = self.node(id).children.first().copied() else {
                         continue;
@@ -5535,6 +5530,49 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
         }
     }
 
+    /// Lower a SystemVerilog `do body while (cond)` post-test loop.  The
+    /// source body runs before the condition on every iteration.  A source
+    /// `continue` jumps to the label immediately before that condition, and
+    /// both a false condition and a source `break` jump to the label after
+    /// the enclosing forever loop.
+    fn lower_do_while(
+        &mut self,
+        cond_node: NodeId,
+        body_node: NodeId,
+    ) -> Result<Vec<IrStmt>, String> {
+        let cond = self.cg.lower_expr(&self.path, cond_node)?;
+        let brk = self.new_label("bk");
+        let cont = self.new_label("ct");
+        self.ctrl.push(CtrlScope::Loop {
+            brk: brk.clone(),
+            brk_used: false,
+            cont: cont.clone(),
+            cont_used: false,
+        });
+        let mut body = self.lower_stmt(body_node)?;
+        match self.ctrl.pop() {
+            Some(CtrlScope::Loop {
+                cont_used,
+                brk: actual_brk,
+                cont: actual_cont,
+                ..
+            }) => {
+                debug_assert_eq!(actual_brk, brk);
+                debug_assert_eq!(actual_cont, cont);
+                if cont_used {
+                    body.push(IrStmt::Label(cont));
+                }
+            }
+            _ => unreachable!("loop scope stack imbalance"),
+        }
+        body.push(IrStmt::If {
+            cond,
+            then_: Vec::new(),
+            els: Some(vec![IrStmt::Goto(brk.clone())]),
+        });
+        Ok(vec![IrStmt::Forever { body }, IrStmt::Label(brk)])
+    }
+
     /// Lower `break;` / `continue;`: an atomic jump to the innermost loop's
     /// break/continue label.  Resolution stops at an inlined-task-body
     /// boundary (a `break` can never target a loop of the CALLER) and
@@ -5694,7 +5732,9 @@ impl EmitCtx<'_, '_> {
                     els,
                 }])
             }
-            NodeKind::Stmt(StmtKind::Assign { blocking, delay }) => match delay {
+            NodeKind::Stmt(StmtKind::Assign {
+                blocking, delay, ..
+            }) => match delay {
                 None => Ok(vec![self.lower_assignment(h, false)?]),
                 Some(IntraControl::Ticks(ticks)) => {
                     if self.in_final {
@@ -5816,6 +5856,7 @@ impl EmitCtx<'_, '_> {
                 out.extend(brk);
                 Ok(out)
             }
+            NodeKind::Stmt(StmtKind::DoWhile { cond, body }) => self.lower_do_while(*cond, *body),
             NodeKind::Stmt(StmtKind::Repeat { cond, body }) => {
                 let c = self.cg.lower_expr(&self.path, *cond)?;
                 if c.is_real() {
@@ -5915,6 +5956,14 @@ impl EmitCtx<'_, '_> {
                 "`foreach` in `{}` is not supported in v1",
                 self.path
             )),
+            NodeKind::Expr(ExprKind::Operation { op, operands, .. })
+                if matches!(
+                    *op,
+                    vpi::vpiPostIncOp | vpi::vpiPreIncOp | vpi::vpiPostDecOp | vpi::vpiPreDecOp
+                ) =>
+            {
+                Ok(vec![self.lower_inc_dec(*op, operands)?])
+            }
             NodeKind::SysCall { name } => self.lower_sys_call(h, name),
             NodeKind::FuncCall {
                 name,
@@ -5949,8 +5998,8 @@ impl EmitCtx<'_, '_> {
     /// Lower an assignment without intra-assignment delay (`force_blocking`
     /// pins blocking semantics for for-loop init/increment statements).
     fn lower_assignment(&mut self, h: NodeId, force_blocking: bool) -> Result<IrStmt, String> {
-        let blocking = match self.cg.kind(h) {
-            NodeKind::Stmt(StmtKind::Assign { blocking, .. }) => *blocking,
+        let (blocking, op) = match self.cg.kind(h) {
+            NodeKind::Stmt(StmtKind::Assign { blocking, op, .. }) => (*blocking, *op),
             _ => unreachable!("non-assignment passed to lower_assignment"),
         };
         if matches!(
@@ -5988,12 +6037,202 @@ impl EmitCtx<'_, '_> {
             ));
         }
         let lh = self.cg.lower_lhs(&self.path, lhs)?;
-        let rhs_ir = self.cg.lower_expr(&self.path, rhs)?;
+        let rhs_ir = self.lower_assignment_rhs(lhs, rhs, op, &lh)?;
         let rhs_ir = apply_lhs_assignment_context(&self.cg.model, &lh, rhs_ir);
         Ok(IrStmt::Assign {
             lhs: lh,
             rhs: rhs_ir,
             nba: !blocking,
+        })
+    }
+
+    /// Lower the value written by a normal or compound procedural
+    /// assignment.  Compound assignments currently require a whole scalar
+    /// target, which guarantees the LHS is evaluated once; select and array
+    /// targets need index temporaries before they can preserve that rule.
+    fn lower_assignment_rhs(
+        &mut self,
+        lhs_node: NodeId,
+        rhs_node: NodeId,
+        op: i32,
+        lhs: &IrLhs,
+    ) -> Result<IrExpr, String> {
+        let rhs = self.cg.lower_expr(&self.path, rhs_node)?;
+        if op == 0 || op == vpi::vpiAssignmentOp {
+            return Ok(rhs);
+        }
+        if !matches!(lhs, IrLhs::Whole(_) | IrLhs::WholeRef { .. }) {
+            return Err(format!(
+                "compound assignment to a select or array element in `{}` is not supported yet",
+                self.path
+            ));
+        }
+        let current = self.cg.lower_expr(&self.path, lhs_node)?;
+        self.lower_compound_expr(op, current, rhs)
+    }
+
+    fn lower_compound_expr(&self, op: i32, lhs: IrExpr, rhs: IrExpr) -> Result<IrExpr, String> {
+        let real = lhs.is_real() || rhs.is_real();
+        let result = match op {
+            vpi::vpiAddOp | vpi::vpiSubOp | vpi::vpiMultOp => {
+                if real {
+                    let op = match op {
+                        vpi::vpiAddOp => IrRealBinOp::Add,
+                        vpi::vpiSubOp => IrRealBinOp::Sub,
+                        _ => IrRealBinOp::Mul,
+                    };
+                    real_bin_expr(op, lhs, rhs)
+                } else {
+                    let op = match op {
+                        vpi::vpiAddOp => IrBinOp::Add,
+                        vpi::vpiSubOp => IrBinOp::Sub,
+                        _ => IrBinOp::Mul,
+                    };
+                    common_bin_expr(op, lhs, rhs)
+                }
+            }
+            vpi::vpiDivOp | vpi::vpiModOp => {
+                if real {
+                    real_bin_expr(
+                        if op == vpi::vpiDivOp {
+                            IrRealBinOp::Div
+                        } else {
+                            IrRealBinOp::Mod
+                        },
+                        lhs,
+                        rhs,
+                    )
+                } else {
+                    if lhs.width > 64 || rhs.width > 64 {
+                        return Err(format!(
+                            "wide division/modulo not yet supported (operand wider than 64 bits) in `{}`",
+                            self.path
+                        ));
+                    }
+                    common_bin_expr(
+                        if op == vpi::vpiDivOp {
+                            IrBinOp::Div
+                        } else {
+                            IrBinOp::Mod
+                        },
+                        lhs,
+                        rhs,
+                    )
+                }
+            }
+            vpi::vpiBitAndOp | vpi::vpiBitOrOp | vpi::vpiBitXorOp => {
+                if real {
+                    return Err(format!(
+                        "bitwise compound assignment on a real value in `{}` is not supported",
+                        self.path
+                    ));
+                }
+                let op = match op {
+                    vpi::vpiBitAndOp => IrBinOp::BitAnd,
+                    vpi::vpiBitOrOp => IrBinOp::BitOr,
+                    _ => IrBinOp::BitXor,
+                };
+                common_bin_expr(op, lhs, rhs)
+            }
+            vpi::vpiLShiftOp | vpi::vpiRShiftOp | vpi::vpiArithLShiftOp | vpi::vpiArithRShiftOp => {
+                if real {
+                    return Err(format!(
+                        "shift compound assignment on a real value in `{}` is not supported",
+                        self.path
+                    ));
+                }
+                let width = lhs.width;
+                let signed = lhs.signed;
+                let op = match op {
+                    vpi::vpiLShiftOp => IrBinOp::Shl,
+                    vpi::vpiRShiftOp => IrBinOp::Shr,
+                    vpi::vpiArithLShiftOp => IrBinOp::Ashl,
+                    _ => IrBinOp::Ashr,
+                };
+                IrExpr::new(
+                    IrExprKind::Bin {
+                        op,
+                        a: Box::new(lhs),
+                        b: Box::new(rhs),
+                    },
+                    width,
+                    signed,
+                    None,
+                )
+            }
+            other => {
+                return Err(format!(
+                    "unsupported compound assignment operation {other} in `{}`",
+                    self.path
+                ))
+            }
+        };
+        Ok(result)
+    }
+
+    /// Lower a statement-position pre/post increment or decrement.  Since
+    /// the operation's value is discarded in statement position, pre and
+    /// post forms have the same blocking-write behavior.  Expression-valued
+    /// forms require a side-effecting expression IR and remain unsupported.
+    fn lower_inc_dec(&mut self, op: i32, operands: &[NodeId]) -> Result<IrStmt, String> {
+        let operand = match operands {
+            [operand] => *operand,
+            _ => {
+                return Err(format!(
+                    "increment/decrement in `{}` must have exactly one operand",
+                    self.path
+                ))
+            }
+        };
+        let lhs = self.cg.lower_lhs(&self.path, operand)?;
+        if !matches!(lhs, IrLhs::Whole(_) | IrLhs::WholeRef { .. }) {
+            return Err(format!(
+                "increment/decrement of a select or array element in `{}` is not supported yet",
+                self.path
+            ));
+        }
+        let current = self.cg.lower_expr(&self.path, operand)?;
+        let increment = matches!(op, vpi::vpiPostIncOp | vpi::vpiPreIncOp);
+        let rhs = if current.is_real() {
+            real_bin_expr(
+                if increment {
+                    IrRealBinOp::Add
+                } else {
+                    IrRealBinOp::Sub
+                },
+                current,
+                real_literal_expr(1.0),
+            )
+        } else {
+            let one = IrExpr::new(
+                IrExprKind::Const(IrConst {
+                    bits: vec![1],
+                    x: vec![0],
+                    z: vec![0],
+                    width: 32,
+                    signed: true,
+                    real: None,
+                    fill: None,
+                }),
+                32,
+                true,
+                None,
+            );
+            common_bin_expr(
+                if increment {
+                    IrBinOp::Add
+                } else {
+                    IrBinOp::Sub
+                },
+                current,
+                one,
+            )
+        };
+        let rhs = apply_lhs_assignment_context(&self.cg.model, &lhs, rhs);
+        Ok(IrStmt::Assign {
+            lhs,
+            rhs,
+            nba: false,
         })
     }
 
@@ -6031,7 +6270,11 @@ impl EmitCtx<'_, '_> {
             .copied()
             .ok_or_else(|| "assignment without RHS".to_string())?;
         let lh = self.cg.lower_lhs(&self.path, lhs)?;
-        let rhs_ir = self.cg.lower_expr(&self.path, rhs)?;
+        let op = match self.cg.kind(h) {
+            NodeKind::Stmt(StmtKind::Assign { op, .. }) => *op,
+            _ => unreachable!("non-assignment passed to lower_delayed_assignment"),
+        };
+        let rhs_ir = self.lower_assignment_rhs(lhs, rhs, op, &lh)?;
         let rhs_ir = apply_lhs_assignment_context(&self.cg.model, &lh, rhs_ir);
         if rhs_ir.is_real() {
             return Err(format!(
@@ -6239,7 +6482,25 @@ impl EmitCtx<'_, '_> {
         let (body_stmts, brk) = self.lower_loop_body(body)?;
         let mut incr_stmts = Vec::with_capacity(incr.len());
         for s in &incr {
-            incr_stmts.push(self.lower_assignment(*s, true)?);
+            match self.cg.kind(*s) {
+                NodeKind::Stmt(StmtKind::Assign { .. }) => {
+                    incr_stmts.push(self.lower_assignment(*s, true)?);
+                }
+                NodeKind::Expr(ExprKind::Operation { op, operands, .. })
+                    if matches!(
+                        *op,
+                        vpi::vpiPostIncOp | vpi::vpiPreIncOp | vpi::vpiPostDecOp | vpi::vpiPreDecOp
+                    ) =>
+                {
+                    incr_stmts.push(self.lower_inc_dec(*op, operands)?)
+                }
+                other => {
+                    return Err(format!(
+                        "unsupported for-loop increment in `{}` (node kind {other:?})",
+                        self.path
+                    ))
+                }
+            }
         }
         // `continue` must run the increment before the condition test: its
         // label sits at the END of the body, and the emitter renders the
@@ -7780,6 +8041,9 @@ impl<'a> Codegen<'a> {
                     )),
                 };
             }
+            if let NodeKind::EnumConst { value } = self.kind(t) {
+                return enum_value_expr(value.as_ref(), &self.node(t).name);
+            }
         }
         // Name fallback within the current scope.
         let name = self.node(r).name.clone();
@@ -7822,6 +8086,37 @@ impl<'a> Codegen<'a> {
                 .and_then(|m| m.get(&name))
             {
                 return Ok(sig_read_expr_full(info));
+            }
+            // Surelog v1.87 leaves some unqualified module-local enum uses
+            // without `vpiActual`.  Resolve those only against the current
+            // instance's matching flat module definition and only when the
+            // enumerator name is unique there.
+            let def_name = match self.kind(self.inst) {
+                NodeKind::ModuleInst { def_name, .. } => strip_lib(def_name),
+                _ => String::new(),
+            };
+            let mut matches = self
+                .db
+                .flat_modules
+                .iter()
+                .filter(|module| match self.kind(**module) {
+                    NodeKind::ModuleInst {
+                        def_name: candidate,
+                        ..
+                    } => strip_lib(candidate) == def_name,
+                    _ => false,
+                })
+                .flat_map(|module| self.node(*module).children.iter())
+                .filter_map(|candidate| match self.kind(*candidate) {
+                    NodeKind::EnumConst { value } if self.node(*candidate).name == name => {
+                        Some((value.as_ref(), self.node(*candidate).name.as_str()))
+                    }
+                    _ => None,
+                });
+            if let Some((value, enum_name)) = matches.next() {
+                if matches.next().is_none() {
+                    return enum_value_expr(value, enum_name);
+                }
             }
         }
         Err(format!(
@@ -8409,6 +8704,25 @@ impl<'a> Codegen<'a> {
                 },
             },
         }
+    }
+}
+
+fn enum_value_expr(value: Option<&Val>, name: &str) -> Result<IrExpr, String> {
+    match value {
+        Some(Val::Bits(bits)) => {
+            let constant = val_to_const(bits)?;
+            Ok(IrExpr::new(
+                IrExprKind::Const(constant.clone()),
+                constant.width,
+                constant.signed,
+                None,
+            ))
+        }
+        Some(Val::Real(value)) => Ok(real_literal_expr(*value)),
+        Some(Val::Str(_)) => Err(format!(
+            "string enum constant `{name}` used as a value is not supported"
+        )),
+        None => Err(format!("enum constant `{name}` has no value")),
     }
 }
 

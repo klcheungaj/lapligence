@@ -1,5 +1,5 @@
 //! End-to-end simulator tests for `disable <label>;` (1364-1995 §11) and
-//! `break` / `continue` (1800-2005 §12.7): Surelog compile → codegen → CMake
+//! `break` / `continue` and `do … while` (1800-2005 §12.7): Surelog compile → codegen → CMake
 //! build → run, asserting exact stdout against hand-simulated traces.
 //!
 //! Covered: disabling an enclosing named begin block mid-loop (statements
@@ -10,6 +10,8 @@
 //! with pinned iteration counts, nesting rules (break exits the innermost
 //! loop only; disable exits the named level across any nesting), the clean
 //! codegen reject for cross-process disables, and optimization parity.
+//! Post-test loops are pinned for execute-once behavior and for `continue`
+//! evaluating the condition before the next iteration.
 //!
 //! Surelog writes `slpp_all/` into the process working directory, so the
 //! tests run with the CWD pointed at a fresh temp dir (serialized through a
@@ -122,6 +124,43 @@ fn run_variant(dir: &std::path::Path, name: &str, model_c: &str) -> Result<Strin
         ));
     }
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+#[test]
+fn do_while_is_post_test_and_honors_loop_control() {
+    if !llg::sim::build::cmake_available() {
+        eprintln!("SKIP: cmake not available");
+        return;
+    }
+    let _guard = SURELOG_LOCK.lock().unwrap();
+    let sv = r#"`timescale 1ns/1ps
+module tb;
+    integer once;
+    integer i;
+    integer sum;
+
+    initial begin
+        once = 0;
+        do once = once + 1; while (0);
+
+        i = 0;
+        sum = 0;
+        do begin
+            i = i + 1;
+            if (i == 2) continue;
+            if (i == 5) break;
+            sum = sum + i;
+        end while (i < 8);
+
+        $display("once=%0d i=%0d sum=%0d", once, i, sum);
+        $finish;
+    end
+endmodule
+"#;
+
+    let (stdout, warnings) = run_sim(sv, "tb", "do_while").expect("simulation should run");
+    assert_eq!(stdout, "once=1 i=5 sum=8\n");
+    assert!(warnings.is_empty(), "unexpected warnings: {warnings:?}");
 }
 
 /// (a) Disable an enclosing NAMED block mid-loop: everything after the

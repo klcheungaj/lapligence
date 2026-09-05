@@ -34,6 +34,7 @@ impl LintRule for AssignmentInConditionRule {
             match db.node_kind(id) {
                 NodeKind::Stmt(StmtKind::IfElse { cond })
                 | NodeKind::Stmt(StmtKind::While { cond, .. })
+                | NodeKind::Stmt(StmtKind::DoWhile { cond, .. })
                 | NodeKind::Stmt(StmtKind::For { cond, .. })
                 | NodeKind::Stmt(StmtKind::Wait { cond }) => {
                     collect_predicate_assignments(db, *cond, &mut assignments);

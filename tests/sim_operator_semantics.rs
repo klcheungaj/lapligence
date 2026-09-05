@@ -75,6 +75,25 @@ fn run_sim(sv: &str, tag: &str) -> Result<String, String> {
     })
 }
 
+fn codegen_error(sv: &str, tag: &str) -> Result<String, String> {
+    with_temp_design(sv, tag, |_dir, src| {
+        let out = compile::compile(&compile::CompileOpts {
+            files: vec![src.to_string_lossy().into_owned()],
+            top: Some("tb".to_string()),
+            ..Default::default()
+        })
+        .map_err(|e| format!("compile: {e}"))?;
+        if !out.ok() {
+            return Err(format!("compile diagnostics: {:?}", out.diagnostics));
+        }
+        let design = out.uhdm_design().ok_or("no UHDM design")?;
+        match sim::codegen::generate(design) {
+            Ok(_) => Err("codegen unexpectedly succeeded".to_string()),
+            Err(error) => Ok(error),
+        }
+    })
+}
+
 fn run_optimized_variants(sv: &str, tag: &str) -> Result<(String, String), String> {
     with_temp_design(sv, tag, |dir, src| {
         let out = compile::compile(&compile::CompileOpts {
@@ -115,6 +134,162 @@ fn assert_stdout(tag: &str, sv: &str, expected: &str) {
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     let stdout = run_sim(sv, tag).expect("simulation should run");
     assert_eq!(stdout, expected);
+}
+
+#[test]
+fn sim_statement_increment_and_decrement() {
+    if !sim::build::cmake_available() {
+        eprintln!("SKIP: cmake not available");
+        return;
+    }
+    let sv = r#"`timescale 1ns/1ps
+module tb;
+    integer i;
+    integer sum;
+    logic [3:0] nibble;
+
+    initial begin
+        sum = 0;
+        for (i = 0; i < 4; i++)
+            sum = sum + i;
+
+        ++sum;
+        sum--;
+        nibble = 4'h0;
+        nibble++;
+        --nibble;
+
+        $display("i=%0d sum=%0d nibble=%0d", i, sum, nibble);
+        $finish;
+    end
+endmodule
+"#;
+    assert_stdout("inc_dec_statement", sv, "i=4 sum=6 nibble=0\n");
+}
+
+#[test]
+fn sim_scalar_enum_variables_use_their_packed_base_type() {
+    if !sim::build::cmake_available() {
+        eprintln!("SKIP: cmake not available");
+        return;
+    }
+    let sv = r#"`timescale 1ns/1ps
+module tb;
+    typedef enum logic [2:0] {
+        IDLE = 3'd0,
+        LOAD = 3'd3,
+        RUN  = 3'd5
+    } state_t;
+    state_t state;
+
+    initial begin
+        state = LOAD;
+        if (state == LOAD)
+            state = RUN;
+        $display("state=%0d bits=%0d", state, $bits(state));
+        $finish;
+    end
+endmodule
+"#;
+    assert_stdout("scalar_enum", sv, "state=5 bits=3\n");
+}
+
+#[test]
+fn sim_whole_variable_compound_assignments() {
+    if !sim::build::cmake_available() {
+        eprintln!("SKIP: cmake not available");
+        return;
+    }
+    let sv = r#"`timescale 1ns/1ps
+module tb;
+    integer value;
+    logic signed [3:0] signed_value;
+
+    initial begin
+        value = 10;
+        value += 5;
+        value -= 3;
+        value *= 2;
+        value /= 5;
+        value %= 3;
+        value <<= 3;
+        value >>= 1;
+        value ^= 3;
+        value |= 8;
+        value &= 6;
+
+        signed_value = -4;
+        signed_value >>>= 1;
+        signed_value <<<= 1;
+
+        $display("value=%0d signed=%0d", value, signed_value);
+        $finish;
+    end
+endmodule
+"#;
+    assert_stdout("compound_assign", sv, "value=6 signed=-4\n");
+}
+
+#[test]
+fn sim_increment_and_compound_assignment_reject_unsupported_positions() {
+    let _guard = SURELOG_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+
+    let select_error = codegen_error(
+        r#"module tb;
+    logic [3:0] value;
+    initial begin
+        value = 0;
+        value[1:0] += 1;
+        $finish;
+    end
+endmodule
+"#,
+        "compound_select_reject",
+    )
+    .expect("compound select must be rejected");
+    assert!(
+        select_error.contains("compound assignment to a select or array element"),
+        "unexpected select error: {select_error}"
+    );
+
+    let increment_select_error = codegen_error(
+        r#"module tb;
+    logic [3:0] value;
+    initial begin
+        value = 0;
+        value[0]++;
+        $finish;
+    end
+endmodule
+"#,
+        "inc_select_reject",
+    )
+    .expect("increment select must be rejected");
+    assert!(
+        increment_select_error.contains("increment/decrement of a select or array element"),
+        "unexpected increment-select error: {increment_select_error}"
+    );
+
+    let expression_error = codegen_error(
+        r#"module tb;
+    integer value;
+    integer result;
+    initial begin
+        value = 0;
+        result = value++;
+        $finish;
+    end
+endmodule
+"#,
+        "inc_expression_reject",
+    )
+    .expect("expression-valued increment must be rejected");
+    assert!(
+        expression_error.contains("unsupported operation op type"),
+        "unexpected increment-expression error: {expression_error}"
+    );
 }
 
 #[test]

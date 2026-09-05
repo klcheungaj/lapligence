@@ -158,6 +158,7 @@ fn analyze_stmt(db: &Db, root: NodeId) -> PathWrites {
         NodeKind::Stmt(StmtKind::Case { items, .. }) => analyze_case(db, items),
         NodeKind::Stmt(StmtKind::For { body, .. })
         | NodeKind::Stmt(StmtKind::While { body, .. })
+        | NodeKind::Stmt(StmtKind::DoWhile { body, .. })
         | NodeKind::Stmt(StmtKind::Repeat { body, .. })
         | NodeKind::Stmt(StmtKind::Forever { body }) => {
             // A loop body may run zero times: its writes are conditional.

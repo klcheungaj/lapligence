@@ -387,6 +387,11 @@ pub enum StmtKind {
     },
     Assign {
         blocking: bool,
+        /// Raw `vpiOpType`: zero (the value exposed for ordinary `=`/`<=` by
+        /// Surelog v1.87's VPI layer), `vpiAssignmentOp`, or the underlying
+        /// arithmetic/bitwise/shift operation for a SystemVerilog compound
+        /// assignment such as `+=` or `>>>=`.
+        op: i32,
         /// Intra-assignment control (`a = #5 b;`, `a <= #5 b;`) — see
         /// [`IntraControl`].  `None` when the assignment has none.
         delay: Option<IntraControl>,
@@ -402,6 +407,12 @@ pub enum StmtKind {
         body: NodeId,
     },
     While {
+        cond: NodeId,
+        body: NodeId,
+    },
+    /// SystemVerilog post-test loop: execute `body`, then repeat while
+    /// `cond` is true.
+    DoWhile {
         cond: NodeId,
         body: NodeId,
     },
@@ -1120,6 +1131,18 @@ impl Builder {
             self.capture_elaborated_type_ranges(h, arr);
             kids.push(self.walk_array(arr, Some(id), true)?);
         }
+        // Enum constants declared by module-local typedefs must be captured
+        // before process expressions that refer to them.  Surelog exposes
+        // the declarations beneath each enum `vpiTypedef`, while uses are
+        // ref objects whose `vpiActual` points back to those constants.
+        for ts in iter(vpi::vpiTypedef, h) {
+            if vpi::obj_type(ts) != vpi::vpiEnumTypespec {
+                continue;
+            }
+            for ec in iter(vpi::vpiEnumConst, ts) {
+                kids.push(self.walk_enum_const(ec, Some(id))?);
+            }
+        }
         // Named events (`event ev;`) are indexed before anything that
         // references them (trigger statements inside process bodies resolve
         // by name against these captures).
@@ -1205,6 +1228,16 @@ impl Builder {
                 timeprecision,
             },
         );
+        let mut kids = Vec::new();
+        for ts in iter(vpi::vpiTypedef, h) {
+            if vpi::obj_type(ts) != vpi::vpiEnumTypespec {
+                continue;
+            }
+            for ec in iter(vpi::vpiEnumConst, ts) {
+                kids.push(self.walk_enum_const(ec, Some(id))?);
+            }
+        }
+        self.set_children(id, kids);
         Ok(id)
     }
 
@@ -1249,7 +1282,7 @@ impl Builder {
                 continue;
             }
             for ec in iter(vpi::vpiEnumConst, ts) {
-                kids.push(self.walk_node(ec, Some(id))?);
+                kids.push(self.walk_enum_const(ec, Some(id))?);
             }
         }
         // Functions/tasks declared directly in the package.
@@ -1287,6 +1320,14 @@ impl Builder {
             kids.push(self.walk_task_func(m, Some(id))?);
         }
         self.set_children(id, kids);
+        Ok(id)
+    }
+
+    fn walk_enum_const(&mut self, h: VpiHandle, parent: Option<NodeId>) -> Result<NodeId, String> {
+        let props = self.common(h);
+        let value = elab::read_value(h).ok();
+        let id = self.register(parent, &props, NodeKind::EnumConst { value });
+        self.index_node(h, &props, id);
         Ok(id)
     }
 
@@ -2071,6 +2112,7 @@ impl Builder {
             }
             vpi::vpiAssignment => {
                 let blocking = vpi::get(vpi::vpiBlocking, h) != 0;
+                let op = vpi::get(vpi::vpiOpType, h);
                 let delay = self.assign_control(h);
                 let lhs =
                     child(vpi::vpiLhs, h).ok_or_else(|| "assignment without LHS".to_string())?;
@@ -2080,7 +2122,14 @@ impl Builder {
                     kids.push(self.walk_node(rhs.raw(), Some(id))?);
                 }
                 self.set_children(id, kids);
-                self.set_stmt(id, StmtKind::Assign { blocking, delay });
+                self.set_stmt(
+                    id,
+                    StmtKind::Assign {
+                        blocking,
+                        op,
+                        delay,
+                    },
+                );
             }
             vpi::vpiCase => {
                 let case_type = vpi::get(vpi::vpiCaseType, h);
@@ -2140,28 +2189,35 @@ impl Builder {
                     },
                 );
             }
-            vpi::vpiWhile | vpi::vpiRepeat => {
+            vpi::vpiWhile | vpi::vpiDoWhile | vpi::vpiRepeat => {
                 let cond = child(vpi::vpiCondition, h)
                     .ok_or_else(|| "loop without condition".to_string())?;
                 let cond_id = self.walk_node(cond.raw(), Some(id))?;
                 let body = self.walk_opt_stmt(h, Some(id))?;
                 self.set_children(id, vec![cond_id, body]);
-                if t == vpi::vpiWhile {
-                    self.set_stmt(
+                match t {
+                    vpi::vpiWhile => self.set_stmt(
                         id,
                         StmtKind::While {
                             cond: cond_id,
                             body,
                         },
-                    );
-                } else {
-                    self.set_stmt(
+                    ),
+                    vpi::vpiDoWhile => self.set_stmt(
+                        id,
+                        StmtKind::DoWhile {
+                            cond: cond_id,
+                            body,
+                        },
+                    ),
+                    vpi::vpiRepeat => self.set_stmt(
                         id,
                         StmtKind::Repeat {
                             cond: cond_id,
                             body,
                         },
-                    );
+                    ),
+                    _ => unreachable!(),
                 }
             }
             vpi::vpiForever => {
@@ -3153,7 +3209,6 @@ fn is_stmt_type(t: c_int) -> bool {
         t,
         vpi::vpiUnsupportedStmt
             | vpi::vpiReturnStmt
-            | vpi::vpiDoWhile
             | vpi::vpiRepeatControl
             | vpi::vpiOrderedWait
             | vpi::vpiForeachStmt

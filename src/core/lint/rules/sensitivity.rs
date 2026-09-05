@@ -283,9 +283,9 @@ fn analyze_stmt(db: &Db, root: NodeId, incoming: &HashSet<NodeId>) -> DefiniteAs
     match db.node_kind(root) {
         NodeKind::Stmt(StmtKind::Begin) => analyze_sequence(db, &db.node(root).children, incoming),
         NodeKind::Stmt(StmtKind::IfElse { cond }) => analyze_if(db, root, *cond, incoming),
-        NodeKind::Stmt(StmtKind::Assign { blocking, delay }) => {
-            analyze_assignment(db, root, *blocking && delay.is_none(), incoming)
-        }
+        NodeKind::Stmt(StmtKind::Assign {
+            blocking, delay, ..
+        }) => analyze_assignment(db, root, *blocking && delay.is_none(), incoming),
         NodeKind::Stmt(StmtKind::Case { items, .. }) => analyze_case(db, root, items, incoming),
         NodeKind::Stmt(StmtKind::For {
             init,
@@ -296,6 +296,9 @@ fn analyze_stmt(db: &Db, root: NodeId, incoming: &HashSet<NodeId>) -> DefiniteAs
         NodeKind::Stmt(StmtKind::While { cond, body })
         | NodeKind::Stmt(StmtKind::Repeat { cond, body }) => {
             analyze_loop(db, Some(*cond), *body, incoming)
+        }
+        NodeKind::Stmt(StmtKind::DoWhile { cond, body }) => {
+            analyze_do_while(db, *cond, *body, incoming)
         }
         NodeKind::Stmt(StmtKind::Forever { body }) => analyze_loop(db, None, *body, incoming),
         NodeKind::Stmt(
@@ -482,6 +485,30 @@ fn analyze_loop(
         // it.  A body release can invalidate an incoming assignment, hence
         // only incoming objects preserved by every possible body execution
         // remain definite.
+        definitely_assigned,
+        read_before_assignment,
+    }
+}
+
+fn analyze_do_while(
+    db: &Db,
+    cond: NodeId,
+    body: NodeId,
+    incoming: &HashSet<NodeId>,
+) -> DefiniteAssignmentFlow {
+    // The first body execution precedes the first condition evaluation.
+    let body_flow = analyze_node(db, body, incoming);
+    let condition = analyze_expr(db, cond, &body_flow.definitely_assigned);
+    let mut read_before_assignment = body_flow.read_before_assignment;
+    read_before_assignment.extend(condition.read_before_assignment);
+    // Keep the post-loop state conservative because an early break can skip
+    // assignments later in the body; the first condition still sees writes
+    // from the first body pass above.
+    let definitely_assigned = incoming
+        .intersection(&body_flow.definitely_assigned)
+        .copied()
+        .collect();
+    DefiniteAssignmentFlow {
         definitely_assigned,
         read_before_assignment,
     }

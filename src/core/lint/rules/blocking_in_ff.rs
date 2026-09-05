@@ -96,11 +96,7 @@ fn has_edge_event(db: &Db, root: NodeId) -> bool {
 /// Every blocking assignment statement in the subtree rooted at `root`, in
 /// depth-first order.
 fn blocking_assigns(db: &Db, root: NodeId, out: &mut Vec<NodeId>) {
-    if let NodeKind::Stmt(StmtKind::Assign {
-        blocking: true,
-        delay: _,
-    }) = db.node_kind(root)
-    {
+    if let NodeKind::Stmt(StmtKind::Assign { blocking: true, .. }) = db.node_kind(root) {
         out.push(root);
     }
     for c in &db.node(root).children {

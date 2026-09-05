@@ -156,33 +156,3 @@ endmodule
         "unexpected net-class rejection: {net_class_error}"
     );
 }
-
-#[test]
-fn unsupported_do_while_is_not_silently_skipped() {
-    let _guard = SURELOG_LOCK.lock().unwrap();
-    let error = in_temp_dir("do_while", |dir| {
-        compile_and_generate(
-            dir,
-            "do_while.sv",
-            r#"// llg-test-fixture: tests/sim_net_decl.rs/do_while.sv
-module tb;
-    integer value;
-    initial begin
-        value = 0;
-        do value = value + 1; while (value < 2);
-        $display("value=%0d", value);
-        $finish;
-    end
-endmodule
-"#,
-        )
-    })
-    .err()
-    .expect("unsupported do-while must fail codegen");
-    assert!(
-        error.contains("unsupported executable statement VPI type")
-            && error.contains("do_while.sv:")
-            && error.contains("in `tb`"),
-        "unexpected unsupported-statement error: {error}"
-    );
-}

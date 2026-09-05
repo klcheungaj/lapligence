@@ -6,6 +6,8 @@
 //! write side: whole-signal blocking/NBA writes from a parent scope into a
 //! child's reg, part-select/bit-select/indexed-part-select writes, and the
 //! wake-on-write behaviour of a child process watching the target signal.
+//! SystemVerilog implicit named (`.name`) and wildcard (`.*`) port
+//! connections are also pinned after Surelog expands them.
 //!
 //! Surelog writes `slpp_all/` into the process working directory, so each test
 //! runs with the CWD pointed at a fresh temp dir (serialized through a mutex).
@@ -62,6 +64,45 @@ fn assert_stdout(tag: &str, sv: &str, expected: &str) {
     let _ = std::fs::remove_dir_all(&dir);
     let stdout = result.expect("simulation should run");
     assert_eq!(stdout, expected);
+}
+
+#[test]
+fn sim_implicit_named_and_wildcard_port_connections() {
+    if !llg::sim::build::cmake_available() {
+        eprintln!("SKIP: cmake not available");
+        return;
+    }
+    let sv = r#"`timescale 1ns/1ns
+module child(input logic a, input logic b, output logic y);
+    assign y = a ^ b;
+endmodule
+
+module named_child(input logic left, input logic right, output logic result);
+    assign result = left & right;
+endmodule
+
+module tb_top;
+    logic a;
+    logic b;
+    wire y;
+    logic left;
+    logic right;
+    wire result;
+
+    child u_wildcard (.*);
+    named_child u_named (.left, .right, .result);
+
+    initial begin
+        a = 1'b1;
+        b = 1'b0;
+        left = 1'b1;
+        right = 1'b1;
+        #1 $display("wild=%0b named=%0b", y, result);
+        $finish;
+    end
+endmodule
+"#;
+    assert_stdout("implicit_ports", sv, "wild=1 named=1\n");
 }
 
 /// (a) A 3-part blocking write from the top into a child's reg, visible to the

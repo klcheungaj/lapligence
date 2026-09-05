@@ -63,8 +63,7 @@ impl LintRule for NbaInCombRule {
 /// depth-first order.
 fn nba_assigns(db: &Db, root: NodeId, out: &mut Vec<NodeId>) {
     if let NodeKind::Stmt(StmtKind::Assign {
-        blocking: false,
-        delay: _,
+        blocking: false, ..
     }) = db.node_kind(root)
     {
         out.push(root);
