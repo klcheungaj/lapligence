@@ -545,6 +545,8 @@ pub enum StmtKind {
         items: Vec<CaseItem>,
     },
     For {
+        /// Variables declared in the initializer (`for (int i = ...; ...)`).
+        vars: Vec<NodeId>,
         init: Vec<NodeId>,
         cond: NodeId,
         incr: Vec<NodeId>,
@@ -671,9 +673,14 @@ pub enum StmtKind {
     Break,
     /// `continue;` inside a loop (1800-2005 §12.7).  Atomic: no children.
     Continue,
-    /// `foreach (...)` loop. Captured distinctly so consumers reject or
-    /// implement it explicitly instead of mistaking it for an empty body.
-    Foreach,
+    /// `foreach (array[index, ...]) body` loop. The array target is resolved
+    /// against an already-captured declaration; iterator variables belong to
+    /// this statement's lexical scope.
+    Foreach {
+        array: Option<NodeId>,
+        vars: Vec<NodeId>,
+        body: NodeId,
+    },
     /// An executable statement object recognized by VPI but not modelled by
     /// the owned database. Keeping the owned object type lets consumers reject it
     /// explicitly instead of silently treating it as an empty statement.
@@ -1331,6 +1338,30 @@ pub(super) fn is_event_operand(t: c_int) -> bool {
 /// The VPI object types Surelog reports for unpacked arrays.
 pub(super) fn is_array_type(t: c_int) -> bool {
     matches!(t, vpi::vpiArrayVar | vpi::vpiRegArray | vpi::vpiArrayNet)
+}
+
+pub(super) fn is_scalar_var_type(t: c_int) -> bool {
+    matches!(
+        t,
+        vpi::vpiIntegerVar
+            | vpi::vpiRealVar
+            | vpi::vpiTimeVar
+            | vpi::vpiLogicVar
+            | vpi::vpiLongIntVar
+            | vpi::vpiShortIntVar
+            | vpi::vpiIntVar
+            | vpi::vpiShortRealVar
+            | vpi::vpiByteVar
+            | vpi::vpiClassVar
+            | vpi::vpiStringVar
+            | vpi::vpiEnumVar
+            | vpi::vpiStructVar
+            | vpi::vpiUnionVar
+            | vpi::vpiBitVar
+            | vpi::vpiChandleVar
+            | vpi::vpiPackedArrayVar
+            | vpi::vpiVirtualInterfaceVar
+    )
 }
 
 /// First byte of a Verilog/SV plain identifier.

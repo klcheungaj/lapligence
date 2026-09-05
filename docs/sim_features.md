@@ -41,14 +41,14 @@ final blocks ≤ 1024.
 | 2 | Data types | 10 | 1 | 5 | 5 | 2 | 4 |
 | 3 | Modules & hierarchy | 8 | 1 | 1 | 2 | 1 | 0 |
 | 4 | Scheduling & processes | 8 | 1 | 0 | 7 | 1 | 1 |
-| 5 | Procedural statements | 17 | 2 | 1 | 4 | 1 | 2 |
+| 5 | Procedural statements | 17 | 2 | 1 | 4 | 3 | 0 |
 | 6 | Timing controls | 2 | 2 | 2 | 0 | 0 | 0 |
 | 7 | Expressions & operators | 18 | 2 | 0 | 2 | 2 | 3 |
 | 8 | Continuous assign & structural | 5 | 4 | 7 | 0 | 0 | 0 |
 | 9 | Functions & tasks | 4 | 0 | 5 | 3 | 0 | 1 |
 | 10 | System tasks & functions | 11 | 2 | 14 | 3 | 0 | 6 |
 | 11 | Compiler directives affecting sim | 5 | 0 | 0 | 4 | 0 | 0 |
-| — | **Total** | **98** | **15** | **35** | **30** | **8** | **18** |
+| — | **Total** | **98** | **15** | **35** | **30** | **10** | **16** |
 
 In-section ⬜ items (not counted above): §3 configurations [V], ref ports /
 default port values, extern/nested modules [SV] · §4 fine-grain process control
@@ -193,9 +193,9 @@ SystemVerilog era:
 - 🟨 **unique/priority/unique0 if & case** — §1800-2009 12.4.2/12.5.3 **[SV-2005]** lowered as plain case; no violation reports (probed)
 - ✅ **case … inside** wildcard matching — §1800-2009 12.5.4 **[SV-2005]** scalar wildcard items, inclusive ranges, first-match/default behavior, and single selector evaluation (sim_wildcard_eq.rs, optimization on/off)
 - ✅ **do-while** — §1800-2009 12.7.5 **[SV-2005]** post-test execution plus break/continue semantics (sim_disable.rs)
-- ❌ **foreach** — §1800-2009 12.7.3 **[SV-2005]** clean codegen rejection
+- 🟨 **foreach** — §1800-2009 12.7.3 **[SV-2005]** fixed unpacked arrays with an explicit iterator for every dimension, declared range direction, break/continue, and nested shadowing (sim_loops.rs); omitted indices, fork/deferred-output capture, and nonblocking writes to iterators remain rejected
 - ✅ **break/continue** — §1800-2009 12.8 **[SV-2005]** (sim_disable.rs) for/while/repeat/forever; continue lands on the increment (for) or back-edge condition test, break exits the innermost loop; nesting pinned
-- ❌ **Inline loop-var declarations** `for (int i…)` — §1800-2009 12.7.1 **[SV-2005]** loop var unresolved (probed)
+- 🟨 **Inline loop-var declarations** `for (int i…)` — §1800-2009 12.7.1 **[SV-2005]** packed integral loop variables with lexical shadowing and break/continue (sim_loops.rs); real loop variables, fork/deferred-output capture, and nonblocking writes to loop locals are rejected
 
 ## 6. Timing controls
 

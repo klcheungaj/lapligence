@@ -294,9 +294,27 @@ impl<'a> Codegen<'a> {
         r: NodeId,
         target: Option<NodeId>,
     ) -> Result<IrExpr, String> {
+        if let Some((_, info)) = self.lexical_proc_local(r) {
+            return Ok(IrExpr::new(
+                IrExprKind::LocalRead(info.c_name.clone()),
+                info.width,
+                info.signed,
+                None,
+            ));
+        }
         if let Some(t) = target {
             if let Some(info) = self.signal_of(t) {
                 return Ok(sig_read_expr_full(info));
+            }
+            if !self.proc_local_is_shadowed(r) {
+                if let Some(info) = self.proc_locals.get(&t) {
+                    return Ok(IrExpr::new(
+                        IrExprKind::LocalRead(info.c_name.clone()),
+                        info.width,
+                        info.signed,
+                        None,
+                    ));
+                }
             }
             // Function/task body reads: formals, locals and the return
             // variable (by arena node).

@@ -120,11 +120,29 @@ impl Builder {
             }
             vpi::vpiFor => {
                 let mut kids: Vec<NodeId> = Vec::new();
+                // A for-loop with an inline declaration is a scope. Capture
+                // any explicitly exposed locals first; v1.87 more commonly
+                // exposes the declaration as the initializer's direct Var
+                // LHS, which is recognized below before condition/body refs
+                // are walked.
+                let mut vars = Vec::new();
+                for v in iter(vpi::vpiVariables, h) {
+                    let vid = self.walk_var(v.raw(), Some(id))?;
+                    kids.push(vid);
+                    vars.push(vid);
+                }
                 let mut init = Vec::new();
                 for s in iter(vpi::vpiForInitStmt, h) {
                     let sid = self.walk_node(s.raw(), Some(id))?;
                     kids.push(sid);
                     init.push(sid);
+                }
+                for statement in &init {
+                    if let Some(lhs) = self.nodes[statement.index()].children.first().copied() {
+                        if matches!(self.nodes[lhs.index()].kind, NodeKind::Var { .. }) {
+                            vars.push(lhs);
+                        }
+                    }
                 }
                 let cond = child(vpi::vpiCondition, h)
                     .ok_or_else(|| "for without condition".to_string())?;
@@ -142,12 +160,35 @@ impl Builder {
                 self.set_stmt(
                     id,
                     StmtKind::For {
+                        vars,
                         init,
                         cond: cond_id,
                         incr,
                         body,
                     },
                 );
+            }
+            vpi::vpiForeachStmt => {
+                // UHDM exposes the iterated array as a single vpiVariables
+                // relation and the lexical index declarations through the
+                // vpiLoopVars group. The array already belongs to its module
+                // scope, so retain its existing arena identity rather than
+                // walking a duplicate declaration subtree.
+                let array = child(vpi::vpiVariables, h).and_then(|variable| {
+                    self.resolve_direct(variable.raw())
+                        .or_else(|| self.resolve_ref(variable.raw()))
+                });
+                let mut kids = Vec::new();
+                let mut vars = Vec::new();
+                for variable in iter(vpi::vpiLoopVars, h) {
+                    let variable = self.walk_var(variable.raw(), Some(id))?;
+                    kids.push(variable);
+                    vars.push(variable);
+                }
+                let body = self.walk_opt_stmt(h, Some(id))?;
+                kids.push(body);
+                self.set_children(id, kids);
+                self.set_stmt(id, StmtKind::Foreach { array, vars, body });
             }
             vpi::vpiWhile | vpi::vpiDoWhile | vpi::vpiRepeat => {
                 let cond = child(vpi::vpiCondition, h)
@@ -419,6 +460,21 @@ impl Builder {
                 let target = self.resolve_ref(h);
                 self.set_expr(id, ExprKind::Ref { target });
             }
+            other if is_scalar_var_type(other) => {
+                // Inline for-loop declarations reach the database through
+                // the initializer assignment's direct variable LHS rather
+                // than a vpiVariables relation on the for_stmt. Capture that
+                // object in place so later refs can resolve to its indexed
+                // arena identity.
+                let ty = self.type_info_of(h);
+                self.set_kind(id, NodeKind::Var { ty });
+                self.index_node(h, &props, id);
+                if let Some(expression) = child(vpi::vpiExpr, h) {
+                    let expression = self.walk_node(expression.raw(), Some(id))?;
+                    self.set_children(id, vec![expression]);
+                    self.vars_init.insert(id, expression);
+                }
+            }
             vpi::vpiNamedEvent => {
                 // A named_event object used directly as an expression-shaped
                 // node (e.g. an event-control condition or a posedge/negedge
@@ -571,9 +627,7 @@ impl Builder {
                     }
                 }
                 self.set_children(id, kids);
-                if other == vpi::vpiForeachStmt {
-                    self.set_stmt(id, StmtKind::Foreach);
-                } else if is_stmt_type(other) {
+                if is_stmt_type(other) {
                     self.set_stmt(
                         id,
                         StmtKind::Unsupported {

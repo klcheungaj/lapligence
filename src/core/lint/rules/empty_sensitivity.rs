@@ -108,7 +108,7 @@ fn body_is_trustworthy(db: &Db, root: NodeId) -> bool {
         NodeKind::Other
         | NodeKind::SysCall { .. }
         | NodeKind::FuncCall { .. }
-        | NodeKind::Stmt(StmtKind::Unsupported { .. } | StmtKind::Foreach) => return false,
+        | NodeKind::Stmt(StmtKind::Unsupported { .. } | StmtKind::Foreach { .. }) => return false,
         NodeKind::Stmt(
             StmtKind::DelayControl { .. }
             | StmtKind::EventControl { .. }

@@ -412,6 +412,13 @@ struct SignalInfo {
     ir: usize,
 }
 
+#[derive(Clone)]
+struct ProcLocalInfo {
+    c_name: String,
+    width: u32,
+    signed: bool,
+}
+
 /// A lowered unpacked array: a flat C array of `sv4_t` elements plus the
 /// per-dimension metadata needed to linearize indices.
 #[derive(Clone)]
@@ -535,6 +542,8 @@ struct Codegen<'a> {
     signals: Vec<SignalInfo>,
     /// Net/Var arena node → lowered signal info (all instances + gen scopes).
     sig_globals: HashMap<NodeId, SignalInfo>,
+    /// Inline procedural declaration node → lexical C local information.
+    proc_locals: HashMap<NodeId, ProcLocalInfo>,
     /// Legacy storage for scalar declaration-initializer fills that need a
     /// collapsed-net driver slot. True-net declarations now lower as
     /// continuous processes, so ordinary wire/tri entries do not use it.
@@ -633,6 +642,7 @@ impl<'a> Codegen<'a> {
             func_meta: HashMap::new(),
             signals: Vec::new(),
             sig_globals: HashMap::new(),
+            proc_locals: HashMap::new(),
             net_inits: Vec::new(),
             arrays: Vec::new(),
             array_globals: HashMap::new(),

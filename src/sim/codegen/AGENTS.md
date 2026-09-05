@@ -79,6 +79,13 @@ and input/output links touching a member are warned and skipped.
 - Fork/join works only in process bodies: join/join_any/join_none, named forks,
   `wait fork;`, `disable fork;`. Reject fork/join in function/task bodies and
   cross-process `disable <label>;`.
+- Inline `for` declarations use lexical packed locals, with unique names for
+  nested/shadowed declarations. `foreach` traverses fixed unpacked arrays in
+  declared dimension order and requires one explicit iterator per dimension.
+  Break/continue follow the innermost source loop. Reject real loop locals,
+  omitted foreach iterators, fork/deferred-output captures of loop locals, and nonblocking
+  writes to loop locals whose stack lifetime cannot cover NBA commit.
+  `tests/sim_loops.rs` compares optimized/unoptimized execution.
 - `case (...) inside` supports wildcard scalar members and inclusive ranges,
   retaining first-match/default ordering. Evaluate the selector exactly once
   into a local temporary before testing members (`tests/sim_wildcard_eq.rs`).

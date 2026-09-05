@@ -293,6 +293,7 @@ fn analyze_stmt(db: &Db, root: NodeId, incoming: &HashSet<NodeId>) -> DefiniteAs
             cond,
             incr,
             body,
+            ..
         }) => analyze_for(db, init, *cond, incr, *body, incoming),
         NodeKind::Stmt(StmtKind::While { cond, body })
         | NodeKind::Stmt(StmtKind::Repeat { cond, body }) => {
@@ -307,7 +308,7 @@ fn analyze_stmt(db: &Db, root: NodeId, incoming: &HashSet<NodeId>) -> DefiniteAs
             | StmtKind::DelayControl { .. }
             | StmtKind::Wait { .. }
             | StmtKind::Fork { .. }
-            | StmtKind::Foreach
+            | StmtKind::Foreach { .. }
             | StmtKind::Unsupported { .. },
         ) => conservative_flow(db, root, incoming),
         NodeKind::Stmt(StmtKind::Force { .. } | StmtKind::ProcContAssign { .. }) => {

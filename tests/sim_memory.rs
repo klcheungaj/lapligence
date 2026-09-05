@@ -304,29 +304,26 @@ endmodule
     );
 }
 
-/// Unsupported foreach loops must fail during codegen rather than silently
-/// disappearing from the generated model.
+/// Foreach forms with an omitted dimension index remain an explicit codegen
+/// boundary rather than silently iterating the wrong shape.
 #[test]
 fn sim_mem_foreach_rejected() {
     let sv = r#"module tb;
-    logic [7:0] mem [0:3];
+    logic [7:0] mem [0:1][0:1];
     initial begin
-        foreach (mem[i]) mem[i] = i;
+        foreach (mem[i,]) mem[i][0] = i;
     end
 endmodule
 "#;
     let result = sim_harness::with_surelog_temp_cwd("mem_foreach_rej", |dir| {
         let source = dir.join("foreach_rej.sv");
         std::fs::write(&source, sv).map_err(|error| format!("write source: {error}"))?;
-        let out = compile::compile(&compile::CompileOpts {
+        let out = compile::compile_checked(&compile::CompileOpts {
             files: vec![source.to_string_lossy().into_owned()],
             top: Some("tb".to_string()),
             ..Default::default()
         })
         .map_err(|e| format!("compile: {e}"))?;
-        if !out.ok() {
-            return Err(format!("compile diagnostics: {:?}", out.diagnostics));
-        }
         let design = out.uhdm_design().ok_or("no UHDM design")?;
         match sim::codegen::generate(design) {
             Ok(_) => Err("codegen unexpectedly succeeded".to_string()),
@@ -335,5 +332,8 @@ endmodule
     });
 
     let err = result.expect("codegen should fail");
-    assert!(err.contains("`foreach`"), "unexpected error: {err}");
+    assert!(
+        err.contains("requires one explicit index variable per dimension"),
+        "unexpected error: {err}"
+    );
 }

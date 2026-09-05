@@ -3,6 +3,141 @@
 use super::*;
 
 impl<'a> Codegen<'a> {
+    /// Register storage for a declaration local to a procedural loop.
+    ///
+    /// Keeping this arena-node mapping separate from model signals preserves
+    /// lexical storage and prevents loop indices from appearing as waveform
+    /// globals.
+    pub(super) fn collect_loop_var(
+        &mut self,
+        path: &str,
+        node: NodeId,
+    ) -> Result<ProcLocalInfo, String> {
+        if let Some(info) = self.proc_locals.get(&node) {
+            return Ok(info.clone());
+        }
+        let ty = match self.kind(node) {
+            NodeKind::Var { ty } => ty.clone(),
+            other => {
+                return Err(format!(
+                    "unsupported procedural loop declaration in `{path}` (node kind {other:?})"
+                ))
+            }
+        };
+        if is_real_kind(&ty.kind) {
+            return Err(format!(
+                "real/shortreal procedural loop variable `{}` is not supported in `{path}`",
+                self.node(node).name
+            ));
+        }
+        let width = self.signal_width(path, &self.node(node).name, &ty)?;
+        let info = ProcLocalInfo {
+            c_name: format!("_lv{}", node.index()),
+            width,
+            signed: ty.signed,
+        };
+        self.proc_locals.insert(node, info.clone());
+        Ok(info)
+    }
+
+    pub(super) fn proc_local_target(&self, node: NodeId) -> Option<NodeId> {
+        if let Some((variable, _)) = self.lexical_proc_local(node) {
+            return Some(variable);
+        }
+        if self.proc_local_is_shadowed(node) {
+            return None;
+        }
+        match self.kind(node) {
+            NodeKind::Var { .. } if self.proc_locals.contains_key(&node) => Some(node),
+            NodeKind::Expr(ExprKind::Ref {
+                target: Some(target),
+            }) if self.proc_locals.contains_key(target) => Some(*target),
+            _ => None,
+        }
+    }
+
+    pub(super) fn lexical_proc_local(&self, reference: NodeId) -> Option<(NodeId, &ProcLocalInfo)> {
+        let name = self.node(reference).name.as_str();
+        let mut parent = self.node(reference).parent;
+        while let Some(scope) = parent {
+            if matches!(self.kind(scope), NodeKind::Stmt(StmtKind::Begin))
+                && self.node(scope).children.iter().any(|child| {
+                    matches!(self.kind(*child), NodeKind::Var { .. })
+                        && self.node(*child).name == name
+                })
+            {
+                return None;
+            }
+            let vars = match self.kind(scope) {
+                NodeKind::Stmt(StmtKind::For { vars, .. })
+                | NodeKind::Stmt(StmtKind::Foreach { vars, .. }) => Some(vars.as_slice()),
+                _ => None,
+            };
+            if let Some(variable) = vars.and_then(|vars| {
+                vars.iter()
+                    .find(|variable| self.node(**variable).name == name)
+            }) {
+                if let Some(info) = self.proc_locals.get(variable) {
+                    return Some((*variable, info));
+                }
+            }
+            parent = self.node(scope).parent;
+        }
+        None
+    }
+
+    pub(super) fn proc_local_is_shadowed(&self, reference: NodeId) -> bool {
+        let name = self.node(reference).name.as_str();
+        let mut parent = self.node(reference).parent;
+        while let Some(scope) = parent {
+            if matches!(self.kind(scope), NodeKind::Stmt(StmtKind::Begin))
+                && self.node(scope).children.iter().any(|child| {
+                    matches!(self.kind(*child), NodeKind::Var { .. })
+                        && self.node(*child).name == name
+                })
+            {
+                return true;
+            }
+            let is_loop_var = match self.kind(scope) {
+                NodeKind::Stmt(StmtKind::For { vars, .. })
+                | NodeKind::Stmt(StmtKind::Foreach { vars, .. }) => vars
+                    .iter()
+                    .any(|variable| self.node(*variable).name == name),
+                _ => false,
+            };
+            if is_loop_var {
+                return false;
+            }
+            parent = self.node(scope).parent;
+        }
+        false
+    }
+
+    pub(super) fn nested_proc_local_ref(&self, node: NodeId) -> Option<NodeId> {
+        if let Some((variable, _)) = self.lexical_proc_local(node) {
+            return Some(variable);
+        }
+        if self.proc_local_is_shadowed(node) {
+            return self
+                .node(node)
+                .children
+                .iter()
+                .find_map(|child| self.nested_proc_local_ref(*child));
+        }
+        if let NodeKind::Expr(ExprKind::Ref {
+            target: Some(target),
+        }) = self.kind(node)
+        {
+            if self.proc_locals.contains_key(target) {
+                return Some(*target);
+            }
+        }
+        self.node(node)
+            .children
+            .iter()
+            .find_map(|child| self.nested_proc_local_ref(*child))
+    }
+
     /// Walk the instance tree, collecting signals, parameters and gen-scope
     /// paths.  Returns the top module nodes.
     pub(super) fn collect_design(&mut self) -> Result<Vec<NodeId>, String> {
@@ -3510,10 +3645,39 @@ impl<'a> Codegen<'a> {
 
     pub(super) fn analyze_lhs(&mut self, path: &str, lhs: NodeId) -> Result<Lhs, String> {
         match self.kind(lhs) {
+            NodeKind::Var { .. } => {
+                let info = self.proc_locals.get(&lhs).ok_or_else(|| {
+                    format!(
+                        "cannot resolve procedural variable `{}` in `{path}`",
+                        self.node(lhs).name
+                    )
+                })?;
+                Ok(Lhs::WholeRef {
+                    addr: format!("&{}", info.c_name),
+                    width: info.width,
+                    signed: info.signed,
+                })
+            }
             NodeKind::Expr(ExprKind::Ref { target }) => {
+                if let Some((_, info)) = self.lexical_proc_local(lhs) {
+                    return Ok(Lhs::WholeRef {
+                        addr: format!("&{}", info.c_name),
+                        width: info.width,
+                        signed: info.signed,
+                    });
+                }
                 if let Some(t) = *target {
                     if let Some(info) = self.signal_of(t) {
                         return Ok(Lhs::Whole(info.clone()));
+                    }
+                    if !self.proc_local_is_shadowed(lhs) {
+                        if let Some(info) = self.proc_locals.get(&t) {
+                            return Ok(Lhs::WholeRef {
+                                addr: format!("&{}", info.c_name),
+                                width: info.width,
+                                signed: info.signed,
+                            });
+                        }
                     }
                     // Function/task body writes: output/inout formals, locals
                     // and the return variable (by arena node).

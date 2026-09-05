@@ -97,9 +97,9 @@ coverage for the same rule IDs.
   hierarchy, timestamps and final blocks. The waveform runtime self-test owns
   ring wrap/backpressure, flush acknowledgement, aliases and FST reader reopening.
 - `sim_packed_strings.rs`, `sim_bit_queries.rs`, `sim_real_conversions.rs`,
-  and `sim_wildcard_eq.rs` compare optimized/unoptimized execution for
-  packed strings, bit queries, numeric conversions, and wildcard
-  equality/case-inside.
+  `sim_wildcard_eq.rs`, and `sim_loops.rs` compare optimized/unoptimized
+  execution for packed strings, bit queries, numeric conversions, wildcard
+  equality/case-inside, and lexical loop declarations/fixed-array foreach.
   `sim_delay.rs` covers the source-recovered constant delay subset and its
   explicit rejection boundaries.
 

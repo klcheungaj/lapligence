@@ -2,6 +2,23 @@
 
 use super::*;
 
+fn loop_index_expr(value: i32) -> IrExpr {
+    IrExpr::new(
+        IrExprKind::Const(IrConst {
+            bits: vec![value as u32 as u64],
+            x: vec![0],
+            z: vec![0],
+            width: 32,
+            signed: true,
+            real: None,
+            fill: None,
+        }),
+        32,
+        true,
+        None,
+    )
+}
+
 impl<'c, 'a> EmitCtx<'c, 'a> {
     /// Build an emission context and record `func`/`depth_arg`/`inst` on the
     /// codegen, where expression and LHS resolution reads them (refs inside
@@ -514,10 +531,7 @@ impl EmitCtx<'_, '_> {
             NodeKind::Stmt(StmtKind::Break) | NodeKind::Stmt(StmtKind::Continue) => self
                 .lower_break_continue(matches!(self.cg.kind(h), NodeKind::Stmt(StmtKind::Break))),
             NodeKind::Stmt(StmtKind::Disable { target }) => self.lower_disable(*target),
-            NodeKind::Stmt(StmtKind::Foreach) => Err(format!(
-                "`foreach` in `{}` is not supported in v1",
-                self.path
-            )),
+            NodeKind::Stmt(StmtKind::Foreach { .. }) => self.lower_foreach(h),
             NodeKind::Expr(ExprKind::Operation { op, operands, .. })
                 if matches!(
                     *op,
@@ -594,6 +608,15 @@ impl EmitCtx<'_, '_> {
             .copied()
             .ok_or_else(|| "assignment without RHS".to_string())?;
         let blocking = force_blocking || blocking;
+        if !blocking {
+            if let Some(local) = self.cg.proc_local_target(lhs) {
+                return Err(format!(
+                    "nonblocking assignment to inline loop variable `{}` in `{}` is not supported because the update can outlive its lexical storage",
+                    self.cg.node(local).name,
+                    self.path
+                ));
+            }
+        }
         if self.in_final && !blocking {
             return Err(format!(
                 "nonblocking assignment inside a final block in `{}` is not \
@@ -1167,20 +1190,41 @@ impl EmitCtx<'_, '_> {
         // Verified against UHDM for_stmt.h: vpiForInitStmt (75) = init stmt(s),
         // vpiCondition (71) = condition, vpiForIncStmt (74) = increment stmt(s),
         // vpiStmt (104) = body.
-        let (init, cond, incr, body) = match self.cg.kind(h) {
+        let (vars, init, cond, incr, body) = match self.cg.kind(h) {
             NodeKind::Stmt(StmtKind::For {
+                vars,
                 init,
                 cond,
                 incr,
                 body,
-            }) => (init.clone(), *cond, incr.clone(), *body),
+            }) => (vars.clone(), init.clone(), *cond, incr.clone(), *body),
             _ => unreachable!("non-for passed to lower_for"),
         };
-        let cond_ir = self.cg.lower_expr(&self.path, cond)?;
+        let mut declarations = Vec::with_capacity(vars.len());
+        for variable in vars {
+            let info = self.cg.collect_loop_var(&self.path, variable)?;
+            declarations.push(IrStmt::DeclLocal {
+                name: info.c_name,
+                width: info.width,
+                signed: info.signed,
+                init: None,
+            });
+        }
         let mut init_stmts = Vec::with_capacity(init.len());
         for s in &init {
-            init_stmts.push(self.lower_assignment(*s, true)?);
+            match self.cg.kind(*s) {
+                NodeKind::Stmt(StmtKind::Assign { .. }) => {
+                    init_stmts.push(self.lower_assignment(*s, true)?);
+                }
+                other => {
+                    return Err(format!(
+                        "unsupported for-loop initializer in `{}` (node kind {other:?})",
+                        self.path
+                    ))
+                }
+            }
         }
+        let cond_ir = self.cg.lower_expr(&self.path, cond)?;
         let (body_stmts, brk) = self.lower_loop_body(body)?;
         let mut incr_stmts = Vec::with_capacity(incr.len());
         for s in &incr {
@@ -1210,15 +1254,119 @@ impl EmitCtx<'_, '_> {
         // `continue` must run the increment before the condition test: its
         // label sits at the END of the body, and the emitter renders the
         // body BEFORE the incr statements inside the C `for`.
-        let mut out = vec![IrStmt::For {
+        let mut loop_stmts = vec![IrStmt::For {
             init: init_stmts,
             cond: cond_ir,
             incr: incr_stmts,
             body: body_stmts,
         }];
         // The break label trails the whole construct.
-        out.extend(brk);
-        Ok(out)
+        loop_stmts.extend(brk);
+        if declarations.is_empty() {
+            Ok(loop_stmts)
+        } else {
+            declarations.extend(loop_stmts);
+            Ok(vec![IrStmt::Block(declarations)])
+        }
+    }
+
+    fn lower_foreach(&mut self, h: NodeId) -> Result<Vec<IrStmt>, String> {
+        let (array, vars, body) = match self.cg.kind(h) {
+            NodeKind::Stmt(StmtKind::Foreach { array, vars, body }) => {
+                (*array, vars.clone(), *body)
+            }
+            _ => unreachable!("non-foreach passed to lower_foreach"),
+        };
+        let array = array.ok_or_else(|| {
+            format!(
+                "cannot resolve the array iterated by `foreach` in `{}`",
+                self.path
+            )
+        })?;
+        let array_info = self.cg.array_globals.get(&array).cloned().ok_or_else(|| {
+            format!(
+                "`foreach` target `{}` in `{}` is not a fixed unpacked array",
+                self.cg.node(array).name,
+                self.path
+            )
+        })?;
+        if vars.len() != array_info.dims.len() {
+            return Err(format!(
+                "`foreach` over {}-dimensional array `{}` in `{}` requires one explicit index variable per dimension",
+                array_info.dims.len(),
+                self.cg.node(array).name,
+                self.path
+            ));
+        }
+
+        let mut declarations = Vec::with_capacity(vars.len());
+        let mut locals = Vec::with_capacity(vars.len());
+        for variable in vars {
+            let info = self.cg.collect_loop_var(&self.path, variable)?;
+            declarations.push(IrStmt::DeclLocal {
+                name: info.c_name.clone(),
+                width: info.width,
+                signed: info.signed,
+                init: None,
+            });
+            locals.push(info);
+        }
+
+        let (source_body, brk) = self.lower_loop_body(body)?;
+        let mut nested = source_body;
+        for (local, (left, right)) in locals.iter().zip(&array_info.dims).rev() {
+            let read = || {
+                IrExpr::new(
+                    IrExprKind::LocalRead(local.c_name.clone()),
+                    local.width,
+                    local.signed,
+                    None,
+                )
+            };
+            let init = IrStmt::Assign {
+                lhs: IrLhs::WholeRef {
+                    addr: format!("&{}", local.c_name),
+                    width: local.width,
+                    signed: local.signed,
+                },
+                rhs: IrExpr::resize_to(loop_index_expr(*left), local.width, local.signed),
+                nba: false,
+            };
+            let increasing = left <= right;
+            let done = self.new_label("fe");
+            let at_endpoint = common_bin_expr(IrBinOp::Eq, read(), loop_index_expr(*right));
+            let next = common_bin_expr(
+                if increasing {
+                    IrBinOp::Add
+                } else {
+                    IrBinOp::Sub
+                },
+                read(),
+                loop_index_expr(1),
+            );
+            let incr = IrStmt::Assign {
+                lhs: IrLhs::WholeRef {
+                    addr: format!("&{}", local.c_name),
+                    width: local.width,
+                    signed: local.signed,
+                },
+                rhs: IrExpr::resize_to(next, local.width, local.signed),
+                nba: false,
+            };
+            nested.push(IrStmt::If {
+                cond: at_endpoint,
+                then_: vec![IrStmt::Goto(done.clone())],
+                els: None,
+            });
+            nested.push(incr);
+            nested = vec![
+                IrStmt::Block(vec![init, IrStmt::Forever { body: nested }]),
+                IrStmt::Label(done),
+            ];
+        }
+        nested.extend(brk);
+        declarations.extend(nested);
+        Ok(vec![IrStmt::Block(declarations)])
     }
 
     /// Lower one `fork … join` site.  Each branch becomes its own coroutine
@@ -1234,6 +1382,16 @@ impl EmitCtx<'_, '_> {
         join_kind: DbJoinKind,
         branches: &[NodeId],
     ) -> Result<Vec<IrStmt>, String> {
+        if let Some(local) = branches
+            .iter()
+            .find_map(|branch| self.cg.nested_proc_local_ref(*branch))
+        {
+            return Err(format!(
+                "fork branch capture of inline loop variable `{}` in `{}` is not supported",
+                self.cg.node(local).name,
+                self.path
+            ));
+        }
         if self.func.is_some() {
             return Err(format!(
                 "fork/join inside a function/task body in `{}` is not supported in v1",
@@ -1700,6 +1858,16 @@ impl EmitCtx<'_, '_> {
                 }])
             }
             "$monitor" | "$strobe" => {
+                if let Some(local) = args
+                    .iter()
+                    .find_map(|arg| self.cg.nested_proc_local_ref(*arg))
+                {
+                    return Err(format!(
+                        "{name} cannot defer a reference to inline loop variable `{}` in `{}`",
+                        self.cg.node(local).name,
+                        self.path
+                    ));
+                }
                 if self.in_final {
                     return Err(format!(
                         "{name} inside a final block in `{}` is not supported: \
