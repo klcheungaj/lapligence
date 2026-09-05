@@ -154,7 +154,7 @@ fn main() {
                     d.file.as_deref().unwrap_or(""),
                     d.line,
                     d.col,
-                    d.message
+                    llg::core::diagnostics::user_message(d)
                 );
             }
             eprintln!("llg: surelog reported errors; aborting");
@@ -168,7 +168,7 @@ fn main() {
             d.file.as_deref().unwrap_or(""),
             d.line,
             d.col,
-            d.message
+            llg::core::diagnostics::user_message(d)
         );
     }
 

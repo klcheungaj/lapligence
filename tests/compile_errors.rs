@@ -118,6 +118,65 @@ fn syntax_errors_remain_inspectable_raw_but_checked_compile_rejects_them() {
 }
 
 #[test]
+fn standalone_instance_has_readable_diagnostics_in_core_and_cli() {
+    in_temp_cwd(|cwd| {
+        let file = cwd.write(
+            "debug_TEMPLATE.v",
+            concat!(
+                "// llg-test-fixture: tests/compile_errors.rs/debug_TEMPLATE.v\n",
+                "edb_top edb_top_inst (\n",
+                "  .clk(clock),\n",
+                "  .reset(reset)\n",
+                ");\n",
+            ),
+        );
+        let out = compile::compile(&CompileOpts {
+            files: vec![file.clone()],
+            ..Default::default()
+        })
+        .expect("compile template");
+        assert!(!out.ok());
+        let messages: Vec<_> = out
+            .diagnostics
+            .iter()
+            .filter(|d| d.severity == Severity::Syntax)
+            .map(llg::core::diagnostics::user_message)
+            .collect();
+        assert!(
+            messages
+                .iter()
+                .any(|m| m.contains("instantiation template")),
+            "{messages:?}"
+        );
+        assert!(
+            messages
+                .iter()
+                .all(|m| !m.contains("Simple_identifier") && !m.contains("viable alternative")),
+            "{messages:?}"
+        );
+        assert!(out
+            .diagnostics
+            .iter()
+            .any(|d| d.message.contains("no viable alternative")));
+        drop(out);
+
+        for binary in [env!("CARGO_BIN_EXE_llg"), env!("CARGO_BIN_EXE_elab_check")] {
+            let output = std::process::Command::new(binary)
+                .arg(&file)
+                .current_dir(&cwd.path)
+                .output()
+                .expect("run CLI on template");
+            assert!(!output.status.success());
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert!(stderr.contains("instantiation template"), "{stderr}");
+            assert!(stderr.contains(&file), "{stderr}");
+            assert!(!stderr.contains("no viable alternative"), "{stderr}");
+            assert!(!stderr.contains("Simple_identifier"), "{stderr}");
+        }
+    });
+}
+
+#[test]
 fn elaboration_errors_cannot_escape_checked_compile_with_partial_uhdm() {
     in_temp_cwd(|cwd| {
         // Arrange
