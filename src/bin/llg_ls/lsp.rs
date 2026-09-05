@@ -710,14 +710,62 @@ impl Backend {
                 }
             }
         }
-        if roots.is_empty() {
-            if let Ok(path) = std::env::current_dir() {
-                if let Some(path) = workspace::normalize_absolute_path(&path) {
-                    roots.insert(path, "cwd".to_owned());
-                }
+        roots.into_iter().collect()
+    }
+
+    /// Select the root for an opened compilation unit that is not owned by a
+    /// configured workspace. A nearby `llg.toml` defines the project;
+    /// otherwise the file's parent is the smallest useful standalone root.
+    /// Header files remain include-only and never create projects themselves.
+    fn standalone_root(path: &Path) -> Option<PathBuf> {
+        if !config::is_compilation_unit(path) {
+            return None;
+        }
+        let parent = path.parent()?;
+        for ancestor in parent.ancestors() {
+            if ancestor.join(config::CONFIG_FILE).is_file() {
+                return workspace::normalize_absolute_path(ancestor);
             }
         }
-        roots.into_iter().collect()
+        workspace::normalize_absolute_path(parent)
+    }
+
+    /// Ensure an opened source has an owning root. Standalone roots are
+    /// retained for the server session so later edits, sibling opens and
+    /// diagnostics use the same analysis and scheduler lifecycle.
+    fn ensure_source_root(&self, path: &Path) -> (Option<RootKey>, bool) {
+        if let Some(root) = self.source_root(path) {
+            return (Some(root), false);
+        }
+        let Some(root_path) = Self::standalone_root(path) else {
+            return (None, false);
+        };
+        let config_path = root_path.join(config::CONFIG_FILE);
+        let id = format!("standalone:{}", root_path.display());
+        let (root, warnings) = Self::root_state(root_path.clone(), id, config_path);
+
+        let root = {
+            let mut state = self.lock_state();
+            let descriptors: Vec<_> = state
+                .roots
+                .values()
+                .map(|root| root.descriptor.clone())
+                .collect();
+            if let Some(owner) = workspace::owning_root_unfiltered(path, &descriptors) {
+                return (Some(owner.root), false);
+            }
+            if state.roots.contains_key(&root_path) {
+                return (Some(root_path), false);
+            }
+            state
+                .pending_logs
+                .extend(warnings.iter().map(|warning| warning.message.clone()));
+            state.roots.insert(root_path.clone(), root);
+            rebuild_dep_dependents(&mut state);
+            Self::rebuild_merged(&mut state);
+            root_path
+        };
+        (Some(root), true)
     }
 
     /// Parse the client initialization options payload.
@@ -4924,7 +4972,11 @@ impl LanguageServer for Backend {
                 Self::log_uri_identity(&params.text_document.uri)
             });
         let uri = params.text_document.uri;
-        let root = Self::uri_to_path(&uri).and_then(|path| self.source_root(&path));
+        let path = Self::uri_to_path(&uri);
+        let (root, root_added) = match path.as_deref() {
+            Some(path) => self.ensure_source_root(path),
+            None => (None, false),
+        };
         if let Some(root) = &root {
             notification.set_root(|| root.to_string_lossy().into_owned());
         }
@@ -4934,6 +4986,15 @@ impl LanguageServer for Backend {
                 Self::admit_document_text(&mut state, uri.clone(), params.text_document.text, true);
             (state.initialized, admission)
         };
+        // Store the didOpen buffer before any await so a concurrent change
+        // cannot be overwritten by the older open text. Discovery itself is
+        // filesystem-only; job snapshotting below adds admitted unsaved units.
+        if root_added {
+            let _ = self.rescan().await;
+            self.register_watchers().await;
+            self.publish_config_diagnostics().await;
+            self.flush_logs().await;
+        }
         match admission {
             Ok(_) => {
                 if initialized {
@@ -6046,6 +6107,37 @@ mod tests {
             !did_change_is_new_content(Some(tracked.as_str()), "module a;\nendmodule\n"),
             "identical full-text re-send must not reschedule"
         );
+    }
+
+    #[test]
+    fn standalone_root_prefers_nearest_config_and_rejects_headers() {
+        let root = temp_root("standalone_root");
+        let nested = root.join("rtl").join("blocks");
+        std::fs::create_dir_all(&nested).expect("create standalone test directories");
+        std::fs::write(root.join(config::CONFIG_FILE), "schema_version = 1\n")
+            .expect("write standalone root config");
+
+        assert_eq!(
+            Backend::standalone_root(&nested.join("unit.sv")),
+            Some(root.clone())
+        );
+        assert_eq!(Backend::standalone_root(&nested.join("defs.svh")), None);
+
+        std::fs::remove_dir_all(root).expect("remove standalone root fixture");
+    }
+
+    #[test]
+    fn standalone_root_without_config_uses_source_parent() {
+        let root = temp_root("standalone_parent");
+        let nested = root.join("rtl");
+        std::fs::create_dir_all(&nested).expect("create standalone source parent");
+
+        assert_eq!(
+            Backend::standalone_root(&nested.join("unit.v")),
+            Some(nested)
+        );
+
+        std::fs::remove_dir_all(root).expect("remove standalone parent fixture");
     }
 
     #[test]

@@ -1786,6 +1786,65 @@ fn lsp_stdio_loads_per_root_lint_configuration() {
 }
 
 #[test]
+fn lsp_stdio_lints_standalone_files_without_a_workspace_folder() {
+    let cwd_fixture = FixtureTree::new();
+    let source_fixture = FixtureTree::new();
+    let directory_a = source_fixture.base().join("standalone-a");
+    let directory_b = source_fixture.base().join("standalone-b");
+    fs::create_dir_all(&directory_a).expect("create first standalone directory");
+    fs::create_dir_all(&directory_b).expect("create second standalone directory");
+    let path_a = directory_a.join("bad.sv");
+    let path_b = directory_b.join("lint.sv");
+    let uri_a = file_uri(&path_a);
+    let uri_b = file_uri(&path_b);
+    let broken = "// llg-lsp-fixture: standalone-a/bad.sv\nmodule StandaloneBroken;\n";
+    let lint_a = "// llg-lsp-fixture: standalone-a/bad.sv\nmodule StandaloneLintA;\n  logic unused_a;\nendmodule\n";
+    let lint_b = "// llg-lsp-fixture: standalone-b/lint.sv\nmodule StandaloneLintB;\n  logic unused_b;\nendmodule\n";
+    let recovered =
+        "// llg-lsp-fixture: standalone-a/bad.sv\nmodule StandaloneRecovered; endmodule\n";
+
+    let mut client = LspProcess::spawn(cwd_fixture.base());
+    client
+        .initialize(&[], default_init_options())
+        .expect("initialize without workspace folders");
+
+    client
+        .open(&path_a, broken)
+        .expect("open standalone syntax-error source");
+    let syntax = wait_for_diagnostics(&mut client, &uri_a, has_severity_1);
+    assert!(
+        has_severity_1(&syntax),
+        "standalone syntax error was not published"
+    );
+
+    client
+        .change(&path_a, 2, lint_a)
+        .expect("repair standalone syntax and introduce lint finding");
+    let linted_a = wait_for_diagnostics(&mut client, &uri_a, |params| {
+        !has_severity_1(params) && has_lint_rule(params, "unused-signal")
+    });
+    assert!(has_lint_rule(&linted_a, "unused-signal"));
+
+    client
+        .open(&path_b, lint_b)
+        .expect("open source in second standalone directory");
+    let linted_b = wait_for_diagnostics(&mut client, &uri_b, |params| {
+        has_lint_rule(params, "unused-signal")
+    });
+    assert!(has_lint_rule(&linted_b, "unused-signal"));
+
+    client
+        .change(&path_a, 3, recovered)
+        .expect("remove standalone lint finding");
+    let recovered_diagnostics = wait_for_diagnostics(&mut client, &uri_a, |params| {
+        !has_severity_1(params) && !has_lint_rule(params, "unused-signal")
+    });
+    assert!(!has_severity_1(&recovered_diagnostics));
+    assert!(!has_lint_rule(&recovered_diagnostics, "unused-signal"));
+    client.shutdown();
+}
+
+#[test]
 fn lsp_stdio_root_config_reload_keeps_discovery_filters() {
     // Editing the root `llg.toml` (lint-only change) must not reset source
     // discovery filters.
