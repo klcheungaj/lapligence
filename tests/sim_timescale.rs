@@ -9,7 +9,8 @@
 //! default to 1ns/1ps (TIMESCALEMOD behavior), which keeps the pre-timescale
 //! test outputs unchanged.
 
-use std::process::Command;
+#[path = "support/sim.rs"]
+mod sim_harness;
 use std::sync::Mutex;
 
 use llg::core::compile;
@@ -45,18 +46,14 @@ fn stime_is_the_32_bit_form_of_time() {
 /// Compile `sv` in a fresh temp dir, run the simulator, and return its stdout
 /// (the hand-simulated trace is documented per test).
 fn run_design(name: &str, files: &[(&str, &str)]) -> Result<String, String> {
-    let dir = std::env::temp_dir().join(format!("llg_sim_ts_{}_{}", name, std::process::id()));
-    std::fs::create_dir_all(&dir).expect("create temp dir");
-    let mut paths = Vec::new();
-    for (fname, body) in files {
-        let p = dir.join(fname);
-        std::fs::write(&p, body).expect("write source");
-        paths.push(p.to_string_lossy().into_owned());
-    }
+    sim_harness::with_temp_cwd(name, |dir| {
+        let mut paths = Vec::new();
+        for (fname, body) in files {
+            let p = dir.join(fname);
+            std::fs::write(&p, body).expect("write source");
+            paths.push(p.to_string_lossy().into_owned());
+        }
 
-    let orig_cwd = std::env::current_dir().expect("current dir");
-    std::env::set_current_dir(&dir).expect("chdir to temp dir");
-    let result = (|| -> Result<String, String> {
         // 1. Surelog compile + elaborate.
         let out = compile::compile(&compile::CompileOpts {
             files: paths,
@@ -73,26 +70,12 @@ fn run_design(name: &str, files: &[(&str, &str)]) -> Result<String, String> {
         let gen = sim::codegen::generate(design).map_err(|e| format!("codegen: {e}"))?;
 
         // 3. Build model + runtime + libaco with CMake.
-        let exe = sim::build::build_model_cmake(&dir, &[("model.c", gen.model_c.as_str())])
+        let exe = sim::build::build_model_cmake(dir, &[("model.c", gen.model_c.as_str())])
             .map_err(|e| format!("cmake: {e}"))?;
 
         // 4. Run.
-        let output = Command::new(&exe)
-            .output()
-            .map_err(|e| format!("run: {e}"))?;
-        if !output.status.success() {
-            return Err(format!(
-                "sim exited with {:?}, stderr: {}",
-                output.status,
-                String::from_utf8_lossy(&output.stderr)
-            ));
-        }
-        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
-    })();
-
-    std::env::set_current_dir(&orig_cwd).expect("restore cwd");
-    let _ = std::fs::remove_dir_all(&dir);
-    result
+        sim_harness::run_executable(&exe)
+    })
 }
 
 /// (a) Two modules with DIFFERENT timescales: `#5` in a `10ns/1ns` module is

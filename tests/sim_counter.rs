@@ -6,13 +6,15 @@
 //! runs with the CWD pointed at a fresh temp dir (serialized through a mutex,
 //! like the other Surelog integration tests).
 
-use std::process::Command;
-use std::sync::Mutex;
-
 use llg::core::compile;
 use llg::sim;
 
-static SURELOG_LOCK: Mutex<()> = Mutex::new(());
+#[path = "support/sim.rs"]
+mod sim_harness;
+
+fn run_sim(sv: &str, tag: &str) -> Result<String, String> {
+    sim_harness::run_sim(sv, "tb", tag)
+}
 
 /// The counter design.  `rst_n` is driven low at t=1 (after a blocking `clk=0;
 /// rst_n=1` at t=0) so the reset edge is deterministic: the always block sees
@@ -78,52 +80,7 @@ fn sim_counter_end_to_end() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
-    let dir = std::env::temp_dir().join(format!("llg_sim_test_{}", std::process::id()));
-    std::fs::create_dir_all(&dir).expect("create temp dir");
-    let src = dir.join("counter.sv");
-    std::fs::write(&src, COUNTER_SV).expect("write source");
-
-    let orig_cwd = std::env::current_dir().expect("current dir");
-    std::env::set_current_dir(&dir).expect("chdir to temp dir");
-    let result = (|| -> Result<String, String> {
-        // 1. Surelog compile + elaborate.
-        let out = compile::compile(&compile::CompileOpts {
-            files: vec![src.to_string_lossy().into_owned()],
-            top: Some("tb".to_string()),
-            ..Default::default()
-        })
-        .map_err(|e| format!("compile: {e}"))?;
-        if !out.ok() {
-            return Err(format!("compile diagnostics: {:?}", out.diagnostics));
-        }
-        let design = out.uhdm_design().ok_or("no UHDM design")?;
-
-        // 2. Codegen.
-        let gen = sim::codegen::generate(design).map_err(|e| format!("codegen: {e}"))?;
-
-        // 3. Build model + runtime + libaco with CMake.
-        let exe = sim::build::build_model_cmake(&dir, &[("model.c", gen.model_c.as_str())])
-            .map_err(|e| format!("cmake: {e}"))?;
-
-        // 4. Run.
-        let output = Command::new(&exe)
-            .output()
-            .map_err(|e| format!("run: {e}"))?;
-        if !output.status.success() {
-            return Err(format!(
-                "sim exited with {:?}, stderr: {}",
-                output.status,
-                String::from_utf8_lossy(&output.stderr)
-            ));
-        }
-        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
-    })();
-
-    std::env::set_current_dir(&orig_cwd).expect("restore cwd");
-    let _ = std::fs::remove_dir_all(&dir);
-
-    let stdout = result.expect("simulation should run");
+    let stdout = run_sim(COUNTER_SV, "counter").expect("simulation should run");
     assert_eq!(stdout, "count=8 done=0\ncount=9 done=0\n");
 }
 
@@ -135,18 +92,13 @@ fn sim_rt_selftest() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let dir = std::env::temp_dir().join(format!("llg_rt_selftest_{}", std::process::id()));
-    std::fs::create_dir_all(&dir).expect("create temp dir");
-    let exe =
-        sim::build::build_model_cmake(&dir, &[("llg_rt_selftest.c", sim::rt::selftest_source())])
-            .expect("selftest should compile");
-    let output = Command::new(&exe).output().expect("selftest should run");
-    assert!(
-        output.status.success(),
-        "selftest failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let _ = std::fs::remove_dir_all(&dir);
+    let dir = sim_harness::TempDir::new("runtime-selftest").expect("create temp dir");
+    let exe = sim::build::build_model_cmake(
+        dir.path(),
+        &[("llg_rt_selftest.c", sim::rt::selftest_source())],
+    )
+    .expect("selftest should compile");
+    sim_harness::run_executable(&exe).expect("selftest should run");
 }
 
 /// always_comb (no explicit event control) must evaluate once at t=0 and then
@@ -158,10 +110,6 @@ fn sim_always_comb_and_display_t() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
-    let dir = std::env::temp_dir().join(format!("llg_sim_comb_{}", std::process::id()));
-    std::fs::create_dir_all(&dir).expect("create temp dir");
-    let src = dir.join("comb.sv");
     let sv = r#"module tb;
     reg a;
     reg [3:0] out;
@@ -179,41 +127,7 @@ fn sim_always_comb_and_display_t() {
     end
 endmodule
 "#;
-    std::fs::write(&src, sv).expect("write source");
-
-    let orig_cwd = std::env::current_dir().expect("current dir");
-    std::env::set_current_dir(&dir).expect("chdir to temp dir");
-    let result = (|| -> Result<String, String> {
-        let out = compile::compile(&compile::CompileOpts {
-            files: vec![src.to_string_lossy().into_owned()],
-            top: Some("tb".to_string()),
-            ..Default::default()
-        })
-        .map_err(|e| format!("compile: {e}"))?;
-        if !out.ok() {
-            return Err(format!("compile diagnostics: {:?}", out.diagnostics));
-        }
-        let design = out.uhdm_design().ok_or("no UHDM design")?;
-        let gen = sim::codegen::generate(design).map_err(|e| format!("codegen: {e}"))?;
-        let exe = sim::build::build_model_cmake(&dir, &[("model.c", gen.model_c.as_str())])
-            .map_err(|e| format!("cmake: {e}"))?;
-        let output = Command::new(&exe)
-            .output()
-            .map_err(|e| format!("run: {e}"))?;
-        if !output.status.success() {
-            return Err(format!(
-                "sim exited with {:?}, stderr: {}",
-                output.status,
-                String::from_utf8_lossy(&output.stderr)
-            ));
-        }
-        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
-    })();
-
-    std::env::set_current_dir(&orig_cwd).expect("restore cwd");
-    let _ = std::fs::remove_dir_all(&dir);
-
-    let stdout = result.expect("simulation should run");
+    let stdout = run_sim(sv, "comb").expect("simulation should run");
     // t=1: out still 2 (a=1 assigned after the display); t=2: out=1; t=3: out=2.
     assert_eq!(stdout, "t=1 out=2\nt=2 out=1\nt=3 out=2\n");
 }
@@ -222,20 +136,14 @@ endmodule
 /// rejected by the codegen, not silently truncated by the C runtime.
 #[test]
 fn sim_wide_signal_rejected() {
-    let _guard = SURELOG_LOCK.lock().unwrap();
-    let dir = std::env::temp_dir().join(format!("llg_sim_wide_{}", std::process::id()));
-    std::fs::create_dir_all(&dir).expect("create temp dir");
-    let src = dir.join("wide.sv");
     let sv = r#"module tb;
     logic [2047:0] a;
     initial $finish;
 endmodule
 "#;
-    std::fs::write(&src, sv).expect("write source");
-
-    let orig_cwd = std::env::current_dir().expect("current dir");
-    std::env::set_current_dir(&dir).expect("chdir to temp dir");
-    let result = (|| -> Result<(), String> {
+    let result = sim_harness::with_surelog_temp_cwd("wide", |dir| {
+        let src = dir.join("tb.sv");
+        std::fs::write(&src, sv).map_err(|error| format!("write source: {error}"))?;
         let out = compile::compile(&compile::CompileOpts {
             files: vec![src.to_string_lossy().into_owned()],
             top: Some("tb".to_string()),
@@ -243,11 +151,10 @@ endmodule
         })
         .map_err(|e| format!("compile: {e}"))?;
         let design = out.uhdm_design().ok_or("no UHDM design")?;
-        sim::codegen::generate(design).map(|_| ())
-    })();
-
-    std::env::set_current_dir(&orig_cwd).expect("restore cwd");
-    let _ = std::fs::remove_dir_all(&dir);
+        sim::codegen::generate(design)
+            .map(|_| ())
+            .map_err(|error| error.to_string())
+    });
 
     let err = result.expect_err("codegen must reject >1024-bit signals");
     assert!(err.contains("1024"), "unexpected error: {err}");
@@ -262,10 +169,6 @@ fn sim_wide_counter_128() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
-    let dir = std::env::temp_dir().join(format!("llg_sim_widec_{}", std::process::id()));
-    std::fs::create_dir_all(&dir).expect("create temp dir");
-    let src = dir.join("wide_counter.sv");
     let sv = r#"module tb;
     logic clk;
     logic rst_n;
@@ -286,8 +189,6 @@ fn sim_wide_counter_128() {
     end
 endmodule
 "#;
-    std::fs::write(&src, sv).expect("write source");
-
     // Hand-simulation (mirrors sim_counter_end_to_end with INIT = 0):
     //
     //   t=0  spawn order: always@(edges) -> always#5 -> initial (db children
@@ -313,39 +214,7 @@ endmodule
     //   count=3
     //   count=4
 
-    let orig_cwd = std::env::current_dir().expect("current dir");
-    std::env::set_current_dir(&dir).expect("chdir to temp dir");
-    let result = (|| -> Result<String, String> {
-        let out = compile::compile(&compile::CompileOpts {
-            files: vec![src.to_string_lossy().into_owned()],
-            top: Some("tb".to_string()),
-            ..Default::default()
-        })
-        .map_err(|e| format!("compile: {e}"))?;
-        if !out.ok() {
-            return Err(format!("compile diagnostics: {:?}", out.diagnostics));
-        }
-        let design = out.uhdm_design().ok_or("no UHDM design")?;
-        let gen = sim::codegen::generate(design).map_err(|e| format!("codegen: {e}"))?;
-        let exe = sim::build::build_model_cmake(&dir, &[("model.c", gen.model_c.as_str())])
-            .map_err(|e| format!("cmake: {e}"))?;
-        let output = Command::new(&exe)
-            .output()
-            .map_err(|e| format!("run: {e}"))?;
-        if !output.status.success() {
-            return Err(format!(
-                "sim exited with {:?}, stderr: {}",
-                output.status,
-                String::from_utf8_lossy(&output.stderr)
-            ));
-        }
-        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
-    })();
-
-    std::env::set_current_dir(&orig_cwd).expect("restore cwd");
-    let _ = std::fs::remove_dir_all(&dir);
-
-    let stdout = result.expect("simulation should run");
+    let stdout = run_sim(sv, "wide-counter").expect("simulation should run");
     assert_eq!(stdout, "count=3\ncount=4\n");
 }
 
@@ -357,10 +226,6 @@ fn sim_wide_concat() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
-    let dir = std::env::temp_dir().join(format!("llg_sim_widecat_{}", std::process::id()));
-    std::fs::create_dir_all(&dir).expect("create temp dir");
-    let src = dir.join("wide_concat.sv");
     let sv = r#"module tb;
     reg [63:0] a, b;
     wire [127:0] w;
@@ -373,8 +238,6 @@ fn sim_wide_concat() {
     end
 endmodule
 "#;
-    std::fs::write(&src, sv).expect("write source");
-
     // Hand-simulation: w = {1, 2^64-1} = 2^65 - 1 = 36893488147419103231.
     //
     //   t=0  spawn order: comb(w) -> initial.
@@ -386,39 +249,7 @@ endmodule
     // Expected stdout (exactly):
     //   w=36893488147419103231
 
-    let orig_cwd = std::env::current_dir().expect("current dir");
-    std::env::set_current_dir(&dir).expect("chdir to temp dir");
-    let result = (|| -> Result<String, String> {
-        let out = compile::compile(&compile::CompileOpts {
-            files: vec![src.to_string_lossy().into_owned()],
-            top: Some("tb".to_string()),
-            ..Default::default()
-        })
-        .map_err(|e| format!("compile: {e}"))?;
-        if !out.ok() {
-            return Err(format!("compile diagnostics: {:?}", out.diagnostics));
-        }
-        let design = out.uhdm_design().ok_or("no UHDM design")?;
-        let gen = sim::codegen::generate(design).map_err(|e| format!("codegen: {e}"))?;
-        let exe = sim::build::build_model_cmake(&dir, &[("model.c", gen.model_c.as_str())])
-            .map_err(|e| format!("cmake: {e}"))?;
-        let output = Command::new(&exe)
-            .output()
-            .map_err(|e| format!("run: {e}"))?;
-        if !output.status.success() {
-            return Err(format!(
-                "sim exited with {:?}, stderr: {}",
-                output.status,
-                String::from_utf8_lossy(&output.stderr)
-            ));
-        }
-        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
-    })();
-
-    std::env::set_current_dir(&orig_cwd).expect("restore cwd");
-    let _ = std::fs::remove_dir_all(&dir);
-
-    let stdout = result.expect("simulation should run");
+    let stdout = run_sim(sv, "wide-concat").expect("simulation should run");
     assert_eq!(stdout, "w=36893488147419103231\n");
 }
 
@@ -431,10 +262,6 @@ fn sim_time_var_is_64bit() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
-    let dir = std::env::temp_dir().join(format!("llg_sim_time64_{}", std::process::id()));
-    std::fs::create_dir_all(&dir).expect("create temp dir");
-    let src = dir.join("time64.sv");
     let sv = r#"module tb;
     time t;
     initial begin
@@ -444,44 +271,10 @@ fn sim_time_var_is_64bit() {
     end
 endmodule
 "#;
-    std::fs::write(&src, sv).expect("write source");
-
     // Expected stdout (exactly): the full 64-bit value survives storage.
     //   t=10000000000
 
-    let orig_cwd = std::env::current_dir().expect("current dir");
-    std::env::set_current_dir(&dir).expect("chdir to temp dir");
-    let result = (|| -> Result<String, String> {
-        let out = compile::compile(&compile::CompileOpts {
-            files: vec![src.to_string_lossy().into_owned()],
-            top: Some("tb".to_string()),
-            ..Default::default()
-        })
-        .map_err(|e| format!("compile: {e}"))?;
-        if !out.ok() {
-            return Err(format!("compile diagnostics: {:?}", out.diagnostics));
-        }
-        let design = out.uhdm_design().ok_or("no UHDM design")?;
-        let gen = sim::codegen::generate(design).map_err(|e| format!("codegen: {e}"))?;
-        let exe = sim::build::build_model_cmake(&dir, &[("model.c", gen.model_c.as_str())])
-            .map_err(|e| format!("cmake: {e}"))?;
-        let output = Command::new(&exe)
-            .output()
-            .map_err(|e| format!("run: {e}"))?;
-        if !output.status.success() {
-            return Err(format!(
-                "sim exited with {:?}, stderr: {}",
-                output.status,
-                String::from_utf8_lossy(&output.stderr)
-            ));
-        }
-        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
-    })();
-
-    std::env::set_current_dir(&orig_cwd).expect("restore cwd");
-    let _ = std::fs::remove_dir_all(&dir);
-
-    let stdout = result.expect("simulation should run");
+    let stdout = run_sim(sv, "time64").expect("simulation should run");
     assert_eq!(stdout, "t=10000000000\n");
 }
 
@@ -500,10 +293,6 @@ fn sim_static_casts() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
-    let dir = std::env::temp_dir().join(format!("llg_sim_casts_{}", std::process::id()));
-    std::fs::create_dir_all(&dir).expect("create temp dir");
-    let src = dir.join("casts.sv");
     let sv = r#"module tb;
     logic [7:0] b;           // unsigned 8-bit source
     logic [7:0] bh;          // unsigned source with the MSB set
@@ -541,8 +330,6 @@ fn sim_static_casts() {
     end
 endmodule
 "#;
-    std::fs::write(&src, sv).expect("write source");
-
     // Hand-simulation (LRM 1800-2009 §6.24.1, §10.7, §11.8.3):
     //   b = 127 unsigned; bh = 255 unsigned; c = -2 signed (8'hFE);
     //   n = -1 signed (4'hF).
@@ -576,39 +363,7 @@ endmodule
     //   a_sel=ff
     //   ini=255
 
-    let orig_cwd = std::env::current_dir().expect("current dir");
-    std::env::set_current_dir(&dir).expect("chdir to temp dir");
-    let result = (|| -> Result<String, String> {
-        let out = compile::compile(&compile::CompileOpts {
-            files: vec![src.to_string_lossy().into_owned()],
-            top: Some("tb".to_string()),
-            ..Default::default()
-        })
-        .map_err(|e| format!("compile: {e}"))?;
-        if !out.ok() {
-            return Err(format!("compile diagnostics: {:?}", out.diagnostics));
-        }
-        let design = out.uhdm_design().ok_or("no UHDM design")?;
-        let gen = sim::codegen::generate(design).map_err(|e| format!("codegen: {e}"))?;
-        let exe = sim::build::build_model_cmake(&dir, &[("model.c", gen.model_c.as_str())])
-            .map_err(|e| format!("cmake: {e}"))?;
-        let output = Command::new(&exe)
-            .output()
-            .map_err(|e| format!("run: {e}"))?;
-        if !output.status.success() {
-            return Err(format!(
-                "sim exited with {:?}, stderr: {}",
-                output.status,
-                String::from_utf8_lossy(&output.stderr)
-            ));
-        }
-        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
-    })();
-
-    std::env::set_current_dir(&orig_cwd).expect("restore cwd");
-    let _ = std::fs::remove_dir_all(&dir);
-
-    let stdout = result.expect("simulation should run");
+    let stdout = run_sim(sv, "casts").expect("simulation should run");
     assert_eq!(
         stdout,
         "pos=127 127 127\nneg=-2 -2 254\nu2s=255\ns2uw=4294967294\n\

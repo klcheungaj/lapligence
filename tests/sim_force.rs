@@ -18,7 +18,9 @@
 //! tests run with the CWD pointed at a fresh temp dir (serialized through a
 //! mutex, like the other Surelog integration tests).
 
-use std::process::Command;
+#[path = "support/sim.rs"]
+mod sim_harness;
+
 use std::sync::Mutex;
 
 use llg::core::compile;
@@ -43,14 +45,9 @@ fn codegen_result(
     top: &str,
     tag: &str,
 ) -> Result<Result<sim::codegen::GeneratedModel, String>, String> {
-    let dir = std::env::temp_dir().join(format!("llg_sim_force_{tag}_{}", std::process::id()));
-    std::fs::create_dir_all(&dir).expect("create temp dir");
-    let src = dir.join("tb.sv");
-    std::fs::write(&src, sv).expect("write source");
-
-    let orig_cwd = std::env::current_dir().expect("current dir");
-    std::env::set_current_dir(&dir).expect("chdir to temp dir");
-    let result = (|| -> Result<Result<sim::codegen::GeneratedModel, String>, String> {
+    sim_harness::with_temp_cwd(tag, |dir| {
+        let src = dir.join("tb.sv");
+        std::fs::write(&src, sv).map_err(|error| format!("write source: {error}"))?;
         let out = compile::compile(&compile::CompileOpts {
             files: vec![src.to_string_lossy().into_owned()],
             top: Some(top.to_string()),
@@ -61,65 +58,14 @@ fn codegen_result(
             return Err(format!("compile diagnostics: {:?}", out.diagnostics));
         }
         let design = out.uhdm_design().ok_or("no UHDM design")?;
-        Ok(sim::codegen::generate(design))
-    })();
-
-    std::env::set_current_dir(&orig_cwd).expect("restore cwd");
-    let _ = std::fs::remove_dir_all(&dir);
-    result
+        Ok(sim::codegen::generate(design).map_err(|error| error.to_string()))
+    })
 }
 
-/// Compile + codegen + C-compile + run `sv` (top module `top`), returning the
-/// simulator's exact stdout, the codegen warnings and the generated C model.
+/// Compile, generate, build, and run one design.
 fn run_sim(sv: &str, top: &str, tag: &str) -> Result<(String, Vec<String>, String), String> {
-    let dir = std::env::temp_dir().join(format!("llg_sim_force_{tag}_{}", std::process::id()));
-    std::fs::create_dir_all(&dir).expect("create temp dir");
-    let src = dir.join("tb.sv");
-    std::fs::write(&src, sv).expect("write source");
-
-    let orig_cwd = std::env::current_dir().expect("current dir");
-    std::env::set_current_dir(&dir).expect("chdir to temp dir");
-    let result = (|| -> Result<(String, Vec<String>, String), String> {
-        // 1. Surelog compile + elaborate.
-        let out = compile::compile(&compile::CompileOpts {
-            files: vec![src.to_string_lossy().into_owned()],
-            top: Some(top.to_string()),
-            ..Default::default()
-        })
-        .map_err(|e| format!("compile: {e}"))?;
-        if !out.ok() {
-            return Err(format!("compile diagnostics: {:?}", out.diagnostics));
-        }
-        let design = out.uhdm_design().ok_or("no UHDM design")?;
-
-        // 2. Codegen.
-        let gen = sim::codegen::generate(design).map_err(|e| format!("codegen: {e}"))?;
-
-        // 3. Build model + runtime + libaco with CMake.
-        let exe = sim::build::build_model_cmake(&dir, &[("model.c", gen.model_c.as_str())])
-            .map_err(|e| format!("cmake: {e}"))?;
-
-        // 4. Run.
-        let output = Command::new(&exe)
-            .output()
-            .map_err(|e| format!("run: {e}"))?;
-        if !output.status.success() {
-            return Err(format!(
-                "sim exited with {:?}, stderr: {}",
-                output.status,
-                String::from_utf8_lossy(&output.stderr)
-            ));
-        }
-        Ok((
-            String::from_utf8_lossy(&output.stdout).into_owned(),
-            gen.warnings,
-            gen.model_c,
-        ))
-    })();
-
-    std::env::set_current_dir(&orig_cwd).expect("restore cwd");
-    let _ = std::fs::remove_dir_all(&dir);
-    result
+    let run = sim_harness::run_generated_sim(sv, top, tag)?;
+    Ok((run.stdout, run.warnings, run.model_c))
 }
 
 /// (a) Force overrides a process write: a blocking write to a forced reg is

@@ -1,13 +1,11 @@
 //! End-to-end simulator coverage for true-net declaration assignments and
 //! codegen rejection of executable statement placeholders.
 
-use std::process::Command;
-use std::sync::Mutex;
-
 use llg::core::compile;
 use llg::sim;
 
-static SURELOG_LOCK: Mutex<()> = Mutex::new(());
+#[path = "support/sim.rs"]
+mod sim_harness;
 
 fn compile_and_generate(
     dir: &std::path::Path,
@@ -26,29 +24,13 @@ fn compile_and_generate(
     sim::codegen::generate(design).map_err(|error| format!("codegen: {error}"))
 }
 
-fn in_temp_dir<R>(tag: &str, run: impl FnOnce(&std::path::Path) -> R) -> R {
-    let dir = std::env::temp_dir().join(format!("llg_sim_net_decl_{tag}_{}", std::process::id()));
-    std::fs::create_dir_all(&dir).expect("create temp dir");
-    let original = std::env::current_dir().expect("current dir");
-    std::env::set_current_dir(&dir).expect("chdir to temp dir");
-    let result = run(&dir);
-    std::env::set_current_dir(original).expect("restore cwd");
-    let _ = std::fs::remove_dir_all(dir);
-    result
-}
-
 #[test]
 fn dynamic_true_net_declarations_match_explicit_assigns() {
     if !sim::build::cmake_available() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
-    let result = in_temp_dir("equivalence", |dir| {
-        let generated = compile_and_generate(
-            dir,
-            "equivalence.sv",
-            r#"// llg-test-fixture: tests/sim_net_decl.rs/equivalence.sv
+    let sv = r#"// llg-test-fixture: tests/sim_net_decl.rs/equivalence.sv
 module tb;
     logic [3:0] a = 4'hf;
     logic [3:0] b = 4'h1;
@@ -83,22 +65,8 @@ module tb;
         $finish;
     end
 endmodule
-"#,
-        )?;
-        let exe = sim::build::build_model_cmake(dir, &[("model.c", &generated.model_c)])
-            .map_err(|error| format!("cmake: {error}"))?;
-        let output = Command::new(exe)
-            .output()
-            .map_err(|error| format!("run: {error}"))?;
-        if !output.status.success() {
-            return Err(format!(
-                "sim exited with {:?}, stderr: {}",
-                output.status,
-                String::from_utf8_lossy(&output.stderr)
-            ));
-        }
-        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
-    });
+"#;
+    let result = sim_harness::run_sim(sv, "tb", "net_decl_equivalence");
 
     assert_eq!(
         result.expect("simulation should run"),
@@ -111,9 +79,7 @@ endmodule
 
 #[test]
 fn net_declaration_rejects_unrepresentable_sensitivity_and_net_class() {
-    let _guard = SURELOG_LOCK.lock().unwrap();
-
-    let array_error = in_temp_dir("array_reject", |dir| {
+    let array_error = sim_harness::with_surelog_temp_cwd("net_decl_array_reject", |dir| {
         compile_and_generate(
             dir,
             "array_reject.sv",
@@ -135,7 +101,7 @@ endmodule
         "unexpected array rejection: {array_error}"
     );
 
-    let net_class_error = in_temp_dir("net_class_reject", |dir| {
+    let net_class_error = sim_harness::with_surelog_temp_cwd("net_class_reject", |dir| {
         compile_and_generate(
             dir,
             "net_class_reject.sv",

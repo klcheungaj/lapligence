@@ -4,55 +4,16 @@
 //! Each test runs Surelog compile + elaborate, codegen, CMake model build,
 //! and executable simulation, asserting the exact stdout.
 
-use std::process::Command;
+#[path = "support/sim.rs"]
+mod sim_harness;
 use std::sync::Mutex;
 
-use llg::core::compile;
 use llg::sim;
 
 static SURELOG_LOCK: Mutex<()> = Mutex::new(());
 
-/// Compile and run one top-level `tb` design. The caller holds
-/// `SURELOG_LOCK`, so Surelog's process-wide state and the temporary CWD are
-/// serialized with the other simulator integration tests.
 fn run_sim(sv: &str, tag: &str) -> Result<String, String> {
-    let dir = std::env::temp_dir().join(format!("llg_sim_arithmetic_{tag}_{}", std::process::id()));
-    std::fs::create_dir_all(&dir).map_err(|e| format!("create temp dir: {e}"))?;
-    let src = dir.join("tb.sv");
-    std::fs::write(&src, sv).map_err(|e| format!("write source: {e}"))?;
-
-    let orig_cwd = std::env::current_dir().map_err(|e| format!("current dir: {e}"))?;
-    std::env::set_current_dir(&dir).map_err(|e| format!("chdir to temp dir: {e}"))?;
-    let result = (|| -> Result<String, String> {
-        let out = compile::compile(&compile::CompileOpts {
-            files: vec![src.to_string_lossy().into_owned()],
-            top: Some("tb".to_string()),
-            ..Default::default()
-        })
-        .map_err(|e| format!("compile: {e}"))?;
-        if !out.ok() {
-            return Err(format!("compile diagnostics: {:?}", out.diagnostics));
-        }
-        let design = out.uhdm_design().ok_or("no UHDM design")?;
-        let generated = sim::codegen::generate(design).map_err(|e| format!("codegen: {e}"))?;
-        let exe = sim::build::build_model_cmake(&dir, &[("model.c", generated.model_c.as_str())])
-            .map_err(|e| format!("cmake: {e}"))?;
-        let output = Command::new(&exe)
-            .output()
-            .map_err(|e| format!("run: {e}"))?;
-        if !output.status.success() {
-            return Err(format!(
-                "sim exited with {:?}, stderr: {}",
-                output.status,
-                String::from_utf8_lossy(&output.stderr)
-            ));
-        }
-        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
-    })();
-
-    std::env::set_current_dir(&orig_cwd).map_err(|e| format!("restore cwd: {e}"))?;
-    let _ = std::fs::remove_dir_all(&dir);
-    result
+    sim_harness::run_sim(sv, "tb", tag)
 }
 
 fn assert_stdout(tag: &str, sv: &str, expected: &str) {

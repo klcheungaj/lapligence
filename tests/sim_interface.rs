@@ -4,53 +4,14 @@
 //! run with the CWD pointed at a fresh temp dir (serialized through a mutex,
 //! like the other Surelog integration tests).
 
-use std::process::Command;
+#[path = "support/sim.rs"]
+mod sim_harness;
 use std::sync::Mutex;
-
-use llg::core::compile;
-use llg::sim;
 
 static SURELOG_LOCK: Mutex<()> = Mutex::new(());
 
-/// Compile, codegen, build and run `sv` (top module `top`); returns stdout.
 fn run_design(sv: &str, tag: &str) -> Result<String, String> {
-    let dir = std::env::temp_dir().join(format!("llg_iface_{tag}_{}", std::process::id()));
-    std::fs::create_dir_all(&dir).expect("create temp dir");
-    let src = dir.join(format!("{tag}.sv"));
-    std::fs::write(&src, sv).expect("write source");
-
-    let orig_cwd = std::env::current_dir().expect("current dir");
-    std::env::set_current_dir(&dir).expect("chdir to temp dir");
-    let result = (|| -> Result<String, String> {
-        let out = compile::compile(&compile::CompileOpts {
-            files: vec![src.to_string_lossy().into_owned()],
-            top: Some("top".to_string()),
-            ..Default::default()
-        })
-        .map_err(|e| format!("compile: {e}"))?;
-        if !out.ok() {
-            return Err(format!("compile diagnostics: {:?}", out.diagnostics));
-        }
-        let design = out.uhdm_design().ok_or("no UHDM design")?;
-        let gen = sim::codegen::generate(design).map_err(|e| format!("codegen: {e}"))?;
-        let exe = sim::build::build_model_cmake(&dir, &[("model.c", gen.model_c.as_str())])
-            .map_err(|e| format!("cmake: {e}"))?;
-        let output = Command::new(&exe)
-            .output()
-            .map_err(|e| format!("run: {e}"))?;
-        if !output.status.success() {
-            return Err(format!(
-                "sim exited with {:?}, stderr: {}",
-                output.status,
-                String::from_utf8_lossy(&output.stderr)
-            ));
-        }
-        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
-    })();
-
-    std::env::set_current_dir(&orig_cwd).expect("restore cwd");
-    let _ = std::fs::remove_dir_all(&dir);
-    result
+    sim_harness::run_sim(sv, "top", tag)
 }
 
 /// Modport propagation through both directions: the master writes its per-port

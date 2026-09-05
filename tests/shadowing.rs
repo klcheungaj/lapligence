@@ -13,24 +13,22 @@
 //! as `#[ignore = "known gap: …"]` tests; the shadowing-resolution follow-up
 //! closed those gaps, the ignores are gone, and the whole suite runs as
 //! ordinary contract tests.
+mod support;
+
 use std::fs;
-use std::io::{self, BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
-use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
 use std::thread;
 use std::time::{Duration, Instant};
+use support::lsp::{default_init_options, file_uri, LspProcess};
 
 use serde_json::{json, Value};
 
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(45);
 /// Generous because the suite spawns one server per test and cargo runs them
 /// in parallel: every server compiles behind Surelog's blocking frontend, so
 /// a busy machine stretches each analysis well past the debounce window.
 const POLL_TIMEOUT: Duration = Duration::from_secs(180);
 const POLL_REQUEST_TIMEOUT: Duration = Duration::from_millis(750);
 const POLL_INTERVAL: Duration = Duration::from_millis(100);
-const READY_MESSAGE: &str = "llg Verilog/SystemVerilog language server ready";
 const CONFIG_FILE_NAME: &str = "llg.toml";
 const CONFIG_TEXT: &str = "schema_version = 1\n\n[sources]\ndirectories = [\".\"]\ninclude = [\"**/*.v\", \"**/*.sv\"]\n\n[lint]\nenabled = false\n";
 
@@ -72,324 +70,6 @@ impl Drop for Workspace {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.base);
     }
-}
-
-// ── Framed JSON-RPC transport ────────────────────────────────────────────────
-
-type ReaderMessage = Result<Value, String>;
-
-fn read_frame(reader: &mut BufReader<ChildStdout>) -> io::Result<Option<Value>> {
-    let mut content_length = None;
-    let mut line = String::new();
-    loop {
-        line.clear();
-        let bytes = reader.read_line(&mut line)?;
-        if bytes == 0 {
-            if content_length.is_none() {
-                return Ok(None);
-            }
-            return Err(io::Error::new(
-                io::ErrorKind::UnexpectedEof,
-                "EOF while reading LSP headers",
-            ));
-        }
-        if line == "\r\n" || line == "\n" {
-            break;
-        }
-        let (name, value) = line
-            .split_once(':')
-            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "malformed LSP header"))?;
-        if name.eq_ignore_ascii_case("Content-Length") {
-            content_length = Some(value.trim().parse::<usize>().map_err(|error| {
-                io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!("invalid Content-Length: {error}"),
-                )
-            })?);
-        }
-    }
-
-    let length = content_length.ok_or_else(|| {
-        io::Error::new(
-            io::ErrorKind::InvalidData,
-            "LSP message has no Content-Length",
-        )
-    })?;
-    let mut body = vec![0; length];
-    reader.read_exact(&mut body)?;
-    serde_json::from_slice(&body)
-        .map_err(|error| {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("invalid LSP JSON: {error}"),
-            )
-        })
-        .map(Some)
-}
-
-fn spawn_reader(stdout: ChildStdout) -> Receiver<ReaderMessage> {
-    let (sender, receiver) = mpsc::channel();
-    thread::spawn(move || {
-        let mut reader = BufReader::new(stdout);
-        loop {
-            match read_frame(&mut reader) {
-                Ok(Some(message)) => {
-                    if sender.send(Ok(message)).is_err() {
-                        return;
-                    }
-                }
-                Ok(None) => {
-                    let _ = sender.send(Err("LSP server stdout closed".to_owned()));
-                    return;
-                }
-                Err(error) => {
-                    let _ = sender.send(Err(error.to_string()));
-                    return;
-                }
-            }
-        }
-    });
-    receiver
-}
-
-struct LspProcess {
-    child: Child,
-    stdin: Option<ChildStdin>,
-    incoming: Receiver<ReaderMessage>,
-    next_id: u64,
-    notifications: Vec<Value>,
-    orphan_responses: Vec<Value>,
-}
-
-impl LspProcess {
-    fn spawn(cwd: &Path) -> Self {
-        let mut child = Command::new(env!("CARGO_BIN_EXE_llg_ls"))
-            .current_dir(cwd)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::inherit())
-            .spawn()
-            .expect("spawn llg LSP server");
-        let stdout = child.stdout.take().expect("capture llg stdout");
-        let stdin = child.stdin.take().expect("capture llg stdin");
-        Self {
-            child,
-            stdin: Some(stdin),
-            incoming: spawn_reader(stdout),
-            next_id: 1,
-            notifications: Vec::new(),
-            orphan_responses: Vec::new(),
-        }
-    }
-
-    fn send_message(&mut self, message: Value) -> Result<(), String> {
-        let body = serde_json::to_vec(&message).map_err(|error| error.to_string())?;
-        let stdin = self
-            .stdin
-            .as_mut()
-            .ok_or_else(|| "LSP stdin is closed".to_owned())?;
-        write!(stdin, "Content-Length: {}\r\n\r\n", body.len())
-            .map_err(|error| error.to_string())?;
-        stdin.write_all(&body).map_err(|error| error.to_string())?;
-        stdin.flush().map_err(|error| error.to_string())
-    }
-
-    fn request_with_timeout(
-        &mut self,
-        method: &str,
-        params: Value,
-        timeout: Duration,
-    ) -> Result<Value, String> {
-        let id = json!(self.next_id);
-        self.next_id += 1;
-        self.send_message(json!({
-            "jsonrpc": "2.0",
-            "id": id,
-            "method": method,
-            "params": params,
-        }))?;
-
-        let deadline = Instant::now() + timeout;
-        loop {
-            if let Some(index) = self
-                .orphan_responses
-                .iter()
-                .position(|message| message.get("id") == Some(&id))
-            {
-                let message = self.orphan_responses.remove(index);
-                if let Some(error) = message.get("error") {
-                    return Err(format!("LSP request {method} failed: {error}"));
-                }
-                return Ok(message.get("result").cloned().unwrap_or(Value::Null));
-            }
-            let message = self.receive_until(deadline)?;
-            if message.get("id") == Some(&id) && message.get("method").is_none() {
-                if let Some(error) = message.get("error") {
-                    return Err(format!("LSP request {method} failed: {error}"));
-                }
-                return Ok(message.get("result").cloned().unwrap_or(Value::Null));
-            }
-            self.route_unsolicited(message)?;
-        }
-    }
-
-    fn request(&mut self, method: &str, params: Value) -> Result<Value, String> {
-        self.request_with_timeout(method, params, REQUEST_TIMEOUT)
-    }
-
-    fn send_notification(&mut self, method: &str, params: Value) -> Result<(), String> {
-        self.send_message(json!({
-            "jsonrpc": "2.0",
-            "method": method,
-            "params": params,
-        }))
-    }
-
-    fn receive_until(&self, deadline: Instant) -> Result<Value, String> {
-        let remaining = deadline.saturating_duration_since(Instant::now());
-        if remaining.is_zero() {
-            return Err("timed out waiting for an LSP message".to_owned());
-        }
-        match self.incoming.recv_timeout(remaining) {
-            Ok(Ok(message)) => Ok(message),
-            Ok(Err(error)) => Err(error),
-            Err(RecvTimeoutError::Timeout) => Err(format!(
-                "timed out after {:?} waiting for an LSP message",
-                remaining
-            )),
-            Err(RecvTimeoutError::Disconnected) => Err("LSP reader thread disconnected".to_owned()),
-        }
-    }
-
-    fn route_unsolicited(&mut self, message: Value) -> Result<(), String> {
-        if message.get("method").and_then(Value::as_str).is_some() {
-            if let Some(id) = message.get("id").filter(|id| !id.is_null()).cloned() {
-                // Answer server-originated requests (registerCapability) so
-                // the server can proceed.
-                self.send_message(json!({
-                    "jsonrpc": "2.0",
-                    "id": id,
-                    "result": Value::Null,
-                }))?;
-            } else {
-                self.notifications.push(message);
-            }
-        } else {
-            self.orphan_responses.push(message);
-        }
-        Ok(())
-    }
-
-    fn initialize(&mut self, root: &Path) -> Result<(), String> {
-        self.request(
-            "initialize",
-            json!({
-                "processId": std::process::id(),
-                "rootUri": Value::Null,
-                "workspaceFolders": [{ "uri": file_uri(root), "name": "ws" }],
-                "initializationOptions": default_init_options(),
-                "clientInfo": { "name": "llg-shadowing-tests", "version": "1" },
-                "capabilities": {
-                    "workspace": {
-                        "configuration": true,
-                        "workspaceFolders": true,
-                        "didChangeWatchedFiles": { "dynamicRegistration": false },
-                        "didChangeWorkspaceFolders": { "dynamicRegistration": false }
-                    },
-                    "textDocument": {
-                        "publishDiagnostics": { "relatedInformation": true },
-                        "semanticTokens": { "dynamicRegistration": false, "requests": { "range": true, "full": true }, "tokenTypes": [], "tokenModifiers": [], "formats": ["relative"] }
-                    }
-                }
-            }),
-        )?;
-        self.send_notification("initialized", json!({}))?;
-        let deadline = Instant::now() + REQUEST_TIMEOUT;
-        loop {
-            let message = self.receive_until(deadline)?;
-            if message.get("method").and_then(Value::as_str) == Some("window/logMessage")
-                && message.pointer("/params/message").and_then(Value::as_str) == Some(READY_MESSAGE)
-            {
-                return Ok(());
-            }
-            self.route_unsolicited(message)?;
-        }
-    }
-
-    fn open(&mut self, path: &Path, text: &str) -> Result<(), String> {
-        self.send_notification(
-            "textDocument/didOpen",
-            json!({
-                "textDocument": {
-                    "uri": file_uri(path),
-                    "languageId": "systemverilog",
-                    "version": 1,
-                    "text": text
-                }
-            }),
-        )
-    }
-
-    fn change(&mut self, path: &Path, version: i64, text: &str) -> Result<(), String> {
-        self.send_notification(
-            "textDocument/didChange",
-            json!({
-                "textDocument": { "uri": file_uri(path), "version": version },
-                "contentChanges": [{ "text": text }]
-            }),
-        )
-    }
-
-    fn shutdown(&mut self) {
-        let _ = self.request("shutdown", Value::Null);
-        let _ = self.send_notification("exit", Value::Null);
-        self.stdin.take();
-        let deadline = Instant::now() + Duration::from_secs(2);
-        loop {
-            match self.child.try_wait() {
-                Ok(Some(_)) | Err(_) => return,
-                Ok(None) if Instant::now() < deadline => thread::sleep(Duration::from_millis(10)),
-                Ok(None) => {
-                    let _ = self.child.kill();
-                    let _ = self.child.wait();
-                    return;
-                }
-            }
-        }
-    }
-}
-
-impl Drop for LspProcess {
-    fn drop(&mut self) {
-        self.stdin.take();
-        if self.child.try_wait().ok().flatten().is_none() {
-            let _ = self.child.kill();
-            let _ = self.child.wait();
-        }
-    }
-}
-
-// ── Small assertion / position helpers ───────────────────────────────────────
-
-fn file_uri(path: &Path) -> String {
-    let mut uri = String::from("file://");
-    for byte in path.to_string_lossy().bytes() {
-        if byte.is_ascii_alphanumeric() || matches!(byte, b'/' | b'-' | b'_' | b'.' | b'~' | b':') {
-            uri.push(byte as char);
-        } else {
-            uri.push_str(&format!("%{byte:02X}"));
-        }
-    }
-    uri
-}
-
-fn default_init_options() -> Value {
-    json!({
-        "llg": {
-            "protocolVersion": 1,
-            "configFiles": []
-        }
-    })
 }
 
 fn position_at(text: &str, needle: &str, offset: usize) -> Value {
@@ -768,7 +448,9 @@ fn named_begin_block_shadow_resolves_inner_and_outer_definitions() {
     let path = ws.root().join("blk.sv");
 
     let mut client = LspProcess::spawn(&ws.base);
-    client.initialize(&ws.root()).expect("initialize workspace");
+    client
+        .initialize_static(&[("ws", &ws.root())], default_init_options())
+        .expect("initialize workspace");
     let lines = open_and_wait_for_binding(
         &mut client,
         &ws,
@@ -822,7 +504,9 @@ fn shadowing_declaration_resolves_to_itself() {
     let path = ws.root().join("blk.sv");
 
     let mut client = LspProcess::spawn(&ws.base);
-    client.initialize(&ws.root()).expect("initialize workspace");
+    client
+        .initialize_static(&[("ws", &ws.root())], default_init_options())
+        .expect("initialize workspace");
     open_and_wait_for_binding(
         &mut client,
         &ws,
@@ -851,7 +535,9 @@ fn unshadowed_sibling_variable_navigates_normally() {
     let path = ws.root().join("blk.sv");
 
     let mut client = LspProcess::spawn(&ws.base);
-    client.initialize(&ws.root()).expect("initialize workspace");
+    client
+        .initialize_static(&[("ws", &ws.root())], default_init_options())
+        .expect("initialize workspace");
     open_and_wait_for_binding(
         &mut client,
         &ws,
@@ -885,7 +571,9 @@ fn named_begin_block_hover_shows_the_shadowing_declaration_type() {
     let path = ws.root().join("blk.sv");
 
     let mut client = LspProcess::spawn(&ws.base);
-    client.initialize(&ws.root()).expect("initialize workspace");
+    client
+        .initialize_static(&[("ws", &ws.root())], default_init_options())
+        .expect("initialize workspace");
     open_and_wait_for_binding(
         &mut client,
         &ws,
@@ -923,7 +611,9 @@ fn named_begin_block_references_respect_shadow_scopes() {
     let path = ws.root().join("blk.sv");
 
     let mut client = LspProcess::spawn(&ws.base);
-    client.initialize(&ws.root()).expect("initialize workspace");
+    client
+        .initialize_static(&[("ws", &ws.root())], default_init_options())
+        .expect("initialize workspace");
     open_and_wait_for_binding(
         &mut client,
         &ws,
@@ -963,7 +653,9 @@ fn function_local_shadow_call_site_stays_on_module_signal() {
     let path = ws.root().join("func.sv");
 
     let mut client = LspProcess::spawn(&ws.base);
-    client.initialize(&ws.root()).expect("initialize workspace");
+    client
+        .initialize_static(&[("ws", &ws.root())], default_init_options())
+        .expect("initialize workspace");
     open_and_wait_for_binding(
         &mut client,
         &ws,
@@ -992,7 +684,9 @@ fn function_local_use_resolves_to_the_function_local_declaration() {
     let path = ws.root().join("func.sv");
 
     let mut client = LspProcess::spawn(&ws.base);
-    client.initialize(&ws.root()).expect("initialize workspace");
+    client
+        .initialize_static(&[("ws", &ws.root())], default_init_options())
+        .expect("initialize workspace");
     open_and_wait_for_binding(
         &mut client,
         &ws,
@@ -1023,7 +717,9 @@ fn task_local_shadow_outside_uses_stay_on_module_signal() {
     let path = ws.root().join("task.sv");
 
     let mut client = LspProcess::spawn(&ws.base);
-    client.initialize(&ws.root()).expect("initialize workspace");
+    client
+        .initialize_static(&[("ws", &ws.root())], default_init_options())
+        .expect("initialize workspace");
     open_and_wait_for_binding(
         &mut client,
         &ws,
@@ -1061,7 +757,9 @@ fn task_local_use_resolves_to_the_task_local_declaration() {
     let path = ws.root().join("task.sv");
 
     let mut client = LspProcess::spawn(&ws.base);
-    client.initialize(&ws.root()).expect("initialize workspace");
+    client
+        .initialize_static(&[("ws", &ws.root())], default_init_options())
+        .expect("initialize workspace");
     open_and_wait_for_binding(
         &mut client,
         &ws,
@@ -1090,7 +788,9 @@ fn generate_block_shadow_outer_uses_before_and_after_generate() {
     let path = ws.root().join("gen.sv");
 
     let mut client = LspProcess::spawn(&ws.base);
-    client.initialize(&ws.root()).expect("initialize workspace");
+    client
+        .initialize_static(&[("ws", &ws.root())], default_init_options())
+        .expect("initialize workspace");
     open_and_wait_for_binding(
         &mut client,
         &ws,
@@ -1127,7 +827,9 @@ fn generate_block_interior_use_resolves_to_the_genblk_local_declaration() {
     let path = ws.root().join("gen.sv");
 
     let mut client = LspProcess::spawn(&ws.base);
-    client.initialize(&ws.root()).expect("initialize workspace");
+    client
+        .initialize_static(&[("ws", &ws.root())], default_init_options())
+        .expect("initialize workspace");
     open_and_wait_for_binding(
         &mut client,
         &ws,
@@ -1158,7 +860,9 @@ fn two_level_nesting_each_scope_wins_inside_itself() {
     let path = ws.root().join("two.sv");
 
     let mut client = LspProcess::spawn(&ws.base);
-    client.initialize(&ws.root()).expect("initialize workspace");
+    client
+        .initialize_static(&[("ws", &ws.root())], default_init_options())
+        .expect("initialize workspace");
     let lines = open_and_wait_for_binding(
         &mut client,
         &ws,
@@ -1212,7 +916,9 @@ fn two_level_hover_shows_the_innermost_scope_type() {
     let path = ws.root().join("two.sv");
 
     let mut client = LspProcess::spawn(&ws.base);
-    client.initialize(&ws.root()).expect("initialize workspace");
+    client
+        .initialize_static(&[("ws", &ws.root())], default_init_options())
+        .expect("initialize workspace");
     open_and_wait_for_binding(
         &mut client,
         &ws,
@@ -1253,7 +959,9 @@ fn nested_instance_namespaces_bind_within_their_own_module() {
     let tb_path = ws.root().join("tb_nested.sv");
 
     let mut client = LspProcess::spawn(&ws.base);
-    client.initialize(&ws.root()).expect("initialize workspace");
+    client
+        .initialize_static(&[("ws", &ws.root())], default_init_options())
+        .expect("initialize workspace");
     open_and_wait_for_binding(&mut client, &ws, "tb_nested.sv", TB_NESTED_SV, "via=label");
 
     // Child-internal use → the child's OWN port (per-instance clone).
@@ -1300,7 +1008,9 @@ fn cross_file_shadowing_stays_within_the_instantiating_module() {
     let tb_path = ws.root().join("tb_cross.sv");
 
     let mut client = LspProcess::spawn(&ws.base);
-    client.initialize(&ws.root()).expect("initialize workspace");
+    client
+        .initialize_static(&[("ws", &ws.root())], default_init_options())
+        .expect("initialize workspace");
     open_and_wait_for_binding(&mut client, &ws, "tb_cross.sv", TB_CROSS_SV, "via=label");
 
     // Connection LABEL `.sel` → the CHILD module's port in cross_leaf.sv.
@@ -1343,7 +1053,9 @@ fn opened_buffer_client_side_block_shadows_module_signal() {
     let uri = file_uri(&path);
 
     let mut client = LspProcess::spawn(&ws.base);
-    client.initialize(&ws.root()).expect("initialize workspace");
+    client
+        .initialize_static(&[("ws", &ws.root())], default_init_options())
+        .expect("initialize workspace");
     client
         .open(&path, EDIT_BASE_SV)
         .expect("open baseline buffer");

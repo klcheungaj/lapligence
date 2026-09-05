@@ -14,7 +14,9 @@
 //! Note: Surelog parses `final` only in `.sv` files (frontend limitation),
 //! which every design here satisfies.
 
-use std::process::Command;
+#[path = "support/sim.rs"]
+mod sim_harness;
+
 use std::sync::Mutex;
 
 use llg::core::compile;
@@ -23,77 +25,19 @@ use llg::sim::opt::OptConfig;
 
 static SURELOG_LOCK: Mutex<()> = Mutex::new(());
 
-/// Compile + codegen + C-compile + run `sv` (top module `tb`), returning the
-/// simulator's exact stdout AND stderr (finals warnings land on stderr).
-/// Holds [`SURELOG_LOCK`] for the whole pipeline: Surelog keeps process-wide
-/// state and the tests chdir.
+/// Compile, generate, build, and run one design.
 fn run_sim(sv: &str, tag: &str) -> Result<(String, String), String> {
-    let _guard = SURELOG_LOCK.lock().unwrap();
-    run_sim_locked(sv, tag)
-}
-
-fn run_sim_locked(sv: &str, tag: &str) -> Result<(String, String), String> {
-    let dir = std::env::temp_dir().join(format!("llg_sim_final_{tag}_{}", std::process::id()));
-    std::fs::create_dir_all(&dir).expect("create temp dir");
-    let src = dir.join("tb.sv");
-    std::fs::write(&src, sv).expect("write source");
-
-    let orig_cwd = std::env::current_dir().expect("current dir");
-    std::env::set_current_dir(&dir).expect("chdir to temp dir");
-    let result = (|| -> Result<(String, String), String> {
-        // 1. Surelog compile + elaborate.
-        let out = compile::compile(&compile::CompileOpts {
-            files: vec![src.to_string_lossy().into_owned()],
-            top: Some("tb".to_string()),
-            ..Default::default()
-        })
-        .map_err(|e| format!("compile: {e}"))?;
-        if !out.ok() {
-            return Err(format!("compile diagnostics: {:?}", out.diagnostics));
-        }
-        let design = out.uhdm_design().ok_or("no UHDM design")?;
-
-        // 2. Codegen.
-        let gen = sim::codegen::generate(design).map_err(|e| format!("codegen: {e}"))?;
-
-        // 3. Build model + runtime + libaco with CMake.
-        let exe = sim::build::build_model_cmake(&dir, &[("model.c", gen.model_c.as_str())])
-            .map_err(|e| format!("cmake: {e}"))?;
-
-        // 4. Run.
-        let output = Command::new(&exe)
-            .output()
-            .map_err(|e| format!("run: {e}"))?;
-        if !output.status.success() {
-            return Err(format!(
-                "sim exited with {:?}, stderr: {}",
-                output.status,
-                String::from_utf8_lossy(&output.stderr)
-            ));
-        }
-        Ok((
-            String::from_utf8_lossy(&output.stdout).into_owned(),
-            String::from_utf8_lossy(&output.stderr).into_owned(),
-        ))
-    })();
-
-    std::env::set_current_dir(&orig_cwd).expect("restore cwd");
-    let _ = std::fs::remove_dir_all(&dir);
-    result
+    let run = sim_harness::run_generated_sim(sv, "tb", tag)?;
+    Ok((run.stdout, run.stderr))
 }
 
 /// Compile + codegen `sv`, returning the codegen error message.
 /// Holds [`SURELOG_LOCK`] for the whole pipeline.
 fn codegen_error(sv: &str, tag: &str) -> Result<String, String> {
     let _guard = SURELOG_LOCK.lock().unwrap();
-    let dir = std::env::temp_dir().join(format!("llg_sim_final_{tag}_{}", std::process::id()));
-    std::fs::create_dir_all(&dir).expect("create temp dir");
-    let src = dir.join("tb.sv");
-    std::fs::write(&src, sv).expect("write source");
-
-    let orig_cwd = std::env::current_dir().expect("current dir");
-    std::env::set_current_dir(&dir).expect("chdir to temp dir");
-    let result = (|| -> Result<String, String> {
+    sim_harness::with_temp_cwd(tag, |dir| {
+        let src = dir.join("tb.sv");
+        std::fs::write(&src, sv).map_err(|error| format!("write source: {error}"))?;
         let out = compile::compile(&compile::CompileOpts {
             files: vec![src.to_string_lossy().into_owned()],
             top: Some("tb".to_string()),
@@ -106,13 +50,9 @@ fn codegen_error(sv: &str, tag: &str) -> Result<String, String> {
         let design = out.uhdm_design().ok_or("no UHDM design")?;
         match sim::codegen::generate(design) {
             Ok(_) => panic!("codegen should reject the design ({tag})"),
-            Err(e) => Ok(e),
+            Err(e) => Ok(e.to_string()),
         }
-    })();
-
-    std::env::set_current_dir(&orig_cwd).expect("restore cwd");
-    let _ = std::fs::remove_dir_all(&dir);
-    result
+    })
 }
 
 /// (a) A final block runs exactly once AFTER the scheduler exits: its output
@@ -345,9 +285,8 @@ fn sim_final_opt_parity() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let dir = std::env::temp_dir().join(format!("llg_sim_final_parity_{}", std::process::id()));
-    std::fs::create_dir_all(&dir).expect("create temp dir");
-    let src = dir.join("tb.sv");
+    let dir = sim_harness::TempDir::new("final-parity").expect("create temp dir");
+    let src = dir.path().join("tb.sv");
     let sv = r#"module tb;
     reg [3:0] acc;
     integer i;
@@ -367,9 +306,7 @@ endmodule
     std::fs::write(&src, sv).expect("write source");
 
     let _guard = SURELOG_LOCK.lock().unwrap();
-    let orig_cwd = std::env::current_dir().expect("current dir");
-    std::env::set_current_dir(&dir).expect("chdir to temp dir");
-    let result = (|| -> Result<(), String> {
+    let result = sim_harness::with_cwd(dir.path(), || {
         let out = compile::compile(&compile::CompileOpts {
             files: vec![src.to_string_lossy().into_owned()],
             top: Some("tb".to_string()),
@@ -387,20 +324,10 @@ endmodule
             .map_err(|e| format!("codegen(opt-off): {e}"))?;
 
         let run = |name: &str, model_c: &str| -> Result<String, String> {
-            let out_dir = dir.join(name);
+            let out_dir = dir.path().join(name);
             let exe = sim::build::build_model_cmake(&out_dir, &[("model.c", model_c)])
                 .map_err(|e| format!("cmake({name}): {e}"))?;
-            let o = Command::new(&exe)
-                .output()
-                .map_err(|e| format!("run: {e}"))?;
-            if !o.status.success() {
-                return Err(format!(
-                    "sim({name}) exited with {:?}: {}",
-                    o.status,
-                    String::from_utf8_lossy(&o.stderr)
-                ));
-            }
-            Ok(String::from_utf8_lossy(&o.stdout).into_owned())
+            sim_harness::run_executable(&exe).map_err(|error| format!("run({name}): {error}"))
         };
         // acc = 0+1+2+3+4+5 = 15 (fits 4 bits exactly).
         let expected = "acc=15\nfinal acc=15 double=30\n";
@@ -408,10 +335,7 @@ endmodule
         assert_eq!(on_out, expected, "opt-on run diverged");
         assert_eq!(run("opt_off", &off.model_c)?, on_out, "parity broken");
         Ok(())
-    })();
-
-    std::env::set_current_dir(&orig_cwd).expect("restore cwd");
-    let _ = std::fs::remove_dir_all(&dir);
+    });
     result.expect("parity simulation should run");
 }
 

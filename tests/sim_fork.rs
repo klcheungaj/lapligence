@@ -5,11 +5,10 @@
 //! tests run with the CWD pointed at a fresh temp dir (serialized through a
 //! mutex, like the other Surelog integration tests).
 
-use std::process::Command;
 use std::sync::Mutex;
 
-use llg::core::compile;
-use llg::sim;
+#[path = "support/sim.rs"]
+mod sim_harness;
 
 static SURELOG_LOCK: Mutex<()> = Mutex::new(());
 
@@ -17,43 +16,7 @@ static SURELOG_LOCK: Mutex<()> = Mutex::new(());
 /// runtime + libaco and run it; returns the captured stdout.  Each call uses
 /// its own temp dir and restores the CWD afterwards.
 fn run_design(sv: &str, top: &str, dir_tag: &str) -> Result<String, String> {
-    let dir = std::env::temp_dir().join(format!("llg_sim_fork_{}_{}", dir_tag, std::process::id()));
-    std::fs::create_dir_all(&dir).map_err(|e| format!("create temp dir: {e}"))?;
-    let src = dir.join("fork.sv");
-    std::fs::write(&src, sv).map_err(|e| format!("write source: {e}"))?;
-
-    let orig_cwd = std::env::current_dir().map_err(|e| format!("current dir: {e}"))?;
-    std::env::set_current_dir(&dir).map_err(|e| format!("chdir: {e}"))?;
-    let result = (|| -> Result<String, String> {
-        let out = compile::compile(&compile::CompileOpts {
-            files: vec![src.to_string_lossy().into_owned()],
-            top: Some(top.to_string()),
-            ..Default::default()
-        })
-        .map_err(|e| format!("compile: {e}"))?;
-        if !out.ok() {
-            return Err(format!("compile diagnostics: {:?}", out.diagnostics));
-        }
-        let design = out.uhdm_design().ok_or("no UHDM design")?;
-        let gen = sim::codegen::generate(design).map_err(|e| format!("codegen: {e}"))?;
-        let exe = sim::build::build_model_cmake(&dir, &[("model.c", gen.model_c.as_str())])
-            .map_err(|e| format!("cmake: {e}"))?;
-        let output = Command::new(&exe)
-            .output()
-            .map_err(|e| format!("run: {e}"))?;
-        if !output.status.success() {
-            return Err(format!(
-                "sim exited with {:?}, stderr: {}",
-                output.status,
-                String::from_utf8_lossy(&output.stderr)
-            ));
-        }
-        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
-    })();
-
-    std::env::set_current_dir(&orig_cwd).map_err(|e| format!("restore cwd: {e}"))?;
-    let _ = std::fs::remove_dir_all(&dir);
-    result
+    sim_harness::run_sim(sv, top, dir_tag)
 }
 
 /// `fork … join`: two branches (`#5` / `#10`) writing signals; the parent

@@ -13,55 +13,16 @@
 //! runs with the CWD pointed at a fresh temp dir (serialized through a mutex,
 //! like the other Surelog integration tests).
 
-use std::process::Command;
-use std::sync::Mutex;
-
 use llg::core::compile;
 use llg::sim;
 
-static SURELOG_LOCK: Mutex<()> = Mutex::new(());
+#[path = "support/sim.rs"]
+mod sim_harness;
 
 /// Compile `sv`, codegen, compile the model + runtime, run it, and return the
 /// stdout.  Fails the test on any compile/codegen/cmake/run error.
 fn run_sim(name: &str, sv: &str) -> String {
-    let dir = std::env::temp_dir().join(format!("llg_mem_{name}_{}", std::process::id()));
-    std::fs::create_dir_all(&dir).expect("create temp dir");
-    let src = dir.join("mem.sv");
-    std::fs::write(&src, sv).expect("write source");
-
-    let orig_cwd = std::env::current_dir().expect("current dir");
-    std::env::set_current_dir(&dir).expect("chdir to temp dir");
-    let result = (|| -> Result<String, String> {
-        let out = compile::compile(&compile::CompileOpts {
-            files: vec![src.to_string_lossy().into_owned()],
-            top: Some("tb".to_string()),
-            ..Default::default()
-        })
-        .map_err(|e| format!("compile: {e}"))?;
-        if !out.ok() {
-            return Err(format!("compile diagnostics: {:?}", out.diagnostics));
-        }
-        let design = out.uhdm_design().ok_or("no UHDM design")?;
-        let gen = sim::codegen::generate(design).map_err(|e| format!("codegen: {e}"))?;
-        let exe = sim::build::build_model_cmake(&dir, &[("model.c", gen.model_c.as_str())])
-            .map_err(|e| format!("cmake: {e}"))?;
-        let output = Command::new(&exe)
-            .output()
-            .map_err(|e| format!("run: {e}"))?;
-        if !output.status.success() {
-            return Err(format!(
-                "sim exited with {:?}, stderr: {}",
-                output.status,
-                String::from_utf8_lossy(&output.stderr)
-            ));
-        }
-        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
-    })();
-
-    std::env::set_current_dir(&orig_cwd).expect("restore cwd");
-    let _ = std::fs::remove_dir_all(&dir);
-
-    result.expect("simulation should run")
+    sim_harness::run_sim(sv, "tb", name).expect("simulation should run")
 }
 
 /// (a) A byte-wide RAM driven by `always @(posedge clk)` with non-blocking
@@ -99,7 +60,6 @@ fn sim_mem_ram_nba() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
     let sv = r#"module tb;
     reg clk;
     reg we;
@@ -158,7 +118,6 @@ fn sim_mem_read_before_write() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
     let sv = r#"module tb;
     reg clk, we;
     reg [7:0] addr, wdata, rdata;
@@ -197,7 +156,6 @@ fn sim_mem_out_of_range() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
     let sv = r#"module tb;
     reg [7:0] mem [0:255];
     reg [7:0] r;
@@ -223,7 +181,6 @@ fn sim_mem_wide_index_does_not_alias_low64() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
     let sv = r#"module tb;
     reg [7:0] mem [0:3];
     reg [127:0] unsigned_idx;
@@ -267,7 +224,6 @@ fn sim_mem_multi_dim() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
     let sv = r#"module tb;
     logic [3:0] a [0:1][0:3];
     initial begin
@@ -294,7 +250,6 @@ fn sim_mem_decl_initializer() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
     let sv = r#"module tb;
     reg [7:0] mem [0:3] = '{8'h1, 8'h2, 8'h3, 8'h4};
     logic [7:0] lm [0:3] = '{8'ha, 8'hb, 8'hc, 8'hd};
@@ -318,22 +273,16 @@ endmodule
 /// codegen error, not silently mis-sized.
 #[test]
 fn sim_mem_implicit_size_rejected() {
-    let _guard = SURELOG_LOCK.lock().unwrap();
-    let dir = std::env::temp_dir().join(format!("llg_mem_rej_{}", std::process::id()));
-    std::fs::create_dir_all(&dir).expect("create temp dir");
-    let src = dir.join("rej.sv");
     let sv = r#"module tb;
     reg [7:0] mem [8];
     initial $display("%h", mem[0]);
 endmodule
 "#;
-    std::fs::write(&src, sv).expect("write source");
-
-    let orig_cwd = std::env::current_dir().expect("current dir");
-    std::env::set_current_dir(&dir).expect("chdir to temp dir");
-    let result = (|| -> Result<String, String> {
+    let result = sim_harness::with_surelog_temp_cwd("mem_rej", |dir| {
+        let source = dir.join("rej.sv");
+        std::fs::write(&source, sv).map_err(|error| format!("write source: {error}"))?;
         let out = compile::compile(&compile::CompileOpts {
-            files: vec![src.to_string_lossy().into_owned()],
+            files: vec![source.to_string_lossy().into_owned()],
             top: Some("tb".to_string()),
             ..Default::default()
         })
@@ -344,12 +293,9 @@ endmodule
         let design = out.uhdm_design().ok_or("no UHDM design")?;
         match sim::codegen::generate(design) {
             Ok(_) => Err("codegen unexpectedly succeeded".to_string()),
-            Err(e) => Ok(e),
+            Err(e) => Ok(e.to_string()),
         }
-    })();
-
-    std::env::set_current_dir(&orig_cwd).expect("restore cwd");
-    let _ = std::fs::remove_dir_all(&dir);
+    });
 
     let err = result.expect("codegen should fail");
     assert!(
@@ -362,10 +308,6 @@ endmodule
 /// disappearing from the generated model.
 #[test]
 fn sim_mem_foreach_rejected() {
-    let _guard = SURELOG_LOCK.lock().unwrap();
-    let dir = std::env::temp_dir().join(format!("llg_mem_foreach_rej_{}", std::process::id()));
-    std::fs::create_dir_all(&dir).expect("create temp dir");
-    let src = dir.join("foreach_rej.sv");
     let sv = r#"module tb;
     logic [7:0] mem [0:3];
     initial begin
@@ -373,13 +315,11 @@ fn sim_mem_foreach_rejected() {
     end
 endmodule
 "#;
-    std::fs::write(&src, sv).expect("write source");
-
-    let orig_cwd = std::env::current_dir().expect("current dir");
-    std::env::set_current_dir(&dir).expect("chdir to temp dir");
-    let result = (|| -> Result<String, String> {
+    let result = sim_harness::with_surelog_temp_cwd("mem_foreach_rej", |dir| {
+        let source = dir.join("foreach_rej.sv");
+        std::fs::write(&source, sv).map_err(|error| format!("write source: {error}"))?;
         let out = compile::compile(&compile::CompileOpts {
-            files: vec![src.to_string_lossy().into_owned()],
+            files: vec![source.to_string_lossy().into_owned()],
             top: Some("tb".to_string()),
             ..Default::default()
         })
@@ -390,12 +330,9 @@ endmodule
         let design = out.uhdm_design().ok_or("no UHDM design")?;
         match sim::codegen::generate(design) {
             Ok(_) => Err("codegen unexpectedly succeeded".to_string()),
-            Err(e) => Ok(e),
+            Err(e) => Ok(e.to_string()),
         }
-    })();
-
-    std::env::set_current_dir(&orig_cwd).expect("restore cwd");
-    let _ = std::fs::remove_dir_all(&dir);
+    });
 
     let err = result.expect("codegen should fail");
     assert!(err.contains("`foreach`"), "unexpected error: {err}");

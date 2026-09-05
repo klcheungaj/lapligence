@@ -5,34 +5,24 @@
 //! wraparound and reopens FST output with GTKWave's official reader.
 
 use std::process::Command;
-use std::sync::atomic::{AtomicU64, Ordering};
+#[path = "support/sim.rs"]
+mod sim_harness;
 use std::sync::Mutex;
+use std::time::Duration;
 
 use llg::core::compile;
 use llg::sim;
 
 static SURELOG_LOCK: Mutex<()> = Mutex::new(());
-static NEXT_DIR: AtomicU64 = AtomicU64::new(0);
-
-fn fresh_dir(tag: &str) -> std::path::PathBuf {
-    let sequence = NEXT_DIR.fetch_add(1, Ordering::Relaxed);
-    let dir = std::env::temp_dir().join(format!(
-        "llg_sim_waveform_{tag}_{}_{}",
-        std::process::id(),
-        sequence
-    ));
-    std::fs::create_dir_all(&dir).expect("create waveform test directory");
-    dir
-}
-
-fn run_waveform(sv: &str, tag: &str) -> Result<(std::path::PathBuf, String, Vec<String>), String> {
-    let dir = fresh_dir(tag);
-    let src = dir.join("tb.sv");
+fn run_waveform(
+    sv: &str,
+    tag: &str,
+) -> Result<(sim_harness::TempDir, String, Vec<String>), String> {
+    let dir = sim_harness::TempDir::new(tag)?;
+    let src = dir.path().join("tb.sv");
     std::fs::write(&src, sv).map_err(|error| format!("write source: {error}"))?;
 
-    let original_dir = std::env::current_dir().map_err(|error| format!("current dir: {error}"))?;
-    std::env::set_current_dir(&dir).map_err(|error| format!("chdir: {error}"))?;
-    let result = (|| {
+    let (stderr, warnings) = sim_harness::with_cwd(dir.path(), || {
         let output = compile::compile_checked(&compile::CompileOpts {
             files: vec![src.to_string_lossy().into_owned()],
             top: Some("tb".to_string()),
@@ -45,12 +35,13 @@ fn run_waveform(sv: &str, tag: &str) -> Result<(std::path::PathBuf, String, Vec<
         if !generated.model_c.contains("#define LLG_WAVEFORM 1") {
             return Err("waveform controls did not enable generated runtime support".to_string());
         }
-        let exe = sim::build::build_model_cmake(&dir, &[("model.c", generated.model_c.as_str())])
-            .map_err(|error| format!("cmake: {error}"))?;
-        let process = Command::new(&exe)
-            .current_dir(&dir)
-            .output()
-            .map_err(|error| format!("run {}: {error}", exe.display()))?;
+        let exe =
+            sim::build::build_model_cmake(dir.path(), &[("model.c", generated.model_c.as_str())])
+                .map_err(|error| format!("cmake: {error}"))?;
+        let process = sim_harness::run_command(
+            Command::new(&exe).current_dir(dir.path()),
+            Duration::from_secs(60),
+        )?;
         if !process.status.success() {
             return Err(format!(
                 "simulator exited with {:?}: {}",
@@ -59,13 +50,11 @@ fn run_waveform(sv: &str, tag: &str) -> Result<(std::path::PathBuf, String, Vec<
             ));
         }
         Ok((
-            dir.clone(),
             String::from_utf8_lossy(&process.stderr).into_owned(),
             generated.warnings,
         ))
-    })();
-    std::env::set_current_dir(original_dir).map_err(|error| format!("restore cwd: {error}"))?;
-    result
+    })?;
+    Ok((dir, stderr, warnings))
 }
 
 #[test]
@@ -123,7 +112,7 @@ endmodule
         1,
         "a model should report the conservative dump selection exactly once: {warnings:?}"
     );
-    let vcd = std::fs::read_to_string(dir.join("trace.vcd")).expect("read generated VCD");
+    let vcd = std::fs::read_to_string(dir.path().join("trace.vcd")).expect("read generated VCD");
 
     assert!(vcd.contains("$timescale 1ps $end"));
     assert!(vcd.contains("$date\n  reproducible build\n$end"));
@@ -148,8 +137,6 @@ endmodule
     assert!(vcd.contains("b10z1 "));
     assert!(vcd.contains("b0011 "), "final-block value must be dumped");
     assert!(vcd.contains("r2.5 "));
-
-    let _ = std::fs::remove_dir_all(dir);
 }
 
 #[test]
@@ -180,15 +167,14 @@ endmodule
         warnings.is_empty(),
         "unexpected codegen warnings: {warnings:?}"
     );
-    let metadata = std::fs::metadata(dir.join("trace.fst")).expect("generated FST metadata");
+    let metadata = std::fs::metadata(dir.path().join("trace.fst")).expect("generated FST metadata");
     assert!(
         metadata.len() > 64,
         "generated FST should contain hierarchy and values"
     );
 
-    validate_generated_fst(&dir).expect("official FST reader should validate generated contents");
-
-    let _ = std::fs::remove_dir_all(dir);
+    validate_generated_fst(dir.path())
+        .expect("official FST reader should validate generated contents");
 }
 
 #[cfg(not(windows))]
@@ -236,33 +222,36 @@ int main(void) {
         .or_else(|_| std::env::var("CC"))
         .unwrap_or_else(|_| "cc".to_string());
     let executable = dir.join("fst_probe");
-    let compile = Command::new(&compiler)
-        .current_dir(dir)
-        .args([
-            "-std=c11",
-            "-DFST_CONFIG_INCLUDE=\"fst_config.h\"",
-            "-I.",
-            "fst_probe.c",
-            "fstapi.c",
-            "fastlz.c",
-            "lz4.c",
-            "-lz",
-            "-lm",
-            "-o",
-        ])
-        .arg(&executable)
-        .output()
-        .map_err(|error| format!("run FST reader compiler `{compiler}`: {error}"))?;
+    let compile = sim_harness::run_command(
+        Command::new(&compiler)
+            .current_dir(dir)
+            .args([
+                "-std=c11",
+                "-DFST_CONFIG_INCLUDE=\"fst_config.h\"",
+                "-I.",
+                "fst_probe.c",
+                "fstapi.c",
+                "fastlz.c",
+                "lz4.c",
+                "-lz",
+                "-lm",
+                "-o",
+            ])
+            .arg(&executable),
+        Duration::from_secs(60),
+    )
+    .map_err(|error| format!("run FST reader compiler `{compiler}`: {error}"))?;
     if !compile.status.success() {
         return Err(format!(
             "compile FST reader probe: {}",
             String::from_utf8_lossy(&compile.stderr)
         ));
     }
-    let output = Command::new(&executable)
-        .current_dir(dir)
-        .output()
-        .map_err(|error| format!("run FST reader probe: {error}"))?;
+    let output = sim_harness::run_command(
+        Command::new(&executable).current_dir(dir),
+        Duration::from_secs(60),
+    )
+    .map_err(|error| format!("run FST reader probe: {error}"))?;
     if !output.status.success() {
         return Err(format!(
             "FST reader rejected hierarchy/timed values with {:?}: {}",

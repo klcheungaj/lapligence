@@ -18,9 +18,13 @@
 
 use std::process::Command;
 use std::sync::Mutex;
+use std::time::Duration;
 
 use llg::core::compile;
 use llg::sim;
+
+#[path = "support/sim.rs"]
+mod sim_harness;
 
 static SURELOG_LOCK: Mutex<()> = Mutex::new(());
 
@@ -28,14 +32,9 @@ static SURELOG_LOCK: Mutex<()> = Mutex::new(());
 /// runtime + libaco and run it; returns `(stdout, stderr)`.  Each call uses
 /// its own temp dir and restores the CWD afterwards.
 fn run_design(sv: &str, tag: &str) -> Result<(String, String), String> {
-    let dir = std::env::temp_dir().join(format!("llg_sim_region_{}_{}", tag, std::process::id()));
-    std::fs::create_dir_all(&dir).map_err(|e| format!("create temp dir: {e}"))?;
-    let src = dir.join("region.sv");
-    std::fs::write(&src, sv).map_err(|e| format!("write source: {e}"))?;
-
-    let orig_cwd = std::env::current_dir().map_err(|e| format!("current dir: {e}"))?;
-    std::env::set_current_dir(&dir).map_err(|e| format!("chdir: {e}"))?;
-    let result = (|| -> Result<(String, String), String> {
+    sim_harness::with_temp_cwd(tag, |dir| {
+        let src = dir.join("region.sv");
+        std::fs::write(&src, sv).map_err(|e| format!("write source: {e}"))?;
         let out = compile::compile(&compile::CompileOpts {
             files: vec![src.to_string_lossy().into_owned()],
             top: Some("tb".to_string()),
@@ -47,11 +46,9 @@ fn run_design(sv: &str, tag: &str) -> Result<(String, String), String> {
         }
         let design = out.uhdm_design().ok_or("no UHDM design")?;
         let gen = sim::codegen::generate(design).map_err(|e| format!("codegen: {e}"))?;
-        let exe = sim::build::build_model_cmake(&dir, &[("model.c", gen.model_c.as_str())])
+        let exe = sim::build::build_model_cmake(dir, &[("model.c", gen.model_c.as_str())])
             .map_err(|e| format!("cmake: {e}"))?;
-        let output = Command::new(&exe)
-            .output()
-            .map_err(|e| format!("run: {e}"))?;
+        let output = sim_harness::run_command(&mut Command::new(&exe), Duration::from_secs(60))?;
         if !output.status.success() {
             return Err(format!(
                 "sim exited with {:?}, stderr: {}",
@@ -63,11 +60,7 @@ fn run_design(sv: &str, tag: &str) -> Result<(String, String), String> {
             String::from_utf8_lossy(&output.stdout).into_owned(),
             String::from_utf8_lossy(&output.stderr).into_owned(),
         ))
-    })();
-
-    std::env::set_current_dir(&orig_cwd).map_err(|e| format!("restore cwd: {e}"))?;
-    let _ = std::fs::remove_dir_all(&dir);
-    result
+    })
 }
 
 /// 1. NBA semantics: RHS sampled when the NBA statement executes; LHS updated

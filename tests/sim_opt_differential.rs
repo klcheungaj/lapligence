@@ -10,7 +10,8 @@
 //! already pinned by the per-feature suites, which run the default
 //! configuration.)
 
-use std::process::Command;
+#[path = "support/sim.rs"]
+mod sim_harness;
 use std::sync::Mutex;
 
 use llg::core::compile;
@@ -22,14 +23,9 @@ static SURELOG_LOCK: Mutex<()> = Mutex::new(());
 /// Compile `sv` once (top `top`), generate + build + run both variants in
 /// PID-keyed sibling directories, and return their two stdouts.
 fn run_both(sv: &str, top: &str, tag: &str) -> Result<(String, String), String> {
-    let dir = std::env::temp_dir().join(format!("llg_sim_optdiff_{tag}_{}", std::process::id()));
-    std::fs::create_dir_all(&dir).expect("create temp dir");
-    let src = dir.join("tb.sv");
-    std::fs::write(&src, sv).expect("write source");
-
-    let orig_cwd = std::env::current_dir().expect("current dir");
-    std::env::set_current_dir(&dir).expect("chdir to temp dir");
-    let result = (|| -> Result<(String, String), String> {
+    sim_harness::with_temp_cwd(tag, |dir| {
+        let src = dir.join("tb.sv");
+        std::fs::write(&src, sv).map_err(|error| format!("write source: {error}"))?;
         // 1. Surelog compile + elaborate (once).
         let out = compile::compile_checked(&compile::CompileOpts {
             files: vec![src.to_string_lossy().into_owned()],
@@ -53,26 +49,12 @@ fn run_both(sv: &str, top: &str, tag: &str) -> Result<(String, String), String> 
             let out_dir = dir.join(name);
             let exe = sim::build::build_model_cmake(&out_dir, &[("model.c", model_c)])
                 .map_err(|e| format!("cmake({name}): {e}"))?;
-            let output = Command::new(&exe)
-                .output()
-                .map_err(|e| format!("run({name}): {e}"))?;
-            if !output.status.success() {
-                return Err(format!(
-                    "sim({name}) exited with {:?}, stderr: {}",
-                    output.status,
-                    String::from_utf8_lossy(&output.stderr)
-                ));
-            }
-            Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+            sim_harness::run_executable(&exe).map_err(|error| format!("{name}: {error}"))
         };
         let on = run_variant("opt_on", &opt_on.model_c)?;
         let off = run_variant("opt_off", &opt_off.model_c)?;
         Ok((on, off))
-    })();
-
-    std::env::set_current_dir(&orig_cwd).map_err(|e| format!("restore cwd: {e}"))?;
-    let _ = std::fs::remove_dir_all(&dir);
-    result
+    })
 }
 
 fn assert_differential(sv: &str, top: &str, tag: &str) {

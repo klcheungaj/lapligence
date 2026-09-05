@@ -5,51 +5,15 @@
 //! test runs with the CWD pointed at a fresh temp dir (serialized through a
 //! mutex, like the other Surelog integration tests).
 
-use std::process::Command;
-use std::sync::Mutex;
-
 use llg::core::compile;
 use llg::sim;
 
-static SURELOG_LOCK: Mutex<()> = Mutex::new(());
+#[path = "support/sim.rs"]
+mod sim_harness;
 
-/// Compile `sv`, codegen the model, build the simulator executable and run
-/// it, returning the exact stdout.  The caller must hold `SURELOG_LOCK` and
-/// have the CWD set to the temp dir.
-fn run_sim(dir: &std::path::Path, file: &str, sv: &str) -> Result<String, String> {
-    let src = dir.join(file);
-    std::fs::write(&src, sv).map_err(|e| format!("write source: {e}"))?;
-    // 1. Surelog compile + elaborate.
-    let out = compile::compile(&compile::CompileOpts {
-        files: vec![src.to_string_lossy().into_owned()],
-        top: Some("tb".to_string()),
-        ..Default::default()
-    })
-    .map_err(|e| format!("compile: {e}"))?;
-    if !out.ok() {
-        return Err(format!("compile diagnostics: {:?}", out.diagnostics));
-    }
-    let design = out.uhdm_design().ok_or("no UHDM design")?;
-
-    // 2. Codegen.
-    let gen = sim::codegen::generate(design).map_err(|e| format!("codegen: {e}"))?;
-
-    // 3. Build model + runtime + libaco with CMake.
-    let exe = sim::build::build_model_cmake(dir, &[("model.c", gen.model_c.as_str())])
-        .map_err(|e| format!("cmake: {e}"))?;
-
-    // 4. Run.
-    let output = Command::new(&exe)
-        .output()
-        .map_err(|e| format!("run: {e}"))?;
-    if !output.status.success() {
-        return Err(format!(
-            "sim exited with {:?}, stderr: {}",
-            output.status,
-            String::from_utf8_lossy(&output.stderr)
-        ));
-    }
-    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+/// Compile and run one `tb` design through the shared simulator harness.
+fn run_sim(sv: &str, tag: &str) -> Result<String, String> {
+    sim_harness::run_sim(sv, "tb", tag)
 }
 
 /// A generate loop with one always process per iteration.  Each iteration's
@@ -81,9 +45,6 @@ fn sim_gen_loop_processes() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
-    let dir = std::env::temp_dir().join(format!("llg_sim_genloop_{}", std::process::id()));
-    std::fs::create_dir_all(&dir).expect("create temp dir");
     let sv = r#"module tb;
     reg clk;
     reg [7:0] arr [0:3];
@@ -102,13 +63,7 @@ fn sim_gen_loop_processes() {
 endmodule
 "#;
 
-    let orig_cwd = std::env::current_dir().expect("current dir");
-    std::env::set_current_dir(&dir).expect("chdir to temp dir");
-    let result = run_sim(&dir, "gen_loop.sv", sv);
-    std::env::set_current_dir(&orig_cwd).expect("restore cwd");
-    let _ = std::fs::remove_dir_all(&dir);
-
-    let stdout = result.expect("simulation should run");
+    let stdout = run_sim(sv, "genloop").expect("simulation should run");
     assert_eq!(stdout, "arr=0 1 2 3\n");
 }
 
@@ -142,9 +97,6 @@ fn sim_cond_generate_processes() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
-    let dir = std::env::temp_dir().join(format!("llg_sim_gencond_{}", std::process::id()));
-    std::fs::create_dir_all(&dir).expect("create temp dir");
     let sv = r#"module tb;
     reg clk;
     reg x;
@@ -169,13 +121,7 @@ fn sim_cond_generate_processes() {
 endmodule
 "#;
 
-    let orig_cwd = std::env::current_dir().expect("current dir");
-    std::env::set_current_dir(&dir).expect("chdir to temp dir");
-    let result = run_sim(&dir, "cond_gen.sv", sv);
-    std::env::set_current_dir(&orig_cwd).expect("restore cwd");
-    let _ = std::fs::remove_dir_all(&dir);
-
-    let stdout = result.expect("simulation should run");
+    let stdout = run_sim(sv, "gencond").expect("simulation should run");
     assert_eq!(stdout, "t=1 x=x\nt=6 x=0\nt=17 x=0\n");
 }
 
@@ -200,9 +146,6 @@ fn sim_scalar_decl_inits() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
-    let dir = std::env::temp_dir().join(format!("llg_sim_declinit_{}", std::process::id()));
-    std::fs::create_dir_all(&dir).expect("create temp dir");
     let sv = r#"module tb;
     wire w = 1'b1;
     reg [3:0] r = 4'ha;
@@ -216,13 +159,7 @@ fn sim_scalar_decl_inits() {
 endmodule
 "#;
 
-    let orig_cwd = std::env::current_dir().expect("current dir");
-    std::env::set_current_dir(&dir).expect("chdir to temp dir");
-    let result = run_sim(&dir, "decl_init.sv", sv);
-    std::env::set_current_dir(&orig_cwd).expect("restore cwd");
-    let _ = std::fs::remove_dir_all(&dir);
-
-    let stdout = result.expect("simulation should run");
+    let stdout = run_sim(sv, "declinit").expect("simulation should run");
     assert_eq!(stdout, "w=1 r=a v=0\nw=1 r=a v=1\n");
 }
 
@@ -231,9 +168,6 @@ endmodule
 /// assignment, this is initialization rather than a continuous driver.
 #[test]
 fn sim_variable_decl_init_nonconst_rejected() {
-    let _guard = SURELOG_LOCK.lock().unwrap();
-    let dir = std::env::temp_dir().join(format!("llg_sim_declnc_{}", std::process::id()));
-    std::fs::create_dir_all(&dir).expect("create temp dir");
     let sv = r#"// llg-test-fixture: tests/sim_geninit.rs/nonconst.sv
 module tb;
     reg a;
@@ -242,12 +176,11 @@ module tb;
 endmodule
 "#;
 
-    let orig_cwd = std::env::current_dir().expect("current dir");
-    std::env::set_current_dir(&dir).expect("chdir to temp dir");
-    std::fs::write(dir.join("nonconst.sv"), sv).expect("write source");
-    let result = (|| -> Result<(), String> {
+    let result = sim_harness::with_surelog_temp_cwd("declnc", |dir| {
+        let source = dir.join("nonconst.sv");
+        std::fs::write(&source, sv).map_err(|error| format!("write source: {error}"))?;
         let out = compile::compile(&compile::CompileOpts {
-            files: vec![dir.join("nonconst.sv").to_string_lossy().into_owned()],
+            files: vec![source.to_string_lossy().into_owned()],
             top: Some("tb".to_string()),
             ..Default::default()
         })
@@ -256,10 +189,10 @@ endmodule
             return Err(format!("compile diagnostics: {:?}", out.diagnostics));
         }
         let design = out.uhdm_design().ok_or("no UHDM design")?;
-        sim::codegen::generate(design).map(|_| ())
-    })();
-    std::env::set_current_dir(&orig_cwd).expect("restore cwd");
-    let _ = std::fs::remove_dir_all(&dir);
+        sim::codegen::generate(design)
+            .map(|_| ())
+            .map_err(|error| error.to_string())
+    });
 
     let err = result.expect_err("codegen must reject non-constant variable initializers");
     assert!(

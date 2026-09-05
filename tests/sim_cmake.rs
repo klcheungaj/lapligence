@@ -3,7 +3,7 @@
 //! `--generator` flag.
 //!
 //! Surelog writes `slpp_all/` into the process working directory, so the
-//! library-level cases run with the CWD pointed at a fresh PID-keyed temp dir;
+//! library-level cases run with the CWD pointed at a fresh harness temp dir;
 //! the driver-level cases spawn `llg` with its own temp CWD instead.
 //! Every test holds one shared mutex: besides serializing Surelog (like the
 //! other simulator suites), it also keeps the process-global `$LLG_CMAKE`
@@ -22,9 +22,13 @@
 
 use std::process::Command;
 use std::sync::Mutex;
+use std::time::Duration;
 
 use llg::core::compile;
 use llg::sim;
+
+#[path = "support/sim.rs"]
+mod sim_harness;
 
 static TEST_LOCK: Mutex<()> = Mutex::new(());
 
@@ -67,18 +71,16 @@ const GENERATOR: &str = "Unix Makefiles";
 /// compiling anything.
 const STUB_MODEL_C: &str = "int main(void) { return 0; }\n";
 
-fn fresh_dir(tag: &str) -> std::path::PathBuf {
-    let dir = std::env::temp_dir().join(format!("llg_sim_cmake_{tag}_{}", std::process::id()));
-    std::fs::create_dir_all(&dir).expect("create temp dir");
-    dir
+fn fresh_dir(tag: &str) -> sim_harness::TempDir {
+    sim_harness::TempDir::new(&format!("sim-cmake-{tag}")).expect("create temp dir")
 }
 
 /// Whether the host cmake lists `generator` as an available `-G` backend
 /// (`cmake --help` prints the generator table on stdout).
 fn generator_supported(generator: &str) -> bool {
-    Command::new(std::env::var("LLG_CMAKE").unwrap_or_else(|_| "cmake".to_string()))
-        .arg("--help")
-        .output()
+    let mut command = Command::new(std::env::var("LLG_CMAKE").unwrap_or_else(|_| "cmake".into()));
+    command.arg("--help");
+    sim_harness::run_command(&mut command, Duration::from_secs(30))
         .map(|o| o.status.success() && String::from_utf8_lossy(&o.stdout).contains(generator))
         .unwrap_or(false)
 }
@@ -102,17 +104,7 @@ fn compile_counter(dir: &std::path::Path) -> Result<sim::codegen::GeneratedModel
 
 /// Run a built simulator executable and return its captured stdout.
 fn run_sim(exe: &std::path::Path) -> Result<String, String> {
-    let output = Command::new(exe)
-        .output()
-        .map_err(|e| format!("run: {e}"))?;
-    if !output.status.success() {
-        return Err(format!(
-            "sim exited with {:?}, stderr: {}",
-            output.status,
-            String::from_utf8_lossy(&output.stderr)
-        ));
-    }
-    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+    sim_harness::run_executable(exe)
 }
 
 /// Library level: compile → codegen → `build_model_cmake` → run, asserting the
@@ -124,19 +116,13 @@ fn end_to_end_cmake() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let dir = fresh_dir("end_to_end");
-
-    let orig_cwd = std::env::current_dir().expect("current dir");
-    std::env::set_current_dir(&dir).expect("chdir to temp dir");
-    let result = (|| -> Result<String, String> {
-        let gen = compile_counter(&dir)?;
-        let exe = sim::build::build_model_cmake(&dir, &[("model.c", gen.model_c.as_str())])
+    let dir = fresh_dir("end-to-end");
+    let result = sim_harness::with_cwd(dir.path(), || {
+        let gen = compile_counter(dir.path())?;
+        let exe = sim::build::build_model_cmake(dir.path(), &[("model.c", gen.model_c.as_str())])
             .map_err(|e| format!("cmake build: {e}"))?;
         run_sim(&exe)
-    })();
-
-    std::env::set_current_dir(&orig_cwd).expect("restore cwd");
-    let _ = std::fs::remove_dir_all(&dir);
+    });
 
     let stdout = result.expect("cmake-built simulation should run");
     assert_eq!(stdout, EXPECTED_STDOUT);
@@ -156,26 +142,20 @@ fn explicit_generator_build_and_run() {
         eprintln!("SKIP: generator {GENERATOR:?} not supported by host cmake");
         return;
     }
-    let dir = fresh_dir("explicit_gen");
-
-    let orig_cwd = std::env::current_dir().expect("current dir");
-    std::env::set_current_dir(&dir).expect("chdir to temp dir");
-    let result = (|| -> Result<String, String> {
-        let gen = compile_counter(&dir)?;
+    let dir = fresh_dir("explicit-generator");
+    let result = sim_harness::with_cwd(dir.path(), || {
+        let gen = compile_counter(dir.path())?;
         let opts = sim::build::CmakeBuildOpts {
             generator: Some(GENERATOR.to_string()),
         };
         let exe = sim::build::build_model_cmake_with_opts(
-            &dir,
+            dir.path(),
             &[("model.c", gen.model_c.as_str())],
             &opts,
         )
         .map_err(|e| format!("cmake build: {e}"))?;
         run_sim(&exe)
-    })();
-
-    std::env::set_current_dir(&orig_cwd).expect("restore cwd");
-    let _ = std::fs::remove_dir_all(&dir);
+    });
 
     let stdout = result.expect("explicit-generator simulation should run");
     assert_eq!(stdout, EXPECTED_STDOUT);
@@ -199,8 +179,8 @@ fn invalid_generator_error() {
     let opts = sim::build::CmakeBuildOpts {
         generator: Some("No Such Generator".to_string()),
     };
-    let result = sim::build::build_model_cmake_with_opts(&dir, &[("model.c", STUB_MODEL_C)], &opts);
-    let _ = std::fs::remove_dir_all(&dir);
+    let result =
+        sim::build::build_model_cmake_with_opts(dir.path(), &[("model.c", STUB_MODEL_C)], &opts);
 
     let err = result.expect_err("unsupported generator must fail the configure step");
     assert!(matches!(&err, sim::build::BuildError::Configure { .. }));
@@ -217,15 +197,15 @@ fn driver_default_uses_cmake() {
         return;
     }
     let dir = fresh_dir("driver_default");
-    std::fs::write(dir.join("counter.sv"), COUNTER_SV).expect("write source");
+    std::fs::write(dir.path().join("counter.sv"), COUNTER_SV).expect("write source");
 
-    let output = Command::new(env!("CARGO_BIN_EXE_llg"))
+    let mut command = Command::new(env!("CARGO_BIN_EXE_llg"));
+    command
         .args(["--top", "tb", "counter.sv"])
-        .current_dir(&dir)
-        .output()
-        .expect("llg should start");
+        .current_dir(dir.path());
+    let output =
+        sim_harness::run_command(&mut command, Duration::from_secs(60)).expect("llg should start");
     let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
-    let _ = std::fs::remove_dir_all(&dir);
 
     assert!(
         output.status.success(),
@@ -272,9 +252,8 @@ fn missing_cmake_error() {
     let dir = fresh_dir("missing_cmake");
 
     let _env = EnvVarGuard::set("LLG_CMAKE", "/nonexistent/llg-no-such-cmake");
-    let result = sim::build::build_model_cmake(&dir, &[("model.c", STUB_MODEL_C)]);
+    let result = sim::build::build_model_cmake(dir.path(), &[("model.c", STUB_MODEL_C)]);
     drop(_env);
-    let _ = std::fs::remove_dir_all(&dir);
 
     let err = result.expect_err("unresolvable LLG_CMAKE must fail the build");
     assert!(matches!(&err, sim::build::BuildError::CmakeLaunch { .. }));

@@ -3,8 +3,10 @@
 //! Each case runs the standard Surelog → codegen → CMake → executable path
 //! and checks the complete stdout trace.
 
+#[path = "support/sim.rs"]
+mod sim_harness;
+
 use std::path::Path;
-use std::process::Command;
 use std::sync::Mutex;
 
 use llg::core::compile;
@@ -21,58 +23,19 @@ fn with_temp_design<T>(
     tag: &str,
     action: impl FnOnce(&Path, &Path) -> Result<T, String>,
 ) -> Result<T, String> {
-    let dir = std::env::temp_dir().join(format!("llg_sim_operator_{tag}_{}", std::process::id()));
-    std::fs::create_dir_all(&dir).map_err(|e| format!("create temp dir: {e}"))?;
-    let src = dir.join("tb.sv");
-    std::fs::write(&src, sv).map_err(|e| format!("write source: {e}"))?;
-
-    let orig_cwd = std::env::current_dir().map_err(|e| format!("current dir: {e}"))?;
-    if let Err(e) = std::env::set_current_dir(&dir) {
-        let _ = std::fs::remove_dir_all(&dir);
-        return Err(format!("chdir to temp dir: {e}"));
-    }
-    let result = action(&dir, &src);
-    let restore = std::env::set_current_dir(&orig_cwd);
-    let _ = std::fs::remove_dir_all(&dir);
-
-    match (result, restore) {
-        (Err(error), _) => Err(error),
-        (Ok(_), Err(error)) => Err(format!("restore cwd: {error}")),
-        (Ok(value), Ok(())) => Ok(value),
-    }
+    sim_harness::with_temp_cwd(tag, |dir| {
+        let source = dir.join("tb.sv");
+        std::fs::write(&source, sv).map_err(|error| format!("write source: {error}"))?;
+        action(dir, &source)
+    })
 }
 
 fn run_executable(exe: &Path, variant: &str) -> Result<String, String> {
-    let output = Command::new(exe)
-        .output()
-        .map_err(|e| format!("run {variant}: {e}"))?;
-    if !output.status.success() {
-        return Err(format!(
-            "simulation {variant} exited with {:?}, stderr: {}",
-            output.status,
-            String::from_utf8_lossy(&output.stderr)
-        ));
-    }
-    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+    sim_harness::run_executable(exe).map_err(|error| format!("{variant}: {error}"))
 }
 
 fn run_sim(sv: &str, tag: &str) -> Result<String, String> {
-    with_temp_design(sv, tag, |dir, src| {
-        let out = compile::compile(&compile::CompileOpts {
-            files: vec![src.to_string_lossy().into_owned()],
-            top: Some("tb".to_string()),
-            ..Default::default()
-        })
-        .map_err(|e| format!("compile: {e}"))?;
-        if !out.ok() {
-            return Err(format!("compile diagnostics: {:?}", out.diagnostics));
-        }
-        let design = out.uhdm_design().ok_or("no UHDM design")?;
-        let generated = sim::codegen::generate(design).map_err(|e| format!("codegen: {e}"))?;
-        let exe = sim::build::build_model_cmake(dir, &[("model.c", generated.model_c.as_str())])
-            .map_err(|e| format!("cmake: {e}"))?;
-        run_executable(&exe, "default")
-    })
+    sim_harness::run_sim(sv, "tb", tag)
 }
 
 fn codegen_error(sv: &str, tag: &str) -> Result<String, String> {
@@ -89,7 +52,7 @@ fn codegen_error(sv: &str, tag: &str) -> Result<String, String> {
         let design = out.uhdm_design().ok_or("no UHDM design")?;
         match sim::codegen::generate(design) {
             Ok(_) => Err("codegen unexpectedly succeeded".to_string()),
-            Err(error) => Ok(error),
+            Err(error) => Ok(error.to_string()),
         }
     })
 }

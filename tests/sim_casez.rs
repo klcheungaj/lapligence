@@ -5,57 +5,11 @@
 //! Each test: Surelog compile → codegen → CMake build → run, asserting the exact
 //! stdout (hand-simulated traces in the comments).
 
-use std::process::Command;
-use std::sync::Mutex;
+#[path = "support/sim.rs"]
+mod sim_harness;
 
-use llg::core::compile;
-use llg::sim;
-
-static SURELOG_LOCK: Mutex<()> = Mutex::new(());
-
-/// Compile `sv`, codegen, compile the model and run it; return stdout.
-/// The mutex serializes tests against each other: Surelog writes `slpp_all/`
-/// into the CWD and the tests chdir to per-test temp dirs, so the process-wide
-/// CWD must not be shared between concurrent tests.
 fn run_sim(dir_name: &str, sv: &str) -> Result<String, String> {
-    let _guard = SURELOG_LOCK.lock().unwrap();
-    let dir = std::env::temp_dir().join(format!("{dir_name}_{}", std::process::id()));
-    std::fs::create_dir_all(&dir).expect("create temp dir");
-    let src = dir.join("t.sv");
-    std::fs::write(&src, sv).expect("write source");
-
-    let orig_cwd = std::env::current_dir().expect("current dir");
-    std::env::set_current_dir(&dir).expect("chdir to temp dir");
-    let result = (|| -> Result<String, String> {
-        let out = compile::compile(&compile::CompileOpts {
-            files: vec![src.to_string_lossy().into_owned()],
-            top: Some("tb".to_string()),
-            ..Default::default()
-        })
-        .map_err(|e| format!("compile: {e}"))?;
-        if !out.ok() {
-            return Err(format!("compile diagnostics: {:?}", out.diagnostics));
-        }
-        let design = out.uhdm_design().ok_or("no UHDM design")?;
-        let gen = sim::codegen::generate(design).map_err(|e| format!("codegen: {e}"))?;
-        let exe = sim::build::build_model_cmake(&dir, &[("model.c", gen.model_c.as_str())])
-            .map_err(|e| format!("cmake: {e}"))?;
-        let output = Command::new(&exe)
-            .output()
-            .map_err(|e| format!("run: {e}"))?;
-        if !output.status.success() {
-            return Err(format!(
-                "sim exited with {:?}, stderr: {}",
-                output.status,
-                String::from_utf8_lossy(&output.stderr)
-            ));
-        }
-        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
-    })();
-
-    std::env::set_current_dir(&orig_cwd).expect("restore cwd");
-    let _ = std::fs::remove_dir_all(&dir);
-    result
+    sim_harness::run_sim(sv, "tb", dir_name)
 }
 
 /// casez priority encoder: `?` (z) in a case item is a don't-care, and an x

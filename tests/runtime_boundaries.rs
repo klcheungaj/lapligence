@@ -1,8 +1,12 @@
 //! Process-level checks for fatal C runtime boundary conditions.
 
 use std::process::Command;
+use std::time::Duration;
 
 use llg::sim;
+
+#[path = "support/sim.rs"]
+mod sim_harness;
 
 #[test]
 fn scheduler_time_overflow_fails_with_a_diagnostic() {
@@ -10,16 +14,19 @@ fn scheduler_time_overflow_fails_with_a_diagnostic() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let dir = std::env::temp_dir().join(format!("llg_runtime_boundary_{}", std::process::id()));
-    std::fs::create_dir_all(&dir).expect("create runtime boundary directory");
-    let executable =
-        sim::build::build_model_cmake(&dir, &[("llg_rt_selftest.c", sim::rt::selftest_source())])
-            .expect("runtime boundary probe should compile");
+    let dir =
+        sim_harness::TempDir::new("runtime-boundary").expect("create runtime boundary directory");
+    let executable = sim::build::build_model_cmake(
+        dir.path(),
+        &[("llg_rt_selftest.c", sim::rt::selftest_source())],
+    )
+    .expect("runtime boundary probe should compile");
 
-    let output = Command::new(&executable)
-        .arg("--time-overflow-probe")
-        .output()
-        .expect("runtime boundary probe should start");
+    let output = sim_harness::run_command(
+        Command::new(&executable).arg("--time-overflow-probe"),
+        Duration::from_secs(10),
+    )
+    .expect("runtime boundary probe should start");
 
     assert!(
         !output.status.success(),
@@ -31,10 +38,11 @@ fn scheduler_time_overflow_fails_with_a_diagnostic() {
         String::from_utf8_lossy(&output.stderr)
     );
 
-    let output = Command::new(&executable)
-        .arg("--scaled-time-overflow-probe")
-        .output()
-        .expect("scaled-time boundary probe should start");
+    let output = sim_harness::run_command(
+        Command::new(&executable).arg("--scaled-time-overflow-probe"),
+        Duration::from_secs(10),
+    )
+    .expect("scaled-time boundary probe should start");
     assert!(
         !output.status.success(),
         "scaled-time overflow probe unexpectedly succeeded"
@@ -44,5 +52,4 @@ fn scheduler_time_overflow_fails_with_a_diagnostic() {
         "missing scaled-time overflow diagnostic: {}",
         String::from_utf8_lossy(&output.stderr)
     );
-    std::fs::remove_dir_all(dir).expect("remove runtime boundary directory");
 }

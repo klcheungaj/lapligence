@@ -8,62 +8,14 @@
 //! Surelog writes `slpp_all/` into the process working directory, so the
 //! tests run with the CWD pointed at a fresh temp dir (serialized through a
 //! mutex, like the other Surelog integration tests).
-
-use std::process::Command;
-use std::sync::Mutex;
+#[path = "support/sim.rs"]
+mod sim_harness;
 
 use llg::core::compile;
 use llg::sim;
 
-static SURELOG_LOCK: Mutex<()> = Mutex::new(());
-
-/// Compile + codegen + C-compile + run `sv` (top module `tb`), returning the
-/// simulator's exact stdout.
 fn run_sim(sv: &str, tag: &str) -> Result<String, String> {
-    let dir = std::env::temp_dir().join(format!("llg_sim_delay_{tag}_{}", std::process::id()));
-    std::fs::create_dir_all(&dir).expect("create temp dir");
-    let src = dir.join("tb.sv");
-    std::fs::write(&src, sv).expect("write source");
-
-    let orig_cwd = std::env::current_dir().expect("current dir");
-    std::env::set_current_dir(&dir).expect("chdir to temp dir");
-    let result = (|| -> Result<String, String> {
-        // 1. Surelog compile + elaborate.
-        let out = compile::compile(&compile::CompileOpts {
-            files: vec![src.to_string_lossy().into_owned()],
-            top: Some("tb".to_string()),
-            ..Default::default()
-        })
-        .map_err(|e| format!("compile: {e}"))?;
-        if !out.ok() {
-            return Err(format!("compile diagnostics: {:?}", out.diagnostics));
-        }
-        let design = out.uhdm_design().ok_or("no UHDM design")?;
-
-        // 2. Codegen.
-        let gen = sim::codegen::generate(design).map_err(|e| format!("codegen: {e}"))?;
-
-        // 3. Build model + runtime + libaco with CMake.
-        let exe = sim::build::build_model_cmake(&dir, &[("model.c", gen.model_c.as_str())])
-            .map_err(|e| format!("cmake: {e}"))?;
-
-        // 4. Run.
-        let output = Command::new(&exe)
-            .output()
-            .map_err(|e| format!("run: {e}"))?;
-        if !output.status.success() {
-            return Err(format!(
-                "sim exited with {:?}, stderr: {}",
-                output.status,
-                String::from_utf8_lossy(&output.stderr)
-            ));
-        }
-        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
-    })();
-
-    std::env::set_current_dir(&orig_cwd).expect("restore cwd");
-    let _ = std::fs::remove_dir_all(&dir);
-    result
+    sim_harness::run_sim(sv, "tb", tag)
 }
 
 /// Compile + codegen `sv`, returning the raw codegen result (for rejection
@@ -72,14 +24,9 @@ fn codegen_result(
     sv: &str,
     tag: &str,
 ) -> Result<Result<sim::codegen::GeneratedModel, String>, String> {
-    let dir = std::env::temp_dir().join(format!("llg_sim_delay_{tag}_{}", std::process::id()));
-    std::fs::create_dir_all(&dir).expect("create temp dir");
-    let src = dir.join("tb.sv");
-    std::fs::write(&src, sv).expect("write source");
-
-    let orig_cwd = std::env::current_dir().expect("current dir");
-    std::env::set_current_dir(&dir).expect("chdir to temp dir");
-    let result = (|| -> Result<Result<sim::codegen::GeneratedModel, String>, String> {
+    sim_harness::with_surelog_temp_cwd(tag, |dir| {
+        let src = dir.join("tb.sv");
+        std::fs::write(&src, sv).map_err(|error| format!("write source: {error}"))?;
         let out = compile::compile(&compile::CompileOpts {
             files: vec![src.to_string_lossy().into_owned()],
             top: Some("tb".to_string()),
@@ -90,12 +37,8 @@ fn codegen_result(
             return Err(format!("compile diagnostics: {:?}", out.diagnostics));
         }
         let design = out.uhdm_design().ok_or("no UHDM design")?;
-        Ok(sim::codegen::generate(design))
-    })();
-
-    std::env::set_current_dir(&orig_cwd).expect("restore cwd");
-    let _ = std::fs::remove_dir_all(&dir);
-    result
+        Ok(sim::codegen::generate(design).map_err(|error| error.to_string()))
+    })
 }
 
 /// (a) Blocking intra-assignment delay: the RHS is evaluated at execution
@@ -107,7 +50,6 @@ fn sim_intra_delay_blocking_ordering() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
     let sv = r#"module tb;
     reg [7:0] a, b;
 
@@ -144,7 +86,6 @@ fn sim_intra_delay_nba_commit_time() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
     let sv = r#"module tb;
     reg [7:0] a;
 
@@ -193,7 +134,6 @@ fn sim_ca_delay_lags_by_d() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
     let sv = r#"module tb;
     reg src;
     wire [3:0] y;
@@ -238,7 +178,6 @@ fn sim_ca_delay_parameter_scales() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
     let sv = r#"module tb;
     parameter P = 2;
     reg src;
@@ -276,7 +215,6 @@ fn sim_ca_delay_t0_evaluation_delayed() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
     let sv = r#"module tb;
     reg src;
     wire y;
@@ -315,7 +253,6 @@ fn sim_ca_delay_rejects_short_pulse() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
     let sv = r#"module tb;
     reg src;
     wire y;
@@ -351,7 +288,6 @@ fn sim_ca_delay_timescale_scaling() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
     let sv = r#"`timescale 10ns/1ns
 module tb;
     reg src;
@@ -396,7 +332,6 @@ fn sim_intra_delay_zero_delay() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
     let sv = r#"module tb;
     reg [7:0] a;
     reg c;
@@ -448,7 +383,6 @@ fn sim_intra_delay_event_form_rejected() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
     let sv = r#"module tb;
     reg a, b, clk;
 
@@ -482,7 +416,6 @@ fn sim_intra_delay_repeat_form_rejected() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
     let sv = r#"module tb;
     reg a, b, clk;
 
@@ -513,7 +446,6 @@ fn sim_intra_delay_parameterized_form_rejected() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
     let sv = r#"module tb;
     reg a, b;
     parameter P = 3;
@@ -551,7 +483,6 @@ fn sim_intra_delay_non_integer_literal_forms_rejected() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
     for (tag, delay) in [("frac", "#0.5"), ("uscore", "#1_0"), ("unit", "#5ns")] {
         let sv = format!(
             r#"module tb;
@@ -586,7 +517,6 @@ fn sim_stmt_delay_non_integer_literal_forms_rejected() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
     for (tag, delay) in [("frac", "#0.5"), ("uscore", "#10_000"), ("unit", "#5ns")] {
         let sv = format!(
             r#"module tb;
@@ -620,7 +550,6 @@ fn sim_ca_delay_negative_parameter_rejected() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
     let sv = r#"module tb;
     parameter signed P = -2;
     reg src;
@@ -654,7 +583,6 @@ fn sim_stmt_delay_scaling_overflow_rejected() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
     let sv = r#"`timescale 1s/1ps
 module tb;
     reg [7:0] a;
@@ -686,7 +614,6 @@ fn sim_delay_opt_parity() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
     let sv = r#"module tb;
     reg [7:0] a, b;
     reg src;
@@ -721,73 +648,58 @@ endmodule
     //   t=9 y=1
     //   t=11 y=1
 
-    let dir = std::env::temp_dir().join(format!("llg_sim_delay_opt_{}", std::process::id()));
-    std::fs::create_dir_all(&dir).expect("create temp dir");
-    let src_path = dir.join("tb.sv");
-    std::fs::write(&src_path, sv).expect("write source");
-
-    let orig_cwd = std::env::current_dir().expect("current dir");
-    std::env::set_current_dir(&dir).expect("chdir to temp dir");
-
     fn build_and_run(
         dir: &std::path::Path,
         db: &llg::core::db::Db,
         cfg: &OptConfig,
     ) -> Result<String, String> {
-        let gen = sim::codegen::generate_from_db_with_opts(db, cfg)?;
+        let gen =
+            sim::codegen::generate_from_db_with_opts(db, cfg).map_err(|error| error.to_string())?;
         let exe = sim::build::build_model_cmake_with_opts(
             dir,
             &[("model.c", gen.model_c.as_str())],
             &Default::default(),
         )
         .map_err(|e| format!("cmake: {e}"))?;
-        let output = Command::new(&exe)
-            .output()
-            .map_err(|e| format!("run: {e}"))?;
-        if !output.status.success() {
-            return Err(format!(
-                "sim exited with {:?}, stderr: {}",
-                output.status,
-                String::from_utf8_lossy(&output.stderr)
-            ));
-        }
-        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+        sim_harness::run_executable(&exe)
     }
 
     // Compile once and lower the same owned frontend snapshot with both
     // optimizer configurations. Surelog v1.87 does not reliably start a
     // second full session in the same process, and recompilation is not part
     // of the behavior this differential test is intended to compare.
-    let out = compile::compile_checked(&compile::CompileOpts {
-        files: vec![src_path.to_string_lossy().into_owned()],
-        top: Some("tb".to_string()),
-        ..Default::default()
-    })
-    .map_err(|e| format!("compile: {e}"));
-    let (on, off) = match out {
-        Ok(out) => {
-            let database = out
-                .uhdm_design()
-                .ok_or_else(|| "no UHDM design".to_string())
-                .and_then(|design| {
-                    llg::core::db::Db::build(design).map_err(|error| error.to_string())
-                });
-            match database {
-                Ok(database) => (
-                    build_and_run(&dir, &database, &OptConfig::default()),
-                    build_and_run(&dir, &database, &OptConfig::none()),
-                ),
-                Err(error) => (Err(error.to_string()), Err(error.to_string())),
+    let (on, off) = sim_harness::with_surelog_temp_cwd("delay-opt", |dir| {
+        let src_path = dir.join("tb.sv");
+        std::fs::write(&src_path, sv).map_err(|error| format!("write source: {error}"))?;
+        let out = compile::compile_checked(&compile::CompileOpts {
+            files: vec![src_path.to_string_lossy().into_owned()],
+            top: Some("tb".to_string()),
+            ..Default::default()
+        })
+        .map_err(|e| format!("compile: {e}"));
+        Ok(match out {
+            Ok(out) => {
+                let database = out
+                    .uhdm_design()
+                    .ok_or_else(|| "no UHDM design".to_string())
+                    .and_then(|design| {
+                        llg::core::db::Db::build(design).map_err(|error| error.to_string())
+                    });
+                match database {
+                    Ok(database) => (
+                        build_and_run(dir, &database, &OptConfig::default()),
+                        build_and_run(dir, &database, &OptConfig::none()),
+                    ),
+                    Err(error) => (Err(error.to_string()), Err(error.to_string())),
+                }
             }
-        }
-        Err(error) => {
-            let message = error.to_string();
-            (Err(message.clone()), Err(message))
-        }
-    };
-
-    std::env::set_current_dir(&orig_cwd).expect("restore cwd");
-    let _ = std::fs::remove_dir_all(&dir);
+            Err(error) => {
+                let message = error.to_string();
+                (Err(message.clone()), Err(message))
+            }
+        })
+    })
+    .expect("delay parity setup");
 
     let expected = "t=5 a=1 b=2 y=x\nt=9 y=1\nt=11 y=1\n";
     assert_eq!(on.expect("opt-on run"), expected);

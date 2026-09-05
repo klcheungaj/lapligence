@@ -11,65 +11,33 @@
 //! tests run with the CWD pointed at a fresh temp dir (serialized through a
 //! mutex, like the other Surelog integration tests).
 
-use std::process::Command;
-use std::sync::Mutex;
-
 use llg::core::compile;
 use llg::sim;
 
-static SURELOG_LOCK: Mutex<()> = Mutex::new(());
+#[path = "support/sim.rs"]
+mod sim_harness;
 
 /// Compile + codegen + C-compile + run `sv` (top module `top`), returning the
 /// simulator's exact stdout, the codegen warnings and the generated C model.
 fn run_sim(sv: &str, top: &str, tag: &str) -> Result<(String, Vec<String>, String), String> {
-    let dir = std::env::temp_dir().join(format!("llg_sim_wait_{tag}_{}", std::process::id()));
-    std::fs::create_dir_all(&dir).expect("create temp dir");
-    let src = dir.join("tb.sv");
-    std::fs::write(&src, sv).expect("write source");
-
-    let orig_cwd = std::env::current_dir().expect("current dir");
-    std::env::set_current_dir(&dir).expect("chdir to temp dir");
-    let result = (|| -> Result<(String, Vec<String>, String), String> {
-        // 1. Surelog compile + elaborate.
-        let out = compile::compile(&compile::CompileOpts {
-            files: vec![src.to_string_lossy().into_owned()],
-            top: Some(top.to_string()),
+    sim_harness::with_surelog_temp_cwd(tag, |dir| {
+        let source = dir.join("tb.sv");
+        std::fs::write(&source, sv).map_err(|error| format!("write source: {error}"))?;
+        let out = compile::compile_checked(&compile::CompileOpts {
+            files: vec![source.to_string_lossy().into_owned()],
+            top: Some(top.to_owned()),
             ..Default::default()
         })
-        .map_err(|e| format!("compile: {e}"))?;
-        if !out.ok() {
-            return Err(format!("compile diagnostics: {:?}", out.diagnostics));
-        }
+        .map_err(|error| format!("compile: {error}"))?;
         let design = out.uhdm_design().ok_or("no UHDM design")?;
-
-        // 2. Codegen.
-        let gen = sim::codegen::generate(design).map_err(|e| format!("codegen: {e}"))?;
-
-        // 3. Build model + runtime + libaco with CMake.
-        let exe = sim::build::build_model_cmake(&dir, &[("model.c", gen.model_c.as_str())])
-            .map_err(|e| format!("cmake: {e}"))?;
-
-        // 4. Run.
-        let output = Command::new(&exe)
-            .output()
-            .map_err(|e| format!("run: {e}"))?;
-        if !output.status.success() {
-            return Err(format!(
-                "sim exited with {:?}, stderr: {}",
-                output.status,
-                String::from_utf8_lossy(&output.stderr)
-            ));
-        }
-        Ok((
-            String::from_utf8_lossy(&output.stdout).into_owned(),
-            gen.warnings,
-            gen.model_c,
-        ))
-    })();
-
-    std::env::set_current_dir(&orig_cwd).expect("restore cwd");
-    let _ = std::fs::remove_dir_all(&dir);
-    result
+        let generated =
+            sim::codegen::generate(design).map_err(|error| format!("codegen: {error}"))?;
+        let executable =
+            sim::build::build_model_cmake(dir, &[("model.c", generated.model_c.as_str())])
+                .map_err(|error| format!("cmake: {error}"))?;
+        let stdout = sim_harness::run_executable(&executable)?;
+        Ok((stdout, generated.warnings, generated.model_c))
+    })
 }
 
 /// (a) Handshake: two consumers both `wait (ready)` while a producer raises
@@ -81,7 +49,6 @@ fn sim_wait_handshake_two_consumers() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
     let sv = r#"module tb;
     reg ready = 0;
 
@@ -130,7 +97,6 @@ fn sim_wait_immediate_constant() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
     let sv = r#"module tb;
     initial begin
         wait (1'b1);
@@ -162,7 +128,6 @@ fn sim_wait_then_body() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
     let sv = r#"module tb;
     reg go = 0;
     reg [7:0] data = 8'h00;
@@ -206,7 +171,6 @@ fn sim_wait_task_inlined() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
     let sv = r#"module tb;
     reg go = 0;
 
@@ -260,7 +224,6 @@ fn sim_wait_compound_condition() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
     let sv = r#"module tb;
     reg a = 0;
     reg b = 0;

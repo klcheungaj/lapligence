@@ -11,27 +11,23 @@
 //! tests run with the CWD pointed at a fresh temp dir (serialized through a
 //! mutex, like the other Surelog integration tests).
 
-use std::process::Command;
 use std::sync::Mutex;
 
 use llg::core::compile;
 use llg::core::elab;
 use llg::sim;
 
+#[path = "support/sim.rs"]
+mod sim_harness;
+
 static SURELOG_LOCK: Mutex<()> = Mutex::new(());
 
 /// Compile + codegen + C-compile + run `sv` (top module `top`), returning the
 /// simulator's exact stdout and the codegen warnings.
 fn run_sim(sv: &str, top: &str, tag: &str) -> Result<(String, Vec<String>), String> {
-    let dir = std::env::temp_dir().join(format!("llg_sim_fn_{tag}_{}", std::process::id()));
-    std::fs::create_dir_all(&dir).expect("create temp dir");
-    let src = dir.join("tb.sv");
-    std::fs::write(&src, sv).expect("write source");
-
-    let orig_cwd = std::env::current_dir().expect("current dir");
-    std::env::set_current_dir(&dir).expect("chdir to temp dir");
-    let result = (|| -> Result<(String, Vec<String>), String> {
-        // 1. Surelog compile + elaborate.
+    sim_harness::with_temp_cwd(tag, |dir| {
+        let src = dir.join("tb.sv");
+        std::fs::write(&src, sv).map_err(|error| format!("write source: {error}"))?;
         let out = compile::compile(&compile::CompileOpts {
             files: vec![src.to_string_lossy().into_owned()],
             top: Some(top.to_string()),
@@ -42,34 +38,12 @@ fn run_sim(sv: &str, top: &str, tag: &str) -> Result<(String, Vec<String>), Stri
             return Err(format!("compile diagnostics: {:?}", out.diagnostics));
         }
         let design = out.uhdm_design().ok_or("no UHDM design")?;
-
-        // 2. Codegen.
         let gen = sim::codegen::generate(design).map_err(|e| format!("codegen: {e}"))?;
-
-        // 3. Build model + runtime + libaco with CMake.
-        let exe = sim::build::build_model_cmake(&dir, &[("model.c", gen.model_c.as_str())])
+        let exe = sim::build::build_model_cmake(dir, &[("model.c", gen.model_c.as_str())])
             .map_err(|e| format!("cmake: {e}"))?;
-
-        // 4. Run.
-        let output = Command::new(&exe)
-            .output()
-            .map_err(|e| format!("run: {e}"))?;
-        if !output.status.success() {
-            return Err(format!(
-                "sim exited with {:?}, stderr: {}",
-                output.status,
-                String::from_utf8_lossy(&output.stderr)
-            ));
-        }
-        Ok((
-            String::from_utf8_lossy(&output.stdout).into_owned(),
-            gen.warnings,
-        ))
-    })();
-
-    std::env::set_current_dir(&orig_cwd).expect("restore cwd");
-    let _ = std::fs::remove_dir_all(&dir);
-    result
+        let stdout = sim_harness::run_executable(&exe)?;
+        Ok((stdout, gen.warnings))
+    })
 }
 
 /// (a) Recursive function: `fact(5)` must return 120.  The function-name
@@ -407,8 +381,6 @@ fn sim_func_default_elab_resolver() {
         return;
     }
     let _guard = SURELOG_LOCK.lock().unwrap();
-    let dir = std::env::temp_dir().join(format!("llg_sim_fn_defelab_{}", std::process::id()));
-    std::fs::create_dir_all(&dir).expect("create temp dir");
     let sv = r#"module tb;
     function automatic logic [7:0] f(input logic [7:0] a = 8'd1, input logic [7:0] b = a + 8'd1);
         f = a * 10 + b;
@@ -417,12 +389,9 @@ fn sim_func_default_elab_resolver() {
     always_comb out = f();
 endmodule
 "#;
-    let src = dir.join("tb.sv");
-    std::fs::write(&src, sv).expect("write source");
-
-    let orig_cwd = std::env::current_dir().expect("current dir");
-    std::env::set_current_dir(&dir).expect("chdir to temp dir");
-    let result = (|| -> Result<elab::Val, String> {
+    let result = sim_harness::with_temp_cwd("function-default-elab", |dir| {
+        let src = dir.join("tb.sv");
+        std::fs::write(&src, sv).map_err(|error| format!("write source: {error}"))?;
         let out = compile::compile(&compile::CompileOpts {
             files: vec![src.to_string_lossy().into_owned()],
             top: Some("tb".to_string()),
@@ -451,9 +420,7 @@ endmodule
         resolver
             .eval_expr(top.raw(), rhs_owned.raw())
             .map_err(|e| format!("eval: {e}"))
-    })();
-    std::env::set_current_dir(&orig_cwd).expect("restore cwd");
-    let _ = std::fs::remove_dir_all(&dir);
+    });
 
     // f() binds a=1 (default), b=a+1=2 (default referencing the earlier
     // formal) -> f = 1*10 + 2 = 12.
