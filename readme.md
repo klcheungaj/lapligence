@@ -69,8 +69,7 @@ and 8 MiB across unique source/include inputs by default. Override them in
 `llg.toml` when a project needs larger files. The process-wide memory safeguard
 is opt-in through `LLG_MEMORY_LIMIT_MB`; it measures the complete `llg_ls` or
 `llg` process and terminates immediately at the configured physical-memory
-ceiling. See [docs/lsp_safeguards.md](docs/lsp_safeguards.md) for the
-cross-platform behavior and all environment variables.
+ceiling. See [configuration](docs/config.md) for the per-root input limits.
 
 For request-to-Surelog diagnostics, run with `LLG_LOG=debug` (or `trace` for
 every transport message) and optionally set `LLG_LOG_FILE`. Logs always go to

@@ -1,5 +1,20 @@
 # AGENTS.md
 
+## Agent persistence records
+
+- Store all persistent agent records in `persistence/`, including session
+  handoffs, implementation plans, investigation findings, validation evidence,
+  and other memory needed between agent sessions.
+- These records are for agents, not human-facing documentation. Keep human
+  guides and product references in `docs/` and module documentation beside
+  its source; do not put agent memory records there.
+- Keep `persistence/` local and ignored by Git. Do not stage, commit, or
+  force-add persistence records; they are memory between agent sessions, not
+  version-controlled project files.
+- Consult relevant persistence records when resuming work and update them with
+  decisions, evidence, limitations, and remaining work needed by the next
+  session. Update references whenever a record moves.
+
 ## Lapligence (llg) Project Overview
 
 This repository implements a **Verilog/SystemVerilog simulator** and a
@@ -107,8 +122,8 @@ at model-build time.
 CI lives in `.github/workflows/`: `build-binaries.yml` produces multi-platform
 release binaries on tag push / manual dispatch — its Windows and macOS legs
 are PLACEHOLDERS/untested because build.rs's native pipeline is validated
-only on x86_64-linux-musl (see docs/platforms.md) — while `ci.yml` is a
-lightweight fmt/check/clippy gate on ubuntu.  `docs/ROADMAP.md` remains the
+only on x86_64-linux-musl (see persistence/platforms.md) — while `ci.yml` is a
+lightweight fmt/check/clippy gate on ubuntu.  `persistence/ROADMAP.md` remains the
 plan of record for the remaining work.
 
 ## Module Rules (architecture invariants)
@@ -162,7 +177,7 @@ plan of record for the remaining work.
   `LLG_MEMORY_WARNING_PERCENT`/`LLG_MEMORY_POLL_MS`/
   `LLG_MEMORY_ADDRESS_SPACE_LIMIT`): the LSP also wires a memory sampler into
   lifecycle logging, `llg` reports status to stderr.  See
-  `docs/lsp_safeguards.md`.
+  `persistence/lsp_safeguards.md`.
 
 ---
 

@@ -21,7 +21,7 @@ rustc-link-search = []
 # ─────────────────────────────────────────────────────────────────────────────
 # Platform targets — PLACEHOLDERS, all sections below are intentionally
 # commented out.  None of these targets is validated yet; see
-# docs/platforms.md for per-target status and open blockers.  Uncomment a
+# persistence/platforms.md for per-target status and open blockers.  Uncomment a
 # section only when actually building for that target.
 # ─────────────────────────────────────────────────────────────────────────────
 

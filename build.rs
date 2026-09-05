@@ -4,7 +4,7 @@
 //!
 //! Platform support: Linux x86_64/aarch64 is the supported configuration;
 //! macOS and Windows branches in this script are PLACEHOLDERS (see
-//! docs/platforms.md for the per-target status and what still needs
+//! persistence/platforms.md for the per-target status and what still needs
 //! validation before they can link).
 
 use std::path::{Path, PathBuf};
@@ -375,7 +375,7 @@ fn apply_surelog_patches(repo: &Path, manifest_dir: &Path) {
 fn apply_surelog_patches(_repo: &Path, _manifest_dir: &Path) {
     println!(
         "cargo:warning=Surelog patches skipped: patch(1) is unavailable on \
-         this platform (placeholder; see docs/platforms.md)"
+         this platform (placeholder; see persistence/platforms.md)"
     );
 }
 
@@ -601,7 +601,7 @@ fn build_surelog_wrapper(manifest_dir: &Path) {
     } else {
         // Non-musl dynamic C++ runtime selection.
         // TODO(placeholder): the macOS and Windows branches are unvalidated
-        // (no toolchains available); see docs/platforms.md for status.
+        // (no toolchains available); see persistence/platforms.md for status.
         let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
         match target_os.as_str() {
             "macos" => {

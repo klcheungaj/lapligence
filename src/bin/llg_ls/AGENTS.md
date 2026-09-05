@@ -293,7 +293,7 @@ tower-lsp server (stdio) for VSCode-style editors, built on the shared core:
 - No `unsafe`; no `#[path]` includes (use `llg::core` / `llg::ffi`).
 - The server may install the shared process-memory guard
   (`llg::memory_limit::install_with_logger`), wiring its sampler into
-  lifecycle logging; see `docs/lsp_safeguards.md`.
+  lifecycle logging; see `persistence/lsp_safeguards.md`.
 
 ## Logging
 

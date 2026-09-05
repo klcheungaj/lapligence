@@ -14,12 +14,11 @@ slpp_all
 build-cache/
 
 docs/*
-/persistence
+/persistence/
 !.cargo
 !sim_features.md
 !config.md
 !coding_practices.md
-!ROADMAP.md
 
 skills-lock.json
 temp
