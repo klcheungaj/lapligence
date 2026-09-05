@@ -1,6 +1,7 @@
 // `uhdm_elaborate` accepts an opaque handle owned by a live Surelog session;
 // the wrapper passes that token to C++ and does not dereference it in Rust.
 #![allow(clippy::not_unsafe_ptr_arg_deref)]
+#![deny(unsafe_op_in_unsafe_fn)]
 
 use std::ffi::{CStr, CString};
 use std::marker::PhantomData;
@@ -10,6 +11,9 @@ use super::vpi::VpiHandle;
 
 // ── Raw FFI ──────────────────────────────────────────────────────────────────
 
+// SAFETY: these declarations mirror `src/wrapper/surelog_c_api.h` exactly in
+// symbol name, calling convention, parameter/return layout, and ownership
+// contract. Each call site below documents its additional validity invariants.
 #[link(name = "surelog_c_wrapper", kind = "static")]
 unsafe extern "C" {
     // SymbolTable
@@ -106,10 +110,14 @@ pub(crate) struct SLRawNodeInfo {
     pub symbol_name: *const c_char, // SymbolTable intern  — never free; may be null
 }
 
-// SAFETY: SLRawNodeInfo only contains plain data (integers + read-only C
-// string pointers to static/interned storage).  It is never mutated after
-// the FFI call that fills it, so Send + Sync hold.
+// SAFETY: transferring or sharing `SLRawNodeInfo` only transfers/shares plain
+// scalar values and opaque pointer values. Safe Rust cannot dereference those
+// pointers, and this module only dereferences `symbol_name` while its owning
+// Surelog session is alive; the pointed-to storage is immutable for that
+// period. `SLRawNodeInfo` itself owns no resource and has no thread affinity.
 unsafe impl Send for SLRawNodeInfo {}
+// SAFETY: same invariant as for `Send`; shared access cannot mutate either the
+// record or the immutable C strings to which its pointer fields refer.
 unsafe impl Sync for SLRawNodeInfo {}
 
 // ── Structured diagnostics (mirrors SL_Diag in surelog_c_api.h) ──────────────
@@ -185,6 +193,10 @@ pub struct SurelogSession {
 
 impl Drop for SurelogSession {
     fn drop(&mut self) {
+        // SAFETY: a session is constructed only after all four pointers are
+        // returned non-null by the matching wrapper constructors. It owns each
+        // object exactly once and destroys them in dependency order; `compiled`
+        // records whether `compiler` must first be shut down.
         unsafe {
             if self.compiled {
                 sl_shutdown_compiler(self.compiler);
@@ -211,9 +223,10 @@ impl SurelogSession {
         let owned: Option<Vec<CString>> = args.iter().map(|s| CString::new(*s).ok()).collect();
         let owned = owned?;
 
-        // SAFETY: the raw pointers are created here and handed to
-        // `finish_session`, which owns them from that point on and frees them
-        // on any failure.
+        // SAFETY: each constructor is called with the live dependency returned
+        // by the preceding constructor. Every non-null object is either freed
+        // along the failure path in reverse dependency order or transferred to
+        // `finish_session`; no pointer is used after that transfer.
         unsafe {
             let symbol_table = sl_create_symbol_table();
             if symbol_table.is_null() {
@@ -238,17 +251,22 @@ impl SurelogSession {
     // ── Errors ────────────────────────────────────────────────────────────────
 
     pub fn fatal_count(&self) -> u32 {
+        // SAFETY: `self.errors` is a live ErrorContainer owned by this session.
         unsafe { sl_errors_get_fatal_count(self.errors) }
     }
     pub fn syntax_count(&self) -> u32 {
+        // SAFETY: `self.errors` is a live ErrorContainer owned by this session.
         unsafe { sl_errors_get_syntax_count(self.errors) }
     }
     pub fn error_count(&self) -> u32 {
+        // SAFETY: `self.errors` is a live ErrorContainer owned by this session.
         unsafe { sl_errors_get_error_count(self.errors) }
     }
 
     /// Print (or suppress) all accumulated error messages.
     pub fn print_messages(&self, mute: bool) {
+        // SAFETY: `self.errors` is a live ErrorContainer owned by this session;
+        // `mute as c_int` is valid for the wrapper's zero/non-zero flag.
         unsafe {
             sl_errors_print_messages(self.errors, mute as c_int);
         }
@@ -259,12 +277,16 @@ impl SurelogSession {
     /// Every entry is copied into an owned `Diag`, so the returned vector
     /// remains valid after the session is dropped.
     pub fn diagnostics(&self) -> Vec<Diag> {
+        // SAFETY: `self.errors` is a live ErrorContainer owned by this session.
         let n = unsafe { sl_errors_get_count(self.errors) };
         let mut out = Vec::with_capacity(n as usize);
         for i in 0..n {
-            // Zero-initialise so padding bytes are defined and nothing is read
-            // as a pointer if the C++ side fails to fill `raw`.
+            // SAFETY: every all-zero field value is valid for `SLDiag`: integer
+            // fields accept zero and null is a valid value for both pointers.
             let mut raw: SLDiag = unsafe { std::mem::zeroed() };
+            // SAFETY: `self.errors` is live, `i < n`, and `raw` provides valid,
+            // aligned writable storage for one `SLDiag` for the duration of the
+            // call. The wrapper either fills it and returns 1 or leaves it unused.
             let ok = unsafe { sl_errors_get_item(self.errors, i, &mut raw) };
             if ok == 0 {
                 continue;
@@ -291,6 +313,8 @@ impl SurelogSession {
     /// Returns a non-owning `Design` handle whose lifetime is tied to `&self`.
     /// Automatically ensures the compiler is still alive.
     pub fn design(&self) -> Option<Design<'_>> {
+        // SAFETY: `self.compiler` is a live compiler owned by this session. The
+        // returned pointer is only wrapped with the lifetime of this borrow.
         let ptr = unsafe { sl_get_design(self.compiler) };
         if ptr.is_null() {
             None
@@ -312,6 +336,7 @@ impl SurelogSession {
     /// }
     /// ```
     pub fn uhdm_design(&self) -> Option<VpiHandle<'_>> {
+        // SAFETY: `self.compiler` is live and owns any returned UHDM design.
         let ptr = unsafe { sl_get_uhdm_design(self.compiler) };
         if ptr.is_null() {
             None
@@ -345,20 +370,33 @@ unsafe fn finish_session(
     let c_argv: Vec<*const c_char> = args.iter().map(|s| s.as_ptr()).collect();
     let argc = c_int::try_from(args.len()).ok()?;
 
-    // SAFETY: `c_argv` points into `args`, alive for the full extent of this
-    // call; all pointers are valid null-terminated C strings.
-    let ok = sl_clp_parse_command_line(clp, argc, c_argv.as_ptr());
+    // SAFETY: `clp` is live by the function contract. `c_argv` points into
+    // `args`, which remains alive and immutably borrowed for this call; every
+    // element points to a NUL-terminated `CString`, and `argc` is its length.
+    let ok = unsafe { sl_clp_parse_command_line(clp, argc, c_argv.as_ptr()) };
     if ok == 0 {
-        sl_free_command_line_parser(clp);
-        sl_free_error_container(errors);
-        sl_free_symbol_table(symbol_table);
+        // SAFETY: the function contract transfers unique ownership of these
+        // live objects. Parsing failed before a compiler was created, so they
+        // are destroyed exactly once in reverse dependency order.
+        unsafe {
+            sl_free_command_line_parser(clp);
+            sl_free_error_container(errors);
+            sl_free_symbol_table(symbol_table);
+        }
         return None;
     }
-    let compiler = sl_start_compiler(clp);
+    // SAFETY: `clp` remains live and parsed successfully; its ErrorContainer
+    // and SymbolTable dependencies also remain live for this call.
+    let compiler = unsafe { sl_start_compiler(clp) };
     if compiler.is_null() {
-        sl_free_command_line_parser(clp);
-        sl_free_error_container(errors);
-        sl_free_symbol_table(symbol_table);
+        // SAFETY: compiler creation returned null and acquired no ownership.
+        // The three uniquely owned live inputs are destroyed exactly once in
+        // reverse dependency order.
+        unsafe {
+            sl_free_command_line_parser(clp);
+            sl_free_error_container(errors);
+            sl_free_symbol_table(symbol_table);
+        }
         return None;
     }
     Some(SurelogSession {
@@ -389,9 +427,10 @@ pub struct SessionBuilder {
 
 impl Drop for SessionBuilder {
     fn drop(&mut self) {
-        // SAFETY: non-null pointers are owned by this builder. build()
-        // replaces transferred pointers with null before finish_session
-        // takes ownership, preventing double-free on either success or error.
+        // SAFETY: each non-null pointer is a live object uniquely owned by this
+        // builder. `build()` replaces transferred pointers with null before
+        // handing them off. Remaining objects are destroyed exactly once here
+        // in reverse dependency order.
         unsafe {
             if !self.clp.is_null() {
                 sl_free_command_line_parser(self.clp);
@@ -411,8 +450,10 @@ impl SessionBuilder {
     /// disable Python support.  `None` if the C++ side fails to initialise
     /// any object.
     pub fn new() -> Option<SessionBuilder> {
-        // SAFETY: the pointers are created here and owned by the builder;
-        // they are freed by `build()` on failure or by the resulting session.
+        // SAFETY: each constructor receives the live dependency returned by
+        // the preceding constructor. Every non-null object is either freed on
+        // a later construction failure in reverse dependency order or stored
+        // in the builder for eventual transfer/destruction.
         unsafe {
             let symbol_table = sl_create_symbol_table();
             if symbol_table.is_null() {
@@ -442,6 +483,7 @@ impl SessionBuilder {
     /// Enable parsing.  Surelog enables this by default; kept for symmetry
     /// with the CLI flags.
     pub fn set_parse(&mut self) -> &mut Self {
+        // SAFETY: `self.clp` is non-null and owned by this live builder.
         unsafe {
             sl_clp_set_parse(self.clp);
         }
@@ -454,6 +496,7 @@ impl SessionBuilder {
     /// parse→compile→elaborate pipeline requires it (without it the design is
     /// left empty).  Always enable it when driving the pipeline via setters.
     pub fn set_write_pp_output(&mut self) -> &mut Self {
+        // SAFETY: `self.clp` is non-null and owned by this live builder.
         unsafe {
             sl_clp_set_write_pp_output(self.clp);
         }
@@ -462,6 +505,7 @@ impl SessionBuilder {
 
     /// Enable compilation of the parsed design.
     pub fn set_compile(&mut self) -> &mut Self {
+        // SAFETY: `self.clp` is non-null and owned by this live builder.
         unsafe {
             sl_clp_set_compile(self.clp);
         }
@@ -470,6 +514,7 @@ impl SessionBuilder {
 
     /// Enable elaboration of the design.
     pub fn set_elaborate(&mut self) -> &mut Self {
+        // SAFETY: `self.clp` is non-null and owned by this live builder.
         unsafe {
             sl_clp_set_elaborate(self.clp);
         }
@@ -479,6 +524,7 @@ impl SessionBuilder {
     /// Enable UHDM full elaboration: ref binding and per-instance
     /// uniquification.
     pub fn set_elab_uhdm(&mut self) -> &mut Self {
+        // SAFETY: `self.clp` is non-null and owned by this live builder.
         unsafe {
             sl_clp_set_elab_uhdm(self.clp);
         }
@@ -487,6 +533,7 @@ impl SessionBuilder {
 
     /// Suppress Surelog's own stdout diagnostics.
     pub fn set_mute_stdout(&mut self) -> &mut Self {
+        // SAFETY: `self.clp` is non-null and owned by this live builder.
         unsafe {
             sl_clp_set_mute_stdout(self.clp);
         }
@@ -547,10 +594,13 @@ impl<'s> Design<'s> {
     }
 
     pub fn top_instance_count(&self) -> u32 {
+        // SAFETY: `self.0` is a live Design borrowed from its owning compiler.
         unsafe { sl_design_get_top_instance_count(self.0) }
     }
 
     pub fn top_instance(&self, i: u32) -> Option<ModuleInstance<'s>> {
+        // SAFETY: `self.0` is a live Design. The wrapper bounds-checks `i` and
+        // returns either null or a child owned by that Design.
         let ptr = unsafe { sl_design_get_top_instance(self.0, i) };
         if ptr.is_null() {
             None
@@ -560,10 +610,13 @@ impl<'s> Design<'s> {
     }
 
     pub fn file_content_count(&self) -> u32 {
+        // SAFETY: `self.0` is a live Design borrowed from its owning compiler.
         unsafe { sl_design_get_file_content_count(self.0) }
     }
 
     pub fn file_content(&self, i: u32) -> Option<FileContent<'s>> {
+        // SAFETY: `self.0` is a live Design. The wrapper bounds-checks `i` and
+        // returns either null or FileContent owned by that Design.
         let ptr = unsafe { sl_design_get_file_content(self.0, i) };
         if ptr.is_null() {
             None
@@ -580,18 +633,25 @@ impl<'s> ModuleInstance<'s> {
     }
 
     pub fn full_path_name(&self) -> String {
+        // SAFETY: `self.0` is a live ModuleInstance. The wrapper returns null
+        // or a newly allocated NUL-terminated string for this call to consume.
         take_owned_c_string(unsafe { sl_instance_get_full_path_name(self.0) })
     }
 
     pub fn file_path(&self) -> String {
+        // SAFETY: `self.0` is a live ModuleInstance. The wrapper returns null
+        // or a newly allocated NUL-terminated string for this call to consume.
         take_owned_c_string(unsafe { sl_instance_get_file_path(self.0) })
     }
 
     pub fn child_count(&self) -> u32 {
+        // SAFETY: `self.0` is a live ModuleInstance borrowed from its Design.
         unsafe { sl_instance_get_child_count(self.0) }
     }
 
     pub fn child(&self, i: u32) -> Option<ModuleInstance<'s>> {
+        // SAFETY: `self.0` is a live ModuleInstance. The wrapper delegates `i`
+        // to Surelog and returns either null or a child with the same owner.
         let ptr = unsafe { sl_instance_get_child(self.0, i) };
         if ptr.is_null() {
             None
@@ -608,14 +668,18 @@ impl<'s> FileContent<'s> {
     }
 
     pub fn path(&self) -> String {
+        // SAFETY: `self.0` is live FileContent. The wrapper returns null or a
+        // newly allocated NUL-terminated string for this call to consume.
         take_owned_c_string(unsafe { sl_file_content_get_path(self.0) })
     }
 
     pub fn file_id(&self) -> u32 {
+        // SAFETY: `self.0` is live FileContent borrowed from its Design.
         unsafe { sl_file_content_get_file_id(self.0) }
     }
 
     pub fn node_count(&self) -> u32 {
+        // SAFETY: `self.0` is live FileContent borrowed from its Design.
         unsafe { sl_file_content_get_node_count(self.0) }
     }
 
@@ -624,9 +688,12 @@ impl<'s> FileContent<'s> {
     /// The returned `ParseNode` owns its strings; no pointers into the
     /// C++ session are retained after the call.
     pub fn get_node(&self, index: u32) -> Option<ParseNode> {
-        // Zero-initialise so padding bytes are defined (avoid UB in
-        // assume_init even though padding is not read by Rust).
+        // SAFETY: every all-zero field value is valid for `SLRawNodeInfo`:
+        // integers accept zero and null is valid for both pointer fields.
         let mut raw: SLRawNodeInfo = unsafe { std::mem::zeroed() };
+        // SAFETY: `self.0` is live FileContent and `raw` is valid, aligned
+        // writable storage. The wrapper bounds-checks `index` before filling
+        // the complete record and reports whether initialization succeeded.
         let ok = unsafe { sl_file_content_get_node(self.0, index, &mut raw as *mut _) };
         if ok == 0 {
             return None;
@@ -639,6 +706,9 @@ impl<'s> FileContent<'s> {
             None
         } else {
             Some(
+                // SAFETY: success above guarantees a non-null `symbol_name`
+                // points to a NUL-terminated interned string that remains live
+                // for the compiler/session lifetime enclosing this borrow.
                 unsafe { CStr::from_ptr(raw.symbol_name) }
                     .to_string_lossy()
                     .into_owned(),
@@ -729,6 +799,10 @@ fn take_owned_c_string(ptr: *mut c_char) -> String {
     if ptr.is_null() {
         return String::new();
     }
+    // SAFETY: this private helper is called only with pointers returned by
+    // wrapper functions documented to return a newly allocated NUL-terminated
+    // string or null. The bytes are copied before the allocation is released
+    // exactly once with its matching wrapper deallocator.
     unsafe {
         let s = CStr::from_ptr(ptr).to_string_lossy().into_owned();
         sl_free_string(ptr);
@@ -738,6 +812,9 @@ fn take_owned_c_string(ptr: *mut c_char) -> String {
 
 /// Runs UHDM elaboration on the design returned by `SurelogSession::uhdm_design`.
 pub fn uhdm_elaborate(vpi_design: VpiHandle<'_>) {
+    // SAFETY: `VpiHandle` can only be constructed in this crate from a UHDM
+    // handle branded with its live Surelog owner. The wrapper treats the raw
+    // value as an opaque token and elaborates the owned design in place.
     unsafe {
         sl_uhdm_elaborate(vpi_design.as_raw());
     }
@@ -757,6 +834,8 @@ pub struct Compiler<'clp>(*mut c_void, PhantomData<&'clp ()>);
 
 impl Drop for SymbolTable {
     fn drop(&mut self) {
+        // SAFETY: this wrapper uniquely owns the SymbolTable returned by the
+        // matching constructor, and `Drop` runs exactly once.
         unsafe {
             sl_free_symbol_table(self.0);
         }
@@ -764,6 +843,8 @@ impl Drop for SymbolTable {
 }
 impl Drop for ErrorContainer<'_> {
     fn drop(&mut self) {
+        // SAFETY: this wrapper uniquely owns the ErrorContainer returned by the
+        // matching constructor. Its lifetime keeps the SymbolTable alive.
         unsafe {
             sl_free_error_container(self.0);
         }
@@ -771,6 +852,8 @@ impl Drop for ErrorContainer<'_> {
 }
 impl Drop for CommandLineParser<'_> {
     fn drop(&mut self) {
+        // SAFETY: this wrapper uniquely owns the parser returned by the matching
+        // constructor; its borrowed dependencies remain live through this drop.
         unsafe {
             sl_free_command_line_parser(self.0);
         }
@@ -778,6 +861,8 @@ impl Drop for CommandLineParser<'_> {
 }
 impl Drop for Compiler<'_> {
     fn drop(&mut self) {
+        // SAFETY: this wrapper uniquely owns the live compiler returned by
+        // `sl_start_compiler`; its parser dependency remains live through drop.
         unsafe {
             sl_shutdown_compiler(self.0);
         }
@@ -787,9 +872,13 @@ impl Drop for Compiler<'_> {
 // ── Constructors (free functions — no owning parent yet) ─────────────────────
 
 pub fn create_symbol_table() -> SymbolTable {
+    // SAFETY: the wrapper constructor takes no arguments and returns a newly
+    // allocated SymbolTable whose ownership is immediately captured.
     SymbolTable(unsafe { sl_create_symbol_table() })
 }
 pub fn create_error_container<'st>(st: &'st SymbolTable) -> ErrorContainer<'st> {
+    // SAFETY: `st.0` denotes the live SymbolTable borrowed for `'st`; ownership
+    // of the newly allocated ErrorContainer is immediately captured.
     ErrorContainer(unsafe { sl_create_error_container(st.0) }, PhantomData)
 }
 pub fn create_command_line_parser<'a>(
@@ -797,6 +886,8 @@ pub fn create_command_line_parser<'a>(
     st: &'a SymbolTable,
 ) -> CommandLineParser<'a> {
     CommandLineParser(
+        // SAFETY: both pointers denote live, mutually associated dependencies
+        // borrowed for `'a`; ownership of the new parser is captured here.
         unsafe { sl_create_command_line_parser(ec.0, st.0) },
         PhantomData,
     )
@@ -806,17 +897,22 @@ pub fn create_command_line_parser<'a>(
 
 impl<'st> ErrorContainer<'st> {
     pub fn print_messages(&self, mute: c_int) {
+        // SAFETY: `self.0` is the live ErrorContainer owned by this wrapper;
+        // the C API accepts any integer as its zero/non-zero mute flag.
         unsafe {
             sl_errors_print_messages(self.0, mute);
         }
     }
     pub fn fatal_count(&self) -> u32 {
+        // SAFETY: `self.0` is the live ErrorContainer owned by this wrapper.
         unsafe { sl_errors_get_fatal_count(self.0) }
     }
     pub fn syntax_count(&self) -> u32 {
+        // SAFETY: `self.0` is the live ErrorContainer owned by this wrapper.
         unsafe { sl_errors_get_syntax_count(self.0) }
     }
     pub fn error_count(&self) -> u32 {
+        // SAFETY: `self.0` is the live ErrorContainer owned by this wrapper.
         unsafe { sl_errors_get_error_count(self.0) }
     }
 }
@@ -825,26 +921,31 @@ impl<'st> ErrorContainer<'st> {
 
 impl<'a> CommandLineParser<'a> {
     pub fn no_python(&self) {
+        // SAFETY: `self.0` is the live parser owned by this wrapper.
         unsafe {
             sl_clp_no_python(self.0);
         }
     }
     pub fn set_parse(&self) {
+        // SAFETY: `self.0` is the live parser owned by this wrapper.
         unsafe {
             sl_clp_set_parse(self.0);
         }
     }
     pub fn set_write_pp_output(&self) {
+        // SAFETY: `self.0` is the live parser owned by this wrapper.
         unsafe {
             sl_clp_set_write_pp_output(self.0);
         }
     }
     pub fn set_compile(&self) {
+        // SAFETY: `self.0` is the live parser owned by this wrapper.
         unsafe {
             sl_clp_set_compile(self.0);
         }
     }
     pub fn set_elaborate(&self) {
+        // SAFETY: `self.0` is the live parser owned by this wrapper.
         unsafe {
             sl_clp_set_elaborate(self.0);
         }
@@ -854,14 +955,17 @@ impl<'a> CommandLineParser<'a> {
     /// and resolves function/task calls.  Requires `set_elaborate` to have
     /// any effect.  This mirrors Surelog's `-elabuhdm` flag.
     pub fn set_elab_uhdm(&self) {
+        // SAFETY: `self.0` is the live parser owned by this wrapper.
         unsafe {
             sl_clp_set_elab_uhdm(self.0);
         }
     }
     pub fn help(&self) -> bool {
+        // SAFETY: `self.0` is the live parser owned by this wrapper.
         unsafe { sl_clp_help(self.0) != 0 }
     }
     pub fn mute_stdout(&self) -> c_int {
+        // SAFETY: `self.0` is the live parser owned by this wrapper.
         unsafe { sl_clp_mute_stdout(self.0) }
     }
 
@@ -883,7 +987,9 @@ impl<'a> CommandLineParser<'a> {
             None => return false,
         };
         let c_argv: Vec<*const c_char> = owned.iter().map(|s| s.as_ptr()).collect();
-        // SAFETY: `c_argv` points into `owned`, alive for the duration of this call.
+        // SAFETY: `self.0` is a live parser. `c_argv` has exactly `argc`
+        // entries, each pointing into a `CString` in `owned`; both vectors and
+        // all NUL-terminated strings remain alive for the duration of the call.
         unsafe { sl_clp_parse_command_line(self.0, argc, c_argv.as_ptr()) != 0 }
     }
 
@@ -891,6 +997,9 @@ impl<'a> CommandLineParser<'a> {
     /// preventing the parser from being freed while the compiler is alive.
     /// Returns `None` when the C++ side cannot create a compiler.
     pub fn start_compiler(&self) -> Option<Compiler<'_>> {
+        // SAFETY: `self.0` is a live parser and its borrowed ErrorContainer and
+        // SymbolTable dependencies remain live. Any returned compiler is tied
+        // to this borrow below.
         let ptr = unsafe { sl_start_compiler(self.0) };
         if ptr.is_null() {
             None
@@ -907,6 +1016,8 @@ impl<'clp> Compiler<'clp> {
     /// borrowed — the borrow checker prevents `self` from being dropped while
     /// the returned handle is in use.
     pub fn get_design(&self) -> Option<Design<'_>> {
+        // SAFETY: `self.0` is a live compiler. Any returned Design remains
+        // compiler-owned and is tied to this borrow below.
         let ptr = unsafe { sl_get_design(self.0) };
         if ptr.is_null() {
             None
@@ -917,6 +1028,7 @@ impl<'clp> Compiler<'clp> {
 
     /// Return a UHDM VPI handle borrowed from this compiler.
     pub fn get_uhdm_design(&self) -> Option<VpiHandle<'_>> {
+        // SAFETY: `self.0` is a live compiler and owns any returned UHDM design.
         let ptr = unsafe { sl_get_uhdm_design(self.0) };
         if ptr.is_null() {
             None
@@ -1031,7 +1143,7 @@ mod tests {
     // fn design_outlives_session() {
     //     let design;
     //     {
-    //         let session = unsafe { make_session(&["-parse"]) }.unwrap();
+    //         let session = make_session(&["-parse"]).unwrap();
     //         design = session.design(); // ERROR: `session` does not live long enough
     //     }
     //     let _ = design; // `session` already dropped here
@@ -1041,7 +1153,7 @@ mod tests {
     // ```compile_fail
     // fn file_content_outlives_design() {
     //     let fc;
-    //     let session = unsafe { make_session(&["-parse"]) }.unwrap();
+    //     let session = make_session(&["-parse"]).unwrap();
     //     {
     //         let design = session.design().unwrap();
     //         fc = design.file_content(0); // ERROR: `design` does not live long enough
