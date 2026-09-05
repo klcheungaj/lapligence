@@ -7354,10 +7354,11 @@ impl EmitCtx<'_, '_> {
             });
         }
         for (cname, ir) in input_copies {
+            let (width, signed) = (ir.width, ir.signed);
             stmts.push(IrStmt::DeclLocal {
                 name: cname,
-                width: 0,
-                signed: false,
+                width,
+                signed,
                 init: Some(Box::new(ir)),
             });
         }
