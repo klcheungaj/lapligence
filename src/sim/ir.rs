@@ -26,7 +26,7 @@ mod validate;
 pub use validate::IrValidationError;
 
 /// Maximum vector width in bits.  Keep in sync with `LLG_MAX_WIDTH` in
-/// `src/sim/rt/llg_rt.h`.
+/// `src/sim/rt/llg_value.h`.
 pub const LLG_MAX_WIDTH: u32 = 1024;
 
 fn validate_width(path: &str, width: u32) -> Result<(), IrValidationError> {

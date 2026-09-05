@@ -6,8 +6,9 @@ The C11 runtime that executes generated models.  It is compiled together with
 the generated `model.c` into a standalone executable and is deliberately
 **never linked into the Rust binaries**:
 
-- `llg_rt.h` / `llg_rt.c` — the `sv4_t` 4-state value model and the event
-  scheduler:
+- `llg_value.h` / `llg_value.c` — scheduler-independent data types, operations,
+  formatting, and numeric conversions, compiled as a standalone C11 translation
+  unit with only standard C/math dependencies:
   - `sv4_t` — up to `LLG_MAX_WIDTH` (1024) bits stored as three parallel
     64-bit limb arrays (`bits`/`x`/`z`), with X and Z kept distinct
     (`x & z == 0`).  Z behaves as X in every unknown-propagating op (LRM
@@ -18,20 +19,9 @@ the generated `model.c` into a standalone executable and is deliberately
     decimal conversion; semantics mirror `core::elab::Value` (kept in sync).
     Bit-vector queries count known one bits across all limbs, ignore X/Z for
     `$countones`/`$onehot`/`$onehot0`, and detect either state for `$isunknown`.
-  - Scheduler — libaco coroutines per process; an IEEE 1800 §4 region loop
-    (active region → inactive region (`#0`, drained in a loop) → NBA commit →
-    re-run woken processes → advance time to the next timed wakeup),
-    per-waiter edge detection, `llg_wait_time`/`llg_wait_edge`/
-    `llg_wait_any`/`llg_wait_any_events`/`llg_wait_level`, fork/join
-    (`llg_fork`/`llg_join`/`llg_wait_fork`/`llg_disable_fork`), blocking
-    (`llg_ba`) and non-blocking (`llg_nba`) assignments, and
-    `$display`/`$monitor`/`$strobe`/`$finish`/`$time` support. Completed
-    fork parents remain alive until detached descendants finish, reclaimed
-    process-table slots are reused, and runtime allocations are released on
-    scheduler exit or reinitialization.
   - Real-number hooks — packed-to-`double` conversion across all `sv4_t`
     limbs (X/Z bit positions contribute zero), rounded `double`-to-packed
-    conversion (targets up to 64 bits), blocking/non-blocking double assignment,
+    conversion (targets up to 64 bits),
     scalar truth conversion, and `%f`/`%e`/`%g` formatting support the
     procedural scalar real/shortreal B6 contract.  `shortreal` precision is
     enforced by codegen at assignments and
@@ -40,6 +30,17 @@ the generated `model.c` into a standalone executable and is deliberately
     `$rtoi` truncates rather than using assignment rounding; real/shortreal
     bitcasts use `memcpy` and require 64-bit `double`/32-bit `float` storage.
     See the [lowering guide](../codegen/AGENTS.md) for conversion bounds.
+- `llg_rt.h` / `llg_rt.c` — event scheduler and simulation-facing services.
+  The header includes `llg_value.h` as a source-compatible facade; the C
+  implementation links value operations rather than including their source.
+  Libaco coroutines execute an IEEE 1800 §4 region loop (active → inactive
+  `#0` → NBA commit → re-run woken processes → next timed wakeup).
+  Services include edge/event/level waits, fork/join, blocking/nonblocking
+  packed and double assignments, net resolution, force/release, and
+  `$display`/`$monitor`/`$strobe`/`$finish`/`$time`.
+  Completed fork parents remain alive until detached descendants finish;
+  process-table slots are reused, and allocations are released on scheduler
+  exit or reinitialization.
 - `llg_rt_selftest.c` — C self-tests: sv4 value vectors (mirrored from the
   `core::elab` unit tests) plus scheduler checks (delay ordering, NBA
   visibility, ping-pong, directly observed nested `join_none` lifetimes, empty
@@ -81,7 +82,8 @@ force/release and inout resolution approximations.
 ## Embedding
 
 - All sources are embedded as strings via `include_str!` in `mod.rs`:
-  - `runtime_sources()` → `(llg_rt.h, llg_rt.c)`;
+  - `value_sources()` → `(llg_value.h, llg_value.c)`;
+  - `runtime_sources()` → `(llg_rt.h, llg_rt.c)`, requiring the value pair;
   - `libaco_sources()` → `(aco.h, aco.c, acosw.S)` from `vendor/libaco`;
   - `selftest_source()` → `llg_rt_selftest.c`.
   - `waveform_sources()` / `waveform_selftest_source()` → the optional
@@ -96,6 +98,9 @@ force/release and inout resolution approximations.
 
 - C11; the model-build line is `cc -std=c11 -O2 -Wall -Wno-unused-function`
   and must stay warning-clean.
+- Value operations must not depend on scheduler state, libaco, or waveform
+  output. `tests/runtime_values.rs` compiles this module alone and exercises
+  its public operations/conversions; generated-model tests cover integration.
 - Waveform builds additionally require CMake's `Threads::Threads` and zlib.
   Thread calls are hidden behind a narrow POSIX/Win32 layer; do not use C11
   `<threads.h>` as the Windows portability boundary. The overall generated

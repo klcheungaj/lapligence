@@ -87,6 +87,10 @@ coverage for the same rule IDs.
   end-to-end CMake build, explicit `CmakeBuildOpts` generator backend,
   invalid-generator configure error, driver default, missing-cmake
   actionable error); skips gracefully when cmake is absent.
+  Its source-generation check also pins the separate value-runtime translation
+  unit and retention of both value files during stale-source cleanup.
+- `runtime_values.rs` compiles `llg_value.c` independently of the scheduler and
+  libaco, checking packed value operations and real/shortreal conversions.
 - `model_tests.rs` covers the explorer-facing model projection: formal
   ports are not duplicated as backing signals, concrete net kinds are kept,
   and packed ranges remain owned per elaborated instance without absorbing
@@ -136,7 +140,7 @@ cargo test --all-features -- --test-threads=1
 ```
 
 The PR/manual `generated-runtime-sanitizers` job has a 180-minute limit and
-runs `runtime_boundaries` plus `sim_counter` with GCC ASan/UBSan. This checks
+runs `runtime_values`, `runtime_boundaries`, and `sim_counter` with GCC ASan/UBSan. This checks
 generated C/runtime memory safety, not LSP admission. The 15-minute
 `dependency-audit` job runs `cargo audit` on those triggers and Mondays at
 04:17 UTC. Neither uploads reports; workflow logs are evidence.

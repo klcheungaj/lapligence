@@ -6,7 +6,7 @@
 //! executed twice over the same generated inputs, asserting that both runs
 //! produce identical result fingerprints.
 //!
-//! The C runtime twin (`sv4_t` in `src/sim/rt/llg_rt.c`) is cross-checked
+//! The C runtime twin (`sv4_t` in `src/sim/rt/llg_value.c`) is cross-checked
 //! against the same `elab::Value` semantics by the deterministic vector table
 //! in `src/sim/rt/llg_rt_selftest.c`.  Regenerate that table with:
 //!

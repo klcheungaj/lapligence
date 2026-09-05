@@ -17,6 +17,10 @@ The module must remain free of `unsafe` and direct VPI access. Extend
 `core::db` when lowering needs additional UHDM data; the C emitter consumes IR
 only. CMake is the sole model builder, and runtime behavior must stay aligned
 with `core::elab::Value` through the property vectors and C runtime self-test.
+The runtime value types, operations, and numeric conversions live in standalone
+`rt/llg_value.h` / `rt/llg_value.c`; `rt/llg_rt.h` includes that API and
+`rt/llg_rt.c` supplies the scheduler. Both implementations are separate CMake
+translation units in every generated model.
 IR table and representation fields are private to the simulator implementation. Public
 constructors validate local invariants, immutable accessors expose phase
 outputs, and `IrModel::validate` plus its detached-node validation helpers

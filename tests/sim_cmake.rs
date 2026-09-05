@@ -75,6 +75,31 @@ fn fresh_dir(tag: &str) -> sim_harness::TempDir {
     sim_harness::TempDir::new(&format!("sim-cmake-{tag}")).expect("create temp dir")
 }
 
+#[test]
+fn generated_sources_keep_value_runtime_as_a_separate_translation_unit() {
+    let dir = fresh_dir("value-sources");
+    let extra = [("model.c", STUB_MODEL_C)];
+    sim::build::generate_model_sources(dir.path(), &extra).expect("generate model sources");
+    std::fs::write(dir.path().join("stale.c"), "stale").expect("write stale source");
+    sim::build::generate_model_sources(dir.path(), &extra).expect("regenerate model sources");
+
+    let (header, source) = sim::rt::value_sources();
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("llg_value.h")).unwrap(),
+        header
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("llg_value.c")).unwrap(),
+        source
+    );
+    assert!(!dir.path().join("stale.c").exists());
+    let cmake = std::fs::read_to_string(dir.path().join("CMakeLists.txt")).unwrap();
+    assert!(cmake.contains("model.c llg_value.c llg_rt.c aco.c acosw.S"));
+    let (runtime_header, runtime_source) = sim::rt::runtime_sources();
+    assert!(runtime_header.contains("#include \"llg_value.h\""));
+    assert!(!runtime_source.contains("#include \"llg_value.c\""));
+}
+
 /// Whether the host cmake lists `generator` as an available `-G` backend
 /// (`cmake --help` prints the generator table on stdout).
 fn generator_supported(generator: &str) -> bool {

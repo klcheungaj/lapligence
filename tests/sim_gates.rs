@@ -201,7 +201,7 @@ endmodule
 //                                           bufif0/notif0 disabled)
 //
 // Lowering normalizes the passing arm with `data|data` (per-bit z→x per
-// llg_rt.c sv4_bitwise OR) before the mux/invert so an enabled gate cannot
+// llg_value.c sv4_bitwise OR) before the mux/invert so an enabled gate cannot
 // leak a data Z through the copy-context mux.
 #[test]
 fn sim_gates_enable_gates_table_7_5() {

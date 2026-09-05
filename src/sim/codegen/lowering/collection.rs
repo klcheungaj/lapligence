@@ -2853,7 +2853,7 @@ impl<'a> Codegen<'a> {
                 // is an identity/copy context that returns its chosen arm
                 // verbatim (`sv4_mux` with a known select), so the Z→X
                 // normalization is done explicitly with `data|data`.
-                // Correctness proof from llg_rt.c `sv4_bitwise` (op = OR),
+                // Correctness proof from llg_value.c `sv4_bitwise` (op = OR),
                 // both operands identical so every bit takes one rule:
                 // known 0 → `!ax && !ab && !bx && !bb` → 0; known 1 →
                 // `!ax && ab` → 1; a Z bit reads as `sv4_lsb_bit() == 3`,

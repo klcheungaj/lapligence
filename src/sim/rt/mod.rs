@@ -1,7 +1,8 @@
 //! rt — the C11 simulation runtime embedded as strings.
 //!
-//! [`runtime_sources`] returns the 4-state value model and event scheduler
-//! (`llg_rt.h` / `llg_rt.c`), [`libaco_sources`] the vendored coroutine
+//! [`value_sources`] returns the scheduler-independent value types, operations,
+//! and conversions (`llg_value.h` / `llg_value.c`), [`runtime_sources`] the event
+//! scheduler (`llg_rt.h` / `llg_rt.c`), [`libaco_sources`] the vendored coroutine
 //! library (`aco.h` / `aco.c` / `acosw.S`), [`waveform_sources`] the optional
 //! asynchronous VCD/FST writer and vendored libfst sources, and
 //! [`selftest_source`] the runtime's C self-test.  The driver and integration
@@ -9,12 +10,19 @@
 //! generated model through CMake (`sim::build`) — the runtime is deliberately
 //! *not* linked into the Rust binaries.
 //!
-//! See `llg_rt.h` (embedded below) for the value semantics and the scheduler
-//! algorithm; correctness of the 4-state math mirrors `core::elab`.
+//! See `llg_value.h` for value semantics and `llg_rt.h` for the scheduler API;
+//! correctness of the 4-state math mirrors `core::elab`.
 
-/// (header, implementation) of the simulation runtime.
+/// (header, implementation) of the event scheduler and runtime facade.
+/// Compile together with [`value_sources`] and [`libaco_sources`].
 pub fn runtime_sources() -> (&'static str, &'static str) {
     (include_str!("llg_rt.h"), include_str!("llg_rt.c"))
+}
+
+/// (header, implementation) of scheduler-independent value operations and casts.
+/// This C11 module can be compiled independently, linking only the math library.
+pub fn value_sources() -> (&'static str, &'static str) {
+    (include_str!("llg_value.h"), include_str!("llg_value.c"))
 }
 
 /// (aco.h, aco.c, acosw.S) from vendor/libaco.

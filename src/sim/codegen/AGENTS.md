@@ -134,7 +134,7 @@ unsupported. See `tests/sim_packed_strings.rs`.
 
 ## Values and real numbers
 
-Keep `LLG_MAX_WIDTH` (1024) aligned with `llg_rt.h`, including constant,
+Keep `LLG_MAX_WIDTH` (1024) aligned with `llg_value.h`, including constant,
 parameter, signal, concat and replication checks; div/mod/pow remain ≤64-bit.
 X/Z remain distinct for display, literal equality and casez/casex matching
 (LRM 12.5.1); Z behaves as X in other expression contexts (LRM 11.4.5), with

@@ -43,7 +43,7 @@ use std::process::Command;
 use std::sync::OnceLock;
 
 /// The generated project file.  `{SOURCES}` is replaced with the actual
-/// source list (`model.c llg_rt.c aco.c acosw.S`, plus waveform/libfst C
+/// source list (`model.c llg_value.c llg_rt.c aco.c acosw.S`, plus waveform/libfst C
 /// files when enabled); everything else is fixed.
 /// ASM is enabled because libaco's context switch lives in `acosw.S`.
 const CMAKELISTS_TEMPLATE: &str = r#"cmake_minimum_required(VERSION 3.16)
@@ -246,9 +246,11 @@ pub fn generate_model_sources(out_dir: &Path, extra: &[(&str, &str)]) -> Result<
 
 /// File names [`super::write_sim_sources`] always writes (must mirror its
 /// fixed list there) plus this module's own `CMakeLists.txt`.
-const FIXED_SOURCE_NAMES: [&str; 7] = [
+const FIXED_SOURCE_NAMES: [&str; 9] = [
     "llg_rt.h",
     "llg_rt.c",
+    "llg_value.h",
+    "llg_value.c",
     "aco.h",
     "aco.c",
     "acosw.S",
@@ -328,7 +330,7 @@ fn write_cmakelists(
         .map(|(name, _)| *name)
         .filter(|name| name.ends_with(".c") || name.ends_with(".S"))
         .collect();
-    sources.extend(["llg_rt.c", "aco.c", "acosw.S"]);
+    sources.extend(["llg_value.c", "llg_rt.c", "aco.c", "acosw.S"]);
     if waveform {
         sources.extend(["llg_wave.c", "fstapi.c", "fastlz.c", "lz4.c"]);
     }

@@ -4,7 +4,7 @@ use super::names::escaped_char;
 use crate::sim::ir::{IrConst, LLG_MAX_WIDTH};
 
 /// Number of 64-bit limbs covering [`LLG_MAX_WIDTH`] bits.  Keep in sync with
-/// `LLG_LIMBS` in `src/sim/rt/llg_rt.h` (16).
+/// `LLG_LIMBS` in `src/sim/rt/llg_value.h` (16).
 pub(crate) const LLG_LIMBS: usize = (LLG_MAX_WIDTH as usize).div_ceil(64);
 
 pub(super) fn c_string_literal(value: &str) -> String {

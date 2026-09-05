@@ -48,8 +48,9 @@ executables:
   compiler chain, `LLG_CFLAGS` appended.  Missing cmake → actionable error
   naming install; flags containing double quotes are rejected;
   `cmake_available()` probes for a usable cmake once per process.
-- `rt/` — embedded C runtime (`include_str!`): `sv4_t` 4-state value ops +
-  event scheduler (`llg_rt.c`), plus the libaco sources (`aco.c`/`acosw.S`)
+- `rt/` — embedded C runtime (`include_str!`): standalone `sv4_t` value
+  types/operations/conversions (`llg_value.h`/`llg_value.c`) and event
+  scheduler (`llg_rt.h`/`llg_rt.c`), plus libaco (`aco.c`/`acosw.S`)
   and the C self-test.  The self-test carries a deterministic vector table
   (`VECTORS[]` in `llg_rt_selftest.c`) whose expected values are generated
   from `core::elab::Value` by `tests/property_elab.rs` (`gen_c_vectors`,
