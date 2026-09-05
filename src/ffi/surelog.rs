@@ -1,6 +1,7 @@
 // `uhdm_elaborate` accepts an opaque handle owned by a live Surelog session;
 // the wrapper passes that token to C++ and does not dereference it in Rust.
 #![allow(clippy::not_unsafe_ptr_arg_deref)]
+#![deny(clippy::undocumented_unsafe_blocks)]
 #![deny(unsafe_op_in_unsafe_fn)]
 
 use std::ffi::{CStr, CString};

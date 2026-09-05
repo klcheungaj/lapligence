@@ -3,6 +3,9 @@
 //! The shared watchdog policy delegates only OS-facing measurements, native
 //! limit handles, and emergency I/O to this module.
 
+#![deny(clippy::undocumented_unsafe_blocks)]
+#![deny(unsafe_op_in_unsafe_fn)]
+
 use std::fmt;
 use std::io;
 

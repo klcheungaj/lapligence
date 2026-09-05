@@ -18,6 +18,8 @@
     clippy::duplicated_attributes,
     clippy::not_unsafe_ptr_arg_deref
 )]
+#![deny(clippy::undocumented_unsafe_blocks)]
+#![deny(unsafe_op_in_unsafe_fn)]
 
 use std::ffi::{CStr, CString};
 use std::marker::PhantomData;
@@ -1712,8 +1714,13 @@ pub struct VpiSystfData {
     pub sysfunctype: PLI_INT32,
     /// Task/function name; first character must be `$`.
     pub tfname: *mut PLI_BYTE8,
+    /// VPI invokes this callback with the registered `user_data` pointer.
+    /// Implementations must treat that pointer according to their registration
+    /// contract and must not unwind across the C ABI boundary.
     pub calltf: Option<unsafe extern "C" fn(*mut PLI_BYTE8) -> PLI_INT32>,
+    /// Same safety contract as [`Self::calltf`].
     pub compiletf: Option<unsafe extern "C" fn(*mut PLI_BYTE8) -> PLI_INT32>,
+    /// Same safety contract as [`Self::calltf`].
     pub sizetf: Option<unsafe extern "C" fn(*mut PLI_BYTE8) -> PLI_INT32>,
     pub user_data: *mut PLI_BYTE8,
 }
@@ -1745,6 +1752,9 @@ pub struct VpiErrorInfo {
 #[repr(C)]
 pub struct CbData {
     pub reason: PLI_INT32,
+    /// VPI invokes this function with a live callback record. Implementations
+    /// must not retain borrowed fields beyond the callback or unwind across
+    /// the C ABI boundary.
     pub cb_rtn: Option<unsafe extern "C" fn(*mut CbData) -> PLI_INT32>,
     pub obj: RawVpiHandle,
     pub time: *mut VpiTime,
@@ -1762,6 +1772,10 @@ pub struct CbData {
 // this module in via `#[path]` (and therefore never reference the `llg` rlib)
 // would otherwise miss the archives and fail to link.
 
+// SAFETY: these declarations reproduce the VPI/UHDM headers' C ABI, including
+// each symbol name, argument layout, return layout, and callback convention.
+// The safe wrappers below establish the per-call pointer, lifetime, ownership,
+// and initialization requirements before entering this boundary.
 #[link(name = "surelog", kind = "static")]
 #[link(name = "uhdm", kind = "static")]
 #[link(name = "antlr4-runtime", kind = "static")]
@@ -2055,6 +2069,9 @@ pub fn handle_by_index<'session>(
 
 /// Returns `true` if two handles refer to the same VPI object.
 pub fn compare_objects<'session>(obj1: VpiHandle<'session>, obj2: VpiHandle<'session>) -> bool {
+    // SAFETY: both opaque handles are valid for the duration of this call;
+    // VPI permits comparing any two live object handles and only inspects
+    // their foreign object identities.
     unsafe { vpi_compare_objects(obj1.as_raw(), obj2.as_raw()) != 0 }
 }
 
@@ -2062,11 +2079,15 @@ pub fn compare_objects<'session>(obj1: VpiHandle<'session>, obj2: VpiHandle<'ses
 
 /// Returns an integer property (e.g. `vpi_get(vpiType, h)`).
 pub fn get(property: PLI_INT32, object: VpiHandle<'_>) -> PLI_INT32 {
+    // SAFETY: `object` is branded with a live session and VPI accepts the
+    // integer property selector by value without retaining either argument.
     unsafe { vpi_get(property, object.as_raw()) }
 }
 
 /// Returns a 64-bit integer property.
 pub fn get64(property: PLI_INT32, object: VpiHandle<'_>) -> PLI_INT64 {
+    // SAFETY: `object` is branded with a live session and VPI accepts the
+    // integer property selector by value without retaining either argument.
     unsafe { vpi_get64(property, object.as_raw()) }
 }
 
@@ -2075,10 +2096,16 @@ pub fn get64(property: PLI_INT32, object: VpiHandle<'_>) -> PLI_INT64 {
 /// The raw pointer from `vpi_get_str` is valid only until the next call to
 /// `vpi_get_str`, so it is always copied here.
 pub fn get_str(property: PLI_INT32, object: VpiHandle<'_>) -> String {
+    // SAFETY: `object` is valid for this call. The returned pointer is either
+    // null or VPI-owned storage documented to remain valid until the next
+    // `vpi_get_str` call.
     let ptr = unsafe { vpi_get_str(property, object.as_raw()) };
     if ptr.is_null() {
         return String::new();
     }
+    // SAFETY: the non-null pointer returned above addresses a NUL-terminated
+    // VPI string. It is copied before another VPI string query can invalidate
+    // the borrowed storage.
     unsafe { CStr::from_ptr(ptr).to_string_lossy().into_owned() }
 }
 
@@ -2213,19 +2240,32 @@ pub fn read_value(expr: VpiHandle<'_>) -> ValueData {
 /// Low-level accessor kept public for compatibility; `core`/`sim` must use
 /// [`read_value`] instead of touching the raw union.
 pub fn get_value(expr: VpiHandle<'_>, value_p: &mut VpiValue) {
+    // SAFETY: `expr` is valid for its live session and `value_p` is aligned,
+    // writable storage for one `VpiValue`. Its format tells VPI which union
+    // representation the caller expects it to initialize.
     unsafe {
         vpi_get_value(expr.as_raw(), value_p as *mut _);
     }
 }
 
 /// Writes a value to a VPI object. Returns a scheduled-event handle or null.
-pub fn put_value<'session>(
+///
+/// # Safety
+/// `value_p.format` must select the initialized member of `value_p.value`, and
+/// every pointer reachable through that member must satisfy VPI's validity and
+/// length requirements. When supplied, `time_p` must contain a valid time
+/// representation for `flags`.
+pub unsafe fn put_value<'session>(
     object: VpiHandle<'session>,
     value_p: &mut VpiValue,
     time_p: Option<&mut VpiTime>,
     flags: PLI_INT32,
 ) -> Option<OwnedHandle<'session>> {
     let tp = time_p.map_or(std::ptr::null_mut(), |t| t as *mut _);
+    // SAFETY: `object` is valid for `'session`; `value_p` and the optional
+    // `time_p` are live, aligned structures for the call. A non-null returned
+    // event handle belongs to the same session and is transferred to the
+    // `OwnedHandle` wrapper.
     OwnedHandle::from_raw(unsafe { vpi_put_value(object.as_raw(), value_p as *mut _, tp, flags) })
 }
 
@@ -2234,8 +2274,12 @@ pub fn put_value<'session>(
 /// Returns the last VPI error information, or `None` if no error is pending.
 pub fn chk_error() -> Option<VpiErrorInfo> {
     let mut info = std::mem::MaybeUninit::<VpiErrorInfo>::uninit();
+    // SAFETY: `info` is aligned writable storage for one `VpiErrorInfo`; VPI
+    // initializes the complete record exactly when it returns nonzero.
     let has_error = unsafe { vpi_chk_error(info.as_mut_ptr()) };
     if has_error != 0 {
+        // SAFETY: the successful result above guarantees every field of
+        // `info` was initialized by VPI.
         Some(unsafe { info.assume_init() })
     } else {
         None
@@ -2246,6 +2290,8 @@ pub fn chk_error() -> Option<VpiErrorInfo> {
 
 /// Flushes all VPI output channels.
 pub fn flush() {
+    // SAFETY: `vpi_flush` takes no arguments and has no caller-side lifetime
+    // or initialization requirements.
     unsafe {
         vpi_flush();
     }
@@ -2254,12 +2300,18 @@ pub fn flush() {
 /// Opens a multi-channel descriptor file. Returns the MCD value, or 0 on failure.
 pub fn mcd_open(file_name: &str) -> PLI_UINT32 {
     match CString::new(file_name) {
-        Ok(s) => unsafe { vpi_mcd_open(s.as_ptr() as *mut _) },
+        Ok(s) => {
+            // SAFETY: `s` is NUL-terminated and remains alive for the call;
+            // VPI copies or consumes the path before returning the descriptor.
+            unsafe { vpi_mcd_open(s.as_ptr() as *mut _) }
+        }
         Err(_) => 0,
     }
 }
 
 /// Closes a multi-channel descriptor.
 pub fn mcd_close(mcd: PLI_UINT32) -> PLI_UINT32 {
+    // SAFETY: an MCD is an integer token passed by value. VPI reports invalid
+    // or already-closed descriptors through its return value.
     unsafe { vpi_mcd_close(mcd) }
 }
