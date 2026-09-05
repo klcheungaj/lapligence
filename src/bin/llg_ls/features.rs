@@ -2157,7 +2157,7 @@ fn analyze_inner(
                             empty_design(),
                             Vec::new(),
                             false,
-                            Some(error),
+                            Some(error.to_string()),
                             Vec::new(),
                             HashMap::new(),
                             HashMap::new(),

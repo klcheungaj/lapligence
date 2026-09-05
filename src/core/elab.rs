@@ -1328,24 +1328,24 @@ impl Resolver {
             Some(ts) => ts,
             None => return Ok(DeclaredType::Other),
         };
-        let mut chain: Vec<OwnedHandle> = Vec::new();
-        let mut cur = ts.raw();
-        while vpi::obj_type(cur) == vpi::vpiRefTypespec {
-            if chain.len() > 16 {
+        let mut current = ts;
+        let mut hops = 0;
+        while vpi::obj_type(current.raw()) == vpi::vpiRefTypespec {
+            if hops > 16 {
                 return Err(ElabError::Unsupported(
                     "cyclic ref_typespec chain".to_string(),
                 ));
             }
-            let actual = child(vpi::vpiActual, cur)
+            current = current
+                .child(vpi::vpiActual)
                 .ok_or_else(|| ElabError::Unsupported("unbound ref_typespec".to_string()))?;
-            chain.push(actual);
-            cur = chain.last().unwrap().raw();
+            hops += 1;
         }
-        match vpi::obj_type(cur) {
+        match vpi::obj_type(current.raw()) {
             vpi::vpiRealTypespec => Ok(DeclaredType::Real),
             vpi::vpiShortRealTypespec => Ok(DeclaredType::ShortReal),
             vpi::vpiStringTypespec => Ok(DeclaredType::Other),
-            _ => match self.typespec_size(sc, resolved, in_progress, ts.raw())? {
+            _ => match self.typespec_size(sc, resolved, in_progress, current.raw())? {
                 Some((width, signed)) => Ok(DeclaredType::Packed(width, signed)),
                 None => Ok(DeclaredType::Other),
             },
@@ -1363,49 +1363,52 @@ impl Resolver {
         // Follow `ref_typespec → vpiActual` chains, keeping every intermediate
         // OwnedHandle alive until the loop ends.  The hop limit guards against
         // malformed cyclic chains (elaborated typespecs never cycle).
-        let mut chain: Vec<OwnedHandle> = Vec::new();
-        let mut cur = ts;
+        let mut current: Option<OwnedHandle> = None;
+        let mut hops = 0;
         loop {
-            if chain.len() > 16 {
+            if hops > 16 {
                 return Err(ElabError::Unsupported(
                     "cyclic ref_typespec chain".to_string(),
                 ));
             }
+            let cur = current.as_ref().map_or(ts, OwnedHandle::raw);
             if vpi::obj_type(cur) == vpi::vpiRefTypespec {
-                match child(vpi::vpiActual, cur) {
-                    Some(a) => {
-                        chain.push(a);
-                        cur = chain.last().unwrap().raw();
-                    }
+                let next = match current.as_ref() {
+                    Some(owner) => owner.child(vpi::vpiActual),
+                    None => child(vpi::vpiActual, ts),
+                };
+                match next {
+                    Some(actual) => current = Some(actual),
                     None => return Err(ElabError::Unsupported("unbound ref_typespec".to_string())),
                 }
+                hops += 1;
             } else {
-                break;
+                let t = vpi::obj_type(cur);
+                let signed_prop = vpi::get(vpi::vpiSigned, cur) != 0;
+                return match t {
+                    vpi::vpiIntTypespec | vpi::vpiIntegerTypespec | vpi::vpiTimeTypespec => {
+                        Ok(Some((32, signed_prop)))
+                    }
+                    vpi::vpiLongIntTypespec => Ok(Some((64, signed_prop))),
+                    vpi::vpiByteTypespec => Ok(Some((8, true))),
+                    vpi::vpiShortIntTypespec => Ok(Some((16, true))),
+                    vpi::vpiLogicTypespec | vpi::vpiBitTypespec => {
+                        self.typespec_ranges(sc, resolved, in_progress, cur)
+                    }
+                    vpi::vpiEnumTypespec => match child(vpi::vpiBaseTypespec, cur) {
+                        Some(base) => self.typespec_size(sc, resolved, in_progress, base.raw()),
+                        None => Err(ElabError::Unsupported(
+                            "enum_typespec without base".to_string(),
+                        )),
+                    },
+                    vpi::vpiPackedArrayTypespec => {
+                        self.typespec_ranges(sc, resolved, in_progress, cur)
+                    }
+                    vpi::vpiStringTypespec => Ok(None),
+                    vpi::vpiRealTypespec | vpi::vpiShortRealTypespec => Ok(None),
+                    other => Err(ElabError::Unsupported(format!("typespec type {other}"))),
+                };
             }
-        }
-
-        let t = vpi::obj_type(cur);
-        let signed_prop = vpi::get(vpi::vpiSigned, cur) != 0;
-        match t {
-            vpi::vpiIntTypespec | vpi::vpiIntegerTypespec | vpi::vpiTimeTypespec => {
-                Ok(Some((32, signed_prop)))
-            }
-            vpi::vpiLongIntTypespec => Ok(Some((64, signed_prop))),
-            vpi::vpiByteTypespec => Ok(Some((8, true))),
-            vpi::vpiShortIntTypespec => Ok(Some((16, true))),
-            vpi::vpiLogicTypespec | vpi::vpiBitTypespec => {
-                self.typespec_ranges(sc, resolved, in_progress, cur)
-            }
-            vpi::vpiEnumTypespec => match child(vpi::vpiBaseTypespec, cur) {
-                Some(base) => self.typespec_size(sc, resolved, in_progress, base.raw()),
-                None => Err(ElabError::Unsupported(
-                    "enum_typespec without base".to_string(),
-                )),
-            },
-            vpi::vpiPackedArrayTypespec => self.typespec_ranges(sc, resolved, in_progress, cur),
-            vpi::vpiStringTypespec => Ok(None),
-            vpi::vpiRealTypespec | vpi::vpiShortRealTypespec => Ok(None),
-            other => Err(ElabError::Unsupported(format!("typespec type {other}"))),
         }
     }
 
@@ -2100,7 +2103,7 @@ impl Resolver {
 
         // The function-name return variable (initialized to all-X) and the
         // body's locals, both from their declared widths.
-        let ret_ts = child(vpi::vpiReturn, func).and_then(|rv| child(vpi::vpiTypespec, rv.raw()));
+        let ret_ts = child(vpi::vpiReturn, func).and_then(|rv| rv.child(vpi::vpiTypespec));
         let ret_name = vpi::obj_name(func);
         let ret_decl = match &ret_ts {
             Some(ts) => self.typespec_size(sc, resolved, in_progress, ts.raw())?,

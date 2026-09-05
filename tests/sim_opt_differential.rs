@@ -38,7 +38,7 @@ fn run_both(sv: &str, top: &str, tag: &str) -> Result<(String, String), String> 
         })
         .map_err(|e| format!("compile: {e}"))?;
         let design = out.uhdm_design().ok_or("no UHDM design")?;
-        let database = llg::core::db::Db::build(design)?;
+        let database = llg::core::db::Db::build(design).map_err(|error| error.to_string())?;
 
         // 2. Both configurations from one owned DB. Besides avoiding a second
         // VPI walk, this keeps differential generation independent of

@@ -42,11 +42,10 @@ fn child_handle<'session>(
 
 /// Invoke `f` for every child reachable via relationship `rel` — works for
 /// both 1-to-many (`vpi_iterate`) and 1-to-1 (`vpi_handle`) relationships.
-fn each_child<'session, F: FnMut(VpiHandle<'session>)>(
-    rel: c_int,
-    obj: VpiHandle<'session>,
-    f: &mut F,
-) {
+fn each_child<F>(rel: c_int, obj: VpiHandle<'_>, f: &mut F)
+where
+    F: for<'handle> FnMut(VpiHandle<'handle>),
+{
     if let Some(it) = vpi::iterate(rel, obj) {
         for h in it {
             f(h);

@@ -308,7 +308,7 @@ impl DesignModel {
     /// Parameter values come from [`crate::core::elab::Resolver`];
     /// unresolvable parameters (e.g. cyclic ones) are emitted with
     /// `value: None` rather than failing the whole build.
-    pub fn build(design: VpiHandle) -> Result<DesignModel, String> {
+    pub fn build(design: VpiHandle) -> Result<DesignModel, db::DbError> {
         Ok(Self::from_db(&db::Db::build(design)?))
     }
 
@@ -731,22 +731,21 @@ fn gen_scopes_from_db(db: &db::Db, gsa_id: NodeId) -> Vec<GenScopeModel> {
 ///
 /// Exposed for future codegen use.
 pub fn typespec_info(ts: VpiHandle) -> Option<(u32, bool)> {
-    let mut visited: HashSet<VpiHandle> = HashSet::new();
-    let mut cur = ts;
-    // The ref_typespec wrappers must outlive the concrete handle we end up
-    // reading, so they are kept alive for the whole call.
-    let mut keep: Vec<OwnedHandle> = Vec::new();
+    let mut visited: HashSet<(i32, String)> = HashSet::new();
+    let mut current: Option<OwnedHandle> = None;
     loop {
+        let cur = current.as_ref().map_or(ts, OwnedHandle::raw);
         let t = vpi::obj_type(cur);
         // `vpiType` reports the *VPI-mapped* type (e.g. vpiRefTypespec), not
         // the raw UHDM discriminant.
         if t == vpi::vpiRefTypespec {
-            if !visited.insert(cur) {
+            if !visited.insert((t, vpi::obj_full_name(cur))) {
                 return None;
             }
-            let actual = vpi::handle(vpi::vpiActual, cur)?;
-            cur = actual.raw();
-            keep.push(actual);
+            current = Some(match current.as_ref() {
+                Some(owner) => owner.child(vpi::vpiActual)?,
+                None => vpi::handle(vpi::vpiActual, ts)?,
+            });
             continue;
         }
         return concrete_typespec_info(cur, t);

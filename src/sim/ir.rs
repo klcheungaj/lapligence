@@ -21,6 +21,10 @@
 //!   final blocks are rendered with the rest but spawn into a separate
 //!   post-simulation phase).
 
+mod validate;
+
+pub use validate::IrValidationError;
+
 /// Maximum vector width in bits.  Keep in sync with `LLG_MAX_WIDTH` in
 /// `src/sim/rt/llg_rt.h`.
 pub const LLG_MAX_WIDTH: u32 = 1024;

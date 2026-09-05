@@ -1114,14 +1114,12 @@ fn decl_type_text(h: VpiHandle) -> String {
         Some(ts) => ts,
         None => return fallback_var_text(h),
     };
-    let mut keep_alive: Vec<vpi::OwnedHandle> = Vec::new();
     for _ in 0..MAX_CHAIN {
         if vpi::obj_type(ts.raw()) != vpi::vpiRefTypespec {
             break;
         }
-        match vpi::handle(vpi::vpiActual, ts.raw()) {
+        match ts.child(vpi::vpiActual) {
             Some(actual) => {
-                keep_alive.push(ts);
                 ts = actual;
             }
             None => return fallback_var_text(h),

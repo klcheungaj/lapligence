@@ -299,7 +299,7 @@ pub fn generate_with_opts(
     design: VpiHandle,
     cfg: &crate::sim::opt::OptConfig,
 ) -> Result<GeneratedModel, String> {
-    let db = Db::build(design)?;
+    let db = Db::build(design).map_err(|error| error.to_string())?;
     generate_from_db_with_opts(&db, cfg)
 }
 
@@ -368,27 +368,9 @@ pub fn generate_from_db_with_opts(
         .filter(|n| !final_names.contains(n))
         .collect();
     model.final_spawns = final_names;
+    model.validate().map_err(|error| error.to_string())?;
     crate::sim::opt::run(&mut model, cfg);
-    // Lowering-time invariant: signal C names must be unique — a collision
-    // would silently merge two variables' storage in `render_signal_decls`.
-    // Synthesized PCA enables embed a `$`, which ident()-sanitized user
-    // names can never produce, so this only fires when two identifiers
-    // sanitize to the same spelling.  Skips exactly what the renderer
-    // skips: collapsed-net members share the group's `<net>.resolved` cell
-    // on purpose, and omitted signals are pruned before emission.
-    let mut seen_names: HashSet<&str> = HashSet::with_capacity(model.signals.len());
-    for sig in &model.signals {
-        if sig.net_driver.is_some() || sig.omit {
-            continue;
-        }
-        if !seen_names.insert(sig.c_name.as_str()) {
-            return Err(format!(
-                "C signal name `{}` is not unique (two signals sanitize to \
-                 the same identifier); refusing to merge their storage",
-                sig.c_name
-            ));
-        }
-    }
+    model.validate().map_err(|error| error.to_string())?;
     let model_c = crate::sim::emit_c::render(&model)?;
     Ok(GeneratedModel {
         design_name: cg.design_name.clone(),

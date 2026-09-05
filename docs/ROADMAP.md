@@ -18,7 +18,7 @@ work. Product feature status remains in `sim_features.md` and `config.md`.
 - [ ] Convert VPI integer discriminants to owned domain enums in `core::db`.
 - [ ] Make DB/IR invariant-bearing fields private and add validated constructors.
 - [ ] Replace public `Result<_, String>` APIs with module-specific error types.
-- [ ] Add explicit DB and IR validation at processing-phase boundaries.
+- [x] Add explicit DB and IR validation at processing-phase boundaries.
 
 ## P3: Cohesive modules
 

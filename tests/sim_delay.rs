@@ -769,7 +769,9 @@ endmodule
             let database = out
                 .uhdm_design()
                 .ok_or_else(|| "no UHDM design".to_string())
-                .and_then(llg::core::db::Db::build);
+                .and_then(|design| {
+                    llg::core::db::Db::build(design).map_err(|error| error.to_string())
+                });
             match database {
                 Ok(database) => (
                     build_and_run(&dir, &database, &OptConfig::default()),

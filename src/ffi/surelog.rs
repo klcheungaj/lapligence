@@ -204,6 +204,9 @@ impl SurelogSession {
     /// Returns `None` if any argument contains an interior null byte, or if
     /// the C++ side fails to initialise any object.
     pub fn new(args: &[&str]) -> Option<Self> {
+        if args.is_empty() || c_int::try_from(args.len()).is_err() {
+            return None;
+        }
         // Convert every argument; bail if any contains an interior null byte.
         let owned: Option<Vec<CString>> = args.iter().map(|s| CString::new(*s).ok()).collect();
         let owned = owned?;
@@ -340,7 +343,7 @@ unsafe fn finish_session(
     args: &[CString],
 ) -> Option<SurelogSession> {
     let c_argv: Vec<*const c_char> = args.iter().map(|s| s.as_ptr()).collect();
-    let argc = args.len() as c_int;
+    let argc = c_int::try_from(args.len()).ok()?;
 
     // SAFETY: `c_argv` points into `args`, alive for the full extent of this
     // call; all pointers are valid null-terminated C strings.
@@ -868,13 +871,18 @@ impl<'a> CommandLineParser<'a> {
     /// the underlying C++ parser reports failure.
     pub fn parse_command_line(&self, args: &[&str]) -> bool {
         use std::ffi::CString;
+        let Ok(argc) = c_int::try_from(args.len()) else {
+            return false;
+        };
+        if argc == 0 {
+            return false;
+        }
         let owned: Option<Vec<CString>> = args.iter().map(|s| CString::new(*s).ok()).collect();
         let owned = match owned {
             Some(v) => v,
             None => return false,
         };
         let c_argv: Vec<*const c_char> = owned.iter().map(|s| s.as_ptr()).collect();
-        let argc = owned.len() as c_int;
         // SAFETY: `c_argv` points into `owned`, alive for the duration of this call.
         unsafe { sl_clp_parse_command_line(self.0, argc, c_argv.as_ptr()) != 0 }
     }
@@ -932,6 +940,11 @@ mod tests {
         let mut all_args = vec!["llg-test"];
         all_args.extend_from_slice(extra_args);
         SurelogSession::new(&all_args)
+    }
+
+    #[test]
+    fn session_rejects_an_empty_argv_before_entering_ffi() {
+        assert!(SurelogSession::new(&[]).is_none());
     }
 
     /// Verify that `Design` cannot outlive the `SurelogSession` it was obtained

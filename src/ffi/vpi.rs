@@ -1900,8 +1900,34 @@ impl<'session> OwnedHandle<'session> {
     }
 
     /// Borrows the represented object without releasing this owning wrapper.
-    pub fn raw(&self) -> VpiHandle<'session> {
-        self.0
+    /// The returned token cannot outlive `self`:
+    ///
+    /// ```compile_fail
+    /// use llg::ffi::vpi::{self, VpiHandle};
+    ///
+    /// fn invalid_escape<'session>(root: VpiHandle<'session>) -> VpiHandle<'session> {
+    ///     let child = vpi::handle(vpi::vpiTypespec, root).unwrap();
+    ///     child.raw()
+    /// }
+    /// ```
+    pub fn raw<'handle>(&'handle self) -> VpiHandle<'handle> {
+        // Rebrand the object for the shorter borrow of this owning wrapper;
+        // the copied token therefore cannot survive `OwnedHandle::drop`.
+        VpiHandle {
+            raw: self.0.raw,
+            session: PhantomData,
+        }
+    }
+
+    /// Navigate to an independently owned 1-to-1 relationship handle.
+    ///
+    /// Unlike [`Self::raw`], the returned wrapper retains the original
+    /// Surelog-session brand because UHDM allocates it independently of this
+    /// wrapper. Dropping either owner therefore cannot invalidate the other.
+    pub fn child(&self, type_: PLI_INT32) -> Option<OwnedHandle<'session>> {
+        // SAFETY: `self.0` is live and session-branded; UHDM returns a newly
+        // allocated relationship wrapper owned by the caller.
+        OwnedHandle::from_raw(unsafe { vpi_handle(type_, self.0.as_raw()) })
     }
 }
 

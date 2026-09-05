@@ -39,7 +39,13 @@
 //! the variant; unsupported primitive kinds (switches, UDPs, arrays) are
 //! captured too and rejected by the simulator at lowering time, not here.
 
+mod validate;
+
+pub use validate::DbValidationError;
+
 use std::collections::{HashMap, HashSet};
+use std::error::Error;
+use std::fmt;
 use std::os::raw::c_int;
 
 use crate::core::elab::{self, Resolver, Val};
@@ -70,6 +76,43 @@ pub struct ElaboratedTypeRanges {
     pub instance: String,
     pub name: String,
     pub packed_ranges: Vec<Option<PackedRange>>,
+}
+
+/// Failure to capture a structurally usable owned database from UHDM.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum DbError {
+    /// The root design handle was null.
+    NullDesign,
+    /// A required UHDM relationship was absent or malformed.
+    MalformedUhdm(String),
+    /// The captured owned graph violated an internal database invariant.
+    InvalidDatabase(DbValidationError),
+}
+
+impl fmt::Display for DbError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NullDesign => f.write_str("null design handle"),
+            Self::MalformedUhdm(detail) => f.write_str(detail),
+            Self::InvalidDatabase(error) => error.fmt(f),
+        }
+    }
+}
+
+impl Error for DbError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::InvalidDatabase(error) => Some(error),
+            Self::NullDesign | Self::MalformedUhdm(_) => None,
+        }
+    }
+}
+
+impl From<String> for DbError {
+    fn from(detail: String) -> Self {
+        Self::MalformedUhdm(detail)
+    }
 }
 
 /// The owned design database produced by one VPI walk.
@@ -671,9 +714,9 @@ impl Db {
     ///
     /// The owning surelog session must stay alive for the duration of the
     /// call.  The returned [`Db`] is fully owned.
-    pub fn build(design: VpiHandle) -> Result<Db, String> {
+    pub fn build(design: VpiHandle) -> Result<Db, DbError> {
         if design.is_null() {
-            return Err("null design handle".to_string());
+            return Err(DbError::NullDesign);
         }
         let design_name = vpi::get_str(vpi::vpiName, design);
         let mut b = Builder::default();
@@ -706,7 +749,7 @@ impl Db {
             (left.instance.as_str(), left.name.as_str())
                 .cmp(&(right.instance.as_str(), right.name.as_str()))
         });
-        Ok(Db {
+        let db = Db {
             nodes: b.nodes,
             tops: b.tops,
             flat_modules: b.flat_modules,
@@ -716,7 +759,9 @@ impl Db {
             arrays: b.arrays,
             vars_init: b.vars_init,
             elaborated_type_ranges,
-        })
+        };
+        db.validate().map_err(DbError::InvalidDatabase)?;
+        Ok(db)
     }
 
     /// The node at `id`.
@@ -962,20 +1007,19 @@ impl Builder {
             child(vpi::vpiTypespec, object).or_else(|| child(vpi::vpiTypedef, object))
         }?;
 
-        // Ref-typespec actuals are returned as owned handles.  Keep every
-        // wrapper alive until all nested typespec/range reads complete.
-        let mut keep_alive = Vec::new();
         let mut visited = HashSet::new();
         for _ in 0..32 {
             if vpi::obj_type(typespec.raw()) != vpi::vpiRefTypespec {
                 break;
             }
-            if !visited.insert(typespec.raw()) {
+            let key = (
+                vpi::obj_type(typespec.raw()),
+                vpi::obj_full_name(typespec.raw()),
+            );
+            if !visited.insert(key) {
                 return None;
             }
-            let actual = child(vpi::vpiActual, typespec.raw())?;
-            keep_alive.push(typespec);
-            typespec = actual;
+            typespec = typespec.child(vpi::vpiActual)?;
         }
 
         let mut ranges = Vec::new();
@@ -987,13 +1031,14 @@ impl Builder {
     /// `array_typespec` contributes only its element type because its ranges
     /// are unpacked; a `packed_array_typespec` contributes its own outer
     /// ranges before its element's nested packed ranges.
-    fn collect_packed_ranges<'session>(
+    fn collect_packed_ranges(
         &self,
-        typespec: VpiHandle<'session>,
+        typespec: VpiHandle<'_>,
         ranges: &mut Vec<Option<PackedRange>>,
-        visited: &mut HashSet<VpiHandle<'session>>,
+        visited: &mut HashSet<(i32, String)>,
     ) {
-        if !visited.insert(typespec) {
+        let key = (vpi::obj_type(typespec), vpi::obj_full_name(typespec));
+        if !visited.insert(key) {
             return;
         }
         let typespec_kind = vpi::obj_type(typespec);
@@ -1059,7 +1104,7 @@ impl Builder {
         h: VpiHandle,
         parent_file: Option<&str>,
         parent: Option<NodeId>,
-    ) -> Result<NodeId, String> {
+    ) -> Result<NodeId, DbError> {
         let mut props = self.common(h);
         let def_name = vpi::get_str(vpi::vpiDefName, h);
         let is_top = parent.is_none();
@@ -1212,7 +1257,11 @@ impl Builder {
         Ok(id)
     }
 
-    fn walk_flat_module(&mut self, h: VpiHandle, parent: Option<NodeId>) -> Result<NodeId, String> {
+    fn walk_flat_module(
+        &mut self,
+        h: VpiHandle,
+        parent: Option<NodeId>,
+    ) -> Result<NodeId, DbError> {
         let props = self.common(h);
         let def_name = vpi::get_str(vpi::vpiDefName, h);
         let timeunit = vpi::get(vpi::vpiTimeUnit, h);
@@ -1260,7 +1309,7 @@ impl Builder {
     /// carries no params/enum consts and its file/line are empty, so model and
     /// index consumers skip it the same way they already skip packages without
     /// a file.
-    fn walk_package(&mut self, h: VpiHandle, parent: Option<NodeId>) -> Result<NodeId, String> {
+    fn walk_package(&mut self, h: VpiHandle, parent: Option<NodeId>) -> Result<NodeId, DbError> {
         let props = self.common(h);
         let id = self.register(parent, &props, NodeKind::Package);
         let mut kids: Vec<NodeId> = Vec::new();
@@ -1308,7 +1357,7 @@ impl Builder {
     ///    `vpiFunction`/`vpiTask` with the `vpiMethod` flag set, so
     ///    [`Builder::walk_task_func`] is reused; the constructor is a function
     ///    named `new` whose `vpiReturn` is the implicit class handle.
-    fn walk_class_defn(&mut self, h: VpiHandle, parent: Option<NodeId>) -> Result<NodeId, String> {
+    fn walk_class_defn(&mut self, h: VpiHandle, parent: Option<NodeId>) -> Result<NodeId, DbError> {
         let props = self.common(h);
         let id = self.register(parent, &props, NodeKind::ClassDef);
         self.index_node(h, &props, id);
@@ -1323,7 +1372,7 @@ impl Builder {
         Ok(id)
     }
 
-    fn walk_enum_const(&mut self, h: VpiHandle, parent: Option<NodeId>) -> Result<NodeId, String> {
+    fn walk_enum_const(&mut self, h: VpiHandle, parent: Option<NodeId>) -> Result<NodeId, DbError> {
         let props = self.common(h);
         let value = elab::read_value(h).ok();
         let id = self.register(parent, &props, NodeKind::EnumConst { value });
@@ -1331,7 +1380,7 @@ impl Builder {
         Ok(id)
     }
 
-    fn walk_port(&mut self, h: VpiHandle, parent: Option<NodeId>) -> Result<NodeId, String> {
+    fn walk_port(&mut self, h: VpiHandle, parent: Option<NodeId>) -> Result<NodeId, DbError> {
         let props = self.common(h);
         let direction = match vpi::get(vpi::vpiDirection, h) {
             vpi::vpiInput => Direction::Input,
@@ -1477,7 +1526,7 @@ impl Builder {
         }
     }
 
-    fn walk_modport(&mut self, h: VpiHandle, parent: Option<NodeId>) -> Result<NodeId, String> {
+    fn walk_modport(&mut self, h: VpiHandle, parent: Option<NodeId>) -> Result<NodeId, DbError> {
         let props = self.common(h);
         let id = self.register(parent, &props, NodeKind::ModPort);
         // Modports have no `vpiFullName`; index them under the owning
@@ -1498,7 +1547,7 @@ impl Builder {
         Ok(id)
     }
 
-    fn walk_io_decl(&mut self, h: VpiHandle, parent: Option<NodeId>) -> Result<NodeId, String> {
+    fn walk_io_decl(&mut self, h: VpiHandle, parent: Option<NodeId>) -> Result<NodeId, DbError> {
         let props = self.common(h);
         let direction = match vpi::get(vpi::vpiDirection, h) {
             vpi::vpiInput => Direction::Input,
@@ -1516,7 +1565,7 @@ impl Builder {
         Ok(id)
     }
 
-    fn walk_net(&mut self, h: VpiHandle, parent: Option<NodeId>) -> Result<NodeId, String> {
+    fn walk_net(&mut self, h: VpiHandle, parent: Option<NodeId>) -> Result<NodeId, DbError> {
         let props = self.common(h);
         let ty = self.type_info_of(h);
         let net_type = vpi::get(vpi::vpiNetType, h);
@@ -1525,7 +1574,7 @@ impl Builder {
         Ok(id)
     }
 
-    fn walk_var(&mut self, h: VpiHandle, parent: Option<NodeId>) -> Result<NodeId, String> {
+    fn walk_var(&mut self, h: VpiHandle, parent: Option<NodeId>) -> Result<NodeId, DbError> {
         // Array objects reached outside `walk_module_inst` (function-body
         // locals, block locals) keep the Array kind so consumers skip them
         // the same way they always did.
@@ -1555,7 +1604,11 @@ impl Builder {
     /// name/full-name properties plus registration in the `(vpiType,
     /// vpiFullName)` index so trigger statements and event-control operands
     /// resolve to it.
-    fn walk_named_event(&mut self, h: VpiHandle, parent: Option<NodeId>) -> Result<NodeId, String> {
+    fn walk_named_event(
+        &mut self,
+        h: VpiHandle,
+        parent: Option<NodeId>,
+    ) -> Result<NodeId, DbError> {
         let props = self.common(h);
         let id = self.register(parent, &props, NodeKind::NamedEvent);
         self.index_node(h, &props, id);
@@ -1581,7 +1634,7 @@ impl Builder {
         h: VpiHandle,
         parent: Option<NodeId>,
         is_net: bool,
-    ) -> Result<NodeId, String> {
+    ) -> Result<NodeId, DbError> {
         let props = self.common(h);
         // Element type: `vpiReg` (array_var/reg_array) or `vpiNet` (array_net)
         // child's typespec — UHDM exposes those as 1-to-many vectors, so
@@ -1635,7 +1688,7 @@ impl Builder {
     /// resolve.  Surelog's per-instance clones sometimes point those refs at
     /// the definition-level return var instead (which is never walked), so
     /// consumers must also key the return var by the function name.
-    fn walk_task_func(&mut self, h: VpiHandle, parent: Option<NodeId>) -> Result<NodeId, String> {
+    fn walk_task_func(&mut self, h: VpiHandle, parent: Option<NodeId>) -> Result<NodeId, DbError> {
         let props = self.common(h);
         let is_task = vpi::obj_type(h) == vpi::vpiTask;
         let automatic = vpi::get(vpi::vpiAutomatic, h) != 0;
@@ -1727,7 +1780,7 @@ impl Builder {
         h: VpiHandle,
         parent: Option<NodeId>,
         value: Option<Val>,
-    ) -> Result<NodeId, String> {
+    ) -> Result<NodeId, DbError> {
         let props = self.common(h);
         let ty = self.type_info_of(h);
         let local = vpi::get(vpi::vpiLocalParam, h) != 0;
@@ -1740,7 +1793,7 @@ impl Builder {
         &mut self,
         h: VpiHandle,
         parent: Option<NodeId>,
-    ) -> Result<NodeId, String> {
+    ) -> Result<NodeId, DbError> {
         let props = self.common(h);
         let overridden = vpi::get(vpi::vpiOverriden, h) != 0;
         let id = self.register(parent, &props, NodeKind::ParamAssign { overridden });
@@ -1755,7 +1808,11 @@ impl Builder {
         Ok(id)
     }
 
-    fn walk_cont_assign(&mut self, h: VpiHandle, parent: Option<NodeId>) -> Result<NodeId, String> {
+    fn walk_cont_assign(
+        &mut self,
+        h: VpiHandle,
+        parent: Option<NodeId>,
+    ) -> Result<NodeId, DbError> {
         let props = self.common(h);
         let net_decl = vpi::get(vpi::vpiNetDeclAssign, h) != 0;
         let id = self.register(
@@ -1827,7 +1884,7 @@ impl Builder {
     /// `vpiDelay` expression (a constant or parameter reference — the same
     /// shape as continuous-assignment delays) is walked as the gate node's
     /// only child.
-    fn walk_primitive(&mut self, h: VpiHandle, parent: Option<NodeId>) -> Result<NodeId, String> {
+    fn walk_primitive(&mut self, h: VpiHandle, parent: Option<NodeId>) -> Result<NodeId, DbError> {
         let props = self.common(h);
         let class = match vpi::obj_type(h) {
             vpi::vpiSwitch => PrimClass::Switch,
@@ -1900,7 +1957,7 @@ impl Builder {
         &mut self,
         h: VpiHandle,
         parent: Option<NodeId>,
-    ) -> Result<NodeId, String> {
+    ) -> Result<NodeId, DbError> {
         let props = self.common(h);
         Ok(self.register(
             parent,
@@ -1916,7 +1973,7 @@ impl Builder {
         ))
     }
 
-    fn walk_process(&mut self, h: VpiHandle, parent: Option<NodeId>) -> Result<NodeId, String> {
+    fn walk_process(&mut self, h: VpiHandle, parent: Option<NodeId>) -> Result<NodeId, DbError> {
         let props = self.common(h);
         let id = self.register(
             parent,
@@ -1947,7 +2004,7 @@ impl Builder {
         &mut self,
         h: VpiHandle,
         parent: Option<NodeId>,
-    ) -> Result<NodeId, String> {
+    ) -> Result<NodeId, DbError> {
         let props = self.common(h);
         let id = self.register(parent, &props, NodeKind::GenScopeArray);
         let mut kids: Vec<NodeId> = Vec::new();
@@ -1958,7 +2015,7 @@ impl Builder {
         Ok(id)
     }
 
-    fn walk_gen_scope(&mut self, h: VpiHandle, parent: Option<NodeId>) -> Result<NodeId, String> {
+    fn walk_gen_scope(&mut self, h: VpiHandle, parent: Option<NodeId>) -> Result<NodeId, DbError> {
         let props = self.common(h);
         let id = self.register(parent, &props, NodeKind::GenScope);
         let resolved = match self.resolver.scope_params(h) {
@@ -2047,7 +2104,7 @@ impl Builder {
 
     /// Walk the `vpiStmt` child of `h`, or an explicit empty placeholder when
     /// there is none.
-    fn walk_opt_stmt(&mut self, h: VpiHandle, parent: Option<NodeId>) -> Result<NodeId, String> {
+    fn walk_opt_stmt(&mut self, h: VpiHandle, parent: Option<NodeId>) -> Result<NodeId, DbError> {
         match child(vpi::vpiStmt, h) {
             Some(s) => self.walk_node(s.raw(), parent),
             None => Ok(self.register(
@@ -2059,7 +2116,7 @@ impl Builder {
     }
 
     /// Dispatch a captured object to its statement/expression/other handler.
-    fn walk_node(&mut self, h: VpiHandle, parent: Option<NodeId>) -> Result<NodeId, String> {
+    fn walk_node(&mut self, h: VpiHandle, parent: Option<NodeId>) -> Result<NodeId, DbError> {
         let props = self.common(h);
         let t = vpi::obj_type(h);
         let id = self.register(parent, &props, NodeKind::Other);
@@ -2651,7 +2708,7 @@ impl Builder {
 
     /// Flatten an event control's condition into sensitivity specs and walk
     /// every referenced signal as a child expression.
-    fn walk_event_control(&mut self, h: VpiHandle, id: NodeId) -> Result<(), String> {
+    fn walk_event_control(&mut self, h: VpiHandle, id: NodeId) -> Result<(), DbError> {
         let mut kids: Vec<NodeId> = Vec::new();
         let mut specs: Vec<EventSpec> = Vec::new();
         let mut implicit = false;
@@ -2965,27 +3022,26 @@ impl Builder {
     /// `TypeInfo` of a typespec handle, following `ref_typespec → vpiActual`
     /// chains (guarded against cycles).
     fn typespec_info(&mut self, ts: VpiHandle) -> TypeInfo {
-        let mut visited: HashSet<VpiHandle> = HashSet::new();
-        // The ref_typespec wrappers must outlive the concrete handle we end up
-        // reading, so they are kept alive for the whole call.
-        let mut keep: Vec<OwnedHandle> = Vec::new();
-        let mut cur = ts;
+        let mut visited: HashSet<(i32, String)> = HashSet::new();
+        let mut current: Option<OwnedHandle> = None;
         loop {
+            let cur = current.as_ref().map_or(ts, OwnedHandle::raw);
             if vpi::obj_type(cur) != vpi::vpiRefTypespec {
-                break;
+                return self.concrete_typespec(cur);
             }
-            if !visited.insert(cur) {
+            let key = (vpi::obj_type(cur), vpi::obj_full_name(cur));
+            if !visited.insert(key) {
                 return TypeInfo::default();
             }
-            match child(vpi::vpiActual, cur) {
-                Some(a) => {
-                    cur = a.raw();
-                    keep.push(a);
-                }
+            let next = match current.as_ref() {
+                Some(owner) => owner.child(vpi::vpiActual),
+                None => child(vpi::vpiActual, ts),
+            };
+            match next {
+                Some(actual) => current = Some(actual),
                 None => return TypeInfo::default(),
             }
         }
-        self.concrete_typespec(cur)
     }
 
     /// `TypeInfo` of a concrete (non-ref) typespec object.
