@@ -38,17 +38,17 @@ final blocks ≤ 1024.
 | § | Area | Verilog ✅ | Verilog 🟨 | Verilog ❌ | SV ✅ | SV 🟨 | SV ❌ |
 |---|---|---:|---:|---:|---:|---:|---:|
 | 1 | Lexical & preprocessing | 10 | 0 | 0 | 0 | 1 | 1 |
-| 2 | Data types | 10 | 1 | 5 | 4 | 2 | 5 |
-| 3 | Modules & hierarchy | 8 | 1 | 1 | 1 | 1 | 1 |
+| 2 | Data types | 10 | 1 | 5 | 5 | 2 | 4 |
+| 3 | Modules & hierarchy | 8 | 1 | 1 | 2 | 1 | 0 |
 | 4 | Scheduling & processes | 8 | 1 | 0 | 7 | 1 | 1 |
-| 5 | Procedural statements | 17 | 2 | 1 | 2 | 1 | 4 |
+| 5 | Procedural statements | 17 | 2 | 1 | 3 | 1 | 3 |
 | 6 | Timing controls | 2 | 1 | 3 | 0 | 0 | 0 |
-| 7 | Expressions & operators | 17 | 2 | 1 | 1 | 0 | 6 |
+| 7 | Expressions & operators | 17 | 2 | 1 | 1 | 2 | 4 |
 | 8 | Continuous assign & structural | 5 | 4 | 7 | 0 | 0 | 0 |
 | 9 | Functions & tasks | 4 | 0 | 5 | 3 | 0 | 1 |
-| 10 | System tasks & functions | 9 | 1 | 17 | 1 | 0 | 8 |
+| 10 | System tasks & functions | 9 | 2 | 16 | 1 | 0 | 8 |
 | 11 | Compiler directives affecting sim | 5 | 0 | 0 | 4 | 0 | 0 |
-| — | **Total** | **95** | **13** | **40** | **23** | **6** | **27** |
+| — | **Total** | **95** | **14** | **39** | **26** | **8** | **22** |
 
 In-section ⬜ items (not counted above): §3 configurations [V], ref ports /
 default port values, extern/nested modules [SV] · §4 fine-grain process control
@@ -104,7 +104,7 @@ SystemVerilog era:
 - ✅ **uwire nets** fold as plain wire, no unique-resolution semantics modeled — §1800-2009 6.6 **[SV-2005]** (probed)
 - ✅ **typedef simple/packed-vector aliases** — §1800-2009 6.18 **[SV-2005]** resolved by frontend (probed)
 - ✅ **Array declaration initializers** `'{…}` patterns applied element-wise in linear-index order — §1800-2009 10.9.1 **[SV-2005]** constant elements only (sim_memory.rs)
-- ❌ **enum-typed variables** — §1800-2009 6.19 **[SV-2005]** "unsupported typespec" reject; enum constants fold at frontend (probed)
+- ✅ **enum-typed scalar variables** — §1800-2009 6.19 **[SV-2005]** stored at the elaborated packed base width; enum constants fold through the frontend (sim_operator_semantics.rs)
 - ❌ **packed struct/union signals** — §1800-2009 7.2–7.3 **[SV-2005]** "unsupported typespec" reject (probed)
 - ❌ **string type/signals/params** — §1800-2009 6.16 **[SV-2005]** rejected
 - ✅ **event data type** scalar `event ev;` declarations — §1800-2009 6.17 **[SV-2005]** (sim_events.rs); event arrays rejected by the Surelog frontend (grammar cannot parse them)
@@ -131,7 +131,7 @@ SystemVerilog era:
 
 - ✅ **Interfaces + modports** actuals, per-port copies, modport links; interface-body processes emitted on actual instance only — §1800-2009 25.3/25.5 **[SV-2005]** (sim_interface.rs, sim_interface_body.rs)
 - 🟨 **Packages** params/types via frontend folding — §1800-2009 26 **[SV-2005]** package subprograms not lowered ("return type has no width", probed)
-- ❌ **`.name` / `.*` connection shorthands** — §1800-2009 23.3.2.3–4 **[SV-2005]** not exercised end-to-end
+- ✅ **`.name` / `.*` connection shorthands** — §1800-2009 23.3.2.3–4 **[SV-2005]** expanded by the frontend and preserved through port-link lowering (sim_hier.rs)
 - ⬜ **ref ports / default port values** — §1800-2009 23.2.2.2/23.2.2.4 **[SV-2005]** out of scope
 - ⬜ **extern / nested modules** — §1800-2009 23.4–23.5 **[SV-2005]** out of scope
 
@@ -192,7 +192,7 @@ SystemVerilog era:
 - ✅ **return** in functions/tasks — §1800-2009 12.8/13.4.1 **[SV-2005]**
 - 🟨 **unique/priority/unique0 if & case** — §1800-2009 12.4.2/12.5.3 **[SV-2005]** lowered as plain case; no violation reports (probed)
 - ❌ **case … inside** wildcard matching — §1800-2009 12.5.4 **[SV-2005]** `==?` ops unsupported
-- ❌ **do-while** — §1800-2009 12.7.5 **[SV-2005]** rejected "unsupported statement" (probed)
+- ✅ **do-while** — §1800-2009 12.7.5 **[SV-2005]** post-test execution plus break/continue semantics (sim_disable.rs)
 - ❌ **foreach** — §1800-2009 12.7.3 **[SV-2005]** clean codegen rejection
 - ✅ **break/continue** — §1800-2009 12.8 **[SV-2005]** (sim_disable.rs) for/while/repeat/forever; continue lands on the increment (for) or back-edge condition test, break exits the innermost loop; nesting pinned
 - ❌ **Inline loop-var declarations** `for (int i…)` — §1800-2009 12.7.1 **[SV-2005]** loop var unresolved (probed)
@@ -240,8 +240,8 @@ Verilog era:
 SystemVerilog era:
 
 - ✅ **Static casts** `int'(e)`, `signed'()`, `unsigned'()`, size casts `n'(e)` — §1800-2009 6.24.1 **[SV-2005]** (sim_counter.rs `sim_static_casts`, re-run with Surelog v1.87) value-preserving: widening extends by the SOURCE's signedness (`sv4_cast`/IR `Convert`; §10.7 assignment padding follows the RHS too, so `int'(8'hFF)`=255 and a signed RHS sign-extends into wider unsigned targets). v1.87 still omits `vpiSigned` on based constants, so codegen recovers the `'s` marker from the literal's source token; size-cast targets remain degraded to int(32) unsigned by the frontend
-- ❌ **Increment/decrement** `++ --` — §1800-2009 11.4.2 **[SV-2005]** rejected "unsupported statement" (probed)
-- ❌ **Assignment operators** `+= -= *= /= %= &= |= ^= <<= >>= …` — §1800-2009 11.4.1 **[SV-2005]** rejected (probed)
+- 🟨 **Increment/decrement** `++ --` — §1800-2009 11.4.2 **[SV-2005]** statement-position pre/post forms on whole scalar variables, including `for` increments, are supported; expression-valued and select/array-element forms remain unsupported (sim_operator_semantics.rs)
+- 🟨 **Assignment operators** `+= -= *= /= %= &= |= ^= <<= >>= <<<= >>>=` — §1800-2009 11.4.1 **[SV-2005]** whole scalar variables are supported; select and array-element targets are cleanly rejected until LHS index evaluation can be preserved exactly once (sim_operator_semantics.rs)
 - ❌ **Wildcard equality** `==? !=?` — §1800-2009 11.4.6 **[SV-2005]**
 - ❌ **Set membership** `inside {…}` — §1800-2009 11.4.13 **[SV-2005]**
 - ❌ **Streaming operators** `{<<{}}`, `{>>{}}` — §1800-2009 11.4.14 **[SV-2005]**
@@ -317,7 +317,7 @@ Memory load/store:
 Time:
 
 - ✅ **$time** module-unit scaled, `%t` consumes it — §1364-2001 17.7.1 **[1995]**
-- ❌ **$stime/$realtime** — §1364-2001 17.7.2–17.7.3 **[1995]** unsupported-function reject
+- 🟨 **$stime/$realtime** — §1364-2001 17.7.2–17.7.3 **[1995]** `$stime` returns the module-unit-scaled low 32 bits; `$realtime` remains unsupported (sim_timescale.rs)
 - ✅ **$printtimescale** — §1364-2001 17.3.1 **[1995]**
 - ❌ **$timeformat** — §1364-2001 17.3.2 **[1995]** unsupported-task reject
 
