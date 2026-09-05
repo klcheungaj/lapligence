@@ -633,6 +633,15 @@ writes sources + `CMakeLists.txt` only (`--gen-only`);
 
 ---
 
+## General Coding Practices
+
+Follow [`coding_practices.md`](docs/coding_practices.md) for general
+software design, Rust idioms, module decomposition, and APIs between modules.
+The project-specific architecture and safety rules in this file take
+precedence.
+
+---
+
 ## Rust Guidelines
 
 - Rust edition: use the edition declared in `Cargo.toml`.

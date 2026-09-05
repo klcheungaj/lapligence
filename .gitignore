@@ -12,9 +12,13 @@ slpp_all
 /core
 /core.*
 build-cache/
+
 docs/*
 !.cargo
 !sim_features.md
 !config.md
+!coding_practices.md
+!ROADMAP.md
+
 skills-lock.json
 temp
