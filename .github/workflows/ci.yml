@@ -14,6 +14,10 @@ name: CI
 on:
   pull_request:
   workflow_dispatch:
+  schedule:
+    # Re-check the lockfile when the RustSec advisory database changes even
+    # if the repository has had no dependency commit that week.
+    - cron: "17 4 * * 1"
 
 permissions:
   contents: read
@@ -21,6 +25,7 @@ permissions:
 jobs:
   lint:
     name: check / fmt / clippy / test (ubuntu)
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-22.04
     timeout-minutes: 180
     steps:
@@ -59,3 +64,53 @@ jobs:
       # C++ singletons), so unit tests in one executable must not overlap.
       - name: cargo test
         run: cargo test --all-features -- --test-threads=1
+
+  generated-runtime-sanitizers:
+    name: generated runtime / ASan + UBSan (ubuntu)
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 180
+    env:
+      # sim::build forwards these flags to every generated-model C source,
+      # including llg_rt.c, aco.c, and the final link. ACO_USE_ASAN enables
+      # libaco's no_sanitize_address annotations on its stack-copy routines.
+      LLG_CC: gcc
+      LLG_CFLAGS: >-
+        -DACO_USE_ASAN -fsanitize=address,undefined
+        -fno-omit-frame-pointer -fno-sanitize-recover=all
+      ASAN_OPTIONS: detect_leaks=1:strict_string_checks=1
+      UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install native build prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y patch cmake g++ zlib1g-dev
+
+      - name: Run generated runtime and model probes under sanitizers
+        run: >-
+          cargo test --all-features
+          --test runtime_boundaries --test sim_counter
+          -- --test-threads=1
+
+  dependency-audit:
+    name: dependency security audit
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+
+      - name: Audit Cargo.lock against RustSec
+        run: cargo audit
