@@ -1,5 +1,5 @@
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index 18f5b328a0..d2d1fb5c3d 100644
+index 5cbd77aed6..7b8a6e2fff 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
 @@ -45,7 +45,10 @@ option(
@@ -14,7 +14,7 @@ index 18f5b328a0..d2d1fb5c3d 100644
  option(
    SURELOG_PATHID_DEBUG_ENABLED
    "Enable PathId debugging" OFF)
-@@ -207,6 +210,13 @@ if(SURELOG_WITH_ZLIB)
+@@ -213,6 +216,13 @@ if(SURELOG_WITH_ZLIB)
    endif()
  endif()
  

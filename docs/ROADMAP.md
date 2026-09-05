@@ -33,7 +33,7 @@ work. Product feature status remains in `sim_features.md` and `config.md`.
 - [x] Run all targets/features, minimal-feature checks, Clippy, and tests in CI.
 - [ ] Consolidate repeated simulator and LSP integration-test harnesses.
 - [ ] Add sanitizer and dependency/security audit jobs.
-- [ ] Stage patched vendor sources under `OUT_DIR` instead of changing checkout state.
+- [x] Keep the Surelog gitlink on upstream and apply local patches only at build time.
 - [ ] Track and maintain the platform and LSP safeguard documentation.
 
 Each refactoring step must preserve the existing owned-data pipeline and pass
