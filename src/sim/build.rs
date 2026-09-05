@@ -35,6 +35,9 @@
 //! - `LLG_CMAKE` — explicit cmake program override; default `cmake`
 //!   (also used by [`cmake_available`]).
 
+use std::error::Error;
+use std::fmt;
+use std::io;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::OnceLock;
@@ -74,10 +77,81 @@ pub struct CmakeBuildOpts {
     pub generator: Option<String>,
 }
 
+/// Failure while writing, configuring, or compiling a generated model.
+#[derive(Debug)]
+#[non_exhaustive]
+pub enum BuildError {
+    /// An embedded runtime or generated model source could not be written.
+    SourceGeneration(String),
+    /// A direct filesystem operation in this module failed.
+    Io {
+        action: &'static str,
+        path: PathBuf,
+        source: io::Error,
+    },
+    /// One `LLG_CFLAGS` token cannot be represented safely in CMake's cache.
+    InvalidCompilerFlag(String),
+    /// The configured CMake program could not be launched.
+    CmakeLaunch { program: String, source: io::Error },
+    /// CMake configuration failed after one clean retry.
+    Configure { command: String, output: String },
+    /// Compilation of the generated C project failed.
+    Compile { output: String },
+    /// CMake succeeded but no simulator executable was produced.
+    ExecutableNotFound { directory: PathBuf, listing: String },
+}
+
+impl BuildError {
+    /// Compatibility helper for callers that previously searched a string
+    /// error. Prefer matching variants for recovery decisions.
+    pub fn contains(&self, pattern: &str) -> bool {
+        self.to_string().contains(pattern)
+    }
+}
+
+impl fmt::Display for BuildError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::SourceGeneration(detail) => f.write_str(detail),
+            Self::Io {
+                action,
+                path,
+                source,
+            } => write!(f, "{action} {}: {source}", path.display()),
+            Self::InvalidCompilerFlag(flag) => write!(
+                f,
+                "LLG_CFLAGS flag `{flag}` contains a double quote; quoted flags cannot be passed through the CMake cache"
+            ),
+            Self::CmakeLaunch { program, source } => write!(
+                f,
+                "cmake not found or not runnable: {program} (install cmake): {source}"
+            ),
+            Self::Configure { command, output } => {
+                write!(f, "cmake configure failed ({command}):\n{output}")
+            }
+            Self::Compile { output } => write!(f, "cmake build failed:\n{output}"),
+            Self::ExecutableNotFound { directory, listing } => write!(
+                f,
+                "sim executable not found under {}: {listing}",
+                directory.display()
+            ),
+        }
+    }
+}
+
+impl Error for BuildError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Io { source, .. } | Self::CmakeLaunch { source, .. } => Some(source),
+            _ => None,
+        }
+    }
+}
+
 /// Build the simulation model in `out_dir` with CMake (default options) and
 /// return the path of the resulting executable.  Sources are written exactly
 /// like [`generate_model_sources`] does (runtime + libaco + `extra`).
-pub fn build_model_cmake(out_dir: &Path, extra: &[(&str, &str)]) -> Result<PathBuf, String> {
+pub fn build_model_cmake(out_dir: &Path, extra: &[(&str, &str)]) -> Result<PathBuf, BuildError> {
     build_model_cmake_with_opts(out_dir, extra, &CmakeBuildOpts::default())
 }
 
@@ -87,7 +161,7 @@ pub fn build_model_cmake_with_opts(
     out_dir: &Path,
     extra: &[(&str, &str)],
     opts: &CmakeBuildOpts,
-) -> Result<PathBuf, String> {
+) -> Result<PathBuf, BuildError> {
     generate_model_sources(out_dir, extra)?;
 
     let cc = resolve_cc();
@@ -121,20 +195,20 @@ pub fn build_model_cmake_with_opts(
     configure
         .arg(format!("-DCMAKE_C_COMPILER={cc}"))
         .arg(format!("-DCMAKE_C_FLAGS:STRING={flags}"));
-    let mut output = configure.output().map_err(|e| {
-        format!("cmake not found or not runnable: {cmake_prog} (install cmake): {e}")
-    })?;
+    let launch_error = |source| BuildError::CmakeLaunch {
+        program: cmake_prog.clone(),
+        source,
+    };
+    let mut output = configure.output().map_err(&launch_error)?;
     if !output.status.success() {
         remove_dir_all_quiet(&build_dir);
-        output = configure.output().map_err(|e| {
-            format!("cmake not found or not runnable: {cmake_prog} (install cmake): {e}")
-        })?;
+        output = configure.output().map_err(&launch_error)?;
     }
     if !output.status.success() {
-        return Err(format!(
-            "cmake configure failed ({configure:?}):\n{}",
-            output_tail(&output)
-        ));
+        return Err(BuildError::Configure {
+            command: format!("{configure:?}"),
+            output: output_tail(&output),
+        });
     }
 
     // Build.
@@ -144,11 +218,11 @@ pub fn build_model_cmake_with_opts(
         .arg(&build_dir)
         .arg("--config")
         .arg("Release");
-    let output = build_cmd.output().map_err(|e| {
-        format!("cmake not found or not runnable: {cmake_prog} (install cmake): {e}")
-    })?;
+    let output = build_cmd.output().map_err(launch_error)?;
     if !output.status.success() {
-        return Err(format!("cmake build failed:\n{}", output_tail(&output)));
+        return Err(BuildError::Compile {
+            output: output_tail(&output),
+        });
     }
 
     find_sim_exe(&build_dir.join("bin"))
@@ -162,11 +236,11 @@ pub fn build_model_cmake_with_opts(
 /// The directory is left deterministic: after writing, entries that are not
 /// part of the current source set (and not the CMake `build/` directory) are
 /// deleted, so artifacts of earlier runs never accumulate.
-pub fn generate_model_sources(out_dir: &Path, extra: &[(&str, &str)]) -> Result<(), String> {
-    super::write_sim_sources(out_dir, extra)?;
+pub fn generate_model_sources(out_dir: &Path, extra: &[(&str, &str)]) -> Result<(), BuildError> {
+    super::write_sim_sources(out_dir, extra).map_err(BuildError::SourceGeneration)?;
     let waveform = waveform_enabled(extra);
     if waveform {
-        super::rt::write_waveform_sources(out_dir)?;
+        super::rt::write_waveform_sources(out_dir).map_err(BuildError::SourceGeneration)?;
     }
     write_cmakelists(out_dir, extra, waveform)?;
     prune_stale_entries(out_dir, extra, waveform);
@@ -247,7 +321,11 @@ fn remove_dir_all_quiet(dir: &Path) {
 }
 
 /// Emit `CMakeLists.txt` for the source set `extra` (+ runtime + libaco).
-fn write_cmakelists(out_dir: &Path, extra: &[(&str, &str)], waveform: bool) -> Result<(), String> {
+fn write_cmakelists(
+    out_dir: &Path,
+    extra: &[(&str, &str)],
+    waveform: bool,
+) -> Result<(), BuildError> {
     let mut sources: Vec<&str> = extra
         .iter()
         .map(|(name, _)| *name)
@@ -261,8 +339,11 @@ fn write_cmakelists(out_dir: &Path, extra: &[(&str, &str)], waveform: bool) -> R
         .replace("{SOURCES}", &sources.join(" "))
         .replace("{WAVE_SETUP}", if waveform { WAVE_CMAKE } else { "" });
     let cmakelists_path = out_dir.join("CMakeLists.txt");
-    std::fs::write(&cmakelists_path, cmakelists)
-        .map_err(|e| format!("write {}: {e}", cmakelists_path.display()))
+    std::fs::write(&cmakelists_path, cmakelists).map_err(|source| BuildError::Io {
+        action: "write",
+        path: cmakelists_path,
+        source,
+    })
 }
 
 fn waveform_enabled(extra: &[(&str, &str)]) -> bool {
@@ -307,15 +388,12 @@ fn resolve_cmake() -> String {
 
 /// `-DCMAKE_C_FLAGS` payload: the base warning/optimization set plus every
 /// whitespace-separated token of `$LLG_CFLAGS`.
-fn c_flags() -> Result<String, String> {
+fn c_flags() -> Result<String, BuildError> {
     let mut flags = String::from("-O2 -Wall -Wno-unused-function");
     if let Ok(extra) = std::env::var("LLG_CFLAGS") {
         for flag in extra.split_whitespace() {
             if flag.contains('"') {
-                return Err(format!(
-                    "LLG_CFLAGS flag `{flag}` contains a double quote; \
-                     quoted flags cannot be passed through the CMake cache"
-                ));
+                return Err(BuildError::InvalidCompilerFlag(flag.to_string()));
             }
             flags.push(' ');
             flags.push_str(flag);
@@ -349,7 +427,7 @@ fn output_tail(output: &std::process::Output) -> String {
 /// Locate the built executable: `<build>/bin/sim` first, then a recursive
 /// search under `<build>/bin/` (multi-config generators may add per-config
 /// subdirectories).  Deterministic order on all paths.
-fn find_sim_exe(bin_dir: &Path) -> Result<PathBuf, String> {
+fn find_sim_exe(bin_dir: &Path) -> Result<PathBuf, BuildError> {
     let direct = bin_dir.join("sim");
     if direct.is_file() {
         return Ok(direct);
@@ -370,10 +448,10 @@ fn find_sim_exe(bin_dir: &Path) -> Result<PathBuf, String> {
             .collect::<Vec<_>>()
             .join(", ")
     };
-    Err(format!(
-        "sim executable not found under {}: {listed}",
-        bin_dir.display()
-    ))
+    Err(BuildError::ExecutableNotFound {
+        directory: bin_dir.to_path_buf(),
+        listing: listed,
+    })
 }
 
 /// Recursively collect files named `name` under `dir`, sorted within each
@@ -434,7 +512,8 @@ mod tests {
                     "llg_wave_selftest.c",
                     super::super::rt::waveform_selftest_source(),
                 )],
-            )?;
+            )
+            .map_err(|error| error.to_string())?;
             let output = Command::new(&exe)
                 .current_dir(&dir)
                 .output()
@@ -445,7 +524,8 @@ mod tests {
                     String::from_utf8_lossy(&output.stderr)
                 ));
             }
-            generate_model_sources(&dir, &[("plain.c", "int main(void) { return 0; }\n")])?;
+            generate_model_sources(&dir, &[("plain.c", "int main(void) { return 0; }\n")])
+                .map_err(|error| error.to_string())?;
             if dir.join("llg_wave.c").exists() {
                 return Err("ordinary source generation retained waveform files".to_string());
             }

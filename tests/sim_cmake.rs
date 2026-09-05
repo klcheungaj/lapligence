@@ -203,6 +203,7 @@ fn invalid_generator_error() {
     let _ = std::fs::remove_dir_all(&dir);
 
     let err = result.expect_err("unsupported generator must fail the configure step");
+    assert!(matches!(&err, sim::build::BuildError::Configure { .. }));
     assert!(err.contains("cmake configure failed"), "error: {err}");
 }
 
@@ -276,6 +277,7 @@ fn missing_cmake_error() {
     let _ = std::fs::remove_dir_all(&dir);
 
     let err = result.expect_err("unresolvable LLG_CMAKE must fail the build");
+    assert!(matches!(&err, sim::build::BuildError::CmakeLaunch { .. }));
     assert!(err.contains("not runnable"), "error: {err}");
     assert!(err.contains("install cmake"), "error: {err}");
     assert!(!err.contains("--direct-cc"), "error: {err}");
