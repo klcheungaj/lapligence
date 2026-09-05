@@ -13,9 +13,11 @@ the generated `model.c` into a standalone executable and is deliberately
     (`x & z == 0`).  Z behaves as X in every unknown-propagating op (LRM
     11.4.5) but is carried through identity/copy ops and distinguished by
     `$display`, casez/casex wildcards and `===`/`!==`.
-  - Value ops — arithmetic/logic/reduction/compare/casez/casex, mux, concat,
+  - Value ops — arithmetic/logic/reduction/compare/wildcard-equality/casez/casex, mux, concat,
     repeat, part/bit/indexed-part selects, resize/fill/clog2, format and
     decimal conversion; semantics mirror `core::elab::Value` (kept in sync).
+    Bit-vector queries count known one bits across all limbs, ignore X/Z for
+    `$countones`/`$onehot`/`$onehot0`, and detect either state for `$isunknown`.
   - Scheduler — libaco coroutines per process; an IEEE 1800 §4 region loop
     (active region → inactive region (`#0`, drained in a loop) → NBA commit →
     re-run woken processes → advance time to the next timed wakeup),
@@ -35,6 +37,9 @@ the generated `model.c` into a standalone executable and is deliberately
     enforced by codegen at assignments and
     initialization; unsupported double-aware scheduling contexts are rejected
     before generated C is compiled.
+    `$rtoi` truncates rather than using assignment rounding; real/shortreal
+    bitcasts use `memcpy` and require 64-bit `double`/32-bit `float` storage.
+    See the [lowering guide](../codegen/AGENTS.md) for conversion bounds.
 - `llg_rt_selftest.c` — C self-tests: sv4 value vectors (mirrored from the
   `core::elab` unit tests) plus scheduler checks (delay ordering, NBA
   visibility, ping-pong, directly observed nested `join_none` lifetimes, empty

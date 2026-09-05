@@ -17,6 +17,11 @@
 #include <stdarg.h>
 #include <math.h>
 
+_Static_assert(sizeof(double) == sizeof(uint64_t),
+               "$realtobits requires a 64-bit C double");
+_Static_assert(sizeof(float) == sizeof(uint32_t),
+               "$shortrealtobits requires a 32-bit C float");
+
 // ── Fatal boundary checks ────────────────────────────────────────────────────
 
 static void llg_fatal_allocation(const char* what, size_t count, size_t size) {
@@ -122,6 +127,42 @@ sv4_t sv4_from_real(double v, uint16_t width, int8_t is_signed) {
     return sv4_from_u64(bits, width, is_signed);
 }
 
+sv4_t sv4_rtoi(double v) {
+    if (!isfinite(v)) return sv4_x(32, 1);
+    const double modulus = 4294967296.0;
+    double magnitude = fmod(fabs(trunc(v)), modulus);
+    uint64_t bits = (uint64_t)magnitude;
+    if (signbit(v)) bits = 0ULL - bits;
+    return sv4_from_u64(bits, 32, 1);
+}
+
+sv4_t sv4_realtobits(double v) {
+    uint64_t bits;
+    memcpy(&bits, &v, sizeof(bits));
+    return sv4_from_u64(bits, 64, 0);
+}
+
+double sv4_bitstoreal(sv4_t v) {
+    uint64_t bits = v.bits[0] & ~(v.x[0] | v.z[0]);
+    double result;
+    memcpy(&result, &bits, sizeof(result));
+    return result;
+}
+
+sv4_t sv4_shortrealtobits(double v) {
+    float value = (float)v;
+    uint32_t bits;
+    memcpy(&bits, &value, sizeof(bits));
+    return sv4_from_u64(bits, 32, 0);
+}
+
+double sv4_bitstoshortreal(sv4_t v) {
+    uint32_t bits = (uint32_t)(v.bits[0] & ~(v.x[0] | v.z[0]));
+    float value;
+    memcpy(&value, &bits, sizeof(value));
+    return (double)value;
+}
+
 int llg_real_to_bool(double v) { return v != 0.0; }
 
 sv4_t sv4_from_limbs(const uint64_t* bits, const uint64_t* x, const uint64_t* z,
@@ -143,6 +184,23 @@ int sv4_is_unknown(sv4_t v) {
     for (int i = 0; i < LLG_LIMBS; i++)
         if (v.x[i] | v.z[i]) return 1;
     return 0;
+}
+
+sv4_t sv4_countones(sv4_t v) {
+    uint64_t count = 0;
+    for (int i = 0; i < LLG_LIMBS; i++) {
+        uint64_t ones = v.bits[i] & ~(v.x[i] | v.z[i]) & sv4_limb_mask(v.width, i);
+        while (ones) {
+            count++;
+            ones &= ones - 1;
+        }
+    }
+    return sv4_from_u64(count, 32, 1);
+}
+
+sv4_t sv4_onehot(sv4_t v, int allow_zero) {
+    uint64_t count = sv4_countones(v).bits[0];
+    return sv4_from_u64(allow_zero ? count <= 1 : count == 1, 1, 0);
 }
 
 int sv4_to_bool(sv4_t v) {
@@ -699,6 +757,30 @@ sv4_t sv4_case_eq(sv4_t a, sv4_t b) {
 sv4_t sv4_case_neq(sv4_t a, sv4_t b) {
     sv4_t r = sv4_case_eq(a, b);
     return sv4_from_u64(1 - sv4_to_u64(r), 1, 0);
+}
+
+sv4_t sv4_wild_eq(sv4_t lhs, sv4_t rhs) {
+    uint16_t w = sv4_maxw(lhs, rhs);
+    int8_t s = lhs.is_signed && rhs.is_signed;
+    sv4_t left = sv4_resize(lhs, w, s);
+    sv4_t right = sv4_resize(rhs, w, s);
+    int unknown = 0;
+    for (int i = 0; i < sv4_nlimbs(w); i++) {
+        uint64_t mask = sv4_limb_mask(w, i);
+        uint64_t wildcard = (right.x[i] | right.z[i]) & mask;
+        uint64_t care = mask & ~wildcard;
+        uint64_t left_unknown = (left.x[i] | left.z[i]) & care;
+        uint64_t known = care & ~left_unknown;
+        if (((left.bits[i] ^ right.bits[i]) & known) != 0) return SV4_C(0, 1);
+        unknown |= left_unknown != 0;
+    }
+    return unknown ? SV4_X(1) : SV4_C(1, 1);
+}
+
+sv4_t sv4_wild_neq(sv4_t lhs, sv4_t rhs) {
+    sv4_t result = sv4_wild_eq(lhs, rhs);
+    if (sv4_is_unknown(result)) return result;
+    return SV4_C(1 - sv4_to_u64(result), 1);
 }
 
 // casez per LRM 12.5.1: a z (or ?) bit in the case ITEM is a don't-care; an x

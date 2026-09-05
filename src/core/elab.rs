@@ -484,7 +484,7 @@ fn unsigned_div_rem(dividend: &Value, divisor: &Value) -> (Value, Value) {
     (quotient, remainder)
 }
 
-fn real_to_bits(value: f64, width: usize, signed: bool) -> Value {
+pub(crate) fn real_to_bits(value: f64, width: usize, signed: bool) -> Value {
     if !value.is_finite() {
         return all_x(width, signed);
     }
@@ -495,6 +495,53 @@ fn real_to_bits(value: f64, width: usize, signed: bool) -> Value {
         bits = bits.wrapping_neg();
     }
     Value::from_u64(bits, width, signed)
+}
+
+/// `$rtoi`: truncate a real toward zero into a signed 32-bit integer.
+/// Non-finite values have no integral representation and produce X.
+pub(crate) fn rtoi_value(value: f64) -> Value {
+    if !value.is_finite() {
+        return Value::from_bits(vec![Bit::X; 32], true);
+    }
+    let magnitude = value.trunc().abs() % 4_294_967_296.0;
+    let mut bits = magnitude as u64;
+    if value.is_sign_negative() {
+        bits = bits.wrapping_neg();
+    }
+    Value::from_u64(bits, 32, true)
+}
+
+/// `$realtobits`: preserve the IEEE-754 double representation exactly.
+pub(crate) fn real_to_ieee_bits(value: f64) -> Value {
+    Value::from_u64(value.to_bits(), 64, false)
+}
+
+/// `$bitstoreal`: reinterpret exactly 64 packed bits as an IEEE-754 double.
+/// X/Z positions contribute zero, matching [`Value::to_real`].
+pub(crate) fn ieee_bits_to_real(value: &Value) -> Option<f64> {
+    (value.width() == 64).then(|| f64::from_bits(known_low_bits(value)))
+}
+
+/// `$shortrealtobits`: round through IEEE-754 single precision and preserve
+/// the resulting 32-bit representation.
+pub(crate) fn shortreal_to_ieee_bits(value: f64) -> Value {
+    Value::from_u64((value as f32).to_bits().into(), 32, false)
+}
+
+/// `$bitstoshortreal`: reinterpret exactly 32 packed bits as an IEEE-754
+/// single and widen it losslessly to the core's `f64` real container.
+pub(crate) fn ieee_bits_to_shortreal(value: &Value) -> Option<f64> {
+    (value.width() == 32).then(|| f32::from_bits(known_low_bits(value) as u32) as f64)
+}
+
+fn known_low_bits(value: &Value) -> u64 {
+    let mut bits = 0u64;
+    for index in 0..value.width().min(64) {
+        if value.bit_lsb(index) == Bit::One {
+            bits |= 1u64 << index;
+        }
+    }
+    bits
 }
 
 fn bit_x() -> Value {
@@ -919,6 +966,68 @@ pub fn case_eq(a: &Value, b: &Value) -> Value {
 /// Case inequality (`!==`): bitwise comparison including X/Z bits; never X.
 pub fn case_neq(a: &Value, b: &Value) -> Value {
     invert_known_one_bit(case_eq(a, b))
+}
+
+/// Wildcard equality (`==?`, LRM 1800-2009 §11.4.6): X/Z bits in the
+/// right operand are don't-cares. A known mismatch on any cared bit makes the
+/// result 0; otherwise an X/Z bit in the left operand makes the result X.
+pub fn wildcard_eq(a: &Value, b: &Value) -> Value {
+    let w = max_width(a, b);
+    let signed = a.signed && b.signed;
+    let ra = a.resize(w, signed);
+    let rb = b.resize(w, signed);
+    let mut unknown = false;
+    for i in 0..w {
+        let right = rb.bit_lsb(i);
+        if matches!(right, Bit::X | Bit::Z) {
+            continue;
+        }
+        let left = ra.bit_lsb(i);
+        if matches!(left, Bit::X | Bit::Z) {
+            unknown = true;
+        } else if left != right {
+            return Value::from_u64(0, 1, false);
+        }
+    }
+    if unknown {
+        bit_x()
+    } else {
+        Value::from_u64(1, 1, false)
+    }
+}
+
+/// Wildcard inequality (`!=?`); logical complement of [`wildcard_eq`] while
+/// preserving an unknown result.
+pub fn wildcard_neq(a: &Value, b: &Value) -> Value {
+    let result = wildcard_eq(a, b);
+    if result.is_unknown() {
+        result
+    } else {
+        invert_known_one_bit(result)
+    }
+}
+
+/// Count known one bits, ignoring X/Z, as a signed SystemVerilog int.
+pub fn countones(value: &Value) -> Value {
+    let count = value.bits.iter().filter(|bit| **bit == Bit::One).count();
+    Value::from_u64(count as u64, 32, true)
+}
+
+/// Test whether exactly one bit is one; X/Z do not contribute to the count.
+pub fn onehot(value: &Value) -> Value {
+    let count = value.bits.iter().filter(|bit| **bit == Bit::One).count();
+    Value::from_u64(u64::from(count == 1), 1, false)
+}
+
+/// Test whether at most one bit is one; X/Z do not contribute to the count.
+pub fn onehot0(value: &Value) -> Value {
+    let count = value.bits.iter().filter(|bit| **bit == Bit::One).count();
+    Value::from_u64(u64::from(count <= 1), 1, false)
+}
+
+/// Return a known one-bit predicate for the presence of X or Z.
+pub fn isunknown(value: &Value) -> Value {
+    Value::from_u64(u64::from(value.is_unknown()), 1, false)
 }
 
 /// Casez wildcard equality (`casez` item match, LRM 12.5.1): 1-bit result,
@@ -1610,11 +1719,10 @@ impl Resolver {
             vpiUnaryAndOp | vpiUnaryNandOp | vpiUnaryOrOp | vpiUnaryNorOp | vpiUnaryXorOp
             | vpiUnaryXNorOp | vpiBitNegOp | vpiBitAndOp | vpiBitOrOp | vpiBitXorOp
             | vpiBitXNorOp | vpiLShiftOp | vpiRShiftOp | vpiArithLShiftOp | vpiArithRShiftOp
-            | vpiCaseEqOp | vpiCaseNeqOp | vpiConcatOp | vpiMultiConcatOp => {
-                Err(ElabError::Unsupported(
-                    "unsupported real constant expression operation".to_string(),
-                ))
-            }
+            | vpiCaseEqOp | vpiCaseNeqOp | vpiWildEqOp | vpiWildNeqOp | vpiConcatOp
+            | vpiMultiConcatOp => Err(ElabError::Unsupported(
+                "unsupported real constant expression operation".to_string(),
+            )),
             other => Err(ElabError::Unsupported(format!(
                 "operation op type {other} with real operand"
             ))),
@@ -1670,6 +1778,8 @@ impl Resolver {
             vpiNeqOp => Ok(Val::Bits(neq(&u(0)?, &u(1)?))),
             vpiCaseEqOp => Ok(Val::Bits(case_eq(&u(0)?, &u(1)?))),
             vpiCaseNeqOp => Ok(Val::Bits(case_neq(&u(0)?, &u(1)?))),
+            vpiWildEqOp => Ok(Val::Bits(wildcard_eq(&u(0)?, &u(1)?))),
+            vpiWildNeqOp => Ok(Val::Bits(wildcard_neq(&u(0)?, &u(1)?))),
             vpiGtOp => Ok(Val::Bits(gt(&u(0)?, &u(1)?))),
             vpiGeOp => Ok(Val::Bits(ge(&u(0)?, &u(1)?))),
             vpiLtOp => Ok(Val::Bits(lt(&u(0)?, &u(1)?))),
@@ -2000,6 +2110,76 @@ impl Resolver {
         let arg_handles = iter(vpi::vpiArgument, call);
         let args: Vec<VpiHandle> = arg_handles.iter().map(OwnedHandle::raw).collect();
         match name.as_str() {
+            "$rtoi" | "$itor" | "$realtobits" | "$bitstoreal" | "$shortrealtobits"
+            | "$bitstoshortreal" => {
+                let [arg] = args.as_slice() else {
+                    return Err(ElabError::Unsupported(format!(
+                        "{name} requires exactly one argument"
+                    )));
+                };
+                let arg = self.eval_expr_ctx(sc, resolved, in_progress, frame, *arg)?;
+                match (name.as_str(), arg) {
+                    ("$rtoi", Val::Real(value)) => Ok(Val::Bits(rtoi_value(value))),
+                    ("$rtoi", Val::Bits(value)) => Ok(Val::Bits(rtoi_value(value.to_real()))),
+                    ("$itor", Val::Bits(value)) => Ok(Val::Real(value.to_real())),
+                    ("$itor", Val::Real(value)) => {
+                        Ok(Val::Real(real_to_bits(value, 32, true).to_real()))
+                    }
+                    ("$realtobits", Val::Real(value)) => Ok(Val::Bits(real_to_ieee_bits(value))),
+                    ("$realtobits", Val::Bits(value)) => {
+                        Ok(Val::Bits(real_to_ieee_bits(value.to_real())))
+                    }
+                    ("$bitstoreal", Val::Bits(value)) => {
+                        ieee_bits_to_real(&value).map(Val::Real).ok_or_else(|| {
+                            ElabError::Unsupported(
+                                "$bitstoreal requires an exactly 64-bit packed argument"
+                                    .to_string(),
+                            )
+                        })
+                    }
+                    ("$shortrealtobits", Val::Real(value)) => {
+                        Ok(Val::Bits(shortreal_to_ieee_bits(value)))
+                    }
+                    ("$shortrealtobits", Val::Bits(value)) => {
+                        Ok(Val::Bits(shortreal_to_ieee_bits(value.to_real())))
+                    }
+                    ("$bitstoshortreal", Val::Bits(value)) => ieee_bits_to_shortreal(&value)
+                        .map(Val::Real)
+                        .ok_or_else(|| {
+                            ElabError::Unsupported(
+                                "$bitstoshortreal requires an exactly 32-bit packed argument"
+                                    .to_string(),
+                            )
+                        }),
+                    ("$rtoi" | "$itor" | "$realtobits", _) => Err(ElabError::Unsupported(format!(
+                        "{name} requires a numeric argument"
+                    ))),
+                    ("$bitstoreal", _) => Err(ElabError::Unsupported(
+                        "$bitstoreal requires an exactly 64-bit packed argument".to_string(),
+                    )),
+                    ("$shortrealtobits", _) => Err(ElabError::Unsupported(
+                        "$shortrealtobits requires a numeric argument".to_string(),
+                    )),
+                    _ => Err(ElabError::Unsupported(
+                        "$bitstoshortreal requires an exactly 32-bit packed argument".to_string(),
+                    )),
+                }
+            }
+            "$countones" | "$onehot" | "$onehot0" | "$isunknown" => {
+                if args.len() != 1 {
+                    return Err(ElabError::Unsupported(format!(
+                        "{name} requires exactly one argument"
+                    )));
+                }
+                let arg = self.op_bits(sc, resolved, in_progress, frame, &args, 0)?;
+                let value = match name.as_str() {
+                    "$countones" => countones(&arg),
+                    "$onehot" => onehot(&arg),
+                    "$onehot0" => onehot0(&arg),
+                    _ => isunknown(&arg),
+                };
+                Ok(Val::Bits(value))
+            }
             "$clog2" => {
                 let a = self.op_bits(sc, resolved, in_progress, frame, &args, 0)?;
                 Ok(Val::Bits(clog2(&a)))
@@ -2750,6 +2930,20 @@ mod tests {
             bits("1")
         );
         assert_eq!(case_eq(&bits_signed("z001"), &bits("00000001")), bits("0"));
+        assert_eq!(wildcard_eq(&bits("10xz"), &bits("10xz")), bits("1"));
+        assert_eq!(wildcard_eq(&bits("10xz"), &bits("10x0")), bits("x"));
+        assert_eq!(wildcard_eq(&bits("11xz"), &bits("10x0")), bits("0"));
+        assert_eq!(wildcard_neq(&bits("11xz"), &bits("10x0")), bits("1"));
+        assert_eq!(wildcard_neq(&bits("10xz"), &bits("10x0")), bits("x"));
+        assert_eq!(wildcard_eq(&bits("1010"), &bits("10xz")), bits("1"));
+        assert_eq!(
+            wildcard_eq(&bits_signed("x001"), &bits_signed("xzzzz001")),
+            bits("1")
+        );
+        assert_eq!(
+            wildcard_eq(&bits_signed("1001"), &bits("00001001")),
+            bits("1")
+        );
         assert_eq!(lt(&v(3, 8, false), &v(5, 8, false)), bits("1"));
         assert_eq!(le(&v(5, 8, false), &v(3, 8, false)), bits("0"));
         assert_eq!(gt(&v(9, 8, false), &v(5, 8, false)), bits("1"));

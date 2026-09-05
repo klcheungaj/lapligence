@@ -226,10 +226,10 @@ use crate::sim::emit_c::{
     RCtx,
 };
 use crate::sim::ir::{
-    IrBinOp, IrCall, IrCallArg, IrCallExpr, IrCaseItem, IrCaseKind, IrConst, IrDepth, IrEdge,
-    IrElemSel, IrEvent, IrExpr, IrExprKind, IrFormal, IrJoinKind, IrLhs, IrModel, IrProcess,
-    IrRealBinOp, IrRealUnOp, IrShape, IrSignal, IrStmt, IrSysFunc, IrTimeKind, IrType, IrUnOp,
-    IrWaitSrc, LLG_MAX_WIDTH,
+    IrBinOp, IrBitQuery, IrCall, IrCallArg, IrCallExpr, IrCaseItem, IrCaseKind, IrConst, IrDepth,
+    IrEdge, IrElemSel, IrEvent, IrExpr, IrExprKind, IrFormal, IrJoinKind, IrLhs, IrModel,
+    IrProcess, IrRealBinOp, IrRealUnOp, IrShape, IrSignal, IrStmt, IrSysFunc, IrTimeKind, IrType,
+    IrUnOp, IrWaitSrc, LLG_MAX_WIDTH,
 };
 
 mod collection;
@@ -999,7 +999,123 @@ fn read_const_from(vd: &ValueData, size: i32) -> Result<IrConst, String> {
             real: Some(value),
             fill: None,
         }),
-        Val::Str(_) => Err("string constant in expression".to_string()),
+        Val::Str(value) => string_to_const(&value),
+    }
+}
+
+/// Convert a Verilog string constant to its packed, unsigned byte value.
+/// The leftmost source character occupies the most-significant byte, as
+/// required when a string is used as an integral expression.
+fn string_to_const(value: &str) -> Result<IrConst, String> {
+    val_to_const(&string_to_value(value)?)
+}
+
+fn string_to_value(value: &str) -> Result<elab::Value, String> {
+    let mut decoded = decode_verilog_string(value)?;
+    // An empty packed string has the same 8-bit zero representation used by
+    // established Verilog simulators.
+    if decoded.is_empty() {
+        decoded.push(0);
+    }
+    let width = decoded
+        .len()
+        .checked_mul(8)
+        .ok_or_else(|| "string constant width overflow".to_string())?;
+    if width > LLG_MAX_WIDTH as usize {
+        return Err(format!(
+            "string constant is too wide ({width} bits; max {LLG_MAX_WIDTH})"
+        ));
+    }
+
+    let mut bits = Vec::with_capacity(width);
+    for byte in decoded {
+        for bit in (0..8).rev() {
+            bits.push(if byte & (1 << bit) != 0 {
+                Bit::One
+            } else {
+                Bit::Zero
+            });
+        }
+    }
+    Ok(elab::Value::from_bits(bits, false))
+}
+
+/// Decode the escape spellings retained in Surelog's owned string payload.
+fn decode_verilog_string(value: &str) -> Result<Vec<u8>, String> {
+    let bytes = value.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] != b'\\' {
+            decoded.push(bytes[i]);
+            i += 1;
+            continue;
+        }
+        i += 1;
+        let escape = *bytes
+            .get(i)
+            .ok_or_else(|| "string constant ends with an incomplete escape".to_string())?;
+        match escape {
+            b'n' => {
+                decoded.push(b'\n');
+                i += 1;
+            }
+            b't' => {
+                decoded.push(b'\t');
+                i += 1;
+            }
+            b'v' => {
+                decoded.push(0x0b);
+                i += 1;
+            }
+            b'f' => {
+                decoded.push(0x0c);
+                i += 1;
+            }
+            b'a' => {
+                decoded.push(0x07);
+                i += 1;
+            }
+            b'\\' | b'"' => {
+                decoded.push(escape);
+                i += 1;
+            }
+            b'0'..=b'7' => {
+                let mut value = 0u16;
+                let mut digits = 0;
+                while digits < 3 && i < bytes.len() && matches!(bytes[i], b'0'..=b'7') {
+                    value = (value << 3) | u16::from(bytes[i] - b'0');
+                    digits += 1;
+                    i += 1;
+                }
+                decoded.push(value as u8);
+            }
+            b'x' => {
+                let first = bytes.get(i + 1).and_then(|b| hex_digit(*b));
+                let second = bytes.get(i + 2).and_then(|b| hex_digit(*b));
+                let (Some(first), Some(second)) = (first, second) else {
+                    return Err("hex string escape requires two digits".to_string());
+                };
+                decoded.push((first << 4) | second);
+                i += 3;
+            }
+            _ => {
+                return Err(format!(
+                    "unsupported string escape `\\{}`",
+                    char::from(escape)
+                ));
+            }
+        }
+    }
+    Ok(decoded)
+}
+
+fn hex_digit(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
     }
 }
 
@@ -1033,6 +1149,22 @@ fn val_to_const(v: &elab::Value) -> Result<IrConst, String> {
             Bit::Z => 3,
         }),
     })
+}
+
+fn decl_value_to_const(value: Val) -> Result<IrConst, String> {
+    match value {
+        Val::Bits(value) => val_to_const(&value),
+        Val::Real(value) => Ok(IrConst {
+            bits: vec![0],
+            x: vec![0],
+            z: vec![0],
+            width: 0,
+            signed: true,
+            real: Some(value),
+            fill: None,
+        }),
+        Val::Str(value) => string_to_const(&value),
+    }
 }
 
 /// Parse the contents of a hierarchical select bracket (`3:0`, `2`, `3 +: 4`,
@@ -1638,6 +1770,48 @@ fn expression_operand_with_context(expr: IrExpr, width: u32, signed: bool) -> Ir
             signed,
         ),
     }
+}
+
+/// Apply wildcard-equality operand context while preserving the runtime's
+/// explicit 64-bit limit for division, modulo and power. Context propagation
+/// can widen a nested limited operation after its ordinary lowering-time
+/// width check, so reject that shape before it reaches C emission.
+fn wildcard_operand_with_context(
+    expr: IrExpr,
+    width: u32,
+    signed: bool,
+    scope_path: &str,
+) -> Result<IrExpr, String> {
+    fn reaches_limited_op(expr: &IrExpr) -> bool {
+        match &expr.kind {
+            IrExprKind::Bin { op, a, b } if is_context_binary(*op) => {
+                matches!(op, IrBinOp::Div | IrBinOp::Mod)
+                    || reaches_limited_op(a)
+                    || reaches_limited_op(b)
+            }
+            IrExprKind::Bin { op, a, .. }
+                if matches!(
+                    op,
+                    IrBinOp::Pow | IrBinOp::Shl | IrBinOp::Shr | IrBinOp::Ashl | IrBinOp::Ashr
+                ) =>
+            {
+                *op == IrBinOp::Pow || reaches_limited_op(a)
+            }
+            IrExprKind::Mux { a, b, .. } => reaches_limited_op(a) || reaches_limited_op(b),
+            IrExprKind::Un {
+                op: IrUnOp::Neg | IrUnOp::BitNeg,
+                a,
+            } => reaches_limited_op(a),
+            _ => false,
+        }
+    }
+
+    if width > 64 && reaches_limited_op(&expr) {
+        return Err(format!(
+            "wide division/modulo/power not yet supported (wildcard comparison context wider than 64 bits) in `{scope_path}`"
+        ));
+    }
+    Ok(expression_operand_with_context(expr, width, signed))
 }
 
 /// A context-determined packed arithmetic/bitwise node. Any unsigned operand

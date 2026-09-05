@@ -41,14 +41,14 @@ final blocks ≤ 1024.
 | 2 | Data types | 10 | 1 | 5 | 5 | 2 | 4 |
 | 3 | Modules & hierarchy | 8 | 1 | 1 | 2 | 1 | 0 |
 | 4 | Scheduling & processes | 8 | 1 | 0 | 7 | 1 | 1 |
-| 5 | Procedural statements | 17 | 2 | 1 | 3 | 1 | 3 |
+| 5 | Procedural statements | 17 | 2 | 1 | 4 | 1 | 2 |
 | 6 | Timing controls | 2 | 1 | 3 | 0 | 0 | 0 |
-| 7 | Expressions & operators | 17 | 2 | 1 | 1 | 2 | 4 |
+| 7 | Expressions & operators | 18 | 2 | 0 | 2 | 2 | 3 |
 | 8 | Continuous assign & structural | 5 | 4 | 7 | 0 | 0 | 0 |
 | 9 | Functions & tasks | 4 | 0 | 5 | 3 | 0 | 1 |
-| 10 | System tasks & functions | 9 | 2 | 16 | 1 | 0 | 8 |
+| 10 | System tasks & functions | 11 | 2 | 14 | 3 | 0 | 6 |
 | 11 | Compiler directives affecting sim | 5 | 0 | 0 | 4 | 0 | 0 |
-| — | **Total** | **95** | **14** | **39** | **26** | **8** | **22** |
+| — | **Total** | **98** | **14** | **36** | **30** | **8** | **18** |
 
 In-section ⬜ items (not counted above): §3 configurations [V], ref ports /
 default port values, extern/nested modules [SV] · §4 fine-grain process control
@@ -191,7 +191,7 @@ SystemVerilog era:
 
 - ✅ **return** in functions/tasks — §1800-2009 12.8/13.4.1 **[SV-2005]**
 - 🟨 **unique/priority/unique0 if & case** — §1800-2009 12.4.2/12.5.3 **[SV-2005]** lowered as plain case; no violation reports (probed)
-- ❌ **case … inside** wildcard matching — §1800-2009 12.5.4 **[SV-2005]** `==?` ops unsupported
+- ✅ **case … inside** wildcard matching — §1800-2009 12.5.4 **[SV-2005]** scalar wildcard items, inclusive ranges, first-match/default behavior, and single selector evaluation (sim_wildcard_eq.rs, optimization on/off)
 - ✅ **do-while** — §1800-2009 12.7.5 **[SV-2005]** post-test execution plus break/continue semantics (sim_disable.rs)
 - ❌ **foreach** — §1800-2009 12.7.3 **[SV-2005]** clean codegen rejection
 - ✅ **break/continue** — §1800-2009 12.8 **[SV-2005]** (sim_disable.rs) for/while/repeat/forever; continue lands on the increment (for) or back-edge condition test, break exits the innermost loop; nesting pinned
@@ -231,7 +231,7 @@ Verilog era:
 - ✅ **Bit-select/part-select operands** — §1364-2001 4.2.1 **[1995]**
 - ✅ **Indexed part-select** `[+:w]` / `[-:w]` — §1364-2001 4.2.1 **[2001]**
 - ✅ **Array addressing** `mem[i][j]` + element selects — §1364-2001 4.2.2 **[1995]**
-- ❌ **Strings as operands** reg vectors holding 8-bit ASCII — §1364-2001 4.2.3 **[1995]** string constants in expressions rejected ("string constant in expression", probed); display format strings only
+- ✅ **Strings as operands** reg vectors holding 8-bit ASCII — §1364-2001 4.2.3 **[1995]** packed literal assignment, comparison, concatenation, escapes, padding/truncation, and packed-parameter declaration initializers (sim_packed_strings.rs, optimization on/off); SystemVerilog `string` storage remains unsupported
 - ✅ **$signed/$unsigned** — §1364-2001 4.5 **[2001]**
 - ✅ **Signedness/self-determined width rules** mirrored by runtime — §1364-2001 4.4–4.5 **[1995]** pinned by property_elab.rs
 - ✅ **X/Z expression semantics** Z=X except identity/copy ops — §1364-2001 3.1 **[1995]** proptests + C vector table
@@ -242,7 +242,7 @@ SystemVerilog era:
 - ✅ **Static casts** `int'(e)`, `signed'()`, `unsigned'()`, size casts `n'(e)` — §1800-2009 6.24.1 **[SV-2005]** (sim_counter.rs `sim_static_casts`, re-run with Surelog v1.87) value-preserving: widening extends by the SOURCE's signedness (`sv4_cast`/IR `Convert`; §10.7 assignment padding follows the RHS too, so `int'(8'hFF)`=255 and a signed RHS sign-extends into wider unsigned targets). v1.87 still omits `vpiSigned` on based constants, so codegen recovers the `'s` marker from the literal's source token; size-cast targets remain degraded to int(32) unsigned by the frontend
 - 🟨 **Increment/decrement** `++ --` — §1800-2009 11.4.2 **[SV-2005]** statement-position pre/post forms on whole scalar variables, including `for` increments, are supported; expression-valued and select/array-element forms remain unsupported (sim_operator_semantics.rs)
 - 🟨 **Assignment operators** `+= -= *= /= %= &= |= ^= <<= >>= <<<= >>>=` — §1800-2009 11.4.1 **[SV-2005]** whole scalar variables are supported; select and array-element targets are cleanly rejected until LHS index evaluation can be preserved exactly once (sim_operator_semantics.rs)
-- ❌ **Wildcard equality** `==? !=?` — §1800-2009 11.4.6 **[SV-2005]**
+- ✅ **Wildcard equality** `==? !=?` — §1800-2009 11.4.6 **[SV-2005]** RHS X/Z bits are wildcards; remaining LHS unknown bits yield X unless a known mismatch decides the result. Common-width/signed extension and 1024-bit operands are covered with optimization on/off (sim_wildcard_eq.rs).
 - ❌ **Set membership** `inside {…}` — §1800-2009 11.4.13 **[SV-2005]**
 - ❌ **Streaming operators** `{<<{}}`, `{>>{}}` — §1800-2009 11.4.14 **[SV-2005]**
 - ❌ **let expressions** — §1800-2009 11.13 **[SV-2009]**
@@ -329,8 +329,8 @@ Control / misc:
 - ❌ **Stochastic tasks** `$q_initialize $q_add …` — §1364-2001 17.6 **[1995]**
 - ❌ **$random** — §1364-2001 17.9.1 **[1995]** unsupported-function reject
 - ❌ **$dist_uniform/$dist_normal/…** — §1364-2001 17.9.2 **[1995]** unsupported-function reject
-- ❌ **Conversion** `$rtoi/$itor` — §1364-2001 17.8 **[1995]** unsupported-function reject
-- ❌ **Conversion** `$realtobits/$bitstoreal` — §1364-2001 17.8 **[2001]** unsupported-function reject
+- ✅ **Conversion** `$rtoi/$itor` — §1364-2001 17.8 **[1995]** truncation toward zero and signed/unsigned integral-to-real conversion, including implicit numeric argument coercion, typed parameters, and constant declaration initializers (sim_real_conversions.rs, optimization on/off)
+- ✅ **Conversion** `$realtobits/$bitstoreal` — §1364-2001 17.8 **[2001]** IEEE-754 bit reinterpretation; `$bitstoreal` requires 64 bits and maps X/Z positions to zero (sim_real_conversions.rs, optimization on/off)
 - ❌ **Plusargs** `$test$plusargs/$value$plusargs` — §1364-2001 17.10 **[1995]** unsupported-task reject
 
 Waveforms:
@@ -346,9 +346,9 @@ SystemVerilog era:
 - ❌ **Math functions** `$ln $log10 $exp $sqrt $pow $floor $ceil $sin …` — §1800-2009 20.8 **[SV-2009]** unsupported-function reject
 - ❌ **Severity tasks** `$fatal/$error/$warning/$info` — §1800-2009 20.9 **[SV-2005]** unsupported-task reject
 - ❌ **$sformatf** — §1800-2009 21.3 **[SV-2005]** unsupported-function reject
-- ❌ **Bit-vector helpers** `$onehot/$onehot0/$countones/$isunknown` — §1800-2009 20.6 **[SV-2005]** unsupported-function reject
+- ✅ **Bit-vector helpers** `$onehot/$onehot0/$countones/$isunknown` — §1800-2009 20.6 **[SV-2005]** packed operands through 1024 bits, X/Z-aware counting, parameters and constant declaration initializers, single argument evaluation, and combinational dependencies; real operands rejected (sim_bit_queries.rs, optimization on/off)
 - ❌ **Sampled-value functions** `$rose/$fell/$stable/$past/$sampled` — §1800-2009 16.9.3 **[SV-2005]** unsupported-function reject
-- ❌ **Shortreal conversion** `$bitstoshortreal/$shortrealtobits` — §1800-2009 20.5 **[SV-2005]** unsupported-function reject
+- ✅ **Shortreal conversion** `$bitstoshortreal/$shortrealtobits` — §1800-2009 20.5 **[SV-2005]** 32-bit IEEE-754 reinterpretation and shortreal rounding; `$bitstoshortreal` requires 32 bits and maps X/Z positions to zero (sim_real_conversions.rs, optimization on/off)
 - ❌ **$system** — §1800-2009 **[SV-2009]** unsupported-task reject
 
 ## 11. Compiler directives affecting simulation

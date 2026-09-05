@@ -39,6 +39,9 @@ the simulator (`src/sim/`):
   constructor is a function named `new`).
 - `elab.rs` — 4-state `Value` math + parameter/expression resolver
   (`Resolver`), used by the db build (and tests).
+  Wildcard equality, bit-vector queries, and real/integer/IEEE-bit conversions
+  are shared with simulator constant evaluation so parameter and runtime
+  paths agree on the supported forms.
   Property tests in `tests/property_elab.rs` pin the `Value` math against
   per-bit references (deterministic fixed-seed proptest): X-propagation,
   resize low-bit preservation, concat/split round-trip, casez/casex wildcard

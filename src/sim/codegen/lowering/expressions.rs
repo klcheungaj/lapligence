@@ -335,10 +335,28 @@ impl<'a> Codegen<'a> {
                         ))
                     }
                     Val::Real(value) => Ok(real_literal_expr(*value)),
-                    Val::Str(_) => Err(format!(
-                        "string parameter `{}` used as a value is not supported",
-                        self.node(t).name
-                    )),
+                    Val::Str(value) => match self.kind(t) {
+                        NodeKind::Param { ty, .. } if ty.kind != "string" => match ty.width {
+                            Some(width) => {
+                                let c = string_to_const(value)?;
+                                let expr = IrExpr::new(
+                                    IrExprKind::Const(c.clone()),
+                                    c.width,
+                                    c.signed,
+                                    None,
+                                );
+                                Ok(IrExpr::convert_to(expr, width, ty.signed))
+                            }
+                            None => Err(format!(
+                                "string parameter `{}` used as a value is not supported",
+                                self.node(t).name
+                            )),
+                        },
+                        _ => Err(format!(
+                            "string parameter `{}` used as a value is not supported",
+                            self.node(t).name
+                        )),
+                    },
                 };
             }
             if let NodeKind::EnumConst { value } = self.kind(t) {
@@ -606,6 +624,25 @@ impl<'a> Codegen<'a> {
                     ));
                 }
                 Ok(cmp_expr_ir(IrBinOp::CaseNeq, a, b))
+            }
+            vpiWildEqOp | vpiWildNeqOp => {
+                let a = op!(0);
+                let b = op!(1);
+                if a.is_real() || b.is_real() {
+                    return Err(format!(
+                        "wildcard equality on real value in `{scope_path}` is not supported"
+                    ));
+                }
+                let width = maxw(&a, &b);
+                let signed = a.signed && b.signed;
+                let a = wildcard_operand_with_context(a, width, signed, scope_path)?;
+                let b = wildcard_operand_with_context(b, width, signed, scope_path)?;
+                let op = if otype == vpiWildEqOp {
+                    IrBinOp::WildEq
+                } else {
+                    IrBinOp::WildNeq
+                };
+                Ok(cmp_expr_ir(op, a, b))
             }
             vpiLtOp => {
                 let a = op!(0);
@@ -895,6 +932,108 @@ impl<'a> Codegen<'a> {
     ) -> Result<IrExpr, String> {
         let args: Vec<NodeId> = self.node(call).children.clone();
         match name {
+            "$rtoi" | "$itor" | "$realtobits" | "$bitstoreal" | "$shortrealtobits"
+            | "$bitstoshortreal" => {
+                let [arg] = args.as_slice() else {
+                    return Err(format!(
+                        "{name} requires exactly one argument in `{scope_path}`"
+                    ));
+                };
+                let arg = self.lower_expr(scope_path, *arg)?;
+                match name {
+                    "$rtoi" => Ok(IrExpr::new(
+                        IrExprKind::SysFunc(IrSysFunc::Rtoi(Box::new(arg))),
+                        32,
+                        true,
+                        None,
+                    )),
+                    "$itor" => {
+                        let arg = if arg.is_real() {
+                            IrExpr::new(
+                                IrExprKind::CastToPacked { a: Box::new(arg) },
+                                32,
+                                true,
+                                None,
+                            )
+                        } else {
+                            arg
+                        };
+                        Ok(IrExpr::new(
+                            IrExprKind::SysFunc(IrSysFunc::Itor(Box::new(arg))),
+                            0,
+                            true,
+                            None,
+                        ))
+                    }
+                    "$realtobits" => Ok(IrExpr::new(
+                        IrExprKind::SysFunc(IrSysFunc::RealToBits(Box::new(arg))),
+                        64,
+                        false,
+                        None,
+                    )),
+                    "$bitstoreal" => {
+                        if arg.is_real() || arg.width != 64 {
+                            return Err(format!(
+                                "$bitstoreal requires an exactly 64-bit packed argument in `{scope_path}`"
+                            ));
+                        }
+                        Ok(IrExpr::new(
+                            IrExprKind::SysFunc(IrSysFunc::BitsToReal(Box::new(arg))),
+                            0,
+                            true,
+                            None,
+                        ))
+                    }
+                    "$shortrealtobits" => Ok(IrExpr::new(
+                        IrExprKind::SysFunc(IrSysFunc::ShortRealToBits(Box::new(arg))),
+                        32,
+                        false,
+                        None,
+                    )),
+                    _ => {
+                        if arg.is_real() || arg.width != 32 {
+                            return Err(format!(
+                                "$bitstoshortreal requires an exactly 32-bit packed argument in `{scope_path}`"
+                            ));
+                        }
+                        Ok(IrExpr::new(
+                            IrExprKind::SysFunc(IrSysFunc::BitsToShortReal(Box::new(arg))),
+                            0,
+                            true,
+                            None,
+                        ))
+                    }
+                }
+            }
+            "$countones" | "$onehot" | "$onehot0" | "$isunknown" => {
+                let [arg] = args.as_slice() else {
+                    return Err(format!(
+                        "{name} requires exactly one argument in `{scope_path}`"
+                    ));
+                };
+                let arg = self.lower_expr(scope_path, *arg)?;
+                if arg.is_real() {
+                    return Err(format!(
+                        "{name} requires a packed integral argument in `{scope_path}`"
+                    ));
+                }
+                let kind = match name {
+                    "$countones" => IrBitQuery::CountOnes,
+                    "$onehot" => IrBitQuery::OneHot,
+                    "$onehot0" => IrBitQuery::OneHot0,
+                    _ => IrBitQuery::IsUnknown,
+                };
+                let (width, signed) = kind.result_type();
+                Ok(IrExpr::new(
+                    IrExprKind::SysFunc(IrSysFunc::BitQuery {
+                        kind,
+                        arg: Box::new(arg),
+                    }),
+                    width,
+                    signed,
+                    None,
+                ))
+            }
             "$clog2" => {
                 let a = args
                     .first()

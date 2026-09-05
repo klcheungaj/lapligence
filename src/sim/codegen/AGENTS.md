@@ -79,6 +79,9 @@ and input/output links touching a member are warned and skipped.
 - Fork/join works only in process bodies: join/join_any/join_none, named forks,
   `wait fork;`, `disable fork;`. Reject fork/join in function/task bodies and
   cross-process `disable <label>;`.
+- `case (...) inside` supports wildcard scalar members and inclusive ranges,
+  retaining first-match/default ordering. Evaluate the selector exactly once
+  into a local temporary before testing members (`tests/sim_wildcard_eq.rs`).
 - `wait (expr) stmt` re-evaluates on changes to read signals, then runs its body
   once when true. Constant true executes immediately; constant false spins
   until the runtime zero-delay guard trips. See the lowering loop above.
@@ -113,7 +116,14 @@ unsized decimal literals such as `-3` emit signed per the LRM.
 Dumpvars depth/scope arguments warn then select all registered user storage.
 Models without waveform controls omit the waveform runtime and GTKWave libfst
 sources. Reject extended-VCD `$dumpports`; `$displayon`/`$displayoff` warn and
-skip. String signals/parameters remain unsupported.
+skip. String-typed signals/parameters remain unsupported.
+
+Packed Verilog string literals are unsigned integral byte vectors, with the
+leftmost character most significant. Escapes retained by Surelog are decoded
+before the 1024-bit limit is checked; an empty literal is one zero byte.
+Assignments pad/truncate as packed values, and explicitly packed parameters
+can initialize packed storage. SystemVerilog `string`-typed storage remains
+unsupported. See `tests/sim_packed_strings.rs`.
 
 ## Values and real numbers
 
@@ -123,6 +133,18 @@ X/Z remain distinct for display, literal equality and casez/casex matching
 (LRM 12.5.1); Z behaves as X in other expression contexts (LRM 11.4.5), with
 identity/copy operations preserving it. See runtime value contracts.
 
+Wildcard equality (`==?`/`!=?`) treats only RHS X/Z bits as wildcards after
+common-width and signedness conversion. A known mismatch wins over an unknown
+LHS bit at another position; otherwise an unmasked LHS X/Z yields X. Real
+operands are rejected. `tests/sim_wildcard_eq.rs` compares optimizer variants.
+
+`$countones`, `$onehot`, `$onehot0`, and `$isunknown` accept one packed
+integral expression up to `LLG_MAX_WIDTH`. One counts ignore X/Z positions;
+`$isunknown` detects either state. Count results are signed 32-bit integers,
+and predicates are unsigned one-bit values. The argument evaluates once;
+optimizer read collection and combinational sensitivity retain its dependencies.
+Real operands are rejected. See `tests/sim_bit_queries.rs`.
+
 Procedural scalar `real`/`shortreal` use companion `double` storage. B6 supports
 constant initialization, real parameters, blocking/NBA assignment, mixed
 packed/real arithmetic, relational/logical operations, conditionals, casts,
@@ -130,6 +152,16 @@ packed/real arithmetic, relational/logical operations, conditionals, casts,
 Shortreal assignment rounds through C `float`; real-to-packed rounds nearest
 (halves away from zero) for targets ≤64 bits. Packed-to-real accepts all
 1024 bits, treating X/Z positions as zero.
+
+`$rtoi` truncates toward zero into signed 32-bit storage (non-finite inputs
+yield X; finite overflow wraps modulo 2^32). `$itor` preserves integral
+arguments' packed width/signedness; a real argument first undergoes ordinary
+rounded conversion to a signed 32-bit integer. Functions taking real values
+accept implicit packed-to-real coercion. `$realtobits`/`$bitstoreal` and
+`$shortrealtobits`/`$bitstoshortreal` reinterpret IEEE-754 representations;
+the inverse bitcasts require exactly 64/32 bits, with X/Z positions treated
+as zero. Typed parameters and constant declaration initializers use the same conversion rules.
+See `tests/sim_real_conversions.rs`.
 
 Reject real ports/links, arrays, function/task types, continuous/comb processes,
 real event controls/wait conditions, monitor/strobe args, force/release/select/

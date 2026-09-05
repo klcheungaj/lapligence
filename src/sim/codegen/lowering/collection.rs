@@ -1044,8 +1044,8 @@ impl<'a> Codegen<'a> {
         // non-constant falls through to the emission error path.
         let c = match self.const_of_node(rhs) {
             Ok(c) => c,
-            Err(_) => match self.eval_bits(rhs) {
-                Ok(v) => val_to_const(&v)?,
+            Err(_) => match self.eval_decl_value(rhs) {
+                Ok(v) => decl_value_to_const(v)?,
                 Err(_) => return Ok(None),
             },
         };
@@ -1063,8 +1063,8 @@ impl<'a> Codegen<'a> {
     fn var_decl_init(&self, path: &str, name: &str, init: NodeId) -> Result<IrConst, String> {
         match self.const_of_node(init) {
             Ok(c) => Ok(c),
-            Err(_) => match self.eval_bits(init) {
-                Ok(v) => val_to_const(&v),
+            Err(_) => match self.eval_decl_value(init) {
+                Ok(v) => decl_value_to_const(v),
                 Err(_) => Err(format!(
                     "variable initializer is not a constant expression in `{name}` in `{path}`"
                 )),
@@ -3794,7 +3794,8 @@ impl<'a> Codegen<'a> {
                 }
                 match value {
                     Val::Bits(b) => Ok(b),
-                    Val::Str(_) | Val::Real(_) => Err("non-integer constant in bound".to_string()),
+                    Val::Str(value) => string_to_value(&value),
+                    Val::Real(_) => Err("non-integer constant in bound".to_string()),
                 }
             }
             NodeKind::EnumConst { value } => match value {
@@ -3802,11 +3803,18 @@ impl<'a> Codegen<'a> {
                 _ => Err("enum constant without value in bound".to_string()),
             },
             NodeKind::Expr(ExprKind::Ref { target }) => {
-                match target.and_then(|t| self.param_vals.get(&t)) {
-                    Some(Val::Bits(b)) => Ok(b.clone()),
-                    Some(Val::Str(_)) | Some(Val::Real(_)) => {
-                        Err("non-integer parameter in bound".to_string())
-                    }
+                match target.and_then(|t| self.param_vals.get(&t).map(|value| (t, value))) {
+                    Some((_, Val::Bits(b))) => Ok(b.clone()),
+                    Some((target, Val::Str(value))) => match self.kind(target) {
+                        NodeKind::Param { ty, .. } if ty.kind != "string" => match ty.width {
+                            Some(width) => {
+                                Ok(string_to_value(value)?.cast(width as usize, ty.signed))
+                            }
+                            None => Err("non-integer parameter in bound".to_string()),
+                        },
+                        _ => Err("non-integer parameter in bound".to_string()),
+                    },
+                    Some((_, Val::Real(_))) => Err("non-integer parameter in bound".to_string()),
                     None => Err("unresolved reference in bound".to_string()),
                 }
             }
@@ -3815,7 +3823,91 @@ impl<'a> Codegen<'a> {
                 reordered,
                 operands,
             }) => self.eval_operation_bits(op.as_raw(), *reordered, operands),
+            NodeKind::SysCall { name }
+                if matches!(
+                    name.as_str(),
+                    "$countones" | "$onehot" | "$onehot0" | "$isunknown"
+                ) =>
+            {
+                let [arg] = self.node(node).children.as_slice() else {
+                    return Err(format!("{name} requires exactly one argument"));
+                };
+                let arg = self.eval_bits(*arg)?;
+                Ok(match name.as_str() {
+                    "$countones" => elab::countones(&arg),
+                    "$onehot" => elab::onehot(&arg),
+                    "$onehot0" => elab::onehot0(&arg),
+                    _ => elab::isunknown(&arg),
+                })
+            }
             other => Err(format!("unsupported bound expression: {other:?}")),
+        }
+    }
+
+    /// Evaluate the packed/real constants accepted in scalar declaration
+    /// initializers.  This stays on the owned database and extends the
+    /// integer-only bound evaluator only for conversion system functions.
+    fn eval_decl_value(&self, node: NodeId) -> Result<Val, String> {
+        if let Ok(bits) = self.eval_bits(node) {
+            return Ok(Val::Bits(bits));
+        }
+        match self.kind(node) {
+            NodeKind::Expr(ExprKind::Constant { value, size, .. }) => {
+                val_from_value_data(value, *size)
+            }
+            NodeKind::Expr(ExprKind::Ref { target }) => target
+                .and_then(|target| self.param_vals.get(&target).cloned())
+                .ok_or_else(|| "unresolved reference in declaration initializer".to_string()),
+            NodeKind::SysCall { name }
+                if matches!(
+                    name.as_str(),
+                    "$rtoi"
+                        | "$itor"
+                        | "$realtobits"
+                        | "$bitstoreal"
+                        | "$shortrealtobits"
+                        | "$bitstoshortreal"
+                ) =>
+            {
+                let [arg] = self.node(node).children.as_slice() else {
+                    return Err(format!("{name} requires exactly one argument"));
+                };
+                let arg = self.eval_decl_value(*arg)?;
+                match (name.as_str(), arg) {
+                    ("$rtoi", Val::Real(value)) => Ok(Val::Bits(elab::rtoi_value(value))),
+                    ("$rtoi", Val::Bits(value)) => Ok(Val::Bits(elab::rtoi_value(value.to_real()))),
+                    ("$itor", Val::Bits(value)) => Ok(Val::Real(value.to_real())),
+                    ("$itor", Val::Real(value)) => {
+                        Ok(Val::Real(elab::real_to_bits(value, 32, true).to_real()))
+                    }
+                    ("$realtobits", Val::Real(value)) => {
+                        Ok(Val::Bits(elab::real_to_ieee_bits(value)))
+                    }
+                    ("$realtobits", Val::Bits(value)) => {
+                        Ok(Val::Bits(elab::real_to_ieee_bits(value.to_real())))
+                    }
+                    ("$bitstoreal", Val::Bits(value)) if value.width() == 64 => Ok(Val::Real(
+                        elab::ieee_bits_to_real(&value)
+                            .ok_or_else(|| "invalid $bitstoreal width".to_string())?,
+                    )),
+                    ("$shortrealtobits", Val::Real(value)) => {
+                        Ok(Val::Bits(elab::shortreal_to_ieee_bits(value)))
+                    }
+                    ("$shortrealtobits", Val::Bits(value)) => {
+                        Ok(Val::Bits(elab::shortreal_to_ieee_bits(value.to_real())))
+                    }
+                    ("$bitstoshortreal", Val::Bits(value)) if value.width() == 32 => Ok(Val::Real(
+                        elab::ieee_bits_to_shortreal(&value)
+                            .ok_or_else(|| "invalid $bitstoshortreal width".to_string())?,
+                    )),
+                    _ => Err(format!(
+                        "invalid argument to {name} in declaration initializer"
+                    )),
+                }
+            }
+            other => Err(format!(
+                "unsupported declaration initializer expression: {other:?}"
+            )),
         }
     }
 
@@ -3850,6 +3942,8 @@ impl<'a> Codegen<'a> {
             vpiNeqOp => Ok(elab::neq(&b!(0), &b!(1))),
             vpiCaseEqOp => Ok(elab::case_eq(&b!(0), &b!(1))),
             vpiCaseNeqOp => Ok(elab::case_neq(&b!(0), &b!(1))),
+            vpiWildEqOp => Ok(elab::wildcard_eq(&b!(0), &b!(1))),
+            vpiWildNeqOp => Ok(elab::wildcard_neq(&b!(0), &b!(1))),
             vpiGtOp => Ok(elab::gt(&b!(0), &b!(1))),
             vpiGeOp => Ok(elab::ge(&b!(0), &b!(1))),
             vpiLtOp => Ok(elab::lt(&b!(0), &b!(1))),

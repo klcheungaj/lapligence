@@ -430,6 +430,8 @@ pub enum IrBinOp {
     Neq,
     CaseEq,
     CaseNeq,
+    WildEq,
+    WildNeq,
     Lt,
     Le,
     Gt,
@@ -489,6 +491,39 @@ pub enum IrSysFunc {
     },
     /// `$bits(x)` → `SV4_C(width, 32)` (32-bit signed).
     Bits(Box<IrExpr>),
+    /// A packed bit-vector query; X/Z never contribute to the one count.
+    BitQuery { kind: IrBitQuery, arg: Box<IrExpr> },
+    /// `$rtoi(real)` truncates toward zero and returns a signed 32-bit integer.
+    Rtoi(Box<IrExpr>),
+    /// `$itor(integer)` converts a packed integral value to a real.
+    Itor(Box<IrExpr>),
+    /// `$realtobits(real)` reinterprets an IEEE-754 double as 64 packed bits.
+    RealToBits(Box<IrExpr>),
+    /// `$bitstoreal(bits)` reinterprets exactly 64 packed bits as a double.
+    BitsToReal(Box<IrExpr>),
+    /// `$shortrealtobits(real)` rounds to `shortreal` and returns 32 packed bits.
+    ShortRealToBits(Box<IrExpr>),
+    /// `$bitstoshortreal(bits)` reinterprets exactly 32 packed bits as a float.
+    BitsToShortReal(Box<IrExpr>),
+}
+
+/// SystemVerilog bit-vector queries with a known two-state result.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IrBitQuery {
+    CountOnes,
+    OneHot,
+    OneHot0,
+    IsUnknown,
+}
+
+impl IrBitQuery {
+    /// `$countones` returns a signed int; predicates return an unsigned bit.
+    pub const fn result_type(self) -> (u32, bool) {
+        match self {
+            Self::CountOnes => (32, true),
+            Self::OneHot | Self::OneHot0 | Self::IsUnknown => (1, false),
+        }
+    }
 }
 
 /// The two width-defined SystemVerilog time query forms.

@@ -410,6 +410,58 @@ impl Validator<'_> {
                 }
             }
             IrExprKind::SysFunc(sys) => match sys {
+                IrSysFunc::Rtoi(arg) => {
+                    self.validate_expr(arg, formals, &format!("{path}.arg"))?;
+                    if expr.width != 32 || !expr.signed {
+                        return self.fail(path, "$rtoi requires a signed int result");
+                    }
+                }
+                IrSysFunc::Itor(arg) => {
+                    self.validate_expr(arg, formals, &format!("{path}.arg"))?;
+                    if arg.is_real() || !expr.is_real() {
+                        return self.fail(path, "$itor requires a packed argument and real result");
+                    }
+                }
+                IrSysFunc::RealToBits(arg) => {
+                    self.validate_expr(arg, formals, &format!("{path}.arg"))?;
+                    if expr.width != 64 || expr.signed {
+                        return self.fail(path, "$realtobits requires a 64-bit unsigned result");
+                    }
+                }
+                IrSysFunc::BitsToReal(arg) => {
+                    self.validate_expr(arg, formals, &format!("{path}.arg"))?;
+                    if arg.is_real() || arg.width != 64 || !expr.is_real() {
+                        return self.fail(
+                            path,
+                            "$bitstoreal requires a 64-bit packed argument and real result",
+                        );
+                    }
+                }
+                IrSysFunc::ShortRealToBits(arg) => {
+                    self.validate_expr(arg, formals, &format!("{path}.arg"))?;
+                    if expr.width != 32 || expr.signed {
+                        return self
+                            .fail(path, "$shortrealtobits requires a 32-bit unsigned result");
+                    }
+                }
+                IrSysFunc::BitsToShortReal(arg) => {
+                    self.validate_expr(arg, formals, &format!("{path}.arg"))?;
+                    if arg.is_real() || arg.width != 32 || !expr.is_real() {
+                        return self.fail(
+                            path,
+                            "$bitstoshortreal requires a 32-bit packed argument and real result",
+                        );
+                    }
+                }
+                IrSysFunc::BitQuery { kind, arg } => {
+                    self.validate_expr(arg, formals, &format!("{path}.arg"))?;
+                    if arg.is_real() || (expr.width, expr.signed) != kind.result_type() {
+                        return self.fail(
+                            path,
+                            "bit query requires a packed argument and its declared result type",
+                        );
+                    }
+                }
                 IrSysFunc::Clog2(arg) | IrSysFunc::Bits(arg) => {
                     self.validate_expr(arg, formals, &format!("{path}.arg"))?;
                 }

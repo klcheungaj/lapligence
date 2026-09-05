@@ -96,6 +96,12 @@ sv4_t sv4_from_u64(uint64_t v, uint16_t width, int8_t is_signed);
 sv4_t sv4_from_i64(int64_t v, uint16_t width);
 double sv4_to_real(sv4_t v);
 sv4_t sv4_from_real(double v, uint16_t width, int8_t is_signed);
+sv4_t sv4_rtoi(double v);
+sv4_t sv4_realtobits(double v);
+// Dynamic X/Z input bits have no real representation and contribute zero.
+double sv4_bitstoreal(sv4_t v);
+sv4_t sv4_shortrealtobits(double v);
+double sv4_bitstoshortreal(sv4_t v);
 int llg_real_to_bool(double v);
 // Build from raw limb arrays (any may be NULL to zero-fill); the top partial
 // limb is masked to `width` and the width is clamped to LLG_MAX_WIDTH.
@@ -112,6 +118,8 @@ sv4_t sv4_cast(sv4_t v, uint16_t width, int8_t is_signed);
 // or bit 3 = Z.
 sv4_t sv4_fill(uint8_t bit, uint16_t width, int8_t is_signed);
 sv4_t sv4_clog2(sv4_t v);
+sv4_t sv4_countones(sv4_t v);     // signed 32-bit count of known one bits
+sv4_t sv4_onehot(sv4_t v, int allow_zero); // one-bit predicate, X/Z ignored
 
 int sv4_is_unknown(sv4_t v);      // any bit X or Z
 int sv4_to_bool(sv4_t v);         // != 0 with no unknown bits, else 0
@@ -167,6 +175,9 @@ sv4_t sv4_eq(sv4_t a, sv4_t b);      // == (X when any operand bit X/Z)
 sv4_t sv4_neq(sv4_t a, sv4_t b);
 sv4_t sv4_case_eq(sv4_t a, sv4_t b); // === (never X; X/Z compared literally)
 sv4_t sv4_case_neq(sv4_t a, sv4_t b);
+// ==?/!=?: X/Z bits in rhs are wildcards; lhs X/Z on cared bits propagate X.
+sv4_t sv4_wild_eq(sv4_t lhs, sv4_t rhs);
+sv4_t sv4_wild_neq(sv4_t lhs, sv4_t rhs);
 // casez/casex wildcard match (never X; 1-bit result), per LRM 12.5.1.  Both
 // resize the operands to max width (zero-extend) and test bits LSB-up:
 //   casez: item z/? -> don't-care; item x -> matches selector x only;

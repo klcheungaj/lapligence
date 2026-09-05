@@ -96,6 +96,10 @@ coverage for the same rule IDs.
 - `sim_waveform.rs` covers HDL→VCD/FST dump controls, X/Z and real values,
   hierarchy, timestamps and final blocks. The waveform runtime self-test owns
   ring wrap/backpressure, flush acknowledgement, aliases and FST reader reopening.
+- `sim_packed_strings.rs`, `sim_bit_queries.rs`, `sim_real_conversions.rs`,
+  and `sim_wildcard_eq.rs` compare optimized/unoptimized execution for
+  packed strings, bit queries, numeric conversions, and wildcard
+  equality/case-inside.
 
 ## Safeguard validation
 

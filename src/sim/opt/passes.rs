@@ -286,7 +286,15 @@ fn walk_expr_mut(e: &mut IrExpr, f: &mut impl FnMut(&mut IrExpr)) {
         }
         IrExprKind::CallFn(call) => walk_call_args_mut(&mut call.args, f),
         IrExprKind::SysFunc(sf) => match sf {
-            IrSysFunc::Clog2(a) | IrSysFunc::Bits(a) => walk_expr_mut(a, f),
+            IrSysFunc::Clog2(a)
+            | IrSysFunc::Bits(a)
+            | IrSysFunc::BitQuery { arg: a, .. }
+            | IrSysFunc::Rtoi(a)
+            | IrSysFunc::Itor(a)
+            | IrSysFunc::RealToBits(a)
+            | IrSysFunc::BitsToReal(a)
+            | IrSysFunc::ShortRealToBits(a)
+            | IrSysFunc::BitsToShortReal(a) => walk_expr_mut(a, f),
             IrSysFunc::Time { .. } => {}
         },
         _ => {}
@@ -555,6 +563,8 @@ fn bin_value(
         Neq => elab::neq(a, b),
         CaseEq => elab::case_eq(a, b),
         CaseNeq => elab::case_neq(a, b),
+        WildEq => elab::wildcard_eq(a, b),
+        WildNeq => elab::wildcard_neq(a, b),
         Lt => elab::lt(a, b),
         Le => elab::le(a, b),
         Gt => elab::gt(a, b),
@@ -670,7 +680,15 @@ fn ident_children(e: &mut IrExpr) {
             }
         }
         IrExprKind::SysFunc(sf) => match sf {
-            IrSysFunc::Clog2(a) | IrSysFunc::Bits(a) => ident_expr(a),
+            IrSysFunc::Clog2(a)
+            | IrSysFunc::Bits(a)
+            | IrSysFunc::BitQuery { arg: a, .. }
+            | IrSysFunc::Rtoi(a)
+            | IrSysFunc::Itor(a)
+            | IrSysFunc::RealToBits(a)
+            | IrSysFunc::BitsToReal(a)
+            | IrSysFunc::ShortRealToBits(a)
+            | IrSysFunc::BitsToShortReal(a) => ident_expr(a),
             IrSysFunc::Time { .. } => {}
         },
         _ => {}
@@ -1414,7 +1432,15 @@ fn collect_children_reads(e: &IrExpr, model: &IrModel, rw: &mut Rw) {
         }
         IrExprKind::CallFn(call) => collect_call_rw_readonly(&call.args, model, rw),
         IrExprKind::SysFunc(sf) => match sf {
-            IrSysFunc::Clog2(a) | IrSysFunc::Bits(a) => collect_expr_reads(a, model, rw),
+            IrSysFunc::Clog2(a)
+            | IrSysFunc::Bits(a)
+            | IrSysFunc::BitQuery { arg: a, .. }
+            | IrSysFunc::Rtoi(a)
+            | IrSysFunc::Itor(a)
+            | IrSysFunc::RealToBits(a)
+            | IrSysFunc::BitsToReal(a)
+            | IrSysFunc::ShortRealToBits(a)
+            | IrSysFunc::BitsToShortReal(a) => collect_expr_reads(a, model, rw),
             IrSysFunc::Time { .. } => {}
         },
         _ => {}

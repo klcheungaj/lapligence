@@ -4,8 +4,8 @@ use super::constants::{emit_const, round_shortreal};
 use super::context::{RCtx, RenderedExpr};
 use super::EmitError;
 use crate::sim::ir::{
-    IrBinOp, IrCallArg, IrElemSel, IrExpr, IrExprKind, IrLhs, IrRealBinOp, IrRealUnOp, IrSysFunc,
-    IrType, IrUnOp,
+    IrBinOp, IrBitQuery, IrCallArg, IrElemSel, IrExpr, IrExprKind, IrLhs, IrRealBinOp, IrRealUnOp,
+    IrSysFunc, IrType, IrUnOp,
 };
 
 /// The real-value code of a rendered operand: bare for real expressions,
@@ -135,6 +135,8 @@ pub(super) fn render_expr_impl(ctx: &RCtx<'_>, e: &IrExpr) -> Result<RenderedExp
                 IrBinOp::Ge => cmp_expr(&ra, &rb, ">="),
                 IrBinOp::CaseEq => format!("sv4_case_eq({}, {})", ra.code, rb.code),
                 IrBinOp::CaseNeq => format!("sv4_case_neq({}, {})", ra.code, rb.code),
+                IrBinOp::WildEq => format!("sv4_wild_eq({}, {})", ra.code, rb.code),
+                IrBinOp::WildNeq => format!("sv4_wild_neq({}, {})", ra.code, rb.code),
                 IrBinOp::Shl => format!("sv4_shl({}, {})", ra.code, rb.code),
                 IrBinOp::Shr => format!("sv4_shr({}, {})", ra.code, rb.code),
                 IrBinOp::Ashl => format!("sv4_ashl({}, {})", ra.code, rb.code),
@@ -400,6 +402,78 @@ pub(super) fn render_expr_impl(ctx: &RCtx<'_>, e: &IrExpr) -> Result<RenderedExp
             }
         }
         IrExprKind::SysFunc(f) => match f {
+            IrSysFunc::Rtoi(arg) => {
+                let arg = w(arg)?;
+                RenderedExpr {
+                    code: format!("sv4_rtoi({})", real_code(&arg)),
+                    width: 32,
+                    signed: true,
+                    fill: None,
+                }
+            }
+            IrSysFunc::Itor(arg) => {
+                let arg = w(arg)?;
+                RenderedExpr {
+                    code: format!("sv4_to_real({})", arg.code),
+                    width: 0,
+                    signed: true,
+                    fill: None,
+                }
+            }
+            IrSysFunc::RealToBits(arg) => {
+                let arg = w(arg)?;
+                RenderedExpr {
+                    code: format!("sv4_realtobits({})", real_code(&arg)),
+                    width: 64,
+                    signed: false,
+                    fill: None,
+                }
+            }
+            IrSysFunc::BitsToReal(arg) => {
+                let arg = w(arg)?;
+                RenderedExpr {
+                    code: format!("sv4_bitstoreal({})", arg.code),
+                    width: 0,
+                    signed: true,
+                    fill: None,
+                }
+            }
+            IrSysFunc::ShortRealToBits(arg) => {
+                let arg = w(arg)?;
+                RenderedExpr {
+                    code: format!("sv4_shortrealtobits({})", real_code(&arg)),
+                    width: 32,
+                    signed: false,
+                    fill: None,
+                }
+            }
+            IrSysFunc::BitsToShortReal(arg) => {
+                let arg = w(arg)?;
+                RenderedExpr {
+                    code: format!("sv4_bitstoshortreal({})", arg.code),
+                    width: 0,
+                    signed: true,
+                    fill: None,
+                }
+            }
+            IrSysFunc::BitQuery { kind, arg } => {
+                let arg = w(arg)?;
+                let code = match kind {
+                    IrBitQuery::CountOnes => format!("sv4_countones({})", arg.code),
+                    IrBitQuery::OneHot => format!("sv4_onehot({}, 0)", arg.code),
+                    IrBitQuery::OneHot0 => format!("sv4_onehot({}, 1)", arg.code),
+                    IrBitQuery::IsUnknown => {
+                        format!("sv4_from_u64(sv4_is_unknown({}), 1, 0)", arg.code)
+                    }
+                };
+                let (width, signed) = kind.result_type();
+                RenderedExpr {
+                    code,
+                    width,
+                    signed,
+                    fill: None,
+                }
+            }
             IrSysFunc::Clog2(a) => {
                 let ra = w(a)?;
                 RenderedExpr {
