@@ -1,0 +1,48 @@
+//! Process-level checks for fatal C runtime boundary conditions.
+
+use std::process::Command;
+
+use llg::sim;
+
+#[test]
+fn scheduler_time_overflow_fails_with_a_diagnostic() {
+    if !sim::build::cmake_available() {
+        eprintln!("SKIP: cmake not available");
+        return;
+    }
+    let dir = std::env::temp_dir().join(format!("llg_runtime_boundary_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("create runtime boundary directory");
+    let executable =
+        sim::build::build_model_cmake(&dir, &[("llg_rt_selftest.c", sim::rt::selftest_source())])
+            .expect("runtime boundary probe should compile");
+
+    let output = Command::new(&executable)
+        .arg("--time-overflow-probe")
+        .output()
+        .expect("runtime boundary probe should start");
+
+    assert!(
+        !output.status.success(),
+        "overflow probe unexpectedly succeeded"
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("simulation time overflow"),
+        "missing overflow diagnostic: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let output = Command::new(&executable)
+        .arg("--scaled-time-overflow-probe")
+        .output()
+        .expect("scaled-time boundary probe should start");
+    assert!(
+        !output.status.success(),
+        "scaled-time overflow probe unexpectedly succeeded"
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("scaled simulation time overflow"),
+        "missing scaled-time overflow diagnostic: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    std::fs::remove_dir_all(dir).expect("remove runtime boundary directory");
+}

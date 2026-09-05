@@ -182,8 +182,8 @@ sv4_t sv4_ge(sv4_t a, sv4_t b);
 sv4_t sv4_mux(sv4_t sel, sv4_t a, sv4_t b);
 sv4_t sv4_concat(sv4_t hi, sv4_t lo);     // hi is the MS part
 sv4_t sv4_repeat(sv4_t pat, uint64_t n);  // {n{pat}}
-sv4_t sv4_part_select(sv4_t v, int left, int right);         // handles reversed ranges
-void sv4_part_select_set(sv4_t* tgt, int left, int right, sv4_t value);
+sv4_t sv4_part_select(sv4_t v, int64_t left, int64_t right); // handles reversed ranges
+void sv4_part_select_set(sv4_t* tgt, int64_t left, int64_t right, sv4_t value);
 sv4_t sv4_bit_select(sv4_t v, uint64_t i);
 void sv4_bit_select_set(sv4_t* tgt, uint64_t i, sv4_t value);
 sv4_t sv4_idx_part_select(sv4_t v, uint64_t base, uint16_t width, int neg);
@@ -236,6 +236,7 @@ void llg_rt_cleanup(void);
 void llg_rt_run(void);
 void llg_rt_finish(void);             // $finish
 uint64_t llg_time(void);              // current tick count
+uint64_t llg_time_scaled(uint64_t precision_ps, uint64_t unit_ps);
 // Diagnostic count of allocated process objects, including completed fork
 // parents retained while detached descendants are still live.
 int llg_rt_process_count(void);

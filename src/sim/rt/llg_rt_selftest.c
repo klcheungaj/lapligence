@@ -339,6 +339,10 @@ static void test_sv4_ops(void) {
     CHECK(u(sv4_bit_select(b4("1010"), 0)) == 0);
     CHECK(sv4_same(sv4_part_select(b4("10100101"), 5, 2), b4("1001")));
     CHECK(sv4_same(sv4_part_select(b4("10100101"), 2, 5), b4("1001")));
+    {
+        sv4_t out = sv4_part_select(b4("10100101"), 4294967297LL, 4294967296LL);
+        CHECK(out.width == 2 && sv4_is_unknown(out));
+    }
     CHECK(u(sv4_idx_part_select(b4("10100101"), 2, 3, 0)) == 1); // [2 +: 3] = 001
     CHECK(u(sv4_idx_part_select(b4("10100101"), 5, 3, 1)) == 4); // [5 -: 3] = 100
     {
@@ -1399,7 +1403,40 @@ static void test_force_wakes_waiters(void) {
     CHECK(f_wait_seen == 0xaa);
 }
 
-int main(void) {
+// Boundary probe run by a separate Rust subprocess test: the first delay
+// reaches the largest scheduler timestamp and the second must terminate with
+// the runtime's explicit overflow diagnostic instead of wrapping to zero.
+static void time_overflow_proc(llg_proc_t* self) {
+    llg_wait_time(UINT64_MAX);
+    llg_wait_time(1);
+    llg_proc_done(self);
+}
+
+static int run_time_overflow_probe(void) {
+    llg_rt_init();
+    llg_spawn(time_overflow_proc, "time-overflow");
+    llg_rt_run();
+    return 2; // the second wait must abort before the scheduler returns
+}
+
+static void scaled_time_overflow_proc(llg_proc_t* self) {
+    llg_wait_time(UINT64_MAX);
+    (void)llg_time_scaled(2, 1);
+    llg_proc_done(self);
+}
+
+static int run_scaled_time_overflow_probe(void) {
+    llg_rt_init();
+    llg_spawn(scaled_time_overflow_proc, "scaled-time-overflow");
+    llg_rt_run();
+    return 2; // llg_time_scaled must abort before the scheduler returns
+}
+
+int main(int argc, char** argv) {
+    if (argc == 2 && strcmp(argv[1], "--time-overflow-probe") == 0)
+        return run_time_overflow_probe();
+    if (argc == 2 && strcmp(argv[1], "--scaled-time-overflow-probe") == 0)
+        return run_scaled_time_overflow_probe();
     test_sv4_ops();
     test_sv4_wide();
     check_vector_table();

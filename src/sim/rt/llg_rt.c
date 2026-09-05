@@ -17,6 +17,35 @@
 #include <stdarg.h>
 #include <math.h>
 
+// ── Fatal boundary checks ────────────────────────────────────────────────────
+
+static void llg_fatal_allocation(const char* what, size_t count, size_t size) {
+    fprintf(stderr,
+            "llg: fatal: cannot allocate %zu element(s) of %zu byte(s) for %s\n",
+            count, size, what);
+    abort();
+}
+
+static void* llg_checked_malloc(size_t count, size_t size, const char* what) {
+    if (size != 0 && count > SIZE_MAX / size)
+        llg_fatal_allocation(what, count, size);
+    size_t bytes = count * size;
+    void* ptr = malloc(bytes == 0 ? 1 : bytes);
+    if (!ptr) llg_fatal_allocation(what, count, size);
+    return ptr;
+}
+
+static void* llg_checked_calloc(size_t count, size_t size, const char* what) {
+    if (size != 0 && count > SIZE_MAX / size)
+        llg_fatal_allocation(what, count, size);
+    // Keep zero-sized requests non-null so callers never depend on a
+    // platform-specific malloc(0)/calloc(0) result.
+    if (count == 0 || size == 0) count = size = 1;
+    void* ptr = calloc(count, size);
+    if (!ptr) llg_fatal_allocation(what, count, size);
+    return ptr;
+}
+
 // ── 4-state value ops ─────────────────────────────────────────────────────────
 
 // Number of 64-bit limbs covering `w` bits.
@@ -812,19 +841,29 @@ void sv4_bit_select_set(sv4_t* tgt, uint64_t i, sv4_t value) {
     sv4_lsb_bit_set(tgt, (int)i, sv4_lsb_bit(value, 0));
 }
 
-sv4_t sv4_part_select(sv4_t v, int left, int right) {
-    int w = (left > right ? left - right : right - left) + 1;
-    if (w < 0) w = 0;
-    if (left < 0 || right < 0 || left >= (int)v.width || right >= (int)v.width) {
-        return sv4_x((uint16_t)w, 0);
+static uint16_t llg_part_select_width(int64_t left, int64_t right) {
+    uint64_t delta = left >= right
+        ? (uint64_t)left - (uint64_t)right
+        : (uint64_t)right - (uint64_t)left;
+    if (delta >= LLG_MAX_WIDTH) {
+        fprintf(stderr, "llg runtime fatal: invalid part-select width\n");
+        abort();
+    }
+    return (uint16_t)(delta + 1);
+}
+
+sv4_t sv4_part_select(sv4_t v, int64_t left, int64_t right) {
+    uint16_t w = llg_part_select_width(left, right);
+    if (left < 0 || right < 0 || left >= (int64_t)v.width || right >= (int64_t)v.width) {
+        return sv4_x(w, 0);
     }
     sv4_t r;
     memset(&r, 0, sizeof(r));
-    r.width = (uint16_t)w;
-    int step = left > right ? -1 : 1;
+    r.width = w;
+    int64_t step = left > right ? -1 : 1;
     int out = 0;
-    for (int i = left; ; i += step) {
-        int b = sv4_lsb_bit(v, i);
+    for (int64_t i = left; ; i += step) {
+        int b = sv4_lsb_bit(v, (int)i);
         int pos = w - 1 - out; // first index (left) is the MSB
         sv4_lsb_bit_set(&r, pos, b);
         out++;
@@ -833,16 +872,17 @@ sv4_t sv4_part_select(sv4_t v, int left, int right) {
     return r;
 }
 
-void sv4_part_select_set(sv4_t* tgt, int left, int right, sv4_t value) {
-    int step = left > right ? -1 : 1;
+void sv4_part_select_set(sv4_t* tgt, int64_t left, int64_t right, sv4_t value) {
+    (void)llg_part_select_width(left, right);
+    int64_t step = left > right ? -1 : 1;
     int in = (int)value.width - 1; // value MSB maps to the first target index
-    for (int i = left; ; i += step) {
-        if (i < 0 || i >= (int)tgt->width) {
+    for (int64_t i = left; ; i += step) {
+        if (i < 0 || i >= (int64_t)tgt->width) {
             in--;
             if (i == right) break;
             continue;
         }
-        sv4_lsb_bit_set(tgt, i, sv4_lsb_bit(value, in));
+        sv4_lsb_bit_set(tgt, (int)i, sv4_lsb_bit(value, in));
         in--;
         if (i == right) break;
     }
@@ -1417,7 +1457,8 @@ static void llg_fork_group_child_done(llg_fork_group_t* grp) {
 
 llg_fork_group_t* llg_fork_group_new(int join_kind) {
     llg_proc_t* parent = llg_current();
-    llg_fork_group_t* grp = (llg_fork_group_t*)calloc(1, sizeof(llg_fork_group_t));
+    llg_fork_group_t* grp = (llg_fork_group_t*)llg_checked_calloc(
+        1, sizeof(llg_fork_group_t), "fork group");
     grp->join_kind = join_kind;
     grp->parent = parent;
     grp->next_g = parent->fork_groups;
@@ -1426,7 +1467,8 @@ llg_fork_group_t* llg_fork_group_new(int join_kind) {
 }
 
 llg_proc_t* llg_fork(void (*fn)(llg_proc_t*), const char* name, llg_fork_group_t* grp) {
-    llg_proc_t* p = (llg_proc_t*)calloc(1, sizeof(llg_proc_t));
+    llg_proc_t* p = (llg_proc_t*)llg_checked_calloc(
+        1, sizeof(llg_proc_t), "forked process");
     p->name = name;
     p->fn = fn;
     p->grp = grp;
@@ -1437,7 +1479,8 @@ llg_proc_t* llg_fork(void (*fn)(llg_proc_t*), const char* name, llg_fork_group_t
     grp->remaining++;
     llg_fork_child_t** pp = &grp->children;
     while (*pp) pp = &(*pp)->next;
-    llg_fork_child_t* c = (llg_fork_child_t*)malloc(sizeof(llg_fork_child_t));
+    llg_fork_child_t* c = (llg_fork_child_t*)llg_checked_malloc(
+        1, sizeof(llg_fork_child_t), "fork child");
     c->proc = p;
     c->next = NULL;
     *pp = c;
@@ -1719,6 +1762,27 @@ void llg_rt_finish(void) {
 
 uint64_t llg_time(void) { return g.now; }
 
+uint64_t llg_time_scaled(uint64_t precision_ps, uint64_t unit_ps) {
+    if (unit_ps == 0) {
+        fprintf(stderr, "llg runtime fatal: zero time unit\n");
+        abort();
+    }
+#if defined(__SIZEOF_INT128__)
+    __uint128_t scaled = (__uint128_t)g.now * precision_ps / unit_ps;
+    if (scaled > UINT64_MAX) {
+        fprintf(stderr, "llg runtime fatal: scaled simulation time overflow\n");
+        abort();
+    }
+    return (uint64_t)scaled;
+#else
+    if (precision_ps != 0 && g.now > UINT64_MAX / precision_ps) {
+        fprintf(stderr, "llg runtime fatal: scaled simulation time overflow\n");
+        abort();
+    }
+    return g.now * precision_ps / unit_ps;
+#endif
+}
+
 int llg_rt_process_count(void) {
     int count = 0;
     for (int i = 0; i < g.n_procs; i++)
@@ -1727,7 +1791,8 @@ int llg_rt_process_count(void) {
 }
 
 llg_proc_t* llg_spawn(void (*fn)(llg_proc_t*), const char* name) {
-    llg_proc_t* p = (llg_proc_t*)calloc(1, sizeof(llg_proc_t));
+    llg_proc_t* p = (llg_proc_t*)llg_checked_calloc(
+        1, sizeof(llg_proc_t), "process");
     p->name = name;
     p->fn = fn;
     p->co = aco_create(g.main_co, g.share_stack, 1u << 20, llg_proc_entry, p);
@@ -1745,6 +1810,12 @@ void llg_wait_time(uint64_t ticks) {
     llg_proc_t* p = llg_current();
     llg_wait_t* w = &p->wait;
     w->kind = W_TIME;
+    if (ticks > UINT64_MAX - g.now) {
+        fprintf(stderr,
+                "llg: fatal: simulation time overflow at %llu while scheduling a delay of %llu tick(s)\n",
+                (unsigned long long)g.now, (unsigned long long)ticks);
+        abort();
+    }
     w->time = g.now + ticks;
     if (ticks == 0) {
         // `#0` yields into the INACTIVE region of the current time step
@@ -1763,8 +1834,10 @@ void llg_wait_any(sv4_t** sigs, int n) {
     llg_wait_t* w = &p->wait;
     w->kind = W_EVENTS;
     w->n = n;
-    w->specs = (llg_event_spec_t*)malloc((size_t)n * sizeof(llg_event_spec_t));
-    w->last = (sv4_t*)malloc((size_t)n * sizeof(sv4_t));
+    w->specs = (llg_event_spec_t*)llg_checked_malloc(
+        (size_t)n, sizeof(llg_event_spec_t), "event wait specifications");
+    w->last = (sv4_t*)llg_checked_malloc(
+        (size_t)n, sizeof(sv4_t), "event wait snapshots");
     for (int i = 0; i < n; i++) {
         w->specs[i].sig = sigs[i];
         w->specs[i].kind = LLG_EV_ANY;
@@ -1779,8 +1852,10 @@ void llg_wait_any_events(llg_event_spec_t* specs, int n) {
     llg_wait_t* w = &p->wait;
     w->kind = W_EVENTS;
     w->n = n;
-    w->specs = (llg_event_spec_t*)malloc((size_t)n * sizeof(llg_event_spec_t));
-    w->last = (sv4_t*)malloc((size_t)n * sizeof(sv4_t));
+    w->specs = (llg_event_spec_t*)llg_checked_malloc(
+        (size_t)n, sizeof(llg_event_spec_t), "edge wait specifications");
+    w->last = (sv4_t*)llg_checked_malloc(
+        (size_t)n, sizeof(sv4_t), "edge wait snapshots");
     for (int i = 0; i < n; i++) {
         w->specs[i].sig = specs[i].sig;
         w->specs[i].kind = specs[i].kind;
@@ -1836,7 +1911,8 @@ void llg_wait_events(const llg_event_t* const* evs, int n) {
     llg_wait_t* w = &p->wait;
     w->kind = W_EVENT;
     w->n_evs = n;
-    w->evs = (const llg_event_t**)malloc((size_t)n * sizeof(llg_event_t*));
+    w->evs = (const llg_event_t**)llg_checked_malloc(
+        (size_t)n, sizeof(llg_event_t*), "named-event wait list");
     memcpy(w->evs, evs, (size_t)n * sizeof(llg_event_t*));
     for (int i = 0; i < n; i++) {
         // The lists are owned by the generated model's non-const globals.
@@ -1857,10 +1933,13 @@ void llg_wait_mixed(llg_wait_src_t* srcs, int n) {
     }
     w->kind = W_MIXED;
     w->n = nsig;
-    w->specs = nsig ? (llg_event_spec_t*)malloc((size_t)nsig * sizeof(llg_event_spec_t)) : NULL;
-    w->last = nsig ? (sv4_t*)malloc((size_t)nsig * sizeof(sv4_t)) : NULL;
+    w->specs = nsig ? (llg_event_spec_t*)llg_checked_malloc(
+        (size_t)nsig, sizeof(llg_event_spec_t), "mixed wait specifications") : NULL;
+    w->last = nsig ? (sv4_t*)llg_checked_malloc(
+        (size_t)nsig, sizeof(sv4_t), "mixed wait snapshots") : NULL;
     w->n_evs = nev;
-    w->evs = nev ? (const llg_event_t**)malloc((size_t)nev * sizeof(llg_event_t*)) : NULL;
+    w->evs = nev ? (const llg_event_t**)llg_checked_malloc(
+        (size_t)nev, sizeof(llg_event_t*), "mixed named-event wait list") : NULL;
     int si = 0;
     int ei = 0;
     for (int i = 0; i < n; i++) {
@@ -1880,7 +1959,8 @@ void llg_wait_mixed(llg_wait_src_t* srcs, int n) {
 
 void llg_nba(sv4_t* target, sv4_t value) {
     llg_proc_t* p = llg_current();
-    llg_nba_t* n = (llg_nba_t*)malloc(sizeof(llg_nba_t));
+    llg_nba_t* n = (llg_nba_t*)llg_checked_malloc(
+        1, sizeof(llg_nba_t), "nonblocking assignment");
     n->target = target;
     n->value = value;
     n->is_real = 0;
@@ -1900,7 +1980,8 @@ void llg_ba(sv4_t* target, sv4_t value) {
 
 void llg_nba_d(double* target, double value) {
     llg_proc_t* p = llg_current();
-    llg_nba_t* n = (llg_nba_t*)malloc(sizeof(llg_nba_t));
+    llg_nba_t* n = (llg_nba_t*)llg_checked_malloc(
+        1, sizeof(llg_nba_t), "real nonblocking assignment");
     n->target = NULL;
     n->value = sv4_x(0, 0);
     n->is_real = 1;
@@ -2041,11 +2122,13 @@ void llg_monitor(const char* fmt, int n, llg_mon_eval_fn eval) {
     g.mon.enabled = 1;
     g.mon.n = n;
     g.mon.eval = eval;
-    g.mon.fmt = (char*)malloc(strlen(fmt) + 1);
+    g.mon.fmt = (char*)llg_checked_malloc(strlen(fmt) + 1, 1, "monitor format");
     strcpy(g.mon.fmt, fmt);
     int alloc = n > 0 ? n : 1;
-    g.mon.last = (sv4_t*)calloc((size_t)alloc, sizeof(sv4_t));
-    g.mon.work = (sv4_t*)calloc((size_t)alloc, sizeof(sv4_t));
+    g.mon.last = (sv4_t*)llg_checked_calloc(
+        (size_t)alloc, sizeof(sv4_t), "monitor previous values");
+    g.mon.work = (sv4_t*)llg_checked_calloc(
+        (size_t)alloc, sizeof(sv4_t), "monitor working values");
     // Initial print: the current values at registration time.
     eval(g.mon.work);
     for (int i = 0; i < n; i++) g.mon.last[i] = g.mon.work[i];
@@ -2055,13 +2138,15 @@ void llg_monitor(const char* fmt, int n, llg_mon_eval_fn eval) {
 }
 
 void llg_strobe(const char* fmt, int n, llg_mon_eval_fn eval) {
-    llg_strobe_t* e = (llg_strobe_t*)malloc(sizeof(llg_strobe_t));
-    e->fmt = (char*)malloc(strlen(fmt) + 1);
+    llg_strobe_t* e = (llg_strobe_t*)llg_checked_malloc(
+        1, sizeof(llg_strobe_t), "strobe");
+    e->fmt = (char*)llg_checked_malloc(strlen(fmt) + 1, 1, "strobe format");
     strcpy(e->fmt, fmt);
     e->n = n;
     e->eval = eval;
     int alloc = n > 0 ? n : 1;
-    e->work = (sv4_t*)calloc((size_t)alloc, sizeof(sv4_t));
+    e->work = (sv4_t*)llg_checked_calloc(
+        (size_t)alloc, sizeof(sv4_t), "strobe working values");
     e->next = g.strobes;
     g.strobes = e;
 }
@@ -2145,7 +2230,8 @@ void llg_rt_run_finals(void) {
     uint64_t guard = 0;
     llg_in_finals = 1;
     for (int i = 0; i < llg_n_finals; i++) {
-        llg_proc_t* p = (llg_proc_t*)calloc(1, sizeof(llg_proc_t));
+        llg_proc_t* p = (llg_proc_t*)llg_checked_calloc(
+            1, sizeof(llg_proc_t), "final process");
         p->name = llg_finals[i].name;
         p->fn = llg_finals[i].fn;
         p->co = aco_create(g.main_co, g.share_stack, 1u << 20, llg_proc_entry, p);
