@@ -188,9 +188,19 @@ fn sync_launcher_state(build_dir: &Path, active: bool) {
         }
     }
     if let Some(parent) = marker.parent() {
-        let _ = std::fs::create_dir_all(parent);
+        std::fs::create_dir_all(parent).unwrap_or_else(|error| {
+            panic!(
+                "failed to create compiler-launcher state directory {}: {error}",
+                parent.display()
+            )
+        });
     }
-    let _ = std::fs::write(&marker, format!("{state}\n"));
+    std::fs::write(&marker, format!("{state}\n")).unwrap_or_else(|error| {
+        panic!(
+            "failed to write compiler-launcher state {}: {error}",
+            marker.display()
+        )
+    });
 }
 
 /// Configures and builds Surelog via the `cmake` crate, which integrates
@@ -535,7 +545,7 @@ fn build_surelog_wrapper(manifest_dir: &Path) {
     // MSVC) compile neither the shim nor mimalloc here, so their C-side
     // allocations go straight to the CRT/system allocator.
     if is_musl {
-        let mi_crate = find_libmimalloc_sys_src();
+        let mi_crate = find_libmimalloc_sys_src(manifest_dir);
         let mi_include = mi_crate.join("c_src/mimalloc/v3/include");
         let mi_src = mi_crate.join("c_src/mimalloc/v3/src");
         let mi_static = mi_src.join("static.c");
@@ -767,15 +777,38 @@ fn ensure_static_archives(drivers: &[String], required: &[&str], tolerated: &[&s
     }
 }
 
-/// Scan CARGO_HOME for the libmimalloc-sys crate source directory.
-/// The version must match the one pinned in Cargo.lock.
-fn find_libmimalloc_sys_src() -> PathBuf {
-    let version = "0.1.47";
-    let cargo_home = std::env::var("CARGO_HOME").unwrap_or_else(|_| {
-        let home = std::env::var("HOME").expect("HOME not set");
-        format!("{home}/.cargo")
-    });
-    let src_root = PathBuf::from(&cargo_home).join("registry").join("src");
+/// Scan CARGO_HOME for the libmimalloc-sys source directory selected by the
+/// current lockfile.  Reading the version from Cargo.lock keeps this build
+/// input aligned when the transitive dependency is updated.
+fn find_libmimalloc_sys_src(manifest_dir: &Path) -> PathBuf {
+    let lock_path = manifest_dir.join("Cargo.lock");
+    let lock = std::fs::read_to_string(&lock_path)
+        .unwrap_or_else(|error| panic!("cannot read {}: {error}", lock_path.display()));
+    let version = lock
+        .split("[[package]]")
+        .find(|package| {
+            package
+                .lines()
+                .any(|line| line.trim() == "name = \"libmimalloc-sys\"")
+        })
+        .and_then(|package| {
+            package.lines().find_map(|line| {
+                line.trim()
+                    .strip_prefix("version = \"")
+                    .and_then(|value| value.strip_suffix('"'))
+            })
+        })
+        .unwrap_or_else(|| {
+            panic!(
+                "libmimalloc-sys package/version not found in {}",
+                lock_path.display()
+            )
+        });
+    let cargo_home = std::env::var_os("CARGO_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".cargo")))
+        .unwrap_or_else(|| panic!("neither CARGO_HOME nor HOME is set"));
+    let src_root = cargo_home.join("registry").join("src");
     for entry in std::fs::read_dir(&src_root)
         .unwrap_or_else(|e| panic!("cannot read {}: {e}", src_root.display()))
     {
