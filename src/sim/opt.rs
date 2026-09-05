@@ -797,7 +797,7 @@ fn truthy_const(e: &IrExpr) -> Option<bool> {
     match &e.kind {
         IrExprKind::Const(c) => match c.real {
             Some(r) => Some(r != 0.0),
-            None => as_packed_const(e).map(|v| v.to_u64().map(|u| u != 0).unwrap_or(false)),
+            None => as_packed_const(e).map(|v| !v.is_unknown() && v.bits.contains(&Bit::One)),
         },
         _ => None,
     }
@@ -1976,6 +1976,25 @@ mod tests {
         assert_eq!(truthy_const(&rkonst(f64::NAN)), Some(true));
         assert_eq!(truthy_const(&rkonst(0.0)), Some(false));
         assert_eq!(truthy_const(&rkonst(-1.5)), Some(true));
+    }
+
+    #[test]
+    fn wide_constant_truthiness_checks_every_limb() {
+        let high_bit = IrExpr::new(
+            IrExprKind::Const(IrConst {
+                bits: vec![0, 1u64 << 36],
+                x: vec![0, 0],
+                z: vec![0, 0],
+                width: 128,
+                signed: false,
+                real: None,
+                fill: None,
+            }),
+            128,
+            false,
+            None,
+        );
+        assert_eq!(truthy_const(&high_bit), Some(true));
     }
 
     #[test]

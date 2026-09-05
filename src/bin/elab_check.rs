@@ -25,7 +25,7 @@ use llg::ffi::vpi::VpiHandle;
 
 const VPI_ELABORATED: c_int = vpi::vpiElaborated;
 
-fn iter(type_: c_int, obj: VpiHandle) -> Vec<VpiHandle> {
+fn iter<'session>(type_: c_int, obj: VpiHandle<'session>) -> Vec<VpiHandle<'session>> {
     vpi::iterate(type_, obj)
         .map(|it| it.collect())
         .unwrap_or_default()
@@ -33,13 +33,20 @@ fn iter(type_: c_int, obj: VpiHandle) -> Vec<VpiHandle> {
 
 /// Child handle kept alive for the duration of the returned `OwnedHandle`.
 /// Callers must hold the handle (or use `.raw()` on it) before it drops.
-fn child_handle(type_: c_int, obj: VpiHandle) -> Option<vpi::OwnedHandle> {
+fn child_handle<'session>(
+    type_: c_int,
+    obj: VpiHandle<'session>,
+) -> Option<vpi::OwnedHandle<'session>> {
     vpi::handle(type_, obj)
 }
 
 /// Invoke `f` for every child reachable via relationship `rel` — works for
 /// both 1-to-many (`vpi_iterate`) and 1-to-1 (`vpi_handle`) relationships.
-fn each_child<F: FnMut(VpiHandle)>(rel: c_int, obj: VpiHandle, f: &mut F) {
+fn each_child<'session, F: FnMut(VpiHandle<'session>)>(
+    rel: c_int,
+    obj: VpiHandle<'session>,
+    f: &mut F,
+) {
     if let Some(it) = vpi::iterate(rel, obj) {
         for h in it {
             f(h);
@@ -52,7 +59,7 @@ fn each_child<F: FnMut(VpiHandle)>(rel: c_int, obj: VpiHandle, f: &mut F) {
 
 /// Recursively collect every ref-like expression under `root` and report how
 /// many resolve via `vpiActual`.
-fn count_refs(root: VpiHandle, stats: &mut RefStats) {
+fn count_refs(root: VpiHandle<'_>, stats: &mut RefStats) {
     // Relationship set that covers the expression/statement tree.
     const RELS: [c_int; 15] = [
         vpi::vpiRhs,
@@ -100,12 +107,11 @@ struct RefStats {
     bound: usize,
 }
 
-#[derive(Default)]
-struct InstStats {
+struct InstStats<'session> {
     full_name: String,
     def_name: String,
     /// Raw VPI handle of the module instance (valid for the whole walk).
-    handle: VpiHandle,
+    handle: VpiHandle<'session>,
     ports: usize,
     nets: usize,
     vars: usize,
@@ -124,16 +130,35 @@ struct InstStats {
     implicit_sensitivity: usize,
     // Parameters whose param_assign RHS is not a constant (unfolded expr).
     unfolded_param_exprs: usize,
-    children: Vec<InstStats>,
+    children: Vec<InstStats<'session>>,
 }
 
-fn visit_module_inst(mi: VpiHandle) -> InstStats {
-    let mut s = InstStats {
-        full_name: vpi::obj_full_name(mi),
-        def_name: vpi::get_str(vpi::vpiDefName, mi),
-        handle: mi,
-        ..Default::default()
-    };
+impl<'session> InstStats<'session> {
+    fn new(mi: VpiHandle<'session>) -> Self {
+        Self {
+            full_name: vpi::obj_full_name(mi),
+            def_name: vpi::get_str(vpi::vpiDefName, mi),
+            handle: mi,
+            ports: 0,
+            nets: 0,
+            vars: 0,
+            params: 0,
+            param_assigns: 0,
+            cont_assigns: 0,
+            processes: 0,
+            gen_scopes: 0,
+            ports_missing_high_conn: 0,
+            ports_missing_low_conn: 0,
+            unfolded_ranges: 0,
+            implicit_sensitivity: 0,
+            unfolded_param_exprs: 0,
+            children: Vec::new(),
+        }
+    }
+}
+
+fn visit_module_inst<'session>(mi: VpiHandle<'session>) -> InstStats<'session> {
+    let mut s = InstStats::new(mi);
 
     for port in iter(vpi::vpiPort, mi) {
         s.ports += 1;

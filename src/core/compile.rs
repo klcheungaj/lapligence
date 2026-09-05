@@ -368,7 +368,7 @@ impl CompileOut {
     }
 
     /// The elaborated UHDM design handle, valid while the session is alive.
-    pub fn uhdm_design(&self) -> Option<VpiHandle> {
+    pub fn uhdm_design(&self) -> Option<VpiHandle<'_>> {
         self.session.uhdm_design()
     }
 

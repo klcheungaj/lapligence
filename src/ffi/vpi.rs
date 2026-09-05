@@ -5,10 +5,6 @@
 //!  - `uhdm_vpi_user.h` — UHDM-specific extension constants
 //!  - `uhdm_types.h`    — `UHDM_OBJECT_TYPE` enum values (as `pub const`)
 //!
-//! # Usage from a binary crate
-//! Add `#[path = "../vpi_user.rs"] mod vpi_user;` (or `pub mod`) at the top
-//! of any `src/bin/*.rs` file, or move to a shared lib crate.
-//!
 //! All VPI functions are in the `uhdm` static library (already linked via
 //! `build.rs`); no extra `#[link]` attribute is needed.
 
@@ -24,6 +20,7 @@
 )]
 
 use std::ffi::{CStr, CString};
+use std::marker::PhantomData;
 use std::os::raw::{c_char, c_double, c_float, c_int, c_short, c_uint, c_void};
 
 // ── Primitive type aliases ────────────────────────────────────────────────────
@@ -37,8 +34,41 @@ pub type PLI_UBYTE8 = u8;
 pub type PLI_INT64 = i64;
 pub type PLI_UINT64 = u64;
 
-/// VPI handle: a pointer to an opaque `PLI_UINT32` object.
-pub type VpiHandle = *mut PLI_UINT32;
+/// Raw C representation of a VPI handle. Never expose this outside `ffi`.
+type RawVpiHandle = *mut PLI_UINT32;
+
+/// A borrowed VPI object whose validity is tied to its Surelog session.
+///
+/// The raw pointer is intentionally private: safe callers can obtain handles
+/// only from a live session or from traversal rooted in another valid handle.
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct VpiHandle<'session> {
+    raw: RawVpiHandle,
+    session: PhantomData<&'session ()>,
+}
+
+impl<'session> VpiHandle<'session> {
+    /// Construct a session-branded handle from the foreign API.
+    ///
+    /// # Safety
+    /// `raw` must be null or denote a VPI object that remains valid for all of
+    /// `'session`.
+    pub(crate) unsafe fn from_raw(raw: RawVpiHandle) -> Self {
+        Self {
+            raw,
+            session: PhantomData,
+        }
+    }
+
+    pub fn is_null(self) -> bool {
+        self.raw.is_null()
+    }
+
+    pub(crate) fn as_raw(self) -> RawVpiHandle {
+        self.raw
+    }
+}
 
 // ── VPI object types (vpi_user.h §OBJECT TYPES) ───────────────────────────────
 
@@ -1716,7 +1746,7 @@ pub struct VpiErrorInfo {
 pub struct CbData {
     pub reason: PLI_INT32,
     pub cb_rtn: Option<unsafe extern "C" fn(*mut CbData) -> PLI_INT32>,
-    pub obj: VpiHandle,
+    pub obj: RawVpiHandle,
     pub time: *mut VpiTime,
     pub value: *mut VpiValue,
     pub index: PLI_INT32,
@@ -1744,53 +1774,53 @@ pub struct CbData {
 unsafe extern "C" {
     // ── Callback ──────────────────────────────────────────────────────────────
 
-    pub fn vpi_register_cb(cb_data_p: *mut CbData) -> VpiHandle;
-    pub fn vpi_remove_cb(cb_obj: VpiHandle) -> PLI_INT32;
-    pub fn vpi_get_cb_info(object: VpiHandle, cb_data_p: *mut CbData);
-    pub fn vpi_register_systf(systf_data_p: *mut VpiSystfData) -> VpiHandle;
-    pub fn vpi_get_systf_info(object: VpiHandle, systf_data_p: *mut VpiSystfData);
+    fn vpi_register_cb(cb_data_p: *mut CbData) -> RawVpiHandle;
+    fn vpi_remove_cb(cb_obj: RawVpiHandle) -> PLI_INT32;
+    fn vpi_get_cb_info(object: RawVpiHandle, cb_data_p: *mut CbData);
+    fn vpi_register_systf(systf_data_p: *mut VpiSystfData) -> RawVpiHandle;
+    fn vpi_get_systf_info(object: RawVpiHandle, systf_data_p: *mut VpiSystfData);
 
     // ── Handle retrieval ──────────────────────────────────────────────────────
 
-    pub fn vpi_handle_by_name(name: *mut PLI_BYTE8, scope: VpiHandle) -> VpiHandle;
-    pub fn vpi_handle_by_index(object: VpiHandle, indx: PLI_INT32) -> VpiHandle;
+    fn vpi_handle_by_name(name: *mut PLI_BYTE8, scope: RawVpiHandle) -> RawVpiHandle;
+    fn vpi_handle_by_index(object: RawVpiHandle, indx: PLI_INT32) -> RawVpiHandle;
 
     // ── Traversal ─────────────────────────────────────────────────────────────
 
-    pub fn vpi_handle(type_: PLI_INT32, ref_handle: VpiHandle) -> VpiHandle;
-    pub fn vpi_iterate(type_: PLI_INT32, ref_handle: VpiHandle) -> VpiHandle;
-    pub fn vpi_scan(iterator: VpiHandle) -> VpiHandle;
+    fn vpi_handle(type_: PLI_INT32, ref_handle: RawVpiHandle) -> RawVpiHandle;
+    fn vpi_iterate(type_: PLI_INT32, ref_handle: RawVpiHandle) -> RawVpiHandle;
+    fn vpi_scan(iterator: RawVpiHandle) -> RawVpiHandle;
 
     // ── Properties ────────────────────────────────────────────────────────────
 
-    pub fn vpi_get(property: PLI_INT32, object: VpiHandle) -> PLI_INT32;
-    pub fn vpi_get64(property: PLI_INT32, object: VpiHandle) -> PLI_INT64;
+    fn vpi_get(property: PLI_INT32, object: RawVpiHandle) -> PLI_INT32;
+    fn vpi_get64(property: PLI_INT32, object: RawVpiHandle) -> PLI_INT64;
     /// Returns a pointer into VPI-internal storage valid until the next call.
     /// Do **not** free this pointer.
-    pub fn vpi_get_str(property: PLI_INT32, object: VpiHandle) -> *mut PLI_BYTE8;
+    fn vpi_get_str(property: PLI_INT32, object: RawVpiHandle) -> *mut PLI_BYTE8;
 
     // ── Delay ─────────────────────────────────────────────────────────────────
 
-    pub fn vpi_get_delays(object: VpiHandle, delay_p: *mut VpiDelay);
-    pub fn vpi_put_delays(object: VpiHandle, delay_p: *mut VpiDelay);
+    fn vpi_get_delays(object: RawVpiHandle, delay_p: *mut VpiDelay);
+    fn vpi_put_delays(object: RawVpiHandle, delay_p: *mut VpiDelay);
 
     // ── Value ─────────────────────────────────────────────────────────────────
 
-    pub fn vpi_get_value(expr: VpiHandle, value_p: *mut VpiValue);
-    pub fn vpi_put_value(
-        object: VpiHandle,
+    fn vpi_get_value(expr: RawVpiHandle, value_p: *mut VpiValue);
+    fn vpi_put_value(
+        object: RawVpiHandle,
         value_p: *mut VpiValue,
         time_p: *mut VpiTime,
         flags: PLI_INT32,
-    ) -> VpiHandle;
-    pub fn vpi_get_value_array(
-        object: VpiHandle,
+    ) -> RawVpiHandle;
+    fn vpi_get_value_array(
+        object: RawVpiHandle,
         arrayvalue_p: *mut VpiArrayValue,
         index_p: *mut PLI_INT32,
         num: PLI_UINT32,
     );
-    pub fn vpi_put_value_array(
-        object: VpiHandle,
+    fn vpi_put_value_array(
+        object: RawVpiHandle,
         arrayvalue_p: *mut VpiArrayValue,
         index_p: *mut PLI_INT32,
         num: PLI_UINT32,
@@ -1798,7 +1828,7 @@ unsafe extern "C" {
 
     // ── Time ──────────────────────────────────────────────────────────────────
 
-    pub fn vpi_get_time(object: VpiHandle, time_p: *mut VpiTime);
+    fn vpi_get_time(object: RawVpiHandle, time_p: *mut VpiTime);
 
     // ── I/O ───────────────────────────────────────────────────────────────────
 
@@ -1810,11 +1840,11 @@ unsafe extern "C" {
 
     // ── Utility ───────────────────────────────────────────────────────────────
 
-    pub fn vpi_compare_objects(object1: VpiHandle, object2: VpiHandle) -> PLI_INT32;
+    fn vpi_compare_objects(object1: RawVpiHandle, object2: RawVpiHandle) -> PLI_INT32;
     pub fn vpi_chk_error(error_info_p: *mut VpiErrorInfo) -> PLI_INT32;
     /// Deprecated in IEEE 1800-2009; prefer `vpi_release_handle`.
-    pub fn vpi_free_object(object: VpiHandle) -> PLI_INT32;
-    pub fn vpi_release_handle(object: VpiHandle) -> PLI_INT32;
+    fn vpi_free_object(object: RawVpiHandle) -> PLI_INT32;
+    fn vpi_release_handle(object: RawVpiHandle) -> PLI_INT32;
     pub fn vpi_get_vlog_info(vlog_info_p: *mut VpiVlogInfo) -> PLI_INT32;
 
     // ── 1364-2001 additions ───────────────────────────────────────────────────
@@ -1829,22 +1859,22 @@ unsafe extern "C" {
         data_loc: *mut PLI_BYTE8,
         num_of_bytes: PLI_INT32,
     ) -> PLI_INT32;
-    pub fn vpi_get_userdata(obj: VpiHandle) -> *mut c_void;
-    pub fn vpi_put_userdata(obj: VpiHandle, userdata: *mut c_void) -> PLI_INT32;
+    fn vpi_get_userdata(obj: RawVpiHandle) -> *mut c_void;
+    fn vpi_put_userdata(obj: RawVpiHandle, userdata: *mut c_void) -> PLI_INT32;
     pub fn vpi_flush() -> PLI_INT32;
     pub fn vpi_mcd_flush(mcd: PLI_UINT32) -> PLI_INT32;
     pub fn vpi_control(operation: PLI_INT32, ...) -> PLI_INT32;
     pub fn vpi_handle_by_multi_index(
-        obj: VpiHandle,
+        obj: RawVpiHandle,
         num_index: PLI_INT32,
         index_array: *mut PLI_INT32,
-    ) -> VpiHandle;
+    ) -> RawVpiHandle;
     pub fn vpi_handle_multi(
         type_: PLI_INT32,
-        ref_handle1: VpiHandle,
-        ref_handle2: VpiHandle,
+        ref_handle1: RawVpiHandle,
+        ref_handle2: RawVpiHandle,
         ...
-    ) -> VpiHandle;
+    ) -> RawVpiHandle;
 }
 
 // ── Safe wrappers ─────────────────────────────────────────────────────────────
@@ -1854,29 +1884,34 @@ unsafe extern "C" {
 /// Handles obtained from `vpi_handle_by_name`, `vpi_handle` (1-to-1 nav),
 /// `vpi_register_cb`, and partial `VpiIter` drops are owning handles and
 /// should be wrapped with this type.
-pub struct OwnedHandle(VpiHandle);
+pub struct OwnedHandle<'session>(VpiHandle<'session>);
 
-impl OwnedHandle {
-    /// Wraps a raw handle. Returns `None` if the pointer is null.
-    pub fn new(raw: VpiHandle) -> Option<Self> {
+impl<'session> OwnedHandle<'session> {
+    /// Wraps a foreign-owned handle. Returns `None` if the pointer is null.
+    fn from_raw(raw: RawVpiHandle) -> Option<Self> {
         if raw.is_null() {
             None
         } else {
-            Some(Self(raw))
+            // SAFETY: every caller obtains `raw` by traversing a valid handle
+            // branded with `'session`; UHDM keeps the object alive for that
+            // session and this wrapper releases only the transient VPI handle.
+            Some(Self(unsafe { VpiHandle::from_raw(raw) }))
         }
     }
 
-    /// Returns the raw handle without releasing ownership.
-    pub fn raw(&self) -> VpiHandle {
+    /// Borrows the represented object without releasing this owning wrapper.
+    pub fn raw(&self) -> VpiHandle<'session> {
         self.0
     }
 }
 
-impl Drop for OwnedHandle {
+impl Drop for OwnedHandle<'_> {
     fn drop(&mut self) {
         if !self.0.is_null() {
+            // SAFETY: this type uniquely owns the transient wrapper returned
+            // by an owning VPI operation and releases it exactly once here.
             unsafe {
-                vpi_release_handle(self.0);
+                vpi_release_handle(self.0.as_raw());
             }
         }
     }
@@ -1886,21 +1921,23 @@ impl Drop for OwnedHandle {
 ///
 /// Yields raw `VpiHandle` values. The underlying iterator handle is released
 /// automatically if the iterator is dropped before exhaustion.
-pub struct VpiIter {
-    iter_handle: VpiHandle,
+pub struct VpiIter<'session> {
+    iter_handle: RawVpiHandle,
     done: bool,
+    session: PhantomData<&'session ()>,
 }
 
-impl VpiIter {
-    fn new(iter_handle: VpiHandle) -> Self {
+impl VpiIter<'_> {
+    fn new(iter_handle: RawVpiHandle) -> Self {
         Self {
             iter_handle,
             done: false,
+            session: PhantomData,
         }
     }
 }
 
-impl Drop for VpiIter {
+impl Drop for VpiIter<'_> {
     fn drop(&mut self) {
         // vpi_scan frees the iterator when it returns null; if not done yet
         // we must free it ourselves.
@@ -1912,22 +1949,25 @@ impl Drop for VpiIter {
     }
 }
 
-impl Iterator for VpiIter {
+impl<'session> Iterator for VpiIter<'session> {
     /// Raw handles from `vpi_scan` are borrowed from the design model and
     /// must not be freed by the caller.
-    type Item = VpiHandle;
+    type Item = VpiHandle<'session>;
 
-    fn next(&mut self) -> Option<VpiHandle> {
+    fn next(&mut self) -> Option<Self::Item> {
         if self.done || self.iter_handle.is_null() {
             return None;
         }
+        // SAFETY: `iter_handle` is a live iterator created for `'session`.
         let h = unsafe { vpi_scan(self.iter_handle) };
         if h.is_null() {
             // vpi_scan freed the iterator; mark done so Drop skips it.
             self.done = true;
             None
         } else {
-            Some(h)
+            // SAFETY: scanned objects are borrowed from the same UHDM session
+            // as the iterator that produced them.
+            Some(unsafe { VpiHandle::from_raw(h) })
         }
     }
 }
@@ -1936,14 +1976,24 @@ impl Iterator for VpiIter {
 
 /// Returns a handle for a 1-to-1 relationship (e.g. `vpi_handle(vpiScope, h)`).
 /// Returns `None` if no such object exists.
-pub fn handle(type_: PLI_INT32, ref_handle: VpiHandle) -> Option<OwnedHandle> {
-    OwnedHandle::new(unsafe { vpi_handle(type_, ref_handle) })
+pub fn handle<'session>(
+    type_: PLI_INT32,
+    ref_handle: VpiHandle<'session>,
+) -> Option<OwnedHandle<'session>> {
+    // SAFETY: `ref_handle` is branded with a live session and the returned
+    // relationship handle belongs to that same session.
+    OwnedHandle::from_raw(unsafe { vpi_handle(type_, ref_handle.as_raw()) })
 }
 
 /// Returns an iterator over a 1-to-many relationship.
 /// Returns `None` if the object has no children of that type.
-pub fn iterate(type_: PLI_INT32, ref_handle: VpiHandle) -> Option<VpiIter> {
-    let h = unsafe { vpi_iterate(type_, ref_handle) };
+pub fn iterate<'session>(
+    type_: PLI_INT32,
+    ref_handle: VpiHandle<'session>,
+) -> Option<VpiIter<'session>> {
+    // SAFETY: `ref_handle` is valid for `'session`; the iterator cannot
+    // outlive that brand.
+    let h = unsafe { vpi_iterate(type_, ref_handle.as_raw()) };
     if h.is_null() {
         None
     } else {
@@ -1953,39 +2003,49 @@ pub fn iterate(type_: PLI_INT32, ref_handle: VpiHandle) -> Option<VpiIter> {
 
 /// Returns a handle to an object by hierarchical name.
 /// `scope` may be null to search the global scope.
-pub fn handle_by_name(name: &str, scope: VpiHandle) -> Option<OwnedHandle> {
+pub fn handle_by_name<'session>(
+    name: &str,
+    scope: VpiHandle<'session>,
+) -> Option<OwnedHandle<'session>> {
     let cname = CString::new(name).ok()?;
-    OwnedHandle::new(unsafe { vpi_handle_by_name(cname.as_ptr() as *mut _, scope) })
+    // SAFETY: `cname` is NUL-terminated and alive for the call; `scope` is
+    // valid for `'session` and anchors the returned handle to that session.
+    OwnedHandle::from_raw(unsafe { vpi_handle_by_name(cname.as_ptr() as *mut _, scope.as_raw()) })
 }
 
 /// Returns a handle to an array element by index.
-pub fn handle_by_index(object: VpiHandle, indx: PLI_INT32) -> Option<OwnedHandle> {
-    OwnedHandle::new(unsafe { vpi_handle_by_index(object, indx) })
+pub fn handle_by_index<'session>(
+    object: VpiHandle<'session>,
+    indx: PLI_INT32,
+) -> Option<OwnedHandle<'session>> {
+    // SAFETY: `object` is valid for `'session`; a returned array-element
+    // wrapper belongs to the same session.
+    OwnedHandle::from_raw(unsafe { vpi_handle_by_index(object.as_raw(), indx) })
 }
 
 /// Returns `true` if two handles refer to the same VPI object.
-pub fn compare_objects(obj1: VpiHandle, obj2: VpiHandle) -> bool {
-    unsafe { vpi_compare_objects(obj1, obj2) != 0 }
+pub fn compare_objects<'session>(obj1: VpiHandle<'session>, obj2: VpiHandle<'session>) -> bool {
+    unsafe { vpi_compare_objects(obj1.as_raw(), obj2.as_raw()) != 0 }
 }
 
 // ── Properties ────────────────────────────────────────────────────────────────
 
 /// Returns an integer property (e.g. `vpi_get(vpiType, h)`).
-pub fn get(property: PLI_INT32, object: VpiHandle) -> PLI_INT32 {
-    unsafe { vpi_get(property, object) }
+pub fn get(property: PLI_INT32, object: VpiHandle<'_>) -> PLI_INT32 {
+    unsafe { vpi_get(property, object.as_raw()) }
 }
 
 /// Returns a 64-bit integer property.
-pub fn get64(property: PLI_INT32, object: VpiHandle) -> PLI_INT64 {
-    unsafe { vpi_get64(property, object) }
+pub fn get64(property: PLI_INT32, object: VpiHandle<'_>) -> PLI_INT64 {
+    unsafe { vpi_get64(property, object.as_raw()) }
 }
 
 /// Returns a string property copied into an owned `String`.
 ///
 /// The raw pointer from `vpi_get_str` is valid only until the next call to
 /// `vpi_get_str`, so it is always copied here.
-pub fn get_str(property: PLI_INT32, object: VpiHandle) -> String {
-    let ptr = unsafe { vpi_get_str(property, object) };
+pub fn get_str(property: PLI_INT32, object: VpiHandle<'_>) -> String {
+    let ptr = unsafe { vpi_get_str(property, object.as_raw()) };
     if ptr.is_null() {
         return String::new();
     }
@@ -1995,27 +2055,27 @@ pub fn get_str(property: PLI_INT32, object: VpiHandle) -> String {
 // ── Convenience property accessors ───────────────────────────────────────────
 
 /// Returns the `vpiType` of an object as an integer constant (e.g. `vpiModule`).
-pub fn obj_type(object: VpiHandle) -> PLI_INT32 {
+pub fn obj_type(object: VpiHandle<'_>) -> PLI_INT32 {
     get(vpiType, object)
 }
 
 /// Returns the `vpiName` of an object.
-pub fn obj_name(object: VpiHandle) -> String {
+pub fn obj_name(object: VpiHandle<'_>) -> String {
     get_str(vpiName, object)
 }
 
 /// Returns the `vpiFullName` of an object.
-pub fn obj_full_name(object: VpiHandle) -> String {
+pub fn obj_full_name(object: VpiHandle<'_>) -> String {
     get_str(vpiFullName, object)
 }
 
 /// Returns the source `vpiFile` of an object.
-pub fn obj_file(object: VpiHandle) -> String {
+pub fn obj_file(object: VpiHandle<'_>) -> String {
     get_str(vpiFile, object)
 }
 
 /// Returns the `vpiLineNo` of an object.
-pub fn obj_line(object: VpiHandle) -> PLI_INT32 {
+pub fn obj_line(object: VpiHandle<'_>) -> PLI_INT32 {
     get(vpiLineNo, object)
 }
 
@@ -2049,27 +2109,33 @@ pub enum ValueData {
     Hex(String),
     /// `vpiVectorVal` — 4-state vector as (aval, bval) word pairs, LSB first.
     Vector(Vec<(u32, u32)>),
+    /// The VPI payload exceeded the defensive owned-copy limit.
+    TooWide { bits: usize },
 }
+
+/// Prevent an untrusted VPI size from causing an unbounded allocation while
+/// copying a vector out of foreign storage.
+const MAX_OWNED_VALUE_BITS: usize = 1 << 24;
 
 /// Read an object's current value.
 ///
 /// All data is copied into owned Rust storage; the returned [`ValueData`]
 /// shares nothing with UHDM.  Callers need no `unsafe`.  Uses `vpi_get_value`
 /// internally.
-pub fn read_value(expr: VpiHandle) -> ValueData {
+pub fn read_value(expr: VpiHandle<'_>) -> ValueData {
     // SAFETY: `vpi_get_value` fills the stack `VpiValue` and selects `format`
     // to tell us which union member is active.  String members (`str_`) point
     // at NUL-terminated UHDM-owned storage and are copied out before this
-    // function returns; the vector member points at an array of `VpiVecval`
-    // words (4-state encoding: aval/bval pair `ab` = 00→0, 10→1, 11→X, 01→Z),
-    // of which at most two 32-bit words are read because v1 constant values
-    // are at most 64 bits wide.
+    // function returns; the vector member points at the `vpiSize`-determined
+    // array of `VpiVecval` words (4-state encoding: aval/bval pair `ab` =
+    // 00→0, 10→1, 11→X, 01→Z).  UHDM owns that complete array for the duration
+    // of this call, and every word is copied into the returned vector.
     unsafe {
         let mut v = VpiValue {
             format: 0,
             value: VpiValueData { integer: 0 },
         };
-        vpi_get_value(expr, &mut v);
+        vpi_get_value(expr.as_raw(), &mut v);
         let copy_str = |p: *mut PLI_BYTE8| -> String {
             if p.is_null() {
                 String::new()
@@ -2092,18 +2158,19 @@ pub fn read_value(expr: VpiHandle) -> ValueData {
                 if ptr.is_null() {
                     ValueData::None
                 } else {
-                    let size = vpi_get(vpiSize, expr);
-                    let words = if size <= 0 {
-                        1
+                    let size = vpi_get(vpiSize, expr.as_raw());
+                    let bits = if size <= 0 { 1 } else { size as usize };
+                    if bits > MAX_OWNED_VALUE_BITS {
+                        ValueData::TooWide { bits }
                     } else {
-                        (size as usize).div_ceil(32).clamp(1, 2)
-                    };
-                    let mut vec = Vec::with_capacity(words);
-                    for i in 0..words {
-                        let w = ptr.add(i).read();
-                        vec.push((w.aval, w.bval));
+                        let words = bits.div_ceil(32);
+                        let mut vec = Vec::with_capacity(words);
+                        for i in 0..words {
+                            let w = ptr.add(i).read();
+                            vec.push((w.aval, w.bval));
+                        }
+                        ValueData::Vector(vec)
                     }
-                    ValueData::Vector(vec)
                 }
             }
             _ => ValueData::None,
@@ -2115,21 +2182,21 @@ pub fn read_value(expr: VpiHandle) -> ValueData {
 ///
 /// Low-level accessor kept public for compatibility; `core`/`sim` must use
 /// [`read_value`] instead of touching the raw union.
-pub fn get_value(expr: VpiHandle, value_p: &mut VpiValue) {
+pub fn get_value(expr: VpiHandle<'_>, value_p: &mut VpiValue) {
     unsafe {
-        vpi_get_value(expr, value_p as *mut _);
+        vpi_get_value(expr.as_raw(), value_p as *mut _);
     }
 }
 
 /// Writes a value to a VPI object. Returns a scheduled-event handle or null.
-pub fn put_value(
-    object: VpiHandle,
+pub fn put_value<'session>(
+    object: VpiHandle<'session>,
     value_p: &mut VpiValue,
     time_p: Option<&mut VpiTime>,
     flags: PLI_INT32,
-) -> Option<OwnedHandle> {
+) -> Option<OwnedHandle<'session>> {
     let tp = time_p.map_or(std::ptr::null_mut(), |t| t as *mut _);
-    OwnedHandle::new(unsafe { vpi_put_value(object, value_p as *mut _, tp, flags) })
+    OwnedHandle::from_raw(unsafe { vpi_put_value(object.as_raw(), value_p as *mut _, tp, flags) })
 }
 
 // ── Error checking ────────────────────────────────────────────────────────────

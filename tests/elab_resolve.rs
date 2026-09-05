@@ -70,7 +70,12 @@ endmodule
 
 /// Run `f` with the elaborated UHDM design handle for `src` (top module
 /// `top`), then clean up.  The design handle is only valid while `f` runs.
-fn with_design<R>(top: &str, src: &str, check_errors: bool, f: impl FnOnce(*mut u32) -> R) -> R {
+fn with_design<R>(
+    top: &str,
+    src: &str,
+    check_errors: bool,
+    f: impl for<'session> FnOnce(vpi::VpiHandle<'session>) -> R,
+) -> R {
     let _guard = SURELOG_LOCK.lock().unwrap();
     let dir = std::env::temp_dir().join(format!("llg_elab_test_{}", std::process::id()));
     std::fs::create_dir_all(&dir).expect("create temp dir");
@@ -118,7 +123,7 @@ fn with_design<R>(top: &str, src: &str, check_errors: bool, f: impl FnOnce(*mut 
 }
 
 /// Resolve all parameters of instance `inst` into a `(name, val)` map.
-fn resolve(design: *mut u32, inst: &str) -> HashMap<String, elab::Val> {
+fn resolve(design: vpi::VpiHandle<'_>, inst: &str) -> HashMap<String, elab::Val> {
     let h = find_instance(design, inst);
     let mut resolver = elab::Resolver::new();
     resolver
@@ -128,7 +133,7 @@ fn resolve(design: *mut u32, inst: &str) -> HashMap<String, elab::Val> {
         .collect()
 }
 
-fn collect_instances(design: *mut u32) -> Vec<vpi::VpiHandle> {
+fn collect_instances<'session>(design: vpi::VpiHandle<'session>) -> Vec<vpi::VpiHandle<'session>> {
     let mut out = Vec::new();
     if let Some(tops) = vpi::iterate(vpi::uhdmtopModules, design) {
         for top in tops {
@@ -144,7 +149,10 @@ fn collect_instances(design: *mut u32) -> Vec<vpi::VpiHandle> {
     out
 }
 
-fn find_instance(design: *mut u32, name: &str) -> vpi::VpiHandle {
+fn find_instance<'session>(
+    design: vpi::VpiHandle<'session>,
+    name: &str,
+) -> vpi::VpiHandle<'session> {
     collect_instances(design)
         .into_iter()
         .find(|h| vpi::obj_name(*h) == name)

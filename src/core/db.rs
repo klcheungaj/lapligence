@@ -987,11 +987,11 @@ impl Builder {
     /// `array_typespec` contributes only its element type because its ranges
     /// are unpacked; a `packed_array_typespec` contributes its own outer
     /// ranges before its element's nested packed ranges.
-    fn collect_packed_ranges(
+    fn collect_packed_ranges<'session>(
         &self,
-        typespec: VpiHandle,
+        typespec: VpiHandle<'session>,
         ranges: &mut Vec<Option<PackedRange>>,
-        visited: &mut HashSet<VpiHandle>,
+        visited: &mut HashSet<VpiHandle<'session>>,
     ) {
         if !visited.insert(typespec) {
             return;

@@ -23,6 +23,7 @@
 
 #![allow(non_upper_case_globals)]
 
+use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::os::raw::c_int;
 
@@ -31,6 +32,23 @@ use crate::ffi::vpi::{self, OwnedHandle, ValueData, VpiHandle};
 /// Maximum nesting depth of constant function calls (parameter expressions).
 /// Guarantees termination for runaway recursion (`f(n) = f(n + 1)`).
 const MAX_FUNC_DEPTH: usize = 256;
+/// Upper bound for values synthesized while resolving types and replication.
+/// This prevents untrusted HDL from requesting effectively unbounded vectors.
+const MAX_RESOLVED_BITS: usize = 1 << 24;
+
+fn checked_inclusive_width(left: i128, right: i128, context: &str) -> Result<usize, ElabError> {
+    let width = left
+        .abs_diff(right)
+        .checked_add(1)
+        .and_then(|value| usize::try_from(value).ok())
+        .ok_or_else(|| ElabError::Unsupported(format!("{context} width overflow")))?;
+    if width > MAX_RESOLVED_BITS {
+        return Err(ElabError::Unsupported(format!(
+            "{context} is too wide ({width} bits)"
+        )));
+    }
+    Ok(width)
+}
 
 // ── 4-state values ────────────────────────────────────────────────────────────
 
@@ -78,34 +96,62 @@ impl Value {
         self.bits.iter().any(|b| matches!(b, Bit::X | Bit::Z))
     }
 
-    /// Interpret the bits as an unsigned integer; `None` if any bit is X/Z.
+    /// Interpret the bits as an unsigned integer; `None` if any bit is X/Z or
+    /// the clean value does not fit in `u64`.
     pub fn to_u64(&self) -> Option<u64> {
-        let mut v: u64 = 0;
-        for (i, b) in self.bits.iter().rev().enumerate() {
-            match b {
-                Bit::Zero => {}
-                Bit::One => v |= 1u64 << i,
-                Bit::X | Bit::Z => return None,
-            }
-        }
-        Some(v)
+        self.to_u128().and_then(|value| value.try_into().ok())
     }
 
     /// Interpret the bits as a two's-complement signed integer; `None` if any
-    /// bit is X/Z.
+    /// bit is X/Z or the clean value does not fit in `i64`.
     pub fn to_i64(&self) -> Option<i64> {
-        self.to_u64().map(|v| {
-            if self.width() >= 64 {
-                v as i64
-            } else {
-                let sign = 1u64 << (self.width() - 1);
-                if v & sign != 0 {
-                    (v | !(sign - 1)) as i64
-                } else {
-                    v as i64
-                }
-            }
-        })
+        self.to_i128().and_then(|value| value.try_into().ok())
+    }
+
+    /// Interpret the bits as an unsigned integer; `None` if any bit is X/Z or
+    /// the clean value does not fit in `u128`.
+    pub fn to_u128(&self) -> Option<u128> {
+        let excess = self.bits.len().saturating_sub(u128::BITS as usize);
+        if self.bits[..excess].iter().any(|bit| *bit != Bit::Zero) {
+            return None;
+        }
+        self.bits[excess..]
+            .iter()
+            .try_fold(0u128, |value, bit| match bit {
+                Bit::Zero => Some(value << 1),
+                Bit::One => Some((value << 1) | 1),
+                Bit::X | Bit::Z => None,
+            })
+    }
+
+    /// Interpret the bits as a two's-complement signed integer; `None` if any
+    /// bit is X/Z or the clean value does not fit in `i128`.
+    pub fn to_i128(&self) -> Option<i128> {
+        if self.bits.is_empty() {
+            return Some(0);
+        }
+        if self.is_unknown() {
+            return None;
+        }
+        let negative = self.bits[0] == Bit::One;
+        let excess = self.bits.len().saturating_sub(u128::BITS as usize);
+        let expected = if negative { Bit::One } else { Bit::Zero };
+        if self.bits[..excess].iter().any(|bit| *bit != expected) {
+            return None;
+        }
+        if self.bits.len() >= u128::BITS as usize && self.bits[excess] != expected {
+            return None;
+        }
+        let raw = self.bits[excess..].iter().fold(0u128, |value, bit| {
+            (value << 1) | u128::from(*bit == Bit::One)
+        });
+        let retained_width = self.bits.len().min(u128::BITS as usize);
+        if retained_width < u128::BITS as usize && negative {
+            let sign_extension = !0u128 << retained_width;
+            Some((raw | sign_extension) as i128)
+        } else {
+            Some(raw as i128)
+        }
     }
 
     /// Convert to a real value. X/Z bits contribute zero; signed values use
@@ -138,7 +184,7 @@ impl Value {
     pub fn from_u64(v: u64, width: usize, signed: bool) -> Value {
         let bits = (0..width)
             .map(|i| {
-                if v & (1u64 << i) != 0 {
+                if i < u64::BITS as usize && v & (1u64 << i) != 0 {
                     Bit::One
                 } else {
                     Bit::Zero
@@ -224,9 +270,15 @@ impl Value {
         if self.is_unknown() {
             format!("{}'h{}", self.width(), self.hex_str())
         } else if self.signed {
-            format!("{}'sd{}", self.width(), self.to_i64().unwrap())
+            match self.to_i128() {
+                Some(value) => format!("{}'sd{value}", self.width()),
+                None => format!("{}'sh{}", self.width(), self.hex_str()),
+            }
         } else {
-            format!("{}'d{}", self.width(), self.to_u64().unwrap())
+            match self.to_u128() {
+                Some(value) => format!("{}'d{value}", self.width()),
+                None => format!("{}'h{}", self.width(), self.hex_str()),
+            }
         }
     }
 
@@ -305,22 +357,132 @@ impl Val {
 // the declared parameter width.  Arithmetic and comparison produce all-X when
 // any operand bit is X/Z; case equality compares X/Z as literal values.
 
-fn mask(width: usize) -> u64 {
-    if width >= 64 {
-        u64::MAX
-    } else if width == 0 {
-        0
-    } else {
-        (1u64 << width) - 1
-    }
-}
-
 fn all_x(width: usize, signed: bool) -> Value {
     Value {
         bits: vec![Bit::X; width],
         signed,
         fill: None,
     }
+}
+
+fn zero(width: usize, signed: bool) -> Value {
+    Value::from_bits(vec![Bit::Zero; width], signed)
+}
+
+fn is_zero(value: &Value) -> bool {
+    value.bits.iter().all(|bit| *bit == Bit::Zero)
+}
+
+/// Add two known, equally-sized vectors and discard carry beyond their width.
+fn add_known(a: &Value, b: &Value, signed: bool) -> Value {
+    debug_assert_eq!(a.width(), b.width());
+    debug_assert!(!a.is_unknown() && !b.is_unknown());
+    let mut bits = vec![Bit::Zero; a.width()];
+    let mut carry = false;
+    for index in (0..a.width()).rev() {
+        let lhs = u8::from(a.bits[index] == Bit::One);
+        let rhs = u8::from(b.bits[index] == Bit::One);
+        let sum = lhs + rhs + u8::from(carry);
+        bits[index] = if sum & 1 == 1 { Bit::One } else { Bit::Zero };
+        carry = sum >= 2;
+    }
+    Value::from_bits(bits, signed)
+}
+
+/// Two's-complement negation of a known vector in its existing width.
+fn negate_known(value: &Value) -> Value {
+    debug_assert!(!value.is_unknown());
+    let inverted = Value::from_bits(
+        value
+            .bits
+            .iter()
+            .map(|bit| {
+                if *bit == Bit::One {
+                    Bit::Zero
+                } else {
+                    Bit::One
+                }
+            })
+            .collect(),
+        value.signed,
+    );
+    let mut one = zero(value.width(), value.signed);
+    if let Some(last) = one.bits.last_mut() {
+        *last = Bit::One;
+    }
+    add_known(&inverted, &one, value.signed)
+}
+
+fn sub_known(a: &Value, b: &Value, signed: bool) -> Value {
+    let mut negated = negate_known(b);
+    negated.signed = signed;
+    add_known(a, &negated, signed)
+}
+
+/// Multiply known vectors modulo `2^width`.
+fn mul_known(a: &Value, b: &Value, signed: bool) -> Value {
+    debug_assert_eq!(a.width(), b.width());
+    debug_assert!(!a.is_unknown() && !b.is_unknown());
+    let width = a.width();
+    let mut result_lsb = vec![false; width];
+    for rhs_index in 0..width {
+        if b.bit_lsb(rhs_index) != Bit::One {
+            continue;
+        }
+        let mut carry = false;
+        for lhs_index in 0..width.saturating_sub(rhs_index) {
+            let out_index = rhs_index + lhs_index;
+            let sum = u8::from(result_lsb[out_index])
+                + u8::from(a.bit_lsb(lhs_index) == Bit::One)
+                + u8::from(carry);
+            result_lsb[out_index] = sum & 1 == 1;
+            carry = sum >= 2;
+        }
+    }
+    Value::from_bits(
+        result_lsb
+            .into_iter()
+            .rev()
+            .map(|bit| if bit { Bit::One } else { Bit::Zero })
+            .collect(),
+        signed,
+    )
+}
+
+fn unsigned_cmp(a: &Value, b: &Value) -> Ordering {
+    debug_assert_eq!(a.width(), b.width());
+    debug_assert!(!a.is_unknown() && !b.is_unknown());
+    a.bits
+        .iter()
+        .zip(&b.bits)
+        .find_map(
+            |(lhs, rhs)| match (*lhs == Bit::One).cmp(&(*rhs == Bit::One)) {
+                Ordering::Equal => None,
+                ordering => Some(ordering),
+            },
+        )
+        .unwrap_or(Ordering::Equal)
+}
+
+/// Unsigned restoring division over known, equally-sized vectors.
+fn unsigned_div_rem(dividend: &Value, divisor: &Value) -> (Value, Value) {
+    debug_assert_eq!(dividend.width(), divisor.width());
+    debug_assert!(!dividend.is_unknown() && !divisor.is_unknown());
+    debug_assert!(!is_zero(divisor));
+    let width = dividend.width();
+    let mut quotient = zero(width, false);
+    let mut remainder = zero(width, false);
+    for (index, bit) in dividend.bits.iter().copied().enumerate() {
+        if width > 0 {
+            remainder.bits.rotate_left(1);
+            remainder.bits[width - 1] = bit;
+        }
+        if unsigned_cmp(&remainder, divisor) != Ordering::Less {
+            remainder = sub_known(&remainder, divisor, false);
+            quotient.bits[index] = Bit::One;
+        }
+    }
+    (quotient, remainder)
 }
 
 fn real_to_bits(value: f64, width: usize, signed: bool) -> Value {
@@ -338,6 +500,19 @@ fn real_to_bits(value: f64, width: usize, signed: bool) -> Value {
 
 fn bit_x() -> Value {
     Value::from_bits(vec![Bit::X], false)
+}
+
+fn invert_known_one_bit(value: Value) -> Value {
+    debug_assert_eq!(value.bits.len(), 1);
+    debug_assert!(!value.is_unknown());
+    Value::from_bits(
+        vec![if value.bits.first() == Some(&Bit::One) {
+            Bit::Zero
+        } else {
+            Bit::One
+        }],
+        false,
+    )
 }
 
 fn max_width(a: &Value, b: &Value) -> usize {
@@ -358,8 +533,7 @@ pub fn add(a: &Value, b: &Value) -> Value {
     if a.is_unknown() || b.is_unknown() {
         return all_x(w, s);
     }
-    let v = a.to_u64().unwrap().wrapping_add(b.to_u64().unwrap()) & mask(w);
-    Value::from_u64(v, w, s)
+    add_known(&a, &b, s)
 }
 
 /// Truncating integer subtraction.
@@ -368,8 +542,7 @@ pub fn sub(a: &Value, b: &Value) -> Value {
     if a.is_unknown() || b.is_unknown() {
         return all_x(w, s);
     }
-    let v = a.to_u64().unwrap().wrapping_sub(b.to_u64().unwrap()) & mask(w);
-    Value::from_u64(v, w, s)
+    sub_known(&a, &b, s)
 }
 
 /// Truncating integer multiplication.
@@ -378,8 +551,7 @@ pub fn mul(a: &Value, b: &Value) -> Value {
     if a.is_unknown() || b.is_unknown() {
         return all_x(w, s);
     }
-    let v = a.to_u64().unwrap().wrapping_mul(b.to_u64().unwrap()) & mask(w);
-    Value::from_u64(v, w, s)
+    mul_known(&a, &b, s)
 }
 
 /// Truncating integer division; division by zero yields X.
@@ -388,22 +560,21 @@ pub fn div(a: &Value, b: &Value) -> Value {
     if a.is_unknown() || b.is_unknown() {
         return all_x(w, s);
     }
-    let (x, y) = (a.to_u64().unwrap(), b.to_u64().unwrap());
-    if y == 0 {
+    if is_zero(&b) {
         return all_x(w, s);
     }
-    let v = if s {
-        let x = a.to_i64().unwrap();
-        let y = b.to_i64().unwrap();
-        if x == i64::MIN && y == -1 {
-            x as u64
-        } else {
-            (x / y) as u64
-        }
-    } else {
-        x / y
-    };
-    Value::from_u64(v & mask(w), w, s)
+    let a_negative = s && a.bits.first() == Some(&Bit::One);
+    let b_negative = s && b.bits.first() == Some(&Bit::One);
+    let mut dividend = if a_negative { negate_known(&a) } else { a };
+    let mut divisor = if b_negative { negate_known(&b) } else { b };
+    dividend.signed = false;
+    divisor.signed = false;
+    let (mut quotient, _) = unsigned_div_rem(&dividend, &divisor);
+    if a_negative != b_negative {
+        quotient = negate_known(&quotient);
+    }
+    quotient.signed = s;
+    quotient
 }
 
 /// Truncating integer remainder (sign of the dividend); modulo zero yields X.
@@ -412,22 +583,21 @@ pub fn rem(a: &Value, b: &Value) -> Value {
     if a.is_unknown() || b.is_unknown() {
         return all_x(w, s);
     }
-    let (x, y) = (a.to_u64().unwrap(), b.to_u64().unwrap());
-    if y == 0 {
+    if is_zero(&b) {
         return all_x(w, s);
     }
-    let v = if s {
-        let x = a.to_i64().unwrap();
-        let y = b.to_i64().unwrap();
-        if x == i64::MIN && y == -1 {
-            0
-        } else {
-            (x % y) as u64
-        }
-    } else {
-        x % y
-    };
-    Value::from_u64(v & mask(w), w, s)
+    let a_negative = s && a.bits.first() == Some(&Bit::One);
+    let b_negative = s && b.bits.first() == Some(&Bit::One);
+    let mut dividend = if a_negative { negate_known(&a) } else { a };
+    let mut divisor = if b_negative { negate_known(&b) } else { b };
+    dividend.signed = false;
+    divisor.signed = false;
+    let (_, mut remainder) = unsigned_div_rem(&dividend, &divisor);
+    if a_negative {
+        remainder = negate_known(&remainder);
+    }
+    remainder.signed = s;
+    remainder
 }
 
 /// Integer exponentiation (`**`); the result has the base operand's width and
@@ -439,11 +609,21 @@ pub fn power(a: &Value, b: &Value) -> Value {
     if a.is_unknown() || b.is_unknown() {
         return all_x(w, s);
     }
-    if b.signed && b.to_i64().unwrap() < 0 {
-        return Value::from_u64(0, w, s);
+    if b.signed && b.bits.first() == Some(&Bit::One) {
+        return zero(w, s);
     }
-    let v = a.to_u64().unwrap().wrapping_pow(b.to_u64().unwrap() as u32);
-    Value::from_u64(v & mask(w), w, s)
+    let mut result = zero(w, s);
+    if let Some(last) = result.bits.last_mut() {
+        *last = Bit::One;
+    }
+    let mut base = a.clone();
+    for bit in b.bits.iter().rev() {
+        if *bit == Bit::One {
+            result = mul_known(&result, &base, s);
+        }
+        base = mul_known(&base, &base, s);
+    }
+    result
 }
 
 /// Bitwise AND (`&`); `0` dominates, X/Z propagates otherwise.
@@ -549,8 +729,7 @@ pub fn minus(a: &Value) -> Value {
     if a.is_unknown() {
         return all_x(w, a.signed);
     }
-    let v = a.to_u64().unwrap().wrapping_neg() & mask(w);
-    Value::from_u64(v, w, a.signed)
+    negate_known(a)
 }
 
 fn logical_bit(a: &Value) -> Bit {
@@ -608,7 +787,7 @@ pub fn unary_nand(a: &Value) -> Value {
     if r.is_unknown() {
         r
     } else {
-        Value::from_u64(1 - r.to_u64().unwrap(), 1, false)
+        invert_known_one_bit(r)
     }
 }
 
@@ -629,7 +808,7 @@ pub fn unary_nor(a: &Value) -> Value {
     if r.is_unknown() {
         r
     } else {
-        Value::from_u64(1 - r.to_u64().unwrap(), 1, false)
+        invert_known_one_bit(r)
     }
 }
 
@@ -648,7 +827,7 @@ pub fn unary_xnor(a: &Value) -> Value {
     if r.is_unknown() {
         r
     } else {
-        Value::from_u64(1 - r.to_u64().unwrap(), 1, false)
+        invert_known_one_bit(r)
     }
 }
 
@@ -715,7 +894,7 @@ pub fn eq(a: &Value, b: &Value) -> Value {
     if a.is_unknown() || b.is_unknown() {
         return bit_x();
     }
-    let r = cmp_vals(a, b, |x, y| x == y);
+    let r = known_cmp(a, b) == Ordering::Equal;
     Value::from_u64(r as u64, 1, false)
 }
 
@@ -724,7 +903,7 @@ pub fn neq(a: &Value, b: &Value) -> Value {
     if a.is_unknown() || b.is_unknown() {
         return bit_x();
     }
-    let r = cmp_vals(a, b, |x, y| x != y);
+    let r = known_cmp(a, b) != Ordering::Equal;
     Value::from_u64(r as u64, 1, false)
 }
 
@@ -740,8 +919,7 @@ pub fn case_eq(a: &Value, b: &Value) -> Value {
 
 /// Case inequality (`!==`): bitwise comparison including X/Z bits; never X.
 pub fn case_neq(a: &Value, b: &Value) -> Value {
-    let r = case_eq(a, b);
-    Value::from_u64(1 - r.to_u64().unwrap(), 1, false)
+    invert_known_one_bit(case_eq(a, b))
 }
 
 /// Casez wildcard equality (`casez` item match, LRM 12.5.1): 1-bit result,
@@ -804,47 +982,44 @@ pub fn casex_eq(sel: &Value, item: &Value) -> Value {
 /// Less than (`<`): 1-bit result, X when any operand bit is X/Z.  Operands
 /// compare as unsigned unless both are signed.
 pub fn lt(a: &Value, b: &Value) -> Value {
-    cmp_result(a, b, |x, y| x < y)
+    cmp_result(a, b, |ordering| ordering == Ordering::Less)
 }
 
 /// Less or equal (`<=`): see `lt`.
 pub fn le(a: &Value, b: &Value) -> Value {
-    cmp_result(a, b, |x, y| x <= y)
+    cmp_result(a, b, |ordering| ordering != Ordering::Greater)
 }
 
 /// Greater than (`>`): see `lt`.
 pub fn gt(a: &Value, b: &Value) -> Value {
-    cmp_result(a, b, |x, y| x > y)
+    cmp_result(a, b, |ordering| ordering == Ordering::Greater)
 }
 
 /// Greater or equal (`>=`): see `lt`.
 pub fn ge(a: &Value, b: &Value) -> Value {
-    cmp_result(a, b, |x, y| x >= y)
+    cmp_result(a, b, |ordering| ordering != Ordering::Less)
 }
 
-fn cmp_result(a: &Value, b: &Value, f: fn(u64, u64) -> bool) -> Value {
+fn cmp_result(a: &Value, b: &Value, predicate: fn(Ordering) -> bool) -> Value {
     if a.is_unknown() || b.is_unknown() {
         return bit_x();
     }
-    Value::from_u64(cmp_vals(a, b, f) as u64, 1, false)
+    Value::from_u64(predicate(known_cmp(a, b)) as u64, 1, false)
 }
 
-fn cmp_vals(a: &Value, b: &Value, f: fn(u64, u64) -> bool) -> bool {
+fn known_cmp(a: &Value, b: &Value) -> Ordering {
     let both_signed = a.signed && b.signed;
     let w = max_width(a, b);
     let ra = a.resize(w, both_signed);
     let rb = b.resize(w, both_signed);
-    let (mut x, mut y) = (ra.to_u64().unwrap(), rb.to_u64().unwrap());
-    if both_signed && w > 0 {
-        // Flip the sign bit so the unsigned order matches the two's-complement
-        // signed order (same trick as `sv4_cmp` in the C runtime).  Comparing
-        // the u64 patterns directly (rather than casting to i64) keeps
-        // unsigned 64-bit comparisons correct: `u64::MAX < 1` is false.
-        let sign = 1u64 << (w - 1);
-        x ^= sign;
-        y ^= sign;
+    if both_signed && w > 0 && ra.bits[0] != rb.bits[0] {
+        return if ra.bits[0] == Bit::One {
+            Ordering::Less
+        } else {
+            Ordering::Greater
+        };
     }
-    f(x, y)
+    unsigned_cmp(&ra, &rb)
 }
 
 /// Concatenation; `parts[0]` is the most-significant part.
@@ -880,13 +1055,19 @@ pub fn clog2(a: &Value) -> Value {
     if a.is_unknown() {
         return all_x(32, false);
     }
-    let v = a.to_u64().unwrap();
-    let r = if v <= 1 {
-        0
-    } else {
-        (64 - (v - 1).leading_zeros()) as u64
+    let Some(first_one) = a.bits.iter().position(|bit| *bit == Bit::One) else {
+        return Value::from_u64(0, 32, false);
     };
-    Value::from_u64(r, 32, false)
+    let bit_length = a.width() - first_one;
+    let lower_bits_set = a.bits[first_one + 1..].contains(&Bit::One);
+    let r = if bit_length <= 1 {
+        0
+    } else if lower_bits_set {
+        bit_length
+    } else {
+        bit_length - 1
+    };
+    Value::from_u64(r as u64, 32, false)
 }
 
 // ── Errors ────────────────────────────────────────────────────────────────────
@@ -920,34 +1101,34 @@ impl std::error::Error for ElabError {}
 // ── Scope model ───────────────────────────────────────────────────────────────
 
 /// Where a parameter's real value comes from.
-enum ParamSrc {
+enum ParamSrc<'session> {
     /// Value read from the `parameter` object itself (gen-scope params,
     /// params without a `param_assign`).
-    OwnValue(VpiHandle),
+    OwnValue(VpiHandle<'session>),
     /// Value obtained by evaluating the `param_assign` RHS expression.  The
     /// `OwnedHandle` is stored (not the raw pointer) so the wrapper stays
     /// alive for the whole evaluation; a raw pointer extracted from a dropped
     /// `OwnedHandle` would dangle.
-    AssignExpr(OwnedHandle),
+    AssignExpr(OwnedHandle<'session>),
 }
 
 /// One parameter declaration in a scope.
-struct ParamEntry {
+struct ParamEntry<'session> {
     /// Raw handle to the `parameter` object (for typespec sizing).
-    handle: VpiHandle,
-    src: ParamSrc,
+    handle: VpiHandle<'session>,
+    src: ParamSrc<'session>,
 }
 
 /// The per-scope view the resolver evaluates against: parameters in
 /// `vpi_iterate(vpiParameter)` order plus the `param_assign` map.
-struct Scope {
-    params: Vec<(String, ParamEntry)>,
+struct Scope<'session> {
+    params: Vec<(String, ParamEntry<'session>)>,
     by_name: HashMap<String, usize>,
 }
 
-impl Scope {
-    fn build(scope: VpiHandle) -> Result<Scope, ElabError> {
-        let mut assigns: HashMap<String, OwnedHandle> = HashMap::new();
+impl<'session> Scope<'session> {
+    fn build(scope: VpiHandle<'session>) -> Result<Scope<'session>, ElabError> {
+        let mut assigns: HashMap<String, OwnedHandle<'session>> = HashMap::new();
         for pa in iter(vpi::vpiParamAssign, scope) {
             if let Some(lhs) = child(vpi::vpiLhs, pa) {
                 let name = vpi::obj_name(lhs.raw());
@@ -957,7 +1138,7 @@ impl Scope {
             }
         }
 
-        let mut params: Vec<(String, ParamEntry)> = Vec::new();
+        let mut params: Vec<(String, ParamEntry<'session>)> = Vec::new();
         let mut by_name: HashMap<String, usize> = HashMap::new();
         for p in iter(vpi::vpiParameter, scope) {
             let name = vpi::obj_name(p);
@@ -975,7 +1156,7 @@ impl Scope {
 
 // ── VPI traversal helpers ─────────────────────────────────────────────────────
 
-fn iter(type_: c_int, obj: VpiHandle) -> Vec<VpiHandle> {
+fn iter<'session>(type_: c_int, obj: VpiHandle<'session>) -> Vec<VpiHandle<'session>> {
     vpi::iterate(type_, obj)
         .map(|it| it.collect())
         .unwrap_or_default()
@@ -983,7 +1164,7 @@ fn iter(type_: c_int, obj: VpiHandle) -> Vec<VpiHandle> {
 
 /// `OwnedHandle` for a 1-to-1 relationship; the caller must keep it alive
 /// (or use `.raw()`) for as long as the child handle is in use.
-fn child(type_: c_int, obj: VpiHandle) -> Option<OwnedHandle> {
+fn child<'session>(type_: c_int, obj: VpiHandle<'session>) -> Option<OwnedHandle<'session>> {
     vpi::handle(type_, obj)
 }
 
@@ -1243,14 +1424,11 @@ impl Resolver {
             any = true;
             let l = self.range_bound(sc, resolved, in_progress, vpi::vpiLeftRange, r)?;
             let rr = self.range_bound(sc, resolved, in_progress, vpi::vpiRightRange, r)?;
-            let dim = (l - rr).abs() + 1;
-            if dim > (1i128 << 24) {
-                return Err(ElabError::Unsupported("range too large".to_string()));
-            }
+            let dim = checked_inclusive_width(l, rr, "typespec range")?;
             total = total.saturating_mul(dim as u64);
         }
         let width = if any { total } else { 1 };
-        if width > (1u64 << 24) {
+        if width > MAX_RESOLVED_BITS as u64 {
             return Err(ElabError::Unsupported("typespec too wide".to_string()));
         }
         Ok(Some((width as usize, vpi::get(vpi::vpiSigned, ts) != 0)))
@@ -1277,11 +1455,12 @@ impl Resolver {
         if v.is_unknown() {
             return Err(ElabError::Unsupported("unknown range bound".to_string()));
         }
-        Ok(if v.signed {
-            v.to_i64().unwrap() as i128
+        if v.signed {
+            v.to_i128()
         } else {
-            v.to_u64().unwrap() as i128
-        })
+            v.to_u128().and_then(|value| value.try_into().ok())
+        }
+        .ok_or_else(|| ElabError::Unsupported("range bound does not fit in i128".to_string()))
     }
 
     // ── Expression evaluation ───────────────────────────────────────────────
@@ -1534,13 +1713,28 @@ impl Resolver {
                         "unknown replication count".to_string(),
                     ));
                 }
-                let n = count.to_u64().unwrap();
+                let n: usize = count
+                    .to_u128()
+                    .and_then(|value| value.try_into().ok())
+                    .ok_or_else(|| {
+                        ElabError::Unsupported(
+                            "replication count does not fit in usize".to_string(),
+                        )
+                    })?;
                 let mut parts = Vec::with_capacity(ops.len().saturating_sub(1));
                 for i in 1..ops.len() {
                     parts.push(u(i)?);
                 }
                 let pat = concat(&parts);
-                let mut bits = Vec::new();
+                let total_width = pat.width().checked_mul(n).ok_or_else(|| {
+                    ElabError::Unsupported("replication width overflow".to_string())
+                })?;
+                if total_width > MAX_RESOLVED_BITS {
+                    return Err(ElabError::Unsupported(format!(
+                        "replication result is too wide ({total_width} bits)"
+                    )));
+                }
+                let mut bits = Vec::with_capacity(total_width);
                 for _ in 0..n {
                     bits.extend(pat.bits.iter().cloned());
                 }
@@ -1676,12 +1870,11 @@ impl Resolver {
         if iv.is_unknown() {
             return Ok(Val::Bits(all_x(1, false)));
         }
-        let i = iv.to_u64().unwrap() as usize;
-        let b = if i < base.width() {
-            base.bit_lsb(i)
-        } else {
-            Bit::X
-        };
+        let b = iv
+            .to_u128()
+            .and_then(|value| usize::try_from(value).ok())
+            .filter(|index| *index < base.width())
+            .map_or(Bit::X, |index| base.bit_lsb(index));
         Ok(Val::Bits(Value::from_bits(vec![b], false)))
     }
 
@@ -1699,7 +1892,7 @@ impl Resolver {
         let w = base.width() as i128;
         if l < 0 || r < 0 || l >= w || r >= w {
             // Out-of-range part select → X of the part width.
-            let width = ((l - r).abs() + 1) as usize;
+            let width = checked_inclusive_width(l, r, "part select")?;
             return Ok(Val::Bits(all_x(width, false)));
         }
         let mut bits = Vec::new();
@@ -1727,11 +1920,6 @@ impl Resolver {
         let idx_h = child(vpi::vpiBaseExpr, sel).ok_or_else(|| {
             ElabError::Unsupported("indexed_part_select without index".to_string())
         })?;
-        let iv = self.op_bits(sc, resolved, in_progress, frame, &[idx_h.raw()], 0)?;
-        if iv.is_unknown() {
-            return Ok(Val::Bits(all_x(1, false)));
-        }
-        let i = iv.to_u64().unwrap() as i128;
         let width = match child(vpi::vpiWidthExpr, sel) {
             Some(wh) => {
                 let wv = self.op_bits(sc, resolved, in_progress, frame, &[wh.raw()], 0)?;
@@ -1740,19 +1928,54 @@ impl Resolver {
                         "unknown indexed_part_select width".to_string(),
                     ));
                 }
-                wv.to_u64().unwrap() as i128
+                wv.to_u128()
+                    .and_then(|value| i128::try_from(value).ok())
+                    .ok_or_else(|| {
+                        ElabError::Unsupported(
+                            "indexed_part_select width does not fit in i128".to_string(),
+                        )
+                    })?
             }
             None => vpi::get(vpi::vpiSize, sel) as i128,
         };
+        let width = usize::try_from(width)
+            .ok()
+            .filter(|width| *width > 0 && *width <= MAX_RESOLVED_BITS)
+            .ok_or_else(|| {
+                ElabError::Unsupported(format!(
+                    "indexed_part_select width must be in 1..={MAX_RESOLVED_BITS}"
+                ))
+            })?;
+        let iv = self.op_bits(sc, resolved, in_progress, frame, &[idx_h.raw()], 0)?;
+        if iv.is_unknown() {
+            return Ok(Val::Bits(all_x(width, false)));
+        }
+        let i = if iv.signed {
+            iv.to_i128()
+        } else {
+            iv.to_u128().and_then(|value| value.try_into().ok())
+        }
+        .ok_or_else(|| {
+            ElabError::Unsupported("indexed_part_select base does not fit in i128".to_string())
+        })?;
         let pos = vpi::get(vpi::vpiIndexedPartSelectType, sel);
         let w = base.width() as i128;
-        let indices: Vec<i128> = if pos == vpi::vpiNegIndexed {
-            (i - width + 1..=i).rev().collect()
-        } else {
-            (i..i + width).rev().collect()
-        };
-        let mut bits = Vec::new();
-        for idx in indices {
+        let mut bits = Vec::with_capacity(width);
+        let top_offset = i128::try_from(width - 1).map_err(|_| {
+            ElabError::Unsupported("indexed_part_select offset overflow".to_string())
+        })?;
+        for offset in 0..width {
+            let offset = i128::try_from(offset).map_err(|_| {
+                ElabError::Unsupported("indexed_part_select offset overflow".to_string())
+            })?;
+            let idx = if pos == vpi::vpiNegIndexed {
+                i.checked_sub(offset)
+            } else {
+                i.checked_add(top_offset - offset)
+            }
+            .ok_or_else(|| {
+                ElabError::Unsupported("indexed_part_select endpoint overflow".to_string())
+            })?;
             bits.push(if idx >= 0 && idx < w {
                 base.bit_lsb(idx as usize)
             } else {
@@ -2006,7 +2229,7 @@ impl Resolver {
                                     "unknown if condition in constant function".to_string(),
                                 ));
                             }
-                            b.to_u64().unwrap() != 0
+                            b.bits.contains(&Bit::One)
                         }
                         Val::Str(_) | Val::Real(_) => {
                             return Err(ElabError::Unsupported(
@@ -2150,17 +2373,20 @@ impl Default for Resolver {
 /// literal width.  `vpiSize == -1` marks an unsized fill literal (`'1`, `'x`).
 pub fn read_value(h: VpiHandle) -> Result<Val, ElabError> {
     let size = vpi::get(vpi::vpiSize, h);
-    match vpi::read_value(h) {
-        ValueData::Bin(s) => Ok(Val::Bits(parse_radix(&s, 1, size))),
-        ValueData::Oct(s) => Ok(Val::Bits(parse_radix(&s, 3, size))),
-        ValueData::Hex(s) => Ok(Val::Bits(parse_radix(&s, 4, size))),
-        ValueData::Dec(s) => {
-            let val = s.trim().parse::<u64>().unwrap_or(0);
-            let width = if size > 0 { size as usize } else { 64 };
-            Ok(Val::Bits(Value::from_u64(val, width, false)))
-        }
+    decode_value_data(&vpi::read_value(h), size)
+}
+
+/// Decode an owned VPI value captured by [`crate::core::db`] without needing
+/// the live VPI handle.  This is the single validation path for elaboration
+/// and simulator-bound constants.
+pub fn decode_value_data(value: &ValueData, size: c_int) -> Result<Val, ElabError> {
+    match value {
+        ValueData::Bin(s) => Ok(Val::Bits(parse_radix(s, 1, size)?)),
+        ValueData::Oct(s) => Ok(Val::Bits(parse_radix(s, 3, size)?)),
+        ValueData::Hex(s) => Ok(Val::Bits(parse_radix(s, 4, size)?)),
+        ValueData::Dec(s) => Ok(Val::Bits(parse_decimal(s, size)?)),
         ValueData::Scalar(sc) => {
-            let b = match sc {
+            let b = match *sc {
                 vpi::vpi0 => Bit::Zero,
                 vpi::vpi1 | vpi::vpiH => Bit::One,
                 vpi::vpiZ => Bit::Z,
@@ -2175,17 +2401,21 @@ pub fn read_value(h: VpiHandle) -> Result<Val, ElabError> {
             }))
         }
         ValueData::Int(val) => {
-            let width = if size > 0 { size as usize } else { 32 };
-            Ok(Val::Bits(Value::from_u64(val as u64, width, true)))
+            let width = stored_width(size, 32)?;
+            let stored = Value::from_u64(*val as u64, width.min(u64::BITS as usize), true);
+            Ok(Val::Bits(stored.resize(width, true)))
         }
         ValueData::UInt(val) => {
-            let width = if size > 0 { size as usize } else { 64 };
-            Ok(Val::Bits(Value::from_u64(val, width, false)))
+            let width = stored_width(size, 64)?;
+            Ok(Val::Bits(Value::from_u64(*val, width, false)))
         }
-        ValueData::Str(s) => Ok(Val::Str(s)),
-        ValueData::Real(v) => Ok(Val::Real(v)),
+        ValueData::Str(s) => Ok(Val::Str(s.clone())),
+        ValueData::Real(v) => Ok(Val::Real(*v)),
         ValueData::None => Err(ElabError::NoValue("object has no stored value".to_string())),
         ValueData::Vector(_) => Err(ElabError::Unsupported("vector value format".to_string())),
+        ValueData::TooWide { bits } => Err(ElabError::Unsupported(format!(
+            "stored vector value is too wide ({bits} bits)"
+        ))),
     }
 }
 
@@ -2194,15 +2424,48 @@ pub fn read_value(h: VpiHandle) -> Result<Val, ElabError> {
 /// zeros, so when `vpiSize` is positive the value is LSB-aligned into that
 /// width (zero-extending when the string is shorter).  A one-digit string with
 /// `size == -1` marks an unsized fill literal (`'1`, `'0`, `'x`, `'z`).
-fn parse_radix(s: &str, base_bits: usize, size: c_int) -> Value {
-    let mut bits = Vec::new();
-    for ch in s.chars() {
+fn parse_radix(s: &str, base_bits: usize, size: c_int) -> Result<Value, ElabError> {
+    let radix = match base_bits {
+        1 => 2,
+        3 => 8,
+        4 => 16,
+        _ => {
+            return Err(ElabError::Unsupported(format!(
+                "invalid stored radix width {base_bits}"
+            )))
+        }
+    };
+    let text = s.trim();
+    if text.is_empty() {
+        return Err(ElabError::NoValue("empty stored radix value".to_string()));
+    }
+    let encoded_width = text
+        .len()
+        .checked_mul(base_bits)
+        .ok_or_else(|| ElabError::Unsupported("stored radix value width overflow".to_string()))?;
+    let target_width = if size > 0 {
+        stored_width(size, encoded_width)?
+    } else {
+        encoded_width
+    };
+    if encoded_width > MAX_RESOLVED_BITS || target_width > MAX_RESOLVED_BITS {
+        return Err(ElabError::Unsupported(format!(
+            "stored radix value is too wide ({} bits)",
+            encoded_width.max(target_width)
+        )));
+    }
+    let mut bits = Vec::with_capacity(encoded_width);
+    for ch in text.chars() {
         let c = ch.to_ascii_lowercase();
         match c {
             'x' => bits.extend(std::iter::repeat_n(Bit::X, base_bits)),
-            'z' => bits.extend(std::iter::repeat_n(Bit::Z, base_bits)),
+            'z' | '?' => bits.extend(std::iter::repeat_n(Bit::Z, base_bits)),
             _ => {
-                let d = c.to_digit(16).unwrap_or(0);
+                let d = c.to_digit(radix).ok_or_else(|| {
+                    ElabError::Unsupported(format!(
+                        "invalid base-{radix} digit `{ch}` in stored value"
+                    ))
+                })?;
                 for i in (0..base_bits).rev() {
                     bits.push(if d & (1 << i) != 0 {
                         Bit::One
@@ -2219,18 +2482,63 @@ fn parse_radix(s: &str, base_bits: usize, size: c_int) -> Value {
         None
     };
     if size > 0 {
-        let width = size as usize;
-        if bits.len() < width {
-            bits.splice(0..0, std::iter::repeat_n(Bit::Zero, width - bits.len()));
-        } else if bits.len() > width {
-            bits = bits[bits.len() - width..].to_vec();
+        if bits.len() < target_width {
+            bits.splice(
+                0..0,
+                std::iter::repeat_n(Bit::Zero, target_width - bits.len()),
+            );
+        } else if bits.len() > target_width {
+            bits = bits[bits.len() - target_width..].to_vec();
         }
     }
-    Value {
+    Ok(Value {
         bits,
         signed: false,
         fill,
+    })
+}
+
+fn stored_width(size: c_int, default: usize) -> Result<usize, ElabError> {
+    let width = if size > 0 { size as usize } else { default };
+    if width > MAX_RESOLVED_BITS {
+        Err(ElabError::Unsupported(format!(
+            "stored value is too wide ({width} bits)"
+        )))
+    } else {
+        Ok(width)
     }
+}
+
+/// Parse a decimal VPI payload directly into a fixed-width bit vector.  This
+/// deliberately avoids an intermediate machine integer so wide parameters do
+/// not truncate and malformed external values cannot silently become zero.
+fn parse_decimal(s: &str, size: c_int) -> Result<Value, ElabError> {
+    let width = stored_width(size, 64)?;
+    let text = s.trim();
+    let (negative, digits) = match text.as_bytes().first() {
+        Some(b'-') => (true, &text[1..]),
+        Some(b'+') => (false, &text[1..]),
+        _ => (false, text),
+    };
+    if digits.is_empty() || !digits.bytes().all(|byte| byte.is_ascii_digit()) {
+        return Err(ElabError::Unsupported(format!(
+            "invalid stored decimal value `{text}`"
+        )));
+    }
+    let ten = Value::from_u64(10, width, false);
+    let mut value = zero(width, false);
+    for digit in digits.bytes() {
+        value = mul_known(&value, &ten, false);
+        value = add_known(
+            &value,
+            &Value::from_u64(u64::from(digit - b'0'), width, false),
+            false,
+        );
+    }
+    if negative {
+        value = negate_known(&value);
+    }
+    Ok(value)
 }
 
 // ── Unit tests: pure value math (no UHDM) ────────────────────────────────────
@@ -2271,6 +2579,12 @@ mod tests {
 
     fn v(v: u64, w: usize, s: bool) -> Value {
         Value::from_u64(v, w, s)
+    }
+
+    fn one_at(width: usize, lsb_index: usize) -> Value {
+        let mut value = zero(width, false);
+        value.bits[width - 1 - lsb_index] = Bit::One;
+        value
     }
 
     #[test]
@@ -2675,5 +2989,100 @@ mod tests {
         assert_eq!(bits("10xz").to_u64(), None);
         assert_eq!(v(5, 4, false).bit_lsb(0), Bit::One);
         assert_eq!(bits("1010").bit_lsb(3), Bit::One);
+    }
+
+    #[test]
+    fn wide_integer_conversions_are_checked_instead_of_panicking() {
+        let high = one_at(129, 100);
+        assert_eq!(high.to_u64(), None);
+        assert_eq!(high.to_u128(), Some(1u128 << 100));
+        assert_eq!(bits_signed(&"1".repeat(128)).to_i128(), Some(-1));
+        assert_eq!(
+            bits_signed(&format!("10{}", "0".repeat(127))).to_i128(),
+            None
+        );
+
+        let widened = Value::from_u64(u64::MAX, 128, false);
+        assert!(widened.bits[..64].iter().all(|bit| *bit == Bit::Zero));
+        assert!(widened.bits[64..].iter().all(|bit| *bit == Bit::One));
+    }
+
+    #[test]
+    fn wide_arithmetic_and_comparison_use_high_bits() {
+        let high = one_at(128, 100);
+        let one = Value::from_u64(1, 128, false);
+        let two = Value::from_u64(2, 128, false);
+        let three = Value::from_u64(3, 128, false);
+
+        let sum = add(&high, &one);
+        assert_eq!(sum.bit_lsb(100), Bit::One);
+        assert_eq!(sum.bit_lsb(0), Bit::One);
+        assert_eq!(sub(&sum, &one), high);
+
+        let product = mul(&high, &three);
+        assert_eq!(product.bit_lsb(101), Bit::One);
+        assert_eq!(product.bit_lsb(100), Bit::One);
+        assert_eq!(div(&product, &three), high);
+        assert_eq!(rem(&product, &three), zero(128, false));
+
+        assert_eq!(gt(&high, &one), Value::from_u64(1, 1, false));
+        assert_eq!(clog2(&high), Value::from_u64(100, 32, false));
+        assert_eq!(clog2(&add(&high, &one)), Value::from_u64(101, 32, false));
+
+        let squared = power(&two, &Value::from_u64(100, 32, false));
+        assert_eq!(squared, high);
+    }
+
+    #[test]
+    fn wide_signed_division_preserves_verilog_sign_rules() {
+        let minus_seven = bits_signed(&format!("{}1001", "1".repeat(124)));
+        let three = Value::from_u64(3, 128, true);
+        let minus_two = bits_signed(&format!("{}10", "1".repeat(126)));
+        let minus_one = bits_signed(&"1".repeat(128));
+
+        assert_eq!(div(&minus_seven, &three), minus_two);
+        assert_eq!(rem(&minus_seven, &three), minus_one);
+    }
+
+    #[test]
+    fn stored_numeric_values_validate_input_and_support_wide_decimal() {
+        let max_u128 = parse_decimal("340282366920938463463374607431768211455", 128)
+            .expect("valid wide decimal");
+        assert!(max_u128.bits.iter().all(|bit| *bit == Bit::One));
+        assert!(parse_decimal("12not-a-number", 128).is_err());
+        assert!(parse_radix("8", 3, 4).is_err());
+        assert!(parse_radix("2", 1, 1).is_err());
+
+        let Val::Bits(question) = decode_value_data(&ValueData::Hex("?".into()), 128)
+            .expect("question mark is a legal Z digit")
+        else {
+            panic!("radix value must be bits");
+        };
+        assert_eq!(question.width(), 128);
+        assert!(question.bits[..124].iter().all(|bit| *bit == Bit::Zero));
+        assert!(question.bits[124..].iter().all(|bit| *bit == Bit::Z));
+
+        let Val::Bits(unknown) =
+            decode_value_data(&ValueData::Hex("x".into()), 128).expect("wide X value")
+        else {
+            panic!("radix value must be bits");
+        };
+        assert!(unknown.bits[..124].iter().all(|bit| *bit == Bit::Zero));
+        assert!(unknown.bits[124..].iter().all(|bit| *bit == Bit::X));
+
+        let Val::Bits(negative) =
+            decode_value_data(&ValueData::Int(-1), 128).expect("wide signed integer")
+        else {
+            panic!("integer value must be bits");
+        };
+        assert_eq!(negative.width(), 128);
+        assert!(negative.bits.iter().all(|bit| *bit == Bit::One));
+    }
+
+    #[test]
+    fn range_width_checks_extreme_endpoints_without_overflow() {
+        assert_eq!(checked_inclusive_width(7, 0, "test").unwrap(), 8);
+        assert!(checked_inclusive_width(i128::MIN, i128::MAX, "test").is_err());
+        assert!(checked_inclusive_width(0, MAX_RESOLVED_BITS as i128, "test").is_err());
     }
 }

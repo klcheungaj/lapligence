@@ -224,8 +224,8 @@ use crate::sim::emit_c::{
 use crate::sim::ir::{
     IrBinOp, IrCall, IrCallArg, IrCallExpr, IrCaseItem, IrCaseKind, IrConst, IrDepth, IrEdge,
     IrElemSel, IrEvent, IrExpr, IrExprKind, IrFormal, IrJoinKind, IrLhs, IrModel, IrProcess,
-    IrRealBinOp, IrRealUnOp, IrShape, IrSignal, IrStmt, IrSysFunc, IrType, IrUnOp, IrWaitSrc,
-    LLG_MAX_WIDTH,
+    IrRealBinOp, IrRealUnOp, IrShape, IrSignal, IrStmt, IrSysFunc, IrTimeKind, IrType, IrUnOp,
+    IrWaitSrc, LLG_MAX_WIDTH,
 };
 
 /// Maximum driver slots of one collapsed inout net.  Keep in sync with
@@ -1029,6 +1029,27 @@ fn scale_delay_ticks(
     Ok(scaled as u64)
 }
 
+fn checked_select_bounds(
+    left: i128,
+    right: i128,
+    context: &str,
+) -> Result<(i64, i64, u32), String> {
+    let left =
+        i64::try_from(left).map_err(|_| format!("{context} left bound does not fit in 64 bits"))?;
+    let right = i64::try_from(right)
+        .map_err(|_| format!("{context} right bound does not fit in 64 bits"))?;
+    let width = left
+        .abs_diff(right)
+        .checked_add(1)
+        .ok_or_else(|| format!("{context} width overflow"))?;
+    if width > u64::from(LLG_MAX_WIDTH) {
+        return Err(format!(
+            "{context} is too wide ({width} bits; max {LLG_MAX_WIDTH})"
+        ));
+    }
+    Ok((left, right, width as u32))
+}
+
 /// Skip ASCII whitespace at the start of `s`.
 fn skip_ws(s: &str) -> &str {
     s.trim_start_matches([' ', '\t'])
@@ -1042,178 +1063,19 @@ fn skip_ws(s: &str) -> &str {
 ///
 /// Convert a captured constant (`ValueData` + `vpiSize`) to an [`IrConst`].
 fn read_const_from(vd: &ValueData, size: i32) -> Result<IrConst, String> {
-    match vd {
-        ValueData::Bin(s) => parse_radix(s, 1, size),
-        ValueData::Oct(s) => parse_radix(s, 3, size),
-        ValueData::Hex(s) => parse_radix(s, 4, size),
-        ValueData::Dec(s) => {
-            let mut limbs = dec_str_to_limbs(s.trim());
-            let width = if size > 0 { size as u32 } else { 64 };
-            truncate_limbs(&mut limbs, width);
-            Ok(IrConst {
-                bits: limbs,
-                x: vec![0],
-                z: vec![0],
-                width,
-                signed: false,
-                real: None,
-                fill: None,
-            })
-        }
-        ValueData::Scalar(sc) => {
-            // 0/1/2=X/3=Z: X and Z stay distinct so `$display` and casez/casex
-            // (and the unsized-fill `'z`) see them separately.
-            let b: u8 = match *sc {
-                vpi::vpi0 | vpi::vpiL => 0,
-                vpi::vpi1 | vpi::vpiH => 1,
-                vpi::vpiX => 2,
-                vpi::vpiZ => 3,
-                _ => 2,
-            };
-            let fill = if size == -1 { Some(b) } else { None };
-            Ok(IrConst {
-                bits: vec![if b == 1 { 1 } else { 0 }],
-                x: vec![if b == 2 { 1 } else { 0 }],
-                z: vec![if b == 3 { 1 } else { 0 }],
-                width: 1,
-                signed: false,
-                real: None,
-                fill,
-            })
-        }
-        ValueData::Int(val) => {
-            let width = if size > 0 { size as u32 } else { 32 };
-            Ok(IrConst {
-                bits: vec![*val as u64],
-                x: vec![0],
-                z: vec![0],
-                width,
-                signed: true,
-                real: None,
-                fill: None,
-            })
-        }
-        ValueData::UInt(val) => {
-            let width = if size > 0 { size as u32 } else { 64 };
-            Ok(IrConst {
-                bits: vec![*val],
-                x: vec![0],
-                z: vec![0],
-                width,
-                signed: false,
-                real: None,
-                fill: None,
-            })
-        }
-        ValueData::Real(value) => Ok(IrConst {
+    match val_from_value_data(vd, size)? {
+        Val::Bits(value) => val_to_const(&value),
+        Val::Real(value) => Ok(IrConst {
             bits: vec![0],
             x: vec![0],
             z: vec![0],
             width: 0,
             signed: false,
-            real: Some(*value),
+            real: Some(value),
             fill: None,
         }),
-        ValueData::Str(_) => Err("string constant in expression".to_string()),
-        _ => Err("unsupported constant value format".to_string()),
+        Val::Str(_) => Err("string constant in expression".to_string()),
     }
-}
-
-/// Parse an unsigned decimal digit string into LSB-first 64-bit limbs
-/// (per-digit multiply-and-accumulate across the limbs).
-fn dec_str_to_limbs(s: &str) -> Vec<u64> {
-    let mut limbs = vec![0u64];
-    for ch in s.chars() {
-        let d = ch.to_digit(10).unwrap_or(0) as u64;
-        let mut carry = d;
-        for limb in limbs.iter_mut() {
-            let cur = (*limb as u128) * 10 + carry as u128;
-            *limb = cur as u64;
-            carry = (cur >> 64) as u64;
-        }
-        if carry != 0 {
-            limbs.push(carry);
-        }
-    }
-    while limbs.len() > 1 && limbs.last() == Some(&0) {
-        limbs.pop();
-    }
-    limbs
-}
-
-/// Drop limbs above `width` and mask the top partial limb.
-fn truncate_limbs(limbs: &mut Vec<u64>, width: u32) {
-    let n = (width as usize).div_ceil(64);
-    if limbs.len() > n {
-        limbs.truncate(n);
-    }
-    if !width.is_multiple_of(64) {
-        if let Some(top) = limbs.last_mut() {
-            *top &= (1u64 << (width % 64)) - 1;
-        }
-    }
-}
-
-/// Parse a BIN/OCT/HEX digit string (which may contain x/z/?) into a `IrConst`.
-/// The stored string omits leading zeros, so a positive `vpiSize` LSB-aligns
-/// the value into that width (zero-extending when shorter).  A one-digit
-/// string with `size == -1` marks an unsized fill literal.  Digits map to bit
-/// values 0/1/2=X/3=Z (`?` is a z synonym); X and Z land in separate limb
-/// arrays.
-fn parse_radix(s: &str, base_bits: usize, size: i32) -> Result<IrConst, String> {
-    let mut vec: Vec<u8> = Vec::new(); // MSB-first; 0/1/2=X/3=Z
-    for ch in s.chars() {
-        let c = ch.to_ascii_lowercase();
-        match c {
-            'x' => vec.extend(std::iter::repeat_n(2u8, base_bits)),
-            'z' | '?' => vec.extend(std::iter::repeat_n(3u8, base_bits)),
-            _ => {
-                let d = c.to_digit(16).unwrap_or(0);
-                for i in (0..base_bits).rev() {
-                    vec.push(if d & (1 << i) != 0 { 1 } else { 0 });
-                }
-            }
-        }
-    }
-    let fill = if size == -1 && vec.len() == base_bits && base_bits == 1 {
-        Some(vec[0])
-    } else {
-        None
-    };
-    if size > 0 {
-        let width = size as usize;
-        if vec.len() < width {
-            let mut padded = vec![0u8; width - vec.len()];
-            padded.extend(vec);
-            vec = padded;
-        } else if vec.len() > width {
-            vec = vec[vec.len() - width..].to_vec();
-        }
-    }
-    if vec.len() > LLG_MAX_WIDTH as usize {
-        return Err(format!("constant wider than {LLG_MAX_WIDTH} bits"));
-    }
-    let nlimbs = vec.len().div_ceil(64);
-    let mut bits = vec![0u64; nlimbs];
-    let mut x = vec![0u64; nlimbs];
-    let mut z = vec![0u64; nlimbs];
-    for (i, b) in vec.iter().rev().enumerate() {
-        match b {
-            1 => bits[i / 64] |= 1u64 << (i % 64),
-            2 => x[i / 64] |= 1u64 << (i % 64),
-            3 => z[i / 64] |= 1u64 << (i % 64),
-            _ => {}
-        }
-    }
-    Ok(IrConst {
-        bits,
-        x,
-        z,
-        width: vec.len() as u32,
-        signed: false,
-        real: None,
-        fill,
-    })
 }
 
 fn val_to_const(v: &elab::Value) -> Result<IrConst, String> {
@@ -1239,7 +1101,12 @@ fn val_to_const(v: &elab::Value) -> Result<IrConst, String> {
         width: v.width() as u32,
         signed: v.signed,
         real: None,
-        fill: None,
+        fill: v.fill.map(|bit| match bit {
+            Bit::Zero => 0,
+            Bit::One => 1,
+            Bit::X => 2,
+            Bit::Z => 3,
+        }),
     })
 }
 
@@ -5084,13 +4951,12 @@ impl<'a> Codegen<'a> {
     /// Evaluate a constant expression node (part-select bound) to an integer.
     fn eval_bound_i128(&self, node: NodeId) -> Result<i128, String> {
         match self.eval_bits(node) {
-            Ok(v) if !v.is_unknown() => {
-                if v.signed {
-                    Ok(v.to_i64().unwrap() as i128)
-                } else {
-                    Ok(v.to_u64().unwrap() as i128)
-                }
+            Ok(v) if !v.is_unknown() => if v.signed {
+                v.to_i128()
+            } else {
+                v.to_u128().and_then(|value| value.try_into().ok())
             }
+            .ok_or_else(|| "part_select bound does not fit in i128".to_string()),
             Ok(_) => Err("unknown part_select bound".to_string()),
             Err(e) => Err(format!("part_select bound: {e}")),
         }
@@ -5209,13 +5075,25 @@ impl<'a> Codegen<'a> {
                 if count.is_unknown() {
                     return Err("unknown replication count".to_string());
                 }
-                let n = count.to_u64().unwrap();
+                let n: usize = count
+                    .to_u128()
+                    .and_then(|value| value.try_into().ok())
+                    .ok_or_else(|| "replication count does not fit in usize".to_string())?;
                 let mut parts = Vec::with_capacity(operands.len().saturating_sub(1));
                 for i in 1..operands.len() {
                     parts.push(b!(i));
                 }
                 let pat = elab::concat(&parts);
-                let mut bits = Vec::new();
+                let total_width = pat
+                    .width()
+                    .checked_mul(n)
+                    .ok_or_else(|| "replication width overflow".to_string())?;
+                if total_width > LLG_MAX_WIDTH as usize {
+                    return Err(format!(
+                        "replication result is too wide ({total_width} bits; max {LLG_MAX_WIDTH})"
+                    ));
+                }
+                let mut bits = Vec::with_capacity(total_width);
                 for _ in 0..n {
                     bits.extend(pat.bits.iter().cloned());
                 }
@@ -5229,83 +5107,7 @@ impl<'a> Codegen<'a> {
 /// Convert a captured constant (`ValueData` + `vpiSize`) to a `Val`, mirroring
 /// `elab::read_value` without a VPI handle.
 fn val_from_value_data(vd: &ValueData, size: i32) -> Result<Val, String> {
-    match vd {
-        ValueData::Bin(s) => Ok(Val::Bits(parse_radix_val(s, 1, size))),
-        ValueData::Oct(s) => Ok(Val::Bits(parse_radix_val(s, 3, size))),
-        ValueData::Hex(s) => Ok(Val::Bits(parse_radix_val(s, 4, size))),
-        ValueData::Dec(s) => {
-            let val = s.trim().parse::<u64>().unwrap_or(0);
-            let width = if size > 0 { size as usize } else { 64 };
-            Ok(Val::Bits(elab::Value::from_u64(val, width, false)))
-        }
-        ValueData::Scalar(sc) => {
-            let b = match *sc {
-                vpi::vpi0 => Bit::Zero,
-                vpi::vpi1 | vpi::vpiH => Bit::One,
-                vpi::vpiZ => Bit::Z,
-                vpi::vpiL => Bit::Zero,
-                _ => Bit::X,
-            };
-            let fill = if size == -1 { Some(b) } else { None };
-            Ok(Val::Bits(elab::Value {
-                bits: vec![b],
-                signed: false,
-                fill,
-            }))
-        }
-        ValueData::Int(val) => {
-            let width = if size > 0 { size as usize } else { 32 };
-            Ok(Val::Bits(elab::Value::from_u64(*val as u64, width, true)))
-        }
-        ValueData::UInt(val) => {
-            let width = if size > 0 { size as usize } else { 64 };
-            Ok(Val::Bits(elab::Value::from_u64(*val, width, false)))
-        }
-        ValueData::Str(s) => Ok(Val::Str(s.clone())),
-        ValueData::Real(_) => Err("real value in bound".to_string()),
-        ValueData::None => Err("object has no stored value".to_string()),
-        ValueData::Vector(_) => Err("vector value format in bound".to_string()),
-    }
-}
-
-/// Parse a BIN/OCT/HEX digit string into bits (see `elab::parse_radix`).
-fn parse_radix_val(s: &str, base_bits: usize, size: i32) -> elab::Value {
-    let mut bits = Vec::new();
-    for ch in s.chars() {
-        let c = ch.to_ascii_lowercase();
-        match c {
-            'x' => bits.extend(std::iter::repeat_n(Bit::X, base_bits)),
-            'z' => bits.extend(std::iter::repeat_n(Bit::Z, base_bits)),
-            _ => {
-                let d = c.to_digit(16).unwrap_or(0);
-                for i in (0..base_bits).rev() {
-                    bits.push(if d & (1 << i) != 0 {
-                        Bit::One
-                    } else {
-                        Bit::Zero
-                    });
-                }
-            }
-        }
-    }
-    let fill = if size == -1 && bits.len() == base_bits && base_bits == 1 {
-        bits.first().copied()
-    } else {
-        None
-    };
-    if size > 0 {
-        let width = size as usize;
-        if bits.len() < width {
-            bits.splice(0..0, std::iter::repeat_n(Bit::Zero, width - bits.len()));
-        } else if bits.len() > width {
-            bits = bits[bits.len() - width..].to_vec();
-        }
-    }
-    elab::Value {
-        bits,
-        signed: false,
-        fill,
-    }
+    elab::decode_value_data(vd, size).map_err(|error| error.to_string())
 }
 
 // ── Statement emission ────────────────────────────────────────────────────────
@@ -7827,7 +7629,8 @@ impl<'a> Codegen<'a> {
                         NodeKind::Expr(ExprKind::PartSelect { left, right, .. }) => {
                             let l = self.eval_bound_i128(*left)?;
                             let r = self.eval_bound_i128(*right)?;
-                            let width = ((l - r).abs() + 1) as u32;
+                            let (l, r, width) =
+                                checked_select_bounds(l, r, "array-element part select")?;
                             (IrElemSel::Part(l, r), width)
                         }
                         NodeKind::Expr(ExprKind::IndexedPartSelect { .. }) => {
@@ -7869,7 +7672,7 @@ impl<'a> Codegen<'a> {
                 }
                 let l = self.eval_bound_i128(*left)?;
                 let r = self.eval_bound_i128(*right)?;
-                let width = ((l - r).abs() + 1) as u32;
+                let (l, r, width) = checked_select_bounds(l, r, "part select")?;
                 Ok(IrExpr::new(
                     IrExprKind::PartSel {
                         base: Box::new(sig_read_expr(info.ir)),
@@ -8619,12 +8422,17 @@ impl<'a> Codegen<'a> {
                 // in design-precision ticks (1 tick = design_precision_ps
                 // ps), so now_ps = now * P.
                 let unit_ps = self.timescale_of_node(call).unit_ps;
-                let width = if name == "$stime" { 32 } else { 64 };
+                let kind = if name == "$stime" {
+                    IrTimeKind::STime
+                } else {
+                    IrTimeKind::Time
+                };
+                let width = kind.width();
                 Ok(IrExpr::new(
                     IrExprKind::SysFunc(IrSysFunc::Time {
                         precision_ps: self.design_precision_ps,
                         unit_ps,
-                        width,
+                        kind,
                     }),
                     width,
                     false,
@@ -8675,13 +8483,13 @@ impl<'a> Codegen<'a> {
     /// transition; sub-expression codes ride along verbatim).
     fn lower_lhs(&mut self, path: &str, lhs: NodeId) -> Result<IrLhs, String> {
         let lh = self.analyze_lhs(path, lhs)?;
-        Ok(self.lhs_to_ir(&lh))
+        self.lhs_to_ir(&lh)
     }
 
     /// Convert a pre-IR [`Lhs`] to its [`IrLhs`] form using the registered
     /// model indices.
-    fn lhs_to_ir(&self, lh: &Lhs) -> IrLhs {
-        match lh {
+    fn lhs_to_ir(&self, lh: &Lhs) -> Result<IrLhs, String> {
+        Ok(match lh {
             Lhs::Whole(info) => IrLhs::Whole(info.ir),
             Lhs::WholeRef {
                 addr,
@@ -8693,7 +8501,11 @@ impl<'a> Codegen<'a> {
                 signed: *signed,
             },
             Lhs::Bit(info, ie) => IrLhs::Bit(info.ir, verbatim_code(ie)),
-            Lhs::Part(info, left, right) => IrLhs::Part(info.ir, *left, *right),
+            Lhs::Part(info, left, right) => {
+                let (left, right, _) =
+                    checked_select_bounds(*left, *right, "assignment part select")?;
+                IrLhs::Part(info.ir, left, right)
+            }
             Lhs::IdxPart(info, be, we, neg) => {
                 IrLhs::IdxPart(info.ir, verbatim_code(be), verbatim_code(we), *neg != 0)
             }
@@ -8702,11 +8514,15 @@ impl<'a> Codegen<'a> {
                 indices: ae.index_codes.iter().map(|c| verbatim_code(c)).collect(),
                 elem_sel: match &ae.elem_sel {
                     ElemSel::Whole => IrElemSel::Whole,
-                    ElemSel::Part(l, r) => IrElemSel::Part(*l, *r),
+                    ElemSel::Part(l, r) => {
+                        let (left, right, _) =
+                            checked_select_bounds(*l, *r, "array-element assignment part select")?;
+                        IrElemSel::Part(left, right)
+                    }
                     ElemSel::Bit(s) => IrElemSel::Bit(Box::new(verbatim_code(s))),
                 },
             },
-        }
+        })
     }
 }
 

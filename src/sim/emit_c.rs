@@ -673,16 +673,19 @@ pub fn render_expr(ctx: &RCtx<'_>, e: &IrExpr) -> Result<RenderedExpr, String> {
             IrSysFunc::Time {
                 precision_ps,
                 unit_ps,
-                width,
-            } => RenderedExpr {
-                code: format!(
-                    "sv4_from_u64(llg_time() * {} / {}, {}, 0)",
-                    precision_ps, unit_ps, width
-                ),
-                width: *width,
-                signed: false,
-                fill: None,
-            },
+                kind,
+            } => {
+                let width = kind.width();
+                RenderedExpr {
+                    code: format!(
+                        "sv4_from_u64(llg_time_scaled({}, {}), {}, 0)",
+                        precision_ps, unit_ps, width
+                    ),
+                    width,
+                    signed: false,
+                    fill: None,
+                }
+            }
             IrSysFunc::Bits(a) => {
                 let ra = w(a)?;
                 RenderedExpr {

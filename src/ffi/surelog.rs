@@ -6,6 +6,8 @@ use std::ffi::{CStr, CString};
 use std::marker::PhantomData;
 use std::os::raw::{c_char, c_int, c_uint, c_void};
 
+use super::vpi::VpiHandle;
+
 // ── Raw FFI ──────────────────────────────────────────────────────────────────
 
 #[link(name = "surelog_c_wrapper", kind = "static")]
@@ -294,13 +296,26 @@ impl SurelogSession {
         }
     }
 
-    /// Returns the raw UHDM VPI handle.  Valid until `self` is dropped.
-    pub fn uhdm_design(&self) -> Option<*mut u32> {
+    /// Returns a UHDM VPI handle borrowed from this session.
+    ///
+    /// The handle cannot escape the session borrow:
+    ///
+    /// ```compile_fail
+    /// use llg::ffi::{surelog::SurelogSession, vpi::VpiHandle};
+    ///
+    /// fn invalid_handle() -> VpiHandle<'static> {
+    ///     let session = SurelogSession::new(&["llg"]).unwrap();
+    ///     session.uhdm_design().unwrap()
+    /// }
+    /// ```
+    pub fn uhdm_design(&self) -> Option<VpiHandle<'_>> {
         let ptr = unsafe { sl_get_uhdm_design(self.compiler) };
         if ptr.is_null() {
             None
         } else {
-            Some(ptr)
+            // SAFETY: Surelog owns the UHDM design and keeps it alive until
+            // this borrowed session is dropped.
+            Some(unsafe { VpiHandle::from_raw(ptr) })
         }
     }
 }
@@ -719,9 +734,9 @@ fn take_owned_c_string(ptr: *mut c_char) -> String {
 }
 
 /// Runs UHDM elaboration on the design returned by `SurelogSession::uhdm_design`.
-pub fn uhdm_elaborate(vpi_design: *mut u32) {
+pub fn uhdm_elaborate(vpi_design: VpiHandle<'_>) {
     unsafe {
-        sl_uhdm_elaborate(vpi_design);
+        sl_uhdm_elaborate(vpi_design.as_raw());
     }
 }
 
@@ -892,14 +907,15 @@ impl<'clp> Compiler<'clp> {
         }
     }
 
-    /// Return the raw UHDM VPI handle.  The pointer is valid until `self` is
-    /// dropped; callers must not use it after that point.
-    pub fn get_uhdm_design(&self) -> Option<*mut u32> {
+    /// Return a UHDM VPI handle borrowed from this compiler.
+    pub fn get_uhdm_design(&self) -> Option<VpiHandle<'_>> {
         let ptr = unsafe { sl_get_uhdm_design(self.0) };
         if ptr.is_null() {
             None
         } else {
-            Some(ptr)
+            // SAFETY: Surelog owns the UHDM design and keeps it alive until
+            // this borrowed compiler is dropped.
+            Some(unsafe { VpiHandle::from_raw(ptr) })
         }
     }
 }

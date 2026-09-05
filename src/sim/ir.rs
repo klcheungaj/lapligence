@@ -136,8 +136,8 @@ pub enum IrExprKind {
     /// Part-select `[left:right]` with constant bounds.
     PartSel {
         base: Box<IrExpr>,
-        left: i128,
-        right: i128,
+        left: i64,
+        right: i64,
     },
     /// Indexed part-select `[base_idx +: width]` / `[base_idx -: width]`.
     IdxPartSel {
@@ -324,15 +324,32 @@ pub enum IrRealUnOp {
 pub enum IrSysFunc {
     /// `$clog2(x)` → `sv4_clog2(code)` (32-bit unsigned).
     Clog2(Box<IrExpr>),
-    /// `$time`/`$stime` scaled to the calling module's unit.  `width` is 64
-    /// for `$time` and 32 for `$stime` (which truncates modulo 2^32).
+    /// `$time`/`$stime` scaled to the calling module's unit.
     Time {
         precision_ps: u64,
         unit_ps: u64,
-        width: u32,
+        kind: IrTimeKind,
     },
     /// `$bits(x)` → `SV4_C(width, 32)` (32-bit signed).
     Bits(Box<IrExpr>),
+}
+
+/// The two width-defined SystemVerilog time query forms.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IrTimeKind {
+    /// `$time`, represented as an unsigned 64-bit value.
+    Time,
+    /// `$stime`, truncated modulo 2^32.
+    STime,
+}
+
+impl IrTimeKind {
+    pub const fn width(self) -> u32 {
+        match self {
+            Self::Time => 64,
+            Self::STime => 32,
+        }
+    }
 }
 
 /// An element-level select applied after the array indices of an array read
@@ -342,7 +359,7 @@ pub enum IrElemSel {
     /// Whole element.
     Whole,
     /// Part-select `[left:right]` of the element.
-    Part(i128, i128),
+    Part(i64, i64),
     /// Bit-select of the element by a runtime index expression.
     Bit(Box<IrExpr>),
 }
@@ -460,7 +477,7 @@ pub enum IrLhs {
     /// Bit-select `[idx]` of a signal.
     Bit(usize, IrExpr),
     /// Part-select `[left:right]` of a signal (constant bounds).
-    Part(usize, i128, i128),
+    Part(usize, i64, i64),
     /// Indexed part-select `[base +: width]` / `[base -: width]`
     /// (`neg` selects the descending form).
     IdxPart(usize, IrExpr, IrExpr, bool),
