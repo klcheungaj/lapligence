@@ -601,7 +601,7 @@ mod platform {
             ));
         }
         let guard = NativeGuard { job };
-        let mut limits = MaybeUninit::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>::zeroed();
+        let limits = MaybeUninit::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>::zeroed();
         // SAFETY: all-zero is a valid initial value for this Win32 POD
         // structure; fields are set before the structure is passed to Win32.
         let mut limits = unsafe { limits.assume_init() };
