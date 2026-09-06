@@ -1,0 +1,18 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 7b8a6e2fff..381ea50427 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -63 +63,3 @@
+-set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
++if(NOT DEFINED CMAKE_MSVC_RUNTIME_LIBRARY)
++  set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
++endif()
+diff --git a/third_party/UHDM/CMakeLists.txt b/third_party/UHDM/CMakeLists.txt
+index 3425264994..3bc86df0a1 100644
+--- a/third_party/UHDM/CMakeLists.txt
++++ b/third_party/UHDM/CMakeLists.txt
+@@ -33 +33,3 @@
+-set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
++if(NOT DEFINED CMAKE_MSVC_RUNTIME_LIBRARY)
++  set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
++endif()

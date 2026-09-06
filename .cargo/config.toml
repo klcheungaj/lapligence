@@ -18,63 +18,15 @@ rustflags = ["-C", "target-feature=+crt-static"]
 rustc-link-lib = []
 rustc-link-search = []
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Platform targets — PLACEHOLDERS, all sections below are intentionally
-# commented out.  None of these targets is validated yet; see
-# persistence/platforms.md for per-target status and open blockers.  Uncomment a
-# section only when actually building for that target.
-# ─────────────────────────────────────────────────────────────────────────────
+[target.aarch64-unknown-linux-musl]
+linker = "aarch64-linux-musl-gcc"
+rustflags = ["-C", "target-feature=+crt-static"]
 
-# Windows x64 via MSVC.  Needs: MSVC Build Tools (cl.exe/link.exe + Windows
-# SDK), a C++17-capable toolchain able to compile the Surelog wrapper, and
-# zlib.  Open blockers tracked in build.rs placeholders: link.exe does not
-# support -Wl,--wrap (mimalloc C-side redirection disabled), cl wants /FI
-# instead of -include and /std:c++17 instead of -std=c++17, patch(1) is
-# unavailable (patches skipped), and the vendored CMake build has never been
-# configured under MSVC.
-# [target.x86_64-pc-windows-msvc]
-# rustflags = []  # CRT comes from MSVC defaults; add /M flags here if needed
+[target.aarch64-unknown-linux-musl.mimalloc]
+rustc-link-lib = []
+rustc-link-search = []
 
-# Windows ARM64 via MSVC.  Same needs/blockers as x86_64-pc-windows-msvc,
-# plus the MSVC ARM64 toolset ("MSVC v143 ARM64 build tools") and ARM64
-# Windows SDK libraries.
-# [target.aarch64-pc-windows-msvc]
-# rustflags = []
-
-# macOS Intel.  Needs: Xcode Command Line Tools (clang, libc++); zlib is
-# usually present via the CLT shim or Homebrew (/opt/homebrew on ARM,
-# /usr/local on Intel).  build.rs links dylib=c++ and dylib=z on this
-# target (pthread lives in libSystem).  Unvalidated: static Surelog/UHDM/
-# ANTLR/capnp archives configure+link under Apple clang, and the `cmake`
-# crate cannot propagate an fd-based jobserver on macOS (falls back to
-# `cmake --build --parallel $NUM_JOBS`).
-# [target.x86_64-apple-darwin]
-# rustflags = []  # e.g. ["-C", "link-arg=-L/usr/local/lib"] if zlib is Homebrew
-
-# macOS Apple Silicon.  Same as x86_64-apple-darwin; Homebrew prefix is
-# /opt/homebrew when a non-system zlib is required.
-# [target.aarch64-apple-darwin]
-# rustflags = []  # e.g. ["-C", "link-arg=-L/opt/homebrew/lib"]
-
-# Linux gnu, x86_64 (host-native dev config).  Expected to work: same code
-# path as musl minus the static-archive hunt (build.rs takes the dynamic
-# stdc++/z/pthread branch); needs system g++, libstdc++.so, zlib.so at link
-# time.  Binaries are NOT portable across glibc versions.
-# [target.x86_64-unknown-linux-gnu]
-# linker = "cc"
-
-# Linux gnu, ARM64.  Needs an aarch64 cross toolchain for the C++ side
-# (e.g. CC/aarch64-unknown-linux-gnu-gcc) plus target sysroot libs
-# (libstdc++, zlib); rustc needs the std component
-# (`rustup target add aarch64-unknown-linux-gnu`).
-# [target.aarch64-unknown-linux-gnu]
-# linker = "aarch64-linux-gnu-gcc"   # adjust to your toolchain's driver
-
-# Linux musl, ARM64.  Needs a musl cross toolchain (aarch64-linux-musl-gcc/
-# g++, e.g. musl.cc or musl-cross-make builds) providing static libstdc++/
-# libsupc++/libgcc/libz in its sysroot — build.rs locates them via
-# `-print-file-name` exactly as on x86_64.  Fully static binaries expected;
-# unvalidated.
-# [target.aarch64-unknown-linux-musl]
-# linker = "aarch64-linux-musl-gcc"
-# rustflags = ["-C", "target-feature=+crt-static"]
+[target.'cfg(all(target_os = "windows", target_env = "msvc"))']
+# Bundle the MSVC and Universal CRT runtimes. Windows SDK/system DLLs remain
+# normal dynamic imports and are checked by the release workflow.
+rustflags = ["-C", "target-feature=+crt-static"]

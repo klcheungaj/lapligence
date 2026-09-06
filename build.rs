@@ -2,10 +2,9 @@
 //! wrapper (surelog_c_api.cpp) and links all Surelog / UHDM / ANTLR /
 //! Cap'n Proto static libraries.
 //!
-//! Platform support: Linux x86_64/aarch64 is the supported configuration;
-//! macOS and Windows branches in this script are PLACEHOLDERS (see
-//! persistence/platforms.md for the per-target status and what still needs
-//! validation before they can link).
+//! Release builds support static-musl Linux on x86_64/aarch64, MSVC Windows
+//! on x86_64/aarch64, and Apple Silicon macOS. Vendored libraries are linked
+//! statically; platform system libraries remain dynamic on Windows/macOS.
 
 use std::path::{Path, PathBuf};
 
@@ -224,6 +223,7 @@ fn cmake_build_surelog(repo: &Path, build_dir: &Path) {
     let target = std::env::var("TARGET").unwrap_or_default();
     let is_musl = target.contains("musl");
     let target_env = std::env::var("CARGO_CFG_TARGET_ENV").unwrap_or_default();
+    let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
 
     let mut cfg = cmake::Config::new(repo);
     cfg.out_dir(build_dir)
@@ -231,16 +231,43 @@ fn cmake_build_surelog(repo: &Path, build_dir: &Path) {
         // tcmalloc is glibc-specific; disable it unconditionally so that the
         // Rust-side mimalloc global allocator is the sole malloc provider.
         .define("SURELOG_WITH_TCMALLOC", "OFF")
+        // The Rust binaries consume only static frontend archives. Avoid
+        // building unused shared variants and test targets.
+        .define("BUILD_SHARED_LIBS", "OFF")
+        .define("ANTLR_BUILD_SHARED", "OFF")
+        .define("ANTLR_BUILD_STATIC", "ON")
+        .define("SURELOG_BUILD_TESTS", "OFF")
+        .define("UHDM_BUILD_TESTS", "OFF")
+        .define("BUILD_TESTING", "OFF")
+        // Surelog's install target expects precompiled package directories
+        // that QUICK_COMP omits, so keep its complete install graph enabled.
+        .define("QUICK_COMP", "OFF")
         // Ensure headers install under <prefix>/include/antlr4-runtime rather
         // than the bare /antlr4-runtime that results when this is unset.
         .define("CMAKE_INSTALL_INCLUDEDIR", "include")
         .define("CMAKE_INSTALL_PREFIX", "../install");
 
-    // Silence vendored-third-party compiler chatter.  `-w` is a GCC/Clang
-    // flag; MSVC's cl.exe rejects it.
-    // TODO(placeholder): use `/W0` (or `/w`) once an MSVC host is available
-    // to confirm the exact spelling accepted through the cc/cmake path.
-    if target_env != "msvc" {
+    if target_env == "msvc" {
+        // Keep the complete native dependency graph on the same static MSVC
+        // runtime as Rust's +crt-static build. The accompanying Surelog patch
+        // permits this command-line cache value to override vendor defaults.
+        cfg.define(
+            "CMAKE_MSVC_RUNTIME_LIBRARY",
+            "MultiThreaded$<$<CONFIG:Debug>:Debug>",
+        )
+        .define("WITH_STATIC_CRT", "ON")
+        // zlib is optional for Surelog's cache files. Disabling it on Windows
+        // avoids shipping a third-party DLL or requiring a target-specific
+        // vcpkg installation; all core parsing/elaboration remains available.
+        .define("SURELOG_WITH_ZLIB", "OFF")
+        .define("WITH_ZLIB", "OFF")
+        .define("WITH_OPENSSL", "OFF");
+    }
+
+    // Silence vendored-third-party compiler chatter with the native spelling.
+    if target_env == "msvc" {
+        cfg.cxxflag("/w");
+    } else {
         cfg.cxxflag("-w");
     }
 
@@ -267,46 +294,41 @@ fn cmake_build_surelog(repo: &Path, build_dir: &Path) {
         cfg.define("CMAKE_C_COMPILER", cc)
             .define("CMAKE_CXX_COMPILER", cxx)
             .define("SURELOG_USE_MUSL", "ON")
-            // CMake cache variables (e.g. ZLIB_LIBRARY) from a previous run
-            // are NOT re-evaluated by find_package even when
-            // CMAKE_FIND_LIBRARY_SUFFIXES changes, so we pin ZLIB_LIBRARY
-            // directly to the static archive to override any cached .so path.
-            // .define("ZLIB_LIBRARY",       "/usr/lib/libz.a")
-            // .define("ZLIB_INCLUDE_DIR",   "/usr/include")
+            // zlib is optional for frontend cache compression. Cross-musl
+            // toolchains do not consistently include it, so omit that feature
+            // instead of accidentally selecting a host/glibc archive.
+            .define("SURELOG_WITH_ZLIB", "OFF")
+            .define("WITH_ZLIB", "OFF")
+            .define("WITH_OPENSSL", "OFF")
             .define("CMAKE_FIND_LIBRARY_SUFFIXES", ".a")
-            .define("ZLIB_USE_STATIC_LIBS", "ON")
             // crtbeginT.o (used for -static) cannot build a shared library.
             // Disable the ANTLR4 shared-library target; only the static
             // archive (antlr4_static / antlr4-runtime) is needed.
             .define("ANTLR_BUILD_SHARED", "OFF")
             .define("ANTLR_BUILD_STATIC", "ON");
+    } else if target_os == "macos" {
+        // Use the SDK's zlib. It is a platform library on macOS and remains
+        // dynamically linked along with libc++ and system frameworks.
+        cfg.define("ZLIB_USE_STATIC_LIBS", "OFF");
     }
 
     cfg.build();
 }
 
 /// Applies any `.patch` files from the `patches/` directory to the Surelog
-/// submodule using POSIX/GNU `patch(1)`.  Each patch is skipped if it is
-/// already applied (detected via a successful reverse dry-run).  Patches are
-/// applied in lexicographic order so they can be numbered for deterministic
-/// sequencing.
+/// submodule. POSIX/GNU `patch(1)` is preferred; `git apply` is the fallback
+/// on hosts such as Windows. Each patch is skipped if it is already applied.
+/// Patches are applied in lexicographic order for deterministic sequencing.
 ///
-/// `patch(1)` is REQUIRED here — git must not be invoked at all:
-/// `vendor/Surelog` is a nested submodule whose `.git` file holds a relative
-/// pointer (`../../../.git/modules/llg/…`) back into the superproject's git
-/// dir.  Inside a container only `llg/` is bind-mounted, so those `../..`
-/// hops escape the mount and every git invocation from anywhere under the
-/// checkout dies during repository DISCOVERY (`fatal: not a git repository`)
-/// — git resolves the work-tree before parsing any subcommand flags, so even
-/// `git apply --no-index` cannot reach its index-free code path.  `patch(1)`
-/// has no concept of a repository and edits plain files unconditionally.
+/// `patch(1)` remains the primary path because container bind mounts can make
+/// the nested submodule's relative gitdir unreachable. Normal GitHub checkouts
+/// have a valid gitdir and can use the Git-for-Windows fallback.
 ///
 /// Flags (all standard in GNU patch ≥ 2.7): `-p1` strips the leading path
 /// component of the patch headers, `-R` reverses the patch for applied-
 /// detection, `--dry-run` makes that probe side-effect free, `-s` keeps the
 /// run silent on success, and `--forward` defensively skips hunks that were
 /// already applied when the reverse probe could not detect them.
-#[cfg(unix)]
 fn apply_surelog_patches(repo: &Path, manifest_dir: &Path) {
     let patches_dir = manifest_dir.join("patches");
     if !patches_dir.exists() {
@@ -327,22 +349,24 @@ fn apply_surelog_patches(repo: &Path, manifest_dir: &Path) {
         // A successful reverse dry-run means the patch is already applied.
         // The probe is fully captured (.output()) so neither its silence nor
         // a mismatch report leaks into the Cargo build log.
-        let already_applied = std::process::Command::new("patch")
+        let reverse_patch = std::process::Command::new("patch")
             .args(["-p1", "-R", "-s", "--dry-run"])
             .stdin(std::process::Stdio::from(
                 std::fs::File::open(&patch)
                     .unwrap_or_else(|e| panic!("failed to open patch {}: {e}", patch.display())),
             ))
             .current_dir(repo)
-            .output()
-            .map(|o| o.status.success())
+            .output();
+        let already_applied = reverse_patch
+            .as_ref()
+            .map(|output| output.status.success())
             .unwrap_or(false);
 
         if already_applied {
             continue;
         }
 
-        let status = std::process::Command::new("patch")
+        let patch_status = std::process::Command::new("patch")
             // Do not leave an untracked `CMakeLists.txt.orig` in the
             // submodule when patch(1) has to apply a harmless offset.  The
             // patch itself is tracked at the superproject level and is the
@@ -356,27 +380,50 @@ fn apply_surelog_patches(repo: &Path, manifest_dir: &Path) {
             // `-s` keeps normal output quiet; stderr stays inherited so a
             // failing hunk surfaces naturally in the build log.
             .stdout(std::process::Stdio::null())
-            .status()
-            .unwrap_or_else(|e| panic!("failed to run patch for {}: {e}", patch.display()));
+            .status();
 
-        if !status.success() {
-            panic!("patch failed to apply: {}", patch.display());
+        if patch_status.as_ref().is_ok_and(|status| status.success()) {
+            continue;
+        }
+
+        // Git for Windows is installed on GitHub-hosted MSVC runners even
+        // when a standalone patch(1) is unavailable. A normal checkout has a
+        // valid submodule gitdir, so git-apply provides a portable fallback.
+        let git_reverse = std::process::Command::new("git")
+            .arg("-C")
+            .arg(repo)
+            .args(["apply", "--reverse", "--check"])
+            .arg(&patch)
+            .output();
+        if git_reverse
+            .as_ref()
+            .is_ok_and(|output| output.status.success())
+        {
+            continue;
+        }
+
+        let git_status = std::process::Command::new("git")
+            .arg("-C")
+            .arg(repo)
+            .arg("apply")
+            .arg(&patch)
+            .status();
+
+        if !git_status.as_ref().is_ok_and(|status| status.success()) {
+            let patch_error = patch_status
+                .err()
+                .map(|error| error.to_string())
+                .unwrap_or_else(|| "patch(1) rejected the patch".to_string());
+            let git_error = git_status
+                .err()
+                .map(|error| error.to_string())
+                .unwrap_or_else(|| "git apply rejected the patch".to_string());
+            panic!(
+                "failed to apply {} with patch(1) ({patch_error}) or git ({git_error})",
+                patch.display()
+            );
         }
     }
-}
-
-/// Windows placeholder: `patch(1)` does not exist there.  The currently
-/// shipped patch (surelog-musl-support.patch) is musl-specific and thus
-/// irrelevant for MSVC targets, so skipping is safe today.
-// TODO(placeholder): a real Windows port must either commit pre-patched
-// vendored sources or apply patches with a Rust-side unified-diff
-// implementation; validate hunk application on CRLF checkouts too.
-#[cfg(not(unix))]
-fn apply_surelog_patches(_repo: &Path, _manifest_dir: &Path) {
-    println!(
-        "cargo:warning=Surelog patches skipped: patch(1) is unavailable on \
-         this platform (placeholder; see persistence/platforms.md)"
-    );
 }
 
 /// Resolves and validates all paths that depend on the Surelog CMake build
@@ -416,6 +463,7 @@ fn build_surelog_wrapper(manifest_dir: &Path) {
     let capnp_src = repo.join("third_party/UHDM/third_party/capnproto/c++/src");
 
     let target_env = std::env::var("CARGO_CFG_TARGET_ENV").unwrap_or_default();
+    let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
     let is_musl = target_env == "musl";
     // MSVC's cl.exe/link.exe use different option spellings from GNU
     // toolchains (see the branches below).
@@ -451,8 +499,7 @@ fn build_surelog_wrapper(manifest_dir: &Path) {
 
     // Force-include config headers (same as CMake build) + language mode.
     if is_msvc {
-        // TODO(placeholder): validate against a real MSVC toolchain.  cl.exe
-        // spells force-include as /FI<file> (single token) and wants
+        // cl.exe spells force-include as /FI<file> (single token) and wants
         // /std:c++17 instead of -std=c++17.
         wrapper
             .flag(format!("/FI{}", sl_config.to_str().unwrap()))
@@ -487,39 +534,30 @@ fn build_surelog_wrapper(manifest_dir: &Path) {
 
     // ── Link pre-built static libraries ─────────────────────────────────────
     // Surelog
-    println!(
-        "cargo:rustc-link-search=native={}",
-        surelog_build.join("lib").display()
-    );
+    emit_native_search(&surelog_build.join("lib"), is_msvc);
     println!("cargo:rustc-link-lib=static=surelog");
 
     // UHDM
-    println!(
-        "cargo:rustc-link-search=native={}",
-        surelog_build.join("third_party/UHDM/lib").display()
-    );
+    emit_native_search(&surelog_build.join("third_party/UHDM/lib"), is_msvc);
     println!("cargo:rustc-link-lib=static=uhdm");
 
     // ANTLR4 runtime
-    println!(
-        "cargo:rustc-link-search=native={}",
-        surelog_build
-            .join("third_party/antlr4/runtime/Cpp/runtime")
-            .display()
+    emit_native_search(
+        &surelog_build.join("third_party/antlr4/runtime/Cpp/runtime"),
+        is_msvc,
     );
-    println!("cargo:rustc-link-lib=static=antlr4-runtime");
+    let antlr_library = if is_msvc {
+        "antlr4-runtime-static"
+    } else {
+        "antlr4-runtime"
+    };
+    println!("cargo:rustc-link-lib=static={antlr_library}");
 
     // Cap'n Proto & kj
     let capnp_build = surelog_build.join("third_party/UHDM/third_party/capnproto/c++/src");
-    println!(
-        "cargo:rustc-link-search=native={}",
-        capnp_build.join("capnp").display()
-    );
+    emit_native_search(&capnp_build.join("capnp"), is_msvc);
     println!("cargo:rustc-link-lib=static=capnp");
-    println!(
-        "cargo:rustc-link-search=native={}",
-        capnp_build.join("kj").display()
-    );
+    emit_native_search(&capnp_build.join("kj"), is_msvc);
     println!("cargo:rustc-link-lib=static=kj-async");
     println!("cargo:rustc-link-lib=static=kj");
 
@@ -588,38 +626,50 @@ fn build_surelog_wrapper(manifest_dir: &Path) {
         // falls back to the linker's default directories (see
         // ensure_static_archives).
         let drivers = collect_driver_candidates();
-        ensure_static_archives(&drivers, &["stdc++", "z"], &["supc++", "gcc_eh", "gcc"]);
+        ensure_static_archives(&drivers, &["stdc++"], &["supc++", "gcc_eh", "gcc"]);
         println!("cargo:rustc-link-lib=static=stdc++");
         println!("cargo:rustc-link-lib=static=supc++");
         println!("cargo:rustc-link-lib=static=gcc_eh");
         println!("cargo:rustc-link-lib=static=gcc");
-        // musl libc bundles pthreads; link zlib statically.
-        println!("cargo:rustc-link-lib=static=z");
+        // musl libc bundles pthreads; optional zlib support is disabled above.
         // Fully static executable — portable to any Linux distro, no runtime
         // .so dependencies.
         println!("cargo:rustc-link-arg=-static");
     } else {
-        // Non-musl dynamic C++ runtime selection.
-        // TODO(placeholder): the macOS and Windows branches are unvalidated
-        // (no toolchains available); see persistence/platforms.md for status.
-        let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
+        // Vendored dependencies above remain static. Only target system
+        // libraries and runtimes are dynamically linked on macOS/Windows.
         match target_os.as_str() {
             "macos" => {
                 // Darwin: libstdc++ is long gone — link libc++ instead;
                 // pthread lives in libSystem (no separate -lpthread).
                 println!("cargo:rustc-link-lib=dylib=c++");
                 println!("cargo:rustc-link-lib=dylib=z");
+                println!("cargo:rustc-link-lib=framework=CoreFoundation");
             }
             "windows" => {
-                // MSVC auto-links its own CRT; there is no libstdc++ to
-                // link.  If a GNU-toolchain Windows target is ever built,
-                // this branch must grow dylib=stdc++ + winpthread handling.
+                // The CRT is embedded by +crt-static. kj-async uses Winsock;
+                // all remaining imports are Windows system DLLs.
+                println!("cargo:rustc-link-lib=dylib=ws2_32");
             }
             _ => {
                 println!("cargo:rustc-link-lib=dylib=stdc++");
                 println!("cargo:rustc-link-lib=dylib=z");
                 println!("cargo:rustc-link-lib=dylib=pthread");
             }
+        }
+    }
+}
+
+/// Emits the archive directory and, for multi-config MSVC generators, its
+/// configuration-specific child directory.
+fn emit_native_search(directory: &Path, is_msvc: bool) {
+    println!("cargo:rustc-link-search=native={}", directory.display());
+    if is_msvc {
+        for configuration in ["Release", "Debug"] {
+            println!(
+                "cargo:rustc-link-search=native={}",
+                directory.join(configuration).display()
+            );
         }
     }
 }
@@ -673,7 +723,6 @@ fn fallback_search_dirs() -> Vec<PathBuf> {
 fn remedy_hint(archive: &str) -> &'static str {
     match archive {
         "stdc++" => "`apk add g++ libstdc++-dev`",
-        "z" => "`apk add zlib-static`",
         _ => "install the package providing this static archive",
     }
 }
@@ -682,7 +731,7 @@ fn remedy_hint(archive: &str) -> &'static str {
 /// `cargo:rustc-link-search=native=` entries for their directories.
 ///
 /// Why this is needed: the musl branch below asks rustc to link
-/// libstdc++/libsupc++/libgcc/libz statically, but rustc resolves every
+/// libstdc++/libsupc++/libgcc statically, but rustc resolves every
 /// `cargo:rustc-link-lib=static=<name>` by searching ONLY the `-L` paths
 /// previously emitted via `cargo:rustc-link-search` — it never falls back to
 /// the linker's own default directories.  Two classes of archives therefore
@@ -697,12 +746,10 @@ fn remedy_hint(archive: &str) -> &'static str {
 ///    paths would not.  For cross toolchains the query also doubles as
 ///    sysroot awareness — the driver answers with archives from ITS OWN
 ///    sysroot, not the build host's.
-/// 2. Distro archives such as libz.a live in ordinary system directories
-///    (`/usr/lib`; Alpine package `zlib-static`) which ARE linker defaults,
-///    yet no emitted `-L` covers them, so rustc fails with "could not find
-///    native static library `z`".  When every queried driver echoes the bare
-///    name back (its way of saying "unknown"), we probe those directories
-///    directly.
+/// 2. Some toolchains place runtime archives in ordinary system directories
+///    which are linker defaults but not part of Cargo's emitted `-L` set.
+///    When every queried driver echoes the bare name back (its way of saying
+///    "unknown"), we probe those directories directly.
 ///
 /// The driver prints an absolute path when it knows the archive, and merely
 /// echoes the bare name back when it does not — that distinction drives the
