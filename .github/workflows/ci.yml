@@ -43,7 +43,8 @@ jobs:
       - name: Install native build prerequisites
         run: |
           sudo apt-get update
-          sudo apt-get install -y patch cmake g++ zlib1g-dev
+          sudo apt-get install -y patch cmake g++ python3-pip zlib1g-dev
+          python3 -m pip install --disable-pip-version-check --user orderedmultidict
 
       # fmt first: it fails fast without paying for the native build.
       - name: cargo fmt --check
@@ -90,7 +91,8 @@ jobs:
       - name: Install native build prerequisites
         run: |
           sudo apt-get update
-          sudo apt-get install -y patch cmake g++ zlib1g-dev
+          sudo apt-get install -y patch cmake g++ python3-pip zlib1g-dev
+          python3 -m pip install --disable-pip-version-check --user orderedmultidict
 
       - name: Run generated runtime and model probes under sanitizers
         run: >-
