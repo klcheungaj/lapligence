@@ -1,202 +1,317 @@
-# Lapligence (llg)
+# Lapligence (`llg`)
 
-Lapligence is a Verilog/SystemVerilog **simulator** and **language server**, built on
-Surelog + UHDM.
+Lapligence provides Verilog/SystemVerilog simulation and editor tooling through
+two programs:
 
-Pipeline:
-`Verilog → Surelog → UHDM → core::db → IR → optimization → C11 emission → CMake build → run`
+- **`llg`** compiles, lints, builds, and runs Verilog/SystemVerilog simulations.
+- **`llg_ls`** provides Language Server Protocol (LSP) features to editors.
 
-## Requirements
+## What it can do
 
-- Rust (stable) with cargo
-- C/C++ toolchain: `cc`, `cmake` (the only model builder), `make` or Ninja
-- Python with `orderedmultidict`, plus a Java runtime for native code generation
-- Linux, Windows, or macOS
+### Simulator and linter: `llg`
 
-First build compiles the vendored Surelog/UHDM/ANTLR — expect it to be slow.
+- Compile and elaborate Verilog/SystemVerilog designs.
+- Run 24 built-in lint rules, with configurable severities.
+- Generate an optimized C11 simulation model.
+- Build and run the generated model automatically with CMake.
+- Produce VCD or FST waveforms from standard `$dump*` system tasks.
+- Emit lint results as readable diagnostics or JSON.
+- Stop after source generation for integration with another build flow.
 
-## Build
+### Language server: `llg_ls`
 
-```sh
-cargo build --bin llg_ls     # language server
-cargo build --bin llg        # simulator driver
-cargo build --release         # everything, optimized
+- Publish compiler and lint diagnostics.
+- Provide semantic highlighting, hover information, and completion.
+- Find definitions and references.
+- Provide document and workspace symbols.
+- Support rename and prepare-rename requests.
+- Analyze multiple workspace roots independently.
+- Track unsaved editor buffers and configuration changes.
+- Expose a read-only module and instance hierarchy explorer.
+
+## Simplified workflow
+
+```text
+Verilog/SystemVerilog
+        |
+        v
+ Parse and elaborate (using Surelog)
+        |
+        v
+       IR
+        |
+        +----> lint and editor analysis ----> llg_ls
+        |
+        +----> optimize ----> emit C11 ----> build ----> run ----> llg
 ```
 
-The tagged/manual release workflow is configured to build `llg` and `llg_ls`
-for Linux x86_64 and arm64, Windows x86_64 and arm64, and macOS arm64. It
-audits architecture and linkage before packaging an archive and SHA-256
-checksum. Only targets with recorded native-run evidence should be treated as
-validated; see the release workflow for the current matrix.
+The first build also compiles the vendored HDL frontend and can take several
+minutes. Its native build artifacts can use several gigabytes.
 
-The bundled generated-simulator coroutine runtime is currently x86/Unix-only.
-On Windows and arm64, the driver can compile/lint/elaborate and emit C
-with `--gen-only`, but building and running that emitted simulator still needs
-a portable coroutine backend.
+## Supported HDL features
 
-Docker alternative (see `Dockerfile`):
+The simulator currently covers a practical RTL-oriented subset, including:
 
-```sh
-docker build --build-arg UID=$(id -u) --build-arg GID=$(id -g) -t llg-dev .
-mkdir -p target
-docker run -t --rm \
-  -v "$(pwd)":/workspace \
-  -v "$(realpath target)":/workspace/target \
-  -u $(id -u):$(id -g) \
-  llg-dev \
-  cargo build --release --target x86_64-unknown-linux-musl
-```
+- Verilog and SystemVerilog modules, ports, parameters, and generate blocks.
+- Four-state values, packed vectors, arrays, memories, strings, and scalar
+  real/shortreal values.
+- `initial`, `always`, `always_comb`, `always_ff`, tasks, and functions.
+- Blocking and non-blocking assignments, event controls, delays, and `#0`/NBA
+  scheduling.
+- Continuous assignments, common logic and tri-state gates, and basic net
+  resolution.
+- Hierarchical reads and writes, interfaces, and module instance arrays.
+- `$display`, `$monitor`, `$strobe`, `$time`, `$finish`, and waveform tasks.
 
-### Disk cleanup
+Lapligence does not yet implement the complete Verilog/SystemVerilog language.
+See [simulator feature status](docs/sim_features.md) for tested features and
+known limitations. See [lint rules](src/core/lint/readme.md) for the rule list.
 
-Artifacts accumulate across profiles and target triples: `target/surelog/`
-holds a full Surelog/UHDM C++ build per `<triple>/<profile>` (gigabytes each),
-every simulator model lands in `target/sim/<design>/`, and Surelog drops
-`slpp_all/` into whatever working directory a manual run used.  Simulator
-rebuilds clean their own output directory (stale generated files are pruned;
-CMake trees whose cached generator no longer matches are rebuilt from
-scratch); for the rest run:
+## Platform support
 
-```sh
-scripts/clean.sh --dry-run   # list what would be removed, with sizes
-scripts/clean.sh             # remove non-selected target/surelog builds,
-                             # target/sim model outputs, and slpp_all/
-scripts/clean.sh --all       # also remove the currently selected surelog tree
-                             # (forces a full Surelog rebuild next build)
-```
+The release workflow is configured to build `llg` and `llg_ls` for these
+targets:
 
-## Binaries
+| Platform | Target | `llg_ls`, lint, and C generation | Generated simulator |
+| --- | --- | --- | --- |
+| Linux x86_64 | `x86_64-unknown-linux-musl` | Supported | Supported |
+| Linux arm64 | `aarch64-unknown-linux-musl` | Release target | Not yet supported |
+| Windows x86_64 | `x86_64-pc-windows-msvc` | Release target | Not yet supported |
+| Windows arm64 | `aarch64-pc-windows-msvc` | Release target | Not yet supported |
+| macOS arm64 | `aarch64-apple-darwin` | Release target | Not yet supported |
 
-| Binary | Purpose |
-|---|---|
-| `llg_ls` | Verilog/SV Language Server (stdio JSON-RPC) |
-| `llg` | Simulator driver: compile → optimize → emit C → build → run |
-| `elab_check` | Elaboration verifier (instance tree, ref binding, params) |
-| `helloworld` / `hellouhdm` / `llg_demo` | Raw Surelog/UHDM API demos |
+The matrix lists configured release targets, not equivalent validation claims.
+Full native-run evidence is currently recorded only for Linux x86_64.
 
-## Language-server safeguards and tracing
+The generated simulator uses a bundled coroutine runtime that is currently
+x86/Unix-only. On arm64 and Windows, `llg` can still lint, elaborate, and emit
+C with `--gen-only`, but it cannot build and run that emitted model yet.
 
-The LSP applies per-root `[analysis]` limits of 1 MiB per unique input file
-and 8 MiB across unique source/include inputs by default. Override them in
-`llg.toml` when a project needs larger files. The process-wide memory safeguard
-is opt-in through `LLG_MEMORY_LIMIT_MB`; it measures the complete `llg_ls` or
-`llg` process and terminates immediately at the configured physical-memory
-ceiling. See [configuration](docs/config.md) for the per-root input limits.
+## Build prerequisites
 
-For request-to-Surelog diagnostics, run with `LLG_LOG=debug` (or `trace` for
-every transport message) and optionally set `LLG_LOG_FILE`. Logs always go to
-stderr/the configured file, never stdout, so stdio JSON-RPC remains valid.
+All platforms require:
 
-Open-buffer semantic tokens are served from the current unsaved text only
-when that text has no syntax diagnostics; incomplete syntax returns an empty
-token stream instead of unstable partial highlighting or stale cached colors.
-Inactive conditional branches and non-lexical compiler-directive lines are
-position-preservingly masked for this isolated parse so valid directives such
-as `` `include`` do not become false syntax errors, and include contents are
-not read by the request.
-The custom `llg/moduleExplorer` response is bounded as well, but reserves
-capacity for useful hierarchy roots and module definitions before optional
-port/parameter/signal contents can consume the remaining response budget.
+- A recursive Git checkout: `git submodule update --init --recursive`.
+- Stable Rust and Cargo from [rustup](https://rustup.rs/).
+- CMake 3.20 or newer.
+- A C and C++ compiler with the platform's standard build tools.
+- Python 3 with the `orderedmultidict` package.
+- A Java 11 or newer runtime for the parser generator.
+- `patch`, or Git with `git apply` support.
+- zlib development files for waveform-enabled generated models.
 
-## Using the simulator (`llg`)
+A Python virtual environment keeps the build dependency local:
 
 ```sh
-llg [generate options] [build options] [--top <module>] <file.sv>...
+python3 -m venv .venv
+. .venv/bin/activate
+python -m pip install orderedmultidict
 ```
 
-Generate-time options:
+### Linux
 
-- `--top <module>` — top module to elaborate
-- `--lint` — run the linter before codegen; lint errors abort (exit 1)
-- `--lint-json [<path>]` — machine-readable lint report only, no simulation
-- `--lint-config <file>` — load a `llg-lint.toml` rule configuration
-- `--gen-only` — emit model + runtime + `CMakeLists.txt` into
-  `target/sim/<design>` (prints the directory), then exit without
-  configuring/building/running
+On Ubuntu or Debian, install the native prerequisites:
 
-The 24-rule shared registry is also used by the language server, including
-checks for undriven signals, incomplete sensitivity lists, out-of-range
-selects, X/Z logical equality, duplicate exact-case labels, empty implicit
-sensitivity, assignment expressions in conditions, and `casex`. See
-[`src/core/lint/readme.md`](src/core/lint/readme.md) for rule and configuration
-details.
+```sh
+sudo apt-get update
+sudo apt-get install build-essential cmake patch python3 python3-venv \
+  default-jre zlib1g-dev
+```
 
-Build-time options:
+Build both programs:
 
-- `--generator <backend>` — cmake `-G` backend (e.g. `Ninja`,
-  `"Unix Makefiles"`); overrides `$CMAKE_GENERATOR`
+```sh
+cargo build --release --bin llg --bin llg_ls
+```
 
-CMake is the only supported model builder; it runs automatically after C
-emission. Exit codes: `0` success · `1` errors · `2` usage error. The
-simulator's exit code is propagated.
+For a fully static Linux x86_64 build, the included Docker image provides the
+musl toolchain and native dependencies:
 
-Waveforms are enabled from HDL with `$dumpfile("trace.vcd")` or
-`$dumpfile("trace.fst")` plus `$dumpvars`. Waveform-enabled generated models
-need zlib and a thread library discoverable by CMake; all GTKWave libfst source
-is emitted from the repository, with no build-time download. A dedicated
-writer thread consumes a bounded lossless ring so the simulation scheduler
-does not perform compression or file I/O. `$dumpon`, `$dumpoff`, `$dumpall`,
-`$dumpflush`, and `$dumplimit` are supported; `$dumpvars` depth/scope filtering
-is not yet implemented and currently dumps all user-visible storage with a
-warning.
+```sh
+docker build --platform linux/amd64 --build-arg UID=$(id -u) \
+  --build-arg GID=$(id -g) -t llg-dev .
+docker run --rm --platform linux/amd64 -v "$(pwd)":/workspace \
+  -v llg-target:/workspace/target \
+  llg-dev cargo build --release --bin llg --bin llg_ls \
+  --target x86_64-unknown-linux-musl
+```
 
-Environment variables:
+### macOS arm64
 
-- `LLG_CC` / `CC` — C compiler for the generated model
-- `LLG_CFLAGS` — extra compiler flags (e.g. sanitizers)
-- `LLG_CMAKE` — override the cmake program
-- `CMAKE_GENERATOR` — passed through to cmake
+- Install Xcode Command Line Tools: `xcode-select --install`.
+- Install CMake, Python 3, and Java 11+ with your package manager. The Xcode
+  SDK supplies zlib.
+- Create the Python environment shown above.
+- Add and build the Rust target:
 
-### Example
+```sh
+rustup target add aarch64-apple-darwin
+cargo build --release --bin llg --bin llg_ls \
+  --target aarch64-apple-darwin
+```
+
+### Windows
+
+- Install Visual Studio Build Tools with the **Desktop development with C++**
+  workload and the Windows SDK.
+- Install CMake, Python 3, Java 11+, Git, and stable Rust.
+- Run the build from a matching MSVC Developer PowerShell.
+- Create and activate the Python environment:
+
+```powershell
+py -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install orderedmultidict
+```
+
+Build for x86_64:
+
+```powershell
+rustup target add x86_64-pc-windows-msvc
+cargo build --release --bin llg --bin llg_ls `
+  --target x86_64-pc-windows-msvc
+```
+
+For Windows arm64, install the MSVC arm64 tools and replace the target with
+`aarch64-pc-windows-msvc`.
+
+## Using `llg`
+
+```text
+llg [options] <file.sv>...
+```
+
+Common options:
+
+- `--top <module>`: select the top-level module.
+- `--lint`: lint before simulation; lint errors stop the build.
+- `--lint-json [<path>]`: write a JSON lint report and exit.
+- `--lint-config <file>`: load rule settings from a TOML file.
+- `--gen-only`: generate C11 sources and `CMakeLists.txt` without building.
+- `--generator <name>`: choose a CMake generator, such as `Ninja`.
+
+Exit status is `0` on success, `1` on compile/lint/build errors, and `2` for
+invalid command-line usage. A completed simulator's exit status is propagated.
+
+### Simulation example
+
+Create `hello.sv`:
 
 ```systemverilog
-// tb.sv
-module counter(clk, rst, out);
-  input clk, rst;
-  output reg [7:0] out;
-  always @(posedge clk) out <= rst ? 8'd0 : out + 8'd1;
-endmodule
-
-module tb;
-  reg clk = 0, rst = 1;
-  wire [7:0] cnt;
-  counter u(.clk(clk), .rst(rst), .out(cnt));
-  always #5 clk = ~clk;
+module hello;
   initial begin
-    #12 rst = 0;
-    #50 $display("cnt=%0d", cnt);
+    $display("Hello from Lapligence");
     $finish;
   end
 endmodule
 ```
 
-Run it:
+Build and run it:
 
 ```sh
-$ llg --top tb tb.sv
-cnt=5
+target/release/llg --top hello hello.sv
 ```
 
-Artifacts land in `target/sim/tb/`: the emitted C model, runtime sources,
-and the CMake-built executable under `build/bin/`.
+The generated sources and executable are written under `target/sim/hello/`.
 
-## Tests
+Other useful invocations:
 
 ```sh
-scripts/run-tests.sh                          # whole suite, parallel
-scripts/run-tests.sh --test sim_counter       # subset; args pass through
-cargo test                                    # plain libtest, always available
+# Lint and then simulate.
+target/release/llg --lint --top hello hello.sv
+
+# Produce a machine-readable lint report without simulating.
+target/release/llg --lint-json lint-results.json hello.sv
+
+# Generate model sources without building or running them.
+target/release/llg --gen-only --top hello hello.sv
 ```
 
-`scripts/run-tests.sh` uses [cargo-nextest](https://nexte.st) when installed
-(`cargo install cargo-nextest --locked`) and falls back to `cargo test`
-otherwise.  nextest runs every test in its own process, so the many
-integration-test binaries execute concurrently instead of one-by-one; the
-profile lives in `.config/nextest.toml` (no retries; Surelog-heavy suites are
-grouped into a capped-concurrency `surelog-heavy` pool).
+To generate waveforms, use `$dumpfile("trace.vcd")` or
+`$dumpfile("trace.fst")` with `$dumpvars` in the HDL source.
 
-Parallelism is safe by construction: suites that move the process-global
-working directory serialize their tests internally through a mutex, and every
-temporary directory is keyed by `std::process::id()` (plus a per-test counter),
-so concurrently running binaries never share paths.  Plain `cargo test`
-remains supported and runs tests within each binary on parallel threads.
+## Using `llg_ls`
+
+`llg_ls` is a stdio LSP server. An editor or LSP client should launch it as a
+child process; it is not an interactive terminal program.
+
+Use the release binary as the editor's server command:
+
+```text
+/absolute/path/to/lapligence/target/release/llg_ls
+```
+
+Each workspace can contain an `llg.toml`:
+
+```toml
+schema_version = 1
+
+[sources]
+directories = ["rtl", "tb"]
+include = ["**/*.v", "**/*.sv"]
+
+[compile]
+top = "tb"
+include_dirs = ["include"]
+defines = ["SIMULATION"]
+
+[lint.rules.width-mismatch]
+severity = "error"
+```
+
+- Missing configuration uses the workspace root and discovers `.v`/`.sv`
+  files recursively.
+- Configuration changes are reloaded without restarting the server.
+- Logs go to stderr and never corrupt the stdio protocol.
+- Set `LLG_LOG=debug` for diagnostic logging or `LLG_LOG_FILE=<path>` to write
+  logs to a file.
+
+See [LSP configuration](docs/config.md) for all source, compile, analysis, and
+lint settings.
+
+## Running tests
+
+Run the complete suite:
+
+```sh
+scripts/run-tests.sh
+```
+
+Run one integration-test binary:
+
+```sh
+scripts/run-tests.sh --test sim_counter
+```
+
+The script uses `cargo-nextest` when available and otherwise falls back to
+`cargo test`. Install nextest with:
+
+```sh
+cargo install cargo-nextest --locked
+```
+
+Run the same serialized test command used by CI:
+
+```sh
+cargo test --all-features -- --test-threads=1
+```
+
+Before submitting a change, run the main checks:
+
+```sh
+cargo fmt --check
+cargo check --all-targets --all-features
+cargo check --lib --no-default-features
+cargo clippy --all-targets --all-features -- -D warnings
+cargo test --all-features -- --test-threads=1
+```
+
+## Build cleanup
+
+Native frontend and generated-model builds can consume significant disk space:
+
+```sh
+scripts/clean.sh --dry-run  # show removable build data
+scripts/clean.sh            # remove old frontend and simulator outputs
+scripts/clean.sh --all      # also remove the active frontend build
+```
