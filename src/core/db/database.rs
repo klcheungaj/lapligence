@@ -23,8 +23,8 @@
 //! `assign` (`vpiAssignStmt`)/`fork … join`/`wait fork`/
 //! `disable fork`/`disable <label>`/`break`/`continue` statements and the
 //! VPI `null` statement are captured as dedicated [`StmtKind`] variants
-//! (`null` objects are defined by the VPI/UHDM type system but not emitted
-//! by Surelog v1.86 elaboration, which drops `;` statements).
+//! (`null` objects are defined by the VPI/UHDM type system but the pinned
+//! Surelog elaboration drops empty `;` statements).
 //!
 //! Named events (`event ev;`) are captured as [`NodeKind::NamedEvent`] nodes
 //! from `vpiNamedEvent` iteration on module instances and generate scopes.
@@ -380,7 +380,7 @@ pub enum NodeKind {
         is_interface: bool,
         /// Raw `vpiTimeUnit` of the instance as Surelog reports it — a
         /// scaled integer per VPI; stored verbatim (currently always 0 in
-        /// Surelog v1.86 output, which never populates it).
+        /// the pinned Surelog output, which never populates it).
         timeunit: i32,
         /// Raw `vpiTimePrecision` of the instance (see `timeunit`).
         timeprecision: i32,
@@ -392,14 +392,14 @@ pub enum NodeKind {
     ///     (`vpiVariables` — Surelog models fields as ordinary variables);
     ///  2. one [`NodeKind::FuncTask`] per method (`vpiMethod` relationship —
     ///     NOT `vpiTaskFunc`, which returns nothing on class_defn in Surelog
-    ///     v1.86; the constructor is a function named `new`).
+    ///     Surelog; the constructor is a function named `new`).
     ClassDef,
     /// `vpiPort`; `high`/`low` resolve to the parent/child net/var nodes.
     /// Interface-typed ports carry an [`NodeKind::IfaceConn`] child.
     ///
     /// The raw connection-presence facts are kept next to the resolved
     /// targets because `high: None` alone is ambiguous (verified against
-    /// Surelog v1.86): a port omitted from the connection list has NO
+    /// the pinned Surelog): a port omitted from the connection list has NO
     /// `vpiHighConn` object, an explicitly-empty `.p()` has one that is a
     /// zero-operand `vpiOperation` with `VpiOpType == vpiNullOp`, and an
     /// expression/constant connection (`.p(a & b)`, `.p(4'd0)`) has a real
@@ -456,7 +456,7 @@ pub enum NodeKind {
     },
     /// A `vpiNamedEvent`: `event ev;` (module or generate-scope level).
     /// Block-local event declarations are NOT captured as events — Surelog
-    /// v1.86 models them as ordinary 1-bit `logic_var`s under the block's
+    /// the pinned Surelog models them as ordinary 1-bit `logic_var`s under the block's
     /// `vpiVariables`, indistinguishable from real logic variables.
     NamedEvent,
     Param {
@@ -507,7 +507,7 @@ pub enum NodeKind {
         class: PrimClass,
         /// Owned interpretation of `vpiPrimType`.
         prim_type: PrimitiveType,
-        /// Owned `vpiStrength0`/`vpiStrength1` properties (Surelog v1.86
+        /// Owned `vpiStrength0`/`vpiStrength1` properties (the pinned Surelog
         /// never sets them on primitives; unknown values are retained so
         /// the simulator can reject drive-strength gates).
         strength0: Strength,
@@ -699,7 +699,7 @@ pub enum StmtKind {
         expression: Option<String>,
     },
     /// `-> ev;` / `->> ev;` — trigger a named event.  The `blocking` property
-    /// is captured verbatim but is NOT reliable in Surelog v1.86 output
+    /// is captured verbatim but is NOT reliable in the pinned Surelog output
     /// (verified empirically: both trigger forms report `vpiBlocking = 1`,
     /// so the blocking/non-blocking distinction is lost).  Surelog exposes no
     /// VPI relationship from the event_stmt to its target named_event (the
@@ -806,7 +806,7 @@ pub enum StmtKind {
 
 /// Intra-assignment control of a procedural assignment (`a = #5 b;`).
 ///
-/// Surelog v1.86 models every control form — `#N`, `@(...)`,
+/// The pinned Surelog models every control form — `#N`, `@(...)`,
 /// `repeat (n) @(...)` — as the `assignment`'s `delay_control` child, which
 /// exposes no VPI value accessor, so the walk classifies the form from the
 /// source text the child points at: for a plain delay the recorded position
@@ -1512,7 +1512,7 @@ impl Builder {
     /// surfaces downstream as a clean codegen error.  Generate scopes are
     /// transparent: they elaborate INSIDE one instance, so the walk crosses
     /// them freely and still stops at that instance.  Used for trigger
-    /// statements: Surelog v1.86 exposes no VPI relationship from an
+    /// statements: the pinned Surelog exposes no VPI relationship from an
     /// `event_stmt` to its target object (verified empirically — only
     /// `vpiName` survives), so the captured events' full names are matched as
     /// `<ancestor full name>.<name>`.

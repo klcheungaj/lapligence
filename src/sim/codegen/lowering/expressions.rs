@@ -1404,7 +1404,7 @@ impl<'a> Codegen<'a> {
                 if width > LLG_MAX_WIDTH {
                     return Err(format!(
                         "concatenation in `{scope_path}` is {width} bits wide; \
-                         the v1 runtime maximum supported width is {LLG_MAX_WIDTH}"
+                         the runtime maximum supported width is {LLG_MAX_WIDTH}"
                     ));
                 }
                 Ok(IrExpr::new(
@@ -1447,7 +1447,7 @@ impl<'a> Codegen<'a> {
                 if total > LLG_MAX_WIDTH as u128 {
                     return Err(format!(
                         "replication in `{scope_path}` is {total} bits wide; \
-                         the v1 runtime maximum supported width is {LLG_MAX_WIDTH}"
+                         the runtime maximum supported width is {LLG_MAX_WIDTH}"
                     ));
                 }
                 Ok(IrExpr::new(
@@ -2037,7 +2037,7 @@ impl<'a> Codegen<'a> {
                     })?;
                     if width > LLG_MAX_WIDTH {
                         return Err(format!(
-                            "streaming assignment target is {width} bits wide; the v1 runtime \
+                            "streaming assignment target is {width} bits wide; the runtime \
                              maximum supported width is {LLG_MAX_WIDTH}"
                         ));
                     }

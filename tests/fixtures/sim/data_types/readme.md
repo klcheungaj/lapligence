@@ -13,6 +13,3 @@ Run serially:
 ```sh
 cargo test --test sim_data_types -- --test-threads=1
 ```
-
-The normative datatype and width summary is
-[sim_data_semantics.md](../../../../docs/sim_data_semantics.md).

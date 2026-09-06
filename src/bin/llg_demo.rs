@@ -3,9 +3,7 @@
 //! Parses a Verilog/SystemVerilog file using the Surelog C FFI wrapper,
 //! prints the elaborated instance tree, and dumps semantic highlight tokens.
 //!
-//! Example usage:
-//!   cd tests/UnitElabBlock
-//!   llg_demo top.sv -mutestdout
+//! Example: `llg_demo design.sv -mutestdout`.
 
 use llg::core::tokens;
 use llg::ffi::surelog;

@@ -4,8 +4,8 @@
 //! position and return LSP payloads.  [`semantic_tokens_for_open_document`]
 //! is the narrow exception: it performs one blocking, isolated parse-only run
 //! over a caller-staged open buffer.  No `Client` and no async here — the
-//! tower-lsp backend (`src/lsp.rs`) owns the cache, staging, debounce logic and
-//! actual request handling.
+//! tower-lsp backend (`lsp.rs` and `lsp/`) owns caching, staging, scheduling,
+//! and request handling.
 //!
 //! # Position conventions
 //!

@@ -1,14 +1,11 @@
-//! hellosureworld — Rust port of src/hellosureworld.cpp
+//! helloworld — low-level Surelog API demonstration.
 //!
 //! Demonstrates the Surelog API via a C FFI wrapper.
 //!
-//! Example usage (from the Surelog repo root):
-//!   cd tests/UnitElabBlock
-//!   ../../rust_hellosureworld/target/release/hellosureworld top.v -parse -mutestdout
+//! Example: `helloworld design.sv -parse -mutestdout`.
 
-// Replace musl's default allocator (and the system allocator on all targets)
-// with mimalloc.  Because this is the final link point the override is also
-// effective for all statically linked C/C++ code (Surelog, UHDM, ANTLR, …).
+// Keep this demo's Rust allocations on mimalloc; musl builds separately wrap
+// native C allocation in the root build script.
 use mimalloc::MiMalloc;
 #[global_allocator]
 static GLOBAL: MiMalloc = MiMalloc;

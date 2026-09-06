@@ -529,7 +529,7 @@ pub fn scope_path(db: &Db, id: NodeId) -> String {
 /// through the copy's modport whose parent is the copy instance — reachable
 /// from any top through child instances and generate scopes.
 ///
-/// Surelog v1.86 additionally emits an UNWIRED twin clone next to the wired
+/// The pinned Surelog additionally emits an UNWIRED twin clone next to the wired
 /// one for bare-interface ports (verified empirically; the twin is referenced
 /// by nothing).  Those twins are caught conservatively: a sibling interface
 /// instance sharing a wired copy's (parent, name) can only be another clone

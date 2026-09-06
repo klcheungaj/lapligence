@@ -323,7 +323,7 @@ endmodule
     //   neg: int'(c) sign-extends -2; signed'(c)=-2; unsigned'(c) retags
     //   8'hFE = 254.
     //   u2s: int'(bh) zero-extends 255 into the signed int -> 255.
-    //   s2uw: Surelog v1.86 captures an n'(e) size-cast target as int
+    //   s2uw: the pinned Surelog captures an n'(e) size-cast target as int
     //   (32-bit unsigned), so 32'(c) zero-extends c into 32 bits and
     //   unsigned'() retags at unchanged width -> 4294967294.  (The pure
     //   signed-source-widening-into-unsigned cast quadrant is pinned at the

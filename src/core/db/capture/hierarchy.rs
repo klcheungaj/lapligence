@@ -225,7 +225,7 @@ impl Builder {
             kids.push(self.walk_param(p, Some(id), value)?);
         }
         // Enum constants live under the package's `vpiTypedef` children
-        // (Surelog v1.86 emits each enum typedef as an `enum_typespec` with
+        // (The pinned Surelog emits each enum typedef as an `enum_typespec` with
         // one `vpiEnumConst` per enumerator, in declaration order).
         for ts in iter(vpi::vpiTypedef, h) {
             let ts = ts.raw();

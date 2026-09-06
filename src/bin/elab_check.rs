@@ -358,7 +358,7 @@ fn run(args: Vec<String>) -> i32 {
     }
 
     // Unified pipeline: parse + compile + elaborate + `-elabuhdm` with
-    // structured diagnostics (see src/compile.rs).
+    // structured diagnostics from `core::compile`.
     let out = match compile::compile_checked(&compile::CompileOpts {
         files: rest,
         top,

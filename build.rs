@@ -2,9 +2,9 @@
 //! wrapper (surelog_c_api.cpp) and links all Surelog / UHDM / ANTLR /
 //! Cap'n Proto static libraries.
 //!
-//! Release builds support static-musl Linux on x86_64/aarch64, MSVC Windows
-//! on x86_64/aarch64, and Apple Silicon macOS. Vendored libraries are linked
-//! statically; platform system libraries remain dynamic on Windows/macOS.
+//! The release matrix targets static-musl Linux on x86_64/aarch64, MSVC
+//! Windows on x86_64/aarch64, and Apple Silicon macOS. Vendored libraries are
+//! static; platform system libraries remain dynamic on Windows/macOS.
 
 use std::path::{Path, PathBuf};
 
@@ -26,9 +26,7 @@ use std::path::{Path, PathBuf};
 ///
 /// Deliberately NOT tracked: `target/` (build outputs), `slpp_all/`
 /// (Surelog preprocessor scratch from tests run in the repo cwd),
-/// `vendor/{verilator,yosys,synlig,libaco}` (not consumed by this build
-/// graph), `docs/`, `tests/`, `perf/`.  No CMakePresets*.json exists in
-/// the vendored tree (checked); if one is added it belongs here.
+/// `vendor/libaco` (embedded later in generated models), `docs/`, and `tests/`.
 fn emit_rerun_if_changed() {
     // Environment variables read by this script: without these directives a
     // value change alone would NOT re-run the script (Cargo tracks files,
@@ -39,8 +37,6 @@ fn emit_rerun_if_changed() {
     // Locally compiled sources (the `cc` crate steps below).
     println!("cargo:rerun-if-changed=src/wrapper/surelog_c_api.cpp");
     println!("cargo:rerun-if-changed=src/wrapper/surelog_c_api.h");
-    // mimalloc_shim.c was previously UNTRACKED (the original three-line
-    // block missed it): editing it did not re-run this script at all.
     println!("cargo:rerun-if-changed=src/wrapper/mimalloc_shim.c");
 
     // Patches applied to the vendored submodule.  Per-file directives are
@@ -101,33 +97,6 @@ fn emit_rerun_if_changed() {
     println!("cargo:rerun-if-changed=vendor/Surelog/third_party/antlr4_bin");
 }
 
-// ───────────────────────────────────────────────────────── Requirement B ──
-// Compilation-time notes (evidence recorded, low-risk wins implemented):
-//
-// * The `cmake` crate already parallelizes the Surelog build: for
-//   Makefile-based projects (ours is — <build>/Makefile) it transfers
-//   Cargo's jobserver via MAKEFLAGS/CARGO_MAKEFLAGS on Linux, and only
-//   falls back to an explicit `--parallel $NUM_JOBS` when no jobserver can
-//   be inherited (cmake ≥ 3.12).  Nothing to gain here without changing
-//   generators.
-// * Ninja would shave configure time but is NOT installed in the dev
-//   container (`ninja --version` fails); auto-switching generators based
-//   on availability was rejected as speculative — install ninja AND pass a
-//   generator explicitly if wanted.
-// * The `cc` crate steps compile ONE translation unit each
-//   (surelog_c_api.cpp; mimalloc static.c + shim), so there is nothing to
-//   parallelize inside them.
-// * Remaining serialization in this script (patch probes, driver queries)
-//   is milliseconds-scale — left alone.
-//
-// Implemented win: opt-in ccache for the CMake build.  Enable with
-// LLG_CCACHE=1 (also accepts on/true, case-insensitive); requires ccache
-// on PATH.  This helps most across clean rebuilds and profile/target
-// switches (cache hits on unchanged TUs); a first cold build pays a small
-// cache-write overhead.  The wrapper TU is also cacheable by exporting
-// CC="ccache g++" CXX="ccache g++" manually — left to users because it is
-// a single file and rarely rebuilt in isolation.
-//
 /// Returns the ccache executable when the user opted in via LLG_CCACHE
 /// and it is present on PATH; None otherwise.  An opt-in without a findable
 /// binary emits a cargo warning instead of silently disabling the cache.
@@ -166,8 +135,7 @@ fn sync_launcher_state(build_dir: &Path, active: bool) {
     let marker = build_dir.join(".llg_ccache_state");
     let changed = match std::fs::read_to_string(&marker) {
         Ok(s) => s.trim() != state,
-        // No marker yet: caches created before this feature existed never
-        // carried a launcher, so only switching ON needs a reconfigure.
+        // An absent marker represents the default launcher-off state.
         Err(_) => active,
     };
     if !changed {
@@ -228,8 +196,7 @@ fn cmake_build_surelog(repo: &Path, build_dir: &Path) {
     let mut cfg = cmake::Config::new(repo);
     cfg.out_dir(build_dir)
         .define("CMAKE_BUILD_TYPE", build_type)
-        // tcmalloc is glibc-specific; disable it unconditionally so that the
-        // Rust-side mimalloc global allocator is the sole malloc provider.
+        // Avoid a second allocator in the statically linked frontend.
         .define("SURELOG_WITH_TCMALLOC", "OFF")
         // The Rust binaries consume only static frontend archives. Avoid
         // building unused shared variants and test targets.
@@ -271,7 +238,7 @@ fn cmake_build_surelog(repo: &Path, build_dir: &Path) {
         cfg.cxxflag("-w");
     }
 
-    // Opt-in compiler cache (LLG_CCACHE=1): see the Requirement B notes.
+    // Opt-in compiler cache (LLG_CCACHE=1).
     // The launcher is defined in BOTH states so that switching it off also
     // overrides the cached value (an absent -D would leave the stale
     // CMakeCache entry active).
@@ -568,7 +535,7 @@ fn build_surelog_wrapper(manifest_dir: &Path) {
     // so all C allocations (Surelog, UHDM, ANTLR, Cap'n Proto) go through
     // mimalloc without touching operator new/delete.
     // operator new in static libstdc++ calls malloc → __wrap_malloc → mi_malloc.
-    // Rust allocations use MiMalloc (#[global_allocator]) directly.
+    // Rust allocations that reach malloc use the same wrapped symbols.
     // No MI_MALLOC_OVERRIDE means no operator new/delete conflict with stdc++.
     // The final binary is fully static — portable across all Linux distros.
     //

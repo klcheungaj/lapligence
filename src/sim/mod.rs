@@ -1,21 +1,14 @@
 //! sim — Verilog/SystemVerilog → C11 code generation and simulation runtime.
 //!
-//! [`codegen::generate`] lowers an elaborated UHDM design (from
-//! `core::compile`) into a C11 model; [`rt`] provides the embedded C runtime
-//! (4-state `sv4_t` values and a coroutine-based event scheduler) and the
-//! vendored libaco sources.  The single model builder is
+//! [`codegen::generate`] captures an elaborated UHDM design, lowers it to
+//! [`ir`], applies [`opt`], and renders it through [`emit_c`]. [`rt`] provides
+//! the embedded C runtime and vendored libaco sources. The single model builder is
 //! [`build::build_model_cmake`] (CMake-only; invoked automatically right
 //! after C emission — see the `build` module docs for env vars and generator
 //! selection).
 //!
-//! v1 scope: 4-state semantics (X and Z stored and displayed distinctly),
-//! model-sized packed vectors (the C backend's exclusive capacity is `1 << 20`
-//! bits), processes (`initial`/`always`, including
-//! generate-block processes), event control, timescale-aware delays, NBA,
-//! continuous assignments, parameter propagation, port + interface links,
-//! functions/tasks (recursion, defaults, inlining), fork/join, arrays/
-//! memories, casez/casex, hierarchical reads, `$display`/`$monitor`/`$strobe`/
-//! `$finish`/`$time`.
+//! Supported language constructs and limits are maintained in
+//! `docs/sim_features.md` rather than duplicated here.
 
 pub mod build;
 pub mod codegen;

@@ -8,7 +8,7 @@
 //! recorded decisions verbatim and the optimizer transforms the model
 //! conservatively without recomputing any wake behavior.
 //!
-//! Conventions carried over from the pre-IR code generator:
+//! IR conventions:
 //!
 //! - an expression whose `width` is 0 is a *real* (double) value; packed
 //!   values are never zero-width (`REAL_EXPR_WIDTH`);
@@ -965,7 +965,7 @@ pub enum IrStmt {
     },
     /// `-> ev;` — trigger the named event (index into [`IrModel::events`]);
     /// wakes ALL current waiters.  Non-blocking triggers (`->>`) are lowered
-    /// the same way: Surelog v1.86 loses the distinction in its UHDM output.
+    /// the same way: the pinned Surelog loses the distinction in its UHDM output.
     EventTrigger {
         ev: usize,
     },

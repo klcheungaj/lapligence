@@ -1,8 +1,8 @@
 //! Lapligence (llg) — Verilog/SystemVerilog simulation and language tooling built on
 //! Surelog + UHDM.
 //!
-//! The crate is organised into two layers, both shared by the LSP server
-//! (`src/bin/llg_ls/`) and the simulator tooling (`src/bin/elab_check.rs`):
+//! The crate exposes the shared frontend, owned analysis, simulator pipeline,
+//! and process safeguard used by the `llg` and `llg_ls` binaries:
 //!
 //! - [`ffi`] — Rust↔C(++) FFI layer.  `ffi::surelog` manages Surelog compile
 //!   sessions (parse/compile/elaborate flags, structured diagnostics);
@@ -13,11 +13,12 @@
 //!   parameter/constant-expression resolver, and `core::tokens` /
 //!   `core::vobject_types` collect VPI + parse-tree objects for semantic
 //!   highlighting.
+//! - [`sim`] — owned-database lowering, typed IR, optimization, C11 emission,
+//!   model building, and the embedded runtime sources.
 //! - [`memory_limit`] provides the shared process-memory safeguard used by
 //!   both executable frontends.
 //!
-//! Binary targets consume the same modules; nothing LSP- or simulator-specific
-//! lives in this library.
+//! LSP protocol and async dependencies remain in the `llg_ls` binary.
 
 pub mod core;
 pub mod ffi;

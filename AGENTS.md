@@ -53,27 +53,24 @@ contracts in their owning guide and link to them instead of copying them here.
 ## Build and references
 
 Cargo's root `build.rs` drives CMake for Surelog/UHDM/ANTLR and the C wrapper.
-Even `cargo check` can require a native build. Release targets are static-musl
-Linux on x86_64/arm64, MSVC Windows on x86_64/arm64, and Apple Silicon macOS.
-Linux executables are fully static; Windows embeds the MSVC/UCRT runtime and
-macOS/Windows dynamically import only platform system libraries. The release
-workflow audits those linkage contracts. Keep run evidence and remaining
-generated-simulator limitations in local `persistence/platforms.md`.
+Even `cargo check` can require a native build. The release workflow targets
+static-musl Linux on x86_64/arm64, MSVC Windows on x86_64/arm64, and Apple
+Silicon macOS, and audits their linkage contracts. Do not treat a configured
+matrix leg as validated support; keep run evidence and generated-simulator
+limitations in local `persistence/platforms.md`.
 
 - Build with `cargo build --bin llg_ls`, `--bin llg`, or `--bin elab_check`;
   demo bins are also available.
-- Binaries select mimalloc at final link; on musl Linux, `build.rs` and
-  `mimalloc_shim.c` also redirect C malloc/free through `--wrap`.
-- Keep `#[link(name = "surelog_c_wrapper", kind = "static")]` in
-  `ffi/surelog.rs` and `ffi/vpi.rs`: these carry native libraries transitively
-  into bins; build-script `link-lib` output alone applies to the lib target.
+- `llg_ls` and `helloworld` select mimalloc as their Rust global allocator. On
+  musl Linux, `build.rs` and `mimalloc_shim.c` redirect C `malloc`/`free`
+  through `--wrap` for every binary.
+- Preserve the native `#[link]` attributes in `ffi/surelog.rs` and
+  `ffi/vpi.rs`; they carry the wrapper and frontend archives through the Rust
+  library boundary.
 - Wrapper changes rebuild quickly; vendored Surelog/CMake changes trigger a
   full frontend rebuild.
-- `vendor/synlig` is a Surelog→Yosys parse/elaborate reference; `vendor/yosys`
-  and `vendor/verilator` supply synthesis/codegen/scheduling references
-  (`V3EmitC`, `V3Sched`, `verilated_timing`). `vendor/libaco` documents
-  `aco_create`, `aco_resume`, `aco_yield`, `aco_exit`, shared stacks and
-  per-coroutine save stacks.
+- `vendor/libaco` documents `aco_create`, `aco_resume`, `aco_yield`, `aco_exit`,
+  shared stacks and per-coroutine save stacks.
   Verilog/SystemVerilog LRMs are PDFs in `docs/specification/`.
 - CI/release commands and caveats live in [tests/AGENTS.md](tests/AGENTS.md).
   `persistence/ROADMAP.md` is the remaining-work plan of record.

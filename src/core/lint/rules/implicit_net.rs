@@ -7,7 +7,7 @@
 //! The created `logic_net` carries **no typespec**, while every explicitly
 //! declared net/variable gets one, so in the owned database the signature of
 //! an implicitly-declared net is a [`NodeKind::Net`] whose [`TypeInfo`] kind
-//! is `"other"` (verified against Surelog v1.86 elaboration output; the
+//! is `"other"` (verified against the pinned Surelog elaboration output; the
 //! object is positioned at its creating use site).
 //!
 //! Undeclared identifiers in other positions degrade differently and are not

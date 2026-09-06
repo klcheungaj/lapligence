@@ -179,9 +179,9 @@ See `tests/sim_net_defaults.rs`.
   until the runtime zero-delay guard trips. See the lowering loop above.
 - Whole-signal `force sig = expr;` ignores procedural blocking/NBA writes while
   forced. `release sig;` restores the pre-force value without re-evaluating
-  drivers changed during force (v1 approximation). Re-force changes the forced
-  value but preserves the original saved value. Normal signal writes implement
-  force/release so `@(sig)`/wait waiters wake.
+  drivers changed during force (current approximation). Re-force changes the
+  forced value but preserves the original saved value. Normal signal writes
+  implement force/release so `@(sig)`/wait waiters wake.
 - Procedural continuous `assign <variable> = expr;` / `deassign <variable>;`
   use a pre-scanned enable-guarded process per site. Deassign disables the
   driver, retaining the last value (`tests/sim_force.rs`).

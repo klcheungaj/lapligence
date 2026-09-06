@@ -386,7 +386,7 @@ impl<'a> Codegen<'a> {
         }
         if width > LLG_MAX_WIDTH {
             return Err(format!(
-                "unpacked aggregate storage `{object_name}` in `{path}` is {width} bits wide; the v1 runtime maximum supported width is {LLG_MAX_WIDTH}"
+                "unpacked aggregate storage `{object_name}` in `{path}` is {width} bits wide; the runtime maximum supported width is {LLG_MAX_WIDTH}"
             ));
         }
         let storage_name = member_name
@@ -1045,7 +1045,7 @@ impl<'a> Codegen<'a> {
         };
         if w > LLG_MAX_WIDTH {
             return Err(format!(
-                "signal `{name}` in `{path}` is {w} bits wide; the v1 runtime \
+                "signal `{name}` in `{path}` is {w} bits wide; the runtime \
                  maximum supported width is {LLG_MAX_WIDTH}"
             ));
         }
@@ -2308,7 +2308,7 @@ impl<'a> Codegen<'a> {
     /// declaration-initializer expressions at elaboration): a plain constant
     /// first, then constant-foldable operations/params via `eval_bits` (which
     /// resolves parameter references through `param_vals`).  Anything
-    /// non-constant is rejected — v1 variable initializers must be constant
+    /// non-constant is rejected because variable initializers must be constant
     /// expressions.
     pub(super) fn var_decl_init(
         &self,
@@ -2405,7 +2405,7 @@ impl<'a> Codegen<'a> {
         };
         if elem_width > LLG_MAX_WIDTH {
             return Err(format!(
-                "array `{name}` in `{path}` has {elem_width}-bit elements; the v1 \
+                "array `{name}` in `{path}` has {elem_width}-bit elements; the \
                  runtime maximum supported width is {LLG_MAX_WIDTH}"
             ));
         }
@@ -2801,7 +2801,7 @@ impl<'a> Codegen<'a> {
             Some(ty) => {
                 if is_real_kind(&ty.kind) {
                     return Err(format!(
-                        "real/shortreal function return `{}` is not supported in v1",
+                        "real/shortreal function return `{}` is not supported",
                         self.node(ft).name
                     ));
                 }
@@ -2810,7 +2810,7 @@ impl<'a> Codegen<'a> {
                         let w = self.effective_decl_width(ft, inst, w);
                         if w > LLG_MAX_WIDTH {
                             return Err(format!(
-                                "return type of `{}` is {w} bits wide; the v1 runtime \
+                                "return type of `{}` is {w} bits wide; the runtime \
                              maximum supported width is {LLG_MAX_WIDTH}",
                                 self.node(ft).name
                             ));
@@ -2832,9 +2832,7 @@ impl<'a> Codegen<'a> {
             match self.kind(*c) {
                 NodeKind::FuncArg { direction, ty, .. } => {
                     if is_real_kind(&ty.kind) {
-                        return Err(
-                            "real/shortreal function formal is not supported in v1".to_string()
-                        );
+                        return Err("real/shortreal function formal is not supported".to_string());
                     }
                     let is_out = matches!(direction, DbDirection::Output | DbDirection::Inout);
                     formals.push((*c, is_out));
@@ -2992,9 +2990,7 @@ impl<'a> Codegen<'a> {
             let (w, s, two_state) = match self.kind(*io) {
                 NodeKind::FuncArg { ty, .. } => {
                     if is_real_kind(&ty.kind) {
-                        return Err(
-                            "real/shortreal function formal is not supported in v1".to_string()
-                        );
+                        return Err("real/shortreal function formal is not supported".to_string());
                     }
                     match ty.width {
                         Some(w) if w <= LLG_MAX_WIDTH => (
@@ -3004,7 +3000,7 @@ impl<'a> Codegen<'a> {
                         ),
                         Some(w) => {
                             return Err(format!(
-                                "formal `{}` of `{c_name}` is {w} bits wide; the v1 runtime \
+                                "formal `{}` of `{c_name}` is {w} bits wide; the runtime \
                              maximum supported width is {LLG_MAX_WIDTH}",
                                 self.node(*io).name
                             ))
@@ -3248,7 +3244,7 @@ impl<'a> Codegen<'a> {
             }
             if is_real_kind(&ty.kind) {
                 return Err(format!(
-                    "real/shortreal function local `{}` is not supported in v1",
+                    "real/shortreal function local `{}` is not supported",
                     self.node(node).name
                 ));
             }
@@ -3256,7 +3252,7 @@ impl<'a> Codegen<'a> {
                 Some(w) if w <= LLG_MAX_WIDTH => self.effective_decl_width(node, inst, w),
                 Some(w) => {
                     return Err(format!(
-                        "local `{}` is {w} bits wide; the v1 runtime supports at most \
+                        "local `{}` is {w} bits wide; the runtime supports at most \
                          {LLG_MAX_WIDTH}",
                         self.node(node).name
                     ))
@@ -3528,7 +3524,7 @@ impl<'a> Codegen<'a> {
                     } else {
                         if is_real_kind(&ty.kind) {
                             return Err(
-                                "real/shortreal function formal is not supported in v1".to_string()
+                                "real/shortreal function formal is not supported".to_string()
                             );
                         }
                         match ty.width {
@@ -3539,7 +3535,7 @@ impl<'a> Codegen<'a> {
                             ),
                             Some(w) => {
                                 return Err(format!(
-                                    "formal `{}` is {w} bits wide; the v1 runtime supports \
+                                    "formal `{}` is {w} bits wide; the runtime supports \
                              at most {LLG_MAX_WIDTH}",
                                     self.node(*io).name
                                 ))
@@ -4052,7 +4048,7 @@ impl<'a> Codegen<'a> {
             Pass::Procs => {
                 // Interface body processes (always/initial/always_comb blocks
                 // inside an interface definition) belong to the ACTUAL
-                // interface instance.  Surelog v1.86 does not clone them into
+                // interface instance. The pinned Surelog does not clone them into
                 // the per-port copies (they are just views); emitting one on a
                 // copy would double-drive the member through the interface
                 // link, so copies are always skipped here.
@@ -4228,7 +4224,7 @@ impl<'a> Codegen<'a> {
             }
             _ => None,
         };
-        // v1 approximation (LRM 1364-1995 §6.1.3): no pulse filtering — the
+        // Backend approximation (LRM 1364-1995 §6.1.3): no pulse filtering — the
         // LHS is written with the CURRENT rhs value D after the wake, so an
         // rhs pulse shorter than D still produces a (delayed) write with the
         // post-pulse value instead of being swallowed.
@@ -4422,26 +4418,26 @@ impl<'a> Codegen<'a> {
             PrimClass::Switch => {
                 return Err(format!(
                     "switch/transistor primitive `{shown}` in `{path}` is not \
-                     supported in v1"
+                     supported"
                 ))
             }
             PrimClass::Udp => {
                 return Err(format!(
                     "user-defined primitive instance `{shown}` in `{path}` is not \
-                     supported in v1"
+                     supported"
                 ))
             }
             PrimClass::Array => {
                 return Err(format!(
                     "primitive array `{shown}` in `{path}` (a range on a gate or \
-                     UDP instance) is not supported in v1"
+                     UDP instance) is not supported"
                 ))
             }
         }
         if strength0 != Strength::Unspecified || strength1 != Strength::Unspecified {
             return Err(format!(
                 "drive-strength specification on gate `{shown}` in `{path}` is not \
-                 supported in v1"
+                 supported"
             ));
         }
         // Which builtin gate this is; everything outside the supported set
@@ -4478,7 +4474,7 @@ impl<'a> Codegen<'a> {
             _ => {
                 return Err(format!(
                     "primitive type {prim_type} of `{shown}` in `{path}` is not \
-                     supported in v1"
+                     supported"
                 ))
             }
         };
@@ -4491,7 +4487,7 @@ impl<'a> Codegen<'a> {
         }
         // Resolve every terminal to its signal.  Terminals must be whole
         // plain signals (a ref to a net/var); select- or expression-
-        // connected terminals are rejected cleanly in v1.
+        // connected terminals are rejected cleanly.
         let mut infos: Vec<SignalInfo> = Vec::new();
         for t in &terms {
             let whole = matches!(
@@ -4502,7 +4498,7 @@ impl<'a> Codegen<'a> {
                 return Err(format!(
                     "terminal `{}` of gate `{shown}` in `{path}` is connected \
                      through a select/expression; gate terminals must be whole \
-                     plain signals in v1",
+                     plain signals",
                     self.node(t.expr).name
                 ));
             }
@@ -4536,7 +4532,7 @@ impl<'a> Codegen<'a> {
                 .join(", ");
             return Err(format!(
                 "gate `{shown}` in `{path}` connects terminals of different widths \
-                 ({widths}); v1 requires equal terminal widths (mixed widths are \
+                 ({widths}); equal terminal widths are required (mixed widths are \
                  legal Verilog, but not supported here yet)"
             ));
         }
@@ -4553,7 +4549,7 @@ impl<'a> Codegen<'a> {
         let shape_ok = match op {
             GateOp::Pull(_) => terms.len() == 1 && out_positions.len() == 1,
             GateOp::Copy | GateOp::Not => {
-                // Multi-output buf/not forms are not supported in v1.
+                // Multi-output buf/not forms are not supported.
                 terms.len() == 2 && out_positions.len() == 1
             }
             GateOp::Enable { .. } => terms.len() == 3 && out_positions.len() == 1,
@@ -4564,7 +4560,7 @@ impl<'a> Codegen<'a> {
                 GateOp::Pull(_) => "pullup/pulldown instance takes exactly one output terminal",
                 GateOp::Copy | GateOp::Not => {
                     "one-output `buf`/`not` gates take exactly one output and one \
-                     input terminal (multi-output forms are not supported in v1)"
+                     input terminal (multi-output forms are not supported)"
                 }
                 GateOp::Enable { .. } => {
                     "enable gates take exactly one output, one data input and one \
@@ -4588,14 +4584,14 @@ impl<'a> Codegen<'a> {
         self.inst = inst;
         // The output write goes through the same LHS machinery as a
         // continuous assignment (collapsed-net members lower to their driver
-        // slot); select/hierarchical outputs stay unsupported in v1.
+        // slot); select/hierarchical outputs remain unsupported.
         let out_ir = match self.lower_lhs(path, terms[out_pos].expr)? {
             IrLhs::Whole(idx) => idx,
             _ => {
                 return Err(format!(
                     "output terminal of gate `{shown}` in `{path}` must be connected \
                      to a whole plain signal (select/hierarchical gate outputs are \
-                     not supported in v1)"
+                     not supported)"
                 ))
             }
         };
@@ -5283,7 +5279,7 @@ impl<'a> Codegen<'a> {
             }
             NodeKind::Expr(ExprKind::HierPath { .. }) => {
                 // A hierarchical LHS base signal must not trigger the owning
-                // process (same rule as a plain LHS ref).  v1 supports only
+                // process (same rule as a plain LHS ref). The backend supports only
                 // constant indices/bounds on hierarchical targets, so there
                 // are no index/bounds reads to collect.
                 Ok(())
@@ -5789,10 +5785,10 @@ impl<'a> Codegen<'a> {
                 // `llg_ba`/`llg_nba` (and the collapsed inout-net driver
                 // path in `assign_statement`) apply unchanged.  A trailing
                 // select on the target is recovered from the node name /
-                // source line — Surelog v1.86's elaborated model drops
+                // source line — the pinned Surelog's elaborated model drops
                 // part-select bounds and only keeps constant bit-select
-                // indices (in the object name); constant indices/bounds only
-                // in v1.
+                // indices (in the object name); only constant indices/bounds
+                // are supported.
                 let info = self.hier_path_signal(lhs).cloned().ok_or_else(|| {
                     format!(
                         "cannot resolve hierarchical assignment LHS `{}` in \
@@ -5840,12 +5836,12 @@ impl<'a> Codegen<'a> {
 
     /// Recover a trailing select on a hierarchical assignment target.
     ///
-    /// Surelog v1.86's elaborated UHDM is lossy here: constant bit-select
+    /// The pinned Surelog's elaborated UHDM is lossy here: constant bit-select
     /// indices survive in the object's VPI name (`u.dut.sig[2]`), but
     /// part-select bounds (`u.dut.sig[3:0]`) are dropped entirely, so they
     /// are read back from the source line the node points at (the same
     /// recovery pattern as `#delay` ticks).  Only plain integer-literal
-    /// indices/bounds are supported in v1; anything else is rejected with a
+    /// indices/bounds are supported; anything else is rejected with a
     /// clear error.  Returns `Ok(None)` when the target is a whole signal.
     fn hier_lhs_select(&self, lhs: NodeId) -> Result<Option<HierSelect>, String> {
         let name = self.node(lhs).name.clone();
@@ -5898,7 +5894,7 @@ impl<'a> Codegen<'a> {
                 if inner.contains('[') || inner.contains(']') {
                     return Err(format!(
                         "nested select on hierarchical assignment LHS `{name}` \
-                         is not supported in v1"
+                         is not supported"
                     ));
                 }
                 return hier_select_from_text(inner, &name).map(Some);

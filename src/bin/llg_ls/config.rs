@@ -7,7 +7,7 @@
 //! directories, source include/exclude filters, `CompileOpts` overrides and a
 //! `LintConfig`.
 //!
-//! Contract (see the migration plan):
+//! Contract:
 //!
 //! * `schema_version = 1` is required; unknown versions and unknown v1 fields
 //!   are errors so a misspelled key cannot silently change analysis.

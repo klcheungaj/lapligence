@@ -2,7 +2,7 @@
 
 - **Purpose:** compile an elaborated design into a standalone C11 simulator.
 - **Pipeline:**
-  - `codegen.rs` lowers the owned `core::db` design to typed IR.
+  - `codegen.rs` exposes lowering from the owned `core::db` design to typed IR.
   - `opt.rs` applies conservative IR transformations.
   - `emit_c.rs` renders validated IR as C11.
   - `build.rs` builds the generated model with CMake, the embedded runtime, and

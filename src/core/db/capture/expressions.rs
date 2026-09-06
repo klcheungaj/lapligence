@@ -433,7 +433,7 @@ impl Builder {
                 let mut kids: Vec<NodeId> = Vec::new();
                 // Named events declared inside the block are captured first
                 // so trigger statements below would resolve against them.
-                // Harmless future-proofing only: Surelog v1.86 never emits
+                // Harmless future-proofing: the pinned Surelog never emits
                 // block-local event declarations as `vpiNamedEvent` children
                 // here — they arrive as ordinary 1-bit `logic_var`s under the
                 // block's `vpiVariables` (see [`NodeKind::NamedEvent`]).
@@ -782,7 +782,7 @@ impl Builder {
                 // first, then the directly enclosing scope children by name),
                 // so it is looked up in the same (vpiType, vpiFullName) index
                 // used everywhere else; a ref wrapper falls back through
-                // `resolve_ref`.  VERIFIED Surelog v1.86 quirk: when the
+                // `resolve_ref`. The pinned Surelog has a quirk: when the
                 // disable sits inside nested constructs (e.g. an `if` inside
                 // a loop body inside the named block), the compile-time name
                 // search does not climb out of the intermediate statements

@@ -1,7 +1,7 @@
 //! End-to-end simulator tests for interface body processes: always/initial/
 //! always_comb blocks declared INSIDE an interface definition.
 //!
-//! Surelog v1.86 elaborates the definition's processes onto the ACTUAL
+//! The pinned Surelog elaborates the definition's processes onto the ACTUAL
 //! interface instance only (`top.u_bus`), never onto the per-port copies
 //! (`top.u_cons.s`), which are just views kept in sync by the interface link
 //! processes.  The codegen emits the processes for the actual instance and

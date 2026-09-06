@@ -27,8 +27,9 @@ LSP-only tower-lsp/tokio/dashmap code stays in `llg_ls`.
 
 ## Startup and process state
 
-Binaries set mimalloc's `#[global_allocator]` at final link (see `llg_ls/main.rs`
-and `helloworld.rs`). Both frontends may install
+`llg_ls` and `helloworld` set mimalloc's `#[global_allocator]`; musl builds
+also wrap C allocation for every binary in the root build script. Both
+frontends may install
 `llg::memory_limit::install[_with_logger]`; policy, defaults, native behavior,
 and generated-child limits are in [../AGENTS.md](../AGENTS.md).
 Platform calls stay in `ffi/process_memory.rs`. The LSP logger uses `LLG_LOG`

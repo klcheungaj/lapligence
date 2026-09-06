@@ -273,7 +273,7 @@ impl SymbolIndex {
     ///
     /// # Decl vs. ref for ambiguous signal tokens
     ///
-    /// Empirically (Surelog v1.86 + UHDM): a true declaration site carries at
+    /// Empirically with the pinned Surelog/UHDM: a true declaration site carries at
     /// least two tokens (VPI walker + parse tree) at the same position and no
     /// `vpiRefObj` companion, while reference sites have a `vpiRefObj`
     /// companion or a single token.  Port declarations additionally emit the

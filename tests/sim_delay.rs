@@ -75,7 +75,7 @@ endmodule
 /// (b) NBA intra-assignment delay commit time: `a <= #4 8'h07;` executed at
 /// t=0 lands in the NBA region of t=4.  A plain read at t=2 sees nothing,
 /// `$strobe` (end-of-step values) pins the commit inside step t=4, and the
-/// writer itself observes the committed value afterwards.  (v1 note: the
+/// writer itself observes the committed value afterwards. The current backend's
 /// executing process suspends across the delay window for both assignment
 /// kinds — see the documented approximation in src/sim/AGENTS.md.)
 #[test]
@@ -124,7 +124,7 @@ endmodule
 }
 
 /// (c) Continuous-assignment delay: the output lags every input change by
-/// exactly D (input changes spaced further apart than D, where the v1
+/// exactly D (input changes spaced further apart than D, where the
 /// no-pulse-filter approximation agrees with the LRM).
 #[test]
 fn sim_ca_delay_lags_by_d() {
@@ -148,7 +148,7 @@ fn sim_ca_delay_lags_by_d() {
 endmodule
 "#;
 
-    // Hand-simulation (v1 lowering: body = delay D, then write CURRENT rhs):
+    // Hand-simulation (body = delay D, then write CURRENT rhs):
     //   t=0  CA starts its first evaluation but suspends for #2 (nothing
     //        written yet).  Display y=xxxx.  src X->1.
     //   t=2  CA writes y = current src = 0001, then waits on src.
@@ -401,7 +401,7 @@ endmodule
         "unexpected codegen error: {err}"
     );
     assert!(
-        err.contains("is not supported in v1"),
+        err.contains("is not supported"),
         "unexpected codegen error: {err}"
     );
 }

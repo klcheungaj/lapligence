@@ -30,12 +30,11 @@ the generated `model.c` into a standalone executable and is deliberately
     `$countones`/`$onehot`/`$onehot0`, and detect either state for `$isunknown`.
   - Real-number hooks — packed-to-`double` conversion across all `sv4_t`
     limbs (X/Z bit positions contribute zero), rounded `double`-to-packed
-    conversion (targets up to the model width),
-    scalar truth conversion, wide division/modulo/power, and `%f`/`%e`/`%g` formatting support the
-    procedural scalar real/shortreal B6 contract.  `shortreal` precision is
-    enforced by codegen at assignments and
-    initialization; unsupported double-aware scheduling contexts are rejected
-    before generated C is compiled.
+    conversion (targets up to the model width), scalar truth conversion, wide
+    division/modulo/power, and `%f`/`%e`/`%g` formatting support the procedural
+    scalar real/shortreal contract. `shortreal` precision is enforced by
+    codegen at assignments and initialization; unsupported double-aware
+    scheduling contexts are rejected before generated C is compiled.
     `$rtoi` truncates rather than using assignment rounding; real/shortreal
     bitcasts use `memcpy` and require 64-bit `double`/32-bit `float` storage.
     See the [lowering guide](../codegen/AGENTS.md) for conversion bounds.
@@ -69,8 +68,8 @@ the generated `model.c` into a standalone executable and is deliberately
 - `llg_rt_selftest.c` — C self-tests: sv4 value vectors (mirrored from the
   `core::elab` unit tests) plus scheduler checks (delay ordering, NBA
   visibility, ping-pong, directly observed nested `join_none` lifetimes, empty
-  fork-group finalization, and cumulative process slot reuse).  Compiled and run by `tests/sim_counter.rs`
-  `sim_rt_selftest`.
+  fork-group finalization, and cumulative process slot reuse). Compiled and run
+  by the `sim_rt_selftest` case in `tests/sim_counter.rs`.
 - `llg_wave.h` / `llg_wave.c` — optional VCD/FST waveform runtime. The one OS
   simulation thread is the sole producer of a bounded SPSC ring and a
   dedicated POSIX/Win32 writer thread is the sole consumer and file owner.
@@ -143,17 +142,18 @@ selected range contributes; lowering rejects dynamic net selectors.
 - The runtime is **timescale-agnostic**: it runs in integer design-precision
   ticks; the codegen scales `#N` delays and `$time`/`%t` reads per the
   calling module's `timescale` before calling `llg_wait_time`/`llg_time`.
-- Scheduler region model follows IEEE 1800 §4 (active/inactive/NBA/reactive;
-  observe/reactive are structurally empty in v1): `#0` resumes in the
-  inactive region between active and NBA, and a per-time-step iteration
-  counter trips `LLG_ZERO_LOOP_LIMIT` zero-delay loops.  Verified by
+- Scheduler region model follows the implemented IEEE 1800 §4 subset
+  (active/inactive/NBA; observed/reactive regions are absent): `#0` resumes in
+  the inactive region between active and NBA, and a per-time-step iteration
+  counter trips `LLG_ZERO_LOOP_LIMIT` zero-delay loops. Verified by
   `tests/region_conformance.rs`.
 - Coroutines must never return without `llg_proc_done`/`aco_exit` (the
   runtime aborts on that — codegen bug).
 
 ## Interactions
 
-- Above: `src/sim/codegen.rs` (emits calls into the runtime API),
+- Above: `src/sim/codegen/` selects runtime operations in IR and
+  `src/sim/emit_c/` emits calls into the runtime API;
   `src/bin/llg.rs` (builds model + runtime + libaco via
   `sim::build`), `tests/sim_counter.rs` (`sim_rt_selftest`).
 - Below: `vendor/libaco` (coroutine library, embedded and compiled with the

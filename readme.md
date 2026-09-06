@@ -23,15 +23,14 @@ cargo build --bin llg        # simulator driver
 cargo build --release         # everything, optimized
 ```
 
-Tagged/manual release builds produce `llg` and `llg_ls` for Linux x86_64 and
-arm64, Windows x86_64 and arm64, and macOS arm64. Linux uses musl and has no
-dynamic dependencies. Windows statically embeds the MSVC/UCRT runtime; macOS
-and Windows link the vendored frontend statically and import only operating
-system libraries/frameworks dynamically. The release workflow verifies these
-properties before packaging each archive and SHA-256 checksum.
+The tagged/manual release workflow is configured to build `llg` and `llg_ls`
+for Linux x86_64 and arm64, Windows x86_64 and arm64, and macOS arm64. It
+audits architecture and linkage before packaging an archive and SHA-256
+checksum. Only targets with recorded native-run evidence should be treated as
+validated; see the release workflow for the current matrix.
 
 The bundled generated-simulator coroutine runtime is currently x86/Unix-only.
-On Windows and arm64, the released driver can compile/lint/elaborate and emit C
+On Windows and arm64, the driver can compile/lint/elaborate and emit C
 with `--gen-only`, but building and running that emitted simulator still needs
 a portable coroutine backend.
 

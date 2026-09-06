@@ -1,8 +1,7 @@
 //! tower-lsp backend facade for the llg language server.
 //!
 //! The implementation is split by responsibility under `lsp/`; this module
-//! keeps the stable surface consumed by `main.rs` while that migration
-//! remains internal to the binary.
+//! keeps the surface consumed by `transport.rs` internal to the binary.
 
 mod handlers;
 

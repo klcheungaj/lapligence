@@ -572,7 +572,7 @@ impl Builder {
         if ty.kind != "other" {
             return ty;
         }
-        // Surelog v1.86 exposes a shortreal variable as vpiShortRealVar but
+        // The pinned Surelog exposes a shortreal variable as vpiShortRealVar but
         // does not attach a vpiTypespec handle. Preserve the scalar type from
         // the object discriminator instead of degrading it to `other`.
         match vpi::obj_type(h) {

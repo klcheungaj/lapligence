@@ -87,7 +87,7 @@ the simulator (`src/sim/`):
   definitions do not leak across files — a
   lost value is possible, an invented one is not.  Pure Rust, no FFI, no
   LSP dependencies; built once per analysis commit (see
-  `src/bin/llg_ls/features.rs::analyze_inner`), never inside a request.
+  `src/bin/llg_ls/features/analysis.rs::analyze_inner`), never inside a request.
 - `lint/` — shared rule engine over `db` + `model`: `LintRule`/`LintCtx`/
   `LintDiag` and a registry of 24 default rules (see
   `src/core/lint/rules/mod.rs::default_rules` for the authoritative list).

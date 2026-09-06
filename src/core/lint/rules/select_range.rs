@@ -225,7 +225,7 @@ fn check_array_select(db: &Db, base: NodeId, indices: &[NodeId]) -> Option<Selec
 
     // A var_select for `array[index][element_select]` carries one extra
     // trailing index.  Only consume exactly one extra index; anything more
-    // has no unambiguous selector-to-dimension mapping in v1.
+    // has no unambiguous selector-to-dimension mapping in the current model.
     if indices.len() != meta.dims.len() + 1 {
         return None;
     }

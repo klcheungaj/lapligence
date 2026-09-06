@@ -345,7 +345,7 @@ impl Builder {
     }
 
     pub(in crate::core::db) fn assign_control(&self, h: VpiHandle) -> Option<IntraControl> {
-        // Explicit event/repeat children would be unambiguous; Surelog v1.86
+        // Explicit event/repeat children would be unambiguous; the pinned Surelog
         // models those forms as a delay_control too, so this is only a
         // future-proof fast path.
         if child(vpi::vpiEventControl, h).is_some() || child(vpi::vpiRepeatControl, h).is_some() {

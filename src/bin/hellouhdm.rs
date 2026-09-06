@@ -1,13 +1,11 @@
-//! hellouhdm — Rust port of src/hellouhdm.cpp
+//! hellouhdm — low-level Surelog/UHDM API demonstration.
 //!
 //! Demonstrates the Surelog/UHDM API via a C FFI wrapper.
 //! Compiles a design, optionally elaborates the UHDM model, then prints:
 //!   - a flat module list (ports, processes, continuous assignments)
 //!   - the elaborated instance tree
 //!
-//! Example usage (from the Surelog repo root):
-//!   cd tests/UnitElabBlock
-//!   hellouhdm top.v -parse -mutestdout
+//! Example: `hellouhdm design.sv -parse -mutestdout`.
 
 use llg::ffi::surelog;
 use llg::ffi::vpi;

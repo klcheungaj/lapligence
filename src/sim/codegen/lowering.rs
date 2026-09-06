@@ -1,4 +1,4 @@
-//! codegen — lower an elaborated UHDM design (Surelog v1.87 `-elabuhdm`) to a
+//! codegen — lower an elaborated UHDM design (pinned Surelog `-elabuhdm`) to a
 //! C11 model for the `llg` runtime (`crate::sim::rt`).
 //!
 //! # Pipeline
@@ -98,7 +98,7 @@
 //! write targets may carry a trailing select (`top.u0.sig[3:0]`,
 //! `top.u0.sig[2]`, `top.u0.sig[3 +: 4]`) with constant integer
 //! indices/bounds only (the trailing select is recovered from the node name /
-//! source line — Surelog v1.86's elaborated model drops part-select bounds
+//! source line — the pinned Surelog's elaborated model drops part-select bounds
 //! and only keeps constant bit-select indices in the object name).
 //!
 //! The supported real subset covers procedural scalar variables, real and
@@ -144,14 +144,13 @@
 //! processes (always/initial/always_comb blocks inside an interface
 //! definition) are emitted for the ACTUAL interface instance only — the
 //! definition's processes are not cloned into the per-port copies (verified
-//! against Surelog v1.86 elaboration), which are just views kept in sync by
+//! against the pinned Surelog elaboration), which are just views kept in sync by
 //! the interface link processes.
 //!
-//! # Database-driven deviations from the VPI-based codegen
+//! # Database capture notes
 //!
 //! The database ([`crate::core::db::Db`]) does not capture every property the
-//! old handle-walking codegen read, so a few v1 behaviors changed (none are
-//! exercised by the test suite):
+//! frontend exposes. The lowering behavior for those cases is:
 //!
 //! - Array and scalar variable declaration initializers are applied in
 //!   `main()` before any process runs. `reg y = 0` arrives through
@@ -171,7 +170,7 @@
 //!   (collection order); the old codegen iterated a hash map, so its order
 //!   varied between runs.
 //!
-//! # v1 limitations (documented)
+//! # Backend limitations
 //!
 //! - X and Z are stored and displayed distinctly (`$display` prints 'x' vs
 //!   'z'; `===`/`!==` compare them literally), and casez/casex wildcard
@@ -205,7 +204,8 @@
 //!   into a temp immediately and apply it after the scaled delay; the
 //!   executing process suspends across the window for BOTH assignment kinds
 //!   (LRM 1364-1995 §9.7.4 lets a nonblocking assignment continue without
-//!   blocking — v1 approximation). Event/repeat-controlled forms are rejected;
+//!   blocking — a documented backend approximation). Event/repeat-controlled
+//!   forms are rejected;
 //!   bounded integer parameter expressions and fixed-point/time literals work.
 //!   Continuous-assignment delays
 //!   (`assign #N lhs = rhs;`) delay every write by N after the triggering
@@ -633,7 +633,7 @@ struct Codegen<'a> {
     /// interface-typed ports (a `ModPort`'s owning interface, or a bare-port
     /// `ModuleInst` directly).  Interface body processes are emitted only for
     /// the ACTUAL interface instances — the copies are just views and never
-    /// carry the definition's processes (verified in Surelog v1.86
+    /// carry the definition's processes (verified in the pinned Surelog
     /// elaboration).
     iface_copy_insts: HashSet<NodeId>,
     /// FuncTask arena node → emitted C function name.
@@ -1203,7 +1203,7 @@ impl<'a> Codegen<'a> {
     }
 
     /// Recover a parameterized function return range from its declaration.
-    /// Surelog v1.86 can retain the module's default parameter value on the
+    /// The pinned Surelog can retain the module's default parameter value on the
     /// return object even when the enclosing instance overrides it.
     fn declared_source_width(&self, declaration: NodeId, inst: NodeId) -> Option<u32> {
         let node = self.node(declaration);
@@ -1304,7 +1304,7 @@ impl<'a> Codegen<'a> {
     }
 
     /// Recover the signed marker of a based literal from its source token.
-    /// Surelog v1.86 does not expose `vpiSigned` on `vpiConstant` objects and
+    /// The pinned Surelog does not expose `vpiSigned` on `vpiConstant` objects and
     /// returns signed based literals through the unsigned value arm.
     fn signed_based_constant(&self, node: NodeId) -> bool {
         self.signed_based_literal_info(node).0
@@ -1757,13 +1757,13 @@ fn decl_value_to_const(value: Val) -> Result<IrConst, String> {
 
 /// Parse the contents of a hierarchical select bracket (`3:0`, `2`, `3 +: 4`,
 /// `8'h2a`) into a [`HierSelect`].  Only plain integer literals are accepted;
-/// identifiers (variable indices) and expressions are rejected in v1.
+/// identifiers (variable indices) and expressions are rejected.
 fn hier_select_from_text(inner: &str, target_name: &str) -> Result<HierSelect, String> {
     let s = inner.trim();
     let bad = || {
         format!(
             "hierarchical select `[{inner}]` on `{target_name}` is not \
-             supported in v1 (constant integer indices/bounds only)"
+             supported (constant integer indices/bounds only)"
         )
     };
     if let Some(plus) = s.find("+:") {
@@ -1802,7 +1802,7 @@ fn hier_select_from_text(inner: &str, target_name: &str) -> Result<HierSelect, S
 
 /// Parse a plain Verilog integer literal (decimal, sized/unsized radix form,
 /// optional sign) into an `i128`.  `None` for identifiers, x/z digits, or any
-/// other form the v1 hierarchical-select support does not handle.
+/// other form the hierarchical-select support does not handle.
 fn parse_select_int(s: &str) -> Option<i128> {
     let s = s.trim();
     if s.is_empty() {
@@ -2042,7 +2042,7 @@ enum Lhs {
 }
 
 /// A trailing select on a hierarchical assignment target, recovered from the
-/// node name / source line (Surelog v1.86's elaborated model does not carry
+/// node name / source line (the pinned Surelog's elaborated model does not carry
 /// hierarchical selects as structured expressions — see
 /// [`Codegen::hier_lhs_select`]).
 enum HierSelect {

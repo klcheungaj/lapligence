@@ -8,8 +8,8 @@ Rust (`src/ffi/`) never sees C++ directly:
 - `surelog_c_api.h/.cpp` — opaque handles (`SL_*`), session/flag setters,
   structured diagnostics (`SL_Diag`: severity/file/line/col/message), VPI
   design access.
-- `mimalloc_shim.c` — redirects C `malloc`/`free` to mimalloc at link time
-  (`--wrap`).
+- `mimalloc_shim.c` — redirects C `malloc`/`free` to mimalloc in musl builds
+  through GNU/LLD `--wrap`.
 
 ## Requirements
 

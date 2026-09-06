@@ -32,11 +32,10 @@ path = "src/bin/llg_ls/main.rs"
 required-features = ["lsp"]
 
 [dependencies]
-# MiMalloc is the global allocator for Rust (see main.rs).  The `override`
-# feature is intentionally OMITTED so libmimalloc.a exports only mi_* symbols
-# and does NOT define operator new/delete — avoiding the duplicate-symbol
-# conflict with static libstdc++.  C/C++ malloc/free are redirected to
-# mi_malloc/mi_free at link time via --wrap (see build.rs + mimalloc_shim.c).
+# `llg_ls` and `helloworld` select MiMalloc as their Rust global allocator.
+# The `override` feature stays disabled to avoid exporting replacement C++
+# allocation symbols. On musl, build.rs separately wraps C malloc/free for all
+# binaries with mimalloc_shim.c.
 mimalloc = { version = "0.1", default-features = false }
 
 # LSP framework (optional; enabled via the `lsp` feature)

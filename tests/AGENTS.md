@@ -168,15 +168,17 @@ cargo test --all-features -- --test-threads=1
 
 The PR/manual `generated-runtime-sanitizers` job has a 180-minute limit and
 runs `runtime_values`, `runtime_boundaries`, `sim_counter`, `sim_data_types`,
-`sim_data_types_next`, `sim_function`, and `sim_loops` with GCC ASan/UBSan.
+`sim_data_types_next`, `sim_data_types_completion`, `sim_function`, and
+`sim_loops` with GCC ASan/UBSan.
 This checks
 generated C/runtime memory safety, not LSP admission. The 15-minute
 `dependency-audit` job runs `cargo audit` on those triggers and Mondays at
 04:17 UTC. Neither uploads reports; workflow logs are evidence.
 
-[build-binaries.yml](../.github/workflows/build-binaries.yml) produces release
-binaries on tags/manual dispatch for Linux x86_64/arm64, Windows x86_64/arm64,
-and macOS arm64. It checks target architecture, fully static Linux linkage,
-static Windows CRT linkage, system-only Windows/macOS dynamic imports, and a
-driver startup smoke test before packaging both executables with checksums.
+[build-binaries.yml](../.github/workflows/build-binaries.yml) is configured to
+produce release binaries on tags/manual dispatch for Linux x86_64/arm64,
+Windows x86_64/arm64, and macOS arm64. It checks target architecture, fully
+static Linux linkage, static Windows CRT linkage, system-only Windows/macOS
+dynamic imports, and a driver startup smoke test before packaging both
+executables with checksums.
 Keep platform claims aligned with local `persistence/platforms.md` evidence.

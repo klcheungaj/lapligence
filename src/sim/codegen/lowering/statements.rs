@@ -192,7 +192,7 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
             return Err(format!(
                 "cannot resolve the target of `disable` in `{}`: no matching \
                  enclosing named block or task of the same process (cross-\
-                 process disables are not supported in v1)",
+                 process disables are not supported)",
                 self.path
             ));
         };
@@ -224,7 +224,7 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
             }
         }
         Err(format!(
-            "disable of `{}` in `{}` is not supported in v1: only an \
+            "disable of `{}` in `{}` is not supported: only an \
              enclosing named block of the same process, or the task itself \
              as an early return, can be disabled (cross-process disables, \
              named forks and outer inlined tasks are not supported)",
@@ -349,7 +349,7 @@ impl EmitCtx<'_, '_> {
                 }
                 Some(IntraControl::EventOrRepeat) => Err(format!(
                     "intra-assignment event/repeat control (`@(…)` or \
-                     `repeat (n) @(…)`) in `{}` is not supported in v1",
+                     `repeat (n) @(…)`) in `{}` is not supported",
                     self.path
                 )),
                 Some(IntraControl::UnresolvedDelay) => {
@@ -357,7 +357,7 @@ impl EmitCtx<'_, '_> {
                     let file = node.file.clone().unwrap_or_default();
                     Err(format!(
                         "cannot determine the `#delay` value at {file}:{} \
-                         (parameterized delays are not supported in v1)",
+                         (parameterized delays are not supported)",
                         node.line
                     ))
                 }
@@ -425,7 +425,7 @@ impl EmitCtx<'_, '_> {
                 self.lower_event_control(h)
             }
             NodeKind::Stmt(StmtKind::EventTrigger { target, .. }) => {
-                // `-> ev;` (and `->> ev;`, indistinguishable in Surelog v1.86
+                // `-> ev;` (and `->> ev;`, indistinguishable in the pinned Surelog
                 // output): wake every current waiter of the event.  A trigger
                 // never suspends the process, so it is accepted inside
                 // function bodies: IEEE 1800-2009 §13.4.4 explicitly allows
@@ -1002,12 +1002,12 @@ impl EmitCtx<'_, '_> {
             match s {
                 EventSpec::Edge { sig, posedge } => {
                     // Edge controls on named events are rejected cleanly
-                    // (v1): an event has no value, so posedge/negedge have no
+                    // because an event has no value, so posedge/negedge have no
                     // meaning (LRM 1364-1995 §9.7.3 note).
                     if let Some(ev) = self.cg.event_target_of(*sig) {
                         let name = self.cg.node(ev).name.clone();
                         return Err(format!(
-                            "edge control on a named event is not supported in v1 \
+                            "edge control on a named event is not supported \
                              (`{name}` in `{}`)",
                             self.path
                         ));
@@ -1485,7 +1485,7 @@ impl EmitCtx<'_, '_> {
         }
         if self.func.is_some() {
             return Err(format!(
-                "fork/join inside a function/task body in `{}` is not supported in v1",
+                "fork/join inside a function/task body in `{}` is not supported",
                 self.path
             ));
         }
@@ -1631,7 +1631,7 @@ impl EmitCtx<'_, '_> {
 
     /// Resolve the target of a procedural continuous `assign` / `deassign`.
     /// Variables only (LRM 1364-1995 §9.4): nets, selects/part-selects/
-    /// array elements, hierarchical paths and (v1 scope) real variables are
+    /// array elements, hierarchical paths and real variables are
     /// rejected cleanly.  Returns the signal's IR index plus its info.
     fn pca_target(&mut self, lhs: NodeId, stmt: &str) -> Result<(usize, SignalInfo), String> {
         if matches!(self.cg.kind(lhs), NodeKind::Expr(ExprKind::HierPath { .. })) {
@@ -1654,7 +1654,7 @@ impl EmitCtx<'_, '_> {
         };
         // Net targets: the elaborated ref normally binds the declaration, so
         // the net/var distinction is read straight off the arena node.
-        // Surelog v1.86 quirk: a module-level `reg` is captured as
+        // Pinned-Surelog quirk: a module-level `reg` is captured as
         // NodeKind::Net with net_type vpiReg (48) — that IS a variable.
         if let NodeKind::Expr(ExprKind::Ref { target: Some(t) }) = self.cg.kind(lhs) {
             if let NodeKind::Net { net_type, .. } = self.cg.kind(*t) {
@@ -1685,7 +1685,7 @@ impl EmitCtx<'_, '_> {
         if info.real {
             return Err(format!(
                 "procedural continuous `{stmt}` on real-valued variable in `{}` is not \
-                 supported in v1",
+                 supported",
                 self.path
             ));
         }
@@ -1778,7 +1778,7 @@ impl EmitCtx<'_, '_> {
         if rhs_reads_real {
             return Err(format!(
                 "real-valued signals in the RHS of a procedural continuous \
-                 assignment in `{}` are not supported in v1",
+                 assignment in `{}` are not supported",
                 self.path
             ));
         }
@@ -2074,10 +2074,9 @@ impl EmitCtx<'_, '_> {
                 }])
             }
             "$displayon" | "$displayoff" => {
-                self.cg.warnings.push(format!(
-                    "{name} in `{}` skipped (not supported in v1)",
-                    self.path
-                ));
+                self.cg
+                    .warnings
+                    .push(format!("{name} in `{}` skipped (not supported)", self.path));
                 Ok(vec![])
             }
             _ => Err(format!("unsupported system task {name} in `{}`", self.path)),

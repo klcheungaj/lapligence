@@ -5,8 +5,8 @@
 //!  - `uhdm_vpi_user.h` — UHDM-specific extension constants
 //!  - `uhdm_types.h`    — `UHDM_OBJECT_TYPE` enum values (as `pub const`)
 //!
-//! All VPI functions are in the `uhdm` static library (already linked via
-//! `build.rs`); no extra `#[link]` attribute is needed.
+//! VPI symbols come from the native UHDM/frontend archive set declared on the
+//! extern block below.
 
 // VPI handles are opaque C tokens: these wrappers pass them back to UHDM but
 // never dereference them in Rust. Multiple `#[link]` attributes are required
@@ -1766,11 +1766,8 @@ pub struct CbData {
 // ── VPI function declarations ─────────────────────────────────────────────────
 // Symbols are provided by the `uhdm` static library (linked via build.rs).
 //
-// The `#[link]` attributes duplicate the static archives that build.rs emits
-// through `cargo:rustc-link-lib`.  With a lib target in the package, cargo
-// applies that build-script output only to the lib; binary targets that pull
-// this module in via `#[path]` (and therefore never reference the `llg` rlib)
-// would otherwise miss the archives and fail to link.
+// Keep the native archive declarations on this Rust library boundary so
+// downstream binaries retain the complete static dependency set.
 
 // SAFETY: these declarations reproduce the VPI/UHDM headers' C ABI, including
 // each symbol name, argument layout, return layout, and callback convention.

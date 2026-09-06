@@ -414,11 +414,11 @@ endmodule
     )
     .expect("design should produce a codegen error");
     assert!(
-        err.contains("edge control on a named event is not supported in v1"),
+        err.contains("edge control on a named event is not supported"),
         "unexpected error: {err}"
     );
 
-    // Event arrays: Surelog v1.86's grammar cannot even parse them.
+    // Event arrays do not pass the pinned Surelog grammar.
     let err = match codegen_error(
         r#"module tb;
     event ev[4];

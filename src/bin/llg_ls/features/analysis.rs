@@ -77,7 +77,7 @@ pub struct Analysis {
     /// Preprocessor macro table ([`core::macros::MacroTable`]) over the exact
     /// compiled sources: config `[compile] defines` seed every file and one
     /// conservative scan per file resolves in-source `` `define ``/`` `undef ``
-    /// positionally (see `llg/src/core/macros.rs` for the documented
+    /// positionally (see `core::macros` for the documented
     /// semantics).  Built once per analysis commit — never inside a request —
     /// so macro-usage hover stays a pure read over committed data.  Empty for
     /// hand-built analyses.

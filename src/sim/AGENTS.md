@@ -5,11 +5,11 @@
 Compiles elaborated designs into C11 models that run as standalone
 executables:
 
-- `codegen.rs` — db → IR lowering (pure lowering; no string emission left).
+- `codegen.rs` — public facade for db → IR lowering in `codegen/lowering/`.
   `generate(design)` builds the owned db (`core::db`) and lowers it into an
-  `IrModel` (`generate_with_opts(design, &OptConfig::default())` delegates to
-  the optimizer + backend); the lower_expr/lower_stmt/lower_lhs families and
-  the process/link/function/init-step builders live here.  `GeneratedModel`
+  `IrModel`; `generate_with_opts` delegates to the optimizer and C backend.
+  The lower-expression/statement/LHS families and process/link/function/init
+  builders live in the lowering modules. `GeneratedModel`
   carries a `pub design_name: String` plus the emitted `model_c` and warnings.
   The behavioral contracts below (inout nets, arrays, timescale, force/
   release, interface bodies, …) are decided here, at lowering time.
@@ -29,9 +29,10 @@ executables:
   elimination uses an omit flag (no index remapping) with a read-collector
   covering processes, funcs, init steps, spawns, monitor eval fns, links,
   force targets, display args, wait sensitivity lists, and task-call temps.
-- `emit_c.rs` — the C11 backend, consuming ONLY IR types; decoupled from
-  `core::db`/`ffi`/`vpi` (enforced by `tests/emit_decoupling.rs` greps, same
-  spirit as the repo's `unsafe`-confinement rule).  Naming conventions
+- `emit_c.rs` and `emit_c/` — the C11 backend, consuming ONLY IR types;
+  decoupled from `core::db`/`ffi`/`vpi` (enforced by
+  `tests/emit_decoupling.rs` greps, same spirit as the repo's
+  `unsafe`-confinement rule). Naming conventions
   (G_/p_/D_ prefixes) and the `model.c` first-line header are unchanged.
 - `build.rs` — the CMake-only model builder (`build_model_cmake`), the only
   supported build path, invoked automatically right after C emission.  It

@@ -1,6 +1,6 @@
 //! `naming-style` — identifier naming conventions.
 //!
-//! v1 ships one built-in convention (no config file yet): modules, interfaces
+//! The rule uses one built-in convention (no config file yet): modules, interfaces
 //! and packages must be `snake_case`, signals and ports must be `snake_case`,
 //! and parameters/localparams must be `UPPER_SNAKE_CASE`.  The per-kind
 //! matchers are stored as fields on [`StyleRule`] with a [`Default`] impl so
@@ -14,7 +14,7 @@
 //! library-qualified names with `<lib>@` (e.g. `work@MyMod_Bad`); the prefix
 //! is stripped before matching.  Flat (not instantiated) module definitions
 //! are name-checked only: their signals/parameters are not captured in the
-//! db (flat module nodes carry no children), so those are not checked in v1.
+//! db (flat module nodes carry no children), so those declarations are not checked.
 
 use crate::core::db::NodeKind;
 use crate::core::lint::rules::analysis::iter_instances;

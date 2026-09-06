@@ -70,7 +70,7 @@ fn run_sim(sv: &str, top: &str, tag: &str) -> Result<(String, Vec<String>, Strin
 
 /// (a) Force overrides a process write: a blocking write to a forced reg is
 /// ignored, and `release` restores the value saved at force time (the write
-/// that was ignored is NOT applied — v1 saves the pre-force value and does
+/// that was ignored is NOT applied — the backend saves the pre-force value and does
 /// not re-evaluate drivers that changed while forced).
 #[test]
 fn sim_force_overrides_process_write() {
@@ -365,7 +365,7 @@ endmodule
 }
 
 /// (h) Clean codegen rejects: PCA on a part-select target (whole variables
-/// only in v1).
+/// only).
 #[test]
 fn sim_pca_select_target_rejected() {
     if !llg::sim::build::cmake_available() {

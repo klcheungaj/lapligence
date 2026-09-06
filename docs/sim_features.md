@@ -7,7 +7,7 @@ the simulator supports today. When a feature lands **and is tested**, flip its
 marker here; do not tick from implementation alone. Priority order equals
 document order: Verilog-core features first, SystemVerilog additions after.
 
-Statuses were audited against `src/sim/codegen.rs`, `src/sim/AGENTS.md`,
+Statuses are audited against the simulator lowering, IR, runtime, and emitter,
 `src/bin/llg.rs`, the regression suites in `tests/sim_*.rs`, and one-off
 end-to-end runs of `llg` (marked **(probed)** below). Section numbers cite
 `docs/spec-reference-verilog.md` (§1364-2001 x.y) and
@@ -185,10 +185,10 @@ Verilog era:
 - ✅ **release** restores pre-force value — §1364-2001 9.3.2 **[1995]**
 - 🟨 **force/release driver re-evaluation** — §1364-2001 9.3.2 **[1995]** drivers changed while forced are not re-evaluated (documented approximation)
 - 🟨 **Condition event expressions** `@(a && b)` — §1364-2001 9.7.2 **[1995]** wait on body read set instead of condition operands
-- ✅ **Intra-assignment timing** `a = #5 b;` / `a <= #5 b;` — §1364-2001 9.7.7 **[1995]** (sim_delay.rs) RHS evaluated immediately into a temp, LHS updated after the scaled delay; event/repeat forms rejected; the executing process suspends across the window for both kinds (v1 approximation)
+- ✅ **Intra-assignment timing** `a = #5 b;` / `a <= #5 b;` — §1364-2001 9.7.7 **[1995]** (sim_delay.rs) RHS evaluated immediately into a temp, LHS updated after the scaled delay; event/repeat forms rejected; the executing process suspends across the window for both kinds (current approximation)
 - ❌ **Repeat event control** `repeat (n) @ev` — §1364-2001 9.7.7 **[1995]** clean codegen rejection
 - ✅ **Named events** `event ev; -> ev; @ ev;` — §1364-1995 §9.7.3 **[1995]** (sim_events.rs, re-run with Surelog v1.87) trigger wakes ALL current waiters (registration order), edge-triggered (no latch); mixed or-lists `@(a or ev)` lower to ONE atomic wait (`llg_wait_mixed`); zero-delay trigger loops trip the runtime guard (sim_events.rs); 🟨 caveats: non-blocking `->>` lowers identically to `->` because v1.87 still reports `vpiBlocking=1` for both forms, and block-local event declarations behave as ordinary 1-bit logic vars; event arrays and hierarchical event references are rejected by the frontend before codegen
-- ✅ **Procedural continuous assign/deassign** — §1364-2001 9.3.1 **[1995]** (sim_force.rs) `assign <reg> = expr;` lowers to a per-site enable-guarded process plus an immediate blocking write; `deassign` clears the enable only (the variable KEEPS its last value); RHS changes propagate while assigned and re-executing the same `assign` statement re-enables the site; while assigned, ordinary procedural writes to the target (blocking AND non-blocking) still take effect immediately, and the guard re-drives from the CURRENT rhs on its next wake (an RHS-read or enable change — it never wakes on changes of the target itself); sites are pre-scanned over every process body before any body lowers, so a `deassign` resolves its site regardless of process/source order; `force` keeps priority over an active PCA, `release` restores it. Clean rejects: net targets (variables only; Surelog models module-level `reg` as Net with net_type vpiReg, which counts as a variable), selects/part-selects/array elements, hierarchical targets, real variables (v1 scope), and multiple active sites on one variable (deterministic static reject — reuse one site through control flow)
+- ✅ **Procedural continuous assign/deassign** — §1364-2001 9.3.1 **[1995]** (sim_force.rs) `assign <reg> = expr;` lowers to a per-site enable-guarded process plus an immediate blocking write; `deassign` clears the enable only (the variable KEEPS its last value); RHS changes propagate while assigned and re-executing the same `assign` statement re-enables the site; while assigned, ordinary procedural writes to the target (blocking AND non-blocking) still take effect immediately, and the guard re-drives from the CURRENT rhs on its next wake (an RHS-read or enable change — it never wakes on changes of the target itself); sites are pre-scanned over every process body before any body lowers, so a `deassign` resolves its site regardless of process/source order; `force` keeps priority over an active PCA, `release` restores it. Clean rejects: net targets (variables only; Surelog models module-level `reg` as Net with net_type vpiReg, which counts as a variable), selects/part-selects/array elements, hierarchical targets, real variables, and multiple active sites on one variable (deterministic static reject — reuse one site through control flow)
 
 SystemVerilog era:
 
@@ -259,17 +259,17 @@ Verilog era:
 - 🟨 **Multiple drivers on one net** — §1364-2001 6.1 **[1995]** bounded ordinary standalone scalar `wire`/`tri` continuous-assignment drivers resolve with explicit strengths and high-Z endpoints; port/inout, vector-strength, gate, wired-net, and charge-storage contexts remain outside this claim
 - 🟨 **Delay on continuous assign** `assign #d lhs = rhs;` — §1364-2001 6.1.3 **[1995]** (sim_delay.rs) constant/parameter delays and t=0 wait; inertial pulse rejection is not implemented, tracked by an ignored `DELAY-BUG` conformance case
 - 🟨 **Strength on continuous assign/gates** — §1364-2001 6.1.4/7.1.2 **[1995]** explicit strengths are reported passing for standalone scalar `wire`/`tri` continuous-assignment drivers in both modes; vector strengths are prohibited by §10.3.4, and gate/inout/wired-strength/trireg contexts remain unsupported
-- ✅ **Logic gates** `and nand or nor xor xnor buf not` — §1364-2001 7.2–7.3 **[1995]** (sim_gates.rs) one comb process per gate, SensLoop over the input read set; n-input gates reduce left-to-right, nand/nor/xnor negate after the full reduce; vector gates are bitwise; v1 requires equal terminal widths
+- ✅ **Logic gates** `and nand or nor xor xnor buf not` — §1364-2001 7.2–7.3 **[1995]** (sim_gates.rs) one comb process per gate, SensLoop over the input read set; n-input gates reduce left-to-right, nand/nor/xnor negate after the full reduce; vector gates are bitwise; the current backend requires equal terminal widths
 - ✅ **Tri-state buffers** `bufif0 bufif1 notif0 notif1` — §1364-2001 7.4 Table 7-5 **[1995]** (sim_gates.rs) lowered to `sv4_mux(en, data|data, Z)` / `sv4_mux(en, Z, ~(data|data))` — the passing arm is z→x-normalized with `data|data` (per-bit), so an ENABLED gate turns a data-Z into X like buf/not while known bits pass unchanged; a DISABLED gate drives Z; unknown enable yields all-X unless both branches match
 - ❌ **MOS/CMOS switches** `nmos pmos cmos rnmos rpmos rcmos` — §1364-2001 7.5–7.7 **[1995]** rejected with a clear message ("switch/transistor primitive … not supported")
 - ❌ **Bidirectional switches** `tran tranif0 tranif1 rtran*` — §1364-2001 7.6 **[1995]** rejected with a clear message
 - ✅ **pullup/pulldown** — §1364-2001 7.8 **[1995]** (sim_gates.rs) constant 1/0 driver process over the terminal width (RunOnce)
 - ❌ **Strength modeling/resolution tables** — §1364-2001 7.9–7.13 **[1995]**
-- 🟨 **Gate delays** `and #2 g(…)` / parameterized `#D` — §1364-2001 7.14 **[1995]** (sim_gates.rs) constant/parameter delays only: the write happens D after each input change and the t=0 first evaluation waits too; v1 approximation: no pulse filtering (the delayed write uses the CURRENT input values), warned at codegen
+- 🟨 **Gate delays** `and #2 g(…)` / parameterized `#D` — §1364-2001 7.14 **[1995]** (sim_gates.rs) constant/parameter delays only: the write happens D after each input change and the t=0 first evaluation waits too; no pulse filtering (the delayed write uses the CURRENT input values), warned at codegen
 - ❌ **Gate instance arrays** `and g[3:0] (…)` — §1364-2001 7.1 **[1995]** captured by the db walk and rejected with a clear message
 - ❌ **Combinational UDPs** definition/table/instances — §1364-2001 8.1–8.2/8.6 **[1995]** instances captured and rejected with a clear message ("user-defined primitive instance … not supported")
 - ❌ **Sequential UDPs** level/edge-sensitive — §1364-2001 8.3–8.5 **[1995]** same reject as combinational UDPs
-- 🟨 **Gate terminal connections** — §1364-2001 7.1 **[1995]** whole plain signals only; select/expression terminals, hierarchical terminals, multi-output `buf`/`not`, and >64-terminal gates are clean rejects, and unequal terminal widths are rejected (a v1 requirement — mixed widths are legal Verilog)
+- 🟨 **Gate terminal connections** — §1364-2001 7.1 **[1995]** whole plain signals only; select/expression terminals, hierarchical terminals, multi-output `buf`/`not`, and >64-terminal gates are clean rejects, and unequal terminal widths are rejected (a backend restriction — mixed widths are legal Verilog)
 
 (SystemVerilog era: 1800-2009 ch28–29 restore gates/UDPs verbatim — same
 statuses as the rows above.)
@@ -404,7 +404,7 @@ Tracked so nothing is lost; all de-prioritized behind RTL-simulation support.
 
 ## How to update this document
 
-1. Land the feature in `src/sim/codegen.rs` (+ runtime/opt changes if needed).
+1. Land the feature in the owning lowering/runtime/IR/emitter modules.
 2. Add or extend a regression test under `tests/` asserting exact behavior.
 3. Flip this item's marker (🟨→✅, ❌→✅, …), replace `(probed)` with the test
    file name, and keep any caveat note accurate.

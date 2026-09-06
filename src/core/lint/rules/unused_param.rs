@@ -9,7 +9,7 @@
 //! parameter.  Localparams are skipped (a localparam's only legal "use" is
 //! its own default value, which elaboration folds away).
 //!
-//! v1 limitation: Surelog v1.86 folds constant uses of parameters during
+//! Frontend limitation: the pinned Surelog folds constant uses of parameters during
 //! elaboration, so parameters used only in ranges (`logic [W-1:0] x`), in
 //! other parameters' defaults (`localparam X = UNUSED + 1`), in generate
 //! conditions, or in fully-constant continuous assigns leave no `Ref` node in
@@ -21,7 +21,7 @@
 //! nodes with the default type's `TypeInfo` and cannot be distinguished, so
 //! they are checked like any other parameter.  Flat (never-instantiated)
 //! module definitions carry no captured children in the db, so their
-//! parameters are not checked in v1.
+//! parameters are not checked.
 
 use std::collections::HashSet;
 
