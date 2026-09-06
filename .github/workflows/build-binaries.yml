@@ -22,16 +22,12 @@ jobs:
             runner: ubuntu-24.04
             platform: linux
             arch: x86_64
-            python_arch: x64
             target: x86_64-unknown-linux-musl
-            musl_toolchain: x86_64-linux-musl-cross
           - name: Linux arm64
-            runner: ubuntu-24.04
+            runner: ubuntu-24.04-arm
             platform: linux
             arch: arm64
-            python_arch: x64
             target: aarch64-unknown-linux-musl
-            musl_toolchain: aarch64-linux-musl-cross
           - name: Windows x86_64
             runner: windows-2025
             platform: windows
@@ -62,44 +58,40 @@ jobs:
           submodules: recursive
 
       - name: Install Rust target
+        if: matrix.platform != 'linux'
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
 
       - uses: Swatinem/rust-cache@v2
+        if: matrix.platform != 'linux'
         with:
           shared-key: release-${{ matrix.target }}
 
       # UHDM and ANTLR generators execute during the native CMake build.
       - uses: actions/setup-python@v7
+        if: matrix.platform != 'linux'
         with:
           python-version: "3.12"
           architecture: ${{ matrix.python_arch }}
 
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
+        if: matrix.platform != 'linux'
         with:
           distribution: temurin
-          java-version: "17"
+          java-version: "21"
           java-package: jre
 
       - name: Install Python model-generation dependency
+        if: matrix.platform != 'linux'
         run: python -m pip install --disable-pip-version-check orderedmultidict
 
-      - name: Install static musl toolchain
+      - name: Install Linux verification tools
         if: matrix.platform == 'linux'
         shell: bash
         run: |
           sudo apt-get update
-          sudo apt-get install -y binutils curl file ninja-build patch qemu-user-binfmt tar
-          toolchain="${{ matrix.musl_toolchain }}"
-          archive="$RUNNER_TEMP/$toolchain.tgz"
-          curl -fsSL --retry 3 "https://more.musl.cc/10/x86_64-linux-musl/$toolchain.tgz" -o "$archive"
-          mkdir -p "$RUNNER_TEMP/musl"
-          tar -xzf "$archive" -C "$RUNNER_TEMP/musl"
-          echo "$RUNNER_TEMP/musl/$toolchain/bin" >> "$GITHUB_PATH"
-          compiler_prefix="${toolchain%-cross}"
-          echo "CC=$compiler_prefix-gcc" >> "$GITHUB_ENV"
-          echo "CXX=$compiler_prefix-g++" >> "$GITHUB_ENV"
+          sudo apt-get install -y binutils file
 
       - name: Select MSVC target tools
         if: matrix.platform == 'windows'
@@ -107,7 +99,40 @@ jobs:
         with:
           arch: ${{ matrix.msvc_arch }}
 
+      # The official Alpine Rust image follows the native runner architecture.
+      # It supplies a musl C/C++ toolchain and static system archives without
+      # QEMU or a separately downloaded cross compiler.
+      - name: Build fully static Linux executables
+        if: matrix.platform == 'linux'
+        shell: bash
+        run: |
+          docker run --rm \
+            --volume "$GITHUB_WORKSPACE:/workspace" \
+            --workdir /workspace \
+            --env CMAKE_GENERATOR=Ninja \
+            --env LLG_TARGET="${{ matrix.target }}" \
+            rust:alpine sh -euxc '
+              apk add --no-cache build-base cmake git ninja openjdk21-jre patch py3-pip python3
+              python3 -m pip install --break-system-packages --disable-pip-version-check orderedmultidict
+              rustup target add "$LLG_TARGET"
+              export CC=gcc CXX=g++
+              case "$LLG_TARGET" in
+                x86_64-unknown-linux-musl)
+                  export CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=gcc
+                  ;;
+                aarch64-unknown-linux-musl)
+                  export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=gcc
+                  ;;
+                *)
+                  echo "unsupported native Linux target: $LLG_TARGET" >&2
+                  exit 1
+                  ;;
+              esac
+              cargo build --locked --release --bin llg_ls --bin llg --target "$LLG_TARGET"
+            '
+
       - name: Build release executables
+        if: matrix.platform != 'linux'
         run: cargo build --locked --release --bin llg_ls --bin llg --target ${{ matrix.target }}
 
       - name: Verify Linux architecture and fully static linkage
@@ -123,12 +148,8 @@ jobs:
         shell: bash
         run: |
           executable="target/${{ matrix.target }}/release/llg"
-          runner=()
-          if [[ "${{ matrix.arch }}" == arm64 ]]; then
-            runner=(qemu-aarch64)
-          fi
           set +e
-          "${runner[@]}" "$executable"
+          "$executable"
           status=$?
           set -e
           test "$status" -eq 2
