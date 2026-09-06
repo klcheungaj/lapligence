@@ -1,9 +1,13 @@
-# sim/ir
+# `sim::ir`
 
-Validation of the typed simulator IR at lowering and optimization boundaries.
-The validator owns no lowering or emission policy: it checks table references,
-widths, constants, array shapes, and process registrations before the backend
-indexes those structures.
+- **Purpose:** define the typed intermediate representation shared by lowering,
+  optimization, and C emission.
+- **Validation:** check table references, widths, constants, array shapes, and
+  process registrations at lowering and optimization boundaries.
+- **Ownership:** IR tables and representation fields are implementation
+  details; public constructors and accessors enforce local invariants.
+- **Cross-table checks:** `IrModel::validate` and detached-node validation run
+  before backend table indexing.
 
-Keep new cross-structure invariants here and cover every new IR variant in the
-recursive validation walk.
+Recursive validation covers each IR variant and owns new cross-structure
+invariants.

@@ -62,6 +62,28 @@ executables:
   runtime + libaco + extra sources into a build dir; consumed by the
   `build` module).
 
+The IR staging tables in `IrModelParts` are untrusted until
+`IrModel::from_parts` validates all table references, storage shapes, process
+registrations, and nested nodes. `IrModel::validate` and detached-node
+validation protect later optimization and emission indexing. The C emitter
+derives `LLG_MODEL_STACK_VALUES` from the largest validated function/process
+frames using `(max_function_frame * recursion_depth_256 +
+max_process_frame) * 8`, retaining the historical minimum for small models.
+Frame accounting includes typed expression storage across sequential statements
+and lexical control-flow arms because generated C compilers, especially with
+sanitizer instrumentation, can retain return-by-value temporaries for the
+whole function lifetime. Checked sizing errors stop emission. The generated
+CMake `sim` target defines both `LLG_MODEL_MAX_WIDTH` and
+`LLG_MODEL_STACK_VALUES` for every translation unit, including the standalone
+value runtime; runtime checks remain defensive at that ABI boundary.
+
+Selected assignment targets retain typed index trees and their elaborated
+indexed-part extent. Capacity discovery includes intermediate index values even
+when they are wider than every stored signal. Indexed reads and writes use that
+static extent during C emission; a width expression's integer storage width is
+not the selected data width. Named packed-member writes preserve the member's
+two-state conversion independently of the enclosing storage type.
+
 Driver: `src/bin/llg.rs` (compile → codegen(lowering → IR → opt → emit)
 → build → run).
 
@@ -83,6 +105,10 @@ standard width/signedness and X/Z rules.
   per optimizer configuration.
 - libaco is **not** a Rust dependency: it is compiled together with the
   generated C model at model-build time.
+- CMake is the only supported model-build path. Source output is pruned to the
+  current model, incompatible or partial CMake build trees are discarded, and
+  a failed configure receives one clean retry. Generator selection is explicit
+  option, then `$CMAKE_GENERATOR`, then CMake's host default.
 - Read [codegen/AGENTS.md](codegen/AGENTS.md) for initialization, sensitivity,
   ports/interfaces, inout nets, tasks/forks, force/release, real values,
   timescale, arrays, supported forms and explicit rejection boundaries.

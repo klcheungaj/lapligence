@@ -1,8 +1,9 @@
-# core/lint/rules
+# Lint rules
 
-Individual lint policies over the owned `Db` and `DesignModel`. Rules report
-findings through `LintCtx`; they must not traverse live VPI data or perform I/O.
-
-Put shared graph/data-flow analysis in the lint analysis layer rather than
-duplicating it across rules, and register every new rule with focused behavior
-and configuration tests.
+- Purpose: individual checks over the owned `Db` and `DesignModel`.
+- Components:
+  - `mod.rs`: authoritative rule registry.
+  - `analysis.rs`: shared graph and data-flow helpers.
+  - Rule modules: policy-specific checks and diagnostics.
+- Boundaries: use `LintCtx`; no live VPI traversal or I/O.
+- Related: [shared linter](../readme.md).

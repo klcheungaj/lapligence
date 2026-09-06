@@ -29,6 +29,14 @@ C-ABI boundary (`src/wrapper/`):
 - Use `#[repr(C)]` for shared structs and `extern "C"` for exported functions.
   Read [../wrapper/AGENTS.md](../wrapper/AGENTS.md) for boundary ownership.
 - Preserve the static `surelog_c_wrapper` link attributes (root build rule).
+- Safe APIs must not expose fabricatable pointers or outlive foreign resources.
+  Validate foreign strings, unions, sizes, and handles before use.
+- Each Rust FFI module denies Clippy's `undocumented_unsafe_blocks` lint and
+  `unsafe_op_in_unsafe_fn`. Every unsafe operation needs a local safety
+  explanation; extern declarations, functions, and trait implementations also
+  carry explicit contracts at their declaration sites.
+- Fallible public APIs use module-specific errors with preserved sources;
+  process-memory operations return `MemoryError` rather than string errors.
 
 ## Interactions
 

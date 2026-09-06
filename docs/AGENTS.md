@@ -4,6 +4,18 @@ Keep documentation synchronized with the implementation and its tested
 behavior.  The repository contains separate simulator, shared-core, and LSP
 contracts; do not describe simulator-only behavior as an LSP guarantee.
 
+## Module documentation
+
+- Keep module READMEs human-facing, clear, and concise: use short bullets or
+  a small hierarchy for purpose, components, and interactions.
+- Put detailed implementation contracts, invariants, and maintenance
+  instructions in the owning `AGENTS.md`, preserving unique details when
+  shortening a README.
+- Do not reference or link to `AGENTS.md` from READMEs. Human-facing links may
+  point to source files, other READMEs, or product documentation in `docs/`.
+
+## Product accuracy
+
 For LSP documentation, record the standard stdio protocol, independent
 multi-root workspaces, per-root `llg.toml` v1 configuration (with
 client-supplied config-file overrides), `.v`/`.sv` compilation-unit discovery

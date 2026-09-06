@@ -1,14 +1,15 @@
 # LSP feature modules
 
-This directory separates the blocking analysis pipeline (`analysis.rs`), the
-owned parse-tree module graph (`source_graph.rs`), syntax-error fallback
-extraction (`fallback.rs`), symbol indexing (`symbol_index.rs`), and pure LSP
-request projections (`requests.rs`). The parent `features.rs` remains the
-compatibility facade used by the backend, dump, rename, and module explorer.
-The original feature regression suite lives in `tests.rs` so the facade stays
-small while exercising the same combined API surface.
+- Purpose: the `features.rs` facade projects owned analysis into LSP feature
+  requests, including navigation, symbols, tokens, hover, completion,
+  references, rename, and the module explorer.
 
-Source-level genvar facts supplement elaborated symbols for scoped navigation,
-rename, hover, and highlighting, including pruned loops and syntax fallback.
-See the [binding contract](AGENTS.md#genvar-source-bindings) and the framed-LSP
-regressions in `tests/lsp_stdio/genvar.rs`.
+- `analysis.rs`: blocking analysis assembly.
+- `source_graph.rs`: owned source-level module graph.
+- `fallback.rs`: syntax-error feature extraction.
+- `symbol_index.rs`: declarations and references.
+- `requests.rs`: pure request projections.
+- `tests.rs`: feature regressions.
+
+- Interaction: genvar and other source-level facts supplement elaborated data
+  for navigation, rename, hover, and highlighting.

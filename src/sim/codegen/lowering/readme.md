@@ -1,14 +1,12 @@
-# lowering domains
+# Lowering domains
 
-The parent `lowering.rs` module owns shared lowering state, data types, pure
-helpers, and the public orchestration entry points. Its child modules group
-behavior by phase:
+- **`collection.rs`:** collect storage and wiring from the owned database and
+  build processes and initialization data.
+- **`statements.rs`:** lower procedural statements through `EmitCtx`.
+- **`expressions.rs`:** lower expressions and assignment targets to typed IR.
+- **Shared state:** `lowering.rs` owns orchestration, data types, and helpers;
+  children communicate through explicit `pub(super)` seams.
+- **Boundary:** UHDM traversal is confined to `core::db`; these modules contain
+  no VPI calls, `unsafe` code, or C source emission.
 
-- `collection.rs` walks the owned database, collects storage and wiring,
-  resolves functions/tasks, and constructs processes and initialization data.
-- `statements.rs` lowers procedural statements through `EmitCtx`.
-- `expressions.rs` lowers expression and assignment targets to typed IR.
-
-Children use only the parent module’s shared state and explicit `pub(super)`
-method seams. UHDM traversal remains confined to the owned `core::db`; these
-modules contain no VPI calls, unsafe code, or C source emission.
+See [the parent lowering README](../readme.md) for the public lowering role.

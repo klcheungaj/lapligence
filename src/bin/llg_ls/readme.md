@@ -1,23 +1,18 @@
-# llg_ls
+# `llg_ls`
 
-Tower-LSP transport, workspace scheduling, shadow-file staging, configuration,
-and presentation over owned analysis snapshots. Surelog work is blocking and
-serialized; no request may retain a live VPI handle.
+- Purpose: Tower-LSP stdio server for owned Verilog/SystemVerilog analysis
+  snapshots.
+- Scope: manages independent workspace roots, schedules serialized analysis,
+  stages read-only inputs, and presents navigation and diagnostics over
+  JSON-RPC.
 
-Sessions initialized without workspace folders adopt an opened `.v` or `.sv`
-file through the normal root scheduler, using its nearest `llg.toml` ancestor
-or its parent directory. Header files remain include-only.
+- `main.rs` selects the async runner and process setup.
+- `transport.rs` owns framed stdio service construction and lifecycle hooks.
+- `features.rs` projects owned analysis into navigation, symbols, tokens,
+  hover, completion, references, rename, and explorer data.
+- `lsp.rs` and `lsp/` own workspace state, scheduling, staging, diagnostics,
+  configuration, and wire handlers.
 
-Published Surelog syntax diagnostics use `core::diagnostics::user_message` for
-readable explanations; analysis and debug logging retain the original messages.
-Presentation does not read files, so it also works for staged unsaved buffers.
-
-Stdout is reserved for JSON-RPC. Filesystem inputs are untrusted, project trees
-are read-only, and all compiler side effects must remain under the private
-process shadow directory.
-
-`main.rs` declares the binary modules and selects the runner; `transport.rs`
-owns stdio service construction, lifecycle interception, diagnostic dump mode,
-and the process-memory guard. The `features.rs` and `lsp.rs` entry modules
-retain the existing call paths while their child modules separate analysis and
-request processing from state, staging, scheduling, and wire handlers.
+- Boundary: the backend serializes blocking Surelog work and returns only owned
+  data to request handling. The transport keeps stdout exclusively for JSON-RPC,
+  while filesystem/compiler side effects stay in the private shadow workspace.

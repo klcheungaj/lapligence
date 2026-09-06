@@ -34,6 +34,18 @@ diagnostics and custom read-only views.
 - Startup may use `llg::memory_limit::install_with_logger`, connecting its
   physical-memory sampler to lifecycle logging.
 
+## Entry and transport boundaries
+
+- A session initialized without workspace folders adopts an opened `.v` or
+  `.sv` file through the normal root scheduler, using its nearest `llg.toml`
+  ancestor or its parent directory. `.vh`/`.svh` files remain include-only.
+- Published Surelog syntax diagnostics use
+  `core::diagnostics::user_message`; analysis and debug logs retain the
+  original diagnostic text. Presentation reads owned/staged data, not files.
+- Project trees and other filesystem inputs are treated as untrusted and
+  read-only. Compiler side effects stay under the private process shadow
+  directory; stdout remains reserved for framed JSON-RPC.
+
 ## Request cache (`request_cache.rs`)
 
 Bounded thread-safe LRU stores memoize definition, hover, references and

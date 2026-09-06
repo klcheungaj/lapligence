@@ -4,14 +4,22 @@ Read [../AGENTS.md](../AGENTS.md) for the rule API and configuration.
 `mod.rs::default_rules` is the authoritative stable registry order.
 Assignment and comparison width rules skip unknown operand widths.
 
-- `unused.rs` — `unused-signal`
-- `width.rs` — `width-mismatch`
-- `latch.rs` — `incomplete-case`
-- `combloop.rs` — `combinational-loop`
-- `multidriver.rs` — `multi-driver`
-- `casez.rs` — `casez-misuse`
-- `if_latch.rs` — `if-latch`
-- `style.rs` — `naming-style`
+Keep shared graph/data-flow helpers in `analysis.rs` rather than duplicating
+them across rules. New rules need registry entries plus focused behavior and
+configuration tests. Rules consume owned data through `LintCtx`, with no live
+VPI traversal or I/O.
+
+- `unused.rs` — `unused-signal`: signals that are never read or used.
+- `width.rs` — `width-mismatch`: assignments and port links with different known widths.
+- `latch.rs` — `incomplete-case`: exact cases without a default in combinational/latch logic.
+- `combloop.rs` — `combinational-loop`: combinational feedback paths.
+- `multidriver.rs` — `multi-driver`: signals driven by multiple processes.
+- `casez.rs` — `casez-misuse`: overlapping wildcard case items and constant selectors.
+- `if_latch.rs` — `if-latch`: incomplete combinational `if` assignments that may infer a latch.
+- `style.rs` — `naming-style`: configured naming-convention violations.
+- `blocking_in_ff.rs` — `blocking-in-always_ff`: blocking assignments in clocked processes.
+- `nba_in_comb.rs` — `nba-in-always_comb`: nonblocking assignments in combinational processes.
+- `unused_param.rs` — `unused-parameter`: parameters that are never referenced.
 - `implicit_net.rs` — `implicit-net`: flags nets Surelog auto-created from
   undeclared identifiers.  Signature in the owned db: a [`NodeKind::Net`]
   whose type info carries no typespec (kind `"other"`) — every declared

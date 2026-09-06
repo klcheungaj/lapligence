@@ -56,7 +56,7 @@ the simulator (`src/sim/`):
   dropped. Admit physical files from
   `CompileOut::frontend_source_files`, never logical `vpiFile` remappings.
   Default `Db::build` adds no constant-source reads; bounded cache and unavailable
-  provenance contracts are documented in [readme.md](readme.md).
+  provenance contracts are documented [below](#owned-database-and-source-provenance).
 - `elab.rs` — 4-state `Value` math + parameter/expression resolver
   (`Resolver`), used by the db build (and tests).
   Wildcard equality, bit-vector queries, and real/integer/IEEE-bit conversions
@@ -94,6 +94,52 @@ the simulator (`src/sim/`):
   Consumed by the LSP (lint diagnostics with source `llg-lint`) and
   `llg --lint`.
 - `vobject_types.rs` — Surelog parse-tree node taxonomy for semantic highlighting.
+
+## Diagnostics and startup failures
+
+- `diagnostics::user_message` translates recognized Surelog syntax errors into
+  shared explanations for the LSP, simulator CLI, and elaboration checker.
+  It explains expected names/punctuation and suggests checking module placement
+  for instance-shaped errors, including standalone instantiation templates.
+- Advice uses diagnostic text only: no source reads or assumptions based on
+  template filenames. Preserve original diagnostics, severity, and positions;
+  unknown messages pass through unchanged.
+- Compile and parse-only setup failures return `compile::StartupError`, with a
+  typed kind and preserved diagnostic message. Checked compilation keeps
+  frontend diagnostics separate and chains startup failures through `Error::source`.
+
+## Owned database and source provenance
+
+- `db/database.rs` owns the arena, shared builder state, and validated build
+  facade. Root collections and metadata maps are private; consumers get
+  read-only slices, iterators, and checked lookups.
+- Private `db/capture/` modules separate hierarchy, declarations, expressions,
+  primitives, and statements. Capture methods are visible only inside `core::db`.
+  `db/domain.rs` converts integer VPI properties into enums retaining
+  `Unknown(raw)`; downstream modules must not interpret raw discriminants.
+  `db/validate.rs` checks roots and side-table references before returning a DB.
+- Constants retain available exact source spans for transformed time literals.
+  Continuous assignments retain drive strengths; unpacked net arrays retain
+  net subtypes so unsupported resolution contexts can be rejected explicitly.
+- Packed dimensions, member offsets, recursive two-state domains, and resolved
+  assignment-pattern key types follow the elaborated model contract below.
+  Match type keys using range/state/signedness information, not spelling or
+  width alone. Preserve missing cast and lifetime provenance rather than
+  inventing a 32-bit cast or a subprogram-local lifetime override.
+- Variable declarations record whether a bounded admitted-source prefix has
+  an explicit `static` or `automatic` qualifier; missing or ambiguous evidence
+  remains explicit.
+- `Db::build_with_source_files` opts into constant-source recovery;
+  ordinary `Db::build` adds no constant-source reads. Admit physical parsed
+  files from `CompileOut::frontend_source_files`, never logical VPI remappings;
+  this inventory does not guarantee included headers.
+- The constant-source cache accepts only non-symlink regular files:
+  - At most 8 MiB per file and 64 MiB total retained keys/text/line offsets/spans.
+  - At most 1,024 paths and 4,096 bytes per path/span.
+  - Unavailable provenance stays explicit for consumer diagnostics.
+  - Older delay/event source capture is unchanged.
+- Method calls retain `vpiWith` presence even without a lowered clause
+  expression; consumers must not silently drop a filter or transform.
 
 ## Requirements
 

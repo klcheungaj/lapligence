@@ -1,47 +1,15 @@
 # Simulator lowering
 
-`codegen.rs` is the public facade. `lowering.rs` coordinates the pipeline and
-shared lowering state; its `collection`, `statements`, and `expressions` child
-modules own database collection/wiring and domain-specific IR construction.
-`timescale.rs` owns parsing and representation of Verilog time-unit directives,
-bounded constant delays and local-precision rounding of time literals;
-`error.rs` defines the typed public failure. Time-value lowering uses exact
-literal spans captured in the owned database, not Surelog's transformed integer
-payload. See [AGENTS.md](AGENTS.md) for supported contexts and rejection limits.
-Collection also assigns independent resolved-net contribution slots to
-standalone wire/tri and wired-net continuous-driver sites. The emitter rebuilds
-selected contributions from Z before publishing them, while initialization
-marks delayed whole-net contributions X until their first scheduled update.
-Ordinary standalone scalar wire/tri slots also retain each continuous
-assignment's separate strength0/strength1 endpoints for strength-range-aware
-resolution; explicit vector strengths are rejected per IEEE 1800-2009 §10.3.4.
-Static function/task formals and delay-bearing task locals use definition-wide
-persistent storage; delay-free static locals and return values use C-static
-storage. Automatic subprogram storage remains fresh per call, and lowering
-rejects NBAs whose queued address could outlive that automatic call.
-Pure chandle input/return function signatures remain native-pointer typed;
-unsupported mixed or output/inout chandle signatures fail during lowering.
-Automatic string-returning functions with packed input formals use owned
-`llg_string_t` results; unsupported persistent/string-formal variants fail
-during lowering.
-String `atoreal` queries have real-valued IR metadata; `realtoa` mutations
-coerce packed arguments to real before storing an owned decimal string.
-Resizable unpacked containers use their own IR and C runtime objects, separate
-from fixed arrays and packed handles. The supported slice covers dynamic-array
-allocation/copy/delete, positional dynamic/queue assignment patterns, queue
-methods, integral/string associative methods, and no-`with` packed-element
-`sum`/`product`/`and`/`or`/`xor` reductions;
-lowering rejects resizable element NBAs and sensitivity dependencies until the
-scheduler has container-change notifications.
+- **Purpose:** lower the owned `core::db` design into validated typed IR.
+- **Facade:** `codegen.rs` exposes the public generation API and typed
+  `CodegenError` failures.
+- **Implementation:** `lowering/` coordinates collection, statement lowering,
+  expression lowering, and shared state; `timescale.rs` handles source
+  timescales and delay values.
+- **Boundary:** this layer performs no direct VPI access, `unsafe` operations,
+  or C source emission. The C backend consumes the resulting IR.
+- **Reuse:** `generate_from_db_with_opts` supports multiple optimization
+  variants from one owned database.
 
-This layer reads only the owned `core::db` model after its initial build. It
-must validate the completed IR before and after optimization and must preserve
-unknown DB domain-enum values in diagnostics rather than guessing a meaning.
-
-Packed widths are carried through the IR without a fixed 1024-bit/64-bit
-semantic ceiling. The C backend emits a model-sized `LLG_MODEL_MAX_WIDTH`
-(strictly below `1 << 20`) and performs the final capacity validation; runtime
-constructors retain defensive checks. Wide division/modulo/power and
-packed/real conversions therefore follow the generated model capacity. See
-[`docs/sim_data_semantics.md`](../../../docs/sim_data_semantics.md) for the
-standard data, sizing, signedness, and X/Z reference.
+See [`docs/sim_features.md`](../../../docs/sim_features.md) for the supported
+feature surface and rejection boundaries.

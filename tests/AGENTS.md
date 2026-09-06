@@ -56,44 +56,17 @@ coverage for the same rule IDs.
 
 ## Suite map
 
-- `sim_data_types.rs` compiles checked-in `.v`/`.sv` fixtures under
-  `fixtures/sim/data_types/` and compares optimized/unoptimized execution.
-  Independent full-bit truth-table output and positional arithmetic/cast
-  oracles cover model-sized and partial-limb vectors. The original 40-case
-  campaign is active without ignored tests and has regular and sanitizer
-  coverage. Commands and
-  stable coverage notes live in the [fixture guide](fixtures/sim/data_types/readme.md),
-  with normative data/width rules in [the semantics reference](../docs/sim_data_semantics.md).
-- `sim_data_types_extended.rs` adds independent wide arithmetic, signed div/mod,
-  packed layouts (including all-bit/mixed-state packed structs and
-  multidimensional packed-bit arrays), net resolution, and backend-boundary
-  fixtures, including acceptance at 1,048,575 bits and explicit rejection at
-  1,048,576 bits. Packed unions and unpacked aggregate/member contexts remain
-  outside the documented support claim.
-- `sim_data_type_edges.rs` exercises signed/unsigned indices, real conversions,
-  two-state subprogram and aggregate storage, enum defaults, numeric size-cast
-  provenance, and near-limit storage combined with recursion. Its HDL lives in
-  `fixtures/sim/data_type_edges/`; enum base-state/signedness and numeric
-  source-enabled/source-less cast paths are covered at the exercised widths.
-  Ambiguous source-less cast provenance must explicitly diagnose rather than
-  silently change the cast width/sign. Test authors derive oracles from the official local
-  `docs/specification/` files without reading production implementation code.
-- `sim_data_types_next.rs` is the bounded next-phase inventory for packed
-  and unpacked unions/structs, streaming and `inside`, static subprogram
-  storage, strings, chandles, dynamic/associative arrays, and queues. Its
-  focused coverage totals 20 positive cases plus one vector-strength rejection
-  and one explicit unsupported nonconstant-static-initializer case. Runtime-
-  dependent static initializers are rejected rather than evaluated on first
-  call. This bounded inventory is not an exhaustive conformance claim.
-- `sim_data_types_completion.rs` adds nine frozen completion contracts: eight
-  positive 128/512-bit string-conversion, aggregate-pattern, and container
-  reduction cases, plus one legal width-changing reduction-`with` case that
-  must produce an explicit unsupported diagnostic. All nine cases pass in
-  normal and sanitizer modes. This bounded completion suite supports current
-  packed/unpacked struct and untagged-union declaration patterns with exact
-  range/state/signedness matching and packed-integral typedef keys; nominal
-  type keys, nested recursive defaults, nested unpacked/object members, and
-  aggregate ports/nets/subprogram storage remain unsupported.
+- `sim_data_types.rs`, `sim_data_types_extended.rs`, and
+  `sim_data_type_edges.rs` cover datatype semantics and boundaries; detailed
+  contracts are in [data_types/AGENTS.md](fixtures/sim/data_types/AGENTS.md),
+  [data_types_extended/AGENTS.md](fixtures/sim/data_types_extended/AGENTS.md),
+  and [data_type_edges/AGENTS.md](fixtures/sim/data_type_edges/AGENTS.md).
+- `sim_data_types_next.rs` is a bounded next-phase inventory for aggregate and
+  container features, with explicit unsupported cases; its contract is in
+  [data_types_next/AGENTS.md](fixtures/sim/data_types_next/AGENTS.md).
+- `sim_data_types_completion.rs` freezes eight positive completion contracts
+  plus one explicit unsupported reduction case; its contract is in
+  [data_types_completion/AGENTS.md](fixtures/sim/data_types_completion/AGENTS.md).
 - `elab_resolve.rs` exercises `core::elab`; `config_effect.rs` observes
   configured `-D` ifdef/elsif selection and top-level `-P` parameter-driven
   generate branches through the owned `DesignModel`.

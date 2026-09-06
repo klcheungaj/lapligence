@@ -1,18 +1,13 @@
-# bin
+# Executables
 
-Executable entry points for the simulator, language server, elaboration checker,
-and low-level demonstrations. Binaries should contain argument/transport wiring
-and presentation only; reusable processing belongs in the library.
+- Purpose: keep argument parsing, transport wiring, and presentation thin;
+  reusable processing lives in the library.
 
-The simulator and elaboration checker format Surelog parser errors through
-`core::diagnostics::user_message` for readable explanations and repair hints.
+- `llg`: simulator driver and compile/lint/build/run presentation.
+- `llg_ls`: feature-gated tower-lsp stdio server; see
+  [llg_ls/readme.md](llg_ls/readme.md).
+- `elab_check`: elaboration and instance-tree checker.
+- `hellouhdm`, `helloworld`, `llg_demo`: low-level API demonstrations.
 
-The `llg_ls` binary remains feature-gated because its asynchronous LSP
-dependencies must not enter minimal library builds.
-
-Each executable's `main` collects arguments or selects its transport, calls a
-runner, and maps the returned status to `ExitCode`. Normal completion and error
-returns therefore drop Surelog sessions and process-memory guards before exit.
-The LSP's mandatory `exit` notification retains its transport-owned emergency
-cleanup/termination path. `llg` parses `DriverOptions` separately from the
-compile/lint/build/run orchestration.
+- Boundary: binaries use the shared core/FFI/simulator libraries; LSP-specific
+  dependencies remain behind the `lsp` feature.
