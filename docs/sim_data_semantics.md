@@ -181,17 +181,23 @@ inventory above. Focused aggregate member/part-select, packed-union,
 unpacked-struct/union, RHS/LHS streaming, and `inside` cases are being used to
 validate lowering. Procedural positional and complete member-named aggregate
 assignment patterns, including the staged queue/dynamic-element contexts, are
-covered. Declaration patterns and mixed, duplicate, omitted, default, or
-type-keyed forms remain outside the profile, as do nested unpacked or object
-members, aggregate ports/nets/subprogram storage, tagged unions, and general
-aggregate slices. Resizable containers currently target one-dimensional
-packed elements; focused integral- and string-key associative access and
-static local/formal/NBA persistence are covered, while aggregate/unpacked
-subprogram storage remains unsupported. String support is limited to basic
+covered. Current packed/unpacked struct and untagged-union declaration
+patterns support positional, named, default, built-in, and packed-integral
+typedef keys with exact range/state/signedness matching and member overrides.
+Nominal type keys, nested recursive defaults, nested unpacked or object
+members, aggregate ports/nets/subprogram storage, tagged unions, classes,
+virtual interfaces, and general aggregate slices remain outside the profile.
+Resizable containers currently target one-dimensional
+packed elements; focused integral- and string-key associative access, element
+reductions, and static local/formal/NBA persistence are covered. A legal
+width-changing reduction `with` clause is explicitly diagnosed unsupported;
+broader associative traversal/conversion variants and aggregate/unpacked
+subprogram storage remain partial or unsupported. String support is limited to basic
 module/generate storage, selected core methods, declaration/cast/copy, display
 paths, and automatic string-return functions with packed inputs; string formals
 and other string subroutine forms, ports, continuous-assignment or
-sensitivity paths, and formatted/real conversion methods are not implied.
+sensitivity paths, and unverified formatted/real conversion methods are not
+implied; `.atoreal`/`.realtoa` have focused 128-/512-bit conversion coverage.
 Native `chandle` handling is limited to null/copy/compare/Boolean operations
 and chandle-input to chandle-return functions. Static subprogram initializers
 must be constant/provenance-supported; runtime-dependent initializers are

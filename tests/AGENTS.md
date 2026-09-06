@@ -80,6 +80,15 @@ coverage for the same rule IDs.
   and one explicit unsupported nonconstant-static-initializer case. Runtime-
   dependent static initializers are rejected rather than evaluated on first
   call. This bounded inventory is not an exhaustive conformance claim.
+- `sim_data_types_completion.rs` adds nine frozen completion contracts: eight
+  positive 128/512-bit string-conversion, aggregate-pattern, and container
+  reduction cases, plus one legal width-changing reduction-`with` case that
+  must produce an explicit unsupported diagnostic. All nine cases pass in
+  normal and sanitizer modes. This bounded completion suite supports current
+  packed/unpacked struct and untagged-union declaration patterns with exact
+  range/state/signedness matching and packed-integral typedef keys; nominal
+  type keys, nested recursive defaults, nested unpacked/object members, and
+  aggregate ports/nets/subprogram storage remain unsupported.
 - `elab_resolve.rs` exercises `core::elab`; `config_effect.rs` observes
   configured `-D` ifdef/elsif selection and top-level `-P` parameter-driven
   generate branches through the owned `DesignModel`.
