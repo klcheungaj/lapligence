@@ -1,11 +1,7 @@
 //! C literals, four-state initializers, and assignment conversions.
 
 use super::names::escaped_char;
-use crate::sim::ir::{IrConst, LLG_MAX_WIDTH};
-
-/// Number of 64-bit limbs covering [`LLG_MAX_WIDTH`] bits.  Keep in sync with
-/// `LLG_LIMBS` in `src/sim/rt/llg_value.h` (16).
-pub(crate) const LLG_LIMBS: usize = (LLG_MAX_WIDTH as usize).div_ceil(64);
+use crate::sim::ir::IrConst;
 
 pub(super) fn c_string_literal(value: &str) -> String {
     let mut out = String::from("\"");
@@ -69,12 +65,13 @@ pub(crate) fn emit_const(c: &IrConst) -> String {
         let z = c.z.first().copied().unwrap_or(0);
         format!("SV4_INIT({b}ULL, {x}ULL, {z}ULL, {}, {signed})", c.width)
     } else {
-        let mut bs = [0u64; LLG_LIMBS];
-        let mut xs = [0u64; LLG_LIMBS];
-        let mut zs = [0u64; LLG_LIMBS];
-        let nb = c.bits.len().min(LLG_LIMBS);
-        let nx = c.x.len().min(LLG_LIMBS);
-        let nz = c.z.len().min(LLG_LIMBS);
+        let limbs = c.width.div_ceil(64) as usize;
+        let mut bs = vec![0u64; limbs];
+        let mut xs = vec![0u64; limbs];
+        let mut zs = vec![0u64; limbs];
+        let nb = c.bits.len();
+        let nx = c.x.len();
+        let nz = c.z.len();
         bs[..nb].copy_from_slice(&c.bits[..nb]);
         xs[..nx].copy_from_slice(&c.x[..nx]);
         zs[..nz].copy_from_slice(&c.z[..nz]);
@@ -110,12 +107,6 @@ pub(crate) fn emit_const_for_vector(
     width: u32,
     signed: bool,
 ) -> Result<String, String> {
-    if c.real.is_some() && width > 64 {
-        return Err(format!(
-            "real-to-packed constant conversion target is {width} bits wide; \
-             v1 supports at most 64 bits"
-        ));
-    }
     Ok(match c.real {
         Some(value) => format!(
             "sv4_from_real({}, {}, {})",
@@ -147,10 +138,10 @@ pub(crate) fn round_shortreal(code: String, shortreal: bool) -> String {
 /// mirroring the runtime's `sv4_x(w, 0)`: X bits fill the width's limbs,
 /// limbs beyond the width are zero.  A brace initializer (not a function
 /// call) so the generated C stays a valid static initializer.
-pub(crate) fn emit_all_x_init(width: u32) -> String {
+pub(crate) fn emit_all_x_init(width: u32, signed: bool) -> String {
     let nlimbs = (width as usize).div_ceil(64);
-    let mut xz = Vec::with_capacity(LLG_LIMBS);
-    for i in 0..LLG_LIMBS {
+    let mut xz = Vec::with_capacity(nlimbs);
+    for i in 0..nlimbs {
         xz.push(if i < nlimbs {
             if i == nlimbs - 1 && !width.is_multiple_of(64) {
                 (1u64 << (width % 64)) - 1
@@ -166,7 +157,10 @@ pub(crate) fn emit_all_x_init(width: u32) -> String {
         .map(|v| format!("{v}ULL"))
         .collect::<Vec<_>>()
         .join(", ");
-    format!("{{ {{ 0 }}, {{ {x} }}, {{ 0 }}, {width}, 0 }}")
+    format!(
+        "{{ {{ 0 }}, {{ {x} }}, {{ 0 }}, {width}, {} }}",
+        signed as u8
+    )
 }
 
 /// All-Z constant expression for a `w`-bit global initializer, mirroring
@@ -174,8 +168,8 @@ pub(crate) fn emit_all_x_init(width: u32) -> String {
 /// this brace initializer to stay a valid static initializer).
 pub(crate) fn emit_all_z_init(width: u32) -> String {
     let nlimbs = (width as usize).div_ceil(64);
-    let mut zz = Vec::with_capacity(LLG_LIMBS);
-    for i in 0..LLG_LIMBS {
+    let mut zz = Vec::with_capacity(nlimbs);
+    for i in 0..nlimbs {
         zz.push(if i < nlimbs {
             if i == nlimbs - 1 && !width.is_multiple_of(64) {
                 (1u64 << (width % 64)) - 1
@@ -192,4 +186,30 @@ pub(crate) fn emit_all_z_init(width: u32) -> String {
         .collect::<Vec<_>>()
         .join(", ");
     format!("{{ {{ 0 }}, {{ 0 }}, {{ {z} }}, {width}, 0 }}")
+}
+
+/// All-zero/all-one known value for a file-scope resolved-net initializer.
+pub(crate) fn emit_all_known_init(width: u32, signed: bool, ones: bool) -> String {
+    let nlimbs = (width as usize).div_ceil(64);
+    let mut bits = Vec::with_capacity(nlimbs);
+    for i in 0..nlimbs {
+        bits.push(if ones && i < nlimbs {
+            if i == nlimbs - 1 && !width.is_multiple_of(64) {
+                (1u64 << (width % 64)) - 1
+            } else {
+                u64::MAX
+            }
+        } else {
+            0
+        });
+    }
+    let bits = bits
+        .iter()
+        .map(|value| format!("{value}ULL"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(
+        "{{ {{ {bits} }}, {{ 0 }}, {{ 0 }}, {width}, {} }}",
+        signed as u8
+    )
 }

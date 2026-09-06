@@ -104,17 +104,17 @@
 //! The supported real subset covers procedural scalar variables, real and
 //! shortreal parameters, mixed arithmetic and conditions, packed/real casts and
 //! assignment, NBA assignment, shortreal rounding, and `%f`/`%e`/`%g` display.
-//! Packed-to-real conversion uses all limbs and treats X/Z bit positions as zero;
-//! real-to-packed conversion rounds halves away from zero and is limited to 64
-//! target bits.
+//! Packed-to-real conversion uses all model-sized limbs and treats X/Z bit
+//! positions as zero; real-to-packed conversion rounds halves away from zero
+//! and follows the generated model's packed capacity.
 //!
 //! Rejected with an `Err`: fork/join inside a function/task body, task calls
 //! inside function bodies, recursive delay-bearing tasks, hierarchical
 //! (cross-instance) function/task calls, string/class signals and string
 //! parameters, unsupported real contexts (ports, arrays, function/task types,
-//! continuous/combinational processes, and double-aware scheduling), widths
-//! above `LLG_MAX_WIDTH` (1024) bits, and division/modulo/power with an
-//! operand wider than 64 bits,
+//! continuous/combinational processes, and double-aware scheduling), widths at
+//! or above the backend's exclusive generated-model capacity, and malformed
+//! IR/value widths that exceed the runtime model capacity,
 //! hierarchical WRITES whose final path element does not resolve to a
 //! per-instance signal, hierarchical write targets with variable or
 //! expression select indices/bounds, select LHS or
@@ -178,9 +178,10 @@
 //!   matching is supported per LRM 12.5.1.  In every other expression context
 //!   Z behaves as X (LRM 11.4.5), and identity/copy ops (mux with a known
 //!   select, selects, resize, concat) carry Z through unchanged.
-//! - Vectors may be up to `LLG_MAX_WIDTH` (1024) bits wide, but
-//!   division/modulo/power accept operands of at most 64 bits (the runtime
-//!   returns all-X for wider operands; the codegen rejects them up front).
+//! - Vectors use the generated model's packed capacity (strictly below the
+//!   backend's exclusive `1 << 20` limit). Division/modulo/power preserve that
+//!   model-sized limb width; backend and runtime checks reject malformed or
+//!   over-capacity values defensively.
 //! - Timescale is honored per file: `#N` delays scale by the calling module's
 //!   time unit (`timescale unit/precision`, parsed from the first directive
 //!   of the source file; modules without a directive default to 1ns/1ps with
@@ -215,33 +216,32 @@
 
 use std::collections::{HashMap, HashSet};
 
-use super::timescale::{eval_procedural_delay, parse_timescale, DelayValue, Timescale};
+use super::timescale::{
+    eval_procedural_delay, parse_timescale, time_literal_to_real, DelayParameter, DelayValue,
+    Timescale,
+};
 use super::CodegenError;
 use crate::core::db::{
-    CaseKind as DbCaseKind, ConstantType, Db, Direction as DbDirection, EventSpec, ExprKind,
-    IntraControl, JoinKind as DbJoinKind, NetType, NodeId, NodeKind, Operation, PrimClass,
-    PrimitiveType, ProcessKind, StmtKind, Strength,
+    CaseKind as DbCaseKind, ConstantSource, ConstantType, Db, Direction as DbDirection, EventSpec,
+    ExprKind, IntraControl, JoinKind as DbJoinKind, NetType, NodeId, NodeKind, Operation,
+    PackedMember, PrimClass, PrimitiveType, ProcessKind, StmtKind, Strength,
 };
 use crate::core::elab::{self, Bit, Val};
 use crate::ffi::vpi::{self, ValueData, VpiHandle};
 use crate::sim::emit_c::{
     escaped_char, event_global_name, global_name, ident, real_global_name, render_expr, strip_lib,
-    RCtx,
+    RCtx, LLG_MAX_WIDTH,
 };
 use crate::sim::ir::{
     IrBinOp, IrBitQuery, IrCall, IrCallArg, IrCallExpr, IrCaseItem, IrCaseKind, IrConst, IrDepth,
     IrEdge, IrElemSel, IrEvent, IrExpr, IrExprKind, IrFormal, IrJoinKind, IrLhs, IrModel,
     IrProcess, IrRealBinOp, IrRealUnOp, IrShape, IrSignal, IrStmt, IrSysFunc, IrTimeKind, IrType,
-    IrUnOp, IrWaitSrc, LLG_MAX_WIDTH,
+    IrUnOp, IrWaitSrc, LLG_MAX_NET_DRIVERS,
 };
 
 mod collection;
 mod expressions;
 mod statements;
-
-/// Maximum driver slots of one collapsed inout net.  Keep in sync with
-/// `LLG_MAX_NET_DRIVERS` in `src/sim/rt/llg_rt.h` (16).
-const LLG_MAX_NET_DRIVERS: usize = 16;
 
 /// Sanity cap on the terminal count of one structural gate.
 const LLG_MAX_GATE_TERMS: usize = 64;
@@ -297,6 +297,11 @@ pub struct GeneratedModel {
 /// (the design handle is only valid then); returns `Err` with a message
 /// naming the construct and instance when the design uses something outside
 /// the supported subset.
+///
+/// Source-dependent time-literal values require an explicitly admitted
+/// [`Db::build_with_source_files`] snapshot passed to
+/// [`generate_from_db_with_opts`]; this bare-handle entry point does not admit
+/// new constant-source reads.
 pub fn generate(design: VpiHandle) -> Result<GeneratedModel, CodegenError> {
     generate_with_opts(design, &crate::sim::opt::OptConfig::default())
 }
@@ -405,6 +410,7 @@ struct SignalInfo {
     global: String,
     width: u32,
     signed: bool,
+    two_state: bool,
     real: bool,
     shortreal: bool,
     /// For members of a collapsed inout-net group: `(net C name, driver
@@ -420,6 +426,7 @@ struct ProcLocalInfo {
     c_name: String,
     width: u32,
     signed: bool,
+    two_state: bool,
 }
 
 /// A lowered unpacked array: a flat C array of `sv4_t` elements plus the
@@ -457,15 +464,15 @@ enum ElemSel {
     /// Part-select `[left:right]` of the element.
     Part(i128, i128),
     /// Bit-select of the element by a runtime index expression.
-    Bit(String),
+    Bit(IrExpr),
 }
 
 /// LHS of an assignment to one array element (with optional element-level
 /// bit/part select).
 struct ArrayElemLhs {
     arr: ArrayInfo,
-    /// One C expression per dimension index, in declaration order.
-    index_codes: Vec<String>,
+    /// One typed expression per dimension index, in declaration order.
+    indices: Vec<IrExpr>,
     elem_sel: ElemSel,
 }
 
@@ -490,6 +497,7 @@ struct PcaSite {
 struct BoundArg {
     width: u32,
     signed: bool,
+    two_state: bool,
     expr: NodeId,
     /// `true` when `expr` is the formal's default expression rather than a
     /// caller-provided argument.  Default expressions are emitted under a
@@ -541,6 +549,9 @@ struct Codegen<'a> {
     /// FuncTask arena node → call-site resolution metadata (model index,
     /// signature).  Emitted functions only; registered by the prototype walk.
     func_meta: HashMap<NodeId, FuncMeta>,
+    /// Persistent storage for output/inout formals of static subroutines,
+    /// keyed by (owning instance, formal declaration).
+    static_formals: HashMap<(NodeId, NodeId), SignalInfo>,
     /// All lowered signals, in collection order (deterministic emission).
     signals: Vec<SignalInfo>,
     /// Net/Var arena node → lowered signal info (all instances + gen scopes).
@@ -625,6 +636,9 @@ struct Codegen<'a> {
     /// ident()-sanitized user name, so synthesized enables cannot collide
     /// with a user variable's global).
     pca_seq: usize,
+    /// Whole-net continuous assignment node -> synthetic signal index carrying
+    /// that wired net driver's distinct runtime slot.
+    wired_driver_sites: HashMap<NodeId, usize>,
     /// Final-block process function names (`ProcessKind::Final`), in
     /// emission order — spawned into [`IrModel::final_spawns`] instead of
     /// the t=0 spawn list.
@@ -643,6 +657,7 @@ impl<'a> Codegen<'a> {
                 .expect("the default timescale has non-zero precision"),
             cur_fn_ir: None,
             func_meta: HashMap::new(),
+            static_formals: HashMap::new(),
             signals: Vec::new(),
             sig_globals: HashMap::new(),
             proc_locals: HashMap::new(),
@@ -671,6 +686,7 @@ impl<'a> Codegen<'a> {
             design_precision_ps: Timescale::DEFAULT.precision_ps,
             pca_sites: HashMap::new(),
             pca_seq: 0,
+            wired_driver_sites: HashMap::new(),
             final_procs: Vec::new(),
             warned_dumpvars_filtering: false,
         }
@@ -730,19 +746,37 @@ impl<'a> Codegen<'a> {
                     if self.node(*child).name != name {
                         continue;
                     }
+                    if let Some(Val::Real(value)) = self.param_vals.get(child) {
+                        return Some(DelayParameter::Real(*value));
+                    }
                     if let Some(Val::Bits(value)) = self.param_vals.get(child) {
                         let (declared_width, declared_signed) = match self.kind(*child) {
                             NodeKind::Param { ty, .. } => (ty.width, Some(ty.signed)),
                             _ => (None, None),
                         };
                         let width = declared_width.or_else(|| u32::try_from(value.width()).ok())?;
-                        return value.to_u128().and_then(|raw| {
-                            DelayValue::from_raw(
-                                raw,
-                                width,
-                                declared_signed.unwrap_or(value.signed),
-                            )
-                        });
+                        return value
+                            .to_u128()
+                            .and_then(|raw| {
+                                DelayValue::from_raw(
+                                    raw,
+                                    width,
+                                    declared_signed.unwrap_or(value.signed),
+                                )
+                            })
+                            .map(DelayParameter::Integer);
+                    }
+                    // A nearer nonconstant declaration shadows outer parameters.
+                    if matches!(
+                        self.kind(*child),
+                        NodeKind::Var { .. }
+                            | NodeKind::Net { .. }
+                            | NodeKind::Param { .. }
+                            | NodeKind::FuncArg { .. }
+                            | NodeKind::Array { .. }
+                            | NodeKind::Port { .. }
+                    ) {
+                        return None;
                     }
                 }
                 scope = self.node(node_id).parent;
@@ -775,6 +809,278 @@ impl<'a> Codegen<'a> {
             }
         }
         None
+    }
+
+    fn packed_member_info(&self, node: NodeId) -> Option<(SignalInfo, PackedMember)> {
+        let NodeKind::Expr(ExprKind::HierPath { parts, refs }) = self.kind(node) else {
+            return None;
+        };
+        let target = refs.first().copied().flatten()?;
+        let member_name = parts.get(1)?;
+        let info = self.signal_of(target)?.clone();
+        let member = self
+            .db
+            .packed_members(target)?
+            .iter()
+            .find(|member| member.name == *member_name)?
+            .clone();
+        Some((info, member))
+    }
+
+    fn packed_member_select(&self, node: NodeId) -> Result<Option<PackedMemberSelect>, String> {
+        let name = &self.node(node).name;
+        let Some(select) = name
+            .strip_suffix(']')
+            .and_then(|prefix| prefix.rfind('[').map(|open| &prefix[open + 1..]))
+        else {
+            return Ok(None);
+        };
+        if let Some((left, right)) = select.split_once(':') {
+            return Ok(Some(PackedMemberSelect::Part(
+                self.packed_member_bound(left)?,
+                self.packed_member_bound(right)?,
+            )));
+        }
+        Ok(Some(PackedMemberSelect::Bit(
+            self.packed_member_bound(select)?,
+        )))
+    }
+
+    fn packed_member_bound(&self, index: &str) -> Result<i128, String> {
+        let parameter_value = |parameter: &str| {
+            self.param_vals.iter().find_map(|(node, value)| {
+                (self.node(*node).name == parameter)
+                    .then_some(value)
+                    .and_then(|value| match value {
+                        Val::Bits(value) if !value.is_unknown() => value.to_i128(),
+                        _ => None,
+                    })
+            })
+        };
+        let term = |text: &str| {
+            let text = text.trim().replace('_', "");
+            text.parse::<i128>().ok().or_else(|| parameter_value(&text))
+        };
+        for operator in ['+', '-'] {
+            let split = index
+                .char_indices()
+                .skip(1)
+                .find(|(_, ch)| *ch == operator)
+                .map(|(at, _)| (&index[..at], &index[at + 1..]));
+            if let Some((left, right)) = split {
+                if let (Some(left), Some(right)) = (term(left), term(right)) {
+                    let value = if operator == '+' {
+                        left.checked_add(right)
+                    } else {
+                        left.checked_sub(right)
+                    }
+                    .ok_or_else(|| format!("packed-member index `{index}` overflows"))?;
+                    return Ok(value);
+                }
+            }
+        }
+        if let Some(value) = term(index) {
+            return Ok(value);
+        }
+        let delay = eval_procedural_delay(index, Timescale::DEFAULT, |parameter| {
+            self.param_vals.iter().find_map(|(node, value)| {
+                if self.node(*node).name != parameter {
+                    return None;
+                }
+                let Val::Bits(value) = value else {
+                    return None;
+                };
+                let width = u32::try_from(value.width()).ok()?;
+                value
+                    .to_u128()
+                    .and_then(|raw| DelayValue::from_raw(raw, width, value.signed))
+                    .map(DelayParameter::Integer)
+            })
+        })
+        .map_err(|error| format!("packed-member index `{index}`: {error}"))?;
+        let (index, _) = delay.ticks_and_unit_ps(Timescale::DEFAULT);
+        Ok(i128::from(index))
+    }
+
+    fn packed_member_relative_bound(
+        &self,
+        member: &PackedMember,
+        bound: i128,
+    ) -> Result<u32, String> {
+        let (left, right) = match member.packed_ranges.as_slice() {
+            [range] => (range.left, range.right),
+            [] => {
+                return Err(format!(
+                    "packed-member `{}` has no captured packed range",
+                    member.name
+                ));
+            }
+            _ => {
+                return Err(format!(
+                    "select on multidimensional packed member `{}` is not supported",
+                    member.name
+                ));
+            }
+        };
+        if bound < left.min(right) || bound > left.max(right) {
+            return Err(format!(
+                "packed-member select bound {bound} is outside `{}` range [{left}:{right}]",
+                member.name
+            ));
+        }
+        let relative = if left >= right {
+            bound.checked_sub(right)
+        } else {
+            right.checked_sub(bound)
+        }
+        .ok_or_else(|| format!("packed-member select bound {bound} overflows"))?;
+        u32::try_from(relative)
+            .map_err(|_| format!("packed-member select bound {bound} does not fit in u32"))
+    }
+
+    /// Resolve a select on a multidimensional packed declaration to its
+    /// corresponding slice in the flattened runtime vector.
+    fn packed_select_info(
+        &self,
+        base: NodeId,
+        indices: &[NodeId],
+    ) -> Result<Option<(SignalInfo, u32, u32)>, String> {
+        let target = match self.kind(base) {
+            NodeKind::Net { .. } | NodeKind::Var { .. } => Some(base),
+            NodeKind::Expr(ExprKind::Ref { target }) => *target,
+            NodeKind::Expr(ExprKind::HierPath { refs, .. }) => refs.last().copied().flatten(),
+            _ => None,
+        };
+        let Some(target) = target else {
+            return Ok(None);
+        };
+        let Some(dimensions) = self.db.packed_dimensions(target) else {
+            return Ok(None);
+        };
+        if dimensions.len() < 2 || indices.is_empty() || indices.len() > dimensions.len() {
+            return Ok(None);
+        }
+        let info = self
+            .signal_of(target)
+            .cloned()
+            .ok_or_else(|| "packed select target is not a signal".to_string())?;
+        let mut remaining = dimensions
+            .iter()
+            .try_fold(1u128, |width, range| {
+                range
+                    .left
+                    .abs_diff(range.right)
+                    .checked_add(1)
+                    .and_then(|extent| width.checked_mul(extent))
+            })
+            .ok_or_else(|| "packed select width overflows".to_string())?;
+        let mut lsb = 0u128;
+        for (range, index_node) in dimensions.iter().zip(indices) {
+            let extent = range
+                .left
+                .abs_diff(range.right)
+                .checked_add(1)
+                .ok_or_else(|| "packed select dimension overflows".to_string())?;
+            let index = self.eval_bound_i128(*index_node)?;
+            let low = range.left.min(range.right);
+            let high = range.left.max(range.right);
+            if !(low..=high).contains(&index) {
+                return Err(format!(
+                    "packed select index {index} is outside [{low}:{high}]"
+                ));
+            }
+            remaining /= extent;
+            let slot = if range.left >= range.right {
+                index - range.right
+            } else {
+                range.right - index
+            };
+            let slot =
+                u128::try_from(slot).map_err(|_| "packed select offset is negative".to_string())?;
+            lsb = lsb
+                .checked_add(
+                    slot.checked_mul(remaining)
+                        .ok_or_else(|| "packed select offset overflows".to_string())?,
+                )
+                .ok_or_else(|| "packed select offset overflows".to_string())?;
+        }
+        let lsb = u32::try_from(lsb)
+            .map_err(|_| "packed select offset does not fit in u32".to_string())?;
+        let width = u32::try_from(remaining)
+            .map_err(|_| "packed select width does not fit in u32".to_string())?;
+        Ok(Some((info, lsb, width)))
+    }
+
+    /// Recover a parameterized function return range from its declaration.
+    /// Surelog v1.86 can retain the module's default parameter value on the
+    /// return object even when the enclosing instance overrides it.
+    fn declared_source_width(&self, declaration: NodeId, inst: NodeId) -> Option<u32> {
+        let node = self.node(declaration);
+        let file = node.file.as_deref()?;
+        let source = std::fs::read_to_string(file).ok()?;
+        let line = source.lines().nth(node.line.checked_sub(1)? as usize)?;
+        let range = line.split_once('[')?.1.split_once(']')?.0;
+        let (left, right) = range.split_once(':')?;
+        let owning_module = |mut node: NodeId| loop {
+            if matches!(self.kind(node), NodeKind::ModuleInst { .. }) {
+                break Some(node);
+            }
+            node = self.node(node).parent()?;
+        };
+        let function_module = owning_module(inst)?;
+        let term = |text: &str| {
+            let text = text.trim().replace('_', "");
+            text.parse::<u128>().ok().or_else(|| {
+                self.param_vals.iter().find_map(|(node, value)| {
+                    if self.node(*node).name != text
+                        || owning_module(*node) != Some(function_module)
+                    {
+                        return None;
+                    }
+                    let Val::Bits(value) = value else {
+                        return None;
+                    };
+                    (!value.is_unknown()).then(|| value.to_u128()).flatten()
+                })
+            })
+        };
+        let evaluate = |expression: &str| {
+            for operator in ['+', '-'] {
+                if let Some((left, right)) = expression.split_once(operator) {
+                    let (left, right) = (term(left)?, term(right)?);
+                    return if operator == '+' {
+                        left.checked_add(right)
+                    } else {
+                        left.checked_sub(right)
+                    };
+                }
+            }
+            term(expression)
+        };
+        let left = evaluate(left)?;
+        let right = evaluate(right)?;
+        u32::try_from(left.abs_diff(right).checked_add(1)?).ok()
+    }
+
+    fn effective_decl_width(&self, declaration: NodeId, inst: NodeId, captured: u32) -> u32 {
+        self.declared_source_width(declaration, inst)
+            .unwrap_or(captured)
+    }
+
+    fn source_size_cast_width(&self, expression: &str) -> Option<u32> {
+        let token = expression.trim();
+        let value = token.replace('_', "").parse::<u128>().ok().or_else(|| {
+            self.param_vals.iter().find_map(|(node, value)| {
+                if self.node(*node).name != token {
+                    return None;
+                }
+                let Val::Bits(value) = value else {
+                    return None;
+                };
+                (!value.is_unknown()).then(|| value.to_u128()).flatten()
+            })
+        })?;
+        u32::try_from(value).ok().filter(|width| *width != 0)
     }
 
     /// Timescale of the source file at `path`, parsed once and cached.  Files
@@ -946,6 +1252,11 @@ impl<'a> Codegen<'a> {
 
 fn is_real_kind(kind: &str) -> bool {
     matches!(kind, "real" | "shortreal")
+}
+
+/// SystemVerilog two-state integral types (IEEE 1800-2009 Table 6-8).
+fn is_two_state_kind(kind: &str) -> bool {
+    matches!(kind, "bit" | "byte" | "shortint" | "int" | "longint")
 }
 
 // ── Union-find (collapsed inout-net groups) ───────────────────────────────────
@@ -1358,6 +1669,7 @@ struct RetCtx {
     c_name: String,
     width: u32,
     signed: bool,
+    two_state: bool,
     node: Option<NodeId>,
 }
 
@@ -1367,7 +1679,7 @@ struct RetCtx {
 struct FuncMeta {
     ir: usize,
     is_task: bool,
-    ret: Option<(u32, bool)>,
+    ret: Option<(u32, bool, bool)>,
     formals: Vec<(NodeId, bool)>,
 }
 
@@ -1378,6 +1690,7 @@ struct FuncMeta {
 struct ArgMap {
     width: u32,
     signed: bool,
+    two_state: bool,
 }
 
 /// Context for emitting a function/task definition body (or an inlined task
@@ -1401,8 +1714,8 @@ struct FuncCtx {
     /// and inout formals (`o0` for a C-function parameter, `&G_x` for an
     /// inlined task's bound argument).
     arg_write: HashMap<NodeId, String>,
-    /// local var arena node → (C local name, width, signed).
-    locals: HashMap<NodeId, (String, u32, bool)>,
+    /// local var arena node → (C local name, width, signed, two-state).
+    locals: HashMap<NodeId, (String, u32, bool, bool)>,
     /// Arena node of the function-name return variable (when captured).
     ret_node: Option<NodeId>,
     /// Arena node of the function/task definition (`disable <taskname>;`
@@ -1491,33 +1804,6 @@ struct EmitCtx<'c, 'a> {
     in_final: bool,
 }
 
-/// Build an IR expression for function-scope storage such as `(*o0)` or a
-/// local variable name.
-fn verbatim_code_owned(code: String, width: u32, signed: bool) -> IrExpr {
-    IrExpr::new(
-        IrExprKind::Verbatim {
-            code,
-            width,
-            signed,
-        },
-        width,
-        signed,
-        None,
-    )
-}
-
-/// Convert a call value to a formal's `(width, signed)` shape:
-/// value-preserving (`sv4_cast`, extension keyed off the *source* value's
-/// own signedness — an unsigned source zero-extends even into a signed
-/// formal, LRM 1800-2009 §6.24.1 / §10.7).  Plain `sv4_resize` would
-/// sign-extend whenever the target is signed, corrupting unsigned values
-/// whose MSB is set (e.g. 3-bit `5` resized to a signed 32-bit integer
-/// formal), and zero-extend into unsigned targets, losing a signed value's
-/// sign.
-fn arg_resize(code: &str, width: u32, signed: bool) -> String {
-    format!("sv4_cast({code}, {width}, {})", signed as u8)
-}
-
 /// Lowered LHS of an assignment.
 enum Lhs {
     Whole(SignalInfo),
@@ -1527,10 +1813,11 @@ enum Lhs {
         addr: String,
         width: u32,
         signed: bool,
+        two_state: bool,
     },
-    Bit(SignalInfo, String),
-    Part(SignalInfo, i128, i128),
-    IdxPart(SignalInfo, String, String, i32),
+    Bit(SignalInfo, IrExpr, bool),
+    Part(SignalInfo, i128, i128, bool),
+    IdxPart(SignalInfo, IrExpr, IrExpr, u32, bool, bool),
     /// A write to one array element, with an optional element-level
     /// bit/part-select.  Emitted as a guarded statement (out-of-range or
     /// unknown indices are no-ops), never as a plain `llg_ba` argument.
@@ -1548,6 +1835,11 @@ enum HierSelect {
     Part(i128, i128),
     /// `[b +: w]` / `[b -: w]` — indexed part select.
     IdxPart(i128, i128, bool),
+}
+
+enum PackedMemberSelect {
+    Bit(i128),
+    Part(i128, i128),
 }
 
 /// One side of a port connection: a plain global signal, or an element of an
@@ -1709,8 +2001,8 @@ fn packed_lhs_width(model: &IrModel, lhs: &IrLhs) -> Option<u32> {
         IrLhs::Whole(idx) => model.signal(*idx).ty.width(),
         IrLhs::WholeRef { width, .. } => *width,
         IrLhs::Bit(..) => 1,
-        IrLhs::Part(_, left, right) => ((left - right).abs() + 1) as u32,
-        IrLhs::IdxPart(..) => return None,
+        IrLhs::Part(_, left, right, _) => ((left - right).abs() + 1) as u32,
+        IrLhs::IdxPart(_, _, _, width, _, _) => *width,
         IrLhs::ArrayElem { arr, elem_sel, .. } => match elem_sel {
             IrElemSel::Whole => model.array(*arr).elem_width,
             IrElemSel::Part(left, right) => ((left - right).abs() + 1) as u32,
@@ -1861,9 +2153,7 @@ fn expression_operand_with_context(expr: IrExpr, width: u32, signed: bool) -> Ir
     }
 }
 
-/// Apply packed operand context while preserving the runtime's explicit
-/// 64-bit limit for division, modulo and power. Context propagation can widen
-/// a nested limited operation after its ordinary lowering-time width check.
+/// Apply packed operand context after checking the implementation width limit.
 fn checked_operand_with_context(
     expr: IrExpr,
     width: u32,
@@ -1871,33 +2161,9 @@ fn checked_operand_with_context(
     scope_path: &str,
     context: &str,
 ) -> Result<IrExpr, String> {
-    fn reaches_limited_op(expr: &IrExpr) -> bool {
-        match &expr.kind {
-            IrExprKind::Bin { op, a, b } if is_context_binary(*op) => {
-                matches!(op, IrBinOp::Div | IrBinOp::Mod)
-                    || reaches_limited_op(a)
-                    || reaches_limited_op(b)
-            }
-            IrExprKind::Bin { op, a, .. }
-                if matches!(
-                    op,
-                    IrBinOp::Pow | IrBinOp::Shl | IrBinOp::Shr | IrBinOp::Ashl | IrBinOp::Ashr
-                ) =>
-            {
-                *op == IrBinOp::Pow || reaches_limited_op(a)
-            }
-            IrExprKind::Mux { a, b, .. } => reaches_limited_op(a) || reaches_limited_op(b),
-            IrExprKind::Un {
-                op: IrUnOp::Neg | IrUnOp::BitNeg,
-                a,
-            } => reaches_limited_op(a),
-            _ => false,
-        }
-    }
-
-    if width > 64 && reaches_limited_op(&expr) {
+    if width > LLG_MAX_WIDTH {
         return Err(format!(
-            "wide division/modulo/power not yet supported ({context} wider than 64 bits) in `{scope_path}`"
+            "{context} width {width} exceeds maximum {LLG_MAX_WIDTH} in `{scope_path}`"
         ));
     }
     Ok(expression_operand_with_context(expr, width, signed))
@@ -2045,15 +2311,38 @@ fn real_un_expr(a: IrExpr) -> IrExpr {
     )
 }
 
-fn verbatim_code(code: &str) -> IrExpr {
+fn lhs_integer_expr(value: i128) -> IrExpr {
+    let signed = value < 0;
+    let width: u32 = if (signed && value >= i128::from(i32::MIN))
+        || (!signed && value <= i128::from(u32::MAX))
+    {
+        32
+    } else if (signed && value >= i128::from(i64::MIN))
+        || (!signed && value <= i128::from(u64::MAX))
+    {
+        64
+    } else {
+        128
+    };
+    let raw = value as u128;
+    let mut bits = vec![raw as u64];
+    if width == 128 {
+        bits.push((raw >> 64) as u64);
+    } else if width == 32 {
+        bits[0] &= u64::from(u32::MAX);
+    }
     IrExpr::new(
-        IrExprKind::Verbatim {
-            code: code.to_string(),
-            width: 32,
-            signed: false,
-        },
-        32,
-        false,
+        IrExprKind::Const(IrConst {
+            bits,
+            x: vec![0; width.div_ceil(64) as usize],
+            z: vec![0; width.div_ceil(64) as usize],
+            width,
+            signed,
+            real: None,
+            fill: None,
+        }),
+        width,
+        signed,
         None,
     )
 }
@@ -2180,15 +2469,10 @@ fn parse_depth(s: &str) -> IrDepth {
 
 /// IR form of `expr_to_vector`: convert a lowered value to an explicit
 /// `(width, signed)` vector target — real payloads through `sv4_from_real`
-/// (at most 64 bits), unsized fills through `sv4_fill`, everything else
+/// through `sv4_from_real`, unsized fills through `sv4_fill`, everything else
 /// through the source-signedness-aware resize chain.
 fn ir_to_vector(e: IrExpr, width: u32, signed: bool) -> Result<IrExpr, String> {
     if e.is_real() {
-        if width > 64 {
-            return Err(format!(
-                "real-to-packed conversion target is {width} bits wide; v1 supports at most 64 bits"
-            ));
-        }
         Ok(IrExpr::new(
             IrExprKind::CastToPacked { a: Box::new(e) },
             width,
@@ -2201,6 +2485,17 @@ fn ir_to_vector(e: IrExpr, width: u32, signed: bool) -> Result<IrExpr, String> {
             None => ir_arg_resize(e, width, signed),
         })
     }
+}
+
+/// Convert to one packed storage type, including the X/Z-to-zero rule of
+/// SystemVerilog two-state destinations.
+fn ir_to_storage(e: IrExpr, width: u32, signed: bool, two_state: bool) -> Result<IrExpr, String> {
+    let converted = ir_to_vector(e, width, signed)?;
+    Ok(if two_state {
+        IrExpr::to_two_state(converted)
+    } else {
+        converted
+    })
 }
 
 /// IR form of a value-preserving conversion to a formal/return shape

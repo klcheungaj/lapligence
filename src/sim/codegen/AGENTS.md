@@ -21,10 +21,12 @@ contracts. `lower_expr`/`lower_stmt`/`lower_lhs` produce typed IR only.
 - `$display` format strings are parsed at codegen time; `%t` consumes an
   argument (typically `$time`) — codegen and the runtime `llg_display`
   must agree on specifier/argument counts.
-- Expression widths: constants, parameters, signals and concat/
-  replication results are all checked against `LLG_MAX_WIDTH` (1024);
-  division/modulo/power operands are additionally limited to 64 bits —
-  silent truncation in `sv4_concat` is a real bug, keep the checks.
+- Expression widths: constants, parameters, signals and concat/replication
+  results are checked against the generated model's `LLG_MAX_WIDTH`; the
+  backend rejects widths at its exclusive `1 << 20` limit. The IR does not
+  impose a fixed 1024-bit or 64-bit arithmetic cap, and division/modulo/power
+  preserve the model-sized limb width. Keep defensive checks at the backend
+  and runtime boundaries; silent truncation in `sv4_concat` is a real bug.
 - `for_stmt` in UHDM: `vpiForInitStmt`/`vpiForIncStmt` (not vpiStmt/
   vpiElseStmt) for init/incr, `vpiCondition` = condition, `vpiStmt` = body.
 - `delay_control` values are NOT exposed via VPI in Surelog v1.87 — the
@@ -48,6 +50,40 @@ with non-net members, mixed widths, unsupported net types (wand/wor/
 tri0/tri1/reg), select-LHS/NBA/task-actual writes are skipped with an
 explicit warning; inout ports emit no link (the group IS the connection)
 and input/output links touching a member are warned and skipped.
+
+Standalone packed `wand/triand` and `wor/trior` nets use one group per
+declaration and a distinct driver slot per whole-net continuous-assignment
+site (including declaration assignments), in deterministic node order, up to
+16 sites. Synthetic driver signals carry slot identities but no waveform names;
+user reads and sensitivity observe only the shared resolved cell. All-Z/no
+drivers resolve to Z; 0 dominates X for wired-AND, 1 dominates X for wired-OR.
+Reject port/interface/array wired nets, hierarchical or select LHS, procedural
+writes, force/release, gate and function/task-output drivers, and explicit
+drive strengths. This does not change the older per-member wire/inout model.
+See `tests/sim_net_resolution.rs` and standalone `tests/runtime_values.rs`.
+
+Standalone scalar and packed `wire/tri` declarations use the same per-site
+driver identity, including ordinary whole-net and selected continuous
+assignments with constant indices and bounds. A selected site rebuilds its
+complete contribution from Z on each evaluation before setting its
+bit/part-select, so it contributes Z outside that selected range. Dynamic net
+selectors are rejected because net lvalues require constant selects; variable
+lvalues remain a separate lowering path. Delayed whole-net drivers
+contribute X until their first scheduled update; a truly driverless wire uses
+the synthetic Z placeholder. Delayed selected drivers remain explicitly
+unsupported. Port/interface nets retain the link/collapsed-inout path. A
+single gate-only net and a forced net with at most one continuous driver retain
+their established direct-write path; mixed gate/continuous, multiple gate, or
+forced multidriver nets are rejected until those writers have independent
+contribution slots.
+
+The same bounded standalone-driver path supports `tri0/tri1` and
+`supply0/supply1`. Pull defaults replace only all-Z bits after ordinary wire
+resolution; X and conflicting active drivers remain X. Supply defaults dominate
+ordinary implicit-strength drivers. Resolved cells start at their default before
+processes run, while individual contribution slots start at Z. Explicit strengths
+remain rejected; `trireg` charge storage is not implemented.
+See `tests/sim_net_defaults.rs`.
 
 
 ## Initialization, generate scopes and interfaces
@@ -76,6 +112,11 @@ and input/output links touching a member are warned and skipped.
 - Functions/tasks support recursion and defaults, including defaults referring
   to earlier formals. Inline delay/wait-bearing tasks at call sites; reject
   recursive delay-bearing tasks and task calls from function bodies.
+  Static task output/inout formals use persistent model storage and copy out
+  when the task returns, so a later NBA can safely update the retained formal.
+  Reject NBAs targeting stack-backed task inputs/locals, and every automatic
+  formal/local target, before emission; queued runtime pointers must never
+  outlive their C storage.
 - Fork/join works only in process bodies: join/join_any/join_none, named forks,
   `wait fork;`, `disable fork;`. Reject fork/join in function/task bodies and
   cross-process `disable <label>;`.
@@ -127,15 +168,19 @@ skip. String-typed signals/parameters remain unsupported.
 
 Packed Verilog string literals are unsigned integral byte vectors, with the
 leftmost character most significant. Escapes retained by Surelog are decoded
-before the 1024-bit limit is checked; an empty literal is one zero byte.
+  before the generated model-width limit is checked; an empty literal is one
+  zero byte.
 Assignments pad/truncate as packed values, and explicitly packed parameters
 can initialize packed storage. SystemVerilog `string`-typed storage remains
 unsupported. See `tests/sim_packed_strings.rs`.
 
 ## Values and real numbers
 
-Keep `LLG_MAX_WIDTH` (1024) aligned with `llg_value.h`, including constant,
-parameter, signal, concat and replication checks; div/mod/pow remain ≤64-bit.
+Keep `LLG_MAX_WIDTH` aligned with the generated model definition in
+`llg_value.h`, including constant, parameter, signal, concat and replication
+checks. The exclusive backend capacity is `1 << 20`; div/mod/pow are
+model-width operations, not a separate 64-bit subset. The IR remains
+backend-independent and does not repeat this capacity as a semantic limit.
 X/Z remain distinct for display, literal equality and casez/casex matching
 (LRM 12.5.1); Z behaves as X in other expression contexts (LRM 11.4.5), with
 identity/copy operations preserving it. See runtime value contracts.
@@ -147,8 +192,8 @@ selectors and items share the maximum operand width and common signedness.
 Concatenation/replication operands and other self-determined positions stay
 one bit. If Surelog loses the fill marker, source recovery requires an exact
 two-character literal span; never reinterpret a folded compound expression
-from its first token. Context widening must still reject nested division,
-modulo, and power beyond 64 bits. See `tests/sim_fill_literals.rs`.
+from its first token. Context widening must preserve model-sized division,
+modulo, and power operations. See `tests/sim_fill_literals.rs`.
 
 Wildcard equality (`==?`/`!=?`) treats only RHS X/Z bits as wildcards after
 common-width and signedness conversion. A known mismatch wins over an unknown
@@ -156,7 +201,7 @@ LHS bit at another position; otherwise an unmasked LHS X/Z yields X. Real
 operands are rejected. `tests/sim_wildcard_eq.rs` compares optimizer variants.
 
 `$countones`, `$onehot`, `$onehot0`, and `$isunknown` accept one packed
-integral expression up to `LLG_MAX_WIDTH`. One counts ignore X/Z positions;
+integral expression up to the generated model's `LLG_MAX_WIDTH`. One counts ignore X/Z positions;
 `$isunknown` detects either state. Count results are signed 32-bit integers,
 and predicates are unsigned one-bit values. The argument evaluates once;
 optimizer read collection and combinational sensitivity retain its dependencies.
@@ -167,8 +212,8 @@ constant initialization, real parameters, blocking/NBA assignment, mixed
 packed/real arithmetic, relational/logical operations, conditionals, casts,
 `if`/`while`/`for` conditions and display `%f`/`%e`/`%g` width/precision.
 Shortreal assignment rounds through C `float`; real-to-packed rounds nearest
-(halves away from zero) for targets ≤64 bits. Packed-to-real accepts all
-1024 bits, treating X/Z positions as zero.
+(halves away from zero) for targets up to the generated model width.
+Packed-to-real accepts the model width, treating X/Z positions as zero.
 
 `$rtoi` truncates toward zero into signed 32-bit storage (non-finite inputs
 yield X; finite overflow wraps modulo 2^32). `$itor` preserves integral
@@ -214,18 +259,31 @@ before C compilation. `tests/sim_real.rs` pins support and rejection messages.
   additionally work in procedural/intra-assignment delays, including enclosing
   parentheses. Exact decimal-rational arithmetic rounds to the calling module's
   precision (nearest, halves upward) before conversion to global scheduler ticks;
-  check both evaluation and scaling overflow. Runtime values, real parameters,
-  scientific notation, arithmetic containing real/time literals, based literals,
+  check both evaluation and scaling overflow. Parenthesized scientific literals
+  (bounded decimal exponent magnitude ≤38, including exponent underscores) and
+  whole resolved real parameters also round locally; nearest declarations shadow
+  outer parameters. Surelog rejects bare scientific delay syntax before lowering.
+  Runtime values, arithmetic containing real/time literals or real parameters, based literals,
   logical/comparison/ternary and system-function forms remain unsupported.
-  General time-literal value expressions are not implemented. Sub-picosecond
+  Exact time literals in runtime value expressions become module-unit realtime
+  values after local-precision rounding, using source spans owned by `core::db`.
+  Build the DB with `Db::build_with_source_files` and explicitly admitted physical
+  sources (the CLI uses `CompileOut::frontend_source_files`); bare-handle
+  `generate` uses ordinary `Db::build` and rejects suspect source-dependent
+  values. Macros and unadmitted headers are rejected when provenance is missing.
+  Reject parameter/declaration initializers and frontend-folded compounds
+  containing time literals rather than accepting transformed integer payloads.
+  Existing real-expression restrictions and the 64-bit local-tick bound apply.
+  Sub-picosecond
   timescale precision still clamps up to 1 ps in the ps-integer representation.
-  See `tests/sim_delay.rs` and `tests/sim_time_literals.rs`.
+  See `tests/sim_delay.rs`, `tests/sim_time_literals.rs`, and `tests/sim_time_values.rs`.
 
 ## Unpacked arrays and memories
 
 - Storage: every array becomes a flat C array `sv4_t G_<path>_<name>[N]`
   (`N` = product of the per-dimension sizes `|left - right| + 1`); elements
-  start all-X (a loop in `main()` fills them, since a function call is not a
+  start all-X for four-state elements or zero for two-state elements (a loop
+  in `main()` fills them, since a function call is not a
   valid static initializer).  Declaration initializers (`= '{…}`) — captured
   by `core::db` either on the array object's `vpiExpr` (`logic`/`bit` arrays)
   or as a `vpiNetDeclAssign` continuous assignment (`reg` arrays, which
@@ -236,9 +294,11 @@ before C compilation. `tests/sim_real.rs` pins support and rejection messages.
   The linear index is row-major with the **leftmost dimension slowest**
   (matching Verilog); descending ranges (`[255:0]`) map `left` to offset 0.
 - Out-of-range semantics (matching Verilog): an index outside the declared
-  bounds, or with unknown (X/Z) bits, reads as X and makes a write a no-op.
-  Guard code is emitted inline (`sv4_to_i64`/`sv4_is_unknown` on each index,
-  a per-dimension offset/range check, then the flat element address).
+  bounds, or with unknown (X/Z) bits, reads as the element type's default
+  value (X for four-state, zero for two-state) and makes a write a no-op.
+  Guard code uses `sv4_to_index_i64` to preserve index signedness and reject
+  high-limb overflow, checks declared bounds before subtracting offsets, then
+  computes the flat element address.
 - Rejected with a clear message: dimension bounds that are not plain
   constants (Surelog keeps an implicit `[N]` size as `[0:N-1]` with an
   un-folded subtraction — declare `[0:N-1]` explicitly), array slices

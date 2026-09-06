@@ -11,7 +11,7 @@
 //! tests run with the CWD pointed at a fresh temp dir (serialized through a
 //! mutex, like the other Surelog integration tests).
 
-use std::sync::Mutex;
+use std::{path::Path, sync::Mutex};
 
 use llg::core::compile;
 use llg::core::elab;
@@ -43,6 +43,26 @@ fn run_sim(sv: &str, top: &str, tag: &str) -> Result<(String, Vec<String>), Stri
             .map_err(|e| format!("cmake: {e}"))?;
         let stdout = sim_harness::run_executable(&exe)?;
         Ok((stdout, gen.warnings))
+    })
+}
+
+fn codegen_fixture_error(file: &str, tag: &str) -> Result<String, String> {
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/sim/function")
+        .join(file);
+    sim_harness::with_temp_cwd(tag, |dir| {
+        let source = dir.join(file);
+        std::fs::copy(&fixture, &source).map_err(|error| format!("copy fixture: {error}"))?;
+        let compiled = compile::compile_checked(&compile::CompileOpts {
+            files: vec![source.to_string_lossy().into_owned()],
+            top: Some("tb".to_owned()),
+            ..Default::default()
+        })
+        .map_err(|error| format!("compile fixture: {error}"))?;
+        match sim::codegen::generate(compiled.uhdm_design().ok_or("no UHDM design")?) {
+            Ok(_) => Err(format!("{file} unexpectedly generated")),
+            Err(error) => Ok(error.to_string()),
+        }
     })
 }
 
@@ -207,10 +227,8 @@ endmodule
     assert_eq!(stdout, "t=5 d=x q=x\nt=15 d=7 q=8\nt=25 d=7 q=8\n");
 }
 
-/// (d) Task with an output formal, non-blocking write (regression: the NBA
-/// used to commit into a caller-side temp *after* the writeback had already
-/// copied it, so the actual never updated).  The whole-signal actual is now
-/// passed by pointer directly.
+/// (d) A static task output formal retains the value committed by its prior
+/// NBA. Copy-out on the next return must then update the caller's actual.
 #[test]
 fn sim_task_output_nba() {
     if !llg::sim::build::cmake_available() {
@@ -218,46 +236,35 @@ fn sim_task_output_nba() {
         return;
     }
     let _guard = SURELOG_LOCK.lock().unwrap();
-    let sv = r#"module tb;
-    logic clk;
-    logic [3:0] q;
-    logic [3:0] d;
+    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/sim/function/task_output_nba.sv");
+    let source = std::fs::read_to_string(&fixture).expect("read task output NBA fixture");
+    let (stdout, _warnings) = run_sim(&source, "tb", "tasknba").expect("simulation should run");
+    assert_eq!(stdout, "PASS task_output_nba\n");
+}
 
-    task set_q(input logic [3:0] x, output logic [3:0] y);
-        y <= x + 1;
-    endtask
-
-    always #5 clk = ~clk;
-
-    always @(posedge clk) begin
-        d <= 4'd7;
-        set_q(d, q);
-    end
-
-    initial begin
-        clk = 0;
-        #25 $display("t=%0t q=%0d", $time, q);
-        #10 $display("t=%0t q=%0d", $time, q);
-        $finish;
-    end
-endmodule
-"#;
-
-    // Hand-simulation:
-    //   t=0  clk=0.
-    //   t=5  posedge: d<=7 recorded; set_q reads d=X -> q<=X+1=X (NBA).
-    //        NBA: d=7, q=X.
-    //   t=15 posedge: set_q(d=7) -> q<=8 (NBA).  NBA: q=8.
-    //   t=25 posedge: set_q(d=7) -> q<=8 (same value).  initial: q=8 ->
-    //        "t=25 q=8".
-    //   t=35 initial: "t=35 q=8"; $finish.
-    //
-    // Expected stdout (exactly):
-    //   t=25 q=8
-    //   t=35 q=8
-
-    let (stdout, _warnings) = run_sim(sv, "tb", "tasknba").expect("simulation should run");
-    assert_eq!(stdout, "t=25 q=8\nt=35 q=8\n");
+#[test]
+fn sim_task_nba_rejects_unsupported_static_input_and_local_targets() {
+    let _guard = SURELOG_LOCK.lock().unwrap();
+    let cases = [
+        ("task_nba_input_formal.sv", "task_nba_input_formal", "input"),
+        (
+            "task_nba_local_storage.sv",
+            "task_nba_local_storage",
+            "local",
+        ),
+    ];
+    for (file, tag, target_kind) in cases {
+        let error = codegen_fixture_error(file, tag)
+            .unwrap_or_else(|error| panic!("{file} must be explicitly rejected: {error}"));
+        let normalized = error.to_ascii_lowercase();
+        assert!(
+            normalized.contains("nonblocking")
+                && normalized.contains("task")
+                && normalized.contains(target_kind),
+            "{file}: unexpected diagnostic: {error}"
+        );
+    }
 }
 
 /// (e) always_comb calling a function that reads a module signal (regression:

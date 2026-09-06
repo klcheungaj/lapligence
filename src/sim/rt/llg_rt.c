@@ -17,6 +17,11 @@
 #include <stdarg.h>
 #include <math.h>
 
+// Generated budgets include function frames through the recursion guard.
+#ifndef LLG_MODEL_STACK_VALUES
+#define LLG_MODEL_STACK_VALUES 256u
+#endif
+
 // ── Fatal boundary checks ────────────────────────────────────────────────────
 
 static void llg_fatal_allocation(const char* what, size_t count, size_t size) {
@@ -46,15 +51,22 @@ static void* llg_checked_calloc(size_t count, size_t size, const char* what) {
     return ptr;
 }
 
-static int llg_sv4_nlimbs(uint16_t width) {
+static size_t llg_coroutine_stack_size(void) {
+    const size_t base = 4u << 20;
+    if (LLG_MODEL_STACK_VALUES > (SIZE_MAX - base) / sizeof(sv4_t))
+        llg_fatal_allocation("coroutine stack", LLG_MODEL_STACK_VALUES, sizeof(sv4_t));
+    return base + (size_t)LLG_MODEL_STACK_VALUES * sizeof(sv4_t);
+}
+
+static int llg_sv4_nlimbs(uint32_t width) {
     return width == 0 ? 0 : (int)((width + 63u) / 64u);
 }
 
-static uint64_t llg_sv4_limb_mask(uint16_t width, int index) {
+static uint64_t llg_sv4_limb_mask(uint32_t width, int index) {
     int limbs = llg_sv4_nlimbs(width);
     if (index < 0 || index >= limbs) return 0;
     if (index == limbs - 1 && (width % 64) != 0)
-        return LLG_MASK((uint16_t)(width % 64));
+        return LLG_MASK((uint32_t)(width % 64));
     return ~0ULL;
 }
 
@@ -783,7 +795,7 @@ void llg_rt_init(void) {
     llg_n_finals = 0; // a fresh run never inherits final registrations
     aco_thread_init(llg_last_word);
     g.main_co = aco_create(NULL, NULL, 0, NULL, NULL);
-    g.share_stack = aco_share_stack_new(4u << 20);
+    g.share_stack = aco_share_stack_new(llg_coroutine_stack_size());
 }
 
 void llg_rt_finish(void) {
@@ -1030,37 +1042,9 @@ void llg_ba_d(double* target, double value) {
 
 // ── Collapsed inout nets ──────────────────────────────────────────────────────
 
-// The resolved value is the per-bit wire/tri combination (equal strengths,
-// LRM Table 6-2): all drivers Z -> Z; exactly one non-Z value -> that value;
-// equal non-Z values -> that value; any X or mixed 0/1 -> X.  Z driver bits
-// contribute nothing to any0/any1/anyx, so an all-Z bit (or a bit with no
-// driver at all) resolves to Z.
 static sv4_t llg_net_compute(const llg_net_t* net) {
-    sv4_t r;
-    memset(&r, 0, sizeof(r));
-    r.width = net->width;
-    r.is_signed = net->is_signed;
-    int nl = llg_sv4_nlimbs(net->width);
-    for (int i = 0; i < nl; i++) {
-        uint64_t m = llg_sv4_limb_mask(net->width, i);
-        uint64_t any0 = 0, any1 = 0, anyx = 0;
-        for (int d = 0; d < net->n_drivers; d++) {
-            const sv4_t* v = net->drivers[d];
-            if (!v) continue;
-            uint64_t bits = v->bits[i] & m;
-            uint64_t x = v->x[i] & m;
-            uint64_t z = v->z[i] & m;
-            uint64_t known = bits & ~(x | z);
-            any0 |= (~bits) & ~(x | z) & m;
-            any1 |= known;
-            anyx |= x;
-        }
-        uint64_t r_x = anyx | (any0 & any1);
-        r.x[i] = r_x & m;
-        r.z[i] = (~(any0 | any1 | anyx)) & m;
-        r.bits[i] = (any1 & ~r_x) & m;
-    }
-    return r;
+    return sv4_resolve((const sv4_t* const*)net->drivers, net->n_drivers,
+                       net->width, net->is_signed, net->resolution);
 }
 
 void llg_net_resolve(llg_net_t* net) {
@@ -1115,14 +1099,15 @@ static void llg_format_array(char* out, size_t cap, const char* fmt,
                    *p == '0' || *p == '.' || (*p >= '0' && *p <= '9')) {
                 p++;
             }
-            c = *p++;
+            c = *p;
+            if (c) ++p;
             if (c == '%') {
                 llg_append(out, cap, &len, '%');
             } else if ((c == 'd' || c == 'h' || c == 'b' || c == 'o' || c == 't') &&
                        argi < n) {
                 // %t prints its argument's value in ticks, like $display
                 // (sv4_format has no 't' case, so format as decimal).
-                char tmp[1100]; // wide enough for a full 1024-bit %b
+                char tmp[LLG_MAX_WIDTH + 2u];
                 sv4_format(c == 't' ? 'd' : c, args[argi++], tmp, sizeof(tmp));
                 for (char* q = tmp; *q && len + 1 < cap; q++) out[len++] = *q;
             } else {
@@ -1141,6 +1126,19 @@ static void llg_print_line(const char* line) {
     fputs(line, stdout);
     fputc('\n', stdout);
     fflush(stdout);
+}
+
+static void llg_print_array(const char* fmt, const sv4_t* args, int n) {
+    size_t cap = strlen(fmt) + 1;
+    for (int i = 0; i < n; ++i) {
+        size_t extra = (size_t)args[i].width + 2u;
+        if (extra > SIZE_MAX - cap) llg_fatal_allocation("formatted line", cap, extra);
+        cap += extra;
+    }
+    char* out = llg_checked_malloc(cap, 1, "formatted line");
+    llg_format_array(out, cap, fmt, args, n);
+    llg_print_line(out);
+    free(out);
 }
 
 void llg_monitor(const char* fmt, int n, llg_mon_eval_fn eval) {
@@ -1163,9 +1161,7 @@ void llg_monitor(const char* fmt, int n, llg_mon_eval_fn eval) {
     // Initial print: the current values at registration time.
     eval(g.mon.work);
     for (int i = 0; i < n; i++) g.mon.last[i] = g.mon.work[i];
-    char out[4096];
-    llg_format_array(out, sizeof(out), fmt, g.mon.work, n);
-    llg_print_line(out);
+    llg_print_array(fmt, g.mon.work, n);
 }
 
 void llg_strobe(const char* fmt, int n, llg_mon_eval_fn eval) {
@@ -1195,9 +1191,7 @@ static void check_monitor(void) {
         }
     if (!changed) return;
     for (int i = 0; i < g.mon.n; i++) g.mon.last[i] = g.mon.work[i];
-    char out[4096];
-    llg_format_array(out, sizeof(out), g.mon.fmt, g.mon.work, g.mon.n);
-    llg_print_line(out);
+    llg_print_array(g.mon.fmt, g.mon.work, g.mon.n);
 }
 
 // Print every queued $strobe line with the values committed by the NBA region
@@ -1207,9 +1201,7 @@ static void flush_strobes(void) {
         llg_strobe_t* e = g.strobes;
         g.strobes = e->next;
         e->eval(e->work);
-        char out[4096];
-        llg_format_array(out, sizeof(out), e->fmt, e->work, e->n);
-        llg_print_line(out);
+        llg_print_array(e->fmt, e->work, e->n);
         free(e->fmt);
         free(e->work);
         free(e);
@@ -1256,7 +1248,7 @@ void llg_rt_run_finals(void) {
     // llg_rt_run released the previous one.
     aco_thread_init(llg_last_word);
     g.main_co = aco_create(NULL, NULL, 0, NULL, NULL);
-    g.share_stack = aco_share_stack_new(4u << 20);
+    g.share_stack = aco_share_stack_new(llg_coroutine_stack_size());
     g.now = llg_final_time;
     uint64_t guard = 0;
     llg_in_finals = 1;
@@ -1421,10 +1413,8 @@ void llg_rt_run(void) {
 // ── $display / $write ─────────────────────────────────────────────────────────
 
 static void llg_vprint(const char* fmt, va_list ap, int newline) {
-    char out[4096];
-    size_t len = 0;
     const char* p = fmt;
-    while (*p && len + 1 < sizeof(out)) {
+    while (*p) {
         char c = *p++;
         if (c == '%') {
             const char* spec_start = p - 1;
@@ -1433,27 +1423,28 @@ static void llg_vprint(const char* fmt, va_list ap, int newline) {
                    *p == '0' || *p == '.' || (*p >= '0' && *p <= '9')) {
                 p++;
             }
-            c = *p++;
+            c = *p;
+            if (c) ++p;
             if (c == '%') {
-                out[len++] = '%';
+                fputc('%', stdout);
             } else if (c == 't') {
                 // %t prints the value of its argument (typically $time) in
                 // ticks, matching the generated code which passes the arg.
                 sv4_t v = va_arg(ap, sv4_t);
-                char tmp[32];
+                char tmp[LLG_MAX_WIDTH + 2u];
                 sv4_format('d', v, tmp, sizeof(tmp));
-                for (char* q = tmp; *q && len + 1 < sizeof(out); q++) out[len++] = *q;
+                fputs(tmp, stdout);
             } else if (c == 's') {
                 const char* s = va_arg(ap, const char*);
                 if (s) {
-                    for (; *s && len + 1 < sizeof(out); s++) out[len++] = *s;
+                    fputs(s, stdout);
                 }
             } else if (c == 'd' || c == 'h' || c == 'b' || c == 'o') {
                 sv4_t v = va_arg(ap, sv4_t);
-                // Wide enough for a full 1024-bit %b plus NUL.
-                char tmp[1100];
+                // One complete packed value, including a possible minus sign.
+                char tmp[LLG_MAX_WIDTH + 2u];
                 sv4_format(c, v, tmp, sizeof(tmp));
-                for (char* q = tmp; *q && len + 1 < sizeof(out); q++) out[len++] = *q;
+                fputs(tmp, stdout);
             } else if (c == 'f' || c == 'e' || c == 'g') {
                 double v = va_arg(ap, double);
                 char real_fmt[128];
@@ -1461,20 +1452,16 @@ static void llg_vprint(const char* fmt, va_list ap, int newline) {
                 if (spec_len >= sizeof(real_fmt)) spec_len = sizeof(real_fmt) - 1;
                 memcpy(real_fmt, spec_start, spec_len);
                 real_fmt[spec_len] = 0;
-                char tmp[128];
-                snprintf(tmp, sizeof(tmp), real_fmt, v);
-                for (char* q = tmp; *q && len + 1 < sizeof(out); q++) out[len++] = *q;
+                fprintf(stdout, real_fmt, v);
             } else {
                 // Unknown specifier: print it verbatim.
-                out[len++] = '%';
-                if (c && len + 1 < sizeof(out)) out[len++] = c;
+                fputc('%', stdout);
+                if (c) fputc(c, stdout);
             }
         } else {
-            out[len++] = c;
+            fputc(c, stdout);
         }
     }
-    out[len] = 0;
-    fputs(out, stdout);
     if (newline) fputc('\n', stdout);
     fflush(stdout);
 }

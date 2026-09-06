@@ -39,13 +39,16 @@ pub(crate) fn arg_resize(code: &str, width: u32, signed: bool) -> String {
 /// Render one IR expression to C, reproducing the pre-IR emitter's text
 /// decision-for-decision from the recorded widths/signedness/fills.
 pub fn render_expr(ctx: &RCtx<'_>, e: &IrExpr) -> Result<RenderedExpr, EmitError> {
-    ctx.model
-        .validate_expr(e, ctx.func)
-        .map_err(EmitError::InvalidIr)?;
+    super::check_capacity(
+        ctx.model
+            .expression_capacity(e, ctx.func)
+            .map_err(EmitError::InvalidIr)?,
+    )?;
     render_expr_impl(ctx, e).map_err(EmitError::new)
 }
 
 pub(super) fn render_expr_impl(ctx: &RCtx<'_>, e: &IrExpr) -> Result<RenderedExpr, String> {
+    super::check_capacity(u128::from(e.width)).map_err(|error| error.to_string())?;
     let w = |x: &IrExpr| render_expr_impl(ctx, x);
     let out = match &e.kind {
         IrExprKind::Const(c) => RenderedExpr {
@@ -237,7 +240,7 @@ pub(super) fn render_expr_impl(ctx: &RCtx<'_>, e: &IrExpr) -> Result<RenderedExp
             let rb = w(base)?;
             let ri = w(idx)?;
             RenderedExpr {
-                code: format!("sv4_bit_select({}, sv4_to_u64({}))", rb.code, ri.code),
+                code: format!("sv4_bit_select({}, sv4_to_index({}))", rb.code, ri.code),
                 width: 1,
                 signed: false,
                 fill: None,
@@ -255,17 +258,15 @@ pub(super) fn render_expr_impl(ctx: &RCtx<'_>, e: &IrExpr) -> Result<RenderedExp
         IrExprKind::IdxPartSel {
             base,
             base_idx,
-            width_expr,
             neg,
+            ..
         } => {
             let rb = w(base)?;
             let rbi = w(base_idx)?;
-            let rwe = w(width_expr)?;
             RenderedExpr {
                 code: format!(
-                    "sv4_idx_part_select({}, sv4_to_u64({}), \
-                     (uint16_t)sv4_to_u64({}), {})",
-                    rb.code, rbi.code, rwe.code, *neg as u8
+                    "sv4_idx_part_select_value({}, {}, {}, {})",
+                    rb.code, rbi.code, e.width, *neg as u8
                 ),
                 width: e.width,
                 signed: false,
@@ -293,7 +294,7 @@ pub(super) fn render_expr_impl(ctx: &RCtx<'_>, e: &IrExpr) -> Result<RenderedExp
                 IrElemSel::Bit(idx) => {
                     let ri = w(idx)?;
                     (
-                        format!("sv4_bit_select({elem}, sv4_to_u64({}))", ri.code),
+                        format!("sv4_bit_select({elem}, sv4_to_index({}))", ri.code),
                         1,
                         false,
                     )
@@ -349,6 +350,15 @@ pub(super) fn render_expr_impl(ctx: &RCtx<'_>, e: &IrExpr) -> Result<RenderedExp
             let ra = w(a)?;
             RenderedExpr {
                 code: format!("sv4_cast({}, {}, {})", ra.code, e.width, e.signed as u8),
+                width: e.width,
+                signed: e.signed,
+                fill: None,
+            }
+        }
+        IrExprKind::ToTwoState { a } => {
+            let ra = w(a)?;
+            RenderedExpr {
+                code: format!("sv4_to_two_state({})", ra.code),
                 width: e.width,
                 signed: e.signed,
                 fill: None,
@@ -538,7 +548,7 @@ fn cmp_expr(ra: &RenderedExpr, rb: &RenderedExpr, op: &str) -> String {
 
 /// Per-dimension size (`|left - right| + 1`).
 fn dim_size(ai: &crate::sim::ir::IrArray, k: usize) -> u64 {
-    ((ai.dims[k].0 - ai.dims[k].1).abs() + 1) as u64
+    (i64::from(ai.dims[k].0) - i64::from(ai.dims[k].1)).unsigned_abs() + 1
 }
 
 /// The per-dimension guard shared by array element reads and writes: temp
@@ -557,24 +567,25 @@ pub(crate) fn array_guard(
     let mut terms = Vec::new();
     let mut stride = 1u64;
     for k in (0..nd).rev() {
-        let (l, _r) = ai.dims[k];
-        let off = if l >= _r {
-            format!("{l} - sv4_to_i64(_i{k})")
+        let (l, r) = ai.dims[k];
+        let off = if l >= r {
+            format!("{l} - _v{k}")
         } else {
-            format!("sv4_to_i64(_i{k}) - {l}")
+            format!("_v{k} - {l}")
         };
         decls.push_str(&format!(
-            "sv4_t _i{k} = {}; int64_t _o{k} = {off}; ",
-            index_codes[k]
+            "sv4_t _i{k} = {}; int64_t _v{k} = 0; \
+             int _valid{k} = sv4_to_index_i64(_i{k}, &_v{k}) && _v{k} >= {} && _v{k} <= {}; \
+             int64_t _o{k} = _valid{k} ? ({off}) : 0; ",
+            index_codes[k],
+            l.min(r),
+            l.max(r)
         ));
-        conds.push(format!(
-            "sv4_fits_i64(_i{k}) && _o{k} >= 0 && _o{k} < {}",
-            dim_size(ai, k)
-        ));
+        conds.push(format!("_valid{k}"));
         if stride == 1 {
-            terms.push(format!("_o{k}"));
+            terms.push(format!("(uint64_t)_o{k}"));
         } else {
-            terms.push(format!("_o{k} * {stride}"));
+            terms.push(format!("(uint64_t)_o{k} * {stride}ULL"));
         }
         stride *= dim_size(ai, k);
     }
@@ -587,10 +598,27 @@ pub(crate) fn array_guard(
 fn guarded_array_read(ai: &crate::sim::ir::IrArray, index_codes: &[String]) -> String {
     match array_guard(ai, index_codes) {
         Some((decls, cond, lin)) => format!(
-            "({{ {decls}({cond}) ? {}[({lin})] : sv4_x({}, {}); }})",
-            ai.c_name, ai.elem_width, ai.signed as u8
+            "({{ {decls}({cond}) ? {}[({lin})] : {}; }})",
+            ai.c_name,
+            packed_default(ai.elem_width, ai.signed, ai.two_state)
         ),
         None => format!("{}[0]", ai.c_name),
+    }
+}
+
+pub(super) fn coerce_two_state(code: String, two_state: bool) -> String {
+    if two_state {
+        format!("sv4_to_two_state({code})")
+    } else {
+        code
+    }
+}
+
+pub(super) fn packed_default(width: u32, signed: bool, two_state: bool) -> String {
+    if two_state {
+        format!("sv4_from_u64(0, {width}, {})", signed as u8)
+    } else {
+        format!("sv4_x({width}, {})", signed as u8)
     }
 }
 
@@ -600,12 +628,6 @@ fn guarded_array_read(ai: &crate::sim::ir::IrArray, index_codes: &[String]) -> S
 /// the value-preserving `sv4_cast`.
 fn rendered_to_vector(r: &RenderedExpr, width: u32, signed: bool) -> Result<String, String> {
     if r.width == 0 {
-        if width > 64 {
-            return Err(format!(
-                "real-to-packed conversion target is {width} bits wide; \
-                 v1 supports at most 64 bits"
-            ));
-        }
         Ok(format!(
             "sv4_from_real({}, {}, {})",
             r.code, width, signed as u8
@@ -649,8 +671,8 @@ pub(super) fn render_assign(
             }
             IrLhs::WholeRef { width, signed, .. } => (*width, *signed),
             IrLhs::Bit(..) => (1, false),
-            IrLhs::Part(_, left, right) => (((left - right).abs() + 1) as u32, false),
-            IrLhs::IdxPart(idx, ..) => (ctx.model.signal(*idx).ty.width(), false),
+            IrLhs::Part(_, left, right, _) => (((left - right).abs() + 1) as u32, false),
+            IrLhs::IdxPart(_, _, _, width, _, _) => (*width, false),
             IrLhs::ArrayElem { arr, elem_sel, .. } => match elem_sel {
                 IrElemSel::Whole => {
                     let a = ctx.model.array(*arr);
@@ -690,12 +712,15 @@ pub(super) fn render_assign(
         // pre-converted to the exact target shape.
         let resize = |w: u32, s: bool| -> String {
             if real_converted {
-                return rhs_code.clone();
+                return coerce_two_state(rhs_code.clone(), ai.two_state);
             }
-            match rhs_fill {
-                Some(f) => format!("sv4_fill({f}, {w}, {})", s as u8),
-                None => format!("sv4_cast({}, {w}, {})", rhs_code, s as u8),
-            }
+            coerce_two_state(
+                match rhs_fill {
+                    Some(f) => format!("sv4_fill({f}, {w}, {})", s as u8),
+                    None => format!("sv4_cast({}, {w}, {})", rhs_code, s as u8),
+                },
+                ai.two_state,
+            )
         };
         let mut index_codes = Vec::with_capacity(indices.len());
         for i in indices {
@@ -724,7 +749,7 @@ pub(super) fn render_assign(
                         target,
                         format!(
                             "({{ sv4_t _t = {base}[({lin})]; \
-                             sv4_bit_select_set(&_t, sv4_to_u64({idx_code}), {v}); _t; }})"
+                             sv4_bit_select_set(&_t, sv4_to_index({idx_code}), {v}); _t; }})"
                         ),
                     )
                 }
@@ -772,15 +797,72 @@ pub(super) fn render_assign(
             return Ok(format!("llg_net_write(&{net}, {slot}, {value});"));
         }
     }
-    // A select LHS on a collapsed-net member never reaches emission (groups
-    // with select writes are skipped at lowering); the error is a backstop.
-    if let IrLhs::Bit(idx, _) | IrLhs::Part(idx, ..) | IrLhs::IdxPart(idx, ..) = lh {
-        if ctx.model.signal(*idx).net_driver.is_some() {
-            return Err("select LHS on an inout-net member is not supported".to_string());
+    // Each selected continuous-assignment site owns one driver. Rebuild its
+    // value from Z so a moving index releases the previously selected bits.
+    if let IrLhs::Bit(idx, ..) | IrLhs::Part(idx, ..) | IrLhs::IdxPart(idx, ..) = lh {
+        let sig = ctx.model.signal(*idx);
+        if let Some((gidx, slot)) = sig.net_driver {
+            if nba {
+                return Err("nonblocking assignment to a net select is not supported".to_string());
+            }
+            let net = &ctx.model.net_group(gidx).c_name;
+            let selected_two_state = match lh {
+                IrLhs::Bit(_, _, two_state)
+                | IrLhs::Part(.., two_state)
+                | IrLhs::IdxPart(.., two_state) => *two_state,
+                _ => false,
+            };
+            let resize = |width: &str| {
+                coerce_two_state(
+                    match rhs_fill {
+                        Some(fill) => format!("sv4_fill({fill}, {width}, 0)"),
+                        None => format!("sv4_cast({rhs_code}, {width}, 0)"),
+                    },
+                    selected_two_state || sig.ty.two_state(),
+                )
+            };
+            let update = match lh {
+                IrLhs::Bit(_, index, _) => {
+                    let index = render_expr_impl(ctx, index)?.code;
+                    let value = resize("1");
+                    format!("sv4_bit_select_set(&_t, sv4_to_index({index}), {value});")
+                }
+                IrLhs::Part(_, left, right, _) => {
+                    let width = (i128::from(*left) - i128::from(*right)).unsigned_abs() + 1;
+                    let value = resize(&width.to_string());
+                    format!("sv4_part_select_set(&_t, {left}, {right}, {value});")
+                }
+                IrLhs::IdxPart(_, base, _, selected_width, neg, _) => {
+                    let base = render_expr_impl(ctx, base)?.code;
+                    let value = resize(&selected_width.to_string());
+                    format!(
+                        "sv4_idx_part_select_set_value(&_t, {base}, \
+                         {selected_width}, {}, {value});",
+                        *neg as u8
+                    )
+                }
+                _ => unreachable!("only selected net targets enter this branch"),
+            };
+            return Ok(format!(
+                "{{ sv4_t _t = sv4_fill(3, {}, {}); {update} \
+                 llg_net_write(&{net}, {slot}, _t); }}",
+                sig.ty.width(),
+                sig.ty.signed() as u8
+            ));
         }
     }
 
     let call = if nba { "llg_nba" } else { "llg_ba" };
+    let two_state = match lh {
+        IrLhs::Whole(idx) => ctx.model.signal(*idx).ty.two_state(),
+        IrLhs::Bit(idx, _, selected_two_state)
+        | IrLhs::Part(idx, .., selected_two_state)
+        | IrLhs::IdxPart(idx, .., selected_two_state) => {
+            ctx.model.signal(*idx).ty.two_state() || *selected_two_state
+        }
+        IrLhs::WholeRef { two_state, .. } => *two_state,
+        _ => false,
+    };
     // Assignment padding follows the RHS's OWN signedness (LRM §10.7);
     // `sv4_cast` keys the extension off the value, so the tags stay the
     // pre-existing target shapes.  Fill literals keep the target shape like
@@ -788,12 +870,15 @@ pub(super) fn render_assign(
     // exact target shape.
     let resize = |code: &str, w: u32, s: bool| -> String {
         if real_converted {
-            return code.to_string();
+            return coerce_two_state(code.to_string(), two_state);
         }
-        match rhs_fill {
-            Some(f) => format!("sv4_fill({f}, {w}, {})", s as u8),
-            None => format!("sv4_cast({code}, {w}, {})", s as u8),
-        }
+        coerce_two_state(
+            match rhs_fill {
+                Some(f) => format!("sv4_fill({f}, {w}, {})", s as u8),
+                None => format!("sv4_cast({code}, {w}, {})", s as u8),
+            },
+            two_state,
+        )
     };
     let args = match lh {
         IrLhs::Whole(idx) => {
@@ -808,17 +893,18 @@ pub(super) fn render_assign(
             addr,
             width,
             signed,
+            ..
         } => format!("{addr}, {}", resize(&rhs_code, *width, *signed)),
-        IrLhs::Bit(idx, ie) => {
+        IrLhs::Bit(idx, ie, _) => {
             let sig = ctx.model.signal(*idx);
             let v = resize(&rhs_code, 1, false);
             let ic = render_expr_impl(ctx, ie)?.code;
             format!(
-                "&{}, ({{ sv4_t _t = {}; sv4_bit_select_set(&_t, sv4_to_u64({}), {}); _t; }})",
+                "&{}, ({{ sv4_t _t = {}; sv4_bit_select_set(&_t, sv4_to_index({}), {}); _t; }})",
                 sig.c_name, sig.c_name, ic, v
             )
         }
-        IrLhs::Part(idx, left, right) => {
+        IrLhs::Part(idx, left, right, _) => {
             let sig = ctx.model.signal(*idx);
             let w = ((left - right).abs() + 1) as u32;
             let v = resize(&rhs_code, w, false);
@@ -827,22 +913,26 @@ pub(super) fn render_assign(
                 sig.c_name, sig.c_name
             )
         }
-        IrLhs::IdxPart(idx, be, we, neg) => {
+        IrLhs::IdxPart(idx, be, _, selected_width, neg, _) => {
             let sig = ctx.model.signal(*idx);
             let bc = render_expr_impl(ctx, be)?.code;
-            let wc = render_expr_impl(ctx, we)?.code;
             let v = if real_converted {
                 rhs_code.clone()
             } else {
                 match rhs_fill {
-                    Some(f) => format!("sv4_fill({f}, (uint16_t)sv4_to_u64({wc}), 0)"),
-                    None => format!("sv4_cast({}, (uint16_t)sv4_to_u64({wc}), 0)", rhs_code),
+                    Some(f) => format!("sv4_fill({f}, {selected_width}, 0)"),
+                    None => format!("sv4_cast({}, {selected_width}, 0)", rhs_code),
                 }
             };
             format!(
-                "&{}, ({{ sv4_t _t = {}; sv4_idx_part_select_set(&_t, sv4_to_u64({}), \
-                 (uint16_t)sv4_to_u64({}), {}, {}); _t; }})",
-                sig.c_name, sig.c_name, bc, wc, *neg as u8, v
+                "&{}, ({{ sv4_t _t = {}; sv4_idx_part_select_set_value(&_t, {}, \
+                 {}, {}, {}); _t; }})",
+                sig.c_name,
+                sig.c_name,
+                bc,
+                selected_width,
+                *neg as u8,
+                coerce_two_state(v, two_state)
             )
         }
         IrLhs::ArrayElem { .. } => unreachable!("array elements handled above"),
@@ -885,7 +975,10 @@ fn render_call_expr(
         );
     for ((idx, _), arg) in formal_order.zip(&call.args) {
         match arg {
-            IrCallArg::Val(e) => call_args.push(render_expr_impl(ctx, e)?.code),
+            IrCallArg::Val(e) => call_args.push(coerce_two_state(
+                render_expr_impl(ctx, e)?.code,
+                f.formals[idx].two_state,
+            )),
             IrCallArg::OutAddr(addr) => call_args.push(addr.clone()),
             IrCallArg::OutTemp {
                 name,
@@ -926,8 +1019,8 @@ fn render_call_expr(
     for t in &temps {
         let form = &f.formals[t.idx];
         let init = match t.init {
-            Some(expr) => render_expr_impl(ctx, expr)?.code,
-            None => format!("sv4_x({}, {})", form.width, form.signed as u8),
+            Some(expr) => coerce_two_state(render_expr_impl(ctx, expr)?.code, form.two_state),
+            None => packed_default(form.width, form.signed, form.two_state),
         };
         parts.push(format!("sv4_t {} = {init}", t.name));
     }

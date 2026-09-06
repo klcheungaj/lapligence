@@ -220,17 +220,22 @@ fn run(options: DriverOptions) -> i32 {
             return 1;
         }
     };
-    let mut codegen_db = None;
+    let codegen_db = if lint_json_mode {
+        llg::core::db::Db::build(design)
+    } else {
+        let source_files = out.frontend_source_files();
+        llg::core::db::Db::build_with_source_files(design, &source_files)
+    };
+    let codegen_db = match codegen_db {
+        Ok(db) => db,
+        Err(e) => {
+            eprintln!("llg: db build failed: {e}");
+            return 1;
+        }
+    };
     if lint_mode {
-        let db = match llg::core::db::Db::build(design) {
-            Ok(db) => db,
-            Err(e) => {
-                eprintln!("lint: db build failed: {e}");
-                return 1;
-            }
-        };
-        let model = llg::core::model::DesignModel::from_db(&db);
-        let findings = llg::core::lint::lint_with_config(&db, &model, &lint_config);
+        let model = llg::core::model::DesignModel::from_db(&codegen_db);
+        let findings = llg::core::lint::lint_with_config(&codegen_db, &model, &lint_config);
 
         if lint_json_mode {
             // Machine-readable report mode: one JSON object on stdout (or in
@@ -292,18 +297,12 @@ fn run(options: DriverOptions) -> i32 {
             if errors > 0 {
                 return 1;
             }
-            // Surelog v1.87 exposes relationships whose contents may be
-            // consumed by a VPI traversal.  Reuse this owned snapshot for
-            // codegen instead of walking the live design a second time.
-            codegen_db = Some(db);
         }
     }
 
-    // 3. Codegen.
-    let generated = match &codegen_db {
-        Some(db) => sim::codegen::generate_from_db_with_opts(db, &sim::opt::OptConfig::default()),
-        None => sim::codegen::generate(design),
-    };
+    // 3. Reuse the owned snapshot: some Surelog relationships are consumable.
+    let generated =
+        sim::codegen::generate_from_db_with_opts(&codegen_db, &sim::opt::OptConfig::default());
     let gen = match generated {
         Ok(g) => g,
         Err(e) => {

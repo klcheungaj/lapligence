@@ -3,10 +3,9 @@
 //! The positive cases cover procedural assignment, real parameter arithmetic,
 //! mixed real/integer conditional typing, shortreal rounding, `$display`'s
 //! real format precision, implicit real-to-integer rounding, and real-valued
-//! non-blocking assignment timing.  The rejection cases pin the documented v1
-//! boundary: real values are procedural-only and are not supported in
-//! combinational processes, waits, monitors, arrays, ports/links, functions,
-//! or real-to-packed conversions wider than 64 bits.
+//! non-blocking assignment timing and wide packed conversion. The rejection
+//! cases retain unsupported procedural contexts: combinational processes,
+//! waits, monitors, arrays, ports/links, and functions.
 //!
 //! Surelog writes `slpp_all/` into the process working directory, so each
 //! test uses a fresh temp directory and the process-wide mutex serializes
@@ -333,6 +332,20 @@ endmodule
 }
 
 #[test]
+fn sim_real_to_128_bit_packed_conversion() {
+    if !llg::sim::build::cmake_available() {
+        eprintln!("SKIP: cmake not available");
+        return;
+    }
+    let _guard = SURELOG_LOCK.lock().unwrap();
+    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/sim/data_type_edges/real_to_wide.sv");
+    let source = std::fs::read_to_string(&fixture).expect("read real-to-wide fixture");
+    let stdout = run_sim(&source, "wide-conversion").expect("wide conversion should run");
+    assert_eq!(stdout, "PASS real_to_wide WIDTH=128\n");
+}
+
+#[test]
 fn sim_real_unsupported_contexts_are_rejected() {
     if !llg::sim::build::cmake_available() {
         eprintln!("SKIP: cmake not available");
@@ -411,20 +424,6 @@ module tb;
 endmodule
 "#,
             "port",
-        ),
-        (
-            "wide-conversion",
-            r#"module tb;
-    real value;
-    logic [127:0] wide;
-
-    initial begin
-        value = 3.5;
-        wide = value;
-    end
-endmodule
-"#,
-            "64",
         ),
         (
             "function",

@@ -3,7 +3,8 @@
 //
 // Values
 // ------
-// `sv4_t` models a 4-state vector of at most LLG_MAX_WIDTH (1024) bits, stored
+// `sv4_t` models a 4-state vector whose compile-time capacity is
+// LLG_MODEL_MAX_WIDTH bits, stored
 // as three parallel arrays of 64-bit limbs: bit i lives in `bits[i/64]` /
 // `x[i/64]` / `z[i/64]` at position `i%64`.  The invariant x & z == 0 holds:
 // bit i is X iff `(x[i/64] >> (i%64)) & 1`, Z iff `(z[i/64] >> (i%64)) & 1`,
@@ -26,43 +27,68 @@ extern "C" {
 
 // ── 4-state values ────────────────────────────────────────────────────────────
 
-#define LLG_MAX_WIDTH 1024u
-#define LLG_LIMBS ((LLG_MAX_WIDTH + 63u) / 64u) /* 16 */
+#define LLG_SUPPORTED_WIDTH_LIMIT (1u << 20)
+#ifndef LLG_MODEL_MAX_WIDTH
+#define LLG_MODEL_MAX_WIDTH 1024u
+#endif
+#if LLG_MODEL_MAX_WIDTH == 0 || LLG_MODEL_MAX_WIDTH >= LLG_SUPPORTED_WIDTH_LIMIT
+#error "LLG_MODEL_MAX_WIDTH must be in the range 1..1048575"
+#endif
+// Compatibility name used throughout the runtime.  The generated-model build
+// defines LLG_MODEL_MAX_WIDTH for every translation unit in the executable.
+#define LLG_MAX_WIDTH LLG_MODEL_MAX_WIDTH
+#define LLG_LIMBS ((LLG_MAX_WIDTH + 63u) / 64u)
 
 typedef struct {
     uint64_t bits[LLG_LIMBS]; // known bits; valid where x/z bits are 0
     uint64_t x[LLG_LIMBS];    // X bits (unknown)
     uint64_t z[LLG_LIMBS];    // Z bits (high-impedance); x & z == 0
-    uint16_t width;            // vector width (0..LLG_MAX_WIDTH)
+    uint32_t width;            // vector width (0..LLG_MAX_WIDTH)
     int8_t is_signed;          // signedness for resize/compare
 } sv4_t;
+
+// Equal-strength net resolution modes.  The pure resolver has no scheduler
+// dependency; llg_rt.c is responsible for publishing changes to waiters.
+enum {
+    LLG_RESOLVE_WIRE = 0,
+    LLG_RESOLVE_WAND = 1,
+    LLG_RESOLVE_WOR = 2,
+    LLG_RESOLVE_TRI0 = 3,
+    LLG_RESOLVE_TRI1 = 4,
+    LLG_RESOLVE_SUPPLY0 = 5,
+    LLG_RESOLVE_SUPPLY1 = 6,
+};
 
 // Compile-time bit mask for a width literal (<= 64).
 #define LLG_MASK(w) ((w) >= 64 ? ~0ULL : ((1ULL << (w)) - 1))
 
 // Build a value from single-limb bit/x/z masks.  Limbs above limb 0 are zero.
-// `SV4_C`/`SV4_S`/`SV4_X` clamp the width to 64 — they fill limb 0 only and are
-// meant for the code generator's <= 64-bit constants (wider values use
-// `sv4_from_limbs` / the wide codegen follow-up).
+// These constant-initializer-compatible macros require widths <= 64; wider
+// values use `sv4_from_limbs` or `sv4_fill`.  The sizeof guard rejects invalid
+// literal widths at compile time without breaking file-scope initializers.
+#define LLG_NARROW_WIDTH(w) \
+    ((uint32_t)(w) + \
+     0u * (uint32_t)sizeof(char[((w) <= 64u && (w) <= LLG_MAX_WIDTH) ? 1 : -1]))
 #define SV4_INIT(b, x, z, w, s) \
-    ((sv4_t){ { [0] = (uint64_t)(b) }, { [0] = (uint64_t)(x) }, \
-              { [0] = (uint64_t)(z) }, \
-              (uint16_t)(w), (int8_t)(s) })
+    ((sv4_t){ { [0] = (uint64_t)(b) & LLG_MASK(LLG_NARROW_WIDTH(w)) }, \
+              { [0] = (uint64_t)(x) & LLG_MASK(LLG_NARROW_WIDTH(w)) }, \
+              { [0] = (uint64_t)(z) & LLG_MASK(LLG_NARROW_WIDTH(w)) }, \
+              LLG_NARROW_WIDTH(w), (int8_t)(s) })
 // Unsigned / signed clean value with `w` bits.
-#define SV4_C(b, w) SV4_INIT((b), 0, 0, ((w) > 64u ? 64u : (w)), 0)
-#define SV4_S(b, w) SV4_INIT((b), 0, 0, ((w) > 64u ? 64u : (w)), 1)
+#define SV4_C(b, w) SV4_INIT((b), 0, 0, (w), 0)
+#define SV4_S(b, w) SV4_INIT((b), 0, 0, (w), 1)
 // All-X value of `w` bits (constant expression for literal `w`).
-#define SV4_X(w) SV4_INIT(0, LLG_MASK(w), 0, ((w) > 64u ? 64u : (w)), 0)
+#define SV4_X(w) SV4_INIT(0, ~0ULL, 0, (w), 0)
 // All-Z value of `w` bits (constant expression for literal `w`).
-#define SV4_Z(w) SV4_INIT(0, 0, LLG_MASK(w), ((w) > 64u ? 64u : (w)), 0)
+#define SV4_Z(w) SV4_INIT(0, 0, ~0ULL, (w), 0)
 
 // ── Value constructors / inspectors ───────────────────────────────────────────
 
-sv4_t sv4_x(uint16_t width, int8_t is_signed);
-sv4_t sv4_from_u64(uint64_t v, uint16_t width, int8_t is_signed);
-sv4_t sv4_from_i64(int64_t v, uint16_t width);
+sv4_t sv4_x(uint32_t width, int8_t is_signed);
+sv4_t sv4_from_u64(uint64_t v, uint32_t width, int8_t is_signed);
+sv4_t sv4_from_i64(int64_t v, uint32_t width);
 double sv4_to_real(sv4_t v);
-sv4_t sv4_from_real(double v, uint16_t width, int8_t is_signed);
+sv4_t sv4_from_real(double v, uint32_t width, int8_t is_signed);
 sv4_t sv4_rtoi(double v);
 sv4_t sv4_realtobits(double v);
 // Dynamic X/Z input bits have no real representation and contribute zero.
@@ -71,19 +97,23 @@ sv4_t sv4_shortrealtobits(double v);
 double sv4_bitstoshortreal(sv4_t v);
 int llg_real_to_bool(double v);
 // Build from raw limb arrays (any may be NULL to zero-fill); the top partial
-// limb is masked to `width` and the width is clamped to LLG_MAX_WIDTH.
+// limb is masked to `width`.  A width exceeding this model's compile-time
+// capacity is a fatal runtime error rather than a silent truncation.
 sv4_t sv4_from_limbs(const uint64_t* bits, const uint64_t* x, const uint64_t* z,
-                     uint16_t width, int8_t is_signed);
-sv4_t sv4_resize(sv4_t v, uint16_t width, int8_t is_signed);
+                     uint32_t width, int8_t is_signed);
+sv4_t sv4_resize(sv4_t v, uint32_t width, int8_t is_signed);
 // Value-preserving conversion (LRM 1800-2009 §6.24.1 / §10.7): widening
 // extends by the SOURCE's signedness (`v.is_signed`), narrowing truncates;
 // the result carries `is_signed`.  Unlike `sv4_resize`, whose extension
 // follows the passed flag, an unsigned source zero-extends even into a
 // signed target and a signed source sign-extends even into an unsigned one.
-sv4_t sv4_cast(sv4_t v, uint16_t width, int8_t is_signed);
+sv4_t sv4_cast(sv4_t v, uint32_t width, int8_t is_signed);
+// Packed four-state to two-state conversion: X and Z bits become zero while
+// known bits, width, and signedness are preserved.
+sv4_t sv4_to_two_state(sv4_t v);
 // All `width` bits set to one literal bit value: bit 0, bit 1, bit 2 = X,
 // or bit 3 = Z.
-sv4_t sv4_fill(uint8_t bit, uint16_t width, int8_t is_signed);
+sv4_t sv4_fill(uint8_t bit, uint32_t width, int8_t is_signed);
 sv4_t sv4_clog2(sv4_t v);
 sv4_t sv4_countones(sv4_t v);     // signed 32-bit count of known one bits
 sv4_t sv4_onehot(sv4_t v, int allow_zero); // one-bit predicate, X/Z ignored
@@ -91,9 +121,25 @@ sv4_t sv4_onehot(sv4_t v, int allow_zero); // one-bit predicate, X/Z ignored
 int sv4_is_unknown(sv4_t v);      // any bit X or Z
 int sv4_to_bool(sv4_t v);         // != 0 with no unknown bits, else 0
 uint64_t sv4_to_u64(sv4_t v);     // low limb; meaningful only when width <= 64
+// Convert a packed index without silently discarding upper bits.  Unknown,
+// negative, and wider-than-uint64 values return UINT64_MAX (always out of
+// range for an admitted packed value).
+uint64_t sv4_to_index(sv4_t v);
+// Exact signed host index conversion honoring the packed value's signedness.
+// Returns zero for X/Z or an out-of-range value without modifying `result`.
+int sv4_to_index_i64(sv4_t v, int64_t* result);
+// Convert a runtime-computed packed width.  Invalid, unknown, negative, or
+// over-capacity values terminate explicitly rather than truncating.
+uint32_t sv4_checked_width(sv4_t v);
 int64_t sv4_to_i64(sv4_t v);      // two's-complement interpretation of low bits
 int sv4_fits_i64(sv4_t v);        // exact signed conversion is representable
 int sv4_same(sv4_t a, sv4_t b);   // bits + x + z equal (ignores width/signed)
+// Resolve per-driver contributions at one net.  Z is absent/neutral; an
+// all-Z bit stays Z.  WAND gives 0 dominance, WOR gives 1 dominance, and
+// WIRE reports conflicting known values as X. TRI0/TRI1 apply their pull
+// only to all-Z bits. SUPPLY0/SUPPLY1 model their implicit supply source.
+sv4_t sv4_resolve(const sv4_t* const* drivers, int n_drivers,
+                  uint32_t width, int8_t is_signed, int mode);
 
 // Format one value into `buf` (NUL-terminated).  `fmt` is 'd', 'h', 'b' or 'o'.
 // %b prints all width bits: 'x' for X bits and 'z' for Z bits; %h prints
@@ -138,7 +184,9 @@ sv4_t sv4_shl(sv4_t a, sv4_t b);     // <<
 sv4_t sv4_shr(sv4_t a, sv4_t b);     // >>
 sv4_t sv4_ashl(sv4_t a, sv4_t b);    // <<<
 sv4_t sv4_ashr(sv4_t a, sv4_t b);    // >>>
-sv4_t sv4_eq(sv4_t a, sv4_t b);      // == (X when any operand bit X/Z)
+// Logical equality: a known mismatch yields 0 even if other bits are X/Z;
+// otherwise any X/Z yields X.
+sv4_t sv4_eq(sv4_t a, sv4_t b);
 sv4_t sv4_neq(sv4_t a, sv4_t b);
 sv4_t sv4_case_eq(sv4_t a, sv4_t b); // === (never X; X/Z compared literally)
 sv4_t sv4_case_neq(sv4_t a, sv4_t b);
@@ -164,9 +212,14 @@ sv4_t sv4_part_select(sv4_t v, int64_t left, int64_t right); // handles reversed
 void sv4_part_select_set(sv4_t* tgt, int64_t left, int64_t right, sv4_t value);
 sv4_t sv4_bit_select(sv4_t v, uint64_t i);
 void sv4_bit_select_set(sv4_t* tgt, uint64_t i, sv4_t value);
-sv4_t sv4_idx_part_select(sv4_t v, uint64_t base, uint16_t width, int neg);
-void sv4_idx_part_select_set(sv4_t* tgt, uint64_t base, uint16_t width, int neg,
+sv4_t sv4_idx_part_select(sv4_t v, uint64_t base, uint32_t width, int neg);
+void sv4_idx_part_select_set(sv4_t* tgt, uint64_t base, uint32_t width, int neg,
                              sv4_t value);
+// Value-based variants preserve a signed negative base long enough to model
+// partial out-of-range overlap (out-of-range read bits are X; writes are no-op).
+sv4_t sv4_idx_part_select_value(sv4_t v, sv4_t base, uint32_t width, int neg);
+void sv4_idx_part_select_set_value(sv4_t* tgt, sv4_t base, uint32_t width,
+                                   int neg, sv4_t value);
 
 #ifdef __cplusplus
 }

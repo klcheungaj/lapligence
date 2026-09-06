@@ -9,7 +9,8 @@
 //! selection).
 //!
 //! v1 scope: 4-state semantics (X and Z stored and displayed distinctly),
-//! vectors up to 1024 bits, processes (`initial`/`always`, including
+//! model-sized packed vectors (the C backend's exclusive capacity is `1 << 20`
+//! bits), processes (`initial`/`always`, including
 //! generate-block processes), event control, timescale-aware delays, NBA,
 //! continuous assignments, parameter propagation, port + interface links,
 //! functions/tasks (recursion, defaults, inlining), fork/join, arrays/

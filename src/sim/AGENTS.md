@@ -22,7 +22,7 @@ executables:
   `OptConfig { fold_constants, identities, prune_branches, unused_storage }`
   with `default()`/`none()` and per-pass toggling for bisection.  Constant
   folding reuses `core::elab::Value` math (X/Z-correct; shortreal casts fold
-  through `f32` like the runtime; div/mod/pow only for known ≤64-bit
+  through `f32` like the runtime; div/mod/pow preserve model-sized known
   operands); identity simplifications are shape-guarded; branch/case pruning
   follows strict provability rules (never prunes past non-const items, and to
   default only when ALL items are proven unmatched); unused-storage
@@ -64,6 +64,15 @@ executables:
 
 Driver: `src/bin/llg.rs` (compile → codegen(lowering → IR → opt → emit)
 → build → run).
+
+Packed-width capacity is selected per generated model. The codegen/backend
+emits `LLG_MODEL_MAX_WIDTH` from the completed design and rejects widths at the
+exclusive `1 << 20` backend limit; the IR itself has no fixed 1024/64-bit
+semantic cap. Runtime `sv4_t` widths are `uint32_t`, with defensive checks for
+the model capacity. Division, modulo, and power therefore use the model's
+wide limb capacity rather than a separate 64-bit operand limit. See
+[docs/sim_data_semantics.md](../../docs/sim_data_semantics.md) for the
+standard width/signedness and X/Z rules.
 
 ## Requirements
 

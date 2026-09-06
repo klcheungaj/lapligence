@@ -2,6 +2,171 @@ use super::*;
 use crate::sim::ir::{IrExpr, IrExprKind, IrModel, IrPreFn, IrStmt};
 
 #[test]
+fn runtime_width_limit_is_a_backend_policy_not_an_ir_invariant() {
+    let model = IrModel::new("wide".to_owned(), 1).unwrap();
+    let ctx = RCtx {
+        model: &model,
+        func: None,
+    };
+    for width in [LLG_WIDTH_LIMIT, LLG_WIDTH_LIMIT + 1, u32::MAX] {
+        let ty = crate::sim::ir::IrType::packed(width, false).unwrap();
+        let wide_model = IrModel::from_parts(
+            "wide_storage".to_owned(),
+            1,
+            crate::sim::ir::IrModelParts {
+                signals: vec![crate::sim::ir::IrSignal::new(
+                    "wide_signal".to_owned(),
+                    None,
+                    ty,
+                    None,
+                )
+                .unwrap()],
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        wide_model.validate().unwrap();
+        assert!(render(&wide_model)
+            .unwrap_err()
+            .to_string()
+            .contains("limit"));
+        let expression = IrExpr::try_new(IrExprKind::Fill(0), width, false, None).unwrap();
+        model.validate_expr(&expression, None).unwrap();
+        assert!(render_expr(&ctx, &expression)
+            .err()
+            .unwrap()
+            .to_string()
+            .contains("limit"));
+        let statement = IrStmt::If {
+            cond: expression.clone(),
+            then_: Vec::new(),
+            els: None,
+        };
+        model.validate_stmt(&statement, None).unwrap();
+        assert!(render_stmt(&ctx, &statement)
+            .err()
+            .unwrap()
+            .to_string()
+            .contains("limit"));
+        let helper = IrPreFn::MonEval {
+            c_name: "probe".into(),
+            args: vec![expression],
+        };
+        model.validate_pre_fn(&helper, None).unwrap();
+        assert!(render_pre_fn(&ctx, &helper)
+            .err()
+            .unwrap()
+            .to_string()
+            .contains("limit"));
+    }
+}
+
+#[test]
+fn malformed_concat_cannot_hide_its_derived_width() {
+    let model = IrModel::new("wide".to_owned(), 1).unwrap();
+    let expression = IrExpr::try_new(
+        IrExprKind::Replicate {
+            count: u64::from(LLG_WIDTH_LIMIT),
+            parts: vec![IrExpr::try_new(IrExprKind::Fill(0), 1, false, None).unwrap()],
+        },
+        1,
+        false,
+        None,
+    )
+    .unwrap();
+    assert!(model
+        .validate_expr(&expression, None)
+        .unwrap_err()
+        .to_string()
+        .contains("derived width"));
+}
+
+#[test]
+fn indexed_read_uses_its_elaborated_extent() {
+    let model = IrModel::new("indexed_read".to_owned(), 1).unwrap();
+    let packed = |value, width| {
+        IrExpr::try_new(
+            IrExprKind::Const(
+                crate::sim::ir::IrConst::packed(
+                    vec![value],
+                    Vec::new(),
+                    Vec::new(),
+                    width,
+                    false,
+                    None,
+                )
+                .unwrap(),
+            ),
+            width,
+            false,
+            None,
+        )
+        .unwrap()
+    };
+    let expression = IrExpr::try_new(
+        IrExprKind::IdxPartSel {
+            base: Box::new(packed(1, 8)),
+            base_idx: Box::new(packed(0, 32)),
+            width_expr: Box::new(packed(96, 32)),
+            neg: false,
+        },
+        96,
+        false,
+        None,
+    )
+    .unwrap();
+    assert_eq!(model.expression_capacity(&expression, None).unwrap(), 96);
+    let rendered = render_expr(
+        &RCtx {
+            model: &model,
+            func: None,
+        },
+        &expression,
+    )
+    .unwrap();
+    assert!(rendered.code.ends_with(", 96, 0)"));
+    assert!(!rendered.code.contains("sv4_checked_width"));
+}
+
+#[test]
+fn selected_net_driver_preserves_member_state_conversion() {
+    use crate::sim::ir::{IrLhs, IrModelParts, IrNetGroup, IrNetKind, IrSignal, IrType};
+    let model = IrModel::from_parts(
+        "member_driver".to_owned(),
+        1,
+        IrModelParts {
+            signals: vec![IrSignal::new(
+                "net.resolved".to_owned(),
+                None,
+                IrType::packed(8, false).unwrap(),
+                Some((0, 0)),
+            )
+            .unwrap()],
+            net_groups: vec![
+                IrNetGroup::new("net".to_owned(), 8, false, IrNetKind::Wire, 1).unwrap(),
+            ],
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let statement = IrStmt::Assign {
+        lhs: IrLhs::Part(0, 7, 4, true),
+        rhs: IrExpr::try_new(IrExprKind::Fill(2), 4, false, Some(2)).unwrap(),
+        nba: false,
+    };
+    let rendered = render_stmt(
+        &RCtx {
+            model: &model,
+            func: None,
+        },
+        &statement,
+    )
+    .unwrap();
+    assert!(rendered.contains("sv4_to_two_state(sv4_fill(2, 4, 0))"));
+    assert!(rendered.contains("llg_net_write(&net, 0, _t)"));
+}
+
+#[test]
 fn detached_fragments_reject_missing_storage_before_rendering() {
     let model = IrModel::new("empty".to_owned(), 1).unwrap();
     let ctx = RCtx {
@@ -52,6 +217,7 @@ fn output_temporary_uses_its_declared_formal_after_c_argument_reordering() {
         Some(IrType::Packed {
             width: 1,
             signed: false,
+            two_state: false,
         }),
         vec![
             IrFormal::new(false, 8, false).unwrap(),
@@ -89,6 +255,7 @@ fn output_temporary_uses_its_declared_formal_after_c_argument_reordering() {
                     addr: "&target".to_owned(),
                     width: 16,
                     signed: true,
+                    two_state: false,
                 }),
             },
             IrCallArg::Val(input),

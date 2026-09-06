@@ -145,34 +145,42 @@ endmodule
 }
 
 #[test]
-fn wide_context_rejects_nested_limited_operation() {
-    let source = r#"// llg-test-fixture: tests/sim_fill_literals.rs/wide_div.sv
-module tb;
-    logic [7:0] dividend, divisor;
-    logic [127:0] comparison_rhs;
-    logic result;
-    initial result = (dividend / divisor) == comparison_rhs;
-endmodule
-"#;
-
+fn nested_division_accepts_wide_comparison_context() {
+    if !sim::build::cmake_available() {
+        eprintln!("SKIP: cmake not available");
+        return;
+    }
+    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/sim/wide_datatype_regressions/nested_wide_div_context.sv");
     sim_harness::with_surelog_temp_cwd("fill_wide_div_context", |dir| {
         let path = dir.join("tb.sv");
-        std::fs::write(&path, source).map_err(|error| error.to_string())?;
+        std::fs::copy(&fixture, &path).map_err(|error| error.to_string())?;
         let compiled = compile::compile_checked(&compile::CompileOpts {
             files: vec![path.to_string_lossy().into_owned()],
             top: Some("tb".to_owned()),
             ..Default::default()
         })
         .map_err(|error| error.to_string())?;
-        let error = match sim::codegen::generate(compiled.uhdm_design().ok_or("no design")?) {
-            Ok(_) => return Err("wide comparison context was accepted".to_owned()),
-            Err(error) => error.to_string(),
-        };
-        assert!(
-            error.contains("comparison context wider than 64 bits"),
-            "unexpected error: {error}"
-        );
+        let db = Db::build(compiled.uhdm_design().ok_or("no design")?)
+            .map_err(|error| error.to_string())?;
+        for (variant, opts) in [
+            ("opt_off", OptConfig::none()),
+            ("opt_on", OptConfig::default()),
+        ] {
+            let model = sim::codegen::generate_from_db_with_opts(&db, &opts)
+                .map_err(|error| error.to_string())?;
+            let executable = sim::build::build_model_cmake(
+                &dir.join(variant),
+                &[("model.c", model.model_c.as_str())],
+            )
+            .map_err(|error| error.to_string())?;
+            assert_eq!(
+                sim_harness::run_executable(&executable)?,
+                "PASS nested_wide_div_context\n",
+                "{variant}"
+            );
+        }
         Ok(())
     })
-    .expect("wide nested limited operation rejection");
+    .expect("wide nested division context simulation");
 }

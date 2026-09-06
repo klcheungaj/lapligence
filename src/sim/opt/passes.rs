@@ -8,14 +8,16 @@
 //! - `fold_constants`: bottom-up constant folding over [`core::elab::Value`]
 //!   math (X/Z-correct; casez/casex wildcards for the wildcard comparisons).
 //!   Division/modulo/power fold only for fully known operands of at most
-//!   64 bits (the runtime's limits).  Calls are never folded through.  Real
-//!   arithmetic folds only when both operands are real literals.  Unsized
+//!   64 bits as a conservative optimization-cost guard; wider operations stay
+//!   symbolic for the arbitrary-width runtime. Calls are never folded through.
+//!   Real arithmetic folds only when both operands are real literals. Unsized
 //!   fill markers are ignored while folding — the runtime ops see concrete
 //!   values only (fill affects assignment conversions, which stay untouched).
 //! - `identities`: algebraic identities applied to a bounded fixpoint
 //!   together with folding (folding exposes identities and vice versa).
 //! - `prune_branches`: statements whose conditions are constants collapse to
-//!   the taken branch, under the runtime truthiness contract (X/Z ⇒ false).
+//!   the taken branch, under the runtime truthiness contract (a known one bit
+//!   is true; an otherwise X/Z-ambiguous value is false).
 //!   A `wait (cond)` with a false constant stays: it is a zero-delay guard
 //!   whose spin trips the runtime's deadlock guard.  Control-flow labels
 //!   whose only jump was pruned away are stripped afterwards.
@@ -28,7 +30,7 @@ use std::collections::HashSet;
 use crate::core::elab::{self, Bit, Value};
 use crate::sim::ir::{
     IrBinOp, IrCallArg, IrCaseKind, IrConst, IrElemSel, IrExpr, IrExprKind, IrLhs, IrModel,
-    IrPreFn, IrRealBinOp, IrRealUnOp, IrStmt, IrSysFunc, IrUnOp, IrWaitSrc, LLG_MAX_WIDTH,
+    IrPreFn, IrRealBinOp, IrRealUnOp, IrStmt, IrSysFunc, IrUnOp, IrWaitSrc,
 };
 
 /// Run the enabled passes over `model` in a fixed order.
@@ -201,8 +203,8 @@ fn real_of(e: &IrExpr) -> Option<f64> {
 
 fn walk_lhs_mut(l: &mut IrLhs, f: &mut impl FnMut(&mut IrExpr)) {
     match l {
-        IrLhs::Bit(_, idx) => walk_expr_mut(idx, f),
-        IrLhs::IdxPart(_, base, width, _) => {
+        IrLhs::Bit(_, idx, _) => walk_expr_mut(idx, f),
+        IrLhs::IdxPart(_, base, width, _, _, _) => {
             walk_expr_mut(base, f);
             walk_expr_mut(width, f);
         }
@@ -247,7 +249,8 @@ fn walk_expr_mut(e: &mut IrExpr, f: &mut impl FnMut(&mut IrExpr)) {
         | IrExprKind::RealUn { a, .. }
         | IrExprKind::CastToPacked { a }
         | IrExprKind::Resize { a }
-        | IrExprKind::Convert { a } => walk_expr_mut(a, f),
+        | IrExprKind::Convert { a }
+        | IrExprKind::ToTwoState { a } => walk_expr_mut(a, f),
         IrExprKind::CastToReal { a, .. } => walk_expr_mut(a, f),
         IrExprKind::Mux { sel, a, b } => {
             walk_expr_mut(sel, f);
@@ -455,7 +458,9 @@ fn fold_expr(e: &mut IrExpr) {
             let Some(total) = pat.width().checked_mul(*count as usize) else {
                 return;
             };
-            if total > LLG_MAX_WIDTH as usize {
+            // Width admission belongs to lowering/IR validation. Refuse an
+            // inconsistent node here without importing backend policy.
+            if total != e.width as usize {
                 return;
             }
             let mut bits = Vec::with_capacity(total);
@@ -471,6 +476,14 @@ fn fold_expr(e: &mut IrExpr) {
         IrExprKind::Convert { a } => as_packed_const(a)
             .map(|va| va.cast(e.width as usize, e.signed))
             .map(Folded::Bits),
+        IrExprKind::ToTwoState { a } => as_packed_const(a).map(|mut value| {
+            for bit in &mut value.bits {
+                if matches!(bit, Bit::X | Bit::Z) {
+                    *bit = Bit::Zero;
+                }
+            }
+            Folded::Bits(value)
+        }),
         // Real → packed rounding lives in the C runtime (`sv4_from_real`);
         // do not reproduce it here.
         IrExprKind::CastToPacked { .. } => None,
@@ -626,7 +639,8 @@ fn ident_children(e: &mut IrExpr) {
         | IrExprKind::RealUn { a, .. }
         | IrExprKind::CastToPacked { a }
         | IrExprKind::Resize { a }
-        | IrExprKind::Convert { a } => ident_expr(a),
+        | IrExprKind::Convert { a }
+        | IrExprKind::ToTwoState { a } => ident_expr(a),
         IrExprKind::CastToReal { a, .. } => ident_expr(a),
         IrExprKind::Mux { sel, a, b } => {
             ident_expr(sel);
@@ -697,8 +711,8 @@ fn ident_children(e: &mut IrExpr) {
 
 fn ident_lhs(l: &mut IrLhs) {
     match l {
-        IrLhs::Bit(_, idx) => ident_expr(idx),
-        IrLhs::IdxPart(_, base, width, _) => {
+        IrLhs::Bit(_, idx, _) => ident_expr(idx),
+        IrLhs::IdxPart(_, base, width, _, _, _) => {
             ident_expr(base);
             ident_expr(width);
         }
@@ -808,14 +822,15 @@ fn try_identity(e: &mut IrExpr) -> bool {
 
 // ── Pass: prune_branches ──────────────────────────────────────────────────────
 
-/// The runtime truthiness of a constant condition (`X/Z ⇒ false`; real
-/// constants follow the C `llg_real_to_bool` exactly: `v != 0.0`, so NaN
-/// is truthy); `None` when the condition is not a constant.
+/// The runtime truthiness of a constant condition (an ambiguous logical value
+/// is false; a known one bit still makes a wider value true). Real constants
+/// follow the C `llg_real_to_bool` exactly: `v != 0.0`, so NaN is truthy.
+/// Returns `None` when the condition is not a constant.
 fn truthy_const(e: &IrExpr) -> Option<bool> {
     match &e.kind {
         IrExprKind::Const(c) => match c.real {
             Some(r) => Some(r != 0.0),
-            None => as_packed_const(e).map(|v| !v.is_unknown() && v.bits.contains(&Bit::One)),
+            None => as_packed_const(e).map(|v| v.bits.contains(&Bit::One)),
         },
         _ => None,
     }
@@ -1350,7 +1365,7 @@ fn collect_lhs_rw(l: &IrLhs, model: &IrModel, rw: &mut Rw) {
     match l {
         IrLhs::Whole(i) => rw.write(*i),
         IrLhs::WholeRef { .. } => {}
-        IrLhs::Bit(i, idx) => {
+        IrLhs::Bit(i, idx, _) => {
             rw.write(*i);
             collect_expr_reads(idx, model, rw);
         }
@@ -1391,6 +1406,7 @@ fn collect_children_reads(e: &IrExpr, model: &IrModel, rw: &mut Rw) {
         | IrExprKind::CastToPacked { a }
         | IrExprKind::Resize { a }
         | IrExprKind::Convert { a }
+        | IrExprKind::ToTwoState { a }
         | IrExprKind::CastToReal { a, .. } => collect_expr_reads(a, model, rw),
         IrExprKind::Mux { sel, a, b } => {
             collect_expr_reads(sel, model, rw);
@@ -1474,7 +1490,7 @@ fn collect_call_rw_readonly(args: &[IrCallArg], model: &IrModel, rw: &mut Rw) {
 fn collect_lhs_write_only(l: &IrLhs, _model: &IrModel, rw: &mut Rw) {
     match l {
         IrLhs::Whole(i) => rw.write(*i),
-        IrLhs::Bit(i, _) | IrLhs::Part(i, ..) | IrLhs::IdxPart(i, ..) => rw.write(*i),
+        IrLhs::Bit(i, ..) | IrLhs::Part(i, ..) | IrLhs::IdxPart(i, ..) => rw.write(*i),
         _ => {}
     }
 }
@@ -1530,6 +1546,23 @@ mod tests {
                 bits: vec![0],
                 x: vec![0],
                 z: vec![u64::MAX],
+                width: w,
+                signed: false,
+                real: None,
+                fill: None,
+            }),
+            w,
+            false,
+            None,
+        )
+    }
+
+    fn masked_konst(bits: u64, x: u64, z: u64, w: u32) -> IrExpr {
+        IrExpr::new(
+            IrExprKind::Const(IrConst {
+                bits: vec![bits],
+                x: vec![x],
+                z: vec![z],
                 width: w,
                 signed: false,
                 real: None,
@@ -1600,6 +1633,7 @@ mod tests {
                 ty: IrType::Packed {
                     width: 8,
                     signed: false,
+                    two_state: false,
                 },
                 net_driver: None,
                 omit: false,
@@ -1790,6 +1824,79 @@ mod tests {
         );
         run(&mut m, &fold_only());
         assert_eq!(const_payload(first_assign_rhs(&m)), Some((1, 1)));
+    }
+
+    #[test]
+    fn fold_logical_equality_honors_known_mismatch_before_unknown_bits() {
+        // bit 3 differs while bit 1 is X in both operands, so == is known 0.
+        let mut m = model_with(
+            vec![assign(
+                IrLhs::Whole(0),
+                bin(
+                    IrBinOp::Eq,
+                    masked_konst(0b1000, 0b0010, 0, 4),
+                    masked_konst(0, 0b0010, 0, 4),
+                    1,
+                ),
+            )],
+            sigs(1),
+        );
+        run(&mut m, &fold_only());
+        assert_eq!(const_payload(first_assign_rhs(&m)), Some((0, 1)));
+
+        // With no known mismatch, the unknown bit keeps != unknown.
+        let mut m = model_with(
+            vec![assign(
+                IrLhs::Whole(0),
+                bin(
+                    IrBinOp::Neq,
+                    masked_konst(0b1000, 0b0010, 0, 4),
+                    masked_konst(0b1000, 0, 0b0010, 4),
+                    1,
+                ),
+            )],
+            sigs(1),
+        );
+        run(&mut m, &fold_only());
+        let IrExprKind::Const(value) = &first_assign_rhs(&m).kind else {
+            panic!("expected folded constant");
+        };
+        assert_eq!(value.x[0] & 1, 1);
+    }
+
+    #[test]
+    fn fold_two_state_conversion_zeros_x_and_z_bits() {
+        let converted = IrExpr::to_two_state(masked_konst(0b1111, 0b0010, 0b0100, 4));
+        let mut m = model_with(vec![assign(IrLhs::Whole(0), converted)], sigs(1));
+        run(&mut m, &fold_only());
+        assert_eq!(const_payload(first_assign_rhs(&m)), Some((0b1001, 4)));
+
+        // The conversion is not an identity for a runtime value even though
+        // it preserves width and signedness.
+        let converted = IrExpr::to_two_state(IrExpr::new(IrExprKind::SigRead(0), 8, false, None));
+        let mut m = model_with(vec![assign(IrLhs::Whole(0), converted)], sigs(1));
+        run(&mut m, &idents_only());
+        assert!(matches!(
+            first_assign_rhs(&m).kind,
+            IrExprKind::ToTwoState { .. }
+        ));
+    }
+
+    #[test]
+    fn fold_conditional_treats_known_one_with_unknown_as_true() {
+        let mux = IrExpr::new(
+            IrExprKind::Mux {
+                sel: Box::new(masked_konst(0b10, 0b01, 0, 2)),
+                a: Box::new(konst(9, 8)),
+                b: Box::new(konst(3, 8)),
+            },
+            8,
+            false,
+            None,
+        );
+        let mut m = model_with(vec![assign(IrLhs::Whole(0), mux)], sigs(1));
+        run(&mut m, &fold_only());
+        assert_eq!(const_payload(first_assign_rhs(&m)), Some((9, 8)));
     }
 
     #[test]
@@ -2021,6 +2128,22 @@ mod tests {
             None,
         );
         assert_eq!(truthy_const(&high_bit), Some(true));
+
+        let high_one_with_low_x = IrExpr::new(
+            IrExprKind::Const(IrConst {
+                bits: vec![0, 1u64 << 36],
+                x: vec![1, 0],
+                z: vec![0, 0],
+                width: 128,
+                signed: false,
+                real: None,
+                fill: None,
+            }),
+            128,
+            false,
+            None,
+        );
+        assert_eq!(truthy_const(&high_one_with_low_x), Some(true));
     }
 
     #[test]
@@ -2378,7 +2501,12 @@ mod tests {
                 0,
                 Some(IrExpr::new(IrExprKind::SigRead(2), 8, false, None)),
             )],
-            copyouts: vec![(IrLhs::Bit(3, konst(0, 3)), "_a0".to_string(), 8, false)],
+            copyouts: vec![(
+                IrLhs::Bit(3, konst(0, 3), false),
+                "_a0".to_string(),
+                8,
+                false,
+            )],
         });
         let mut m = model_with(vec![call], sigs(5));
         run(&mut m, &storage_only());

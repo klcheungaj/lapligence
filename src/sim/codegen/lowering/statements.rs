@@ -696,12 +696,6 @@ impl EmitCtx<'_, '_> {
                         rhs,
                     )
                 } else {
-                    if lhs.width > 64 || rhs.width > 64 {
-                        return Err(format!(
-                            "wide division/modulo not yet supported (operand wider than 64 bits) in `{}`",
-                            self.path
-                        ));
-                    }
                     common_bin_expr(
                         if op == vpi::vpiDivOp {
                             IrBinOp::Div
@@ -885,6 +879,7 @@ impl EmitCtx<'_, '_> {
                 name: tmp.clone(),
                 width: w,
                 signed: s,
+                two_state: false,
                 init: Some(Box::new(rhs_ir)),
             },
             IrStmt::Delay {
@@ -1208,6 +1203,7 @@ impl EmitCtx<'_, '_> {
             name: selector_name,
             width: selector_width,
             signed: selector_signed,
+            two_state: false,
             init: Some(Box::new(selector)),
         }];
         lowered.extend(tail.unwrap_or_default());
@@ -1235,6 +1231,7 @@ impl EmitCtx<'_, '_> {
                 name: info.c_name,
                 width: info.width,
                 signed: info.signed,
+                two_state: info.two_state,
                 init: None,
             });
         }
@@ -1335,6 +1332,7 @@ impl EmitCtx<'_, '_> {
                 name: info.c_name.clone(),
                 width: info.width,
                 signed: info.signed,
+                two_state: info.two_state,
                 init: None,
             });
             locals.push(info);
@@ -1356,6 +1354,7 @@ impl EmitCtx<'_, '_> {
                     addr: format!("&{}", local.c_name),
                     width: local.width,
                     signed: local.signed,
+                    two_state: local.two_state,
                 },
                 rhs: IrExpr::resize_to(loop_index_expr(*left), local.width, local.signed),
                 nba: false,
@@ -1377,6 +1376,7 @@ impl EmitCtx<'_, '_> {
                     addr: format!("&{}", local.c_name),
                     width: local.width,
                     signed: local.signed,
+                    two_state: local.two_state,
                 },
                 rhs: IrExpr::resize_to(next, local.width, local.signed),
                 nba: false,
@@ -2190,15 +2190,32 @@ impl EmitCtx<'_, '_> {
             }
         }
         let ft = self.cg.resolve_callee(self.inst, name, is_task, callee)?;
+        let automatic = matches!(
+            self.cg.kind(ft),
+            NodeKind::FuncTask {
+                automatic: true,
+                ..
+            }
+        );
+        if is_task
+            && self
+                .cg
+                .func_body(ft)
+                .is_some_and(|body| self.cg.node_has_unsafe_subroutine_nba(body, ft, automatic))
+        {
+            return Err(format!(
+                "nonblocking assignment in task `{name}` targets stack-backed input/formal/local storage which cannot outlive the call"
+            ));
+        }
         // All function/task definitions carry names; the model index exists
         // only for emitted (delay-free) callees.
         self.cg
             .func_names
             .get(&ft)
             .ok_or_else(|| format!("task `{name}` has no C name"))?;
-        let (_, _, formals) = self.cg.func_info(ft)?;
+        let (_, _, formals) = self.cg.func_info(ft, self.inst)?;
         let args: Vec<NodeId> = self.cg.node(h).children.clone();
-        let bound = self.cg.bind_call_args(&formals, &args)?;
+        let bound = self.cg.bind_call_args(self.inst, &formals, &args)?;
         if is_task && self.cg.task_has_wait(ft, self.inst) {
             self.lower_task_inline(ft, h, &formals, &bound)
         } else {
@@ -2213,8 +2230,7 @@ impl EmitCtx<'_, '_> {
     }
 
     /// Lower a delay-free task/function statement call: caller-side temps for
-    /// select-target output/inout formals, direct addresses for addressable
-    /// lvalues, inputs by value.
+    /// output/inout formals followed by copy-out, and inputs by value.
     fn lower_call_stmts(
         &mut self,
         fidx: usize,
@@ -2230,65 +2246,58 @@ impl EmitCtx<'_, '_> {
         let mut in_args: Vec<IrCallArg> = Vec::new();
         let mut arg_codes: Vec<Option<String>> = vec![None; formals.len()];
         let mut arg_irs: Vec<Option<IrExpr>> = vec![None; formals.len()];
+        let mut before = Vec::new();
+        let mut after = Vec::new();
         for (idx, (io, is_out)) in formals.iter().enumerate() {
             if !*is_out {
                 continue;
             }
-            // An output/inout actual bound to a whole signal (or another
-            // addressable lvalue) is passed through directly, so writes
-            // inside the task — including non-blocking ones, which commit
-            // in the NBA region *after* the call returns — hit the actual
-            // itself.  Select targets keep the temp + writeback (a temp is
-            // not an addressable whole signal).
             let lh = self.cg.lower_lhs(&self.path, bound[idx].expr)?;
-            match &lh {
-                IrLhs::Whole(sig_i) => {
-                    let sig = self.cg.model.signal(*sig_i);
-                    let global = sig.c_name.clone();
-                    let src_signed = sig.ty.signed();
-                    let sig_w = sig.ty.width();
-                    arg_irs[idx] = Some(ir_arg_resize(
-                        IrExpr::new(IrExprKind::SigRead(*sig_i), sig_w, src_signed, None),
-                        bound[idx].width,
-                        bound[idx].signed,
-                    ));
-                    arg_codes[idx] = Some(arg_resize(&global, bound[idx].width, bound[idx].signed));
-                    out_args.push(IrCallArg::OutAddr(format!("&{global}")));
+            if let Some(storage) = self.cg.static_formals.get(&(self.inst, *io)).cloned() {
+                let storage_lhs = IrLhs::Whole(storage.ir);
+                if matches!(
+                    self.cg.kind(*io),
+                    NodeKind::FuncArg {
+                        direction: DbDirection::Inout,
+                        ..
+                    }
+                ) {
+                    let value = self.cg.lower_expr(&self.path, bound[idx].expr)?;
+                    before.push(IrStmt::Assign {
+                        rhs: apply_lhs_assignment_context(&self.cg.model, &storage_lhs, value),
+                        lhs: storage_lhs.clone(),
+                        nba: false,
+                    });
                 }
-                IrLhs::WholeRef {
-                    addr,
-                    width,
-                    signed,
-                } => {
-                    let value = if let Some(rest) = addr.strip_prefix('&') {
-                        rest.to_string()
-                    } else {
-                        format!("(*{addr})")
-                    };
-                    arg_irs[idx] = Some(ir_arg_resize(
-                        verbatim_code_owned(value.clone(), *width, *signed),
-                        bound[idx].width,
-                        bound[idx].signed,
-                    ));
-                    arg_codes[idx] = Some(arg_resize(&value, *width, bound[idx].signed));
-                    out_args.push(IrCallArg::OutAddr(addr.clone()));
-                }
-                _ => {
-                    let tname = format!("_a{}", h.0);
-                    let (_init_code, init_ir) =
-                        self.cg.lower_call_temp_init(&self.path, *io, &bound[idx])?;
-                    temps.push((tname.clone(), idx, init_ir));
-                    copyouts.push((lh, tname.clone(), bound[idx].width, bound[idx].signed));
-                    arg_irs[idx] = Some(IrExpr::new(
-                        IrExprKind::LocalRead(tname.clone()),
-                        bound[idx].width,
-                        bound[idx].signed,
-                        None,
-                    ));
-                    arg_codes[idx] = Some(tname.clone());
-                    out_args.push(IrCallArg::OutAddr(format!("&{tname}")));
-                }
+                let read = IrExpr::new(
+                    IrExprKind::SigRead(storage.ir),
+                    storage.width,
+                    storage.signed,
+                    None,
+                );
+                after.push(IrStmt::Assign {
+                    rhs: apply_lhs_assignment_context(&self.cg.model, &lh, read.clone()),
+                    lhs: lh,
+                    nba: false,
+                });
+                arg_irs[idx] = Some(read);
+                arg_codes[idx] = Some(storage.global.clone());
+                out_args.push(IrCallArg::OutAddr(format!("&{}", storage.global)));
+                continue;
             }
+            let tname = format!("_a{}_{}", h.0, idx);
+            let (_init_code, init_ir) =
+                self.cg.lower_call_temp_init(&self.path, *io, &bound[idx])?;
+            temps.push((tname.clone(), idx, init_ir));
+            copyouts.push((lh, tname.clone(), bound[idx].width, bound[idx].signed));
+            arg_irs[idx] = Some(IrExpr::new(
+                IrExprKind::LocalRead(tname.clone()),
+                bound[idx].width,
+                bound[idx].signed,
+                None,
+            ));
+            arg_codes[idx] = Some(tname.clone());
+            out_args.push(IrCallArg::OutAddr(format!("&{tname}")));
         }
         for (idx, (_, is_out)) in formals.iter().enumerate() {
             if !*is_out {
@@ -2306,13 +2315,20 @@ impl EmitCtx<'_, '_> {
         }
         out_args.extend(in_args);
         let depth = parse_depth(&self.depth_arg);
-        Ok(IrStmt::Call(IrCall {
+        let call = IrStmt::Call(IrCall {
             f: fidx,
             args: out_args,
             depth,
             temps,
             copyouts,
-        }))
+        });
+        if before.is_empty() && after.is_empty() {
+            Ok(call)
+        } else {
+            before.push(call);
+            before.extend(after);
+            Ok(IrStmt::Block(before))
+        }
     }
 
     /// Lower a delay-bearing task body inlined at its call site: the task's
@@ -2342,11 +2358,11 @@ impl EmitCtx<'_, '_> {
 
         // Task locals get fresh C names per inline site (the same task may be
         // inlined several times in one block).
-        let mut locals: HashMap<NodeId, (String, u32, bool)> = HashMap::new();
+        let mut locals: HashMap<NodeId, (String, u32, bool, bool)> = HashMap::new();
         let mut local_seq = 0usize;
         let prefix = format!("_i{}", h.0);
         self.cg
-            .collect_func_locals(body, &mut locals, &mut local_seq, &prefix)?;
+            .collect_func_locals(body, self.inst, &mut locals, &mut local_seq, &prefix)?;
 
         // Formals bound to the caller's argument expressions.
         let mut arg_read: HashMap<NodeId, ArgMap> = HashMap::new();
@@ -2356,7 +2372,7 @@ impl EmitCtx<'_, '_> {
         let mut arg_irs: Vec<Option<IrExpr>> = vec![None; formals.len()];
         // Input formals bound to caller rvalue expressions need a writable
         // local copy (an input formal is a local copy in SystemVerilog).
-        let mut input_copies: Vec<(String, IrExpr)> = Vec::new();
+        let mut input_copies: Vec<(String, IrExpr, bool)> = Vec::new();
         for (idx, (io, is_out)) in formals.iter().enumerate() {
             let b = &bound[idx];
             if *is_out {
@@ -2379,6 +2395,7 @@ impl EmitCtx<'_, '_> {
                     ArgMap {
                         width: b.width,
                         signed: b.signed,
+                        two_state: b.two_state,
                     },
                 );
                 arg_irs[idx] = Some(read_ir.clone());
@@ -2408,9 +2425,10 @@ impl EmitCtx<'_, '_> {
                     ArgMap {
                         width: b.width,
                         signed: b.signed,
+                        two_state: b.two_state,
                     },
                 );
-                input_copies.push((cname, ir));
+                input_copies.push((cname, ir, b.two_state));
             }
         }
 
@@ -2455,7 +2473,7 @@ impl EmitCtx<'_, '_> {
 
         let mut stmts: Vec<IrStmt> = Vec::new();
         // Locals sorted by node id (emission order of the pre-IR emitter).
-        let mut local_names: Vec<(u32, (String, u32, bool))> = self
+        let mut local_names: Vec<(u32, (String, u32, bool, bool))> = self
             .func
             .as_ref()
             .map(|f| {
@@ -2466,20 +2484,22 @@ impl EmitCtx<'_, '_> {
             })
             .unwrap_or_default();
         local_names.sort_by_key(|(id, _)| *id);
-        for (_, (cname, w, s)) in local_names {
+        for (_, (cname, w, s, two_state)) in local_names {
             stmts.push(IrStmt::DeclLocal {
                 name: cname,
                 width: w,
                 signed: s,
+                two_state,
                 init: None,
             });
         }
-        for (cname, ir) in input_copies {
+        for (cname, ir, two_state) in input_copies {
             let (width, signed) = (ir.width, ir.signed);
             stmts.push(IrStmt::DeclLocal {
                 name: cname,
                 width,
                 signed,
+                two_state,
                 init: Some(Box::new(ir)),
             });
         }

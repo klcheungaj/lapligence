@@ -353,8 +353,9 @@ impl Val {
 //
 // All functions operate on self-determined operand widths and return the value
 // in the operation's result width; the caller (`eval_operation`) resizes to
-// the declared parameter width.  Arithmetic and comparison produce all-X when
-// any operand bit is X/Z; case equality compares X/Z as literal values.
+// the declared parameter width. Arithmetic and relational comparison produce
+// X when an operand is ambiguous; logical equality still returns a known false
+// when another bit proves a mismatch. Case equality compares X/Z literally.
 
 fn all_x(width: usize, signed: bool) -> Value {
     Value {
@@ -656,6 +657,25 @@ pub fn power(a: &Value, b: &Value) -> Value {
         return all_x(w, s);
     }
     if b.signed && b.bits.first() == Some(&Bit::One) {
+        if is_zero(a) {
+            return all_x(w, s);
+        }
+        let base_is_negative_one =
+            s && !a.bits.is_empty() && a.bits.iter().all(|bit| *bit == Bit::One);
+        if base_is_negative_one {
+            return if b.bit_lsb(0) == Bit::One {
+                a.clone()
+            } else {
+                Value::from_u64(1, w, s)
+            };
+        }
+        let base_is_one = a.bits.last() == Some(&Bit::One)
+            && a.bits[..a.bits.len().saturating_sub(1)]
+                .iter()
+                .all(|bit| *bit == Bit::Zero);
+        if base_is_one {
+            return Value::from_u64(1, w, s);
+        }
         return zero(w, s);
     }
     let mut result = zero(w, s);
@@ -935,22 +955,36 @@ fn shift(a: &Value, b: &Value, right: bool, arith: bool) -> Value {
     }
 }
 
-/// Equality (`==`): 1-bit result, X when any operand bit is X/Z.
+/// Equality (`==`, IEEE 1800-2009 §11.4.5): a known mismatch determines
+/// zero even when another bit is X/Z; otherwise an X/Z bit makes the result X.
 pub fn eq(a: &Value, b: &Value) -> Value {
-    if a.is_unknown() || b.is_unknown() {
-        return bit_x();
+    let w = max_width(a, b);
+    let signed = a.signed && b.signed;
+    let ra = a.resize(w, signed);
+    let rb = b.resize(w, signed);
+    let mut unknown = false;
+    for (left, right) in ra.bits.iter().zip(&rb.bits) {
+        if matches!(left, Bit::X | Bit::Z) || matches!(right, Bit::X | Bit::Z) {
+            unknown = true;
+        } else if left != right {
+            return Value::from_u64(0, 1, false);
+        }
     }
-    let r = known_cmp(a, b) == Ordering::Equal;
-    Value::from_u64(r as u64, 1, false)
+    if unknown {
+        bit_x()
+    } else {
+        Value::from_u64(1, 1, false)
+    }
 }
 
-/// Inequality (`!=`): 1-bit result, X when any operand bit is X/Z.
+/// Inequality (`!=`): logical complement of [`eq`] while preserving X.
 pub fn neq(a: &Value, b: &Value) -> Value {
-    if a.is_unknown() || b.is_unknown() {
-        return bit_x();
+    let result = eq(a, b);
+    if result.is_unknown() {
+        result
+    } else {
+        invert_known_one_bit(result)
     }
-    let r = known_cmp(a, b) != Ordering::Equal;
-    Value::from_u64(r as u64, 1, false)
 }
 
 /// Case equality (`===`): bitwise comparison including X/Z bits as literal
@@ -1146,8 +1180,10 @@ pub fn cond(sel: &Value, a: &Value, b: &Value) -> Value {
     let signed = a.signed && b.signed;
     let ra = a.resize(w, signed);
     let rb = b.resize(w, signed);
-    if !sel.is_unknown() {
-        return if sel.bits.contains(&Bit::One) { ra } else { rb };
+    match logical_bit(sel) {
+        Bit::One => return ra,
+        Bit::Zero => return rb,
+        Bit::X | Bit::Z => {}
     }
     let bits = ra
         .bits
@@ -2900,6 +2936,14 @@ mod tests {
         assert_eq!(arith_shl(&bits("0001"), &v(2, 8, false)), bits("0100"));
         // Shift >= width → 0.
         assert_eq!(shl(&bits("0001"), &v(4, 8, false)), bits("0000"));
+        // High set bits in a wide shift amount must not be truncated to the
+        // low host word. The known amount is far beyond the LHS width.
+        let mut wide_count = vec![Bit::Zero; 130];
+        wide_count[0] = Bit::One;
+        assert_eq!(
+            shl(&bits("0001"), &Value::from_bits(wide_count, false)),
+            bits("0000")
+        );
     }
 
     #[test]
@@ -2916,6 +2960,11 @@ mod tests {
     #[test]
     fn comparisons() {
         assert_eq!(eq(&bits("10x0"), &bits("10x0")), bits("x"));
+        // A known mismatch determines logical equality even when a different
+        // bit is unknown (IEEE 1800-2009 §11.4.5).
+        assert_eq!(eq(&bits("10x0"), &bits("00x0")), bits("0"));
+        assert_eq!(neq(&bits("10z0"), &bits("00z0")), bits("1"));
+        assert_eq!(eq(&bits("10x0"), &bits("10z0")), bits("x"));
         assert_eq!(case_eq(&bits("10x0"), &bits("10x0")), bits("1"));
         assert_eq!(case_neq(&bits("10x0"), &bits("10x0")), bits("0"));
         let signed_narrow = bits_signed("1111");
@@ -3078,6 +3127,20 @@ mod tests {
             power(&v(2, 4, true), &v((-1i64) as u64, 8, true)),
             v(0, 4, true)
         );
+        assert_eq!(
+            power(&v(1, 4, true), &v((-7i64) as u64, 8, true)),
+            v(1, 4, true)
+        );
+        let negative_one = v((-1i64) as u64, 4, true);
+        assert_eq!(
+            power(&negative_one, &v((-3i64) as u64, 8, true)),
+            negative_one
+        );
+        assert_eq!(
+            power(&negative_one, &v((-2i64) as u64, 8, true)),
+            v(1, 4, true)
+        );
+        assert!(power(&v(0, 4, false), &v((-1i64) as u64, 8, true)).is_unknown());
     }
 
     #[test]
@@ -3153,6 +3216,12 @@ mod tests {
         assert_eq!(cond(&bits("1"), &bits("1010"), &bits("0101")), bits("1010"));
         // sel = 0 → b
         assert_eq!(cond(&bits("0"), &bits("1010"), &bits("0101")), bits("0101"));
+        // A known one makes a multi-bit condition true even when another bit
+        // is unknown (IEEE 1800-2009 §11.4.11).
+        assert_eq!(
+            cond(&bits("1x"), &bits("1010"), &bits("0101")),
+            bits("1010")
+        );
         // sel = X with equal branches → value
         let same = bits("1010");
         assert_eq!(cond(&bits("x"), &same, &same), bits("1010"));
@@ -3174,11 +3243,11 @@ mod tests {
             cond(&bits("x"), &bits_signed("1111"), &bits("00000000")),
             bits("0000xxxx")
         );
-        // Any X/Z in a multi-bit selector is ambiguous, even if another bit
-        // is known one, so the two resized arms are merged.
+        // Logical truth is determined before branch selection, so the known
+        // one dominates the unknown low bit.
         assert_eq!(
             cond(&bits("1x"), &bits("1010"), &bits("1000")),
-            bits("10x0")
+            bits("1010")
         );
     }
 

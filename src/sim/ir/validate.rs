@@ -1,3 +1,4 @@
+use std::cell::Cell;
 use std::collections::HashSet;
 use std::error::Error;
 use std::fmt;
@@ -42,6 +43,7 @@ type ValidationResult = Result<(), IrValidationError>;
 
 struct Validator<'model> {
     model: &'model IrModel,
+    max_width: Cell<u128>,
 }
 
 impl IrModel {
@@ -50,7 +52,15 @@ impl IrModel {
     /// Lowering and optimization must call this at their phase boundaries;
     /// the C emitter may then index the model tables without defensive checks.
     pub fn validate(&self) -> Result<(), IrValidationError> {
-        Validator { model: self }.validate()
+        self.packed_capacity().map(|_| ())
+    }
+
+    /// Validate the model and find its required packed storage capacity.
+    /// Includes intermediate expressions, function locals, and initializers.
+    pub fn packed_capacity(&self) -> Result<u128, IrValidationError> {
+        let validator = Validator::new(self);
+        validator.validate()?;
+        Ok(validator.max_width.get())
     }
 
     /// Validate a detached expression against this model's index tables.
@@ -59,11 +69,18 @@ impl IrModel {
         expression: &IrExpr,
         function: Option<&IrFunc>,
     ) -> Result<(), IrValidationError> {
-        Validator { model: self }.validate_expr(
-            expression,
-            function.map_or(&[], IrFunc::formals),
-            "expr",
-        )
+        self.expression_capacity(expression, function).map(|_| ())
+    }
+
+    /// Validate a detached expression and report its widest packed shape.
+    pub fn expression_capacity(
+        &self,
+        expression: &IrExpr,
+        function: Option<&IrFunc>,
+    ) -> Result<u128, IrValidationError> {
+        let validator = Validator::new(self);
+        validator.validate_expr(expression, function.map_or(&[], IrFunc::formals), "expr")?;
+        Ok(validator.max_width.get())
     }
 
     /// Validate a detached statement against this model's index tables.
@@ -72,11 +89,22 @@ impl IrModel {
         statement: &IrStmt,
         function: Option<&IrFunc>,
     ) -> Result<(), IrValidationError> {
-        Validator { model: self }.validate_stmts(
+        self.statement_capacity(statement, function).map(|_| ())
+    }
+
+    /// Validate a detached statement and report its widest packed shape.
+    pub fn statement_capacity(
+        &self,
+        statement: &IrStmt,
+        function: Option<&IrFunc>,
+    ) -> Result<u128, IrValidationError> {
+        let validator = Validator::new(self);
+        validator.validate_stmts(
             std::slice::from_ref(statement),
             function.map_or(&[], IrFunc::formals),
             "stmt",
-        )
+        )?;
+        Ok(validator.max_width.get())
     }
 
     /// Validate a detached helper function against this model's index tables.
@@ -85,15 +113,33 @@ impl IrModel {
         pre_fn: &IrPreFn,
         function: Option<&IrFunc>,
     ) -> Result<(), IrValidationError> {
-        Validator { model: self }.validate_pre_fns(
+        self.pre_fn_capacity(pre_fn, function).map(|_| ())
+    }
+
+    /// Validate a detached helper and report its widest packed shape.
+    pub fn pre_fn_capacity(
+        &self,
+        pre_fn: &IrPreFn,
+        function: Option<&IrFunc>,
+    ) -> Result<u128, IrValidationError> {
+        let validator = Validator::new(self);
+        validator.validate_pre_fns(
             std::slice::from_ref(pre_fn),
             function.map_or(&[], IrFunc::formals),
             "pre_fn",
-        )
+        )?;
+        Ok(validator.max_width.get())
     }
 }
 
 impl Validator<'_> {
+    fn new(model: &IrModel) -> Validator<'_> {
+        Validator {
+            model,
+            max_width: Cell::new(0),
+        }
+    }
+
     fn validate(&self) -> ValidationResult {
         if self.model.precision_ps == 0 {
             return self.fail("precision_ps", "scheduler precision must be non-zero");
@@ -135,6 +181,12 @@ impl Validator<'_> {
             self.validate_width(group.width, &format!("{path}.width"))?;
             if group.n_drivers == 0 {
                 return self.fail(format!("{path}.n_drivers"), "net group has no drivers");
+            }
+            if group.n_drivers > LLG_MAX_NET_DRIVERS {
+                return self.fail(
+                    format!("{path}.n_drivers"),
+                    format!("net group exceeds {LLG_MAX_NET_DRIVERS} drivers"),
+                );
             }
         }
 
@@ -215,12 +267,11 @@ impl Validator<'_> {
     }
 
     fn validate_width(&self, width: u32, path: &str) -> ValidationResult {
-        if !(1..=LLG_MAX_WIDTH).contains(&width) {
-            return self.fail(
-                path,
-                format!("packed width {width} is outside 1..={LLG_MAX_WIDTH}"),
-            );
+        if width == 0 {
+            return self.fail(path, "packed width must be nonzero");
         }
+        self.max_width
+            .set(self.max_width.get().max(u128::from(width)));
         Ok(())
     }
 
@@ -270,12 +321,8 @@ impl Validator<'_> {
     }
 
     fn validate_expr(&self, expr: &IrExpr, formals: &[IrFormal], path: &str) -> ValidationResult {
-        if expr.width > LLG_MAX_WIDTH {
-            return self.fail(
-                format!("{path}.width"),
-                format!("expression width {} exceeds {LLG_MAX_WIDTH}", expr.width),
-            );
-        }
+        self.max_width
+            .set(self.max_width.get().max(u128::from(expr.width)));
         if expr.fill.is_some_and(|fill| fill > 3) {
             return self.fail(format!("{path}.fill"), "fill marker must be in 0..=3");
         }
@@ -345,7 +392,8 @@ impl Validator<'_> {
             | IrExprKind::CastToReal { a, .. }
             | IrExprKind::CastToPacked { a }
             | IrExprKind::Resize { a }
-            | IrExprKind::Convert { a } => {
+            | IrExprKind::Convert { a }
+            | IrExprKind::ToTwoState { a } => {
                 self.validate_expr(a, formals, &format!("{path}.a"))?;
             }
             IrExprKind::Mux { sel, a, b } => {
@@ -354,6 +402,17 @@ impl Validator<'_> {
                 self.validate_expr(b, formals, &format!("{path}.b"))?;
             }
             IrExprKind::Concat { parts } | IrExprKind::Replicate { parts, .. } => {
+                if parts.is_empty() {
+                    return self.fail(path, "concatenation requires at least one operand");
+                }
+                let sum: u128 = parts.iter().map(|part| u128::from(part.width)).sum();
+                let expected = match &expr.kind {
+                    IrExprKind::Replicate { count, .. } => sum * u128::from(*count),
+                    _ => sum,
+                };
+                if expected != u128::from(expr.width) {
+                    return self.fail(path, format!("concatenation/replication width {} disagrees with derived width {expected}", expr.width));
+                }
                 for (idx, part) in parts.iter().enumerate() {
                     self.validate_expr(part, formals, &format!("{path}.parts[{idx}]"))?;
                 }
@@ -573,14 +632,9 @@ impl Validator<'_> {
         }
     }
 
-    fn validate_select_width(&self, left: i64, right: i64, path: &str) -> ValidationResult {
+    fn validate_select_width(&self, left: i64, right: i64, _path: &str) -> ValidationResult {
         let width = (i128::from(left) - i128::from(right)).unsigned_abs() + 1;
-        if width > u128::from(LLG_MAX_WIDTH) {
-            return self.fail(
-                path,
-                format!("part-select width {width} exceeds {LLG_MAX_WIDTH}"),
-            );
-        }
+        self.max_width.set(self.max_width.get().max(width));
         Ok(())
     }
 
@@ -590,23 +644,24 @@ impl Validator<'_> {
                 if *signal >= self.model.signals.len() {
                     return self.fail(path, format!("signal index {signal} is out of bounds"));
                 }
-                if let IrLhs::Part(_, left, right) = lhs {
+                if let IrLhs::Part(_, left, right, _) = lhs {
                     self.validate_select_width(*left, *right, path)?;
                 }
             }
             IrLhs::WholeRef { width, .. } => self.validate_width(*width, path)?,
-            IrLhs::Bit(signal, index) => {
+            IrLhs::Bit(signal, index, _) => {
                 if *signal >= self.model.signals.len() {
                     return self.fail(path, format!("signal index {signal} is out of bounds"));
                 }
                 self.validate_expr(index, formals, &format!("{path}.index"))?;
             }
-            IrLhs::IdxPart(signal, base, width, _) => {
+            IrLhs::IdxPart(signal, base, width_expr, width, _, _) => {
                 if *signal >= self.model.signals.len() {
                     return self.fail(path, format!("signal index {signal} is out of bounds"));
                 }
                 self.validate_expr(base, formals, &format!("{path}.base"))?;
-                self.validate_expr(width, formals, &format!("{path}.width"))?;
+                self.validate_expr(width_expr, formals, &format!("{path}.width_expr"))?;
+                self.validate_width(*width, &format!("{path}.selected_width"))?;
             }
             IrLhs::ArrayElem {
                 arr,
@@ -903,11 +958,23 @@ mod tests {
             ty: IrType::Packed {
                 width: 1,
                 signed: false,
+                two_state: false,
             },
             net_driver: None,
             omit: false,
         }];
         model
+    }
+
+    fn packed_const(value: u64, width: u32) -> IrExpr {
+        IrExpr::new(
+            IrExprKind::Const(
+                IrConst::packed(vec![value], vec![], vec![], width, false, None).unwrap(),
+            ),
+            width,
+            false,
+            None,
+        )
     }
 
     #[test]
@@ -937,6 +1004,7 @@ mod tests {
             hdl_name: "memory".to_string(),
             elem_width: 8,
             signed: false,
+            two_state: false,
             dims: vec![(3, 0), (1, 0)],
             total: 7,
         });
@@ -952,12 +1020,64 @@ mod tests {
     }
 
     #[test]
+    fn indexed_lhs_selected_width_contributes_to_capacity() {
+        let statement = IrStmt::Assign {
+            lhs: IrLhs::IdxPart(
+                0,
+                packed_const(0, 32),
+                packed_const(96, 32),
+                96,
+                false,
+                false,
+            ),
+            rhs: packed_const(1, 1),
+            nba: false,
+        };
+
+        assert_eq!(
+            valid_model().statement_capacity(&statement, None).unwrap(),
+            96
+        );
+    }
+
+    #[test]
+    fn indexed_lhs_preserves_wide_base_expression_capacity() {
+        let part = || packed_const(0, 32);
+        let base = IrExpr::new(
+            IrExprKind::Concat {
+                parts: vec![part(), part(), part()],
+            },
+            96,
+            false,
+            None,
+        );
+        let statement = IrStmt::Assign {
+            lhs: IrLhs::IdxPart(0, base, packed_const(8, 32), 8, false, false),
+            rhs: packed_const(1, 1),
+            nba: false,
+        };
+
+        assert_eq!(
+            valid_model().statement_capacity(&statement, None).unwrap(),
+            96
+        );
+    }
+
+    #[test]
     fn constructors_reject_invalid_local_invariants() {
         assert!(IrModel::new("top".to_string(), 0).is_err());
         assert!(IrType::packed(0, false).is_err());
         assert!(IrExpr::try_new(IrExprKind::Fill(4), 1, false, Some(4)).is_err());
         assert!(IrArray::new("a".into(), "a".into(), 8, false, Vec::new()).is_err());
-        assert!(IrNetGroup::new("n".into(), 1, false, 0).is_err());
+        assert!(IrNetGroup::new("n".into(), 1, false, IrNetKind::Wire, 0).is_err());
+        assert!(IrNetGroup::new(
+            "n".into(),
+            1,
+            false,
+            IrNetKind::Wire,
+            LLG_MAX_NET_DRIVERS + 1,
+        )
+        .is_err());
     }
 
     #[test]

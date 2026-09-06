@@ -18,18 +18,18 @@ impl<'a> Codegen<'a> {
         Ok(render_expr(&ctx, ir)?.code)
     }
 
-    /// Lower `h` to IR and render it in one step.  This is THE expression
-    /// seam: every consumer sees exactly the pre-IR rendered C text.
-    pub(super) fn emit_expr(&mut self, scope_path: &str, h: NodeId) -> Result<String, String> {
-        let ir = self.lower_expr(scope_path, h)?;
-        self.render_ir_code(&ir)
-    }
-
     /// Lower an expression node decision-for-decision like the pre-IR
     /// emitter: same widths, signednesses, fills, and error strings.
     pub(super) fn lower_expr(&mut self, scope_path: &str, h: NodeId) -> Result<IrExpr, String> {
         match self.kind(h) {
             NodeKind::Expr(ExprKind::Constant { .. }) => {
+                if let Some(literal) = self.source_time_literal(h) {
+                    let timescale = self.timescale_of_node(h);
+                    let value = time_literal_to_real(&literal, timescale)?.ok_or_else(|| {
+                        format!("invalid time literal `{literal}` in `{scope_path}`")
+                    })?;
+                    return Ok(real_literal_expr(value));
+                }
                 let c = self.const_of_node(h)?;
                 Ok(IrExpr::new(
                     IrExprKind::Const(c.clone()),
@@ -75,6 +75,21 @@ impl<'a> Codegen<'a> {
                         None,
                     ));
                 }
+                if let Some((info, lsb, width)) = self.packed_select_info(*base, &[*index])? {
+                    if width > 1 {
+                        let right = i64::from(lsb);
+                        return Ok(IrExpr::new(
+                            IrExprKind::PartSel {
+                                base: Box::new(sig_read_expr_full(&info)),
+                                left: right + i64::from(width) - 1,
+                                right,
+                            },
+                            width,
+                            false,
+                            None,
+                        ));
+                    }
+                }
                 let (_, info) = self.base_signal(scope_path, *base)?;
                 if info.real {
                     return Err(format!(
@@ -93,6 +108,19 @@ impl<'a> Codegen<'a> {
                 ))
             }
             NodeKind::Expr(ExprKind::ArraySelect { base, indices }) => {
+                if let Some((info, lsb, width)) = self.packed_select_info(*base, indices)? {
+                    let right = i64::from(lsb);
+                    return Ok(IrExpr::new(
+                        IrExprKind::PartSel {
+                            base: Box::new(sig_read_expr_full(&info)),
+                            left: right + i64::from(width) - 1,
+                            right,
+                        },
+                        width,
+                        false,
+                        None,
+                    ));
+                }
                 let ai = self.array_of(*base).cloned().ok_or_else(|| {
                     format!(
                         "cannot resolve array base of select `{}` in `{scope_path}`",
@@ -195,19 +223,7 @@ impl<'a> Codegen<'a> {
                 }
                 let be = self.lower_expr(scope_path, *base_expr)?;
                 let we = self.lower_expr(scope_path, *width_expr)?;
-                let width = match self.const_of_node(*width_expr) {
-                    Ok(c) if c.real.is_none() => c.width,
-                    Ok(_) => {
-                        return Err(format!(
-                            "indexed part-select width cannot be real in `{scope_path}`"
-                        ))
-                    }
-                    Err(_) => {
-                        return Err(format!(
-                            "indexed part-select width must be a constant in `{scope_path}`"
-                        ))
-                    }
-                };
+                let width = self.indexed_part_select_width(*width_expr, scope_path)?;
                 Ok(IrExpr::new(
                     IrExprKind::IdxPartSel {
                         base: Box::new(sig_read_expr_full(&info)),
@@ -225,7 +241,19 @@ impl<'a> Codegen<'a> {
                 reordered,
                 operands,
             }) => self.lower_operation(scope_path, op.as_raw(), *reordered, operands),
-            NodeKind::Expr(ExprKind::Cast { operand, ty }) => {
+            NodeKind::Expr(ExprKind::Cast {
+                operand,
+                ty,
+                size_cast,
+                size_cast_expr,
+                cast_kind_known,
+                two_state,
+            }) => {
+                if !cast_kind_known {
+                    return Err(format!(
+                        "cast kind cannot be determined without admitted source or UHDM decompile in `{scope_path}`"
+                    ));
+                }
                 let v = self.lower_expr(scope_path, *operand)?;
                 if matches!(ty.kind.as_str(), "real" | "shortreal") {
                     return Ok(IrExpr::new(
@@ -238,8 +266,12 @@ impl<'a> Codegen<'a> {
                         None,
                     ));
                 }
-                let (w, s) = match (ty.width, ty.signed) {
-                    (Some(w), s) => (w, s),
+                let target_width = size_cast_expr
+                    .as_deref()
+                    .and_then(|expression| self.source_size_cast_width(expression))
+                    .or(ty.width);
+                let (w, s) = match (target_width, ty.signed) {
+                    (Some(w), s) => (w, if *size_cast { v.signed } else { s }),
                     (None, _) => {
                         return Err(format!(
                             "cast with unsized target type `{}` in `{scope_path}`",
@@ -250,14 +282,14 @@ impl<'a> Codegen<'a> {
                 if w > LLG_MAX_WIDTH {
                     return Err(format!(
                         "cast target in `{scope_path}` is {w} bits wide; the v1 \
-                         runtime supports at most {LLG_MAX_WIDTH}"
+                         runtime maximum supported width is {LLG_MAX_WIDTH}"
                     ));
                 }
                 // Value-preserving conversion (LRM 1800-2009 §6.24.1: the
                 // cast yields the value a variable of the cast type holds
                 // after the assignment — extension follows the SOURCE's
                 // signedness, so int'(8'hFF) is 255, not -1).
-                Ok(ir_to_vector(v, w, s)?)
+                ir_to_storage(v, w, s, *two_state || is_two_state_kind(&ty.kind))
             }
             NodeKind::SysCall { name } => self.lower_sys_func_expr(scope_path, name, h),
             NodeKind::FuncCall {
@@ -273,6 +305,65 @@ impl<'a> Codegen<'a> {
                 self.lower_func_call_expr(scope_path, h, name, *callee)
             }
             NodeKind::Expr(ExprKind::HierPath { .. }) => {
+                if let Some((info, member)) = self.packed_member_info(h) {
+                    let base = sig_read_expr_full(&info);
+                    let member_value = IrExpr::new(
+                        IrExprKind::PartSel {
+                            base: Box::new(base),
+                            left: i64::from(member.lsb + member.width - 1),
+                            right: i64::from(member.lsb),
+                        },
+                        member.width,
+                        false,
+                        None,
+                    );
+                    if let Some(select) = self.packed_member_select(h)? {
+                        let selected = match select {
+                            PackedMemberSelect::Bit(index) => {
+                                let index = self.packed_member_relative_bound(&member, index)?;
+                                IrExpr::new(
+                                    IrExprKind::BitSel {
+                                        base: Box::new(member_value),
+                                        idx: Box::new(lhs_integer_expr(i128::from(index))),
+                                    },
+                                    1,
+                                    false,
+                                    None,
+                                )
+                            }
+                            PackedMemberSelect::Part(left, right) => {
+                                let left = self.packed_member_relative_bound(&member, left)?;
+                                let right = self.packed_member_relative_bound(&member, right)?;
+                                let (left, right, width) = checked_select_bounds(
+                                    i128::from(left),
+                                    i128::from(right),
+                                    "packed-member part select",
+                                )?;
+                                IrExpr::new(
+                                    IrExprKind::PartSel {
+                                        base: Box::new(member_value),
+                                        left,
+                                        right,
+                                    },
+                                    width,
+                                    false,
+                                    None,
+                                )
+                            }
+                        };
+                        return Ok(if member.two_state {
+                            IrExpr::to_two_state(selected)
+                        } else {
+                            selected
+                        });
+                    }
+                    let selected = IrExpr::resize_to(member_value, member.width, member.signed);
+                    return Ok(if member.two_state {
+                        IrExpr::to_two_state(selected)
+                    } else {
+                        selected
+                    });
+                }
                 // 2-part interface member access (`m.data`): a read of the
                 // resolved per-port copy var.
                 if let Some(info) = self.hier_path_signal(h) {
@@ -322,7 +413,7 @@ impl<'a> Codegen<'a> {
                 if let Some(ir) = f.arg_ir.get(&t) {
                     return Ok(ir.clone());
                 }
-                if let Some((cname, w, s)) = f.locals.get(&t) {
+                if let Some((cname, w, s, _)) = f.locals.get(&t) {
                     return Ok(IrExpr::new(
                         IrExprKind::LocalRead(cname.clone()),
                         *w,
@@ -391,7 +482,7 @@ impl<'a> Codegen<'a> {
                         return Ok(ir.clone());
                     }
                 }
-                for (node, (cname, w, s)) in &f.locals {
+                for (node, (cname, w, s, _)) in &f.locals {
                     if self.node(*node).name == name {
                         return Ok(IrExpr::new(
                             IrExprKind::LocalRead(cname.clone()),
@@ -465,6 +556,22 @@ impl<'a> Codegen<'a> {
     pub(super) fn const_of_node(&self, node: NodeId) -> Result<IrConst, String> {
         match self.kind(node) {
             NodeKind::Expr(ExprKind::Constant { value, size, .. }) => {
+                if let Some(literal) = self.source_time_literal(node) {
+                    return Err(format!(
+                        "time literal `{literal}` requires a runtime expression context"
+                    ));
+                }
+                if let Some(literal) = self.embedded_source_time_literal(node) {
+                    return Err(format!(
+                        "folded expression containing time literal `{literal}` is not supported"
+                    ));
+                }
+                if self.unverified_time_literal_candidate(node) {
+                    return Err(
+                        "cannot verify unsigned constant source after possible time-literal rewriting"
+                            .to_owned(),
+                    );
+                }
                 let mut c = if let Some(fill) = self.source_fill_literal(node) {
                     IrConst {
                         bits: vec![(fill == 1) as u64],
@@ -491,6 +598,102 @@ impl<'a> Codegen<'a> {
             }
             _ => Err("unsupported constant value format".to_string()),
         }
+    }
+
+    pub(super) fn indexed_part_select_width(
+        &self,
+        node: NodeId,
+        scope_path: &str,
+    ) -> Result<u32, String> {
+        let value = self.eval_bound_i128(node).map_err(|_| {
+            format!("indexed part-select width must be a constant in `{scope_path}`")
+        })?;
+        let width = u32::try_from(value)
+            .map_err(|_| format!("indexed part-select width must be positive in `{scope_path}`"))?;
+        if width == 0 {
+            return Err(format!(
+                "indexed part-select width must be positive in `{scope_path}`"
+            ));
+        }
+        if width > LLG_MAX_WIDTH {
+            return Err(format!(
+                "indexed part-select width {width} exceeds maximum {LLG_MAX_WIDTH} in `{scope_path}`"
+            ));
+        }
+        Ok(width)
+    }
+
+    /// Recover a time literal only when the UHDM constant's exact source span
+    /// is one complete token. Surelog v1.87 rewrites these constants to an
+    /// unsigned femtosecond payload and loses `vpiTimeConst`; accepting a
+    /// prefix or a folded compound span would silently invent the wrong unit.
+    pub(super) fn source_time_literal(&self, node: NodeId) -> Option<String> {
+        let NodeKind::Expr(ExprKind::Constant {
+            source: ConstantSource::Exact(token),
+            const_type: ConstantType::UnsignedInteger,
+            ..
+        }) = self.kind(node)
+        else {
+            return None;
+        };
+        if time_literal_token(token).is_some_and(|literal| literal == token) {
+            Some(token.clone())
+        } else {
+            None
+        }
+    }
+
+    pub(super) fn embedded_source_time_literal(&self, node: NodeId) -> Option<String> {
+        let NodeKind::Expr(ExprKind::Constant {
+            source: ConstantSource::Exact(source),
+            const_type: ConstantType::UnsignedInteger,
+            ..
+        }) = self.kind(node)
+        else {
+            return None;
+        };
+        time_literal_token(source).map(str::to_owned)
+    }
+
+    pub(super) fn unverified_time_literal_candidate(&self, node: NodeId) -> bool {
+        matches!(
+            self.kind(node),
+            NodeKind::Expr(ExprKind::Constant {
+                source: ConstantSource::Unavailable | ConstantSource::NotCaptured,
+                time_literal_candidate: true,
+                ..
+            })
+                | NodeKind::Expr(ExprKind::Constant {
+                    source: ConstantSource::Exact(_),
+                    time_literal_candidate: true,
+                    ..
+                }) if self.source_time_literal(node).is_none()
+                    && self.embedded_source_time_literal(node).is_none()
+        )
+    }
+
+    pub(super) fn time_literal_in_subtree(&self, node: NodeId) -> Option<String> {
+        if let Some(literal) = self.source_time_literal(node) {
+            return Some(literal);
+        }
+        if let Some(literal) = self.embedded_source_time_literal(node) {
+            return Some(literal);
+        }
+        for child in &self.node(node).children {
+            if let Some(literal) = self.time_literal_in_subtree(*child) {
+                return Some(literal);
+            }
+        }
+        None
+    }
+
+    pub(super) fn unverified_time_literal_in_subtree(&self, node: NodeId) -> bool {
+        self.unverified_time_literal_candidate(node)
+            || self
+                .node(node)
+                .children
+                .iter()
+                .any(|child| self.unverified_time_literal_in_subtree(*child))
     }
 
     /// Lower one operation, mirroring the pre-IR emitter's operand shapes,
@@ -545,14 +748,6 @@ impl<'a> Codegen<'a> {
                         _ => IrRealBinOp::Pow,
                     };
                     return Ok(real_bin_expr(rop, a, b));
-                }
-                // The runtime returns all-X for div/mod/pow with operands
-                // wider than 64 bits; reject before emission instead.
-                if a.width > 64 || b.width > 64 {
-                    return Err(format!(
-                        "wide division/modulo/power not yet supported (operand \
-                         wider than 64 bits) in `{scope_path}`"
-                    ));
                 }
                 let f = match otype {
                     vpiDivOp => IrBinOp::Div,
@@ -895,7 +1090,7 @@ impl<'a> Codegen<'a> {
                 if width > LLG_MAX_WIDTH {
                     return Err(format!(
                         "concatenation in `{scope_path}` is {width} bits wide; \
-                         the v1 runtime supports at most {LLG_MAX_WIDTH}"
+                         the v1 runtime maximum supported width is {LLG_MAX_WIDTH}"
                     ));
                 }
                 Ok(IrExpr::new(
@@ -907,11 +1102,16 @@ impl<'a> Codegen<'a> {
             }
             vpiMultiConcatOp => {
                 let count = {
-                    let c = self.const_of_node(operands[0])?;
-                    if c.x.iter().any(|&v| v != 0) || c.z.iter().any(|&v| v != 0) {
+                    let value = self.eval_bits(operands[0])?;
+                    if value.is_unknown() {
                         return Err(format!("unknown replication count in `{scope_path}`"));
                     }
-                    c.bits.first().copied().unwrap_or(0)
+                    value
+                        .to_u128()
+                        .and_then(|count| u64::try_from(count).ok())
+                        .ok_or_else(|| {
+                            format!("replication count does not fit in u64 in `{scope_path}`")
+                        })?
                 };
                 let mut pat_parts = Vec::new();
                 for operand in operands.iter().skip(1) {
@@ -933,7 +1133,7 @@ impl<'a> Codegen<'a> {
                 if total > LLG_MAX_WIDTH as u128 {
                     return Err(format!(
                         "replication in `{scope_path}` is {total} bits wide; \
-                         the v1 runtime supports at most {LLG_MAX_WIDTH}"
+                         the v1 runtime maximum supported width is {LLG_MAX_WIDTH}"
                     ));
                 }
                 Ok(IrExpr::new(
@@ -1157,45 +1357,150 @@ impl<'a> Codegen<'a> {
     /// transition; sub-expression codes ride along verbatim).
     pub(super) fn lower_lhs(&mut self, path: &str, lhs: NodeId) -> Result<IrLhs, String> {
         let lh = self.analyze_lhs(path, lhs)?;
-        self.lhs_to_ir(&lh)
+        self.lhs_to_ir(lh)
     }
 
     /// Convert a pre-IR [`Lhs`] to its [`IrLhs`] form using the registered
     /// model indices.
-    fn lhs_to_ir(&self, lh: &Lhs) -> Result<IrLhs, String> {
+    fn lhs_to_ir(&self, lh: Lhs) -> Result<IrLhs, String> {
         Ok(match lh {
             Lhs::Whole(info) => IrLhs::Whole(info.ir),
             Lhs::WholeRef {
                 addr,
                 width,
                 signed,
+                two_state,
             } => IrLhs::WholeRef {
-                addr: addr.clone(),
-                width: *width,
-                signed: *signed,
+                addr,
+                width,
+                signed,
+                two_state,
             },
-            Lhs::Bit(info, ie) => IrLhs::Bit(info.ir, verbatim_code(ie)),
-            Lhs::Part(info, left, right) => {
+            Lhs::Bit(info, index, two_state) => IrLhs::Bit(info.ir, index, two_state),
+            Lhs::Part(info, left, right, two_state) => {
                 let (left, right, _) =
-                    checked_select_bounds(*left, *right, "assignment part select")?;
-                IrLhs::Part(info.ir, left, right)
+                    checked_select_bounds(left, right, "assignment part select")?;
+                IrLhs::Part(info.ir, left, right, two_state)
             }
-            Lhs::IdxPart(info, be, we, neg) => {
-                IrLhs::IdxPart(info.ir, verbatim_code(be), verbatim_code(we), *neg != 0)
+            Lhs::IdxPart(info, base, width_expr, width, neg, two_state) => {
+                IrLhs::IdxPart(info.ir, base, width_expr, width, neg, two_state)
             }
             Lhs::ArrayElem(ae) => IrLhs::ArrayElem {
                 arr: ae.arr.ir,
-                indices: ae.index_codes.iter().map(|c| verbatim_code(c)).collect(),
-                elem_sel: match &ae.elem_sel {
+                indices: ae.indices,
+                elem_sel: match ae.elem_sel {
                     ElemSel::Whole => IrElemSel::Whole,
                     ElemSel::Part(l, r) => {
                         let (left, right, _) =
-                            checked_select_bounds(*l, *r, "array-element assignment part select")?;
+                            checked_select_bounds(l, r, "array-element assignment part select")?;
                         IrElemSel::Part(left, right)
                     }
-                    ElemSel::Bit(s) => IrElemSel::Bit(Box::new(verbatim_code(s))),
+                    ElemSel::Bit(index) => IrElemSel::Bit(Box::new(index)),
                 },
             },
         })
+    }
+}
+
+fn time_literal_token(source: &str) -> Option<&str> {
+    let bytes = source.as_bytes();
+    let mut start = 0usize;
+    while start < bytes.len() {
+        if bytes[start] == b'/' && bytes.get(start + 1) == Some(&b'/') {
+            return None;
+        }
+        if bytes[start] == b'/' && bytes.get(start + 1) == Some(&b'*') {
+            start += 2;
+            while start + 1 < bytes.len() && !(bytes[start] == b'*' && bytes[start + 1] == b'/') {
+                start += 1;
+            }
+            start = (start + 2).min(bytes.len());
+            continue;
+        }
+        if bytes[start] == b'"' {
+            start += 1;
+            while start < bytes.len() {
+                if bytes[start] == b'\\' {
+                    start = (start + 2).min(bytes.len());
+                } else if bytes[start] == b'"' {
+                    start += 1;
+                    break;
+                } else {
+                    start += 1;
+                }
+            }
+            continue;
+        }
+        if bytes[start] == b'\\' {
+            while start < bytes.len() && !bytes[start].is_ascii_whitespace() {
+                start += 1;
+            }
+            continue;
+        }
+        if !bytes[start].is_ascii_digit()
+            || start > 0
+                && matches!(
+                    bytes[start - 1],
+                    b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_' | b'$'
+                )
+        {
+            start += 1;
+            continue;
+        }
+        let mut end = start;
+        while matches!(bytes.get(end), Some(b'0'..=b'9' | b'_')) {
+            end += 1;
+        }
+        if bytes.get(end) == Some(&b'.') {
+            end += 1;
+            let fraction = end;
+            while matches!(bytes.get(end), Some(b'0'..=b'9' | b'_')) {
+                end += 1;
+            }
+            if !bytes[fraction..end].iter().any(u8::is_ascii_digit) {
+                start += 1;
+                continue;
+            }
+        }
+        let suffix_end = ["ms", "us", "ns", "ps", "fs", "s"]
+            .iter()
+            .find_map(|suffix| {
+                source[end..]
+                    .starts_with(suffix)
+                    .then(|| end + suffix.len())
+            });
+        if let Some(suffix_end) = suffix_end {
+            let boundary = bytes.get(suffix_end);
+            if !matches!(
+                boundary,
+                Some(b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_' | b'$')
+            ) {
+                return source.get(start..suffix_end);
+            }
+        }
+        start += 1;
+    }
+    None
+}
+
+#[cfg(test)]
+mod time_literal_source_tests {
+    use super::time_literal_token;
+
+    #[test]
+    fn source_scanner_ignores_non_token_text() {
+        assert_eq!(time_literal_token("8'd1 /* 2ns */ + 8'd2"), None);
+        assert_eq!(time_literal_token("8'd1 + 8'd2 // 2ns"), None);
+        assert_eq!(time_literal_token(r#""2ns""#), None);
+        assert_eq!(time_literal_token(r"\2ns + 1"), None);
+        assert_eq!(time_literal_token("design2ns + 1"), None);
+        assert_eq!(time_literal_token("design22ns + _12ns"), None);
+    }
+
+    #[test]
+    fn source_scanner_finds_standalone_time_tokens() {
+        assert_eq!(time_literal_token("2.1ns"), Some("2.1ns"));
+        assert_eq!(time_literal_token("(2ns + 1ns)"), Some("2ns"));
+        assert_eq!(time_literal_token("3 + 40ps"), Some("40ps"));
     }
 }

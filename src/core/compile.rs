@@ -441,6 +441,36 @@ impl CompileOut {
     pub fn design(&self) -> Option<surelog::Design<'_>> {
         self.session.design()
     }
+
+    /// Bounded physical parse-source paths exposed by the live Surelog design.
+    /// This inventory is suitable for explicitly admitting owned-DB source
+    /// recovery and excludes logical VPI `line remappings. Surelog does not
+    /// guarantee that preprocessed include files appear here.
+    pub fn frontend_source_files(&self) -> Vec<String> {
+        const MAX_SOURCE_FILES: usize = 1024;
+        const MAX_SOURCE_PATH_BYTES: usize = 4096;
+        let Some(design) = self.design() else {
+            return Vec::new();
+        };
+        let mut paths = Vec::new();
+        for path in (0..design.file_content_count())
+            .filter_map(|index| design.file_content(index))
+            .map(|content| content.path())
+        {
+            if path.is_empty()
+                || path.len() > MAX_SOURCE_PATH_BYTES
+                || paths.iter().any(|existing| existing == &path)
+            {
+                continue;
+            }
+            paths.push(path);
+            if paths.len() == MAX_SOURCE_FILES {
+                break;
+            }
+        }
+        paths.sort_unstable();
+        paths
+    }
 }
 
 /// Compile + elaborate (per `opts`) the given files.

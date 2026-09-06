@@ -1,5 +1,6 @@
 use crate::core::elab;
 use crate::ffi::vpi::{self, VpiHandle};
+use std::io::Read;
 
 use super::super::capture;
 use super::super::database::*;
@@ -13,7 +14,259 @@ pub(in crate::core::db) fn constant_type(handle: VpiHandle) -> ConstantType {
     ConstantType::from_raw(vpi::get(vpi::vpiConstType, handle))
 }
 
+impl CachedConstantSourceFile {
+    fn span(&self, line: usize, column: usize, len: usize) -> Option<&str> {
+        let Self::Available { text, line_starts } = self else {
+            return None;
+        };
+        let line_start = *line_starts.get(line)? as usize;
+        let mut line_end = line_starts
+            .get(line + 1)
+            .map_or(text.len(), |start| *start as usize);
+        while line_end > line_start && matches!(text.as_bytes()[line_end - 1], b'\n' | b'\r') {
+            line_end -= 1;
+        }
+        let start = line_start.checked_add(column)?;
+        let end = start.checked_add(len)?;
+        (start <= line_end && end <= line_end)
+            .then(|| text.get(start..end))
+            .flatten()
+    }
+}
+
 impl Builder {
+    /// Maximum bytes read from one source file while recovering unsigned
+    /// constant spelling. A sentinel byte detects a racing/growing file.
+    const MAX_CONSTANT_SOURCE_FILE_BYTES: usize = 8 * 1024 * 1024;
+    /// Maximum combined source-text and line-offset bytes retained during one
+    /// owned database build.
+    const MAX_CONSTANT_SOURCE_CACHE_BYTES: usize = 64 * 1024 * 1024;
+    /// Bounds negative-cache keys as well as open file descriptors/metadata
+    /// work triggered by distinct UHDM paths.
+    const MAX_CONSTANT_SOURCE_FILES: usize = 1024;
+    const MAX_CONSTANT_SOURCE_PATH_BYTES: usize = 4096;
+    /// Maximum retained lexical token or folded-expression span.
+    const MAX_CONSTANT_SOURCE_SPAN_BYTES: usize = 4096;
+
+    pub(in crate::core::db) fn admit_constant_source_files(&mut self, source_files: &[String]) {
+        for path in source_files {
+            if path.is_empty()
+                || path.len() > Self::MAX_CONSTANT_SOURCE_PATH_BYTES
+                || self.constant_source_allowed.contains(path)
+            {
+                continue;
+            }
+            if self.constant_source_allowed.len() == Self::MAX_CONSTANT_SOURCE_FILES {
+                break;
+            }
+            let Some(total) = self.constant_source_bytes.checked_add(path.len()) else {
+                break;
+            };
+            if total > Self::MAX_CONSTANT_SOURCE_CACHE_BYTES {
+                break;
+            }
+            self.constant_source_allowed.insert(path.clone());
+            self.constant_source_bytes = total;
+        }
+    }
+
+    pub(in crate::core::db) fn constant_source(&mut self, handle: VpiHandle) -> ConstantSource {
+        let file = vpi::obj_file(handle);
+        let line = vpi::get(vpi::vpiLineNo, handle);
+        let end_line = vpi::get(vpi::vpiEndLineNo, handle);
+        let column = vpi::get(vpi::vpiColumnNo, handle);
+        let end_column = vpi::get(vpi::vpiEndColumnNo, handle);
+        if file.is_empty() || line <= 0 || column <= 0 {
+            return ConstantSource::NotCaptured;
+        }
+        if !self.constant_source_allowed.contains(&file) {
+            return ConstantSource::Unavailable;
+        }
+        if line != end_line || end_column <= column {
+            return ConstantSource::Unavailable;
+        }
+        let span = match usize::try_from(end_column - column) {
+            Ok(span) if span <= Self::MAX_CONSTANT_SOURCE_SPAN_BYTES => span,
+            _ => return ConstantSource::Unavailable,
+        };
+        if !self.ensure_constant_source_file(&file) {
+            return ConstantSource::Unavailable;
+        }
+        let Some(cached) = self.constant_source_files.get(&file) else {
+            return ConstantSource::Unavailable;
+        };
+        match cached.span(line as usize - 1, column as usize - 1, span) {
+            Some(source) => {
+                let Some(total) = self.constant_source_bytes.checked_add(source.len()) else {
+                    self.constant_source_cache_exhausted = true;
+                    return ConstantSource::Unavailable;
+                };
+                if total > Self::MAX_CONSTANT_SOURCE_CACHE_BYTES {
+                    self.constant_source_cache_exhausted = true;
+                    return ConstantSource::Unavailable;
+                }
+                self.constant_source_bytes = total;
+                ConstantSource::Exact(source.to_owned())
+            }
+            _ => ConstantSource::Unavailable,
+        }
+    }
+
+    /// Return the bounded declaration prefix beginning at a UHDM object's
+    /// source location. This is used only when UHDM omits declaration
+    /// qualifiers such as `signed`; callers must treat absence as unknown.
+    pub(in crate::core::db) fn declaration_source_prefix(
+        &mut self,
+        handle: VpiHandle,
+    ) -> Option<String> {
+        let file = vpi::obj_file(handle);
+        let line = usize::try_from(vpi::get(vpi::vpiLineNo, handle)).ok()?;
+        let column = usize::try_from(vpi::get(vpi::vpiColumnNo, handle)).ok()?;
+        if line == 0
+            || column == 0
+            || !self.constant_source_allowed.contains(&file)
+            || !self.ensure_constant_source_file(&file)
+        {
+            return None;
+        }
+        let CachedConstantSourceFile::Available { text, line_starts } =
+            self.constant_source_files.get(&file)?
+        else {
+            return None;
+        };
+        let start = usize::try_from(*line_starts.get(line - 1)?).ok()? + column - 1;
+        let end = text
+            .len()
+            .min(start.checked_add(Self::MAX_CONSTANT_SOURCE_SPAN_BYTES)?);
+        let source = text.get(start..end)?;
+        let prefix_end = source.find('{').map_or(source.len(), |offset| offset + 1);
+        Some(source[..prefix_end].to_owned())
+    }
+
+    fn simple_size_cast_width(&mut self, handle: VpiHandle) -> Option<u32> {
+        let ConstantSource::Exact(source) = self.constant_source(handle) else {
+            return None;
+        };
+        let (size, expression) = source.split_once('\'')?;
+        let size = size.trim().replace('_', "");
+        if size.is_empty() || !size.bytes().all(|byte| byte.is_ascii_digit()) {
+            return None;
+        }
+        let expression = expression.trim();
+        if !expression.starts_with('(') || !expression.ends_with(')') {
+            return None;
+        }
+        size.parse::<u32>().ok().filter(|width| *width != 0)
+    }
+
+    fn size_cast_spelling(&mut self, handle: VpiHandle) -> (Option<String>, bool) {
+        let source = match self.constant_source(handle) {
+            ConstantSource::Exact(source) => Some(source),
+            _ => {
+                let decompiled = vpi::get_str(vpi::vpiDecompile, handle);
+                if decompiled.is_empty() {
+                    self.declaration_source_prefix(handle)
+                } else {
+                    Some(decompiled)
+                }
+            }
+        };
+        let Some(source) = source else {
+            return (None, false);
+        };
+        let Some((prefix, _)) = source.trim_start().split_once('\'') else {
+            return (None, true);
+        };
+        let token = prefix.trim().to_owned();
+        let valid = !token.is_empty()
+            && token
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_');
+        (valid.then_some(token), true)
+    }
+
+    fn ensure_constant_source_file(&mut self, file: &str) -> bool {
+        if let Some(cached) = self.constant_source_files.get(file) {
+            return matches!(cached, CachedConstantSourceFile::Available { .. });
+        }
+        if self.constant_source_cache_exhausted
+            || self.constant_source_files.len() >= Self::MAX_CONSTANT_SOURCE_FILES
+            || file.len() > Self::MAX_CONSTANT_SOURCE_PATH_BYTES
+            || self
+                .constant_source_bytes
+                .checked_add(file.len())
+                .is_none_or(|total| total > Self::MAX_CONSTANT_SOURCE_CACHE_BYTES)
+        {
+            self.constant_source_cache_exhausted = true;
+            return false;
+        }
+        self.constant_source_bytes += file.len();
+        let loaded = self.load_constant_source_file(file);
+        let available = matches!(loaded, CachedConstantSourceFile::Available { .. });
+        self.constant_source_files.insert(file.to_owned(), loaded);
+        available
+    }
+
+    fn load_constant_source_file(&mut self, file: &str) -> CachedConstantSourceFile {
+        let metadata = match std::fs::symlink_metadata(file) {
+            Ok(metadata) if metadata.file_type().is_file() => metadata,
+            _ => return CachedConstantSourceFile::Unavailable,
+        };
+        let remaining = Self::MAX_CONSTANT_SOURCE_CACHE_BYTES - self.constant_source_bytes;
+        if metadata.len() > Self::MAX_CONSTANT_SOURCE_FILE_BYTES as u64
+            || metadata.len() > remaining as u64
+        {
+            return CachedConstantSourceFile::Unavailable;
+        }
+        let mut source = match std::fs::File::open(file) {
+            Ok(source) => source,
+            Err(_) => return CachedConstantSourceFile::Unavailable,
+        };
+        let opened_metadata = match source.metadata() {
+            Ok(metadata) if metadata.is_file() => metadata,
+            _ => return CachedConstantSourceFile::Unavailable,
+        };
+        if opened_metadata.len() > Self::MAX_CONSTANT_SOURCE_FILE_BYTES as u64
+            || opened_metadata.len() > remaining as u64
+        {
+            return CachedConstantSourceFile::Unavailable;
+        }
+        let mut text = String::new();
+        if source
+            .by_ref()
+            .take((Self::MAX_CONSTANT_SOURCE_FILE_BYTES.min(remaining)) as u64 + 1)
+            .read_to_string(&mut text)
+            .is_err()
+            || text.len() > Self::MAX_CONSTANT_SOURCE_FILE_BYTES
+        {
+            return CachedConstantSourceFile::Unavailable;
+        }
+        let line_count = 1usize.saturating_add(text.bytes().filter(|byte| *byte == b'\n').count());
+        let cost = match line_count
+            .checked_mul(std::mem::size_of::<u32>())
+            .and_then(|offsets| offsets.checked_add(text.len()))
+        {
+            Some(cost) => cost,
+            None => return CachedConstantSourceFile::Unavailable,
+        };
+        let Some(total) = self.constant_source_bytes.checked_add(cost) else {
+            return CachedConstantSourceFile::Unavailable;
+        };
+        if total > Self::MAX_CONSTANT_SOURCE_CACHE_BYTES {
+            return CachedConstantSourceFile::Unavailable;
+        }
+        let mut line_starts = Vec::with_capacity(line_count);
+        line_starts.push(0u32);
+        line_starts.extend(
+            text.bytes()
+                .enumerate()
+                .filter(|(_, byte)| *byte == b'\n')
+                .filter_map(|(index, _)| u32::try_from(index + 1).ok()),
+        );
+        self.constant_source_bytes = total;
+        CachedConstantSourceFile::Available { text, line_starts }
+    }
+
     pub(in crate::core::db) fn walk_node(
         &mut self,
         h: VpiHandle,
@@ -414,10 +667,21 @@ impl Builder {
 
             // ── Expressions ────────────────────────────────────────────────
             vpi::vpiConstant => {
+                let const_type = capture::expressions::constant_type(h);
+                let unsigned = const_type == ConstantType::UnsignedInteger;
                 let kind = ExprKind::Constant {
                     value: vpi::read_value(h),
                     size: vpi::get(vpi::vpiSize, h),
-                    const_type: capture::expressions::constant_type(h),
+                    const_type,
+                    source: if unsigned {
+                        self.constant_source(h)
+                    } else {
+                        ConstantSource::NotCaptured
+                    },
+                    // Surelog v1.87's time-literal compilation path uniquely
+                    // omits vpiDecompile while ordinary UInt constants set it.
+                    time_literal_candidate: unsigned
+                        && vpi::get_str(vpi::vpiDecompile, h).is_empty(),
                 };
                 self.set_expr(id, kind);
             }
@@ -437,14 +701,65 @@ impl Builder {
                 }
                 self.set_children(id, kids);
                 if op.is(vpi::vpiCastOp) {
-                    let ty = child(vpi::vpiTypespec, h)
-                        .map(|ts| self.typespec_info(ts.raw()))
+                    let typespec = child(vpi::vpiTypespec, h);
+                    let mut ty = typespec
+                        .as_ref()
+                        .map(|typespec| self.typespec_info(typespec.raw()))
                         .unwrap_or_default();
+                    // Surelog omits the range on size-cast and parameterized
+                    // typedef cast typespecs. Prefer the elaborated operation
+                    // size, then evaluate retained typedef ranges in the
+                    // operation's enclosing parameter scope.
+                    let (mut size_cast_expr, spelling_available) = self.size_cast_spelling(h);
+                    if size_cast_expr.as_deref().is_some_and(|token| {
+                        token.eq_ignore_ascii_case(&ty.kind)
+                            || ty.type_name.as_deref() == Some(token)
+                            || (!token
+                                .replace('_', "")
+                                .bytes()
+                                .all(|byte| byte.is_ascii_digit())
+                                && !self.nodes.iter().any(|node| {
+                                    node.name == token
+                                        && matches!(&node.kind, NodeKind::Param { .. })
+                                }))
+                    }) {
+                        size_cast_expr = None;
+                    }
+                    let size_cast_width = size_cast_expr
+                        .as_deref()
+                        .and_then(|token| token.replace('_', "").parse::<u32>().ok())
+                        .filter(|width| *width != 0)
+                        .or_else(|| self.simple_size_cast_width(h));
+                    if let Some(width) = size_cast_width {
+                        ty.width = Some(width);
+                    } else if ty.width.is_none() {
+                        let width = vpi::get(vpi::vpiSize, h);
+                        if width > 0 {
+                            ty.width = u32::try_from(width).ok();
+                        } else if let Some(typespec) = &typespec {
+                            ty.width = self.contextual_typespec_width(typespec.raw(), h);
+                        }
+                    }
                     let operand = operands
                         .first()
                         .copied()
                         .ok_or_else(|| "cast without operand".to_string())?;
-                    self.set_expr(id, ExprKind::Cast { operand, ty });
+                    let cast_kind_known =
+                        spelling_available || !matches!(ty.kind.as_str(), "int" | "integer");
+                    let two_state = typespec
+                        .as_ref()
+                        .is_some_and(|typespec| self.typespec_two_state(typespec.raw(), 0));
+                    self.set_expr(
+                        id,
+                        ExprKind::Cast {
+                            operand,
+                            ty,
+                            size_cast: size_cast_expr.is_some(),
+                            size_cast_expr,
+                            cast_kind_known,
+                            two_state,
+                        },
+                    );
                 } else {
                     self.set_expr(
                         id,
@@ -468,6 +783,9 @@ impl Builder {
                 // arena identity.
                 let ty = self.type_info_of(h);
                 self.set_kind(id, NodeKind::Var { ty });
+                if self.object_two_state(h) {
+                    self.two_state_types.insert(id);
+                }
                 self.index_node(h, &props, id);
                 if let Some(expression) = child(vpi::vpiExpr, h) {
                     let expression = self.walk_node(expression.raw(), Some(id))?;
@@ -670,5 +988,75 @@ impl Builder {
             }
         }
         None
+    }
+}
+
+#[cfg(test)]
+mod source_cache_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static NEXT_PATH: AtomicU64 = AtomicU64::new(0);
+
+    fn test_path(tag: &str) -> std::path::PathBuf {
+        let sequence = NEXT_PATH.fetch_add(1, Ordering::Relaxed);
+        std::env::temp_dir().join(format!(
+            "llg-constant-source-{tag}-{}-{sequence}",
+            std::process::id()
+        ))
+    }
+
+    #[test]
+    fn source_cache_admits_bounded_regular_files() {
+        let path = test_path("regular");
+        std::fs::write(&path, "first\nsecond\n").expect("write source cache fixture");
+        let mut builder = Builder::default();
+        assert!(builder.ensure_constant_source_file(&path.to_string_lossy()));
+        let CachedConstantSourceFile::Available { text, line_starts } = builder
+            .constant_source_files
+            .get(path.to_string_lossy().as_ref())
+            .expect("cached source")
+        else {
+            panic!("regular file should be cached");
+        };
+        assert_eq!(text, "first\nsecond\n");
+        assert_eq!(line_starts, &[0, 6, 13]);
+        let cached = builder
+            .constant_source_files
+            .get(path.to_string_lossy().as_ref())
+            .expect("cached source");
+        assert_eq!(cached.span(1, 0, 6), Some("second"));
+        assert_eq!(cached.span(0, 6, 1), None);
+        assert_eq!(cached.span(0, 40, 1), None);
+        assert_eq!(cached.span(0, 4, 2), None);
+        std::fs::remove_file(path).expect("remove source cache fixture");
+    }
+
+    #[test]
+    fn source_cache_negatively_caches_failures_and_bounds() {
+        let missing = test_path("missing");
+        let mut builder = Builder::default();
+        assert!(!builder.ensure_constant_source_file(&missing.to_string_lossy()));
+        std::fs::write(&missing, "now present").expect("create formerly missing fixture");
+        assert!(!builder.ensure_constant_source_file(&missing.to_string_lossy()));
+        std::fs::remove_file(missing).expect("remove formerly missing fixture");
+
+        let oversized = test_path("oversized");
+        let file = std::fs::File::create(&oversized).expect("create oversized fixture");
+        file.set_len(Builder::MAX_CONSTANT_SOURCE_FILE_BYTES as u64 + 1)
+            .expect("size oversized fixture");
+        assert!(!builder.ensure_constant_source_file(&oversized.to_string_lossy()));
+        std::fs::remove_file(oversized).expect("remove oversized fixture");
+
+        assert!(
+            !builder.ensure_constant_source_file(std::env::temp_dir().to_string_lossy().as_ref())
+        );
+
+        let mut exhausted = Builder {
+            constant_source_bytes: Builder::MAX_CONSTANT_SOURCE_CACHE_BYTES,
+            ..Builder::default()
+        };
+        assert!(!exhausted.ensure_constant_source_file("another-source.sv"));
+        assert!(exhausted.constant_source_cache_exhausted);
     }
 }

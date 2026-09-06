@@ -108,17 +108,17 @@ endmodule
             r#"// llg-test-fixture: tests/sim_net_decl.rs/net_class_reject.sv
 module tb;
     logic source;
-    wand value = source;
+    trireg value = source;
     initial $finish;
 endmodule
 "#,
         )
     })
     .err()
-    .expect("unsupported resolved-net declaration must be rejected");
+    .expect("unsupported biased-net declaration must be rejected");
     assert!(
         net_class_error.contains("unsupported net type")
-            && net_class_error.contains("only wire/tri/logic nets"),
+            && net_class_error.contains("outside the standalone subset"),
         "unexpected net-class rejection: {net_class_error}"
     );
 }

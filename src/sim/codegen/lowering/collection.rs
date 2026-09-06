@@ -35,6 +35,7 @@ impl<'a> Codegen<'a> {
             c_name: format!("_lv{}", node.index()),
             width,
             signed: ty.signed,
+            two_state: self.db.is_two_state_type(node) || is_two_state_kind(&ty.kind),
         };
         self.proc_locals.insert(node, info.clone());
         Ok(info)
@@ -141,6 +142,7 @@ impl<'a> Codegen<'a> {
     /// Walk the instance tree, collecting signals, parameters and gen-scope
     /// paths.  Returns the top module nodes.
     pub(super) fn collect_design(&mut self) -> Result<Vec<NodeId>, String> {
+        self.reject_time_literal_parameter_initializers()?;
         let mut tops = Vec::new();
         for top in self.db.tops() {
             let path = strip_lib(&self.node(*top).name);
@@ -156,6 +158,26 @@ impl<'a> Codegen<'a> {
             tops.push(*top);
         }
         Ok(tops)
+    }
+
+    fn reject_time_literal_parameter_initializers(&self) -> Result<(), String> {
+        for node in self.db.node_ids() {
+            if !matches!(self.kind(node), NodeKind::ParamAssign { .. }) {
+                continue;
+            }
+            if let Some(literal) = self.time_literal_in_subtree(node) {
+                return Err(format!(
+                    "time literal `{literal}` in a parameter initializer is not supported"
+                ));
+            }
+            if self.unverified_time_literal_in_subtree(node) {
+                return Err(
+                    "cannot verify parameter initializer after possible time-literal rewriting"
+                        .to_owned(),
+                );
+            }
+        }
+        Ok(())
     }
 
     /// Collect the arena nodes of every per-port COPY interface instance: the
@@ -253,6 +275,7 @@ impl<'a> Codegen<'a> {
                         },
                         width: w,
                         signed: ty.signed,
+                        two_state: self.db.is_two_state_type(nid) || is_two_state_kind(&ty.kind),
                         real: is_real_kind(&ty.kind),
                         shortreal: ty.kind == "shortreal",
                         net_driver: None,
@@ -269,6 +292,7 @@ impl<'a> Codegen<'a> {
                             IrType::Packed {
                                 width: info.width,
                                 signed: info.signed,
+                                two_state: info.two_state,
                             }
                         },
                         net_driver: None,
@@ -307,10 +331,7 @@ impl<'a> Codegen<'a> {
                 // itself is skipped at emission. A scalar reg initializer is
                 // collected into `scalar_inits`; true nets stay available to
                 // `emit_cont_assign` as continuous drivers.
-                NodeKind::ContAssign {
-                    net_decl: true,
-                    delay: _,
-                } => {
+                NodeKind::ContAssign { net_decl: true, .. } => {
                     if let Some((arr, vals)) = self.cont_assign_array_init(path, nid)? {
                         let name = self.node(arr).name.clone();
                         let ai = self.array_globals.get_mut(&arr).ok_or_else(|| {
@@ -457,6 +478,9 @@ impl<'a> Codegen<'a> {
             }
             "int" | "integer" | "time" | "longint" | "byte" | "shortint" | "logic" | "bit"
             | "enum" => ty.width.unwrap_or(1),
+            "struct" | "union" | "array" => ty.width.ok_or_else(|| {
+                format!("packed type of signal `{name}` in `{path}` has no resolved width")
+            })?,
             _ => {
                 return Err(format!(
                     "unsupported typespec type for signal `{name}` in `{path}`"
@@ -466,7 +490,7 @@ impl<'a> Codegen<'a> {
         if w > LLG_MAX_WIDTH {
             return Err(format!(
                 "signal `{name}` in `{path}` is {w} bits wide; the v1 runtime \
-                 supports at most {LLG_MAX_WIDTH}"
+                 maximum supported width is {LLG_MAX_WIDTH}"
             ));
         }
         Ok(w)
@@ -532,6 +556,7 @@ impl<'a> Codegen<'a> {
                         },
                         width: w,
                         signed: ty.signed,
+                        two_state: self.db.is_two_state_type(nid) || is_two_state_kind(&ty.kind),
                         real: is_real_kind(&ty.kind),
                         shortreal: ty.kind == "shortreal",
                         net_driver: None,
@@ -548,6 +573,7 @@ impl<'a> Codegen<'a> {
                             IrType::Packed {
                                 width: info.width,
                                 signed: info.signed,
+                                two_state: info.two_state,
                             }
                         },
                         net_driver: None,
@@ -579,10 +605,7 @@ impl<'a> Codegen<'a> {
                     self.events.push(info.clone());
                     self.event_globals.insert(nid, info);
                 }
-                NodeKind::ContAssign {
-                    net_decl: true,
-                    delay: _,
-                } => {
+                NodeKind::ContAssign { net_decl: true, .. } => {
                     if let Some((arr, vals)) = self.cont_assign_array_init(&gs_path, nid)? {
                         let name = self.node(arr).name.clone();
                         let ai = self.array_globals.get_mut(&arr).ok_or_else(|| {
@@ -645,6 +668,7 @@ impl<'a> Codegen<'a> {
     /// writes) are skipped with an explicit warning — never silently.
     pub(super) fn build_net_groups(&mut self) -> Result<(), String> {
         let nodes = self.design_nodes();
+        self.build_wired_net_groups(&nodes)?;
         // Union-find over the parent/child nets of every inout port.
         let mut parent: HashMap<NodeId, NodeId> = HashMap::new();
         let mut rank: HashMap<NodeId, u8> = HashMap::new();
@@ -839,6 +863,7 @@ impl<'a> Codegen<'a> {
                 c_name: name.clone(),
                 width,
                 signed: first_ty.signed,
+                kind: crate::sim::ir::IrNetKind::Wire,
                 n_drivers: members.len(),
             });
         }
@@ -858,6 +883,394 @@ impl<'a> Codegen<'a> {
         }
         self.scalar_inits = keep;
         Ok(())
+    }
+
+    /// Build one resolved group per standalone scalar wire, tri, or wired net.
+    /// Unlike collapsed inout groups, driver identity belongs to the
+    /// continuous-assignment site, not to the declaration: two `assign w =
+    /// ...` statements must retain two contributions even though both target
+    /// the same net object. Ordinary nets participating in module ports or
+    /// interfaces stay on the existing link/inout path.
+    fn build_wired_net_groups(&mut self, nodes: &[NodeId]) -> Result<(), String> {
+        if let Some(array) = nodes.iter().find(|id| {
+            matches!(self.kind(**id), NodeKind::Array { .. })
+                && self.db.array_meta(**id).is_some_and(|meta| {
+                    matches!(
+                        meta.net_type(),
+                        Some(
+                            NetType::Wand
+                                | NetType::TriAnd
+                                | NetType::Wor
+                                | NetType::TriOr
+                                | NetType::Tri0
+                                | NetType::Tri1
+                                | NetType::Supply0
+                                | NetType::Supply1
+                        )
+                    )
+                })
+        }) {
+            return Err(format!(
+                "unpacked wired-net array `{}` is not supported",
+                self.display_name(*array)
+            ));
+        }
+        let standalone: Vec<(NodeId, crate::sim::ir::IrNetKind)> = nodes
+            .iter()
+            .filter_map(|id| match self.kind(*id) {
+                NodeKind::Net { net_type, .. } => match net_type {
+                    NetType::Wire | NetType::Tri => {
+                        let member_set = HashSet::from([*id]);
+                        let in_interface = self.node(*id).parent.is_some_and(|parent| {
+                            matches!(
+                                self.kind(parent),
+                                NodeKind::ModuleInst {
+                                    is_interface: true,
+                                    ..
+                                }
+                            )
+                        });
+                        let used_as_port = nodes.iter().any(|candidate| {
+                            let NodeKind::Port {
+                                high,
+                                low,
+                                high_expr,
+                                ..
+                            } = self.kind(*candidate)
+                            else {
+                                return false;
+                            };
+                            *high == Some(*id)
+                                || *low == Some(*id)
+                                || high_expr.is_some_and(|expr| {
+                                    self.nested_member_target(expr, &member_set).is_some()
+                                })
+                        });
+                        let continuous_driver_count = nodes
+                            .iter()
+                            .filter(|candidate| {
+                                matches!(self.kind(**candidate), NodeKind::ContAssign { .. })
+                                    && self.node(**candidate).children.first().is_some_and(|lhs| {
+                                        self.nested_member_target(*lhs, &member_set).is_some()
+                                    })
+                            })
+                            .count();
+                        let gate_driver_count = nodes
+                            .iter()
+                            .filter(|candidate| {
+                                let NodeKind::Gate { terms, .. } = self.kind(**candidate) else {
+                                    return false;
+                                };
+                                terms.iter().any(|term| {
+                                    matches!(
+                                        term.direction,
+                                        DbDirection::Output | DbDirection::Inout
+                                    ) && self.nested_member_target(term.expr, &member_set).is_some()
+                                })
+                            })
+                            .count();
+                        let has_force_or_release =
+                            nodes.iter().any(|candidate| match self.kind(*candidate) {
+                                NodeKind::Stmt(StmtKind::Force { lhs, .. })
+                                | NodeKind::Stmt(StmtKind::Release { lhs }) => {
+                                    self.nested_member_target(*lhs, &member_set).is_some()
+                                }
+                                _ => false,
+                            });
+                        let legacy_single_gate =
+                            continuous_driver_count == 0 && gate_driver_count == 1;
+                        let legacy_forced_net =
+                            has_force_or_release && continuous_driver_count <= 1;
+                        (!in_interface
+                            && !used_as_port
+                            && !legacy_single_gate
+                            && !legacy_forced_net)
+                            .then_some((*id, crate::sim::ir::IrNetKind::Wire))
+                    }
+                    NetType::Wand | NetType::TriAnd => Some((*id, crate::sim::ir::IrNetKind::Wand)),
+                    NetType::Wor | NetType::TriOr => Some((*id, crate::sim::ir::IrNetKind::Wor)),
+                    NetType::Tri0 => Some((*id, crate::sim::ir::IrNetKind::Tri0)),
+                    NetType::Tri1 => Some((*id, crate::sim::ir::IrNetKind::Tri1)),
+                    NetType::Supply0 => Some((*id, crate::sim::ir::IrNetKind::Supply0)),
+                    NetType::Supply1 => Some((*id, crate::sim::ir::IrNetKind::Supply1)),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .collect();
+
+        for (net, kind) in standalone {
+            let shown = self.display_name(net);
+            let member_set = HashSet::from([net]);
+            if self.node(net).parent.is_some_and(|parent| {
+                matches!(
+                    self.kind(parent),
+                    NodeKind::ModuleInst {
+                        is_interface: true,
+                        ..
+                    }
+                )
+            }) {
+                return Err(format!(
+                    "wired net `{shown}` declared in an interface is not supported"
+                ));
+            }
+            for id in nodes {
+                if let NodeKind::Port {
+                    high,
+                    low,
+                    high_expr,
+                    ..
+                } = self.kind(*id)
+                {
+                    if *high == Some(net)
+                        || *low == Some(net)
+                        || high_expr.is_some_and(|expr| {
+                            self.nested_member_target(expr, &member_set).is_some()
+                        })
+                    {
+                        return Err(format!(
+                            "wired net `{shown}` used as a module port is not supported"
+                        ));
+                    }
+                }
+            }
+
+            let mut sites = Vec::new();
+            for id in nodes {
+                match self.kind(*id) {
+                    NodeKind::ContAssign {
+                        strength0,
+                        strength1,
+                        ..
+                    } => {
+                        let Some(lhs) = self.node(*id).children.first().copied() else {
+                            continue;
+                        };
+                        if matches!(self.kind(lhs), NodeKind::Expr(ExprKind::HierPath { .. }))
+                            && self.member_write_base(lhs, &member_set).is_some()
+                        {
+                            return Err(format!(
+                                "hierarchical continuous assignment to wired net `{shown}` is not supported"
+                            ));
+                        }
+                        if self.cont_assign_source_has_hier_lhs(*id, net) {
+                            return Err(format!(
+                                "hierarchical continuous assignment to wired net `{shown}` is not supported"
+                            ));
+                        }
+                        match self.member_write_kind(lhs, &member_set) {
+                            MemberWrite::None => {
+                                if self.nested_member_target(lhs, &member_set).is_some() {
+                                    return Err(format!(
+                                        "concatenated/complex continuous-assignment LHS containing wired net `{shown}` is not supported"
+                                    ));
+                                }
+                            }
+                            MemberWrite::Whole => {
+                                if *strength0 != Strength::Unspecified
+                                    || *strength1 != Strength::Unspecified
+                                {
+                                    return Err(format!(
+                                        "drive-strength continuous assignment to wired net `{shown}` is not supported"
+                                    ));
+                                }
+                                sites.push(*id);
+                            }
+                            MemberWrite::Select => {
+                                if !matches!(kind, crate::sim::ir::IrNetKind::Wire) {
+                                    return Err(format!(
+                                        "continuous assignment to a select of wired net `{shown}` is not supported"
+                                    ));
+                                }
+                                if *strength0 != Strength::Unspecified
+                                    || *strength1 != Strength::Unspecified
+                                {
+                                    return Err(format!(
+                                        "drive-strength continuous assignment to wired net `{shown}` is not supported"
+                                    ));
+                                }
+                                if matches!(
+                                    self.kind(*id),
+                                    NodeKind::ContAssign { delay: Some(_), .. }
+                                ) {
+                                    return Err(format!(
+                                        "delayed continuous assignment to a select of resolved net `{shown}` is not supported"
+                                    ));
+                                }
+                                sites.push(*id);
+                            }
+                        }
+                    }
+                    NodeKind::Stmt(StmtKind::Assign { blocking, .. }) => {
+                        let Some(lhs) = self.node(*id).children.first().copied() else {
+                            continue;
+                        };
+                        if self.nested_member_target(lhs, &member_set).is_some() {
+                            let form = if *blocking { "blocking" } else { "nonblocking" };
+                            return Err(format!(
+                                "procedural {form} assignment to wired net `{shown}` is not supported"
+                            ));
+                        }
+                    }
+                    NodeKind::Stmt(StmtKind::ProcContAssign { lhs, .. }) => {
+                        if self.nested_member_target(*lhs, &member_set).is_some() {
+                            if matches!(kind, crate::sim::ir::IrNetKind::Wire) {
+                                return Err(format!(
+                                    "procedural continuous assignment targets variables only; resolved net `{shown}` is not supported"
+                                ));
+                            }
+                            return Err(format!(
+                                "procedural continuous assignment to wired net `{shown}` is not supported"
+                            ));
+                        }
+                    }
+                    NodeKind::Stmt(StmtKind::Deassign { lhs }) => {
+                        if self.nested_member_target(*lhs, &member_set).is_some() {
+                            return Err(format!(
+                                "procedural deassign of wired net `{shown}` is not supported"
+                            ));
+                        }
+                    }
+                    NodeKind::Stmt(StmtKind::Force { lhs, .. }) => {
+                        if self.nested_member_target(*lhs, &member_set).is_some() {
+                            return Err(format!("force of wired net `{shown}` is not supported"));
+                        }
+                    }
+                    NodeKind::Stmt(StmtKind::Release { lhs }) => {
+                        if self.nested_member_target(*lhs, &member_set).is_some() {
+                            return Err(format!("release of wired net `{shown}` is not supported"));
+                        }
+                    }
+                    NodeKind::Gate { terms, .. } => {
+                        if terms.iter().any(|term| {
+                            matches!(term.direction, DbDirection::Output | DbDirection::Inout)
+                                && self.nested_member_target(term.expr, &member_set).is_some()
+                        }) {
+                            return Err(format!(
+                                "gate output driving wired net `{shown}` is not supported"
+                            ));
+                        }
+                    }
+                    NodeKind::FuncCall { .. }
+                        if self.task_actual_member_write(*id, &member_set).is_some() =>
+                    {
+                        return Err(format!(
+                            "function/task output/inout driving wired net `{shown}` is not supported"
+                        ));
+                    }
+                    _ => {}
+                }
+            }
+            sites.sort_by_key(|id| id.0);
+            if sites.len() > LLG_MAX_NET_DRIVERS {
+                return Err(format!(
+                    "wired net `{shown}` has {} continuous driver sites, exceeding the {LLG_MAX_NET_DRIVERS} driver-slot limit",
+                    sites.len()
+                ));
+            }
+
+            let info = self
+                .sig_globals
+                .get(&net)
+                .cloned()
+                .ok_or_else(|| format!("wired net `{shown}` has no lowered scalar storage"))?;
+            if info.real {
+                return Err(format!("real-valued wired net `{shown}` is not supported"));
+            }
+            let name = format!("g_net_{}", self.model.net_groups.len());
+            let group = self.model.net_groups.len();
+            let n_drivers = sites.len().max(1);
+            self.model.net_groups.push(crate::sim::ir::IrNetGroup {
+                c_name: name.clone(),
+                width: info.width,
+                signed: info.signed,
+                kind,
+                n_drivers,
+            });
+
+            let old_global = info.global;
+            let resolved = format!("{name}.resolved");
+            if let Some(mapped) = self.sig_globals.get_mut(&net) {
+                mapped.global = resolved.clone();
+                mapped.net_driver = Some((name.clone(), 0));
+            }
+            if let Some(signal) = self.model.signals.get_mut(info.ir) {
+                signal.c_name = resolved.clone();
+                signal.net_driver = Some((group, 0));
+            }
+            for signal in &mut self.signals {
+                if signal.global == old_global {
+                    signal.global = resolved.clone();
+                    signal.net_driver = Some((name.clone(), 0));
+                }
+            }
+            for names in self.scope_sig_names.values_mut() {
+                for signal in names.values_mut() {
+                    if signal.global == old_global {
+                        signal.global = resolved.clone();
+                        signal.net_driver = Some((name.clone(), 0));
+                    }
+                }
+            }
+
+            for (slot, site) in sites.into_iter().enumerate() {
+                let delayed =
+                    matches!(self.kind(site), NodeKind::ContAssign { delay: Some(_), .. });
+                let signal = self.model.signals.len();
+                self.model.signals.push(IrSignal {
+                    c_name: resolved.clone(),
+                    hdl_name: None,
+                    ty: IrType::Packed {
+                        width: info.width,
+                        signed: info.signed,
+                        two_state: false,
+                    },
+                    net_driver: Some((group, slot)),
+                    omit: false,
+                });
+                self.wired_driver_sites.insert(site, signal);
+                if delayed {
+                    let nlimbs = (info.width as usize).div_ceil(64);
+                    let mut x = vec![u64::MAX; nlimbs];
+                    if !info.width.is_multiple_of(64) {
+                        x[nlimbs - 1] = (1u64 << (info.width % 64)) - 1;
+                    }
+                    let initial_x = IrConst::packed(
+                        vec![0; nlimbs],
+                        x,
+                        vec![0; nlimbs],
+                        info.width,
+                        info.signed,
+                        None,
+                    )
+                    .map_err(|error| error.to_string())?;
+                    self.net_inits.push((name.clone(), slot, initial_x));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Surelog can leave a top-self hierarchical continuous LHS unresolved.
+    /// Use its owned source location only as a rejection fallback; accepted
+    /// direct drivers still require an owned target identity.
+    fn cont_assign_source_has_hier_lhs(&self, ca: NodeId, net: NodeId) -> bool {
+        let node = self.node(ca);
+        let Some(file) = node.file.as_deref() else {
+            return false;
+        };
+        if node.line == 0 {
+            return false;
+        }
+        let Ok(source) = std::fs::read_to_string(file) else {
+            return false;
+        };
+        let Some(line) = source.lines().nth(node.line as usize - 1) else {
+            return false;
+        };
+        let lhs = line.split('=').next().unwrap_or(line);
+        lhs.contains(&format!(".{}", self.node(net).name))
     }
 
     /// Every arena node of the instance tree (top instances + children +
@@ -1015,6 +1428,14 @@ impl<'a> Codegen<'a> {
         match self.kind(node) {
             NodeKind::Net { .. } if member_set.contains(&node) => Some(node),
             NodeKind::Expr(ExprKind::Ref { target }) => target.filter(|t| member_set.contains(t)),
+            NodeKind::Expr(ExprKind::HierPath { .. }) => {
+                let signal = self.hier_path_signal(node)?;
+                member_set.iter().find_map(|member| {
+                    self.signal_of(*member)
+                        .filter(|candidate| candidate.ir == signal.ir)
+                        .map(|_| *member)
+                })
+            }
             NodeKind::Expr(
                 ExprKind::BitSelect { base, .. }
                 | ExprKind::PartSelect { base, .. }
@@ -1025,6 +1446,18 @@ impl<'a> Codegen<'a> {
         }
     }
 
+    /// Find a wired member anywhere inside an LHS-shaped expression.  This
+    /// closes fail-closed checks for concatenations and other compound actuals
+    /// that the supported direct/ref/select classifier intentionally ignores.
+    fn nested_member_target(&self, node: NodeId, member_set: &HashSet<NodeId>) -> Option<NodeId> {
+        self.member_write_base(node, member_set).or_else(|| {
+            self.node(node)
+                .children
+                .iter()
+                .find_map(|child| self.nested_member_target(*child, member_set))
+        })
+    }
+
     /// Whether a task call binds an output/inout formal to a member: those
     /// actuals become `sv4_t*` parameters in the emitted C and would write
     /// through the resolved cell, bypassing resolution.
@@ -1033,25 +1466,25 @@ impl<'a> Codegen<'a> {
         call: NodeId,
         member_set: &HashSet<NodeId>,
     ) -> Option<String> {
-        let (name, callee) = match self.kind(call) {
+        let (name, is_task, callee) = match self.kind(call) {
             NodeKind::FuncCall {
                 name,
-                is_task: true,
+                is_task,
                 callee,
                 ..
-            } => (name.clone(), *callee),
+            } => (name.clone(), *is_task, *callee),
             _ => return None,
         };
         let inst = self.owning_inst(call)?;
-        let ft = self.resolve_callee(inst, &name, true, callee).ok()?;
-        let (_, _, formals) = self.func_info(ft).ok()?;
+        let ft = self.resolve_callee(inst, &name, is_task, callee).ok()?;
+        let (_, _, formals) = self.func_info(ft, inst).ok()?;
         let args: Vec<NodeId> = self.node(call).children.clone();
         for (idx, (io, is_out)) in formals.iter().enumerate() {
             if !*is_out {
                 continue;
             }
             if let Some(arg) = args.get(idx) {
-                if let Some(m) = self.member_write_base(*arg, member_set) {
+                if let Some(m) = self.nested_member_target(*arg, member_set) {
                     return Some(format!(
                         "task output/inout actual `{}` on member `{}`",
                         self.node(*io).name,
@@ -1114,7 +1547,17 @@ impl<'a> Codegen<'a> {
             Some(NodeKind::Array { .. }) => NetDeclTarget::Array,
             Some(NodeKind::Var { .. }) => NetDeclTarget::Variable,
             Some(NodeKind::Net { net_type, .. }) => match *net_type {
-                NetType::Wire | NetType::Tri | NetType::Logic => NetDeclTarget::TrueNet,
+                NetType::Wire
+                | NetType::Tri
+                | NetType::Logic
+                | NetType::Wand
+                | NetType::TriAnd
+                | NetType::Wor
+                | NetType::TriOr
+                | NetType::Tri0
+                | NetType::Tri1
+                | NetType::Supply0
+                | NetType::Supply1 => NetDeclTarget::TrueNet,
                 other if other == vpi::vpiNet => NetDeclTarget::TrueNet,
                 NetType::Reg => NetDeclTarget::Variable,
                 other => NetDeclTarget::UnsupportedNet(other),
@@ -1166,6 +1609,17 @@ impl<'a> Codegen<'a> {
             Some(r) => *r,
             None => return Ok(None),
         };
+        if let Some(literal) = self.time_literal_in_subtree(rhs) {
+            return Err(format!(
+                "time literal `{literal}` in a scalar declaration initializer is not supported"
+            ));
+        }
+        if self.unverified_time_literal_in_subtree(rhs) {
+            return Err(
+                "cannot verify scalar declaration initializer after possible time-literal rewriting"
+                    .to_owned(),
+            );
+        }
         // Whole-signal LHS only: `resolve_signal_id` rejects selects and
         // arrays (the latter are registered as refs to `Array` nodes, which
         // carry no `SignalInfo`).
@@ -1196,6 +1650,16 @@ impl<'a> Codegen<'a> {
     /// non-constant is rejected — v1 variable initializers must be constant
     /// expressions.
     fn var_decl_init(&self, path: &str, name: &str, init: NodeId) -> Result<IrConst, String> {
+        if let Some(literal) = self.time_literal_in_subtree(init) {
+            return Err(format!(
+                "time literal `{literal}` in variable initializer `{name}` in `{path}` is not supported"
+            ));
+        }
+        if self.unverified_time_literal_in_subtree(init) {
+            return Err(format!(
+                "cannot verify variable initializer `{name}` in `{path}` after possible time-literal rewriting"
+            ));
+        }
         match self.const_of_node(init) {
             Ok(c) => Ok(c),
             Err(_) => match self.eval_decl_value(init) {
@@ -1276,7 +1740,7 @@ impl<'a> Codegen<'a> {
         if elem_width > LLG_MAX_WIDTH {
             return Err(format!(
                 "array `{name}` in `{path}` has {elem_width}-bit elements; the v1 \
-                 runtime supports at most {LLG_MAX_WIDTH}"
+                 runtime maximum supported width is {LLG_MAX_WIDTH}"
             ));
         }
         let mut dims: Vec<(i32, i32)> = Vec::new();
@@ -1308,6 +1772,7 @@ impl<'a> Codegen<'a> {
             hdl_name: self.waveform_name(node),
             elem_width,
             signed: ty.signed,
+            two_state: self.db.is_two_state_type(node) || is_two_state_kind(&ty.kind),
             dims: dims.clone(),
             total,
         });
@@ -1329,11 +1794,15 @@ impl<'a> Codegen<'a> {
     /// at their call sites), so they get no prototype.
     pub(super) fn emit_func_prototypes(&mut self, inst: NodeId) -> Result<(), String> {
         for c in &self.node(inst).children {
-            if let NodeKind::FuncTask { is_task, .. } = self.kind(*c) {
+            if let NodeKind::FuncTask {
+                is_task, automatic, ..
+            } = self.kind(*c)
+            {
                 if *is_task && self.task_has_wait(*c, inst) {
                     continue;
                 }
-                let (is_task_f, ret, formals) = self.func_info(*c)?;
+                let automatic = *automatic;
+                let (is_task_f, ret, formals) = self.func_info(*c, inst)?;
                 let c_name =
                     self.func_names.get(c).cloned().ok_or_else(|| {
                         format!("function `{}` has no C name", self.node(*c).name)
@@ -1341,22 +1810,60 @@ impl<'a> Codegen<'a> {
                 // Register the model entry (call-site lowering and the C
                 // renderers resolve through it).
                 let ir = self.model.funcs.len();
-                let formals_ir = formals
+                let formals_ir: Vec<IrFormal> = formals
                     .iter()
                     .map(|(io, is_out)| match self.kind(*io) {
                         NodeKind::FuncArg { ty, .. } => IrFormal {
                             is_out: *is_out,
-                            width: ty.width.unwrap_or(0),
+                            width: ty
+                                .width
+                                .map(|width| self.effective_decl_width(*io, inst, width))
+                                .unwrap_or(0),
                             signed: ty.signed,
+                            two_state: self.db.is_two_state_type(*io)
+                                || is_two_state_kind(&ty.kind),
                         },
                         _ => unreachable!("formal kind"),
                     })
                     .collect();
+                if !automatic {
+                    for (idx, ((io, is_out), formal)) in formals.iter().zip(&formals_ir).enumerate()
+                    {
+                        if !*is_out {
+                            continue;
+                        }
+                        let signal = self.model.signals.len();
+                        let info = SignalInfo {
+                            global: format!("S_f{}_{}_o{idx}", inst.index(), c.index()),
+                            width: formal.width,
+                            signed: formal.signed,
+                            two_state: formal.two_state,
+                            real: false,
+                            shortreal: false,
+                            net_driver: None,
+                            ir: signal,
+                        };
+                        self.model.signals.push(IrSignal {
+                            c_name: info.global.clone(),
+                            hdl_name: None,
+                            ty: IrType::Packed {
+                                width: info.width,
+                                signed: info.signed,
+                                two_state: info.two_state,
+                            },
+                            net_driver: None,
+                            omit: false,
+                        });
+                        self.signals.push(info.clone());
+                        self.static_formals.insert((inst, *io), info);
+                    }
+                }
                 self.model.funcs.push(crate::sim::ir::IrFunc {
                     c_name,
-                    ret: ret.map(|(w, s)| IrType::Packed {
+                    ret: ret.map(|(w, s, two_state)| IrType::Packed {
                         width: w,
                         signed: s,
+                        two_state,
                     }),
                     formals: formals_ir,
                     locals: Vec::new(),
@@ -1406,8 +1913,12 @@ impl<'a> Codegen<'a> {
     /// `(return type, params, depth)` → `(declaration prefix, formals)`.
     /// Functions pass inputs by value; tasks pass outputs/inouts first as
     /// `sv4_t*` pointers, then inputs by value.  Both end with `int depth`.
-    fn func_signature(&self, ft: NodeId) -> Result<(String, Vec<(NodeId, bool)>), String> {
-        let (is_task, ret, formals) = self.func_info(ft)?;
+    fn func_signature(
+        &self,
+        ft: NodeId,
+        inst: NodeId,
+    ) -> Result<(String, Vec<(NodeId, bool)>), String> {
+        let (is_task, ret, formals) = self.func_info(ft, inst)?;
         let c_name = self
             .func_names
             .get(&ft)
@@ -1448,11 +1959,19 @@ impl<'a> Codegen<'a> {
     pub(super) fn func_info(
         &self,
         ft: NodeId,
-    ) -> Result<(bool, Option<(u32, bool)>, Vec<(NodeId, bool)>), String> {
+        inst: NodeId,
+    ) -> Result<(bool, Option<(u32, bool, bool)>, Vec<(NodeId, bool)>), String> {
         let (is_task, ret) = match self.kind(ft) {
             NodeKind::FuncTask { is_task, ret, .. } => (*is_task, ret.clone()),
             _ => return Err("non-FuncTask passed to func_info".to_string()),
         };
+        let ret_two_state = self
+            .node(ft)
+            .children
+            .iter()
+            .copied()
+            .find(|child| matches!(self.kind(*child), NodeKind::Var { .. }))
+            .is_some_and(|return_var| self.db.is_two_state_type(return_var));
         let ret = match ret {
             Some(ty) => {
                 if is_real_kind(&ty.kind) {
@@ -1463,14 +1982,15 @@ impl<'a> Codegen<'a> {
                 }
                 match ty.width {
                     Some(w) => {
+                        let w = self.effective_decl_width(ft, inst, w);
                         if w > LLG_MAX_WIDTH {
                             return Err(format!(
                                 "return type of `{}` is {w} bits wide; the v1 runtime \
-                             supports at most {LLG_MAX_WIDTH}",
+                             maximum supported width is {LLG_MAX_WIDTH}",
                                 self.node(ft).name
                             ));
                         }
-                        Some((w, ty.signed))
+                        Some((w, ty.signed, ret_two_state || is_two_state_kind(&ty.kind)))
                     }
                     None => {
                         return Err(format!(
@@ -1522,8 +2042,8 @@ impl<'a> Codegen<'a> {
     /// the locals to C locals; the function-name variable maps to a local
     /// `_ret` that `return` reads.
     fn emit_func_task(&mut self, path: &str, inst: NodeId, ft: NodeId) -> Result<(), String> {
-        let (is_task, ret, formals) = self.func_info(ft)?;
-        let (decl, _) = self.func_signature(ft)?;
+        let (is_task, ret, formals) = self.func_info(ft, inst)?;
+        let (decl, _) = self.func_signature(ft, inst)?;
         let c_name = self
             .func_names
             .get(&ft)
@@ -1541,7 +2061,11 @@ impl<'a> Codegen<'a> {
 
         // The all-X return value used by the recursion guard.
         let ret_x = match ret {
-            Some((w, s)) => format!("sv4_x({w}, {})", s as u8),
+            Some((w, s, two_state)) => format!(
+                "{}({w}, {})",
+                if two_state { "sv4_zero" } else { "sv4_x" },
+                s as u8
+            ),
             None => String::new(),
         };
         let guard = if has_ret {
@@ -1554,18 +2078,19 @@ impl<'a> Codegen<'a> {
             )
         };
 
-        let mut locals: HashMap<NodeId, (String, u32, bool)> = HashMap::new();
+        let mut locals: HashMap<NodeId, (String, u32, bool, bool)> = HashMap::new();
         let mut local_seq = 0usize;
-        self.collect_func_locals(body, &mut locals, &mut local_seq, "")?;
+        self.collect_func_locals(body, inst, &mut locals, &mut local_seq, "")?;
 
         // Function-name return variable → `_ret` local.
         let ret_ctx = match (has_ret, ret_var) {
             (true, Some(rv)) => {
-                let (w, s) = ret.expect("ret width known");
+                let (w, s, two_state) = ret.expect("ret width known");
                 Some(RetCtx {
                     c_name: "_ret".to_string(),
                     width: w,
                     signed: s,
+                    two_state,
                     node: Some(rv),
                 })
             }
@@ -1576,7 +2101,7 @@ impl<'a> Codegen<'a> {
         let mut arg_ir: HashMap<NodeId, IrExpr> = HashMap::new();
         let mut arg_write: HashMap<NodeId, String> = HashMap::new();
         for (idx, (io, is_out)) in formals.iter().enumerate() {
-            let (w, s) = match self.kind(*io) {
+            let (w, s, two_state) = match self.kind(*io) {
                 NodeKind::FuncArg { ty, .. } => {
                     if is_real_kind(&ty.kind) {
                         return Err(
@@ -1584,11 +2109,15 @@ impl<'a> Codegen<'a> {
                         );
                     }
                     match ty.width {
-                        Some(w) if w <= LLG_MAX_WIDTH => (w, ty.signed),
+                        Some(w) if w <= LLG_MAX_WIDTH => (
+                            self.effective_decl_width(*io, inst, w),
+                            ty.signed,
+                            is_two_state_kind(&ty.kind),
+                        ),
                         Some(w) => {
                             return Err(format!(
                                 "formal `{}` of `{c_name}` is {w} bits wide; the v1 runtime \
-                             supports at most {LLG_MAX_WIDTH}",
+                             maximum supported width is {LLG_MAX_WIDTH}",
                                 self.node(*io).name
                             ))
                         }
@@ -1610,6 +2139,7 @@ impl<'a> Codegen<'a> {
                     ArgMap {
                         width: w,
                         signed: s,
+                        two_state,
                     },
                 );
             } else {
@@ -1623,6 +2153,7 @@ impl<'a> Codegen<'a> {
                     ArgMap {
                         width: w,
                         signed: s,
+                        two_state,
                     },
                 );
             }
@@ -1673,11 +2204,14 @@ impl<'a> Codegen<'a> {
             names.sort_by_key(|(id, _)| id.0);
             names
                 .into_iter()
-                .map(|(_, (c_name, width, signed))| crate::sim::ir::IrLocal {
-                    c_name,
-                    width,
-                    signed,
-                })
+                .map(
+                    |(_, (c_name, width, signed, two_state))| crate::sim::ir::IrLocal {
+                        c_name,
+                        width,
+                        signed,
+                        two_state,
+                    },
+                )
                 .collect()
         };
         let no_entry = format!("function `{}` has no model entry", self.node(ft).name);
@@ -1697,7 +2231,8 @@ impl<'a> Codegen<'a> {
     pub(super) fn collect_func_locals(
         &self,
         node: NodeId,
-        locals: &mut HashMap<NodeId, (String, u32, bool)>,
+        inst: NodeId,
+        locals: &mut HashMap<NodeId, (String, u32, bool, bool)>,
         seq: &mut usize,
         prefix: &str,
     ) -> Result<(), String> {
@@ -1709,7 +2244,7 @@ impl<'a> Codegen<'a> {
                 ));
             }
             let w = match ty.width {
-                Some(w) if w <= LLG_MAX_WIDTH => w,
+                Some(w) if w <= LLG_MAX_WIDTH => self.effective_decl_width(node, inst, w),
                 Some(w) => {
                     return Err(format!(
                         "local `{}` is {w} bits wide; the v1 runtime supports at most \
@@ -1721,11 +2256,11 @@ impl<'a> Codegen<'a> {
             };
             let cname = format!("{prefix}_l{seq}");
             *seq += 1;
-            locals.insert(node, (cname, w, ty.signed));
+            locals.insert(node, (cname, w, ty.signed, is_two_state_kind(&ty.kind)));
             return Ok(());
         }
         for c in &self.node(node).children {
-            self.collect_func_locals(*c, locals, seq, prefix)?;
+            self.collect_func_locals(*c, inst, locals, seq, prefix)?;
         }
         Ok(())
     }
@@ -1774,6 +2309,86 @@ impl<'a> Codegen<'a> {
     pub(super) fn task_has_wait(&self, ft: NodeId, inst: NodeId) -> bool {
         let mut seen: HashSet<NodeId> = HashSet::new();
         self.task_has_wait_inner(ft, inst, &mut seen)
+    }
+
+    /// Whether an NBA in `node` targets subroutine storage which does not
+    /// outlive the generated C call. Static output/inout formals use the
+    /// persistent storage allocated by `emit_func_prototypes`; inputs and
+    /// locals remain call-stack values. Every automatic formal/local is
+    /// call-stack storage.
+    pub(super) fn node_has_unsafe_subroutine_nba(
+        &self,
+        node: NodeId,
+        subroutine: NodeId,
+        automatic: bool,
+    ) -> bool {
+        if let NodeKind::Stmt(StmtKind::Assign {
+            blocking: false, ..
+        }) = self.kind(node)
+        {
+            if let Some(lhs) = self.node(node).children.first().copied() {
+                let target = match self.kind(lhs) {
+                    NodeKind::Expr(ExprKind::Ref { target }) => *target,
+                    NodeKind::Expr(ExprKind::BitSelect { base, .. })
+                    | NodeKind::Expr(ExprKind::PartSelect { base, .. })
+                    | NodeKind::Expr(ExprKind::IndexedPartSelect { base, .. })
+                    | NodeKind::Expr(ExprKind::ArraySelect { base, .. }) => {
+                        match self.kind(*base) {
+                            NodeKind::Expr(ExprKind::Ref { target }) => *target,
+                            _ => Some(*base),
+                        }
+                    }
+                    _ => None,
+                };
+                let declaration = target.or_else(|| {
+                    let name = self
+                        .node(lhs)
+                        .name
+                        .split_once('[')
+                        .map_or(self.node(lhs).name.as_str(), |(name, _)| name);
+                    self.subroutine_storage_named(subroutine, name)
+                });
+                let mut current = declaration;
+                while let Some(target) = current {
+                    if target == subroutine {
+                        return declaration.is_some_and(|declaration| {
+                            match self.kind(declaration) {
+                                NodeKind::FuncArg { direction, .. } => {
+                                    automatic
+                                        || !matches!(
+                                            direction,
+                                            DbDirection::Output | DbDirection::Inout
+                                        )
+                                }
+                                NodeKind::Var { .. } | NodeKind::Array { .. } => true,
+                                _ => false,
+                            }
+                        });
+                    }
+                    current = self.node(target).parent;
+                }
+            }
+        }
+        self.node(node)
+            .children
+            .iter()
+            .any(|child| self.node_has_unsafe_subroutine_nba(*child, subroutine, automatic))
+    }
+
+    fn subroutine_storage_named(&self, node: NodeId, name: &str) -> Option<NodeId> {
+        for child in &self.node(node).children {
+            if matches!(
+                self.kind(*child),
+                NodeKind::FuncArg { .. } | NodeKind::Var { .. } | NodeKind::Array { .. }
+            ) && self.node(*child).name == name
+            {
+                return Some(*child);
+            }
+            if let Some(found) = self.subroutine_storage_named(*child, name) {
+                return Some(found);
+            }
+        }
+        None
     }
 
     fn task_has_wait_inner(&self, ft: NodeId, inst: NodeId, seen: &mut HashSet<NodeId>) -> bool {
@@ -1836,12 +2451,13 @@ impl<'a> Codegen<'a> {
     /// formal's default expression; a formal without a default errors.
     pub(super) fn bind_call_args(
         &self,
+        inst: NodeId,
         formals: &[(NodeId, bool)],
         args: &[NodeId],
     ) -> Result<Vec<BoundArg>, String> {
         let mut bound = Vec::with_capacity(formals.len());
         for (idx, (io, _)) in formals.iter().enumerate() {
-            let (w, s) = match self.kind(*io) {
+            let (w, s, two_state) = match self.kind(*io) {
                 NodeKind::FuncArg { ty, .. } => {
                     if is_real_kind(&ty.kind) {
                         return Err(
@@ -1849,7 +2465,11 @@ impl<'a> Codegen<'a> {
                         );
                     }
                     match ty.width {
-                        Some(w) if w <= LLG_MAX_WIDTH => (w, ty.signed),
+                        Some(w) if w <= LLG_MAX_WIDTH => (
+                            self.effective_decl_width(*io, inst, w),
+                            ty.signed,
+                            is_two_state_kind(&ty.kind),
+                        ),
                         Some(w) => {
                             return Err(format!(
                                 "formal `{}` is {w} bits wide; the v1 runtime supports \
@@ -1886,6 +2506,7 @@ impl<'a> Codegen<'a> {
             bound.push(BoundArg {
                 width: w,
                 signed: s,
+                two_state,
                 expr,
                 is_default,
             });
@@ -1912,7 +2533,7 @@ impl<'a> Codegen<'a> {
         arg_codes: &mut [Option<String>],
         arg_irs: &mut Vec<Option<IrExpr>>,
     ) -> Result<(String, IrExpr), String> {
-        let (w, s) = (bound[idx].width, bound[idx].signed);
+        let (w, s, two_state) = (bound[idx].width, bound[idx].signed, bound[idx].two_state);
         let e_ir = if bound[idx].is_default {
             let mut arg_read: HashMap<NodeId, ArgMap> = HashMap::new();
             let mut arg_ir: HashMap<NodeId, IrExpr> = HashMap::new();
@@ -1924,6 +2545,7 @@ impl<'a> Codegen<'a> {
                         ArgMap {
                             width: wj,
                             signed: sj,
+                            two_state: bound[j].two_state,
                         },
                     );
                     if let Some(ir) = arg_irs[j].clone() {
@@ -1951,7 +2573,7 @@ impl<'a> Codegen<'a> {
             self.lower_expr(scope_path, bound[idx].expr)?
         };
         let e_ir = apply_assignment_expression_width(e_ir, w);
-        let conv_ir = ir_to_vector(e_ir, w, s)?;
+        let conv_ir = ir_to_storage(e_ir, w, s, two_state)?;
         let code = self.render_ir_code(&conv_ir)?;
         arg_codes[idx] = Some(code.clone());
         if arg_irs.len() <= idx {
@@ -1984,13 +2606,26 @@ impl<'a> Codegen<'a> {
             ));
         }
         let formals = meta.formals.clone();
+        if formals.iter().any(|(_, is_out)| *is_out)
+            && matches!(
+                self.kind(ft),
+                NodeKind::FuncTask {
+                    automatic: false,
+                    ..
+                }
+            )
+        {
+            return Err(format!(
+                "static function `{name}` with output/inout formals is not supported in expression position"
+            ));
+        }
         let args: Vec<NodeId> = self.node(h).children.clone();
-        let bound = self.bind_call_args(&formals, &args)?;
+        let bound = self.bind_call_args(self.inst, &formals, &args)?;
         // `ret` is `None` for void functions; using one as a value (legal in
         // Surelog's parse, e.g. `out <= vf(4'd2);`) emits the call for its
         // side effects and yields all-X.
         let ret_val = meta.ret;
-        let (ret_w, ret_s) = ret_val.unwrap_or((1, false));
+        let (ret_w, ret_s, _) = ret_val.unwrap_or((1, false, false));
 
         let mut out_args: Vec<IrCallArg> = Vec::new();
         let mut in_args: Vec<IrCallArg> = Vec::new();
@@ -2068,7 +2703,7 @@ impl<'a> Codegen<'a> {
             } => {
                 let e = self.lower_expr(scope_path, b.expr)?;
                 let e = apply_assignment_expression_width(e, b.width);
-                let conv = ir_to_vector(e, b.width, b.signed)?;
+                let conv = ir_to_storage(e, b.width, b.signed, b.two_state)?;
                 let code = self.render_ir_code(&conv)?;
                 Ok((code, Some(conv)))
             }
@@ -2087,14 +2722,16 @@ impl<'a> Codegen<'a> {
                     addr: addr.clone(),
                     width: am.width,
                     signed: am.signed,
+                    two_state: am.two_state,
                 });
             }
         }
-        if let Some((cname, w, s)) = f.locals.get(&node) {
+        if let Some((cname, w, s, two_state)) = f.locals.get(&node) {
             return Some(Lhs::WholeRef {
                 addr: format!("&{cname}"),
                 width: *w,
                 signed: *s,
+                two_state: *two_state,
             });
         }
         if f.ret_node == Some(node) {
@@ -2103,6 +2740,7 @@ impl<'a> Codegen<'a> {
                     addr: format!("&{}", r.c_name),
                     width: r.width,
                     signed: r.signed,
+                    two_state: r.two_state,
                 });
             }
         }
@@ -2113,16 +2751,18 @@ impl<'a> Codegen<'a> {
                         addr: addr.clone(),
                         width: am.width,
                         signed: am.signed,
+                        two_state: am.two_state,
                     });
                 }
             }
         }
-        for (nid, (cname, w, s)) in &f.locals {
+        for (nid, (cname, w, s, two_state)) in &f.locals {
             if self.node(*nid).name == name {
                 return Some(Lhs::WholeRef {
                     addr: format!("&{cname}"),
                     width: *w,
                     signed: *s,
+                    two_state: *two_state,
                 });
             }
         }
@@ -2132,6 +2772,7 @@ impl<'a> Codegen<'a> {
                     addr: format!("&{}", r.c_name),
                     width: r.width,
                     signed: r.signed,
+                    two_state: r.two_state,
                 });
             }
         }
@@ -2378,11 +3019,7 @@ impl<'a> Codegen<'a> {
 
     fn emit_cont_assign(&mut self, inst: NodeId, path: &str, ca: NodeId) -> Result<(), String> {
         let node = self.node(ca);
-        if let NodeKind::ContAssign {
-            net_decl: true,
-            delay: _,
-        } = self.kind(ca)
-        {
+        if let NodeKind::ContAssign { net_decl: true, .. } = self.kind(ca) {
             // Array and variable declaration initializers are applied in
             // `main()` at collection time. True-net declarations continue
             // below and use the ordinary event-driven continuous-assignment
@@ -2395,7 +3032,8 @@ impl<'a> Codegen<'a> {
                 NetDeclTarget::UnsupportedNet(net_type) => {
                     return Err(format!(
                         "net declaration assignment in `{path}` targets unsupported net type \
-                         {net_type} (only wire/tri/logic nets are supported)"
+                         {net_type} (trireg and biased/resolved net classes outside the \
+                         standalone subset are not supported)"
                     ));
                 }
                 NetDeclTarget::Array | NetDeclTarget::Variable | NetDeclTarget::Unknown => {
@@ -2418,6 +3056,13 @@ impl<'a> Codegen<'a> {
             .ok_or_else(|| format!("continuous assignment without RHS in `{path}`"))?;
         // Callee resolution in the RHS needs the owning instance.
         self.inst = inst;
+        if self.wired_driver_sites.contains_key(&ca) && !self.net_lvalue_selects_are_constant(lhs) {
+            return Err(format!(
+                "continuous assignment to a resolved net in `{path}` requires constant select \
+                 indices and bounds; dynamic or unpacked-array-dependent selectors are not \
+                 supported"
+            ));
+        }
         if matches!(self.kind(ca), NodeKind::ContAssign { net_decl: true, .. })
             && self.contains_unpacked_array(rhs, &mut HashSet::new())
         {
@@ -2426,7 +3071,32 @@ impl<'a> Codegen<'a> {
                  continuous sensitivity cannot be represented"
             ));
         }
-        let lh = self.lower_lhs(path, lhs)?;
+        let mut lh = self.lower_lhs(path, lhs)?;
+        if let Some(signal) = self.wired_driver_sites.get(&ca).copied() {
+            let is_wire = self.model.signals[signal]
+                .net_driver
+                .is_some_and(|(group, _)| {
+                    matches!(
+                        self.model.net_groups[group].kind,
+                        crate::sim::ir::IrNetKind::Wire
+                    )
+                });
+            lh = match lh {
+                IrLhs::Whole(_) => IrLhs::Whole(signal),
+                IrLhs::Bit(_, index, two_state) if is_wire => IrLhs::Bit(signal, index, two_state),
+                IrLhs::Part(_, left, right, two_state) if is_wire => {
+                    IrLhs::Part(signal, left, right, two_state)
+                }
+                IrLhs::IdxPart(_, base, width_expr, width, neg, two_state) if is_wire => {
+                    IrLhs::IdxPart(signal, base, width_expr, width, neg, two_state)
+                }
+                _ => {
+                    return Err(format!(
+                        "wired-net driver in `{path}` must target a supported net select"
+                    ));
+                }
+            };
+        }
         let rhs_ir = self.lower_expr(path, rhs)?;
         let rhs_ir = apply_lhs_assignment_context(&self.model, &lh, rhs_ir);
         let lhs_real = matches!(&lh, IrLhs::Whole(idx)
@@ -2508,6 +3178,39 @@ impl<'a> Codegen<'a> {
         Ok(())
     }
 
+    /// Net lvalues admit only constant selects. This runs after `self.inst`
+    /// is set to the owning instance so elaborated parameters and genvars are
+    /// accepted while runtime signal or array-dependent selectors fail.
+    fn net_lvalue_selects_are_constant(&self, lhs: NodeId) -> bool {
+        match self.kind(lhs) {
+            NodeKind::Expr(ExprKind::BitSelect { base, index }) => {
+                self.net_lvalue_selects_are_constant(*base) && self.eval_bound_i128(*index).is_ok()
+            }
+            NodeKind::Expr(ExprKind::PartSelect { base, left, right }) => {
+                self.net_lvalue_selects_are_constant(*base)
+                    && self.eval_bound_i128(*left).is_ok()
+                    && self.eval_bound_i128(*right).is_ok()
+            }
+            NodeKind::Expr(ExprKind::IndexedPartSelect {
+                base,
+                base_expr,
+                width_expr,
+                ..
+            }) => {
+                self.net_lvalue_selects_are_constant(*base)
+                    && self.eval_bound_i128(*base_expr).is_ok()
+                    && self.eval_bound_i128(*width_expr).is_ok()
+            }
+            NodeKind::Expr(ExprKind::ArraySelect { base, indices }) => {
+                self.net_lvalue_selects_are_constant(*base)
+                    && indices
+                        .iter()
+                        .all(|index| self.eval_bound_i128(*index).is_ok())
+            }
+            _ => true,
+        }
+    }
+
     /// Whether an expression (including a called function body) reaches an
     /// unpacked array. Array element storage is not representable in an
     /// `IrShape::SensLoop` read set, so declaration drivers reject it rather
@@ -2564,6 +3267,7 @@ impl<'a> Codegen<'a> {
             ty: IrType::Packed {
                 width: 1,
                 signed: false,
+                two_state: false,
             },
             net_driver: None,
             omit: false,
@@ -3656,6 +4360,7 @@ impl<'a> Codegen<'a> {
                     addr: format!("&{}", info.c_name),
                     width: info.width,
                     signed: info.signed,
+                    two_state: info.two_state,
                 })
             }
             NodeKind::Expr(ExprKind::Ref { target }) => {
@@ -3664,6 +4369,7 @@ impl<'a> Codegen<'a> {
                         addr: format!("&{}", info.c_name),
                         width: info.width,
                         signed: info.signed,
+                        two_state: info.two_state,
                     });
                 }
                 if let Some(t) = *target {
@@ -3676,6 +4382,7 @@ impl<'a> Codegen<'a> {
                                 addr: format!("&{}", info.c_name),
                                 width: info.width,
                                 signed: info.signed,
+                                two_state: info.two_state,
                             });
                         }
                     }
@@ -3708,12 +4415,24 @@ impl<'a> Codegen<'a> {
                             ai.dims.len()
                         ));
                     }
-                    let ie = self.emit_expr(path, *index)?;
+                    let index = self.lower_expr(path, *index)?;
                     return Ok(Lhs::ArrayElem(ArrayElemLhs {
                         arr: ai,
-                        index_codes: vec![ie],
+                        indices: vec![index],
                         elem_sel: ElemSel::Whole,
                     }));
+                }
+                if let Some((info, lsb, width)) = self.packed_select_info(*base, &[*index])? {
+                    if width > 1 {
+                        let right = i128::from(lsb);
+                        let two_state = info.two_state;
+                        return Ok(Lhs::Part(
+                            info,
+                            right + i128::from(width) - 1,
+                            right,
+                            two_state,
+                        ));
+                    }
                 }
                 let (_, info) = self.base_signal(path, *base)?;
                 if info.real {
@@ -3721,10 +4440,21 @@ impl<'a> Codegen<'a> {
                         "select on real-valued signal in `{path}` is not supported"
                     ));
                 }
-                let ie = self.emit_expr(path, *index)?;
-                Ok(Lhs::Bit(info, ie))
+                let index = self.lower_expr(path, *index)?;
+                let two_state = info.two_state;
+                Ok(Lhs::Bit(info, index, two_state))
             }
             NodeKind::Expr(ExprKind::ArraySelect { base, indices }) => {
+                if let Some((info, lsb, width)) = self.packed_select_info(*base, indices)? {
+                    let right = i128::from(lsb);
+                    let two_state = info.two_state;
+                    return Ok(Lhs::Part(
+                        info,
+                        right + i128::from(width) - 1,
+                        right,
+                        two_state,
+                    ));
+                }
                 let ai = self.array_of(*base).cloned().ok_or_else(|| {
                     format!(
                         "cannot resolve array base of select `{}` in `{path}`",
@@ -3735,11 +4465,11 @@ impl<'a> Codegen<'a> {
                 if indices.len() == ndims {
                     let ies = indices
                         .iter()
-                        .map(|i| self.emit_expr(path, *i))
+                        .map(|i| self.lower_expr(path, *i))
                         .collect::<Result<Vec<_>, _>>()?;
                     return Ok(Lhs::ArrayElem(ArrayElemLhs {
                         arr: ai,
-                        index_codes: ies,
+                        indices: ies,
                         elem_sel: ElemSel::Whole,
                     }));
                 }
@@ -3747,7 +4477,7 @@ impl<'a> Codegen<'a> {
                     let last = *indices.last().expect("non-empty indices");
                     let ies = indices[..ndims]
                         .iter()
-                        .map(|i| self.emit_expr(path, *i))
+                        .map(|i| self.lower_expr(path, *i))
                         .collect::<Result<Vec<_>, _>>()?;
                     let elem_sel = match self.kind(last) {
                         NodeKind::Expr(ExprKind::PartSelect { left, right, .. }) => {
@@ -3761,14 +4491,11 @@ impl<'a> Codegen<'a> {
                                  supported in `{path}`"
                             ))
                         }
-                        _ => {
-                            let ie = self.emit_expr(path, last)?;
-                            ElemSel::Bit(ie)
-                        }
+                        _ => ElemSel::Bit(self.lower_expr(path, last)?),
                     };
                     return Ok(Lhs::ArrayElem(ArrayElemLhs {
                         arr: ai,
-                        index_codes: ies,
+                        indices: ies,
                         elem_sel,
                     }));
                 }
@@ -3788,7 +4515,8 @@ impl<'a> Codegen<'a> {
                     ));
                 }
                 let (l, r) = (self.eval_bound_i128(*left)?, self.eval_bound_i128(*right)?);
-                Ok(Lhs::Part(info, l, r))
+                let two_state = info.two_state;
+                Ok(Lhs::Part(info, l, r, two_state))
             }
             NodeKind::Expr(ExprKind::IndexedPartSelect {
                 base,
@@ -3802,12 +4530,45 @@ impl<'a> Codegen<'a> {
                         "select on real-valued signal in `{path}` is not supported"
                     ));
                 }
-                let be = self.emit_expr(path, *base_expr)?;
-                let we = self.emit_expr(path, *width_expr)?;
-                let neg = if *neg { 1 } else { 0 };
-                Ok(Lhs::IdxPart(info, be, we, neg))
+                let width = self.indexed_part_select_width(*width_expr, path)?;
+                let base = self.lower_expr(path, *base_expr)?;
+                let width_expr = self.lower_expr(path, *width_expr)?;
+                let two_state = info.two_state;
+                Ok(Lhs::IdxPart(info, base, width_expr, width, *neg, two_state))
             }
             NodeKind::Expr(ExprKind::HierPath { .. }) => {
+                if let Some((info, member)) = self.packed_member_info(lhs) {
+                    if let Some(select) = self.packed_member_select(lhs)? {
+                        let two_state = member.two_state;
+                        return match select {
+                            PackedMemberSelect::Bit(index) => {
+                                let index = self.packed_member_relative_bound(&member, index)?;
+                                Ok(Lhs::Bit(
+                                    info,
+                                    lhs_integer_expr(i128::from(member.lsb + index)),
+                                    two_state,
+                                ))
+                            }
+                            PackedMemberSelect::Part(left, right) => {
+                                let left = self.packed_member_relative_bound(&member, left)?;
+                                let right = self.packed_member_relative_bound(&member, right)?;
+                                Ok(Lhs::Part(
+                                    info,
+                                    i128::from(member.lsb + left),
+                                    i128::from(member.lsb + right),
+                                    two_state,
+                                ))
+                            }
+                        };
+                    }
+                    let two_state = member.two_state;
+                    return Ok(Lhs::Part(
+                        info,
+                        i128::from(member.lsb + member.width - 1),
+                        i128::from(member.lsb),
+                        two_state,
+                    ));
+                }
                 // A whole-signal hierarchical WRITE (`m.data`, `tb.dut.sig`,
                 // …) lowers to the resolved target signal's global, so
                 // `llg_ba`/`llg_nba` (and the collapsed inout-net driver
@@ -3827,14 +4588,33 @@ impl<'a> Codegen<'a> {
                 })?;
                 if let Some(sel) = self.hier_lhs_select(lhs)? {
                     return Ok(match sel {
-                        HierSelect::Bit(idx) => Lhs::Bit(info, format!("SV4_C({idx}, 32)")),
-                        HierSelect::Part(left, right) => Lhs::Part(info, left, right),
-                        HierSelect::IdxPart(base, width, neg) => Lhs::IdxPart(
-                            info,
-                            format!("SV4_C({base}, 32)"),
-                            format!("SV4_C({width}, 32)"),
-                            if neg { 1 } else { 0 },
-                        ),
+                        HierSelect::Bit(idx) => {
+                            let two_state = info.two_state;
+                            Lhs::Bit(info, lhs_integer_expr(idx), two_state)
+                        }
+                        HierSelect::Part(left, right) => {
+                            let two_state = info.two_state;
+                            Lhs::Part(info, left, right, two_state)
+                        }
+                        HierSelect::IdxPart(base, width, neg) => {
+                            let selected_width = u32::try_from(width).map_err(|_| {
+                                format!("indexed part-select width must be positive in `{path}`")
+                            })?;
+                            if selected_width == 0 || selected_width > LLG_MAX_WIDTH {
+                                return Err(format!(
+                                    "indexed part-select width {width} is outside 1..={LLG_MAX_WIDTH} in `{path}`"
+                                ));
+                            }
+                            let two_state = info.two_state;
+                            Lhs::IdxPart(
+                                info,
+                                lhs_integer_expr(base),
+                                lhs_integer_expr(width),
+                                selected_width,
+                                neg,
+                                two_state,
+                            )
+                        }
                     });
                 }
                 Ok(Lhs::Whole(info))
@@ -3938,9 +4718,20 @@ impl<'a> Codegen<'a> {
     /// Evaluate a constant-ish expression node to a 4-state value, mirroring
     /// `core::elab::Resolver::eval_expr` for the constructs that can appear in
     /// elaborated bound positions.
-    fn eval_bits(&self, node: NodeId) -> Result<elab::Value, String> {
+    pub(super) fn eval_bits(&self, node: NodeId) -> Result<elab::Value, String> {
         match self.kind(node) {
             NodeKind::Expr(ExprKind::Constant { value, size, .. }) => {
+                if let Some(literal) = self.time_literal_in_subtree(node) {
+                    return Err(format!(
+                        "time literal `{literal}` is not supported in a constant-only context"
+                    ));
+                }
+                if self.unverified_time_literal_candidate(node) {
+                    return Err(
+                        "cannot verify constant-only source after possible time-literal rewriting"
+                            .to_owned(),
+                    );
+                }
                 let mut value = val_from_value_data(value, *size)?;
                 if self.signed_based_constant(node) {
                     if let Val::Bits(bits) = &mut value {
@@ -4017,7 +4808,19 @@ impl<'a> Codegen<'a> {
         }
         match self.kind(node) {
             NodeKind::Expr(ExprKind::Constant { value, size, .. }) => {
-                val_from_value_data(value, *size)
+                if let Some(literal) = self.time_literal_in_subtree(node) {
+                    Err(format!(
+                        "time literal `{literal}` is not supported in a declaration initializer"
+                    ))
+                } else {
+                    if self.unverified_time_literal_candidate(node) {
+                        return Err(
+                            "cannot verify declaration initializer after possible time-literal rewriting"
+                                .to_owned(),
+                        );
+                    }
+                    val_from_value_data(value, *size)
+                }
             }
             NodeKind::Expr(ExprKind::Ref { target }) => target
                 .and_then(|target| self.param_vals.get(&target).cloned())

@@ -18,6 +18,7 @@ docs/*
 /persistence/
 !.cargo
 !sim_features.md
+!docs/sim_data_semantics.md
 !config.md
 !coding_practices.md
 

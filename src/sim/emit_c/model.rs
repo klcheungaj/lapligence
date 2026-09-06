@@ -1,15 +1,16 @@
 //! Whole-model assembly, storage declarations, processes, and initialization.
 
 use super::constants::{
-    c_string_literal, emit_all_x_init, emit_all_z_init, emit_const, emit_const_for_real,
-    emit_const_for_vector, round_shortreal,
+    c_string_literal, emit_all_known_init, emit_all_x_init, emit_all_z_init, emit_const,
+    emit_const_for_real, emit_const_for_vector, round_shortreal,
 };
 use super::context::RCtx;
+use super::expressions::{coerce_two_state, packed_default};
 use super::statements::{
     render_pre_fn_impl as render_pre_fn, render_stmt_impl as render_stmt, wait_any_text,
 };
 use super::EmitError;
-use crate::sim::ir::{IrFunc, IrModel, IrType};
+use crate::sim::ir::{IrFunc, IrModel, IrNetKind, IrType};
 use std::collections::HashSet;
 
 // ── Model rendering ───────────────────────────────────────────────────────────
@@ -18,15 +19,29 @@ use std::collections::HashSet;
 /// the header comment the driver parses, signal/net/array storage, function
 /// prototypes and bodies, process functions, and `main()`.
 pub fn render(model: &IrModel) -> Result<String, EmitError> {
-    model.validate().map_err(EmitError::InvalidIr)?;
-    render_model(model).map_err(EmitError::new)
+    let capacity = model
+        .packed_capacity()
+        .map_err(EmitError::InvalidIr)?
+        .max(64);
+    if capacity >= u128::from(super::LLG_WIDTH_LIMIT) {
+        return Err(EmitError::new(format!(
+            "packed width {capacity} reaches the C runtime exclusive limit {}",
+            super::LLG_WIDTH_LIMIT
+        )));
+    }
+    render_model(model, capacity as u32).map_err(EmitError::new)
 }
 
-fn render_model(model: &IrModel) -> Result<String, String> {
+fn render_model(model: &IrModel, capacity: u32) -> Result<String, String> {
     let mut out = format!(
         "// llg-generated C11 model for design `{}`\n",
         model.design_name
     );
+    out.push_str(&format!("#define LLG_MODEL_MAX_WIDTH {capacity}\n"));
+    out.push_str(&format!(
+        "#define LLG_MODEL_STACK_VALUES {}\n",
+        super::stack::stack_value_slots(model)?
+    ));
     if model.waveform {
         out.push_str("#define LLG_WAVEFORM 1\n");
     }
@@ -97,13 +112,22 @@ fn render_signal_decls(model: &IrModel, out: &mut String) {
         }
         match sig.ty {
             IrType::Real { .. } => out.push_str(&format!("double {} = 0.0;\n", sig.c_name)),
-            IrType::Packed { width, .. } => {
+            IrType::Packed {
+                width,
+                signed,
+                two_state,
+            } => {
                 // `SV4_X` clamps to 64 bits, so init wide signals with an
                 // all-X brace initializer mirroring the runtime `sv4_x`.
-                let init = if width <= 64 {
-                    format!("SV4_X({width})")
+                let init = if two_state {
+                    emit_all_known_init(width, signed, false)
+                } else if width <= 64 {
+                    format!(
+                        "SV4_INIT(0, LLG_MASK({width}), 0, {width}, {})",
+                        signed as u8
+                    )
                 } else {
-                    emit_all_x_init(width)
+                    emit_all_x_init(width, signed)
                 };
                 out.push_str(&format!("sv4_t {} = {init};\n", sig.c_name));
             }
@@ -114,22 +138,28 @@ fn render_signal_decls(model: &IrModel, out: &mut String) {
         if !groups_emitted.insert(g.c_name.as_str()) {
             continue;
         }
-        let init = if g.width <= 64 {
+        let driver_init = if g.width <= 64 {
             format!("SV4_Z({})", g.width)
         } else {
             emit_all_z_init(g.width)
         };
+        let resolved_init = match g.kind {
+            IrNetKind::Tri0 | IrNetKind::Supply0 => emit_all_known_init(g.width, g.signed, false),
+            IrNetKind::Tri1 | IrNetKind::Supply1 => emit_all_known_init(g.width, g.signed, true),
+            IrNetKind::Wire | IrNetKind::Wand | IrNetKind::Wor => driver_init.clone(),
+        };
         let mut driver_ptrs = Vec::with_capacity(g.n_drivers);
         for slot in 0..g.n_drivers {
             let cell = format!("{}_d{}", g.c_name, slot);
-            out.push_str(&format!("sv4_t {cell} = {init};\n"));
+            out.push_str(&format!("sv4_t {cell} = {driver_init};\n"));
             driver_ptrs.push(format!("&{cell}"));
         }
         out.push_str(&format!(
-            "static llg_net_t {} = {{ {init}, {}, {}, {}, {{ {} }} }};\n",
+            "static llg_net_t {} = {{ {resolved_init}, {}, {}, {}, {}, {{ {} }} }};\n",
             g.c_name,
             g.width,
             g.signed as u8,
+            g.kind.c_value(),
             g.n_drivers,
             driver_ptrs.join(", ")
         ));
@@ -168,7 +198,7 @@ fn func_prototype(f: &IrFunc) -> String {
 }
 
 /// The recursion depth guard at the top of every emitted function; it returns
-/// all-X (or nothing) beyond [`crate::sim::ir::LLG_MAX_WIDTH`]-safe nesting.
+/// the return type's default value (or nothing) after reporting excessive nesting.
 const LLG_MAX_FUNC_DEPTH: u32 = 256;
 
 fn render_func_body(ctx: &RCtx<'_>, f: &IrFunc) -> Result<String, String> {
@@ -186,17 +216,23 @@ fn render_func_body(ctx: &RCtx<'_>, f: &IrFunc) -> Result<String, String> {
          {ret_clause}\n    }}\n",
         f.c_name
     ));
-    if let Some(IrType::Packed { width, signed }) = f.ret {
+    if let Some(IrType::Packed {
+        width,
+        signed,
+        two_state,
+    }) = f.ret
+    {
         // Function-name return variable → `_ret` local.
         out.push_str(&format!(
-            "    sv4_t _ret = sv4_x({width}, {});\n",
-            signed as u8
+            "    sv4_t _ret = {};\n",
+            packed_default(width, signed, two_state)
         ));
     }
     for l in &f.locals {
         out.push_str(&format!(
-            "    sv4_t {} = sv4_x({}, {});\n",
-            l.c_name, l.width, l.signed as u8
+            "    sv4_t {} = {};\n",
+            l.c_name,
+            packed_default(l.width, l.signed, l.two_state)
         ));
     }
     out.push_str(&block_stmts_of(ctx, &f.body)?);
@@ -359,8 +395,10 @@ fn render_main(model: &IrModel) -> Result<String, String> {
             IrInitStep::FillArrayX(arr) => {
                 let a = model.array(*arr);
                 out.push_str(&format!(
-                    "    {{ for (uint64_t _i = 0; _i < {}; _i++) {}[_i] = sv4_x({}, {}); }}\n",
-                    a.total, a.c_name, a.elem_width, a.signed as u8
+                    "    {{ for (uint64_t _i = 0; _i < {}; _i++) {}[_i] = {}; }}\n",
+                    a.total,
+                    a.c_name,
+                    packed_default(a.elem_width, a.signed, a.two_state)
                 ));
             }
             IrInitStep::SetArrayElem { arr, index, value } => {
@@ -369,7 +407,10 @@ fn render_main(model: &IrModel) -> Result<String, String> {
                     "    {}[{}] = {};\n",
                     a.c_name,
                     index,
-                    emit_const_for_vector(value, a.elem_width, a.signed)?
+                    coerce_two_state(
+                        emit_const_for_vector(value, a.elem_width, a.signed)?,
+                        a.two_state
+                    )
                 ));
             }
             IrInitStep::SetScalar { sig, value } => {
@@ -378,9 +419,11 @@ fn render_main(model: &IrModel) -> Result<String, String> {
                     IrType::Real { shortreal } => {
                         round_shortreal(emit_const_for_real(value), shortreal)
                     }
-                    IrType::Packed { width, signed } => {
-                        emit_const_for_vector(value, width, signed)?
-                    }
+                    IrType::Packed {
+                        width,
+                        signed,
+                        two_state,
+                    } => coerce_two_state(emit_const_for_vector(value, width, signed)?, two_state),
                 };
                 out.push_str(&format!("    {} = {};\n", s.c_name, v));
             }
@@ -524,6 +567,7 @@ mod tests {
                 ty: IrType::Packed {
                     width: 12,
                     signed: false,
+                    two_state: false,
                 },
                 net_driver: None,
                 omit: false,
@@ -534,6 +578,7 @@ mod tests {
                 ty: IrType::Packed {
                     width: 1,
                     signed: false,
+                    two_state: false,
                 },
                 net_driver: Some((0, 0)),
                 omit: false,
@@ -551,6 +596,7 @@ mod tests {
                 ty: IrType::Packed {
                     width: 1,
                     signed: false,
+                    two_state: false,
                 },
                 net_driver: None,
                 omit: false,
@@ -560,6 +606,7 @@ mod tests {
             c_name: "g_net_0".to_string(),
             width: 1,
             signed: false,
+            kind: crate::sim::ir::IrNetKind::Wire,
             n_drivers: 1,
         }];
         model.arrays = vec![IrArray {
@@ -567,6 +614,7 @@ mod tests {
             hdl_name: "top\u{1f}mem".to_string(),
             elem_width: 8,
             signed: false,
+            two_state: false,
             dims: vec![(1, 0)],
             total: 2,
         }];

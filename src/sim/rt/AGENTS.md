@@ -9,7 +9,8 @@ the generated `model.c` into a standalone executable and is deliberately
 - `llg_value.h` / `llg_value.c` — scheduler-independent data types, operations,
   formatting, and numeric conversions, compiled as a standalone C11 translation
   unit with only standard C/math dependencies:
-  - `sv4_t` — up to `LLG_MAX_WIDTH` (1024) bits stored as three parallel
+  - `sv4_t` — up to the generated model's `LLG_MAX_WIDTH` bits (below the
+    backend's exclusive `1 << 20` limit) stored as three parallel
     64-bit limb arrays (`bits`/`x`/`z`), with X and Z kept distinct
     (`x & z == 0`).  Z behaves as X in every unknown-propagating op (LRM
     11.4.5) but is carried through identity/copy ops and distinguished by
@@ -17,12 +18,17 @@ the generated `model.c` into a standalone executable and is deliberately
   - Value ops — arithmetic/logic/reduction/compare/wildcard-equality/casez/casex, mux, concat,
     repeat, part/bit/indexed-part selects, resize/fill/clog2, format and
     decimal conversion; semantics mirror `core::elab::Value` (kept in sync).
+    `sv4_resolve` combines equal-strength driver values independently of the
+    scheduler: wire conflicts yield X, wired-AND 0 dominates X, wired-OR 1
+    dominates X, and Z is neutral in every mode. No active drivers yield Z.
+    Tri0/tri1 modes instead fill undriven bits with their pull defaults;
+    supply0/supply1 modes dominate ordinary implicit-strength contributions.
     Bit-vector queries count known one bits across all limbs, ignore X/Z for
     `$countones`/`$onehot`/`$onehot0`, and detect either state for `$isunknown`.
   - Real-number hooks — packed-to-`double` conversion across all `sv4_t`
     limbs (X/Z bit positions contribute zero), rounded `double`-to-packed
-    conversion (targets up to 64 bits),
-    scalar truth conversion, and `%f`/`%e`/`%g` formatting support the
+    conversion (targets up to the model width),
+    scalar truth conversion, wide division/modulo/power, and `%f`/`%e`/`%g` formatting support the
     procedural scalar real/shortreal B6 contract.  `shortreal` precision is
     enforced by codegen at assignments and
     initialization; unsupported double-aware scheduling contexts are rejected
@@ -66,7 +72,7 @@ the generated `model.c` into a standalone executable and is deliberately
 
 ## Scheduling and value details
 
-`sv4_t` has `uint64_t bits[16], x[16], z[16]`, `uint16_t width`, and
+`sv4_t` has model-sized `uint64_t bits[]`, `x[]`, `z[]`, a `uint32_t width`, and
 `int8_t is_signed`. Keep these operations aligned with `core::elab::Value`;
 [../../../tests/AGENTS.md](../../../tests/AGENTS.md) describes property/vector checks.
 
@@ -78,6 +84,13 @@ Per-waiter last-seen values detect posedge 0→1, 0→X, X→1 (negedge mirrored
 `llg_wait_any` uses snapshots; event or-lists require atomic
 `llg_wait_any_events`, never sequential waits. See the lowering guide for
 force/release and inout resolution approximations.
+Net groups select wire/wired-AND/wired-OR/pull/supply resolution through the standalone
+value API; `llg_net_write` publishes only resolved-value changes to waiters.
+Generated driver cells start at Z. Lowering explicitly writes X into an
+existing delayed continuous-driver slot before processes start, distinguishing
+that pending driver from a genuinely driverless Z net. Selected continuous
+drivers publish a fresh Z-based contribution on every evaluation, so only the
+selected range contributes; lowering rejects dynamic net selectors.
 
 ## Embedding
 

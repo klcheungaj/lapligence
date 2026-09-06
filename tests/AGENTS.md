@@ -51,6 +51,28 @@ coverage for the same rule IDs.
 
 ## Suite map
 
+- `sim_data_types.rs` compiles checked-in `.v`/`.sv` fixtures under
+  `fixtures/sim/data_types/` and compares optimized/unoptimized execution.
+  Independent full-bit truth-table output and positional arithmetic/cast
+  oracles cover model-sized and partial-limb vectors. The original 40-case
+  campaign is active without ignored tests and has regular and sanitizer
+  coverage. Commands and
+  stable coverage notes live in the [fixture guide](fixtures/sim/data_types/readme.md),
+  with normative data/width rules in [the semantics reference](../docs/sim_data_semantics.md).
+- `sim_data_types_extended.rs` adds independent wide arithmetic, signed div/mod,
+  packed layouts (including all-bit/mixed-state packed structs and
+  multidimensional packed-bit arrays), net resolution, and backend-boundary
+  fixtures, including acceptance at 1,048,575 bits and explicit rejection at
+  1,048,576 bits. Packed unions and unpacked aggregate/member contexts remain
+  outside the documented support claim.
+- `sim_data_type_edges.rs` exercises signed/unsigned indices, real conversions,
+  two-state subprogram and aggregate storage, enum defaults, numeric size-cast
+  provenance, and near-limit storage combined with recursion. Its HDL lives in
+  `fixtures/sim/data_type_edges/`; enum base-state/signedness and numeric
+  source-enabled/source-less cast paths are covered at the exercised widths.
+  Ambiguous source-less cast provenance must explicitly diagnose rather than
+  silently change the cast width/sign. Test authors derive oracles from the official local
+  `docs/specification/` files without reading production implementation code.
 - `elab_resolve.rs` exercises `core::elab`; `config_effect.rs` observes
   configured `-D` ifdef/elsif selection and top-level `-P` parameter-driven
   generate branches through the owned `DesignModel`.
@@ -90,7 +112,12 @@ coverage for the same rule IDs.
   Its source-generation check also pins the separate value-runtime translation
   unit and retention of both value files during stale-source cleanup.
 - `runtime_values.rs` compiles `llg_value.c` independently of the scheduler and
-  libaco, checking packed value operations and real/shortreal conversions.
+  libaco, checking packed value operations, real/shortreal conversions, and
+  wire/wired-AND/wired-OR truth tables and wide-vector normalization.
+  `sim_net_resolution.rs` covers per-site wired drivers, aliases, repeated
+  updates, optimizer parity, driver limits and unsupported-context rejection.
+  `sim_net_defaults.rs` covers implicit pull/supply ordering, initial defaults,
+  driver release and unchanged resolved-value notifications.
 - `model_tests.rs` covers the explorer-facing model projection: formal
   ports are not duplicated as backing signals, concrete net kinds are kept,
   and packed ranges remain owned per elaborated instance without absorbing
@@ -106,8 +133,10 @@ coverage for the same rule IDs.
   equality/case-inside, and lexical loop declarations/fixed-array foreach.
   `sim_delay.rs` covers the source-recovered constant delay subset and its
   explicit rejection boundaries.
-  `sim_time_literals.rs` checks fixed-point/unit-suffixed delays and local
-  precision rounding before global scheduling, with optimizer parity.
+  `sim_time_literals.rs` checks fixed-point/unit-suffixed/scientific and real
+  parameter delays, lexical shadowing, and local rounding before global
+  scheduling, with optimizer parity. `sim_time_values.rs` covers owned-source
+  time-literal recovery, module-unit realtime values and rejection boundaries.
   `sim_fill_literals.rs` checks context-determined fills through expressions
   and case operands, self-determined boundaries, and wide-operation rejection.
 
@@ -144,7 +173,8 @@ cargo test --all-features -- --test-threads=1
 ```
 
 The PR/manual `generated-runtime-sanitizers` job has a 180-minute limit and
-runs `runtime_values`, `runtime_boundaries`, and `sim_counter` with GCC ASan/UBSan. This checks
+runs `runtime_values`, `runtime_boundaries`, `sim_counter`, and the 40-case
+`sim_data_types` suite with GCC ASan/UBSan. This checks
 generated C/runtime memory safety, not LSP admission. The 15-minute
 `dependency-audit` job runs `cargo audit` on those triggers and Mondays at
 04:17 UTC. Neither uploads reports; workflow logs are evidence.

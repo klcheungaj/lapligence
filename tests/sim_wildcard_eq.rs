@@ -8,6 +8,7 @@ mod sim_harness;
 
 use llg::core::{compile, db::Db};
 use llg::sim::{self, opt::OptConfig};
+use std::path::Path;
 
 #[test]
 fn wildcard_equality_rhs_wildcards_unknowns_and_coercion() {
@@ -154,33 +155,48 @@ constant=1 1 x\n";
         Ok(())
     })
     .expect("wildcard equality simulations");
+}
 
-    let wide_context = r#"module tb;
-    logic [7:0] a;
-    logic [7:0] b;
-    logic [127:0] rhs;
-    logic result;
-    initial result = (a / b) ==? rhs;
-endmodule
-"#;
+#[test]
+fn wildcard_equality_accepts_wide_expression_context() {
+    if !sim::build::cmake_available() {
+        eprintln!("SKIP: cmake not available");
+        return;
+    }
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/sim/wildcard_eq/wide_context.sv");
     sim_harness::with_surelog_temp_cwd("wildcard_eq_wide_context", |dir| {
-        let path = dir.join("tb.sv");
-        std::fs::write(&path, wide_context).map_err(|error| error.to_string())?;
+        let path = dir.join("wide_context.sv");
+        std::fs::copy(&fixture, &path).map_err(|error| format!("copy fixture: {error}"))?;
         let compiled = compile::compile_checked(&compile::CompileOpts {
             files: vec![path.to_string_lossy().into_owned()],
             top: Some("tb".to_owned()),
             ..Default::default()
         })
         .map_err(|error| error.to_string())?;
-        let error = match sim::codegen::generate(compiled.uhdm_design().ok_or("no design")?) {
-            Ok(_) => return Err("wide wildcard comparison context was accepted".to_string()),
-            Err(error) => error.to_string(),
-        };
-        assert!(
-            error.contains("wildcard comparison context wider than 64 bits"),
-            "unexpected error: {error}"
-        );
+        let db = Db::build_with_source_files(
+            compiled.uhdm_design().ok_or("no design")?,
+            &compiled.frontend_source_files(),
+        )
+        .map_err(|error| error.to_string())?;
+        for (variant, options) in [
+            ("opt_on", OptConfig::default()),
+            ("opt_off", OptConfig::none()),
+        ] {
+            let model = sim::codegen::generate_from_db_with_opts(&db, &options)
+                .map_err(|error| format!("{variant} lowering: {error}"))?;
+            let executable = sim::build::build_model_cmake(
+                &dir.join(variant),
+                &[("model.c", model.model_c.as_str())],
+            )
+            .map_err(|error| format!("{variant} C model build: {error}"))?;
+            assert_eq!(
+                sim_harness::run_executable(&executable)?,
+                "PASS wildcard_wide_context\n",
+                "{variant}"
+            );
+        }
         Ok(())
     })
-    .expect("wide wildcard context rejection");
+    .expect("wide wildcard context simulation");
 }

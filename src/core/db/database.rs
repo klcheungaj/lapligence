@@ -90,6 +90,20 @@ pub struct ElaboratedTypeRanges {
     pub packed_ranges: Vec<Option<PackedRange>>,
 }
 
+/// One top-level member of a packed structure or union, expressed as bit
+/// positions in its containing packed value.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PackedMember {
+    pub name: String,
+    pub lsb: u32,
+    pub width: u32,
+    pub signed: bool,
+    pub two_state: bool,
+    /// Effective declared packed dimensions, outermost first. Atomic types
+    /// without an explicit range use their implicit `[width-1:0]` range.
+    pub packed_ranges: Vec<PackedRange>,
+}
+
 impl ElaboratedTypeRanges {
     pub fn instance(&self) -> &str {
         &self.instance
@@ -168,6 +182,12 @@ pub struct Db {
     /// initializers instead become `vpiNetDeclAssign` continuous assignments
     /// (see [`NodeKind::ContAssign`]).
     vars_init: HashMap<NodeId, NodeId>,
+    /// Top-level packed struct/union layouts keyed by the declared object.
+    packed_members: HashMap<NodeId, Vec<PackedMember>>,
+    /// Ordered ranges of multidimensional packed declarations.
+    packed_dimensions: HashMap<NodeId, Vec<PackedRange>>,
+    /// True for declarations whose complete packed type has a two-state base.
+    two_state_types: HashSet<NodeId>,
     /// Ordered packed dimensions captured during the canonical instance and
     /// generate-scope walk.  Consumers use this owned projection instead of
     /// traversing the live VPI design again.
@@ -192,6 +212,9 @@ pub struct ArrayMeta {
     /// same pattern on a `vpiNetDeclAssign` continuous assignment instead —
     /// that form is captured separately, see `walk_cont_assign`.)
     pub init: Option<NodeId>,
+    /// Captured subtype for an unpacked net array (including reg-shaped
+    /// arrays); `None` for variable-shaped arrays or missing element metadata.
+    pub net_type: Option<NetType>,
 }
 
 impl ArrayMeta {
@@ -201,6 +224,10 @@ impl ArrayMeta {
 
     pub fn initializer(&self) -> Option<NodeId> {
         self.init
+    }
+
+    pub fn net_type(&self) -> Option<NetType> {
+        self.net_type
     }
 }
 
@@ -378,6 +405,11 @@ pub enum NodeKind {
         /// parameter values).  Also captured as the node's third child so
         /// its operands are walked; `None` when undelayed.
         delay: Option<NodeId>,
+        /// Drive strengths retained so consumers can reject unsupported
+        /// strength-aware resolution instead of silently treating it as
+        /// equal-strength.
+        strength0: Strength,
+        strength1: Strength,
     },
     /// A structural primitive instance from `vpiPrimitive`
     /// (`gate`/`switch_tran`/`udp` objects: builtin logic gates, enable
@@ -735,6 +767,12 @@ pub enum ExprKind {
         value: ValueData,
         size: i32,
         const_type: ConstantType,
+        /// Source provenance retained for unsigned constants because Surelog
+        /// rewrites time-literal payloads and drops their constant kind.
+        source: ConstantSource,
+        /// Surelog v1.87 omitted `vpiDecompile` for a time literal before
+        /// rewriting it to an unsigned femtosecond payload.
+        time_literal_candidate: bool,
     },
     Operation {
         op: Operation,
@@ -745,6 +783,18 @@ pub enum ExprKind {
     Cast {
         operand: NodeId,
         ty: TypeInfo,
+        /// A numeric size cast (`N'(expr)`), whose result keeps the operand's
+        /// signedness rather than taking it from an integer typespec.
+        size_cast: bool,
+        /// Source-level numeric/parameter size token. UHDM represents a size
+        /// cast using the same integer typespec as an `int` cast.
+        size_cast_expr: Option<String>,
+        /// False when source/decompile provenance was unavailable and the
+        /// integer typespec is therefore ambiguous.
+        cast_kind_known: bool,
+        /// State domain of the complete target type, including aggregate and
+        /// enum base types.
+        two_state: bool,
     },
     /// A reference to a net/var/param; `target` is the arena node of the
     /// object `vpiActual` resolves to, when it was captured.
@@ -791,6 +841,18 @@ pub enum ExprKind {
     Other,
 }
 
+/// Owned source provenance for a captured constant.
+#[derive(Debug)]
+pub enum ConstantSource {
+    /// Source is unnecessary (non-unsigned constant) or the frontend supplied
+    /// no usable location.
+    NotCaptured,
+    /// Exact, bounded, single-line source span.
+    Exact(String),
+    /// A source location existed but bounded capture could not safely read it.
+    Unavailable,
+}
+
 /// Common source/name properties captured for every node.
 #[derive(Default)]
 pub(super) struct CommonProps {
@@ -819,9 +881,28 @@ pub(super) struct Builder {
     /// Scalar-variable declaration initializers, keyed by the Var node
     /// (see [`Db::vars_init`]).
     pub(super) vars_init: HashMap<NodeId, NodeId>,
+    pub(super) packed_members: HashMap<NodeId, Vec<PackedMember>>,
+    pub(super) packed_dimensions: HashMap<NodeId, Vec<PackedRange>>,
+    pub(super) two_state_types: HashSet<NodeId>,
+    /// Source contents retained only while building, with negative entries so
+    /// failed paths are never retried once per literal.
+    pub(super) constant_source_files: HashMap<String, CachedConstantSourceFile>,
+    /// Accounted bytes of admitted/cache paths, source text, line offsets,
+    /// and retained exact source spans.
+    pub(super) constant_source_bytes: usize,
+    /// Once cache admission is exhausted, later paths fail closed without
+    /// repeated metadata or open attempts.
+    pub(super) constant_source_cache_exhausted: bool,
+    /// Exact frontend source paths explicitly admitted by the caller.
+    pub(super) constant_source_allowed: HashSet<String>,
     /// Packed dimensions captured while each module/generate scope's objects
     /// are already being visited by the canonical walk.
     pub(super) elaborated_type_ranges: HashMap<(String, String), Vec<Option<PackedRange>>>,
+}
+
+pub(super) enum CachedConstantSourceFile {
+    Available { text: String, line_starts: Vec<u32> },
+    Unavailable,
 }
 
 impl Db {
@@ -836,6 +917,9 @@ impl Db {
             design_name: "test".to_owned(),
             arrays: HashMap::new(),
             vars_init: HashMap::new(),
+            packed_members: HashMap::new(),
+            packed_dimensions: HashMap::new(),
+            two_state_types: HashSet::new(),
             elaborated_type_ranges: Vec::new(),
         }
     }
@@ -849,12 +933,30 @@ impl Db {
     ///
     /// The owning surelog session must stay alive for the duration of the
     /// call.  The returned [`Db`] is fully owned.
+    /// Constant-source recovery is disabled; use [`Self::build_with_source_files`]
+    /// when simulation needs exact time-literal spelling. Older delay/event
+    /// source recovery is unchanged.
     pub fn build(design: VpiHandle) -> Result<Db, DbError> {
+        Self::build_impl(design, &[])
+    }
+
+    /// Build while allowing bounded constant-source recovery only from the
+    /// supplied physical frontend files. Callers obtain these paths from the
+    /// live Surelog `Design`; `vpiFile` alone may be logically remapped.
+    pub fn build_with_source_files(
+        design: VpiHandle,
+        source_files: &[String],
+    ) -> Result<Db, DbError> {
+        Self::build_impl(design, source_files)
+    }
+
+    fn build_impl(design: VpiHandle, source_files: &[String]) -> Result<Db, DbError> {
         if design.is_null() {
             return Err(DbError::NullDesign);
         }
         let design_name = vpi::get_str(vpi::vpiName, design);
         let mut b = Builder::default();
+        b.admit_constant_source_files(source_files);
         for top in iter(vpi::uhdmtopModules, design) {
             let top = top.raw();
             let id = b.walk_module_inst(top, None, None)?;
@@ -897,6 +999,9 @@ impl Db {
             design_name,
             arrays: b.arrays,
             vars_init: b.vars_init,
+            packed_members: b.packed_members,
+            packed_dimensions: b.packed_dimensions,
+            two_state_types: b.two_state_types,
             elaborated_type_ranges,
         };
         db.validate().map_err(DbError::InvalidDatabase)?;
@@ -962,6 +1067,18 @@ impl Db {
 
     pub fn var_initializer(&self, id: NodeId) -> Option<NodeId> {
         self.vars_init.get(&id).copied()
+    }
+
+    pub fn packed_members(&self, id: NodeId) -> Option<&[PackedMember]> {
+        self.packed_members.get(&id).map(Vec::as_slice)
+    }
+
+    pub fn packed_dimensions(&self, id: NodeId) -> Option<&[PackedRange]> {
+        self.packed_dimensions.get(&id).map(Vec::as_slice)
+    }
+
+    pub fn is_two_state_type(&self, id: NodeId) -> bool {
+        self.two_state_types.contains(&id)
     }
 
     /// Instance path of a `module_inst` node (`"top.u0"`), `""` for the top.

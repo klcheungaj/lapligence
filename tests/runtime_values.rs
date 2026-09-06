@@ -78,8 +78,6 @@ static int check_wide_four_state_ops(void) {
         CHECK(unknown_sum.z[i] == 0);
     }
 
-    sv4_t clamped = sv4_fill(1, UINT16_MAX, 0);
-    CHECK(clamped.width == LLG_MAX_WIDTH);
     return 0;
 }
 
@@ -149,6 +147,108 @@ static int check_queries(void) {
     return 0;
 }
 
+static void set_state(sv4_t* value, unsigned bit, int state) {
+    unsigned limb = bit / 64u;
+    uint64_t mask = UINT64_C(1) << (bit % 64u);
+    value->bits[limb] &= ~mask;
+    value->x[limb] &= ~mask;
+    value->z[limb] &= ~mask;
+    if (state == 1) value->bits[limb] |= mask;
+    else if (state == 2) value->x[limb] |= mask;
+    else if (state == 3) value->z[limb] |= mask;
+}
+
+static int check_normalized(sv4_t value) {
+    unsigned limbs = value.width == 0 ? 0 : (value.width + 63u) / 64u;
+    for (unsigned i = 0; i < LLG_LIMBS; i++) {
+        uint64_t mask = UINT64_MAX;
+        if (i >= limbs) mask = 0;
+        else if (i + 1 == limbs && value.width % 64u != 0)
+            mask = (UINT64_C(1) << (value.width % 64u)) - 1;
+        CHECK((value.x[i] & value.z[i]) == 0);
+        CHECK((value.bits[i] & (value.x[i] | value.z[i])) == 0);
+        CHECK(((value.bits[i] | value.x[i] | value.z[i]) & ~mask) == 0);
+    }
+    return 0;
+}
+
+static int check_net_resolution(void) {
+    static const int modes[7] = {
+        LLG_RESOLVE_WIRE, LLG_RESOLVE_WAND, LLG_RESOLVE_WOR,
+        LLG_RESOLVE_TRI0, LLG_RESOLVE_TRI1,
+        LLG_RESOLVE_SUPPLY0, LLG_RESOLVE_SUPPLY1
+    };
+    static const int expected[7][16] = {
+        {0, 2, 2, 0, 2, 1, 2, 1, 2, 2, 2, 2, 0, 1, 2, 3},
+        {0, 0, 0, 0, 0, 1, 2, 1, 0, 2, 2, 2, 0, 1, 2, 3},
+        {0, 1, 2, 0, 1, 1, 1, 1, 2, 1, 2, 2, 0, 1, 2, 3},
+        {0, 2, 2, 0, 2, 1, 2, 1, 2, 2, 2, 2, 0, 1, 2, 0},
+        {0, 2, 2, 0, 2, 1, 2, 1, 2, 2, 2, 2, 0, 1, 2, 1},
+        {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+        {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1},
+    };
+
+    /* Pin every scalar pair, including pull fallback and supply dominance. */
+    for (int mode = 0; mode < 7; mode++) {
+        for (int left = 0; left < 4; left++) {
+            for (int right = 0; right < 4; right++) {
+                sv4_t a = sv4_fill((uint8_t)left, 1, 0);
+                sv4_t b = sv4_fill((uint8_t)right, 1, 0);
+                const sv4_t* drivers[2] = {&a, &b};
+                sv4_t result = sv4_resolve(drivers, 2, 1, 0, modes[mode]);
+                CHECK(state_at(result, 0) == expected[mode][left * 4 + right]);
+                CHECK(check_normalized(result) == 0);
+            }
+        }
+    }
+
+    /* Exercise partial, multi-limb, and maximum-width top masks. */
+    static const uint16_t widths[3] = {65, 130, LLG_MAX_WIDTH};
+    for (unsigned w = 0; w < 3; w++) {
+        uint16_t width = widths[w];
+        sv4_t a = sv4_fill(0, width, 0);
+        sv4_t b = sv4_fill(0, width, 0);
+        for (unsigned bit = 0; bit < width; bit++) {
+            set_state(&a, bit, (int)(bit % 4u));
+            set_state(&b, bit, (int)((bit / 4u) % 4u));
+        }
+        const sv4_t* drivers[2] = {&a, &b};
+        for (int mode = 0; mode < 7; mode++) {
+            sv4_t result = sv4_resolve(drivers, 2, width, 1, modes[mode]);
+            CHECK(result.width == width && result.is_signed == 1);
+            for (unsigned bit = 0; bit < width; bit++) {
+                int pair = state_at(a, bit) * 4 + state_at(b, bit);
+                CHECK(state_at(result, bit) == expected[mode][pair]);
+            }
+            CHECK(check_normalized(result) == 0);
+        }
+    }
+
+    /* Driverless wire/wired modes are Z; pull/supply modes have defaults. */
+    static const uint16_t empty_widths[4] = {1, 65, 130, LLG_MAX_WIDTH};
+    static const int empty_expected[7] = {3, 3, 3, 0, 1, 0, 1};
+    for (unsigned w = 0; w < 4; w++) {
+        uint16_t width = empty_widths[w];
+        for (int mode = 0; mode < 7; mode++) {
+            sv4_t result = sv4_resolve(NULL, 0, width, 1, modes[mode]);
+            CHECK(result.width == width && result.is_signed == 1);
+            for (unsigned bit = 0; bit < width; bit++)
+                CHECK(state_at(result, bit) == empty_expected[mode]);
+            CHECK(check_normalized(result) == 0);
+        }
+    }
+
+    sv4_t one = sv4_fill(1, LLG_MAX_WIDTH, 0);
+    const sv4_t* sparse_drivers[2] = {NULL, &one};
+    sv4_t sparse = sv4_resolve(sparse_drivers, 2, LLG_MAX_WIDTH, 0,
+                               LLG_RESOLVE_WIRE);
+    for (unsigned bit = 0; bit < LLG_MAX_WIDTH; bit++)
+        CHECK(state_at(sparse, bit) == 1);
+    CHECK(check_normalized(sparse) == 0);
+
+    return 0;
+}
+
 static int check_numeric_conversions(void) {
     uint64_t wide_bits[LLG_LIMBS] = {0};
     wide_bits[2] = 1;
@@ -206,9 +306,34 @@ int main(void) {
     CHECK(check_wide_four_state_ops() == 0);
     CHECK(check_signed_resize() == 0);
     CHECK(check_queries() == 0);
+    CHECK(check_net_resolution() == 0);
     CHECK(check_numeric_conversions() == 0);
     puts("runtime value isolation ok");
     return 0;
+}
+"#;
+
+const VALUE_BOUNDARY_PROBE: &str = r#"
+#include "llg_value.h"
+
+#include <stdint.h>
+#include <string.h>
+
+#define OVER_CAP_WIDTH ((uint32_t)LLG_MAX_WIDTH + UINT32_C(1))
+
+int main(int argc, char** argv) {
+    if (argc != 2) return 2;
+    if (strcmp(argv[1], "constructor") == 0) {
+        (void)sv4_fill(1, OVER_CAP_WIDTH, 0);
+        return 0;
+    }
+    if (strcmp(argv[1], "resolution") == 0) {
+        sv4_t driver = sv4_fill(1, LLG_MAX_WIDTH, 0);
+        const sv4_t* drivers[1] = {&driver};
+        (void)sv4_resolve(drivers, 1, OVER_CAP_WIDTH, 0, LLG_RESOLVE_WIRE);
+        return 0;
+    }
+    return 2;
 }
 "#;
 
@@ -252,4 +377,67 @@ fn value_runtime_compiles_and_runs_without_scheduler() {
 
     let stdout = sim_harness::run_executable(&executable).expect("value probe should run");
     assert_eq!(stdout, "runtime value isolation ok\n");
+}
+
+#[test]
+fn value_runtime_rejects_over_capacity_widths() {
+    let compiler = std::env::var("LLG_CC")
+        .or_else(|_| std::env::var("CC"))
+        .unwrap_or_else(|_| "cc".to_owned());
+    if Command::new(&compiler).arg("--version").output().is_err() {
+        eprintln!("SKIP: C compiler `{compiler}` not available");
+        return;
+    }
+
+    let dir = sim_harness::TempDir::new("runtime-value-boundaries").expect("create temp directory");
+    let (header, implementation) = llg::sim::rt::value_sources();
+    std::fs::write(dir.path().join("llg_value.h"), header).expect("write value header");
+    std::fs::write(dir.path().join("llg_value.c"), implementation)
+        .expect("write value implementation");
+    std::fs::write(
+        dir.path().join("runtime_values_boundary_probe.c"),
+        VALUE_BOUNDARY_PROBE,
+    )
+    .expect("write value boundary probe");
+
+    let executable = dir.path().join("runtime_values_boundary_probe");
+    let mut command = Command::new(&compiler);
+    command
+        .current_dir(dir.path())
+        .args(["-std=c11", "-O2", "-Wall", "-Wextra", "-Werror", "-I."]);
+    if let Ok(flags) = std::env::var("LLG_CFLAGS") {
+        command.args(flags.split_whitespace());
+    }
+    command
+        .args([
+            "llg_value.c",
+            "runtime_values_boundary_probe.c",
+            "-lm",
+            "-o",
+        ])
+        .arg(&executable);
+
+    let compiled = sim_harness::run_command(&mut command, Duration::from_secs(60))
+        .unwrap_or_else(|error| panic!("run C compiler `{compiler}`: {error}"));
+    assert!(
+        compiled.status.success(),
+        "standalone value boundary probe must compile:\n{}",
+        String::from_utf8_lossy(&compiled.stderr)
+    );
+
+    for operation in ["constructor", "resolution"] {
+        let mut command = Command::new(&executable);
+        command.arg(operation);
+        let output = sim_harness::run_command(&mut command, Duration::from_secs(10))
+            .unwrap_or_else(|error| panic!("run {operation} boundary probe: {error}"));
+        assert!(
+            !output.status.success(),
+            "over-capacity {operation} request must fail"
+        );
+        let diagnostic = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            diagnostic.to_ascii_lowercase().contains("width"),
+            "over-capacity {operation} failure must diagnose width: {diagnostic:?}"
+        );
+    }
 }

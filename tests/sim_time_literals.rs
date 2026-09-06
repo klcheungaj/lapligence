@@ -1,4 +1,4 @@
-//! End-to-end simulator coverage for fixed-point and unit-suffixed procedural
+//! End-to-end simulator coverage for real and unit-suffixed procedural
 //! delays. IEEE 1800-2009 §3.14.1 requires delay values to be rounded to the
 //! calling design element's time precision before simulation; §5.8 applies
 //! that rule to time literals. Statement and intra-assignment forms are run
@@ -36,8 +36,10 @@ endmodule
         ..Default::default()
     })
     .map_err(|error| format!("compile: {error}"))?;
+    let source_files = out.frontend_source_files();
     let design = out.uhdm_design().ok_or("no UHDM design")?;
-    llg::core::db::Db::build(design).map_err(|error| error.to_string())
+    llg::core::db::Db::build_with_source_files(design, &source_files)
+        .map_err(|error| error.to_string())
 }
 
 fn build_and_run(
@@ -112,6 +114,101 @@ fn codegen_error(source: &str, tag: &str) -> String {
         }
     })
     .expect("compile and codegen should complete")
+}
+
+#[test]
+fn sim_scientific_and_real_parameter_delays_round_locally() {
+    if !sim::build::cmake_available() {
+        eprintln!("SKIP: cmake not available");
+        return;
+    }
+    let source = r#"`timescale 1ns/100ps
+module tb;
+    parameter real P = 0.25;
+    parameter real _1e3 = 0.25;
+    reg [7:0] a;
+    reg [2:0] marker;
+    precision_anchor observer(.a(a), .marker(marker));
+    initial begin
+        a = 0;
+        marker = 0;
+        #P marker = 1;
+        #(1.25e-1) marker = 2;
+        #(2E-1) marker = 3;
+        a = #(1e0_0) 9;
+        marker = 4;
+        #((_1e3)) marker = 5;
+        #1 $finish;
+    end
+endmodule
+"#;
+    let expected = concat!(
+        "global=300 marker=1 a=0\n",
+        "global=400 marker=2 a=0\n",
+        "global=600 marker=3 a=0\n",
+        "global=1600 marker=4 a=9\n",
+        "global=1900 marker=5 a=9\n",
+    );
+    sim_harness::with_surelog_temp_cwd("scientific-real-delay", |dir| {
+        let database = compile_database(dir, source)?;
+        for (name, options) in [("off", OptConfig::none()), ("on", OptConfig::default())] {
+            assert_eq!(
+                build_and_run(dir, &database, &options, name)?,
+                expected,
+                "{name}"
+            );
+        }
+        Ok(())
+    })
+    .expect("scientific and real parameter delays");
+}
+
+#[test]
+fn sim_negative_real_parameter_delay_is_rejected() {
+    let source = r#"module tb;
+    parameter real P = -0.25;
+    initial #P $finish;
+endmodule
+"#;
+    let error = codegen_error(source, "negative-real-delay");
+    assert!(error.contains("finite and nonnegative"), "{error}");
+}
+
+#[test]
+fn sim_local_variable_shadows_real_delay_parameter() {
+    let source = r#"module tb;
+    parameter real P = 0.25;
+    initial begin : local_scope
+        real P;
+        #P $finish;
+    end
+endmodule
+"#;
+    let error = codegen_error(source, "shadowed-real-delay");
+    assert!(
+        error.contains("parameter") || error.contains("identifier"),
+        "{error}"
+    );
+}
+
+#[test]
+fn sim_task_argument_shadows_real_delay_parameter() {
+    let source = r#"module tb;
+    parameter real P = 0.25;
+    task t(input integer P);
+        #P;
+    endtask
+    initial begin
+        t(1);
+        $finish;
+    end
+endmodule
+"#;
+    let error = codegen_error(source, "shadowed-task-delay");
+    assert!(
+        error.contains("parameter") || error.contains("identifier"),
+        "{error}"
+    );
 }
 
 /// General arithmetic over real/time literals remains outside this literal

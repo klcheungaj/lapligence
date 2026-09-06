@@ -56,6 +56,8 @@ endif()
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 include_directories(${CMAKE_SOURCE_DIR})
 add_executable(sim {SOURCES})
+target_compile_definitions(sim PRIVATE LLG_MODEL_MAX_WIDTH={MODEL_WIDTH})
+target_compile_definitions(sim PRIVATE LLG_MODEL_STACK_VALUES={STACK_VALUES})
 if(NOT MSVC)
   target_link_libraries(sim PRIVATE m)
 endif()
@@ -89,6 +91,10 @@ pub enum BuildError {
     },
     /// One `LLG_CFLAGS` token cannot be represented safely in CMake's cache.
     InvalidCompilerFlag(String),
+    /// Generated source requested an invalid packed-value ABI capacity.
+    InvalidModelWidth(String),
+    /// Generated source requested invalid coroutine stack metadata.
+    InvalidModelStack(String),
     /// The configured CMake program could not be launched.
     CmakeLaunch { program: String, source: io::Error },
     /// CMake configuration failed after one clean retry.
@@ -119,6 +125,8 @@ impl fmt::Display for BuildError {
                 f,
                 "LLG_CFLAGS flag `{flag}` contains a double quote; quoted flags cannot be passed through the CMake cache"
             ),
+            Self::InvalidModelWidth(width) => write!(f, "invalid generated model packed width `{width}`; expected 1..{}", super::emit_c::LLG_WIDTH_LIMIT),
+            Self::InvalidModelStack(value) => write!(f, "invalid generated model stack value count `{value}`"),
             Self::CmakeLaunch { program, source } => write!(
                 f,
                 "cmake not found or not runnable: {program} (install cmake): {source}"
@@ -336,6 +344,8 @@ fn write_cmakelists(
     }
     let cmakelists = CMAKELISTS_TEMPLATE
         .replace("{SOURCES}", &sources.join(" "))
+        .replace("{MODEL_WIDTH}", &model_capacity(extra)?.to_string())
+        .replace("{STACK_VALUES}", &model_stack_values(extra)?.to_string())
         .replace("{WAVE_SETUP}", if waveform { WAVE_CMAKE } else { "" });
     let cmakelists_path = out_dir.join("CMakeLists.txt");
     std::fs::write(&cmakelists_path, cmakelists).map_err(|source| BuildError::Io {
@@ -343,6 +353,53 @@ fn write_cmakelists(
         path: cmakelists_path,
         source,
     })
+}
+
+fn model_capacity(extra: &[(&str, &str)]) -> Result<u32, BuildError> {
+    let mut capacity = None;
+    for (_, source) in extra {
+        for line in source.lines() {
+            if let Some(value) = line.strip_prefix("#define LLG_MODEL_MAX_WIDTH ") {
+                let width = value
+                    .trim()
+                    .parse::<u32>()
+                    .ok()
+                    .filter(|width| (1..super::emit_c::LLG_WIDTH_LIMIT).contains(width))
+                    .ok_or_else(|| BuildError::InvalidModelWidth(value.to_string()))?;
+                if capacity.is_some_and(|previous| previous != width) {
+                    return Err(BuildError::InvalidModelWidth(format!(
+                        "conflicting capacities {capacity:?} and {width}"
+                    )));
+                }
+                capacity = Some(width);
+            }
+        }
+    }
+    // Standalone C runtime self-tests do not carry generated model metadata.
+    Ok(capacity.unwrap_or(1024))
+}
+
+fn model_stack_values(extra: &[(&str, &str)]) -> Result<u64, BuildError> {
+    let mut slots = None;
+    for (_, source) in extra {
+        for line in source.lines() {
+            if let Some(value) = line.strip_prefix("#define LLG_MODEL_STACK_VALUES ") {
+                let parsed = value
+                    .trim()
+                    .parse::<u64>()
+                    .ok()
+                    .filter(|value| *value > 0)
+                    .ok_or_else(|| BuildError::InvalidModelStack(value.to_string()))?;
+                if slots.is_some_and(|previous| previous != parsed) {
+                    return Err(BuildError::InvalidModelStack(
+                        "conflicting stack counts".into(),
+                    ));
+                }
+                slots = Some(parsed);
+            }
+        }
+    }
+    Ok(slots.unwrap_or(256))
 }
 
 fn waveform_enabled(extra: &[(&str, &str)]) -> bool {
@@ -493,6 +550,28 @@ fn sorted_entries(dir: &Path) -> Option<Vec<PathBuf>> {
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicU64, Ordering};
+
+    #[test]
+    fn model_metadata_selects_one_consistent_runtime_abi() {
+        assert_eq!(model_capacity(&[]).unwrap(), 1024);
+        assert_eq!(model_stack_values(&[]).unwrap(), 256);
+        let source = "#define LLG_MODEL_MAX_WIDTH 65536\n#define LLG_MODEL_STACK_VALUES 4096\n";
+        assert_eq!(model_capacity(&[("model.c", source)]).unwrap(), 65536);
+        assert_eq!(model_stack_values(&[("model.c", source)]).unwrap(), 4096);
+        for invalid in ["0", "1048576", "1048577", "4294967296", "(1 << 20)"] {
+            let source = format!("#define LLG_MODEL_MAX_WIDTH {invalid}\n");
+            assert!(matches!(
+                model_capacity(&[("model.c", &source)]),
+                Err(BuildError::InvalidModelWidth(_))
+            ));
+        }
+        assert!(model_capacity(&[
+            ("a.c", "#define LLG_MODEL_MAX_WIDTH 128\n"),
+            ("b.c", "#define LLG_MODEL_MAX_WIDTH 256\n")
+        ])
+        .is_err());
+        assert!(model_stack_values(&[("a.c", "#define LLG_MODEL_STACK_VALUES 0\n")]).is_err());
+    }
 
     #[test]
     fn waveform_runtime_selftest() {

@@ -42,24 +42,6 @@ fn run_both(sv: &str, tag: &str) -> Result<(String, String), String> {
     })
 }
 
-fn codegen_error(sv: &str, tag: &str) -> Result<String, String> {
-    sim_harness::with_surelog_temp_cwd(tag, |dir| {
-        let source = dir.join("tb.v");
-        std::fs::write(&source, sv).map_err(|error| format!("write source: {error}"))?;
-        let compiled = compile::compile_checked(&compile::CompileOpts {
-            files: vec![source.to_string_lossy().into_owned()],
-            top: Some("tb".to_string()),
-            ..Default::default()
-        })
-        .map_err(|error| format!("compile: {error}"))?;
-        let design = compiled.uhdm_design().ok_or("no UHDM design")?;
-        match sim::codegen::generate(design) {
-            Ok(_) => Err("codegen unexpectedly succeeded".to_string()),
-            Err(error) => Ok(error.to_string()),
-        }
-    })
-}
-
 #[test]
 fn packed_strings_are_integral_expression_operands() {
     if !sim::build::cmake_available() {
@@ -119,16 +101,16 @@ endmodule
 }
 
 #[test]
-fn packed_string_width_limit_is_checked() {
-    let literal = "A".repeat(129);
-    let sv = format!(
-        "// llg-test-fixture: tests/sim_packed_strings.rs/too_wide.v\n\
-         module tb; reg [1023:0] value; initial value = \"{literal}\"; endmodule\n"
-    );
-    let error = codegen_error(&sv, "packed_string_too_wide")
-        .expect("a string wider than the runtime limit must be rejected");
-    assert!(
-        error.contains("string constant is too wide (1032 bits; max 1024)"),
-        "unexpected error: {error}"
-    );
+fn packed_string_1032_bits_is_supported() {
+    if !sim::build::cmake_available() {
+        eprintln!("SKIP: cmake not available");
+        return;
+    }
+    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/sim/data_type_edges/wide_string_1032.v");
+    let source = std::fs::read_to_string(&fixture).expect("read wide-string fixture");
+    let (on, off) =
+        run_both(&source, "packed_string_1032").expect("both wide-string variants should run");
+    assert_eq!(on, "PASS wide_string_1032\n");
+    assert_eq!(off, "PASS wide_string_1032\n");
 }

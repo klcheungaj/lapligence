@@ -58,13 +58,14 @@ extern "C" {
 
 typedef struct {
     sv4_t resolved;                       /* what readers/waiters see */
-    uint16_t width;
+    uint32_t width;
     int8_t is_signed;
+    int8_t resolution;
     int n_drivers;
     sv4_t* drivers[LLG_MAX_NET_DRIVERS]; /* per-driver contribution cells */
 } llg_net_t;
 
-void llg_net_resolve(llg_net_t* net); /* LRM wire/tri, equal strengths, per limb */
+void llg_net_resolve(llg_net_t* net); /* equal-strength resolution, per limb */
 void llg_net_write(llg_net_t* net, int idx, sv4_t value);
 
 // ── Scheduler ─────────────────────────────────────────────────────────────────

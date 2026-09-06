@@ -155,6 +155,30 @@ fn human_lint_reuses_delay_metadata_for_codegen() {
     assert_eq!(String::from_utf8_lossy(&out.stdout), "value=1 time=3\n");
 }
 
+#[test]
+fn simulation_admits_time_literal_sources_with_and_without_lint() {
+    let source = r#"`timescale 1ns/100ps
+module time_values;
+    initial begin
+        $display("literal=%.1f", 2.15ns);
+        $finish;
+    end
+endmodule
+"#;
+    for lint in [false, true] {
+        let dir = TempDir::new(if lint { "time_lint" } else { "time_no_lint" });
+        dir.write("design.sv", source);
+        let args = if lint {
+            vec!["--lint", "--top", "time_values", "design.sv"]
+        } else {
+            vec!["--top", "time_values", "design.sv"]
+        };
+        let output = run_llg(&dir.path, &args);
+        assert!(output.status.success(), "{}", stderr(&output));
+        assert_eq!(String::from_utf8_lossy(&output.stdout), "literal=2.2\n");
+    }
+}
+
 /// Overriding a rule's severity to `error` promotes its findings; the lint
 /// gate then aborts with exit code 1 before codegen.
 #[test]

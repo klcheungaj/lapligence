@@ -98,6 +98,7 @@ jobs:
         run: >-
           cargo test --all-features
           --test runtime_values --test runtime_boundaries --test sim_counter
+          --test sim_data_types
           -- --test-threads=1
 
   dependency-audit:

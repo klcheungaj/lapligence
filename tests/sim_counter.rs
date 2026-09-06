@@ -6,7 +6,6 @@
 //! runs with the CWD pointed at a fresh temp dir (serialized through a mutex,
 //! like the other Surelog integration tests).
 
-use llg::core::compile;
 use llg::sim;
 
 #[path = "support/sim.rs"]
@@ -132,32 +131,19 @@ endmodule
     assert_eq!(stdout, "t=1 out=2\nt=2 out=1\nt=3 out=2\n");
 }
 
-/// Signals or expressions wider than `LLG_MAX_WIDTH` (1024 bits) must be
-/// rejected by the codegen, not silently truncated by the C runtime.
+/// A packed vector wider than the former 1024-bit implementation ceiling must
+/// preserve low, middle, and high bits through context-sized arithmetic.
 #[test]
-fn sim_wide_signal_rejected() {
-    let sv = r#"module tb;
-    logic [2047:0] a;
-    initial $finish;
-endmodule
-"#;
-    let result = sim_harness::with_surelog_temp_cwd("wide", |dir| {
-        let src = dir.join("tb.sv");
-        std::fs::write(&src, sv).map_err(|error| format!("write source: {error}"))?;
-        let out = compile::compile(&compile::CompileOpts {
-            files: vec![src.to_string_lossy().into_owned()],
-            top: Some("tb".to_string()),
-            ..Default::default()
-        })
-        .map_err(|e| format!("compile: {e}"))?;
-        let design = out.uhdm_design().ok_or("no UHDM design")?;
-        sim::codegen::generate(design)
-            .map(|_| ())
-            .map_err(|error| error.to_string())
-    });
-
-    let err = result.expect_err("codegen must reject >1024-bit signals");
-    assert!(err.contains("1024"), "unexpected error: {err}");
+fn sim_wide_signal_2048() {
+    if !llg::sim::build::cmake_available() {
+        eprintln!("SKIP: cmake not available");
+        return;
+    }
+    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/sim/wide_datatype_regressions/wide_signal_2048.sv");
+    let source = std::fs::read_to_string(&fixture).expect("read wide-signal fixture");
+    let stdout = run_sim(&source, "wide-signal-2048").expect("simulation should run");
+    assert_eq!(stdout, "PASS wide_signal_2048\n");
 }
 
 /// A 128-bit counter driven on `posedge clk`: wide signals, wide constants

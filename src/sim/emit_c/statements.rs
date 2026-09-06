@@ -11,9 +11,11 @@ use crate::sim::ir::{IrCallArg, IrExpr, IrExprKind, IrWaitSrc};
 /// Render one statement, reproducing the pre-IR emitter's text shape exactly
 /// (including its indentation conventions).
 pub fn render_stmt(ctx: &RCtx<'_>, st: &crate::sim::ir::IrStmt) -> Result<String, EmitError> {
-    ctx.model
-        .validate_stmt(st, ctx.func)
-        .map_err(EmitError::InvalidIr)?;
+    super::check_capacity(
+        ctx.model
+            .statement_capacity(st, ctx.func)
+            .map_err(EmitError::InvalidIr)?,
+    )?;
     render_stmt_impl(ctx, st).map_err(EmitError::new)
 }
 
@@ -38,10 +40,13 @@ pub(super) fn render_stmt_impl(
             width,
             signed,
             init,
+            two_state,
         } => {
             let init = match init {
-                Some(e) => render_expr(ctx, e)?.code,
-                None => format!("sv4_x({width}, {})", *signed as u8),
+                Some(e) => {
+                    super::expressions::coerce_two_state(render_expr(ctx, e)?.code, *two_state)
+                }
+                None => super::expressions::packed_default(*width, *signed, *two_state),
             };
             format!("    sv4_t {name} = {init};\n")
         }
@@ -178,7 +183,11 @@ pub(super) fn render_stmt_impl(
         IrStmt::Force { sig, value } => {
             let sig_name = ctx.model.signal(*sig).c_name.clone();
             let rv = render_expr(ctx, value)?;
-            format!("    llg_force(&{sig_name}, {});\n", rv.code)
+            let code = super::expressions::coerce_two_state(
+                rv.code,
+                ctx.model.signal(*sig).ty.two_state(),
+            );
+            format!("    llg_force(&{sig_name}, {code});\n")
         }
         IrStmt::Release { sig } => {
             format!("    llg_release(&{});\n", ctx.model.signal(*sig).c_name)
@@ -237,8 +246,13 @@ pub(super) fn render_stmt_impl(
             for (tname, formal_idx, init) in &call.temps {
                 let form = &f.formals[*formal_idx];
                 let init = match init {
-                    Some(e) => render_expr(ctx, e)?.code,
-                    None => format!("sv4_x({}, {})", form.width, form.signed as u8),
+                    Some(e) => super::expressions::coerce_two_state(
+                        render_expr(ctx, e)?.code,
+                        form.two_state,
+                    ),
+                    None => {
+                        super::expressions::packed_default(form.width, form.signed, form.two_state)
+                    }
                 };
                 out.push_str(&format!("        sv4_t {tname} = {init};\n"));
             }
@@ -270,7 +284,14 @@ pub(super) fn render_stmt_impl(
                 "internal: return rendered outside a function context".to_string()
             })?;
             match (&f.ret, value) {
-                (Some(crate::sim::ir::IrType::Packed { width, signed }), Some(v)) => {
+                (
+                    Some(crate::sim::ir::IrType::Packed {
+                        width,
+                        signed,
+                        two_state,
+                    }),
+                    Some(v),
+                ) => {
                     let (w, sg) = (*width, *signed);
                     let rv = render_expr(ctx, v)?;
                     let code = match rv.fill {
@@ -280,6 +301,7 @@ pub(super) fn render_stmt_impl(
                         }
                         None => arg_resize(&rv.code, w, sg),
                     };
+                    let code = super::expressions::coerce_two_state(code, *two_state);
                     format!("        _ret = {code};\n        return _ret;\n")
                 }
                 (Some(_), None) => "        return _ret;\n".to_string(),
@@ -404,9 +426,11 @@ fn wait_events_text(
 /// Render a helper function attached to a process/function: fork-branch
 /// coroutines and monitor/strobe evaluators.
 pub fn render_pre_fn(ctx: &RCtx<'_>, pre: &crate::sim::ir::IrPreFn) -> Result<String, EmitError> {
-    ctx.model
-        .validate_pre_fn(pre, ctx.func)
-        .map_err(EmitError::InvalidIr)?;
+    super::check_capacity(
+        ctx.model
+            .pre_fn_capacity(pre, ctx.func)
+            .map_err(EmitError::InvalidIr)?,
+    )?;
     render_pre_fn_impl(ctx, pre).map_err(EmitError::new)
 }
 

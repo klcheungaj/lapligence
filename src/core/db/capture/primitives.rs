@@ -27,12 +27,15 @@ impl Builder {
     ) -> Result<NodeId, DbError> {
         let props = self.common(h);
         let net_decl = vpi::get(vpi::vpiNetDeclAssign, h) != 0;
+        let (strength0, strength1) = capture::primitives::strengths(h);
         let id = self.register(
             parent,
             &props,
             NodeKind::ContAssign {
                 net_decl,
                 delay: None,
+                strength0,
+                strength1,
             },
         );
         let mut kids: Vec<NodeId> = Vec::new();
@@ -82,7 +85,15 @@ impl Builder {
             None => None,
         };
         self.set_children(id, kids);
-        self.set_kind(id, NodeKind::ContAssign { net_decl, delay });
+        self.set_kind(
+            id,
+            NodeKind::ContAssign {
+                net_decl,
+                delay,
+                strength0,
+                strength1,
+            },
+        );
         Ok(id)
     }
 

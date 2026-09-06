@@ -25,18 +25,14 @@ mod validate;
 
 pub use validate::IrValidationError;
 
-/// Maximum vector width in bits.  Keep in sync with `LLG_MAX_WIDTH` in
-/// `src/sim/rt/llg_value.h`.
-pub const LLG_MAX_WIDTH: u32 = 1024;
+/// Maximum contributions stored by one generated `llg_net_t`.
+pub const LLG_MAX_NET_DRIVERS: usize = 16;
 
 fn validate_width(path: &str, width: u32) -> Result<(), IrValidationError> {
-    if (1..=LLG_MAX_WIDTH).contains(&width) {
+    if width != 0 {
         Ok(())
     } else {
-        Err(IrValidationError::new(
-            path,
-            format!("packed width {width} is outside 1..={LLG_MAX_WIDTH}"),
-        ))
+        Err(IrValidationError::new(path, "packed width must be nonzero"))
     }
 }
 
@@ -44,7 +40,11 @@ fn validate_width(path: &str, width: u32) -> Result<(), IrValidationError> {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum IrType {
     /// A packed 4-state vector (`sv4_t`).
-    Packed { width: u32, signed: bool },
+    Packed {
+        width: u32,
+        signed: bool,
+        two_state: bool,
+    },
     /// A real scalar stored in a companion `double` global.
     Real {
         /// `true` for `shortreal` (values round through C `float`).
@@ -53,10 +53,14 @@ pub enum IrType {
 }
 
 impl IrType {
-    /// Construct a packed type whose width fits the simulator runtime.
+    /// Construct a packed type with a nonzero width, independent of backends.
     pub fn packed(width: u32, signed: bool) -> Result<Self, IrValidationError> {
         validate_width("type.width", width)?;
-        Ok(Self::Packed { width, signed })
+        Ok(Self::Packed {
+            width,
+            signed,
+            two_state: false,
+        })
     }
 
     /// Packed width, or 0 for real types.
@@ -72,6 +76,17 @@ impl IrType {
             IrType::Packed { signed, .. } => *signed,
             IrType::Real { .. } => false,
         }
+    }
+
+    /// Whether packed storage coerces X/Z to zero.
+    pub fn two_state(&self) -> bool {
+        matches!(
+            self,
+            Self::Packed {
+                two_state: true,
+                ..
+            }
+        )
     }
 }
 
@@ -250,6 +265,8 @@ pub enum IrExprKind {
         right: i64,
     },
     /// Indexed part-select `[base_idx +: width]` / `[base_idx -: width]`.
+    /// The enclosing expression's width is the elaborated, static extent;
+    /// `width_expr` retains its source expression for analysis, not evaluation.
     IdxPartSel {
         base: Box<IrExpr>,
         base_idx: Box<IrExpr>,
@@ -288,6 +305,10 @@ pub enum IrExprKind {
     /// unsigned one), narrowing truncates; the result carries the target tag.
     /// Used for static casts and assignment RHS→LHS conversion.
     Convert {
+        a: Box<IrExpr>,
+    },
+    /// Coerce every X/Z bit to zero without changing width or signedness.
+    ToTwoState {
         a: Box<IrExpr>,
     },
     /// Unsized fill literal used as a value (`sv4_fill(f, width, signed)`).
@@ -347,12 +368,6 @@ impl IrExpr {
         signed: bool,
         fill: Option<u8>,
     ) -> Result<IrExpr, IrValidationError> {
-        if width > LLG_MAX_WIDTH {
-            return Err(IrValidationError::new(
-                "expr.width",
-                format!("expression width {width} exceeds {LLG_MAX_WIDTH}"),
-            ));
-        }
         if fill.is_some_and(|value| value > 3) {
             return Err(IrValidationError::new(
                 "expr.fill",
@@ -402,6 +417,16 @@ impl IrExpr {
             return IrExpr::new(IrExprKind::Fill(f), width, signed, Some(f));
         }
         IrExpr::new(IrExprKind::Convert { a: Box::new(a) }, width, signed, None)
+    }
+
+    pub(in crate::sim) fn to_two_state(a: IrExpr) -> IrExpr {
+        let (width, signed) = (a.width, a.signed);
+        IrExpr::new(
+            IrExprKind::ToTwoState { a: Box::new(a) },
+            width,
+            signed,
+            None,
+        )
     }
 
     /// True when this node is a real-valued expression (`width == 0`).
@@ -734,14 +759,18 @@ pub enum IrLhs {
         addr: String,
         width: u32,
         signed: bool,
+        two_state: bool,
     },
     /// Bit-select `[idx]` of a signal.
-    Bit(usize, IrExpr),
+    Bit(usize, IrExpr, bool),
     /// Part-select `[left:right]` of a signal (constant bounds).
-    Part(usize, i64, i64),
+    Part(usize, i64, i64, bool),
     /// Indexed part-select `[base +: width]` / `[base -: width]`
-    /// (`neg` selects the descending form).
-    IdxPart(usize, IrExpr, IrExpr, bool),
+    /// The explicit `u32` is the constant selected width; `neg` selects the
+    /// descending form.  Keeping the selected width separate from the width
+    /// expression's own type lets capacity analysis account for `[base +: N]`
+    /// even when `N` is represented by a narrow integer expression.
+    IdxPart(usize, IrExpr, IrExpr, u32, bool, bool),
     /// One unpacked-array element with an optional element-level select;
     /// emitted as a guarded statement (out-of-range/unknown indices no-op).
     ArrayElem {
@@ -833,6 +862,7 @@ pub enum IrStmt {
         width: u32,
         signed: bool,
         init: Option<Box<IrExpr>>,
+        two_state: bool,
     },
     /// Blocking (`nba == false`: `llg_ba`) or non-blocking (`llg_nba`)
     /// assignment; real companions use the `_d` variants.
@@ -1063,6 +1093,7 @@ pub struct IrFormal {
     pub(in crate::sim) is_out: bool,
     pub(in crate::sim) width: u32,
     pub(in crate::sim) signed: bool,
+    pub(in crate::sim) two_state: bool,
 }
 
 impl IrFormal {
@@ -1072,6 +1103,7 @@ impl IrFormal {
             is_out,
             width,
             signed,
+            two_state: false,
         })
     }
 
@@ -1092,6 +1124,7 @@ pub struct IrLocal {
     pub(in crate::sim) c_name: String,
     pub(in crate::sim) width: u32,
     pub(in crate::sim) signed: bool,
+    pub(in crate::sim) two_state: bool,
 }
 
 impl IrLocal {
@@ -1101,6 +1134,7 @@ impl IrLocal {
             c_name,
             width,
             signed,
+            two_state: false,
         })
     }
 
@@ -1154,7 +1188,17 @@ impl IrFunc {
     /// (`sv4_x(w, s)`), empty for void functions/tasks.
     pub fn ret_x(&self) -> String {
         match self.ret {
-            Some(IrType::Packed { width, signed }) => format!("sv4_x({width}, {})", signed as u8),
+            Some(IrType::Packed {
+                width,
+                signed,
+                two_state,
+            }) => {
+                if two_state {
+                    format!("sv4_from_u64(0, {width}, {})", signed as u8)
+                } else {
+                    format!("sv4_x({width}, {})", signed as u8)
+                }
+            }
             _ => String::new(),
         }
     }
@@ -1253,8 +1297,34 @@ impl IrSignal {
     }
 }
 
-/// A collapsed inout-net group: one resolved simulated net with one driver
-/// slot per member net.
+/// Equal-strength resolution rule for a simulated net group.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IrNetKind {
+    Wire,
+    Wand,
+    Wor,
+    Tri0,
+    Tri1,
+    Supply0,
+    Supply1,
+}
+
+impl IrNetKind {
+    pub const fn c_value(self) -> &'static str {
+        match self {
+            Self::Wire => "LLG_RESOLVE_WIRE",
+            Self::Wand => "LLG_RESOLVE_WAND",
+            Self::Wor => "LLG_RESOLVE_WOR",
+            Self::Tri0 => "LLG_RESOLVE_TRI0",
+            Self::Tri1 => "LLG_RESOLVE_TRI1",
+            Self::Supply0 => "LLG_RESOLVE_SUPPLY0",
+            Self::Supply1 => "LLG_RESOLVE_SUPPLY1",
+        }
+    }
+}
+
+/// A resolved net group: either one collapsed inout net with a driver slot
+/// per member, or one wired net with a slot per continuous-assignment site.
 #[derive(Clone, Debug, PartialEq)]
 pub struct IrNetGroup {
     /// C name of the `llg_net_t` global (e.g. `g_net_0`); driver cells are
@@ -1262,6 +1332,7 @@ pub struct IrNetGroup {
     pub(in crate::sim) c_name: String,
     pub(in crate::sim) width: u32,
     pub(in crate::sim) signed: bool,
+    pub(in crate::sim) kind: IrNetKind,
     pub(in crate::sim) n_drivers: usize,
 }
 
@@ -1270,6 +1341,7 @@ impl IrNetGroup {
         c_name: String,
         width: u32,
         signed: bool,
+        kind: IrNetKind,
         n_drivers: usize,
     ) -> Result<Self, IrValidationError> {
         validate_width("net_group.width", width)?;
@@ -1279,10 +1351,17 @@ impl IrNetGroup {
                 "net group has no drivers",
             ));
         }
+        if n_drivers > LLG_MAX_NET_DRIVERS {
+            return Err(IrValidationError::new(
+                "net_group.n_drivers",
+                format!("net group exceeds {LLG_MAX_NET_DRIVERS} drivers"),
+            ));
+        }
         Ok(Self {
             c_name,
             width,
             signed,
+            kind,
             n_drivers,
         })
     }
@@ -1295,6 +1374,9 @@ impl IrNetGroup {
     }
     pub fn signed(&self) -> bool {
         self.signed
+    }
+    pub fn kind(&self) -> IrNetKind {
+        self.kind
     }
     pub fn driver_count(&self) -> usize {
         self.n_drivers
@@ -1309,6 +1391,7 @@ pub struct IrArray {
     pub(in crate::sim) hdl_name: String,
     pub(in crate::sim) elem_width: u32,
     pub(in crate::sim) signed: bool,
+    pub(in crate::sim) two_state: bool,
     /// `(left, right)` per declared dimension, in declaration order.
     pub(in crate::sim) dims: Vec<(i32, i32)>,
     /// Total element count (product of dimension sizes).
@@ -1345,6 +1428,7 @@ impl IrArray {
             hdl_name,
             elem_width,
             signed,
+            two_state: false,
             dims,
             total,
         })

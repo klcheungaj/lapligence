@@ -166,9 +166,15 @@ pub(crate) fn run_generated_sim(sv: &str, top: &str, tag: &str) -> Result<SimRun
             ..Default::default()
         })
         .map_err(|error| format!("compile: {error}"))?;
+        let source_files = compiled.frontend_source_files();
         let design = compiled.uhdm_design().ok_or("no UHDM design")?;
-        let generated =
-            sim::codegen::generate(design).map_err(|error| format!("codegen: {error}"))?;
+        let database = llg::core::db::Db::build_with_source_files(design, &source_files)
+            .map_err(|error| format!("database: {error}"))?;
+        let generated = sim::codegen::generate_from_db_with_opts(
+            &database,
+            &llg::sim::opt::OptConfig::default(),
+        )
+        .map_err(|error| format!("codegen: {error}"))?;
         let executable =
             sim::build::build_model_cmake(dir, &[("model.c", generated.model_c.as_str())])
                 .map_err(|error| format!("cmake: {error}"))?;

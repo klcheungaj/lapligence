@@ -6,7 +6,24 @@ mod error;
 mod expressions;
 mod model;
 mod names;
+mod stack;
 mod statements;
+
+/// Exclusive packed-width safeguard of the C runtime, not an IR restriction.
+/// Keep aligned with `LLG_SUPPORTED_WIDTH_LIMIT` in `rt/llg_value.h`.
+pub const LLG_WIDTH_LIMIT: u32 = 1 << 20;
+/// Largest width supported by this C backend.
+pub const LLG_MAX_WIDTH: u32 = LLG_WIDTH_LIMIT - 1;
+
+fn check_capacity(width: u128) -> Result<(), EmitError> {
+    if width >= u128::from(LLG_WIDTH_LIMIT) {
+        Err(EmitError::new(format!(
+            "packed width {width} reaches the C runtime exclusive limit {LLG_WIDTH_LIMIT}"
+        )))
+    } else {
+        Ok(())
+    }
+}
 
 pub use context::{RCtx, RenderedExpr};
 pub use error::EmitError;

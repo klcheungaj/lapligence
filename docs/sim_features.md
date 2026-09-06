@@ -27,9 +27,12 @@ end-to-end runs of `llg` (marked **(probed)** below). Section numbers cite
   **[SV-2009]** = added by 1800-2009 · **[1364-2005]** = IEEE 1364-2005
   interim revision, between our bands; used only as an inline annotation
 
-Numeric limits (all designs): vectors ≤ `LLG_MAX_WIDTH` = 1024 bits;
-division/modulo/power operands ≤ 64 bits; function/task recursion depth ≤ 256;
-zero-delay loop guard = 10M scheduler passes; inout net drivers ≤ 16 per group;
+Numeric limits: packed-vector capacity is selected per generated model;
+`LLG_MODEL_MAX_WIDTH` is an exclusive-backend capacity below `1 << 20` bits,
+and runtime widths are `uint32_t`. Division/modulo/power and packed/real
+conversions use the model-sized limb capacity; the IR has no separate 1024/64
+bit semantic cap. Function/task recursion depth ≤ 256;
+zero-delay loop guard = 10M scheduler passes; resolved net drivers ≤ 16 per group;
 force slots ≤ 64; processes ≤ 4096; named-event waiters ≤ 64 per event;
 final blocks ≤ 1024.
 
@@ -38,17 +41,17 @@ final blocks ≤ 1024.
 | § | Area | Verilog ✅ | Verilog 🟨 | Verilog ❌ | SV ✅ | SV 🟨 | SV ❌ |
 |---|---|---:|---:|---:|---:|---:|---:|
 | 1 | Lexical & preprocessing | 10 | 0 | 0 | 1 | 1 | 0 |
-| 2 | Data types | 10 | 1 | 5 | 5 | 2 | 4 |
+| 2 | Data types | 10 | 3 | 3 | 5 | 3 | 3 |
 | 3 | Modules & hierarchy | 8 | 1 | 1 | 2 | 1 | 0 |
 | 4 | Scheduling & processes | 8 | 1 | 0 | 7 | 1 | 1 |
 | 5 | Procedural statements | 17 | 2 | 1 | 4 | 3 | 0 |
 | 6 | Timing controls | 2 | 3 | 1 | 0 | 0 | 0 |
-| 7 | Expressions & operators | 18 | 2 | 0 | 2 | 2 | 3 |
+| 7 | Expressions & operators | 16 | 4 | 0 | 1 | 3 | 3 |
 | 8 | Continuous assign & structural | 5 | 4 | 7 | 0 | 0 | 0 |
 | 9 | Functions & tasks | 4 | 0 | 5 | 3 | 0 | 1 |
 | 10 | System tasks & functions | 11 | 2 | 14 | 3 | 0 | 6 |
 | 11 | Compiler directives affecting sim | 5 | 0 | 0 | 4 | 0 | 0 |
-| — | **Total** | **98** | **16** | **34** | **31** | **10** | **15** |
+| — | **Total** | **96** | **20** | **32** | **30** | **12** | **14** |
 
 In-section ⬜ items (not counted above): §3 configurations [V], ref ports /
 default port values, extern/nested modules [SV] · §4 fine-grain process control
@@ -74,7 +77,7 @@ Verilog era:
 SystemVerilog era:
 
 - ✅ **Fill literals** `'0/'1/'x/'z` — §1800-2009 5.7.1 **[SV-2005]** context sizing in supported packed arithmetic/bitwise expressions, comparisons, conditional branches, assignments, function arguments, and case/casez/casex; self-determined concatenation/replication operands remain one bit (sim_fill_literals.rs, optimization on/off)
-- 🟨 **Time literals** `2.1ns` — §1800-2009 5.8 **[SV-2005]** fixed-point literals with `s/ms/us/ns/ps/fs` suffixes work in procedural and intra-assignment delays, rounded to module precision before scheduler scaling (sim_time_literals.rs); general expression/value positions and scientific notation remain unsupported, and scheduler precision remains at least 1ps
+- 🟨 **Time literals** `2.1ns` — §1800-2009 5.8 **[SV-2005]** integer/fixed-point literals with `s/ms/us/ns/ps/fs` suffixes work in procedural/intra-assignment delays and runtime value expressions, rounded locally and scaled to module-unit realtime values (sim_time_literals.rs, sim_time_values.rs); value recovery requires explicitly admitted exact source spans; macros, unadmitted includes, parameter/declaration initializers and captured frontend-folded compounds are rejected; existing real-context and 64-bit local-tick bounds apply, and scheduler precision remains at least 1ps
 
 ## 2. Data types
 
@@ -84,28 +87,28 @@ Verilog era:
 - ✅ **signed net/reg declarations** `reg signed [3:0] s;` — §1364-2001 3.3/3.8 **[2001]** `%d` prints two's complement
 - ✅ **integer variables** — §1364-2001 3.9 **[1995]**
 - ✅ **time variables** 64-bit unsigned storage — §1364-2001 3.9 **[1995]** (sim_counter.rs)
-- ✅ **wire/tri nets** — §1364-2001 3.7 **[1995]** tri resolution inside inout net groups (sim_inout.rs); plain tri behaves like wire
+- ✅ **wire/tri nets** — §1364-2001 3.7 **[1995]** tri resolution inside inout net groups and ordinary per-continuous-assignment driver groups; plain tri behaves like wire (sim_inout.rs, sim_net_resolution.rs)
 - ✅ **memories/unpacked arrays N-D** element bit/part selects, guarded OOB→X — §1364-2001 3.10 **[1995]** (sim_memory.rs); multi-dim slices & element indexed-part-selects rejected
 - ✅ **Net declaration assignment** `wire w = expr;` — §1364-2001 3.6 **[1995]** behaves as a continuous driver for constant and dynamic RHS expressions, using the same event-driven run-once/sensitivity-loop IR as an explicit `assign` (sim_net_decl.rs); dynamic reads of unpacked arrays and unsupported resolved-net classes are rejected explicitly
 - ✅ **Variable declaration initializers** scalar `reg x = 0;`, `logic l = 1'b0;`, `int x = P+1;` — §1364-2001 6.2.1 **[2001]** constant RHS only, non-constant rejected (sim_varinit.rs, sim_geninit.rs)
 - ✅ **Parameters** override + propagation — §1364-2001 3.11.1 **[1995]** (elab_resolve.rs)
 - ✅ **localparam** — §1364-2001 3.11.2 **[2001]**
 - 🟨 **real/realtime** — §1364-2001 3.9 **[1995]** scalar procedural vars/params subset only (sim_real.rs)
-- ❌ **wand/wor/triand/trior wired resolution** — §1364-2001 3.7 **[1995]** declared like plain wire; multi-driver last-write-wins (probed)
-- ❌ **tri0/tri1/trireg/supply0/supply1 pull semantics** — §1364-2001 3.7 **[1995]** no resistive/pull modeling
-- ❌ **drive strength / charge strength** — §1364-2001 3.4 **[1995]** not modeled anywhere
+- 🟨 **wand/wor/triand/trior wired resolution** — §1364-2001 3.7 **[1995]** standalone packed nets resolve equal-strength whole-net continuous/declaration assignments with one slot per driver site (≤16); Z is neutral, 0 dominates X for wired-AND and 1 dominates X for wired-OR (sim_net_resolution.rs, runtime_values.rs); port/interface/array nets, hierarchical/select/procedural writes, force/release, gate/function/task-output drivers, and explicit strengths are rejected
+- 🟨 **tri0/tri1/trireg/supply0/supply1 pull semantics** — §1364-2001 3.7 **[1995]** standalone `tri0/tri1` apply implicit pulls only to all-Z bits after ordinary-driver resolution; `supply0/supply1` dominate ordinary drivers, with correct initial defaults (sim_net_defaults.rs, runtime_values.rs); same bounded standalone-driver restrictions as wired nets; `trireg` charge storage and resistive propagation remain unsupported
+- ❌ **drive strength / charge strength** — §1364-2001 3.4 **[1995]** arbitrary explicit strengths and charge storage are unsupported; only implicit pull/supply ordering in the bounded standalone-net subset is modeled
 - ❌ **specparam** — §1364-2001 3.11.3 **[1995]** specify blocks unsupported
 - ❌ **vectored/scalared hints** — §1364-2001 3.3 **[1995]** no dedicated handling
 
 SystemVerilog era:
 
-- 🟨 **logic/bit vectors** — §1800-2009 6.9/6.11 **[SV-2005]** `logic` has 4-state storage; `bit` currently shares that storage and therefore does not enforce 2-state initialization/conversion
-- 🟨 **byte/shortint/int/longint** 2-state ints — §1800-2009 6.11 **[SV-2005]** widths/signedness lower, but storage currently remains 4-state instead of coercing X/Z to zero
+- 🟨 **logic/bit vectors** — §1800-2009 6.9/6.11 **[SV-2005]** `logic` has 4-state storage; `bit`/2-state vectors coerce X/Z to zero on assignments and casts. Scalar/vector paths and the tested packed-aggregate paths are covered; unsupported aggregate/net member contexts remain outside this claim
+- 🟨 **byte/shortint/int/longint** 2-state ints — §1800-2009 6.11 **[SV-2005]** widths/signedness and X/Z-to-zero coercion are implemented for scalar/vector paths and the tested packed aggregates; unsupported net/member contexts remain outside this row's claim
 - ✅ **uwire nets** fold as plain wire, no unique-resolution semantics modeled — §1800-2009 6.6 **[SV-2005]** (probed)
 - ✅ **typedef simple/packed-vector aliases** — §1800-2009 6.18 **[SV-2005]** resolved by frontend (probed)
 - ✅ **Array declaration initializers** `'{…}` patterns applied element-wise in linear-index order — §1800-2009 10.9.1 **[SV-2005]** constant elements only (sim_memory.rs)
-- ✅ **enum-typed scalar variables** — §1800-2009 6.19 **[SV-2005]** stored at the elaborated packed base width; enum constants fold through the frontend (sim_operator_semantics.rs)
-- ❌ **packed struct/union signals** — §1800-2009 7.2–7.3 **[SV-2005]** "unsupported typespec" reject (probed)
+- ✅ **enum-typed scalar variables** — §1800-2009 6.19 **[SV-2005]** stored at the elaborated packed base width; enum constants fold through the frontend. Base-state and signedness behavior pass at both exercised widths (sim_operator_semantics.rs)
+- 🟨 **packed struct signals and multidimensional packed arrays** — §1800-2009 7.2, 7.4 **[SV-2005]** all-bit and mixed-state packed structs plus multidimensional packed-bit arrays pass at the exercised 128/4096-bit widths. Packed unions, unpacked structs/unions, and unsupported member contexts are not claimed; see `sim_data_types_extended.rs`
 - ❌ **string type/signals/params** — §1800-2009 6.16 **[SV-2005]** rejected
 - ✅ **event data type** scalar `event ev;` declarations — §1800-2009 6.17 **[SV-2005]** (sim_events.rs); event arrays rejected by the Surelog frontend (grammar cannot parse them)
 - ❌ **dynamic arrays / associative arrays / queues** — §1800-2009 7.5/7.8/7.10 **[SV-2005]**
@@ -178,7 +181,7 @@ Verilog era:
 - ✅ **repeat** non-constant count runtime-evaluated — §1364-2001 9.6 **[1995]**
 - ✅ **forever** — §1364-2001 9.6 **[1995]**
 - ✅ **Event control @** edges/plain/or-lists/comma lists, atomic single wait — §1364-2001 9.7.2/9.7.4 **[1995]**
-- ✅ **force** `force sig = expr;` whole signals, wakes waiters — §1364-2001 9.3.2 **[1995]** (sim_force.rs)
+- ✅ **force** `force sig = expr;` whole signals, wakes waiters — §1364-2001 9.3.2 **[1995]** (sim_force.rs); ordinary single-driver nets retain this path, while resolved multidriver/wired-net force is explicitly unsupported
 - ✅ **release** restores pre-force value — §1364-2001 9.3.2 **[1995]**
 - 🟨 **force/release driver re-evaluation** — §1364-2001 9.3.2 **[1995]** drivers changed while forced are not re-evaluated (documented approximation)
 - 🟨 **Condition event expressions** `@(a && b)` — §1364-2001 9.7.2 **[1995]** wait on body read set instead of condition operands
@@ -204,8 +207,8 @@ Verilog era:
 - ✅ **#delay integer literal**, timescale-scaled — §1364-2001 9.7.1 **[1995]** (sim_timescale.rs)
 - ✅ **@\* / @(\*) implicit sensitivity** from body read set — §1364-2001 9.7.5 **[2001]**
 - 🟨 **Comb sensitivity to array elements** — §1364-2001 9.7.5 **[2001]** wakes on index signals only, not array writes
-- 🟨 **Fractional delays** `#0.5` — §1364-2001 9.7.1 **[1995]** nonnegative fixed-point procedural and intra-assignment literals, including parentheses, round to the calling module's precision before global tick conversion (sim_delay.rs, sim_time_literals.rs); real expressions/parameters, scientific notation, fractional continuous/gate delays, and sub-ps scheduling remain unsupported
-- 🟨 **Expression/parameter delays** `#(expr)` / `#P`, underscored `#10_000` and unit-suffixed `#5ns` literals — §1364-2001 9.7.1 **[1995]** resolved integer parameters, decimal literals, bounded integer arithmetic/bitwise expressions, and fixed-point/unit-suffixed literals work in statement and intra-assignment delays (sim_delay.rs, sim_time_literals.rs); mixed-width/context-sensitive signed arithmetic, dynamic values, based literals, logical/comparison/ternary expressions, system functions, and arithmetic containing real/time literals remain rejected
+- 🟨 **Fractional delays** `#0.5` — §1364-2001 9.7.1 **[1995]** nonnegative fixed-point literals, parenthesized scientific literals (exponent magnitude ≤38), and whole real parameters round to local precision before global tick conversion in procedural/intra-assignment delays (sim_delay.rs, sim_time_literals.rs); bare scientific syntax is frontend-rejected; real arithmetic, fractional continuous/gate delays, and sub-ps scheduling remain unsupported
+- 🟨 **Expression/parameter delays** `#(expr)` / `#P`, underscored `#10_000` and unit-suffixed `#5ns` literals — §1364-2001 9.7.1 **[1995]** resolved integer parameters, whole real parameters, decimal literals, bounded integer arithmetic/bitwise expressions, and fixed-point/unit-suffixed/parenthesized-scientific literals work in statement and intra-assignment delays (sim_delay.rs, sim_time_literals.rs); mixed-width/context-sensitive signed arithmetic, dynamic values, based literals, logical/comparison/ternary expressions, system functions, and arithmetic containing real/time literals or real parameters remain rejected
 - ❌ **min:typ:max delays** `#(1:2:3)` — §1364-2001 4.3 **[1995]**
 
 SystemVerilog era:
@@ -216,15 +219,15 @@ SystemVerilog era:
 
 Verilog era:
 
-- ✅ **Arithmetic** `+ - * / %` — §1364-2001 4.1.5 **[1995]** div/mod operands >64 bits rejected up front
-- 🟨 **Power** `**` — §1364-2001 4.1.5 **[2001]** ≤64-bit operands else rejected
+- 🟨 **Arithmetic** `+ - * / %` — §1364-2001 4.1.5 **[1995]** add/subtract/multiply/division/modulo preserve model-sized limbs; the generated backend rejects widths at its exclusive `1 << 20` capacity, while runtime constructors remain defensive
+- 🟨 **Power** `**` — §1364-2001 4.1.5 **[2001]** model-sized operands are supported; backend capacity remains exclusive at `1 << 20`
 - ✅ **Bitwise** `& | ^ ~ ^~` — §1364-2001 4.1.10 **[1995]**
 - ✅ **Logical** `&& || !` — §1364-2001 4.1.9 **[1995]**
 - ✅ **Reductions** `& ~& | ~| ^ ~^` — §1364-2001 4.1.11 **[1995]**
 - ✅ **Shifts** `<< >>` — §1364-2001 4.1.12 **[1995]**
 - ✅ **Arithmetic shifts** `<<< >>>` sign-fill — §1364-2001 4.1.12 **[2001]**
 - ✅ **Relational** `< <= > >=` — §1364-2001 4.1.7 **[1995]**
-- ✅ **Equality** `== != === !==` — §1364-2001 4.1.8 **[1995]** X/Z compared literally by `===`
+- 🟨 **Equality** `== != === !==` — §1364-2001 4.1.8 **[1995]** X/Z compare literally with `===`/`!==`; logical equality preserves known-mismatch dominance over unrelated unknown bits (the broader formal matrix remains a partial claim)
 - ✅ **Conditional** `?:` Z-carrying mux — §1364-2001 4.1.13 **[1995]**
 - ✅ **Concatenation** `{}` reordered-concat respected — §1364-2001 4.1.14 **[1995]**
 - ✅ **Replication** `{n{}}` — §1364-2001 4.1.14 **[1995]**
@@ -239,10 +242,10 @@ Verilog era:
 
 SystemVerilog era:
 
-- ✅ **Static casts** `int'(e)`, `signed'()`, `unsigned'()`, size casts `n'(e)` — §1800-2009 6.24.1 **[SV-2005]** (sim_counter.rs `sim_static_casts`, re-run with Surelog v1.87) value-preserving: widening extends by the SOURCE's signedness (`sv4_cast`/IR `Convert`; §10.7 assignment padding follows the RHS too, so `int'(8'hFF)`=255 and a signed RHS sign-extends into wider unsigned targets). v1.87 still omits `vpiSigned` on based constants, so codegen recovers the `'s` marker from the literal's source token; size-cast targets remain degraded to int(32) unsigned by the frontend
+- 🟨 **Static casts** `int'(e)`, `signed'()`, `unsigned'()`, size casts `n'(e)` — §1800-2009 6.24.1 **[SV-2005]** source-signed extension, predefined/size/typedef casts, packed/real conversions and bitcasts are covered by the model-sized `sim_data_types.rs` matrix. Numeric source-enabled and source-less cast paths pass; ambiguous source-less provenance is explicitly rejected rather than silently changing width/sign. Unsupported aggregate/net paths remain outside this claim. Based-constant signedness is recovered from exact source spelling when Surelog omits it
 - 🟨 **Increment/decrement** `++ --` — §1800-2009 11.4.2 **[SV-2005]** statement-position pre/post forms on whole scalar variables, including `for` increments, are supported; expression-valued and select/array-element forms remain unsupported (sim_operator_semantics.rs)
 - 🟨 **Assignment operators** `+= -= *= /= %= &= |= ^= <<= >>= <<<= >>>=` — §1800-2009 11.4.1 **[SV-2005]** whole scalar variables are supported; select and array-element targets are cleanly rejected until LHS index evaluation can be preserved exactly once (sim_operator_semantics.rs)
-- ✅ **Wildcard equality** `==? !=?` — §1800-2009 11.4.6 **[SV-2005]** RHS X/Z bits are wildcards; remaining LHS unknown bits yield X unless a known mismatch decides the result. Common-width/signed extension and 1024-bit operands are covered with optimization on/off (sim_wildcard_eq.rs).
+- ✅ **Wildcard equality** `==? !=?` — §1800-2009 11.4.6 **[SV-2005]** RHS X/Z bits are wildcards; remaining LHS unknown bits yield X unless a known mismatch decides the result. Common-width/signed extension and model-sized operands are covered with optimization on/off (sim_wildcard_eq.rs).
 - ❌ **Set membership** `inside {…}` — §1800-2009 11.4.13 **[SV-2005]**
 - ❌ **Streaming operators** `{<<{}}`, `{>>{}}` — §1800-2009 11.4.14 **[SV-2005]**
 - ❌ **let expressions** — §1800-2009 11.13 **[SV-2009]**
@@ -275,8 +278,8 @@ statuses as the rows above.)
 
 Verilog era:
 
-- ✅ **Function declaration/return value/call in expressions** — §1364-2001 10.3 **[1995]** recursion depth guard 256 returns all-X beyond (beyond-limit behavior implemented, untested; sim_function.rs pins within-limit recursion)
-- ✅ **Tasks incl. output/inout args**; delay-bearing tasks inlined at call sites — §1364-2001 10.2 **[1995]** wait-bearing tasks inlined (sim_function.rs)
+- ✅ **Function declaration/return value/call in expressions** — §1364-2001 10.3 **[1995]** recursion depth guard 256 reports an error and returns the type's default beyond the guard (sim_function.rs pins within-limit recursion); static functions with output/inout formals in expression position explicitly reject until their persistent copy-out storage is supported
+- ✅ **Tasks incl. output/inout args**; delay-bearing tasks inlined at call sites — §1364-2001 10.2 **[1995]** wait-bearing tasks inlined (sim_function.rs). Delay-free static task outputs/inouts retain storage across calls and copy out at return, including values from earlier NBAs; NBAs to automatic subroutine storage or still-stack-backed static task inputs/locals explicitly reject instead of queuing dangling targets
 - ✅ **automatic reentrant functions/tasks** — §1364-2001 10.2.3/10.3.1 **[2001]** recursion supported
 - ✅ **Constant functions in parameter expressions** — §1364-2001 10.3.5 **[2001]** evaluated by elab Resolver; typed parameters required (probed)
 - ❌ **Task calls inside function bodies** — §1364-2001 10.3.4 **[1995]** rejected
@@ -346,7 +349,7 @@ SystemVerilog era:
 - ❌ **Math functions** `$ln $log10 $exp $sqrt $pow $floor $ceil $sin …` — §1800-2009 20.8 **[SV-2009]** unsupported-function reject
 - ❌ **Severity tasks** `$fatal/$error/$warning/$info` — §1800-2009 20.9 **[SV-2005]** unsupported-task reject
 - ❌ **$sformatf** — §1800-2009 21.3 **[SV-2005]** unsupported-function reject
-- ✅ **Bit-vector helpers** `$onehot/$onehot0/$countones/$isunknown` — §1800-2009 20.6 **[SV-2005]** packed operands through 1024 bits, X/Z-aware counting, parameters and constant declaration initializers, single argument evaluation, and combinational dependencies; real operands rejected (sim_bit_queries.rs, optimization on/off)
+- ✅ **Bit-vector helpers** `$onehot/$onehot0/$countones/$isunknown` — §1800-2009 20.6 **[SV-2005]** packed operands through the generated model width, X/Z-aware counting, parameters and constant declaration initializers, single argument evaluation, and combinational dependencies; real operands rejected (sim_bit_queries.rs, optimization on/off)
 - ❌ **Sampled-value functions** `$rose/$fell/$stable/$past/$sampled` — §1800-2009 16.9.3 **[SV-2005]** unsupported-function reject
 - ✅ **Shortreal conversion** `$bitstoshortreal/$shortrealtobits` — §1800-2009 20.5 **[SV-2005]** 32-bit IEEE-754 reinterpretation and shortreal rounding; `$bitstoshortreal` requires 32 bits and maps X/Z positions to zero (sim_real_conversions.rs, optimization on/off)
 - ❌ **$system** — §1800-2009 **[SV-2009]** unsupported-task reject

@@ -217,7 +217,18 @@ impl Builder {
         let ty = self.type_info_of(h);
         let net_type = capture::declarations::net_type(h);
         let id = self.register(parent, &props, NodeKind::Net { ty, net_type });
+        if self.object_two_state(h) {
+            self.two_state_types.insert(id);
+        }
         self.index_node(h, &props, id);
+        if let Some(typespec) = child(vpi::vpiTypespec, h).or_else(|| child(vpi::vpiTypedef, h)) {
+            if let Some(members) = self.packed_member_layout(typespec.raw(), h) {
+                self.packed_members.insert(id, members);
+            }
+            if let Some(dimensions) = self.contextual_packed_ranges(typespec.raw(), h) {
+                self.packed_dimensions.insert(id, dimensions);
+            }
+        }
         Ok(id)
     }
 
@@ -235,7 +246,18 @@ impl Builder {
         let props = self.common(h);
         let ty = self.type_info_of(h);
         let id = self.register(parent, &props, NodeKind::Var { ty });
+        if self.object_two_state(h) {
+            self.two_state_types.insert(id);
+        }
         self.index_node(h, &props, id);
+        if let Some(typespec) = child(vpi::vpiTypespec, h).or_else(|| child(vpi::vpiTypedef, h)) {
+            if let Some(members) = self.packed_member_layout(typespec.raw(), h) {
+                self.packed_members.insert(id, members);
+            }
+            if let Some(dimensions) = self.contextual_packed_ranges(typespec.raw(), h) {
+                self.packed_dimensions.insert(id, dimensions);
+            }
+        }
         // Declaration initializer (`logic l = 1'b0;`, `int x = 5;`): the
         // value lives on the var's `vpiExpr` child (a constant or a constant
         // expression), unlike `reg`/`wire` initializers which Surelog models
@@ -276,7 +298,12 @@ impl Builder {
         let el = iter(if is_net { vpi::vpiNet } else { vpi::vpiReg }, h)
             .into_iter()
             .next();
-        let ty = match el {
+        let net_type = el
+            .as_ref()
+            .filter(|_| is_net)
+            .map(|e| capture::declarations::net_type(e.raw()));
+        let element_handle = el.as_ref().map(|element| element.raw()).unwrap_or(h);
+        let ty = match &el {
             Some(e) => self.type_info_of(e.raw()),
             None => self.type_info_of(h),
         };
@@ -291,6 +318,9 @@ impl Builder {
             });
         }
         let id = self.register(parent, &props, NodeKind::Array { ty });
+        if self.object_two_state(element_handle) {
+            self.two_state_types.insert(id);
+        }
         self.index_node(h, &props, id);
         // Declaration initializer (`= '{…}`): an assignment-pattern operation
         // under `vpiExpr`.  Walked as the array's only child so its constant
@@ -306,7 +336,14 @@ impl Builder {
             None => None,
         };
         self.set_children(id, kids);
-        self.arrays.insert(id, ArrayMeta { dims, init });
+        self.arrays.insert(
+            id,
+            ArrayMeta {
+                dims,
+                init,
+                net_type,
+            },
+        );
         Ok(id)
     }
 
@@ -347,6 +384,9 @@ impl Builder {
                 end_col: props.end_col,
             };
             let rv_id = self.register(Some(id), &rprops, NodeKind::Var { ty: ty.clone() });
+            if self.object_two_state(rv.raw()) {
+                self.two_state_types.insert(rv_id);
+            }
             self.index
                 .insert((vpi::obj_type(rv.raw()), props.full_name.clone()), rv_id);
             kids.push(rv_id);
@@ -367,6 +407,9 @@ impl Builder {
                     default: None,
                 },
             );
+            if self.object_two_state(io) {
+                self.two_state_types.insert(aid);
+            }
             // The default-value expression (`input int a = 7`) is captured
             // as the FuncArg's only child.
             if let Some(d) = child(vpi::vpiExpr, io) {
@@ -431,13 +474,17 @@ impl Builder {
     }
 
     pub(in crate::core::db) fn type_info_of(&mut self, h: VpiHandle) -> TypeInfo {
-        let ty = match child(vpi::vpiTypespec, h) {
+        let typespec = child(vpi::vpiTypespec, h).or_else(|| child(vpi::vpiTypedef, h));
+        let mut ty = match &typespec {
             Some(ts) => self.typespec_info(ts.raw()),
-            None => match child(vpi::vpiTypedef, h) {
-                Some(ts) => self.typespec_info(ts.raw()),
-                None => TypeInfo::default(),
-            },
+            None => TypeInfo::default(),
         };
+        ty.signed |= vpi::get(vpi::vpiSigned, h) != 0;
+        if ty.width.is_none() {
+            if let Some(typespec) = &typespec {
+                ty.width = self.contextual_typespec_width(typespec.raw(), h);
+            }
+        }
         if ty.kind != "other" {
             return ty;
         }
@@ -461,13 +508,56 @@ impl Builder {
         }
     }
 
+    pub(in crate::core::db) fn object_two_state(&mut self, object: VpiHandle) -> bool {
+        child(vpi::vpiTypespec, object)
+            .or_else(|| child(vpi::vpiTypedef, object))
+            .is_some_and(|typespec| self.typespec_two_state(typespec.raw(), 0))
+    }
+
+    pub(in crate::core::db) fn typespec_two_state(
+        &mut self,
+        typespec: VpiHandle,
+        hops: usize,
+    ) -> bool {
+        if hops > 32 {
+            return false;
+        }
+        match vpi::obj_type(typespec) {
+            vpi::vpiBitTypespec
+            | vpi::vpiIntTypespec
+            | vpi::vpiLongIntTypespec
+            | vpi::vpiByteTypespec
+            | vpi::vpiShortIntTypespec => true,
+            vpi::vpiRefTypespec => child(vpi::vpiActual, typespec)
+                .is_some_and(|actual| self.typespec_two_state(actual.raw(), hops + 1)),
+            vpi::vpiEnumTypespec => child(vpi::vpiBaseTypespec, typespec)
+                .is_some_and(|base| self.typespec_two_state(base.raw(), hops + 1)),
+            vpi::vpiPackedArrayTypespec => child(vpi::vpiElemTypespec, typespec)
+                .is_some_and(|element| self.typespec_two_state(element.raw(), hops + 1)),
+            vpi::vpiStructTypespec | vpi::vpiUnionTypespec => {
+                let members = iter(vpi::vpiTypespecMember, typespec);
+                !members.is_empty()
+                    && members.into_iter().all(|member| {
+                        child(vpi::vpiTypespec, member.raw()).is_some_and(|member_type| {
+                            self.typespec_two_state(member_type.raw(), hops + 1)
+                        })
+                    })
+            }
+            _ => false,
+        }
+    }
+
     pub(in crate::core::db) fn typespec_info(&mut self, ts: VpiHandle) -> TypeInfo {
         let mut visited: HashSet<(i32, String)> = HashSet::new();
         let mut current: Option<OwnedHandle> = None;
+        let mut signed = false;
         loop {
             let cur = current.as_ref().map_or(ts, OwnedHandle::raw);
+            signed |= vpi::get(vpi::vpiSigned, cur) != 0;
             if vpi::obj_type(cur) != vpi::vpiRefTypespec {
-                return self.concrete_typespec(cur);
+                let mut ty = self.concrete_typespec(cur);
+                ty.signed |= signed;
+                return ty;
             }
             let key = (vpi::obj_type(cur), vpi::obj_full_name(cur));
             if !visited.insert(key) {
@@ -484,9 +574,247 @@ impl Builder {
         }
     }
 
+    /// Recover a parameter-dependent packed width using the expression's
+    /// enclosing elaborated scope. Surelog retains typedef range expressions
+    /// such as `WIDTH-1` even when it omits the cast operation's `vpiSize`.
+    pub(in crate::core::db) fn contextual_typespec_width(
+        &mut self,
+        ts: VpiHandle,
+        context: VpiHandle,
+    ) -> Option<u32> {
+        let mut current: Option<OwnedHandle> = None;
+        let mut hops = 0usize;
+        loop {
+            let cur = current.as_ref().map_or(ts, OwnedHandle::raw);
+            if vpi::obj_type(cur) != vpi::vpiRefTypespec {
+                return match vpi::obj_type(cur) {
+                    vpi::vpiLogicTypespec | vpi::vpiBitTypespec | vpi::vpiPackedArrayTypespec => {
+                        self.contextual_range_width(cur, context)
+                    }
+                    vpi::vpiStructTypespec => {
+                        let mut total = 0u32;
+                        let mut any = false;
+                        for member in iter(vpi::vpiTypespecMember, cur) {
+                            let member = child(vpi::vpiTypespec, member.raw())?;
+                            total = total.checked_add(
+                                self.contextual_typespec_width(member.raw(), context)?,
+                            )?;
+                            any = true;
+                        }
+                        any.then_some(total)
+                    }
+                    vpi::vpiUnionTypespec => {
+                        let mut width = 0u32;
+                        let mut any = false;
+                        for member in iter(vpi::vpiTypespecMember, cur) {
+                            let member = child(vpi::vpiTypespec, member.raw())?;
+                            width =
+                                width.max(self.contextual_typespec_width(member.raw(), context)?);
+                            any = true;
+                        }
+                        any.then_some(width)
+                    }
+                    vpi::vpiEnumTypespec => child(vpi::vpiBaseTypespec, cur)
+                        .and_then(|base| self.contextual_typespec_width(base.raw(), context)),
+                    _ => self.concrete_typespec(cur).width,
+                };
+            }
+            if hops == 16 {
+                return None;
+            }
+            current = match current.as_ref() {
+                Some(owner) => owner.child(vpi::vpiActual),
+                None => child(vpi::vpiActual, ts),
+            };
+            current.as_ref()?;
+            hops += 1;
+        }
+    }
+
+    fn packed_member_layout(
+        &mut self,
+        typespec: VpiHandle,
+        context: VpiHandle,
+    ) -> Option<Vec<PackedMember>> {
+        let mut current: Option<OwnedHandle> = None;
+        let mut hops = 0usize;
+        loop {
+            let cur = current.as_ref().map_or(typespec, OwnedHandle::raw);
+            if vpi::obj_type(cur) != vpi::vpiRefTypespec {
+                let is_union = vpi::obj_type(cur) == vpi::vpiUnionTypespec;
+                if !is_union && vpi::obj_type(cur) != vpi::vpiStructTypespec {
+                    return None;
+                }
+                let mut members = Vec::new();
+                for member in iter(vpi::vpiTypespecMember, cur) {
+                    let name = vpi::obj_name(member.raw());
+                    if name.is_empty() {
+                        return None;
+                    }
+                    let member_type = child(vpi::vpiTypespec, member.raw())?;
+                    let width = self.contextual_typespec_width(member_type.raw(), context)?;
+                    let signed = self.typespec_info(member_type.raw()).signed;
+                    let two_state = self.typespec_two_state(member_type.raw(), 0);
+                    let packed_ranges =
+                        match self.contextual_packed_ranges(member_type.raw(), context) {
+                            Some(ranges) => ranges,
+                            None => vec![PackedRange {
+                                left: i128::from(width.checked_sub(1)?),
+                                right: 0,
+                            }],
+                        };
+                    members.push(PackedMember {
+                        name,
+                        lsb: 0,
+                        width,
+                        signed,
+                        two_state,
+                        packed_ranges,
+                    });
+                }
+                if members.is_empty() {
+                    return None;
+                }
+                if !is_union {
+                    let mut lsb = 0u32;
+                    for member in members.iter_mut().rev() {
+                        member.lsb = lsb;
+                        lsb = lsb.checked_add(member.width)?;
+                    }
+                }
+                return Some(members);
+            }
+            if hops == 16 {
+                return None;
+            }
+            current = match current.as_ref() {
+                Some(owner) => owner.child(vpi::vpiActual),
+                None => child(vpi::vpiActual, typespec),
+            };
+            current.as_ref()?;
+            hops += 1;
+        }
+    }
+
+    fn contextual_packed_ranges(
+        &mut self,
+        typespec: VpiHandle,
+        context: VpiHandle,
+    ) -> Option<Vec<PackedRange>> {
+        let mut current: Option<OwnedHandle> = None;
+        let mut hops = 0usize;
+        loop {
+            let cur = current.as_ref().map_or(typespec, OwnedHandle::raw);
+            if vpi::obj_type(cur) != vpi::vpiRefTypespec {
+                if !matches!(
+                    vpi::obj_type(cur),
+                    vpi::vpiLogicTypespec | vpi::vpiBitTypespec | vpi::vpiPackedArrayTypespec
+                ) {
+                    return None;
+                }
+                let mut ranges = Vec::new();
+                for range in iter(vpi::vpiRange, cur) {
+                    let left = child(vpi::vpiLeftRange, range.raw())?;
+                    let right = child(vpi::vpiRightRange, range.raw())?;
+                    ranges.push(PackedRange {
+                        left: self.contextual_bound_value(left.raw(), context)?,
+                        right: self.contextual_bound_value(right.raw(), context)?,
+                    });
+                }
+                if vpi::obj_type(cur) == vpi::vpiPackedArrayTypespec {
+                    if let Some(element) = child(vpi::vpiElemTypespec, cur) {
+                        if let Some(mut inner) =
+                            self.contextual_packed_ranges(element.raw(), context)
+                        {
+                            ranges.append(&mut inner);
+                        }
+                    }
+                }
+                return (!ranges.is_empty()).then_some(ranges);
+            }
+            if hops == 16 {
+                return None;
+            }
+            current = match current.as_ref() {
+                Some(owner) => owner.child(vpi::vpiActual),
+                None => child(vpi::vpiActual, typespec),
+            };
+            current.as_ref()?;
+            hops += 1;
+        }
+    }
+
+    fn contextual_range_width(&mut self, typespec: VpiHandle, context: VpiHandle) -> Option<u32> {
+        let mut total = 1u128;
+        let mut any = false;
+        for range in iter(vpi::vpiRange, typespec) {
+            any = true;
+            let left = child(vpi::vpiLeftRange, range.raw())?;
+            let right = child(vpi::vpiRightRange, range.raw())?;
+            let left = self.contextual_bound_value(left.raw(), context)?;
+            let right = self.contextual_bound_value(right.raw(), context)?;
+            let width = left.abs_diff(right).checked_add(1)?;
+            total = total.checked_mul(width)?;
+        }
+        if !any {
+            return Some(1);
+        }
+        u32::try_from(total).ok()
+    }
+
+    fn contextual_bound_value(&mut self, bound: VpiHandle, context: VpiHandle) -> Option<i128> {
+        match vpi::read_value(bound) {
+            ValueData::Int(value) => return Some(value as i128),
+            ValueData::UInt(value) => return Some(value as i128),
+            ValueData::Scalar(value) => return Some(value as i128),
+            _ => {}
+        }
+        self.eval_in_parent_scope(context, bound, 0)
+            .and_then(|value| match value {
+                Val::Bits(bits) if !bits.is_unknown() => {
+                    if bits.signed {
+                        bits.to_i128()
+                    } else {
+                        bits.to_u128().and_then(|value| i128::try_from(value).ok())
+                    }
+                }
+                _ => None,
+            })
+    }
+
+    fn eval_in_parent_scope(
+        &mut self,
+        object: VpiHandle,
+        expression: VpiHandle,
+        hops: usize,
+    ) -> Option<Val> {
+        if hops > 64 {
+            return None;
+        }
+        if matches!(
+            vpi::obj_type(object),
+            vpi::vpiModule | vpi::vpiGenScope | vpi::vpiPackage
+        ) {
+            return self.resolver.eval_expr(object, expression).ok();
+        }
+        let parent = child(vpi::vpiParent, object)?;
+        self.eval_in_parent_scope(parent.raw(), expression, hops + 1)
+    }
+
     pub(in crate::core::db) fn concrete_typespec(&mut self, ts: VpiHandle) -> TypeInfo {
         let t = vpi::obj_type(ts);
-        let signed = vpi::get(vpi::vpiSigned, ts) != 0;
+        let mut signed = vpi::get(vpi::vpiSigned, ts) != 0;
+        if matches!(t, vpi::vpiStructTypespec | vpi::vpiUnionTypespec) && !signed {
+            if let Some(source) = self.declaration_source_prefix(ts) {
+                let words = source
+                    .split(|character: char| !character.is_ascii_alphanumeric() && character != '_')
+                    .filter(|word| !word.is_empty())
+                    .collect::<Vec<_>>();
+                signed = words
+                    .windows(3)
+                    .any(|words| matches!(words, ["struct" | "union", "packed", "signed"]));
+            }
+        }
         let type_name = {
             let n = vpi::obj_name(ts);
             if n.is_empty() {
@@ -546,23 +874,27 @@ impl Builder {
                 signed,
                 type_name: None,
             },
-            vpi::vpiEnumTypespec => TypeInfo {
-                kind: "enum".to_string(),
-                width: child(vpi::vpiBaseTypespec, ts)
-                    .and_then(|b| self.typespec_info(b.raw()).width),
-                signed,
-                type_name,
-            },
+            vpi::vpiEnumTypespec => {
+                let base = child(vpi::vpiBaseTypespec, ts)
+                    .map(|base| self.typespec_info(base.raw()))
+                    .unwrap_or_default();
+                TypeInfo {
+                    kind: "enum".to_string(),
+                    width: base.width,
+                    signed: base.signed,
+                    type_name,
+                }
+            }
             vpi::vpiStructTypespec => TypeInfo {
                 kind: "struct".to_string(),
                 width: None,
-                signed: false,
+                signed,
                 type_name,
             },
             vpi::vpiUnionTypespec => TypeInfo {
                 kind: "union".to_string(),
                 width: None,
-                signed: false,
+                signed,
                 type_name,
             },
             vpi::vpiStringTypespec => TypeInfo {

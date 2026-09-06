@@ -249,7 +249,7 @@ endmodule
     );
 }
 
-// ── pullup / pulldown drive undriven wires ──────────────────────────────────
+// ── pullup / pulldown and ordinary undriven-net defaults ────────────────────
 
 #[test]
 fn sim_gates_pullup_pulldown_drive_undriven_wire() {
@@ -258,18 +258,11 @@ fn sim_gates_pullup_pulldown_drive_undriven_wire() {
         return;
     }
     let _guard = SURELOG_LOCK.lock().unwrap();
-    let sv = r#"module tb;
-    wire w_up, w_down, w_plain;
-    pullup pu(w_up);
-    pulldown pd(w_down);
-    initial begin
-        #1 $display("%b_%b_%b", w_up, w_down, w_plain);
-        #1 $finish;
-    end
-endmodule
-"#;
-    let stdout = run_sim(sv, "pull").expect("simulation should run");
-    assert_eq!(stdout, "1_0_x\n");
+    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/sim/gates/pull_undriven.v");
+    let source = std::fs::read_to_string(&fixture).expect("read pull fixture");
+    let stdout = run_sim(&source, "pull").expect("simulation should run");
+    assert_eq!(stdout, "PASS pull_undriven\n");
 }
 
 // ── Gate chains settle across delta cycles ──────────────────────────────────

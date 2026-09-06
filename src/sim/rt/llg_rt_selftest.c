@@ -332,7 +332,7 @@ static void test_sv4_ops(void) {
         CHECK(sv4_same(sv4_mux(b4("x"), signed_narrow, SV4_C(0, 8)),
                        b4("0000xxxx")));
         CHECK(sv4_same(sv4_mux(b4("1x"), b4("1010"), b4("1000")),
-                       b4("10x0")));
+                       b4("1010")));
     }
     // selects
     CHECK(u(sv4_bit_select(b4("1010"), 1)) == 1);
@@ -465,9 +465,9 @@ static void test_sv4_wide(void) {
     CHECK(w_same(sv4_mul(w128(0, 1), w128(0, 1)), 0, 0));
     CHECK(isx(sv4_mul(w128(1, 0), sv4_x(128, 0))));
     // div/mod/pow on operands wider than 64 bits -> all-X
-    CHECK(isx(sv4_div(w128(100, 0), SV4_C(3, 32))));
-    CHECK(isx(sv4_mod(w128(100, 0), SV4_C(3, 32))));
-    CHECK(isx(sv4_pow(w128(100, 0), SV4_C(2, 32))));
+    CHECK(w_same(sv4_div(w128(100, 0), SV4_C(3, 32)), 33, 0));
+    CHECK(w_same(sv4_mod(w128(100, 0), SV4_C(3, 32)), 1, 0));
+    CHECK(w_same(sv4_pow(w128(100, 0), SV4_C(2, 32)), 10000, 0));
     // 128-bit compares: 2^100 vs 2^100 - 1
     {
         sv4_t a = w128(0, 1ULL << 36);              // 2^100
@@ -508,17 +508,16 @@ static void test_sv4_wide(void) {
     }
     // concat 64 + 64 -> 128, hi above lo
     CHECK(w_same(sv4_concat(SV4_C(1, 64), SV4_C(2, 64)), 2, 1));
-    // repeat: 128-bit pattern twice -> 256 bits; clamp at 1024
+    // repeat: 128-bit pattern twice -> 256 bits; maximum-width requests remain valid
     {
         sv4_t r = sv4_repeat(w128(0x1111111111111111ULL, 0x2222222222222222ULL), 2);
         CHECK(r.width == 256);
         CHECK(r.bits[0] == 0x1111111111111111ULL && r.bits[1] == 0x2222222222222222ULL);
         CHECK(r.bits[2] == 0x1111111111111111ULL && r.bits[3] == 0x2222222222222222ULL);
-        sv4_t cl = sv4_repeat(SV4_C(1, 1), 2000);
-        CHECK(cl.width == 1024);
-        CHECK(cl.bits[0] == ~0ULL && cl.bits[15] == ~0ULL);
-        CHECK(sv4_same(sv4_concat(sv4_fill(1, 1024, 0), sv4_fill(1, 1024, 0)),
-                       sv4_fill(1, 1024, 0))); // concat clamps at 1024
+        sv4_t boundary_repeat = sv4_repeat(SV4_C(1, 1), LLG_MAX_WIDTH);
+        CHECK(sv4_same(boundary_repeat, sv4_fill(1, LLG_MAX_WIDTH, 0)));
+        sv4_t half = sv4_fill(1, LLG_MAX_WIDTH / 2, 0);
+        CHECK(sv4_same(sv4_concat(half, half), sv4_fill(1, LLG_MAX_WIDTH, 0)));
     }
     // part-select spanning the limb boundary (bits 63..70)
     {
@@ -1241,7 +1240,7 @@ static void test_llg_net(void) {
     //   all-z -> z.
     {
         sv4_t d0 = SV4_Z(1), d1 = SV4_Z(1);
-        llg_net_t net = { SV4_Z(1), 1, 0, 2, { &d0, &d1 } };
+        llg_net_t net = { SV4_Z(1), 1, 0, LLG_RESOLVE_WIRE, 2, { &d0, &d1 } };
         llg_net_resolve(&net);
         CHECK(sv4_same(net.resolved, SV4_Z(1))); // z+z -> z
         d0 = SV4_C(0, 1);
@@ -1265,7 +1264,7 @@ static void test_llg_net(void) {
     }
     // No driver -> all-Z.
     {
-        llg_net_t net = { SV4_Z(4), 4, 0, 0, { NULL } };
+        llg_net_t net = { SV4_Z(4), 4, 0, LLG_RESOLVE_WIRE, 0, { NULL } };
         llg_net_resolve(&net);
         CHECK(sv4_same(net.resolved, SV4_Z(4)));
     }
@@ -1273,7 +1272,7 @@ static void test_llg_net(void) {
     // disturb the resolved value.
     {
         sv4_t d0 = SV4_Z(8), d1 = SV4_Z(8);
-        llg_net_t net = { SV4_Z(8), 8, 0, 2, { &d0, &d1 } };
+        llg_net_t net = { SV4_Z(8), 8, 0, LLG_RESOLVE_WIRE, 2, { &d0, &d1 } };
         llg_net_resolve(&net);
         sv4_t before = net.resolved;
         llg_net_write(&net, 0, SV4_Z(8)); // same value -> early-out
@@ -1284,7 +1283,7 @@ static void test_llg_net(void) {
     // early-out (the resolved cell is untouched).
     {
         sv4_t d0 = SV4_Z(8), d1 = SV4_Z(8);
-        llg_net_t net = { SV4_Z(8), 8, 0, 2, { &d0, &d1 } };
+        llg_net_t net = { SV4_Z(8), 8, 0, LLG_RESOLVE_WIRE, 2, { &d0, &d1 } };
         llg_net_resolve(&net);
         llg_net_write(&net, 0, SV4_C(0x5a, 8));
         CHECK(sv4_same(d0, SV4_C(0x5a, 8)));
@@ -1296,7 +1295,7 @@ static void test_llg_net(void) {
     // with bit 0 X, which %h prints as "0x".
     {
         sv4_t d0 = SV4_C(0x0a, 8), d1 = SV4_C(0x0b, 8);
-        llg_net_t net = { SV4_Z(8), 8, 0, 2, { &d0, &d1 } };
+        llg_net_t net = { SV4_Z(8), 8, 0, LLG_RESOLVE_WIRE, 2, { &d0, &d1 } };
         llg_net_resolve(&net);
         char buf[64];
         sv4_format('h', net.resolved, buf, sizeof(buf));
@@ -1306,7 +1305,7 @@ static void test_llg_net(void) {
     // above); a known driver loses to X: 0x5a + X -> X.
     {
         sv4_t d0 = SV4_C(0x5a, 8), d1 = SV4_X(8);
-        llg_net_t net = { SV4_Z(8), 8, 0, 2, { &d0, &d1 } };
+        llg_net_t net = { SV4_Z(8), 8, 0, LLG_RESOLVE_WIRE, 2, { &d0, &d1 } };
         llg_net_resolve(&net);
         CHECK(sv4_same(net.resolved, SV4_X(8)));
     }

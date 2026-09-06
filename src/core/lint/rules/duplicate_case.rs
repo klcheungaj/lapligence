@@ -94,6 +94,7 @@ fn same_literal(db: &Db, left: NodeId, right: NodeId) -> bool {
         value: left_value,
         size: left_size,
         const_type: left_const_type,
+        ..
     }) = db.node_kind(left)
     else {
         return false;
@@ -102,6 +103,7 @@ fn same_literal(db: &Db, left: NodeId, right: NodeId) -> bool {
         value: right_value,
         size: right_size,
         const_type: right_const_type,
+        ..
     }) = db.node_kind(right)
     else {
         return false;
@@ -117,6 +119,7 @@ fn literal_description(db: &Db, id: NodeId) -> String {
         value,
         size,
         const_type,
+        ..
     }) = db.node_kind(id)
     else {
         return "<literal>".to_string();
