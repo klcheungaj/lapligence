@@ -4,6 +4,11 @@ Shared, safe processing over Surelog/UHDM data. `compile` owns frontend
 orchestration, `db` performs the canonical VPI capture, and model, elaboration,
 tokens, macros, and lint consume or produce owned data.
 
+`tokens` also captures source-level genvar declarations and lexical bindings
+from owned parse trees. These supplement elaborated tokens for editor features;
+they do not change simulator generate elaboration. The detailed contract lives
+in the [LSP feature guide](../bin/llg_ls/features/AGENTS.md#genvar-source-bindings).
+
 `diagnostics::user_message` translates recognized Surelog syntax errors into
 readable explanations shared by the LSP, simulator CLI, and elaboration checker.
 It explains expected names/punctuation and suggests checking module placement

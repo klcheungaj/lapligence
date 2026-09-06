@@ -60,7 +60,12 @@ modifier bit 10: port labels `.clk` retain base `function`; parameter labels
 `.W` retain `property` + `readonly`; connected signals remain `variable`.
 Themes use `*.connectionLabel`, and dump rows show `sym=…/connectionLabel`.
 `core::tokens::classify_identifier_ancestor` produces `TOKEN_PORT_CONN_LABEL`
-and `TOKEN_PARAM_CONN_LABEL`, so this holds for both serving paths:
+and `TOKEN_PARAM_CONN_LABEL`, so this holds for both serving paths.
+
+Parse-backed genvar names are `variable` (with the declaration modifier at
+declarations); actual `genvar` spans are `keyword`. Both serving paths preserve
+UTF-16 positions for these tokens, using already-admitted current text for the
+isolated path. See the [source-binding contract](features/AGENTS.md#genvar-source-bindings).
 
 - Open `textDocument/semanticTokens/full` parses the current buffer as one
   request-local staged source with Surelog `-parseonly -nocache -nobuiltin`.

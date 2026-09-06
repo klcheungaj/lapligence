@@ -17,6 +17,9 @@ the simulator (`src/sim/`):
   boundaries when unresolved macros damage Surelog's tree. The source-local
   scanner uses UTF-16 columns and must ignore comments, strings, escaped
   identifiers, includes, and continued preprocessor directives.
+  Owned parse-tree genvar facts retain lexical declarations and scoped uses
+  even when elaboration replaces loop indices with per-iteration parameters
+  or prunes loops. See the [LSP binding contract](../bin/llg_ls/features/AGENTS.md#genvar-source-bindings).
 - `db.rs` — **the owned UHDM database**: one VPI walk at build time
   (`Db::build`) captures the whole elaborated design as an arena of `Node`s;
   consumers read owned Rust data instead of calling VPI again.  Includes

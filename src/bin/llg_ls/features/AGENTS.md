@@ -49,6 +49,30 @@ Module-type references must remain distinct from same-named instance names.
   folds fill only unbound positions. `definition_at` serves exact bound targets
   before index/name fallback.
 
+## Genvar source bindings
+
+Owned parse-tree facts supplement UHDM with explicit (including multi-name)
+and inline loop genvar declarations, keyword spans, and lexical reference
+bindings. Preserve declarations in pruned loops and syntax-error fallback;
+header assignment/increment sites are references too. Resolve against the
+nearest enclosing source scope, not an elaborated iteration's localparam.
+Index each lexical declaration once as a variable with `genvar <name>` hover,
+without an iteration-dependent parameter value.
+
+Declaration self-bindings identify genvar reference sets. Definition,
+references, and rename use exact bindings, including an empty reference set
+for an unused declaration; do not fall back to same-name guesses. Respect
+ordinary local declarations and existing UHDM bindings. Member selectors,
+named connection labels, and block labels are not bare genvar uses. Generated
+instance port labels still bind to the child's port while actuals bind in the
+parent's lexical scope. Both committed and isolated semantic-token paths use
+variable tokens for names and keyword tokens at the actual `genvar` span;
+the isolated path normalizes these parse positions using the admitted buffer.
+
+Wire regressions live in `tests/lsp_stdio/genvar.rs`, with checked-in Verilog
+and SystemVerilog fixtures covering shadowing, pruned/nested loops, fallback,
+and UTF-16 positions. These facts introduce no additional VPI traversal.
+
 ## Shadowing, details and references
 
 The token walk must reach every inner scope: function/task bodies through

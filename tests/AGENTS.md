@@ -38,6 +38,11 @@ never parse/depend on stdout debug output. Cover these contracts:
   Cover single/multiline forms and syntax-fallback bindings with `dumpTokens`
   `bind=` as oracle. Module-type navigation stays distinct from same-named
   instance identifiers. Parse-backed enum navigation also has wire coverage.
+- `lsp_stdio/genvar.rs` exercises explicit and inline genvars through standard
+  hover/definition/references/prepareRename/rename/symbol/token requests. Keep
+  exact scope-isolation assertions, including unused and pruned declarations,
+  ordinary namesakes, labels/members, syntax fallback, and UTF-16 columns.
+  HDL lives in `fixtures/lsp/genvar/` and `fixtures/lsp/genvar-fallback/`.
 - Module explorer: configured-top/source-graph roots, recursive children and
   leaves, declaration fallback, typed contents, no shadow URIs, and useful
   hierarchy roots surviving module-content budget truncation.
