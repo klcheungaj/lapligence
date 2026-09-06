@@ -59,6 +59,20 @@ enum {
     LLG_RESOLVE_SUPPLY1 = 6,
 };
 
+// IEEE 1800-2009 Table 28-7 strength levels. Continuous assignments use
+// HIGHZ, WEAK, PULL, STRONG, or SUPPLY; the intermediate levels are retained
+// so the resolver's representation matches the standard's ordered scale.
+enum {
+    LLG_STRENGTH_HIGHZ = 0,
+    LLG_STRENGTH_SMALL = 1,
+    LLG_STRENGTH_MEDIUM = 2,
+    LLG_STRENGTH_WEAK = 3,
+    LLG_STRENGTH_LARGE = 4,
+    LLG_STRENGTH_PULL = 5,
+    LLG_STRENGTH_STRONG = 6,
+    LLG_STRENGTH_SUPPLY = 7,
+};
+
 // Compile-time bit mask for a width literal (<= 64).
 #define LLG_MASK(w) ((w) >= 64 ? ~0ULL : ((1ULL << (w)) - 1))
 
@@ -140,6 +154,14 @@ int sv4_same(sv4_t a, sv4_t b);   // bits + x + z equal (ignores width/signed)
 // only to all-Z bits. SUPPLY0/SUPPLY1 model their implicit supply source.
 sv4_t sv4_resolve(const sv4_t* const* drivers, int n_drivers,
                   uint32_t width, int8_t is_signed, int mode);
+// Resolve direct driver contributions with one strength endpoint for each
+// logic value. An X contribution spans both endpoint ranges; therefore a
+// known value is stable only when a known driver strictly dominates every
+// possible opposite endpoint. Strength arrays contain n_drivers entries.
+sv4_t sv4_resolve_strengths(const sv4_t* const* drivers,
+                            const uint8_t* strength0,
+                            const uint8_t* strength1, int n_drivers,
+                            uint32_t width, int8_t is_signed, int mode);
 
 // Format one value into `buf` (NUL-terminated).  `fmt` is 'd', 'h', 'b' or 'o'.
 // %b prints all width bits: 'x' for X bits and 'z' for Z bits; %h prints
@@ -205,9 +227,17 @@ sv4_t sv4_lt(sv4_t a, sv4_t b);
 sv4_t sv4_le(sv4_t a, sv4_t b);
 sv4_t sv4_gt(sv4_t a, sv4_t b);
 sv4_t sv4_ge(sv4_t a, sv4_t b);
+// Inclusive inside-range match. Unknown relational results propagate unless
+// one comparison is definitively false.
+sv4_t sv4_inside_range(sv4_t value, sv4_t low, sv4_t high);
 sv4_t sv4_mux(sv4_t sel, sv4_t a, sv4_t b);
 sv4_t sv4_concat(sv4_t hi, sv4_t lo);     // hi is the MS part
 sv4_t sv4_repeat(sv4_t pat, uint64_t n);  // {n{pat}}
+// Packed streaming: right_to_left reverses slice-sized blocks; left-to-right
+// preserves stream order. The result is unsigned and has value.width bits.
+sv4_t sv4_stream(sv4_t value, uint32_t slice, int right_to_left);
+// Inverse mapping used when a packed stream is an assignment target.
+sv4_t sv4_unstream(sv4_t value, uint32_t slice, int right_to_left);
 sv4_t sv4_part_select(sv4_t v, int64_t left, int64_t right); // handles reversed ranges
 void sv4_part_select_set(sv4_t* tgt, int64_t left, int64_t right, sv4_t value);
 sv4_t sv4_bit_select(sv4_t v, uint64_t i);

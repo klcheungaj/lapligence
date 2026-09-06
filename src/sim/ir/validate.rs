@@ -44,6 +44,9 @@ type ValidationResult = Result<(), IrValidationError>;
 struct Validator<'model> {
     model: &'model IrModel,
     max_width: Cell<u128>,
+    /// None outside a C function; otherwise whether that function returns chandle.
+    chandle_return: Cell<Option<bool>>,
+    string_return: Cell<Option<bool>>,
 }
 
 impl IrModel {
@@ -79,6 +82,12 @@ impl IrModel {
         function: Option<&IrFunc>,
     ) -> Result<u128, IrValidationError> {
         let validator = Validator::new(self);
+        validator
+            .chandle_return
+            .set(function.map(|function| function.ret_chandle));
+        validator
+            .string_return
+            .set(function.map(|function| function.ret_string));
         validator.validate_expr(expression, function.map_or(&[], IrFunc::formals), "expr")?;
         Ok(validator.max_width.get())
     }
@@ -99,6 +108,12 @@ impl IrModel {
         function: Option<&IrFunc>,
     ) -> Result<u128, IrValidationError> {
         let validator = Validator::new(self);
+        validator
+            .chandle_return
+            .set(function.map(|function| function.ret_chandle));
+        validator
+            .string_return
+            .set(function.map(|function| function.ret_string));
         validator.validate_stmts(
             std::slice::from_ref(statement),
             function.map_or(&[], IrFunc::formals),
@@ -123,6 +138,12 @@ impl IrModel {
         function: Option<&IrFunc>,
     ) -> Result<u128, IrValidationError> {
         let validator = Validator::new(self);
+        validator
+            .chandle_return
+            .set(function.map(|function| function.ret_chandle));
+        validator
+            .string_return
+            .set(function.map(|function| function.ret_string));
         validator.validate_pre_fns(
             std::slice::from_ref(pre_fn),
             function.map_or(&[], IrFunc::formals),
@@ -137,6 +158,8 @@ impl Validator<'_> {
         Validator {
             model,
             max_width: Cell::new(0),
+            chandle_return: Cell::new(None),
+            string_return: Cell::new(None),
         }
     }
 
@@ -146,6 +169,46 @@ impl Validator<'_> {
         }
 
         let mut storage_names = HashSet::new();
+        for (idx, container) in self.model.containers.iter().enumerate() {
+            if !storage_names.insert(container.c_name.as_str()) {
+                return self.fail("containers", "duplicate container storage name");
+            }
+            match container.element {
+                IrType::Packed { width, .. } => {
+                    self.validate_width(width, &format!("containers[{idx}].element"))?;
+                }
+                IrType::Real { .. } => {
+                    return self.fail(
+                        format!("containers[{idx}].element"),
+                        "real container elements are not supported by this runtime",
+                    );
+                }
+            }
+            if let IrContainerKind::Associative {
+                key: IrAssocKey::Integral { width, .. },
+            } = container.kind
+            {
+                self.validate_width(width, &format!("containers[{idx}].key"))?;
+            }
+        }
+        for object in &self.model.objects {
+            if !storage_names.insert(object.c_name.as_str()) {
+                return self.fail("objects", "duplicate object storage name");
+            }
+            if let Some(initial) = &object.initial {
+                if object.ty != IrObjectType::String {
+                    return self.fail("objects", "non-string initializer");
+                }
+                initial.validate(self.model, None)?;
+                let mut result = Ok(());
+                initial.expressions(&mut |expr| {
+                    result = result
+                        .clone()
+                        .and_then(|_| self.validate_expr(expr, &[], "object.initial"));
+                });
+                result?;
+            }
+        }
         for (idx, signal) in self.model.signals.iter().enumerate() {
             let path = format!("signals[{idx}]");
             self.validate_type(&signal.ty, &format!("{path}.ty"))?;
@@ -188,6 +251,23 @@ impl Validator<'_> {
                     format!("net group exceeds {LLG_MAX_NET_DRIVERS} drivers"),
                 );
             }
+            if group.driver_strengths.len() != group.n_drivers {
+                return self.fail(
+                    format!("{path}.driver_strengths"),
+                    "net group strength count does not match its driver count",
+                );
+            }
+            if let Some((strength_idx, _)) = group
+                .driver_strengths
+                .iter()
+                .enumerate()
+                .find(|(_, (strength0, strength1))| *strength0 > 7 || *strength1 > 7)
+            {
+                return self.fail(
+                    format!("{path}.driver_strengths[{strength_idx}]"),
+                    "net driver strength is outside the IEEE 1800 strength scale",
+                );
+            }
         }
 
         for (idx, array) in self.model.arrays.iter().enumerate() {
@@ -218,20 +298,47 @@ impl Validator<'_> {
         }
 
         for (idx, func) in self.model.funcs.iter().enumerate() {
+            self.chandle_return.set(Some(func.ret_chandle));
+            self.string_return.set(Some(func.ret_string));
             let path = format!("funcs[{idx}]");
+            if (func.ret_chandle || func.ret_string) && func.ret.is_some()
+                || func.ret_chandle && func.ret_string
+            {
+                return self.fail(&path, "function has incompatible return types");
+            }
             if let Some(ret) = &func.ret {
                 self.validate_type(ret, &format!("{path}.ret"))?;
             }
             for (formal_idx, formal) in func.formals.iter().enumerate() {
-                self.validate_width(formal.width, &format!("{path}.formals[{formal_idx}].width"))?;
+                if !formal.chandle {
+                    self.validate_width(
+                        formal.width,
+                        &format!("{path}.formals[{formal_idx}].width"),
+                    )?;
+                }
             }
             for (local_idx, local) in func.locals.iter().enumerate() {
-                self.validate_width(local.width, &format!("{path}.locals[{local_idx}].width"))?;
+                let local_path = format!("{path}.locals[{local_idx}]");
+                self.validate_width(local.width, &format!("{local_path}.width"))?;
+                if let Some(initial) = &local.initial {
+                    self.validate_expr(initial, &func.formals, &format!("{local_path}.initial"))?;
+                    if initial.is_real()
+                        || initial.width != local.width
+                        || initial.signed != local.signed
+                    {
+                        return self.fail(
+                            format!("{local_path}.initial"),
+                            "local initializer type disagrees with its declaration",
+                        );
+                    }
+                }
             }
             self.validate_pre_fns(&func.pre_fns, &func.formals, &path)?;
             self.validate_stmts(&func.body, &func.formals, &format!("{path}.body"))?;
         }
 
+        self.chandle_return.set(None);
+        self.string_return.set(None);
         for (idx, process) in self.model.processes.iter().enumerate() {
             let path = format!("processes[{idx}]");
             self.validate_pre_fns(&process.pre_fns, &[], &path)?;
@@ -333,13 +440,88 @@ impl Validator<'_> {
             );
         }
         match &expr.kind {
+            IrExprKind::Container(operation) => {
+                operation.validate(self.model, self.string_return.get())?;
+                if expr.width == 0 || expr.fill.is_some() {
+                    return self.fail(path, "container expression must produce a packed value");
+                }
+                let expected = match operation.as_ref() {
+                    IrContainerExpr::Size(_)
+                    | IrContainerExpr::AssocTraverse { .. }
+                    | IrContainerExpr::AssocTraverseString { .. } => (32, true),
+                    IrContainerExpr::Exists { .. } | IrContainerExpr::ExistsString { .. } => {
+                        (32, true)
+                    }
+                    IrContainerExpr::Get { container, .. }
+                    | IrContainerExpr::GetString { container, .. }
+                    | IrContainerExpr::QueueFront(container)
+                    | IrContainerExpr::QueueBack(container)
+                    | IrContainerExpr::QueuePopFront(container)
+                    | IrContainerExpr::QueuePopBack(container) => {
+                        let ty = self.model.containers[*container].element;
+                        (ty.width(), ty.signed())
+                    }
+                };
+                if (expr.width, expr.signed) != expected {
+                    return self.fail(path, "container result type disagrees with expression type");
+                }
+                let mut result = Ok(());
+                operation.expressions(&mut |child| {
+                    result = result
+                        .clone()
+                        .and_then(|_| self.validate_expr(child, formals, path));
+                });
+                result?;
+            }
+            IrExprKind::ObjectQuery(query) => {
+                query.validate(
+                    self.model,
+                    formals,
+                    self.chandle_return.get(),
+                    self.string_return.get(),
+                )?;
+                let expected = match query.as_ref() {
+                    IrObjectQuery::ChandleEq(..) => Some((1, false)),
+                    IrObjectQuery::StringGetc(..) => Some((8, true)),
+                    IrObjectQuery::StringPacked(..) => None,
+                    _ => Some((32, true)),
+                };
+                if expected.is_some_and(|ty| ty != (expr.width, expr.signed)) {
+                    return self.fail(path, "object query result type mismatch");
+                }
+                if expr.width == 0 || expr.fill.is_some() {
+                    return self.fail(path, "object query must produce a packed value");
+                }
+                let mut result = Ok(());
+                query.expressions(&mut |child| {
+                    result = result.clone().and_then(|_| {
+                        if child.is_real() {
+                            self.fail(path, "object query requires packed operands")
+                        } else {
+                            self.validate_expr(child, formals, path)
+                        }
+                    });
+                });
+                result?;
+            }
             IrExprKind::Const(value) => {
                 self.validate_const(value, &format!("{path}.const"))?;
                 if value.width != expr.width
                     || value.signed != expr.signed
                     || value.fill != expr.fill
                 {
-                    return self.fail(path, "constant payload type disagrees with expression type");
+                    return self.fail(
+                        path,
+                        format!(
+                            "constant payload type disagrees with expression type: payload width={} signed={} fill={:?}, expression width={} signed={} fill={:?}",
+                            value.width,
+                            value.signed,
+                            value.fill,
+                            expr.width,
+                            expr.signed,
+                            expr.fill
+                        ),
+                    );
                 }
             }
             IrExprKind::SigRead(idx) => {
@@ -355,7 +537,7 @@ impl Validator<'_> {
                 let formal = formals.get(*idx).ok_or_else(|| {
                     IrValidationError::new(path, format!("formal index {idx} is out of bounds"))
                 })?;
-                if formal.width != expr.width || formal.signed != expr.signed {
+                if formal.chandle || formal.width != expr.width || formal.signed != expr.signed {
                     return self.fail(path, "formal type disagrees with expression type");
                 }
             }
@@ -415,6 +597,57 @@ impl Validator<'_> {
                 }
                 for (idx, part) in parts.iter().enumerate() {
                     self.validate_expr(part, formals, &format!("{path}.parts[{idx}]"))?;
+                }
+            }
+            IrExprKind::Stream { value, slice, .. } => {
+                if *slice == 0 {
+                    return self.fail(path, "streaming slice size must be positive");
+                }
+                self.validate_expr(value, formals, &format!("{path}.value"))?;
+                if value.is_real() || expr.width != value.width || expr.signed {
+                    return self.fail(
+                        path,
+                        "streaming expression must preserve packed width and produce unsigned data",
+                    );
+                }
+            }
+            IrExprKind::Inside { value, items } => {
+                if items.is_empty() {
+                    return self.fail(path, "inside expression requires at least one set item");
+                }
+                if value.is_real() || expr.width != 1 || expr.signed {
+                    return self.fail(
+                        path,
+                        "inside expression requires a packed selector and 1-bit unsigned result",
+                    );
+                }
+                self.validate_expr(value, formals, &format!("{path}.value"))?;
+                for (idx, item) in items.iter().enumerate() {
+                    match item {
+                        IrInsideItem::Value(item) => {
+                            if item.is_real() {
+                                return self.fail(
+                                    format!("{path}.items[{idx}]"),
+                                    "inside set item must be packed",
+                                );
+                            }
+                            self.validate_expr(item, formals, &format!("{path}.items[{idx}]"))?;
+                        }
+                        IrInsideItem::Range { low, high } => {
+                            if low.is_real() || high.is_real() {
+                                return self.fail(
+                                    format!("{path}.items[{idx}]"),
+                                    "inside range endpoints must be packed",
+                                );
+                            }
+                            self.validate_expr(low, formals, &format!("{path}.items[{idx}].low"))?;
+                            self.validate_expr(
+                                high,
+                                formals,
+                                &format!("{path}.items[{idx}].high"),
+                            )?;
+                        }
+                    }
                 }
             }
             IrExprKind::BitSel { base, idx } => {
@@ -572,6 +805,12 @@ impl Validator<'_> {
         let callee = self.model.funcs.get(function).ok_or_else(|| {
             IrValidationError::new(path, format!("function index {function} is out of bounds"))
         })?;
+        if callee.ret_chandle
+            || callee.ret_string
+            || callee.formals.iter().any(|formal| formal.chandle)
+        {
+            return self.fail(path, "non-integral subprogram requires its typed call path");
+        }
         if args.len() != callee.formals.len() {
             return self.fail(
                 path,
@@ -638,6 +877,22 @@ impl Validator<'_> {
         Ok(())
     }
 
+    fn lhs_packed_width(&self, lhs: &IrLhs) -> Option<u32> {
+        let width = match lhs {
+            IrLhs::Whole(signal) => self.model.signals.get(*signal)?.ty.width(),
+            IrLhs::WholeRef { width, .. } | IrLhs::Stream { width, .. } => *width,
+            IrLhs::Bit(..) => 1,
+            IrLhs::Part(_, left, right, _) => ((left - right).abs() + 1) as u32,
+            IrLhs::IdxPart(_, _, _, width, _, _) => *width,
+            IrLhs::ArrayElem { arr, elem_sel, .. } => match elem_sel {
+                IrElemSel::Whole => self.model.arrays.get(*arr)?.elem_width,
+                IrElemSel::Part(left, right) => ((left - right).abs() + 1) as u32,
+                IrElemSel::Bit(_) => 1,
+            },
+        };
+        (width != 0).then_some(width)
+    }
+
     fn validate_lhs(&self, lhs: &IrLhs, formals: &[IrFormal], path: &str) -> ValidationResult {
         match lhs {
             IrLhs::Whole(signal) | IrLhs::Part(signal, ..) => {
@@ -679,6 +934,42 @@ impl Validator<'_> {
                 }
                 self.validate_elem_sel(elem_sel, formals, &format!("{path}.elem_sel"))?;
             }
+            IrLhs::Stream {
+                parts,
+                width,
+                slice,
+                ..
+            } => {
+                self.validate_width(*width, &format!("{path}.width"))?;
+                if *slice == 0 || *slice > *width {
+                    return self.fail(path, "streaming LHS slice must be in 1..=its packed width");
+                }
+                if parts.is_empty() {
+                    return self.fail(path, "streaming LHS must contain at least one target");
+                }
+                let mut total = 0u32;
+                for (index, (part, part_width)) in parts.iter().enumerate() {
+                    self.validate_width(*part_width, &format!("{path}.parts[{index}].width"))?;
+                    self.validate_lhs(part, formals, &format!("{path}.parts[{index}]"))?;
+                    if self.lhs_packed_width(part) != Some(*part_width) {
+                        return self.fail(
+                            format!("{path}.parts[{index}].width"),
+                            "streaming LHS part width disagrees with its target",
+                        );
+                    }
+                    total = total.checked_add(*part_width).ok_or_else(|| {
+                        IrValidationError::new(path, "streaming LHS width sum overflows u32")
+                    })?;
+                }
+                if total != *width {
+                    return self.fail(
+                        path,
+                        format!(
+                            "streaming LHS part widths sum to {total}, not declared width {width}"
+                        ),
+                    );
+                }
+            }
         }
         Ok(())
     }
@@ -697,6 +988,35 @@ impl Validator<'_> {
 
     fn validate_stmt(&self, stmt: &IrStmt, formals: &[IrFormal], path: &str) -> ValidationResult {
         match stmt {
+            IrStmt::Container(operation) => {
+                operation.validate(self.model, self.string_return.get())?;
+                let mut result = Ok(());
+                operation.expressions(&mut |child| {
+                    result = result
+                        .clone()
+                        .and_then(|_| self.validate_expr(child, formals, path));
+                });
+                result?;
+            }
+            IrStmt::Object(operation) => {
+                operation.validate(
+                    self.model,
+                    formals,
+                    self.chandle_return.get(),
+                    self.string_return.get(),
+                )?;
+                let mut result = Ok(());
+                operation.expressions(&mut |child| {
+                    result = result.clone().and_then(|_| {
+                        if child.is_real() {
+                            self.fail(path, "object statement requires packed operands")
+                        } else {
+                            self.validate_expr(child, formals, path)
+                        }
+                    });
+                });
+                result?;
+            }
             IrStmt::Block(body) | IrStmt::Forever { body } => {
                 self.validate_stmts(body, formals, &format!("{path}.body"))?;
             }
@@ -835,6 +1155,14 @@ impl Validator<'_> {
             }
             IrStmt::Return { value } => {
                 if let Some(value) = value {
+                    if self.string_return.get() == Some(true)
+                        || self.chandle_return.get() == Some(true)
+                    {
+                        return self.fail(
+                            path,
+                            "non-integral return requires its typed return storage",
+                        );
+                    }
                     self.validate_expr(value, formals, &format!("{path}.value"))?;
                 }
             }
@@ -861,9 +1189,12 @@ impl Validator<'_> {
     fn validate_pre_fns(
         &self,
         pre_fns: &[IrPreFn],
-        formals: &[IrFormal],
+        _formals: &[IrFormal],
         path: &str,
     ) -> ValidationResult {
+        let saved_return = self.chandle_return.replace(None);
+        let saved_string_return = self.string_return.replace(None);
+        let formals = &[];
         for (idx, pre_fn) in pre_fns.iter().enumerate() {
             match pre_fn {
                 IrPreFn::Branch { body, .. } => {
@@ -880,6 +1211,8 @@ impl Validator<'_> {
                 }
             }
         }
+        self.chandle_return.set(saved_return);
+        self.string_return.set(saved_string_return);
         Ok(())
     }
 
@@ -1041,6 +1374,28 @@ mod tests {
     }
 
     #[test]
+    fn streaming_lhs_explicit_width_contributes_to_capacity() {
+        let statement = IrStmt::Assign {
+            lhs: IrLhs::Stream {
+                parts: vec![
+                    (IrLhs::Part(0, 63, 0, false), 64),
+                    (IrLhs::Part(0, 31, 0, false), 32),
+                ],
+                width: 96,
+                slice: 8,
+                direction: IrStreamDirection::RightToLeft,
+            },
+            rhs: packed_const(1, 1),
+            nba: false,
+        };
+
+        assert_eq!(
+            valid_model().statement_capacity(&statement, None).unwrap(),
+            96
+        );
+    }
+
+    #[test]
     fn indexed_lhs_preserves_wide_base_expression_capacity() {
         let part = || packed_const(0, 32);
         let base = IrExpr::new(
@@ -1060,6 +1415,44 @@ mod tests {
         assert_eq!(
             valid_model().statement_capacity(&statement, None).unwrap(),
             96
+        );
+    }
+
+    #[test]
+    fn streaming_and_inside_children_contribute_to_capacity() {
+        let stream = IrExpr::new(
+            IrExprKind::Stream {
+                value: Box::new(packed_const(0xa5, 128)),
+                slice: 8,
+                direction: IrStreamDirection::RightToLeft,
+            },
+            128,
+            false,
+            None,
+        );
+        assert_eq!(
+            valid_model().expression_capacity(&stream, None).unwrap(),
+            128
+        );
+
+        let inside = IrExpr::new(
+            IrExprKind::Inside {
+                value: Box::new(packed_const(1, 512)),
+                items: vec![
+                    IrInsideItem::Value(packed_const(1, 8)),
+                    IrInsideItem::Range {
+                        low: packed_const(0, 32),
+                        high: packed_const(3, 32),
+                    },
+                ],
+            },
+            1,
+            false,
+            None,
+        );
+        assert_eq!(
+            valid_model().expression_capacity(&inside, None).unwrap(),
+            512
         );
     }
 
@@ -1089,6 +1482,60 @@ mod tests {
         let error = IrConst::packed(vec![0, 2], vec![], vec![], 65, false, None)
             .expect_err("bit 65 lies outside a 65-bit value");
         assert_eq!(error.path(), "const.bits");
+    }
+
+    #[test]
+    fn function_local_initializer_uses_formals_and_contributes_to_capacity() {
+        let formal = IrFormal::new(false, 512, false).expect("valid formal");
+        let formal_read = IrExpr::new(IrExprKind::FormalRead(0), 512, false, None);
+        let mut local = IrLocal::new("local".to_string(), 8, false).expect("valid local");
+        local.initial = Some(IrExpr::resize_to(formal_read, 8, false));
+        let function = IrFunc::new(
+            "f".to_string(),
+            None,
+            vec![formal],
+            vec![local],
+            Vec::new(),
+            Vec::new(),
+        );
+        let model = IrModel::from_parts(
+            "top".to_string(),
+            1,
+            IrModelParts {
+                funcs: vec![function],
+                ..IrModelParts::default()
+            },
+        )
+        .expect("a typed local initializer may read its function formal");
+
+        assert_eq!(model.packed_capacity().unwrap(), 512);
+    }
+
+    #[test]
+    fn public_parts_reject_local_initializer_with_wrong_type() {
+        let formal = IrFormal::new(false, 8, false).expect("valid formal");
+        let mut local = IrLocal::new("local".to_string(), 8, true).expect("valid local");
+        local.initial = Some(IrExpr::new(IrExprKind::FormalRead(0), 8, false, None));
+        let function = IrFunc::new(
+            "f".to_string(),
+            None,
+            vec![formal],
+            vec![local],
+            Vec::new(),
+            Vec::new(),
+        );
+
+        let error = IrModel::from_parts(
+            "top".to_string(),
+            1,
+            IrModelParts {
+                funcs: vec![function],
+                ..IrModelParts::default()
+            },
+        )
+        .expect_err("a local initializer must have the declaration's exact packed type");
+        assert_eq!(error.path(), "funcs[0].locals[0].initial");
+        assert!(error.detail().contains("initializer type"));
     }
 
     #[test]
@@ -1235,5 +1682,60 @@ mod tests {
             .expect_err("argument variants must agree with formal directions");
         assert_eq!(error.path(), "expr.args[0]");
         assert!(error.detail().contains("address argument"));
+    }
+
+    #[test]
+    fn string_return_storage_requires_its_function_context() {
+        let model = valid_model();
+        let value = IrStringExpr::LocalRead("_ret".to_owned());
+        let statement = IrStmt::Object(IrObjectStmt::StringAssignLocal("_ret".to_owned(), value));
+        assert!(model.validate_stmt(&statement, None).is_err());
+        let mut function =
+            IrFunc::new("string_fn".to_owned(), None, vec![], vec![], vec![], vec![]);
+        assert!(model.validate_stmt(&statement, Some(&function)).is_err());
+        function.ret_string = true;
+        model.validate_stmt(&statement, Some(&function)).unwrap();
+        let helper = IrPreFn::Branch {
+            c_name: "helper".to_owned(),
+            body: vec![statement],
+        };
+        assert!(model.validate_pre_fn(&helper, Some(&function)).is_err());
+    }
+
+    #[test]
+    fn string_calls_validate_packed_arguments_and_depth_context() {
+        let mut model = valid_model();
+        let mut function = IrFunc::new(
+            "string_fn".to_owned(),
+            None,
+            vec![IrFormal::new(false, 128, false).unwrap()],
+            vec![],
+            vec![],
+            vec![],
+        );
+        function.ret_string = true;
+        model.funcs.push(function.clone());
+        let statement = |width, depth| {
+            IrStmt::Object(IrObjectStmt::StringPrint(IrStringExpr::Call {
+                function: 0,
+                args: vec![packed_const(1, width)],
+                depth,
+            }))
+        };
+        assert_eq!(
+            model
+                .statement_capacity(&statement(128, IrDepth::PROC), None)
+                .unwrap(),
+            128
+        );
+        assert!(model
+            .validate_stmt(&statement(64, IrDepth::PROC), None)
+            .is_err());
+        assert!(model
+            .validate_stmt(&statement(128, IrDepth::FUNC), None)
+            .is_err());
+        model
+            .validate_stmt(&statement(128, IrDepth::FUNC), Some(&function))
+            .unwrap();
     }
 }

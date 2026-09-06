@@ -4,8 +4,8 @@ use super::constants::{emit_const, round_shortreal};
 use super::context::{RCtx, RenderedExpr};
 use super::EmitError;
 use crate::sim::ir::{
-    IrBinOp, IrBitQuery, IrCallArg, IrElemSel, IrExpr, IrExprKind, IrLhs, IrRealBinOp, IrRealUnOp,
-    IrSysFunc, IrType, IrUnOp,
+    IrBinOp, IrBitQuery, IrCallArg, IrElemSel, IrExpr, IrExprKind, IrInsideItem, IrLhs,
+    IrRealBinOp, IrRealUnOp, IrStreamDirection, IrSysFunc, IrType, IrUnOp,
 };
 
 /// The real-value code of a rendered operand: bare for real expressions,
@@ -51,6 +51,18 @@ pub(super) fn render_expr_impl(ctx: &RCtx<'_>, e: &IrExpr) -> Result<RenderedExp
     super::check_capacity(u128::from(e.width)).map_err(|error| error.to_string())?;
     let w = |x: &IrExpr| render_expr_impl(ctx, x);
     let out = match &e.kind {
+        IrExprKind::Container(operation) => RenderedExpr {
+            code: super::containers::expression(ctx, operation)?,
+            width: e.width,
+            signed: e.signed,
+            fill: None,
+        },
+        IrExprKind::ObjectQuery(query) => RenderedExpr {
+            code: super::objects::query(ctx, query, e.width, e.signed)?,
+            width: e.width,
+            signed: e.signed,
+            fill: None,
+        },
         IrExprKind::Const(c) => RenderedExpr {
             code: emit_const(c),
             width: c.width,
@@ -232,6 +244,62 @@ pub(super) fn render_expr_impl(ctx: &RCtx<'_>, e: &IrExpr) -> Result<RenderedExp
             RenderedExpr {
                 code: format!("sv4_repeat({pat}, {count})"),
                 width: e.width,
+                signed: false,
+                fill: None,
+            }
+        }
+        IrExprKind::Stream {
+            value,
+            slice,
+            direction,
+        } => {
+            let value = w(value)?;
+            RenderedExpr {
+                code: format!(
+                    "sv4_stream({}, {slice}, {})",
+                    value.code,
+                    matches!(direction, IrStreamDirection::RightToLeft) as u8
+                ),
+                width: e.width,
+                signed: false,
+                fill: None,
+            }
+        }
+        IrExprKind::Inside { value, items } => {
+            let value = w(value)?;
+            let mut code = format!(
+                "({{ sv4_t _inside_value = {}; sv4_t _inside_result = SV4_C(0, 1); ",
+                value.code
+            );
+            for (index, item) in items.iter().enumerate() {
+                match item {
+                    IrInsideItem::Value(item) => {
+                        let item = w(item)?;
+                        code.push_str(&format!(
+                            "sv4_t _inside_item_{index} = {}; \
+                             _inside_result = sv4_logor(_inside_result, \
+                             sv4_wild_eq(_inside_value, _inside_item_{index})); ",
+                            item.code
+                        ));
+                    }
+                    IrInsideItem::Range { low, high } => {
+                        let low = w(low)?;
+                        let high = w(high)?;
+                        code.push_str(&format!(
+                            "sv4_t _inside_low_{index} = {}; \
+                             sv4_t _inside_high_{index} = {}; \
+                             _inside_result = sv4_logor(_inside_result, \
+                             sv4_inside_range(_inside_value, _inside_low_{index}, \
+                             _inside_high_{index})); ",
+                            low.code, high.code
+                        ));
+                    }
+                }
+            }
+            code.push_str("_inside_result; })");
+            RenderedExpr {
+                code,
+                width: 1,
                 signed: false,
                 fill: None,
             }
@@ -662,6 +730,47 @@ pub(super) fn render_assign(
             ));
         }
     }
+    // A streaming target consumes one packed RHS value, applies the inverse
+    // stream permutation, then assigns conventional concatenation slices to
+    // its component targets from most significant to least significant.
+    if let IrLhs::Stream {
+        parts,
+        width,
+        slice,
+        direction,
+    } = lh
+    {
+        let rendered = render_expr_impl(ctx, rhs)?;
+        let value = if rhs.width == 0 {
+            rendered_to_vector(&rendered, *width, false)?
+        } else if let Some(fill) = rendered.fill {
+            format!("sv4_fill({fill}, {width}, 0)")
+        } else {
+            format!("sv4_cast({}, {width}, 0)", rendered.code)
+        };
+        let mut statements = String::new();
+        let mut cursor = *width;
+        for (part, part_width) in parts {
+            let right = cursor - part_width;
+            let left = cursor - 1;
+            let part_value = IrExpr::new(
+                IrExprKind::Verbatim {
+                    code: format!("sv4_part_select(_stream_value, {left}, {right})"),
+                    width: *part_width,
+                    signed: false,
+                },
+                *part_width,
+                false,
+                None,
+            );
+            statements.push_str(&render_assign(ctx, part, &part_value, nba)?);
+            cursor = right;
+        }
+        return Ok(format!(
+            "{{ sv4_t _stream_value = sv4_unstream({value}, {slice}, {}); {statements} }}",
+            matches!(direction, IrStreamDirection::RightToLeft) as u8
+        ));
+    }
     // A real RHS is converted to the target's vector shape up front.
     let converted: Option<(String, u32, bool)> = if rhs.width == 0 {
         let (width, signed) = match lh {
@@ -681,6 +790,7 @@ pub(super) fn render_assign(
                 IrElemSel::Part(left, right) => (((left - right).abs() + 1) as u32, false),
                 IrElemSel::Bit(_) => (1, false),
             },
+            IrLhs::Stream { width, .. } => (*width, false),
         };
         let rr = render_expr_impl(ctx, rhs)?;
         Some((rendered_to_vector(&rr, width, signed)?, width, signed))
@@ -936,6 +1046,7 @@ pub(super) fn render_assign(
             )
         }
         IrLhs::ArrayElem { .. } => unreachable!("array elements handled above"),
+        IrLhs::Stream { .. } => unreachable!("streaming targets handled above"),
     };
     Ok(format!("{call}({args});"))
 }

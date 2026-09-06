@@ -52,7 +52,7 @@ pub enum SymKind {
 pub struct TypeInfo {
     /// Base type kind: `"logic"`, `"bit"`, `"int"`, `"integer"`, `"longint"`,
     /// `"byte"`, `"shortint"`, `"time"`, `"real"`, `"shortreal"`, `"enum"`, `"struct"`,
-    /// `"union"`, `"array"`, `"string"`, `"class"`, `"other"`.
+    /// `"union"`, `"array"`, `"string"`, `"chandle"`, `"class"`, `"other"`.
     pub kind: String,
     /// Bit width; `None` when unknown or unsized (e.g. `string`).
     pub width: Option<u32>,

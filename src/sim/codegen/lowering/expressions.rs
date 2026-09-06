@@ -21,8 +21,17 @@ impl<'a> Codegen<'a> {
     /// Lower an expression node decision-for-decision like the pre-IR
     /// emitter: same widths, signednesses, fills, and error strings.
     pub(super) fn lower_expr(&mut self, scope_path: &str, h: NodeId) -> Result<IrExpr, String> {
+        if let Some(value) = self.lower_container_query(scope_path, h)? {
+            return Ok(value);
+        }
+        if let Some(value) = self.lower_object_query(scope_path, h)? {
+            return Ok(value);
+        }
         match self.kind(h) {
             NodeKind::Expr(ExprKind::Constant { .. }) => {
+                if let Some(comparison) = self.recover_folded_real_parameter_comparison(h) {
+                    return Ok(comparison);
+                }
                 if let Some(literal) = self.source_time_literal(h) {
                     let timescale = self.timescale_of_node(h);
                     let value = time_literal_to_real(&literal, timescale)?.ok_or_else(|| {
@@ -289,7 +298,7 @@ impl<'a> Codegen<'a> {
                 // cast yields the value a variable of the cast type holds
                 // after the assignment — extension follows the SOURCE's
                 // signedness, so int'(8'hFF) is 255, not -1).
-                ir_to_storage(v, w, s, *two_state || is_two_state_kind(&ty.kind))
+                ir_to_explicit_cast_storage(v, w, s, *two_state || is_two_state_kind(&ty.kind))
             }
             NodeKind::SysCall { name } => self.lower_sys_func_expr(scope_path, name, h),
             NodeKind::FuncCall {
@@ -305,6 +314,73 @@ impl<'a> Codegen<'a> {
                 self.lower_func_call_expr(scope_path, h, name, *callee)
             }
             NodeKind::Expr(ExprKind::HierPath { .. }) => {
+                if let Some((_target, _kind, member_info)) = self.unpacked_member_info(h) {
+                    let member = member_info.member;
+                    let member_value = IrExpr::resize_to(
+                        sig_read_expr_full(&member_info.signal),
+                        member.ty.width.ok_or_else(|| {
+                            format!("unpacked member `{}` has unresolved width", member.name)
+                        })?,
+                        member.ty.signed,
+                    );
+                    if let Some(select) = self.packed_member_select(h)? {
+                        let selected = match select {
+                            PackedMemberSelect::Bit(index) => {
+                                let index = self.aggregate_member_relative_bound(
+                                    &member.name,
+                                    &member.packed_ranges,
+                                    index,
+                                )?;
+                                IrExpr::new(
+                                    IrExprKind::BitSel {
+                                        base: Box::new(member_value),
+                                        idx: Box::new(lhs_integer_expr(i128::from(index))),
+                                    },
+                                    1,
+                                    false,
+                                    None,
+                                )
+                            }
+                            PackedMemberSelect::Part(left, right) => {
+                                let left = self.aggregate_member_relative_bound(
+                                    &member.name,
+                                    &member.packed_ranges,
+                                    left,
+                                )?;
+                                let right = self.aggregate_member_relative_bound(
+                                    &member.name,
+                                    &member.packed_ranges,
+                                    right,
+                                )?;
+                                let (left, right, width) = checked_select_bounds(
+                                    i128::from(left),
+                                    i128::from(right),
+                                    "unpacked aggregate member part select",
+                                )?;
+                                IrExpr::new(
+                                    IrExprKind::PartSel {
+                                        base: Box::new(member_value),
+                                        left,
+                                        right,
+                                    },
+                                    width,
+                                    false,
+                                    None,
+                                )
+                            }
+                        };
+                        return Ok(if member.two_state {
+                            IrExpr::to_two_state(selected)
+                        } else {
+                            selected
+                        });
+                    }
+                    return Ok(if member.two_state {
+                        IrExpr::to_two_state(member_value)
+                    } else {
+                        member_value
+                    });
+                }
                 if let Some((info, member)) = self.packed_member_info(h) {
                     let base = sig_read_expr_full(&info);
                     let member_value = IrExpr::new(
@@ -320,7 +396,11 @@ impl<'a> Codegen<'a> {
                     if let Some(select) = self.packed_member_select(h)? {
                         let selected = match select {
                             PackedMemberSelect::Bit(index) => {
-                                let index = self.packed_member_relative_bound(&member, index)?;
+                                let index = self.aggregate_member_relative_bound(
+                                    &member.name,
+                                    &member.packed_ranges,
+                                    index,
+                                )?;
                                 IrExpr::new(
                                     IrExprKind::BitSel {
                                         base: Box::new(member_value),
@@ -332,8 +412,16 @@ impl<'a> Codegen<'a> {
                                 )
                             }
                             PackedMemberSelect::Part(left, right) => {
-                                let left = self.packed_member_relative_bound(&member, left)?;
-                                let right = self.packed_member_relative_bound(&member, right)?;
+                                let left = self.aggregate_member_relative_bound(
+                                    &member.name,
+                                    &member.packed_ranges,
+                                    left,
+                                )?;
+                                let right = self.aggregate_member_relative_bound(
+                                    &member.name,
+                                    &member.packed_ranges,
+                                    right,
+                                )?;
                                 let (left, right, width) = checked_select_bounds(
                                     i128::from(left),
                                     i128::from(right),
@@ -370,7 +458,9 @@ impl<'a> Codegen<'a> {
                     return Ok(sig_read_expr_full(info));
                 }
                 Err(format!(
-                    "hierarchical references are not supported (in `{scope_path}`)"
+                    "hierarchical reference `{}` is not supported (in `{scope_path}`): {:?}",
+                    self.node(h).name,
+                    self.kind(h)
                 ))
             }
             other => Err(format!(
@@ -379,8 +469,99 @@ impl<'a> Codegen<'a> {
         }
     }
 
+    fn recover_folded_real_parameter_comparison(&self, node: NodeId) -> Option<IrExpr> {
+        let NodeKind::Expr(ExprKind::Constant {
+            source: ConstantSource::Exact(source),
+            size: 1,
+            ..
+        }) = self.kind(node)
+        else {
+            return None;
+        };
+        let (left, op, right) = [
+            ("!=", IrBinOp::Neq),
+            ("==", IrBinOp::Eq),
+            ("<=", IrBinOp::Le),
+            (">=", IrBinOp::Ge),
+            ("<", IrBinOp::Lt),
+            (">", IrBinOp::Gt),
+        ]
+        .into_iter()
+        .find_map(|(token, op)| {
+            source
+                .split_once(token)
+                .map(|(left, right)| (left.trim(), op, right.trim()))
+        })?;
+
+        let mut scope = self.node(node).parent;
+        let mut lexical_scopes = Vec::new();
+        let scope = loop {
+            let candidate = scope?;
+            if matches!(
+                self.kind(candidate),
+                NodeKind::ModuleInst { .. } | NodeKind::GenScope
+            ) {
+                break candidate;
+            }
+            lexical_scopes.push(candidate);
+            scope = self.node(candidate).parent;
+        };
+        let real_parameter = |name: &str| {
+            let shadowed = lexical_scopes.iter().any(|scope| {
+                self.node(*scope).children.iter().any(|declaration| {
+                    self.node(*declaration).name == name
+                        && matches!(
+                            self.kind(*declaration),
+                            NodeKind::Var { .. }
+                                | NodeKind::Array { .. }
+                                | NodeKind::Param { .. }
+                                | NodeKind::FuncArg { .. }
+                        )
+                })
+            });
+            if shadowed {
+                return None;
+            }
+            self.node(scope).children.iter().find_map(|parameter| {
+                (self.node(*parameter).name == name)
+                    .then(|| self.param_vals.get(parameter))
+                    .flatten()
+                    .and_then(|value| match value {
+                        Val::Real(value) => Some(*value),
+                        Val::Bits(_) | Val::Str(_) => None,
+                    })
+            })
+        };
+        let reverse = |op| match op {
+            IrBinOp::Lt => IrBinOp::Gt,
+            IrBinOp::Le => IrBinOp::Ge,
+            IrBinOp::Gt => IrBinOp::Lt,
+            IrBinOp::Ge => IrBinOp::Le,
+            other => other,
+        };
+        if let (Some(parameter), Some(literal)) =
+            (real_parameter(left), parse_decimal_real_literal(right))
+        {
+            return Some(cmp_expr_ir(
+                op,
+                real_literal_expr(parameter),
+                real_literal_expr(literal),
+            ));
+        }
+        if let (Some(literal), Some(parameter)) =
+            (parse_decimal_real_literal(left), real_parameter(right))
+        {
+            return Some(cmp_expr_ir(
+                reverse(op),
+                real_literal_expr(parameter),
+                real_literal_expr(literal),
+            ));
+        }
+        None
+    }
+
     fn lower_ref_expr(
-        &self,
+        &mut self,
         scope_path: &str,
         r: NodeId,
         target: Option<NodeId>,
@@ -394,6 +575,12 @@ impl<'a> Codegen<'a> {
             ));
         }
         if let Some(t) = target {
+            if self.unpacked_aggregates.contains_key(&t) {
+                return Err(format!(
+                    "whole unpacked aggregate `{}` is not supported in scalar expression `{scope_path}`",
+                    self.node(t).name
+                ));
+            }
             if let Some(info) = self.signal_of(t) {
                 return Ok(sig_read_expr_full(info));
             }
@@ -1067,6 +1254,133 @@ impl<'a> Codegen<'a> {
                 }
                 Ok(un_expr(IrUnOp::RedXNor, a))
             }
+            vpiStreamLROp | vpiStreamRLOp => {
+                let (slice, value_node) = match operands {
+                    [value] => (None, *value),
+                    [slice, value] => {
+                        let slice_value = self.eval_bits(*slice).map_err(|error| {
+                            format!(
+                                "streaming slice size must be a positive constant in \
+                                 `{scope_path}`: {error}"
+                            )
+                        })?;
+                        if slice_value.is_unknown() {
+                            return Err(format!(
+                                "streaming slice size must be known in `{scope_path}`"
+                            ));
+                        }
+                        if slice_value.signed
+                            && slice_value.width() != 0
+                            && slice_value.bit_lsb(slice_value.width() - 1) == Bit::One
+                        {
+                            return Err(format!(
+                                "streaming slice size must be positive in `{scope_path}`"
+                            ));
+                        }
+                        let slice = slice_value.to_u128().unwrap_or(u128::MAX);
+                        if slice == 0 {
+                            return Err(format!(
+                                "streaming slice size must be positive in `{scope_path}`"
+                            ));
+                        }
+                        (Some(slice), *value)
+                    }
+                    _ => {
+                        return Err(format!(
+                            "malformed streaming concatenation in `{scope_path}`"
+                        ));
+                    }
+                };
+                let value = self.lower_expr(scope_path, value_node)?;
+                if value.is_real() {
+                    return Err(format!(
+                        "streaming concatenation of real value in `{scope_path}` is not supported"
+                    ));
+                }
+                let width = value.width;
+                let slice = slice
+                    .unwrap_or(1)
+                    .min(u128::from(width))
+                    .try_into()
+                    .expect("packed stream width fits u32");
+                Ok(IrExpr::new(
+                    IrExprKind::Stream {
+                        value: Box::new(value),
+                        slice,
+                        direction: if otype == vpiStreamLROp {
+                            IrStreamDirection::LeftToRight
+                        } else {
+                            IrStreamDirection::RightToLeft
+                        },
+                    },
+                    width,
+                    false,
+                    None,
+                ))
+            }
+            vpiInsideOp => {
+                let Some((value_node, item_nodes)) = operands.split_first() else {
+                    return Err(format!("empty inside expression in `{scope_path}`"));
+                };
+                if item_nodes.is_empty() {
+                    return Err(format!("inside set is empty in `{scope_path}`"));
+                }
+                let value = self.lower_expr(scope_path, *value_node)?;
+                if value.is_real() {
+                    return Err(format!(
+                        "real-valued inside selector is not supported in `{scope_path}`"
+                    ));
+                }
+                let shapes = item_nodes
+                    .iter()
+                    .map(|node| match self.kind(*node) {
+                        NodeKind::Expr(ExprKind::Operation {
+                            op: Operation::List,
+                            operands,
+                            ..
+                        }) if matches!(operands.len(), 1 | 2) => Ok(operands.clone()),
+                        NodeKind::Expr(ExprKind::Operation {
+                            op: Operation::List,
+                            ..
+                        }) => Err(format!("malformed inside set item in `{scope_path}`")),
+                        _ => Ok(vec![*node]),
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                let mut items = Vec::with_capacity(shapes.len());
+                for shape in shapes {
+                    match shape.as_slice() {
+                        [item] => {
+                            let item = self.lower_expr(scope_path, *item)?;
+                            if item.is_real() {
+                                return Err(format!(
+                                    "real-valued inside item is not supported in `{scope_path}`"
+                                ));
+                            }
+                            items.push(IrInsideItem::Value(item));
+                        }
+                        [low, high] => {
+                            let low = self.lower_expr(scope_path, *low)?;
+                            let high = self.lower_expr(scope_path, *high)?;
+                            if low.is_real() || high.is_real() {
+                                return Err(format!(
+                                    "real-valued inside range is not supported in `{scope_path}`"
+                                ));
+                            }
+                            items.push(IrInsideItem::Range { low, high });
+                        }
+                        _ => unreachable!("inside item shape validated above"),
+                    }
+                }
+                Ok(IrExpr::new(
+                    IrExprKind::Inside {
+                        value: Box::new(value),
+                        items,
+                    },
+                    1,
+                    false,
+                    None,
+                ))
+            }
             vpiConcatOp => {
                 let mut parts = Vec::new();
                 for operand in operands {
@@ -1360,6 +1674,282 @@ impl<'a> Codegen<'a> {
         self.lhs_to_ir(lh)
     }
 
+    pub(super) fn lower_unpacked_aggregate_assignment(
+        &mut self,
+        path: &str,
+        lhs: NodeId,
+        rhs: NodeId,
+        nba: bool,
+        op: i32,
+    ) -> Result<Option<IrStmt>, String> {
+        let lhs_aggregate = self.unpacked_aggregate_info(lhs);
+        let rhs_aggregate = self.unpacked_aggregate_info(rhs);
+        let rhs_is_pattern = matches!(
+            self.kind(rhs),
+            NodeKind::Expr(ExprKind::Operation { op, .. })
+                if *op == vpi::vpiAssignmentPatternOp
+        );
+        if lhs_aggregate.is_none() && rhs_aggregate.is_none() && !rhs_is_pattern {
+            return Ok(None);
+        }
+        let (lhs_target, lhs_aggregate) = lhs_aggregate.ok_or_else(|| {
+            format!("unpacked aggregate used as a scalar assignment RHS in `{path}`")
+        })?;
+        if rhs_is_pattern {
+            if lhs_aggregate.kind != AggregateKind::UnpackedStruct {
+                return Err(format!(
+                    "assignment pattern for unpacked union `{}` in `{path}` is not supported",
+                    self.node(lhs_target).name
+                ));
+            }
+            if op != 0 && op != vpi::vpiAssignmentOp {
+                return Err(format!(
+                    "compound assignment of unpacked aggregate pattern in `{path}` is not supported"
+                ));
+            }
+            let NodeKind::Expr(ExprKind::Operation {
+                operands,
+                reordered,
+                ..
+            }) = self.kind(rhs)
+            else {
+                return Err("assignment-pattern shape changed during lowering".to_string());
+            };
+            let mut operands = operands.clone();
+            if *reordered {
+                operands.reverse();
+            }
+            let any_tagged = operands.iter().any(|operand| {
+                matches!(
+                    self.kind(*operand),
+                    NodeKind::Expr(ExprKind::TaggedPattern { .. })
+                )
+            });
+            let values = if any_tagged {
+                if operands.iter().any(|operand| {
+                    !matches!(
+                        self.kind(*operand),
+                        NodeKind::Expr(ExprKind::TaggedPattern { .. })
+                    )
+                }) {
+                    return Err(format!(
+                        "mixed positional and named unpacked struct pattern in `{path}` is not supported"
+                    ));
+                }
+                let mut values = vec![None; lhs_aggregate.members.len()];
+                for operand in operands {
+                    let NodeKind::Expr(ExprKind::TaggedPattern { key, value }) = self.kind(operand)
+                    else {
+                        continue;
+                    };
+                    let key = key.as_deref().ok_or_else(|| {
+                        format!("unresolved unpacked struct pattern key in `{path}`")
+                    })?;
+                    let value = value.ok_or_else(|| {
+                        format!("unpacked struct pattern key `{key}` has no value in `{path}`")
+                    })?;
+                    let index = lhs_aggregate
+                        .members
+                        .iter()
+                        .position(|member| member.member.name == key)
+                        .ok_or_else(|| {
+                            format!("unknown unpacked struct pattern key `{key}` in `{path}`")
+                        })?;
+                    if values[index].replace(value).is_some() {
+                        return Err(format!(
+                            "duplicate unpacked struct pattern key `{key}` in `{path}`"
+                        ));
+                    }
+                }
+                values
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, value)| {
+                        value.ok_or_else(|| {
+                            format!(
+                                "unpacked struct pattern omits member `{}` in `{path}`",
+                                lhs_aggregate.members[index].member.name
+                            )
+                        })
+                    })
+                    .collect::<Result<Vec<_>, _>>()?
+            } else {
+                if operands.len() != lhs_aggregate.members.len() {
+                    return Err(format!(
+                        "unpacked struct pattern in `{path}` has {} values for {} members",
+                        operands.len(),
+                        lhs_aggregate.members.len()
+                    ));
+                }
+                operands
+            };
+            let mut assignments = Vec::with_capacity(values.len());
+            for (left, value) in lhs_aggregate.members.iter().zip(values) {
+                let width = left.member.ty.width.ok_or_else(|| {
+                    format!(
+                        "unpacked member `{}` has unresolved width",
+                        left.member.name
+                    )
+                })?;
+                let value = self.lower_expr(path, value)?;
+                let lhs = IrLhs::Part(
+                    left.signal.ir,
+                    i64::from(width - 1),
+                    0,
+                    left.member.two_state,
+                );
+                let value = apply_lhs_assignment_context(&self.model, &lhs, value);
+                assignments.push(IrStmt::Assign {
+                    lhs,
+                    rhs: value,
+                    nba,
+                });
+            }
+            return Ok(Some(IrStmt::Block(assignments)));
+        }
+        if lhs_aggregate.kind == AggregateKind::UnpackedStruct
+            && matches!(self.kind(rhs), NodeKind::Expr(ExprKind::Constant { .. }))
+        {
+            // Surelog folds constant unpacked-structure assignment patterns
+            // to one integral payload. Recover the positional member values
+            // from the standard first-member-most-significant layout.
+            let total_width = lhs_aggregate
+                .members
+                .iter()
+                .try_fold(0u32, |width, member| {
+                    width.checked_add(member.member.ty.width?)
+                })
+                .ok_or_else(|| format!("unpacked struct pattern width overflow in `{path}`"))?;
+            let packed = IrExpr::convert_to(self.lower_expr(path, rhs)?, total_width, false);
+            let mut right = 0u32;
+            let mut values = Vec::with_capacity(lhs_aggregate.members.len());
+            for member in lhs_aggregate.members.iter().rev() {
+                let width = member.member.ty.width.ok_or_else(|| {
+                    format!(
+                        "unpacked member `{}` has unresolved width",
+                        member.member.name
+                    )
+                })?;
+                values.push((member, right, width));
+                right = right.checked_add(width).ok_or_else(|| {
+                    format!("unpacked struct pattern offset overflow in `{path}`")
+                })?;
+            }
+            values.reverse();
+            let mut assignments = Vec::with_capacity(values.len());
+            for (left, right, width) in values {
+                let value = IrExpr::new(
+                    IrExprKind::PartSel {
+                        base: Box::new(packed.clone()),
+                        left: i64::from(right + width - 1),
+                        right: i64::from(right),
+                    },
+                    width,
+                    false,
+                    None,
+                );
+                let lhs = IrLhs::Part(
+                    left.signal.ir,
+                    i64::from(width - 1),
+                    0,
+                    left.member.two_state,
+                );
+                let value = apply_lhs_assignment_context(&self.model, &lhs, value);
+                assignments.push(IrStmt::Assign {
+                    lhs,
+                    rhs: value,
+                    nba,
+                });
+            }
+            return Ok(Some(IrStmt::Block(assignments)));
+        }
+        let (rhs_target, rhs_aggregate) = rhs_aggregate.ok_or_else(|| {
+            format!("unpacked aggregate used as a scalar assignment LHS in `{path}`")
+        })?;
+        if op != 0 && op != vpi::vpiAssignmentOp {
+            return Err(format!(
+                "compound assignment of unpacked aggregates in `{path}` is not supported"
+            ));
+        }
+        let same_type_identity = match (
+            lhs_aggregate.type_identity.as_deref(),
+            rhs_aggregate.type_identity.as_deref(),
+        ) {
+            (Some(left), Some(right)) => left == right,
+            (None, None) => lhs_target == rhs_target,
+            _ => false,
+        };
+        let compatible = same_type_identity
+            && lhs_aggregate.kind == rhs_aggregate.kind
+            && lhs_aggregate.members.len() == rhs_aggregate.members.len()
+            && lhs_aggregate
+                .members
+                .iter()
+                .zip(&rhs_aggregate.members)
+                .all(|(left, right)| {
+                    left.member.name == right.member.name
+                        && left.member.ty == right.member.ty
+                        && left.member.two_state == right.member.two_state
+                        && left.member.packed_ranges == right.member.packed_ranges
+                });
+        if !compatible {
+            return Err(format!(
+                "assignment between incompatible unpacked aggregate types `{}` and `{}` in `{path}`",
+                self.node(lhs_target).name,
+                self.node(rhs_target).name
+            ));
+        }
+        if lhs_aggregate.kind == AggregateKind::UnpackedUnion {
+            let lhs = lhs_aggregate.members.first().ok_or_else(|| {
+                format!(
+                    "unpacked union `{}` has no members",
+                    self.node(lhs_target).name
+                )
+            })?;
+            let rhs = rhs_aggregate.members.first().ok_or_else(|| {
+                format!(
+                    "unpacked union `{}` has no members",
+                    self.node(rhs_target).name
+                )
+            })?;
+            return Ok(Some(IrStmt::Assign {
+                lhs: IrLhs::Whole(lhs.signal.ir),
+                rhs: sig_read_expr_full(&rhs.signal),
+                nba,
+            }));
+        }
+        let mut assignments = Vec::with_capacity(lhs_aggregate.members.len());
+        for (left, right) in lhs_aggregate.members.iter().zip(&rhs_aggregate.members) {
+            let width = left.member.ty.width.ok_or_else(|| {
+                format!(
+                    "unpacked member `{}` has unresolved width",
+                    left.member.name
+                )
+            })?;
+            let mut value = IrExpr::resize_to(
+                sig_read_expr_full(&right.signal),
+                width,
+                right.member.ty.signed,
+            );
+            if right.member.two_state {
+                value = IrExpr::to_two_state(value);
+            }
+            let lhs = IrLhs::Part(
+                left.signal.ir,
+                i64::from(width - 1),
+                0,
+                left.member.two_state,
+            );
+            let value = apply_lhs_assignment_context(&self.model, &lhs, value);
+            assignments.push(IrStmt::Assign {
+                lhs,
+                rhs: value,
+                nba,
+            });
+        }
+        Ok(Some(IrStmt::Block(assignments)))
+    }
+
     /// Convert a pre-IR [`Lhs`] to its [`IrLhs`] form using the registered
     /// model indices.
     fn lhs_to_ir(&self, lh: Lhs) -> Result<IrLhs, String> {
@@ -1398,8 +1988,144 @@ impl<'a> Codegen<'a> {
                     ElemSel::Bit(index) => IrElemSel::Bit(Box::new(index)),
                 },
             },
+            Lhs::Stream {
+                parts,
+                slice,
+                direction,
+            } => {
+                let mut ir_parts = Vec::with_capacity(parts.len());
+                let mut width = 0u32;
+                for part in parts {
+                    let part = self.lhs_to_ir(part)?;
+                    let part_width = packed_lhs_width(&self.model, &part).ok_or_else(|| {
+                        "streaming assignment target has no packed width".to_string()
+                    })?;
+                    width = width.checked_add(part_width).ok_or_else(|| {
+                        "streaming assignment target width exceeds the supported range".to_string()
+                    })?;
+                    if width > LLG_MAX_WIDTH {
+                        return Err(format!(
+                            "streaming assignment target is {width} bits wide; the v1 runtime \
+                             maximum supported width is {LLG_MAX_WIDTH}"
+                        ));
+                    }
+                    ir_parts.push((part, part_width));
+                }
+                if width == 0 {
+                    return Err("empty streaming assignment target".to_string());
+                }
+                let slice = slice
+                    .unwrap_or(1)
+                    .min(u128::from(width))
+                    .try_into()
+                    .expect("packed stream width fits u32");
+                IrLhs::Stream {
+                    parts: ir_parts,
+                    width,
+                    slice,
+                    direction,
+                }
+            }
         })
     }
+}
+
+/// Materialize an explicit cast's target width before the value enters any
+/// enclosing assignment context. An unbased unsized fill is contextual only
+/// until this boundary (IEEE 1800-2009 §6.24.1); retaining its marker would
+/// incorrectly refill a wider destination instead of extending the cast value.
+fn ir_to_explicit_cast_storage(
+    value: IrExpr,
+    width: u32,
+    signed: bool,
+    two_state: bool,
+) -> Result<IrExpr, String> {
+    let Some(fill) = value.fill else {
+        return ir_to_storage(value, width, signed, two_state);
+    };
+    let limbs = (width as usize).div_ceil(64);
+    let mut materialized = vec![u64::MAX; limbs];
+    if let Some(last) = materialized.last_mut() {
+        let tail = width % 64;
+        if tail != 0 {
+            *last = (1u64 << tail) - 1;
+        }
+    }
+    let zeros = vec![0; limbs];
+    let (bits, x, z) = match (fill, two_state) {
+        (2 | 3, true) => (zeros.clone(), zeros.clone(), zeros),
+        (0, _) => (zeros.clone(), zeros.clone(), zeros),
+        (1, _) => (materialized, zeros.clone(), zeros),
+        (2, _) => (zeros.clone(), materialized, zeros),
+        (3, _) => (zeros.clone(), zeros, materialized),
+        _ => return Err(format!("invalid explicit-cast fill value {fill}")),
+    };
+    let constant =
+        IrConst::packed(bits, x, z, width, signed, None).map_err(|error| error.to_string())?;
+    Ok(IrExpr::new(
+        IrExprKind::Const(constant),
+        width,
+        signed,
+        None,
+    ))
+}
+
+fn parse_decimal_real_literal(token: &str) -> Option<f64> {
+    let bytes = token.as_bytes();
+    if bytes.is_empty() {
+        return None;
+    }
+    for (index, byte) in bytes.iter().enumerate() {
+        if *byte == b'_'
+            && (!index
+                .checked_sub(1)
+                .and_then(|previous| bytes.get(previous))
+                .is_some_and(u8::is_ascii_digit)
+                || !bytes.get(index + 1).is_some_and(u8::is_ascii_digit))
+        {
+            return None;
+        }
+    }
+    let normalized = token.replace('_', "");
+    let bytes = normalized.as_bytes();
+    let mut index = usize::from(matches!(bytes.first(), Some(b'+' | b'-')));
+    let integer_start = index;
+    while bytes.get(index).is_some_and(u8::is_ascii_digit) {
+        index += 1;
+    }
+    if index == integer_start {
+        return None;
+    }
+    if bytes.get(index) == Some(&b'.') {
+        index += 1;
+        let fraction_start = index;
+        while bytes.get(index).is_some_and(u8::is_ascii_digit) {
+            index += 1;
+        }
+        if index == fraction_start {
+            return None;
+        }
+    }
+    if matches!(bytes.get(index), Some(b'e' | b'E')) {
+        index += 1;
+        if matches!(bytes.get(index), Some(b'+' | b'-')) {
+            index += 1;
+        }
+        let exponent_start = index;
+        while bytes.get(index).is_some_and(u8::is_ascii_digit) {
+            index += 1;
+        }
+        if index == exponent_start {
+            return None;
+        }
+    }
+    if index != bytes.len() {
+        return None;
+    }
+    normalized
+        .parse::<f64>()
+        .ok()
+        .filter(|value| value.is_finite())
 }
 
 fn time_literal_token(source: &str) -> Option<&str> {
@@ -1481,6 +2207,87 @@ fn time_literal_token(source: &str) -> Option<&str> {
         start += 1;
     }
     None
+}
+
+#[cfg(test)]
+mod cast_tests {
+    use super::{ir_to_explicit_cast_storage, parse_decimal_real_literal};
+    use crate::sim::codegen::lowering::ir_to_storage;
+    use crate::sim::ir::{
+        IrExpr, IrExprKind, IrLhs, IrModel, IrProcess, IrShape, IrSignal, IrStmt, IrType,
+    };
+    use crate::sim::opt::{self, OptConfig};
+
+    #[test]
+    fn explicit_cast_materializes_unsized_fill_at_target_width() {
+        let fill = IrExpr::new(IrExprKind::Fill(1), 1, false, Some(1));
+        let cast = ir_to_explicit_cast_storage(fill, 1, false, false).unwrap();
+
+        assert_eq!(cast.width(), 1);
+        assert_eq!(cast.fill(), None);
+        assert!(matches!(
+            cast.kind(),
+            IrExprKind::Const(value)
+                if value.bits() == [1]
+                    && value.x_mask() == [0]
+                    && value.z_mask() == [0]
+        ));
+    }
+
+    #[test]
+    fn folded_real_comparison_accepts_only_decimal_numeric_tokens() {
+        assert_eq!(parse_decimal_real_literal("1.5"), Some(1.5));
+        assert_eq!(parse_decimal_real_literal("-2_000e-3"), Some(-2.0));
+        assert_eq!(parse_decimal_real_literal("42"), Some(42.0));
+        for rejected in ["NaN", "inf", "+inf", "1.", ".5", "1__0", "1e", "8'h1"] {
+            assert_eq!(parse_decimal_real_literal(rejected), None, "{rejected}");
+        }
+    }
+
+    #[test]
+    fn narrow_fill_cast_stays_materialized_when_assigned_wider() {
+        let build = || {
+            let fill = IrExpr::new(IrExprKind::Fill(1), 1, false, Some(1));
+            let cast = ir_to_explicit_cast_storage(fill, 1, false, false).unwrap();
+            let rhs = ir_to_storage(cast, 8, false, false).unwrap();
+            let mut model = IrModel::new("cast".to_string(), 1).unwrap();
+            model.signals.push(
+                IrSignal::new(
+                    "value".to_string(),
+                    None,
+                    IrType::packed(8, false).unwrap(),
+                    None,
+                )
+                .unwrap(),
+            );
+            model.processes.push(IrProcess::new(
+                "proc".to_string(),
+                "cast.initial".to_string(),
+                IrShape::RunOnce,
+                Vec::new(),
+                vec![IrStmt::Assign {
+                    lhs: IrLhs::Whole(0),
+                    rhs,
+                    nba: false,
+                }],
+            ));
+            model
+        };
+
+        for config in [OptConfig::none(), OptConfig::default()] {
+            let mut model = build();
+            opt::run(&mut model, &config);
+            let IrStmt::Assign { rhs, .. } = &model.processes[0].body[0] else {
+                panic!("optimizer replaced the cast assignment")
+            };
+            assert_eq!(rhs.fill(), None);
+            if let IrExprKind::Const(value) = rhs.kind() {
+                assert_eq!(value.width(), 8);
+                assert_eq!(value.bits(), [1]);
+                assert_eq!(value.fill(), None);
+            }
+        }
+    }
 }
 
 #[cfg(test)]

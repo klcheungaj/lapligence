@@ -41,12 +41,18 @@ pub(crate) fn write_sim_sources(
 
     let (rt_h, rt_c) = rt::runtime_sources();
     let (value_h, value_c) = rt::value_sources();
+    let (container_h, container_c) = rt::container_sources();
+    let (string_h, string_c) = rt::string_sources();
     let (aco_h, aco_c, aco_s) = rt::libaco_sources();
     let mut files = vec![
         ("llg_rt.h", rt_h),
         ("llg_rt.c", rt_c),
         ("llg_value.h", value_h),
         ("llg_value.c", value_c),
+        ("llg_container.h", container_h),
+        ("llg_container.c", container_c),
+        ("llg_string.h", string_h),
+        ("llg_string.c", string_c),
         ("aco.h", aco_h),
         ("aco.c", aco_c),
         ("acosw.S", aco_s),

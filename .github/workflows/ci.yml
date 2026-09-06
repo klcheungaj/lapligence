@@ -72,7 +72,7 @@ jobs:
     timeout-minutes: 180
     env:
       # sim::build forwards these flags to every generated-model C source,
-      # including llg_value.c, llg_rt.c, aco.c, and the final link. ACO_USE_ASAN enables
+      # including value/string/container runtimes, llg_rt.c, aco.c, and the final link. ACO_USE_ASAN enables
       # libaco's no_sanitize_address annotations on its stack-copy routines.
       LLG_CC: gcc
       LLG_CFLAGS: >-
@@ -98,7 +98,7 @@ jobs:
         run: >-
           cargo test --all-features
           --test runtime_values --test runtime_boundaries --test sim_counter
-          --test sim_data_types
+          --test sim_data_types --test sim_data_types_next --test sim_function --test sim_loops
           -- --test-threads=1
 
   dependency-audit:

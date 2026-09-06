@@ -34,6 +34,97 @@ impl CachedConstantSourceFile {
     }
 }
 
+fn lifetime_qualifier_on_line(
+    text: &str,
+    object_offset: usize,
+    scan_end: usize,
+) -> Option<VariableLifetimeQualifier> {
+    let bytes = text.as_bytes();
+    let mut offset = 0usize;
+    let mut declaration_start = 0usize;
+    let mut block_comment = false;
+    let (mut has_static, mut has_automatic) = (false, false);
+    while offset < scan_end {
+        if block_comment {
+            if bytes.get(offset..offset + 2) == Some(b"*/") {
+                block_comment = false;
+                offset += 2;
+            } else {
+                offset += 1;
+            }
+            continue;
+        }
+        if bytes.get(offset..offset + 2) == Some(b"/*") {
+            block_comment = true;
+            offset += 2;
+            continue;
+        }
+        if bytes.get(offset..offset + 2) == Some(b"//") {
+            offset = bytes[offset..scan_end]
+                .iter()
+                .position(|byte| *byte == b'\n')
+                .map_or(scan_end, |newline| offset + newline + 1);
+            continue;
+        }
+        if bytes[offset] == b'"' {
+            offset += 1;
+            while offset < scan_end {
+                match bytes[offset] {
+                    b'\\' => offset = (offset + 2).min(scan_end),
+                    b'"' => {
+                        offset += 1;
+                        break;
+                    }
+                    _ => offset += 1,
+                }
+            }
+            continue;
+        }
+        if bytes[offset] == b'\\' {
+            while offset < scan_end && !bytes[offset].is_ascii_whitespace() {
+                offset += 1;
+            }
+            continue;
+        }
+        if matches!(bytes[offset], b';' | b'{' | b'}') {
+            if offset >= object_offset {
+                break;
+            }
+            declaration_start = offset + 1;
+            has_static = false;
+            has_automatic = false;
+            offset += 1;
+            continue;
+        }
+        if bytes[offset] == b'=' && offset >= object_offset {
+            break;
+        }
+        if !is_ident_start(bytes[offset]) {
+            offset += 1;
+            continue;
+        }
+        let word_start = offset;
+        offset += 1;
+        while offset < scan_end && is_ident_byte(bytes[offset]) {
+            offset += 1;
+        }
+        match &text[word_start..offset] {
+            "static" => has_static = true,
+            "automatic" => has_automatic = true,
+            _ => {}
+        }
+    }
+    if object_offset.saturating_sub(declaration_start) > Builder::MAX_CONSTANT_SOURCE_SPAN_BYTES {
+        return None;
+    }
+    Some(match (has_static, has_automatic) {
+        (true, false) => VariableLifetimeQualifier::Static,
+        (false, true) => VariableLifetimeQualifier::Automatic,
+        (false, false) => VariableLifetimeQualifier::None,
+        (true, true) => VariableLifetimeQualifier::Ambiguous,
+    })
+}
+
 impl Builder {
     /// Maximum bytes read from one source file while recovering unsigned
     /// constant spelling. A sentinel byte detects a racing/growing file.
@@ -141,6 +232,62 @@ impl Builder {
         let source = text.get(start..end)?;
         let prefix_end = source.find('{').map_or(source.len(), |offset| offset + 1);
         Some(source[..prefix_end].to_owned())
+    }
+
+    pub(in crate::core::db) fn variable_lifetime_qualifier(
+        &mut self,
+        handle: VpiHandle,
+        parent: Option<NodeId>,
+    ) -> VariableLifetimeQualifier {
+        let file = {
+            let direct = vpi::obj_file(handle);
+            if !direct.is_empty() {
+                Some(direct)
+            } else {
+                let mut scope = parent;
+                let mut inherited = None;
+                while let Some(node) = scope {
+                    let entry = &self.nodes[node.index()];
+                    if let Some(file) = entry.file.as_ref().filter(|file| !file.is_empty()) {
+                        inherited = Some(file.clone());
+                        break;
+                    }
+                    scope = entry.parent;
+                }
+                inherited
+            }
+        };
+        let Some(file) = file else {
+            return VariableLifetimeQualifier::Unavailable;
+        };
+        let line = match usize::try_from(vpi::get(vpi::vpiLineNo, handle)) {
+            Ok(line) if line != 0 => line,
+            _ => return VariableLifetimeQualifier::Unavailable,
+        };
+        if !self.constant_source_allowed.contains(&file) || !self.ensure_constant_source_file(&file)
+        {
+            return VariableLifetimeQualifier::Unavailable;
+        }
+        let Some(CachedConstantSourceFile::Available { text, line_starts }) =
+            self.constant_source_files.get(&file)
+        else {
+            return VariableLifetimeQualifier::Unavailable;
+        };
+        let Some(start) = line_starts.get(line - 1).map(|offset| *offset as usize) else {
+            return VariableLifetimeQualifier::Unavailable;
+        };
+        let end = line_starts
+            .get(line)
+            .map_or(text.len(), |offset| *offset as usize);
+        let column = match usize::try_from(vpi::get(vpi::vpiColumnNo, handle)) {
+            Ok(column) if column != 0 => column,
+            _ => return VariableLifetimeQualifier::Unavailable,
+        };
+        let Some(object_offset) = start.checked_add(column - 1) else {
+            return VariableLifetimeQualifier::Unavailable;
+        };
+        lifetime_qualifier_on_line(text, object_offset, end)
+            .unwrap_or(VariableLifetimeQualifier::Unavailable)
     }
 
     fn simple_size_cast_width(&mut self, handle: VpiHandle) -> Option<u32> {
@@ -573,9 +720,10 @@ impl Builder {
             vpi::vpiNullStmt => {
                 self.set_stmt(id, StmtKind::Empty);
             }
-            vpi::vpiReturnStmt => {
+            vpi::vpiReturn | vpi::vpiReturnStmt => {
                 // `return [expr];` — the value lives under `vpiCondition`;
-                // a bare `return;` has no children.
+                // a bare `return;` has no children. Vendored UHDM's
+                // return_stmt.yaml reports vpiReturn as the object type.
                 let mut kids: Vec<NodeId> = Vec::new();
                 let value = match child(vpi::vpiCondition, h) {
                     Some(v) => {
@@ -673,11 +821,7 @@ impl Builder {
                     value: vpi::read_value(h),
                     size: vpi::get(vpi::vpiSize, h),
                     const_type,
-                    source: if unsigned {
-                        self.constant_source(h)
-                    } else {
-                        ConstantSource::NotCaptured
-                    },
+                    source: self.constant_source(h),
                     // Surelog v1.87's time-literal compilation path uniquely
                     // omits vpiDecompile while ordinary UInt constants set it.
                     time_literal_candidate: unsigned
@@ -688,6 +832,20 @@ impl Builder {
             vpi::vpiEnumConst => {
                 let value = elab::read_value(h).ok();
                 self.set_kind(id, NodeKind::EnumConst { value });
+            }
+            vpi::vpiTaggedPattern => {
+                let typespec = child(vpi::vpiTypespec, h);
+                let key = typespec
+                    .as_ref()
+                    .and_then(|typespec| child(vpi::vpiActual, typespec.raw()))
+                    .map(|actual| vpi::obj_name(actual.raw()))
+                    .filter(|name| !name.is_empty());
+                let value = match child(vpi::vpiPattern, h) {
+                    Some(pattern) => Some(self.walk_node(pattern.raw(), Some(id))?),
+                    None => None,
+                };
+                self.set_children(id, value.into_iter().collect());
+                self.set_expr(id, ExprKind::TaggedPattern { key, value });
             }
             vpi::vpiOperation => {
                 let op = capture::expressions::operation(h);
@@ -711,6 +869,17 @@ impl Builder {
                     // size, then evaluate retained typedef ranges in the
                     // operation's enclosing parameter scope.
                     let (mut size_cast_expr, spelling_available) = self.size_cast_spelling(h);
+                    let source_typedef = size_cast_expr.as_deref().and_then(|token| {
+                        (!token
+                            .replace('_', "")
+                            .bytes()
+                            .all(|byte| byte.is_ascii_digit()))
+                        .then(|| self.enclosing_typedef_info(h, token))
+                        .flatten()
+                    });
+                    if let Some((source_ty, _)) = &source_typedef {
+                        ty = source_ty.clone();
+                    }
                     if size_cast_expr.as_deref().is_some_and(|token| {
                         token.eq_ignore_ascii_case(&ty.kind)
                             || ty.type_name.as_deref() == Some(token)
@@ -746,9 +915,14 @@ impl Builder {
                         .ok_or_else(|| "cast without operand".to_string())?;
                     let cast_kind_known =
                         spelling_available || !matches!(ty.kind.as_str(), "int" | "integer");
-                    let two_state = typespec
-                        .as_ref()
-                        .is_some_and(|typespec| self.typespec_two_state(typespec.raw(), 0));
+                    let two_state = source_typedef.as_ref().map_or_else(
+                        || {
+                            typespec
+                                .as_ref()
+                                .is_some_and(|typespec| self.typespec_two_state(typespec.raw(), 0))
+                        },
+                        |(_, two_state)| *two_state,
+                    );
                     self.set_expr(
                         id,
                         ExprKind::Cast {
@@ -783,6 +957,8 @@ impl Builder {
                 // arena identity.
                 let ty = self.type_info_of(h);
                 self.set_kind(id, NodeKind::Var { ty });
+                let lifetime = self.variable_lifetime_qualifier(h, parent);
+                self.var_lifetime_qualifiers.insert(id, lifetime);
                 if self.object_two_state(h) {
                     self.two_state_types.insert(id);
                 }
@@ -875,6 +1051,34 @@ impl Builder {
                 );
             }
             vpi::vpiHierPath => {
+                let actuals = iter(vpi::vpiActual, h);
+                if let Some(method) = actuals.last().filter(|node| {
+                    matches!(
+                        vpi::obj_type(node.raw()),
+                        vpi::vpiMethodFuncCall | vpi::vpiMethodTaskCall
+                    )
+                }) {
+                    let receiver = match child(vpi::vpiPrefix, method.raw()) {
+                        Some(prefix) => Some(self.walk_node(prefix.raw(), Some(id))?),
+                        None => match actuals.iter().rev().nth(1) {
+                            Some(prefix) => Some(self.walk_node(prefix.raw(), Some(id))?),
+                            None => None,
+                        },
+                    };
+                    let mut kids = receiver.into_iter().collect::<Vec<_>>();
+                    for argument in iter(vpi::vpiArgument, method.raw()) {
+                        kids.push(self.walk_node(argument.raw(), Some(id))?);
+                    }
+                    self.set_children(id, kids);
+                    self.set_kind(
+                        id,
+                        NodeKind::MethodCall {
+                            name: vpi::obj_name(method.raw()),
+                            receiver,
+                        },
+                    );
+                    return Ok(id);
+                }
                 let mut parts = Vec::new();
                 let mut refs = Vec::new();
                 // A hier_path's `vpiActual` is 1-to-many: one ref_obj per
@@ -892,6 +1096,24 @@ impl Builder {
             }
 
             // ── Calls ──────────────────────────────────────────────────────
+            vpi::vpiMethodFuncCall | vpi::vpiMethodTaskCall => {
+                let receiver = match child(vpi::vpiPrefix, h) {
+                    Some(prefix) => Some(self.walk_node(prefix.raw(), Some(id))?),
+                    None => None,
+                };
+                let mut kids = receiver.into_iter().collect::<Vec<_>>();
+                for argument in iter(vpi::vpiArgument, h) {
+                    kids.push(self.walk_node(argument.raw(), Some(id))?);
+                }
+                self.set_children(id, kids);
+                self.set_kind(
+                    id,
+                    NodeKind::MethodCall {
+                        name: vpi::obj_name(h),
+                        receiver,
+                    },
+                );
+            }
             vpi::vpiSysFuncCall | vpi::vpiSysTaskCall => {
                 let name = vpi::obj_name(h);
                 let mut kids: Vec<NodeId> = Vec::new();
@@ -997,6 +1219,32 @@ mod source_cache_tests {
     use std::sync::atomic::{AtomicU64, Ordering};
 
     static NEXT_PATH: AtomicU64 = AtomicU64::new(0);
+
+    #[test]
+    fn lifetime_qualifier_scan_ignores_comments_strings_and_prior_lines() {
+        let text = "static int prior; /* automatic */\n\
+                    logic value; // static automatic\n";
+        let start = text.find("logic").unwrap();
+        assert_eq!(
+            lifetime_qualifier_on_line(text, start, text.len()),
+            Some(VariableLifetimeQualifier::None)
+        );
+        assert_eq!(
+            lifetime_qualifier_on_line("static automatic int value;", 21, 27),
+            Some(VariableLifetimeQualifier::Ambiguous)
+        );
+        assert_eq!(
+            lifetime_qualifier_on_line("automatic int value;", 14, 20),
+            Some(VariableLifetimeQualifier::Automatic)
+        );
+        let multiline = "function automatic f;\nstatic\nint value;\nendfunction\n";
+        let value = multiline.find("value").unwrap();
+        let end = multiline[value..].find(';').unwrap() + value + 1;
+        assert_eq!(
+            lifetime_qualifier_on_line(multiline, value, end),
+            Some(VariableLifetimeQualifier::Static)
+        );
+    }
 
     fn test_path(tag: &str) -> std::path::PathBuf {
         let sequence = NEXT_PATH.fetch_add(1, Ordering::Relaxed);

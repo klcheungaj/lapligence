@@ -1,8 +1,8 @@
 //! Conservative coroutine-stack sizing from the validated simulator IR.
 
 use crate::sim::ir::{
-    IrCall, IrCallArg, IrElemSel, IrExpr, IrExprKind, IrFunc, IrLhs, IrModel, IrPreFn, IrStmt,
-    IrSysFunc, IrType,
+    IrCall, IrCallArg, IrElemSel, IrExpr, IrExprKind, IrFunc, IrInsideItem, IrLhs, IrModel,
+    IrPreFn, IrStmt, IrSysFunc, IrType,
 };
 
 /// Keep aligned with the emitted function recursion guard in `model.rs`.
@@ -57,10 +57,27 @@ fn function_frame_slots(func: &IrFunc) -> Result<u64, String> {
         "function value-formal count",
     )?;
     let locals = usize_slots(func.locals.len(), "function local count")?;
+    let mut local_initializers = 0;
+    for local in &func.locals {
+        if let Some(initial) = &local.initial {
+            local_initializers = checked_add(
+                local_initializers,
+                expr_slots(initial)?,
+                "function local initializer slots",
+            )?;
+        }
+    }
     let declarations = decl_slots(&func.body)?;
     let temporaries = stmt_temp_frame_slots(&func.body)?;
     checked_sum(
-        [ret, formals, locals, declarations, temporaries],
+        [
+            ret,
+            formals,
+            locals,
+            local_initializers,
+            declarations,
+            temporaries,
+        ],
         "function frame slots",
     )
 }
@@ -134,6 +151,24 @@ fn stmt_temp_frame_slots(stmts: &[IrStmt]) -> Result<u64, String> {
 
 fn stmt_temp_slots(stmt: &IrStmt) -> Result<u64, String> {
     match stmt {
+        IrStmt::Container(operation) => {
+            let mut slots = Ok(1);
+            operation.expressions(&mut |child| {
+                slots = slots
+                    .clone()
+                    .and_then(|n| checked_add(n, expr_slots(child)?, "container statement slots"));
+            });
+            slots
+        }
+        IrStmt::Object(operation) => {
+            let mut slots = Ok(1);
+            operation.expressions(&mut |child| {
+                slots = slots
+                    .clone()
+                    .and_then(|n| checked_add(n, expr_slots(child)?, "object statement slots"));
+            });
+            slots
+        }
         IrStmt::Block(body) | IrStmt::Forever { body } => stmt_temp_frame_slots(body),
         IrStmt::DeclLocal { init, .. } => init
             .as_deref()
@@ -288,6 +323,24 @@ fn expr_peak(exprs: &[IrExpr]) -> Result<u64, String> {
 
 fn expr_slots(expr: &IrExpr) -> Result<u64, String> {
     let children = match expr.kind() {
+        IrExprKind::Container(operation) => {
+            let mut slots = Ok(0);
+            operation.expressions(&mut |child| {
+                slots = slots
+                    .clone()
+                    .and_then(|n| checked_add(n, expr_slots(child)?, "container expression slots"));
+            });
+            slots?
+        }
+        IrExprKind::ObjectQuery(query) => {
+            let mut slots = Ok(0);
+            query.expressions(&mut |child| {
+                slots = slots
+                    .clone()
+                    .and_then(|n| checked_add(n, expr_slots(child)?, "object expression slots"));
+            });
+            slots?
+        }
         IrExprKind::CallFn(call) => call_arg_slots(call.args())?,
         IrExprKind::Bin { a, b, .. } | IrExprKind::RealBin { a, b, .. } => {
             checked_add(expr_slots(a)?, expr_slots(b)?, "binary expression slots")?
@@ -305,6 +358,22 @@ fn expr_slots(expr: &IrExpr) -> Result<u64, String> {
         )?,
         IrExprKind::Concat { parts } | IrExprKind::Replicate { parts, .. } => {
             expr_sum(parts, "concatenation expression slots")?
+        }
+        IrExprKind::Stream { value, .. } => expr_slots(value)?,
+        IrExprKind::Inside { value, items } => {
+            let mut slots = expr_slots(value)?;
+            for item in items {
+                let item_slots = match item {
+                    IrInsideItem::Value(item) => expr_slots(item)?,
+                    IrInsideItem::Range { low, high } => checked_add(
+                        expr_slots(low)?,
+                        expr_slots(high)?,
+                        "inside range expression slots",
+                    )?,
+                };
+                slots = checked_add(slots, item_slots, "inside expression slots")?;
+            }
+            slots
         }
         IrExprKind::BitSel { base, idx } => checked_add(
             expr_slots(base)?,
@@ -373,6 +442,13 @@ fn lhs_slots(lhs: &IrLhs) -> Result<u64, String> {
             elem_sel_slots(elem_sel)?,
             "array LHS slots",
         ),
+        IrLhs::Stream { parts, .. } => {
+            let mut slots = 1;
+            for (part, _) in parts {
+                slots = checked_add(slots, lhs_slots(part)?, "streaming LHS slots")?;
+            }
+            Ok(slots)
+        }
         IrLhs::Whole(_) | IrLhs::WholeRef { .. } | IrLhs::Part(..) => Ok(0),
     }
 }
@@ -473,6 +549,38 @@ mod tests {
         assert_eq!(
             stack_value_slots(&model),
             Ok(frame_slots * MAX_FUNC_DEPTH * ABI_SAFETY_FACTOR)
+        );
+    }
+
+    #[test]
+    fn function_frame_counts_local_initializer_temporaries() {
+        let initializer = IrExpr::new(
+            IrExprKind::Bin {
+                op: IrBinOp::Add,
+                a: Box::new(constant(1)),
+                b: Box::new(constant(2)),
+            },
+            8,
+            false,
+            None,
+        );
+        let mut local = IrLocal::new("local".to_string(), 8, false).expect("valid local");
+        local.initial = Some(initializer);
+        let function = IrFunc::new(
+            "f".to_string(),
+            None,
+            Vec::new(),
+            vec![local],
+            Vec::new(),
+            Vec::new(),
+        );
+        let mut model = IrModel::new("initializers".to_string(), 1).expect("valid model");
+        model.funcs.push(function);
+
+        // One persistent local plus the binary initializer's three values.
+        assert_eq!(
+            stack_value_slots(&model),
+            Ok(4 * MAX_FUNC_DEPTH * ABI_SAFETY_FACTOR)
         );
     }
 

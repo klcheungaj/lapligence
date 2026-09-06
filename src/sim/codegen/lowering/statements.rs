@@ -108,7 +108,7 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
         cond_node: NodeId,
         body_node: NodeId,
     ) -> Result<Vec<IrStmt>, String> {
-        let cond = self.cg.lower_expr(&self.path, cond_node)?;
+        let cond = self.cg.lower_boolean_expr(&self.path, cond_node)?;
         let brk = self.new_label("bk");
         let cont = self.new_label("ct");
         self.ctrl.push(CtrlScope::Loop {
@@ -242,6 +242,21 @@ impl EmitCtx<'_, '_> {
         match self.cg.kind(h) {
             NodeKind::Stmt(StmtKind::Begin) => {
                 let mut body = Vec::new();
+                let children = self.cg.node(h).children.clone();
+                if self.func.is_none() {
+                    for child in &children {
+                        if matches!(self.cg.kind(*child), NodeKind::Var { .. }) {
+                            let info = self.cg.collect_loop_var(&self.path, *child)?;
+                            body.push(IrStmt::DeclLocal {
+                                name: info.c_name,
+                                width: info.width,
+                                signed: info.signed,
+                                two_state: info.two_state,
+                                init: None,
+                            });
+                        }
+                    }
+                }
                 // A named block is a potential `disable` target: its exit
                 // label is allocated before the body lowers so disables
                 // inside (including inside inlined task expansions) can
@@ -255,7 +270,7 @@ impl EmitCtx<'_, '_> {
                         exit_used: false,
                     });
                 }
-                for s in &self.cg.node(h).children {
+                for s in &children {
                     // Local variable declarations inside the block are hoisted
                     // by the function-local collection; skip them here.
                     if matches!(
@@ -281,7 +296,7 @@ impl EmitCtx<'_, '_> {
                 Ok(vec![IrStmt::Block(body)])
             }
             NodeKind::Stmt(StmtKind::IfElse { cond }) => {
-                let c = self.cg.lower_expr(&self.path, *cond)?;
+                let c = self.cg.lower_boolean_expr(&self.path, *cond)?;
                 let then_node = self
                     .cg
                     .node(h)
@@ -432,7 +447,7 @@ impl EmitCtx<'_, '_> {
             NodeKind::Stmt(StmtKind::Case { .. }) => self.lower_case(h),
             NodeKind::Stmt(StmtKind::For { .. }) => self.lower_for(h),
             NodeKind::Stmt(StmtKind::While { cond, body }) => {
-                let c = self.cg.lower_expr(&self.path, *cond)?;
+                let c = self.cg.lower_boolean_expr(&self.path, *cond)?;
                 let (body, brk) = self.lower_loop_body(*body)?;
                 // `continue` lands on the back edge (the condition test):
                 // its label sits at the END of the body (lower_loop_body).
@@ -563,6 +578,13 @@ impl EmitCtx<'_, '_> {
                 }
                 Ok(vec![self.lower_task_call(h, name, *is_task, *callee)?])
             }
+            NodeKind::MethodCall { .. } => {
+                if let Some(statement) = self.cg.lower_container_method(&self.path, h)? {
+                    Ok(vec![statement])
+                } else {
+                    Ok(vec![self.cg.lower_object_method(&self.path, h)?])
+                }
+            }
             NodeKind::Stmt(StmtKind::Unsupported { vpi_type }) => {
                 let node = self.cg.node(h);
                 let file = node.file.as_deref().unwrap_or("<unknown>");
@@ -612,7 +634,32 @@ impl EmitCtx<'_, '_> {
             .get(1)
             .copied()
             .ok_or_else(|| "assignment without RHS".to_string())?;
+        // Surelog exposes a subprogram declaration initializer as an
+        // assignment whose LHS is the Var declaration itself. Its value is
+        // emitted through `IrLocal::initial`; suppress only that structural
+        // declaration form. Executable assignments have Ref LHS nodes.
+        let is_declaration_initializer = matches!(self.cg.kind(lhs), NodeKind::Var { .. })
+            && !force_blocking
+            && self
+                .func
+                .as_ref()
+                .is_some_and(|function| function.locals.contains_key(&lhs));
+        if is_declaration_initializer {
+            return Ok(IrStmt::Nop);
+        }
         let blocking = force_blocking || blocking;
+        if let Some(statement) =
+            self.cg
+                .lower_container_assignment(&self.path, lhs, rhs, blocking, op.as_raw())?
+        {
+            return Ok(statement);
+        }
+        if let Some(statement) =
+            self.cg
+                .lower_object_assignment(&self.path, lhs, rhs, blocking, op.as_raw())?
+        {
+            return Ok(statement);
+        }
         if !blocking {
             if let Some(local) = self.cg.proc_local_target(lhs) {
                 return Err(format!(
@@ -628,6 +675,15 @@ impl EmitCtx<'_, '_> {
                  allowed (final permits function statements only)",
                 self.path
             ));
+        }
+        if let Some(aggregate_assignment) = self.cg.lower_unpacked_aggregate_assignment(
+            &self.path,
+            lhs,
+            rhs,
+            !blocking,
+            op.as_raw(),
+        )? {
+            return Ok(aggregate_assignment);
         }
         let lh = self.cg.lower_lhs(&self.path, lhs)?;
         let rhs_ir = self.lower_assignment_rhs(lhs, rhs, op.as_raw(), &lh)?;
@@ -1249,7 +1305,7 @@ impl EmitCtx<'_, '_> {
                 }
             }
         }
-        let cond_ir = self.cg.lower_expr(&self.path, cond)?;
+        let cond_ir = self.cg.lower_boolean_expr(&self.path, cond)?;
         let (body_stmts, brk) = self.lower_loop_body(body)?;
         let mut incr_stmts = Vec::with_capacity(incr.len());
         for s in &incr {
@@ -1878,6 +1934,12 @@ impl EmitCtx<'_, '_> {
         let args: Vec<NodeId> = self.cg.node(h).children.clone();
         match name {
             "$display" | "$write" => {
+                if let Some(statements) =
+                    self.cg
+                        .lower_object_display(&self.path, &args, name == "$display")?
+                {
+                    return Ok(statements);
+                }
                 let (fmt, display_args) = self.parse_display_call(name, &args, true)?;
                 Ok(vec![IrStmt::Display {
                     fmt,
@@ -2198,10 +2260,10 @@ impl EmitCtx<'_, '_> {
             }
         );
         if is_task
-            && self
-                .cg
-                .func_body(ft)
-                .is_some_and(|body| self.cg.node_has_unsafe_subroutine_nba(body, ft, automatic))
+            && self.cg.func_body(ft).is_some_and(|body| {
+                self.cg
+                    .node_has_stack_backed_subroutine_nba(body, ft, automatic)
+            })
         {
             return Err(format!(
                 "nonblocking assignment in task `{name}` targets stack-backed input/formal/local storage which cannot outlive the call"
@@ -2344,6 +2406,13 @@ impl EmitCtx<'_, '_> {
         bound: &[BoundArg],
     ) -> Result<IrStmt, String> {
         let tname = self.cg.node(ft).name.clone();
+        let automatic = matches!(
+            self.cg.kind(ft),
+            NodeKind::FuncTask {
+                automatic: true,
+                ..
+            }
+        );
         if let Some(inl) = &self.inline {
             if inl.chain.contains(&tname) {
                 return Err(format!(
@@ -2356,8 +2425,8 @@ impl EmitCtx<'_, '_> {
             .func_body(ft)
             .ok_or_else(|| format!("task `{tname}` without a body"))?;
 
-        // Task locals get fresh C names per inline site (the same task may be
-        // inlined several times in one block).
+        // Automatic task locals get fresh C names per inline site. Static
+        // tasks instead map these declarations to model-global storage below.
         let mut locals: HashMap<NodeId, (String, u32, bool, bool)> = HashMap::new();
         let mut local_seq = 0usize;
         let prefix = format!("_i{}", h.0);
@@ -2368,14 +2437,85 @@ impl EmitCtx<'_, '_> {
         let mut arg_read: HashMap<NodeId, ArgMap> = HashMap::new();
         let mut arg_ir: HashMap<NodeId, IrExpr> = HashMap::new();
         let mut arg_write: HashMap<NodeId, String> = HashMap::new();
+        let mut persistent = HashMap::new();
+        let chandle_read = HashMap::new();
+        let chandle_write = HashMap::new();
+        let string_read = HashMap::new();
+        let string_write = HashMap::new();
         let mut arg_codes: Vec<Option<String>> = vec![None; formals.len()];
         let mut arg_irs: Vec<Option<IrExpr>> = vec![None; formals.len()];
-        // Input formals bound to caller rvalue expressions need a writable
-        // local copy (an input formal is a local copy in SystemVerilog).
+        let mut before = Vec::new();
+        let mut after = Vec::new();
+        // Automatic input formals bound to caller rvalue expressions need a
+        // writable local copy. Static formals use their persistent signal.
         let mut input_copies: Vec<(String, IrExpr, bool)> = Vec::new();
         for (idx, (io, is_out)) in formals.iter().enumerate() {
+            if matches!(self.cg.kind(*io), NodeKind::FuncArg { ty, .. } if ty.kind == "chandle") {
+                return Err(format!(
+                    "chandle formal `{}` on delay-bearing task `{tname}` is not supported",
+                    self.cg.node(*io).name
+                ));
+            }
             let b = &bound[idx];
-            if *is_out {
+            if let Some(storage) = (!automatic)
+                .then(|| self.cg.static_formals.get(&(self.inst, *io)).cloned())
+                .flatten()
+            {
+                let storage_lhs = IrLhs::Whole(storage.ir);
+                let storage_read = sig_read_expr_full(&storage);
+                arg_write.insert(*io, format!("&{}", storage.global));
+                persistent.insert(*io, storage.clone());
+                arg_ir.insert(*io, storage_read.clone());
+                arg_read.insert(
+                    *io,
+                    ArgMap {
+                        width: storage.width,
+                        signed: storage.signed,
+                        two_state: storage.two_state,
+                    },
+                );
+                let is_inout = matches!(
+                    self.cg.kind(*io),
+                    NodeKind::FuncArg {
+                        direction: DbDirection::Inout,
+                        ..
+                    }
+                );
+                if !*is_out {
+                    let (_, value) = self.cg.lower_bound_arg_code(
+                        &self.path,
+                        formals,
+                        bound,
+                        idx,
+                        &mut arg_codes,
+                        &mut arg_irs,
+                    )?;
+                    before.push(IrStmt::Assign {
+                        rhs: apply_lhs_assignment_context(&self.cg.model, &storage_lhs, value),
+                        lhs: storage_lhs,
+                        nba: false,
+                    });
+                } else {
+                    let actual_lhs = self.cg.lower_lhs(&self.path, b.expr)?;
+                    if is_inout {
+                        let value = self.cg.lower_expr(&self.path, b.expr)?;
+                        before.push(IrStmt::Assign {
+                            rhs: apply_lhs_assignment_context(&self.cg.model, &storage_lhs, value),
+                            lhs: storage_lhs,
+                            nba: false,
+                        });
+                    }
+                    after.push(IrStmt::Assign {
+                        rhs: apply_lhs_assignment_context(
+                            &self.cg.model,
+                            &actual_lhs,
+                            storage_read,
+                        ),
+                        lhs: actual_lhs,
+                        nba: false,
+                    });
+                }
+            } else if *is_out {
                 let lh = self.cg.lower_lhs(&self.path, b.expr)?;
                 let addr = match &lh {
                     IrLhs::Whole(sig_i) => format!("&{}", self.cg.model.signal(*sig_i).c_name),
@@ -2432,6 +2572,31 @@ impl EmitCtx<'_, '_> {
             }
         }
 
+        if !automatic {
+            for local in locals.keys().copied().collect::<Vec<_>>() {
+                let storage = self
+                    .cg
+                    .static_task_locals
+                    .get(&(self.inst, local))
+                    .cloned()
+                    .ok_or_else(|| {
+                        format!("static task `{tname}` local has no persistent storage")
+                    })?;
+                arg_write.insert(local, format!("&{}", storage.global));
+                persistent.insert(local, storage.clone());
+                arg_ir.insert(local, sig_read_expr_full(&storage));
+                arg_read.insert(
+                    local,
+                    ArgMap {
+                        width: storage.width,
+                        signed: storage.signed,
+                        two_state: storage.two_state,
+                    },
+                );
+            }
+            locals.clear();
+        }
+
         let done_label = format!("_id{}", h.0);
         let mut chain = match &self.inline {
             Some(inl) => inl.chain.clone(),
@@ -2445,6 +2610,11 @@ impl EmitCtx<'_, '_> {
             arg_read,
             arg_ir,
             arg_write,
+            persistent,
+            chandle_read,
+            chandle_write,
+            string_read,
+            string_write,
             locals,
             ret_node: None,
             // Deliberately None: a `disable <taskname>;` inside an inlined
@@ -2471,26 +2641,48 @@ impl EmitCtx<'_, '_> {
         self.inline = Some(inline);
         self.depth_arg = depth;
 
-        let mut stmts: Vec<IrStmt> = Vec::new();
+        let mut stmts: Vec<IrStmt> = before;
         // Locals sorted by node id (emission order of the pre-IR emitter).
-        let mut local_names: Vec<(u32, (String, u32, bool, bool))> = self
+        let mut local_names: Vec<(NodeId, (String, u32, bool, bool))> = self
             .func
             .as_ref()
             .map(|f| {
                 f.locals
                     .iter()
-                    .map(|(id, v)| (id.0, v.clone()))
+                    .map(|(id, v)| (*id, v.clone()))
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default();
-        local_names.sort_by_key(|(id, _)| *id);
-        for (_, (cname, w, s, two_state)) in local_names {
+        local_names.sort_by_key(|(id, _)| id.0);
+        let mut declared_locals = HashSet::new();
+        for (local, (cname, w, s, two_state)) in local_names {
+            if !declared_locals.insert(cname.clone()) {
+                continue;
+            }
+            let init = self
+                .cg
+                .db
+                .var_initializer(local)
+                .map(|initializer| {
+                    self.cg
+                        .var_decl_init(&self.path, &self.cg.node(local).name, initializer)
+                })
+                .transpose()?
+                .map(|value| {
+                    let expr = IrExpr::new(
+                        IrExprKind::Const(value.clone()),
+                        value.width,
+                        value.signed,
+                        value.fill,
+                    );
+                    Box::new(IrExpr::resize_to(expr, w, s))
+                });
             stmts.push(IrStmt::DeclLocal {
                 name: cname,
                 width: w,
                 signed: s,
                 two_state,
-                init: None,
+                init,
             });
         }
         for (cname, ir, two_state) in input_copies {
@@ -2516,6 +2708,7 @@ impl EmitCtx<'_, '_> {
         if self.inline.as_ref().map(|i| i.used).unwrap_or(false) {
             stmts.push(IrStmt::Label(done_label));
         }
+        stmts.extend(after);
 
         self.cg.func = saved_cg.0;
         self.cg.depth_arg = saved_cg.1;
@@ -2536,6 +2729,26 @@ impl EmitCtx<'_, '_> {
             }
             inl.used = true;
             return Ok(IrStmt::Goto(inl.done_label.clone()));
+        }
+        let returns_string = self.func.as_ref().is_some_and(|function| {
+            function.ret_node.is_some_and(|node| {
+                function
+                    .string_write
+                    .get(&node)
+                    .is_some_and(|target| target == "_ret")
+            })
+        });
+        if returns_string {
+            return match value {
+                Some(value) => Ok(IrStmt::Block(vec![
+                    IrStmt::Object(crate::sim::ir::IrObjectStmt::StringAssignLocal(
+                        "_ret".to_string(),
+                        self.cg.lower_string(&self.path, value)?,
+                    )),
+                    IrStmt::Return { value: None },
+                ])),
+                None => Ok(IrStmt::Return { value: None }),
+            };
         }
         match self.func.as_ref() {
             Some(f) if f.ret.is_some() => {

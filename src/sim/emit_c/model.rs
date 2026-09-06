@@ -46,6 +46,10 @@ fn render_model(model: &IrModel, capacity: u32) -> Result<String, String> {
         out.push_str("#define LLG_WAVEFORM 1\n");
     }
     out.push_str("#include \"llg_rt.h\"\n");
+    if !model.containers.is_empty() {
+        out.push_str("#include \"llg_container.h\"\n");
+    }
+    out.push_str("#include \"llg_string.h\"\n");
     if model.waveform {
         out.push_str("#include \"llg_wave.h\"\n");
     }
@@ -53,7 +57,27 @@ fn render_model(model: &IrModel, capacity: u32) -> Result<String, String> {
         "\n#include <stdio.h>\n#include <math.h>\n\n\
          /* signals start all-X; driven by processes and link processes */\n",
     );
+    if model.containers.iter().any(|container| {
+        matches!(
+            container.kind,
+            crate::sim::ir::IrContainerKind::Associative {
+                key: crate::sim::ir::IrAssocKey::String
+            }
+        )
+    }) {
+        out.push_str(super::containers::string_adapters());
+    }
     render_signal_decls(model, &mut out);
+    for container in &model.containers {
+        out.push_str(&super::containers::declaration_and_init(container)?.0);
+    }
+    for object in &model.objects {
+        let ty = match object.ty {
+            crate::sim::ir::IrObjectType::String => "llg_string_t",
+            crate::sim::ir::IrObjectType::Chandle => "void *",
+        };
+        out.push_str(&format!("static {ty} {} = {{0}};\n", object.c_name));
+    }
     out.push('\n');
     // Arrays start all-X; elements are filled in `main()` (a function call
     // is not a valid static initializer).
@@ -154,8 +178,20 @@ fn render_signal_decls(model: &IrModel, out: &mut String) {
             out.push_str(&format!("sv4_t {cell} = {driver_init};\n"));
             driver_ptrs.push(format!("&{cell}"));
         }
+        let strength0 = g
+            .driver_strengths
+            .iter()
+            .map(|(zero, _)| zero.to_string())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let strength1 = g
+            .driver_strengths
+            .iter()
+            .map(|(_, one)| one.to_string())
+            .collect::<Vec<_>>()
+            .join(", ");
         out.push_str(&format!(
-            "static llg_net_t {} = {{ {resolved_init}, {}, {}, {}, {}, {{ {} }} }};\n",
+            "static llg_net_t {} = {{ {resolved_init}, {}, {}, {}, {}, {{ {} }}, {{ {strength0} }}, {{ {strength1} }} }};\n",
             g.c_name,
             g.width,
             g.signed as u8,
@@ -180,12 +216,18 @@ fn func_params(f: &IrFunc) -> String {
     let mut params = Vec::new();
     for (idx, form) in f.formals.iter().enumerate() {
         if form.is_out {
-            params.push(format!("sv4_t* o{idx}"));
+            params.push(format!(
+                "{}* o{idx}",
+                if form.chandle { "void *" } else { "sv4_t" }
+            ));
         }
     }
     for (idx, form) in f.formals.iter().enumerate() {
         if !form.is_out {
-            params.push(format!("sv4_t a{idx}"));
+            params.push(format!(
+                "{} a{idx}",
+                if form.chandle { "void *" } else { "sv4_t" }
+            ));
         }
     }
     params.push("int depth".to_string());
@@ -193,7 +235,15 @@ fn func_params(f: &IrFunc) -> String {
 }
 
 fn func_prototype(f: &IrFunc) -> String {
-    let ret_t = if f.ret.is_some() { "sv4_t" } else { "void" };
+    let ret_t = if f.ret_string {
+        "llg_string_t"
+    } else if f.ret_chandle {
+        "void *"
+    } else if f.ret.is_some() {
+        "sv4_t"
+    } else {
+        "void"
+    };
     format!("static {ret_t} {}({});\n", f.c_name, func_params(f))
 }
 
@@ -202,10 +252,27 @@ fn func_prototype(f: &IrFunc) -> String {
 const LLG_MAX_FUNC_DEPTH: u32 = 256;
 
 fn render_func_body(ctx: &RCtx<'_>, f: &IrFunc) -> Result<String, String> {
-    let ret_t = if f.ret.is_some() { "sv4_t" } else { "void" };
+    if f.ret_string && !f.automatic {
+        return Err(
+            "static string-return functions require persistent owned return storage".to_owned(),
+        );
+    }
+    let ret_t = if f.ret_string {
+        "llg_string_t"
+    } else if f.ret_chandle {
+        "void *"
+    } else if f.ret.is_some() {
+        "sv4_t"
+    } else {
+        "void"
+    };
     let mut out = format!("static {ret_t} {}({}) {{\n", f.c_name, func_params(f));
     // The all-X return value used by the recursion guard.
-    let ret_clause = if f.ret.is_some() {
+    let ret_clause = if f.ret_string {
+        "return llg_string_bytes(\"\", 0);".to_string()
+    } else if f.ret_chandle {
+        "return NULL;".to_string()
+    } else if f.ret.is_some() {
         format!("return {};", f.ret_x())
     } else {
         "return;".to_string()
@@ -216,6 +283,10 @@ fn render_func_body(ctx: &RCtx<'_>, f: &IrFunc) -> Result<String, String> {
          {ret_clause}\n    }}\n",
         f.c_name
     ));
+    let persistent = !f.automatic;
+    if persistent && (f.ret.is_some() || f.ret_chandle || !f.locals.is_empty()) {
+        out.push_str("    static int _static_init;\n");
+    }
     if let Some(IrType::Packed {
         width,
         signed,
@@ -223,21 +294,67 @@ fn render_func_body(ctx: &RCtx<'_>, f: &IrFunc) -> Result<String, String> {
     }) = f.ret
     {
         // Function-name return variable → `_ret` local.
-        out.push_str(&format!(
-            "    sv4_t _ret = {};\n",
-            packed_default(width, signed, two_state)
-        ));
+        if persistent {
+            out.push_str("    static sv4_t _ret;\n");
+        } else {
+            out.push_str(&format!(
+                "    sv4_t _ret = {};\n",
+                packed_default(width, signed, two_state)
+            ));
+        }
+    }
+    if f.ret_chandle {
+        out.push_str(if persistent {
+            "    static void *_ret;\n"
+        } else {
+            "    void *_ret = NULL;\n"
+        });
+    }
+    if f.ret_string {
+        out.push_str("    llg_string_t _ret = llg_string_bytes(\"\", 0);\n");
     }
     for l in &f.locals {
-        out.push_str(&format!(
-            "    sv4_t {} = {};\n",
-            l.c_name,
-            packed_default(l.width, l.signed, l.two_state)
-        ));
+        if persistent {
+            out.push_str(&format!("    static sv4_t {};\n", l.c_name));
+        } else {
+            let initial = match &l.initial {
+                Some(value) => coerce_two_state(
+                    super::expressions::render_expr_impl(ctx, value)?.code,
+                    l.two_state,
+                ),
+                None => packed_default(l.width, l.signed, l.two_state),
+            };
+            out.push_str(&format!("    sv4_t {} = {};\n", l.c_name, initial));
+        }
+    }
+    if persistent && (f.ret.is_some() || f.ret_chandle || !f.locals.is_empty()) {
+        out.push_str("    if (!_static_init) {\n");
+        if let Some(IrType::Packed {
+            width,
+            signed,
+            two_state,
+        }) = f.ret
+        {
+            out.push_str(&format!(
+                "        _ret = {};\n",
+                packed_default(width, signed, two_state)
+            ));
+        }
+        for l in &f.locals {
+            let initial = match &l.initial {
+                Some(value) => coerce_two_state(
+                    super::expressions::render_expr_impl(ctx, value)?.code,
+                    l.two_state,
+                ),
+                None => packed_default(l.width, l.signed, l.two_state),
+            };
+            out.push_str(&format!("        {} = {};\n", l.c_name, initial));
+        }
+        out.push_str("        _static_init = 1;\n    }\n");
     }
     out.push_str(&block_stmts_of(ctx, &f.body)?);
     out.push_str("    ");
-    if f.ret.is_some() {
+    if f.ret.is_some() || f.ret_chandle || f.ret_string {
         out.push_str("return _ret;\n");
     }
     out.push_str("}\n\n");
@@ -389,7 +506,11 @@ fn rename_stmt_labels(stmts: &[crate::sim::ir::IrStmt]) -> Vec<crate::sim::ir::I
 
 fn render_main(model: &IrModel) -> Result<String, String> {
     use crate::sim::ir::IrInitStep;
+    let ctx = RCtx { model, func: None };
     let mut out = String::from("int main(void) {\n    llg_rt_init();\n");
+    for container in &model.containers {
+        out.push_str(&super::containers::declaration_and_init(container)?.1);
+    }
     for step in &model.init_steps {
         match step {
             IrInitStep::FillArrayX(arr) => {
@@ -436,6 +557,15 @@ fn render_main(model: &IrModel) -> Result<String, String> {
                     emit_const(value)
                 ));
             }
+        }
+    }
+    for object in &model.objects {
+        if let Some(value) = &object.initial {
+            out.push_str(&format!(
+                "    llg_string_move(&{}, {});\n",
+                object.c_name,
+                super::objects::string(&ctx, value)?
+            ));
         }
     }
     if model.waveform {
@@ -504,6 +634,14 @@ fn render_main(model: &IrModel) -> Result<String, String> {
     out.push_str("    llg_rt_run();\n");
     if !model.final_spawns.is_empty() || model.waveform {
         out.push_str("    llg_rt_run_finals();\n");
+    }
+    for object in &model.objects {
+        if object.ty == crate::sim::ir::IrObjectType::String {
+            out.push_str(&format!("    llg_string_destroy(&{});\n", object.c_name));
+        }
+    }
+    for container in &model.containers {
+        out.push_str(&super::containers::destroy(container));
     }
     if model.waveform {
         out.push_str("    return llg_wave_close(llg_wave_final_time);\n}\n");
@@ -608,6 +746,7 @@ mod tests {
             signed: false,
             kind: crate::sim::ir::IrNetKind::Wire,
             n_drivers: 1,
+            driver_strengths: vec![(6, 6)],
         }];
         model.arrays = vec![IrArray {
             c_name: "G_top_mem".to_string(),

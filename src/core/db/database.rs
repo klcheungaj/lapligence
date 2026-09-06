@@ -104,6 +104,38 @@ pub struct PackedMember {
     pub packed_ranges: Vec<PackedRange>,
 }
 
+/// Representation category of a captured SystemVerilog structure or union.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AggregateKind {
+    PackedStruct,
+    PackedUnion,
+    UnpackedStruct,
+    UnpackedUnion,
+    TaggedUnion,
+}
+
+/// One declared member of an unpacked aggregate.
+#[derive(Clone, Debug, PartialEq)]
+pub struct AggregateMember {
+    pub name: String,
+    pub ty: TypeInfo,
+    pub two_state: bool,
+    pub packed_ranges: Vec<PackedRange>,
+    /// Nested structure/union layout when this member is itself aggregate.
+    pub aggregate: Option<Box<AggregateLayout>>,
+}
+
+/// Owned structure/union metadata retained after the UHDM session closes.
+#[derive(Clone, Debug, PartialEq)]
+pub struct AggregateLayout {
+    pub kind: AggregateKind,
+    /// Stable typedef/full-name identity when UHDM provides one. Consumers
+    /// fail closed for whole assignments between anonymous layouts without
+    /// a common captured identity.
+    pub type_identity: Option<String>,
+    pub members: Vec<AggregateMember>,
+}
+
 impl ElaboratedTypeRanges {
     pub fn instance(&self) -> &str {
         &self.instance
@@ -182,8 +214,11 @@ pub struct Db {
     /// initializers instead become `vpiNetDeclAssign` continuous assignments
     /// (see [`NodeKind::ContAssign`]).
     vars_init: HashMap<NodeId, NodeId>,
+    var_lifetime_qualifiers: HashMap<NodeId, VariableLifetimeQualifier>,
     /// Top-level packed struct/union layouts keyed by the declared object.
     packed_members: HashMap<NodeId, Vec<PackedMember>>,
+    /// Structure/union category and members keyed by the declared object.
+    aggregate_layouts: HashMap<NodeId, AggregateLayout>,
     /// Ordered ranges of multidimensional packed declarations.
     packed_dimensions: HashMap<NodeId, Vec<PackedRange>>,
     /// True for declarations whose complete packed type has a two-state base.
@@ -199,6 +234,8 @@ pub struct Db {
 /// `ty` field) does not have to change.
 #[derive(Debug)]
 pub struct ArrayMeta {
+    /// Storage category reported by UHDM's `vpiArrayType` property.
+    pub kind: ArrayKind,
     /// One entry per declared dimension, in declaration order: the
     /// `vpiLeftRange`/`vpiRightRange` constant bounds of that dimension's
     /// `vpiRange` child.  `None` when a bound is not a plain constant
@@ -217,7 +254,37 @@ pub struct ArrayMeta {
     pub net_type: Option<NetType>,
 }
 
+/// Runtime storage category for an unpacked array declaration.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ArrayKind {
+    Static,
+    Dynamic,
+    Associative(AssociativeIndex),
+    /// Maximum element count (`N + 1` for a `[$:N]` declaration), or `None`
+    /// for an unbounded `[$]` queue.
+    Queue {
+        maximum_elements: Option<u64>,
+    },
+}
+
+/// Index type of an associative array. Unsupported legal SV index types stay
+/// explicit so consumers can diagnose them without another VPI traversal.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AssociativeIndex {
+    Wildcard,
+    Integral {
+        width: u32,
+        signed: bool,
+        two_state: bool,
+    },
+    String,
+    Unsupported(String),
+}
+
 impl ArrayMeta {
+    pub fn kind(&self) -> &ArrayKind {
+        &self.kind
+    }
     pub fn dimensions(&self) -> &[Option<(i32, i32)>] {
         &self.dims
     }
@@ -446,6 +513,12 @@ pub enum NodeKind {
     Expr(ExprKind),
     SysCall {
         name: String,
+    },
+    /// Built-in object method. The receiver, when present, is the first child;
+    /// remaining children are arguments in declaration order.
+    MethodCall {
+        name: String,
+        receiver: Option<NodeId>,
     },
     FuncCall {
         name: String,
@@ -779,6 +852,11 @@ pub enum ExprKind {
         reordered: bool,
         operands: Vec<NodeId>,
     },
+    /// One keyed operand inside an assignment pattern (`'{member: value}`).
+    TaggedPattern {
+        key: Option<String>,
+        value: Option<NodeId>,
+    },
     /// `'(type)(expr)` cast — target type resolved at build time.
     Cast {
         operand: NodeId,
@@ -881,7 +959,9 @@ pub(super) struct Builder {
     /// Scalar-variable declaration initializers, keyed by the Var node
     /// (see [`Db::vars_init`]).
     pub(super) vars_init: HashMap<NodeId, NodeId>,
+    pub(super) var_lifetime_qualifiers: HashMap<NodeId, VariableLifetimeQualifier>,
     pub(super) packed_members: HashMap<NodeId, Vec<PackedMember>>,
+    pub(super) aggregate_layouts: HashMap<NodeId, AggregateLayout>,
     pub(super) packed_dimensions: HashMap<NodeId, Vec<PackedRange>>,
     pub(super) two_state_types: HashSet<NodeId>,
     /// Source contents retained only while building, with negative entries so
@@ -905,6 +985,16 @@ pub(super) enum CachedConstantSourceFile {
     Unavailable,
 }
 
+/// Explicit variable-lifetime provenance recovered from admitted source.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum VariableLifetimeQualifier {
+    None,
+    Static,
+    Automatic,
+    Ambiguous,
+    Unavailable,
+}
+
 impl Db {
     #[cfg(test)]
     pub(super) fn empty_for_validation_test() -> Self {
@@ -917,7 +1007,9 @@ impl Db {
             design_name: "test".to_owned(),
             arrays: HashMap::new(),
             vars_init: HashMap::new(),
+            var_lifetime_qualifiers: HashMap::new(),
             packed_members: HashMap::new(),
+            aggregate_layouts: HashMap::new(),
             packed_dimensions: HashMap::new(),
             two_state_types: HashSet::new(),
             elaborated_type_ranges: Vec::new(),
@@ -999,7 +1091,9 @@ impl Db {
             design_name,
             arrays: b.arrays,
             vars_init: b.vars_init,
+            var_lifetime_qualifiers: b.var_lifetime_qualifiers,
             packed_members: b.packed_members,
+            aggregate_layouts: b.aggregate_layouts,
             packed_dimensions: b.packed_dimensions,
             two_state_types: b.two_state_types,
             elaborated_type_ranges,
@@ -1069,8 +1163,19 @@ impl Db {
         self.vars_init.get(&id).copied()
     }
 
+    pub fn variable_lifetime_qualifier(&self, id: NodeId) -> VariableLifetimeQualifier {
+        self.var_lifetime_qualifiers
+            .get(&id)
+            .copied()
+            .unwrap_or(VariableLifetimeQualifier::Unavailable)
+    }
+
     pub fn packed_members(&self, id: NodeId) -> Option<&[PackedMember]> {
         self.packed_members.get(&id).map(Vec::as_slice)
+    }
+
+    pub fn aggregate_layout(&self, id: NodeId) -> Option<&AggregateLayout> {
+        self.aggregate_layouts.get(&id)
     }
 
     pub fn packed_dimensions(&self, id: NodeId) -> Option<&[PackedRange]> {
@@ -1520,5 +1625,14 @@ mod statement_type_tests {
     fn explicit_unsupported_statement_uses_statement_lowering_path() {
         assert!(is_stmt_type(vpi::vpiUnsupportedStmt));
         assert!(!is_stmt_type(vpi::vpiUnsupportedExpr));
+    }
+
+    #[test]
+    fn missing_source_provenance_is_unavailable() {
+        let db = Db::empty_for_validation_test();
+        assert_eq!(
+            db.variable_lifetime_qualifier(NodeId(0)),
+            VariableLifetimeQualifier::Unavailable
+        );
     }
 }

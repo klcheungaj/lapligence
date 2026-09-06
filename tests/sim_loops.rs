@@ -23,8 +23,11 @@ fn run_variants(source: &str, tag: &str) -> Result<(String, String), String> {
             ..Default::default()
         })
         .map_err(|error| format!("compile: {error}"))?;
-        let design = compiled.uhdm_design().ok_or("no UHDM design")?;
-        let database = db::Db::build(design).map_err(|error| format!("db: {error}"))?;
+        let database = db::Db::build_with_source_files(
+            compiled.uhdm_design().ok_or("no UHDM design")?,
+            &compiled.frontend_source_files(),
+        )
+        .map_err(|error| format!("db: {error}"))?;
         let optimized = sim::codegen::generate_from_db_with_opts(&database, &OptConfig::default())
             .map_err(|error| format!("optimized codegen: {error}"))?;
         let unoptimized = sim::codegen::generate_from_db_with_opts(&database, &OptConfig::none())

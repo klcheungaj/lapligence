@@ -21,7 +21,15 @@
 //!   final blocks are rendered with the rest but spawn into a separate
 //!   post-simulation phase).
 
+mod containers;
+mod objects;
 mod validate;
+pub use containers::{
+    IrAssocKey, IrAssocTraversal, IrContainer, IrContainerExpr, IrContainerKind, IrContainerStmt,
+};
+pub use objects::{
+    IrChandleExpr, IrObject, IrObjectQuery, IrObjectStmt, IrObjectType, IrStringExpr,
+};
 
 pub use validate::IrValidationError;
 
@@ -216,6 +224,8 @@ impl PartialEq for IrConst {
 /// the whole expression lives on the enclosing [`IrExpr`].
 #[derive(Clone, Debug, PartialEq)]
 pub enum IrExprKind {
+    Container(Box<IrContainerExpr>),
+    ObjectQuery(Box<IrObjectQuery>),
     /// A concrete constant.
     Const(IrConst),
     /// Read a lowered signal global (or real companion / collapsed-net
@@ -252,6 +262,19 @@ pub enum IrExprKind {
     Replicate {
         count: u64,
         parts: Vec<IrExpr>,
+    },
+    /// Packed streaming concatenation. The operand is the normalized packed
+    /// stream and `slice` is the positive, elaboration-time block size.
+    Stream {
+        value: Box<IrExpr>,
+        slice: u32,
+        direction: IrStreamDirection,
+    },
+    /// Integral set-membership expression. The selector and each endpoint
+    /// are evaluated once by the emitter.
+    Inside {
+        value: Box<IrExpr>,
+        items: Vec<IrInsideItem>,
     },
     /// Bit-select `[idx]` on any base expression.
     BitSel {
@@ -581,6 +604,24 @@ pub enum IrElemSel {
     Bit(Box<IrExpr>),
 }
 
+/// Direction of a packed streaming concatenation (LRM 1800-2009 §11.4.14).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IrStreamDirection {
+    /// `{>>{...}}`: preserve the left-to-right stream order.
+    LeftToRight,
+    /// `{<< slice {...}}`: reverse the order of `slice`-bit blocks.
+    RightToLeft,
+}
+
+/// One scalar integral member of an `inside` set.
+#[derive(Clone, Debug, PartialEq)]
+pub enum IrInsideItem {
+    /// A wildcard-matched value item.
+    Value(IrExpr),
+    /// An inclusive `[low:high]` range.
+    Range { low: IrExpr, high: IrExpr },
+}
+
 /// Structural call arguments shared by statement-position and
 /// expression-position calls.  Input arguments arrive already converted to
 /// the formal's width/signedness (defaults substituted at lowering).
@@ -778,6 +819,14 @@ pub enum IrLhs {
         indices: Vec<IrExpr>,
         elem_sel: IrElemSel,
     },
+    /// Streaming concatenation assignment target. Each part's explicit width
+    /// preserves the static unpack shape independently of the target storage.
+    Stream {
+        parts: Vec<(IrLhs, u32)>,
+        width: u32,
+        slice: u32,
+        direction: IrStreamDirection,
+    },
 }
 
 /// Case statement matching kind (`vpiCaseExact`/`vpiCaseX`/`vpiCaseZ`).
@@ -853,6 +902,8 @@ pub enum IrJoinKind {
 /// (`sens`/`reads`); those lists are never recomputed afterwards.
 #[derive(Clone, Debug, PartialEq)]
 pub enum IrStmt {
+    Container(IrContainerStmt),
+    Object(IrObjectStmt),
     /// `{ stmts }` — a begin block.
     Block(Vec<IrStmt>),
     /// `sv4_t name = sv4_x(w, s);` (no init) or `sv4_t name = <init>;`
@@ -1094,6 +1145,8 @@ pub struct IrFormal {
     pub(in crate::sim) width: u32,
     pub(in crate::sim) signed: bool,
     pub(in crate::sim) two_state: bool,
+    /// Non-integral native pointer formal; width/signedness are unused.
+    pub(in crate::sim) chandle: bool,
 }
 
 impl IrFormal {
@@ -1104,6 +1157,7 @@ impl IrFormal {
             width,
             signed,
             two_state: false,
+            chandle: false,
         })
     }
 
@@ -1118,13 +1172,16 @@ impl IrFormal {
     }
 }
 
-/// A function/task local (`_l{n}` or `_i{site}_{n}`), all-X initialized.
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// A function/task local (`_l{n}` or `_i{site}_{n}`).
+#[derive(Clone, Debug, PartialEq)]
 pub struct IrLocal {
     pub(in crate::sim) c_name: String,
     pub(in crate::sim) width: u32,
     pub(in crate::sim) signed: bool,
     pub(in crate::sim) two_state: bool,
+    /// Constant declaration initializer. Static subprograms apply it once;
+    /// automatic subprograms apply it on each call.
+    pub(in crate::sim) initial: Option<IrExpr>,
 }
 
 impl IrLocal {
@@ -1135,6 +1192,7 @@ impl IrLocal {
             width,
             signed,
             two_state: false,
+            initial: None,
         })
     }
 
@@ -1154,6 +1212,13 @@ impl IrLocal {
 #[derive(Clone, Debug, PartialEq)]
 pub struct IrFunc {
     pub(in crate::sim) c_name: String,
+    /// Automatic subprograms use fresh C locals per call; static subprograms
+    /// retain their return/local storage across calls.
+    pub(in crate::sim) automatic: bool,
+    /// Distinguishes a chandle-returning function from a void function/task.
+    pub(in crate::sim) ret_chandle: bool,
+    /// Automatic function returning an owned SystemVerilog string.
+    pub(in crate::sim) ret_string: bool,
     /// Return type; `None` for tasks and void functions.
     pub(in crate::sim) ret: Option<IrType>,
     pub(in crate::sim) formals: Vec<IrFormal>,
@@ -1176,6 +1241,9 @@ impl IrFunc {
     ) -> Self {
         Self {
             c_name,
+            automatic: true,
+            ret_chandle: false,
+            ret_string: false,
             ret,
             formals,
             locals,
@@ -1205,6 +1273,9 @@ impl IrFunc {
 
     pub fn c_name(&self) -> &str {
         &self.c_name
+    }
+    pub fn is_automatic(&self) -> bool {
+        self.automatic
     }
     pub fn ret(&self) -> Option<IrType> {
         self.ret
@@ -1334,6 +1405,10 @@ pub struct IrNetGroup {
     pub(in crate::sim) signed: bool,
     pub(in crate::sim) kind: IrNetKind,
     pub(in crate::sim) n_drivers: usize,
+    /// Per-slot `(strength0, strength1)` levels on the IEEE 1800 strength
+    /// scale (high impedance 0 through supply 7). Ordinary unspecified
+    /// continuous assignments use strong/strong (6, 6).
+    pub(in crate::sim) driver_strengths: Vec<(u8, u8)>,
 }
 
 impl IrNetGroup {
@@ -1363,6 +1438,7 @@ impl IrNetGroup {
             signed,
             kind,
             n_drivers,
+            driver_strengths: vec![(6, 6); n_drivers],
         })
     }
 
@@ -1482,6 +1558,8 @@ pub struct IrModel {
     pub(in crate::sim) signals: Vec<IrSignal>,
     pub(in crate::sim) net_groups: Vec<IrNetGroup>,
     pub(in crate::sim) arrays: Vec<IrArray>,
+    pub(in crate::sim) containers: Vec<IrContainer>,
+    pub(in crate::sim) objects: Vec<IrObject>,
     pub(in crate::sim) events: Vec<IrEvent>,
     pub(in crate::sim) funcs: Vec<IrFunc>,
     /// Comb drivers, then links, then always/initial processes — push order
@@ -1511,6 +1589,8 @@ pub struct IrModelParts {
     pub signals: Vec<IrSignal>,
     pub net_groups: Vec<IrNetGroup>,
     pub arrays: Vec<IrArray>,
+    pub containers: Vec<IrContainer>,
+    pub objects: Vec<IrObject>,
     pub events: Vec<IrEvent>,
     pub funcs: Vec<IrFunc>,
     pub processes: Vec<IrProcess>,
@@ -1544,6 +1624,8 @@ impl IrModel {
             signals: parts.signals,
             net_groups: parts.net_groups,
             arrays: parts.arrays,
+            containers: parts.containers,
+            objects: parts.objects,
             events: parts.events,
             funcs: parts.funcs,
             processes: parts.processes,
@@ -1572,6 +1654,9 @@ impl IrModel {
     }
     pub fn arrays(&self) -> &[IrArray] {
         &self.arrays
+    }
+    pub fn containers(&self) -> &[IrContainer] {
+        &self.containers
     }
     pub fn events(&self) -> &[IrEvent] {
         &self.events

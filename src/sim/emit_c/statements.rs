@@ -32,6 +32,8 @@ pub(super) fn render_stmt_impl(
         Ok(out)
     }
     let out = match st {
+        IrStmt::Container(operation) => super::containers::statement(ctx, operation)?,
+        IrStmt::Object(operation) => super::objects::statement(ctx, operation)?,
         IrStmt::Block(stmts) => {
             format!("{{\n{}}}\n", block_stmts(ctx, stmts)?)
         }
@@ -305,7 +307,13 @@ pub(super) fn render_stmt_impl(
                     format!("        _ret = {code};\n        return _ret;\n")
                 }
                 (Some(_), None) => "        return _ret;\n".to_string(),
-                (None, _) => "        return;\n".to_string(),
+                (None, None) if f.ret_chandle || f.ret_string => {
+                    "        return _ret;\n".to_string()
+                }
+                (None, None) => "        return;\n".to_string(),
+                (None, Some(_)) => {
+                    return Err("internal: object function return has packed value".to_string());
+                }
                 (Some(crate::sim::ir::IrType::Real { .. }), _) => {
                     return Err(
                         "internal: real function returns are rejected at lowering".to_string()

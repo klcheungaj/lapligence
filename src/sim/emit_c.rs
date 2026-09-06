@@ -1,11 +1,13 @@
 //! Public façade for rendering validated simulator IR as C11.
 
 mod constants;
+mod containers;
 mod context;
 mod error;
 mod expressions;
 mod model;
 mod names;
+mod objects;
 mod stack;
 mod statements;
 

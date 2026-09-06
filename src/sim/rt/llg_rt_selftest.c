@@ -1240,7 +1240,8 @@ static void test_llg_net(void) {
     //   all-z -> z.
     {
         sv4_t d0 = SV4_Z(1), d1 = SV4_Z(1);
-        llg_net_t net = { SV4_Z(1), 1, 0, LLG_RESOLVE_WIRE, 2, { &d0, &d1 } };
+        llg_net_t net = { SV4_Z(1), 1, 0, LLG_RESOLVE_WIRE, 2,
+                          { &d0, &d1 }, { 6, 6 }, { 6, 6 } };
         llg_net_resolve(&net);
         CHECK(sv4_same(net.resolved, SV4_Z(1))); // z+z -> z
         d0 = SV4_C(0, 1);
@@ -1264,7 +1265,8 @@ static void test_llg_net(void) {
     }
     // No driver -> all-Z.
     {
-        llg_net_t net = { SV4_Z(4), 4, 0, LLG_RESOLVE_WIRE, 0, { NULL } };
+        llg_net_t net = { SV4_Z(4), 4, 0, LLG_RESOLVE_WIRE, 0,
+                          { NULL }, { 0 }, { 0 } };
         llg_net_resolve(&net);
         CHECK(sv4_same(net.resolved, SV4_Z(4)));
     }
@@ -1272,7 +1274,8 @@ static void test_llg_net(void) {
     // disturb the resolved value.
     {
         sv4_t d0 = SV4_Z(8), d1 = SV4_Z(8);
-        llg_net_t net = { SV4_Z(8), 8, 0, LLG_RESOLVE_WIRE, 2, { &d0, &d1 } };
+        llg_net_t net = { SV4_Z(8), 8, 0, LLG_RESOLVE_WIRE, 2,
+                          { &d0, &d1 }, { 6, 6 }, { 6, 6 } };
         llg_net_resolve(&net);
         sv4_t before = net.resolved;
         llg_net_write(&net, 0, SV4_Z(8)); // same value -> early-out
@@ -1283,7 +1286,8 @@ static void test_llg_net(void) {
     // early-out (the resolved cell is untouched).
     {
         sv4_t d0 = SV4_Z(8), d1 = SV4_Z(8);
-        llg_net_t net = { SV4_Z(8), 8, 0, LLG_RESOLVE_WIRE, 2, { &d0, &d1 } };
+        llg_net_t net = { SV4_Z(8), 8, 0, LLG_RESOLVE_WIRE, 2,
+                          { &d0, &d1 }, { 6, 6 }, { 6, 6 } };
         llg_net_resolve(&net);
         llg_net_write(&net, 0, SV4_C(0x5a, 8));
         CHECK(sv4_same(d0, SV4_C(0x5a, 8)));
@@ -1295,7 +1299,8 @@ static void test_llg_net(void) {
     // with bit 0 X, which %h prints as "0x".
     {
         sv4_t d0 = SV4_C(0x0a, 8), d1 = SV4_C(0x0b, 8);
-        llg_net_t net = { SV4_Z(8), 8, 0, LLG_RESOLVE_WIRE, 2, { &d0, &d1 } };
+        llg_net_t net = { SV4_Z(8), 8, 0, LLG_RESOLVE_WIRE, 2,
+                          { &d0, &d1 }, { 6, 6 }, { 6, 6 } };
         llg_net_resolve(&net);
         char buf[64];
         sv4_format('h', net.resolved, buf, sizeof(buf));
@@ -1305,7 +1310,8 @@ static void test_llg_net(void) {
     // above); a known driver loses to X: 0x5a + X -> X.
     {
         sv4_t d0 = SV4_C(0x5a, 8), d1 = SV4_X(8);
-        llg_net_t net = { SV4_Z(8), 8, 0, LLG_RESOLVE_WIRE, 2, { &d0, &d1 } };
+        llg_net_t net = { SV4_Z(8), 8, 0, LLG_RESOLVE_WIRE, 2,
+                          { &d0, &d1 }, { 6, 6 }, { 6, 6 } };
         llg_net_resolve(&net);
         CHECK(sv4_same(net.resolved, SV4_X(8)));
     }

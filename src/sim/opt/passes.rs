@@ -29,8 +29,8 @@ use std::collections::HashSet;
 
 use crate::core::elab::{self, Bit, Value};
 use crate::sim::ir::{
-    IrBinOp, IrCallArg, IrCaseKind, IrConst, IrElemSel, IrExpr, IrExprKind, IrLhs, IrModel,
-    IrPreFn, IrRealBinOp, IrRealUnOp, IrStmt, IrSysFunc, IrUnOp, IrWaitSrc,
+    IrBinOp, IrCallArg, IrCaseKind, IrConst, IrElemSel, IrExpr, IrExprKind, IrInsideItem, IrLhs,
+    IrModel, IrPreFn, IrRealBinOp, IrRealUnOp, IrStmt, IrSysFunc, IrUnOp, IrWaitSrc,
 };
 
 /// Run the enabled passes over `model` in a fixed order.
@@ -218,6 +218,11 @@ fn walk_lhs_mut(l: &mut IrLhs, f: &mut impl FnMut(&mut IrExpr)) {
                 walk_expr_mut(idx, f);
             }
         }
+        IrLhs::Stream { parts, .. } => {
+            for (part, _) in parts {
+                walk_lhs_mut(part, f);
+            }
+        }
         _ => {}
     }
 }
@@ -241,6 +246,12 @@ fn walk_call_args_mut(args: &mut [IrCallArg], f: &mut impl FnMut(&mut IrExpr)) {
 
 fn walk_expr_mut(e: &mut IrExpr, f: &mut impl FnMut(&mut IrExpr)) {
     match &mut e.kind {
+        IrExprKind::Container(operation) => {
+            operation.expressions_mut(&mut |child| walk_expr_mut(child, f))
+        }
+        IrExprKind::ObjectQuery(query) => {
+            query.expressions_mut(&mut |child| walk_expr_mut(child, f))
+        }
         IrExprKind::Bin { a, b, .. } | IrExprKind::RealBin { a, b, .. } => {
             walk_expr_mut(a, f);
             walk_expr_mut(b, f);
@@ -260,6 +271,19 @@ fn walk_expr_mut(e: &mut IrExpr, f: &mut impl FnMut(&mut IrExpr)) {
         IrExprKind::Concat { parts } | IrExprKind::Replicate { parts, .. } => {
             for p in parts {
                 walk_expr_mut(p, f);
+            }
+        }
+        IrExprKind::Stream { value, .. } => walk_expr_mut(value, f),
+        IrExprKind::Inside { value, items } => {
+            walk_expr_mut(value, f);
+            for item in items {
+                match item {
+                    IrInsideItem::Value(item) => walk_expr_mut(item, f),
+                    IrInsideItem::Range { low, high } => {
+                        walk_expr_mut(low, f);
+                        walk_expr_mut(high, f);
+                    }
+                }
             }
         }
         IrExprKind::BitSel { base, idx } => {
@@ -308,6 +332,12 @@ fn walk_expr_mut(e: &mut IrExpr, f: &mut impl FnMut(&mut IrExpr)) {
 /// Visit every expression slot of one statement (recursively).
 fn walk_stmt_mut(s: &mut IrStmt, f: &mut impl FnMut(&mut IrExpr)) {
     match s {
+        IrStmt::Container(operation) => {
+            operation.expressions_mut(&mut |child| walk_expr_mut(child, f))
+        }
+        IrStmt::Object(operation) => {
+            operation.expressions_mut(&mut |child| walk_expr_mut(child, f))
+        }
         IrStmt::Block(b) | IrStmt::Forever { body: b } => walk_stmts_mut(b, f),
         IrStmt::Repeat { count, body } => {
             walk_expr_mut(count, f);
@@ -399,6 +429,11 @@ fn walk_pre_fn_mut(pre: &mut IrPreFn, f: &mut impl FnMut(&mut IrExpr)) {
 
 fn walk_model_exprs_mut(model: &mut IrModel, f: &mut impl FnMut(&mut IrExpr)) {
     for func in &mut model.funcs {
+        for local in &mut func.locals {
+            if let Some(initial) = &mut local.initial {
+                walk_expr_mut(initial, f);
+            }
+        }
         for pre in &mut func.pre_fns {
             walk_pre_fn_mut(pre, f);
         }
@@ -652,6 +687,19 @@ fn ident_children(e: &mut IrExpr) {
                 ident_expr(p);
             }
         }
+        IrExprKind::Stream { value, .. } => ident_expr(value),
+        IrExprKind::Inside { value, items } => {
+            ident_expr(value);
+            for item in items {
+                match item {
+                    IrInsideItem::Value(item) => ident_expr(item),
+                    IrInsideItem::Range { low, high } => {
+                        ident_expr(low);
+                        ident_expr(high);
+                    }
+                }
+            }
+        }
         IrExprKind::BitSel { base, idx } => {
             ident_expr(base);
             ident_expr(idx);
@@ -724,6 +772,11 @@ fn ident_lhs(l: &mut IrLhs) {
             }
             if let IrElemSel::Bit(idx) = elem_sel {
                 ident_expr(idx);
+            }
+        }
+        IrLhs::Stream { parts, .. } => {
+            for (part, _) in parts {
+                ident_lhs(part);
             }
         }
         _ => {}
@@ -1104,6 +1157,11 @@ impl Rw {
 
 fn mark_unused_storage(model: &mut IrModel) {
     let mut rw = Rw::default();
+    for object in &model.objects {
+        if let Some(initial) = &object.initial {
+            initial.expressions(&mut |child| collect_expr_reads(child, model, &mut rw));
+        }
+    }
     // Sensitivity lists and link sources are reads (plain globals only;
     // array-element addresses carry brackets and match nothing).
     let mut sens: Vec<String> = Vec::new();
@@ -1123,6 +1181,11 @@ fn mark_unused_storage(model: &mut IrModel) {
         }
     }
     for func in &model.funcs {
+        for local in &func.locals {
+            if let Some(initial) = &local.initial {
+                collect_expr_reads(initial, model, &mut rw);
+            }
+        }
         collect_pre_fns_rw(&func.pre_fns, model, &mut rw);
         collect_stmts_rw(&func.body, model, &mut rw);
     }
@@ -1237,6 +1300,12 @@ fn collect_stmts_rw(stmts: &[IrStmt], model: &IrModel, rw: &mut Rw) {
 
 fn collect_stmt_rw(s: &IrStmt, model: &IrModel, rw: &mut Rw) {
     match s {
+        IrStmt::Container(operation) => {
+            operation.expressions(&mut |child| collect_expr_reads(child, model, rw))
+        }
+        IrStmt::Object(operation) => {
+            operation.expressions(&mut |child| collect_expr_reads(child, model, rw))
+        }
         IrStmt::Block(b) => collect_stmts_rw(b, model, rw),
         IrStmt::DeclLocal {
             init: Some(init), ..
@@ -1369,7 +1438,12 @@ fn collect_lhs_rw(l: &IrLhs, model: &IrModel, rw: &mut Rw) {
             rw.write(*i);
             collect_expr_reads(idx, model, rw);
         }
-        IrLhs::Part(i, ..) | IrLhs::IdxPart(i, ..) => rw.write(*i),
+        IrLhs::Part(i, ..) => rw.write(*i),
+        IrLhs::IdxPart(i, base, width, ..) => {
+            rw.write(*i);
+            collect_expr_reads(base, model, rw);
+            collect_expr_reads(width, model, rw);
+        }
         IrLhs::ArrayElem {
             indices, elem_sel, ..
         } => {
@@ -1378,6 +1452,11 @@ fn collect_lhs_rw(l: &IrLhs, model: &IrModel, rw: &mut Rw) {
             }
             if let IrElemSel::Bit(idx) = elem_sel {
                 collect_expr_reads(idx, model, rw);
+            }
+        }
+        IrLhs::Stream { parts, .. } => {
+            for (part, _) in parts {
+                collect_lhs_rw(part, model, rw);
             }
         }
     }
@@ -1397,6 +1476,15 @@ fn collect_expr_reads(e: &IrExpr, model: &IrModel, rw: &mut Rw) {
 
 fn collect_children_reads(e: &IrExpr, model: &IrModel, rw: &mut Rw) {
     match &e.kind {
+        IrExprKind::Container(operation) => {
+            if let Some(signal) = operation.traversal_signal() {
+                rw.read(signal);
+            }
+            operation.expressions(&mut |child| collect_expr_reads(child, model, rw));
+        }
+        IrExprKind::ObjectQuery(query) => {
+            query.expressions(&mut |child| collect_expr_reads(child, model, rw))
+        }
         IrExprKind::Bin { a, b, .. } | IrExprKind::RealBin { a, b, .. } => {
             collect_expr_reads(a, model, rw);
             collect_expr_reads(b, model, rw);
@@ -1416,6 +1504,19 @@ fn collect_children_reads(e: &IrExpr, model: &IrModel, rw: &mut Rw) {
         IrExprKind::Concat { parts } | IrExprKind::Replicate { parts, .. } => {
             for p in parts {
                 collect_expr_reads(p, model, rw);
+            }
+        }
+        IrExprKind::Stream { value, .. } => collect_expr_reads(value, model, rw),
+        IrExprKind::Inside { value, items } => {
+            collect_expr_reads(value, model, rw);
+            for item in items {
+                match item {
+                    IrInsideItem::Value(item) => collect_expr_reads(item, model, rw),
+                    IrInsideItem::Range { low, high } => {
+                        collect_expr_reads(low, model, rw);
+                        collect_expr_reads(high, model, rw);
+                    }
+                }
             }
         }
         IrExprKind::BitSel { base, idx } => {
@@ -1491,6 +1592,11 @@ fn collect_lhs_write_only(l: &IrLhs, _model: &IrModel, rw: &mut Rw) {
     match l {
         IrLhs::Whole(i) => rw.write(*i),
         IrLhs::Bit(i, ..) | IrLhs::Part(i, ..) | IrLhs::IdxPart(i, ..) => rw.write(*i),
+        IrLhs::Stream { parts, .. } => {
+            for (part, _) in parts {
+                collect_lhs_write_only(part, _model, rw);
+            }
+        }
         _ => {}
     }
 }
@@ -1501,7 +1607,8 @@ fn collect_lhs_write_only(l: &IrLhs, _model: &IrModel, rw: &mut Rw) {
 mod tests {
     use super::*;
     use crate::sim::ir::{
-        IrCall, IrCallArg, IrCaseItem, IrDepth, IrEdge, IrProcess, IrShape, IrSignal, IrType,
+        IrCall, IrCallArg, IrCaseItem, IrDepth, IrEdge, IrFunc, IrLocal, IrProcess, IrShape,
+        IrSignal, IrType,
     };
 
     // ── builders ──────────────────────────────────────────────────────────
@@ -1649,6 +1756,8 @@ mod tests {
             signals,
             net_groups: Vec::new(),
             arrays: Vec::new(),
+            objects: Vec::new(),
+            containers: Vec::new(),
             events: Vec::new(),
             funcs: Vec::new(),
             processes: vec![IrProcess {
@@ -1751,6 +1860,31 @@ mod tests {
         );
         run(&mut m, &fold_only());
         assert_eq!(const_payload(first_assign_rhs(&m)), Some((11, 8)));
+    }
+
+    #[test]
+    fn fold_constants_visits_function_local_initializers() {
+        let mut local = IrLocal::new("local".to_string(), 8, false).expect("valid local");
+        local.initial = Some(bin(IrBinOp::Add, konst(5, 8), konst(6, 8), 8));
+        let mut m = model_with(Vec::new(), Vec::new());
+        m.funcs.push(IrFunc::new(
+            "f".to_string(),
+            None,
+            Vec::new(),
+            vec![local],
+            Vec::new(),
+            Vec::new(),
+        ));
+
+        run(&mut m, &fold_only());
+
+        assert_eq!(
+            m.funcs[0].locals[0]
+                .initial
+                .as_ref()
+                .and_then(const_payload),
+            Some((11, 8))
+        );
     }
 
     #[test]
@@ -2373,6 +2507,26 @@ mod tests {
         assert!(!m.signals[1].omit, "written signal stays");
         assert!(!m.signals[2].omit, "read signal stays");
         assert!(!m.signals[3].omit, "sensitivity-read signal stays");
+    }
+
+    #[test]
+    fn unused_storage_counts_function_local_initializer_reads() {
+        let mut local = IrLocal::new("local".to_string(), 8, false).expect("valid local");
+        local.initial = Some(IrExpr::new(IrExprKind::SigRead(0), 8, false, None));
+        let mut m = model_with(Vec::new(), sigs(2));
+        m.funcs.push(IrFunc::new(
+            "f".to_string(),
+            None,
+            Vec::new(),
+            vec![local],
+            Vec::new(),
+            Vec::new(),
+        ));
+
+        run(&mut m, &storage_only());
+
+        assert!(!m.signals[0].omit, "initializer-read signal stays");
+        assert!(m.signals[1].omit, "unreferenced signal is omitted");
     }
 
     #[test]

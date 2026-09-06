@@ -176,17 +176,10 @@ endmodule
 
 #[test]
 fn sim_local_variable_shadows_real_delay_parameter() {
-    let source = r#"module tb;
-    parameter real P = 0.25;
-    initial begin : local_scope
-        real P;
-        #P $finish;
-    end
-endmodule
-"#;
+    let source = include_str!("fixtures/sim/time_literals/shadowed_real_delay_local.sv");
     let error = codegen_error(source, "shadowed-real-delay");
     assert!(
-        error.contains("parameter") || error.contains("identifier"),
+        error.contains("real/shortreal procedural variable `P` is not supported in `tb`"),
         "{error}"
     );
 }

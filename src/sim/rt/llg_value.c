@@ -285,6 +285,68 @@ sv4_t sv4_resolve(const sv4_t* const* drivers, int n_drivers,
     return r;
 }
 
+sv4_t sv4_resolve_strengths(const sv4_t* const* drivers,
+                            const uint8_t* strength0,
+                            const uint8_t* strength1, int n_drivers,
+                            uint32_t width, int8_t is_signed, int mode) {
+    if (mode != LLG_RESOLVE_WIRE || !strength0 || !strength1)
+        return sv4_resolve(drivers, n_drivers, width, is_signed, mode);
+
+    sv4_require_width(width, "strength-aware net");
+    sv4_t r;
+    memset(&r, 0, sizeof(r));
+    r.width = width;
+    r.is_signed = is_signed;
+    int nl = sv4_nlimbs(width);
+    for (int i = 0; i < nl; i++) {
+        uint64_t known0[8] = {0};
+        uint64_t known1[8] = {0};
+        uint64_t possible0[8] = {0};
+        uint64_t possible1[8] = {0};
+        uint64_t m = sv4_limb_mask(width, i);
+        for (int d = 0; d < n_drivers; d++) {
+            const sv4_t* v = drivers[d];
+            if (!v) continue;
+            uint8_t s0 = strength0[d];
+            uint8_t s1 = strength1[d];
+            if (s0 > LLG_STRENGTH_SUPPLY || s1 > LLG_STRENGTH_SUPPLY) {
+                fprintf(stderr, "llg runtime fatal: invalid net drive strength\n");
+                abort();
+            }
+            uint64_t x = v->x[i] & m;
+            uint64_t z = v->z[i] & m;
+            uint64_t k0 = (~v->bits[i]) & ~(x | z) & m;
+            uint64_t k1 = v->bits[i] & ~(x | z) & m;
+            if (s0 != LLG_STRENGTH_HIGHZ) {
+                known0[s0] |= k0;
+                possible0[s0] |= k0 | x;
+            }
+            if (s1 != LLG_STRENGTH_HIGHZ) {
+                known1[s1] |= k1;
+                possible1[s1] |= k1 | x;
+            }
+        }
+
+        uint64_t driven = 0;
+        uint64_t definite0 = 0;
+        uint64_t definite1 = 0;
+        uint64_t opposing0 = 0;
+        uint64_t opposing1 = 0;
+        for (int strength = LLG_STRENGTH_SUPPLY;
+             strength > LLG_STRENGTH_HIGHZ; strength--) {
+            opposing0 |= possible0[strength];
+            opposing1 |= possible1[strength];
+            definite0 |= known0[strength] & ~opposing1;
+            definite1 |= known1[strength] & ~opposing0;
+            driven |= possible0[strength] | possible1[strength];
+        }
+        r.bits[i] = definite1 & m;
+        r.x[i] = driven & ~(definite0 | definite1) & m;
+        r.z[i] = ~driven & m;
+    }
+    return r;
+}
+
 // Bit `i` counted from the LSB; out-of-range -> 2 (X), X -> 2, Z -> 3,
 // else 0/1.
 static int sv4_lsb_bit(sv4_t v, int i) {
@@ -1088,6 +1150,10 @@ sv4_t sv4_le(sv4_t a, sv4_t b) { return sv4_cmp(a, b, 1); }
 sv4_t sv4_gt(sv4_t a, sv4_t b) { return sv4_cmp(a, b, 2); }
 sv4_t sv4_ge(sv4_t a, sv4_t b) { return sv4_cmp(a, b, 3); }
 
+sv4_t sv4_inside_range(sv4_t value, sv4_t low, sv4_t high) {
+    return sv4_logand(sv4_ge(value, low), sv4_le(value, high));
+}
+
 sv4_t sv4_mux(sv4_t sel, sv4_t a, sv4_t b) {
     uint32_t w = sv4_maxw(a, b);
     int8_t s = a.is_signed && b.is_signed;
@@ -1138,6 +1204,66 @@ sv4_t sv4_repeat(sv4_t pat, uint64_t n) {
         int dst = (int)dst64;
         for (int i = 0; i < (int)pat.width && dst + i < (int)w_total; i++)
             sv4_lsb_bit_set(&r, dst + i, sv4_lsb_bit(pat, i));
+    }
+    return r;
+}
+
+sv4_t sv4_stream(sv4_t value, uint32_t slice, int right_to_left) {
+    if (slice == 0) {
+        fprintf(stderr, "llg runtime fatal: zero streaming slice size\n");
+        abort();
+    }
+    sv4_t r;
+    memset(&r, 0, sizeof(r));
+    r.width = value.width;
+    r.is_signed = 0;
+    if (!right_to_left || value.width == 0 || slice >= value.width) {
+        int limbs = sv4_nlimbs(value.width);
+        for (int i = 0; i < limbs; i++) {
+            r.bits[i] = value.bits[i];
+            r.x[i] = value.x[i];
+            r.z[i] = value.z[i];
+        }
+        return r;
+    }
+    uint64_t width = value.width;
+    for (uint64_t src = 0; src < width; src++) {
+        uint64_t block = src / slice;
+        uint64_t offset = src % slice;
+        uint64_t consumed = (block + 1) * (uint64_t)slice;
+        if (consumed > width) consumed = width;
+        uint64_t dst = width - consumed + offset;
+        sv4_lsb_bit_set(&r, (int)dst, sv4_lsb_bit(value, (int)src));
+    }
+    return r;
+}
+
+sv4_t sv4_unstream(sv4_t value, uint32_t slice, int right_to_left) {
+    if (slice == 0) {
+        fprintf(stderr, "llg runtime fatal: zero streaming slice size\n");
+        abort();
+    }
+    sv4_t r;
+    memset(&r, 0, sizeof(r));
+    r.width = value.width;
+    r.is_signed = 0;
+    if (!right_to_left || value.width == 0 || slice >= value.width) {
+        int limbs = sv4_nlimbs(value.width);
+        for (int i = 0; i < limbs; i++) {
+            r.bits[i] = value.bits[i];
+            r.x[i] = value.x[i];
+            r.z[i] = value.z[i];
+        }
+        return r;
+    }
+    uint64_t width = value.width;
+    for (uint64_t dst = 0; dst < width; dst++) {
+        uint64_t block = dst / slice;
+        uint64_t offset = dst % slice;
+        uint64_t consumed = (block + 1) * (uint64_t)slice;
+        if (consumed > width) consumed = width;
+        uint64_t src = width - consumed + offset;
+        sv4_lsb_bit_set(&r, (int)dst, sv4_lsb_bit(value, (int)src));
     }
     return r;
 }

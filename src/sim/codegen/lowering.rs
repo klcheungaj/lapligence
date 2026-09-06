@@ -222,9 +222,10 @@ use super::timescale::{
 };
 use super::CodegenError;
 use crate::core::db::{
-    CaseKind as DbCaseKind, ConstantSource, ConstantType, Db, Direction as DbDirection, EventSpec,
-    ExprKind, IntraControl, JoinKind as DbJoinKind, NetType, NodeId, NodeKind, Operation,
-    PackedMember, PrimClass, PrimitiveType, ProcessKind, StmtKind, Strength,
+    AggregateKind, AggregateMember, ArrayKind, AssociativeIndex, CaseKind as DbCaseKind,
+    ConstantSource, ConstantType, Db, Direction as DbDirection, EventSpec, ExprKind, IntraControl,
+    JoinKind as DbJoinKind, NetType, NodeId, NodeKind, Operation, PackedMember, PrimClass,
+    PrimitiveType, ProcessKind, StmtKind, Strength,
 };
 use crate::core::elab::{self, Bit, Val};
 use crate::ffi::vpi::{self, ValueData, VpiHandle};
@@ -233,14 +234,18 @@ use crate::sim::emit_c::{
     RCtx, LLG_MAX_WIDTH,
 };
 use crate::sim::ir::{
-    IrBinOp, IrBitQuery, IrCall, IrCallArg, IrCallExpr, IrCaseItem, IrCaseKind, IrConst, IrDepth,
-    IrEdge, IrElemSel, IrEvent, IrExpr, IrExprKind, IrFormal, IrJoinKind, IrLhs, IrModel,
-    IrProcess, IrRealBinOp, IrRealUnOp, IrShape, IrSignal, IrStmt, IrSysFunc, IrTimeKind, IrType,
-    IrUnOp, IrWaitSrc, LLG_MAX_NET_DRIVERS,
+    IrAssocKey, IrAssocTraversal, IrBinOp, IrBitQuery, IrCall, IrCallArg, IrCallExpr, IrCaseItem,
+    IrCaseKind, IrChandleExpr, IrConst, IrContainer, IrContainerExpr, IrContainerKind,
+    IrContainerStmt, IrDepth, IrEdge, IrElemSel, IrEvent, IrExpr, IrExprKind, IrFormal,
+    IrInsideItem, IrJoinKind, IrLhs, IrModel, IrProcess, IrRealBinOp, IrRealUnOp, IrShape,
+    IrSignal, IrStmt, IrStreamDirection, IrSysFunc, IrTimeKind, IrType, IrUnOp, IrWaitSrc,
+    LLG_MAX_NET_DRIVERS,
 };
 
 mod collection;
+mod containers;
 mod expressions;
+mod objects;
 mod statements;
 
 /// Sanity cap on the terminal count of one structural gate.
@@ -446,6 +451,24 @@ struct ArrayInfo {
     ir: usize,
 }
 
+#[derive(Clone)]
+struct ContainerInfo {
+    ir: usize,
+}
+
+#[derive(Clone)]
+struct AggregateMemberInfo {
+    member: AggregateMember,
+    signal: SignalInfo,
+}
+
+#[derive(Clone)]
+struct UnpackedAggregateInfo {
+    kind: AggregateKind,
+    type_identity: Option<String>,
+    members: Vec<AggregateMemberInfo>,
+}
+
 /// A lowered named event (`event ev;`): its waiter-table C name and index
 /// into [`Codegen::model`].events.  Events carry no value — only triggers and
 /// waits reference them.
@@ -549,13 +572,22 @@ struct Codegen<'a> {
     /// FuncTask arena node → call-site resolution metadata (model index,
     /// signature).  Emitted functions only; registered by the prototype walk.
     func_meta: HashMap<NodeId, FuncMeta>,
-    /// Persistent storage for output/inout formals of static subroutines,
+    /// Persistent storage for every formal of static subroutines,
     /// keyed by (owning instance, formal declaration).
     static_formals: HashMap<(NodeId, NodeId), SignalInfo>,
+    /// Native pointer storage for static chandle formals.
+    static_chandle_formals: HashMap<(NodeId, NodeId), usize>,
+    /// Persistent storage for locals of static delay-bearing tasks. Those
+    /// tasks are inlined, so their storage must live outside each call site.
+    static_task_locals: HashMap<(NodeId, NodeId), SignalInfo>,
     /// All lowered signals, in collection order (deterministic emission).
     signals: Vec<SignalInfo>,
     /// Net/Var arena node → lowered signal info (all instances + gen scopes).
     sig_globals: HashMap<NodeId, SignalInfo>,
+    object_globals: HashMap<NodeId, usize>,
+    scope_object_names: HashMap<String, HashMap<String, usize>>,
+    /// Top-level unpacked aggregate variables lowered to member storage.
+    unpacked_aggregates: HashMap<NodeId, UnpackedAggregateInfo>,
     /// Inline procedural declaration node → lexical C local information.
     proc_locals: HashMap<NodeId, ProcLocalInfo>,
     /// Legacy storage for scalar declaration-initializer fills that need a
@@ -566,6 +598,9 @@ struct Codegen<'a> {
     arrays: Vec<ArrayInfo>,
     /// Array arena node → lowered array info.
     array_globals: HashMap<NodeId, ArrayInfo>,
+    /// Dynamic arrays, queues, and associative arrays use owned runtime
+    /// storage and never alias fixed unpacked-array storage.
+    container_globals: HashMap<NodeId, ContainerInfo>,
     /// All lowered named events, in collection order (deterministic emission).
     events: Vec<EventInfo>,
     /// NamedEvent arena node → lowered event info.
@@ -658,12 +693,18 @@ impl<'a> Codegen<'a> {
             cur_fn_ir: None,
             func_meta: HashMap::new(),
             static_formals: HashMap::new(),
+            static_chandle_formals: HashMap::new(),
+            static_task_locals: HashMap::new(),
             signals: Vec::new(),
             sig_globals: HashMap::new(),
+            object_globals: HashMap::new(),
+            scope_object_names: HashMap::new(),
+            unpacked_aggregates: HashMap::new(),
             proc_locals: HashMap::new(),
             net_inits: Vec::new(),
             arrays: Vec::new(),
             array_globals: HashMap::new(),
+            container_globals: HashMap::new(),
             events: Vec::new(),
             event_globals: HashMap::new(),
             scalar_inits: Vec::new(),
@@ -816,15 +857,99 @@ impl<'a> Codegen<'a> {
             return None;
         };
         let target = refs.first().copied().flatten()?;
-        let member_name = parts.get(1)?;
         let info = self.signal_of(target)?.clone();
-        let member = self
-            .db
-            .packed_members(target)?
+        let mut layout = self.db.aggregate_layout(target)?;
+        if !matches!(
+            layout.kind,
+            AggregateKind::PackedStruct | AggregateKind::PackedUnion
+        ) {
+            return None;
+        }
+        let mut absolute_lsb = 0u32;
+        let mut selected: Option<&AggregateMember> = None;
+        for (part_index, member_name) in parts.iter().enumerate().skip(1) {
+            let index = layout
+                .members
+                .iter()
+                .position(|member| member.name == *member_name)?;
+            let member = &layout.members[index];
+            let relative_lsb = if layout.kind == AggregateKind::PackedUnion {
+                0
+            } else {
+                layout.members[index + 1..]
+                    .iter()
+                    .try_fold(0u32, |offset, following| {
+                        offset.checked_add(following.ty.width?)
+                    })?
+            };
+            absolute_lsb = absolute_lsb.checked_add(relative_lsb)?;
+            selected = Some(member);
+            match member.aggregate.as_deref() {
+                Some(nested)
+                    if matches!(
+                        nested.kind,
+                        AggregateKind::PackedStruct | AggregateKind::PackedUnion
+                    ) =>
+                {
+                    layout = nested;
+                }
+                _ if part_index + 1 == parts.len() => break,
+                _ => return None,
+            }
+        }
+        let member = selected?;
+        Some((
+            info,
+            PackedMember {
+                name: member.name.clone(),
+                lsb: absolute_lsb,
+                width: member.ty.width?,
+                signed: member.ty.signed,
+                two_state: member.two_state,
+                packed_ranges: member.packed_ranges.clone(),
+            },
+        ))
+    }
+
+    fn unpacked_aggregate_target(&self, node: NodeId) -> Option<NodeId> {
+        match self.kind(node) {
+            NodeKind::Var { .. } => self.unpacked_aggregates.contains_key(&node).then_some(node),
+            NodeKind::Expr(ExprKind::Ref { target }) => {
+                target.filter(|target| self.unpacked_aggregates.contains_key(target))
+            }
+            NodeKind::Expr(ExprKind::HierPath { parts, refs }) if parts.len() == 1 => refs
+                .first()
+                .copied()
+                .flatten()
+                .filter(|target| self.unpacked_aggregates.contains_key(target)),
+            _ => None,
+        }
+    }
+
+    fn unpacked_aggregate_info(&self, node: NodeId) -> Option<(NodeId, UnpackedAggregateInfo)> {
+        let target = self.unpacked_aggregate_target(node)?;
+        self.unpacked_aggregates
+            .get(&target)
+            .cloned()
+            .map(|aggregate| (target, aggregate))
+    }
+
+    fn unpacked_member_info(
+        &self,
+        node: NodeId,
+    ) -> Option<(NodeId, AggregateKind, AggregateMemberInfo)> {
+        let NodeKind::Expr(ExprKind::HierPath { parts, refs }) = self.kind(node) else {
+            return None;
+        };
+        let target = refs.first().copied().flatten()?;
+        let aggregate = self.unpacked_aggregates.get(&target)?;
+        let member_name = parts.get(1)?;
+        let member = aggregate
+            .members
             .iter()
-            .find(|member| member.name == *member_name)?
+            .find(|member| member.member.name == *member_name)?
             .clone();
-        Some((info, member))
+        Some((target, aggregate.kind, member))
     }
 
     fn packed_member_select(&self, node: NodeId) -> Result<Option<PackedMemberSelect>, String> {
@@ -902,30 +1027,31 @@ impl<'a> Codegen<'a> {
         Ok(i128::from(index))
     }
 
-    fn packed_member_relative_bound(
+    fn aggregate_member_relative_bound(
         &self,
-        member: &PackedMember,
+        member_name: &str,
+        packed_ranges: &[crate::core::db::PackedRange],
         bound: i128,
     ) -> Result<u32, String> {
-        let (left, right) = match member.packed_ranges.as_slice() {
+        let (left, right) = match packed_ranges {
             [range] => (range.left, range.right),
             [] => {
                 return Err(format!(
                     "packed-member `{}` has no captured packed range",
-                    member.name
+                    member_name
                 ));
             }
             _ => {
                 return Err(format!(
                     "select on multidimensional packed member `{}` is not supported",
-                    member.name
+                    member_name
                 ));
             }
         };
         if bound < left.min(right) || bound > left.max(right) {
             return Err(format!(
                 "packed-member select bound {bound} is outside `{}` range [{left}:{right}]",
-                member.name
+                member_name
             ));
         }
         let relative = if left >= right {
@@ -1680,6 +1806,8 @@ struct FuncMeta {
     ir: usize,
     is_task: bool,
     ret: Option<(u32, bool, bool)>,
+    ret_chandle: bool,
+    ret_string: bool,
     formals: Vec<(NodeId, bool)>,
 }
 
@@ -1691,6 +1819,12 @@ struct ArgMap {
     width: u32,
     signed: bool,
     two_state: bool,
+}
+
+#[derive(Clone)]
+enum ChandleTarget {
+    Object(usize),
+    Local(String),
 }
 
 /// Context for emitting a function/task definition body (or an inlined task
@@ -1714,6 +1848,16 @@ struct FuncCtx {
     /// and inout formals (`o0` for a C-function parameter, `&G_x` for an
     /// inlined task's bound argument).
     arg_write: HashMap<NodeId, String>,
+    /// Static formal/local arena node → persistent model storage. Keeping
+    /// this structural mapping lets validation and optimization see writes;
+    /// `arg_write` alone is an opaque C address.
+    persistent: HashMap<NodeId, SignalInfo>,
+    /// Chandle formals/return variables remain native pointer values rather
+    /// than being encoded as packed integers.
+    chandle_read: HashMap<NodeId, IrChandleExpr>,
+    chandle_write: HashMap<NodeId, ChandleTarget>,
+    string_read: HashMap<NodeId, crate::sim::ir::IrStringExpr>,
+    string_write: HashMap<NodeId, String>,
     /// local var arena node → (C local name, width, signed, two-state).
     locals: HashMap<NodeId, (String, u32, bool, bool)>,
     /// Arena node of the function-name return variable (when captured).
@@ -1822,6 +1966,14 @@ enum Lhs {
     /// bit/part-select.  Emitted as a guarded statement (out-of-range or
     /// unknown indices are no-ops), never as a plain `llg_ba` argument.
     ArrayElem(ArrayElemLhs),
+    /// Streaming-concatenation assignment target and its unevaluated static
+    /// slice size. The effective slice is clamped after the target width is
+    /// known, matching expression streaming.
+    Stream {
+        parts: Vec<Lhs>,
+        slice: Option<u128>,
+        direction: IrStreamDirection,
+    },
 }
 
 /// A trailing select on a hierarchical assignment target, recovered from the
@@ -2008,6 +2160,7 @@ fn packed_lhs_width(model: &IrModel, lhs: &IrLhs) -> Option<u32> {
             IrElemSel::Part(left, right) => ((left - right).abs() + 1) as u32,
             IrElemSel::Bit(_) => 1,
         },
+        IrLhs::Stream { width, .. } => *width,
     };
     (width > 0).then_some(width)
 }

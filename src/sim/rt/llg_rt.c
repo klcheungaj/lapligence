@@ -1043,8 +1043,9 @@ void llg_ba_d(double* target, double value) {
 // ── Collapsed inout nets ──────────────────────────────────────────────────────
 
 static sv4_t llg_net_compute(const llg_net_t* net) {
-    return sv4_resolve((const sv4_t* const*)net->drivers, net->n_drivers,
-                       net->width, net->is_signed, net->resolution);
+    return sv4_resolve_strengths(
+        (const sv4_t* const*)net->drivers, net->strength0, net->strength1,
+        net->n_drivers, net->width, net->is_signed, net->resolution);
 }
 
 void llg_net_resolve(llg_net_t* net) {

@@ -1,7 +1,8 @@
 //! rt — the C11 simulation runtime embedded as strings.
 //!
 //! [`value_sources`] returns the scheduler-independent value types, operations,
-//! and conversions (`llg_value.h` / `llg_value.c`), [`runtime_sources`] the event
+//! and conversions (`llg_value.h` / `llg_value.c`), [`container_sources`] and
+//! [`string_sources`] the dynamically sized value stores, [`runtime_sources`] the event
 //! scheduler (`llg_rt.h` / `llg_rt.c`), [`libaco_sources`] the vendored coroutine
 //! library (`aco.h` / `aco.c` / `acosw.S`), [`waveform_sources`] the optional
 //! asynchronous VCD/FST writer and vendored libfst sources, and
@@ -23,6 +24,19 @@ pub fn runtime_sources() -> (&'static str, &'static str) {
 /// This C11 module can be compiled independently, linking only the math library.
 pub fn value_sources() -> (&'static str, &'static str) {
     (include_str!("llg_value.h"), include_str!("llg_value.c"))
+}
+
+/// Scheduler-independent dynamic-array, queue, and associative-array storage.
+pub fn container_sources() -> (&'static str, &'static str) {
+    (
+        include_str!("llg_container.h"),
+        include_str!("llg_container.c"),
+    )
+}
+
+/// Scheduler-independent owned SystemVerilog string values and operations.
+pub fn string_sources() -> (&'static str, &'static str) {
+    (include_str!("llg_string.h"), include_str!("llg_string.c"))
 }
 
 /// (aco.h, aco.c, acosw.S) from vendor/libaco.

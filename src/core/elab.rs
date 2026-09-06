@@ -1897,8 +1897,12 @@ impl Resolver {
                     .typespec_size(sc, resolved, in_progress, ts.raw())?
                     .ok_or_else(|| ElabError::Unsupported("cast to unsizable type".to_string()))?;
                 // Value-preserving cast (§6.24.1): extension by the SOURCE's
-                // signedness, result tagged with the cast type.
-                Ok(Val::Bits(v.cast(w, signed)))
+                // signedness, result tagged with the cast type. The cast's
+                // target width materializes an unbased unsized fill before
+                // any enclosing assignment supplies a second context.
+                let mut cast = v.cast(w, signed);
+                cast.fill = None;
+                Ok(Val::Bits(cast))
             }
             other => Err(ElabError::Unsupported(format!("operation op type {other}"))),
         }

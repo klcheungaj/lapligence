@@ -10,9 +10,10 @@ mod domain;
 mod validate;
 
 pub use database::{
-    ArrayMeta, CaseItem, ConstantSource, Db, DbError, ElaboratedTypeRanges, EventSpec, ExprKind,
-    GateTerm, IntraControl, Node, NodeId, NodeKind, PackedMember, PackedRange, PrimClass,
-    ProcessKind, StmtKind,
+    AggregateKind, AggregateLayout, AggregateMember, ArrayKind, ArrayMeta, AssociativeIndex,
+    CaseItem, ConstantSource, Db, DbError, ElaboratedTypeRanges, EventSpec, ExprKind, GateTerm,
+    IntraControl, Node, NodeId, NodeKind, PackedMember, PackedRange, PrimClass, ProcessKind,
+    StmtKind, VariableLifetimeQualifier,
 };
 pub use domain::{
     AlwaysKind, CaseKind, ConstantType, Direction, JoinKind, NetType, ObjectType, Operation,

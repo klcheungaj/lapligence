@@ -48,8 +48,10 @@ extern "C" {
 //
 // An inout port collapses its parent and child nets into ONE simulated net
 // (IEEE 1800-2017 §23.3.3.7): every side writes a per-driver slot and readers
-// see the wire/tri resolution (Table 6-2, equal strengths) of all slots.
-// All-Z when no driver is active; any X or mixed 0/1 resolves to X.
+// see the wire/tri resolution of all slots. Standalone continuous-assignment
+// groups carry per-slot drive-strength endpoints; collapsed inout and wired
+// groups use the default strong endpoints with their established modes.
+// All-Z when no driver is active; equal-strength conflicts resolve to X.
 //
 // The struct is a valid file-scope static initializer: driver cells are
 // separate `sv4_t` globals whose addresses the codegen wires into `drivers`.
@@ -63,9 +65,11 @@ typedef struct {
     int8_t resolution;
     int n_drivers;
     sv4_t* drivers[LLG_MAX_NET_DRIVERS]; /* per-driver contribution cells */
+    uint8_t strength0[LLG_MAX_NET_DRIVERS];
+    uint8_t strength1[LLG_MAX_NET_DRIVERS];
 } llg_net_t;
 
-void llg_net_resolve(llg_net_t* net); /* equal-strength resolution, per limb */
+void llg_net_resolve(llg_net_t* net); /* strength-aware resolution, per limb */
 void llg_net_write(llg_net_t* net, int idx, sv4_t value);
 
 // ── Scheduler ─────────────────────────────────────────────────────────────────

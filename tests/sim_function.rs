@@ -13,9 +13,10 @@
 
 use std::{path::Path, sync::Mutex};
 
-use llg::core::compile;
 use llg::core::elab;
+use llg::core::{compile, db::Db};
 use llg::sim;
+use llg::sim::opt::OptConfig;
 
 #[path = "support/sim.rs"]
 mod sim_harness;
@@ -46,23 +47,68 @@ fn run_sim(sv: &str, top: &str, tag: &str) -> Result<(String, Vec<String>), Stri
     })
 }
 
-fn codegen_fixture_error(file: &str, tag: &str) -> Result<String, String> {
+fn fixture_rejection(file: &str, tag: &str) -> Result<String, String> {
     let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/sim/function")
         .join(file);
     sim_harness::with_temp_cwd(tag, |dir| {
         let source = dir.join(file);
         std::fs::copy(&fixture, &source).map_err(|error| format!("copy fixture: {error}"))?;
-        let compiled = compile::compile_checked(&compile::CompileOpts {
+        let compiled = compile::compile(&compile::CompileOpts {
             files: vec![source.to_string_lossy().into_owned()],
             top: Some("tb".to_owned()),
             ..Default::default()
         })
         .map_err(|error| format!("compile fixture: {error}"))?;
+        if !compiled.ok() {
+            return Ok(format!("{:?}", compiled.diagnostics));
+        }
         match sim::codegen::generate(compiled.uhdm_design().ok_or("no UHDM design")?) {
             Ok(_) => Err(format!("{file} unexpectedly generated")),
             Err(error) => Ok(error.to_string()),
         }
+    })
+}
+
+fn run_fixture_both_opts(file: &str, tag: &str, expected: &str) -> Result<(), String> {
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/sim/function")
+        .join(file);
+    sim_harness::with_temp_cwd(tag, |dir| {
+        let source = dir.join(file);
+        std::fs::copy(&fixture, &source).map_err(|error| format!("copy fixture: {error}"))?;
+        let compiled = compile::compile(&compile::CompileOpts {
+            files: vec![source.to_string_lossy().into_owned()],
+            top: Some("tb".to_owned()),
+            ..Default::default()
+        })
+        .map_err(|error| format!("compile fixture: {error}"))?;
+        if !compiled.ok() {
+            return Err(format!("frontend diagnostics: {:?}", compiled.diagnostics));
+        }
+        let database = Db::build_with_source_files(
+            compiled.uhdm_design().ok_or("no UHDM design")?,
+            &compiled.frontend_source_files(),
+        )
+        .map_err(|error| format!("database: {error}"))?;
+
+        for (variant, options) in [
+            ("unoptimized", OptConfig::none()),
+            ("optimized", OptConfig::default()),
+        ] {
+            let model = sim::codegen::generate_from_db_with_opts(&database, &options)
+                .map_err(|error| format!("{variant} codegen: {error}"))?;
+            let executable = sim::build::build_model_cmake(
+                &dir.join(variant),
+                &[("model.c", model.model_c.as_str())],
+            )
+            .map_err(|error| format!("{variant} cmake: {error}"))?;
+            let actual = sim_harness::run_executable(&executable)?;
+            if actual != expected {
+                return Err(format!("{variant}: expected {expected:?}, got {actual:?}"));
+            }
+        }
+        Ok(())
     })
 }
 
@@ -244,24 +290,52 @@ fn sim_task_output_nba() {
 }
 
 #[test]
-fn sim_task_nba_rejects_unsupported_static_input_and_local_targets() {
+fn sim_task_nba_static_input_and_local_targets_persist() {
+    if !llg::sim::build::cmake_available() {
+        eprintln!("SKIP: cmake not available");
+        return;
+    }
     let _guard = SURELOG_LOCK.lock().unwrap();
     let cases = [
-        ("task_nba_input_formal.sv", "task_nba_input_formal", "input"),
+        (
+            "task_nba_input_formal.sv",
+            "task_nba_input_formal",
+            "PASS task_nba_input_formal\n",
+        ),
         (
             "task_nba_local_storage.sv",
             "task_nba_local_storage",
-            "local",
+            "PASS task_nba_local_storage\n",
         ),
     ];
-    for (file, tag, target_kind) in cases {
-        let error = codegen_fixture_error(file, tag)
+    for (file, tag, expected) in cases {
+        run_fixture_both_opts(file, tag, expected)
+            .unwrap_or_else(|error| panic!("{file} must execute correctly: {error}"));
+    }
+}
+
+#[test]
+fn sim_task_nba_rejects_automatic_input_and_local_targets() {
+    let _guard = SURELOG_LOCK.lock().unwrap();
+    for (file, tag) in [
+        (
+            "task_nba_automatic_input_formal.sv",
+            "task_nba_automatic_input_formal",
+        ),
+        (
+            "task_nba_automatic_local_storage.sv",
+            "task_nba_automatic_local_storage",
+        ),
+    ] {
+        let error = fixture_rejection(file, tag)
             .unwrap_or_else(|error| panic!("{file} must be explicitly rejected: {error}"));
         let normalized = error.to_ascii_lowercase();
         assert!(
             normalized.contains("nonblocking")
                 && normalized.contains("task")
-                && normalized.contains(target_kind),
+                && (normalized.contains("automatic")
+                    || (normalized.contains("stack-backed")
+                        && normalized.contains("cannot outlive"))),
             "{file}: unexpected diagnostic: {error}"
         );
     }

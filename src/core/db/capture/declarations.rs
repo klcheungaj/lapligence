@@ -18,6 +18,30 @@ pub(in crate::core::db) fn net_type(handle: VpiHandle) -> NetType {
 }
 
 impl Builder {
+    pub(in crate::core::db) fn enclosing_typedef_info(
+        &mut self,
+        context: VpiHandle,
+        name: &str,
+    ) -> Option<(TypeInfo, bool)> {
+        let mut scope = child(vpi::vpiParent, context);
+        let mut hops = 0usize;
+        loop {
+            let current = scope.as_ref()?;
+            for typedef in iter(vpi::vpiTypedef, current.raw()) {
+                if vpi::obj_name(typedef.raw()) == name {
+                    let ty = self.typespec_info(typedef.raw());
+                    let two_state = self.typespec_two_state(typedef.raw(), 0);
+                    return Some((ty, two_state));
+                }
+            }
+            if hops == 32 {
+                return None;
+            }
+            scope = current.child(vpi::vpiParent);
+            hops += 1;
+        }
+    }
+
     pub(in crate::core::db) fn walk_enum_const(
         &mut self,
         h: VpiHandle,
@@ -222,8 +246,11 @@ impl Builder {
         }
         self.index_node(h, &props, id);
         if let Some(typespec) = child(vpi::vpiTypespec, h).or_else(|| child(vpi::vpiTypedef, h)) {
-            if let Some(members) = self.packed_member_layout(typespec.raw(), h) {
-                self.packed_members.insert(id, members);
+            if let Some((layout, packed_members)) = self.aggregate_layout(typespec.raw(), h) {
+                self.aggregate_layouts.insert(id, layout);
+                if let Some(members) = packed_members {
+                    self.packed_members.insert(id, members);
+                }
             }
             if let Some(dimensions) = self.contextual_packed_ranges(typespec.raw(), h) {
                 self.packed_dimensions.insert(id, dimensions);
@@ -246,13 +273,18 @@ impl Builder {
         let props = self.common(h);
         let ty = self.type_info_of(h);
         let id = self.register(parent, &props, NodeKind::Var { ty });
+        let lifetime = self.variable_lifetime_qualifier(h, parent);
+        self.var_lifetime_qualifiers.insert(id, lifetime);
         if self.object_two_state(h) {
             self.two_state_types.insert(id);
         }
         self.index_node(h, &props, id);
         if let Some(typespec) = child(vpi::vpiTypespec, h).or_else(|| child(vpi::vpiTypedef, h)) {
-            if let Some(members) = self.packed_member_layout(typespec.raw(), h) {
-                self.packed_members.insert(id, members);
+            if let Some((layout, packed_members)) = self.aggregate_layout(typespec.raw(), h) {
+                self.aggregate_layouts.insert(id, layout);
+                if let Some(members) = packed_members {
+                    self.packed_members.insert(id, members);
+                }
             }
             if let Some(dimensions) = self.contextual_packed_ranges(typespec.raw(), h) {
                 self.packed_dimensions.insert(id, dimensions);
@@ -317,6 +349,24 @@ impl Builder {
                 _ => None,
             });
         }
+        let array_type = vpi::get(vpi::vpiArrayType, h);
+        let queue_maximum_elements = if array_type == vpi::vpiQueueArray {
+            iter(vpi::vpiRange, h).into_iter().next().and_then(|range| {
+                self.range_bound(vpi::vpiRightRange, range.raw())
+                    .and_then(|right| u64::try_from(right).ok())
+                    .and_then(|upper| upper.checked_add(1))
+            })
+        } else {
+            None
+        };
+        let kind = match array_type {
+            vpi::vpiDynamicArray => ArrayKind::Dynamic,
+            vpi::vpiAssocArray => ArrayKind::Associative(self.associative_index(h)),
+            vpi::vpiQueueArray => ArrayKind::Queue {
+                maximum_elements: queue_maximum_elements,
+            },
+            _ => ArrayKind::Static,
+        };
         let id = self.register(parent, &props, NodeKind::Array { ty });
         if self.object_two_state(element_handle) {
             self.two_state_types.insert(id);
@@ -339,12 +389,46 @@ impl Builder {
         self.arrays.insert(
             id,
             ArrayMeta {
+                kind,
                 dims,
                 init,
                 net_type,
             },
         );
         Ok(id)
+    }
+
+    fn associative_index(&mut self, array: VpiHandle) -> AssociativeIndex {
+        let Some(root) = child(vpi::vpiTypespec, array) else {
+            return AssociativeIndex::Wildcard;
+        };
+        let mut current = root;
+        for _ in 0..=32 {
+            if vpi::obj_type(current.raw()) != vpi::vpiRefTypespec {
+                let Some(index) = current.child(vpi::vpiIndexTypespec) else {
+                    return AssociativeIndex::Wildcard;
+                };
+                let info = self.typespec_info(index.raw());
+                return match info.kind.as_str() {
+                    "string" => AssociativeIndex::String,
+                    "logic" | "bit" | "int" | "integer" | "longint" | "byte" | "shortint"
+                    | "time" | "enum" => info
+                        .width
+                        .map(|width| AssociativeIndex::Integral {
+                            width,
+                            signed: info.signed,
+                            two_state: self.typespec_two_state(index.raw(), 0),
+                        })
+                        .unwrap_or_else(|| AssociativeIndex::Unsupported(info.kind.clone())),
+                    kind => AssociativeIndex::Unsupported(kind.to_string()),
+                };
+            }
+            let Some(next) = current.child(vpi::vpiActual) else {
+                return AssociativeIndex::Wildcard;
+            };
+            current = next;
+        }
+        AssociativeIndex::Unsupported("recursive index typespec".to_string())
     }
 
     pub(in crate::core::db) fn walk_task_func(
@@ -504,6 +588,12 @@ impl Builder {
                 signed: true,
                 type_name: None,
             },
+            vpi::vpiChandleVar => TypeInfo {
+                kind: "chandle".to_string(),
+                width: None,
+                signed: false,
+                type_name: None,
+            },
             _ => ty,
         }
     }
@@ -592,6 +682,9 @@ impl Builder {
                         self.contextual_range_width(cur, context)
                     }
                     vpi::vpiStructTypespec => {
+                        if vpi::get(vpi::vpiPacked, cur) == 0 {
+                            return None;
+                        }
                         let mut total = 0u32;
                         let mut any = false;
                         for member in iter(vpi::vpiTypespecMember, cur) {
@@ -604,6 +697,9 @@ impl Builder {
                         any.then_some(total)
                     }
                     vpi::vpiUnionTypespec => {
+                        if vpi::get(vpi::vpiPacked, cur) == 0 {
+                            return None;
+                        }
                         let mut width = 0u32;
                         let mut any = false;
                         for member in iter(vpi::vpiTypespecMember, cur) {
@@ -631,11 +727,11 @@ impl Builder {
         }
     }
 
-    fn packed_member_layout(
+    fn aggregate_layout(
         &mut self,
         typespec: VpiHandle,
         context: VpiHandle,
-    ) -> Option<Vec<PackedMember>> {
+    ) -> Option<(AggregateLayout, Option<Vec<PackedMember>>)> {
         let mut current: Option<OwnedHandle> = None;
         let mut hops = 0usize;
         loop {
@@ -645,44 +741,96 @@ impl Builder {
                 if !is_union && vpi::obj_type(cur) != vpi::vpiStructTypespec {
                     return None;
                 }
-                let mut members = Vec::new();
+                let is_packed = vpi::get(vpi::vpiPacked, cur) != 0;
+                let is_tagged = is_union && vpi::get(vpi::vpiTagged, cur) != 0;
+                let kind = if is_tagged {
+                    AggregateKind::TaggedUnion
+                } else if is_union && is_packed {
+                    AggregateKind::PackedUnion
+                } else if is_union {
+                    AggregateKind::UnpackedUnion
+                } else if is_packed {
+                    AggregateKind::PackedStruct
+                } else {
+                    AggregateKind::UnpackedStruct
+                };
+                let mut aggregate_members = Vec::new();
                 for member in iter(vpi::vpiTypespecMember, cur) {
                     let name = vpi::obj_name(member.raw());
                     if name.is_empty() {
                         return None;
                     }
                     let member_type = child(vpi::vpiTypespec, member.raw())?;
-                    let width = self.contextual_typespec_width(member_type.raw(), context)?;
-                    let signed = self.typespec_info(member_type.raw()).signed;
+                    let mut ty = self.typespec_info(member_type.raw());
+                    if ty.width.is_none() {
+                        ty.width = self.contextual_typespec_width(member_type.raw(), context);
+                    }
                     let two_state = self.typespec_two_state(member_type.raw(), 0);
+                    let aggregate = self
+                        .aggregate_layout(member_type.raw(), context)
+                        .map(|(layout, _)| Box::new(layout));
                     let packed_ranges =
                         match self.contextual_packed_ranges(member_type.raw(), context) {
                             Some(ranges) => ranges,
-                            None => vec![PackedRange {
-                                left: i128::from(width.checked_sub(1)?),
-                                right: 0,
-                            }],
+                            None => match ty.width.and_then(|width| width.checked_sub(1)) {
+                                Some(left) => vec![PackedRange {
+                                    left: i128::from(left),
+                                    right: 0,
+                                }],
+                                None => Vec::new(),
+                            },
                         };
-                    members.push(PackedMember {
+                    aggregate_members.push(AggregateMember {
                         name,
-                        lsb: 0,
-                        width,
-                        signed,
+                        ty,
                         two_state,
                         packed_ranges,
+                        aggregate,
                     });
                 }
-                if members.is_empty() {
+                if aggregate_members.is_empty() {
                     return None;
                 }
-                if !is_union {
+                let mut packed_members = if is_packed {
+                    aggregate_members
+                        .iter()
+                        .map(|member| {
+                            Some(PackedMember {
+                                name: member.name.clone(),
+                                lsb: 0,
+                                width: member.ty.width?,
+                                signed: member.ty.signed,
+                                two_state: member.two_state,
+                                packed_ranges: member.packed_ranges.clone(),
+                            })
+                        })
+                        .collect::<Option<Vec<_>>>()
+                } else {
+                    None
+                };
+                if is_packed && !is_union {
                     let mut lsb = 0u32;
-                    for member in members.iter_mut().rev() {
+                    for member in packed_members.as_mut()?.iter_mut().rev() {
                         member.lsb = lsb;
                         lsb = lsb.checked_add(member.width)?;
                     }
                 }
-                return Some(members);
+                return Some((
+                    AggregateLayout {
+                        kind,
+                        type_identity: {
+                            let full_name = vpi::obj_full_name(cur);
+                            if !full_name.is_empty() {
+                                Some(full_name)
+                            } else {
+                                let name = vpi::obj_name(cur);
+                                (!name.is_empty()).then_some(name)
+                            }
+                        },
+                        members: aggregate_members,
+                    },
+                    packed_members,
+                ));
             }
             if hops == 16 {
                 return None;
@@ -913,6 +1061,12 @@ impl Builder {
                 kind: "shortreal".to_string(),
                 width: None,
                 signed: true,
+                type_name: None,
+            },
+            vpi::vpiChandleTypespec => TypeInfo {
+                kind: "chandle".to_string(),
+                width: None,
+                signed: false,
                 type_name: None,
             },
             vpi::vpiClassTypespec => TypeInfo {
