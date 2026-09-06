@@ -1768,6 +1768,8 @@ pub struct CbData {
 //
 // Keep the native archive declarations on this Rust library boundary so
 // downstream binaries retain the complete static dependency set.
+// System runtime names follow the target: Apple uses libc++, glibc Linux uses
+// libstdc++/zlib/pthread, and musl/MSVC are supplied explicitly by build.rs.
 
 // SAFETY: these declarations reproduce the VPI/UHDM headers' C ABI, including
 // each symbol name, argument layout, return layout, and callback convention.
@@ -1775,13 +1777,33 @@ pub struct CbData {
 // and initialization requirements before entering this boundary.
 #[link(name = "surelog", kind = "static")]
 #[link(name = "uhdm", kind = "static")]
-#[link(name = "antlr4-runtime", kind = "static")]
+#[cfg_attr(
+    not(target_env = "msvc"),
+    link(name = "antlr4-runtime", kind = "static")
+)]
+#[cfg_attr(
+    target_env = "msvc",
+    link(name = "antlr4-runtime-static", kind = "static")
+)]
 #[link(name = "capnp", kind = "static")]
 #[link(name = "kj-async", kind = "static")]
 #[link(name = "kj", kind = "static")]
-#[link(name = "stdc++")]
-#[link(name = "z")]
-#[link(name = "pthread")]
+#[cfg_attr(target_os = "macos", link(name = "c++"))]
+#[cfg_attr(
+    all(target_os = "linux", not(target_env = "musl")),
+    link(name = "stdc++")
+)]
+#[cfg_attr(
+    any(
+        target_os = "macos",
+        all(target_os = "linux", not(target_env = "musl"))
+    ),
+    link(name = "z")
+)]
+#[cfg_attr(
+    all(target_os = "linux", not(target_env = "musl")),
+    link(name = "pthread")
+)]
 unsafe extern "C" {
     // ── Callback ──────────────────────────────────────────────────────────────
 
