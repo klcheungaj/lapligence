@@ -164,6 +164,428 @@ pub fn collect_vpi_tokens(design: VpiHandle) -> Vec<FileTokens> {
 /// multi-view hints only an elaborated (UHDM) analysis provides.
 pub type ParseDeclPositions = HashSet<(String, u32, u32)>;
 
+/// LSP-internal token kinds for source-level generate variables. UHDM turns
+/// generate-loop variables into per-iteration localparams, so their logical
+/// declaration and references must come from the parse tree instead.
+pub const TOKEN_GENVAR_DECL: i32 = 10_007;
+pub const TOKEN_GENVAR_REF: i32 = 10_008;
+
+/// Source-level generate-variable bindings recovered from the parse tree.
+#[derive(Debug, Default)]
+pub struct ParseGenvarFacts {
+    pub bindings: RefBindings,
+}
+
+#[derive(Debug, Clone)]
+struct ParseGenvarDecl {
+    name: String,
+    node_index: usize,
+    scope_index: usize,
+    initializer_index: Option<usize>,
+    line: u32,
+    col: u32,
+    keyword: Option<(u32, u32)>,
+}
+
+struct ParseShadowDecl {
+    name: String,
+    kind: &'static str,
+    scope_index: usize,
+    line: u32,
+    col: u32,
+}
+
+fn parse_ancestor_of_type(
+    nodes: &[surelog::ParseNode],
+    mut parent_idx: u32,
+    wanted: impl Fn(VObjectType) -> bool,
+) -> Option<usize> {
+    let mut remaining = nodes.len().min(256);
+    while parent_idx != 0 && remaining != 0 {
+        let idx = parent_idx as usize;
+        let node = nodes.get(idx)?;
+        if VObjectType::try_from(node.type_id).is_ok_and(&wanted) {
+            return Some(idx);
+        }
+        parent_idx = node.parent_index;
+        remaining -= 1;
+    }
+    None
+}
+
+fn parse_node_is_descendant_of(
+    nodes: &[surelog::ParseNode],
+    mut node_index: usize,
+    ancestor_index: usize,
+) -> bool {
+    let mut remaining = nodes.len().min(256);
+    while remaining != 0 {
+        if node_index == ancestor_index {
+            return true;
+        }
+        let Some(node) = nodes.get(node_index) else {
+            return false;
+        };
+        if node.parent_index == 0 {
+            return false;
+        }
+        node_index = node.parent_index as usize;
+        remaining -= 1;
+    }
+    false
+}
+
+fn parse_ancestor_distance(
+    nodes: &[surelog::ParseNode],
+    mut node_index: usize,
+    ancestor_index: usize,
+) -> Option<usize> {
+    let mut distance = 0;
+    let mut remaining = nodes.len().min(256);
+    while remaining != 0 {
+        if node_index == ancestor_index {
+            return Some(distance);
+        }
+        let node = nodes.get(node_index)?;
+        if node.parent_index == 0 {
+            return None;
+        }
+        node_index = node.parent_index as usize;
+        distance += 1;
+        remaining -= 1;
+    }
+    None
+}
+
+fn direct_identifier_context(
+    nodes: &[surelog::ParseNode],
+    mut parent_idx: u32,
+) -> Option<(usize, VObjectType)> {
+    const MAX_DEPTH: usize = 8;
+    for _ in 0..MAX_DEPTH {
+        let idx = parent_idx as usize;
+        let node = nodes.get(idx)?;
+        let kind = VObjectType::try_from(node.type_id).ok()?;
+        if matches!(
+            kind,
+            VObjectType::paSimple_identifier
+                | VObjectType::paIdentifier
+                | VObjectType::paEscaped_identifier
+        ) {
+            parent_idx = node.parent_index;
+            continue;
+        }
+        return Some((idx, kind));
+    }
+    None
+}
+
+fn scan_file_genvars(
+    nodes: &[surelog::ParseNode],
+    path: &str,
+    own_id: u32,
+) -> (Vec<VObjectInfo>, ParseDeclPositions, ParseGenvarFacts) {
+    let mut declarations = Vec::new();
+    for (node_index, node) in nodes.iter().enumerate() {
+        if node.file_id != own_id
+            || node.type_id != VObjectType::slStringConst as u16
+            || node.line == 0
+        {
+            continue;
+        }
+        let Some(name) = node.symbol_name.as_deref().filter(|name| !name.is_empty()) else {
+            continue;
+        };
+        let Some((context_index, context)) = direct_identifier_context(nodes, node.parent_index)
+        else {
+            continue;
+        };
+        let (scope_index, initializer_index, keyword) = match context {
+            VObjectType::paIdentifier_list => {
+                let Some(declaration_index) =
+                    parse_ancestor_of_type(nodes, nodes[context_index].parent_index, |kind| {
+                        kind == VObjectType::paGenvar_declaration
+                    })
+                else {
+                    continue;
+                };
+                let Some(scope_index) =
+                    parse_ancestor_of_type(nodes, nodes[declaration_index].parent_index, |kind| {
+                        matches!(
+                            kind,
+                            VObjectType::paGenerate_begin_end_block
+                                | VObjectType::paGenerate_module_block
+                                | VObjectType::paGenerate_interface_block
+                                | VObjectType::paGenerate_module_named_block
+                                | VObjectType::paGenerate_interface_named_block
+                                | VObjectType::paModule_declaration
+                                | VObjectType::paInterface_declaration
+                        )
+                    })
+                else {
+                    continue;
+                };
+                let first_in_declaration = !declarations.iter().any(|decl: &ParseGenvarDecl| {
+                    parse_node_is_descendant_of(nodes, decl.node_index, declaration_index)
+                });
+                let declaration = &nodes[declaration_index];
+                (
+                    scope_index,
+                    None,
+                    first_in_declaration.then_some((declaration.line, declaration.col as u32)),
+                )
+            }
+            VObjectType::paGenvar_initialization | VObjectType::paGenvar_decl_assignment
+                if (nodes[context_index].line, nodes[context_index].col)
+                    < (node.line, node.col) =>
+            {
+                let Some(scope_index) =
+                    parse_ancestor_of_type(nodes, nodes[context_index].parent_index, |kind| {
+                        matches!(
+                            kind,
+                            VObjectType::paLoop_generate_construct
+                                | VObjectType::paGenerate_module_loop_statement
+                                | VObjectType::paGenerate_interface_loop_statement
+                        )
+                    })
+                else {
+                    continue;
+                };
+                (
+                    scope_index,
+                    Some(context_index),
+                    Some((nodes[context_index].line, nodes[context_index].col as u32)),
+                )
+            }
+            _ => continue,
+        };
+        declarations.push(ParseGenvarDecl {
+            name: name.to_owned(),
+            node_index,
+            scope_index,
+            initializer_index,
+            line: node.line,
+            col: node.col as u32,
+            keyword,
+        });
+    }
+
+    let shadow_declarations: Vec<ParseShadowDecl> = nodes
+        .iter()
+        .filter(|node| {
+            node.file_id == own_id
+                && node.type_id == VObjectType::slStringConst as u16
+                && node.line != 0
+        })
+        .filter_map(|node| {
+            let name = node.symbol_name.as_deref()?.to_owned();
+            let (_, context) = direct_identifier_context(nodes, node.parent_index)?;
+            if !matches!(
+                context,
+                VObjectType::paParam_assignment
+                    | VObjectType::paVariable_decl_assignment
+                    | VObjectType::paNet_decl_assignment
+                    | VObjectType::paTf_port_item
+                    | VObjectType::paList_of_tf_variable_identifiers
+                    | VObjectType::paFor_variable_declaration
+            ) {
+                return None;
+            }
+            if context == VObjectType::paVariable_decl_assignment
+                && parse_ancestor_of_type(nodes, node.parent_index, |kind| {
+                    kind == VObjectType::paType_declaration
+                })
+                .is_some()
+            {
+                return None;
+            }
+            let scope_index = parse_ancestor_of_type(nodes, node.parent_index, |kind| {
+                matches!(
+                    kind,
+                    VObjectType::paFunction_body_declaration
+                        | VObjectType::paFunction_declaration
+                        | VObjectType::paTask_body_declaration
+                        | VObjectType::paTask_declaration
+                        | VObjectType::paGenerate_begin_end_block
+                        | VObjectType::paGenerate_module_block
+                        | VObjectType::paGenerate_interface_block
+                        | VObjectType::paSeq_block
+                        | VObjectType::paModule_declaration
+                        | VObjectType::paInterface_declaration
+                )
+            })?;
+            Some(ParseShadowDecl {
+                name,
+                kind: if context == VObjectType::paParam_assignment {
+                    "parameter"
+                } else if context == VObjectType::paNet_decl_assignment {
+                    "net"
+                } else {
+                    "var"
+                },
+                scope_index,
+                line: node.line,
+                col: node.col as u32,
+            })
+        })
+        .collect();
+
+    let declaration_nodes: HashSet<usize> =
+        declarations.iter().map(|decl| decl.node_index).collect();
+    let mut tokens = Vec::new();
+    let mut positions = HashSet::new();
+    let mut facts = ParseGenvarFacts::default();
+    for declaration in &declarations {
+        let node = &nodes[declaration.node_index];
+        positions.insert((path.to_owned(), declaration.line, declaration.col));
+        tokens.push(VObjectInfo {
+            line: declaration.line,
+            col: declaration.col,
+            end_line: node.end_line,
+            end_col: node.end_col as u32,
+            vpi_type: TOKEN_GENVAR_DECL,
+            name: Some(declaration.name.clone()),
+            file: path.to_owned(),
+        });
+        facts.bindings.insert(
+            (
+                path.to_owned(),
+                declaration.line.saturating_sub(1),
+                declaration.col.saturating_sub(1),
+            ),
+            DeclTarget {
+                name: declaration.name.clone(),
+                kind: "genvar".to_owned(),
+                file: path.to_owned(),
+                line0: declaration.line.saturating_sub(1),
+                col0: declaration.col.saturating_sub(1),
+                via_label: false,
+                via_connection: false,
+            },
+        );
+        if let Some((keyword_line, keyword_col)) = declaration.keyword {
+            tokens.push(VObjectInfo {
+                line: keyword_line,
+                col: keyword_col,
+                end_line: keyword_line,
+                end_col: keyword_col.saturating_add(6),
+                vpi_type: VObjectTypeShifted::paGENVAR.into(),
+                name: Some("genvar".to_owned()),
+                file: path.to_owned(),
+            });
+        }
+    }
+
+    for (node_index, node) in nodes.iter().enumerate() {
+        if node.file_id != own_id
+            || node.type_id != VObjectType::slStringConst as u16
+            || node.line == 0
+            || declaration_nodes.contains(&node_index)
+        {
+            continue;
+        }
+        let Some(name) = node.symbol_name.as_deref().filter(|name| !name.is_empty()) else {
+            continue;
+        };
+        let Some((_, context)) = direct_identifier_context(nodes, node.parent_index) else {
+            continue;
+        };
+        if !matches!(
+            context,
+            VObjectType::paGenvar_initialization
+                | VObjectType::paGenvar_iteration
+                | VObjectType::paPrimary_literal
+        ) {
+            continue;
+        }
+        let Some(_) = parse_ancestor_of_type(nodes, node.parent_index, |kind| {
+            matches!(
+                kind,
+                VObjectType::paLoop_generate_construct
+                    | VObjectType::paGenerate_module_loop_statement
+                    | VObjectType::paGenerate_interface_loop_statement
+            )
+        }) else {
+            continue;
+        };
+        let Some(declaration) = declarations
+            .iter()
+            .filter(|decl| {
+                decl.name == name
+                    && parse_node_is_descendant_of(nodes, node_index, decl.scope_index)
+                    && decl.line <= node.line
+                    && !decl.initializer_index.is_some_and(|initializer| {
+                        parse_node_is_descendant_of(nodes, node_index, initializer)
+                    })
+            })
+            .min_by_key(|decl| {
+                parse_ancestor_distance(nodes, node_index, decl.scope_index).unwrap_or(usize::MAX)
+            })
+        else {
+            continue;
+        };
+        let genvar_distance = parse_ancestor_distance(nodes, node_index, declaration.scope_index)
+            .unwrap_or(usize::MAX);
+        let shadow = shadow_declarations
+            .iter()
+            .filter(|shadow| {
+                shadow.name == name && (shadow.line, shadow.col) <= (node.line, node.col as u32)
+            })
+            .filter_map(|shadow| {
+                parse_ancestor_distance(nodes, node_index, shadow.scope_index)
+                    .filter(|distance| *distance < genvar_distance)
+                    .map(|distance| (distance, shadow))
+            })
+            .min_by_key(|(distance, _)| *distance)
+            .map(|(_, shadow)| shadow);
+        if let Some(shadow) = shadow {
+            facts.bindings.insert(
+                (
+                    path.to_owned(),
+                    node.line.saturating_sub(1),
+                    (node.col as u32).saturating_sub(1),
+                ),
+                DeclTarget {
+                    name: shadow.name.clone(),
+                    kind: shadow.kind.to_owned(),
+                    file: path.to_owned(),
+                    line0: shadow.line.saturating_sub(1),
+                    col0: shadow.col.saturating_sub(1),
+                    via_label: false,
+                    via_connection: false,
+                },
+            );
+            continue;
+        }
+        tokens.push(VObjectInfo {
+            line: node.line,
+            col: node.col as u32,
+            end_line: node.end_line,
+            end_col: node.end_col as u32,
+            vpi_type: TOKEN_GENVAR_REF,
+            name: Some(name.to_owned()),
+            file: path.to_owned(),
+        });
+        facts.bindings.insert(
+            (
+                path.to_owned(),
+                node.line.saturating_sub(1),
+                (node.col as u32).saturating_sub(1),
+            ),
+            DeclTarget {
+                name: declaration.name.clone(),
+                kind: "genvar".to_owned(),
+                file: path.to_owned(),
+                line0: declaration.line.saturating_sub(1),
+                col0: declaration.col.saturating_sub(1),
+                via_label: false,
+                via_connection: false,
+            },
+        );
+    }
+    (tokens, positions, facts)
+}
+
 /// Whether any ancestor of `parent_idx` (bounded walk) is an assignment
 /// left-hand-side context (`paNet_lvalue` / `paVariable_lvalue`).  Such
 /// identifiers are references to an existing object, not declarations, even
@@ -218,7 +640,11 @@ pub fn collect_parse_tokens(design: &surelog::Design) -> (Vec<FileTokens>, Parse
         let all_nodes: Vec<surelog::ParseNode> =
             (0..n_nodes).filter_map(|i| fc.get_node(i)).collect();
 
+        let (genvar_tokens, genvar_decls, _) = scan_file_genvars(&all_nodes, &path, own_id);
+        decl_positions.extend(genvar_decls);
+
         let file_nodes = by_file.entry(path.clone()).or_default();
+        file_nodes.extend(genvar_tokens);
         let mut declarations: HashMap<String, i32> = HashMap::new();
 
         // ── Pass 2: classify and emit tokens ──────────────────────────────
@@ -375,6 +801,22 @@ pub fn collect_parse_tokens(design: &surelog::Design) -> (Vec<FileTokens>, Parse
             .collect(),
         decl_positions,
     )
+}
+
+/// Collect lexical generate-variable bindings without walking elaborated VPI.
+pub fn collect_parse_genvar_facts(design: &surelog::Design) -> ParseGenvarFacts {
+    let mut facts = ParseGenvarFacts::default();
+    for fc_idx in 0..design.file_content_count() {
+        let Some(fc) = design.file_content(fc_idx) else {
+            continue;
+        };
+        let nodes: Vec<surelog::ParseNode> = (0..fc.node_count())
+            .filter_map(|index| fc.get_node(index))
+            .collect();
+        let (_, _, file_facts) = scan_file_genvars(&nodes, &fc.path(), fc.file_id());
+        facts.bindings.extend(file_facts.bindings);
+    }
+    facts
 }
 
 /// Supplement an isolated parse with literal module-boundary tokens from the

@@ -157,7 +157,7 @@ pub fn semantic_tokens_for_open_document(
     file: &str,
     defines: &[String],
 ) -> Result<SemanticTokens, OpenDocumentTokensError> {
-    semantic_tokens_for_open_document_with_parent(file, defines, None)
+    semantic_tokens_for_open_document_with_parent(file, defines, None, None)
 }
 
 /// Parent-aware variant used by an LSP semantic-token request.  Direct
@@ -166,6 +166,7 @@ pub fn semantic_tokens_for_open_document(
 pub(crate) fn semantic_tokens_for_open_document_with_parent(
     file: &str,
     defines: &[String],
+    source: Option<&str>,
     parent_id: Option<u64>,
 ) -> Result<SemanticTokens, OpenDocumentTokensError> {
     let wait_started = std::time::Instant::now();
@@ -215,7 +216,7 @@ pub(crate) fn semantic_tokens_for_open_document_with_parent(
             Err(error) => log_surelog_invocation_rejected("parse_only", &error, file, 0, parent_id),
         }
     }
-    let parsed = match compile::parse_only(file, defines) {
+    let mut parsed = match compile::parse_only(file, defines) {
         Ok(parsed) => parsed,
         Err(error) => {
             let error = error.to_string();
@@ -230,6 +231,20 @@ pub(crate) fn semantic_tokens_for_open_document_with_parent(
             return Err(OpenDocumentTokensError::new(error));
         }
     };
+    if let Some(source) = source.filter(|source| !source.is_ascii()) {
+        let maps = FeatureSourceMaps::from_source(file, source);
+        for file_tokens in &mut parsed.tokens {
+            for node in &mut file_tokens.nodes {
+                if matches!(
+                    node.vpi_type,
+                    tokens::TOKEN_GENVAR_DECL | tokens::TOKEN_GENVAR_REF
+                ) || node.vpi_type == llg::core::vobject_types::VObjectTypeShifted::paGENVAR
+                {
+                    normalize_vobject_positions(&maps, Some(file), std::slice::from_mut(node));
+                }
+            }
+        }
+    }
     let token_count = token_cardinality(&parsed.tokens);
     let diagnostic_count = parsed.diagnostics.len();
     let syntax_error_count = parsed
@@ -1096,9 +1111,7 @@ pub fn references_at_with_options(
         }
         if !heads.is_empty() {
             let locations = shadow_aware_reference_locations(a, e, &heads, include_declaration);
-            if !locations.is_empty() {
-                return locations;
-            }
+            return locations;
         }
     }
     references_fallback_with_options(a, file, line, col, include_declaration)
@@ -1145,6 +1158,19 @@ pub(super) fn shadow_aware_reference_locations(
     let mut out: Vec<SymEntry> = Vec::new();
     let mut seen: HashSet<(String, u32, u32)> = HashSet::new();
 
+    if include_declaration {
+        for (file, line, col) in heads {
+            if let Some(declaration) = a
+                .index
+                .entry_at(file, *line, *col)
+                .filter(|entry| entry.is_decl)
+            {
+                seen.insert((file.clone(), *line, *col));
+                out.push(declaration.clone());
+            }
+        }
+    }
+
     // True declaration sites per the UHDM capture: positions recorded as
     // declared objects behave like declarations even when the multi-view
     // classification left them REF-shaped.
@@ -1152,6 +1178,11 @@ pub(super) fn shadow_aware_reference_locations(
 
     let targets_head =
         |target: &DeclTarget| heads.contains(&(target.file.clone(), target.line0, target.col0));
+    let genvar_head = heads.iter().any(|(file, line, col)| {
+        a.ref_bindings
+            .get(&(file.clone(), *line, *col))
+            .is_some_and(|target| target.kind == "genvar")
+    });
 
     for occurrence in a.index.all_references(e) {
         let key = (occurrence.file.clone(), occurrence.line, occurrence.col);
@@ -1174,6 +1205,7 @@ pub(super) fn shadow_aware_reference_locations(
             &occurrence,
         ) {
             Some(target) => targets_head(target),
+            None if genvar_head => false,
             None => a
                 .index
                 .resolve(&occurrence)
@@ -1192,6 +1224,9 @@ pub(super) fn shadow_aware_reference_locations(
             continue;
         }
         let key = (bfile.clone(), *bline, *bcol);
+        if heads.contains(&key) {
+            continue;
+        }
         if seen.insert(key.clone()) {
             out.push(SymEntry {
                 name: e.name.clone(),
@@ -2286,6 +2321,7 @@ pub(super) fn is_declaration_vpi_type(t: i32) -> bool {
             | vpi::TOKEN_PORT_OUTPUT
             | vpi::TOKEN_PORT_INOUT
             | vpi::TOKEN_TYPEDEF_NAME
+            | llg::core::tokens::TOKEN_GENVAR_DECL
     )
 }
 

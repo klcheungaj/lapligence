@@ -855,7 +855,12 @@ pub(super) fn open_document_semantic_tokens_if_current(
                 );
                 Err(STALE_OPEN_TOKEN_ERROR.to_owned())
             } else {
-                features::semantic_tokens_for_open_document_with_parent(path, defines, parent_id)
+                features::semantic_tokens_for_open_document_with_parent(
+                    path,
+                    defines,
+                    Some(text),
+                    parent_id,
+                )
                     .map_err(|error| error.to_string())
             }
         });

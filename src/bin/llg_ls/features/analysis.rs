@@ -429,6 +429,13 @@ pub(super) struct FeatureSourceMaps {
 }
 
 impl FeatureSourceMaps {
+    pub(super) fn from_source(file: &str, source: &str) -> Self {
+        Self {
+            by_file: std::iter::once((file.to_owned(), FeatureSourceMap::new(source.to_owned())))
+                .collect(),
+        }
+    }
+
     fn get(&self, file: &str) -> Option<&FeatureSourceMap> {
         self.by_file.get(file)
     }
@@ -1602,6 +1609,10 @@ pub(super) fn analyze_inner(
         Some(d) => scan_parse_enum_facts(d),
         None => ParseEnumFacts::default(),
     };
+    let genvar_facts = match design.as_ref() {
+        Some(d) => tokens::collect_parse_genvar_facts(d),
+        None => tokens::ParseGenvarFacts::default(),
+    };
     parse_facts_span.complete("ok", conn_pairs.len());
     crate::llg_debug!(
         "event=analysis.parse_facts.end outcome=ok root={} generation={} connections={} enum_decls={} enum_bindings={} enum_unresolved={} elapsed_us={}",
@@ -1712,10 +1723,18 @@ pub(super) fn analyze_inner(
                             parent_id,
                         );
                         let tokens_started = std::time::Instant::now();
-                        let (tokens, uhdm_bindings, decl_details) = match design.as_ref() {
+                        let (tokens, mut uhdm_bindings, decl_details) = match design.as_ref() {
                             Some(d) => tokens::collect_all_tokens(h, d),
                             None => (Vec::new(), HashMap::new(), HashMap::new()),
                         };
+                        // A source genvar is elaborated as one localparam per
+                        // iteration. Keep navigation anchored to the written
+                        // declaration instead of an arbitrary clone.
+                        for (position, target) in &genvar_facts.bindings {
+                            uhdm_bindings
+                                .entry(position.clone())
+                                .or_insert_with(|| target.clone());
+                        }
                         let token_count = token_cardinality(&tokens);
                         token_span.complete("ok", token_count);
                         crate::llg_debug!(
@@ -1790,7 +1809,7 @@ pub(super) fn analyze_inner(
                     files
                 );
                 let fallback_started = std::time::Instant::now();
-                let (model, tokens, connections) = match design.as_ref() {
+                let (model, tokens, mut connections) = match design.as_ref() {
                     Some(d) => parse_tree_feature_parts(
                         d,
                         &conn_pairs,
@@ -1801,6 +1820,9 @@ pub(super) fn analyze_inner(
                     ),
                     None => (empty_design(), Vec::new(), ConnectionInputs::default()),
                 };
+                connections
+                    .fallback_bindings
+                    .extend(genvar_facts.bindings.clone());
                 let token_count = token_cardinality(&tokens);
                 fallback_span.complete("ok", token_count);
                 crate::llg_debug!(

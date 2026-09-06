@@ -8,6 +8,8 @@
 //! test.
 
 use std::fs;
+#[path = "lsp_stdio/genvar.rs"]
+mod genvar;
 mod support;
 
 use std::io;

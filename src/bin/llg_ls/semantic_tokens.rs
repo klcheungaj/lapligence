@@ -314,6 +314,10 @@ fn token_type_for(vpi_type: i32) -> Option<(u32, u32)> {
         vpi::TOKEN_PORT_CONN_LABEL => Some(TT_FUNCTION),
         vpi::TOKEN_PARAM_CONN_LABEL => Some(TT_PROPERTY),
 
+        llg::core::tokens::TOKEN_GENVAR_DECL | llg::core::tokens::TOKEN_GENVAR_REF => {
+            Some(TT_VARIABLE)
+        }
+
         // ── Parse-tree keyword VObjectType (PARSE_OFFSET = 100_000) ───────────────
         //
         // These are Surelog VObjectType discriminants shifted by PARSE_OFFSET.
@@ -440,6 +444,9 @@ fn token_type_for(vpi_type: i32) -> Option<(u32, u32)> {
         }
         // Module instantiation names are declarations of a new named instance.
         vpi::uhdmmodule_inst => {
+            token_modifiers = 1 << TM_DECLARATION;
+        }
+        llg::core::tokens::TOKEN_GENVAR_DECL => {
             token_modifiers = 1 << TM_DECLARATION;
         }
         // parameter / localparam keywords are always read-only.

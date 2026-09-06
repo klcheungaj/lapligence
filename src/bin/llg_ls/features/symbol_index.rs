@@ -791,6 +791,12 @@ impl SymbolIndex {
 
         // ── Token pass: ports/signals/params decls and references ───────────
         for ft in tokens {
+            let genvar_reference_positions: HashSet<(u32, u32)> = ft
+                .nodes
+                .iter()
+                .filter(|node| node.vpi_type == llg::core::tokens::TOKEN_GENVAR_REF)
+                .map(|node| (node.line, node.col))
+                .collect();
             // Type histogram per position drives the decl/ref classification.
             let mut pos_types: HashMap<(u32, u32), Vec<i32>> = HashMap::new();
             for n in &ft.nodes {
@@ -803,6 +809,11 @@ impl SymbolIndex {
             }
 
             for n in &ft.nodes {
+                if genvar_reference_positions.contains(&(n.line, n.col))
+                    && n.vpi_type != llg::core::tokens::TOKEN_GENVAR_REF
+                {
+                    continue;
+                }
                 let Some(name) = n.name.as_deref() else {
                     continue;
                 };
@@ -858,6 +869,9 @@ impl SymbolIndex {
                 let scope = enclosing_scope(&scope_providers, &ft.path, n.line);
                 let detail = if is_decl {
                     match kind {
+                        SymKind::Var if n.vpi_type == llg::core::tokens::TOKEN_GENVAR_DECL => {
+                            Some(format!("genvar {name}"))
+                        }
                         SymKind::Port | SymKind::Net | SymKind::Var | SymKind::Param => {
                             decl_detail(model, kind, name)
                         }
@@ -909,6 +923,39 @@ impl SymbolIndex {
             };
             if ref_positions.contains(&(pos_file.clone(), pos_line, pos_col)) {
                 port_labels.insert((pos_file, pos_line, pos_col), idx);
+            }
+        }
+        // Generate-scope instances are not always retained as ordinary
+        // instance declarations by UHDM. The parse tree still gives an exact
+        // named-port pair and instantiated type, so resolve that label
+        // directly against the type's indexed port declaration.
+        for pair in pairs.iter().filter(|pair| pair.kind == ConnKind::Port) {
+            let key = (
+                pair.file.clone(),
+                pair.label.0.saturating_sub(1),
+                pair.label.1.saturating_sub(1),
+            );
+            if port_labels.contains_key(&key) || !ref_positions.contains(&key) {
+                continue;
+            }
+            let Some(def_name) = pair.inst_type.as_deref().map(clean_name) else {
+                continue;
+            };
+            let Some(module_file) = model
+                .modules
+                .iter()
+                .find(|module| clean_name(&module.name) == def_name)
+                .and_then(|module| module.file.as_deref())
+            else {
+                continue;
+            };
+            if let Some((idx, _)) = decls.iter().enumerate().find(|(_, declaration)| {
+                declaration.kind == SymKind::Port
+                    && declaration.name == pair.label_name
+                    && declaration.file == module_file
+                    && declaration.scope.as_deref() == Some(def_name)
+            }) {
+                port_labels.insert(key, idx);
             }
         }
 
@@ -1592,6 +1639,13 @@ pub(super) fn classify_token(
     forced_enum_ref: bool,
 ) -> Option<(SymKind, bool)> {
     use llg::ffi::vpi;
+
+    if t == llg::core::tokens::TOKEN_GENVAR_DECL {
+        return Some((SymKind::Var, true));
+    }
+    if t == llg::core::tokens::TOKEN_GENVAR_REF {
+        return Some((SymKind::Var, false));
+    }
 
     // Pure reference types (expression operands walked by the VPI walker).
     if REF_TOKEN_TYPES.contains(&t) {
