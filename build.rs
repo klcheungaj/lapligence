@@ -196,6 +196,10 @@ fn cmake_build_surelog(repo: &Path, build_dir: &Path) {
     let mut cfg = cmake::Config::new(repo);
     cfg.out_dir(build_dir)
         .define("CMAKE_BUILD_TYPE", build_type)
+        // CMake 4 removed implicit compatibility with policy versions older
+        // than 3.5. Vendored Cap'n Proto still declares an older minimum but
+        // configures correctly when that compatibility floor is explicit.
+        .define("CMAKE_POLICY_VERSION_MINIMUM", "3.5")
         // Avoid a second allocator in the statically linked frontend.
         .define("SURELOG_WITH_TCMALLOC", "OFF")
         // The Rust binaries consume only static frontend archives. Avoid
@@ -380,7 +384,15 @@ fn apply_surelog_patches(repo: &Path, manifest_dir: &Path) {
         let git_reverse = std::process::Command::new("git")
             .arg("-C")
             .arg(repo)
-            .args(["apply", "--reverse", "--check"])
+            // Git for Windows may check out the vendored CMake files with
+            // CRLF while repository patches are deliberately LF-only.
+            .args([
+                "apply",
+                "--ignore-space-change",
+                "--unidiff-zero",
+                "--reverse",
+                "--check",
+            ])
             .arg(&patch)
             .output();
         if git_reverse
@@ -393,7 +405,12 @@ fn apply_surelog_patches(repo: &Path, manifest_dir: &Path) {
         let git_check = std::process::Command::new("git")
             .arg("-C")
             .arg(repo)
-            .args(["apply", "--check"])
+            .args([
+                "apply",
+                "--ignore-space-change",
+                "--unidiff-zero",
+                "--check",
+            ])
             .arg(&patch)
             .output();
 
@@ -404,7 +421,7 @@ fn apply_surelog_patches(repo: &Path, manifest_dir: &Path) {
             let git_status = std::process::Command::new("git")
                 .arg("-C")
                 .arg(repo)
-                .arg("apply")
+                .args(["apply", "--ignore-space-change", "--unidiff-zero"])
                 .arg(&patch)
                 .status();
             if git_status.as_ref().is_ok_and(|status| status.success()) {
