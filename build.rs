@@ -289,13 +289,15 @@ fn cmake_build_surelog(repo: &Path, build_dir: &Path) {
 ///
 /// `patch(1)` remains the primary path because container bind mounts can make
 /// the nested submodule's relative gitdir unreachable. Normal GitHub checkouts
-/// have a valid gitdir and can use the Git-for-Windows fallback.
+/// have a valid gitdir and can use the Git-for-Windows fallback. Both paths are
+/// checked before they mutate the source tree so a rejected later hunk cannot
+/// leave an earlier hunk applied and poison the fallback.
 ///
 /// Flags (all standard in GNU patch ≥ 2.7): `-p1` strips the leading path
 /// component of the patch headers, `-R` reverses the patch for applied-
 /// detection, `--dry-run` makes that probe side-effect free, `-s` keeps the
-/// run silent on success, and `--forward` defensively skips hunks that were
-/// already applied when the reverse probe could not detect them.
+/// run silent on success, and `-N` defensively skips hunks that were already
+/// applied when the reverse probe could not detect them.
 fn apply_surelog_patches(repo: &Path, manifest_dir: &Path) {
     let patches_dir = manifest_dir.join("patches");
     if !patches_dir.exists() {
@@ -333,24 +335,43 @@ fn apply_surelog_patches(repo: &Path, manifest_dir: &Path) {
             continue;
         }
 
-        let patch_status = std::process::Command::new("patch")
-            // Do not leave an untracked `CMakeLists.txt.orig` in the
-            // submodule when patch(1) has to apply a harmless offset.  The
-            // patch itself is tracked at the superproject level and is the
-            // reproducible source of these build-only changes.
-            .args(["-p1", "-s", "--forward", "--no-backup-if-mismatch"])
+        let forward_patch = std::process::Command::new("patch")
+            .args(["-p1", "-s", "-N", "--dry-run"])
             .stdin(std::process::Stdio::from(
                 std::fs::File::open(&patch)
                     .unwrap_or_else(|e| panic!("failed to open patch {}: {e}", patch.display())),
             ))
             .current_dir(repo)
-            // `-s` keeps normal output quiet; stderr stays inherited so a
-            // failing hunk surfaces naturally in the build log.
-            .stdout(std::process::Stdio::null())
-            .status();
+            .output();
 
-        if patch_status.as_ref().is_ok_and(|status| status.success()) {
-            continue;
+        if forward_patch
+            .as_ref()
+            .is_ok_and(|output| output.status.success())
+        {
+            let patch_status = std::process::Command::new("patch")
+                // The dry-run above established that every hunk can be
+                // applied, so patch will not create mismatch backup files.
+                .args(["-p1", "-s", "-N"])
+                .stdin(std::process::Stdio::from(
+                    std::fs::File::open(&patch).unwrap_or_else(|e| {
+                        panic!("failed to open patch {}: {e}", patch.display())
+                    }),
+                ))
+                .current_dir(repo)
+                .status();
+
+            if patch_status.as_ref().is_ok_and(|status| status.success()) {
+                continue;
+            }
+
+            let patch_error = patch_status
+                .err()
+                .map(|error| error.to_string())
+                .unwrap_or_else(|| "patch(1) failed after a successful dry-run".to_string());
+            panic!(
+                "failed to apply {} with patch(1): {patch_error}",
+                patch.display()
+            );
         }
 
         // Git for Windows is installed on GitHub-hosted MSVC runners even
@@ -369,22 +390,41 @@ fn apply_surelog_patches(repo: &Path, manifest_dir: &Path) {
             continue;
         }
 
-        let git_status = std::process::Command::new("git")
+        let git_check = std::process::Command::new("git")
             .arg("-C")
             .arg(repo)
-            .arg("apply")
+            .args(["apply", "--check"])
             .arg(&patch)
-            .status();
+            .output();
 
-        if !git_status.as_ref().is_ok_and(|status| status.success()) {
-            let patch_error = patch_status
-                .err()
-                .map(|error| error.to_string())
-                .unwrap_or_else(|| "patch(1) rejected the patch".to_string());
+        if git_check
+            .as_ref()
+            .is_ok_and(|output| output.status.success())
+        {
+            let git_status = std::process::Command::new("git")
+                .arg("-C")
+                .arg(repo)
+                .arg("apply")
+                .arg(&patch)
+                .status();
+            if git_status.as_ref().is_ok_and(|status| status.success()) {
+                continue;
+            }
+
             let git_error = git_status
                 .err()
                 .map(|error| error.to_string())
-                .unwrap_or_else(|| "git apply rejected the patch".to_string());
+                .unwrap_or_else(|| "git apply failed after a successful check".to_string());
+            panic!("failed to apply {} with git: {git_error}", patch.display());
+        } else {
+            let patch_error = forward_patch
+                .err()
+                .map(|error| error.to_string())
+                .unwrap_or_else(|| "patch(1) dry-run rejected the patch".to_string());
+            let git_error = git_check
+                .err()
+                .map(|error| error.to_string())
+                .unwrap_or_else(|| "git apply --check rejected the patch".to_string());
             panic!(
                 "failed to apply {} with patch(1) ({patch_error}) or git ({git_error})",
                 patch.display()
