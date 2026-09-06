@@ -112,7 +112,7 @@ jobs:
             --env CMAKE_GENERATOR=Ninja \
             --env LLG_TARGET="${{ matrix.target }}" \
             rust:alpine sh -euxc '
-              apk add --no-cache build-base cmake git ninja openjdk21-jre patch py3-pip python3
+              apk add --no-cache build-base cmake git linux-headers ninja openjdk21-jre patch py3-pip python3
               python3 -m pip install --break-system-packages --disable-pip-version-check orderedmultidict
               git config --global --add safe.directory /workspace
               git config --global --add safe.directory /workspace/vendor/Surelog
