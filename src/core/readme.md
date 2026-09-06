@@ -28,7 +28,9 @@ time literals whose numeric payload Surelog has already transformed. Continuous
 assignments retain drive strengths, and unpacked net arrays retain their net
 subtype, allowing unsupported resolution contexts to be rejected explicitly.
 Packed declarations retain ordered dimensions, top-level struct/union member
-offsets, and their recursively derived two-state domain. Cast nodes retain a
+offsets, and their recursively derived two-state domain. Assignment-pattern
+type keys retain their owned resolved type, packed ranges, signedness, and
+state domain so consumers do not match keys by spelling or width alone. Cast nodes retain a
 numeric size token and whether their type-vs-size classification had reliable
 source or UHDM decompile provenance; consumers reject ambiguous source-less
 integer casts rather than accepting a guessed 32-bit result.
@@ -36,6 +38,9 @@ Variable declarations also retain whether a bounded admitted-source prefix
 contains an explicit `static` or `automatic` lifetime qualifier. Missing or
 ambiguous provenance remains explicit so simulator lowering cannot invent a
 subprogram-local lifetime override.
+Method calls retain the presence of UHDM's `vpiWith` relationship even when
+the with-clause expression is not yet lowered, so consumers reject it instead
+of silently executing the method without its filter or transform.
 The new constant-source capture is opt-in through `Db::build_with_source_files`;
 ordinary `Db::build` adds no constant-source reads. Simulator callers use
 `CompileOut::frontend_source_files` to admit physical parsed files, never logical

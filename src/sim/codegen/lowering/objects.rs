@@ -534,6 +534,7 @@ impl Codegen<'_> {
                 let value = self.lower_string(path, receiver)?;
                 match (name.as_str(), args.as_slice()) {
                     ("len", []) => (IrObjectQuery::StringLen(value), 32, true),
+                    ("atoreal", []) => (IrObjectQuery::StringAtoreal(value), REAL_EXPR_WIDTH, true),
                     ("getc", [index]) => (
                         IrObjectQuery::StringGetc(
                             value,
@@ -800,6 +801,23 @@ impl Codegen<'_> {
         }
         let args = self.node(node).children[1..].to_vec();
         let operation = match (name.as_str(), args.as_slice()) {
+            ("realtoa", [value]) => {
+                let value = self.lower_expr(path, *value)?;
+                let value = if value.is_real() {
+                    value
+                } else {
+                    IrExpr::new(
+                        IrExprKind::CastToReal {
+                            a: Box::new(value),
+                            shortreal: false,
+                        },
+                        REAL_EXPR_WIDTH,
+                        true,
+                        None,
+                    )
+                };
+                IrObjectStmt::StringRealtoa(index, value)
+            }
             ("putc", [position, value]) => IrObjectStmt::StringPutc(
                 index,
                 self.object_int_argument(path, *position, 32)?,

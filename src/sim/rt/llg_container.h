@@ -11,6 +11,14 @@
 extern "C" {
 #endif
 
+enum {
+    LLG_CONTAINER_REDUCE_SUM = 0,
+    LLG_CONTAINER_REDUCE_PRODUCT = 1,
+    LLG_CONTAINER_REDUCE_AND = 2,
+    LLG_CONTAINER_REDUCE_OR = 3,
+    LLG_CONTAINER_REDUCE_XOR = 4,
+};
+
 typedef struct {
     sv4_t* data;
     size_t size;
@@ -32,6 +40,7 @@ void llg_dyn_resize(llg_dyn_array_t* array, sv4_t size);
 size_t llg_dyn_size(const llg_dyn_array_t* array);
 sv4_t llg_dyn_get(const llg_dyn_array_t* array, sv4_t index);
 int llg_dyn_set(llg_dyn_array_t* array, sv4_t index, sv4_t value);
+sv4_t llg_dyn_reduce(const llg_dyn_array_t* array, int operation);
 
 typedef struct {
     sv4_t* data;
@@ -63,6 +72,7 @@ sv4_t llg_queue_pop_front(llg_queue_t* queue);
 sv4_t llg_queue_pop_back(llg_queue_t* queue);
 sv4_t llg_queue_front(const llg_queue_t* queue);
 sv4_t llg_queue_back(const llg_queue_t* queue);
+sv4_t llg_queue_reduce(const llg_queue_t* queue, int operation);
 
 enum {
     LLG_ASSOC_INTEGRAL = 0,
@@ -101,6 +111,7 @@ void llg_assoc_destroy(llg_assoc_t* array);
 void llg_assoc_delete(llg_assoc_t* array);
 void llg_assoc_copy(llg_assoc_t* dst, const llg_assoc_t* src);
 size_t llg_assoc_count(const llg_assoc_t* array);
+sv4_t llg_assoc_reduce(const llg_assoc_t* array, int operation);
 
 sv4_t llg_assoc_get_integral(const llg_assoc_t* array, sv4_t key);
 int llg_assoc_set_integral(llg_assoc_t* array, sv4_t key, sv4_t value);

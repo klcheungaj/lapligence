@@ -1,7 +1,7 @@
 //! Lowering for resizable unpacked containers.
 
 use super::*;
-use crate::sim::ir::IrObjectType;
+use crate::sim::ir::{IrContainerReduction, IrObjectType};
 
 impl<'a> Codegen<'a> {
     fn lower_container_value(
@@ -202,9 +202,24 @@ impl<'a> Codegen<'a> {
                     return Ok(None);
                 };
                 let name = name.clone();
+                if self.db.method_call_has_with_clause(node) {
+                    return Err(format!(
+                        "container method `{name}` with a `with` clause in `{path}` is not supported"
+                    ));
+                }
                 let args = self.node(node).children[1..].to_vec();
                 match (name.as_str(), args.as_slice()) {
                     ("size" | "num", []) => IrContainerExpr::Size(container.ir),
+                    ("sum" | "product" | "and" | "or" | "xor", []) => IrContainerExpr::Reduce {
+                        container: container.ir,
+                        operation: match name.as_str() {
+                            "sum" => IrContainerReduction::Sum,
+                            "product" => IrContainerReduction::Product,
+                            "and" => IrContainerReduction::BitAnd,
+                            "or" => IrContainerReduction::BitOr,
+                            _ => IrContainerReduction::BitXor,
+                        },
+                    },
                     ("exists", [key]) => match self.model.containers[container.ir].kind {
                         IrContainerKind::Associative {
                             key: IrAssocKey::String,
@@ -277,6 +292,10 @@ impl<'a> Codegen<'a> {
             | IrContainerExpr::AssocTraverse { .. }
             | IrContainerExpr::AssocTraverseString { .. } => (32, true),
             IrContainerExpr::Exists { .. } | IrContainerExpr::ExistsString { .. } => (32, true),
+            IrContainerExpr::Reduce { container, .. } => {
+                let container = &self.model.containers[*container];
+                (container.element.width(), container.element.signed())
+            }
             _ => {
                 let index = match &operation {
                     IrContainerExpr::Get { container, .. }
@@ -465,6 +484,11 @@ impl<'a> Codegen<'a> {
         let Some(container) = self.container_of(receiver) else {
             return Ok(None);
         };
+        if self.db.method_call_has_with_clause(node) {
+            return Err(format!(
+                "container method `{name}` with a `with` clause in `{path}` is not supported"
+            ));
+        }
         let args = self.node(node).children[1..].to_vec();
         let operation = match (name.as_str(), args.as_slice()) {
             ("delete", []) => IrContainerStmt::Delete(container.ir),

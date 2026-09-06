@@ -50,11 +50,18 @@ the generated `model.c` into a standalone executable and is deliberately
   Completed fork parents remain alive until detached descendants finish;
   process-table slots are reused, and allocations are released on scheduler
   exit or reinitialization.
+- `llg_string.h` / `llg_string.c` — scheduler-independent, owned byte strings.
+  Reads clone storage; expression operations consume their arguments; mutations
+  replace or update the target allocation. Strings exclude NUL bytes and use
+  ASCII case conversion. `atoreal` parses a decimal prefix without admitting C
+  hexadecimal/NaN/infinity spellings; `realtoa` emits enough decimal digits for
+  finite-double round trips. Both preserve the existing clone/consume contract.
 - `llg_container.h` / `llg_container.c` — scheduler-independent storage for
   dynamic arrays, queues, and associative arrays whose packed elements are
   full-width `sv4_t` values. Dynamic resize preserves the common prefix and
   default-fills growth; bounded queues apply the LRM discard rules;
-  associative arrays keep ordered integral or byte-string keys. Every object
+  associative arrays keep ordered integral or byte-string keys. All three
+  container kinds provide packed-element reduction folds. Every object
   requires matching init/destroy calls. Allocation overflow and exhaustion are
   fatal diagnostics, while invalid indices use default-read/no-op-write method
   semantics. Integral associative keys containing X/Z are rejected before
@@ -109,6 +116,7 @@ selected range contributes; lowering rejects dynamic net selectors.
 - All sources are embedded as strings via `include_str!` in `mod.rs`:
   - `value_sources()` → `(llg_value.h, llg_value.c)`;
   - `runtime_sources()` → `(llg_rt.h, llg_rt.c)`, requiring the value pair;
+  - `string_sources()` → `(llg_string.h, llg_string.c)`, requiring the value pair;
   - `container_sources()` → `(llg_container.h, llg_container.c)`, requiring
     the value pair but not the scheduler;
   - `libaco_sources()` → `(aco.h, aco.c, acosw.S)` from `vendor/libaco`;

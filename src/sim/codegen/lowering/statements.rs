@@ -686,7 +686,14 @@ impl EmitCtx<'_, '_> {
             return Ok(aggregate_assignment);
         }
         let lh = self.cg.lower_lhs(&self.path, lhs)?;
-        let rhs_ir = self.lower_assignment_rhs(lhs, rhs, op.as_raw(), &lh)?;
+        let rhs_ir =
+            match self
+                .cg
+                .lower_packed_aggregate_pattern(&self.path, lhs, rhs, op.as_raw())?
+            {
+                Some(value) => value,
+                None => self.lower_assignment_rhs(lhs, rhs, op.as_raw(), &lh)?,
+            };
         let rhs_ir = apply_lhs_assignment_context(&self.cg.model, &lh, rhs_ir);
         Ok(IrStmt::Assign {
             lhs: lh,

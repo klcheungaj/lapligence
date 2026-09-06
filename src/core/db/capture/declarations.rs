@@ -844,7 +844,7 @@ impl Builder {
         }
     }
 
-    fn contextual_packed_ranges(
+    pub(in crate::core::db) fn contextual_packed_ranges(
         &mut self,
         typespec: VpiHandle,
         context: VpiHandle,

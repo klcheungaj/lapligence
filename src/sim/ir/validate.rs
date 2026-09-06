@@ -454,6 +454,7 @@ impl Validator<'_> {
                     }
                     IrContainerExpr::Get { container, .. }
                     | IrContainerExpr::GetString { container, .. }
+                    | IrContainerExpr::Reduce { container, .. }
                     | IrContainerExpr::QueueFront(container)
                     | IrContainerExpr::QueueBack(container)
                     | IrContainerExpr::QueuePopFront(container)
@@ -483,14 +484,17 @@ impl Validator<'_> {
                 let expected = match query.as_ref() {
                     IrObjectQuery::ChandleEq(..) => Some((1, false)),
                     IrObjectQuery::StringGetc(..) => Some((8, true)),
+                    IrObjectQuery::StringAtoreal(..) => Some((0, true)),
                     IrObjectQuery::StringPacked(..) => None,
                     _ => Some((32, true)),
                 };
                 if expected.is_some_and(|ty| ty != (expr.width, expr.signed)) {
                     return self.fail(path, "object query result type mismatch");
                 }
-                if expr.width == 0 || expr.fill.is_some() {
-                    return self.fail(path, "object query must produce a packed value");
+                if (expr.width == 0 && !matches!(query.as_ref(), IrObjectQuery::StringAtoreal(_)))
+                    || expr.fill.is_some()
+                {
+                    return self.fail(path, "object query has an invalid result shape");
                 }
                 let mut result = Ok(());
                 query.expressions(&mut |child| {
@@ -1008,7 +1012,8 @@ impl Validator<'_> {
                 let mut result = Ok(());
                 operation.expressions(&mut |child| {
                     result = result.clone().and_then(|_| {
-                        if child.is_real() {
+                        if child.is_real() && !matches!(operation, IrObjectStmt::StringRealtoa(..))
+                        {
                             self.fail(path, "object statement requires packed operands")
                         } else {
                             self.validate_expr(child, formals, path)
@@ -1682,6 +1687,65 @@ mod tests {
             .expect_err("argument variants must agree with formal directions");
         assert_eq!(error.path(), "expr.args[0]");
         assert!(error.detail().contains("address argument"));
+    }
+
+    #[test]
+    fn string_real_queries_require_real_result_metadata() {
+        let model = valid_model();
+        let query = IrObjectQuery::StringAtoreal(IrStringExpr::Literal(b"1.5".to_vec()));
+        let expression = |width, signed| {
+            IrExpr::new(
+                IrExprKind::ObjectQuery(Box::new(query.clone())),
+                width,
+                signed,
+                None,
+            )
+        };
+        model.validate_expr(&expression(0, true), None).unwrap();
+        assert!(model.validate_expr(&expression(32, true), None).is_err());
+        assert!(model.validate_expr(&expression(0, false), None).is_err());
+        let packed_query = IrExpr::new(
+            IrExprKind::ObjectQuery(Box::new(IrObjectQuery::StringLen(IrStringExpr::Literal(
+                vec![],
+            )))),
+            0,
+            true,
+            None,
+        );
+        assert!(model.validate_expr(&packed_query, None).is_err());
+    }
+
+    #[test]
+    fn string_realtoa_requires_real_argument_and_string_storage() {
+        let mut model = valid_model();
+        model.objects.push(IrObject {
+            c_name: "text".to_owned(),
+            ty: IrObjectType::String,
+            initial: None,
+        });
+        let real = IrExpr::new(IrExprKind::Const(IrConst::real(1.5)), 0, false, None);
+        model
+            .validate_stmt(
+                &IrStmt::Object(IrObjectStmt::StringRealtoa(0, real.clone())),
+                None,
+            )
+            .unwrap();
+        assert!(model
+            .validate_stmt(
+                &IrStmt::Object(IrObjectStmt::StringRealtoa(0, packed_const(1, 32))),
+                None
+            )
+            .is_err());
+        assert!(model
+            .validate_stmt(
+                &IrStmt::Object(IrObjectStmt::StringItoa(0, real.clone(), 10)),
+                None
+            )
+            .is_err());
+        model.objects[0].ty = IrObjectType::Chandle;
+        assert!(model
+            .validate_stmt(&IrStmt::Object(IrObjectStmt::StringRealtoa(0, real)), None)
+            .is_err());
     }
 
     #[test]

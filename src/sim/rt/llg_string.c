@@ -1,5 +1,6 @@
 #include "llg_string.h"
 
+#include <float.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -186,4 +187,52 @@ void llg_string_itoa(llg_string_t *target, sv4_t value, unsigned base) {
 void llg_string_print(llg_string_t value) {
     if (value.len) fwrite(value.data, 1, value.len, stdout);
     llg_string_destroy(&value);
+}
+
+static int decimal_digit(char c) { return c >= '0' && c <= '9'; }
+
+/* Compact underscores only within an unsigned decimal number. */
+static size_t real_digits(char *text, size_t length, size_t read, size_t *write) {
+    while (read < length && (decimal_digit(text[read]) || text[read] == '_')) {
+        if (text[read] != '_') text[(*write)++] = text[read];
+        ++read;
+    }
+    return read;
+}
+
+double llg_string_atoreal(llg_string_t value) {
+    size_t read = 0, write = 0;
+    while (read < value.len && strchr(" \t\n\r\f\v", value.data[read])) ++read;
+    if (read < value.len && (value.data[read] == '+' || value.data[read] == '-'))
+        value.data[write++] = value.data[read++];
+    if (read == value.len || !decimal_digit(value.data[read])) {
+        llg_string_destroy(&value);
+        return 0.0;
+    }
+    read = real_digits(value.data, value.len, read, &write);
+    if (read + 1 < value.len && value.data[read] == '.' && decimal_digit(value.data[read + 1])) {
+        value.data[write++] = value.data[read++];
+        read = real_digits(value.data, value.len, read, &write);
+    }
+    if (read < value.len && (value.data[read] == 'e' || value.data[read] == 'E')) {
+        size_t exponent = read + 1;
+        if (exponent < value.len && (value.data[exponent] == '+' || value.data[exponent] == '-')) ++exponent;
+        if (exponent < value.len && decimal_digit(value.data[exponent])) {
+            while (read < exponent) value.data[write++] = value.data[read++];
+            (void)real_digits(value.data, value.len, read, &write);
+        }
+    }
+    value.data[write] = 0;
+    double result = strtod(value.data, NULL);
+    llg_string_destroy(&value);
+    return result;
+}
+
+void llg_string_realtoa(llg_string_t *target, double value) {
+    int length = snprintf(NULL, 0, "%.*g", DBL_DECIMAL_DIG, value);
+    if (length <= 0) string_fail("real conversion failed");
+    llg_string_t result = string_alloc((size_t)length);
+    if (snprintf(result.data, (size_t)length + 1, "%.*g", DBL_DECIMAL_DIG, value) != length)
+        string_fail("real conversion length changed");
+    llg_string_move(target, result);
 }

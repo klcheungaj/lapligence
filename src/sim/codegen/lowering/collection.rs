@@ -272,12 +272,6 @@ impl<'a> Codegen<'a> {
                 self.node(node).name
             ));
         }
-        if self.db.var_initializer(node).is_some() {
-            return Err(format!(
-                "declaration initializer on unpacked aggregate `{}` in `{path}` is not supported",
-                self.node(node).name
-            ));
-        }
         let object_name = self.node(node).name.clone();
         let is_union = layout.kind == AggregateKind::UnpackedUnion;
         let first_width = layout.members.first().and_then(|member| member.ty.width);
@@ -571,6 +565,8 @@ impl<'a> Codegen<'a> {
                         if let Some(vi) = self.arrays.iter_mut().find(|vi| vi.global == ai.global) {
                             vi.init = Some(vals);
                         }
+                    } else if self.collect_aggregate_cont_assign_init(path, nid)? {
+                        self.scalar_init_ca.insert(nid);
                     } else if matches!(self.net_decl_target(nid), NetDeclTarget::Variable) {
                         let (info, c) = self.scalar_decl_init(path, nid)?.ok_or_else(|| {
                             format!(
@@ -624,15 +620,356 @@ impl<'a> Codegen<'a> {
                 Some(init) => init,
                 None => continue,
             };
+            if let Some(aggregate) = self.unpacked_aggregates.get(c).cloned() {
+                self.collect_unpacked_aggregate_decl_init(path, *c, init, &aggregate)?;
+                continue;
+            }
             let info = match self.signal_of(*c) {
                 Some(info) => info.clone(),
                 None => continue,
             };
+            if let Some(layout) = self.db.aggregate_layout(*c) {
+                if matches!(
+                    layout.kind,
+                    AggregateKind::PackedStruct | AggregateKind::PackedUnion
+                ) && matches!(
+                    self.kind(init),
+                    NodeKind::Expr(ExprKind::Operation { op, .. })
+                        if *op == vpi::vpiAssignmentPatternOp
+                ) {
+                    let value = self.packed_aggregate_decl_init(path, init, layout, &info)?;
+                    self.var_inits.push((info, value));
+                    continue;
+                }
+            }
             let name = self.node(*c).name.clone();
             let cconst = self.var_decl_init(path, &name, init)?;
             self.var_inits.push((info, cconst));
         }
         Ok(())
+    }
+
+    fn packed_aggregate_decl_init(
+        &self,
+        path: &str,
+        init: NodeId,
+        layout: &crate::core::db::AggregateLayout,
+        storage: &SignalInfo,
+    ) -> Result<IrConst, String> {
+        let value = self.packed_aggregate_decl_value(path, init, layout)?;
+        let value = materialize_decl_cast_value(
+            value,
+            storage.width as usize,
+            storage.signed,
+            storage.two_state,
+        );
+        decl_value_to_const(Val::Bits(value))
+    }
+
+    fn collect_unpacked_aggregate_decl_init(
+        &mut self,
+        path: &str,
+        object: NodeId,
+        init: NodeId,
+        aggregate: &UnpackedAggregateInfo,
+    ) -> Result<(), String> {
+        let layout = self.db.aggregate_layout(object).ok_or_else(|| {
+            format!(
+                "unpacked aggregate `{}` in `{path}` has no captured layout",
+                self.node(object).name
+            )
+        })?;
+        let values = self.aggregate_pattern_values(path, init, layout)?;
+        for (member_index, value_node) in values {
+            let member = aggregate.members.get(member_index).ok_or_else(|| {
+                format!("aggregate initializer member index {member_index} is out of bounds")
+            })?;
+            let width = member.member.ty.width.ok_or_else(|| {
+                format!(
+                    "unpacked member `{}` has unresolved width in `{path}`",
+                    member.member.name
+                )
+            })?;
+            let value =
+                self.aggregate_member_decl_value(path, value_node, &member.member, width)?;
+            let value = value.cast(member.signal.width as usize, member.signal.signed);
+            self.var_inits.push((
+                member.signal.clone(),
+                decl_value_to_const(Val::Bits(value))?,
+            ));
+        }
+        Ok(())
+    }
+
+    fn aggregate_member_decl_value(
+        &self,
+        path: &str,
+        value_node: NodeId,
+        member: &AggregateMember,
+        width: u32,
+    ) -> Result<elab::Value, String> {
+        if let Some(layout) = member.aggregate.as_deref() {
+            if matches!(
+                self.kind(value_node),
+                NodeKind::Expr(ExprKind::Operation { op, .. })
+                    if *op == vpi::vpiAssignmentPatternOp
+            ) {
+                if !matches!(
+                    layout.kind,
+                    AggregateKind::PackedStruct | AggregateKind::PackedUnion
+                ) {
+                    return Err(format!(
+                        "nested unpacked aggregate member `{}` in `{path}` is not supported",
+                        member.name
+                    ));
+                }
+                let value = self.packed_aggregate_decl_value(path, value_node, layout)?;
+                return Ok(materialize_decl_cast_value(
+                    value,
+                    width as usize,
+                    member.ty.signed,
+                    member.two_state,
+                ));
+            }
+        }
+        if let Some(fill) = self.source_fill_literal(value_node) {
+            let fill = match fill {
+                0 => Bit::Zero,
+                1 => Bit::One,
+                2 => Bit::X,
+                3 => Bit::Z,
+                _ => return Err(format!("invalid aggregate fill value {fill} in `{path}`")),
+            };
+            return Ok(materialize_decl_cast_value(
+                elab::Value {
+                    bits: vec![fill],
+                    signed: false,
+                    fill: Some(fill),
+                },
+                width as usize,
+                member.ty.signed,
+                member.two_state,
+            ));
+        }
+        let value = match self.eval_decl_value(value_node)? {
+            Val::Bits(value) => value,
+            Val::Real(value) => elab::real_to_bits(value, width as usize, member.ty.signed),
+            Val::Str(_) => {
+                return Err(format!(
+                    "string value for aggregate member `{}` is not supported",
+                    member.name
+                ))
+            }
+        };
+        Ok(materialize_decl_cast_value(
+            value,
+            width as usize,
+            member.ty.signed,
+            member.two_state,
+        ))
+    }
+
+    fn packed_aggregate_decl_value(
+        &self,
+        path: &str,
+        init: NodeId,
+        layout: &crate::core::db::AggregateLayout,
+    ) -> Result<elab::Value, String> {
+        let values = self.aggregate_pattern_values(path, init, layout)?;
+        let mut members = Vec::with_capacity(values.len());
+        for (member_index, value_node) in values {
+            let member = layout.members.get(member_index).ok_or_else(|| {
+                format!("aggregate initializer member index {member_index} is out of bounds")
+            })?;
+            let width = member.ty.width.ok_or_else(|| {
+                format!(
+                    "packed member `{}` has unresolved width in `{path}`",
+                    member.name
+                )
+            })?;
+            members.push(self.aggregate_member_decl_value(path, value_node, member, width)?);
+        }
+        if layout.kind == AggregateKind::PackedUnion {
+            members
+                .into_iter()
+                .next()
+                .ok_or_else(|| format!("packed union assignment pattern is empty in `{path}`"))
+        } else {
+            Ok(elab::concat(&members))
+        }
+    }
+
+    pub(super) fn aggregate_pattern_values(
+        &self,
+        path: &str,
+        init: NodeId,
+        layout: &crate::core::db::AggregateLayout,
+    ) -> Result<Vec<(usize, NodeId)>, String> {
+        let NodeKind::Expr(ExprKind::Operation {
+            op,
+            operands,
+            reordered,
+        }) = self.kind(init)
+        else {
+            return Err(format!(
+                "declaration initializer for aggregate in `{path}` is not an assignment pattern"
+            ));
+        };
+        if *op != vpi::vpiAssignmentPatternOp {
+            return Err(format!(
+                "declaration initializer for aggregate in `{path}` is not an assignment pattern"
+            ));
+        }
+        let mut operands = operands.clone();
+        if *reordered {
+            operands.reverse();
+        }
+        let tagged = operands.iter().any(|operand| {
+            matches!(
+                self.kind(*operand),
+                NodeKind::Expr(ExprKind::TaggedPattern { .. })
+            )
+        });
+        let is_union = matches!(
+            layout.kind,
+            AggregateKind::PackedUnion | AggregateKind::UnpackedUnion
+        );
+        if !tagged {
+            let expected = if is_union { 1 } else { layout.members.len() };
+            if operands.len() != expected {
+                return Err(format!(
+                    "aggregate assignment pattern in `{path}` has {} positional values; expected {expected}",
+                    operands.len()
+                ));
+            }
+            return Ok(operands.into_iter().enumerate().collect());
+        }
+        if operands.iter().any(|operand| {
+            !matches!(
+                self.kind(*operand),
+                NodeKind::Expr(ExprKind::TaggedPattern { .. })
+            )
+        }) {
+            if !is_union && operands.len() == layout.members.len() {
+                // UHDM's checked flattener replaces resolved member/default
+                // keys with their values but retains resolved type keys as
+                // tagged operands, all in declaration order.
+                return operands
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, operand)| match self.kind(operand) {
+                        NodeKind::Expr(ExprKind::TaggedPattern {
+                            value: Some(value),
+                            ..
+                        }) => Ok((index, *value)),
+                        NodeKind::Expr(ExprKind::TaggedPattern { .. }) => Err(format!(
+                            "flattened aggregate assignment pattern operand {index} has no value in `{path}`"
+                        )),
+                        _ => Ok((index, operand)),
+                    })
+                    .collect();
+            }
+            return Err(format!(
+                "mixed positional and keyed aggregate assignment pattern in `{path}` is not supported"
+            ));
+        }
+
+        let mut explicit = vec![None; layout.members.len()];
+        let mut type_values: Vec<(String, Option<AssignmentPatternKeyType>, NodeId)> = Vec::new();
+        let mut default = None;
+        for operand in operands {
+            let NodeKind::Expr(ExprKind::TaggedPattern {
+                key,
+                key_type,
+                value,
+            }) = self.kind(operand)
+            else {
+                continue;
+            };
+            let key = key.as_deref().ok_or_else(|| {
+                format!("aggregate assignment pattern key is unavailable in `{path}`")
+            })?;
+            let value = value.ok_or_else(|| {
+                format!("aggregate assignment pattern key `{key}` has no value in `{path}`")
+            })?;
+            if key == "default" {
+                if default.replace(value).is_some() {
+                    return Err(format!(
+                        "duplicate default key in aggregate assignment pattern in `{path}`"
+                    ));
+                }
+                continue;
+            }
+            if let Some(index) = layout.members.iter().position(|member| member.name == key) {
+                if explicit[index].replace(value).is_some() {
+                    return Err(format!(
+                        "duplicate aggregate member key `{key}` in `{path}`"
+                    ));
+                }
+                continue;
+            }
+            if !layout
+                .members
+                .iter()
+                .any(|member| aggregate_member_matches_type_key(member, key, key_type.as_ref()))
+            {
+                return Err(format!(
+                    "aggregate assignment pattern key `{key}` has no matching member or type in `{path}`"
+                ));
+            }
+            type_values.push((key.to_owned(), key_type.clone(), value));
+        }
+
+        for (index, member) in layout.members.iter().enumerate() {
+            if member.aggregate.is_some()
+                && explicit[index].is_none()
+                && (default.is_some()
+                    || type_values.iter().any(|(key, key_type, _)| {
+                        aggregate_member_matches_type_key(member, key, key_type.as_ref())
+                    }))
+            {
+                return Err(format!(
+                    "recursive default/type-key assignment into aggregate member `{}` in `{path}` is not supported",
+                    member.name
+                ));
+            }
+        }
+
+        let resolved = layout
+            .members
+            .iter()
+            .enumerate()
+            .filter_map(|(index, member)| {
+                explicit[index]
+                    .or_else(|| {
+                        type_values.iter().rev().find_map(|(key, key_type, value)| {
+                            aggregate_member_matches_type_key(member, key, key_type.as_ref())
+                                .then_some(*value)
+                        })
+                    })
+                    .or(default)
+                    .map(|value| (index, value))
+            })
+            .collect::<Vec<_>>();
+        if is_union {
+            if resolved.len() != 1 {
+                return Err(format!(
+                    "untagged union assignment pattern in `{path}` must select exactly one member"
+                ));
+            }
+        } else if resolved.len() != layout.members.len() {
+            let missing = layout
+                .members
+                .iter()
+                .enumerate()
+                .find(|(index, _)| !resolved.iter().any(|(set, _)| set == index))
+                .map(|(_, member)| member.name.as_str())
+                .unwrap_or("<unknown>");
+            return Err(format!(
+                "aggregate assignment pattern in `{path}` does not cover member `{missing}`"
+            ));
+        }
+        Ok(resolved)
     }
 
     /// Record the C function name of every function/task definition in the
@@ -851,6 +1188,8 @@ impl<'a> Codegen<'a> {
                         if let Some(vi) = self.arrays.iter_mut().find(|vi| vi.global == ai.global) {
                             vi.init = Some(vals);
                         }
+                    } else if self.collect_aggregate_cont_assign_init(&gs_path, nid)? {
+                        self.scalar_init_ca.insert(nid);
                     } else if matches!(self.net_decl_target(nid), NetDeclTarget::Variable) {
                         let (info, c) = self.scalar_decl_init(&gs_path, nid)?.ok_or_else(|| {
                             format!(
@@ -1792,6 +2131,57 @@ impl<'a> Codegen<'a> {
             .and_then(|lhs| self.ref_array_target(lhs))
     }
 
+    fn cont_assign_decl_target(&self, ca: NodeId) -> Option<NodeId> {
+        let lhs = self.node(ca).children.first().copied()?;
+        match self.kind(lhs) {
+            NodeKind::Expr(ExprKind::Ref { target }) => *target,
+            NodeKind::Net { .. } | NodeKind::Var { .. } | NodeKind::Array { .. } => Some(lhs),
+            _ => None,
+        }
+    }
+
+    fn collect_aggregate_cont_assign_init(
+        &mut self,
+        path: &str,
+        ca: NodeId,
+    ) -> Result<bool, String> {
+        if !matches!(self.net_decl_target(ca), NetDeclTarget::Variable) {
+            return Ok(false);
+        }
+        let Some(target) = self.cont_assign_decl_target(ca) else {
+            return Ok(false);
+        };
+        let Some(rhs) = self.node(ca).children.get(1).copied() else {
+            return Ok(false);
+        };
+        if !matches!(
+            self.kind(rhs),
+            NodeKind::Expr(ExprKind::Operation { op, .. })
+                if *op == vpi::vpiAssignmentPatternOp
+        ) {
+            return Ok(false);
+        }
+        if let Some(aggregate) = self.unpacked_aggregates.get(&target).cloned() {
+            self.collect_unpacked_aggregate_decl_init(path, target, rhs, &aggregate)?;
+            return Ok(true);
+        }
+        let Some(layout) = self.db.aggregate_layout(target).cloned() else {
+            return Ok(false);
+        };
+        if !matches!(
+            layout.kind,
+            AggregateKind::PackedStruct | AggregateKind::PackedUnion
+        ) {
+            return Ok(false);
+        }
+        let Some(info) = self.signal_of(target).cloned() else {
+            return Ok(false);
+        };
+        let value = self.packed_aggregate_decl_init(path, rhs, &layout, &info)?;
+        self.scalar_inits.push((info, value));
+        Ok(true)
+    }
+
     /// Classify the declaration object on the LHS of a net-declaration
     /// assignment. `wire`, `tri`, and SV `logic` nets are true continuous
     /// drivers; `reg` and variable objects retain declaration-initializer
@@ -1805,10 +2195,19 @@ impl<'a> Codegen<'a> {
             NodeKind::Net { .. } | NodeKind::Var { .. } | NodeKind::Array { .. } => Some(lhs),
             _ => None,
         };
+        let aggregate_storage = target
+            .and_then(|target| self.signal_of(target))
+            .is_some_and(|info| {
+                self.sig_globals.iter().any(|(candidate, candidate_info)| {
+                    candidate_info.ir == info.ir && self.db.aggregate_layout(*candidate).is_some()
+                })
+            });
         match target.map(|target| self.kind(target)) {
             Some(NodeKind::Array { .. }) => NetDeclTarget::Array,
             Some(NodeKind::Var { .. }) => NetDeclTarget::Variable,
             Some(NodeKind::Net { net_type, .. }) => match *net_type {
+                NetType::None => NetDeclTarget::Variable,
+                other if other.as_raw() == 0 && aggregate_storage => NetDeclTarget::Variable,
                 NetType::Wire
                 | NetType::Tri
                 | NetType::Logic
@@ -5941,6 +6340,57 @@ fn materialize_decl_cast_value(
         }
     }
     value
+}
+
+fn aggregate_member_matches_type_key(
+    member: &AggregateMember,
+    _key: &str,
+    key_type: Option<&AssignmentPatternKeyType>,
+) -> bool {
+    let Some(key_type) = key_type else {
+        return false;
+    };
+    if matches!(
+        key_type.ty.kind.as_str(),
+        "struct" | "union" | "enum" | "class"
+    ) || matches!(
+        member.ty.kind.as_str(),
+        "struct" | "union" | "enum" | "class"
+    ) {
+        // TypeInfo names do not encode lexical typedef identity. Decline
+        // nominal type keys until capture can prove that identity.
+        return false;
+    }
+    if !is_integral_pattern_key_kind(&key_type.ty.kind)
+        || !is_integral_pattern_key_kind(&member.ty.kind)
+        || key_type.ty.signed != member.ty.signed
+        || key_type.two_state != member.two_state
+    {
+        return false;
+    }
+    let effective_ranges = |ranges: &[crate::core::db::PackedRange], width: Option<u32>| {
+        if !ranges.is_empty() {
+            return ranges.to_vec();
+        }
+        width
+            .and_then(|width| width.checked_sub(1))
+            .map(|left| {
+                vec![crate::core::db::PackedRange {
+                    left: i128::from(left),
+                    right: 0,
+                }]
+            })
+            .unwrap_or_default()
+    };
+    effective_ranges(&key_type.packed_ranges, key_type.ty.width)
+        == effective_ranges(&member.packed_ranges, member.ty.width)
+}
+
+fn is_integral_pattern_key_kind(kind: &str) -> bool {
+    matches!(
+        kind,
+        "bit" | "logic" | "byte" | "shortint" | "int" | "longint" | "integer" | "time"
+    )
 }
 
 fn materialize_parameter_value(value: &Val) -> Val {

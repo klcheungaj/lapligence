@@ -31,6 +31,10 @@ pub struct IrContainer {
 #[derive(Clone, Debug, PartialEq)]
 pub enum IrContainerExpr {
     Size(usize),
+    Reduce {
+        container: usize,
+        operation: IrContainerReduction,
+    },
     Get {
         container: usize,
         index: Box<IrExpr>,
@@ -74,6 +78,15 @@ pub enum IrAssocTraversal {
     Last,
     Next,
     Prev,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IrContainerReduction {
+    Sum,
+    Product,
+    BitAnd,
+    BitOr,
+    BitXor,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -141,6 +154,7 @@ impl IrContainerExpr {
         }
         let (index, expected) = match self {
             Self::Size(index) => (*index, None),
+            Self::Reduce { container, .. } => (*container, None),
             Self::Get { container, .. } => {
                 let container = container_kind(model, *container, None)?;
                 if matches!(

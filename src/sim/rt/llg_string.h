@@ -22,7 +22,11 @@ sv4_t llg_string_getc(llg_string_t value, sv4_t index);
 void llg_string_putc(llg_string_t *value, sv4_t index, sv4_t character);
 sv4_t llg_string_compare(llg_string_t a, llg_string_t b, int ignore_case);
 sv4_t llg_string_atoi(llg_string_t value, unsigned base);
+/* Consume the string and parse its decimal real prefix; no digits yields zero. */
+double llg_string_atoreal(llg_string_t value);
 void llg_string_itoa(llg_string_t *target, sv4_t value, unsigned base);
+/* Replace target with an owned decimal representation of value. */
+void llg_string_realtoa(llg_string_t *target, double value);
 void llg_string_print(llg_string_t value);
 
 #endif

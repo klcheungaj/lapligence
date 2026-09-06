@@ -48,7 +48,9 @@ the simulator (`src/sim/`):
   capture for time literals, cast/type qualifiers, and explicit variable
   lifetime qualifiers which UHDM does not distinguish reliably. Numeric size casts retain their source/decompile size
   token; ambiguous integer casts without admitted provenance must be rejected
-  by consumers instead of silently becoming 32-bit `int` casts. Admit physical files from
+  by consumers instead of silently becoming 32-bit `int` casts. Method calls
+  retain `vpiWith` presence so an unsupported with-clause cannot be silently
+  dropped. Admit physical files from
   `CompileOut::frontend_source_files`, never logical `vpiFile` remappings.
   Default `Db::build` adds no constant-source reads; bounded cache and unavailable
   provenance contracts are documented in [readme.md](readme.md).
@@ -145,7 +147,10 @@ simulation purposes (verified empirically, 100% `vpiActual` ref binding on the
   array metadata), top-level packed struct/union member offsets and each
   member's declared packed dimensions, aggregate category (packed/unpacked,
   struct/union/tagged) plus typed unpacked members, and the complete
-  declaration type's two-state domain (including enum bases and all-bit packed aggregates).
+  declaration type's two-state domain (including enum bases and all-bit packed
+  aggregates). Tagged assignment-pattern operands retain resolved key type,
+  packed ranges, signedness, and state domain; consumers must fail closed when
+  nominal lexical type identity is unavailable.
   Consumers can render parameter-dependent widths and flatten packed
   selections after the Surelog session is gone; unknown bounds remain
   explicitly unresolved.

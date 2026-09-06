@@ -17,6 +17,10 @@ needs only the C and math libraries, with no scheduler or libaco dependency.
 `llg_rt.h` includes the value header as a compatibility facade; `llg_rt.c` owns
 process scheduling, signal writes, driver storage/resolved-value publication,
 and simulation output.
+`llg_string.h` / `llg_string.c` own byte-string allocation, copying, methods,
+and packed/numeric conversions. Expressions consume owned strings; storage
+reads clone them. Decimal real parsing and formatting retain that ownership
+contract and are independent of scheduler state.
 `llg_container.h` / `llg_container.c` independently own dynamic-array, queue,
 and associative-array allocation and element/key operations. Packed elements
 remain model-width `sv4_t` values rather than host-width integers; each
@@ -26,9 +30,9 @@ Driver cells default to Z; generated initialization seeds pending delayed
 continuous drivers with X before process scheduling.
 The optional `llg_wave.c` owns asynchronous waveform output.
 
-`rt::value_sources()`, `rt::runtime_sources()`, and `rt::container_sources()`
-expose the three source pairs.
-The shared source writer and CMake builder emit and compile both, including
+`rt::value_sources()`, `rt::runtime_sources()`, `rt::string_sources()`, and
+`rt::container_sources()` expose the four source pairs.
+The shared source writer and CMake builder emit and compile them, including
 for runtime self-tests and models with waveform output.
 
 Keep vector semantics aligned with `core::elab`, check allocation/size/time

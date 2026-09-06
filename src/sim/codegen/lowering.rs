@@ -222,10 +222,10 @@ use super::timescale::{
 };
 use super::CodegenError;
 use crate::core::db::{
-    AggregateKind, AggregateMember, ArrayKind, AssociativeIndex, CaseKind as DbCaseKind,
-    ConstantSource, ConstantType, Db, Direction as DbDirection, EventSpec, ExprKind, IntraControl,
-    JoinKind as DbJoinKind, NetType, NodeId, NodeKind, Operation, PackedMember, PrimClass,
-    PrimitiveType, ProcessKind, StmtKind, Strength,
+    AggregateKind, AggregateMember, ArrayKind, AssignmentPatternKeyType, AssociativeIndex,
+    CaseKind as DbCaseKind, ConstantSource, ConstantType, Db, Direction as DbDirection, EventSpec,
+    ExprKind, IntraControl, JoinKind as DbJoinKind, NetType, NodeId, NodeKind, Operation,
+    PackedMember, PrimClass, PrimitiveType, ProcessKind, StmtKind, Strength,
 };
 use crate::core::elab::{self, Bit, Val};
 use crate::ffi::vpi::{self, ValueData, VpiHandle};
@@ -844,9 +844,54 @@ impl<'a> Codegen<'a> {
     /// resolves to a captured Net/Var (per-instance, via the db's refs).
     /// Longer or unresolvable paths return `None`.
     fn hier_path_signal(&self, node: NodeId) -> Option<&SignalInfo> {
-        if let NodeKind::Expr(ExprKind::HierPath { refs, .. }) = self.kind(node) {
+        if let NodeKind::Expr(ExprKind::HierPath { parts, refs }) = self.kind(node) {
             if let Some(t) = refs.last().copied().flatten() {
                 return self.signal_of(t);
+            }
+            let (target, base_index) = self.hier_path_signal_target(parts, refs)?;
+            if base_index + 1 == parts.len() {
+                return self.signal_of(target);
+            }
+        }
+        None
+    }
+
+    /// Recover a signal target when Surelog omits every `vpiActual` reference
+    /// from a generated-scope hierarchical path. Scope/name lookup remains on
+    /// the already-collected owned model and requires an exact scope prefix.
+    fn hier_path_signal_target(
+        &self,
+        parts: &[String],
+        refs: &[Option<NodeId>],
+    ) -> Option<(NodeId, usize)> {
+        if let Some((index, target)) = refs
+            .iter()
+            .enumerate()
+            .find_map(|(index, target)| target.map(|target| (index, target)))
+        {
+            if self.signal_of(target).is_some() {
+                return Some((target, index));
+            }
+        }
+        for base_index in (0..parts.len()).rev() {
+            let mut scope = self.design_name.clone();
+            if base_index != 0 {
+                scope.push('.');
+                scope.push_str(&parts[..base_index].join("."));
+            }
+            let Some(info) = self
+                .scope_sig_names
+                .get(&scope)
+                .and_then(|names| names.get(&parts[base_index]))
+            else {
+                continue;
+            };
+            if let Some(target) = self
+                .sig_globals
+                .iter()
+                .find_map(|(target, candidate)| (candidate.ir == info.ir).then_some(*target))
+            {
+                return Some((target, base_index));
             }
         }
         None
@@ -856,7 +901,7 @@ impl<'a> Codegen<'a> {
         let NodeKind::Expr(ExprKind::HierPath { parts, refs }) = self.kind(node) else {
             return None;
         };
-        let target = refs.first().copied().flatten()?;
+        let (target, base_index) = self.hier_path_signal_target(parts, refs)?;
         let info = self.signal_of(target)?.clone();
         let mut layout = self.db.aggregate_layout(target)?;
         if !matches!(
@@ -867,7 +912,7 @@ impl<'a> Codegen<'a> {
         }
         let mut absolute_lsb = 0u32;
         let mut selected: Option<&AggregateMember> = None;
-        for (part_index, member_name) in parts.iter().enumerate().skip(1) {
+        for (part_index, member_name) in parts.iter().enumerate().skip(base_index + 1) {
             let index = layout
                 .members
                 .iter()
@@ -941,9 +986,29 @@ impl<'a> Codegen<'a> {
         let NodeKind::Expr(ExprKind::HierPath { parts, refs }) = self.kind(node) else {
             return None;
         };
-        let target = refs.first().copied().flatten()?;
+        let (target, base_index) = if let Some(target) = refs.first().copied().flatten() {
+            (target, 0)
+        } else {
+            let mut found = None;
+            for base_index in (0..parts.len()).rev() {
+                let mut scope = self.design_name.clone();
+                if base_index != 0 {
+                    scope.push('.');
+                    scope.push_str(&parts[..base_index].join("."));
+                }
+                found = self.unpacked_aggregates.keys().find_map(|target| {
+                    (self.node(*target).name == parts[base_index]
+                        && self.instance_path_of(*target) == scope)
+                        .then_some((*target, base_index))
+                });
+                if found.is_some() {
+                    break;
+                }
+            }
+            found?
+        };
         let aggregate = self.unpacked_aggregates.get(&target)?;
-        let member_name = parts.get(1)?;
+        let member_name = parts.get(base_index + 1)?;
         let member = aggregate
             .members
             .iter()

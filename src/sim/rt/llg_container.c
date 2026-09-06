@@ -60,6 +60,50 @@ static sv4_t llg_element_assign(sv4_t value, uint32_t width, int8_t is_signed,
     return two_state ? sv4_to_two_state(result) : result;
 }
 
+static sv4_t llg_reduce_identity(uint32_t width, int8_t is_signed,
+                                 int operation) {
+    switch (operation) {
+        case LLG_CONTAINER_REDUCE_PRODUCT:
+            return sv4_from_u64(1, width, is_signed);
+        case LLG_CONTAINER_REDUCE_AND:
+            return sv4_fill(1, width, is_signed);
+        case LLG_CONTAINER_REDUCE_SUM:
+        case LLG_CONTAINER_REDUCE_OR:
+        case LLG_CONTAINER_REDUCE_XOR:
+            return sv4_from_u64(0, width, is_signed);
+        default:
+            llg_container_fatal("invalid container reduction operation");
+            return sv4_from_u64(0, width, is_signed);
+    }
+}
+
+static sv4_t llg_reduce_step(sv4_t accumulated, sv4_t value, int operation) {
+    switch (operation) {
+        case LLG_CONTAINER_REDUCE_SUM:
+            return sv4_add(accumulated, value);
+        case LLG_CONTAINER_REDUCE_PRODUCT:
+            return sv4_mul(accumulated, value);
+        case LLG_CONTAINER_REDUCE_AND:
+            return sv4_and(accumulated, value);
+        case LLG_CONTAINER_REDUCE_OR:
+            return sv4_or(accumulated, value);
+        case LLG_CONTAINER_REDUCE_XOR:
+            return sv4_xor(accumulated, value);
+        default:
+            llg_container_fatal("invalid container reduction operation");
+            return accumulated;
+    }
+}
+
+static sv4_t llg_reduce_values(const sv4_t* values, size_t count,
+                               uint32_t width, int8_t is_signed,
+                               int operation) {
+    sv4_t result = llg_reduce_identity(width, is_signed, operation);
+    for (size_t i = 0; i < count; ++i)
+        result = llg_reduce_step(result, values[i], operation);
+    return result;
+}
+
 static int llg_index(sv4_t value, size_t upper_exclusive, int allow_end,
                      size_t* result) {
     uint64_t index = sv4_to_index(value);
@@ -174,6 +218,11 @@ int llg_dyn_set(llg_dyn_array_t* array, sv4_t index, sv4_t value) {
         value, array->element_width, array->element_signed,
         array->element_two_state);
     return 1;
+}
+
+sv4_t llg_dyn_reduce(const llg_dyn_array_t* array, int operation) {
+    return llg_reduce_values(array->data, array->size, array->element_width,
+                             array->element_signed, operation);
 }
 
 static void llg_queue_reserve(llg_queue_t* queue, size_t needed) {
@@ -370,6 +419,11 @@ sv4_t llg_queue_back(const llg_queue_t* queue) {
     return queue->data[queue->size - 1];
 }
 
+sv4_t llg_queue_reduce(const llg_queue_t* queue, int operation) {
+    return llg_reduce_values(queue->data, queue->size, queue->element_width,
+                             queue->element_signed, operation);
+}
+
 static void llg_assoc_check_kind(const llg_assoc_t* array, uint8_t kind) {
     if (array->key_kind != kind)
         llg_container_fatal("associative-array key kind mismatch");
@@ -430,6 +484,14 @@ static void llg_assoc_reserve(llg_assoc_t* array, size_t needed) {
 }
 
 size_t llg_assoc_count(const llg_assoc_t* array) { return array->size; }
+
+sv4_t llg_assoc_reduce(const llg_assoc_t* array, int operation) {
+    sv4_t result = llg_reduce_identity(array->element_width,
+                                       array->element_signed, operation);
+    for (size_t i = 0; i < array->size; ++i)
+        result = llg_reduce_step(result, array->entries[i].value, operation);
+    return result;
+}
 
 static int llg_assoc_normalize_key(const llg_assoc_t* array, sv4_t input,
                                    sv4_t* output) {

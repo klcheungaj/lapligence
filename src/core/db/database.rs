@@ -136,6 +136,14 @@ pub struct AggregateLayout {
     pub members: Vec<AggregateMember>,
 }
 
+/// Exact owned metadata for a type key in an assignment pattern.
+#[derive(Clone, Debug, PartialEq)]
+pub struct AssignmentPatternKeyType {
+    pub ty: TypeInfo,
+    pub two_state: bool,
+    pub packed_ranges: Vec<PackedRange>,
+}
+
 impl ElaboratedTypeRanges {
     pub fn instance(&self) -> &str {
         &self.instance
@@ -215,6 +223,8 @@ pub struct Db {
     /// (see [`NodeKind::ContAssign`]).
     vars_init: HashMap<NodeId, NodeId>,
     var_lifetime_qualifiers: HashMap<NodeId, VariableLifetimeQualifier>,
+    /// Method calls whose UHDM node carries a `vpiWith` expression.
+    method_calls_with_clause: HashSet<NodeId>,
     /// Top-level packed struct/union layouts keyed by the declared object.
     packed_members: HashMap<NodeId, Vec<PackedMember>>,
     /// Structure/union category and members keyed by the declared object.
@@ -855,6 +865,7 @@ pub enum ExprKind {
     /// One keyed operand inside an assignment pattern (`'{member: value}`).
     TaggedPattern {
         key: Option<String>,
+        key_type: Option<AssignmentPatternKeyType>,
         value: Option<NodeId>,
     },
     /// `'(type)(expr)` cast — target type resolved at build time.
@@ -960,6 +971,7 @@ pub(super) struct Builder {
     /// (see [`Db::vars_init`]).
     pub(super) vars_init: HashMap<NodeId, NodeId>,
     pub(super) var_lifetime_qualifiers: HashMap<NodeId, VariableLifetimeQualifier>,
+    pub(super) method_calls_with_clause: HashSet<NodeId>,
     pub(super) packed_members: HashMap<NodeId, Vec<PackedMember>>,
     pub(super) aggregate_layouts: HashMap<NodeId, AggregateLayout>,
     pub(super) packed_dimensions: HashMap<NodeId, Vec<PackedRange>>,
@@ -1008,6 +1020,7 @@ impl Db {
             arrays: HashMap::new(),
             vars_init: HashMap::new(),
             var_lifetime_qualifiers: HashMap::new(),
+            method_calls_with_clause: HashSet::new(),
             packed_members: HashMap::new(),
             aggregate_layouts: HashMap::new(),
             packed_dimensions: HashMap::new(),
@@ -1092,6 +1105,7 @@ impl Db {
             arrays: b.arrays,
             vars_init: b.vars_init,
             var_lifetime_qualifiers: b.var_lifetime_qualifiers,
+            method_calls_with_clause: b.method_calls_with_clause,
             packed_members: b.packed_members,
             aggregate_layouts: b.aggregate_layouts,
             packed_dimensions: b.packed_dimensions,
@@ -1168,6 +1182,14 @@ impl Db {
             .get(&id)
             .copied()
             .unwrap_or(VariableLifetimeQualifier::Unavailable)
+    }
+
+    pub fn method_call_has_with_clause(&self, id: NodeId) -> bool {
+        self.method_calls_with_clause.contains(&id)
+    }
+
+    pub(crate) fn method_calls_with_clause_nodes(&self) -> &HashSet<NodeId> {
+        &self.method_calls_with_clause
     }
 
     pub fn packed_members(&self, id: NodeId) -> Option<&[PackedMember]> {

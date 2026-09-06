@@ -24,10 +24,13 @@ unsupported mixed or output/inout chandle signatures fail during lowering.
 Automatic string-returning functions with packed input formals use owned
 `llg_string_t` results; unsupported persistent/string-formal variants fail
 during lowering.
+String `atoreal` queries have real-valued IR metadata; `realtoa` mutations
+coerce packed arguments to real before storing an owned decimal string.
 Resizable unpacked containers use their own IR and C runtime objects, separate
 from fixed arrays and packed handles. The supported slice covers dynamic-array
 allocation/copy/delete, positional dynamic/queue assignment patterns, queue
-methods, and integral/string associative methods;
+methods, integral/string associative methods, and no-`with` packed-element
+`sum`/`product`/`and`/`or`/`xor` reductions;
 lowering rejects resizable element NBAs and sensitivity dependencies until the
 scheduler has container-change notifications.
 

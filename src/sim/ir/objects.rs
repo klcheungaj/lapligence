@@ -51,13 +51,14 @@ pub enum IrChandleExpr {
     },
 }
 
-/// Queries produce packed values, never an integer encoding of an object.
+/// Queries produce packed or real values, never integer encodings of objects.
 #[derive(Clone, Debug, PartialEq)]
 pub enum IrObjectQuery {
     StringLen(IrStringExpr),
     StringGetc(IrStringExpr, Box<IrExpr>),
     StringCompare(IrStringExpr, IrStringExpr, bool),
     StringAtoi(IrStringExpr, u32),
+    StringAtoreal(IrStringExpr),
     StringPacked(IrStringExpr),
     ChandleEq(IrChandleExpr, IrChandleExpr),
 }
@@ -70,6 +71,7 @@ pub enum IrObjectStmt {
     StringAssignLocal(String, IrStringExpr),
     StringPutc(usize, IrExpr, IrExpr),
     StringItoa(usize, IrExpr, u32),
+    StringRealtoa(usize, IrExpr),
     ChandleAssign(usize, IrChandleExpr),
     ChandleAssignLocal(String, IrChandleExpr),
 }
@@ -203,6 +205,7 @@ impl IrObjectQuery {
             Self::StringLen(value)
             | Self::StringGetc(value, _)
             | Self::StringAtoi(value, _)
+            | Self::StringAtoreal(value)
             | Self::StringPacked(value) => value.validate(model, string_return),
             Self::StringCompare(a, b, _) => {
                 a.validate(model, string_return)?;
@@ -216,9 +219,10 @@ impl IrObjectQuery {
     }
     pub(in crate::sim) fn expressions(&self, visit: &mut impl FnMut(&IrExpr)) {
         match self {
-            Self::StringLen(value) | Self::StringAtoi(value, _) | Self::StringPacked(value) => {
-                value.expressions(visit)
-            }
+            Self::StringLen(value)
+            | Self::StringAtoi(value, _)
+            | Self::StringAtoreal(value)
+            | Self::StringPacked(value) => value.expressions(visit),
             Self::StringGetc(value, index) => {
                 value.expressions(visit);
                 visit(index);
@@ -232,9 +236,10 @@ impl IrObjectQuery {
     }
     pub(in crate::sim) fn expressions_mut(&mut self, visit: &mut impl FnMut(&mut IrExpr)) {
         match self {
-            Self::StringLen(value) | Self::StringAtoi(value, _) | Self::StringPacked(value) => {
-                value.expressions_mut(visit)
-            }
+            Self::StringLen(value)
+            | Self::StringAtoi(value, _)
+            | Self::StringAtoreal(value)
+            | Self::StringPacked(value) => value.expressions_mut(visit),
             Self::StringGetc(value, index) => {
                 value.expressions_mut(visit);
                 visit(index);
@@ -277,6 +282,16 @@ impl IrObjectStmt {
             Self::StringPutc(index, _, _) | Self::StringItoa(index, _, _) => {
                 object_type(model, *index, IrObjectType::String)
             }
+            Self::StringRealtoa(index, value) => {
+                object_type(model, *index, IrObjectType::String)?;
+                if !value.is_real() {
+                    return Err(super::IrValidationError::new(
+                        "string",
+                        "realtoa requires a real argument",
+                    ));
+                }
+                Ok(())
+            }
             Self::ChandleAssign(index, value) => {
                 object_type(model, *index, IrObjectType::Chandle)?;
                 value.validate(model, formals, chandle_return)
@@ -301,7 +316,7 @@ impl IrObjectStmt {
                 visit(index);
                 visit(value);
             }
-            Self::StringItoa(_, value, _) => visit(value),
+            Self::StringItoa(_, value, _) | Self::StringRealtoa(_, value) => visit(value),
             Self::ChandleAssign(..) | Self::ChandleAssignLocal(..) => {}
         }
     }
@@ -314,7 +329,7 @@ impl IrObjectStmt {
                 visit(index);
                 visit(value);
             }
-            Self::StringItoa(_, value, _) => visit(value),
+            Self::StringItoa(_, value, _) | Self::StringRealtoa(_, value) => visit(value),
             Self::ChandleAssign(..) | Self::ChandleAssignLocal(..) => {}
         }
     }

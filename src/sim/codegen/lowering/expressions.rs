@@ -1674,6 +1674,110 @@ impl<'a> Codegen<'a> {
         self.lhs_to_ir(lh)
     }
 
+    pub(super) fn lower_packed_aggregate_pattern(
+        &mut self,
+        path: &str,
+        lhs: NodeId,
+        rhs: NodeId,
+        op: i32,
+    ) -> Result<Option<IrExpr>, String> {
+        if !matches!(
+            self.kind(rhs),
+            NodeKind::Expr(ExprKind::Operation { op, .. })
+                if *op == vpi::vpiAssignmentPatternOp
+        ) {
+            return Ok(None);
+        }
+        let target = match self.kind(lhs) {
+            NodeKind::Expr(ExprKind::Ref {
+                target: Some(target),
+            }) => *target,
+            NodeKind::Var { .. } => lhs,
+            _ => return Ok(None),
+        };
+        let Some(layout) = self.db.aggregate_layout(target) else {
+            return Ok(None);
+        };
+        if !matches!(
+            layout.kind,
+            AggregateKind::PackedStruct | AggregateKind::PackedUnion
+        ) {
+            return Ok(None);
+        }
+        if op != 0 && op != vpi::vpiAssignmentOp {
+            return Err(format!(
+                "compound assignment of packed aggregate pattern in `{path}` is not supported"
+            ));
+        }
+        Ok(Some(
+            self.lower_packed_aggregate_pattern_value(path, rhs, layout)?,
+        ))
+    }
+
+    fn lower_packed_aggregate_pattern_value(
+        &mut self,
+        path: &str,
+        rhs: NodeId,
+        layout: &crate::core::db::AggregateLayout,
+    ) -> Result<IrExpr, String> {
+        let values = self.aggregate_pattern_values(path, rhs, layout)?;
+        let mut members = Vec::with_capacity(values.len());
+        for (member_index, value_node) in values {
+            let member = layout.members.get(member_index).ok_or_else(|| {
+                format!("aggregate pattern member index {member_index} is out of bounds")
+            })?;
+            let width = member.ty.width.ok_or_else(|| {
+                format!(
+                    "packed member `{}` has unresolved width in `{path}`",
+                    member.name
+                )
+            })?;
+            let value = if let Some(nested) = member.aggregate.as_deref() {
+                if matches!(
+                    self.kind(value_node),
+                    NodeKind::Expr(ExprKind::Operation { op, .. })
+                        if *op == vpi::vpiAssignmentPatternOp
+                ) {
+                    if !matches!(
+                        nested.kind,
+                        AggregateKind::PackedStruct | AggregateKind::PackedUnion
+                    ) {
+                        return Err(format!(
+                            "nested unpacked aggregate member `{}` in `{path}` is not supported",
+                            member.name
+                        ));
+                    }
+                    self.lower_packed_aggregate_pattern_value(path, value_node, nested)?
+                } else {
+                    self.lower_expr(path, value_node)?
+                }
+            } else {
+                self.lower_expr(path, value_node)?
+            };
+            members.push(ir_to_storage(
+                value,
+                width,
+                member.ty.signed,
+                member.two_state,
+            )?);
+        }
+        let value = if layout.kind == AggregateKind::PackedUnion {
+            members
+                .into_iter()
+                .next()
+                .ok_or_else(|| format!("packed union assignment pattern is empty in `{path}`"))?
+        } else {
+            let width = members
+                .iter()
+                .try_fold(0u32, |total, member| total.checked_add(member.width()));
+            let width = width.ok_or_else(|| {
+                format!("packed aggregate assignment pattern width overflows in `{path}`")
+            })?;
+            IrExpr::new(IrExprKind::Concat { parts: members }, width, false, None)
+        };
+        Ok(value)
+    }
+
     pub(super) fn lower_unpacked_aggregate_assignment(
         &mut self,
         path: &str,
@@ -1689,102 +1793,30 @@ impl<'a> Codegen<'a> {
             NodeKind::Expr(ExprKind::Operation { op, .. })
                 if *op == vpi::vpiAssignmentPatternOp
         );
-        if lhs_aggregate.is_none() && rhs_aggregate.is_none() && !rhs_is_pattern {
+        if lhs_aggregate.is_none() && rhs_aggregate.is_none() {
             return Ok(None);
         }
         let (lhs_target, lhs_aggregate) = lhs_aggregate.ok_or_else(|| {
             format!("unpacked aggregate used as a scalar assignment RHS in `{path}`")
         })?;
         if rhs_is_pattern {
-            if lhs_aggregate.kind != AggregateKind::UnpackedStruct {
-                return Err(format!(
-                    "assignment pattern for unpacked union `{}` in `{path}` is not supported",
-                    self.node(lhs_target).name
-                ));
-            }
             if op != 0 && op != vpi::vpiAssignmentOp {
                 return Err(format!(
                     "compound assignment of unpacked aggregate pattern in `{path}` is not supported"
                 ));
             }
-            let NodeKind::Expr(ExprKind::Operation {
-                operands,
-                reordered,
-                ..
-            }) = self.kind(rhs)
-            else {
-                return Err("assignment-pattern shape changed during lowering".to_string());
-            };
-            let mut operands = operands.clone();
-            if *reordered {
-                operands.reverse();
-            }
-            let any_tagged = operands.iter().any(|operand| {
-                matches!(
-                    self.kind(*operand),
-                    NodeKind::Expr(ExprKind::TaggedPattern { .. })
+            let layout = self.db.aggregate_layout(lhs_target).ok_or_else(|| {
+                format!(
+                    "unpacked aggregate `{}` in `{path}` has no captured layout",
+                    self.node(lhs_target).name
                 )
-            });
-            let values = if any_tagged {
-                if operands.iter().any(|operand| {
-                    !matches!(
-                        self.kind(*operand),
-                        NodeKind::Expr(ExprKind::TaggedPattern { .. })
-                    )
-                }) {
-                    return Err(format!(
-                        "mixed positional and named unpacked struct pattern in `{path}` is not supported"
-                    ));
-                }
-                let mut values = vec![None; lhs_aggregate.members.len()];
-                for operand in operands {
-                    let NodeKind::Expr(ExprKind::TaggedPattern { key, value }) = self.kind(operand)
-                    else {
-                        continue;
-                    };
-                    let key = key.as_deref().ok_or_else(|| {
-                        format!("unresolved unpacked struct pattern key in `{path}`")
-                    })?;
-                    let value = value.ok_or_else(|| {
-                        format!("unpacked struct pattern key `{key}` has no value in `{path}`")
-                    })?;
-                    let index = lhs_aggregate
-                        .members
-                        .iter()
-                        .position(|member| member.member.name == key)
-                        .ok_or_else(|| {
-                            format!("unknown unpacked struct pattern key `{key}` in `{path}`")
-                        })?;
-                    if values[index].replace(value).is_some() {
-                        return Err(format!(
-                            "duplicate unpacked struct pattern key `{key}` in `{path}`"
-                        ));
-                    }
-                }
-                values
-                    .into_iter()
-                    .enumerate()
-                    .map(|(index, value)| {
-                        value.ok_or_else(|| {
-                            format!(
-                                "unpacked struct pattern omits member `{}` in `{path}`",
-                                lhs_aggregate.members[index].member.name
-                            )
-                        })
-                    })
-                    .collect::<Result<Vec<_>, _>>()?
-            } else {
-                if operands.len() != lhs_aggregate.members.len() {
-                    return Err(format!(
-                        "unpacked struct pattern in `{path}` has {} values for {} members",
-                        operands.len(),
-                        lhs_aggregate.members.len()
-                    ));
-                }
-                operands
-            };
+            })?;
+            let values = self.aggregate_pattern_values(path, rhs, layout)?;
             let mut assignments = Vec::with_capacity(values.len());
-            for (left, value) in lhs_aggregate.members.iter().zip(values) {
+            for (member_index, value) in values {
+                let left = lhs_aggregate.members.get(member_index).ok_or_else(|| {
+                    format!("aggregate pattern member index {member_index} is out of bounds")
+                })?;
                 let width = left.member.ty.width.ok_or_else(|| {
                     format!(
                         "unpacked member `{}` has unresolved width",

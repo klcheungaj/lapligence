@@ -106,6 +106,16 @@ impl Validator<'_> {
             self.node(*init, &format!("vars_init[{}]", variable.0))?;
         }
 
+        for call in self.db.method_calls_with_clause_nodes() {
+            let node = self.node(*call, &format!("method_calls_with_clause[{}]", call.0))?;
+            if !matches!(node.kind, NodeKind::MethodCall { .. }) {
+                return self.fail(
+                    format!("method_calls_with_clause[{}]", call.0),
+                    "with-clause metadata key is not a method call",
+                );
+            }
+        }
+
         let mut range_keys = HashSet::new();
         for (index, entry) in self.db.elaborated_type_ranges().iter().enumerate() {
             if entry.instance.is_empty() || entry.name.is_empty() {

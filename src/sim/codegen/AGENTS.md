@@ -45,7 +45,8 @@ contracts. `lower_expr`/`lower_stmt`/`lower_lhs` produce typed IR only.
   IR and runtime storage; their packed elements retain arbitrary model width.
   The current vertical slice supports one resizable dimension, dynamic `new`
   and copy/delete, positional dynamic/queue assignment patterns, queue element/
-  method operations, and integral or string-key associative access, delete,
+  method operations, packed-element `sum`/`product`/`and`/`or`/`xor`
+  reductions, and integral or string-key associative access, delete,
   existence, and traversal. Resizable element NBAs
   are illegal (LRM §6.21), and container reads in sensitivity/wait expressions
   are rejected until mutations can notify the scheduler. Declaration
@@ -210,8 +211,9 @@ sources. Reject extended-VCD `$dumpports`; `$displayon`/`$displayoff` warn and
 skip. Basic SystemVerilog `string` storage is lowered for bounded module and
 generate-scope paths, and automatic packed-input functions may return string
 values. String ports, general string subprogram storage/formals,
-continuous-assignment/sensitivity paths, and formatted/real conversion methods
-such as `atoreal`/`realtoa` remain unsupported.
+and continuous-assignment/sensitivity paths remain unsupported. `atoreal`
+returns a real-valued expression from a decimal prefix, and `realtoa` applies
+ordinary real argument conversion before replacing the string value.
 
 Packed Verilog string literals are unsigned integral byte vectors, with the
 leftmost character most significant. Escapes retained by Surelog are decoded
@@ -221,8 +223,8 @@ Assignments pad/truncate as packed values, and explicitly packed parameters
 can initialize packed storage. SystemVerilog `string`-typed storage is
 separate from packed Verilog byte vectors: basic declarations, assignment/
 copy, casts, display paths, and bounded automatic function returns are covered,
-while general string subprogram forms, ports, continuous-assignment/sensitivity
-paths, and native formatted/real conversion methods remain unsupported. See the bounded
+while general string subprogram forms, ports, and continuous-assignment/sensitivity
+paths remain unsupported. See the bounded
 `tests/fixtures/sim/data_types_next/readme.md` inventory.
 
 ## Values and real numbers
@@ -386,10 +388,16 @@ members have independent typed signal storage; equal-width unpacked untagged
 union members share storage. Named member reads/writes and constant member
 bit/part selects are supported. A whole assignment between compatible named
 unpacked types is fieldwise for structs and copies shared storage for unions.
-Positional and complete member-named assignment patterns lower fieldwise;
-mixed, duplicate, omitted, default, and type-keyed pattern forms are rejected.
+Declaration and procedural assignment patterns support positional, complete
+member-named, default, and simple integral type keys. Type keys match exact
+packed dimensions, signedness, and 2-state/4-state domain; member keys take
+precedence over type keys, and the last matching type key takes precedence over
+default. Explicit nested packed-aggregate member patterns are recursive.
+Recursive default/type-key distribution into aggregate-valued members and
+nominal aggregate type keys fail closed until owned lexical type identity is
+available.
 Anonymous whole-type copies fail closed when owned type identity is unavailable.
 Reject unpacked aggregate nets/ports, nested aggregate or unpacked-array members,
-unequal-width unpacked unions, tagged unions, declaration patterns, aggregate
-subprogram formals/locals, compound assignments, and whole aggregates in scalar
-expression contexts.
+unequal-width unpacked unions, tagged unions, aggregate subprogram
+formals/locals, compound assignments, and whole aggregates in scalar expression
+contexts.

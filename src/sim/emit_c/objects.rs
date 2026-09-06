@@ -103,6 +103,9 @@ pub(super) fn query(
         IrObjectQuery::StringAtoi(value, base) => {
             format!("llg_string_atoi({}, {base})", string(ctx, value)?)
         }
+        IrObjectQuery::StringAtoreal(value) => {
+            format!("llg_string_atoreal({})", string(ctx, value)?)
+        }
         IrObjectQuery::StringPacked(value) => format!(
             "llg_string_to_packed({}, {width}, {})",
             string(ctx, value)?,
@@ -137,6 +140,11 @@ pub(super) fn statement(ctx: &RCtx<'_>, operation: &IrObjectStmt) -> Result<Stri
         ),
         IrObjectStmt::StringItoa(index, value, base) => format!(
             "    llg_string_itoa(&{}, {}, {base});\n",
+            ctx.model.objects[*index].c_name,
+            render_expr_impl(ctx, value)?.code
+        ),
+        IrObjectStmt::StringRealtoa(index, value) => format!(
+            "    llg_string_realtoa(&{}, {});\n",
             ctx.model.objects[*index].c_name,
             render_expr_impl(ctx, value)?.code
         ),

@@ -1,0 +1,223 @@
+--- a/third_party/UHDM/templates/ExprEval.cpp
++++ b/third_party/UHDM/templates/ExprEval.cpp
+@@ -52,3 +52,139 @@
++struct AssignmentPatternPackedType {
++  UHDM_OBJECT_TYPE leaf = UHDM_OBJECT_TYPE::uhdmunsupported_typespec;
++  bool isSigned = false;
++  std::vector<std::pair<int64_t, int64_t>> ranges;
++};
++
++static bool assignmentPatternPackedType(ExprEval& eval, const typespec* type,
++                                        AssignmentPatternPackedType& result,
++                                        uint32_t depth = 0) {
++  if ((type == nullptr) || (depth == 64)) return false;
++  auto appendRanges = [&](const VectorOfrange* ranges) {
++    if (ranges == nullptr) return true;
++    for (const range* dimension : *ranges) {
++      bool invalid = false;
++      const int64_t left = eval.get_value(invalid, dimension->Left_expr());
++      if (invalid) return false;
++      const int64_t right = eval.get_value(invalid, dimension->Right_expr());
++      if (invalid) return false;
++      result.ranges.emplace_back(left, right);
++    }
++    return true;
++  };
++  switch (type->UhdmType()) {
++    case UHDM_OBJECT_TYPE::uhdmpacked_array_typespec: {
++      const auto* array = (const packed_array_typespec*)type;
++      const ref_typespec* element = array->Elem_typespec();
++      return appendRanges(array->Ranges()) && (element != nullptr) &&
++             assignmentPatternPackedType(eval, element->Actual_typespec(),
++                                         result, depth + 1);
++    }
++    case UHDM_OBJECT_TYPE::uhdmlogic_typespec: {
++      const auto* logic = (const logic_typespec*)type;
++      result.leaf = type->UhdmType();
++      result.isSigned = logic->VpiSigned();
++      if (!appendRanges(logic->Ranges())) return false;
++      if (result.ranges.empty()) result.ranges.emplace_back(0, 0);
++      return true;
++    }
++    case UHDM_OBJECT_TYPE::uhdmbit_typespec: {
++      const auto* bit = (const bit_typespec*)type;
++      result.leaf = type->UhdmType();
++      result.isSigned = bit->VpiSigned();
++      if (!appendRanges(bit->Ranges())) return false;
++      if (result.ranges.empty()) result.ranges.emplace_back(0, 0);
++      return true;
++    }
++    case UHDM_OBJECT_TYPE::uhdmbyte_typespec:
++      result.leaf = UHDM_OBJECT_TYPE::uhdmbit_typespec;
++      result.isSigned = ((const byte_typespec*)type)->VpiSigned();
++      result.ranges.emplace_back(7, 0);
++      return true;
++    case UHDM_OBJECT_TYPE::uhdmshort_int_typespec:
++      result.leaf = UHDM_OBJECT_TYPE::uhdmbit_typespec;
++      result.isSigned = ((const short_int_typespec*)type)->VpiSigned();
++      result.ranges.emplace_back(15, 0);
++      return true;
++    case UHDM_OBJECT_TYPE::uhdmint_typespec:
++      result.leaf = UHDM_OBJECT_TYPE::uhdmbit_typespec;
++      result.isSigned = ((const int_typespec*)type)->VpiSigned();
++      result.ranges.emplace_back(31, 0);
++      return true;
++    case UHDM_OBJECT_TYPE::uhdmlong_int_typespec:
++      result.leaf = UHDM_OBJECT_TYPE::uhdmbit_typespec;
++      result.isSigned = ((const long_int_typespec*)type)->VpiSigned();
++      result.ranges.emplace_back(63, 0);
++      return true;
++    case UHDM_OBJECT_TYPE::uhdminteger_typespec:
++      result.leaf = UHDM_OBJECT_TYPE::uhdmlogic_typespec;
++      result.isSigned = ((const integer_typespec*)type)->VpiSigned();
++      result.ranges.emplace_back(31, 0);
++      return true;
++    case UHDM_OBJECT_TYPE::uhdmtime_typespec:
++      result.leaf = UHDM_OBJECT_TYPE::uhdmlogic_typespec;
++      result.isSigned = ((const time_typespec*)type)->VpiSigned();
++      result.ranges.emplace_back(63, 0);
++      return true;
++    default:
++      if (const ref_typespec* alias = type->Typedef_alias()) {
++        if (const typespec* actual = alias->Actual_typespec()) {
++          if (actual != type) {
++            return assignmentPatternPackedType(eval, actual, result, depth + 1);
++          }
++        }
++      }
++      return false;
++  }
++}
++
++// IEEE 1800-2009 6.22.1 and 10.9 require matching types, not merely typespec
++// object kinds. Follow simple typedef aliases, preserve exact packed ranges,
++// state domain, and signedness, and keep aggregate typedef identity nominal.
++static bool assignmentPatternTypesMatch(ExprEval& eval, const typespec* lhs,
++                                        const typespec* rhs,
++                                        uint32_t depth = 0) {
++  if ((lhs == nullptr) || (rhs == nullptr)) return lhs == rhs;
++  if (lhs == rhs) return true;
++  if (depth == 64) return false;
++  AssignmentPatternPackedType lhsPacked;
++  AssignmentPatternPackedType rhsPacked;
++  if (assignmentPatternPackedType(eval, lhs, lhsPacked) &&
++      assignmentPatternPackedType(eval, rhs, rhsPacked)) {
++    return (lhsPacked.leaf == rhsPacked.leaf) &&
++           (lhsPacked.isSigned == rhsPacked.isSigned) &&
++           (lhsPacked.ranges == rhsPacked.ranges);
++  }
++  if (const ref_typespec* alias = lhs->Typedef_alias()) {
++    if (const typespec* actual = alias->Actual_typespec()) {
++      if (actual != lhs) {
++        return assignmentPatternTypesMatch(eval, actual, rhs, depth + 1);
++      }
++    }
++  }
++  if (const ref_typespec* alias = rhs->Typedef_alias()) {
++    if (const typespec* actual = alias->Actual_typespec()) {
++      if (actual != rhs) {
++        return assignmentPatternTypesMatch(eval, lhs, actual, depth + 1);
++      }
++    }
++  }
++  if (lhs->UhdmType() != rhs->UhdmType()) return false;
++  switch (lhs->UhdmType()) {
++    case UHDM_OBJECT_TYPE::uhdmenum_typespec:
++    case UHDM_OBJECT_TYPE::uhdmstruct_typespec:
++    case UHDM_OBJECT_TYPE::uhdmunion_typespec:
++    case UHDM_OBJECT_TYPE::uhdmclass_typespec:
++      return false;
++    case UHDM_OBJECT_TYPE::uhdmreal_typespec:
++    case UHDM_OBJECT_TYPE::uhdmshort_real_typespec:
++    case UHDM_OBJECT_TYPE::uhdmstring_typespec:
++    case UHDM_OBJECT_TYPE::uhdmchandle_typespec:
++      return true;
++    default:
++      return false;
++  }
++}
++
+ [[nodiscard]] std::string_view rtrim(std::string_view str, char c) {
+   auto pos = str.rfind(c);
+   if (pos != std::string_view::npos) str = str.substr(0, pos);
+@@ -839,6 +975,7 @@
+     }
+     VectorOfany *ordered = s.MakeAnyVec();
+     std::vector<any *> tmp(fieldNames.size());
++    std::vector<bool> selectedByFieldName(fieldNames.size());
+     any *defaultOp = nullptr;
+     int32_t index = 0;
+     bool flatten = false;
+@@ -858,16 +995,16 @@
+         for (uint32_t i = 0; i < fieldNames.size(); i++) {
+           if (tname == fieldNames[i]) {
+             tmp[i] = oper;
++            selectedByFieldName[i] = true;
+             found = true;
+             break;
+           }
+         }
+         if (found == false) {
+           for (uint32_t i = 0; i < fieldTypes.size(); i++) {
+-            if (ttp->UhdmType() == fieldTypes[i]->UhdmType()) {
+-              tmp[i] = oper;
++            if (assignmentPatternTypesMatch(*this, ttp, fieldTypes[i])) {
++              if (!selectedByFieldName[i]) tmp[i] = oper;
+               found = true;
+-              break;
+             }
+           }
+         }
+--- a/src/DesignCompile/CompileExpression.cpp
++++ b/src/DesignCompile/CompileExpression.cpp
+@@ -3823,15 +3823,45 @@
+           NodeId Constant_expression = fC->Child(Structure_pattern_key);
+           NodeId Constant_primary = fC->Child(Constant_expression);
+           if (!Constant_primary) {
+-            UHDM::string_typespec *tps = s.MakeString_typespec();
++            UHDM::typespec *tps = nullptr;
+             if (fC->Type(Constant_expression) == VObjectType::slStringConst) {
+-              tps->VpiName(fC->SymName(Constant_expression));
++              const std::string_view key = fC->SymName(Constant_expression);
++              if (component) {
++                if (const DataType *dtype = component->getDataType(key)) {
++                  dtype = dtype->getActual();
++                  if (typespec *resolved = dtype->getTypespec()) {
++                    ElaboratorContext context(&s, false, true);
++                    tps = any_cast<typespec *>(
++                        UHDM::clone_tree((any *)resolved, &context));
++                    if (tps) {
++                      fC->populateCoreMembers(Constant_expression,
++                                              Constant_expression, tps);
++                      ref_typespec *alias = s.MakeRef_typespec();
++                      alias->VpiParent(tps);
++                      alias->Actual_typespec(resolved);
++                      tps->Typedef_alias(alias);
++                      tps->VpiName(key);
++                      tps->VpiParent(pattern);
++                    }
++                  }
++                }
++              }
++              if (tps == nullptr) {
++                UHDM::string_typespec *symbol = s.MakeString_typespec();
++                symbol->VpiName(key);
++                fC->populateCoreMembers(Constant_expression,
++                                        Constant_expression, symbol);
++                symbol->VpiParent(pattern);
++                tps = symbol;
++              }
+             } else {
++              UHDM::string_typespec *symbol = s.MakeString_typespec();
++              tps = symbol;
++              fC->populateCoreMembers(Constant_expression, Constant_expression,
++                                      symbol);
++              symbol->VpiParent(pattern);
+               tps->VpiName("default");
+             }
+-            fC->populateCoreMembers(Constant_expression, Constant_expression,
+-                                    tps);
+-            tps->VpiParent(pattern);
+             if (pattern->Typespec() == nullptr) {
+               ref_typespec *rt = s.MakeRef_typespec();
+               rt->VpiParent(pattern);

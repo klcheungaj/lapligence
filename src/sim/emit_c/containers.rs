@@ -4,7 +4,8 @@ use super::context::RCtx;
 use super::expressions::render_expr_impl;
 use super::objects::string as render_string;
 use crate::sim::ir::{
-    IrAssocKey, IrAssocTraversal, IrContainerExpr, IrContainerKind, IrContainerStmt, IrType,
+    IrAssocKey, IrAssocTraversal, IrContainerExpr, IrContainerKind, IrContainerReduction,
+    IrContainerStmt, IrType,
 };
 
 fn name<'a>(ctx: &'a RCtx<'_>, index: usize) -> &'a str {
@@ -24,6 +25,21 @@ pub(super) fn expression(ctx: &RCtx<'_>, operation: &IrContainerExpr) -> Result<
                 name(ctx, *index)
             )
         }
+        IrContainerExpr::Reduce {
+            container,
+            operation,
+        } => format!(
+            "{}_reduce(&{}, {})",
+            prefix(&ctx.model.containers[*container].kind),
+            name(ctx, *container),
+            match operation {
+                IrContainerReduction::Sum => "LLG_CONTAINER_REDUCE_SUM",
+                IrContainerReduction::Product => "LLG_CONTAINER_REDUCE_PRODUCT",
+                IrContainerReduction::BitAnd => "LLG_CONTAINER_REDUCE_AND",
+                IrContainerReduction::BitOr => "LLG_CONTAINER_REDUCE_OR",
+                IrContainerReduction::BitXor => "LLG_CONTAINER_REDUCE_XOR",
+            }
+        ),
         IrContainerExpr::Get { container, index } => {
             let method = match ctx.model.containers[*container].kind {
                 IrContainerKind::Dynamic => "llg_dyn_get",

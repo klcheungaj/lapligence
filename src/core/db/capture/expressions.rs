@@ -835,17 +835,47 @@ impl Builder {
             }
             vpi::vpiTaggedPattern => {
                 let typespec = child(vpi::vpiTypespec, h);
-                let key = typespec
+                let actual = typespec
                     .as_ref()
-                    .and_then(|typespec| child(vpi::vpiActual, typespec.raw()))
-                    .map(|actual| vpi::obj_name(actual.raw()))
-                    .filter(|name| !name.is_empty());
+                    .and_then(|typespec| child(vpi::vpiActual, typespec.raw()));
+                let key = actual.as_ref().and_then(|actual| {
+                    let name = vpi::obj_name(actual.raw());
+                    if !name.is_empty() {
+                        return Some(name);
+                    }
+                    let ty = self.typespec_info(actual.raw());
+                    ty.type_name
+                        .filter(|name| !name.is_empty())
+                        .or_else(|| (ty.kind != "other").then_some(ty.kind))
+                });
+                let key_type = actual.as_ref().and_then(|actual| {
+                    if key.as_deref() == Some("default") {
+                        return None;
+                    }
+                    let ty = self.typespec_info(actual.raw());
+                    let two_state = self.typespec_two_state(actual.raw(), 0);
+                    let packed_ranges = self
+                        .contextual_packed_ranges(actual.raw(), h)
+                        .unwrap_or_default();
+                    Some(crate::core::db::AssignmentPatternKeyType {
+                        ty,
+                        two_state,
+                        packed_ranges,
+                    })
+                });
                 let value = match child(vpi::vpiPattern, h) {
                     Some(pattern) => Some(self.walk_node(pattern.raw(), Some(id))?),
                     None => None,
                 };
                 self.set_children(id, value.into_iter().collect());
-                self.set_expr(id, ExprKind::TaggedPattern { key, value });
+                self.set_expr(
+                    id,
+                    ExprKind::TaggedPattern {
+                        key,
+                        key_type,
+                        value,
+                    },
+                );
             }
             vpi::vpiOperation => {
                 let op = capture::expressions::operation(h);
@@ -1058,6 +1088,9 @@ impl Builder {
                         vpi::vpiMethodFuncCall | vpi::vpiMethodTaskCall
                     )
                 }) {
+                    if child(vpi::vpiWith, method.raw()).is_some() {
+                        self.method_calls_with_clause.insert(id);
+                    }
                     let receiver = match child(vpi::vpiPrefix, method.raw()) {
                         Some(prefix) => Some(self.walk_node(prefix.raw(), Some(id))?),
                         None => match actuals.iter().rev().nth(1) {
@@ -1097,6 +1130,9 @@ impl Builder {
 
             // ── Calls ──────────────────────────────────────────────────────
             vpi::vpiMethodFuncCall | vpi::vpiMethodTaskCall => {
+                if child(vpi::vpiWith, h).is_some() {
+                    self.method_calls_with_clause.insert(id);
+                }
                 let receiver = match child(vpi::vpiPrefix, h) {
                     Some(prefix) => Some(self.walk_node(prefix.raw(), Some(id))?),
                     None => None,
