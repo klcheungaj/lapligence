@@ -73,6 +73,13 @@ coverage for the same rule IDs.
   Ambiguous source-less cast provenance must explicitly diagnose rather than
   silently change the cast width/sign. Test authors derive oracles from the official local
   `docs/specification/` files without reading production implementation code.
+- `sim_data_types_next.rs` is the bounded next-phase inventory for packed
+  and unpacked unions/structs, streaming and `inside`, static subprogram
+  storage, strings, chandles, dynamic/associative arrays, and queues. Its
+  focused coverage totals 20 positive cases plus one vector-strength rejection
+  and one explicit unsupported nonconstant-static-initializer case. Runtime-
+  dependent static initializers are rejected rather than evaluated on first
+  call. This bounded inventory is not an exhaustive conformance claim.
 - `elab_resolve.rs` exercises `core::elab`; `config_effect.rs` observes
   configured `-D` ifdef/elsif selection and top-level `-P` parameter-driven
   generate branches through the owned `DesignModel`.
@@ -173,8 +180,9 @@ cargo test --all-features -- --test-threads=1
 ```
 
 The PR/manual `generated-runtime-sanitizers` job has a 180-minute limit and
-runs `runtime_values`, `runtime_boundaries`, `sim_counter`, and the 40-case
-`sim_data_types` suite with GCC ASan/UBSan. This checks
+runs `runtime_values`, `runtime_boundaries`, `sim_counter`, `sim_data_types`,
+`sim_data_types_next`, `sim_function`, and `sim_loops` with GCC ASan/UBSan.
+This checks
 generated C/runtime memory safety, not LSP admission. The 15-minute
 `dependency-audit` job runs `cargo audit` on those triggers and Mondays at
 04:17 UTC. Neither uploads reports; workflow logs are evidence.

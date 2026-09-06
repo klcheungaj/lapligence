@@ -35,6 +35,23 @@ contracts. `lower_expr`/`lower_stmt`/`lower_lhs` produce typed IR only.
   expression evaluation and timescale scaling happen in codegen.
 - Generated C uses GNU statement-expressions `({ ... })` for select-LHS
   write-back (gcc/clang OK, not strict ISO C).
+- Packed streaming expressions retain the operand width and are unsigned;
+  streaming assignment targets retain typed component LHS expressions and
+  explicit component widths so the RHS is evaluated once before unpacking.
+  `inside` evaluates its selector and every scalar/range endpoint once, using
+  wildcard equality for scalar items and ordinary inclusive comparisons for
+  ranges.
+- Dynamic arrays, queues, and associative arrays lower to distinct container
+  IR and runtime storage; their packed elements retain arbitrary model width.
+  The current vertical slice supports one resizable dimension, dynamic `new`
+  and copy/delete, positional dynamic/queue assignment patterns, queue element/
+  method operations, and integral or string-key associative access, delete,
+  existence, and traversal. Resizable element NBAs
+  are illegal (LRM §6.21), and container reads in sensitivity/wait expressions
+  are rejected until mutations can notify the scheduler. Declaration
+  initializers and keyed/default container assignment patterns, resizable
+  subprogram/port storage, and assignment-compatible traversal keys that
+  require conversion remain explicit unsupported cases.
 
 
 ## Inout ports and tri-state nets
@@ -66,7 +83,12 @@ Standalone scalar and packed `wire/tri` declarations use the same per-site
 driver identity, including ordinary whole-net and selected continuous
 assignments with constant indices and bounds. A selected site rebuilds its
 complete contribution from Z on each evaluation before setting its
-bit/part-select, so it contributes Z outside that selected range. Dynamic net
+bit/part-select, so it contributes Z outside that selected range. For scalar
+ordinary nets, explicit continuous-assignment drive strengths are retained per
+site; §10.3.4 forbids them on vector nets. Resolution follows the Table 28-7 scale and §28.12 uncertainty ranges:
+an X driver exposes both its strength0 and strength1 endpoints, so a known
+driver wins only when it strictly dominates every possible opposite endpoint.
+Highz endpoints contribute no drive. Dynamic net
 selectors are rejected because net lvalues require constant selects; variable
 lvalues remain a separate lowering path. Delayed whole-net drivers
 contribute X until their first scheduled update; a truly driverless wire uses
@@ -82,7 +104,8 @@ The same bounded standalone-driver path supports `tri0/tri1` and
 resolution; X and conflicting active drivers remain X. Supply defaults dominate
 ordinary implicit-strength drivers. Resolved cells start at their default before
 processes run, while individual contribution slots start at Z. Explicit strengths
-remain rejected; `trireg` charge storage is not implemented.
+remain rejected for wired nets, pull/supply defaults, ports, and gates;
+`trireg` charge storage is not implemented.
 See `tests/sim_net_defaults.rs`.
 
 
@@ -112,11 +135,31 @@ See `tests/sim_net_defaults.rs`.
 - Functions/tasks support recursion and defaults, including defaults referring
   to earlier formals. Inline delay/wait-bearing tasks at call sites; reject
   recursive delay-bearing tasks and task calls from function bodies.
-  Static task output/inout formals use persistent model storage and copy out
-  when the task returns, so a later NBA can safely update the retained formal.
-  Reject NBAs targeting stack-backed task inputs/locals, and every automatic
-  formal/local target, before emission; queued runtime pointers must never
-  outlive their C storage.
+  Per LRM 1800-2009 §§6.21 and 13.4.2 (and 1364-2001 §§10.2.3 and
+  10.3.1), static subprogram formals, locals and function return variables
+  retain one value per elaborated definition; inputs/inouts copy in on each
+  call and outputs/inouts copy out when the task returns. Delay-bearing static
+  tasks use hidden model storage because their bodies are inlined. Automatic
+  subprograms retain fresh per-call storage. Constant/provenance-supported local
+  declaration initializers run once for static storage and on each automatic
+  call; runtime-dependent static initializers are rejected rather than evaluated
+  on first call. A queued NBA may target static
+  packed storage, but every NBA to an automatic formal/local is rejected
+  before emission so no runtime pointer can outlive its C storage. Unpacked
+  subprogram storage remains unsupported for NBA targets. Explicit local
+  lifetime qualifiers matching the enclosing subprogram are accepted when
+  owned capture is available; ambiguous or opposite-lifetime overrides are
+  rejected because the owned DB cannot safely preserve their lifetime.
+- Chandle-returning delay-free functions with chandle input formals retain
+  native `void *` values through IR and C calls; static chandle inputs use
+  definition-wide object storage. Output/inout chandle formals, mixed packed
+  and chandle signatures, chandle locals, and delay-bearing chandle tasks are
+  rejected rather than encoding pointers as integers.
+- Automatic, delay-free string-returning functions with packed input formals
+  return owned `llg_string_t` values. Static string returns, string/chandle
+  formals, output/inout formals, and local string declarations are rejected
+  until persistent string ownership and typed object-formal copy semantics are
+  available.
 - Fork/join works only in process bodies: join/join_any/join_none, named forks,
   `wait fork;`, `disable fork;`. Reject fork/join in function/task bodies and
   cross-process `disable <label>;`.
@@ -164,15 +207,23 @@ unsized decimal literals such as `-3` emit signed per the LRM.
 Dumpvars depth/scope arguments warn then select all registered user storage.
 Models without waveform controls omit the waveform runtime and GTKWave libfst
 sources. Reject extended-VCD `$dumpports`; `$displayon`/`$displayoff` warn and
-skip. String-typed signals/parameters remain unsupported.
+skip. Basic SystemVerilog `string` storage is lowered for bounded module and
+generate-scope paths, and automatic packed-input functions may return string
+values. String ports, general string subprogram storage/formals,
+continuous-assignment/sensitivity paths, and formatted/real conversion methods
+such as `atoreal`/`realtoa` remain unsupported.
 
 Packed Verilog string literals are unsigned integral byte vectors, with the
 leftmost character most significant. Escapes retained by Surelog are decoded
   before the generated model-width limit is checked; an empty literal is one
   zero byte.
 Assignments pad/truncate as packed values, and explicitly packed parameters
-can initialize packed storage. SystemVerilog `string`-typed storage remains
-unsupported. See `tests/sim_packed_strings.rs`.
+can initialize packed storage. SystemVerilog `string`-typed storage is
+separate from packed Verilog byte vectors: basic declarations, assignment/
+copy, casts, display paths, and bounded automatic function returns are covered,
+while general string subprogram forms, ports, continuous-assignment/sensitivity
+paths, and native formatted/real conversion methods remain unsupported. See the bounded
+`tests/fixtures/sim/data_types_next/readme.md` inventory.
 
 ## Values and real numbers
 
@@ -214,6 +265,12 @@ packed/real arithmetic, relational/logical operations, conditionals, casts,
 Shortreal assignment rounds through C `float`; real-to-packed rounds nearest
 (halves away from zero) for targets up to the generated model width.
 Packed-to-real accepts the model width, treating X/Z positions as zero.
+
+Surelog can incorrectly fold comparisons involving explicitly cast real
+parameters. Lowering can reconstruct simple parameter/numeric-literal
+comparisons from exact, admitted one-bit constant source spans. This bounded
+recovery is not a general source-expression parser and must preserve lexical
+shadowing; it must not treat identifier spellings as numeric literals.
 
 `$rtoi` truncates toward zero into signed 32-bit storage (non-finite inputs
 yield X; finite overflow wraps modulo 2^32). `$itor` preserves integral
@@ -315,3 +372,24 @@ before C compilation. `tests/sim_real.rs` pins support and rejection messages.
   that exact element address, but the generated comb processes do not watch
   array elements).  Use event-controlled (`always_ff`/`@(...)`) processes for
   memory reads.
+
+## Structures and unions
+
+Packed untagged structures and unions lower as packed values. Packed-union
+members overlay bit zero, must have equal resolved widths, and retain each
+member's signedness and 2-state conversion on named access. Tagged unions are
+rejected.
+
+The unpacked aggregate vertical slice covers top-level module and generate-scope
+variables whose members are fixed-width packed integral values. Unpacked struct
+members have independent typed signal storage; equal-width unpacked untagged
+union members share storage. Named member reads/writes and constant member
+bit/part selects are supported. A whole assignment between compatible named
+unpacked types is fieldwise for structs and copies shared storage for unions.
+Positional and complete member-named assignment patterns lower fieldwise;
+mixed, duplicate, omitted, default, and type-keyed pattern forms are rejected.
+Anonymous whole-type copies fail closed when owned type identity is unavailable.
+Reject unpacked aggregate nets/ports, nested aggregate or unpacked-array members,
+unequal-width unpacked unions, tagged unions, declaration patterns, aggregate
+subprogram formals/locals, compound assignments, and whole aggregates in scalar
+expression contexts.

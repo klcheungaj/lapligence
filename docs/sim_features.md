@@ -19,7 +19,7 @@ end-to-end runs of `llg` (marked **(probed)** below). Section numbers cite
   `llg` run during an audit, no dedicated regression test yet; no
   parenthetical = **(suite-covered)**: exercised by one of the named suites
   during audits, without a single dedicated test
-- 🟨 partial / approximated — one-line caveat
+- 🟨 partial / approximated — one-line bounded-support caveat
 - ❌ not supported — rejected or unhandled (reason cited)
 - ⬜ out of scope — verification-infrastructure tier, tracked but de-prioritized
 - Revision tags: **[1995]** = IEEE 1364-1995 baseline · **[2001]** = added by
@@ -41,17 +41,17 @@ final blocks ≤ 1024.
 | § | Area | Verilog ✅ | Verilog 🟨 | Verilog ❌ | SV ✅ | SV 🟨 | SV ❌ |
 |---|---|---:|---:|---:|---:|---:|---:|
 | 1 | Lexical & preprocessing | 10 | 0 | 0 | 1 | 1 | 0 |
-| 2 | Data types | 10 | 3 | 3 | 5 | 3 | 3 |
+| 2 | Data types | 10 | 4 | 2 | 5 | 6 | 0 |
 | 3 | Modules & hierarchy | 8 | 1 | 1 | 2 | 1 | 0 |
 | 4 | Scheduling & processes | 8 | 1 | 0 | 7 | 1 | 1 |
 | 5 | Procedural statements | 17 | 2 | 1 | 4 | 3 | 0 |
 | 6 | Timing controls | 2 | 3 | 1 | 0 | 0 | 0 |
-| 7 | Expressions & operators | 16 | 4 | 0 | 1 | 3 | 3 |
-| 8 | Continuous assign & structural | 5 | 4 | 7 | 0 | 0 | 0 |
+| 7 | Expressions & operators | 16 | 4 | 0 | 1 | 5 | 1 |
+| 8 | Continuous assign & structural | 5 | 5 | 6 | 0 | 0 | 0 |
 | 9 | Functions & tasks | 4 | 0 | 5 | 3 | 0 | 1 |
 | 10 | System tasks & functions | 11 | 2 | 14 | 3 | 0 | 6 |
 | 11 | Compiler directives affecting sim | 5 | 0 | 0 | 4 | 0 | 0 |
-| — | **Total** | **96** | **20** | **32** | **30** | **12** | **14** |
+| — | **Total** | **96** | **22** | **30** | **30** | **17** | **9** |
 
 In-section ⬜ items (not counted above): §3 configurations [V], ref ports /
 default port values, extern/nested modules [SV] · §4 fine-grain process control
@@ -66,7 +66,7 @@ Verilog era:
 - ✅ **Integer literals** `[size]'base value`, x/z digits, `_` separators `` `4'b1001` `` — §1364-2001 2.5.1 **[1995]**
 - ✅ **Signed literals** `` `-8'd6`, `4'shf` `` — §1364-2001 2.5.1 **[2001]**
 - ✅ **Real literals** `1.2`, `2.5e10` — §1364-2001 2.5.2 **[1995]**
-- ✅ **String literals** `"..."` as display format strings — §1364-2001 2.6 **[1995]** (string *type* unsupported, see §2)
+- ✅ **String literals** `"..."` as display format strings — §1364-2001 2.6 **[1995]** (SystemVerilog `string` is a separate partial type, see §2)
 - ✅ **Lexical base** comments, identifiers, escaped identifiers, operators — §1364-2001 2.1–2.7 **[1995]** via Surelog frontend
 - ✅ **Attributes** `(* full_case *)` parsed+ignored — §1364-2001 2.8 **[2001]** consumed by frontend, no sim effect
 - ✅ **`` `define ``/`` `undef `` macros incl. arguments** — §1364-2001 19.3 **[1995]** expanded pre-elaboration
@@ -96,7 +96,7 @@ Verilog era:
 - 🟨 **real/realtime** — §1364-2001 3.9 **[1995]** scalar procedural vars/params subset only (sim_real.rs)
 - 🟨 **wand/wor/triand/trior wired resolution** — §1364-2001 3.7 **[1995]** standalone packed nets resolve equal-strength whole-net continuous/declaration assignments with one slot per driver site (≤16); Z is neutral, 0 dominates X for wired-AND and 1 dominates X for wired-OR (sim_net_resolution.rs, runtime_values.rs); port/interface/array nets, hierarchical/select/procedural writes, force/release, gate/function/task-output drivers, and explicit strengths are rejected
 - 🟨 **tri0/tri1/trireg/supply0/supply1 pull semantics** — §1364-2001 3.7 **[1995]** standalone `tri0/tri1` apply implicit pulls only to all-Z bits after ordinary-driver resolution; `supply0/supply1` dominate ordinary drivers, with correct initial defaults (sim_net_defaults.rs, runtime_values.rs); same bounded standalone-driver restrictions as wired nets; `trireg` charge storage and resistive propagation remain unsupported
-- ❌ **drive strength / charge strength** — §1364-2001 3.4 **[1995]** arbitrary explicit strengths and charge storage are unsupported; only implicit pull/supply ordering in the bounded standalone-net subset is modeled
+- 🟨 **drive strength / charge strength** — §1364-2001 3.4 **[1995]** explicit drive-strength resolution is covered for standalone scalar `wire`/`tri` continuous-assignment drivers; vector/gate/inout/wired-strength cases and `trireg` charge storage remain unsupported
 - ❌ **specparam** — §1364-2001 3.11.3 **[1995]** specify blocks unsupported
 - ❌ **vectored/scalared hints** — §1364-2001 3.3 **[1995]** no dedicated handling
 
@@ -108,11 +108,11 @@ SystemVerilog era:
 - ✅ **typedef simple/packed-vector aliases** — §1800-2009 6.18 **[SV-2005]** resolved by frontend (probed)
 - ✅ **Array declaration initializers** `'{…}` patterns applied element-wise in linear-index order — §1800-2009 10.9.1 **[SV-2005]** constant elements only (sim_memory.rs)
 - ✅ **enum-typed scalar variables** — §1800-2009 6.19 **[SV-2005]** stored at the elaborated packed base width; enum constants fold through the frontend. Base-state and signedness behavior pass at both exercised widths (sim_operator_semantics.rs)
-- 🟨 **packed struct signals and multidimensional packed arrays** — §1800-2009 7.2, 7.4 **[SV-2005]** all-bit and mixed-state packed structs plus multidimensional packed-bit arrays pass at the exercised 128/4096-bit widths. Packed unions, unpacked structs/unions, and unsupported member contexts are not claimed; see `sim_data_types_extended.rs`
-- ❌ **string type/signals/params** — §1800-2009 6.16 **[SV-2005]** rejected
+- 🟨 **packed/unpacked struct and union aggregates** — §1800-2009 7.2–7.3, 7.4 **[SV-2005]** focused packed-union, unpacked-struct, and unpacked-union cases pass in both optimization modes. Declaration patterns, nested unpacked/object members, aggregate ports/nets/subprogram storage, tagged unions, and general aggregate slices remain unsupported; the bounded 22-case inventory is not an exhaustive conformance claim
+- 🟨 **string type/signals/params** — §1800-2009 6.16 **[SV-2005]** focused basic declaration, cast/copy, display-extra, and automatic string-return-with-packed-input cases are reported passing in both modes; string formals are not supported. Module/generate storage and core methods remain bounded; string subroutine forms, ports, continuous-assignment/sensitivity paths, and formatted/real methods such as `atoreal`/`realtoa` remain unsupported
 - ✅ **event data type** scalar `event ev;` declarations — §1800-2009 6.17 **[SV-2005]** (sim_events.rs); event arrays rejected by the Surelog frontend (grammar cannot parse them)
-- ❌ **dynamic arrays / associative arrays / queues** — §1800-2009 7.5/7.8/7.10 **[SV-2005]**
-- ❌ **chandle** — §1800-2009 6.14 **[SV-2005]**
+- 🟨 **dynamic arrays / associative arrays / queues** — §1800-2009 7.5/7.8/7.10 **[SV-2005]** focused dynamic-array, integral/string-key associative-array, and queue cases, including positional assignment patterns, are reported passing in both modes. Containers are bounded to 1-D packed elements, not general nested/object-member forms
+- 🟨 **chandle** — §1800-2009 6.14 **[SV-2005]** focused native-chandle call cases are reported passing in both modes, limited to null/copy/compare/Boolean operations and chandle-input→chandle-return functions
 
 ## 3. Modules, ports, parameters, hierarchy
 
@@ -234,7 +234,7 @@ Verilog era:
 - ✅ **Bit-select/part-select operands** — §1364-2001 4.2.1 **[1995]**
 - ✅ **Indexed part-select** `[+:w]` / `[-:w]` — §1364-2001 4.2.1 **[2001]**
 - ✅ **Array addressing** `mem[i][j]` + element selects — §1364-2001 4.2.2 **[1995]**
-- ✅ **Strings as operands** reg vectors holding 8-bit ASCII — §1364-2001 4.2.3 **[1995]** packed literal assignment, comparison, concatenation, escapes, padding/truncation, and packed-parameter declaration initializers (sim_packed_strings.rs, optimization on/off); SystemVerilog `string` storage remains unsupported
+- ✅ **Strings as operands** reg vectors holding 8-bit ASCII — §1364-2001 4.2.3 **[1995]** packed literal assignment, comparison, concatenation, escapes, padding/truncation, and packed-parameter declaration initializers (sim_packed_strings.rs, optimization on/off); SystemVerilog `string` storage is covered separately by the bounded partial row in §2
 - ✅ **$signed/$unsigned** — §1364-2001 4.5 **[2001]**
 - ✅ **Signedness/self-determined width rules** mirrored by runtime — §1364-2001 4.4–4.5 **[1995]** pinned by property_elab.rs
 - ✅ **X/Z expression semantics** Z=X except identity/copy ops — §1364-2001 3.1 **[1995]** proptests + C vector table
@@ -246,8 +246,8 @@ SystemVerilog era:
 - 🟨 **Increment/decrement** `++ --` — §1800-2009 11.4.2 **[SV-2005]** statement-position pre/post forms on whole scalar variables, including `for` increments, are supported; expression-valued and select/array-element forms remain unsupported (sim_operator_semantics.rs)
 - 🟨 **Assignment operators** `+= -= *= /= %= &= |= ^= <<= >>= <<<= >>>=` — §1800-2009 11.4.1 **[SV-2005]** whole scalar variables are supported; select and array-element targets are cleanly rejected until LHS index evaluation can be preserved exactly once (sim_operator_semantics.rs)
 - ✅ **Wildcard equality** `==? !=?` — §1800-2009 11.4.6 **[SV-2005]** RHS X/Z bits are wildcards; remaining LHS unknown bits yield X unless a known mismatch decides the result. Common-width/signed extension and model-sized operands are covered with optimization on/off (sim_wildcard_eq.rs).
-- ❌ **Set membership** `inside {…}` — §1800-2009 11.4.13 **[SV-2005]**
-- ❌ **Streaming operators** `{<<{}}`, `{>>{}}` — §1800-2009 11.4.14 **[SV-2005]**
+- 🟨 **Set membership** `inside {…}` — §1800-2009 11.4.13 **[SV-2005]** scalar/range/wildcard cases are reported passing in both modes; aggregate and broader contextual forms remain outside the focused claim
+- 🟨 **Streaming operators** `{<<{}}`, `{>>{}}` — §1800-2009 11.4.14 **[SV-2005]** focused packed RHS/LHS slice-order cases are reported passing in both modes; general aggregate streaming remains outside the focused claim
 - ❌ **let expressions** — §1800-2009 11.13 **[SV-2009]**
 
 ## 8. Continuous assignments & structural
@@ -256,9 +256,9 @@ Verilog era:
 
 - ✅ **Continuous assignment** `assign lhs = rhs;` — §1364-2001 6.1.2 **[1995]** comb process on RHS read set
 - ✅ **Multiple/comma-form continuous assigns** — §1364-2001 6.1.2 **[1995]**
-- 🟨 **Multiple drivers on one net** — §1364-2001 6.1 **[1995]** no strength resolution; last write wins (probed)
+- 🟨 **Multiple drivers on one net** — §1364-2001 6.1 **[1995]** bounded ordinary standalone scalar `wire`/`tri` continuous-assignment drivers resolve with explicit strengths and high-Z endpoints; port/inout, vector-strength, gate, wired-net, and charge-storage contexts remain outside this claim
 - 🟨 **Delay on continuous assign** `assign #d lhs = rhs;` — §1364-2001 6.1.3 **[1995]** (sim_delay.rs) constant/parameter delays and t=0 wait; inertial pulse rejection is not implemented, tracked by an ignored `DELAY-BUG` conformance case
-- ❌ **Strength on continuous assign/gates** — §1364-2001 6.1.4/7.1.2 **[1995]** nonzero drive-strength properties are rejected when the frontend exposes them; silent property loss was observed on v1.86 and remains unverified on v1.87
+- 🟨 **Strength on continuous assign/gates** — §1364-2001 6.1.4/7.1.2 **[1995]** explicit strengths are reported passing for standalone scalar `wire`/`tri` continuous-assignment drivers in both modes; vector strengths are prohibited by §10.3.4, and gate/inout/wired-strength/trireg contexts remain unsupported
 - ✅ **Logic gates** `and nand or nor xor xnor buf not` — §1364-2001 7.2–7.3 **[1995]** (sim_gates.rs) one comb process per gate, SensLoop over the input read set; n-input gates reduce left-to-right, nand/nor/xnor negate after the full reduce; vector gates are bitwise; v1 requires equal terminal widths
 - ✅ **Tri-state buffers** `bufif0 bufif1 notif0 notif1` — §1364-2001 7.4 Table 7-5 **[1995]** (sim_gates.rs) lowered to `sv4_mux(en, data|data, Z)` / `sv4_mux(en, Z, ~(data|data))` — the passing arm is z→x-normalized with `data|data` (per-bit), so an ENABLED gate turns a data-Z into X like buf/not while known bits pass unchanged; a DISABLED gate drives Z; unknown enable yields all-X unless both branches match
 - ❌ **MOS/CMOS switches** `nmos pmos cmos rnmos rpmos rcmos` — §1364-2001 7.5–7.7 **[1995]** rejected with a clear message ("switch/transistor primitive … not supported")
@@ -276,10 +276,17 @@ statuses as the rows above.)
 
 ## 9. Functions & tasks
 
+The next-phase lowering carries persistent static function/task-local and
+static-task-NBA storage paths. Focused cases pass; runtime-dependent static
+initializers are explicitly rejected rather than evaluated on first call.
+Same-lifetime qualifiers are accepted when owned capture is available;
+ambiguous or opposite-lifetime overrides are rejected. The established rows
+below retain their documented boundaries.
+
 Verilog era:
 
 - ✅ **Function declaration/return value/call in expressions** — §1364-2001 10.3 **[1995]** recursion depth guard 256 reports an error and returns the type's default beyond the guard (sim_function.rs pins within-limit recursion); static functions with output/inout formals in expression position explicitly reject until their persistent copy-out storage is supported
-- ✅ **Tasks incl. output/inout args**; delay-bearing tasks inlined at call sites — §1364-2001 10.2 **[1995]** wait-bearing tasks inlined (sim_function.rs). Delay-free static task outputs/inouts retain storage across calls and copy out at return, including values from earlier NBAs; NBAs to automatic subroutine storage or still-stack-backed static task inputs/locals explicitly reject instead of queuing dangling targets
+- ✅ **Tasks incl. output/inout args**; delay-bearing tasks inlined at call sites — §1364-2001 10.2 **[1995]** wait-bearing tasks inlined (sim_function.rs). Focused static local/formal persistence and static-task NBA copy-out cases pass; delay-free static task outputs/inouts retain storage across calls and copy out at return, including values from earlier NBAs. NBAs to automatic subroutine storage or aggregate/unpacked subprogram storage remain explicitly rejected instead of queuing dangling targets
 - ✅ **automatic reentrant functions/tasks** — §1364-2001 10.2.3/10.3.1 **[2001]** recursion supported
 - ✅ **Constant functions in parameter expressions** — §1364-2001 10.3.5 **[2001]** evaluated by elab Resolver; typed parameters required (probed)
 - ❌ **Task calls inside function bodies** — §1364-2001 10.3.4 **[1995]** rejected

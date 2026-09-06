@@ -19,8 +19,11 @@ the generated `model.c` into a standalone executable and is deliberately
     repeat, part/bit/indexed-part selects, resize/fill/clog2, format and
     decimal conversion; semantics mirror `core::elab::Value` (kept in sync).
     `sv4_resolve` combines equal-strength driver values independently of the
-    scheduler: wire conflicts yield X, wired-AND 0 dominates X, wired-OR 1
-    dominates X, and Z is neutral in every mode. No active drivers yield Z.
+    scheduler; `sv4_resolve_strengths` additionally applies per-driver 0/1
+    endpoints for ordinary wires. An X contribution represents both endpoint
+    ranges, so a known driver resolves the bit only when it strictly dominates
+    every possible opposite value. Wire conflicts yield X, wired-AND 0
+    dominates X, wired-OR 1 dominates X, and Z is neutral in every mode. No active drivers yield Z.
     Tri0/tri1 modes instead fill undriven bits with their pull defaults;
     supply0/supply1 modes dominate ordinary implicit-strength contributions.
     Bit-vector queries count known one bits across all limbs, ignore X/Z for
@@ -47,6 +50,15 @@ the generated `model.c` into a standalone executable and is deliberately
   Completed fork parents remain alive until detached descendants finish;
   process-table slots are reused, and allocations are released on scheduler
   exit or reinitialization.
+- `llg_container.h` / `llg_container.c` — scheduler-independent storage for
+  dynamic arrays, queues, and associative arrays whose packed elements are
+  full-width `sv4_t` values. Dynamic resize preserves the common prefix and
+  default-fills growth; bounded queues apply the LRM discard rules;
+  associative arrays keep ordered integral or byte-string keys. Every object
+  requires matching init/destroy calls. Allocation overflow and exhaustion are
+  fatal diagnostics, while invalid indices use default-read/no-op-write method
+  semantics. Integral associative keys containing X/Z are rejected before
+  declared-key casting.
 - `llg_rt_selftest.c` — C self-tests: sv4 value vectors (mirrored from the
   `core::elab` unit tests) plus scheduler checks (delay ordering, NBA
   visibility, ping-pong, directly observed nested `join_none` lifetimes, empty
@@ -97,6 +109,8 @@ selected range contributes; lowering rejects dynamic net selectors.
 - All sources are embedded as strings via `include_str!` in `mod.rs`:
   - `value_sources()` → `(llg_value.h, llg_value.c)`;
   - `runtime_sources()` → `(llg_rt.h, llg_rt.c)`, requiring the value pair;
+  - `container_sources()` → `(llg_container.h, llg_container.c)`, requiring
+    the value pair but not the scheduler;
   - `libaco_sources()` → `(aco.h, aco.c, acosw.S)` from `vendor/libaco`;
   - `selftest_source()` → `llg_rt_selftest.c`.
   - `waveform_sources()` / `waveform_selftest_source()` → the optional

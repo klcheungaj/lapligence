@@ -32,6 +32,10 @@ offsets, and their recursively derived two-state domain. Cast nodes retain a
 numeric size token and whether their type-vs-size classification had reliable
 source or UHDM decompile provenance; consumers reject ambiguous source-less
 integer casts rather than accepting a guessed 32-bit result.
+Variable declarations also retain whether a bounded admitted-source prefix
+contains an explicit `static` or `automatic` lifetime qualifier. Missing or
+ambiguous provenance remains explicit so simulator lowering cannot invent a
+subprogram-local lifetime override.
 The new constant-source capture is opt-in through `Db::build_with_source_files`;
 ordinary `Db::build` adds no constant-source reads. Simulator callers use
 `CompileOut::frontend_source_files` to admit physical parsed files, never logical

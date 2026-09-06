@@ -9,6 +9,12 @@ IEEE 1364-2001 unless an edition is named; “SystemVerilog” means IEEE
 below were checked against the local PDFs/extracted text in
 `docs/specification/` (the 2009 PDF is the primary source for SystemVerilog).
 
+This page is normative guidance for expected semantics, not an implementation
+status report. The feature checklist and the bounded
+`tests/fixtures/sim/data_types_next/readme.md` inventory separate bounded
+lowering work from final conformance evidence; an implementation path or
+fixture must not be read as proof that a construct is supported.
+
 ## Scope and edition boundary
 
 The 1364-2001 core supplies four-state nets/regs, integer/real/time values,
@@ -167,6 +173,32 @@ bit-vector expression.
 The 1800-2009 inventory does not include user-defined nettypes. IEEE
 1800-2012 and later revisions add that facility; it must be documented against
 the later LRM rather than inferred as one of the 2009 net-type keywords.
+
+### Implementation-facing bounded profile (non-normative)
+
+The current next-phase implementation profile is narrower than the language
+inventory above. Focused aggregate member/part-select, packed-union,
+unpacked-struct/union, RHS/LHS streaming, and `inside` cases are being used to
+validate lowering. Procedural positional and complete member-named aggregate
+assignment patterns, including the staged queue/dynamic-element contexts, are
+covered. Declaration patterns and mixed, duplicate, omitted, default, or
+type-keyed forms remain outside the profile, as do nested unpacked or object
+members, aggregate ports/nets/subprogram storage, tagged unions, and general
+aggregate slices. Resizable containers currently target one-dimensional
+packed elements; focused integral- and string-key associative access and
+static local/formal/NBA persistence are covered, while aggregate/unpacked
+subprogram storage remains unsupported. String support is limited to basic
+module/generate storage, selected core methods, declaration/cast/copy, display
+paths, and automatic string-return functions with packed inputs; string formals
+and other string subroutine forms, ports, continuous-assignment or
+sensitivity paths, and formatted/real conversion methods are not implied.
+Native `chandle` handling is limited to null/copy/compare/Boolean operations
+and chandle-input to chandle-return functions. Static subprogram initializers
+must be constant/provenance-supported; runtime-dependent initializers are
+explicitly rejected rather than evaluated on first call. Same-lifetime
+qualifiers are accepted when owned capture is available, while ambiguous or
+opposite-lifetime overrides are rejected. These boundaries describe the
+implementation work queue, not changes to IEEE semantics.
 
 ## Net-resolution truth tables
 

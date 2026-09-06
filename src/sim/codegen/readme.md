@@ -12,6 +12,24 @@ Collection also assigns independent resolved-net contribution slots to
 standalone wire/tri and wired-net continuous-driver sites. The emitter rebuilds
 selected contributions from Z before publishing them, while initialization
 marks delayed whole-net contributions X until their first scheduled update.
+Ordinary standalone scalar wire/tri slots also retain each continuous
+assignment's separate strength0/strength1 endpoints for strength-range-aware
+resolution; explicit vector strengths are rejected per IEEE 1800-2009 §10.3.4.
+Static function/task formals and delay-bearing task locals use definition-wide
+persistent storage; delay-free static locals and return values use C-static
+storage. Automatic subprogram storage remains fresh per call, and lowering
+rejects NBAs whose queued address could outlive that automatic call.
+Pure chandle input/return function signatures remain native-pointer typed;
+unsupported mixed or output/inout chandle signatures fail during lowering.
+Automatic string-returning functions with packed input formals use owned
+`llg_string_t` results; unsupported persistent/string-formal variants fail
+during lowering.
+Resizable unpacked containers use their own IR and C runtime objects, separate
+from fixed arrays and packed handles. The supported slice covers dynamic-array
+allocation/copy/delete, positional dynamic/queue assignment patterns, queue
+methods, and integral/string associative methods;
+lowering rejects resizable element NBAs and sensitivity dependencies until the
+scheduler has container-change notifications.
 
 This layer reads only the owned `core::db` model after its initial build. It
 must validate the completed IR before and after optimization and must preserve

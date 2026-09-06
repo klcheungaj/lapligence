@@ -38,12 +38,15 @@ the simulator (`src/sim/`):
   (`vpiMethod` — the class's task_func relationship, NOT `vpiTaskFunc`; the
   constructor is a function named `new`).
   Procedural `for`/`foreach` nodes retain their lexical variable declarations
-  and fixed-array targets. Delay controls retain raw ticks or source spelling
+  and fixed-array targets. Explicit returns accept both `vpiReturnStmt` and
+  vendored UHDM's `vpiReturn` object type (`return_stmt.yaml`), with their
+  optional expression read through `vpiCondition` into owned `StmtKind::Return`.
+  Delay controls retain raw ticks or source spelling
   where Surelog lacks an expression relationship; supported evaluation forms
   are defined in the [simulator lowering guide](../sim/codegen/AGENTS.md).
   The same builder has opt-in `Db::build_with_source_files` constant-source
-  capture for time literals and cast/type qualifiers which UHDM does not
-  distinguish reliably. Numeric size casts retain their source/decompile size
+  capture for time literals, cast/type qualifiers, and explicit variable
+  lifetime qualifiers which UHDM does not distinguish reliably. Numeric size casts retain their source/decompile size
   token; ambiguous integer casts without admitted provenance must be rejected
   by consumers instead of silently becoming 32-bit `int` casts. Admit physical files from
   `CompileOut::frontend_source_files`, never logical `vpiFile` remappings.
@@ -140,8 +143,9 @@ simulation purposes (verified empirically, 100% `vpiActual` ref binding on the
   `$clog2()` evaluated).  `core::db::Db` also owns the ordered packed ranges
   captured for each elaborated instance/object (unpacked dimensions stay in
   array metadata), top-level packed struct/union member offsets and each
-  member's declared packed dimensions, and the complete declaration type's
-  two-state domain (including enum bases and all-bit packed aggregates).
+  member's declared packed dimensions, aggregate category (packed/unpacked,
+  struct/union/tagged) plus typed unpacked members, and the complete
+  declaration type's two-state domain (including enum bases and all-bit packed aggregates).
   Consumers can render parameter-dependent widths and flatten packed
   selections after the Surelog session is gone; unknown bounds remain
   explicitly unresolved.
