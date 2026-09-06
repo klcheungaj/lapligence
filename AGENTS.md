@@ -53,16 +53,17 @@ contracts in their owning guide and link to them instead of copying them here.
 ## Build and references
 
 Cargo's root `build.rs` drives CMake for Surelog/UHDM/ANTLR and the C wrapper.
-Even `cargo check` can require a native build. Static
-`x86_64-unknown-linux-musl` is the norm. Linux/macOS are intended targets;
-Windows is unsupported. The native pipeline is validated only on
-x86_64-linux-musl; release-workflow Windows/macOS legs remain placeholders,
-with evidence in local `persistence/platforms.md`.
+Even `cargo check` can require a native build. Release targets are static-musl
+Linux on x86_64/arm64, MSVC Windows on x86_64/arm64, and Apple Silicon macOS.
+Linux executables are fully static; Windows embeds the MSVC/UCRT runtime and
+macOS/Windows dynamically import only platform system libraries. The release
+workflow audits those linkage contracts. Keep run evidence and remaining
+generated-simulator limitations in local `persistence/platforms.md`.
 
 - Build with `cargo build --bin llg_ls`, `--bin llg`, or `--bin elab_check`;
   demo bins are also available.
-- Binaries select mimalloc at final link; `build.rs` and `mimalloc_shim.c`
-  redirect C malloc/free through `--wrap`.
+- Binaries select mimalloc at final link; on musl Linux, `build.rs` and
+  `mimalloc_shim.c` also redirect C malloc/free through `--wrap`.
 - Keep `#[link(name = "surelog_c_wrapper", kind = "static")]` in
   `ffi/surelog.rs` and `ffi/vpi.rs`: these carry native libraries transitively
   into bins; build-script `link-lib` output alone applies to the lib target.

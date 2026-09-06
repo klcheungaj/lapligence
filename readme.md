@@ -9,8 +9,9 @@ Pipeline:
 ## Requirements
 
 - Rust (stable) with cargo
-- C/C++ toolchain: `cc`, `cmake` (the only model builder), `make`
-- Linux or macOS; static musl builds supported (`x86_64-unknown-linux-musl`)
+- C/C++ toolchain: `cc`, `cmake` (the only model builder), `make` or Ninja
+- Python with `orderedmultidict`, plus a Java runtime for native code generation
+- Linux, Windows, or macOS
 
 First build compiles the vendored Surelog/UHDM/ANTLR — expect it to be slow.
 
@@ -21,6 +22,18 @@ cargo build --bin llg_ls     # language server
 cargo build --bin llg        # simulator driver
 cargo build --release         # everything, optimized
 ```
+
+Tagged/manual release builds produce `llg` and `llg_ls` for Linux x86_64 and
+arm64, Windows x86_64 and arm64, and macOS arm64. Linux uses musl and has no
+dynamic dependencies. Windows statically embeds the MSVC/UCRT runtime; macOS
+and Windows link the vendored frontend statically and import only operating
+system libraries/frameworks dynamically. The release workflow verifies these
+properties before packaging each archive and SHA-256 checksum.
+
+The bundled generated-simulator coroutine runtime is currently x86/Unix-only.
+On Windows and arm64, the released driver can compile/lint/elaborate and emit C
+with `--gen-only`, but building and running that emitted simulator still needs
+a portable coroutine backend.
 
 Docker alternative (see `Dockerfile`):
 
