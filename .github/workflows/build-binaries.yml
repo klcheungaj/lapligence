@@ -1,49 +1,10 @@
-# ══════════════════════════════════════════════════════════════════════════════
-# PORTABILITY CAVEAT — read before expecting green checkmarks.
-#
-# The heavy part of this project is not the Rust code: build.rs drives a full
-# CMake build of vendored Surelog v1.87 + UHDM + ANTLR4 + Cap'n Proto and then
-# applies custom link logic. That pipeline has ONLY ever been validated on
-# x86_64 Linux with a fully-static musl toolchain. Concretely, build.rs today
-# assumes:
-#   * `patch(1)` on PATH for HOST-unix builds only — patches/*.patch are
-#     applied to vendor/Surelog before CMake runs (apply_surelog_patches is
-#     #[cfg(unix)] and shells out to GNU patch; git-apply is deliberately
-#     not used). Non-unix hosts skip patching with a cargo warning.
-#   * GNU-ld style `cargo:rustc-link-arg=-Wl,--wrap=malloc|free|…` flags for
-#     the mimalloc shim — emitted only on musl targets. MSVC's link.exe/
-#     lld-link and Apple ld64 do not implement --wrap.
-#   * Per-TARGET link branches keyed on the target env/os: musl targets take
-#     the static branch (static libstdc++/libsupc++/libgcc/libz, -static,
-#     ensure_static_archives driver probing — its failure hints even
-#     reference Alpine/apk); non-musl targets select per-OS (`dylib=c++/z`
-#     on macOS, CRT auto-link on Windows MSVC, glibc-style
-#     `dylib=stdc++/z/pthread` elsewhere). The macOS/Windows branches exist
-#     in build.rs but were never validated end-to-end.
-#
-# Expected status per leg:
-#   * linux-x86 / linux-arm64 : closest to working, but unvalidated in CI;
-#     arm64 additionally depends on the downloaded musl cross-toolchain
-#     shipping a static libstdc++ for its triple.
-#   * windows-x86             : PLACEHOLDER — build.rs has MSVC branches
-#     (/FI force-includes, /std:c++17, no --wrap → CRT malloc for C code)
-#     but they have never run against a real MSVC toolchain.
-#   * windows-arm64           : PLACEHOLDER, ESPECIALLY EXPERIMENTAL — same
-#     problems as windows-x86 plus a far less-exercised triple end-to-end.
-#   * macos-arm64             : PLACEHOLDER — a Darwin branch exists in
-#     build.rs (dylib=c++/z), but Apple-clang configure/link of the vendored
-#     CMake tree is unvalidated.
-#
-# Failures in the placeholder legs are expected and informative; fix the
-# platform branches in build.rs first.
-# ══════════════════════════════════════════════════════════════════════════════
 name: Build Binaries
 
 on:
   workflow_dispatch:
   push:
     tags:
-      - 'v*'
+      - "v*"
 
 permissions:
   contents: read
@@ -51,104 +12,201 @@ permissions:
 jobs:
   build:
     name: ${{ matrix.name }} (${{ matrix.target }})
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 180
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 240
     strategy:
-      # Experimental legs must not cancel the legs that matter.
       fail-fast: false
       matrix:
         include:
-          # Native musl build on the amd64 runner: musl-tools provides the
-          # musl-gcc/musl-g++ wrappers around the host gcc.
-          - name: linux-x86
-            os: ubuntu-22.04
+          - name: Linux x86_64
+            runner: ubuntu-24.04
+            platform: linux
+            arch: x86_64
+            python_arch: x64
             target: x86_64-unknown-linux-musl
-          # Deliberately cross-compiled FROM an amd64 runner rather than run on
-          # native arm runners (ubuntu-24.04-arm): the prebuilt musl.cc
-          # cross-toolchain provides aarch64-linux-musl-{gcc,g++} — exactly the
-          # compiler names build.rs derives from the target triple — including
-          # its own static libstdc++. Native arm runners would still need a
-          # musl sysroot assembled by hand.
-          - name: linux-arm64
-            os: ubuntu-22.04
+            musl_toolchain: x86_64-linux-musl-cross
+          - name: Linux arm64
+            runner: ubuntu-24.04
+            platform: linux
+            arch: arm64
+            python_arch: x64
             target: aarch64-unknown-linux-musl
-          - name: windows-x86
-            os: windows-2022
+            musl_toolchain: aarch64-linux-musl-cross
+          - name: Windows x86_64
+            runner: windows-2025
+            platform: windows
+            arch: x86_64
+            python_arch: x64
+            msvc_arch: amd64
             target: x86_64-pc-windows-msvc
-          - name: windows-arm64
-            os: windows-2022
+          - name: Windows arm64
+            runner: windows-11-vs2026-arm
+            platform: windows
+            arch: arm64
+            python_arch: arm64
+            msvc_arch: amd64_arm64
             target: aarch64-pc-windows-msvc
-          - name: macos-arm64
-            os: macos-14
+          - name: macOS arm64
+            runner: macos-15
+            platform: macos
+            arch: arm64
+            python_arch: arm64
             target: aarch64-apple-darwin
 
+    env:
+      CMAKE_GENERATOR: Ninja
+
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
-          # vendor/ holds the vendored Surelog/UHDM/ANTLR/capnproto sources
-          # that build.rs compiles; nothing builds without them.
           submodules: recursive
 
-      - name: Install Rust toolchain (${{ matrix.target }})
+      - name: Install Rust target
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
 
-      - name: Cache cargo registry and build outputs
-        uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@v2
         with:
-          key: ${{ matrix.target }}
+          shared-key: release-${{ matrix.target }}
 
-      # cmake is preinstalled on all hosted runner images used above, so no
-      # explicit cmake bootstrap step is needed.
+      # UHDM and ANTLR generators execute during the native CMake build.
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          architecture: ${{ matrix.python_arch }}
 
-      - name: Install musl toolchain (linux-x86, native wrappers)
-        if: matrix.name == 'linux-x86'
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          java-package: jre
+
+      - name: Install Python model-generation dependency
+        run: python -m pip install --disable-pip-version-check orderedmultidict
+
+      - name: Install static musl toolchain
+        if: matrix.platform == 'linux'
+        shell: bash
         run: |
           sudo apt-get update
-          sudo apt-get install -y musl-tools musl-dev patch
-          echo "CC=musl-gcc"  >> "$GITHUB_ENV"
-          echo "CXX=musl-g++" >> "$GITHUB_ENV"
-
-      - name: Install musl cross-toolchain (linux-arm64, cross from amd64)
-        if: matrix.name == 'linux-arm64'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y curl tar patch
+          sudo apt-get install -y binutils curl file ninja-build patch qemu-user-binfmt tar
+          toolchain="${{ matrix.musl_toolchain }}"
+          archive="$RUNNER_TEMP/$toolchain.tgz"
+          curl -fsSL --retry 3 "https://more.musl.cc/10/x86_64-linux-musl/$toolchain.tgz" -o "$archive"
           mkdir -p "$RUNNER_TEMP/musl"
-          curl -fsSL --retry 3 \
-            https://more.musl.cc/10/x86_64-linux-musl/aarch64-linux-musl-cross.tgz \
-            -o "$RUNNER_TEMP/musl/aarch64-linux-musl-cross.tgz"
-          tar -xzf "$RUNNER_TEMP/musl/aarch64-linux-musl-cross.tgz" -C "$RUNNER_TEMP/musl"
-          echo "$RUNNER_TEMP/musl/aarch64-linux-musl-cross/bin" >> "$GITHUB_PATH"
-          # The toolchain's binaries are named aarch64-linux-musl-{gcc,g++,…}
-          # (same names CC/CXX below use). rustc must link through that same
-          # driver; without this env it falls back to `cc` (the host glibc
-          # gcc), which cannot link a musl static binary.
-          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=aarch64-linux-musl-gcc" >> "$GITHUB_ENV"
-          echo "CC=aarch64-linux-musl-gcc"  >> "$GITHUB_ENV"
-          echo "CXX=aarch64-linux-musl-g++" >> "$GITHUB_ENV"
+          tar -xzf "$archive" -C "$RUNNER_TEMP/musl"
+          echo "$RUNNER_TEMP/musl/$toolchain/bin" >> "$GITHUB_PATH"
+          compiler_prefix="${toolchain%-cross}"
+          echo "CC=$compiler_prefix-gcc" >> "$GITHUB_ENV"
+          echo "CXX=$compiler_prefix-g++" >> "$GITHUB_ENV"
 
-      # build.rs applies Surelog patches only on unix HOSTS
-      # (apply_surelog_patches is #[cfg(unix)]); Windows hosts skip patching
-      # with a cargo warning, so no patch(1) bootstrap is needed here.
+      - name: Select MSVC target tools
+        if: matrix.platform == 'windows'
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: ${{ matrix.msvc_arch }}
 
-      # macOS images ship patch(1) and a complete clang toolchain; nothing to
-      # install for the macos-arm64 leg.
+      - name: Build release executables
+        run: cargo build --locked --release --bin llg_ls --bin llg --target ${{ matrix.target }}
 
-      - name: Build (release)
-        run: cargo build --release --bin llg_ls --bin llg --target ${{ matrix.target }}
+      - name: Verify Linux architecture and fully static linkage
+        if: matrix.platform == 'linux'
+        shell: bash
+        run: |
+          scripts/verify-linux-release.sh "${{ matrix.arch }}" \
+            "target/${{ matrix.target }}/release/llg_ls" \
+            "target/${{ matrix.target }}/release/llg"
 
-      - name: Upload artifacts (${{ matrix.name }})
+      - name: Smoke-test Linux executable
+        if: matrix.platform == 'linux'
+        shell: bash
+        run: |
+          executable="target/${{ matrix.target }}/release/llg"
+          runner=()
+          if [[ "${{ matrix.arch }}" == arm64 ]]; then
+            runner=(qemu-aarch64)
+          fi
+          set +e
+          "${runner[@]}" "$executable"
+          status=$?
+          set -e
+          test "$status" -eq 2
+
+      - name: Verify Windows architecture and static runtime linkage
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        run: |
+          $binaries = @(
+              "target/${{ matrix.target }}/release/llg_ls.exe",
+              "target/${{ matrix.target }}/release/llg.exe"
+          )
+          & scripts/verify-windows-release.ps1 -Architecture "${{ matrix.arch }}" -Binary $binaries
+
+      - name: Smoke-test Windows executable
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        run: |
+          & "target/${{ matrix.target }}/release/llg.exe"
+          if ($LASTEXITCODE -ne 2) {
+              throw "llg usage smoke test returned $LASTEXITCODE instead of 2"
+          }
+
+      - name: Verify macOS architecture and system-only dynamic linkage
+        if: matrix.platform == 'macos'
+        shell: bash
+        run: |
+          scripts/verify-macos-release.sh \
+            "target/${{ matrix.target }}/release/llg_ls" \
+            "target/${{ matrix.target }}/release/llg"
+
+      - name: Smoke-test macOS executable
+        if: matrix.platform == 'macos'
+        shell: bash
+        run: |
+          set +e
+          "target/${{ matrix.target }}/release/llg"
+          status=$?
+          set -e
+          test "$status" -eq 2
+
+      - name: Package Unix executables
+        if: matrix.platform != 'windows'
+        shell: bash
+        run: |
+          version=${GITHUB_REF_NAME//\//-}
+          archive="llg-$version-${{ matrix.platform }}-${{ matrix.arch }}.tar.gz"
+          mkdir -p dist/package
+          install -m 755 "target/${{ matrix.target }}/release/llg_ls" dist/package/llg_ls
+          install -m 755 "target/${{ matrix.target }}/release/llg" dist/package/llg
+          install -m 644 LICENSE readme.md dist/package/
+          tar -C dist/package -czf "dist/$archive" llg_ls llg LICENSE readme.md
+          if command -v sha256sum >/dev/null 2>&1; then
+            (cd dist && sha256sum "$archive" > "$archive.sha256")
+          else
+            (cd dist && shasum -a 256 "$archive" > "$archive.sha256")
+          fi
+
+      - name: Package Windows executables
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        run: |
+          $version = $env:GITHUB_REF_NAME -replace '/', '-'
+          $archive = "llg-$version-windows-${{ matrix.arch }}.zip"
+          New-Item -ItemType Directory -Force -Path dist/package | Out-Null
+          Copy-Item -LiteralPath "target/${{ matrix.target }}/release/llg_ls.exe" -Destination dist/package/
+          Copy-Item -LiteralPath "target/${{ matrix.target }}/release/llg.exe" -Destination dist/package/
+          Copy-Item -LiteralPath LICENSE, readme.md -Destination dist/package/
+          Compress-Archive -Path dist/package/* -DestinationPath "dist/$archive"
+          $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath "dist/$archive").Hash.ToLowerInvariant()
+          "$hash  $archive" | Set-Content -Encoding ascii "dist/$archive.sha256"
+
+      - name: Upload packaged executables
         uses: actions/upload-artifact@v4
         with:
-          name: llg-${{ matrix.name }}-${{ matrix.target }}
+          name: llg-${{ matrix.platform }}-${{ matrix.arch }}
           if-no-files-found: error
-          # Unix legs produce ./llg_ls ./llg; Windows legs produce the
-          # .exe variants. Missing entries in a multi-path list are skipped,
-          # so one declaration serves every platform.
           path: |
-            target/${{ matrix.target }}/release/llg_ls
-            target/${{ matrix.target }}/release/llg
-            target/${{ matrix.target }}/release/llg_ls.exe
-            target/${{ matrix.target }}/release/llg.exe
+            dist/*.tar.gz
+            dist/*.zip
+            dist/*.sha256

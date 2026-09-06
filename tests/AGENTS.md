@@ -175,6 +175,8 @@ generated C/runtime memory safety, not LSP admission. The 15-minute
 04:17 UTC. Neither uploads reports; workflow logs are evidence.
 
 [build-binaries.yml](../.github/workflows/build-binaries.yml) produces release
-binaries on tags/manual dispatch. Windows/macOS legs remain placeholders/
-untested: the root native pipeline is validated only on x86_64-linux-musl.
+binaries on tags/manual dispatch for Linux x86_64/arm64, Windows x86_64/arm64,
+and macOS arm64. It checks target architecture, fully static Linux linkage,
+static Windows CRT linkage, system-only Windows/macOS dynamic imports, and a
+driver startup smoke test before packaging both executables with checksums.
 Keep platform claims aligned with local `persistence/platforms.md` evidence.

@@ -4,11 +4,9 @@
 # CAVEAT: there is no cheap way to lint this crate — even `cargo check --lib`
 # executes build.rs, i.e. a full native CMake build of vendored
 # Surelog/UHDM/ANTLR4/Cap'n Proto plus custom link steps. That native pipeline
-# has only ever been validated on x86_64-linux-musl (see the portability
-# caveat block in build-binaries.yml and the platform branches in build.rs:
-# patch(1) dependency, -Wl,--wrap flags, musl-only static linking). This job
-# therefore runs against glibc Ubuntu; platform release builds remain the job
-# of build-binaries.yml.
+# is expensive on every platform. This development gate therefore runs against
+# glibc Ubuntu; the five release targets and their linkage audits remain the
+# job of build-binaries.yml.
 name: CI
 
 on:
