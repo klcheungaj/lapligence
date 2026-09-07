@@ -166,6 +166,19 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo test --all-features -- --test-threads=1
 ```
 
+The Ubuntu lint and sanitizer jobs disable Rust debug info and incremental
+compilation and strip debug sections (including the linked native frontend's)
+from Rust executables. They limit Cargo test builds to two concurrent jobs,
+independently of the serialized test execution above, and report disk/memory
+use even after failures. Debug assertions and overflow checks remain enabled;
+generated C sanitizer flags are unchanged.
+
+Workflow caches retain Cargo downloads only, excluding compiled targets and
+installed Cargo binaries to reduce use of the repository's 10 GB cache budget.
+Release packages expire after one day; CI tests upload no artifacts. Retention
+does not enforce the account's 500 MB artifact budget across concurrent runs or
+other repositories. Runner working-disk usage is separate from these quotas.
+
 The PR/manual `generated-runtime-sanitizers` job has a 180-minute limit and
 runs `runtime_values`, `runtime_boundaries`, `sim_counter`, `sim_data_types`,
 `sim_data_types_next`, `sim_data_types_completion`, `sim_function`, and

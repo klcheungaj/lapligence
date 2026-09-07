@@ -26,8 +26,15 @@ jobs:
     if: github.event_name != 'schedule'
     runs-on: ubuntu-22.04
     timeout-minutes: 180
+    env:
+      # Each test executable links the large native frontend archives. Strip
+      # their debug sections at link time to keep runner disk use bounded.
+      # The test profile inherits these settings; assertions remain enabled.
+      CARGO_PROFILE_DEV_DEBUG: "0"
+      CARGO_PROFILE_DEV_STRIP: debuginfo
+      CARGO_INCREMENTAL: "0"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # build.rs compiles vendor/ directly; required for cargo check too.
           submodules: recursive
@@ -37,6 +44,11 @@ jobs:
           components: rustfmt, clippy
 
       - uses: Swatinem/rust-cache@v2
+        with:
+          # Keep native archives and test executables out of the 10 GB cache budget.
+          prefix-key: registry-only-v1
+          cache-targets: "false"
+          cache-bin: "false"
 
       # patch(1) is required by build.rs (Surelog submodule patches); cmake,
       # g++ and zlib headers back the non-musl dynamic-link branch used here.
@@ -62,7 +74,14 @@ jobs:
       # Surelog and several boundary tests change process-global state (CWD and
       # C++ singletons), so unit tests in one executable must not overlap.
       - name: cargo test
-        run: cargo test --all-features -- --test-threads=1
+        run: cargo test --jobs 2 --all-features -- --test-threads=1
+
+      - name: Report runner resources
+        if: always()
+        run: |
+          df -h
+          free -h
+          du -sh target || true
 
   generated-runtime-sanitizers:
     name: generated runtime / ASan + UBSan (ubuntu)
@@ -70,6 +89,10 @@ jobs:
     runs-on: ubuntu-22.04
     timeout-minutes: 180
     env:
+      # Also strip native archive debug sections from the Rust test runners.
+      CARGO_PROFILE_DEV_DEBUG: "0"
+      CARGO_PROFILE_DEV_STRIP: debuginfo
+      CARGO_INCREMENTAL: "0"
       # sim::build forwards these flags to every generated-model C source,
       # including value/string/container runtimes, llg_rt.c, aco.c, and the final link. ACO_USE_ASAN enables
       # libaco's no_sanitize_address annotations on its stack-copy routines.
@@ -80,13 +103,17 @@ jobs:
       ASAN_OPTIONS: detect_leaks=1:strict_string_checks=1
       UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: recursive
 
       - uses: dtolnay/rust-toolchain@stable
 
       - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: registry-only-v1
+          cache-targets: "false"
+          cache-bin: "false"
 
       - name: Install native build prerequisites
         run: |
@@ -96,18 +123,25 @@ jobs:
 
       - name: Run generated runtime and model probes under sanitizers
         run: >-
-          cargo test --all-features
+          cargo test --jobs 2 --all-features
           --test runtime_values --test runtime_boundaries --test sim_counter
           --test sim_data_types --test sim_data_types_next --test sim_data_types_completion
           --test sim_function --test sim_loops
           -- --test-threads=1
+
+      - name: Report runner resources
+        if: always()
+        run: |
+          df -h
+          free -h
+          du -sh target || true
 
   dependency-audit:
     name: dependency security audit
     runs-on: ubuntu-22.04
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: dtolnay/rust-toolchain@stable
 

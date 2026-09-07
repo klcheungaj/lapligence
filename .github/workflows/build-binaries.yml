@@ -67,6 +67,10 @@ jobs:
         if: matrix.platform != 'linux'
         with:
           shared-key: release-${{ matrix.target }}
+          # Native build trees across the matrix can exceed the cache budget.
+          prefix-key: registry-only-v1
+          cache-targets: "false"
+          cache-bin: "false"
 
       # UHDM and ANTLR generators execute during the native CMake build.
       - uses: actions/setup-python@v7
@@ -175,6 +179,8 @@ jobs:
           if ($LASTEXITCODE -ne 2) {
               throw "llg usage smoke test returned $LASTEXITCODE instead of 2"
           }
+          # GitHub's pwsh wrapper otherwise propagates the expected exit code 2.
+          exit 0
 
       - name: Verify macOS architecture and system-only dynamic linkage
         if: matrix.platform == 'macos'
@@ -230,6 +236,9 @@ jobs:
         with:
           name: llg-${{ matrix.platform }}-${{ matrix.arch }}
           if-no-files-found: error
+          # Packaged archives are already compressed; expire downloads promptly.
+          compression-level: 0
+          retention-days: 1
           path: |
             dist/*.tar.gz
             dist/*.zip
