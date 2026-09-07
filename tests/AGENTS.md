@@ -155,8 +155,11 @@ cargo test --bin llg_ls response_budget -- --test-threads=1
 
 ## CI and release gate
 
-[ci.yml](../.github/workflows/ci.yml) runs on Ubuntu. Before release, run its
-complete serialized `lint` gate:
+[ci.yml](../.github/workflows/ci.yml) runs the Ubuntu test gates and five-platform
+build matrix on pushes to `master`, manual dispatch for the selected branch,
+and GitHub Release publication (`release: published`, including prereleases).
+Draft saves and standalone tag pushes do not trigger CI. Before release, run
+its complete serialized `lint` gate:
 
 ```sh
 cargo fmt --check
@@ -175,11 +178,12 @@ generated C sanitizer flags are unchanged.
 
 Workflow caches retain Cargo downloads only, excluding compiled targets and
 installed Cargo binaries to reduce use of the repository's 10 GB cache budget.
-Release packages expire after one day; CI tests upload no artifacts. Retention
+Only release events upload packages as Actions artifacts, which expire
+after one day; branch pushes and manual builds upload no artifacts. Retention
 does not enforce the account's 500 MB artifact budget across concurrent runs or
 other repositories. Runner working-disk usage is separate from these quotas.
 
-The PR/manual `generated-runtime-sanitizers` job has a 180-minute limit and
+The `generated-runtime-sanitizers` job has a 180-minute limit and
 runs `runtime_values`, `runtime_boundaries`, `sim_counter`, `sim_data_types`,
 `sim_data_types_next`, `sim_data_types_completion`, `sim_function`, and
 `sim_loops` with GCC ASan/UBSan.
@@ -188,10 +192,18 @@ generated C/runtime memory safety, not LSP admission. The 15-minute
 `dependency-audit` job runs `cargo audit` on those triggers and Mondays at
 04:17 UTC. Neither uploads reports; workflow logs are evidence.
 
-[build-binaries.yml](../.github/workflows/build-binaries.yml) is configured to
-produce release binaries on tags/manual dispatch for Linux x86_64/arm64,
+The `build` matrix in [ci.yml](../.github/workflows/ci.yml) is configured to
+produce release binaries for Linux x86_64/arm64,
 Windows x86_64/arm64, and macOS arm64. It checks target architecture, fully
 static Linux linkage, static Windows CRT linkage, system-only Windows/macOS
 dynamic imports, and a driver startup smoke test before packaging both
 executables with checksums.
+On release publication, `release` waits for every test/audit/build job, checks
+the five package checksums, and attaches packages and checksum files to the
+existing GitHub Release. Only that job receives `contents: write`. CI never
+creates or publishes a release or edits its metadata; reruns replace assets
+with matching names.
+Packages use `lapligence-<version>-<os>-<arch>.<ext>`, removing the tag's leading
+`v`, with `linux`/`windows`/`macos`, `x64`/`arm64`, and `tar.gz` for Unix or
+`zip` for Windows. Each contains both executables, `readme.md`, and `LICENSE`.
 Keep platform claims aligned with local `persistence/platforms.md` evidence.

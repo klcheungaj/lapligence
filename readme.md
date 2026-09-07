@@ -83,6 +83,17 @@ targets:
 The matrix lists configured release targets, not equivalent validation claims.
 Full native-run evidence is currently recorded only for Linux x86_64.
 
+CI tests and builds all targets above on pushes to `master`, or when you select
+a branch under **Actions → CI and Release → Run workflow**. Publishing a release
+in the GitHub web UI runs the same checks for its tag and attaches binary
+packages to that existing release after all jobs pass. Saving a draft does not
+trigger CI. For a tag such as `v1.2.3`, download packages use
+`lapligence-1.2.3-<os>-<arch>.<ext>`: `os` is `linux`, `windows`, or `macos`,
+and `arch` is `x64` or `arm64` for the targets above. Windows packages are ZIP
+files; Linux and macOS packages are `.tar.gz` files. Each includes `llg`,
+`llg_ls` (with `.exe` on Windows), `readme.md`, and `LICENSE`. SHA-256 checksum
+files accompany the packages.
+
 The generated simulator uses a bundled coroutine runtime that is currently
 x86/Unix-only. On arm64 and Windows, `llg` can still lint, elaborate, and emit
 C with `--gen-only`, but it cannot build and run that emitted model yet.
