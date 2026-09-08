@@ -7,13 +7,17 @@
 # is expensive on every platform. This development gate therefore runs against
 # glibc Ubuntu; the five release targets and their linkage audits remain the
 # job of the build matrix below.
-name: CI and Release
+name: CI
 
 on:
   push:
     branches: [master]
-  release:
-    types: [published]
+  workflow_call:
+    inputs:
+      release-packages:
+        description: Package and upload binaries for the calling release workflow
+        type: boolean
+        default: false
   workflow_dispatch:
   schedule:
     # Re-check the lockfile when the RustSec advisory database changes even
@@ -352,7 +356,7 @@ jobs:
           test "$status" -eq 2
 
       - name: Package Unix executables
-        if: github.event_name == 'release' && matrix.platform != 'windows'
+        if: inputs.release-packages && matrix.platform != 'windows'
         shell: bash
         run: |
           version=${GITHUB_REF_NAME#v}
@@ -369,7 +373,7 @@ jobs:
           fi
 
       - name: Package Windows executables
-        if: github.event_name == 'release' && matrix.platform == 'windows'
+        if: inputs.release-packages && matrix.platform == 'windows'
         shell: pwsh
         run: |
           $version = $env:GITHUB_REF_NAME -replace '^v', ''
@@ -383,7 +387,7 @@ jobs:
           "$hash  $archive" | Set-Content -Encoding ascii "dist/$archive.sha256"
 
       - name: Upload packaged executables
-        if: github.event_name == 'release'
+        if: inputs.release-packages
         uses: actions/upload-artifact@v4
         with:
           name: lapligence-${{ matrix.platform }}-${{ matrix.package_arch }}
@@ -395,44 +399,3 @@ jobs:
             dist/*.tar.gz
             dist/*.zip
             dist/*.sha256
-
-  release:
-    name: Attach packages to GitHub release
-    if: github.event_name == 'release'
-    needs: [lint, generated-runtime-sanitizers, dependency-audit, build]
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    permissions:
-      contents: write
-    concurrency:
-      group: release-${{ github.ref }}
-      cancel-in-progress: false
-    env:
-      GH_TOKEN: ${{ github.token }}
-      GH_REPO: ${{ github.repository }}
-    steps:
-      - name: Download release packages
-        uses: actions/download-artifact@v4
-        with:
-          pattern: lapligence-*
-          merge-multiple: true
-          path: dist
-
-      - name: Verify release package set and checksums
-        shell: bash
-        working-directory: dist
-        run: |
-          version=${GITHUB_REF_NAME#v}
-          for platform in linux-x64 linux-arm64 windows-x64 windows-arm64 macos-arm64; do
-            extension=tar.gz
-            if [[ "$platform" == windows-* ]]; then
-              extension=zip
-            fi
-            archive="lapligence-$version-$platform.$extension"
-            test -s "$archive"
-            sha256sum --check "$archive.sha256"
-          done
-
-      - name: Attach packages to existing release
-        shell: bash
-        run: gh release upload "$GITHUB_REF_NAME" dist/* --clobber
