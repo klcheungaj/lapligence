@@ -184,21 +184,13 @@ does not enforce the account's 500 MB artifact budget across concurrent runs or
 other repositories. Runner working-disk usage is separate from these quotas.
 
 The `generated-runtime-sanitizers` job has a 180-minute limit and
-runs `runtime_values`, `runtime_boundaries`, `libaco_runtime`, `sim_counter`, `sim_data_types`,
+runs `runtime_values`, `runtime_boundaries`, `sim_counter`, `sim_data_types`,
 `sim_data_types_next`, `sim_data_types_completion`, `sim_function`, and
 `sim_loops` with GCC ASan/UBSan.
 This checks
 generated C/runtime memory safety, not LSP admission. The 15-minute
 `dependency-audit` job runs `cargo audit` on those triggers and Mondays at
 04:17 UTC. Neither uploads reports; workflow logs are evidence.
-
-`libaco_runtime` runs standalone Linux x64 GCC probes for shared-stack value
-and ASan shadow preservation, with fake-stack mode both off and on. Deliberate
-stack overflow after resumption must still be detected. A non-sanitized probe
-checks a sparse 1 TiB reservation and guard-page faults; it skips under Linux
-strict overcommit mode 2, where `MAP_NORESERVE` is ignored. The existing
-`sim_data_type_edges` maximum-width recursion fixture remains the end-to-end
-check for model-sized stack reservations.
 
 The `build` matrix in [ci.yml](../.github/workflows/ci.yml) is configured to
 produce release binaries for Linux x86_64/arm64,

@@ -14,9 +14,6 @@
   generated model sources and builds them with CMake.
 - **Checks:** standalone value/runtime self-tests and Rust integration tests
   cover the runtime boundary.
-- **Coroutine stacks:** local libaco patches preserve ASan shadow state across
-  shared-stack switches and avoid reserving swap for unused Linux stack
-  headroom. Stack guards and generated stack budgets remain active.
 
 See [`docs/sim_data_semantics.md`](../../../docs/sim_data_semantics.md) for
 language-level value semantics.

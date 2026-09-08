@@ -149,18 +149,6 @@ selected range contributes; lowering rejects dynamic net selectors.
   `tests/region_conformance.rs`.
 - Coroutines must never return without `llg_proc_done`/`aco_exit` (the
   runtime aborts on that — codegen bug).
-- Local libaco fixes live in `patches/libaco/` and are applied by root
-  `build.rs` before source embedding. With `ACO_USE_ASAN`, stack copies bypass
-  intercepted `memcpy` and save/restore the corresponding ASan shadow bytes.
-  Shadow buffers belong to each coroutine and are freed by `aco_destroy`;
-  stale redzones are cleared before another coroutine owns the shared stack.
-  This retains checks on resumed locals, but does not add sanitizer fiber
-  hooks or establish complete stack-use-after-return coverage.
-- Linux guarded coroutine stacks use `MAP_NORESERVE` for conservative virtual
-  headroom; only touched pages consume physical memory. The model budget and
-  guard page remain in force. Strict Linux overcommit mode 2 ignores this
-  flag; address-space limits and physical-memory exhaustion can still fail.
-  Other platforms retain their existing mapping behavior.
 
 ## Interactions
 
