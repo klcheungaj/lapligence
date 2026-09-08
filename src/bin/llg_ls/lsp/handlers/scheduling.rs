@@ -2,6 +2,16 @@
 
 use super::*;
 
+#[cfg(feature = "slang")]
+pub(super) fn slang_has_unrepresented_alias(
+    paths: &BTreeSet<&Path>,
+    snapshots: &InputSnapshots,
+) -> bool {
+    paths
+        .iter()
+        .any(|path| !snapshots.by_path.contains_key(*path))
+}
+
 /// Free-standing watcher registration used by both the backend methods and
 /// spawned commit tasks (which cannot borrow `&Backend`).
 ///
@@ -1152,6 +1162,144 @@ impl Backend {
                 job.generation,
                 Some(job_span.id()),
             );
+            #[cfg(feature = "slang")]
+            let mut analysis = analysis;
+            #[cfg(feature = "slang")]
+            if features::slang_diagnostics_enabled() {
+                if !Self::job_current(state, &job) {
+                    crate::llg_debug!(
+                        "event=root_job.frontend.end outcome=stale-before-slang root={} generation={} elapsed_us={}",
+                        root_identity,
+                        job.generation,
+                        job_started.elapsed().as_micros()
+                    );
+                    return None;
+                }
+                // `include_deps` retains every admitted lexical alias, while
+                // `InputSnapshots` canonical-deduplicates the underlying text.
+                // Bound the existing lists before allocating their union.
+                let source_path_count = job.files.len().saturating_add(include_deps.len());
+                let source_count_over = source_path_count > features::MAX_SLANG_SOURCE_SNAPSHOTS;
+                let slang_paths: BTreeSet<&Path> = if source_count_over {
+                    BTreeSet::new()
+                } else {
+                    job.files
+                        .iter()
+                        .map(PathBuf::as_path)
+                        .chain(include_deps.iter().map(PathBuf::as_path))
+                        .collect()
+                };
+                let path_bytes = slang_paths.iter().try_fold(0_u64, |total, path| {
+                    total.checked_add(path.to_string_lossy().len() as u64)
+                });
+                let first_path = job
+                    .files
+                    .first()
+                    .map(PathBuf::as_path)
+                    .or_else(|| include_deps.iter().next().map(PathBuf::as_path))
+                    .map_or_else(
+                        || "<slang>".to_owned(),
+                        |path| path.to_string_lossy().into_owned(),
+                    );
+                let path_bytes_over =
+                    path_bytes.is_none_or(|bytes| bytes > features::MAX_SLANG_PATH_BYTES);
+                let alias_incomplete = !source_count_over
+                    && slang_has_unrepresented_alias(&slang_paths, &input_snapshots);
+                let config_preflight = if source_count_over || path_bytes_over || alias_incomplete {
+                    Ok(())
+                } else {
+                    features::slang_config_preflight(
+                        &job.config.compile.defines,
+                        job.config.compile.top.as_deref(),
+                        &job.config.sources.directories,
+                        &job.config.compile.include_dirs,
+                        &job.config.compile.param_overrides,
+                    )
+                };
+                let slang_diagnostics = if source_count_over {
+                    features::slang_input_rejected(
+                        &first_path,
+                        "slang.source-count-limit",
+                        format!(
+                            "Slang diagnostic analysis was skipped because {} admitted sources exceed its limit of {}",
+                            source_path_count,
+                            features::MAX_SLANG_SOURCE_SNAPSHOTS
+                        ),
+                    )
+                } else if path_bytes_over {
+                    features::slang_input_rejected(
+                        &first_path,
+                        "slang.path-bytes-limit",
+                        format!(
+                            "Slang diagnostic analysis was skipped because admitted source paths exceed its {} byte metadata limit",
+                            features::MAX_SLANG_PATH_BYTES
+                        ),
+                    )
+                } else if alias_incomplete {
+                    features::slang_input_rejected(
+                        &first_path,
+                        "slang.source-alias",
+                        "Slang diagnostic analysis was skipped because canonically identical source aliases cannot yet preserve one frontend file identity"
+                            .to_owned(),
+                    )
+                } else if let Err(error) = config_preflight {
+                    let message = match error {
+                        features::SlangConfigPreflightError::Count { kind, count } => format!(
+                            "Slang diagnostic analysis was skipped because {count} {kind} exceed its limit of {}",
+                            features::MAX_SLANG_OPTION_COUNT
+                        ),
+                        features::SlangConfigPreflightError::Bytes => format!(
+                            "Slang diagnostic analysis was skipped because frontend options exceed its {} byte metadata limit",
+                            features::MAX_SLANG_CONFIG_BYTES
+                        ),
+                    };
+                    features::slang_input_rejected(&first_path, "slang.config-limit", message)
+                } else {
+                    let compilation_units: BTreeSet<&Path> =
+                        job.files.iter().map(PathBuf::as_path).collect();
+                    let owned_inputs: Vec<_> = slang_paths
+                        .iter()
+                        .map(|path| {
+                            (
+                                path.to_string_lossy().into_owned(),
+                                input_snapshots
+                                    .by_path
+                                    .get(*path)
+                                    .expect("Slang paths preflighted")
+                                    .as_str(),
+                                compilation_units.contains(path),
+                            )
+                        })
+                        .collect();
+                    let slang_inputs: Vec<_> = owned_inputs
+                        .iter()
+                        .map(|(name, text, is_compilation_unit)| features::SlangSource {
+                            name,
+                            text,
+                            is_compilation_unit: *is_compilation_unit,
+                        })
+                        .collect();
+                    let include_dirs: Vec<_> = config::include_dirs(&job.config)
+                        .into_iter()
+                        .map(|path| path.to_string_lossy().into_owned())
+                        .collect();
+                    features::slang_lsp_diagnostics(
+                        &slang_inputs,
+                        &job.config.compile.defines,
+                        job.config.compile.top.as_deref(),
+                        &include_dirs,
+                        &job.config.compile.param_overrides,
+                        job.config.analysis.max_total_input_bytes,
+                    )
+                };
+                crate::llg_debug!(
+                    "event=root_job.slang_diagnostics.end root={} generation={} diagnostics={}",
+                    root_identity,
+                    job.generation,
+                    slang_diagnostics.len()
+                );
+                analysis.attach_slang_diagnostics(slang_diagnostics);
+            }
             crate::llg_debug!(
                 "event=root_job.analysis.end outcome={:?} root={} generation={} diagnostics={} lint={} token_files={} declarations={} references={} elapsed_us={}",
                 analysis.outcome,

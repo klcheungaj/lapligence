@@ -49,12 +49,16 @@ use llg::ffi::surelog::{Diag, Severity, VObjectInfo};
 mod analysis;
 mod fallback;
 mod requests;
+#[cfg(feature = "slang")]
+mod slang;
 mod source_graph;
 mod symbol_index;
 
 pub(crate) use analysis::*;
 pub(crate) use fallback::*;
 pub(crate) use requests::*;
+#[cfg(feature = "slang")]
+pub(crate) use slang::*;
 pub(crate) use source_graph::*;
 pub(crate) use symbol_index::*;
 

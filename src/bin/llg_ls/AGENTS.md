@@ -33,6 +33,14 @@ diagnostics and custom read-only views.
   (code 0 after shutdown).
 - Startup may use `llg::memory_limit::install_with_logger`, connecting its
   physical-memory sampler to lifecycle logging.
+- With the opt-in Cargo feature `slang`, setting
+  `LLG_SLANG_DIAGNOSTICS=1` runs the migration frontend over the exact bounded
+  in-memory inputs admitted for each root. Its compiler and analysis findings
+  are published alongside the current Surelog/Rust findings with distinct
+  sources and namespaced codes. The environment variable defaults off so an
+  all-feature build retains ordinary LSP behavior. Slang findings never change
+  the Surelog-owned semantic outcome or promote a diagnostic-only result into
+  a servable snapshot.
 
 ## Entry and transport boundaries
 

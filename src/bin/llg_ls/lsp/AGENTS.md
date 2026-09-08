@@ -100,8 +100,9 @@ to `CompileOpts`, including the `.v`/`.sv` compilation-unit predicate.
   published. `didClose` removes staged open text and reschedules an on-disk
   refresh; it does not clear diagnostics immediately.
 - Shared paths are published exclusively through a union of tracking roots'
-  findings, never the primary per-root map. Deduplicate identical URI/range/
-  severity/code/message; distinct same-location non-owner findings get a
+  findings, never the primary per-root map. Deduplicate identical diagnostic
+  payloads, including source and related information; distinct same-location
+  non-owner findings get a
   `[<root-name>]` suffix. This prevents primary publication swallowing labels.
 - Initial scans and standard `workspace/didChangeWatchedFiles` drive updates;
   there is no internal filesystem watcher. Dynamically register watchers when
@@ -165,3 +166,14 @@ the live file in that case. Discovered/root compilation units that are absent,
 unreadable, or otherwise unmeasurable at admission are rejected the same way;
 no root file reaches Surelog unrestricted. A newly appearing literal include
 is not admitted retroactively.
+
+When the opt-in Slang diagnostic comparison mode is enabled, its compilation
+units and include-only buffers come from this same `InputSnapshots` value after
+admission. Never reconstruct them from live project paths. Slang bridge failure
+or an option the bridge cannot preserve produces an explicit integration
+diagnostic; it does not silently fall back or change Surelog snapshot validity.
+The comparison pass also declines a root when canonical input deduplication
+retained only one of several lexical source aliases: presenting those aliases
+as independent Slang buffers would change same-file identity. Source, logical
+path and frontend-option count/byte limits are checked before building the
+owned Slang request vectors.

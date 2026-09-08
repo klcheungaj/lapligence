@@ -18,6 +18,11 @@ previously declared same-file uses become REFs, excluding assignment LHS via
 `ancestor_is_assignment_lvalue`. This supplies non-Fatal feature data until
 full compilation succeeds.
 
+Under Cargo feature `slang`, the backend can attach diagnostics projected from
+Slang's owned snapshot. This is migration-only observation data: it keeps its
+Slang provider and namespaced code and does not affect `AnalysisOutcome`,
+`has_feature_data`, or the retained Surelog semantic/navigation snapshot.
+
 `SymbolIndex` provides cross-file declarations/references and merges per-root
 indexes for workspace symbols. Model objects provide declarations and
 `vpiRefObj` tokens provide reference sites. Refine module/instance positions

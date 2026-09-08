@@ -44,31 +44,12 @@ pub(super) fn pos_key(position: Position) -> PosKey {
     (position.line, position.character)
 }
 
-pub(super) type DiagKey = ((PosKey, PosKey), u8, Option<NumberOrString>, String);
-
-/// Wire severity number for digest/duplicate keys (`None` → 0).
-pub(super) fn severity_tag(severity: Option<DiagnosticSeverity>) -> u8 {
-    match severity {
-        Some(DiagnosticSeverity::ERROR) => 1,
-        Some(DiagnosticSeverity::WARNING) => 2,
-        Some(DiagnosticSeverity::INFORMATION) => 3,
-        Some(DiagnosticSeverity::HINT) => 4,
-        _ => 0,
-    }
-}
+pub(super) type DiagKey = String;
 
 /// Stable identity of a diagnostic for exact-duplicate detection:
-/// same range/severity/code/message.
+/// every wire-visible field, including provider and related notes.
 pub(super) fn diagnostic_key(diagnostic: &Diagnostic) -> DiagKey {
-    (
-        (
-            pos_key(diagnostic.range.start),
-            pos_key(diagnostic.range.end),
-        ),
-        severity_tag(diagnostic.severity),
-        diagnostic.code.clone(),
-        diagnostic.message.clone(),
-    )
+    format!("{diagnostic:?}")
 }
 
 pub(super) fn diagnostics_digest(diagnostics: &[Diagnostic]) -> String {
@@ -140,6 +121,25 @@ pub(super) fn merge_shared_file_diagnostics(
     kept.into_iter()
         .map(|(_, _, diagnostic)| diagnostic)
         .collect()
+}
+
+pub(super) fn remap_related_diagnostic_uris(diagnostics: &mut [Diagnostic], shadow: &ShadowPaths) {
+    for diagnostic in diagnostics {
+        let Some(related) = diagnostic.related_information.as_mut() else {
+            continue;
+        };
+        for information in related {
+            let Ok(path) = information.location.uri.to_file_path() else {
+                continue;
+            };
+            let Some(real) = shadow.real_path(&path) else {
+                continue;
+            };
+            if let Ok(uri) = Url::from_file_path(real) {
+                information.location.uri = uri;
+            }
+        }
+    }
 }
 
 /// Compute the diagnostic union for every file tracked by more than one root
@@ -411,10 +411,14 @@ impl Backend {
         // Full per-real-path diagnostics map (open or closed): feeds both
         // the project-wide publication map and the shared-file aggregation.
         let mut all: BTreeMap<PathBuf, Vec<Diagnostic>> = BTreeMap::new();
-        for (path, diagnostics) in diagnostics_by_path {
+        for (path, mut diagnostics) in diagnostics_by_path {
             let path = PathBuf::from(path);
             let real = root.shadow.real_path(&path).unwrap_or(path);
-            all.insert(real, diagnostics);
+            remap_related_diagnostic_uris(&mut diagnostics, &root.shadow);
+            all.entry(real).or_default().extend(diagnostics);
+        }
+        for diagnostics in all.values_mut() {
+            diagnostics.sort_by_cached_key(diagnostic_key);
         }
         // Project-wide publication map: every compilation unit is published,
         // open or closed (clients render Problems-panel entries for closed

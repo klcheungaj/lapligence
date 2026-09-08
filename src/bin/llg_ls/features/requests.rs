@@ -97,6 +97,12 @@ pub fn lsp_diagnostics_with_fallback(
             data: None,
         });
     }
+    #[cfg(feature = "slang")]
+    for (path, diagnostic) in &a.slang_diagnostics {
+        out.entry(path.clone())
+            .or_default()
+            .push(diagnostic.clone());
+    }
     out
 }
 

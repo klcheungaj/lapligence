@@ -179,6 +179,21 @@ fn admitted_snapshot_indexes_share_the_same_text_allocation() {
     ));
 }
 
+#[cfg(feature = "slang")]
+#[test]
+fn slang_alias_preflight_rejects_a_lexical_path_without_its_own_snapshot() {
+    let admitted = PathBuf::from("/tmp/llg-slang-alias/inc/header.svh");
+    let alias = PathBuf::from("/tmp/llg-slang-alias/alias/header.svh");
+    let mut snapshots = InputSnapshots::default();
+    snapshots.insert(&admitted, Arc::new("`define WIDTH 8\n".to_owned()));
+    let paths = BTreeSet::from([admitted.as_path(), alias.as_path()]);
+
+    assert!(slang_has_unrepresented_alias(&paths, &snapshots));
+
+    snapshots.insert(&alias, Arc::new("`define WIDTH 8\n".to_owned()));
+    assert!(!slang_has_unrepresented_alias(&paths, &snapshots));
+}
+
 #[test]
 fn open_token_cache_key_tracks_text_and_defines() {
     let defines_a = vec!["-DWIDTH=8".to_owned()];
@@ -1612,6 +1627,38 @@ fn shadow_paths_stage_and_round_trip() {
 }
 
 #[test]
+fn related_diagnostic_uris_do_not_leak_shadow_paths() {
+    let shadow = ShadowPaths::new();
+    let real = PathBuf::from("/tmp/llg-related-note.sv");
+    let staged = shadow.shadow_path(&real).expect("shadow path");
+    let mut diagnostics = vec![Diagnostic {
+        range: Range::new(Position::new(0, 0), Position::new(0, 1)),
+        severity: Some(DiagnosticSeverity::ERROR),
+        code: None,
+        code_description: None,
+        source: Some("slang-compiler".to_owned()),
+        message: "primary".to_owned(),
+        related_information: Some(vec![DiagnosticRelatedInformation {
+            location: Location::new(
+                Url::from_file_path(&staged).expect("staged URI"),
+                Range::new(Position::new(1, 2), Position::new(1, 3)),
+            ),
+            message: "related".to_owned(),
+        }]),
+        tags: None,
+        data: None,
+    }];
+
+    remap_related_diagnostic_uris(&mut diagnostics, &shadow);
+
+    let related = &diagnostics[0].related_information.as_ref().unwrap()[0];
+    assert_eq!(
+        related.location.uri,
+        Url::from_file_path(real).expect("real URI")
+    );
+}
+
+#[test]
 fn staging_never_touches_the_project_tree() {
     let _guard = SHADOW_TESTS_LOCK
         .lock()
@@ -2398,6 +2445,25 @@ fn shared_diagnostics_dedupe_exact_and_label_conflicts() {
             .any(|diagnostic| diagnostic.message == "width mismatch [root-a]"),
         "non-owner copy must carry the documented [root-name] label: {merged:?}"
     );
+}
+
+#[test]
+fn diagnostic_identity_includes_related_information() {
+    let mut first = labeled_diagnostic((4, 2), 1, "duplicate declaration");
+    first.related_information = Some(vec![DiagnosticRelatedInformation {
+        location: Location::new(
+            Url::parse("file:///workspace/first.sv").unwrap(),
+            Range::new(Position::new(1, 0), Position::new(1, 3)),
+        ),
+        message: "previous declaration".to_owned(),
+    }]);
+    let mut second = first.clone();
+    second.related_information.as_mut().unwrap()[0]
+        .location
+        .range = Range::new(Position::new(2, 0), Position::new(2, 3));
+
+    assert_ne!(diagnostic_key(&first), diagnostic_key(&second));
+    assert_ne!(diagnostics_digest(&[first]), diagnostics_digest(&[second]));
 }
 
 #[test]

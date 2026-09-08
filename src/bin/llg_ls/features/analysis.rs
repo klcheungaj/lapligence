@@ -29,6 +29,12 @@ pub struct Analysis {
     /// Surelog diagnostics (1-based positions; `file`/`line`/`col` may be
     /// unknown).
     pub diagnostics: Vec<Diag>,
+    /// Diagnostics from additional frontends, already projected to LSP
+    /// coordinates while their admitted source buffers are available. These
+    /// observations never influence [`AnalysisOutcome`] or snapshot serving;
+    /// Surelog remains the semantic/navigation frontend during migration.
+    #[cfg(feature = "slang")]
+    pub slang_diagnostics: Vec<(String, LspDiagnostic)>,
     /// Elaborated design model.  A default/empty model when compilation
     /// failed or neither UHDM nor a parse tree was produced; a modules-only
     /// parse-tree model when syntax errors made Surelog skip UHDM (see
@@ -163,6 +169,8 @@ impl Analysis {
         Analysis {
             outcome,
             diagnostics,
+            #[cfg(feature = "slang")]
+            slang_diagnostics: Vec::new(),
             model,
             tokens,
             index,
@@ -290,6 +298,13 @@ impl Analysis {
             && (!self.index.decls.is_empty()
                 || !self.model.modules.is_empty()
                 || !self.tokens.is_empty())
+    }
+
+    /// Attach Slang's diagnostic projection without changing semantic
+    /// validity or the feature-serving decision made from Surelog's result.
+    #[cfg(feature = "slang")]
+    pub(crate) fn attach_slang_diagnostics(&mut self, diagnostics: Vec<(String, LspDiagnostic)>) {
+        self.slang_diagnostics = diagnostics;
     }
 }
 

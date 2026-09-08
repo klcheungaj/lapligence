@@ -12,7 +12,8 @@ reports status and warnings to stderr.
 
 The `llg_ls` language-server and `llg` simulator-driver executables can
 enforce a process-wide memory ceiling. The ceiling covers Rust allocations and
-the in-process Surelog/UHDM frontend, including its C++ allocations.
+the in-process Surelog/UHDM and optional Slang frontends, including their
+C++ allocations.
 
 The safeguard is disabled by default. Enable it with an environment variable
 before starting either `llg_ls` or `llg`:
@@ -72,7 +73,8 @@ Validation commands and CI scope live in [../tests/AGENTS.md](../tests/AGENTS.md
 - Keep open-buffer text authoritative while bounding closed-file reads to
   the configured maximum plus one byte; reuse the admitted snapshot afterward.
 - Preserve include authorization, canonical-path deduplication, and the
-  fail-closed rule that project compilation reads only staged shadow inputs.
+  fail-closed rule that Surelog reads only staged shadow inputs and Slang
+  reads only admitted in-memory buffers through its cache-only source manager.
 - Keep invalid configuration atomic and retain the last valid config and
   last servable analysis snapshot where documented.
 - Verify scheduler and cache backpressure: stale revisions and saturated
