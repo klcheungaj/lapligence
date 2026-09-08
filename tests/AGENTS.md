@@ -156,11 +156,8 @@ cargo test --bin llg_ls response_budget -- --test-threads=1
 ## CI and release gate
 
 [ci.yml](../.github/workflows/ci.yml) runs the Ubuntu test gates and five-platform
-build matrix on pushes to `master` and manual dispatch for the selected branch.
-[release.yml](../.github/workflows/release.yml) handles GitHub Release
-publication (`release: published`, including prereleases) by calling `ci.yml`
-with `release-packages: true`; its attachment job waits for that reusable
-workflow to succeed. Build and test definitions live only in `ci.yml`.
+build matrix on pushes to `master`, manual dispatch for the selected branch,
+and GitHub Release publication (`release: published`, including prereleases).
 Draft saves and standalone tag pushes do not trigger CI. Before release, run
 its complete serialized `lint` gate:
 
