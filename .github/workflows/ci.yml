@@ -98,7 +98,7 @@ jobs:
       CARGO_INCREMENTAL: "0"
       # sim::build forwards these flags to every generated-model C source,
       # including value/string/container runtimes, llg_rt.c, aco.c, and the final link. ACO_USE_ASAN enables
-      # libaco's no_sanitize_address annotations on its stack-copy routines.
+      # libaco's stack-byte and ASan shadow preservation during switches.
       LLG_CC: gcc
       LLG_CFLAGS: >-
         -DACO_USE_ASAN -fsanitize=address,undefined
@@ -128,6 +128,7 @@ jobs:
         run: >-
           cargo test --jobs 2 --all-features
           --test runtime_values --test runtime_boundaries --test sim_counter
+          --test libaco_runtime
           --test sim_data_types --test sim_data_types_next --test sim_data_types_completion
           --test sim_function --test sim_loops
           -- --test-threads=1

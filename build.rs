@@ -26,7 +26,8 @@ use std::path::{Path, PathBuf};
 ///
 /// Deliberately NOT tracked: `target/` (build outputs), `slpp_all/`
 /// (Surelog preprocessor scratch from tests run in the repo cwd),
-/// `vendor/libaco` (embedded later in generated models), `docs/`, and `tests/`.
+/// `docs/`, and `tests/`. Libaco source is tracked so resetting its submodule
+/// reapplies the local patches before Rust embeds it in generated models.
 fn emit_rerun_if_changed() {
     // Environment variables read by this script: without these directives a
     // value change alone would NOT re-run the script (Cargo tracks files,
@@ -40,10 +41,12 @@ fn emit_rerun_if_changed() {
     println!("cargo:rerun-if-changed=src/wrapper/mimalloc_shim.c");
 
     // Patches applied to the vendored submodule.  Per-file directives are
-    // also emitted by apply_surelog_patches(); watching the directory
+    // also emitted by apply_vendor_patches(); watching the directory
     // itself additionally catches ADDED or REMOVED .patch files (file
     // additions update the directory mtime).
     println!("cargo:rerun-if-changed=patches");
+    println!("cargo:rerun-if-changed=vendor/libaco/aco.c");
+    println!("cargo:rerun-if-changed=vendor/libaco/aco.h");
 
     // Vendored Surelog proper: build logic, its own sources/headers, the
     // ANTLR grammars (parser codegen inputs) and CMake modules.
@@ -286,8 +289,8 @@ fn cmake_build_surelog(repo: &Path, build_dir: &Path) {
     cfg.build();
 }
 
-/// Applies any `.patch` files from the `patches/` directory to the Surelog
-/// submodule. POSIX/GNU `patch(1)` is preferred; `git apply` is the fallback
+/// Applies `.patch` files from a directory to a vendored submodule.
+/// POSIX/GNU `patch(1)` is preferred; `git apply` is the fallback
 /// on hosts such as Windows. Each patch is skipped if it is already applied.
 /// Patches are applied in lexicographic order for deterministic sequencing.
 ///
@@ -302,13 +305,12 @@ fn cmake_build_surelog(repo: &Path, build_dir: &Path) {
 /// detection, `--dry-run` makes that probe side-effect free, `-s` keeps the
 /// run silent on success, and `-N` defensively skips hunks that were already
 /// applied when the reverse probe could not detect them.
-fn apply_surelog_patches(repo: &Path, manifest_dir: &Path) {
-    let patches_dir = manifest_dir.join("patches");
+fn apply_vendor_patches(repo: &Path, patches_dir: &Path) {
     if !patches_dir.exists() {
         return;
     }
 
-    let mut patches: Vec<_> = std::fs::read_dir(&patches_dir)
+    let mut patches: Vec<_> = std::fs::read_dir(patches_dir)
         .expect("failed to read patches/ directory")
         .filter_map(|e| e.ok())
         .map(|e| e.path())
@@ -468,11 +470,15 @@ fn build_surelog_wrapper(manifest_dir: &Path) {
     // changes (see emit_rerun_if_changed for the full rationale).
     emit_rerun_if_changed();
 
-    // ── Apply patches to the Surelog submodule ───────────────────────────────
+    // ── Apply patches to vendored sources ───────────────────────────────────
     // Patches are applied before CMake runs so that the patched CMakeLists.txt
     // is in place on a freshly-initialised submodule.  Each patch is idempotent
     // (skipped when already applied) so repeated builds are safe.
-    apply_surelog_patches(&repo, manifest_dir);
+    apply_vendor_patches(&repo, &manifest_dir.join("patches"));
+    apply_vendor_patches(
+        &manifest_dir.join("vendor/libaco"),
+        &manifest_dir.join("patches/libaco"),
+    );
 
     // ── Build Surelog via CMake ───────────────────────────────────────────────
     // Always invoke cmake_build_surelog so that -D overrides (e.g. ZLIB_LIBRARY)
