@@ -4,3 +4,6 @@
 [submodule "vendor/libaco"]
 	path = vendor/libaco
 	url = https://github.com/hnes/libaco.git
+[submodule "vendor/slang"]
+	path = vendor/slang
+	url = https://github.com/MikePopoloski/slang.git
