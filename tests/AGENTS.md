@@ -56,6 +56,11 @@ coverage for the same rule IDs.
 
 ## Suite map
 
+- `slang_frontend.rs` (Cargo feature `slang`) probes the release-pinned native
+  bridge through safe Rust APIs: owned hierarchy/parameters/constants,
+  compiler/analysis diagnostics, checked failure, repeated/concurrent session
+  isolation, and admitted-buffer includes versus rejected external files.
+  This is initial frontend-capture coverage, not Slang simulation parity.
 - `sim_data_types.rs`, `sim_data_types_extended.rs`, and
   `sim_data_type_edges.rs` cover datatype semantics and boundaries; detailed
   contracts are in [data_types/AGENTS.md](fixtures/sim/data_types/AGENTS.md),

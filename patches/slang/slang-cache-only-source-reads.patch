@@ -1,0 +1,64 @@
+diff --git a/include/slang/text/SourceManager.h b/include/slang/text/SourceManager.h
+index 604dd1d17..7ea76830e 100644
+--- a/include/slang/text/SourceManager.h
++++ b/include/slang/text/SourceManager.h
+@@ -61,6 +61,10 @@ public:
+     /// and that path does not exist or is not a directory.
+     std::error_code addUserDirectories(std::string_view pattern);
+ 
++    /// Restricts source reads to buffers that have already been assigned or cached.
++    /// Cache misses return permission_denied without accessing the filesystem.
++    void setCacheOnlyReads(bool set) { cacheOnlyReads = set; }
++
+     /// Gets the source line number for a given source location.
+     size_t getLineNumber(SourceLocation location) const;
+ 
+@@ -378,6 +382,7 @@ private:
+     bool disableProximatePaths = false;
+     bool disableLocalIncludes = false;
+     bool incDirFirst = false;
++    bool cacheOnlyReads = false;
+ 
+     template<IsLock TLock>
+     FileInfo* getFileInfo(BufferID buffer, TLock& lock);
+diff --git a/source/text/SourceManager.cpp b/source/text/SourceManager.cpp
+index c89596583..d5e6ba28d 100644
+--- a/source/text/SourceManager.cpp
++++ b/source/text/SourceManager.cpp
+@@ -410,6 +410,8 @@ SourceBuffer SourceManager::assignBuffer(std::string_view bufferPath, SmallVecto
+                                          const SourceLibrary* library) {
+     // first see if we have this file cached
+     fs::path path(bufferPath);
++    if (disableProximatePaths)
++        path = path.lexically_normal();
+     auto pathStr = getU8Str(path);
+     {
+         std::shared_lock<std::shared_mutex> lock(mutex);
+@@ -617,7 +619,7 @@ bool SourceManager::isCached(const fs::path& path) const {
+             return false;
+     }
+     else {
+-        absPath = path;
++        absPath = path.lexically_normal();
+     }
+ 
+     std::shared_lock<std::shared_mutex> lock(mutex);
+@@ -637,7 +639,7 @@ SourceManager::BufferOrError SourceManager::openCached(const fs::path& fullPath,
+             return nonstd::make_unexpected(ec);
+     }
+     else {
+-        absPath = fullPath;
++        absPath = fullPath.lexically_normal();
+     }
+ 
+     // first see if we have this file cached
+@@ -655,6 +657,9 @@ SourceManager::BufferOrError SourceManager::openCached(const fs::path& fullPath,
+         }
+     }
+ 
++    if (cacheOnlyReads)
++        return nonstd::make_unexpected(make_error_code(std::errc::permission_denied));
++
+     // do the read
+     SmallVector<char> buffer;
+     if (std::error_code ec = OS::readFile(absPath, buffer)) {

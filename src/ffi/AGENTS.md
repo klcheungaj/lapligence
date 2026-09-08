@@ -2,13 +2,15 @@
 
 ## Purpose
 
-The only module that talks to the vendored Surelog/UHDM C++ world, over a
-C-ABI boundary (`src/wrapper/`):
+The only module that talks to vendored native frontend code over a C-ABI
+boundary (`src/wrapper/`):
 
 - `surelog.rs` — Surelog compile sessions: `SurelogSession`, `SessionBuilder`
   (parse/compile/elaborate/`-elabuhdm` flags), structured `Diag`/`Severity`.
 - `vpi.rs` — safe wrapper over the UHDM VPI traversal API: `iterate`/`handle`
   (with the `OwnedHandle` lifetime rule), `get`/`get_str`/`read_value`.
+- `slang.rs` (feature `slang`) — safe in-memory Slang compilation and bounded,
+  owned diagnostics, hierarchy, parameter, type, and constant observations.
 - `process_memory.rs` — platform-specific physical-footprint sampler
   (Linux/macOS/Windows) backing the shared `memory_limit` safeguard; the only
   place `unsafe` platform calls live.
@@ -29,6 +31,13 @@ C-ABI boundary (`src/wrapper/`):
 - Use `#[repr(C)]` for shared structs and `extern "C"` for exported functions.
   Read [../wrapper/AGENTS.md](../wrapper/AGENTS.md) for boundary ownership.
 - Preserve the static `surelog_c_wrapper` link attributes (root build rule).
+- Preserve the Slang wrapper, `svlang`, and `fmt` static link attributes on its
+  feature-gated extern block so native archives cross the Rust library target.
+- Slang inputs distinguish compilation units from admitted include-only
+  buffers. The shim permits cache-only reads, and the Rust facade copies and
+  validates all output before destroying the native snapshot. SystemVerilog
+  string constants remain byte vectors because their contents need not be
+  UTF-8. No native pointer is public.
 - Safe APIs must not expose fabricatable pointers or outlive foreign resources.
   Validate foreign strings, unions, sizes, and handles before use.
 - Each Rust FFI module denies Clippy's `undocumented_unsafe_blocks` lint and

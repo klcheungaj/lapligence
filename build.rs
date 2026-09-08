@@ -1,6 +1,6 @@
-//! build.rs — builds Surelog via CMake (if needed), then compiles the C++
-//! wrapper (surelog_c_api.cpp) and links all Surelog / UHDM / ANTLR /
-//! Cap'n Proto static libraries.
+//! build.rs — builds the native SystemVerilog frontends and their C ABI
+//! wrappers. Surelog remains the default; the `slang` Cargo feature also builds
+//! the experimental Slang wrapper and static dependencies.
 //!
 //! The release matrix targets static-musl Linux on x86_64/aarch64, MSVC
 //! Windows on x86_64/aarch64, and Apple Silicon macOS. Vendored libraries are
@@ -97,6 +97,23 @@ fn emit_rerun_if_changed() {
     println!("cargo:rerun-if-changed=vendor/Surelog/third_party/antlr4_bin");
 }
 
+/// Adds the opt-in Slang build inputs to Cargo's exact build-script watch list.
+fn emit_slang_rerun_if_changed() {
+    println!("cargo:rerun-if-changed=src/wrapper/slang/CMakeLists.txt");
+    println!("cargo:rerun-if-changed=src/wrapper/slang_c_api.cpp");
+    println!("cargo:rerun-if-changed=src/wrapper/slang_c_api.h");
+
+    // Slang generates headers from scripts at build time. Its public headers,
+    // implementation, bundled header dependencies, and CMake modules are all
+    // native build inputs; tools, tests, docs, and Python bindings are disabled.
+    println!("cargo:rerun-if-changed=vendor/slang/CMakeLists.txt");
+    println!("cargo:rerun-if-changed=vendor/slang/cmake");
+    println!("cargo:rerun-if-changed=vendor/slang/external");
+    println!("cargo:rerun-if-changed=vendor/slang/include");
+    println!("cargo:rerun-if-changed=vendor/slang/scripts");
+    println!("cargo:rerun-if-changed=vendor/slang/source");
+}
+
 /// Returns the ccache executable when the user opted in via LLG_CCACHE
 /// and it is present on PATH; None otherwise.  An opt-in without a findable
 /// binary emits a cargo warning instead of silently disabling the cache.
@@ -130,7 +147,7 @@ fn requested_ccache() -> Option<PathBuf> {
 /// a marker file next to the build dir and, whenever it changes, delete
 /// CMakeCache.txt so the next invocation re-configures with the current
 /// defines.  Object files stay valid; only configure re-runs.
-fn sync_launcher_state(build_dir: &Path, active: bool) {
+fn sync_launcher_state(build_dir: &Path, active: bool, component: &str) {
     let state = if active { "ccache" } else { "none" };
     let marker = build_dir.join(".llg_ccache_state");
     let changed = match std::fs::read_to_string(&marker) {
@@ -146,7 +163,7 @@ fn sync_launcher_state(build_dir: &Path, active: bool) {
         match std::fs::remove_file(&cache) {
             Ok(()) => println!(
                 "cargo:warning=LLG_CCACHE setting changed to `{state}`; \
-                 forcing Surelog CMake reconfigure"
+                 forcing {component} CMake reconfigure"
             ),
             Err(e) => panic!(
                 "failed to remove {} while switching the compiler launcher: {e}",
@@ -247,7 +264,7 @@ fn cmake_build_surelog(repo: &Path, build_dir: &Path) {
     // overrides the cached value (an absent -D would leave the stale
     // CMakeCache entry active).
     let ccache = requested_ccache();
-    sync_launcher_state(build_dir, ccache.is_some());
+    sync_launcher_state(build_dir, ccache.is_some(), "Surelog");
     let launcher = ccache
         .as_ref()
         .map(|p| p.to_string_lossy().into_owned())
@@ -286,9 +303,94 @@ fn cmake_build_surelog(repo: &Path, build_dir: &Path) {
     cfg.build();
 }
 
-/// Applies any `.patch` files from the `patches/` directory to the Surelog
-/// submodule. POSIX/GNU `patch(1)` is preferred; `git apply` is the fallback
-/// on hosts such as Windows. Each patch is skipped if it is already applied.
+/// Builds and links the experimental Slang C ABI shim when its Cargo feature
+/// is enabled. The Slang source remains an ordinary vendored checkout; CMake
+/// places all generated files and fetched dependency sources under the
+/// target-specific build directory.
+fn build_slang_wrapper(manifest_dir: &Path) {
+    emit_slang_rerun_if_changed();
+
+    let profile = std::env::var("PROFILE").unwrap_or_else(|_| "default".to_string());
+    // Slang's debug library is exceptionally large and exports no different C
+    // ABI. Keep the native dependency optimized in every Cargo profile; Rust
+    // code and the boundary checks retain the active Cargo profile.
+    let build_type = "Release";
+    let target = std::env::var("TARGET").unwrap_or_default();
+    let target_env = std::env::var("CARGO_CFG_TARGET_ENV").unwrap_or_default();
+    let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
+    let is_msvc = target_env == "msvc";
+    let is_musl = target.contains("musl");
+
+    let project = manifest_dir.join("src/wrapper/slang");
+    let repo = manifest_dir.join("vendor/slang");
+    apply_vendor_patches(&repo, &manifest_dir.join("patches/slang"));
+    let build_dir = manifest_dir
+        .join("target/slang")
+        .join(&target)
+        .join(&profile);
+
+    let mut cfg = cmake::Config::new(project);
+    cfg.out_dir(&build_dir)
+        .profile(build_type)
+        .define("LLG_SLANG_SOURCE_DIR", &repo)
+        .define("CMAKE_INSTALL_LIBDIR", "lib")
+        // Slang v11 pins fmt 12.1.0. Always build that static dependency so
+        // Cargo never accidentally links an incompatible host fmt package.
+        .define("FETCHCONTENT_TRY_FIND_PACKAGE_MODE", "NEVER");
+
+    if is_msvc {
+        cfg.define("CMAKE_MSVC_RUNTIME_LIBRARY", "MultiThreaded")
+            .define("SLANG_WARN_FLAGS", "/w");
+    } else {
+        cfg.define("SLANG_WARN_FLAGS", "-w");
+    }
+
+    let ccache = requested_ccache();
+    sync_launcher_state(&build_dir, ccache.is_some(), "Slang");
+    let launcher = ccache
+        .as_ref()
+        .map(|path| path.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    cfg.define("CMAKE_CXX_COMPILER_LAUNCHER", &launcher);
+
+    if is_musl {
+        let musl_triple = target.replace("-unknown-", "-");
+        let cxx = std::env::var("CXX").unwrap_or_else(|_| format!("{musl_triple}-g++"));
+        cfg.define("CMAKE_CXX_COMPILER", cxx)
+            .define("CMAKE_FIND_LIBRARY_SUFFIXES", ".a");
+    }
+
+    let install_dir = cfg.build();
+    emit_native_search(&install_dir.join("lib"), is_msvc);
+    println!("cargo:rustc-link-lib=static=llg_slang_wrapper");
+    println!("cargo:rustc-link-lib=static=svlang");
+    println!("cargo:rustc-link-lib=static=fmt");
+
+    // Slang's public library enables threads. Keep the platform runtime
+    // dependencies explicit because the Rust library can be consumed by bins
+    // that do not otherwise link C++.
+    match target_os.as_str() {
+        "macos" => println!("cargo:rustc-link-lib=dylib=c++"),
+        "windows" => {}
+        _ if is_musl => {
+            let drivers = collect_driver_candidates();
+            ensure_static_archives(&drivers, &["stdc++"], &["supc++", "gcc_eh", "gcc"]);
+            println!("cargo:rustc-link-lib=static=stdc++");
+            println!("cargo:rustc-link-lib=static=supc++");
+            println!("cargo:rustc-link-lib=static=gcc_eh");
+            println!("cargo:rustc-link-lib=static=gcc");
+            println!("cargo:rustc-link-arg=-static");
+        }
+        _ => {
+            println!("cargo:rustc-link-lib=dylib=stdc++");
+            println!("cargo:rustc-link-lib=dylib=pthread");
+        }
+    }
+}
+
+/// Applies every `.patch` file from `patches_dir` to a vendored repository.
+/// POSIX/GNU `patch(1)` is preferred; `git apply` is the fallback on hosts such
+/// as Windows. Each patch is skipped if it is already applied.
 /// Patches are applied in lexicographic order for deterministic sequencing.
 ///
 /// `patch(1)` remains the primary path because container bind mounts can make
@@ -302,14 +404,18 @@ fn cmake_build_surelog(repo: &Path, build_dir: &Path) {
 /// detection, `--dry-run` makes that probe side-effect free, `-s` keeps the
 /// run silent on success, and `-N` defensively skips hunks that were already
 /// applied when the reverse probe could not detect them.
-fn apply_surelog_patches(repo: &Path, manifest_dir: &Path) {
-    let patches_dir = manifest_dir.join("patches");
+fn apply_vendor_patches(repo: &Path, patches_dir: &Path) {
     if !patches_dir.exists() {
         return;
     }
 
-    let mut patches: Vec<_> = std::fs::read_dir(&patches_dir)
-        .expect("failed to read patches/ directory")
+    let mut patches: Vec<_> = std::fs::read_dir(patches_dir)
+        .unwrap_or_else(|error| {
+            panic!(
+                "failed to read patch directory {}: {error}",
+                patches_dir.display()
+            )
+        })
         .filter_map(|e| e.ok())
         .map(|e| e.path())
         .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("patch"))
@@ -472,7 +578,7 @@ fn build_surelog_wrapper(manifest_dir: &Path) {
     // Patches are applied before CMake runs so that the patched CMakeLists.txt
     // is in place on a freshly-initialised submodule.  Each patch is idempotent
     // (skipped when already applied) so repeated builds are safe.
-    apply_surelog_patches(&repo, manifest_dir);
+    apply_vendor_patches(&repo, &manifest_dir.join("patches"));
 
     // ── Build Surelog via CMake ───────────────────────────────────────────────
     // Always invoke cmake_build_surelog so that -D overrides (e.g. ZLIB_LIBRARY)
@@ -899,5 +1005,8 @@ fn find_libmimalloc_sys_src(manifest_dir: &Path) -> PathBuf {
 
 fn main() {
     let manifest_dir = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
+    if std::env::var_os("CARGO_FEATURE_SLANG").is_some() {
+        build_slang_wrapper(&manifest_dir);
+    }
     build_surelog_wrapper(&manifest_dir);
 }

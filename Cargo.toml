@@ -10,6 +10,9 @@ path = "src/lib.rs"
 
 [features]
 default = ["lsp"]
+# Builds the experimental Slang frontend and its C ABI shim alongside the
+# current Surelog frontend. Slang remains opt-in until the migration gates pass.
+slang = []
 # LSP-only dependencies.  They are used exclusively by the `llg_ls` binary
 # (src/bin/llg_ls), never by the library; the feature is default-on so the
 # normal `cargo build --bin llg_ls` flow is unchanged, and can be disabled for

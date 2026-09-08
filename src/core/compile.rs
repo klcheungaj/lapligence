@@ -14,6 +14,9 @@ use crate::ffi::surelog;
 use crate::ffi::vpi::VpiHandle;
 use std::sync::Mutex;
 
+#[cfg(feature = "slang")]
+pub mod slang;
+
 pub use crate::ffi::surelog::{Diag, Severity};
 
 /// Stage at which Surelog rejected an invocation before diagnostics existed.

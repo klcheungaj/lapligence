@@ -5,6 +5,13 @@
 The common processing core used by both the LSP server (`src/bin/llg_ls`) and
 the simulator (`src/sim/`):
 
+- `compile/slang.rs` — opt-in Slang v11.0 compilation facade behind the
+  `slang` feature. Raw compilation preserves diagnostics after HDL errors;
+  checked compilation withholds observations on frontend failure. Native
+  owners are destroyed before return. Initial hierarchy capture is not a
+  complete owned simulator DB, so frontend success alone never establishes
+  executable capability. The existing Surelog pipeline remains in place
+  while Slang capture and consumer integration are validated.
 - `compile.rs` — unified Surelog pipeline (`CompileOpts`, `CompileOut`,
   `CompileError`, `Diag`): raw `compile` returns partial
   frontend results plus `CompileOut` diagnostics for the LSP, while

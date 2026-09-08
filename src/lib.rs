@@ -19,6 +19,9 @@
 //!   both executable frontends.
 //!
 //! LSP protocol and async dependencies remain in the `llg_ls` binary.
+//! The opt-in `slang` feature adds `core::compile::slang` for owned Slang
+//! diagnostic and hierarchy observations during frontend migration. It does
+//! not replace the simulator's Surelog/UHDM capture yet.
 
 pub mod core;
 pub mod ffi;
