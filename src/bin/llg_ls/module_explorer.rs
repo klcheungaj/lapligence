@@ -1430,7 +1430,17 @@ where
                 break;
             }
             let child_type = clean_name(&child.def_name).to_owned();
+            let child_type_width = child_type.chars().count() as u32;
             let child_resolution = catalog.resolve(&child_type);
+            let source_occurrence = source_definition.children.iter().find(|source_child| {
+                same_name(&source_child.name, &child.name)
+                    && same_name(&source_child.module_type, &child_type)
+            });
+            let child_file = source_occurrence
+                .and_then(|source_child| source_child.file.clone())
+                .or_else(|| child.file.clone());
+            let child_line = source_occurrence.map_or(child.line, |source_child| source_child.line);
+            let child_col = source_occurrence.map_or(child.col, |source_child| source_child.col);
             let Some(child_node) = graph_instance_node(
                 root_id,
                 catalog,
@@ -1438,13 +1448,11 @@ where
                 graph_child_hierarchy(&hierarchy, &child.name),
                 child.name.clone(),
                 child_type,
-                child.file.clone(),
-                child.line,
-                child.col,
-                child.line,
-                child
-                    .col
-                    .saturating_add(clean_name(&child.def_name).chars().count() as u32),
+                child_file,
+                child_line,
+                child_col,
+                child_line,
+                child_col.saturating_add(child_type_width),
                 child_resolution,
                 Some(child),
                 elaborated_lookup,

@@ -58,6 +58,73 @@ fn module_graph_from_slang_deduplicates_definitions_and_uses_utf16_columns() {
     assert_eq!((top.end_line, top.end_col), (1, 18));
 }
 
+#[test]
+fn slang_module_explorer_keeps_repeated_nested_instances_and_source_roots() {
+    let _guards = analysis_guards();
+    let sources = [
+        llg::core::compile::OwnedSource::compilation_unit(
+            "/virtual/tb.sv",
+            "module tb; top u_top(); endmodule\n",
+        ),
+        llg::core::compile::OwnedSource::compilation_unit(
+            "/virtual/top.sv",
+            "module top; child #(.WIDTH(8)) u_child(); child #(.WIDTH(16)) u_wide(); endmodule\n",
+        ),
+        llg::core::compile::OwnedSource::compilation_unit(
+            "/virtual/child.sv",
+            "module child #(parameter int WIDTH = 1); logic [WIDTH-1:0] value; endmodule\n",
+        ),
+    ];
+
+    for configured_top in [None, Some("top".to_owned())] {
+        let analysis = analyze(&CompileOpts {
+            sources: sources.to_vec(),
+            top: configured_top,
+            ..CompileOpts::default()
+        });
+        assert_eq!(
+            analysis.outcome,
+            AnalysisOutcome::Valid,
+            "{:?}",
+            analysis.diagnostics
+        );
+
+        let snapshot = crate::module_explorer::snapshot_analysis("workspace", &analysis, |path| {
+            Some(path.to_owned())
+        });
+        let tb = snapshot
+            .roots
+            .iter()
+            .find(|root| root.module_type == "tb")
+            .unwrap_or_else(|| panic!("missing source root tb: {snapshot:#?}"));
+        let top = tb
+            .children
+            .iter()
+            .find(|child| child.instance_name == "u_top")
+            .unwrap_or_else(|| panic!("missing nested top: {snapshot:#?}"));
+        let children = top
+            .children
+            .iter()
+            .filter(|child| child.module_type == "child")
+            .collect::<Vec<_>>();
+        assert_eq!(children.len(), 2, "{snapshot:#?}");
+        assert!(
+            children
+                .iter()
+                .all(|child| child.content_source.as_deref() == Some("elaborated")),
+            "{snapshot:#?}"
+        );
+        assert_eq!(
+            children
+                .iter()
+                .map(|child| child.params[0].value.as_deref())
+                .collect::<Vec<_>>(),
+            [Some("32'sd8"), Some("32'sd16")],
+            "{snapshot:#?}"
+        );
+    }
+}
+
 /// Restores the process CWD and removes the temp dir even when the body
 /// panics, so a failing test cannot strand other tests in a deleted CWD.
 struct TempDirGuard {

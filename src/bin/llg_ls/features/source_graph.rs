@@ -265,55 +265,69 @@ pub(super) fn module_graph_from_slang(
                 owners.push(child_id);
             }
         }
-    } else {
-        for node in &snapshot.semantic_nodes {
-            if node.kind != SemanticKind::Instance
-                || node.is_top
-                || node.is_uninstantiated
-                || node.name.is_empty()
-                || node.definition_name.is_empty()
-            {
-                continue;
-            }
-            let mut owner = node
-                .parent_id
+    }
+    for node in &snapshot.semantic_nodes {
+        if node.kind != SemanticKind::Instance
+            || node.is_top
+            || (database.is_some() && !node.is_uninstantiated)
+            || node.name.is_empty()
+            || node.definition_name.is_empty()
+        {
+            continue;
+        }
+        let mut owner = node
+            .parent_id
+            .and_then(|id| semantic_by_id.get(&id).copied());
+        while owner.is_some_and(|parent| {
+            !matches!(
+                parent.kind,
+                SemanticKind::Instance | SemanticKind::Definition
+            )
+        }) {
+            owner = owner
+                .and_then(|parent| parent.parent_id)
                 .and_then(|id| semantic_by_id.get(&id).copied());
-            while owner.is_some_and(|parent| parent.kind != SemanticKind::Instance) {
-                owner = owner
-                    .and_then(|parent| parent.parent_id)
-                    .and_then(|id| semantic_by_id.get(&id).copied());
-            }
-            let Some(owner) = owner else { continue };
-            if owner.range == node.range
-                && owner.name == node.name
-                && owner.definition_name == node.definition_name
-            {
-                continue;
-            }
-            let owner_name = clean_name(&owner.definition_name);
-            let (file, line, col) = node
-                .range
-                .and_then(|range| {
-                    let file = *files.get(&range.file_id)?;
-                    let text = *texts.get(file)?;
-                    let (line, col) = graph_position(text, range.start);
-                    Some((Some(file.to_owned()), line, col))
-                })
-                .unwrap_or((None, 0, 0));
-            let child = ModuleGraphInstance {
-                name: node.name.clone(),
-                module_type: clean_name(&node.definition_name).to_owned(),
-                file,
-                line,
-                col,
-            };
-            for definition in definitions
-                .iter_mut()
-                .filter(|definition| clean_name(&definition.name) == owner_name)
-            {
-                if !definition.children.contains(&child) {
-                    definition.children.push(child.clone());
+        }
+        let Some(owner) = owner else { continue };
+        if owner.range == node.range
+            && owner.name == node.name
+            && owner.definition_name == node.definition_name
+        {
+            continue;
+        }
+        let owner_name = if owner.kind == SemanticKind::Definition {
+            clean_name(&owner.name)
+        } else {
+            clean_name(&owner.definition_name)
+        };
+        let (file, line, col) = node
+            .range
+            .and_then(|range| {
+                let file = *files.get(&range.file_id)?;
+                let text = *texts.get(file)?;
+                let (line, col) = graph_position(text, range.start);
+                Some((Some(file.to_owned()), line, col))
+            })
+            .unwrap_or((None, 0, 0));
+        let child = ModuleGraphInstance {
+            name: node.name.clone(),
+            module_type: clean_name(&node.definition_name).to_owned(),
+            file,
+            line,
+            col,
+        };
+        for definition in definitions
+            .iter_mut()
+            .filter(|definition| clean_name(&definition.name) == owner_name)
+        {
+            if let Some(existing) = definition.children.iter_mut().find(|existing| {
+                existing.name == child.name && existing.module_type == child.module_type
+            }) {
+                if node.is_uninstantiated {
+                    *existing = child.clone();
                 }
+            } else {
+                definition.children.push(child.clone());
             }
         }
     }
@@ -456,7 +470,7 @@ pub(super) fn module_graph_from_slang(
                     definition.signals.push(ModuleGraphSignal {
                         name: node.name.clone(),
                         kind: if node.kind == SemanticKind::Net {
-                            "net".to_owned()
+                            source_net_kind(node.subkind).to_owned()
                         } else if node.kind == SemanticKind::Array {
                             "array".to_owned()
                         } else {
@@ -525,6 +539,24 @@ pub(super) fn module_graph_from_slang(
     }
 }
 
+fn source_net_kind(subkind: u32) -> &'static str {
+    match subkind {
+        128 => "wire",
+        129 => "wand",
+        130 => "wor",
+        131 => "tri",
+        132 => "triand",
+        133 => "trior",
+        134 => "tri0",
+        135 => "tri1",
+        136 => "trireg",
+        137 => "supply0",
+        138 => "supply1",
+        139 => "uwire",
+        _ => "net",
+    }
+}
+
 fn slang_packed_ranges(
     mut type_id: u64,
     types: &HashMap<u64, &llg::ffi::slang::Type>,
@@ -569,11 +601,48 @@ fn source_decl_type(
     }
     let line_start = text[..start].rfind('\n').map_or(0, |at| at + 1);
     let line_end = text[end..].find('\n').map_or(text.len(), |at| end + at);
-    let prefix_text = text[line_start..start]
+    let mut prefix_text = text[line_start..start]
         .rsplit(['(', ',', ';'])
         .next()
         .unwrap_or_default()
-        .trim();
+        .trim()
+        .to_owned();
+    // Slang locates a declarator at its name. For a declaration whose shared
+    // data type ends on preceding lines, the name's line contains only
+    // indentation. Walk through bracket-only continuation lines until the
+    // base type is owned as well.
+    let has_base_type = |value: &str| {
+        let mut bracket_depth = 0_u32;
+        value.chars().any(|character| match character {
+            '[' => {
+                bracket_depth = bracket_depth.saturating_add(1);
+                false
+            }
+            ']' => {
+                bracket_depth = bracket_depth.saturating_sub(1);
+                false
+            }
+            _ => bracket_depth == 0 && (character.is_alphanumeric() || character == '_'),
+        })
+    };
+    let mut previous_end = line_start.saturating_sub(1);
+    while !has_base_type(&prefix_text) && previous_end > 0 {
+        let previous_start = text[..previous_end].rfind('\n').map_or(0, |at| at + 1);
+        let previous = text[previous_start..previous_end]
+            .rsplit(['(', ',', ';'])
+            .next()
+            .unwrap_or_default()
+            .trim_end_matches('\r')
+            .trim();
+        if !previous.is_empty() {
+            prefix_text = if prefix_text.is_empty() {
+                previous.to_owned()
+            } else {
+                format!("{previous} {prefix_text}")
+            };
+        }
+        previous_end = previous_start.saturating_sub(1);
+    }
     let mut prefix = prefix_text.to_owned();
     for keyword in ["input", "output", "inout", "parameter", "localparam"] {
         if prefix
@@ -600,7 +669,7 @@ fn source_decl_type(
     let brackets = |value: &str| value.bytes().filter(|byte| *byte == b'[').count();
     let unpacked_dimensions = brackets(suffix);
     let packed_dimensions = brackets(&prefix);
-    let detail = [prefix_text, name, suffix]
+    let detail = [prefix_text.as_str(), name, suffix]
         .into_iter()
         .filter(|part| !part.is_empty())
         .collect::<Vec<_>>()
@@ -642,4 +711,34 @@ fn graph_position(text: &str, offset: u64) -> (u32, u32) {
         }
     }
     (line, col)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn source_decl_type_keeps_a_shared_type_from_the_previous_line() {
+        let text = "output logic\n    [WIDTH-1:0]\n    payload [0:3],\n";
+        let start = text.find("payload").expect("payload offset");
+        let end = start + "payload".len();
+        let (display, shape, detail) = source_decl_type(
+            text,
+            llg::ffi::slang::SourceRange {
+                file_id: 1,
+                start: start as u64,
+                end: end as u64,
+            },
+            "payload",
+        )
+        .expect("declaration type");
+
+        assert_eq!(display.as_deref(), Some("logic [WIDTH-1:0] [0:3]"));
+        assert_eq!(shape.packed_dimensions, 1);
+        assert_eq!(shape.unpacked_dimensions, 1);
+        assert_eq!(
+            detail.as_deref(),
+            Some("output logic [WIDTH-1:0] payload [0:3]")
+        );
+    }
 }

@@ -34,7 +34,10 @@ Small, well-contained C-ABI translation layers over native C++ APIs so Rust
   `ReportedDiagnostic` records. Preserve intrinsic compiler errors even when a
   diagnostic is suppressed, and also record effective error severities.
 - The Slang capture must contain every semantic record required by the Rust
-  semantic IR. Do not silently treat unsupported semantic data as captured.
+  semantic IR. It also emits owned, uninstantiated source-instance records from
+  module syntax so consumers retain source topology for definitions excluded by
+  top-selected elaboration. Do not silently treat unsupported semantic data as
+  captured.
 - Match Slang driver's default downstream analysis checks for unused and
   shadowed declarations. Changes to enabled checks require fixture evidence and
   corresponding language-server diagnostic policy review.

@@ -13,6 +13,11 @@ projects the design model, runs lint when the frontend is valid, and constructs
 the lexical token and symbol indexes. Native handles and AST pointers never
 enter feature code.
 
+The module source graph merges elaborated DB instances with the snapshot's
+owned source-instance records. Slang does not elaborate bodies excluded by an
+explicit top selection, so those records preserve incoming edges, root
+classification, and declaration fallback without reparsing or reading files.
+
 Use Slang lexical tokens and their semantic IDs for declaration/reference
 identity. `core::tokens::RefBindings` maps zero-based source positions to exact
 owned declaration targets. Conflicting targets at the same position remain

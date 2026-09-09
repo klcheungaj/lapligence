@@ -1249,6 +1249,47 @@ void addDriveStrength(LlgSlangSemanticNode& node,
   node.strength1 = semanticDriveStrength(strength.second);
 }
 
+class SourceInstanceCapture final
+    : public syntax::SyntaxVisitor<SourceInstanceCapture> {
+public:
+  SourceInstanceCapture(Capture& capture, uint64_t definitionId)
+      : capture(capture), definitionId(definitionId) {}
+
+  void handle(const syntax::HierarchyInstantiationSyntax& syntaxNode) {
+    const std::string_view moduleType = syntaxNode.type.valueText();
+    if (moduleType.empty())
+      return;
+
+    for (const syntax::HierarchicalInstanceSyntax* instance : syntaxNode.instances) {
+      if (!instance || !instance->decl)
+        continue;
+      const std::string_view name = instance->decl->name.valueText();
+      if (name.empty())
+        continue;
+
+      const uint64_t id = capture.newSyntheticSemantic();
+      auto& result = capture.output.semantic_nodes[static_cast<size_t>(id)];
+      result.parent_id = definitionId;
+      result.kind = LLG_SLANG_SEMANTIC_INSTANCE;
+      result.subkind = LLG_SLANG_INSTANCE_SINGLE;
+      result.flags |= LLG_SLANG_SEMANTIC_UNINSTANTIATED;
+      result.name = storeString(capture.output, name);
+      result.definition_name = storeString(capture.output, moduleType);
+      result.detail = storeString(capture.output, "SourceInstance");
+      result.range = capture.span(syntaxNode.type.range());
+      capture.semanticChild(definitionId, id);
+    }
+  }
+
+  // A nested module is a separate definition and must not contribute source
+  // instances to its lexical parent.
+  void handle(const syntax::ModuleDeclarationSyntax&) {}
+
+private:
+  Capture& capture;
+  uint64_t definitionId;
+};
+
 class SemanticCapture final
     : public ASTVisitor<SemanticCapture, VisitFlags::AllGood | VisitFlags::Bad> {
 public:
@@ -1349,6 +1390,15 @@ public:
       addTimeScale(result, symbol.timeScale);
       if (symbol.getInstanceCount() == 0)
         result.flags |= LLG_SLANG_SEMANTIC_UNINSTANTIATED;
+      if (symbol.definitionKind == DefinitionKind::Module) {
+        const syntax::SyntaxNode* syntaxNode = symbol.getSyntax();
+        if (syntaxNode && syntax::ModuleDeclarationSyntax::isKind(syntaxNode->kind)) {
+          SourceInstanceCapture sourceInstances(capture, id);
+          const auto& declaration = syntaxNode->as<syntax::ModuleDeclarationSyntax>();
+          for (const syntax::MemberSyntax* member : declaration.members)
+            member->visit(sourceInstances);
+        }
+      }
     }
     if constexpr (std::same_as<T, PackageSymbol>)
       addTimeScale(result, symbol.timeScale);
