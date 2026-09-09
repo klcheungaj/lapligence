@@ -1,7 +1,8 @@
 //! sim — Verilog/SystemVerilog → C11 code generation and simulation runtime.
 //!
-//! [`codegen::generate`] captures an elaborated UHDM design, lowers it to
-//! [`ir`], applies [`opt`], and renders it through [`emit_c`]. [`rt`] provides
+//! [`codegen::generate`] lowers a frontend-neutral [`semantic`] model into
+//! typed [`execution`] blocks, applies [`opt`], and renders them through
+//! [`emit_c`]. [`rt`] provides
 //! the embedded C runtime and vendored libaco sources. The single model builder is
 //! [`build::build_model_cmake`] (CMake-only; invoked automatically right
 //! after C emission — see the `build` module docs for env vars and generator
@@ -13,9 +14,11 @@
 pub mod build;
 pub mod codegen;
 pub mod emit_c;
+pub mod execution;
 pub mod ir;
 pub mod opt;
 pub mod rt;
+pub mod semantic;
 
 use std::path::Path;
 

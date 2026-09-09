@@ -1,4 +1,4 @@
-// Test design to check Surelog elaboration completeness
+// Test design to check frontend elaboration completeness
 // Features: parameter propagation, generate blocks, hierarchy, port connections
 
 module counter #(

@@ -6,8 +6,8 @@
 - `llg`: simulator driver and compile/lint/build/run presentation.
 - `llg_ls`: feature-gated tower-lsp stdio server; see
   [llg_ls/readme.md](llg_ls/readme.md).
-- `elab_check`: elaboration and instance-tree checker.
-- `hellouhdm`, `helloworld`, `llg_demo`: low-level API demonstrations.
+- `elab_check`: owned semantic-database and instance-tree checker.
+- `helloslang`, `helloworld`, `llg_demo`: Slang snapshot demonstrations.
 
 - Boundary: binaries use the shared core/FFI/simulator libraries; LSP-specific
   dependencies remain behind the `lsp` feature.

@@ -57,7 +57,7 @@ impl LintRule for WidthMismatchRule {
                         | Direction::Mixed
                         | Direction::None
                         | Direction::Ref
-                        | Direction::Unknown(_) => (None, None),
+                        | Direction::Unsupported => (None, None),
                     };
                     let (Some(lhs), Some(rhs)) = (lhs, rhs) else {
                         continue;

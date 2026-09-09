@@ -4,7 +4,7 @@
 //! `.v`/`.sv` discovery, longest-root ownership, `config::compile_opts`,
 //! [`features::analyze_with_config`]) without staging any buffers, then prints
 //! one deterministic line per indexed token occurrence: location, name, raw
-//! VPI type, decl-vs-reference classification, semantic-token legend
+//! lexical kind, declaration/reference classification, semantic-token legend
 //! classification and the elaboration binding target.  The output is meant to
 //! be diffed or pasted verbatim when navigation correctness on a real project
 //! must be checked away from an editor.
@@ -26,7 +26,7 @@ use crate::config::{self, LlgConfig};
 use crate::features::{self, Analysis, AnalysisOutcome};
 use crate::semantic_tokens;
 use crate::workspace::{self, RootDescriptor};
-use llg::core::vobject_types::{VObjectType, VObjectTypeShifted, PARSE_OFFSET};
+use llg::core::tokens;
 
 // ── Entry point ───────────────────────────────────────────────────────────────
 
@@ -112,7 +112,7 @@ pub fn run(target: &Path) -> i32 {
     print_report(files.len(), &rows, &analysis);
 
     // Nothing user-owned lives under the shadow base in dump mode; remove the
-    // scratch tree the analysis parked Surelog artifacts in.
+    // private tree used for admitted source mirrors.
     features::cleanup_process_shadow();
     0
 }
@@ -209,7 +209,7 @@ pub(crate) struct OutRow {
     col: u32,
     end_col: u32,
     name: String,
-    vpi: String,
+    token_kind: String,
     is_decl: bool,
     sym: Option<(String, Vec<String>)>,
     bind: Option<BindOut>,
@@ -403,7 +403,7 @@ pub(crate) fn collect_rows_for(
                 col: col0,
                 end_col: col0.saturating_add(name.chars().count() as u32),
                 name: name.to_owned(),
-                vpi: vpi_type_name(node.vpi_type),
+                token_kind: token_kind_name(node.kind),
                 is_decl,
                 sym,
                 bind,
@@ -473,7 +473,7 @@ pub(crate) fn format_rows(files_label: &str, rows: &[OutRow], analysis: &Analysi
             col: row.col,
             end_col: row.end_col,
             name: &row.name,
-            vpi: &row.vpi,
+            token_kind: &row.token_kind,
             is_decl: row.is_decl,
             sym: row
                 .sym
@@ -517,7 +517,7 @@ pub(crate) struct LineParts<'a> {
     pub col: u32,
     pub end_col: u32,
     pub name: &'a str,
-    pub vpi: &'a str,
+    pub token_kind: &'a str,
     pub is_decl: bool,
     /// Legend type name plus modifier names; `None` renders `sym=-`.
     pub sym: Option<(&'a str, &'a [String])>,
@@ -537,7 +537,7 @@ pub(crate) struct BindParts<'a> {
 /// Render one report line in the stable machine-parseable format:
 ///
 /// ```text
-/// <relfile>:<line0>:<col0>-<col1>\t<name>\tvpi=<VpiTypeName>\tDECL|REF\tsym=<type>[/<mods>]\tbind=<relfile>:<line0>:<col0>[<name>,<kind>]|\t[via=label][\tvia=connection]
+/// <relfile>:<line0>:<col0>-<col1>\t<name>\tkind=<TokenKind>\tDECL|REF\tsym=<type>[/<mods>]\tbind=<relfile>:<line0>:<col0>[<name>,<kind>]|\t[via=label][\tvia=connection]
 /// ```
 ///
 /// `bind=-` marks an unbound occurrence; `via=label` / `via=connection` are
@@ -551,13 +551,13 @@ pub(crate) fn format_line(parts: &LineParts) -> String {
         None => "-".to_owned(),
     };
     let mut line = format!(
-        "{file}:{line}:{col}-{end}\t{name}\tvpi={vpi}\t{classification}\tsym={sym}\tbind=",
+        "{file}:{line}:{col}-{end}\t{name}\tkind={token_kind}\t{classification}\tsym={sym}\tbind=",
         file = parts.file,
         line = parts.line,
         col = parts.col,
         end = parts.end_col,
         name = parts.name,
-        vpi = parts.vpi,
+        token_kind = parts.token_kind,
     );
     match &parts.bind {
         Some(bind) => {
@@ -577,89 +577,44 @@ pub(crate) fn format_line(parts: &LineParts) -> String {
     line
 }
 
-// ── VPI type names ────────────────────────────────────────────────────────────
+// ── Lexical kind names ───────────────────────────────────────────────────────
 
-/// Stable name of a collected token's VPI / synthetic / parse-tree type.
-///
-/// Parse-tree types arrive shifted by [`PARSE_OFFSET`]; their names come from
-/// the `VObjectType` variant (`paWIRE`, `paModule_keyword`, …).  Unknown
-/// values render as `vpi-<n>` so the dump stays parseable on new types.
-fn vpi_type_name(vpi_type: i32) -> String {
+fn token_kind_name(kind: i32) -> String {
+    let (base, declaration) = tokens::token_base_kind(kind);
     const NAMES: &[(i32, &str)] = &[
-        (llg::ffi::vpi::vpiModule, "vpiModule"),
-        (llg::ffi::vpi::uhdmmodule_inst, "uhdmmodule_inst"),
-        (llg::ffi::vpi::uhdmpackage, "uhdmpackage"),
-        (llg::ffi::vpi::uhdminterface_inst, "uhdminterface_inst"),
-        (llg::ffi::vpi::uhdmclass_defn, "uhdmclass_defn"),
-        (llg::ffi::vpi::uhdmenum_typespec, "uhdmenum_typespec"),
-        (llg::ffi::vpi::uhdmenum_const, "uhdmenum_const"),
-        (llg::ffi::vpi::uhdmstruct_typespec, "uhdmstruct_typespec"),
-        (llg::ffi::vpi::uhdmunion_typespec, "uhdmunion_typespec"),
-        (llg::ffi::vpi::vpiFunction, "vpiFunction"),
-        (llg::ffi::vpi::vpiTask, "vpiTask"),
-        (llg::ffi::vpi::uhdmfunction, "uhdmfunction"),
-        (llg::ffi::vpi::uhdmtask, "uhdmtask"),
-        (llg::ffi::vpi::vpiParameter, "vpiParameter"),
-        (llg::ffi::vpi::vpiSpecParam, "vpiSpecParam"),
-        (llg::ffi::vpi::uhdmparameter, "uhdmparameter"),
-        (llg::ffi::vpi::TOKEN_PORT_INPUT, "TOKEN_PORT_INPUT"),
-        (llg::ffi::vpi::TOKEN_PORT_OUTPUT, "TOKEN_PORT_OUTPUT"),
-        (llg::ffi::vpi::TOKEN_PORT_INOUT, "TOKEN_PORT_INOUT"),
+        (tokens::TOKEN_SLANG_MODULE, "module"),
+        (tokens::TOKEN_SLANG_INTERFACE, "interface"),
+        (tokens::TOKEN_SLANG_PROGRAM, "program"),
+        (tokens::TOKEN_SLANG_PACKAGE, "package"),
+        (tokens::TOKEN_SLANG_CLASS, "class"),
+        (tokens::TOKEN_SLANG_ENUM_MEMBER, "enum-member"),
+        (tokens::TOKEN_SLANG_TYPE_ALIAS, "type-alias"),
+        (tokens::TOKEN_SLANG_PARAMETER, "parameter"),
+        (tokens::TOKEN_SLANG_PORT, "port"),
+        (tokens::TOKEN_SLANG_VARIABLE, "variable"),
+        (tokens::TOKEN_SLANG_NET, "net"),
+        (tokens::TOKEN_SLANG_FUNCTION, "function"),
+        (tokens::TOKEN_SLANG_TASK, "task"),
+        (tokens::TOKEN_SLANG_IDENTIFIER, "identifier"),
         (
-            llg::ffi::vpi::TOKEN_PORT_CONN_LABEL,
-            "TOKEN_PORT_CONN_LABEL",
+            tokens::TOKEN_SLANG_PORT_CONNECTION_LABEL,
+            "port-connection-label",
         ),
         (
-            llg::ffi::vpi::TOKEN_PARAM_CONN_LABEL,
-            "TOKEN_PARAM_CONN_LABEL",
-        ),
-        (llg::ffi::vpi::vpiPort, "vpiPort"),
-        (llg::ffi::vpi::vpiPortBit, "vpiPortBit"),
-        (llg::ffi::vpi::vpiNet, "vpiNet"),
-        (llg::ffi::vpi::vpiNetBit, "vpiNetBit"),
-        (llg::ffi::vpi::uhdmlogic_net, "uhdmlogic_net"),
-        (llg::ffi::vpi::uhdmnet, "uhdmnet"),
-        (llg::ffi::vpi::vpiReg, "vpiReg"),
-        (llg::ffi::vpi::vpiRegBit, "vpiRegBit"),
-        (llg::ffi::vpi::vpiIntegerVar, "vpiIntegerVar"),
-        (llg::ffi::vpi::vpiRealVar, "vpiRealVar"),
-        (llg::ffi::vpi::vpiTimeVar, "vpiTimeVar"),
-        (llg::ffi::vpi::vpiLogicVar, "vpiLogicVar"),
-        (llg::ffi::vpi::uhdmlogic_var, "uhdmlogic_var"),
-        (llg::ffi::vpi::uhdmint_var, "uhdmint_var"),
-        (llg::ffi::vpi::uhdmreal_var, "uhdmreal_var"),
-        (llg::ffi::vpi::uhdmbit_var, "uhdmbit_var"),
-        (llg::ffi::vpi::uhdmbyte_var, "uhdmbyte_var"),
-        (llg::ffi::vpi::uhdmshort_int_var, "uhdmshort_int_var"),
-        (llg::ffi::vpi::uhdmlong_int_var, "uhdmlong_int_var"),
-        (llg::ffi::vpi::uhdmref_obj, "uhdmref_obj"),
-        (llg::ffi::vpi::uhdmref_var, "uhdmref_var"),
-        (llg::ffi::vpi::vpiRefObj, "vpiRefObj"),
-        (
-            VObjectTypeShifted::ppMacroInstanceNoArgs as i32,
-            "ppMacroInstanceNoArgs",
-        ),
-        (
-            VObjectTypeShifted::ppMacroInstanceWithArgs as i32,
-            "ppMacroInstanceWithArgs",
-        ),
-        (
-            VObjectTypeShifted::ppMacro_definition as i32,
-            "ppMacro_definition",
+            tokens::TOKEN_SLANG_PARAMETER_CONNECTION_LABEL,
+            "parameter-connection-label",
         ),
     ];
     for (value, name) in NAMES {
-        if *value == vpi_type {
-            return (*name).to_owned();
+        if *value == base {
+            return if declaration {
+                format!("{name}-declaration")
+            } else {
+                (*name).to_owned()
+            };
         }
     }
-    if vpi_type >= PARSE_OFFSET {
-        let type_id = (vpi_type - PARSE_OFFSET) as u16;
-        if let Ok(variant) = VObjectType::try_from(type_id) {
-            return format!("{variant:?}");
-        }
-    }
-    format!("vpi-{vpi_type}")
+    format!("token-{kind}")
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -682,7 +637,7 @@ mod tests {
             col: 62,
             end_col: 65,
             name: "clk",
-            vpi: "uhdmref_obj",
+            token_kind: "identifier",
             is_decl: false,
             sym: Some(("parameter", &modifiers)),
             bind: Some(BindParts {
@@ -697,7 +652,7 @@ mod tests {
         };
         assert_eq!(
             format_line(&parts),
-            "m_a.sv:1:62-65\tclk\tvpi=uhdmref_obj\tREF\tsym=parameter/readonly\tbind=m_a.sv:0:23[clk,port]"
+            "m_a.sv:1:62-65\tclk\tkind=identifier\tREF\tsym=parameter/readonly\tbind=m_a.sv:0:23[clk,port]"
         );
     }
 
@@ -709,14 +664,14 @@ mod tests {
             col: 8,
             end_col: 10,
             name: "wa",
-            vpi: "uhdmlogic_var",
+            token_kind: "variable",
             is_decl: true,
             sym: Some(("variable", &[])),
             bind: None,
         };
         assert_eq!(
             format_line(&parts),
-            "tb.sv:2:8-10\twa\tvpi=uhdmlogic_var\tDECL\tsym=variable\tbind=-"
+            "tb.sv:2:8-10\twa\tkind=variable\tDECL\tsym=variable\tbind=-"
         );
     }
 
@@ -729,7 +684,7 @@ mod tests {
             col: 12,
             end_col: 15,
             name: "clk",
-            vpi: "vpiFunction",
+            token_kind: "function",
             is_decl: false,
             sym: None,
             bind: Some(BindParts {
@@ -744,7 +699,7 @@ mod tests {
         };
         assert_eq!(
             format_line(&parts),
-            "top.sv:5:12-15\tclk\tvpi=vpiFunction\tREF\tsym=-\tbind=child.sv:3:12[clk,port]\tvia=label"
+            "top.sv:5:12-15\tclk\tkind=function\tREF\tsym=-\tbind=child.sv:3:12[clk,port]\tvia=label"
         );
     }
 
@@ -760,7 +715,7 @@ mod tests {
             col: 16,
             end_col: 18,
             name: "wa",
-            vpi: "uhdmlogic_var",
+            token_kind: "variable",
             is_decl: false,
             sym: Some(("variable", &[])),
             bind: Some(BindParts {
@@ -775,7 +730,7 @@ mod tests {
         };
         assert_eq!(
             format_line(&parts),
-            "top.sv:5:16-18\twa\tvpi=uhdmlogic_var\tREF\tsym=variable\tbind=child.sv:3:12[clk,port]\tvia=connection"
+            "top.sv:5:16-18\twa\tkind=variable\tREF\tsym=variable\tbind=child.sv:3:12[clk,port]\tvia=connection"
         );
     }
 
@@ -821,16 +776,15 @@ mod tests {
     }
 
     #[test]
-    fn vpi_type_names_cover_vpi_parse_and_unknown_ranges() {
-        assert_eq!(vpi_type_name(llg::ffi::vpi::uhdmref_obj), "uhdmref_obj");
+    fn token_kind_names_cover_declarations_and_unknown_values() {
         assert_eq!(
-            vpi_type_name(llg::ffi::vpi::TOKEN_PORT_INPUT),
-            "TOKEN_PORT_INPUT"
+            token_kind_name(tokens::TOKEN_SLANG_IDENTIFIER),
+            "identifier"
         );
         assert_eq!(
-            vpi_type_name(PARSE_OFFSET + VObjectType::paWIRE as i32),
-            "paWIRE"
+            token_kind_name(tokens::TOKEN_SLANG_PORT + tokens::TOKEN_DECLARATION_OFFSET),
+            "port-declaration"
         );
-        assert_eq!(vpi_type_name(999_999), "vpi-999999");
+        assert_eq!(token_kind_name(999_999), "token-999999");
     }
 }

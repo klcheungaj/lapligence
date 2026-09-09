@@ -25,7 +25,7 @@ fn run_fixture_bytes_with_codegen_rejection(
     let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/sim/data_types_next")
         .join(file);
-    sim_harness::with_surelog_temp_cwd("data-types-next", |dir| {
+    sim_harness::with_frontend_temp_cwd("data-types-next", |dir| {
         let source = dir.join(file);
         std::fs::copy(&fixture, &source).map_err(|error| format!("copy fixture: {error}"))?;
         let compiled = compile::compile_checked(&compile::CompileOpts {
@@ -34,11 +34,8 @@ fn run_fixture_bytes_with_codegen_rejection(
             ..Default::default()
         })
         .map_err(|error| format!("{file}: compile: {error}"))?;
-        let database = Db::build_with_source_files(
-            compiled.uhdm_design().ok_or("no UHDM design")?,
-            &compiled.frontend_source_files(),
-        )
-        .map_err(|error| format!("{file}: database: {error}"))?;
+        let database = Db::from_slang(&compiled.snapshot)
+            .map_err(|error| format!("{file}: database: {error}"))?;
 
         let mut failures = Vec::new();
         for (variant, options) in [
@@ -92,7 +89,7 @@ fn run_rejection_fixture(file: &str) {
     let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/sim/data_types_next")
         .join(file);
-    sim_harness::with_surelog_temp_cwd("data-types-next-rejection", |dir| {
+    sim_harness::with_frontend_temp_cwd("data-types-next-rejection", |dir| {
         let source = dir.join(file);
         std::fs::copy(&fixture, &source).map_err(|error| format!("copy fixture: {error}"))?;
         let compiled = compile::compile(&compile::CompileOpts {
@@ -112,11 +109,8 @@ fn run_rejection_fixture(file: &str) {
             };
         }
 
-        let database = Db::build_with_source_files(
-            compiled.uhdm_design().ok_or("no UHDM design")?,
-            &compiled.frontend_source_files(),
-        )
-        .map_err(|error| format!("{file}: database: {error}"))?;
+        let database = Db::from_slang(&compiled.snapshot)
+            .map_err(|error| format!("{file}: database: {error}"))?;
         for (variant, options) in [
             ("unoptimized", OptConfig::none()),
             ("optimized", OptConfig::default()),
@@ -132,6 +126,39 @@ fn run_rejection_fixture(file: &str) {
         Ok(())
     })
     .expect("next-phase datatype rejection conformance");
+}
+
+#[test]
+fn distinct_unpacked_struct_typedefs_are_not_assignment_compatible() {
+    let source = r#"module tb;
+    typedef struct { logic [7:0] value; } left_t;
+    typedef struct { logic [7:0] value; } right_t;
+    left_t left;
+    right_t right;
+    initial left = right;
+endmodule
+"#;
+    sim_harness::with_frontend_temp_cwd("unpacked-nominal-mismatch", |dir| {
+        let source_path = dir.join("tb.sv");
+        std::fs::write(&source_path, source).map_err(|error| error.to_string())?;
+        let options = compile::CompileOpts {
+            files: vec![source_path.to_string_lossy().into_owned()],
+            top: Some("tb".to_owned()),
+            ..Default::default()
+        };
+        let partial = compile::compile(&options).map_err(|error| error.to_string())?;
+        if partial.ok() {
+            return Err("Slang accepted assignment between distinct unpacked typedefs".into());
+        }
+        if !matches!(
+            compile::compile_checked(&options),
+            Err(compile::CompileError::FrontendDiagnostics(_))
+        ) {
+            return Err("checked compilation did not withhold the invalid design".into());
+        }
+        Ok(())
+    })
+    .expect("distinct unpacked typedefs must remain nominally incompatible");
 }
 
 macro_rules! datatype_case {

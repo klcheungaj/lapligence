@@ -36,10 +36,7 @@ endmodule
         ..Default::default()
     })
     .map_err(|error| format!("compile: {error}"))?;
-    let source_files = out.frontend_source_files();
-    let design = out.uhdm_design().ok_or("no UHDM design")?;
-    llg::core::db::Db::build_with_source_files(design, &source_files)
-        .map_err(|error| error.to_string())
+    llg::core::db::Db::from_slang(&out.snapshot).map_err(|error| error.to_string())
 }
 
 fn build_and_run(
@@ -93,7 +90,7 @@ endmodule
     );
 
     let (optimized, unoptimized) =
-        sim_harness::with_surelog_temp_cwd("time-literal-rounding", |dir| {
+        sim_harness::with_frontend_temp_cwd("time-literal-rounding", |dir| {
             let database = compile_database(dir, source)?;
             Ok((
                 build_and_run(dir, &database, &OptConfig::default(), "optimized"),
@@ -106,7 +103,7 @@ endmodule
 }
 
 fn codegen_error(source: &str, tag: &str) -> String {
-    sim_harness::with_surelog_temp_cwd(tag, |dir| {
+    sim_harness::with_frontend_temp_cwd(tag, |dir| {
         let database = compile_database(dir, source)?;
         match sim::codegen::generate_from_db_with_opts(&database, &OptConfig::default()) {
             Ok(_) => Err("codegen unexpectedly accepted delay".to_string()),
@@ -149,7 +146,7 @@ endmodule
         "global=1600 marker=4 a=9\n",
         "global=1900 marker=5 a=9\n",
     );
-    sim_harness::with_surelog_temp_cwd("scientific-real-delay", |dir| {
+    sim_harness::with_frontend_temp_cwd("scientific-real-delay", |dir| {
         let database = compile_database(dir, source)?;
         for (name, options) in [("off", OptConfig::none()), ("on", OptConfig::default())] {
             assert_eq!(
@@ -185,7 +182,7 @@ fn sim_local_variable_shadows_real_delay_parameter() {
 }
 
 #[test]
-fn sim_task_argument_shadows_real_delay_parameter() {
+fn sim_task_argument_delay_is_rejected_as_runtime_valued() {
     let source = r#"module tb;
     parameter real P = 0.25;
     task t(input integer P);
@@ -199,25 +196,40 @@ endmodule
 "#;
     let error = codegen_error(source, "shadowed-task-delay");
     assert!(
-        error.contains("parameter") || error.contains("identifier"),
+        error.contains("procedural delay") && error.contains("runtime-valued"),
         "{error}"
     );
 }
 
-/// General arithmetic over real/time literals remains outside this literal
-/// slice and is rejected instead of being evaluated with incomplete context.
+/// A typed expression containing multiple unit-suffixed literals lowers
+/// without source-text reconstruction.
 #[test]
-fn sim_time_literal_expression_is_rejected() {
+fn sim_time_literal_expression_is_supported() {
+    if !sim::build::cmake_available() {
+        eprintln!("SKIP: cmake not available");
+        return;
+    }
     let source = r#"`timescale 1ns/100ps
 module tb;
-    initial #(1ns + 1ns) $finish;
+    initial begin
+        #(1ns + 1ns) $display("time=%0t", $time);
+        $finish;
+    end
 endmodule
 "#;
-    let error = codegen_error(source, "time-literal-expression");
-    assert!(
-        error.contains("unsupported token"),
-        "unexpected codegen error: {error}"
-    );
+    sim_harness::with_frontend_temp_cwd("time-literal-expression", |dir| {
+        let database = compile_database(dir, source)?;
+        assert_eq!(
+            build_and_run(dir, &database, &OptConfig::default(), "optimized")?,
+            "time=2\n"
+        );
+        assert_eq!(
+            build_and_run(dir, &database, &OptConfig::none(), "unoptimized")?,
+            "time=2\n"
+        );
+        Ok(())
+    })
+    .expect("typed time-literal expression must execute");
 }
 
 /// Scaling a syntactically valid time literal must fail cleanly when its

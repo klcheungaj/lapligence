@@ -22,7 +22,7 @@
 //! simulation.  The JSON goes to stdout, or to the file given as
 //! `--lint-json <path>` (the token after the flag is the output path when it
 //! does not start with `-`).  The human-readable lint lines are suppressed;
-//! Surelog's own stderr output remains.  When both `--lint` and `--lint-json`
+//! Frontend diagnostics remain on stderr. When both `--lint` and `--lint-json`
 //! are given, `--lint-json` wins.  Exit codes: 0 clean, 1 on lint errors, 2
 //! usage errors.
 //!
@@ -40,8 +40,8 @@
 //!   `CMakeLists.txt` into `target/sim/<design>` (prints the directory,
 //!   exits 0) without configuring/building/running.
 //!
-//! Flow: compile + elaborate with Surelog (via `core::compile`), lower the
-//! elaborated UHDM to C11 (`sim::codegen::generate`), write the model plus the
+//! Flow: compile + elaborate with Slang (via `core::compile`), lower the
+//! owned semantic database to C11 (`sim::codegen::generate`), write the model plus the
 //! runtime and libaco into `target/sim/<design>`, build through CMake
 //! (unless `--gen-only`), and run the resulting simulator (stdout inherits;
 //! the exit code is the simulator's).
@@ -174,14 +174,14 @@ fn run(options: DriverOptions) -> i32 {
         }
     }
 
-    // 1. Surelog parse + compile + elaborate + -elabuhdm.
+    // 1. Slang parse, compile and elaborate into an owned snapshot.
     let out = match compile::compile_checked(&compile::CompileOpts {
         files,
         top,
         ..Default::default()
     }) {
         Ok(out) => out,
-        Err(compile::CompileError::SessionStart(e)) => {
+        Err(compile::CompileError::Startup(e)) => {
             eprintln!("llg: compile failed to start: {e}");
             return 1;
         }
@@ -196,7 +196,7 @@ fn run(options: DriverOptions) -> i32 {
                     llg::core::diagnostics::user_message(d)
                 );
             }
-            eprintln!("llg: surelog reported errors; aborting");
+            eprintln!("llg: Slang reported errors; aborting");
             return 1;
         }
     };
@@ -213,20 +213,7 @@ fn run(options: DriverOptions) -> i32 {
 
     // 2. Lint gate (--lint mode): build the owned db + model, print findings,
     //    and abort on lint errors before codegen.
-    let design = match out.uhdm_design() {
-        Some(d) => d,
-        None => {
-            eprintln!("llg: no elaborated UHDM design");
-            return 1;
-        }
-    };
-    let codegen_db = if lint_json_mode {
-        llg::core::db::Db::build(design)
-    } else {
-        let source_files = out.frontend_source_files();
-        llg::core::db::Db::build_with_source_files(design, &source_files)
-    };
-    let codegen_db = match codegen_db {
+    let codegen_db = match llg::core::db::Db::from_slang(&out.snapshot) {
         Ok(db) => db,
         Err(e) => {
             eprintln!("llg: db build failed: {e}");
@@ -300,7 +287,7 @@ fn run(options: DriverOptions) -> i32 {
         }
     }
 
-    // 3. Reuse the owned snapshot: some Surelog relationships are consumable.
+    // 3. Reuse the validated owned semantic database.
     let generated =
         sim::codegen::generate_from_db_with_opts(&codegen_db, &sim::opt::OptConfig::default());
     let gen = match generated {

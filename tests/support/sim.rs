@@ -13,8 +13,16 @@ use llg::core::compile;
 use llg::sim;
 
 static NEXT_TEMP_ID: AtomicU64 = AtomicU64::new(0);
-static SURELOG_LOCK: Mutex<()> = Mutex::new(());
+static CWD_LOCK: Mutex<()> = Mutex::new(());
 const MODEL_TIMEOUT: Duration = Duration::from_secs(60);
+
+fn lock_process_cwd() -> std::sync::MutexGuard<'static, ()> {
+    // CwdGuard restores the process directory while unwinding. A poisoned
+    // mutex therefore records a failed test, not a damaged CWD invariant.
+    CWD_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
 
 pub(crate) struct TempDir {
     path: PathBuf,
@@ -70,11 +78,11 @@ pub(crate) fn with_temp_cwd<T>(
     with_cwd(dir.path(), || action(dir.path()))
 }
 
-pub(crate) fn with_surelog_temp_cwd<T>(
+pub(crate) fn with_frontend_temp_cwd<T>(
     prefix: &str,
     action: impl FnOnce(&Path) -> Result<T, String>,
 ) -> Result<T, String> {
-    let _guard = SURELOG_LOCK.lock().expect("lock Surelog test harness");
+    let _guard = lock_process_cwd();
     with_temp_cwd(prefix, action)
 }
 
@@ -84,6 +92,25 @@ pub(crate) fn with_cwd<T>(
 ) -> Result<T, String> {
     let _cwd = CwdGuard::enter(path)?;
     action()
+}
+
+/// Compile one admitted source and return Slang's complete named diagnostics.
+/// Negative frontend tests use this instead of flattening diagnostics into a
+/// codegen error string.
+pub(crate) fn frontend_diagnostics(
+    source_text: &str,
+    top: &str,
+) -> Result<Vec<llg::ffi::slang::Diagnostic>, String> {
+    let source = compile::OwnedSource::compilation_unit("tb.sv", source_text);
+    let out = compile::compile_sources(
+        &[source],
+        &compile::CompileOpts {
+            top: Some(top.to_owned()),
+            ..Default::default()
+        },
+    )
+    .map_err(|error| format!("compile: {error}"))?;
+    Ok(out.snapshot.diagnostics)
 }
 
 pub(crate) fn run_command(command: &mut Command, timeout: Duration) -> Result<Output, String> {
@@ -156,7 +183,7 @@ pub(crate) struct SimRun {
 }
 
 pub(crate) fn run_generated_sim(sv: &str, top: &str, tag: &str) -> Result<SimRun, String> {
-    let _guard = SURELOG_LOCK.lock().expect("lock Surelog test harness");
+    let _guard = lock_process_cwd();
     with_temp_cwd(tag, |dir| {
         let source = dir.join("tb.sv");
         std::fs::write(&source, sv).map_err(|error| format!("write source: {error}"))?;
@@ -166,9 +193,7 @@ pub(crate) fn run_generated_sim(sv: &str, top: &str, tag: &str) -> Result<SimRun
             ..Default::default()
         })
         .map_err(|error| format!("compile: {error}"))?;
-        let source_files = compiled.frontend_source_files();
-        let design = compiled.uhdm_design().ok_or("no UHDM design")?;
-        let database = llg::core::db::Db::build_with_source_files(design, &source_files)
+        let database = llg::core::db::Db::from_slang(&compiled.snapshot)
             .map_err(|error| format!("database: {error}"))?;
         let generated = sim::codegen::generate_from_db_with_opts(
             &database,

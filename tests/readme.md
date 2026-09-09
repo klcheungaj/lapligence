@@ -1,6 +1,6 @@
 # Integration tests
 
-- Purpose: cover the shared Surelog/UHDM pipeline, simulator code generation,
+- Purpose: cover the shared Slang/owned-semantic pipeline, simulator code generation,
   native execution, and the language server's framed stdio contract.
 - Harnesses: shared test helpers are summarized in [support/readme.md](support/readme.md).
 - LSP fixtures: `fixtures/lsp/` uses `llg.lsp.fixture/v1` manifests and declared

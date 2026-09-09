@@ -1,18 +1,17 @@
 //! End-to-end simulator tests for named events (`event ev;` / `-> ev;` /
-//! `@(ev)`): Surelog compile → codegen → CMake build → run, asserting exact
+//! `@(ev)`): Slang compile → codegen → CMake build → run, asserting exact
 //! stdout against hand-simulated traces.
 //!
 //! Regression coverage: producer/consumer handshake, all-current-waiters
 //! wake semantics (each waiter woken exactly once, registration order),
 //! mixed signal/event or-lists lowered as ONE atomic wait, edge-triggered
 //! (non-latching) event semantics, the zero-delay guard tripping on trigger
-//! loops, generate-scope events, and the clean rejections (edge control on
-//! an event; event arrays and hierarchical event references are rejected by
-//! the Surelog frontend itself).
+//! loops, generate-scope and hierarchical events, and clean rejection of edge
+//! control on an event and event arrays.
 //!
-//! Surelog writes `slpp_all/` into the process working directory, so the
+//! These tests temporarily change the process working directory, so the
 //! tests run with the CWD pointed at a fresh temp dir (serialized through a
-//! mutex, like the other Surelog integration tests).
+//! mutex, to avoid process-wide CWD races).
 
 #[path = "support/sim.rs"]
 mod sim_harness;
@@ -20,9 +19,10 @@ mod sim_harness;
 use std::sync::Mutex;
 
 use llg::core::compile;
+use llg::ffi::slang::DiagnosticSeverity;
 use llg::sim;
 
-static SURELOG_LOCK: Mutex<()> = Mutex::new(());
+static CWD_LOCK: Mutex<()> = Mutex::new(());
 
 /// Compile, generate, build, and run one design.
 fn run_sim(sv: &str, top: &str, tag: &str) -> Result<(String, Vec<String>, String), String> {
@@ -31,7 +31,7 @@ fn run_sim(sv: &str, top: &str, tag: &str) -> Result<(String, Vec<String>, Strin
 }
 
 /// Compile + codegen only (no model build): the codegen error message, when
-/// the design must be rejected at lowering.  Returns `Err` when Surelog
+/// the design must be rejected at lowering. Returns `Err` when the frontend
 /// itself rejects the design (the message then starts with "COMPILE-ERROR:").
 fn codegen_error(sv: &str, top: &str, tag: &str) -> Result<String, String> {
     sim_harness::with_temp_cwd(tag, |dir| {
@@ -53,8 +53,9 @@ fn codegen_error(sv: &str, top: &str, tag: &str) -> Result<String, String> {
                     .join("; ")
             ));
         }
-        let design = out.uhdm_design().ok_or("no UHDM design")?;
-        match sim::codegen::generate(design) {
+        let db =
+            llg::core::db::Db::from_slang(&out.snapshot).map_err(|error| format!("db: {error}"))?;
+        match sim::codegen::generate(&db) {
             Ok(_) => Err("design was expected to be rejected".to_string()),
             Err(e) => Ok(e.to_string()),
         }
@@ -69,7 +70,7 @@ fn sim_events_handshake() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
+    let _guard = CWD_LOCK.lock().unwrap();
     let sv = r#"module tb;
     event ev;
 
@@ -119,7 +120,7 @@ fn sim_events_multiple_waiters_woken_once() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
+    let _guard = CWD_LOCK.lock().unwrap();
     let sv = r#"module tb;
     event ev;
     integer c1_count = 0;
@@ -181,7 +182,7 @@ fn sim_events_mixed_list_atomic() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
+    let _guard = CWD_LOCK.lock().unwrap();
     let sv = r#"module tb;
     event ev;
     reg a = 0;
@@ -240,7 +241,7 @@ fn sim_events_event_only_or_list_rearms_on_each_event() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
+    let _guard = CWD_LOCK.lock().unwrap();
     let sv = r#"module tb;
     event ev1, ev2;
 
@@ -277,7 +278,7 @@ fn sim_events_trigger_before_wait_does_not_latch() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
+    let _guard = CWD_LOCK.lock().unwrap();
     let sv = r#"module tb;
     event ev;
 
@@ -318,7 +319,7 @@ fn sim_events_zero_delay_trigger_loop_guard() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
+    let _guard = CWD_LOCK.lock().unwrap();
     let sv = r#"module tb;
     event ev;
     event ev2;
@@ -359,7 +360,7 @@ fn sim_events_gen_scope_instances() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
+    let _guard = CWD_LOCK.lock().unwrap();
     let sv = r#"module tb;
     genvar i;
     generate
@@ -393,15 +394,14 @@ endmodule
     assert_eq!(stdout, "gen 0 woken at 3\ngen 1 woken at 3\n");
 }
 
-/// (g) Rejections: `@(posedge ev)` is a clean codegen error; event arrays and
-/// hierarchical event references never reach the simulator (Surelog rejects
-/// them at compile time).
+/// (g) Rejections: `@(posedge ev)` is a frontend type error and event arrays
+/// remain an explicit lowering boundary.
 #[test]
 fn sim_events_rejections() {
-    let _guard = SURELOG_LOCK.lock().unwrap();
+    let _guard = CWD_LOCK.lock().unwrap();
 
     // Edge control on a named event: no value means no edges.
-    let err = codegen_error(
+    let diagnostics = sim_harness::frontend_diagnostics(
         r#"module tb;
     event ev;
     initial begin
@@ -410,16 +410,19 @@ fn sim_events_rejections() {
 endmodule
 "#,
         "tb",
-        "reject-edge",
     )
-    .expect("design should produce a codegen error");
+    .expect("compile named-event edge control");
     assert!(
-        err.contains("edge control on a named event is not supported"),
-        "unexpected error: {err}"
+        diagnostics.iter().any(|diagnostic| {
+            diagnostic.severity == DiagnosticSeverity::Error
+                && diagnostic.name == "ExprMustBeIntegral"
+        }),
+        "named-event edge control must report ExprMustBeIntegral: {diagnostics:?}"
     );
 
-    // Event arrays do not pass the pinned Surelog grammar.
-    let err = match codegen_error(
+    // Slang accepts event arrays, while executable lowering rejects their
+    // unsupported element type explicitly.
+    let err = codegen_error(
         r#"module tb;
     event ev[4];
     initial begin
@@ -429,37 +432,37 @@ endmodule
 "#,
         "tb",
         "reject-array",
-    ) {
-        Err(e) => e,
-        Ok(other) => panic!("expected the Surelog syntax reject, got: {other}"),
-    };
+    )
+    .expect("event arrays should reach lowering");
     assert!(
-        err.contains("COMPILE-ERROR") && err.contains("Syntax error"),
-        "expected the Surelog syntax reject, got: {err}"
+        err.contains("unsupported element type `event`"),
+        "expected an explicit event-array lowering reject, got: {err}"
     );
+}
 
-    // Hierarchical event references: rejected by Surelog elaboration.
-    let err = match codegen_error(
-        r#"module sub;
+#[test]
+fn sim_events_hierarchical_reference() {
+    if !llg::sim::build::cmake_available() {
+        eprintln!("SKIP: cmake not available");
+        return;
+    }
+    let sv = r#"`timescale 1ns/1ns
+module sub;
     event sev;
+    initial #1 -> sev;
 endmodule
 module tb;
     sub u0();
     initial begin
         @(u0.sev);
+        $display("hier event t=%0t", $time);
+        $finish;
     end
 endmodule
-"#,
-        "tb",
-        "reject-hier",
-    ) {
-        Err(e) => e,
-        Ok(other) => panic!("expected the Surelog hierarchical-reference reject, got: {other}"),
-    };
-    assert!(
-        err.contains("Unresolved hierarchical reference"),
-        "expected the Surelog hierarchical-reference reject, got: {err}"
-    );
+"#;
+    let (stdout, _warnings, _model) =
+        run_sim(sv, "tb", "hier-event").expect("hierarchical event simulation");
+    assert_eq!(stdout, "hier event t=1\n");
 }
 
 /// (h) Optimizer parity: a design mixing events, signals and dead storage
@@ -472,7 +475,7 @@ fn sim_events_opt_parity() {
     }
     use llg::sim::opt::OptConfig;
 
-    let _guard = SURELOG_LOCK.lock().unwrap();
+    let _guard = CWD_LOCK.lock().unwrap();
     let sv = r#"module tb;
     event ev;
     reg a = 0;
@@ -508,7 +511,7 @@ endmodule
     //   data=2a at 5
     //   a set at 9
 
-    // House pattern (sim_opt_differential): ONE Surelog compile and owned DB;
+    // House pattern (sim_opt_differential): ONE Slang compile and owned DB;
     // both configurations generate from that immutable snapshot.
     let dir = sim_harness::TempDir::new("events-optparity").expect("create temp dir");
     let src = dir.path().join("tb.sv");
@@ -524,8 +527,7 @@ endmodule
         if !out.ok() {
             return Err(format!("compile diagnostics: {:?}", out.diagnostics));
         }
-        let design = out.uhdm_design().ok_or("no UHDM design")?;
-        let db = llg::core::db::Db::build(design).map_err(|e| format!("db: {e}"))?;
+        let db = llg::core::db::Db::from_slang(&out.snapshot).map_err(|e| format!("db: {e}"))?;
         let opt_on = sim::codegen::generate_from_db_with_opts(&db, &OptConfig::default())
             .map_err(|e| format!("codegen(opt-on): {e}"))?;
         let opt_off = sim::codegen::generate_from_db_with_opts(&db, &OptConfig::none())

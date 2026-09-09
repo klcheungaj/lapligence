@@ -17,7 +17,7 @@
 //!   structurally.  Entries keyed by a superseded epoch can never be served
 //!   again; they age out through the LRU bound.
 //! * Open-buffer token streams depend on `(buffer text, -D defines)` only
-//!   (Surelog `-parseonly` over one staged copy); both are folded into the
+//!   (isolated Slang compilation over one admitted buffer); both are folded into the
 //!   key, so a `[compile] defines` hot reload or any edit misses the cache.
 //!
 //! The cache is thread-safe (`Mutex`) and bounded (small LRU); values are

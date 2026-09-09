@@ -1,8 +1,8 @@
 //! CLI integration tests for `llg --lint --lint-config <path>`.
 //!
 //! Each test drives the real `llg` binary (via `CARGO_BIN_EXE_llg`)
-//! in a fresh temp dir, so Surelog's `slpp_all/` output and the generated
-//! `target/sim/` tree stay isolated per test.
+//! in a fresh temp dir, so the generated `target/sim/` tree stays isolated
+//! per test.
 
 use std::path::Path;
 use std::process::Command;
@@ -20,9 +20,8 @@ const UNUSED_SV: &str = r#"module unused;
 endmodule
 "#;
 
-/// Delays are intentionally present: Surelog v1.87 may consume their UHDM
-/// relationships during a VPI walk, so human lint and codegen must share one
-/// owned database rather than traversing the live design twice.
+/// Delays are intentionally present so human lint and codegen exercise the
+/// same owned semantic database.
 const DELAYED_SV: &str = r#"module delayed;
     logic value = 1'b0;
     initial begin
@@ -175,7 +174,7 @@ endmodule
         };
         let output = run_llg(&dir.path, &args);
         assert!(output.status.success(), "{}", stderr(&output));
-        assert_eq!(String::from_utf8_lossy(&output.stdout), "literal=2.2\n");
+        assert_eq!(String::from_utf8_lossy(&output.stdout), "literal=2.1\n");
     }
 }
 

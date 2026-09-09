@@ -1,17 +1,19 @@
 # Repository validation
 
 Prefer Rust unit and integration tests, including Rust-side FFI probes.
-Tests must be deterministic. Surelog writes `slpp_all/` into its CWD and has
-process-global C++ state: use `std::env::set_current_dir` to a fresh temporary
-directory, clean up afterward, and serialize execution (`--test-threads=1`).
-Use `compile_checked` for successful execution/elaboration. Raw `compile` is
-for tests inspecting partial results/diagnostics; assert that the checked
-contract withholds a failed session.
+Tests must be deterministic. Prefer admitted in-memory Slang sources; tests
+which change the process CWD must serialize that change, use a fresh temporary
+directory, and restore it through an unwind-safe guard. Use `compile_checked`
+for successful execution/elaboration. Raw `compile` is for tests inspecting
+partial snapshots and diagnostics; assert that the checked contract withholds
+a snapshot containing blocking errors.
 
 ## LSP acceptance and fixtures
 
 `lsp_stdio.rs` launches **`llg_ls`** and speaks only framed standard LSP JSON-RPC;
-never parse/depend on stdout debug output. Cover these contracts:
+never parse/depend on stdout debug output. `lsp_stdio.rs`, `shadowing.rs`, and
+`dump_tokens.rs` are gated by the `lsp` feature so no-default builds cannot
+launch a stale language-server binary. Cover these contracts:
 
 - Default and client-overridden per-root `llg.toml`, `llg.configFiles`, hot
   reload without restart, `llg/configChanged` only on changed parsed configs,
@@ -27,8 +29,8 @@ never parse/depend on stdout debug output. Cover these contracts:
   and the same stable IDs exercised through simulator `--lint-json`.
 - Unsaved source/header buffers, configured-directory include authorization
   and rejected escapes, last-good navigation after failed compiles, read-only
-  staging and no Surelog artifacts (`slpp_all/`, logs) in server workspace CWD.
-- Feature serving for non-syntax error projects with surviving UHDM, and
+  staging and no compiler artifacts in the server workspace CWD.
+- Feature serving for non-syntax error projects with surviving semantic data, and
   declaration-level document/workspace symbols/hover for syntax-broken roots
   (e.g. an unterminated sibling module). Fatal-only roots are feature-less;
   watched fixes upgrade analyses. Syntax-invalid current open buffers yield
@@ -56,11 +58,16 @@ coverage for the same rule IDs.
 
 ## Suite map
 
-- `slang_frontend.rs` (Cargo feature `slang`) probes the release-pinned native
+- `slang_frontend.rs` probes the release-pinned native
   bridge through safe Rust APIs: owned hierarchy/parameters/constants,
-  compiler/analysis diagnostics, checked failure, repeated/concurrent session
+  compiler/analysis diagnostics, checked failure, repeated/concurrent compilation
   isolation, and admitted-buffer includes versus rejected external files.
-  This is initial frontend-capture coverage, not Slang simulation parity.
+- `slang_semantics.rs` pins the safe semantic snapshot contract independently
+  of database and simulator lowering: process and assignment relationships,
+  timing and event edges, type ranges and aggregate members, and paired module
+  port declarations and actuals.
+- `support_harness.rs` verifies that simulator test CWD restoration and mutex
+  recovery remain sound when a test action unwinds.
 - `sim_data_types.rs`, `sim_data_types_extended.rs`, and
   `sim_data_type_edges.rs` cover datatype semantics and boundaries; detailed
   contracts are in [data_types/AGENTS.md](fixtures/sim/data_types/AGENTS.md),
@@ -72,12 +79,12 @@ coverage for the same rule IDs.
 - `sim_data_types_completion.rs` freezes eight positive completion contracts
   plus one explicit unsupported reduction case; its contract is in
   [data_types_completion/AGENTS.md](fixtures/sim/data_types_completion/AGENTS.md).
-- `elab_resolve.rs` exercises `core::elab`; `config_effect.rs` observes
-  configured `-D` ifdef/elsif selection and top-level `-P` parameter-driven
+- `elab_resolve.rs` exercises resolved Slang parameter values; `config_effect.rs` observes
+  configured defines and top-level parameter overrides driving
   generate branches through the owned `DesignModel`.
-- `elaboration/run_elab_check.sh` is the elaboration regression suite
-  (runs `elab_check` over the test designs; ref binding must stay 100% and
-  resolved parameter values must match the expected outputs).
+- `elaboration/run_elab_check.sh` runs `elab_check` over representative designs;
+  the binary validates the owned semantic database and prints hierarchy,
+  binding and resolved-parameter summaries.
 - `sim_counter.rs` is the simulator regression suite: compiles + runs
   real designs end-to-end (codegen → `cc` → execute) and asserts exact stdout
   (hand-simulated traces, documented in the test), plus the C runtime
@@ -96,14 +103,16 @@ coverage for the same rule IDs.
   it and asserts the exact stdout.  Model-building suites require cmake and
   skip gracefully (`SKIP: cmake not available`) when
   `sim::build::cmake_available()` is false.
-- `emit_decoupling.rs` pins the pipeline shape with architectural
-  greps: `sim::emit_c` consumes only IR types (no `core::db`/`ffi`/`vpi`/
-  `unsafe`/`VpiHandle`), and `sim::codegen` builds an `IrModel` instead of
-  emitting runtime C calls directly.
+- `emit_decoupling.rs` pins the pipeline shape with architectural greps:
+  `sim::emit_c` consumes only the execution IR, while `sim::codegen` lowers
+  the semantic model without emitting runtime C calls directly.
 - `sim_opt_differential.rs` runs designs twice — once with
   `OptConfig::default()` (all passes) and once with `OptConfig::none()` —
   building both models via `sim::build::build_model_cmake` and asserting
   byte-identical stdout.
+- `sim_variable_lifetime.rs` runs an in-memory Slang design with optimization
+  enabled and disabled, proving that resolved static procedural locals retain
+  storage across block reentry while automatic locals are recreated.
 - `sim_cmake.rs` covers the build path (5 cases: library-level
   end-to-end CMake build, explicit `CmakeBuildOpts` generator backend,
   invalid-generator configure error, driver default, missing-cmake
@@ -130,12 +139,14 @@ coverage for the same rule IDs.
   `sim_wildcard_eq.rs`, and `sim_loops.rs` compare optimized/unoptimized
   execution for packed strings, bit queries, numeric conversions, wildcard
   equality/case-inside, and lexical loop declarations/fixed-array foreach.
-  `sim_delay.rs` covers the source-recovered constant delay subset and its
-  explicit rejection boundaries.
-  `sim_time_literals.rs` checks fixed-point/unit-suffixed/scientific and real
-  parameter delays, lexical shadowing, and local rounding before global
-  scheduling, with optimizer parity. `sim_time_values.rs` covers owned-source
-  time-literal recovery, module-unit realtime values and rejection boundaries.
+  `sim_delay.rs` covers typed constant delay expressions and explicit dynamic,
+  negative and unsupported-control boundaries.
+  `sim_time_literals.rs` checks typed unit-suffixed, scientific and real
+  parameter delays, lexical shadowing, and rounding of completed delays to the
+  local precision before global scheduling, with optimizer parity.
+  `sim_time_values.rs` covers Slang's typed time-literal values, module-unit
+  scaling without local precision rounding, integral assignment conversion,
+  and ownership after admitted source buffers are removed.
   `sim_fill_literals.rs` checks context-determined fills through expressions
   and case operands, self-determined boundaries, and wide-operation rejection.
 

@@ -5,7 +5,7 @@
 //! the same time step still sees the previous value.  This rule flags blocking
 //! assignments (`=`) in:
 //!
-//! - `always_ff` processes (`vpiAlwaysFF`), and
+//! - `always_ff` processes , and
 //! - plain `always` processes whose sensitivity list contains an edge event
 //!   (`@(posedge …)` / `@(negedge …)`) — the classic
 //!   `always @(posedge clk)` style warning.
@@ -60,7 +60,7 @@ impl LintRule for BlockingInFFRule {
 }
 
 /// `Some(label)` when `id` is a clocked process this rule checks:
-/// `"always_ff"` for `vpiAlwaysFF`, `"edge-sensitive always"` for a plain
+/// `"always_ff"` for a dedicated flip-flop process, `"edge-sensitive always"` for a plain
 /// `always` whose body contains an edge event control.
 fn ff_label(db: &Db, id: NodeId) -> Option<&'static str> {
     let NodeKind::Process {

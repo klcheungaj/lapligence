@@ -1,8 +1,11 @@
 //! Conservative coroutine-stack sizing from the validated simulator IR.
 
+use crate::sim::execution::ExecutionModel;
+#[cfg(test)]
+use crate::sim::ir::IrModel;
 use crate::sim::ir::{
-    IrCall, IrCallArg, IrElemSel, IrExpr, IrExprKind, IrFunc, IrInsideItem, IrLhs, IrModel,
-    IrPreFn, IrStmt, IrSysFunc, IrType,
+    IrCall, IrCallArg, IrElemSel, IrExpr, IrExprKind, IrFunc, IrInsideItem, IrLhs, IrPreFn, IrStmt,
+    IrSysFunc, IrType,
 };
 
 /// Keep aligned with the emitted function recursion guard in `model.rs`.
@@ -22,6 +25,7 @@ const MIN_VALUE_SLOTS: u64 = 256;
 /// summed across sequential statements because optimized C still commonly
 /// reserves their return-by-value temporaries for the lifetime of the whole
 /// generated function, especially under sanitizer instrumentation.
+#[cfg(test)]
 pub(super) fn stack_value_slots(model: &IrModel) -> Result<u64, String> {
     let mut max_func = 0;
     let mut max_proc = 0;
@@ -39,6 +43,39 @@ pub(super) fn stack_value_slots(model: &IrModel) -> Result<u64, String> {
         }
     }
 
+    let recursive = checked_mul(max_func, MAX_FUNC_DEPTH, "recursive function stack slots")?;
+    let model_slots = checked_add(recursive, max_proc, "model stack slots")?;
+    Ok(
+        checked_mul(model_slots, ABI_SAFETY_FACTOR, "guarded model stack slots")?
+            .max(MIN_VALUE_SLOTS),
+    )
+}
+
+pub(super) fn execution_stack_value_slots(model: &ExecutionModel) -> Result<u64, String> {
+    let ir = model.ir();
+    let mut max_func = 0;
+    let mut max_proc = 0;
+    for func in &ir.funcs {
+        max_func = max_func.max(function_frame_slots(func)?);
+        for pre_fn in &func.pre_fns {
+            max_proc = max_proc.max(pre_fn_frame_slots(pre_fn)?);
+        }
+    }
+    for executable in model.processes() {
+        let process = &ir.processes[executable.semantic_process];
+        let mut process_slots = 0;
+        for block in &executable.blocks {
+            process_slots = checked_add(
+                process_slots,
+                stmt_frame_slots(&block.operations)?,
+                "execution block stack slots",
+            )?;
+        }
+        max_proc = max_proc.max(process_slots);
+        for pre_fn in &process.pre_fns {
+            max_proc = max_proc.max(pre_fn_frame_slots(pre_fn)?);
+        }
+    }
     let recursive = checked_mul(max_func, MAX_FUNC_DEPTH, "recursive function stack slots")?;
     let model_slots = checked_add(recursive, max_proc, "model stack slots")?;
     Ok(

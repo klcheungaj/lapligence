@@ -3,18 +3,19 @@
 //!
 //! Coverage includes lexical shadowing, nested loops, ascending and descending
 //! array ranges, multidimensional traversal, break/continue behavior, and
-//! optimizer parity. Surelog compilation uses the shared serialized temporary
+//! optimizer parity. the Slang compilation uses the shared serialized temporary
 //! CWD harness because the frontend writes process-global artifacts.
 
 #[path = "support/sim.rs"]
 mod sim_harness;
 
 use llg::core::{compile, db};
+use llg::ffi::slang::DiagnosticSeverity;
 use llg::sim;
 use llg::sim::opt::OptConfig;
 
 fn run_variants(source: &str, tag: &str) -> Result<(String, String), String> {
-    sim_harness::with_surelog_temp_cwd(tag, |dir| {
+    sim_harness::with_frontend_temp_cwd(tag, |dir| {
         let source_path = dir.join("tb.sv");
         std::fs::write(&source_path, source).map_err(|error| format!("write source: {error}"))?;
         let compiled = compile::compile_checked(&compile::CompileOpts {
@@ -23,11 +24,8 @@ fn run_variants(source: &str, tag: &str) -> Result<(String, String), String> {
             ..Default::default()
         })
         .map_err(|error| format!("compile: {error}"))?;
-        let database = db::Db::build_with_source_files(
-            compiled.uhdm_design().ok_or("no UHDM design")?,
-            &compiled.frontend_source_files(),
-        )
-        .map_err(|error| format!("db: {error}"))?;
+        let database =
+            db::Db::from_slang(&compiled.snapshot).map_err(|error| format!("db: {error}"))?;
         let optimized = sim::codegen::generate_from_db_with_opts(&database, &OptConfig::default())
             .map_err(|error| format!("optimized codegen: {error}"))?;
         let unoptimized = sim::codegen::generate_from_db_with_opts(&database, &OptConfig::none())
@@ -123,7 +121,7 @@ endmodule
 }
 
 fn codegen_error(source: &str, tag: &str) -> Result<String, String> {
-    sim_harness::with_surelog_temp_cwd(tag, |dir| {
+    sim_harness::with_frontend_temp_cwd(tag, |dir| {
         let source_path = dir.join("tb.sv");
         std::fs::write(&source_path, source).map_err(|error| error.to_string())?;
         let compiled = compile::compile_checked(&compile::CompileOpts {
@@ -132,8 +130,9 @@ fn codegen_error(source: &str, tag: &str) -> Result<String, String> {
             ..Default::default()
         })
         .map_err(|error| error.to_string())?;
-        let design = compiled.uhdm_design().ok_or("no UHDM design")?;
-        match sim::codegen::generate(design) {
+        let database =
+            db::Db::from_slang(&compiled.snapshot).map_err(|error| format!("db: {error}"))?;
+        match sim::codegen::generate(&database) {
             Ok(_) => Err("codegen unexpectedly succeeded".to_owned()),
             Err(error) => Ok(error.to_string()),
         }
@@ -162,19 +161,19 @@ endmodule
 
 #[test]
 fn inline_loop_variable_strobe_capture_is_rejected() {
-    let error = codegen_error(
-        r#"module tb;
+    let source = r#"module tb;
 initial begin
     for (int i = 0; i < 1; i++) $strobe("%0d", i);
     #1 $finish;
 end
 endmodule
-"#,
-        "loop_strobe_capture",
-    )
-    .expect("strobe capture should reach codegen rejection");
+"#;
+    let diagnostics =
+        sim_harness::frontend_diagnostics(source, "tb").expect("compile strobe capture");
     assert!(
-        error.contains("$strobe cannot defer a reference to inline loop variable `i`"),
-        "{error}"
+        diagnostics.iter().any(|diagnostic| {
+            diagnostic.severity == DiagnosticSeverity::Error && diagnostic.name == "AutoVarTraced"
+        }),
+        "automatic strobe argument must report AutoVarTraced: {diagnostics:?}"
     );
 }

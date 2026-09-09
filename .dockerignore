@@ -5,5 +5,5 @@ build-cache/
 # Rust build output
 target/
 
-# Surelog in-tree build
-vendor/Surelog/build/
+# Local agent records and archived vendor work are not build inputs.
+persistence/

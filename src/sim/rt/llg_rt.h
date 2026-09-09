@@ -178,7 +178,7 @@ void llg_rt_run_finals(void);
 
 typedef struct llg_fork_group llg_fork_group_t;
 
-// Join kinds (VPI numbering: vpiJoin=0, vpiJoinNone=1, vpiJoinAny=2).
+// Join kinds shared with the executable IR's C emission.
 enum {
     LLG_JOIN = 0,      // wait for every child
     LLG_JOIN_NONE = 1, // return immediately

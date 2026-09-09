@@ -1,18 +1,18 @@
 //! End-to-end simulator tests for $display/$write/$monitor/$strobe,
-//! hierarchical reads, signed-%d formatting, and bare event controls (Surelog
+//! hierarchical reads, signed-%d formatting, and bare event controls (Slang
 //! compile → codegen → CMake build → run, like tests/sim_counter.rs).
 //!
-//! Surelog writes `slpp_all/` into the process working directory, so each test
+//! Each test
 //! runs with the CWD pointed at a fresh temp dir (serialized through a mutex).
 
 #[path = "support/sim.rs"]
 mod sim_harness;
 use std::sync::Mutex;
 
-static SURELOG_LOCK: Mutex<()> = Mutex::new(());
+static CWD_LOCK: Mutex<()> = Mutex::new(());
 
 fn assert_stdout(tag: &str, sv: &str, expected: &str) {
-    let _guard = SURELOG_LOCK.lock().unwrap();
+    let _guard = CWD_LOCK.lock().unwrap();
     let stdout = sim_harness::run_sim(sv, "tb", tag).expect("simulation should run");
     assert_eq!(stdout, expected);
 }

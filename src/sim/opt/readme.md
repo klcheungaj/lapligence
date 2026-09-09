@@ -1,6 +1,7 @@
 # IR optimization
 
-- **Facade:** `opt.rs` exposes optimization configuration and entry points.
+- **Facade:** `opt.rs` accepts only `ExecutionModel`, exposes optimization
+  configuration, and revalidates scheduling summaries after transformations.
 - **Passes:** `passes.rs` walks and transforms typed IR conservatively.
 - **Invariants:** passes preserve table indices and lowering-time sensitivity
   sets; they do not recompute wake behavior.

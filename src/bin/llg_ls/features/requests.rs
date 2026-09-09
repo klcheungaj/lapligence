@@ -29,7 +29,7 @@ pub fn lsp_diagnostics(a: &Analysis) -> HashMap<String, Vec<LspDiagnostic>> {
 }
 
 /// Convert diagnostics like [`lsp_diagnostics`], optionally routing fileless
-/// Surelog diagnostics to a caller-provided source path.
+/// frontend diagnostics to a caller-provided source path.
 ///
 /// The fallback is used only when a diagnostic has no file of its own.  It is
 /// intentionally a concrete source path supplied by the caller; no synthetic
@@ -41,17 +41,25 @@ pub fn lsp_diagnostics_with_fallback(
 ) -> HashMap<String, Vec<LspDiagnostic>> {
     let mut out: HashMap<String, Vec<LspDiagnostic>> = HashMap::new();
     let fallback_file = fallback_file.map(|path| path.to_string_lossy().into_owned());
+    let rich_frontend: HashSet<_> = a
+        .frontend_diagnostics
+        .iter()
+        .map(|(path, diagnostic)| (path.as_str(), diagnostic.message.as_str()))
+        .collect();
     for d in &a.diagnostics {
         let Some(path) = d.file.as_deref().or(fallback_file.as_deref()) else {
             continue;
         };
+        if rich_frontend.contains(&(path, d.message.as_str())) {
+            continue;
+        }
         let severity = match d.severity {
             Severity::Fatal | Severity::Syntax | Severity::Error => DiagnosticSeverity::ERROR,
             Severity::Warning => DiagnosticSeverity::WARNING,
             Severity::Note => DiagnosticSeverity::INFORMATION,
             Severity::Info => DiagnosticSeverity::HINT,
         };
-        // Surelog positions are 1-based; 0 means unknown → report at (0,0).
+        // Core positions are 1-based; 0 means unknown → report at (0,0).
         let (line, col) = if d.line == 0 {
             (0, 0)
         } else {
@@ -63,7 +71,7 @@ pub fn lsp_diagnostics_with_fallback(
             severity: Some(severity),
             code: None,
             code_description: None,
-            source: Some("surelog".to_owned()),
+            source: Some("slang".to_owned()),
             message: llg::core::diagnostics::user_message(d),
             related_information: None,
             tags: None,
@@ -97,8 +105,7 @@ pub fn lsp_diagnostics_with_fallback(
             data: None,
         });
     }
-    #[cfg(feature = "slang")]
-    for (path, diagnostic) in &a.slang_diagnostics {
+    for (path, diagnostic) in &a.frontend_diagnostics {
         out.entry(path.clone())
             .or_default()
             .push(diagnostic.clone());
@@ -110,11 +117,9 @@ pub fn lsp_diagnostics_with_fallback(
 
 /// Encode the semantic tokens for `file` from the cached token lists.
 ///
-/// Token-list matching retains its compatibility filename fallback. A syntax
-/// diagnostic, however, is associated only by an exact or successfully
-/// canonicalized path: a same-named file elsewhere in the workspace must not
-/// suppress this file's tokens. A matching syntax diagnostic makes the empty
-/// result authoritative.
+/// Source identity is exact. A same-named file elsewhere in the workspace
+/// must neither provide tokens nor suppress this file's tokens. A matching
+/// syntax diagnostic makes the empty result authoritative.
 pub fn semantic_tokens_for(a: &Analysis, file: &str) -> SemanticTokens {
     if a.diagnostics.iter().any(|diagnostic| {
         matches!(diagnostic.severity, Severity::Syntax)
@@ -148,14 +153,12 @@ pub(super) fn semantic_file_matches(left: &str, right: &str) -> bool {
     }
 }
 
-/// Parse one staged open document in isolation and encode its parse-tree
+/// Parse one open document in isolation and encode its lexical
 /// semantic tokens.
 ///
 /// This path deliberately does not build or update an [`Analysis`].  It runs
-/// Surelog's parse-only mode behind the same process-wide lock and scratch-CWD
-/// guard as project analysis, then drops the session before returning owned
-/// LSP data.  The caller owns staging and cleanup of `file`.  Frontend syntax
-/// diagnostics do not make this return an error.  Instead, any syntax
+/// Slang receives the admitted in-memory buffer when one is available.
+/// Frontend syntax diagnostics do not make this return an error. Instead, any syntax
 /// diagnostic produces an authoritative empty stream so an incomplete edit
 /// cannot expose unstable partial highlighting or fall back to stale tokens.
 #[allow(dead_code)] // compatibility wrapper; production uses the parent-aware variant
@@ -173,203 +176,34 @@ pub(crate) fn semantic_tokens_for_open_document_with_parent(
     file: &str,
     defines: &[String],
     source: Option<&str>,
-    parent_id: Option<u64>,
+    _parent_id: Option<u64>,
 ) -> Result<SemanticTokens, OpenDocumentTokensError> {
-    let wait_started = std::time::Instant::now();
-    crate::llg_debug!(
-        "event=surelog.parse_only.wait.begin file={} parent_id={:?}",
-        file,
-        parent_id
-    );
-    let mut wait_span = crate::logging::LifecycleSpan::phase_with_parent(
-        "surelog.wait_global_mutex.parse_only",
-        || file.to_owned(),
-        0,
-        1,
-        parent_id,
-    );
-    let _guard = ANALYZE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    wait_span.complete("ok", 0);
-    crate::llg_debug!(
-        "event=surelog.parse_only.wait.end outcome=ok file={} elapsed_us={}",
-        file,
-        wait_started.elapsed().as_micros()
-    );
-    drop(wait_span);
-    let scratch = analysis_scratch_dir();
-    let _cwd = ScratchCwd::enter(&scratch).map_err(|error| {
-        OpenDocumentTokensError::new(format!(
-            "cannot establish the Surelog parse-only scratch directory {}: {error}",
-            scratch.display()
-        ))
-    })?;
-    let mut parse_span = crate::logging::LifecycleSpan::phase_with_parent(
-        "surelog.parse_only",
-        || file.to_owned(),
-        0,
-        1,
-        parent_id,
-    );
-    let parse_started = std::time::Instant::now();
-    crate::llg_debug!(
-        "event=surelog.parse_only.session_construct.begin file={} parent_id={:?}",
-        file,
-        parent_id
-    );
-    if crate::logging::enabled(crate::logging::Level::Debug) {
-        match compile::parse_only_invocation(file, defines) {
-            Ok(invocation) => log_surelog_invocation("parse_only", &invocation, file, 0, parent_id),
-            Err(error) => log_surelog_invocation_rejected("parse_only", &error, file, 0, parent_id),
-        }
+    let parsed = match source {
+        Some(source) => compile::parse_source(file, source, defines),
+        None => compile::parse_only(file, defines),
     }
-    let mut parsed = match compile::parse_only(file, defines) {
-        Ok(parsed) => parsed,
-        Err(error) => {
-            let error = error.to_string();
-            crate::llg_debug!(
-                "event=surelog.parse_only.return outcome=error file={} parent_id={:?} elapsed_us={} error={}",
-                file,
-                parent_id,
-                parse_started.elapsed().as_micros(),
-                bounded_log_text(&error, SURELOG_LOG_ERROR_MAX)
-            );
-            parse_span.outcome("error");
-            return Err(OpenDocumentTokensError::new(error));
-        }
-    };
-    if let Some(source) = source.filter(|source| !source.is_ascii()) {
-        let maps = FeatureSourceMaps::from_source(file, source);
-        for file_tokens in &mut parsed.tokens {
-            for node in &mut file_tokens.nodes {
-                if matches!(
-                    node.vpi_type,
-                    tokens::TOKEN_GENVAR_DECL | tokens::TOKEN_GENVAR_REF
-                ) || node.vpi_type == llg::core::vobject_types::VObjectTypeShifted::paGENVAR
-                {
-                    normalize_vobject_positions(&maps, Some(file), std::slice::from_mut(node));
-                }
-            }
-        }
-    }
-    let token_count = token_cardinality(&parsed.tokens);
-    let diagnostic_count = parsed.diagnostics.len();
-    let syntax_error_count = parsed
+    .map_err(|error| OpenDocumentTokensError::new(error.to_string()))?;
+    let blocking_diagnostics = parsed
         .diagnostics
         .iter()
-        .filter(|diagnostic| matches!(diagnostic.severity, Severity::Syntax))
-        .count();
-    if syntax_error_count > 0 && crate::logging::enabled(crate::logging::Level::Debug) {
-        let first_syntax = parsed
-            .diagnostics
-            .iter()
-            .find(|diagnostic| matches!(diagnostic.severity, Severity::Syntax))
-            .map(|diagnostic| bounded_log_text(&diagnostic.message, SURELOG_LOG_ERROR_MAX))
-            .unwrap_or_else(|| "-".to_owned());
+        .filter(|diagnostic| matches!(diagnostic.severity, Severity::Fatal | Severity::Syntax))
+        .collect::<Vec<_>>();
+    if !blocking_diagnostics.is_empty() {
         crate::llg_debug!(
-            "event=surelog.parse_only.syntax_error file={} parent_id={:?} count={} first_message={}",
-            file,
-            parent_id,
-            syntax_error_count,
-            first_syntax
+            "isolated semantic token parse rejected file={file} diagnostics={blocking_diagnostics:?}"
         );
+        return Ok(SemanticTokens {
+            result_id: None,
+            data: Vec::new(),
+        });
     }
-    crate::llg_debug!(
-        "event=surelog.parse_only.return outcome=ok file={} parent_id={:?} diagnostics={} token_files={} token_nodes={} elapsed_us={}",
-        file,
-        parent_id,
-        diagnostic_count,
-        parsed.tokens.len(),
-        token_count,
-        parse_started.elapsed().as_micros()
-    );
-    crate::llg_debug!(
-        "event=surelog.parse_only.diagnostics.end outcome=extracted file={} parent_id={:?} diagnostics={} error_like={} elapsed_us={}",
-        file,
-        parent_id,
-        diagnostic_count,
-        parsed
-            .diagnostics
-            .iter()
-            .filter(|diagnostic| {
-                matches!(
-                    diagnostic.severity,
-                    Severity::Fatal | Severity::Syntax | Severity::Error
-                )
-            })
-            .count(),
-        parse_started.elapsed().as_micros()
-    );
-    crate::llg_debug!(
-        "event=analysis.parse_only.token_collection.end outcome=collected file={} parent_id={:?} parsed_nodes={} supplemented_nodes={} token_files={} token_nodes={}",
-        file,
-        parent_id,
-        parsed.parsed_token_count,
-        parsed.supplemented_token_count,
-        parsed.tokens.len(),
-        token_count,
-    );
-    crate::llg_debug!(
-        "event=analysis.parse_only.source_supplementation.end outcome=completed file={} parent_id={:?} supplemented_nodes={}",
-        file,
-        parent_id,
-        parsed.supplemented_token_count,
-    );
-    crate::llg_debug!(
-        "event=surelog.parse_only.session_drop.end outcome=complete file={} parent_id={:?}",
-        file,
-        parent_id
-    );
-    parse_span.complete("ok", token_count);
-    drop(parse_span);
-    let mut encode_span = crate::logging::LifecycleSpan::phase_with_parent(
-        "analysis.parse_only_token_encoding",
-        || file.to_owned(),
-        0,
-        1,
-        parent_id,
-    );
-    let encode_started = std::time::Instant::now();
-    let file_name = Path::new(file)
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or_default();
-    let tokens = parsed
+    let nodes = parsed
         .tokens
         .iter()
-        .find(|tokens| tokens.path == file)
-        .or_else(|| {
-            parsed.tokens.iter().find(|tokens| {
-                !file_name.is_empty()
-                    && Path::new(&tokens.path)
-                        .file_name()
-                        .and_then(|name| name.to_str())
-                        == Some(file_name)
-            })
-        });
-    let result = if syntax_error_count > 0 {
-        empty_semantic_tokens()
-    } else {
-        tokens
-            .map(|tokens| semantic_tokens::encode(&tokens.nodes))
-            .unwrap_or_else(empty_semantic_tokens)
-    };
-    let outcome = if syntax_error_count > 0 {
-        "syntax-error"
-    } else {
-        "ok"
-    };
-    encode_span.complete(outcome, result.data.len());
-    crate::llg_debug!(
-        "event=analysis.parse_only_token_encoding.end outcome={} file={} token_count={} syntax_errors={} suppressed_token_nodes={} elapsed_us={}",
-        outcome,
-        file,
-        result.data.len(),
-        syntax_error_count,
-        if syntax_error_count > 0 { token_count } else { 0 },
-        encode_started.elapsed().as_micros()
-    );
-    drop(encode_span);
-    Ok(result)
+        .find(|tokens| semantic_file_matches(&tokens.path, file))
+        .map(|tokens| tokens.nodes.as_slice())
+        .unwrap_or_default();
+    Ok(semantic_tokens::encode(nodes))
 }
 
 // ── Hover ─────────────────────────────────────────────────────────────────────
@@ -481,6 +315,15 @@ pub(super) fn with_elab_value(detail: String, value: &Val) -> String {
     }
 }
 
+fn normalize_inline_elab_value(detail: String) -> String {
+    match detail.rsplit_once(" = ") {
+        Some((declaration, value)) if !declaration.is_empty() && !value.is_empty() => {
+            format!("{declaration}\nvalue = {value}")
+        }
+        _ => detail,
+    }
+}
+
 /// Return a hover for the symbol at the 0-based `(line, col)` position, if any.
 ///
 /// Macro usages (`` `NAME ``) and `` `define `` NAME identifiers are served
@@ -511,6 +354,9 @@ pub fn hover_at(a: &Analysis, file: &str, line: u32, col: u32) -> Option<Hover> 
     // Cursor normalization mirrors `definition_at`: a click mid-identifier
     // must reuse the token's start column, where bindings are keyed.
     let clicked = a.index.entry_at(file, line, col);
+    if unresolved_binding_at(a, file, line, col, clicked) {
+        return None;
+    }
     let bound = a
         .ref_bindings
         .get(&(file.to_string(), line, col))
@@ -531,11 +377,13 @@ pub fn hover_at(a: &Analysis, file: &str, line: u32, col: u32) -> Option<Hover> 
             .clone()
             .or_else(|| hover_detail(a, file, &e.name));
         if matches!(decl.kind, SymKind::Param) {
-            if let (Some(d), Some(v)) = (
-                detail.as_ref(),
-                param_elab_value(a, &decl.file, decl.line, &decl.name),
-            ) {
-                detail = Some(with_elab_value(d.clone(), v));
+            if let Some(d) = detail.take() {
+                detail = Some(
+                    match param_elab_value(a, &decl.file, decl.line, &decl.name) {
+                        Some(v) => with_elab_value(d, v),
+                        None => normalize_inline_elab_value(d),
+                    },
+                );
             }
         }
         if let Some(f) = func_from_decl(&a.model, decl) {
@@ -544,10 +392,7 @@ pub fn hover_at(a: &Analysis, file: &str, line: u32, col: u32) -> Option<Hover> 
                 f.scope,
                 if f.automatic { "automatic" } else { "static" }
             );
-            detail = Some(match detail {
-                Some(d) => format!("{d}\n\n{extra}"),
-                None => extra,
-            });
+            detail = Some(format!("{}\n\n{extra}", func_signature(f)));
         }
         if let Some(detail) = detail {
             let len = lsp_name_len(&e.name);
@@ -665,7 +510,7 @@ pub(super) fn build_macro_hover(
 ///
 /// Detail precedence: the indexed DECLARATION entry at the target position
 /// (carries model data for functions/classes/instances), then the
-/// position-accurate snippet captured during the VPI walk
+/// position-accurate snippet captured during the semantic walk
 /// ([`Analysis::decl_details`]), then the name-based model lookup.  Parameter
 /// targets additionally gain the elaborated-value line from the committed
 /// model (omitted when unresolved/ambiguous).  `None` when no detail can be
@@ -697,10 +542,13 @@ pub(super) fn hover_for_target(
     })?;
     // Parameter targets (elaboration-bound refs, override labels included)
     // gain the elaborated-value line from the committed model.
-    let detail = if target.kind == "parameter" {
+    let detail = if matches!(target.kind.as_str(), "parameter" | "localparam") {
         match param_elab_value(a, &target.file, target.line0, &target.name) {
             Some(v) => with_elab_value(detail, v),
-            None => detail,
+            // The indexed model detail can already carry Slang's elaborated
+            // constant even when definition-span lookup cannot identify a
+            // unique instance (for example a top-level localparam).
+            None => normalize_inline_elab_value(detail),
         }
     } else {
         detail
@@ -929,7 +777,7 @@ pub(super) fn func_from_decl<'m>(model: &'m DesignModel, decl: &SymEntry) -> Opt
     let want_scope = decl.scope.as_deref()?;
     // Index positions are 0-based; model positions are 1-based.
     let want_line = decl.line.saturating_add(1);
-    all_instances(&model.top_instances)
+    let instance_function = all_instances(&model.top_instances)
         .into_iter()
         .find_map(|inst| {
             if inst.full_name != want_scope && clean_name(&inst.full_name) != want_scope {
@@ -938,7 +786,18 @@ pub(super) fn func_from_decl<'m>(model: &'m DesignModel, decl: &SymEntry) -> Opt
             inst.funcs
                 .iter()
                 .find(|f| f.name == decl.name && f.line == want_line)
+        });
+    instance_function.or_else(|| {
+        model.classes.iter().find_map(|class| {
+            if clean_name(&class.name) != clean_name(want_scope) {
+                return None;
+            }
+            class
+                .methods
+                .iter()
+                .find(|method| method.name == decl.name && method.line == want_line)
         })
+    })
 }
 
 pub(super) fn def_site_line(a: &Analysis, def_name: &str) -> Option<(String, u32)> {
@@ -955,7 +814,7 @@ pub(super) fn def_site_line(a: &Analysis, def_name: &str) -> Option<(String, u32
 ///
 /// The reference-binding map is consulted FIRST: a position that exactly
 /// matches a captured binding key (the 0-based start of an emitted reference
-/// token — UHDM `vpiActual` capture or resolved port/parameter connection
+/// token from Slang or a resolved port/parameter connection
 /// label) serves the single bound declaration location, which is precise
 /// even where the name-based index would be ambiguous.  On a miss the symbol
 /// index resolves the entry at the position to its declaration (cross-file
@@ -972,11 +831,13 @@ pub fn definition_at(a: &Analysis, file: &str, line: u32, col: u32) -> Option<Lo
     if let Some(target) = a.ref_bindings.get(&(file.to_string(), line, col)) {
         return Some(ref_target_location(target));
     }
-    if a.index.is_unresolved_enum_ref(file, line, col) {
+    if a.index.is_unresolved_enum_ref(file, line, col)
+        || unresolved_binding_at(a, file, line, col, a.index.entry_at(file, line, col))
+    {
         return None;
     }
     // Cursor normalization: a click mid-identifier must reuse the token's
-    // start column, where UHDM ref->decl bindings are keyed.
+    // start column, where semantic DB ref->decl bindings are keyed.
     if let Some(e) = a.index.entry_at(file, line, col) {
         if let Some(target) = a.ref_bindings.get(&(file.to_string(), line, e.col)) {
             return Some(ref_target_location(target));
@@ -1098,6 +959,9 @@ pub fn references_at_with_options(
     include_declaration: bool,
 ) -> Vec<Location> {
     if let Some(e) = a.index.entry_at(file, line, col) {
+        if unresolved_binding_at(a, file, line, col, Some(e)) {
+            return Vec::new();
+        }
         if a.index.is_unresolved_enum_ref(file, line, e.col) {
             return Vec::new();
         }
@@ -1121,6 +985,21 @@ pub fn references_at_with_options(
         }
     }
     references_fallback_with_options(a, file, line, col, include_declaration)
+}
+
+fn unresolved_binding_at(
+    a: &Analysis,
+    file: &str,
+    line: u32,
+    col: u32,
+    entry: Option<&SymEntry>,
+) -> bool {
+    a.unresolved_bindings
+        .contains(&(file.to_owned(), line, col))
+        || entry.is_some_and(|entry| {
+            a.unresolved_bindings
+                .contains(&(file.to_owned(), line, entry.col))
+        })
 }
 
 /// The binding target for the query position: exact key first, then the
@@ -1177,7 +1056,7 @@ pub(super) fn shadow_aware_reference_locations(
         }
     }
 
-    // True declaration sites per the UHDM capture: positions recorded as
+    // True declaration sites per the semantic DB capture: positions recorded as
     // declared objects behave like declarations even when the multi-view
     // classification left them REF-shaped.
     let is_decl_position = |key: &(String, u32, u32)| a.decl_details.contains_key(key);
@@ -1272,7 +1151,7 @@ pub(super) fn references_fallback_with_options(
     if let Some(ft) = file_tokens(a, file) {
         for n in &ft.nodes {
             if n.name.as_deref() == Some(name)
-                && (include_declaration || !is_declaration_vpi_type(n.vpi_type))
+                && (include_declaration || !is_declaration_token(n.kind))
                 && seen.insert((n.line, n.col))
             {
                 out.push(location(file, n.line, n.col, lsp_name_len(name) as usize));
@@ -1629,7 +1508,7 @@ pub(super) fn param_type_detail(
 /// Document-symbol child detail carrying the SOURCE-DECLARED type (no name,
 /// no resolved value): ports render `[direction] type`, nets/vars render
 /// `type`, parameters render `parameter|localparam [type]`.  Prefers the
-/// position-accurate UHDM declaration snippet ([`Analysis::decl_details`])
+/// position-accurate semantic DB declaration snippet ([`Analysis::decl_details`])
 /// over the name-based model detail; missing information degrades to `None`
 /// rather than a guess.
 pub(super) fn child_type_detail(a: &Analysis, d: &SymEntry) -> Option<String> {
@@ -1846,11 +1725,7 @@ pub(super) fn child_symbol(
         .iter()
         .filter(|n| n.name.as_deref() == Some(name))
         .min_by_key(|n| {
-            let decl_rank = if is_declaration_vpi_type(n.vpi_type) {
-                0
-            } else {
-                1
-            };
+            let decl_rank = if is_declaration_token(n.kind) { 0 } else { 1 };
             (decl_rank, n.line, n.col)
         })?;
     let line = node.line.saturating_sub(1);
@@ -2150,7 +2025,7 @@ pub(super) fn utf16_byte_offset(line: &str, col: u32) -> usize {
     line.len()
 }
 
-/// Strip a Surelog library prefix (`lib@name` → `name`) from a design name.
+/// Strip a Slang library prefix (`lib@name` → `name`) from a design name.
 ///
 /// Elaborated module/package names arrive as `work@param_top` etc.; SV
 /// identifiers cannot contain `@`, so the prefix is unambiguous to strip for
@@ -2162,28 +2037,18 @@ pub(super) fn clean_name(name: &str) -> &str {
     }
 }
 
-/// `true` when `file` is Surelog's virtual builtin file (`<cwd>/builtin.sv`).
+/// `true` when `file` is Slang's virtual builtin file (`<cwd>/builtin.sv`).
 ///
-/// Surelog parses the builtin classes (mailbox/process/semaphore) from a
+/// Slang parses the builtin classes (mailbox/process/semaphore) from a
 /// string and reports them under this path, which never exists on disk;
 /// declarations there are skipped so goto-definition cannot dead-end.
 pub(super) fn builtin_file(file: &str) -> bool {
     Path::new(file).file_name().and_then(|n| n.to_str()) == Some("builtin.sv")
 }
 
-/// The token list for `file`, by exact path with a filename fallback.
+/// The token list for `file`, by exact admitted source identity.
 pub(super) fn file_tokens<'a>(a: &'a Analysis, file: &str) -> Option<&'a FileTokens> {
-    let file_name = Path::new(file)
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("");
-    a.tokens.iter().find(|ft| ft.path == file).or_else(|| {
-        if file_name.is_empty() {
-            None
-        } else {
-            a.tokens.iter().find(|ft| ft.path.ends_with(file_name))
-        }
-    })
+    a.tokens.iter().find(|ft| ft.path == file)
 }
 
 /// The named token at 0-based `(line, col)`: prefer a token whose name range
@@ -2194,11 +2059,11 @@ pub(super) fn token_at<'a>(
     file: &str,
     line: u32,
     col: u32,
-) -> Option<&'a VObjectInfo> {
+) -> Option<&'a TokenInfo> {
     let line1 = line + 1;
     let col1 = col + 1;
     let ft = file_tokens(a, file)?;
-    let mut candidates: Vec<&VObjectInfo> = ft
+    let mut candidates: Vec<&TokenInfo> = ft
         .nodes
         .iter()
         .filter(|n| n.line == line1 && n.name.as_deref().is_some_and(|s| !s.is_empty()))
@@ -2236,34 +2101,27 @@ pub(super) fn all_instances(insts: &[InstanceModel]) -> Vec<&InstanceModel> {
 }
 
 /// The 1-based position of the token at the exact 0-based `(line, col)` when
-/// that token's VPI type is a named-connection LABEL flavor (the dedicated
-/// `TOKEN_*_CONN_LABEL` synthetic types, plus the historical
-/// `vpiFunction`/`vpiTask` port-label and `vpiParameter` override-label types);
+/// that token's semantic type is a named-connection label flavor;
 /// `None` otherwise.
 ///
 /// Used to keep [`nearest_declaration`] from matching a connection label's
 /// OWN token: an unresolvable label must yield no definition, not a no-op
 /// jump onto itself.
 pub(super) fn skip_self_label(a: &Analysis, file: &str, line: u32, col: u32) -> Option<(u32, u32)> {
-    use llg::ffi::vpi;
     let ft = file_tokens(a, file)?;
     let node = ft
         .nodes
         .iter()
         .find(|n| n.line == line + 1 && n.col == col + 1)?;
     let is_label_flavor = matches!(
-        node.vpi_type,
-        vpi::TOKEN_PORT_CONN_LABEL
-            | vpi::TOKEN_PARAM_CONN_LABEL
-            | vpi::vpiFunction
-            | vpi::vpiTask
-            | vpi::vpiParameter
+        tokens::token_base_kind(node.kind).0,
+        tokens::TOKEN_SLANG_PORT_CONNECTION_LABEL | tokens::TOKEN_SLANG_PARAMETER_CONNECTION_LABEL
     );
     is_label_flavor.then_some((node.line, node.col))
 }
 
 /// The same-file port/signal/parameter declaration of `name` nearest to
-/// 0-based `line`, from tokens whose VPI type is a declaration type.
+/// 0-based `line`, from tokens whose semantic type is a declaration type.
 ///
 /// `skip` excludes one 1-based position — the clicked connection-label token
 /// itself (see [`skip_self_label`]) — so a dropped/unbound label cannot
@@ -2280,55 +2138,16 @@ pub(super) fn nearest_declaration(
         .iter()
         .filter(|n| {
             n.name.as_deref() == Some(name)
-                && is_declaration_vpi_type(n.vpi_type)
+                && is_declaration_token(n.kind)
                 && Some((n.line, n.col)) != skip
         })
         .min_by_key(|n| (n.line.abs_diff(line + 1), n.col))
         .map(|n| (n.line, n.col))
 }
 
-/// VPI object types that represent declarations (rather than references).
-pub(super) fn is_declaration_vpi_type(t: i32) -> bool {
-    use llg::ffi::vpi;
-    matches!(
-        t,
-        vpi::vpiModule
-            | vpi::vpiPort
-            | vpi::vpiPortBit
-            | vpi::vpiNet
-            | vpi::vpiNetBit
-            | vpi::vpiReg
-            | vpi::vpiRegBit
-            | vpi::vpiIntegerVar
-            | vpi::vpiRealVar
-            | vpi::vpiTimeVar
-            | vpi::vpiParameter
-            | vpi::vpiSpecParam
-            | vpi::vpiLogicVar
-            | vpi::vpiFunction
-            | vpi::vpiTask
-            | vpi::uhdmpackage
-            | vpi::uhdmclass_defn
-            | vpi::uhdmenum_const
-            | vpi::uhdmlogic_net
-            | vpi::uhdmnet
-            | vpi::uhdmlogic_var
-            | vpi::uhdmint_var
-            | vpi::uhdmreal_var
-            | vpi::uhdmbit_var
-            | vpi::uhdmbyte_var
-            | vpi::uhdmshort_int_var
-            | vpi::uhdmlong_int_var
-            | vpi::uhdmparameter
-            | vpi::uhdmfunction
-            | vpi::uhdmtask
-            | vpi::uhdminterface_inst
-            | vpi::TOKEN_PORT_INPUT
-            | vpi::TOKEN_PORT_OUTPUT
-            | vpi::TOKEN_PORT_INOUT
-            | vpi::TOKEN_TYPEDEF_NAME
-            | llg::core::tokens::TOKEN_GENVAR_DECL
-    )
+/// Whether a lexical token represents a declaration.
+pub(super) fn is_declaration_token(t: i32) -> bool {
+    tokens::token_base_kind(t).1 || t == tokens::TOKEN_GENVAR_DECL
 }
 
 // ── Location construction ─────────────────────────────────────────────────────

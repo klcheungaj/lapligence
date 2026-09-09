@@ -1,12 +1,13 @@
 //! End-to-end simulator tests for generate-block processes and scalar
-//! declaration initializers: Surelog compile → codegen → CMake build → run.
+//! declaration initializers: Slang compile → codegen → CMake build → run.
 //!
-//! Surelog writes `slpp_all/` into the process working directory, so each
+//! These tests temporarily change the process working directory, so each
 //! test runs with the CWD pointed at a fresh temp dir (serialized through a
-//! mutex, like the other Surelog integration tests).
+//! mutex, to avoid process-wide CWD races).
 
 use llg::core::compile;
 use llg::sim;
+use llg::sim::opt::OptConfig;
 
 #[path = "support/sim.rs"]
 mod sim_harness;
@@ -125,6 +126,84 @@ endmodule
     assert_eq!(stdout, "t=1 x=x\nt=6 x=0\nt=17 x=0\n");
 }
 
+/// Nested direct conditional scopes retain all executable content: the child
+/// instance connects through its ports, the continuous assignment propagates
+/// the process result, and the selected process observes the connected value.
+#[test]
+fn sim_nested_cond_generate_retains_process_driver_and_child_links() {
+    if !llg::sim::build::cmake_available() {
+        eprintln!("SKIP: cmake not available");
+        return;
+    }
+    let sv = r#"// llg-test-fixture: tests/sim_geninit.rs/nested_conditional.sv
+module leaf(input wire source, output wire linked);
+    assign linked = source;
+endmodule
+
+module tb;
+    reg clk;
+    reg source;
+    reg sampled;
+    wire observed;
+    localparam OUTER = 1;
+    localparam INNER = 1;
+
+    generate
+        if (OUTER) begin : outer
+            if (INNER) begin : inner
+                wire linked;
+                leaf child(.source(source), .linked(linked));
+                always @(posedge clk) sampled <= linked;
+                assign observed = sampled;
+            end
+        end
+    endgenerate
+
+    initial begin
+        clk = 0;
+        source = 0;
+        #1 source = 1;
+        #4 clk = 1;
+        #1 $display("observed=%0b", observed);
+        $finish;
+    end
+endmodule
+"#;
+    let expected = "observed=1\n";
+
+    sim_harness::with_frontend_temp_cwd("nested-cond-generate", |dir| {
+        let source = dir.join("nested_conditional.sv");
+        std::fs::write(&source, sv).map_err(|error| format!("write source: {error}"))?;
+        let compiled = compile::compile_checked(&compile::CompileOpts {
+            files: vec![source.to_string_lossy().into_owned()],
+            top: Some("tb".to_owned()),
+            ..Default::default()
+        })
+        .map_err(|error| format!("compile: {error}"))?;
+        let database = llg::core::db::Db::from_slang(&compiled.snapshot)
+            .map_err(|error| format!("database: {error}"))?;
+
+        for (variant, options) in [
+            ("unoptimized", OptConfig::none()),
+            ("optimized", OptConfig::default()),
+        ] {
+            let generated = sim::codegen::generate_from_db_with_opts(&database, &options)
+                .map_err(|error| format!("{variant} codegen: {error}"))?;
+            let executable = sim::build::build_model_cmake(
+                &dir.join(variant),
+                &[("model.c", generated.model_c.as_str())],
+            )
+            .map_err(|error| format!("{variant} cmake: {error}"))?;
+            let stdout = sim_harness::run_executable(&executable)?;
+            if stdout != expected {
+                return Err(format!("{variant}: expected {expected:?}, got {stdout:?}"));
+            }
+        }
+        Ok(())
+    })
+    .expect("nested direct conditional generate scopes must execute");
+}
+
 /// Scalar declaration initializers (`wire w = 1'b1;`, `reg [3:0] r = 4'ha;`,
 /// `reg v = 1'b0;` — previously rejected) must be applied in `main()` before
 /// any process runs, and a process writing the signal at t=0 must override
@@ -176,7 +255,7 @@ module tb;
 endmodule
 "#;
 
-    let result = sim_harness::with_surelog_temp_cwd("declnc", |dir| {
+    let result = sim_harness::with_frontend_temp_cwd("declnc", |dir| {
         let source = dir.join("nonconst.sv");
         std::fs::write(&source, sv).map_err(|error| format!("write source: {error}"))?;
         let out = compile::compile(&compile::CompileOpts {
@@ -188,15 +267,16 @@ endmodule
         if !out.ok() {
             return Err(format!("compile diagnostics: {:?}", out.diagnostics));
         }
-        let design = out.uhdm_design().ok_or("no UHDM design")?;
-        sim::codegen::generate(design)
+        let db =
+            llg::core::db::Db::from_slang(&out.snapshot).map_err(|error| format!("db: {error}"))?;
+        sim::codegen::generate(&db)
             .map(|_| ())
             .map_err(|error| error.to_string())
     });
 
     let err = result.expect_err("codegen must reject non-constant variable initializers");
     assert!(
-        err.contains("declaration initializer"),
+        err.contains("variable initializer is not a constant expression"),
         "unexpected error: {err}"
     );
 }

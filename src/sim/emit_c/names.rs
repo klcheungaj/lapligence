@@ -1,4 +1,4 @@
-/// Strip the `lib@` prefix Surelog puts on top-instance names.
+/// Strip an optional frontend library prefix from a top-instance name.
 pub(crate) fn strip_lib(name: &str) -> String {
     match name.split_once('@') {
         Some((_, rest)) if !rest.is_empty() => rest.to_string(),

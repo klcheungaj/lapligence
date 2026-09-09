@@ -29,7 +29,7 @@ pub struct SymEntry {
 /// pipeline knows about, with lookup structures for position/name queries.
 ///
 /// Built by [`SymbolIndex::build`] (or `Analysis::new`) from the design model
-/// and the token lists; never touches Surelog afterwards.
+/// and the token lists; never touches Slang afterwards.
 #[derive(Debug, Default)]
 pub struct SymbolIndex {
     /// All declaration sites, in build order.
@@ -64,59 +64,59 @@ pub struct SymbolIndex {
     unresolved_enum_refs: HashSet<(String, u32, u32)>,
 }
 
-/// VPI types that always denote a reference site (from `walk_expr` in
-/// `core::tokens`; verified empirically that refs report `vpiRefObj`).
-pub(super) const REF_TOKEN_TYPES: &[i32] = &[
-    llg::ffi::vpi::vpiRefObj,
-    llg::ffi::vpi::uhdmref_obj,
-    llg::ffi::vpi::uhdmref_var,
-    llg::ffi::vpi::vpiVarSelect,
-];
-
-/// VPI types that denote a net/var/port/parameter object — ambiguous between
-/// declaration and reference sites (see the classification in
-/// [`SymbolIndex::from_parts`]).
-pub(super) const SIGNAL_DECL_TYPES: &[i32] = &[
-    llg::ffi::vpi::vpiNet,
-    llg::ffi::vpi::vpiNetBit,
-    llg::ffi::vpi::vpiReg,
-    llg::ffi::vpi::vpiRegBit,
-    llg::ffi::vpi::vpiPort,
-    llg::ffi::vpi::vpiPortBit,
-    llg::ffi::vpi::vpiLogicVar,
-    llg::ffi::vpi::vpiIntegerVar,
-    llg::ffi::vpi::vpiRealVar,
-    llg::ffi::vpi::vpiTimeVar,
-    llg::ffi::vpi::uhdmlogic_var,
-    llg::ffi::vpi::uhdmnet,
-    llg::ffi::vpi::uhdmlogic_net,
-    llg::ffi::vpi::uhdmint_var,
-    llg::ffi::vpi::uhdmreal_var,
-    llg::ffi::vpi::uhdmbit_var,
-    llg::ffi::vpi::uhdmbyte_var,
-    llg::ffi::vpi::uhdmshort_int_var,
-    llg::ffi::vpi::uhdmlong_int_var,
-    llg::ffi::vpi::vpiParameter,
-    llg::ffi::vpi::vpiSpecParam,
-    llg::ffi::vpi::uhdmparameter,
-];
-
-/// VPI types that denote a module/interface instance name at its
-/// instantiation site (parse-tree classified; see `paName_of_instance`).
-pub(super) const INSTANCE_NAME_TOKEN_TYPES: &[i32] = &[
-    llg::ffi::vpi::uhdmlogic_var,
-    llg::ffi::vpi::uhdmmodule_inst,
-    llg::ffi::vpi::uhdminterface_inst,
-];
+/// Token kinds that denote a module/interface instance name at its site.
+pub(super) const INSTANCE_NAME_TOKEN_TYPES: &[i32] = &[tokens::TOKEN_SLANG_IDENTIFIER];
 
 /// Maximum distance (0-based lines) between an instance declaration and a
 /// named port-connection label on a later line for the multi-line heuristic in
 /// [`port_label_candidate`].  Labels farther below their instance than this are
-/// not associated with it (they are more likely to belong to a different
-/// instantiation or to be unrelated `vpiFunction`/`vpiTask` tokens).
+/// not associated with it because they are more likely to belong elsewhere.
 pub(super) const PORT_LABEL_MAX_SPAN: u32 = 50;
 
 impl SymbolIndex {
+    /// Populate named-connection lookup maps from Slang's exact lexical
+    /// identities. Navigation continues to prefer `Analysis.ref_bindings`.
+    pub(super) fn attach_exact_label_bindings(
+        &mut self,
+        tokens: &[FileTokens],
+        bindings: &RefBindings,
+    ) {
+        for ((file, line, col), target) in bindings {
+            if !target.via_label {
+                continue;
+            }
+            let Some(token_kind) = tokens
+                .iter()
+                .find(|file_tokens| file_tokens.path == *file)
+                .and_then(|file_tokens| {
+                    file_tokens.nodes.iter().find(|token| {
+                        token.line == line.saturating_add(1) && token.col == col.saturating_add(1)
+                    })
+                })
+                .map(|token| tokens::token_base_kind(token.kind).0)
+            else {
+                continue;
+            };
+            let Some(index) = self.decls.iter().position(|declaration| {
+                declaration.file == target.file
+                    && declaration.line == target.line0
+                    && declaration.col == target.col0
+            }) else {
+                continue;
+            };
+            let key = (file.clone(), *line, *col);
+            match token_kind {
+                tokens::TOKEN_SLANG_PORT_CONNECTION_LABEL => {
+                    self.port_labels.insert(key, index);
+                }
+                tokens::TOKEN_SLANG_PARAMETER_CONNECTION_LABEL => {
+                    self.param_labels.insert(key, index);
+                }
+                _ => {}
+            }
+        }
+    }
+
     /// Build the index from an [`Analysis`].
     ///
     /// `Analysis::new` builds the index internally via [`SymbolIndex::from_parts`];
@@ -254,38 +254,12 @@ impl SymbolIndex {
     ///
     /// # References
     ///
-    /// * token nodes with a reference VPI type (`vpiRefObj`, `uhdmref_obj`,
-    ///   `uhdmref_var`, `vpiVarSelect`) or a connection-label synthetic type
-    ///   (`TOKEN_PORT_CONN_LABEL`, `TOKEN_PARAM_CONN_LABEL`),
-    /// * module type names at instantiation sites (`uhdmclass_defn` tokens
-    ///   whose name matches a module definition),
-    /// * named port connections (`vpiFunction`/`vpiTask` tokens whose name is
-    ///   a known port/signal/parameter, plus every `TOKEN_PORT_CONN_LABEL`
-    ///   token); their child port declaration is precomputed into
-    ///   `port_labels` (see [`port_label_candidate`] and
-    ///   [`resolve_port_label`]),
-    /// * named parameter overrides (classifier-labeled `TOKEN_PARAM_CONN_LABEL`
-    ///   tokens at scanned `paNamed_parameter_assignment` positions — `pairs`
-    ///   supplies both the positions and each instantiation's module type, so
-    ///   no positional guessing is involved); their child parameter declaration
-    ///   is precomputed into `param_labels` (see [`resolve_param_override`]),
-    ///   while unresolvable label positions land in `unresolved_param_labels`.
+    /// * lexical tokens carrying Slang's reference role,
+    /// * module type names at instantiation sites,
+    /// * exact named port and parameter labels.
     ///
-    /// # Decl vs. ref for ambiguous signal tokens
-    ///
-    /// Empirically with the pinned Surelog/UHDM: a true declaration site carries at
-    /// least two tokens (VPI walker + parse tree) at the same position and no
-    /// `vpiRefObj` companion, while reference sites have a `vpiRefObj`
-    /// companion or a single token.  Port declarations additionally emit the
-    /// direction-specific `TOKEN_PORT_*` types, which appear only at
-    /// declaration sites.
-    /// `parse_decls` carries the parse-tree declaration positions recorded by
-    /// [`collect_parse_tokens`].  It is `Some` ONLY for the syntax-broken
-    /// fallback path: without instances, `signal_names` would stay empty and
-    /// every parse-classified port/net/var token would be dropped by
-    /// [`classify_token`]'s gate; seeded sets plus per-position
-    /// `forced_decl` restore them.  The elaborated pipeline passes `None` so
-    /// UHDM multi-view classification is untouched.
+    /// Slang supplies declaration/reference roles directly. `parse_decls`
+    /// retains declarations from a recovery snapshot when elaboration fails.
     pub(super) fn from_parts(
         model: &DesignModel,
         tokens: &[FileTokens],
@@ -295,8 +269,6 @@ impl SymbolIndex {
         parse_enum_ref_positions: &HashSet<(String, u32, u32)>,
         unresolved_enum_refs: &HashSet<(String, u32, u32)>,
     ) -> SymbolIndex {
-        use llg::ffi::vpi;
-
         let mut decls: Vec<SymEntry> = Vec::new();
         let mut refs: Vec<SymEntry> = Vec::new();
         let mut claimed: HashSet<(String, u32, u32)> = HashSet::new();
@@ -354,7 +326,7 @@ impl SymbolIndex {
         // `nodes.iter().find` scan per declaration while preserving the old
         // first-node-at-position choice.
         let parse_nodes_by_position = parse_decls.map(|_| {
-            let mut nodes_by_position: HashMap<(&str, u32, u32), &llg::ffi::surelog::VObjectInfo> =
+            let mut nodes_by_position: HashMap<(&str, u32, u32), &llg::core::tokens::TokenInfo> =
                 HashMap::with_capacity(tokens.iter().map(|ft| ft.nodes.len()).sum());
             for file_tokens in tokens_by_file.values() {
                 for node in &file_tokens.nodes {
@@ -382,12 +354,12 @@ impl SymbolIndex {
                     continue;
                 };
                 let nm = name.to_owned();
-                match node.vpi_type {
-                    vpi::TOKEN_PORT_INPUT | vpi::TOKEN_PORT_OUTPUT | vpi::TOKEN_PORT_INOUT => {
+                match tokens::token_base_kind(node.kind).0 {
+                    tokens::TOKEN_SLANG_PORT => {
                         port_names.insert(nm.clone());
                         signal_names.insert(nm);
                     }
-                    vpi::vpiParameter => {
+                    tokens::TOKEN_SLANG_PARAMETER => {
                         param_names.insert(nm.clone());
                         signal_names.insert(nm);
                     }
@@ -405,7 +377,7 @@ impl SymbolIndex {
                 .get(file.as_str())
                 .and_then(|ft| {
                     ft.nodes.iter().find(|n| {
-                        n.vpi_type == vpi::vpiModule
+                        tokens::token_base_kind(n.kind).0 == tokens::TOKEN_SLANG_MODULE
                             && clean_name(n.name.as_deref().unwrap_or("")) == clean_name(&m.name)
                     })
                 })
@@ -437,7 +409,7 @@ impl SymbolIndex {
                 .get(file.as_str())
                 .and_then(|ft| {
                     ft.nodes.iter().find(|n| {
-                        n.vpi_type == vpi::uhdmpackage
+                        tokens::token_base_kind(n.kind).0 == tokens::TOKEN_SLANG_PACKAGE
                             && clean_name(n.name.as_deref().unwrap_or("")) == clean_name(&p.name)
                     })
                 })
@@ -474,12 +446,12 @@ impl SymbolIndex {
             let ft = tokens_by_file.get(file.as_str());
             for param in &p.params {
                 // `ParamModel` carries no position; the package-file token
-                // (vpiParameter at the declaration site) supplies it.  Params
+                // at the declaration site supplies it. Params
                 // without a token are skipped rather than mis-positioned.
                 let Some((line1, col1)) = ft
                     .and_then(|ft| {
                         ft.nodes.iter().find(|n| {
-                            n.vpi_type == vpi::vpiParameter
+                            tokens::token_base_kind(n.kind).0 == tokens::TOKEN_SLANG_PARAMETER
                                 && clean_name(n.name.as_deref().unwrap_or("")) == param.name
                         })
                     })
@@ -528,10 +500,10 @@ impl SymbolIndex {
 
         // ── Class declarations and class members (model) ───────────────────
         // Classes are per-file definitions (not per-instance clones).  The
-        // class decl position is refined to the class *name* token (Surelog's
+        // class decl position is refined to the class *name* token (Slang's
         // own position points at the `class` keyword); methods and fields are
         // indexed with the class name as their scope so `Class::member`
-        // resolution and class-scoped completion work.  Surelog's builtin
+        // resolution and class-scoped completion work.  Slang's builtin
         // classes (mailbox/process/semaphore) report a virtual `<cwd>/builtin.sv`
         // file that never exists on disk, so they are skipped the same way the
         // builtin package is (no user code to navigate to).
@@ -544,7 +516,7 @@ impl SymbolIndex {
                 .get(file.as_str())
                 .and_then(|ft| {
                     ft.nodes.iter().find(|n| {
-                        n.vpi_type == vpi::uhdmclass_defn
+                        tokens::token_base_kind(n.kind).0 == tokens::TOKEN_SLANG_CLASS
                             && n.line == c.line
                             && clean_name(n.name.as_deref().unwrap_or("")) == clean_name(&c.name)
                     })
@@ -595,7 +567,7 @@ impl SymbolIndex {
                     detail: Some(func_signature(m)),
                 });
                 claimed.insert((mfile.clone(), m.line, m.col));
-                // Surelog's own method position points at the `function`/
+                // Slang's own method position points at the `function`/
                 // `task` keyword; the parse-tree name token sits on the same
                 // line.  Claim it too so the token pass does not emit a
                 // second, detail-less method decl at the name.
@@ -603,8 +575,10 @@ impl SymbolIndex {
                     .get(file.as_str())
                     .and_then(|ft| {
                         ft.nodes.iter().find(|n| {
-                            (n.vpi_type == vpi::vpiFunction || n.vpi_type == vpi::vpiTask)
-                                && n.line == m.line
+                            matches!(
+                                tokens::token_base_kind(n.kind).0,
+                                tokens::TOKEN_SLANG_FUNCTION | tokens::TOKEN_SLANG_TASK
+                            ) && n.line == m.line
                                 && clean_name(n.name.as_deref().unwrap_or("")) == mname
                         })
                     })
@@ -636,8 +610,8 @@ impl SymbolIndex {
         }
 
         // ── Instance declarations (model, at the instantiation site) ────────
-        // Surelog's `vpiColumnNo` on an instance points at the module *type*
-        // name; the position is refined to the instance-name token (when
+        // The model's instance position can point at the module type name;
+        // refine it to the instance-name token (when
         // present) so `entry_at` hits the identifier the user actually clicks.
         fn push_instances(
             insts: &[InstanceModel],
@@ -657,7 +631,7 @@ impl SymbolIndex {
                             ft.nodes.iter().find(|n| {
                                 n.line == i.line
                                     && clean_name(n.name.as_deref().unwrap_or("")) == name
-                                    && INSTANCE_NAME_TOKEN_TYPES.contains(&n.vpi_type)
+                                    && INSTANCE_NAME_TOKEN_TYPES.contains(&n.kind)
                             })
                         })
                         .map(|n| (n.line, n.col))
@@ -734,10 +708,10 @@ impl SymbolIndex {
         }
 
         // Parse-backed enum declarations supplement the model.  In a valid
-        // design package enum constants already arrived through UHDM and were
+        // design package enum constants already arrived through semantic DB and were
         // inserted above, so this pass runs afterward and keeps the richer
         // model entry at duplicate positions while retaining class-local and
-        // syntax-broken declarations absent from UHDM.
+        // syntax-broken declarations absent from semantic DB.
         for parsed in parse_enum_decls {
             let key = (
                 parsed.file.clone(),
@@ -794,36 +768,48 @@ impl SymbolIndex {
             let genvar_reference_positions: HashSet<(u32, u32)> = ft
                 .nodes
                 .iter()
-                .filter(|node| node.vpi_type == llg::core::tokens::TOKEN_GENVAR_REF)
+                .filter(|node| node.kind == llg::core::tokens::TOKEN_GENVAR_REF)
                 .map(|node| (node.line, node.col))
                 .collect();
             // Type histogram per position drives the decl/ref classification.
             let mut pos_types: HashMap<(u32, u32), Vec<i32>> = HashMap::new();
             for n in &ft.nodes {
                 if n.name.is_some() {
-                    pos_types
-                        .entry((n.line, n.col))
-                        .or_default()
-                        .push(n.vpi_type);
+                    pos_types.entry((n.line, n.col)).or_default().push(n.kind);
                 }
             }
 
             for n in &ft.nodes {
                 if genvar_reference_positions.contains(&(n.line, n.col))
-                    && n.vpi_type != llg::core::tokens::TOKEN_GENVAR_REF
+                    && n.kind != llg::core::tokens::TOKEN_GENVAR_REF
                 {
                     continue;
                 }
                 let Some(name) = n.name.as_deref() else {
                     continue;
                 };
-                if name.is_empty() || claimed.contains(&(ft.path.clone(), n.line, n.col)) {
+                if name.is_empty() {
+                    continue;
+                }
+                if n.kind == llg::core::tokens::TOKEN_GENVAR_DECL {
+                    // The lexical Genvar record is the authoritative source
+                    // declaration. Remove any elaborated parameter/variable
+                    // clone at the same position before the common token path
+                    // builds the single index entry.
+                    decls.retain(|declaration| {
+                        declaration.file != ft.path
+                            || declaration.line + 1 != n.line
+                            || declaration.col + 1 != n.col
+                    });
+                    claimed.remove(&(ft.path.clone(), n.line, n.col));
+                }
+                if claimed.contains(&(ft.path.clone(), n.line, n.col)) {
                     continue;
                 }
                 let forced_decl =
                     parse_decls.is_some_and(|set| set.contains(&(ft.path.clone(), n.line, n.col)));
                 let Some((kind, is_decl)) = classify_token(
-                    n.vpi_type,
+                    n.kind,
                     name,
                     &pos_types,
                     n.line,
@@ -841,16 +827,15 @@ impl SymbolIndex {
                 ) else {
                     continue;
                 };
-                // Named port connections: a `vpiFunction`/`vpiTask` reference
-                // with an instance declaration on the same or an earlier line
+                // Named port connections with an instance declaration on the
+                // same or an earlier line
                 // (see `port_label_candidate` for the exact heuristic), or a
                 // classifier-labeled `TOKEN_PORT_CONN_LABEL` token — the same
                 // structural evidence, needing no name gate.
                 if !is_decl
                     && kind == SymKind::Var
-                    && (n.vpi_type == vpi::vpiFunction
-                        || n.vpi_type == vpi::vpiTask
-                        || n.vpi_type == vpi::TOKEN_PORT_CONN_LABEL)
+                    && tokens::token_base_kind(n.kind).0
+                        == tokens::TOKEN_SLANG_PORT_CONNECTION_LABEL
                 {
                     if let Some(cand) = port_label_candidate(
                         &decls,
@@ -869,7 +854,7 @@ impl SymbolIndex {
                 let scope = enclosing_scope(&scope_providers, &ft.path, n.line);
                 let detail = if is_decl {
                     match kind {
-                        SymKind::Var if n.vpi_type == llg::core::tokens::TOKEN_GENVAR_DECL => {
+                        SymKind::Var if n.kind == llg::core::tokens::TOKEN_GENVAR_DECL => {
                             Some(format!("genvar {name}"))
                         }
                         SymKind::Port | SymKind::Net | SymKind::Var | SymKind::Param => {
@@ -926,7 +911,7 @@ impl SymbolIndex {
             }
         }
         // Generate-scope instances are not always retained as ordinary
-        // instance declarations by UHDM. The parse tree still gives an exact
+        // instance declarations by semantic DB. The parse tree still gives an exact
         // named-port pair and instantiated type, so resolve that label
         // directly against the type's indexed port declaration.
         for pair in pairs.iter().filter(|pair| pair.kind == ConnKind::Port) {
@@ -1027,7 +1012,7 @@ impl SymbolIndex {
     /// in `file` (declarations and references merged; the longest name wins so
     /// nested identifiers like `pkg::item` match their full spelling).
     pub fn entry_at(&self, file: &str, line: u32, col: u32) -> Option<&SymEntry> {
-        // Parse-backed qualified enum references can coexist with Surelog's
+        // Parse-backed qualified enum references can coexist with Slang's
         // folded `pkg::member` token.  An exact token start is the most
         // precise cursor anchor, so prefer it before the broader spelling's
         // containing range.
@@ -1315,9 +1300,7 @@ pub(super) struct PortLabelCandidate {
 /// The index has no source text, so the check is positional (verified against
 /// the hand-built fixtures in the test module):
 ///
-/// 1. the token at the position was classified as a *reference* (not a decl)
-///    of kind `Var` by the `vpiFunction`/`vpiTask` heuristic — the existing
-///    signal-name test already excludes real function/task declarations;
+/// 1. the token at the position is a connection-label reference;
 /// 2. **same-line rule** (v1, unchanged): the same line holds an `Instance`
 ///    declaration at an earlier column (the instance name); the label column
 ///    must be at least `instance name length + 2` past it, i.e. room for the
@@ -1627,18 +1610,42 @@ pub(super) fn find_instance<'m>(
 #[allow(clippy::too_many_arguments)]
 pub(super) fn classify_token(
     t: i32,
-    name: &str,
-    pos_types: &HashMap<(u32, u32), Vec<i32>>,
-    line: u32,
-    col: u32,
-    signal_names: &HashSet<String>,
-    port_names: &HashSet<String>,
-    param_names: &HashSet<String>,
-    module_names: &HashSet<String>,
+    _name: &str,
+    _pos_types: &HashMap<(u32, u32), Vec<i32>>,
+    _line: u32,
+    _col: u32,
+    _signal_names: &HashSet<String>,
+    _port_names: &HashSet<String>,
+    _param_names: &HashSet<String>,
+    _module_names: &HashSet<String>,
     forced_decl: bool,
-    forced_enum_ref: bool,
+    _forced_enum_ref: bool,
 ) -> Option<(SymKind, bool)> {
-    use llg::ffi::vpi;
+    let (slang_kind, slang_declaration) = tokens::token_base_kind(t);
+    let slang_symbol = match slang_kind {
+        tokens::TOKEN_SLANG_MODULE => Some(SymKind::Module),
+        tokens::TOKEN_SLANG_INTERFACE => Some(SymKind::Interface),
+        tokens::TOKEN_SLANG_PROGRAM => Some(SymKind::Program),
+        tokens::TOKEN_SLANG_PACKAGE => Some(SymKind::Package),
+        tokens::TOKEN_SLANG_CLASS => Some(SymKind::Class),
+        tokens::TOKEN_SLANG_TYPE_ALIAS
+        | tokens::TOKEN_SLANG_STRUCT
+        | tokens::TOKEN_SLANG_UNION
+        | tokens::TOKEN_SLANG_ENUM => Some(SymKind::Typedef),
+        tokens::TOKEN_SLANG_ENUM_MEMBER => Some(SymKind::EnumConst),
+        tokens::TOKEN_SLANG_PARAMETER => Some(SymKind::Param),
+        tokens::TOKEN_SLANG_PORT => Some(SymKind::Port),
+        tokens::TOKEN_SLANG_NET => Some(SymKind::Net),
+        tokens::TOKEN_SLANG_VARIABLE | tokens::TOKEN_SLANG_IDENTIFIER => Some(SymKind::Var),
+        tokens::TOKEN_SLANG_FUNCTION | tokens::TOKEN_SLANG_METHOD => Some(SymKind::Function),
+        tokens::TOKEN_SLANG_TASK => Some(SymKind::Task),
+        tokens::TOKEN_SLANG_PORT_CONNECTION_LABEL
+        | tokens::TOKEN_SLANG_PARAMETER_CONNECTION_LABEL => Some(SymKind::Var),
+        _ => None,
+    };
+    if let Some(kind) = slang_symbol {
+        return Some((kind, slang_declaration || forced_decl));
+    }
 
     if t == llg::core::tokens::TOKEN_GENVAR_DECL {
         return Some((SymKind::Var, true));
@@ -1647,99 +1654,7 @@ pub(super) fn classify_token(
         return Some((SymKind::Var, false));
     }
 
-    // Pure reference types (expression operands walked by the VPI walker).
-    if REF_TOKEN_TYPES.contains(&t) {
-        return Some((SymKind::Var, false));
-    }
-    // Named-connection labels are reference sites by construction: the
-    // classifier emits the dedicated synthetic types ONLY under
-    // `paNamed_port_connection` / `paNamed_parameter_assignment`, and their
-    // resolution to the child module's declaration happens through
-    // `port_labels`/`param_labels`.  Classifying them as references
-    // unconditionally keeps an unresolvable label indexed (cursor
-    // normalization, dump visibility) without ever surfacing it as a phantom
-    // function/task/parameter DECLARATION.
-    if t == vpi::TOKEN_PORT_CONN_LABEL || t == vpi::TOKEN_PARAM_CONN_LABEL {
-        return Some((SymKind::Var, false));
-    }
-    // Port declarations: the direction-specific synthetic types appear only at
-    // declaration sites.
-    if matches!(
-        t,
-        vpi::TOKEN_PORT_INPUT | vpi::TOKEN_PORT_OUTPUT | vpi::TOKEN_PORT_INOUT
-    ) {
-        return Some((SymKind::Port, true));
-    }
-    // Signal/parameter-like objects.  In the parse-fallback path
-    // (`forced_decl`) the position was recorded as a declaration by the core
-    // collector, bypassing the instance-derived name gate; single-view parse
-    // tokens would otherwise never satisfy the multi-view heuristic below.
-    if SIGNAL_DECL_TYPES.contains(&t) {
-        if !forced_decl && !signal_names.contains(name) {
-            return None;
-        }
-        let types_at_pos: Vec<i32> = pos_types.get(&(line, col)).cloned().unwrap_or_default();
-        let has_ref = types_at_pos.iter().any(|x| REF_TOKEN_TYPES.contains(x));
-        let is_decl = forced_decl || (!has_ref && types_at_pos.len() >= 2);
-        let kind = if port_names.contains(name) {
-            SymKind::Port
-        } else if param_names.contains(name) {
-            SymKind::Param
-        } else if is_net_type(t) {
-            SymKind::Net
-        } else {
-            SymKind::Var
-        };
-        return Some((kind, is_decl));
-    }
-    // Module instantiation sites: the type name is a reference to the module
-    // definition; class declarations are declarations.
-    if t == vpi::uhdmclass_defn {
-        if module_names.contains(name) {
-            return Some((SymKind::Module, false));
-        }
-        return Some((SymKind::Class, true));
-    }
-    // Functions/tasks: named port connections carry the port name (a
-    // reference); declarations of functions/tasks are declarations.
-    if t == vpi::vpiFunction || t == vpi::vpiTask {
-        if signal_names.contains(name) {
-            return Some((SymKind::Var, false));
-        }
-        return Some((
-            if t == vpi::vpiFunction {
-                SymKind::Function
-            } else {
-                SymKind::Task
-            },
-            true,
-        ));
-    }
-    match t {
-        vpi::uhdmenum_const => {
-            return Some((SymKind::EnumConst, !forced_enum_ref));
-        }
-        vpi::TOKEN_TYPEDEF_NAME => return Some((SymKind::Typedef, true)),
-        vpi::uhdminterface_inst => return Some((SymKind::Interface, true)),
-        vpi::vpiProgram | vpi::uhdmprogram => return Some((SymKind::Program, true)),
-        _ => {}
-    }
     None
-}
-
-/// Whether a VPI object type denotes a net (vs. a variable).
-pub(super) fn is_net_type(t: i32) -> bool {
-    use llg::ffi::vpi;
-    matches!(
-        t,
-        vpi::vpiNet
-            | vpi::vpiNetBit
-            | vpi::vpiReg
-            | vpi::vpiRegBit
-            | vpi::vpiLogicVar
-            | vpi::uhdmnet
-            | vpi::uhdmlogic_net
-    )
 }
 
 /// Short human label for a symbol kind, used in hover details.

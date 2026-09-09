@@ -19,10 +19,7 @@ fn compile_database(dir: &std::path::Path, source: &str) -> Result<llg::core::db
         ..Default::default()
     })
     .map_err(|error| format!("compile: {error}"))?;
-    let source_files = compiled.frontend_source_files();
-    let design = compiled.uhdm_design().ok_or("no UHDM design")?;
-    llg::core::db::Db::build_with_source_files(design, &source_files)
-        .map_err(|error| error.to_string())
+    llg::core::db::Db::from_slang(&compiled.snapshot).map_err(|error| error.to_string())
 }
 
 fn build_and_run(
@@ -40,7 +37,7 @@ fn build_and_run(
 }
 
 fn run_optimized_and_unoptimized(source: &str, tag: &str) -> (String, String) {
-    sim_harness::with_surelog_temp_cwd(tag, |dir| {
+    sim_harness::with_frontend_temp_cwd(tag, |dir| {
         let database = compile_database(dir, source)?;
         Ok((
             build_and_run(dir, &database, &OptConfig::default(), "optimized")?,
@@ -71,7 +68,10 @@ module tb;
     end
 endmodule
 "#;
-    let expected = "values=2.10 3 0 2.50\n";
+    // Slang v11 follows the IEEE 1800-2023 clarification: an ordinary time
+    // literal value is scaled to the local unit without precision rounding.
+    // Assignment to `time` still applies integral conversion.
+    let expected = "values=2.14 3 0 2.54\n";
     let (optimized, unoptimized) = run_optimized_and_unoptimized(source, "time-values");
     assert_eq!(optimized, expected);
     assert_eq!(unoptimized, expected);
@@ -86,13 +86,13 @@ fn sim_time_literal_uses_calling_module_unit() {
     let source = r#"`timescale 1s/100ms
 module tb;
     real scaled;
-    real large;
+    real large_value;
     time rounded;
     initial begin
         scaled = 2500ms;
-        large = 20000000s;
+        large_value = 20000000s;
         rounded = 2500ms;
-        $display("scaled=%.1f large=%.0f rounded=%0d", scaled, large, rounded);
+        $display("scaled=%.1f large=%.0f rounded=%0d", scaled, large_value, rounded);
         $finish;
     end
 endmodule
@@ -119,7 +119,7 @@ fn sim_time_literal_source_is_owned_after_frontend_capture() {
 endmodule
 "#;
     let (optimized, unoptimized) =
-        sim_harness::with_surelog_temp_cwd("time-value-owned-source", |dir| {
+        sim_harness::with_frontend_temp_cwd("time-value-owned-source", |dir| {
             let database = compile_database(dir, source)?;
             std::fs::remove_file(dir.join("tb.sv"))
                 .map_err(|error| format!("remove captured source: {error}"))?;
@@ -133,74 +133,80 @@ endmodule
     assert_eq!(unoptimized, "owned=2.1\n");
 }
 
-fn codegen_error(source: &str, tag: &str) -> String {
-    sim_harness::with_surelog_temp_cwd(tag, |dir| {
-        let database = compile_database(dir, source)?;
-        match sim::codegen::generate_from_db_with_opts(&database, &OptConfig::default()) {
-            Ok(_) => Err("codegen unexpectedly accepted time literal".to_owned()),
-            Err(error) => Ok(error.to_string()),
-        }
-    })
-    .expect("compile and codegen")
-}
-
 #[test]
-fn sim_time_literal_parameter_initializer_is_rejected_explicitly() {
-    let error = codegen_error(
-        r#"`timescale 1ns/100ps
+fn sim_time_literal_parameter_initializer_uses_typed_value() {
+    if !sim::build::cmake_available() {
+        eprintln!("SKIP: cmake not available");
+        return;
+    }
+    let source = r#"`timescale 1ns/100ps
 module tb;
     localparam time VALUE = 2.1ns;
+    initial begin
+        $display("param=%0d", VALUE);
+        $finish;
+    end
 endmodule
-"#,
-        "time-value-param",
-    );
-    assert!(
-        error.contains("time literal `2.1ns` in a parameter initializer is not supported"),
-        "unexpected codegen error: {error}"
-    );
+"#;
+    let (optimized, unoptimized) = run_optimized_and_unoptimized(source, "time-value-param");
+    assert_eq!(optimized, "param=2\n");
+    assert_eq!(unoptimized, "param=2\n");
 }
 
 #[test]
-fn sim_time_literal_declaration_initializer_is_rejected_explicitly() {
-    let error = codegen_error(
-        r#"`timescale 1ns/100ps
+fn sim_time_literal_declaration_initializer_uses_typed_value() {
+    if !sim::build::cmake_available() {
+        eprintln!("SKIP: cmake not available");
+        return;
+    }
+    let source = r#"`timescale 1ns/100ps
 module tb;
     real value = 2.1ns;
+    initial begin
+        $display("initializer=%.1f", value);
+        $finish;
+    end
 endmodule
-"#,
-        "time-value-initializer",
-    );
-    assert!(
-        error.contains("time literal `2.1ns` in variable initializer `value`"),
-        "unexpected codegen error: {error}"
-    );
+"#;
+    let (optimized, unoptimized) = run_optimized_and_unoptimized(source, "time-value-initializer");
+    assert_eq!(optimized, "initializer=2.1\n");
+    assert_eq!(unoptimized, "initializer=2.1\n");
 }
 
 #[test]
-fn sim_macro_time_literal_without_admitted_source_is_rejected() {
-    let error = codegen_error(
-        r#"`timescale 1ns/100ps
+fn sim_macro_time_literal_uses_typed_value() {
+    if !sim::build::cmake_available() {
+        eprintln!("SKIP: cmake not available");
+        return;
+    }
+    let source = r#"`timescale 1ns/100ps
 `define VALUE 2.1ns
 module tb;
     real value;
-    initial value = `VALUE;
+    initial begin
+        value = `VALUE;
+        $display("macro=%.1f", value);
+        $finish;
+    end
 endmodule
-"#,
-        "time-value-macro",
-    );
-    assert!(
-        error.contains("cannot verify unsigned constant source"),
-        "unexpected codegen error: {error}"
-    );
+"#;
+    let (optimized, unoptimized) = run_optimized_and_unoptimized(source, "time-value-macro");
+    assert_eq!(optimized, "macro=2.1\n");
+    assert_eq!(unoptimized, "macro=2.1\n");
 }
 
 #[test]
 fn sim_default_database_build_does_not_read_time_literal_source() {
-    let error = sim_harness::with_surelog_temp_cwd("time-value-default-db", |dir| {
+    if !sim::build::cmake_available() {
+        eprintln!("SKIP: cmake not available");
+        return;
+    }
+    let stdout = sim_harness::with_frontend_temp_cwd("time-value-default-db", |dir| {
         let testbench = dir.join("tb.sv");
         std::fs::write(
             &testbench,
-            "module tb; real value; initial value = 2.1ns; endmodule\n",
+            "module tb; real value; initial begin value = 2.1ns; \
+             $display(\"default=%.1f\", value); $finish; end endmodule\n",
         )
         .map_err(|error| format!("write testbench: {error}"))?;
         let compiled = compile::compile_checked(&compile::CompileOpts {
@@ -209,18 +215,14 @@ fn sim_default_database_build_does_not_read_time_literal_source() {
             ..Default::default()
         })
         .map_err(|error| format!("compile: {error}"))?;
-        let design = compiled.uhdm_design().ok_or("no UHDM design")?;
-        let database = llg::core::db::Db::build(design).map_err(|error| error.to_string())?;
-        match sim::codegen::generate_from_db_with_opts(&database, &OptConfig::default()) {
-            Ok(_) => Err("codegen unexpectedly accepted unverified time literal".to_owned()),
-            Err(error) => Ok(error.to_string()),
-        }
+        let database =
+            llg::core::db::Db::from_slang(&compiled.snapshot).map_err(|error| error.to_string())?;
+        std::fs::remove_file(&testbench)
+            .map_err(|error| format!("remove captured source: {error}"))?;
+        build_and_run(dir, &database, &OptConfig::default(), "default-db")
     })
     .expect("default database build");
-    assert!(
-        error.contains("cannot verify unsigned constant source"),
-        "unexpected codegen error: {error}"
-    );
+    assert_eq!(stdout, "default=2.1\n");
 }
 
 #[test]
@@ -232,7 +234,7 @@ module tb;
     initial value = 2.1ns;
 endmodule
 "#;
-    sim_harness::with_surelog_temp_cwd("time-value-line-remap", |dir| {
+    sim_harness::with_frontend_temp_cwd("time-value-line-remap", |dir| {
         let database = compile_database(dir, source)?;
         assert!(database
             .nodes()

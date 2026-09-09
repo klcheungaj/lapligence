@@ -10,7 +10,7 @@ use std::fmt;
 use std::io;
 
 /// Current memory attributed to the complete owning process, including the
-/// statically linked Surelog/UHDM frontend.
+/// statically linked Slang frontend.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct MemoryUsage {
     /// Resident/physical footprint in bytes.
@@ -100,7 +100,7 @@ impl fmt::Debug for NativeLimitGuard {
     }
 }
 
-/// Measure this process without traversing child processes.  Surelog is
+/// Measure this process without traversing child processes.  Slang is
 /// linked into this process, so its allocations are included.
 pub fn current_usage() -> Result<MemoryUsage, MemoryError> {
     platform::current_usage()

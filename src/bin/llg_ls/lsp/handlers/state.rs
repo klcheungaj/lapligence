@@ -619,19 +619,14 @@ impl Backend {
             .collect();
         let owner = workspace::owner_for_path(&real, &roots)?;
         let root = state.roots.get(&owner.root)?;
-        let mut paths = Vec::new();
-        if let Some(path) = root
-            .shadow
-            .shadow_path(&real)
-            .and_then(|path| path.to_str().map(str::to_owned))
-        {
-            paths.push(path);
-        }
-        if let Some(path) = real.to_str() {
-            if !paths.iter().any(|candidate| candidate == path) {
-                paths.push(path.to_owned());
-            }
-        }
+        // Slang compiles admitted buffers under their real source identity.
+        // The staging tree is only an I/O isolation detail and must not enter
+        // feature lookup: trying its path first can activate filename fallback
+        // and select a different same-named file before the exact path is read.
+        let paths = real
+            .to_str()
+            .map(|path| vec![path.to_owned()])
+            .unwrap_or_default();
         Some((root, real, paths))
     }
 

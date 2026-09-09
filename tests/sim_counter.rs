@@ -1,10 +1,10 @@
-//! End-to-end simulator test: Surelog compile → codegen → CMake build → run.
+//! End-to-end simulator test: Slang compile → codegen → CMake build → run.
 //!
 //! Also compiles and runs the C runtime self-test (`llg_rt_selftest.c`).
 //!
-//! Surelog writes `slpp_all/` into the process working directory, so the test
+//! These tests temporarily change the process working directory, so the test
 //! runs with the CWD pointed at a fresh temp dir (serialized through a mutex,
-//! like the other Surelog integration tests).
+//! to avoid process-wide CWD races).
 
 use llg::sim;
 
@@ -323,12 +323,11 @@ endmodule
     //   neg: int'(c) sign-extends -2; signed'(c)=-2; unsigned'(c) retags
     //   8'hFE = 254.
     //   u2s: int'(bh) zero-extends 255 into the signed int -> 255.
-    //   s2uw: the pinned Surelog captures an n'(e) size-cast target as int
-    //   (32-bit unsigned), so 32'(c) zero-extends c into 32 bits and
+    //   s2uw: 32'(c) produces a 32-bit value and
     //   unsigned'() retags at unchanged width -> 4294967294.  (The pure
     //   signed-source-widening-into-unsigned cast quadrant is pinned at the
     //   elab/rt/vector-table layers and by the a_s2u_var assignment below;
-    //   the size-cast width capture is a Surelog frontend limitation.)
+    //   the explicit size-cast behavior is also pinned here.)
     //   a_u2s_var/a_u2s_lit: unsigned RHS zero-extends into the wider signed
     //   LHS -> 255 (was -1 before the §10.7 fix).
     //   a_s2u_var: signed RHS sign-extends into the wider unsigned LHS ->

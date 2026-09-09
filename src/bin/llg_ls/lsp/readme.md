@@ -12,5 +12,5 @@
 - `handlers.rs`: protocol types, custom requests, and `LanguageServer`.
 - `handlers/tests.rs`: backend unit and async regressions.
 
-- Boundary: blocking Surelog work stays serialized; async request paths consume
-  owned `Analysis` results.
+- Boundary: blocking Slang compilation consumes admitted buffers; async request
+  paths consume owned `Analysis` results.

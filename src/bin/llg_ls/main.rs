@@ -1,7 +1,7 @@
 //! Lapligence (llg) — Verilog/SystemVerilog Language Server
 //!
 //! Communicates with editors via the Language Server Protocol (LSP) over
-//! stdin/stdout. Parsing is delegated to Surelog through the shared Rust core.
+//! stdin/stdout. Compilation is delegated to Slang through the shared Rust core.
 
 // Keep the server's Rust allocations on mimalloc; musl builds separately wrap
 // native C allocation in the root build script.

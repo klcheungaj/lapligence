@@ -9,8 +9,12 @@ module tb;
     endfunction
 
     initial begin
-        if (first != null || first !== null || first) begin
+        if (first != null || first !== null) begin
             $display("FAIL chandle default_null");
+            $finish;
+        end
+        if (first) begin
+            $display("FAIL chandle default_boolean");
             $finish;
         end
 
@@ -19,10 +23,18 @@ module tb;
             $display("FAIL chandle assignment");
             $finish;
         end
+        if (second) begin
+            $display("FAIL chandle assignment_boolean");
+            $finish;
+        end
         first = null;
         second = pass_through(first);
-        if (!(first == second) || !(first === null) || second) begin
+        if (!(first == second) || !(first === null)) begin
             $display("FAIL chandle comparison_subroutine");
+            $finish;
+        end
+        if (second) begin
+            $display("FAIL chandle subroutine_boolean");
             $finish;
         end
 

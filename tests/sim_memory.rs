@@ -1,4 +1,4 @@
-//! End-to-end simulator tests for unpacked arrays and memories: Surelog
+//! End-to-end simulator tests for unpacked arrays and memories: Slang
 //! compile → codegen → CMake build → run.
 //!
 //! Covers: single-dimension RAM with non-blocking element writes (including
@@ -6,12 +6,11 @@
 //! out-of-range index semantics (read → X, write → no-op), multi-dimensional
 //! arrays (row-major linearization, leftmost dimension slowest), wide index
 //! values that must not alias through their low 64 bits, and
-//! declaration initializers (`'{…}` patterns, both the `array_var` `vpiExpr`
-//! form and the `array_net` net-decl-assign form).
+//! declaration initializers (`'{…}` patterns on variables and nets).
 //!
-//! Surelog writes `slpp_all/` into the process working directory, so the test
+//! These tests temporarily change the process working directory, so the test
 //! runs with the CWD pointed at a fresh temp dir (serialized through a mutex,
-//! like the other Surelog integration tests).
+//! to avoid process-wide CWD races).
 
 use llg::core::compile;
 use llg::sim;
@@ -239,11 +238,9 @@ endmodule
     assert_eq!(run_sim("multidim", sv), "a00=1 a01=3 a12=8 a13=c\n");
 }
 
-/// (e) Declaration initializers (`= '{…}`): both the `reg` form (Surelog
-/// models the array as an `array_net` plus a net-decl-assign pattern) and the
-/// `logic` form (an `array_var` carrying the pattern on `vpiExpr`).  The
-/// pattern is applied in `main()` before any process runs; later element
-/// writes behave normally.
+/// (e) Declaration initializers (`= '{…}`) for both `reg` and `logic` arrays.
+/// The pattern is applied before any process runs; later element writes behave
+/// normally.
 #[test]
 fn sim_mem_decl_initializer() {
     if !llg::sim::build::cmake_available() {
@@ -268,40 +265,24 @@ endmodule
     );
 }
 
-/// Non-constant array dimension bounds (Surelog keeps an implicit `[N]` size
-/// as `[0:N-1]` with an un-folded subtraction) must be rejected with a clear
-/// codegen error, not silently mis-sized.
+/// A single unpacked dimension expression is an implicit `[0:size-1]` range.
 #[test]
-fn sim_mem_implicit_size_rejected() {
+fn sim_mem_implicit_size_is_zero_based() {
+    if !llg::sim::build::cmake_available() {
+        eprintln!("SKIP: cmake not available");
+        return;
+    }
     let sv = r#"module tb;
     reg [7:0] mem [8];
-    initial $display("%h", mem[0]);
+    initial begin
+        mem[0] = 8'h11;
+        mem[7] = 8'h77;
+        $display("m0=%h m7=%h", mem[0], mem[7]);
+        $finish;
+    end
 endmodule
 "#;
-    let result = sim_harness::with_surelog_temp_cwd("mem_rej", |dir| {
-        let source = dir.join("rej.sv");
-        std::fs::write(&source, sv).map_err(|error| format!("write source: {error}"))?;
-        let out = compile::compile(&compile::CompileOpts {
-            files: vec![source.to_string_lossy().into_owned()],
-            top: Some("tb".to_string()),
-            ..Default::default()
-        })
-        .map_err(|e| format!("compile: {e}"))?;
-        if !out.ok() {
-            return Err(format!("compile diagnostics: {:?}", out.diagnostics));
-        }
-        let design = out.uhdm_design().ok_or("no UHDM design")?;
-        match sim::codegen::generate(design) {
-            Ok(_) => Err("codegen unexpectedly succeeded".to_string()),
-            Err(e) => Ok(e.to_string()),
-        }
-    });
-
-    let err = result.expect("codegen should fail");
-    assert!(
-        err.contains("not plain constants"),
-        "unexpected error: {err}"
-    );
+    assert_eq!(run_sim("implicit_size", sv), "m0=11 m7=77\n");
 }
 
 /// Foreach forms with an omitted dimension index remain an explicit codegen
@@ -315,7 +296,7 @@ fn sim_mem_foreach_rejected() {
     end
 endmodule
 "#;
-    let result = sim_harness::with_surelog_temp_cwd("mem_foreach_rej", |dir| {
+    let result = sim_harness::with_frontend_temp_cwd("mem_foreach_rej", |dir| {
         let source = dir.join("foreach_rej.sv");
         std::fs::write(&source, sv).map_err(|error| format!("write source: {error}"))?;
         let out = compile::compile_checked(&compile::CompileOpts {
@@ -324,8 +305,9 @@ endmodule
             ..Default::default()
         })
         .map_err(|e| format!("compile: {e}"))?;
-        let design = out.uhdm_design().ok_or("no UHDM design")?;
-        match sim::codegen::generate(design) {
+        let db =
+            llg::core::db::Db::from_slang(&out.snapshot).map_err(|error| format!("db: {error}"))?;
+        match sim::codegen::generate(&db) {
             Ok(_) => Err("codegen unexpectedly succeeded".to_string()),
             Err(e) => Ok(e.to_string()),
         }

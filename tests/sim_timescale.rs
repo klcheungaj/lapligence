@@ -16,7 +16,7 @@ use std::sync::Mutex;
 use llg::core::compile;
 use llg::sim;
 
-static SURELOG_LOCK: Mutex<()> = Mutex::new(());
+static CWD_LOCK: Mutex<()> = Mutex::new(());
 
 #[test]
 fn stime_is_the_32_bit_form_of_time() {
@@ -24,7 +24,7 @@ fn stime_is_the_32_bit_form_of_time() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
+    let _guard = CWD_LOCK.lock().unwrap();
     let stdout = run_design(
         "stime",
         &[(
@@ -32,7 +32,7 @@ fn stime_is_the_32_bit_form_of_time() {
             "`timescale 1ns/1ns\n\
              module tb;\n\
                  initial begin\n\
-                     #4294967298;\n\
+                     #(64'd4294967298);\n\
                      $display(\"time=%0d stime=%0d\", $time, $stime);\n\
                      $finish;\n\
                  end\n\
@@ -54,7 +54,7 @@ fn run_design(name: &str, files: &[(&str, &str)]) -> Result<String, String> {
             paths.push(p.to_string_lossy().into_owned());
         }
 
-        // 1. Surelog compile + elaborate.
+        // 1. Slang compile + elaborate.
         let out = compile::compile(&compile::CompileOpts {
             files: paths,
             top: Some("tb".to_string()),
@@ -64,10 +64,11 @@ fn run_design(name: &str, files: &[(&str, &str)]) -> Result<String, String> {
         if !out.ok() {
             return Err(format!("compile diagnostics: {:?}", out.diagnostics));
         }
-        let design = out.uhdm_design().ok_or("no UHDM design")?;
+        let db =
+            llg::core::db::Db::from_slang(&out.snapshot).map_err(|error| format!("db: {error}"))?;
 
         // 2. Codegen.
-        let gen = sim::codegen::generate(design).map_err(|e| format!("codegen: {e}"))?;
+        let gen = sim::codegen::generate(&db).map_err(|e| format!("codegen: {e}"))?;
 
         // 3. Build model + runtime + libaco with CMake.
         let exe = sim::build::build_model_cmake(dir, &[("model.c", gen.model_c.as_str())])
@@ -107,7 +108,7 @@ fn timescale_cross_module_units() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
+    let _guard = CWD_LOCK.lock().unwrap();
     let stdout = run_design(
         "cross",
         &[
@@ -173,7 +174,7 @@ fn timescale_default_1ns_1ps() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
+    let _guard = CWD_LOCK.lock().unwrap();
     let stdout = run_design(
         "default",
         &[(
@@ -221,7 +222,7 @@ fn timescale_sub_unit_delay_jumps() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
+    let _guard = CWD_LOCK.lock().unwrap();
     let stdout = run_design(
         "subunit",
         &[

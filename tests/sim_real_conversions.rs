@@ -4,6 +4,7 @@
 mod sim_harness;
 
 use llg::core::{compile, db::Db};
+use llg::ffi::slang::DiagnosticSeverity;
 use llg::sim::{self, opt::OptConfig};
 
 #[test]
@@ -43,9 +44,9 @@ fn real_conversion_functions_match_truncation_and_ieee_bits() {
     end
 endmodule
 "#;
-    let expected = "rtoi=3 -3 2 -2\nitor=-7.0 4294967295.0\nitor-wide=18446744073709551616.0 -1.0\ncoerce=9 2.0 3ff0000000000000 3f800000\nbits=3fb999999999999a width=64\npi=3.141592653589793 roundtrip=3fb999999999999a\nshort=1.000000119 bits=3f800001\n";
+    let expected = "rtoi=3 -3 2 -2\nitor=-7.0 4294967295.0\nitor-wide=18446744073709551616.0 -1.0\ncoerce=9 1.9 3ff0000000000000 3f800000\nbits=3fb999999999999a width=64\npi=3.141592653589793 roundtrip=3fb999999999999a\nshort=1.000000119 bits=3f800001\n";
 
-    sim_harness::with_surelog_temp_cwd("real_conversions", |dir| {
+    sim_harness::with_frontend_temp_cwd("real_conversions", |dir| {
         let path = dir.join("tb.sv");
         std::fs::write(&path, source).map_err(|error| error.to_string())?;
         let compiled = compile::compile_checked(&compile::CompileOpts {
@@ -54,8 +55,7 @@ endmodule
             ..Default::default()
         })
         .map_err(|error| error.to_string())?;
-        let db = Db::build(compiled.uhdm_design().ok_or("no design")?)
-            .map_err(|error| error.to_string())?;
+        let db = Db::from_slang(&compiled.snapshot).map_err(|error| error.to_string())?;
 
         for (variant, opts) in [("on", OptConfig::default()), ("off", OptConfig::none())] {
             let model = sim::codegen::generate_from_db_with_opts(&db, &opts)
@@ -71,62 +71,41 @@ endmodule
 }
 
 #[test]
-fn real_conversion_functions_reject_wrong_argument_shapes() {
-    let cases = [
-        (
-            "bitstoreal_narrow",
-            "$bitstoreal(32'd1)",
-            "$bitstoreal requires an exactly 64-bit packed argument",
-        ),
-        (
-            "bitstoreal_real",
-            "$bitstoreal(1.0)",
-            "$bitstoreal requires an exactly 64-bit packed argument",
-        ),
-        (
-            "bitstoshortreal_wide",
-            "$bitstoshortreal(64'd1)",
-            "$bitstoshortreal requires an exactly 32-bit packed argument",
-        ),
-        (
-            "bitstoshortreal_real",
-            "$bitstoshortreal(1.0)",
-            "$bitstoshortreal requires an exactly 32-bit packed argument",
-        ),
-        (
-            "rtoi_missing",
-            "$rtoi()",
-            "$rtoi requires exactly one argument",
-        ),
-        (
-            "itor_extra",
-            "$itor(1, 2)",
-            "$itor requires exactly one argument",
-        ),
-    ];
+fn real_conversion_functions_follow_slang_argument_coercion_and_arity() {
+    if !sim::build::cmake_available() {
+        eprintln!("SKIP: cmake not available");
+        return;
+    }
 
-    for (case, expression, expected) in cases {
-        sim_harness::with_surelog_temp_cwd(case, |dir| {
-            let path = dir.join("tb.sv");
-            std::fs::write(
-                &path,
-                format!("module tb; initial $display(\"%0d\", {expression}); endmodule\n"),
-            )
-            .map_err(|error| error.to_string())?;
-            let compiled = compile::compile_checked(&compile::CompileOpts {
-                files: vec![path.to_string_lossy().into_owned()],
-                top: Some("tb".to_owned()),
-                ..Default::default()
-            })
-            .map_err(|error| error.to_string())?;
-            let error = match sim::codegen::generate(compiled.uhdm_design().ok_or("no design")?) {
-                Ok(_) => return Err("invalid conversion unexpectedly succeeded".to_owned()),
-                Err(error) => error.to_string(),
-            };
-            assert!(error.contains(expected), "{case}: {error}");
-            Ok(())
-        })
-        .expect("real conversion rejection");
+    let source = r#"module tb;
+initial begin
+    $display("real=%h %h", $realtobits($bitstoreal(32'd1)),
+             $realtobits($bitstoreal(1.0)));
+    $display("short=%h %h", $shortrealtobits($bitstoshortreal(64'd1)),
+             $shortrealtobits($bitstoshortreal(1.0)));
+    $finish;
+end
+endmodule
+"#;
+    assert_eq!(
+        sim_harness::run_sim(source, "tb", "real_conversion_coercion")
+            .expect("conversion coercion simulation"),
+        "real=0000000000000001 0000000000000001\nshort=00000001 00000001\n"
+    );
+
+    for (expression, expected_name) in [
+        ("$rtoi()", "TooFewArguments"),
+        ("$itor(1, 2)", "TooManyArguments"),
+    ] {
+        let source = format!("module tb; initial $display(\"%0d\", {expression}); endmodule\n");
+        let diagnostics =
+            sim_harness::frontend_diagnostics(&source, "tb").expect("compile bad arity");
+        assert!(
+            diagnostics.iter().any(|diagnostic| {
+                diagnostic.severity == DiagnosticSeverity::Error && diagnostic.name == expected_name
+            }),
+            "{expression} must report {expected_name}: {diagnostics:?}"
+        );
     }
 }
 
@@ -152,7 +131,7 @@ fn real_conversion_constant_declaration_initializers() {
 endmodule
 "#;
 
-    sim_harness::with_surelog_temp_cwd("real_conversion_init", |dir| {
+    sim_harness::with_frontend_temp_cwd("real_conversion_init", |dir| {
         let path = dir.join("tb.sv");
         std::fs::write(&path, source).map_err(|error| error.to_string())?;
         let compiled = compile::compile_checked(&compile::CompileOpts {
@@ -161,13 +140,13 @@ endmodule
             ..Default::default()
         })
         .map_err(|error| error.to_string())?;
-        let model = sim::codegen::generate(compiled.uhdm_design().ok_or("no design")?)
-            .map_err(|error| error.to_string())?;
+        let db = Db::from_slang(&compiled.snapshot).map_err(|error| error.to_string())?;
+        let model = sim::codegen::generate(&db).map_err(|error| error.to_string())?;
         let exe = sim::build::build_model_cmake(dir, &[("model.c", &model.model_c)])
             .map_err(|error| error.to_string())?;
         assert_eq!(
             sim_harness::run_executable(&exe)?,
-            "init=7 2.0 3ff0000000000000 2.0 3f800000 3.0\n"
+            "init=7 1.9 3ff0000000000000 2.0 3f800000 3.0\n"
         );
         Ok(())
     })
@@ -196,7 +175,7 @@ fn real_conversion_typed_localparams_resolve_in_shared_elaboration() {
 endmodule
 "#;
 
-    sim_harness::with_surelog_temp_cwd("real_conversion_params", |dir| {
+    sim_harness::with_frontend_temp_cwd("real_conversion_params", |dir| {
         let path = dir.join("tb.sv");
         std::fs::write(&path, source).map_err(|error| error.to_string())?;
         let compiled = compile::compile_checked(&compile::CompileOpts {
@@ -205,13 +184,13 @@ endmodule
             ..Default::default()
         })
         .map_err(|error| error.to_string())?;
-        let model = sim::codegen::generate(compiled.uhdm_design().ok_or("no design")?)
-            .map_err(|error| error.to_string())?;
+        let db = Db::from_slang(&compiled.snapshot).map_err(|error| error.to_string())?;
+        let model = sim::codegen::generate(&db).map_err(|error| error.to_string())?;
         let exe = sim::build::build_model_cmake(dir, &[("model.c", &model.model_c)])
             .map_err(|error| error.to_string())?;
         assert_eq!(
             sim_harness::run_executable(&exe)?,
-            "params=7 2.0 3ff0000000000000 2.0 3f800000 3.0\n"
+            "params=7 1.9 3ff0000000000000 2.0 3f800000 3.0\n"
         );
         Ok(())
     })

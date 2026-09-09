@@ -22,11 +22,11 @@
 //!   resolution.
 //! * Every source directory is automatically an include-search directory.
 //! * `compile.include_dirs` adds search-only directories and may be external.
-//! * `compile.defines`/`include_dirs` are converted to validated Surelog
-//!   `-D`/`-I` arguments internally; no raw compiler-argument passthrough.
+//! * `compile.defines`/`include_dirs` are passed to Slang as validated values;
+//!   no raw compiler-argument passthrough exists.
 //! * `[compile.param_overrides]` maps top-level parameter names to string or
-//!   integer values, converted to Surelog `-PNAME=VALUE` arguments; integers
-//!   are normalized to their decimal string form.
+//!   integer values, converted to `NAME=VALUE`; integers are normalized to
+//!   their decimal string form.
 //! * `[analysis]` bounds each unique input file at 1 MiB by default and the
 //!   complete unique compilation-unit/include input set at 8 MiB.  Both
 //!   limits must be positive when configured.
@@ -37,10 +37,10 @@
 //!   `defines` entries or `param_overrides` keys/values are dropped with a
 //!   published warning instead: one bad entry never discards the rest of the
 //!   configuration.  Values containing ASCII control characters are dropped
-//!   the same way (they cannot survive the Surelog C-argument boundary).
+//!   the same way (they cannot survive the Slang C-argument boundary).
 //! * A missing config uses safe defaults: the config directory as the sole
 //!   source directory, recursive `.v`/`.sv`, and built-in excludes
-//!   (`slpp_all/**`, `.git/**`, `target/**`).
+//!   (`.git/**`, `target/**`).
 //! * Malformed or semantically invalid config is rejected atomically.  The
 //!   backend publishes diagnostics against the TOML URI, retains the last
 //!   valid configuration on reload, and uses safe defaults until a valid
@@ -64,11 +64,7 @@ pub const CONFIG_FILE: &str = "llg.toml";
 
 /// Built-in source directories excluded by default.
 ///
-/// `slpp_all/**` is defense-in-depth: Surelog writes preprocessed-output
-/// copies there, and a leaked directory must never enter source discovery or
-/// watchers (the analysis CWD guard in `features` keeps it out of project
-/// trees entirely).
-pub const DEFAULT_EXCLUDE_GLOBS: [&str; 3] = ["slpp_all/**", ".git/**", "target/**"];
+pub const DEFAULT_EXCLUDE_GLOBS: [&str; 2] = [".git/**", "target/**"];
 
 /// Recursive include globs used when a config does not name explicit
 /// include patterns (same defaults as a missing config file).
@@ -121,8 +117,8 @@ pub struct CompileConfig {
     /// Validated preprocessor defines (`NAME` or `NAME=VALUE`), raw.
     pub defines: Vec<String>,
     /// Validated top-level parameter overrides, ordered by name.  These
-    /// become Surelog `-PNAME=VALUE` arguments and apply to the top-level
-    /// module instances of the analysis (the explicit `top` or Surelog's
+    /// become Slang `NAME=VALUE` overrides and apply to the top-level
+    /// module instances of the analysis (the explicit `top` or Slang's
     /// auto-detected tops).
     pub param_overrides: BTreeMap<String, String>,
 }
@@ -455,9 +451,8 @@ pub fn include_dirs(config: &LlgConfig) -> Vec<PathBuf> {
 /// `shadow_base` is the private per-process shadow tree; all shadow mirrors
 /// are emitted first in configured order, followed by all live directories in
 /// that same order, so a staged header cannot be preempted by a live fallback
-/// directory.  `defines`/`include_dirs`/`param_overrides` are converted to
-/// validated Surelog `-D`/`-I`/`-P` arguments; there is no raw compiler-argument
-/// passthrough.
+/// directory. `defines`/`include_dirs`/`param_overrides` remain validated raw
+/// values; there is no compiler-argument passthrough.
 pub fn compile_opts(
     config: &LlgConfig,
     files: Vec<String>,
@@ -466,20 +461,27 @@ pub fn compile_opts(
     compile_opts_with_include_dirs(config, files, shadow_base, true)
 }
 
-/// Build compile options for the LSP's admitted/staged input path.
-///
-/// This deliberately omits live source/include directories.  The LSP stages
-/// every admitted literal include into the private shadow tree; omitting live
-/// `-I` fallbacks also makes macro-generated or dynamic includes fail closed
-/// instead of letting Surelog read an unmeasured project file.  The general
-/// [`compile_opts`] path retains its live directories for dump/general flows
-/// that intentionally need them.
-pub fn compile_opts_isolated(
+/// Build Slang options from the exact source buffers admitted by the LSP.
+pub fn compile_opts_sources(
     config: &LlgConfig,
-    files: Vec<String>,
-    shadow_base: &Path,
+    sources: Vec<llg::core::compile::OwnedSource>,
 ) -> llg::core::compile::CompileOpts {
-    compile_opts_with_include_dirs(config, files, shadow_base, false)
+    llg::core::compile::CompileOpts {
+        sources,
+        top: config.compile.top.clone(),
+        defines: config.compile.defines.clone(),
+        param_overrides: config
+            .compile
+            .param_overrides
+            .iter()
+            .map(|(name, value)| format!("{name}={value}"))
+            .collect(),
+        include_dirs: include_dirs(config)
+            .into_iter()
+            .map(|path| path.to_string_lossy().into_owned())
+            .collect(),
+        ..Default::default()
+    }
 }
 
 fn compile_opts_with_include_dirs(
@@ -492,27 +494,22 @@ fn compile_opts_with_include_dirs(
     let search_dirs = include_dirs(config);
     for dir in &search_dirs {
         let shadow_dir = crate::features::shadow_path(dir, shadow_base);
-        include_args.push(format!("-I{}", shadow_dir.display()));
+        include_args.push(shadow_dir.to_string_lossy().into_owned());
     }
     if include_live_dirs {
         for dir in &search_dirs {
-            include_args.push(format!("-I{}", dir.display()));
+            include_args.push(dir.to_string_lossy().into_owned());
         }
     }
     llg::core::compile::CompileOpts {
         files,
         top: config.compile.top.clone(),
-        defines: config
-            .compile
-            .defines
-            .iter()
-            .map(|define| format!("-D{define}"))
-            .collect(),
+        defines: config.compile.defines.clone(),
         param_overrides: config
             .compile
             .param_overrides
             .iter()
-            .map(|(name, value)| format!("-P{name}={value}"))
+            .map(|(name, value)| format!("{name}={value}"))
             .collect(),
         include_dirs: include_args,
         ..Default::default()
@@ -534,7 +531,7 @@ fn resolve_sources(base_dir: &Path, raw: &RawSources) -> Result<SourcesConfig, C
     // empty glob list and silently discover nothing; fall back to the same
     // recursive `.v`/`.sv` defaults a missing config uses.  Exclude patterns
     // always sit ON TOP of the built-in excludes (defense-in-depth:
-    // `slpp_all/**` must never enter discovery), so an explicit-empty
+    // built-in exclusions must never be lost), so an explicit-empty
     // exclude means exactly "no extra excludes beyond the built-ins".
     let include = if raw.include.is_empty() {
         DEFAULT_INCLUDE_GLOBS
@@ -651,7 +648,7 @@ fn normalize_patterns(field: &str, patterns: &[String]) -> Result<Vec<String>, C
     Ok(normalized)
 }
 
-/// Values become C-string arguments at the Surelog FFI boundary
+/// Values become C-string arguments at the Slang FFI boundary
 /// (`SessionBuilder::add_arg`), where ASCII control characters silently
 /// vanish.  Entries carrying them are therefore soft-dropped up front with
 /// the other fail-soft warnings.
@@ -877,16 +874,16 @@ mod tests {
         assert_eq!(config.analysis.max_file_bytes, 17);
         assert_eq!(config.analysis.max_total_input_bytes, 91);
         let opts = compile_opts(&config, vec!["top.sv".to_owned()], &root.join("shadow"));
-        assert_eq!(opts.defines, vec!["-DSYNTHESIS", "-DWIDTH=8"]);
-        assert_eq!(opts.param_overrides, vec!["-PDEPTH=1024"]);
+        assert_eq!(opts.defines, vec!["SYNTHESIS", "WIDTH=8"]);
+        assert_eq!(opts.param_overrides, vec!["DEPTH=1024"]);
         assert!(opts
             .include_dirs
             .iter()
-            .any(|arg| arg == &format!("-I{}", dir.join("rtl").display())));
+            .any(|arg| arg == &dir.join("rtl").to_string_lossy()));
         assert!(opts
             .include_dirs
             .iter()
-            .any(|arg| arg == &format!("-I{}", dir.join("inc").display())));
+            .any(|arg| arg == &dir.join("inc").to_string_lossy()));
         let _ = std::fs::remove_dir_all(root);
     }
 
@@ -1095,8 +1092,8 @@ mod tests {
         let opts = compile_opts(&config, vec![], &root.join("shadow"));
         assert_eq!(
             opts.param_overrides,
-            vec!["-PDEPTH=1024".to_owned(), "-PWIDTH=8".to_owned()],
-            "overrides become Surelog -P arguments in deterministic name order"
+            vec!["DEPTH=1024".to_owned(), "WIDTH=8".to_owned()],
+            "overrides remain raw in deterministic name order"
         );
         let _ = std::fs::remove_dir_all(root);
     }
@@ -1175,7 +1172,7 @@ mod tests {
     }
 
     /// Control characters in define/override values would vanish silently at
-    /// the Surelog argument boundary; such entries are dropped with a warning.
+    /// the Slang argument boundary; such entries are dropped with a warning.
     #[test]
     fn control_characters_in_values_are_dropped_with_a_warning() {
         let root = std::env::temp_dir().join(format!("llg_cfg_ctrl_{}", std::process::id()));
@@ -1249,15 +1246,14 @@ mod tests {
         let expected = search_dirs
             .iter()
             .map(|directory| {
-                format!(
-                    "-I{}",
-                    crate::features::shadow_path(directory, &shadow_base).display()
-                )
+                crate::features::shadow_path(directory, &shadow_base)
+                    .to_string_lossy()
+                    .into_owned()
             })
             .chain(
                 search_dirs
                     .iter()
-                    .map(|directory| format!("-I{}", directory.display())),
+                    .map(|directory| directory.to_string_lossy().into_owned()),
             )
             .collect::<Vec<_>>();
 
@@ -1267,7 +1263,7 @@ mod tests {
     }
 
     #[test]
-    fn isolated_compile_include_args_omit_live_dirs() {
+    fn source_compile_options_preserve_exact_admitted_buffers_and_raw_values() {
         let root =
             std::env::temp_dir().join(format!("llg_cfg_isolated_include_{}", std::process::id()));
         let dir = root.join("proj");
@@ -1280,28 +1276,34 @@ mod tests {
              [sources]\n\
              directories = [\"src\"]\n\
              [compile]\n\
-             include_dirs = [\"inc\"]\n",
+             include_dirs = [\"inc\"]\n\
+             defines = [\"SYNTHESIS\", \"WIDTH=8\"]\n\
+             [compile.param_overrides]\n\
+             DEPTH = 16\n",
         );
         let config = load.config.expect("config");
-        let shadow_base = dir.join("shadow");
         let search_dirs = include_dirs(&config);
-        let expected_shadow = search_dirs
-            .iter()
-            .map(|directory| {
-                format!(
-                    "-I{}",
-                    crate::features::shadow_path(directory, &shadow_base).display()
-                )
-            })
-            .collect::<Vec<_>>();
+        let sources = vec![
+            llg::core::compile::OwnedSource::compilation_unit("top.sv", "module top; endmodule"),
+            llg::core::compile::OwnedSource::include("defs.svh", "`define WIDTH 8"),
+        ];
+        let opts = compile_opts_sources(&config, sources.clone());
 
-        let opts = compile_opts_isolated(&config, vec!["top.sv".to_owned()], &shadow_base);
-        assert_eq!(opts.include_dirs, expected_shadow);
-        for directory in search_dirs {
-            assert!(!opts
-                .include_dirs
-                .contains(&format!("-I{}", directory.display())));
-        }
+        assert_eq!(opts.sources, sources);
+        assert!(opts.files.is_empty());
+        assert_eq!(
+            opts.include_dirs,
+            search_dirs
+                .iter()
+                .map(|dir| dir.to_string_lossy())
+                .collect::<Vec<_>>()
+        );
+        assert!(opts
+            .include_dirs
+            .iter()
+            .all(|directory| !directory.starts_with("-I")));
+        assert_eq!(opts.defines, ["SYNTHESIS", "WIDTH=8"]);
+        assert_eq!(opts.param_overrides, ["DEPTH=16"]);
         let _ = std::fs::remove_dir_all(root);
     }
 
@@ -1346,8 +1348,7 @@ mod tests {
     }
 
     #[test]
-    fn default_excludes_cover_slpp_all() {
-        assert!(DEFAULT_EXCLUDE_GLOBS.contains(&"slpp_all/**"));
+    fn default_excludes_cover_repository_outputs() {
         assert!(DEFAULT_EXCLUDE_GLOBS.contains(&".git/**"));
         assert!(DEFAULT_EXCLUDE_GLOBS.contains(&"target/**"));
     }
@@ -1396,7 +1397,7 @@ mod tests {
         );
 
         // An explicit user list sits on top of the built-in excludes, so the
-        // slpp_all defense is never lost.
+        // built-in output exclusions are never lost.
         let load = write_and_load(
             &root,
             "schema_version = 1\n\

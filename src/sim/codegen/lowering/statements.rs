@@ -144,7 +144,7 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
     /// Lower `break;` / `continue;`: an atomic jump to the innermost loop's
     /// break/continue label.  Resolution stops at an inlined-task-body
     /// boundary (a `break` can never target a loop of the CALLER) and
-    /// outside a loop this is a syntax-level error that Surelog normally
+    /// outside a loop this is a syntax-level error that the frontend normally
     /// rejects first; kept as a clean codegen reject.
     fn lower_break_continue(&mut self, is_break: bool) -> Result<Vec<IrStmt>, String> {
         for scope in self.ctrl.iter_mut().rev() {
@@ -247,13 +247,15 @@ impl EmitCtx<'_, '_> {
                     for child in &children {
                         if matches!(self.cg.kind(*child), NodeKind::Var { .. }) {
                             let info = self.cg.collect_loop_var(&self.path, *child)?;
-                            body.push(IrStmt::DeclLocal {
-                                name: info.c_name,
-                                width: info.width,
-                                signed: info.signed,
-                                two_state: info.two_state,
-                                init: None,
-                            });
+                            if info.static_signal.is_none() {
+                                body.push(IrStmt::DeclLocal {
+                                    name: info.c_name,
+                                    width: info.width,
+                                    signed: info.signed,
+                                    two_state: info.two_state,
+                                    init: None,
+                                });
+                            }
                         }
                     }
                 }
@@ -319,7 +321,7 @@ impl EmitCtx<'_, '_> {
                 blocking, delay, ..
             }) => match delay {
                 None => Ok(vec![self.lower_assignment(h, false)?]),
-                Some(IntraControl::Ticks(ticks)) => {
+                Some(IntraControl::Delay(delay)) => {
                     if self.in_final {
                         return Err(format!(
                             "intra-assignment delay inside a final block in `{}` is not \
@@ -327,24 +329,7 @@ impl EmitCtx<'_, '_> {
                             self.path
                         ));
                     }
-                    let unit_ps = self.cg.timescale_of_node(h).unit_ps;
-                    let scaled = scale_delay_ticks(
-                        *ticks,
-                        unit_ps,
-                        self.cg.design_precision_ps,
-                        &self.path,
-                    )?;
-                    self.lower_delayed_assignment(h, *blocking, scaled)
-                }
-                Some(IntraControl::Expression(expression)) => {
-                    if self.in_final {
-                        return Err(format!(
-                            "intra-assignment delay inside a final block in `{}` is not \
-                             allowed (no timing controls in final)",
-                            self.path
-                        ));
-                    }
-                    let scaled = self.cg.procedural_delay_ticks(h, expression)?;
+                    let scaled = self.cg.procedural_delay_ticks(h, *delay)?;
                     self.lower_delayed_assignment(h, *blocking, scaled)
                 }
                 Some(IntraControl::EventOrRepeat) => Err(format!(
@@ -352,17 +337,8 @@ impl EmitCtx<'_, '_> {
                      `repeat (n) @(…)`) in `{}` is not supported",
                     self.path
                 )),
-                Some(IntraControl::UnresolvedDelay) => {
-                    let node = self.cg.node(h);
-                    let file = node.file.clone().unwrap_or_default();
-                    Err(format!(
-                        "cannot determine the `#delay` value at {file}:{} \
-                         (parameterized delays are not supported)",
-                        node.line
-                    ))
-                }
             },
-            NodeKind::Stmt(StmtKind::DelayControl { ticks, expression }) => {
+            NodeKind::Stmt(StmtKind::DelayControl { delay }) => {
                 if self.in_final {
                     return Err(format!(
                         "`#delay` inside a final block in `{}` is not allowed \
@@ -372,29 +348,13 @@ impl EmitCtx<'_, '_> {
                 }
                 if self.func.is_some() && self.inline.is_none() {
                     return Err(format!(
-                        "delay `#{}` inside a function/task body in `{}` is not \
+                        "delay inside a function/task body in `{}` is not \
                          supported (delay-bearing tasks are inlined at their call \
                          sites)",
-                        ticks
-                            .map(|t| t.to_string())
-                            .unwrap_or_else(|| "?".to_string()),
                         self.path
                     ));
                 }
-                let scaled = match (ticks, expression) {
-                    (Some(t), _) => {
-                        let unit_ps = self.cg.timescale_of_node(h).unit_ps;
-                        scale_delay_ticks(*t, unit_ps, self.cg.design_precision_ps, &self.path)?
-                    }
-                    (None, Some(expression)) => self.cg.procedural_delay_ticks(h, expression)?,
-                    (None, None) => {
-                        let file = self.cg.node(h).file.clone().unwrap_or_default();
-                        let line = self.cg.node(h).line;
-                        return Err(format!(
-                            "cannot determine the `#delay` value at {file}:{line}"
-                        ));
-                    }
-                };
+                let scaled = self.cg.procedural_delay_ticks(h, *delay)?;
                 self.saw_wait = true;
                 let mut out = vec![IrStmt::Delay { ticks: scaled }];
                 // The body may be a `Stmt(Empty)` placeholder for a bare
@@ -425,15 +385,14 @@ impl EmitCtx<'_, '_> {
                 self.lower_event_control(h)
             }
             NodeKind::Stmt(StmtKind::EventTrigger { target, .. }) => {
-                // `-> ev;` (and `->> ev;`, indistinguishable in the pinned Surelog
-                // output): wake every current waiter of the event.  A trigger
+                // `-> ev;` and `->> ev;` both wake every current waiter of the
+                // event. A trigger
                 // never suspends the process, so it is accepted inside
                 // function bodies: IEEE 1800-2009 §13.4.4 explicitly allows
                 // non-blocking statements there ("specifically, nonblocking
                 // assignments, event triggers, …"), and 1364-2001 §10.3.4(a)
                 // bans only statements introduced with #/@/wait.  The
-                // `blocking` property is not relied on: Surelog reports 1 for
-                // both trigger forms.
+                // blocking distinction does not affect the runtime wake.
                 let target = target.ok_or_else(|| {
                     format!(
                         "cannot resolve named event reference `{}` in `{}`",
@@ -505,8 +464,8 @@ impl EmitCtx<'_, '_> {
                 }
                 let sens = self.cg.collect_read_signals(&self.path, *cond)?;
                 self.saw_wait = true;
-                // The body is optional (`wait (cond);`); the database walk
-                // captures it as a child only when Surelog emits a `vpiStmt`.
+                // The body is optional (`wait (cond);`); the semantic database
+                // captures it as a child only when the statement is present.
                 // Skip the `Empty` placeholder like the delay/event controls.
                 let mut body = Vec::new();
                 if let Some(b) = self.cg.node(h).children.get(1) {
@@ -524,6 +483,9 @@ impl EmitCtx<'_, '_> {
             NodeKind::Stmt(StmtKind::Release { .. }) => Ok(vec![self.lower_release(h)?]),
             NodeKind::Stmt(StmtKind::ProcContAssign { .. }) => self.lower_proc_cont_assign(h),
             NodeKind::Stmt(StmtKind::Deassign { lhs }) => self.lower_deassign(*lhs),
+            NodeKind::Stmt(StmtKind::VariableDecl { declaration }) => {
+                self.lower_variable_decl(*declaration)
+            }
             NodeKind::Stmt(StmtKind::Empty) => Ok(vec![IrStmt::Nop]),
             NodeKind::Stmt(StmtKind::Return { value }) => Ok(vec![self.lower_return(*value)?]),
             NodeKind::Stmt(StmtKind::Fork {
@@ -585,11 +547,11 @@ impl EmitCtx<'_, '_> {
                     Ok(vec![self.cg.lower_object_method(&self.path, h)?])
                 }
             }
-            NodeKind::Stmt(StmtKind::Unsupported { vpi_type }) => {
+            NodeKind::Stmt(StmtKind::Unsupported { object_type }) => {
                 let node = self.cg.node(h);
                 let file = node.file.as_deref().unwrap_or("<unknown>");
                 Err(format!(
-                    "unsupported executable statement VPI type {vpi_type} at \
+                    "unsupported executable statement kind {object_type:?} at \
                      {file}:{}:{} in `{}`",
                     node.line, node.col, self.path
                 ))
@@ -599,6 +561,75 @@ impl EmitCtx<'_, '_> {
                 self.path
             )),
         }
+    }
+
+    fn lower_variable_decl(&mut self, declaration: NodeId) -> Result<Vec<IrStmt>, String> {
+        if self.func.is_some() {
+            return match self.cg.db.variable_lifetime(declaration) {
+                VariableLifetime::Static => Ok(Vec::new()),
+                VariableLifetime::Automatic => {
+                    let (_, width, signed, two_state) = self
+                        .func
+                        .as_ref()
+                        .and_then(|function| function.locals.get(&declaration))
+                        .cloned()
+                        .ok_or_else(|| {
+                            format!(
+                                "automatic subprogram variable `{}` has no local storage",
+                                self.cg.node(declaration).name
+                            )
+                        })?;
+                    let init = self
+                        .cg
+                        .db
+                        .var_initializer(declaration)
+                        .map(|initializer| {
+                            let expression = self.cg.lower_expr(&self.path, initializer)?;
+                            ir_to_storage(expression, width, signed, two_state).map(Box::new)
+                        })
+                        .transpose()?;
+                    let name = self
+                        .func
+                        .as_ref()
+                        .and_then(|function| function.locals.get(&declaration))
+                        .map(|(name, ..)| name.clone())
+                        .expect("automatic local storage checked above");
+                    Ok(vec![IrStmt::DeclLocal {
+                        name,
+                        width,
+                        signed,
+                        two_state,
+                        init,
+                    }])
+                }
+                VariableLifetime::Unavailable => Err(format!(
+                    "resolved lifetime is unavailable for subprogram variable `{}` in `{}`",
+                    self.cg.node(declaration).name,
+                    self.path
+                )),
+            };
+        }
+
+        let info = self.cg.collect_loop_var(&self.path, declaration)?;
+        if info.static_signal.is_some() {
+            return Ok(Vec::new());
+        }
+        let init = self
+            .cg
+            .db
+            .var_initializer(declaration)
+            .map(|initializer| {
+                let expr = self.cg.lower_expr(&self.path, initializer)?;
+                ir_to_storage(expr, info.width, info.signed, info.two_state).map(Box::new)
+            })
+            .transpose()?;
+        Ok(vec![IrStmt::DeclLocal {
+            name: info.c_name,
+            width: info.width,
+            signed: info.signed,
+            two_state: info.two_state,
+            init,
+        }])
     }
 
     /// Lower an assignment without intra-assignment delay (`force_blocking`
@@ -634,8 +665,19 @@ impl EmitCtx<'_, '_> {
             .get(1)
             .copied()
             .ok_or_else(|| "assignment without RHS".to_string())?;
-        // Surelog exposes a subprogram declaration initializer as an
-        // assignment whose LHS is the Var declaration itself. Its value is
+        self.lower_assignment_operands(lhs, rhs, force_blocking || blocking, op, force_blocking)
+    }
+
+    fn lower_assignment_operands(
+        &mut self,
+        lhs: NodeId,
+        rhs: NodeId,
+        blocking: bool,
+        op: Operation,
+        force_blocking: bool,
+    ) -> Result<IrStmt, String> {
+        // A subprogram declaration initializer can be represented as an
+        // assignment whose LHS is the variable declaration itself. Its value is
         // emitted through `IrLocal::initial`; suppress only that structural
         // declaration form. Executable assignments have Ref LHS nodes.
         let is_declaration_initializer = matches!(self.cg.kind(lhs), NodeKind::Var { .. })
@@ -647,16 +689,15 @@ impl EmitCtx<'_, '_> {
         if is_declaration_initializer {
             return Ok(IrStmt::Nop);
         }
-        let blocking = force_blocking || blocking;
-        if let Some(statement) =
-            self.cg
-                .lower_container_assignment(&self.path, lhs, rhs, blocking, op.as_raw())?
+        if let Some(statement) = self
+            .cg
+            .lower_container_assignment(&self.path, lhs, rhs, blocking, op)?
         {
             return Ok(statement);
         }
-        if let Some(statement) =
-            self.cg
-                .lower_object_assignment(&self.path, lhs, rhs, blocking, op.as_raw())?
+        if let Some(statement) = self
+            .cg
+            .lower_object_assignment(&self.path, lhs, rhs, blocking, op)?
         {
             return Ok(statement);
         }
@@ -676,24 +717,20 @@ impl EmitCtx<'_, '_> {
                 self.path
             ));
         }
-        if let Some(aggregate_assignment) = self.cg.lower_unpacked_aggregate_assignment(
-            &self.path,
-            lhs,
-            rhs,
-            !blocking,
-            op.as_raw(),
-        )? {
+        if let Some(aggregate_assignment) = self
+            .cg
+            .lower_unpacked_aggregate_assignment(&self.path, lhs, rhs, !blocking, op)?
+        {
             return Ok(aggregate_assignment);
         }
         let lh = self.cg.lower_lhs(&self.path, lhs)?;
-        let rhs_ir =
-            match self
-                .cg
-                .lower_packed_aggregate_pattern(&self.path, lhs, rhs, op.as_raw())?
-            {
-                Some(value) => value,
-                None => self.lower_assignment_rhs(lhs, rhs, op.as_raw(), &lh)?,
-            };
+        let rhs_ir = match self
+            .cg
+            .lower_packed_aggregate_pattern(&self.path, lhs, rhs, op)?
+        {
+            Some(value) => value,
+            None => self.lower_assignment_rhs(lhs, rhs, op, &lh)?,
+        };
         let rhs_ir = apply_lhs_assignment_context(&self.cg.model, &lh, rhs_ir);
         Ok(IrStmt::Assign {
             lhs: lh,
@@ -710,11 +747,11 @@ impl EmitCtx<'_, '_> {
         &mut self,
         lhs_node: NodeId,
         rhs_node: NodeId,
-        op: i32,
+        op: Operation,
         lhs: &IrLhs,
     ) -> Result<IrExpr, String> {
         let rhs = self.cg.lower_expr(&self.path, rhs_node)?;
-        if op == 0 || op == vpi::vpiAssignmentOp {
+        if op == Operation::Assignment {
             return Ok(rhs);
         }
         if !matches!(lhs, IrLhs::Whole(_) | IrLhs::WholeRef { .. }) {
@@ -727,30 +764,35 @@ impl EmitCtx<'_, '_> {
         self.lower_compound_expr(op, current, rhs)
     }
 
-    fn lower_compound_expr(&self, op: i32, lhs: IrExpr, rhs: IrExpr) -> Result<IrExpr, String> {
+    fn lower_compound_expr(
+        &self,
+        op: Operation,
+        lhs: IrExpr,
+        rhs: IrExpr,
+    ) -> Result<IrExpr, String> {
         let real = lhs.is_real() || rhs.is_real();
         let result = match op {
-            vpi::vpiAddOp | vpi::vpiSubOp | vpi::vpiMultOp => {
+            Operation::Add | Operation::Subtract | Operation::Multiply => {
                 if real {
                     let op = match op {
-                        vpi::vpiAddOp => IrRealBinOp::Add,
-                        vpi::vpiSubOp => IrRealBinOp::Sub,
+                        Operation::Add => IrRealBinOp::Add,
+                        Operation::Subtract => IrRealBinOp::Sub,
                         _ => IrRealBinOp::Mul,
                     };
                     real_bin_expr(op, lhs, rhs)
                 } else {
                     let op = match op {
-                        vpi::vpiAddOp => IrBinOp::Add,
-                        vpi::vpiSubOp => IrBinOp::Sub,
+                        Operation::Add => IrBinOp::Add,
+                        Operation::Subtract => IrBinOp::Sub,
                         _ => IrBinOp::Mul,
                     };
                     common_bin_expr(op, lhs, rhs)
                 }
             }
-            vpi::vpiDivOp | vpi::vpiModOp => {
+            Operation::Divide | Operation::Modulo => {
                 if real {
                     real_bin_expr(
-                        if op == vpi::vpiDivOp {
+                        if op == Operation::Divide {
                             IrRealBinOp::Div
                         } else {
                             IrRealBinOp::Mod
@@ -760,7 +802,7 @@ impl EmitCtx<'_, '_> {
                     )
                 } else {
                     common_bin_expr(
-                        if op == vpi::vpiDivOp {
+                        if op == Operation::Divide {
                             IrBinOp::Div
                         } else {
                             IrBinOp::Mod
@@ -770,7 +812,7 @@ impl EmitCtx<'_, '_> {
                     )
                 }
             }
-            vpi::vpiBitAndOp | vpi::vpiBitOrOp | vpi::vpiBitXorOp => {
+            Operation::BitwiseAnd | Operation::BitwiseOr | Operation::BitwiseXor => {
                 if real {
                     return Err(format!(
                         "bitwise compound assignment on a real value in `{}` is not supported",
@@ -778,13 +820,16 @@ impl EmitCtx<'_, '_> {
                     ));
                 }
                 let op = match op {
-                    vpi::vpiBitAndOp => IrBinOp::BitAnd,
-                    vpi::vpiBitOrOp => IrBinOp::BitOr,
+                    Operation::BitwiseAnd => IrBinOp::BitAnd,
+                    Operation::BitwiseOr => IrBinOp::BitOr,
                     _ => IrBinOp::BitXor,
                 };
                 common_bin_expr(op, lhs, rhs)
             }
-            vpi::vpiLShiftOp | vpi::vpiRShiftOp | vpi::vpiArithLShiftOp | vpi::vpiArithRShiftOp => {
+            Operation::ShiftLeft
+            | Operation::ShiftRight
+            | Operation::ArithmeticShiftLeft
+            | Operation::ArithmeticShiftRight => {
                 if real {
                     return Err(format!(
                         "shift compound assignment on a real value in `{}` is not supported",
@@ -794,9 +839,9 @@ impl EmitCtx<'_, '_> {
                 let width = lhs.width;
                 let signed = lhs.signed;
                 let op = match op {
-                    vpi::vpiLShiftOp => IrBinOp::Shl,
-                    vpi::vpiRShiftOp => IrBinOp::Shr,
-                    vpi::vpiArithLShiftOp => IrBinOp::Ashl,
+                    Operation::ShiftLeft => IrBinOp::Shl,
+                    Operation::ShiftRight => IrBinOp::Shr,
+                    Operation::ArithmeticShiftLeft => IrBinOp::Ashl,
                     _ => IrBinOp::Ashr,
                 };
                 IrExpr::new(
@@ -812,7 +857,7 @@ impl EmitCtx<'_, '_> {
             }
             other => {
                 return Err(format!(
-                    "unsupported compound assignment operation {other} in `{}`",
+                    "unsupported compound assignment operation {other:?} in `{}`",
                     self.path
                 ))
             }
@@ -924,7 +969,7 @@ impl EmitCtx<'_, '_> {
             NodeKind::Stmt(StmtKind::Assign { op, .. }) => *op,
             _ => unreachable!("non-assignment passed to lower_delayed_assignment"),
         };
-        let rhs_ir = self.lower_assignment_rhs(lhs, rhs, op.as_raw(), &lh)?;
+        let rhs_ir = self.lower_assignment_rhs(lhs, rhs, op, &lh)?;
         let rhs_ir = apply_lhs_assignment_context(&self.cg.model, &lh, rhs_ir);
         if rhs_ir.is_real() {
             return Err(format!(
@@ -1060,15 +1105,6 @@ impl EmitCtx<'_, '_> {
             NodeKind::Stmt(StmtKind::Case { case_type, items }) => (*case_type, items),
             _ => unreachable!("non-case passed to lower_case"),
         };
-        // VPI case subtypes (vpi_user.h): vpiCaseExact=1 (case), vpiCaseX=2
-        // (casex), vpiCaseZ=3 (casez).  casez/casex keep wildcard matching
-        // per LRM 12.5.1 instead of degrading to exact equality.
-        let kind = match case_type {
-            DbCaseKind::Exact => IrCaseKind::Exact,
-            DbCaseKind::X => IrCaseKind::Casex,
-            DbCaseKind::Z => IrCaseKind::Casez,
-            other => return Err(format!("unsupported case type {other} in `{}`", self.path)),
-        };
         let sel = self
             .cg
             .node(h)
@@ -1083,9 +1119,22 @@ impl EmitCtx<'_, '_> {
                 self.path
             ));
         }
-        if case_type == DbCaseKind::Exact && self.is_case_inside(items) {
+        if case_type == DbCaseKind::Inside {
             return self.lower_case_inside(items, sel_ir);
         }
+        // `casez` and `casex` keep wildcard matching per LRM 12.5.1 instead
+        // of degrading to exact equality.
+        let kind = match case_type {
+            DbCaseKind::Exact => IrCaseKind::Exact,
+            DbCaseKind::X => IrCaseKind::Casex,
+            DbCaseKind::Z => IrCaseKind::Casez,
+            other => {
+                return Err(format!(
+                    "unsupported case type {other:?} in `{}`",
+                    self.path
+                ))
+            }
+        };
         let mut ir_items = Vec::with_capacity(items.len());
         let mut common_width = sel_ir.width;
         let mut common_signed = sel_ir.signed;
@@ -1138,45 +1187,6 @@ impl EmitCtx<'_, '_> {
         }])
     }
 
-    /// Surelog represents `case (selector) inside` as an exact case whose
-    /// non-default items each contain one `vpiInsideOp`. Every operand of that
-    /// wrapper is a `vpiListOp`: one child for a wildcard value, two for an
-    /// inclusive range. Requiring that full shape avoids confusing an
-    /// ordinary case item whose expression happens to use the `inside`
-    /// operator with a case-inside statement.
-    fn is_case_inside(&self, items: &[crate::core::db::CaseItem]) -> bool {
-        let mut saw_item = false;
-        for item in items {
-            if item.exprs.is_empty() {
-                continue;
-            }
-            saw_item = true;
-            let [expr] = item.exprs.as_slice() else {
-                return false;
-            };
-            let NodeKind::Expr(ExprKind::Operation { op, operands, .. }) = self.cg.kind(*expr)
-            else {
-                return false;
-            };
-            if *op != Operation::Inside
-                || operands.is_empty()
-                || operands.iter().any(|operand| {
-                    !matches!(
-                        self.cg.kind(*operand),
-                        NodeKind::Expr(ExprKind::Operation {
-                            op: Operation::List,
-                            operands,
-                            ..
-                        }) if matches!(operands.len(), 1 | 2)
-                    )
-                })
-            {
-                return false;
-            }
-        }
-        saw_item
-    }
-
     fn lower_case_inside(
         &mut self,
         items: &[crate::core::db::CaseItem],
@@ -1208,16 +1218,15 @@ impl EmitCtx<'_, '_> {
                 continue;
             }
 
-            let wrapper = item.exprs[0];
-            let operands = match self.cg.kind(wrapper) {
-                NodeKind::Expr(ExprKind::Operation { operands, .. }) => operands.clone(),
-                _ => unreachable!("case-inside shape checked before lowering"),
-            };
             let mut condition = None;
-            for operand in operands {
-                let members = match self.cg.kind(operand) {
-                    NodeKind::Expr(ExprKind::Operation { operands, .. }) => operands.clone(),
-                    _ => unreachable!("case-inside list shape checked before lowering"),
+            for operand in &item.exprs {
+                let members = match self.cg.kind(*operand) {
+                    NodeKind::Expr(ExprKind::Operation {
+                        op: Operation::List,
+                        operands,
+                        ..
+                    }) => operands.clone(),
+                    _ => vec![*operand],
                 };
                 let matched = match members.as_slice() {
                     [value] => {
@@ -1241,7 +1250,12 @@ impl EmitCtx<'_, '_> {
                         }
                         case_inside_range_match(&self.path, selector_read.clone(), low, high)?
                     }
-                    _ => unreachable!("case-inside list arity checked before lowering"),
+                    _ => {
+                        return Err(format!(
+                            "case-inside range requires two endpoints in `{}`",
+                            self.path
+                        ));
+                    }
                 };
                 condition = Some(match condition {
                     Some(previous) => cmp_expr_ir(IrBinOp::LogOr, previous, matched),
@@ -1249,7 +1263,7 @@ impl EmitCtx<'_, '_> {
                 });
             }
             branches.push((
-                condition.expect("case-inside wrapper has at least one operand"),
+                condition.ok_or_else(|| "case-inside item has no expressions".to_string())?,
                 body,
             ));
         }
@@ -1274,9 +1288,6 @@ impl EmitCtx<'_, '_> {
     }
 
     fn lower_for(&mut self, h: NodeId) -> Result<Vec<IrStmt>, String> {
-        // Verified against UHDM for_stmt.h: vpiForInitStmt (75) = init stmt(s),
-        // vpiCondition (71) = condition, vpiForIncStmt (74) = increment stmt(s),
-        // vpiStmt (104) = body.
         let (vars, init, cond, incr, body) = match self.cg.kind(h) {
             NodeKind::Stmt(StmtKind::For {
                 vars,
@@ -1304,6 +1315,18 @@ impl EmitCtx<'_, '_> {
                 NodeKind::Stmt(StmtKind::Assign { .. }) => {
                     init_stmts.push(self.lower_assignment(*s, true)?);
                 }
+                NodeKind::Expr(ExprKind::Operation { op, operands, .. }) => {
+                    let op = *op;
+                    validate_operation_arity(op, operands.len(), &self.path)?;
+                    let [lhs, rhs] = operands.as_slice() else {
+                        return Err(format!(
+                            "for-loop assignment initializer in `{}` requires two operands",
+                            self.path
+                        ));
+                    };
+                    let (lhs, rhs) = (*lhs, *rhs);
+                    init_stmts.push(self.lower_assignment_operands(lhs, rhs, true, op, true)?);
+                }
                 other => {
                     return Err(format!(
                         "unsupported for-loop initializer in `{}` (node kind {other:?})",
@@ -1319,6 +1342,26 @@ impl EmitCtx<'_, '_> {
             match self.cg.kind(*s) {
                 NodeKind::Stmt(StmtKind::Assign { .. }) => {
                     incr_stmts.push(self.lower_assignment(*s, true)?);
+                }
+                NodeKind::Expr(ExprKind::Operation { op, operands, .. })
+                    if !matches!(
+                        *op,
+                        Operation::PostIncrement
+                            | Operation::PreIncrement
+                            | Operation::PostDecrement
+                            | Operation::PreDecrement
+                    ) =>
+                {
+                    let op = *op;
+                    validate_operation_arity(op, operands.len(), &self.path)?;
+                    let [lhs, rhs] = operands.as_slice() else {
+                        return Err(format!(
+                            "for-loop assignment increment in `{}` requires two operands",
+                            self.path
+                        ));
+                    };
+                    let (lhs, rhs) = (*lhs, *rhs);
+                    incr_stmts.push(self.lower_assignment_operands(lhs, rhs, true, op, true)?);
                 }
                 NodeKind::Expr(ExprKind::Operation { op, operands, .. })
                     if matches!(
@@ -1502,7 +1545,12 @@ impl EmitCtx<'_, '_> {
             DbJoinKind::All => IrJoinKind::Join,
             DbJoinKind::None => IrJoinKind::None,
             DbJoinKind::Any => IrJoinKind::Any,
-            k => return Err(format!("unsupported fork join type {k} in `{}`", self.path)),
+            k => {
+                return Err(format!(
+                    "unsupported fork join type {k:?} in `{}`",
+                    self.path
+                ))
+            }
         };
         let mut names = Vec::with_capacity(branches.len());
         for (k, branch) in branches.iter().enumerate() {
@@ -1541,20 +1589,10 @@ impl EmitCtx<'_, '_> {
     /// signal; only whole-signal targets are supported (no selects/arrays, no
     /// collapsed-net members).
     fn lower_force(&mut self, h: NodeId) -> Result<IrStmt, String> {
-        let lhs = self
-            .cg
-            .node(h)
-            .children
-            .first()
-            .copied()
-            .ok_or_else(|| "force without LHS".to_string())?;
-        let rhs = self
-            .cg
-            .node(h)
-            .children
-            .get(1)
-            .copied()
-            .ok_or_else(|| "force without RHS".to_string())?;
+        let NodeKind::Stmt(StmtKind::Force { lhs, rhs }) = self.cg.kind(h) else {
+            return Err("expected a typed force statement".to_string());
+        };
+        let (lhs, rhs) = (*lhs, *rhs);
         let lh = self.cg.lower_lhs(&self.path, lhs)?;
         let (sig_idx, width, signed) = match &lh {
             IrLhs::Whole(idx) => {
@@ -1598,13 +1636,10 @@ impl EmitCtx<'_, '_> {
 
     /// Lower `release lhs;` — cancel a procedural force on a whole signal.
     fn lower_release(&mut self, h: NodeId) -> Result<IrStmt, String> {
-        let lhs = self
-            .cg
-            .node(h)
-            .children
-            .first()
-            .copied()
-            .ok_or_else(|| "release without LHS".to_string())?;
+        let NodeKind::Stmt(StmtKind::Release { lhs }) = self.cg.kind(h) else {
+            return Err("expected a typed release statement".to_string());
+        };
+        let lhs = *lhs;
         let lh = self.cg.lower_lhs(&self.path, lhs)?;
         match &lh {
             IrLhs::Whole(idx) => {
@@ -1654,8 +1689,8 @@ impl EmitCtx<'_, '_> {
         };
         // Net targets: the elaborated ref normally binds the declaration, so
         // the net/var distinction is read straight off the arena node.
-        // Pinned-Surelog quirk: a module-level `reg` is captured as
-        // NodeKind::Net with net_type vpiReg (48) — that IS a variable.
+        // A module-level `reg` can be captured as a net node, but its semantic
+        // net type still identifies it as variable storage.
         if let NodeKind::Expr(ExprKind::Ref { target: Some(t) }) = self.cg.kind(lhs) {
             if let NodeKind::Net { net_type, .. } = self.cg.kind(*t) {
                 if *net_type != NetType::Reg {
@@ -1699,13 +1734,10 @@ impl EmitCtx<'_, '_> {
     /// db child order.
     pub(super) fn claim_pca_sites(&mut self, nodes: &[NodeId]) -> Result<(), String> {
         for n in nodes {
-            let lhs = self
-                .cg
-                .node(*n)
-                .children
-                .first()
-                .copied()
-                .ok_or_else(|| "procedural continuous assignment without LHS".to_string())?;
+            let NodeKind::Stmt(StmtKind::ProcContAssign { lhs, .. }) = self.cg.kind(*n) else {
+                return Err("expected a typed procedural continuous assignment".to_string());
+            };
+            let lhs = *lhs;
             let (sig_idx, _) = self.pca_target(lhs, "assign")?;
             if self.cg.pca_sites.contains_key(&sig_idx) {
                 return Err(self.cg.pca_multi_site_err(lhs, &self.path));
@@ -1749,20 +1781,10 @@ impl EmitCtx<'_, '_> {
     /// body lowers; this method only CLAIMS the pre-allocated site by
     /// materializing its guard process.
     fn lower_proc_cont_assign(&mut self, h: NodeId) -> Result<Vec<IrStmt>, String> {
-        let lhs = self
-            .cg
-            .node(h)
-            .children
-            .first()
-            .copied()
-            .ok_or_else(|| "procedural continuous assignment without LHS".to_string())?;
-        let rhs = self
-            .cg
-            .node(h)
-            .children
-            .get(1)
-            .copied()
-            .ok_or_else(|| "procedural continuous assignment without RHS".to_string())?;
+        let NodeKind::Stmt(StmtKind::ProcContAssign { lhs, rhs }) = self.cg.kind(h) else {
+            return Err("expected a typed procedural continuous assignment".to_string());
+        };
+        let (lhs, rhs) = (*lhs, *rhs);
         let (sig_idx, info) = self.pca_target(lhs, "assign")?;
 
         // The dedicated guard process: waits on the RHS read set ∪ {en} and
@@ -1867,13 +1889,15 @@ impl EmitCtx<'_, '_> {
             },
         ];
         let guard_name = self.cg.new_fn_name(&self.path, "pca");
-        self.cg.model.processes.push(IrProcess {
-            c_name: guard_name,
-            label: format!("{}.pca", self.path),
-            shape: IrShape::Loop,
-            pre_fns: Vec::new(),
-            body: guard_body,
-        });
+        let origin = self.cg.origin(h);
+        self.cg.model.processes.push(IrProcess::new_with_origin(
+            guard_name,
+            format!("{}.pca", self.path),
+            IrShape::Loop,
+            Vec::new(),
+            guard_body,
+            origin,
+        ));
 
         // Statement execution: enable, then the immediate blocking write
         // (dropped by the runtime while the target is forced).
@@ -1999,19 +2023,14 @@ impl EmitCtx<'_, '_> {
                         self.path
                     ));
                 }
-                let path = match self.cg.kind(args[0]) {
-                    NodeKind::Expr(ExprKind::Constant {
-                        const_type: ConstantType::String,
-                        value: ValueData::Str(path),
-                        ..
-                    }) => path.clone(),
-                    _ => {
-                        return Err(format!(
+                let path = self
+                    .literal_string(args[0], "$dumpfile path")?
+                    .ok_or_else(|| {
+                        format!(
                             "$dumpfile requires a literal string argument in `{}`",
                             self.path
-                        ))
-                    }
-                };
+                        )
+                    })?;
                 let lower_path = path.to_ascii_lowercase();
                 if !lower_path.ends_with(".vcd") && !lower_path.ends_with(".fst") {
                     return Err(format!(
@@ -2109,10 +2128,9 @@ impl EmitCtx<'_, '_> {
             );
             if is_fmt && fmt_arg.is_none() {
                 fmt_arg = match self.cg.kind(*a) {
-                    NodeKind::Expr(ExprKind::Constant {
-                        value: ValueData::Str(s),
-                        ..
-                    }) => Some(s.clone()),
+                    NodeKind::Expr(ExprKind::Constant { value, .. }) => {
+                        Some(decoded_string_text(value, name)?)
+                    }
                     _ => None,
                 };
             } else {
@@ -2237,6 +2255,22 @@ impl EmitCtx<'_, '_> {
         }
         c_fmt.push('"');
         Ok((c_fmt, display_args))
+    }
+
+    /// Recover a source string literal through the implicit string cast that
+    /// Slang may insert at a system-task argument boundary.
+    fn literal_string(&self, node: NodeId, context: &str) -> Result<Option<String>, String> {
+        match self.cg.kind(node) {
+            NodeKind::Expr(ExprKind::Constant {
+                const_type: ConstantType::String,
+                value,
+                ..
+            }) => decoded_string_text(value, context).map(Some),
+            NodeKind::Expr(ExprKind::Cast { operand, ty, .. }) if ty.kind == "string" => {
+                self.literal_string(*operand, context)
+            }
+            _ => Ok(None),
+        }
     }
 
     /// Lower a `task_call` statement (or a function call used as a statement).
@@ -2579,7 +2613,12 @@ impl EmitCtx<'_, '_> {
         }
 
         if !automatic {
-            for local in locals.keys().copied().collect::<Vec<_>>() {
+            let persistent_locals = locals
+                .keys()
+                .copied()
+                .filter(|local| self.cg.db.variable_lifetime(*local) == VariableLifetime::Static)
+                .collect::<Vec<_>>();
+            for local in persistent_locals {
                 let storage = self
                     .cg
                     .static_task_locals
@@ -2599,8 +2638,8 @@ impl EmitCtx<'_, '_> {
                         two_state: storage.two_state,
                     },
                 );
+                locals.remove(&local);
             }
-            locals.clear();
         }
 
         let done_label = format!("_id{}", h.0);
@@ -2648,49 +2687,6 @@ impl EmitCtx<'_, '_> {
         self.depth_arg = depth;
 
         let mut stmts: Vec<IrStmt> = before;
-        // Locals sorted by node id (emission order of the pre-IR emitter).
-        let mut local_names: Vec<(NodeId, (String, u32, bool, bool))> = self
-            .func
-            .as_ref()
-            .map(|f| {
-                f.locals
-                    .iter()
-                    .map(|(id, v)| (*id, v.clone()))
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default();
-        local_names.sort_by_key(|(id, _)| id.0);
-        let mut declared_locals = HashSet::new();
-        for (local, (cname, w, s, two_state)) in local_names {
-            if !declared_locals.insert(cname.clone()) {
-                continue;
-            }
-            let init = self
-                .cg
-                .db
-                .var_initializer(local)
-                .map(|initializer| {
-                    self.cg
-                        .var_decl_init(&self.path, &self.cg.node(local).name, initializer)
-                })
-                .transpose()?
-                .map(|value| {
-                    let expr = IrExpr::new(
-                        IrExprKind::Const(value.clone()),
-                        value.width,
-                        value.signed,
-                        value.fill,
-                    );
-                    Box::new(IrExpr::resize_to(expr, w, s))
-                });
-            stmts.push(IrStmt::DeclLocal {
-                name: cname,
-                width: w,
-                signed: s,
-                two_state,
-                init,
-            });
-        }
         for (cname, ir, two_state) in input_copies {
             let (width, signed) = (ir.width, ir.signed);
             stmts.push(IrStmt::DeclLocal {

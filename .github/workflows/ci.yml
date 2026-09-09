@@ -2,8 +2,8 @@
 # repository's native-backed unit/integration tests on Ubuntu.
 #
 # CAVEAT: there is no cheap way to lint this crate — even `cargo check --lib`
-# executes build.rs, i.e. a full native CMake build of vendored
-# Surelog/UHDM/ANTLR4/Cap'n Proto plus custom link steps. That native pipeline
+# executes build.rs, i.e. a full native CMake build of vendored Slang plus its
+# C ABI and custom link steps. That native pipeline
 # is expensive on every platform. This development gate therefore runs against
 # glibc Ubuntu; the five release targets and their linkage audits remain the
 # job of the build matrix below.
@@ -53,13 +53,12 @@ jobs:
           cache-targets: "false"
           cache-bin: "false"
 
-      # patch(1) is required by build.rs (Surelog submodule patches); cmake,
-      # g++ and zlib headers back the non-musl dynamic-link branch used here.
+      # Slang's generated headers require Python. build.rs also needs patch(1),
+      # CMake, and a C++20 compiler.
       - name: Install native build prerequisites
         run: |
           sudo apt-get update
-          sudo apt-get install -y patch cmake g++ python3-pip zlib1g-dev
-          python3 -m pip install --disable-pip-version-check --user orderedmultidict
+          sudo apt-get install -y patch cmake g++ python3
 
       # fmt first: it fails fast without paying for the native build.
       - name: cargo fmt --check
@@ -74,8 +73,8 @@ jobs:
       - name: cargo clippy (-D warnings)
         run: cargo clippy --all-targets --all-features -- -D warnings
 
-      # Surelog and several boundary tests change process-global state (CWD and
-      # C++ singletons), so unit tests in one executable must not overlap.
+      # Several boundary tests change process-global state, so unit tests in
+      # one executable must not overlap.
       - name: cargo test
         run: cargo test --jobs 2 --all-features -- --test-threads=1
 
@@ -121,8 +120,7 @@ jobs:
       - name: Install native build prerequisites
         run: |
           sudo apt-get update
-          sudo apt-get install -y patch cmake g++ python3-pip zlib1g-dev
-          python3 -m pip install --disable-pip-version-check --user orderedmultidict
+          sudo apt-get install -y patch cmake g++ python3
 
       - name: Run generated runtime and model probes under sanitizers
         run: >-
@@ -222,23 +220,12 @@ jobs:
           cache-targets: "false"
           cache-bin: "false"
 
-      # UHDM and ANTLR generators execute during the native CMake build.
+      # Slang's syntax and diagnostic generators execute during its CMake build.
       - uses: actions/setup-python@v7
         if: matrix.platform != 'linux'
         with:
           python-version: "3.12"
           architecture: ${{ matrix.python_arch }}
-
-      - uses: actions/setup-java@v5
-        if: matrix.platform != 'linux'
-        with:
-          distribution: temurin
-          java-version: "21"
-          java-package: jre
-
-      - name: Install Python model-generation dependency
-        if: matrix.platform != 'linux'
-        run: python -m pip install --disable-pip-version-check orderedmultidict
 
       - name: Install Linux verification tools
         if: matrix.platform == 'linux'
@@ -266,11 +253,9 @@ jobs:
             --env CMAKE_GENERATOR=Ninja \
             --env LLG_TARGET="${{ matrix.target }}" \
             rust:alpine sh -euxc '
-              apk add --no-cache build-base cmake git linux-headers ninja openjdk21-jre patch py3-pip python3
-              python3 -m pip install --break-system-packages --disable-pip-version-check orderedmultidict
+              apk add --no-cache build-base cmake git linux-headers ninja patch python3
               git config --global --add safe.directory /workspace
-              git config --global --add safe.directory /workspace/vendor/Surelog
-              git config --global --add safe.directory /workspace/vendor/Surelog/third_party/UHDM
+              git config --global --add safe.directory /workspace/vendor/slang
               rustup target add "$LLG_TARGET"
               export CC=gcc CXX=g++
               case "$LLG_TARGET" in

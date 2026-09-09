@@ -3,139 +3,59 @@
 use super::*;
 use llg::core::elab::{Val, Value};
 use llg::core::model::{GenScopeModel, TypeInfo};
+use llg::core::tokens;
 
-/// Serializes the Surelog-touching tests in this binary: Surelog's global
-/// C++ singletons are not thread-safe and it writes `slpp_all/` into the
-/// CWD, so the compile-based tests must not interleave.
-static SURELOG_LOCK: Mutex<()> = Mutex::new(());
+/// Serializes tests that temporarily change the process working directory.
+static ANALYSIS_CWD_LOCK: Mutex<()> = Mutex::new(());
 
 /// Guards for tests that run real analyses.  Analyses CREATE the process
-/// shadow base, park the process CWD inside it and let Surelog write
-/// there — so they must be serialized against other Surelog runs AND
-/// against the shadow staging/cleanup tests.  Lock order is fixed:
-/// SURELOG first, then TEST_PROCESS_SHADOW_LOCK (never reversed).
+/// shadow base and park the process CWD inside it, so they must be serialized
+/// against the shadow staging/cleanup tests. Lock order is fixed: the analysis
+/// CWD lock first, then TEST_PROCESS_SHADOW_LOCK (never reversed).
 fn analysis_guards() -> (
     std::sync::MutexGuard<'static, ()>,
     std::sync::MutexGuard<'static, ()>,
 ) {
-    let surelog = SURELOG_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let cwd = ANALYSIS_CWD_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let shadow = crate::features::TEST_PROCESS_SHADOW_LOCK
         .lock()
         .unwrap_or_else(|e| e.into_inner());
-    (surelog, shadow)
+    (cwd, shadow)
 }
 
 #[test]
-fn graph_assembly_indexes_keep_large_declaration_and_instance_sets_keyed() {
-    let mut indexes = GraphAssemblyIndexes::new(1);
-    let mut definition = ModuleGraphDefinition {
-        id: "m|/tmp/m.sv|1|1".to_owned(),
-        name: "m".to_owned(),
-        file: Some("/tmp/m.sv".to_owned()),
-        line: 1,
-        col: 1,
-        end_line: 20_000,
-        end_col: 1,
-        ports: Vec::new(),
-        params: Vec::new(),
-        signals: Vec::new(),
-        children: Vec::new(),
-        generated_scopes: Vec::new(),
-    };
+fn module_graph_from_slang_deduplicates_definitions_and_uses_utf16_columns() {
+    let _guards = analysis_guards();
+    let name = "/virtual/module_graph.sv";
+    let source = "/*😀*/ module top; endmodule\n";
+    let opts = CompileOpts::default();
+    let mut out = llg::core::compile::compile_sources(
+        &[llg::core::compile::OwnedSource::compilation_unit(
+            name, source,
+        )],
+        &opts,
+    )
+    .expect("compile Slang graph fixture");
+    assert!(!out.snapshot.has_errors(), "{:?}", out.diagnostics);
 
-    for index in 0..4_096 {
-        assert!(indexes.ports[0].insert((format!("p{index}"), None)));
-        assert!(indexes.params[0].insert((format!("P{index}"), None)));
-        assert!(indexes.signals[0].insert((format!("s{index}"), None)));
-        let instance = ModuleGraphInstance {
-            name: format!("u{index}"),
-            module_type: "child".to_owned(),
-            file: definition.file.clone(),
-            line: index + 1,
-            col: 1,
-        };
-        graph_push_instance(
-            &mut definition.children,
-            &mut indexes.children[0],
-            instance.clone(),
-        );
-        graph_push_instance(&mut definition.children, &mut indexes.children[0], instance);
-    }
+    let database = llg::core::db::Db::from_slang(&out.snapshot).expect("import graph fixture");
+    let definition = out
+        .snapshot
+        .semantic_nodes
+        .iter()
+        .find(|node| node.kind == llg::ffi::slang::SemanticKind::Definition && node.name == "top")
+        .cloned()
+        .expect("top definition");
+    out.snapshot.semantic_nodes.push(definition);
 
-    let path = vec![
-        ModuleGraphGenerateScope {
-            name: "g_outer".to_owned(),
-            file: definition.file.clone(),
-            line: 2,
-            col: 1,
-            children: Vec::new(),
-            nested: Vec::new(),
-        },
-        ModuleGraphGenerateScope {
-            name: "g_inner".to_owned(),
-            file: definition.file.clone(),
-            line: 3,
-            col: 1,
-            children: Vec::new(),
-            nested: Vec::new(),
-        },
-    ];
-    for index in 0..4_096 {
-        let instance = ModuleGraphInstance {
-            name: format!("gu{index}"),
-            module_type: "generated_child".to_owned(),
-            file: definition.file.clone(),
-            line: index + 1,
-            col: 2,
-        };
-        graph_push_generated_instance(0, &mut definition, &path, instance.clone(), &mut indexes);
-        graph_push_generated_instance(0, &mut definition, &path, instance, &mut indexes);
-    }
+    let graph = module_graph_from_slang(&out.snapshot, &[(name, source)], Some(&database));
+    assert_eq!(graph.definitions.len(), 1);
+    let top = &graph.definitions[0];
+    assert_eq!(top.name, "top");
+    assert_eq!(top.file.as_deref(), Some(name));
+    assert_eq!((top.line, top.col), (1, 15));
 
-    assert_eq!(indexes.ports[0].len(), 4_096);
-    assert_eq!(indexes.params[0].len(), 4_096);
-    assert_eq!(indexes.signals[0].len(), 4_096);
-    assert_eq!(definition.children.len(), 4_096);
-    assert_eq!(
-        definition.children.first().map(|child| child.name.as_str()),
-        Some("u0")
-    );
-    assert_eq!(
-        definition.children.last().map(|child| child.name.as_str()),
-        Some("u4095")
-    );
-    assert_eq!(definition.generated_scopes.len(), 1);
-    assert_eq!(definition.generated_scopes[0].nested.len(), 1);
-    assert_eq!(
-        definition.generated_scopes[0].nested[0].children.len(),
-        4_096
-    );
-}
-
-#[test]
-fn surelog_invocation_log_details_are_bounded_and_redacted() {
-    let argv = vec![
-        "llg".to_owned(),
-        "-D".to_owned(),
-        "SECRET=separate-value".to_owned(),
-        "-P".to_owned(),
-        "WIDTH=999999".to_owned(),
-        "-DSECRET=do-not-log-this-value".to_owned(),
-        format!("-I{}", "include/".to_owned() + &"nested/".repeat(64)),
-        "top.sv".to_owned(),
-    ];
-    let (representation, fingerprint) = surelog_argv_log_details(&argv);
-
-    assert!(representation.len() <= SURELOG_LOG_ARGV_MAX);
-    assert!(representation.contains("-DSECRET=<redacted>"));
-    assert!(!representation.contains("do-not-log-this-value"));
-    assert!(!representation.contains("separate-value"));
-    assert!(!representation.contains("999999"));
-    assert!(representation.contains("-I"));
-    assert_eq!(fingerprint.len(), 16);
-    assert!(fingerprint
-        .chars()
-        .all(|character| character.is_ascii_hexdigit()));
+    assert_eq!((top.end_line, top.end_col), (1, 18));
 }
 
 /// Restores the process CWD and removes the temp dir even when the body
@@ -160,7 +80,7 @@ impl Drop for TempDirGuard {
 /// - tokens for `clk`, `u0`, `W`, `add`, and `run`.
 ///
 /// Returned as parts so tests can assemble the analysis with or without
-/// synthetic UHDM bindings.
+/// synthetic semantic bindings.
 fn sample_parts() -> (DesignModel, Vec<FileTokens>) {
     let module = ModuleDef {
         name: "m".to_owned(),
@@ -268,78 +188,85 @@ fn sample_parts() -> (DesignModel, Vec<FileTokens>) {
     let tokens = vec![FileTokens {
         path: "/x/top.sv".to_owned(),
         nodes: vec![
-            VObjectInfo {
+            TokenInfo {
                 line: 1,
                 col: 8,
                 end_line: 1,
                 end_col: 9,
-                vpi_type: llg::ffi::vpi::vpiModule,
+                kind: llg::core::tokens::TOKEN_SLANG_MODULE
+                    + llg::core::tokens::TOKEN_DECLARATION_OFFSET,
                 name: Some("m".to_owned()),
                 file: "/x/top.sv".to_owned(),
             },
-            VObjectInfo {
+            TokenInfo {
                 line: 1,
                 col: 5,
                 end_line: 1,
                 end_col: 8,
-                vpi_type: llg::ffi::vpi::TOKEN_PORT_INPUT,
+                kind: llg::core::tokens::TOKEN_SLANG_PORT
+                    + llg::core::tokens::TOKEN_DECLARATION_OFFSET,
                 name: Some("clk".to_owned()),
                 file: "/x/top.sv".to_owned(),
             },
-            VObjectInfo {
+            TokenInfo {
                 line: 1,
                 col: 20,
                 end_line: 1,
                 end_col: 22,
-                vpi_type: llg::ffi::vpi::uhdmmodule_inst,
+                kind: llg::core::tokens::TOKEN_SLANG_IDENTIFIER
+                    + llg::core::tokens::TOKEN_DECLARATION_OFFSET,
                 name: Some("u0".to_owned()),
                 file: "/x/top.sv".to_owned(),
             },
-            // Real pipelines emit the parameter declaration site three
-            // times (VPI walker + UHDM iteration + parse tree); the index
-            // uses the multiplicity to separate decls from references.
-            VObjectInfo {
+            // This fixture repeats a declaration site to ensure the index
+            // deduplicates explicit declarations.
+            TokenInfo {
                 line: 2,
                 col: 5,
                 end_line: 2,
                 end_col: 6,
-                vpi_type: llg::ffi::vpi::uhdmparameter,
+                kind: llg::core::tokens::TOKEN_SLANG_PARAMETER
+                    + llg::core::tokens::TOKEN_DECLARATION_OFFSET,
                 name: Some("W".to_owned()),
                 file: "/x/top.sv".to_owned(),
             },
-            VObjectInfo {
+            TokenInfo {
                 line: 2,
                 col: 5,
                 end_line: 2,
                 end_col: 6,
-                vpi_type: llg::ffi::vpi::uhdmparameter,
+                kind: llg::core::tokens::TOKEN_SLANG_PARAMETER
+                    + llg::core::tokens::TOKEN_DECLARATION_OFFSET,
                 name: Some("W".to_owned()),
                 file: "/x/top.sv".to_owned(),
             },
-            VObjectInfo {
+            TokenInfo {
                 line: 2,
                 col: 5,
                 end_line: 2,
                 end_col: 6,
-                vpi_type: llg::ffi::vpi::uhdmparameter,
+                kind: llg::core::tokens::TOKEN_SLANG_PARAMETER
+                    + llg::core::tokens::TOKEN_DECLARATION_OFFSET,
                 name: Some("W".to_owned()),
                 file: "/x/top.sv".to_owned(),
             },
-            VObjectInfo {
+            TokenInfo {
                 line: 4,
                 col: 8,
                 end_line: 4,
                 end_col: 11,
-                vpi_type: llg::ffi::vpi::vpiFunction,
+                kind: llg::core::tokens::TOKEN_SLANG_FUNCTION
+                    + llg::core::tokens::TOKEN_DECLARATION_OFFSET,
                 name: Some("add".to_owned()),
                 file: "/x/top.sv".to_owned(),
             },
-            VObjectInfo {
+            TokenInfo {
                 line: 5,
                 col: 8,
                 end_line: 5,
                 end_col: 11,
-                vpi_type: llg::ffi::vpi::vpiTask,
+                kind: llg::core::tokens::TOKEN_SLANG_TASK
+                    + llg::core::tokens::TOKEN_DECLARATION_OFFSET,
                 name: Some("run".to_owned()),
                 file: "/x/top.sv".to_owned(),
             },
@@ -354,7 +281,7 @@ fn sample_analysis() -> Analysis {
     Analysis::new(Vec::new(), model, tokens, Vec::new())
 }
 
-/// [`sample_parts`] assembled with synthetic UHDM reference bindings.
+/// [`sample_parts`] assembled with synthetic semantic reference bindings.
 fn sample_analysis_with_bindings(bindings: RefBindings) -> Analysis {
     let (model, tokens) = sample_parts();
     Analysis::new_with_outcome(
@@ -425,33 +352,41 @@ fn navigation_ranges_use_utf16_after_supplementary_text() {
         packages: Vec::new(),
         classes: Vec::new(),
     };
-    let token = |line: u32, col: u32, vpi_type: i32| VObjectInfo {
+    let token = |line: u32, col: u32, kind: i32| TokenInfo {
         line,
         col,
         end_line: line,
         end_col: col + 4,
-        vpi_type,
+        kind,
         name: Some("data".to_owned()),
         file: file.clone(),
     };
     let tokens = vec![FileTokens {
         path: file.clone(),
         nodes: vec![
-            VObjectInfo {
+            TokenInfo {
                 line: 1,
                 col: 8,
                 end_line: 1,
                 end_col: 12,
-                vpi_type: llg::ffi::vpi::vpiModule,
+                kind: tokens::TOKEN_SLANG_MODULE + tokens::TOKEN_DECLARATION_OFFSET,
                 name: Some("top".to_owned()),
                 file: file.clone(),
             },
-            // Scalar column 15 points at `data`; the emoji in the comment
-            // adds one extra UTF-16 code unit before the identifier.
-            token(2, 15, llg::ffi::vpi::vpiNet),
-            token(2, 15, llg::ffi::vpi::vpiNet),
-            token(3, 8, llg::ffi::vpi::vpiRefObj),
-            token(3, 15, llg::ffi::vpi::vpiRefObj),
+            // Token coordinates already use one-based UTF-16; the emoji in
+            // the comment consumes two code units before `data`.
+            token(
+                2,
+                16,
+                tokens::TOKEN_SLANG_NET + tokens::TOKEN_DECLARATION_OFFSET,
+            ),
+            token(
+                2,
+                16,
+                tokens::TOKEN_SLANG_NET + tokens::TOKEN_DECLARATION_OFFSET,
+            ),
+            token(3, 8, tokens::TOKEN_SLANG_IDENTIFIER),
+            token(3, 15, tokens::TOKEN_SLANG_IDENTIFIER),
         ],
     }];
     let analysis = Analysis::new(Vec::new(), model, tokens, Vec::new());
@@ -743,6 +678,37 @@ fn hover_on_bound_param_reference_shows_elaborated_value() {
 }
 
 #[test]
+fn unresolved_semantic_reference_does_not_fall_back_by_name() {
+    let (model, mut token_files) = sample_parts();
+    token_files[0].nodes.push(TokenInfo {
+        line: 7,
+        col: 3,
+        end_line: 7,
+        end_col: 4,
+        kind: tokens::TOKEN_SLANG_PARAMETER,
+        name: Some("W".to_owned()),
+        file: "/x/top.sv".to_owned(),
+    });
+    let key = ("/x/top.sv".to_owned(), 6, 2);
+    let analysis = Analysis::new_with_outcome(
+        AnalysisOutcome::Valid,
+        Vec::new(),
+        model,
+        token_files,
+        Vec::new(),
+        HashMap::new(),
+        ConnectionInputs {
+            unresolved_bindings: [key].into_iter().collect(),
+            ..ConnectionInputs::default()
+        },
+    );
+
+    assert!(definition_at(&analysis, "/x/top.sv", 6, 2).is_none());
+    assert!(hover_at(&analysis, "/x/top.sv", 6, 2).is_none());
+    assert!(references_at(&analysis, "/x/top.sv", 6, 2).is_empty());
+}
+
+#[test]
 fn hover_on_unresolved_param_omits_the_value_line() {
     let (mut model, tokens) = sample_parts();
     model.top_instances[0].params[0].value = None;
@@ -886,8 +852,8 @@ fn definition_on_module_name_resolves_in_place() {
 }
 
 #[test]
-fn definition_at_bound_position_serves_the_uhdm_binding_target() {
-    // Synthetic UHDM capture: the reference at 0-based (0,19) (`u0`) is
+fn definition_at_bound_position_serves_the_semantic_binding_target() {
+    // Synthetic semantic capture: the reference at 0-based (0,19) (`u0`) is
     // bound to a declaration in another file.  The binding path must win
     // over the index (which would resolve the instance to /x/top.sv).
     let mut bindings: RefBindings = HashMap::new();
@@ -954,10 +920,9 @@ fn port_labels_join_ref_bindings_in_new_with_outcome() {
 }
 
 #[test]
-fn merged_ref_bindings_prefers_uhdm_targets_on_collision() {
-    // Collision policy: UHDM bindings are inserted after port-label ones,
-    // so where both captured the same position the elaboration-backed
-    // UHDM target wins; disjoint entries from BOTH sources survive.
+fn merged_ref_bindings_prefers_semantic_targets_on_collision() {
+    // Semantic bindings are inserted after port-label ones. Where both
+    // capture the same position, the elaboration-backed target wins.
     let mut index = SymbolIndex::default();
     index.decls.push(SymEntry {
         name: "clk".to_owned(),
@@ -976,9 +941,9 @@ fn merged_ref_bindings_prefers_uhdm_targets_on_collision() {
         .port_labels
         .insert(("/x/top.sv".to_owned(), 10, 11), 0);
 
-    let mut uhdm: RefBindings = HashMap::new();
+    let mut semantic: RefBindings = HashMap::new();
     // Overlaps the (8,9) port-label entry with a different target...
-    uhdm.insert(
+    semantic.insert(
         ("/x/top.sv".to_owned(), 8, 9),
         DeclTarget {
             name: "clk".to_owned(),
@@ -991,7 +956,7 @@ fn merged_ref_bindings_prefers_uhdm_targets_on_collision() {
         },
     );
     // ...and adds a position the label heuristic never saw.
-    uhdm.insert(
+    semantic.insert(
         ("/x/top.sv".to_owned(), 20, 21),
         DeclTarget {
             name: "rst".to_owned(),
@@ -1004,13 +969,18 @@ fn merged_ref_bindings_prefers_uhdm_targets_on_collision() {
         },
     );
 
-    let merged = merged_ref_bindings(&index, &empty_design(), uhdm, &ConnectionInputs::default());
+    let merged = merged_ref_bindings(
+        &index,
+        &empty_design(),
+        semantic,
+        &ConnectionInputs::default(),
+    );
     assert_eq!(
         merged
             .get(&("/x/top.sv".to_owned(), 8, 9))
             .map(|t| t.file.as_str()),
         Some("/x/elab.sv"),
-        "UHDM binding must win on collision"
+        "semantic binding must win on collision"
     );
     let label_only = merged
         .get(&("/x/top.sv".to_owned(), 10, 11))
@@ -1019,15 +989,15 @@ fn merged_ref_bindings_prefers_uhdm_targets_on_collision() {
         (label_only.file.as_str(), label_only.line0, label_only.col0),
         ("/x/child.sv", 3, 4)
     );
-    let uhdm_only = merged
+    let semantic_only = merged
         .get(&("/x/top.sv".to_owned(), 20, 21))
-        .expect("UHDM-only entry survives");
-    assert_eq!(uhdm_only.name, "rst");
+        .expect("semantic-only entry survives");
+    assert_eq!(semantic_only.name, "rst");
 }
 
 #[test]
 fn connection_pairs_bind_actuals_to_the_parent_scope_declaration() {
-    // UHDM mode: a resolved label (`.clk` at 0-based (8,9)) keeps its
+    // A resolved label (`.clk` at 0-based (8,9)) keeps its
     // child-port target (`via_label`); the paired ACTUAL identifier binds
     // to its OWN declaration in the instantiating (parent) scope, NOT to
     // the child port.  Two same-named declarations exist in the file in
@@ -1168,8 +1138,8 @@ fn connection_actual_fold_never_overrides_an_explicit_binding() {
     });
     index.port_labels.insert(("/x/top.sv".to_owned(), 8, 9), 0);
 
-    let mut uhdm: RefBindings = HashMap::new();
-    uhdm.insert(
+    let mut semantic: RefBindings = HashMap::new();
+    semantic.insert(
         ("/x/top.sv".to_owned(), 8, 12),
         DeclTarget {
             name: "wa".to_owned(),
@@ -1196,7 +1166,7 @@ fn connection_actual_fold_never_overrides_an_explicit_binding() {
         fallback_bindings: HashMap::new(),
         ..ConnectionInputs::default()
     };
-    let merged = merged_ref_bindings(&index, &empty_design(), uhdm, &connections);
+    let merged = merged_ref_bindings(&index, &empty_design(), semantic, &connections);
     let kept = merged
         .get(&("/x/top.sv".to_owned(), 8, 12))
         .expect("pre-existing binding survives");
@@ -1246,10 +1216,7 @@ fn connection_actual_without_parent_scope_candidate_stays_unbound() {
     assert!(merged.contains_key(&("/x/top.sv".to_owned(), 8, 9)));
 }
 
-/// End-to-end over the classifier-labeled connection types: a hand-built
-/// UHDM-mode analysis whose port/override LABEL tokens carry
-/// `TOKEN_PORT_CONN_LABEL` / `TOKEN_PARAM_CONN_LABEL` (as
-/// `collect_parse_tokens` emits them).
+/// End-to-end over Slang's classifier-labeled connection tokens.
 ///
 /// Pins three facts at once:
 ///
@@ -1263,8 +1230,6 @@ fn connection_actual_without_parent_scope_candidate_stays_unbound() {
 ///   stay plain `variable`.
 #[test]
 fn connection_label_tokens_index_as_references_and_highlight_as_labels() {
-    use llg::ffi::vpi;
-
     // `/x/a.sv`:
     //   line 1: `module m(input logic clk);`   — port `clk` at col 22
     //   line 2: `  parameter int W = 4;`       — param `W` at col 17
@@ -1274,12 +1239,12 @@ fn connection_label_tokens_index_as_references_and_highlight_as_labels() {
     //     instance `u0` col 24, port label `clk` col 29, actual `c` col 33
     //   line 2: `  logic w;` — parent net `w` at col 9
     //   line 3: `  logic c;` — parent net `c` at col 9
-    let node = |line: u32, col: u32, t: i32, name: &str| VObjectInfo {
+    let node = |line: u32, col: u32, t: i32, name: &str| TokenInfo {
         line,
         col,
         end_line: line,
         end_col: col + name.len() as u32,
-        vpi_type: t,
+        kind: t,
         name: Some(name.to_owned()),
         file: String::new(),
     };
@@ -1299,26 +1264,52 @@ fn connection_label_tokens_index_as_references_and_highlight_as_labels() {
 
     let a_file = mk(
         vec![
-            (1, 8, vpi::vpiModule, "m"),
-            (1, 22, vpi::TOKEN_PORT_INPUT, "clk"),
-            (1, 22, vpi::vpiPort, "clk"),
-            (2, 17, vpi::vpiParameter, "W"),
-            (2, 17, vpi::uhdmparameter, "W"),
+            (
+                1,
+                8,
+                tokens::TOKEN_SLANG_MODULE + tokens::TOKEN_DECLARATION_OFFSET,
+                "m",
+            ),
+            (
+                1,
+                22,
+                tokens::TOKEN_SLANG_PORT + tokens::TOKEN_DECLARATION_OFFSET,
+                "clk",
+            ),
+            (
+                2,
+                17,
+                tokens::TOKEN_SLANG_PARAMETER + tokens::TOKEN_DECLARATION_OFFSET,
+                "W",
+            ),
         ],
         "/x/a.sv",
     );
     let b_file = mk(
         vec![
-            (1, 13, vpi::uhdmclass_defn, "m"),
-            (1, 18, vpi::TOKEN_PARAM_CONN_LABEL, "W"),
-            (1, 20, vpi::vpiRefObj, "w"),
-            (1, 24, vpi::uhdmlogic_var, "u0"),
-            (1, 29, vpi::TOKEN_PORT_CONN_LABEL, "clk"),
-            (1, 33, vpi::vpiRefObj, "c"),
-            (2, 9, vpi::uhdmlogic_var, "w"),
-            (2, 9, vpi::vpiNet, "w"),
-            (3, 9, vpi::uhdmlogic_var, "c"),
-            (3, 9, vpi::vpiNet, "c"),
+            (1, 13, tokens::TOKEN_SLANG_MODULE, "m"),
+            (1, 18, tokens::TOKEN_SLANG_PARAMETER_CONNECTION_LABEL, "W"),
+            (1, 20, tokens::TOKEN_SLANG_IDENTIFIER, "w"),
+            (
+                1,
+                24,
+                tokens::TOKEN_SLANG_IDENTIFIER + tokens::TOKEN_DECLARATION_OFFSET,
+                "u0",
+            ),
+            (1, 29, tokens::TOKEN_SLANG_PORT_CONNECTION_LABEL, "clk"),
+            (1, 33, tokens::TOKEN_SLANG_IDENTIFIER, "c"),
+            (
+                2,
+                9,
+                tokens::TOKEN_SLANG_VARIABLE + tokens::TOKEN_DECLARATION_OFFSET,
+                "w",
+            ),
+            (
+                3,
+                9,
+                tokens::TOKEN_SLANG_VARIABLE + tokens::TOKEN_DECLARATION_OFFSET,
+                "c",
+            ),
         ],
         "/x/b.sv",
     );
@@ -1502,7 +1493,7 @@ fn connection_label_tokens_index_as_references_and_highlight_as_labels() {
 #[test]
 fn fallback_connection_bindings_survive_the_merge() {
     // Parse-fallback mode carries pre-resolved label+actual bindings;
-    // they are inserted before UHDM (which is empty there) and survive.
+    // they are inserted before semantic bindings (which are empty there).
     let connections = ConnectionInputs {
         parse_decls: None,
         pairs: Vec::new(),
@@ -1585,13 +1576,13 @@ fn references_options_exclude_indexed_declaration() {
 }
 
 #[test]
-fn references_options_filter_fallback_declaration() {
-    let node = |line: u32, ty: i32| VObjectInfo {
+fn references_options_filter_explicit_slang_declaration() {
+    let node = |line: u32, ty: i32| TokenInfo {
         line,
         col: 1,
         end_line: line,
         end_col: 7,
-        vpi_type: ty,
+        kind: ty,
         name: Some("thing".to_owned()),
         file: "/x/fallback.sv".to_owned(),
     };
@@ -1601,14 +1592,20 @@ fn references_options_filter_fallback_declaration() {
         vec![FileTokens {
             path: "/x/fallback.sv".to_owned(),
             nodes: vec![
-                node(1, llg::ffi::vpi::vpiModule),
-                node(2, llg::ffi::vpi::vpiRefObj),
+                node(
+                    1,
+                    tokens::TOKEN_SLANG_MODULE + tokens::TOKEN_DECLARATION_OFFSET,
+                ),
+                node(2, tokens::TOKEN_SLANG_IDENTIFIER),
             ],
         }],
         Vec::new(),
     );
 
-    assert!(a.index.entry_at("/x/fallback.sv", 0, 0).is_none());
+    assert!(a
+        .index
+        .entry_at("/x/fallback.sv", 0, 0)
+        .is_some_and(|entry| entry.is_decl));
     let with_declaration = references_at_with_options(&a, "/x/fallback.sv", 0, 0, true);
     let without_declaration = references_at_with_options(&a, "/x/fallback.sv", 0, 0, false);
 
@@ -1680,12 +1677,12 @@ fn served_feature_parts() -> (DesignModel, Vec<FileTokens>) {
     };
     let tokens = vec![FileTokens {
         path: "/x/top.sv".to_owned(),
-        nodes: vec![VObjectInfo {
+        nodes: vec![TokenInfo {
             line: 1,
             col: 8,
             end_line: 1,
             end_col: 9,
-            vpi_type: llg::ffi::vpi::vpiModule,
+            kind: tokens::TOKEN_SLANG_MODULE + tokens::TOKEN_DECLARATION_OFFSET,
             name: Some("m".to_owned()),
             file: "/x/top.sv".to_owned(),
         }],
@@ -1909,21 +1906,21 @@ fn hierarchy_parts() -> (DesignModel, Vec<FileTokens>) {
     let tokens = vec![FileTokens {
         path: "/x/top.sv".to_owned(),
         nodes: vec![
-            VObjectInfo {
+            TokenInfo {
                 line: 2,
                 col: 9,
                 end_line: 2,
                 end_col: 11,
-                vpi_type: llg::ffi::vpi::uhdmmodule_inst,
+                kind: tokens::TOKEN_SLANG_IDENTIFIER + tokens::TOKEN_DECLARATION_OFFSET,
                 name: Some("u0".to_owned()),
                 file: "/x/top.sv".to_owned(),
             },
-            VObjectInfo {
+            TokenInfo {
                 line: 6,
                 col: 3,
                 end_line: 6,
                 end_col: 5,
-                vpi_type: llg::ffi::vpi::uhdmmodule_inst,
+                kind: tokens::TOKEN_SLANG_IDENTIFIER + tokens::TOKEN_DECLARATION_OFFSET,
                 name: Some("tb".to_owned()),
                 file: "/x/top.sv".to_owned(),
             },
@@ -2036,917 +2033,6 @@ fn type_only_detail_helpers_degrade_without_guessing() {
 }
 
 #[test]
-fn symbolic_dimension_normalization_preserves_token_boundaries() {
-    assert_eq!(normalize_symbolic_expression(" P    +    +1 "), "P+ +1");
-    assert_eq!(normalize_symbolic_expression(" P    -    -1 "), "P- -1");
-    assert_eq!(normalize_symbolic_expression(r" \WIDTH + 1 "), r"\WIDTH +1");
-    // The closing bracket is outside the helper's input, so the escaped
-    // identifier's terminating separator is retained at the end too.
-    assert_eq!(normalize_symbolic_expression(r" \WIDTH "), r"\WIDTH ");
-    assert_eq!(
-        normalize_symbolic_expression(" P    inside    { BASE , IDX } : 0 "),
-        "P inside {BASE,IDX}:0"
-    );
-    assert_eq!(
-        normalize_symbolic_expression(" MODE == \"A  ] B\" : 0 "),
-        "MODE==\"A  ] B\":0"
-    );
-    assert_eq!(normalize_symbolic_expression(" 1 : 0 "), "1:0");
-}
-
-#[test]
-fn graph_source_index_reuses_comment_and_unicode_line_facts() {
-    let source = concat!(
-        "module Ω;\r\n",
-        "// ignored [bracket]\r\n",
-        "logic [7:0] λ /* ignored ; , [ ] */;\r\n",
-        "string text = \"// not a comment /* [ ] */\";\r\n",
-        r"wire \name//not-comment/*also-not-comment */ ;",
-        "\r\nendmodule\r\n",
-    );
-    let index = GraphSourceIndex::new(source.to_owned());
-
-    assert_eq!(index.source, source);
-    assert_eq!(index.masked.len(), source.len());
-    assert_eq!(index.stripped, strip_hdl_comments(source));
-    assert_eq!(index.comment_ranges.len(), 2);
-    assert!(index
-        .comment_ranges
-        .iter()
-        .all(|(start, end)| source[*start..*end].starts_with("//")
-            || source[*start..*end].starts_with("/*")));
-    assert!(!index.masked.contains("ignored ; , [ ]"));
-    assert!(index.masked.contains(r#""// not a comment /* [ ] */""#));
-    assert!(index
-        .masked
-        .contains(r"\name//not-comment/*also-not-comment */"));
-
-    let logic_start = source.find("logic").expect("logic line");
-    let lambda_start = source.find('λ').expect("unicode declaration name");
-    let lambda_col = "logic [7:0] ".chars().count() as u32 + 1;
-    assert_eq!(
-        index.line_starts,
-        vec![
-            0,
-            source.find("// ignored").expect("comment line"),
-            logic_start,
-            source.find("string text").expect("string line"),
-            source.find(r"wire \name").expect("escaped identifier line"),
-            source.find("endmodule").expect("endmodule line"),
-            source.len(),
-        ]
-    );
-    assert_eq!(index.line_start(3), Some(logic_start));
-    assert_eq!(index.line_start(7), Some(source.len()));
-    assert_eq!(index.line_start(8), None);
-    assert_eq!(index.line_text(1), Some("module Ω;"));
-    assert!(index
-        .line_text(3)
-        .is_some_and(|line| line.starts_with("logic [7:0] λ") && !line.contains("ignored")));
-    assert_eq!(index.line_text(7), None);
-    assert_eq!(
-        source_position_offset(&index, 3, lambda_col),
-        Some(lambda_start)
-    );
-    assert_eq!(index.position_offset(3, lambda_col), Some(lambda_start));
-
-    let declaration = llg::ffi::surelog::ParseNode {
-        line: 3,
-        col: 1,
-        end_line: 3,
-        end_col: 1,
-        type_id: 0,
-        file_id: 0,
-        parent_index: 0,
-        child_index: 0,
-        sibling_index: 0,
-        symbol_name: None,
-    };
-    let parts = graph_type_prefix(Some(&index), Some(&declaration), 3, lambda_col, "λ")
-        .expect("indexed source type");
-    assert_eq!(parts.base, "logic");
-    assert_eq!(parts.packed_dimensions, vec!["[7:0]"]);
-    assert!(parts.unpacked_dimensions.is_empty());
-
-    let detail = graph_declaration_detail(
-        Some(&index),
-        3,
-        lambda_col,
-        "λ",
-        &TypeInfo {
-            kind: "logic".to_owned(),
-            width: Some(8),
-            signed: false,
-            type_name: None,
-        },
-        &GraphDeclarationKind::Signal("var".to_owned()),
-    );
-    assert_eq!(detail.as_deref(), Some("logic [7:0] λ"));
-}
-
-#[test]
-fn graph_source_index_handles_many_same_line_declarations() {
-    let count = 2_048;
-    let mut source = String::from("logic [7:0] ");
-    let mut declarations = Vec::with_capacity(count);
-    for index in 0..count {
-        if index > 0 {
-            source.push_str(", ");
-        }
-        let name = format!("signal_{index}");
-        let col = source.chars().count() as u32 + 1;
-        declarations.push((name.clone(), col));
-        source.push_str(&name);
-    }
-    source.push_str(";\n");
-
-    let index = GraphSourceIndex::new(source.clone());
-    assert_eq!(index.line_text(1), Some(source.trim_end_matches('\n')));
-    assert_eq!(
-        index.source_lines[0].character_count,
-        source.trim_end_matches('\n').chars().count()
-    );
-    assert!(index.source_lines[0].character_checkpoints.is_empty());
-    assert!(index.stripped_lines[0].character_checkpoints.is_empty());
-    for (name, col) in declarations {
-        let offset = index
-            .position_offset(1, col)
-            .expect("same-line declaration position");
-        assert_eq!(&source[offset..offset + name.len()], name);
-        let detail = graph_declaration_detail(
-            Some(&index),
-            1,
-            col,
-            &name,
-            &TypeInfo {
-                kind: "logic".to_owned(),
-                width: Some(8),
-                signed: false,
-                type_name: None,
-            },
-            &GraphDeclarationKind::Signal("var".to_owned()),
-        )
-        .expect("same-line declaration detail");
-        assert!(detail.contains(&name), "detail {detail:?} misses {name}");
-    }
-}
-
-#[test]
-fn graph_source_index_keeps_ascii_metadata_sparse_at_scale() {
-    let source = "x".repeat(8 * 1024 * 1024);
-    let index = GraphSourceIndex::new(source.clone());
-
-    assert_eq!(index.source_lines.len(), 1);
-    assert_eq!(index.stripped_lines.len(), 1);
-    assert_eq!(index.source_lines[0].character_count, source.len());
-    assert_eq!(index.stripped_lines[0].character_count, source.len());
-    assert!(
-        index.source_lines[0].character_checkpoints.is_empty(),
-        "ASCII source must not allocate one offset per character"
-    );
-    assert!(
-        index.stripped_lines[0].character_checkpoints.is_empty(),
-        "ASCII stripped source must not allocate one offset per character"
-    );
-}
-
-#[test]
-fn graph_declaration_facts_are_cached_per_root_for_many_names() {
-    use llg::core::vobject_types::VObjectType;
-
-    const NAME_COUNT: usize = 512;
-    let mut nodes = vec![llg::ffi::surelog::ParseNode {
-        line: 1,
-        col: 1,
-        end_line: 1,
-        end_col: 1,
-        type_id: 0,
-        file_id: 0,
-        parent_index: 0,
-        child_index: 0,
-        sibling_index: 0,
-        symbol_name: None,
-    }];
-    nodes.push(llg::ffi::surelog::ParseNode {
-        line: 1,
-        col: 1,
-        end_line: 1,
-        end_col: 1,
-        type_id: VObjectType::paData_declaration as u16,
-        file_id: 1,
-        parent_index: 0,
-        child_index: 2,
-        sibling_index: 0,
-        symbol_name: None,
-    });
-    for index in 0..NAME_COUNT {
-        nodes.push(llg::ffi::surelog::ParseNode {
-            line: 1,
-            col: (index + 2) as u16,
-            end_line: 1,
-            end_col: (index + 3) as u16,
-            type_id: VObjectType::slStringConst as u16,
-            file_id: 1,
-            parent_index: 1,
-            child_index: 0,
-            sibling_index: if index + 1 == NAME_COUNT {
-                0
-            } else {
-                (index + 3) as u32
-            },
-            symbol_name: Some(format!("name_{index}")),
-        });
-    }
-
-    let mut cache = GraphDeclarationFactsCache::default();
-    for index in 2..nodes.len() {
-        let (root, kind) = graph_declaration_kind(&nodes, index, &mut cache)
-            .expect("each declarator belongs to the data declaration");
-        assert_eq!(root, 1);
-        assert_eq!(kind, GraphDeclarationKind::Signal("var".to_owned()));
-    }
-    assert_eq!(cache.by_root.len(), 1);
-    assert_eq!(cache.subtree_walks, 1);
-}
-
-#[test]
-fn graph_fallback_module_lookup_uses_keyed_line_ranges() {
-    let count = 2_048;
-    let definitions = (0..count)
-        .map(|index| ModuleGraphDefinition {
-            id: format!("module-{index}"),
-            name: format!("module_{index}"),
-            file: Some("/x/modules.sv".to_owned()),
-            line: (index * 2 + 1) as u32,
-            col: 1,
-            end_line: (index * 2 + 1) as u32,
-            end_col: 1,
-            ports: Vec::new(),
-            params: Vec::new(),
-            signals: Vec::new(),
-            children: Vec::new(),
-            generated_scopes: Vec::new(),
-        })
-        .collect::<Vec<_>>();
-    let ranges = graph_definition_line_ranges(&definitions);
-    for index in 0..count {
-        let name = format!("module_{index}");
-        let line = (index * 2 + 1) as u32;
-        assert!(graph_definition_line_is_retained(
-            &ranges,
-            "/x/modules.sv",
-            &name,
-            line
-        ));
-        assert!(!graph_definition_line_is_retained(
-            &ranges,
-            "/x/modules.sv",
-            &name,
-            line + 1
-        ));
-    }
-    assert!(!graph_definition_line_is_retained(
-        &ranges,
-        "/x/other.sv",
-        "module_0",
-        1
-    ));
-}
-
-#[test]
-fn graph_declaration_boundary_index_matches_reverse_fallback() {
-    fn reverse_boundary(text: &str, name_start: usize) -> Option<usize> {
-        let prefix = text.get(..name_start)?;
-        let mut square = 0usize;
-        let mut paren = 0usize;
-        let mut brace = 0usize;
-        for (offset, character) in prefix.char_indices().rev() {
-            match character {
-                ']' => square += 1,
-                '[' => square = square.saturating_sub(1),
-                ')' => paren += 1,
-                '(' if paren > 0 => paren -= 1,
-                '(' if square == 0 && brace == 0 => return Some(offset + 1),
-                '}' => brace += 1,
-                '{' => brace = brace.saturating_sub(1),
-                ';' if square == 0 && paren == 0 && brace == 0 => return Some(offset + 1),
-                _ => {}
-            }
-        }
-        Some(0)
-    }
-
-    let source = concat!(
-        "module m #(parameter int W) (input logic p);\r\n",
-        "logic [7:0] value; /* ignored ; ( ) */\r\n",
-        "always @ (value) begin\r\n",
-        "  value = value;\r\n",
-        "end\r\nendmodule\r\n",
-    );
-    let index = GraphSourceIndex::new(source.to_owned());
-    let mut offsets = source
-        .char_indices()
-        .map(|(offset, _)| offset)
-        .collect::<Vec<_>>();
-    offsets.push(source.len());
-    for offset in offsets {
-        assert_eq!(
-            graph_source_declaration_start(&index, offset),
-            reverse_boundary(&index.masked, offset),
-            "boundary at byte offset {offset}"
-        );
-    }
-}
-
-#[test]
-fn graph_declaration_boundaries_ignore_quoted_and_escaped_delimiters() {
-    let source = concat!(
-        "module m;\r\n",
-        "// ignored ( [ { ; , ] } )\r\n",
-        "logic quote = \"( [ { ; , ) ] }\";\r\n",
-        r"logic \escaped([;,{)]} name;",
-        "\r\n",
-        "logic broken( [7:0] later;\r\n",
-        "logic after;\r\n",
-        "endmodule\r\n",
-    );
-    let index = GraphSourceIndex::new(source.to_owned());
-    let events = graph_declaration_boundary_events(&index.masked);
-
-    let module_end = source.find("module m;").expect("module") + "module m;".len();
-    let quote_name = source.find("quote").expect("quoted initializer");
-    let escaped_name = source.find(r"\escaped").expect("escaped identifier");
-    let escaped_tail = source.find("name;").expect("escaped identifier tail");
-    let string_start = source.find('"').expect("string");
-    let string_end = string_start + 1 + source[string_start + 1..].find('"').expect("string end");
-    let quote_semicolon = string_end + source[string_end..].find(';').expect("quote semicolon");
-    assert_eq!(
-        graph_source_declaration_start(&index, quote_name),
-        Some(module_end)
-    );
-    assert_eq!(
-        graph_source_declaration_start(&index, escaped_name),
-        Some(quote_semicolon + 1)
-    );
-    assert_eq!(
-        graph_source_declaration_start(&index, escaped_tail),
-        Some(quote_semicolon + 1)
-    );
-
-    let broken_start = source.find("logic broken").expect("malformed declaration");
-    let broken_open = broken_start + source[broken_start..].find('(').expect("open paren");
-    let later_name = source.find("later").expect("later declaration token");
-    let broken_semicolon = later_name + source[later_name..].find(';').expect("semicolon");
-    let after_name = source.find("after").expect("later declaration");
-    assert_eq!(
-        graph_source_declaration_start(&index, later_name),
-        Some(broken_open + 1),
-        "a balanced bracket inside the malformed parenthesized clause is local"
-    );
-    assert_eq!(
-        graph_source_declaration_start(&index, after_name),
-        Some(broken_semicolon + 1),
-        "an unmatched opener must not poison later declarations"
-    );
-
-    assert!(events
-        .iter()
-        .all(|(offset, _)| !(*offset >= string_start && *offset < string_end)));
-    let escaped_start = escaped_name;
-    let escaped_end = escaped_tail;
-    assert!(events
-        .iter()
-        .all(|(offset, _)| !(*offset >= escaped_start && *offset < escaped_end)));
-    assert!(index
-        .line_starts
-        .windows(2)
-        .any(|pair| pair[1] > pair[0] && &source[pair[1] - 2..pair[1]] == "\r\n"));
-}
-
-#[test]
-fn graph_source_index_reuses_top_level_comma_facts_at_scale() {
-    fn source_with_declarations(count: usize) -> String {
-        let mut source = String::from(
-            "module m #(parameter int P = 1, parameter int Q = 2) (input logic p, q);\r\n",
-        );
-        for index in 0..count {
-            source.push_str(&format!(
-                "logic [7:0] first_{index}, second_{index} = 1;\r\n"
-            ));
-        }
-        source.push_str("endmodule\r\n");
-        source
-    }
-
-    fn assert_indexed_declarations(source: &str, count: usize) {
-        let index = GraphSourceIndex::new(source.to_owned());
-        let zero_state = GraphDelimiterState::default();
-        assert_eq!(
-            index.commas_by_state.get(&zero_state).map_or(0, Vec::len),
-            count,
-            "each declaration comma is indexed once at its nesting state"
-        );
-        let header_state = GraphDelimiterState {
-            paren: 1,
-            ..GraphDelimiterState::default()
-        };
-        assert_eq!(
-            index.commas_by_state.get(&header_state).map_or(0, Vec::len),
-            2,
-            "ANSI parameter and port separators share the parenthesis state"
-        );
-
-        for declaration_index in 0..count {
-            let marker = format!("logic [7:0] first_{declaration_index}");
-            let start = source.find(&marker).expect("declaration marker");
-            let end = start + source[start..].find(';').expect("declaration semicolon");
-            let comma = start + source[start..end].find(',').expect("declarator comma");
-            assert_eq!(
-                graph_top_level_commas_index(&index, start, end),
-                (Some(comma), Some(comma))
-            );
-            let (type_start, type_end) = graph_select_type_prefix_index(&index, start, end);
-            assert_eq!(&source[type_start..type_end], "logic [7:0]");
-        }
-    }
-
-    let n = 32;
-    let source_n = source_with_declarations(n);
-    let source_2n = source_with_declarations(2 * n);
-    assert_indexed_declarations(&source_n, n);
-    assert_indexed_declarations(&source_2n, 2 * n);
-}
-
-#[test]
-fn parse_fallback_indexes_declarations_and_actuals_at_scale() {
-    fn fixture(
-        count: usize,
-    ) -> (
-        Vec<FileTokens>,
-        ParseDeclPositions,
-        Vec<ModuleDef>,
-        String,
-        u32,
-    ) {
-        let file = "/x/fallback.sv".to_owned();
-        let child_end = (2 * count + 1) as u32;
-        let parent_line = child_end + 1;
-        let parent_end = parent_line + count as u32 + 1;
-        let mut nodes = Vec::with_capacity(3 * count);
-        let mut declarations = ParseDeclPositions::new();
-        let mut add = |line: u32, col: u32, vpi_type: i32, name: String| {
-            declarations.insert((file.clone(), line, col));
-            nodes.push(VObjectInfo {
-                line,
-                col,
-                end_line: line,
-                end_col: col + name.chars().count() as u32,
-                vpi_type,
-                name: Some(name),
-                file: file.clone(),
-            });
-        };
-
-        for index in 0..count {
-            add(
-                2 + index as u32,
-                3,
-                llg::ffi::vpi::vpiPort,
-                format!("port_{index}"),
-            );
-            add(
-                count as u32 + 2 + index as u32,
-                5,
-                llg::ffi::vpi::vpiParameter,
-                format!("PARAM_{index}"),
-            );
-            add(
-                parent_line + 1 + index as u32,
-                7,
-                llg::ffi::vpi::vpiNet,
-                format!("signal_{index}"),
-            );
-        }
-
-        let tokens = vec![FileTokens {
-            path: file.clone(),
-            nodes,
-        }];
-        let modules = vec![
-            ModuleDef {
-                name: "child".to_owned(),
-                file: Some(file.clone()),
-                line: 1,
-                col: 1,
-                end_line: child_end,
-                end_col: 1,
-            },
-            ModuleDef {
-                name: "parent".to_owned(),
-                file: Some(file.clone()),
-                line: parent_line,
-                col: 1,
-                end_line: parent_end,
-                end_col: 1,
-            },
-        ];
-        (tokens, declarations, modules, file, parent_line - 1)
-    }
-
-    for count in [16, 32] {
-        let (tokens, declarations, modules, file, parent_line0) = fixture(count);
-        let index = ParseFallbackIndex::new(&tokens, &declarations, &modules);
-        let ports = declared_ports_by_module(&index);
-        let params = declared_params_by_module(&index);
-        assert_eq!(ports.len(), count);
-        assert_eq!(params.len(), count);
-        assert_eq!(
-            index
-                .files
-                .get(file.as_str())
-                .expect("file index")
-                .actual_positions_by_name
-                .len(),
-            3 * count
-        );
-
-        for declaration_index in 0..count {
-            let port_name = format!("port_{declaration_index}");
-            let param_name = format!("PARAM_{declaration_index}");
-            assert_eq!(
-                find_fallback_port(ports, "child", &port_name).map(|decl| (decl.line1, decl.col1)),
-                Some((2 + declaration_index as u32, 3))
-            );
-            assert_eq!(
-                find_fallback_param(params, "child", &param_name)
-                    .map(|decl| (decl.line1, decl.col1)),
-                Some((count as u32 + 2 + declaration_index as u32, 5))
-            );
-            let actual_name = format!("signal_{declaration_index}");
-            let target = fallback_actual_target(
-                &index,
-                &file,
-                parent_line0 + declaration_index as u32 + 1,
-                &actual_name,
-            )
-            .expect("parent actual target");
-            assert_eq!(
-                (target.line0, target.col0, target.kind.as_str()),
-                (parent_line0 + declaration_index as u32 + 1, 6, "net")
-            );
-        }
-    }
-}
-
-#[test]
-fn parse_fallback_actual_kind_matches_duplicate_position_name() {
-    let file = "/x/fallback-duplicate.sv".to_owned();
-    let tokens = vec![FileTokens {
-        path: file.clone(),
-        nodes: vec![
-            VObjectInfo {
-                line: 4,
-                col: 2,
-                end_line: 4,
-                end_col: 7,
-                vpi_type: llg::ffi::vpi::vpiNet,
-                name: Some("decoy".to_owned()),
-                file: file.clone(),
-            },
-            VObjectInfo {
-                line: 4,
-                col: 2,
-                end_line: 4,
-                end_col: 8,
-                vpi_type: llg::ffi::vpi::vpiParameter,
-                name: Some("actual".to_owned()),
-                file: file.clone(),
-            },
-        ],
-    }];
-    let mut declarations = ParseDeclPositions::new();
-    declarations.insert((file.clone(), 4, 2));
-    let modules = vec![ModuleDef {
-        name: "parent".to_owned(),
-        file: Some(file.clone()),
-        line: 1,
-        col: 1,
-        end_line: 10,
-        end_col: 1,
-    }];
-    let index = ParseFallbackIndex::new(&tokens, &declarations, &modules);
-
-    let target = fallback_actual_target(&index, &file, 5, "actual").expect("actual target");
-    assert_eq!(target.kind, "parameter");
-    assert_eq!((target.line0, target.col0), (3, 1));
-}
-
-#[test]
-fn graph_display_type_preserves_qualified_port_types() {
-    let ty = TypeInfo {
-        kind: "logic".to_owned(),
-        width: Some(1),
-        signed: false,
-        type_name: None,
-    };
-    for (prefix, expected) in [
-        ("input ref logic", "ref logic"),
-        ("input const ref logic", "const ref logic"),
-        ("input var logic", "var logic"),
-        ("input buffer logic", "buffer logic"),
-        ("input linkage signed bus_t", "linkage signed bus_t"),
-    ] {
-        let source = format!("{prefix} p;");
-        let source_index = GraphSourceIndex::new(source.clone());
-        let name_col = source.find("p;").expect("port name") as u32 + 1;
-        let declaration = llg::ffi::surelog::ParseNode {
-            line: 1,
-            col: 1,
-            end_line: 1,
-            end_col: 1,
-            type_id: 0,
-            file_id: 0,
-            parent_index: 0,
-            child_index: 0,
-            sibling_index: 0,
-            symbol_name: None,
-        };
-        let display = graph_type_display(
-            Some(&source_index),
-            &declaration,
-            1,
-            name_col,
-            "p",
-            &ty,
-            &GraphDeclarationKind::Port(Direction::Input),
-            None,
-        );
-        assert_eq!(display.text.as_deref(), Some(expected), "{prefix}");
-    }
-}
-
-#[test]
-fn graph_display_type_preserves_brackets_inside_quoted_dimension() {
-    let source = r#"logic [MODE == "A ] B" ? 7 : 3:0] payload;"#;
-    let source_index = GraphSourceIndex::new(source.to_owned());
-    let name_col = source.find("payload").expect("payload name") as u32 + 1;
-    let declaration = llg::ffi::surelog::ParseNode {
-        line: 1,
-        col: 1,
-        end_line: 1,
-        end_col: 1,
-        type_id: 0,
-        file_id: 0,
-        parent_index: 0,
-        child_index: 0,
-        sibling_index: 0,
-        symbol_name: None,
-    };
-    let display = graph_type_display(
-        Some(&source_index),
-        &declaration,
-        1,
-        name_col,
-        "payload",
-        &TypeInfo {
-            kind: "logic".to_owned(),
-            width: None,
-            signed: false,
-            type_name: None,
-        },
-        &GraphDeclarationKind::Signal("var".to_owned()),
-        None,
-    );
-
-    assert_eq!(display.shape.packed_dimensions, 1);
-    assert_eq!(display.shape.unpacked_dimensions, 0);
-    assert_eq!(
-        display.text.as_deref(),
-        Some(r#"logic [MODE=="A ] B"?7:3:0]"#)
-    );
-}
-
-#[test]
-fn graph_display_type_preserves_unpacked_dimension_operators() {
-    let source = r#"logic [1:0] payload [MODE == "A ] B" ? 1 : 0];"#;
-    let source_index = GraphSourceIndex::new(source.to_owned());
-    let name_col = source.find("payload").expect("payload name") as u32 + 1;
-    let declaration = llg::ffi::surelog::ParseNode {
-        line: 1,
-        col: 1,
-        end_line: 1,
-        end_col: 1,
-        type_id: 0,
-        file_id: 0,
-        parent_index: 0,
-        child_index: 0,
-        sibling_index: 0,
-        symbol_name: None,
-    };
-    let display = graph_type_display(
-        Some(&source_index),
-        &declaration,
-        1,
-        name_col,
-        "payload",
-        &TypeInfo {
-            kind: "logic".to_owned(),
-            width: None,
-            signed: false,
-            type_name: None,
-        },
-        &GraphDeclarationKind::Signal("var".to_owned()),
-        None,
-    );
-
-    assert_eq!(display.shape.packed_dimensions, 1);
-    assert_eq!(display.shape.unpacked_dimensions, 1);
-    assert_eq!(
-        display.text.as_deref(),
-        Some(r#"logic [1:0] [MODE=="A ] B"?1:0]"#)
-    );
-}
-
-#[test]
-fn graph_bracket_dimensions_ignore_brackets_inside_escaped_identifiers() {
-    let source = r"logic [\MODE[A]B == 7 ? 3 : 0] payload;";
-    let expected_start = source.find('[').expect("dimension start");
-    let expected_end = source.find("] payload").expect("dimension end") + 1;
-
-    assert_eq!(
-        graph_bracket_spans(source),
-        vec![(
-            expected_start,
-            expected_end,
-            r"\MODE[A]B == 7 ? 3 : 0".to_owned()
-        )]
-    );
-    assert_eq!(
-        graph_bracket_dimensions(source),
-        vec![r"[\MODE[A]B ==7?3:0]".to_owned()]
-    );
-}
-
-#[test]
-fn graph_bracket_dimensions_preserve_comments_and_active_tokens() {
-    let line_source = "logic [P // ignored ]\n + 1:0] payload;";
-    let line_source_index = GraphSourceIndex::new(line_source.to_owned());
-    let line_spans = graph_bracket_spans(line_source);
-    assert_eq!(line_spans.len(), 1);
-    assert_eq!(line_spans[0].2, "P // ignored ]\n + 1:0");
-    assert_eq!(
-        graph_bracket_dimensions(line_source),
-        vec!["[P +1:0]".to_owned()]
-    );
-
-    let block_source = "logic [P /* ignored ] */ + 1:0] payload;";
-    let block_spans = graph_bracket_spans(block_source);
-    assert_eq!(block_spans.len(), 1);
-    assert_eq!(block_spans[0].2, "P /* ignored ] */ + 1:0");
-    assert!(block_spans[0].2.contains("+ 1:0"));
-    assert_eq!(
-        graph_bracket_dimensions(block_source),
-        vec!["[P +1:0]".to_owned()]
-    );
-
-    let comments_between_operators = "P /* left */ + /* right */ + 1";
-    assert_eq!(
-        normalize_symbolic_expression(comments_between_operators),
-        "P + +1"
-    );
-    assert_eq!(
-        normalize_graph_type_display("logic [P /* left */ + /* right */ + 1:0]"),
-        "logic [P + +1:0]"
-    );
-    assert_eq!(
-        normalize_graph_type_display("logic [ 1 : 0 ]"),
-        "logic [1:0]"
-    );
-
-    let declaration = llg::ffi::surelog::ParseNode {
-        line: 1,
-        col: 1,
-        end_line: 1,
-        end_col: 1,
-        type_id: 0,
-        file_id: 0,
-        parent_index: 0,
-        child_index: 0,
-        sibling_index: 0,
-        symbol_name: None,
-    };
-    let name_col = 9;
-    let display = graph_type_display(
-        Some(&line_source_index),
-        &declaration,
-        2,
-        name_col,
-        "payload",
-        &TypeInfo {
-            kind: "logic".to_owned(),
-            width: None,
-            signed: false,
-            type_name: None,
-        },
-        &GraphDeclarationKind::Signal("var".to_owned()),
-        None,
-    );
-    assert_eq!(display.shape.packed_dimensions, 1);
-    assert_eq!(display.text.as_deref(), Some("logic [P +1:0]"));
-}
-
-#[test]
-fn graph_display_ignores_leading_line_comment_before_wire() {
-    let source = "module Foo();\n\n// This is a line comment\nwire start;\n\nendmodule";
-    let source_index = GraphSourceIndex::new(source.to_owned());
-    let declaration = llg::ffi::surelog::ParseNode {
-        line: 3,
-        col: 1,
-        end_line: 3,
-        end_col: 1,
-        type_id: 0,
-        file_id: 0,
-        parent_index: 0,
-        child_index: 0,
-        sibling_index: 0,
-        symbol_name: None,
-    };
-    let display = graph_type_display(
-        Some(&source_index),
-        &declaration,
-        4,
-        6,
-        "start",
-        &TypeInfo {
-            kind: "logic".to_owned(),
-            width: Some(1),
-            signed: false,
-            type_name: None,
-        },
-        &GraphDeclarationKind::Signal("wire".to_owned()),
-        None,
-    );
-
-    assert_eq!(display.text.as_deref(), Some("wire"));
-    assert!(!display
-        .text
-        .as_deref()
-        .unwrap_or_default()
-        .contains("This is a line comment"));
-}
-
-#[test]
-fn graph_type_words_ignore_comment_tokens_and_preserve_quoted_text() {
-    let block_comment = "/* int */ wire start";
-    let (ty, saw_decl_qualifier) = graph_source_type_words(block_comment);
-    assert_eq!(ty.kind, "logic");
-    assert!(saw_decl_qualifier);
-    assert_eq!(normalize_graph_type_display(block_comment), "wire start");
-
-    let comment_only_type = "/* int */ p";
-    let (comment_only_ty, comment_only_qualifier) = graph_source_type_words(comment_only_type);
-    assert_eq!(comment_only_ty.kind, "other");
-    assert!(!comment_only_qualifier);
-
-    let quoted = r#"logic "http://x /* int */""#;
-    assert!(graph_comment_ranges(quoted).is_empty());
-    assert_eq!(strip_hdl_comments(quoted), quoted);
-    let (quoted_ty, _) = graph_source_type_words(quoted);
-    assert_eq!(quoted_ty.kind, "logic");
-
-    let escaped = r"wire \int//not_a_comment/*also_not_a_comment ";
-    assert!(graph_comment_ranges(escaped).is_empty());
-    assert_eq!(strip_hdl_comments(escaped), escaped);
-    let (escaped_ty, escaped_qualifier) = graph_source_type_words(escaped);
-    assert_eq!(escaped_ty.kind, "logic");
-    assert!(escaped_qualifier);
-}
-
-#[test]
-fn malformed_sibling_links_terminate_subtree_traversal() {
-    fn node(child_index: u32, sibling_index: u32) -> llg::ffi::surelog::ParseNode {
-        llg::ffi::surelog::ParseNode {
-            line: 1,
-            col: 1,
-            end_line: 1,
-            end_col: 1,
-            type_id: 0,
-            file_id: 0,
-            parent_index: 0,
-            child_index,
-            sibling_index,
-            symbol_name: None,
-        }
-    }
-
-    let self_link = vec![node(1, 0), node(0, 1)];
-    assert_eq!(graph_subtree_indices(&self_link, 0), vec![0, 1]);
-
-    let cyclic_links = vec![node(1, 0), node(0, 2), node(0, 1)];
-    assert_eq!(graph_subtree_indices(&cyclic_links, 0), vec![0, 1, 2]);
-}
-
-#[test]
 fn completion_filters_by_prefix() {
     let a = sample_analysis();
     let items = completion_at(&a, "/x/top.sv", 0, 3, "mod");
@@ -2984,22 +2070,21 @@ fn completion_includes_function_and_task_names() {
 }
 
 #[test]
-fn parser_diagnostics_are_explained_without_changing_location_or_raw_message() {
+fn slang_diagnostics_preserve_location_and_message() {
     let raw = Diag {
         severity: Severity::Syntax,
         file: Some("/x/debug_TEMPLATE.v".to_owned()),
         line: 2,
         col: 22,
-        message: "Syntax error: no viable alternative at input 'edb_top edb_top_inst ('".to_owned(),
+        message: "expected a statement".to_owned(),
     };
     let a = Analysis::new(vec![raw.clone()], empty_design(), Vec::new(), Vec::new());
     let map = lsp_diagnostics(&a);
     let diagnostics = &map["/x/debug_TEMPLATE.v"];
     assert_eq!(diagnostics.len(), 1);
-    assert!(diagnostics[0].message.contains("instantiation template"));
-    assert!(!diagnostics[0].message.contains("no viable alternative"));
+    assert_eq!(diagnostics[0].message, raw.message);
     assert_eq!(diagnostics[0].severity, Some(DiagnosticSeverity::ERROR));
-    assert_eq!(diagnostics[0].source.as_deref(), Some("surelog"));
+    assert_eq!(diagnostics[0].source.as_deref(), Some("slang"));
     assert_eq!(diagnostics[0].range.start, Position::new(1, 21));
     assert_eq!(a.diagnostics[0], raw);
 }
@@ -3055,7 +2140,7 @@ fn diagnostics_severity_mapping() {
 
 #[test]
 fn fileless_synthetic_diagnostic_uses_supplied_fallback_path() {
-    let message = "UHDM database build failed: node walk failed";
+    let message = "semantic database build failed: node walk failed";
     let a = Analysis::new(
         vec![db_build_diagnostic("node walk failed")],
         empty_design(),
@@ -3112,7 +2197,7 @@ fn lint_diagnostics_mapping() {
     );
     let map = lsp_diagnostics(&a);
     let a_diags = map.get("/x/a.sv").expect("diags for a.sv");
-    assert_eq!(a_diags.len(), 3, "surelog + two lint diags: {a_diags:?}");
+    assert_eq!(a_diags.len(), 3, "frontend + two lint diags: {a_diags:?}");
     let lint: Vec<&LspDiagnostic> = a_diags
         .iter()
         .filter(|d| d.source.as_deref() == Some("llg-lint"))
@@ -3142,10 +2227,10 @@ fn lint_diagnostics_mapping() {
 }
 
 #[test]
-fn semantic_tokens_matched_by_name_fallback() {
+fn semantic_tokens_require_exact_source_identity() {
     let a = sample_analysis();
-    let tokens = semantic_tokens_for(&a, "/symlink/top.sv");
-    assert!(!tokens.data.is_empty());
+    assert!(semantic_tokens_for(&a, "/symlink/top.sv").data.is_empty());
+    assert!(!semantic_tokens_for(&a, "/x/top.sv").data.is_empty());
 }
 
 #[test]
@@ -3234,9 +2319,7 @@ fn analyze_full_pipeline_on_params() {
 
 /// Full compile of a design whose module declares a function and a task,
 /// instantiated once: the model must carry per-instance clones and the LSP
-/// features must surface them (signature hover, document symbols,
-/// completion).  Runs in a fresh temp dir (Surelog writes `slpp_all/` into
-/// the CWD).
+/// features must surface them (signature hover, document symbols, completion).
 #[test]
 fn analyze_full_pipeline_extracts_funcs() {
     let _guards = analysis_guards();
@@ -3288,7 +2371,11 @@ fn analyze_full_pipeline_extracts_funcs() {
     let add = c0.func("add").expect("add func");
     assert!(!add.is_task);
     assert!(add.automatic);
-    assert_eq!(add.ret.as_ref().map(|t| t.kind.as_str()), Some("int"));
+    let add_ret = add.ret.as_ref().expect("add return type");
+    assert_eq!(add_ret.type_name, None);
+    assert_eq!(add_ret.kind, "int");
+    assert_eq!(add_ret.width, Some(32));
+    assert!(add_ret.signed);
     assert_eq!(add.args.len(), 2);
     assert_eq!(add.args[0].direction, Direction::Input);
     assert_eq!(add.args[0].name, "a");
@@ -3341,8 +2428,7 @@ fn analyze_full_pipeline_extracts_funcs() {
 
 /// Full compile of a tiny design with a known lint finding: `unused_sig`
 /// is never read or written, so the `unused-signal` rule (Warning) fires
-/// and must surface as a `llg-lint` diagnostic.  Runs in a fresh temp
-/// dir (Surelog writes `slpp_all/` into the CWD).
+/// and must surface as a `llg-lint` diagnostic.
 #[test]
 fn analyze_full_pipeline_reports_unused_signal_lint() {
     let _guards = analysis_guards();
@@ -3398,12 +2484,9 @@ fn analyze_full_pipeline_reports_unused_signal_lint() {
     );
 }
 
-/// Full pipeline over a syntax-broken project: one clean unit plus one
-/// file with a real syntax error (an unterminated module).  Surelog skips
-/// its whole compile/UHDM stage on any syntax error, so this exercises
-/// the parse-tree fallback: the outcome stays Parse with unchanged
-/// diagnostics, but `has_feature_data()` holds and declaration-level
-/// navigation serves from the parse tree.
+/// Full pipeline over a syntax-broken project: one clean unit plus one file
+/// with a real syntax error. The outcome stays Parse with unchanged diagnostics,
+/// while Slang's lexical snapshot retains declaration-level navigation data.
 #[test]
 fn analyze_syntax_broken_project_serves_parse_tree_declarations() {
     let _guards = analysis_guards();
@@ -3450,9 +2533,8 @@ fn analyze_syntax_broken_project_serves_parse_tree_declarations() {
     assert_eq!(a.outcome, AnalysisOutcome::Parse);
     assert!(a.has_feature_data(), "fallback must carry feature data");
 
-    // Modules-only model synthesized from the parse tree; no instances.
-    // Even the unterminated module keeps its header through Surelog's
-    // parse-error recovery, so both declarations are covered.
+    // The recovery snapshot retains module declarations without inventing
+    // elaborated instances for the broken compilation.
     assert!(
         !a.model.modules.is_empty(),
         "modules: {:?}",
@@ -3534,8 +2616,7 @@ fn settings_obj(entries: Vec<(&str, LSPAny)>) -> LSPAny {
 
 /// `analyze_with_config` honors a per-rule `enabled: false`: the fixture
 /// that produces an `unused-signal` finding under the default config is
-/// quiet when the rule is disabled.  Runs in a fresh temp dir (Surelog
-/// writes `slpp_all/` into the CWD).
+/// quiet when the rule is disabled.
 #[test]
 fn analyze_with_config_disables_rule() {
     let _guards = analysis_guards();
@@ -3584,8 +2665,7 @@ fn analyze_with_config_disables_rule() {
 
 /// `analyze_with_config` applies a `severity` override: the
 /// `width-mismatch` extension finding (Info by default) is reported as
-/// Error when configured.  Runs in a fresh temp dir (Surelog writes
-/// `slpp_all/` into the CWD).
+/// Error when configured.
 #[test]
 fn analyze_with_config_severity_override() {
     let _guards = analysis_guards();
@@ -3636,13 +2716,10 @@ fn analyze_with_config_severity_override() {
     assert_eq!(width.expect("width finding").severity, LintSeverity::Error);
 }
 
-/// `analyze_with_config` contains Surelog's filesystem side-effects: with
-/// the process CWD parked *inside* a fixture tree, the fixture tree gains
-/// no entries (`slpp_all/`, `surelog.log`, …), the artifacts live under
-/// the analysis scratch dir inside the process shadow base, and the
-/// previous CWD is restored afterwards.
+/// Slang analysis neither changes the caller's working directory nor creates
+/// frontend artifacts alongside the source file.
 #[test]
-fn analyze_in_scratch_contains_surelog_side_effects() {
+fn analyze_leaves_source_tree_and_cwd_unchanged() {
     let _guards = analysis_guards();
     let fixture = std::env::temp_dir().join(format!("llg_scratch_probe_{}", std::process::id()));
     let rtl = fixture.join("rtl");
@@ -3688,52 +2765,16 @@ fn analyze_in_scratch_contains_surelog_side_effects() {
     );
 
     assert_eq!(listing(&fixture), before, "fixture tree gained entries");
-    let scratch = analysis_scratch_dir();
-    assert!(scratch.starts_with(process_shadow_base()));
-    // The guard restored the pre-analysis CWD (the fixture rtl dir this
-    // test chdir'd into), not the process default.
     assert_eq!(
-        std::env::current_dir().expect("cwd after restore"),
+        std::env::current_dir().expect("cwd after analysis"),
         std::fs::canonicalize(&rtl).unwrap_or(rtl.clone())
     );
-    assert!(
-        scratch.join("slpp_all").is_dir(),
-        "slpp_all must live under the analysis scratch dir {}",
-        scratch.display()
-    );
 
-    cleanup_process_shadow();
     let _ = std::fs::remove_dir_all(fixture);
 }
 
-#[test]
-fn scratch_cwd_rejects_an_unusable_directory_without_changing_cwd() {
-    let _guards = analysis_guards();
-    let fixture =
-        std::env::temp_dir().join(format!("llg_scratch_failure_probe_{}", std::process::id()));
-    std::fs::create_dir_all(&fixture).expect("create fixture tree");
-    let blocker = fixture.join("not-a-directory");
-    std::fs::write(&blocker, "block nested directory creation").expect("write blocking file");
-    let before = std::env::current_dir().expect("current dir before failed enter");
-
-    let error = ScratchCwd::enter(&blocker.join("scratch"))
-        .err()
-        .expect("a path below a regular file must be rejected");
-
-    assert_ne!(error.kind(), std::io::ErrorKind::NotFound);
-    assert_eq!(
-        std::env::current_dir().expect("current dir after failed enter"),
-        before
-    );
-    std::fs::remove_dir_all(fixture).expect("remove fixture tree");
-}
-
-/// Regression: the `module` declaration keyword must be tokenized the
-/// same way `endmodule` is.  Surelog types the leading keyword node
-/// `paModule_keyword` (the `paMODULE` discriminant belongs to the whole
-/// declaration design element), which the parse-token pass previously
-/// ignored — so the first token on a declaration line started at the
-/// identifier column.
+/// Regression: the semantic-token stream includes the `module` keyword as
+/// well as the declaration identifier.
 #[test]
 fn semantic_tokens_cover_the_module_declaration_keyword() {
     use tower_lsp::lsp_types::SemanticTokenType;
@@ -3883,18 +2924,16 @@ fn settings_to_lint_config_accepts_bare_rules_object() {
 ///   (instance `u0` of `m`; the `m` type name and the named port
 ///   connections are reference sites).
 ///
-/// Token types mirror the real pipeline (verified empirically): module
-/// names `vpiModule`, port decls `TOKEN_PORT_*` with `vpiNet`/`vpiPort`
-/// companions, expression references `vpiRefObj` (+ companion), module
-/// type names at instantiation sites `uhdmclass_defn`, instance names
-/// `uhdmlogic_var`, named port connections `vpiFunction`.
+/// Token roles mirror the Slang lexical snapshot: definitions carry the
+/// declaration offset, expression and type uses are identifiers, and named
+/// port connections are connection labels.
 fn cross_file_analysis() -> Analysis {
-    let node = |line: u32, col: u32, t: i32, name: &str| VObjectInfo {
+    let node = |line: u32, col: u32, t: i32, name: &str| TokenInfo {
         line,
         col,
         end_line: line,
         end_col: col + name.len() as u32,
-        vpi_type: t,
+        kind: t,
         name: Some(name.to_owned()),
         file: String::new(), // filled below
     };
@@ -3914,29 +2953,48 @@ fn cross_file_analysis() -> Analysis {
 
     let a_file = mk(
         vec![
-            (1, 8, llg::ffi::vpi::vpiModule, "m"),
-            (1, 24, llg::ffi::vpi::TOKEN_PORT_INPUT, "clk"),
-            (1, 24, llg::ffi::vpi::vpiNet, "clk"),
-            (1, 24, llg::ffi::vpi::vpiPort, "clk"),
-            (1, 47, llg::ffi::vpi::TOKEN_PORT_OUTPUT, "o"),
-            (1, 47, llg::ffi::vpi::vpiNet, "o"),
-            (1, 47, llg::ffi::vpi::vpiPort, "o"),
-            (2, 10, llg::ffi::vpi::vpiRefObj, "o"),
-            (2, 10, llg::ffi::vpi::vpiNet, "o"),
-            (2, 14, llg::ffi::vpi::vpiRefObj, "clk"),
-            (2, 14, llg::ffi::vpi::vpiPort, "clk"),
+            (
+                1,
+                8,
+                tokens::TOKEN_SLANG_MODULE + tokens::TOKEN_DECLARATION_OFFSET,
+                "m",
+            ),
+            (
+                1,
+                24,
+                tokens::TOKEN_SLANG_PORT + tokens::TOKEN_DECLARATION_OFFSET,
+                "clk",
+            ),
+            (
+                1,
+                47,
+                tokens::TOKEN_SLANG_PORT + tokens::TOKEN_DECLARATION_OFFSET,
+                "o",
+            ),
+            (2, 10, tokens::TOKEN_SLANG_IDENTIFIER, "o"),
+            (2, 14, tokens::TOKEN_SLANG_IDENTIFIER, "clk"),
         ],
         "/x/a.sv",
     );
     let b_file = mk(
         vec![
-            (1, 8, llg::ffi::vpi::vpiModule, "top"),
-            (1, 13, llg::ffi::vpi::uhdmclass_defn, "m"),
-            (1, 15, llg::ffi::vpi::uhdmlogic_var, "u0"),
-            (1, 19, llg::ffi::vpi::vpiFunction, "clk"),
-            (1, 23, llg::ffi::vpi::vpiRefObj, "c"),
-            (1, 28, llg::ffi::vpi::vpiFunction, "o"),
-            (1, 30, llg::ffi::vpi::vpiPort, "o"),
+            (
+                1,
+                8,
+                tokens::TOKEN_SLANG_MODULE + tokens::TOKEN_DECLARATION_OFFSET,
+                "top",
+            ),
+            (1, 13, tokens::TOKEN_SLANG_MODULE, "m"),
+            (
+                1,
+                15,
+                tokens::TOKEN_SLANG_IDENTIFIER + tokens::TOKEN_DECLARATION_OFFSET,
+                "u0",
+            ),
+            (1, 19, tokens::TOKEN_SLANG_PORT_CONNECTION_LABEL, "clk"),
+            (1, 23, tokens::TOKEN_SLANG_IDENTIFIER, "c"),
+            (1, 28, tokens::TOKEN_SLANG_PORT_CONNECTION_LABEL, "o"),
+            (1, 30, tokens::TOKEN_SLANG_IDENTIFIER, "o"),
         ],
         "/x/b.sv",
     );
@@ -4007,10 +3065,8 @@ fn cross_file_analysis() -> Analysis {
 /// Hand-built analysis for two `Bar` instantiations inside `Foo`:
 /// `Bar Bar(...)` and `Bar u_bar(...)`.  The first instance deliberately
 /// shares its name with the module type so the type-reference resolver's
-/// scope and kind behavior can be tested independently from Surelog.
+/// scope and kind behavior can be tested independently from frontend details.
 fn module_type_instance_collision_analysis() -> Analysis {
-    use llg::ffi::vpi;
-
     let mut analysis = cross_file_analysis();
     analysis.model.design_name = "Foo".to_owned();
     analysis.model.modules[0].name = "Bar".to_owned();
@@ -4044,19 +3100,23 @@ fn module_type_instance_collision_analysis() -> Analysis {
     for file_tokens in &mut analysis.tokens {
         for node in &mut file_tokens.nodes {
             if file_tokens.path == "/x/a.sv"
-                && node.vpi_type == vpi::vpiModule
+                && node.kind == tokens::TOKEN_SLANG_MODULE + tokens::TOKEN_DECLARATION_OFFSET
                 && node.name.as_deref() == Some("m")
             {
                 node.name = Some("Bar".to_owned());
             }
             if file_tokens.path == "/x/b.sv" {
-                if node.vpi_type == vpi::vpiModule && node.name.as_deref() == Some("top") {
+                if node.kind == tokens::TOKEN_SLANG_MODULE + tokens::TOKEN_DECLARATION_OFFSET
+                    && node.name.as_deref() == Some("top")
+                {
                     node.name = Some("Foo".to_owned());
                 }
-                if node.vpi_type == vpi::uhdmclass_defn && node.name.as_deref() == Some("m") {
+                if node.kind == tokens::TOKEN_SLANG_MODULE && node.name.as_deref() == Some("m") {
                     node.name = Some("Bar".to_owned());
                 }
-                if node.vpi_type == vpi::uhdmlogic_var && node.name.as_deref() == Some("u0") {
+                if node.kind == tokens::TOKEN_SLANG_IDENTIFIER + tokens::TOKEN_DECLARATION_OFFSET
+                    && node.name.as_deref() == Some("u0")
+                {
                     node.name = Some("Bar".to_owned());
                 }
             }
@@ -4068,21 +3128,21 @@ fn module_type_instance_collision_analysis() -> Analysis {
         .find(|file_tokens| file_tokens.path == "/x/b.sv")
         .expect("collision fixture file");
     b_file.nodes.extend([
-        VObjectInfo {
+        TokenInfo {
             line: 2,
             col: 3,
             end_line: 2,
             end_col: 6,
-            vpi_type: vpi::uhdmclass_defn,
+            kind: tokens::TOKEN_SLANG_MODULE,
             name: Some("Bar".to_owned()),
             file: "/x/b.sv".to_owned(),
         },
-        VObjectInfo {
+        TokenInfo {
             line: 2,
             col: 7,
             end_line: 2,
             end_col: 12,
-            vpi_type: vpi::uhdmlogic_var,
+            kind: tokens::TOKEN_SLANG_IDENTIFIER + tokens::TOKEN_DECLARATION_OFFSET,
             name: Some("u_bar".to_owned()),
             file: "/x/b.sv".to_owned(),
         },
@@ -4139,19 +3199,19 @@ fn instance_name_definition_still_resolves_when_name_matches_module_type() {
 ///   );                   ← closing at 0-based (3, 0)
 ///   ```
 ///
-///   plus a decoy `vpiFunction`-typed token named `clk` at 0-based
-///   (10, 0) that must NOT be treated as a port label: its column is 0,
-///   so it is not an indented continuation line.
+///   plus a decoy connection-label token named `clk` at 0-based (10, 0)
+///   that must not be treated as an instance port label: its column is 0,
+///   so it is outside the indented continuation lines.
 ///
-/// The `mk` helper takes 1-based positions (as `VObjectInfo` reports
+/// The `mk` helper takes 1-based positions (as `TokenInfo` reports
 /// them); the index converts them to 0-based.
 fn multiline_port_analysis() -> Analysis {
-    let node = |line: u32, col: u32, t: i32, name: &str| VObjectInfo {
+    let node = |line: u32, col: u32, t: i32, name: &str| TokenInfo {
         line,
         col,
         end_line: line,
         end_col: col + name.len() as u32,
-        vpi_type: t,
+        kind: t,
         name: Some(name.to_owned()),
         file: String::new(), // filled below
     };
@@ -4171,47 +3231,59 @@ fn multiline_port_analysis() -> Analysis {
 
     let a_file = mk(
         vec![
-            (1, 8, llg::ffi::vpi::vpiModule, "m"),
-            (1, 24, llg::ffi::vpi::TOKEN_PORT_INPUT, "clk"),
-            (1, 24, llg::ffi::vpi::vpiNet, "clk"),
-            (1, 24, llg::ffi::vpi::vpiPort, "clk"),
-            (1, 47, llg::ffi::vpi::TOKEN_PORT_OUTPUT, "o"),
-            (1, 47, llg::ffi::vpi::vpiNet, "o"),
-            (1, 47, llg::ffi::vpi::vpiPort, "o"),
-            (2, 10, llg::ffi::vpi::vpiRefObj, "o"),
-            (2, 10, llg::ffi::vpi::vpiNet, "o"),
-            (2, 14, llg::ffi::vpi::vpiRefObj, "clk"),
-            (2, 14, llg::ffi::vpi::vpiPort, "clk"),
+            (
+                1,
+                8,
+                tokens::TOKEN_SLANG_MODULE + tokens::TOKEN_DECLARATION_OFFSET,
+                "m",
+            ),
+            (
+                1,
+                24,
+                tokens::TOKEN_SLANG_PORT + tokens::TOKEN_DECLARATION_OFFSET,
+                "clk",
+            ),
+            (
+                1,
+                47,
+                tokens::TOKEN_SLANG_PORT + tokens::TOKEN_DECLARATION_OFFSET,
+                "o",
+            ),
+            (2, 10, tokens::TOKEN_SLANG_IDENTIFIER, "o"),
+            (2, 14, tokens::TOKEN_SLANG_IDENTIFIER, "clk"),
         ],
         "/x/a.sv",
     );
     let mut b_file = mk(
         vec![
             // Instance name token (1-based (1,9) → 0-based (0,8)).
-            (1, 9, llg::ffi::vpi::uhdmlogic_var, "u0"),
+            (
+                1,
+                9,
+                tokens::TOKEN_SLANG_IDENTIFIER + tokens::TOKEN_DECLARATION_OFFSET,
+                "u0",
+            ),
             // `.clk` label (1-based (2,4) → 0-based (1,3)).
-            (2, 4, llg::ffi::vpi::vpiFunction, "clk"),
+            (2, 4, tokens::TOKEN_SLANG_PORT_CONNECTION_LABEL, "clk"),
             // Inner expression ref `c` in `.clk(c)`.
-            (2, 8, llg::ffi::vpi::vpiRefObj, "c"),
+            (2, 8, tokens::TOKEN_SLANG_IDENTIFIER, "c"),
             // `.o` label (1-based (3,4) → 0-based (2,3)).
-            (3, 4, llg::ffi::vpi::vpiFunction, "o"),
+            (3, 4, tokens::TOKEN_SLANG_PORT_CONNECTION_LABEL, "o"),
             // Inner expression ref `o` in `.o(o)`.
-            (3, 8, llg::ffi::vpi::vpiPort, "o"),
-            // Decoy `vpiFunction` token at 0-based (10, 0): named `clk`
-            // so it would pass the Var-ref classification, but its column
-            // is 0 → not an indented continuation line.
-            (11, 1, llg::ffi::vpi::vpiFunction, "clk"),
+            (3, 8, tokens::TOKEN_SLANG_IDENTIFIER, "o"),
+            // Decoy label at 0-based (10, 0), outside the instance span.
+            (11, 1, tokens::TOKEN_SLANG_PORT_CONNECTION_LABEL, "clk"),
         ],
         "/x/b.sv",
     );
     // Nameless closing `);` at 0-based (3, 0) (1-based (4, 1)): included
     // for fixture fidelity; the index skips nameless tokens.
-    b_file.nodes.push(VObjectInfo {
+    b_file.nodes.push(TokenInfo {
         line: 4,
         col: 1,
         end_line: 4,
         end_col: 2,
-        vpi_type: 0,
+        kind: 0,
         name: None,
         file: "/x/b.sv".to_owned(),
     });
@@ -4313,9 +3385,8 @@ fn port_label_multiline_hover_shows_child_port() {
 #[test]
 fn port_label_multiline_decoy_at_column_zero_is_not_a_port_label() {
     let a = multiline_port_analysis();
-    // The decoy at 0-based (10, 0) is a `vpiFunction`/Var ref (named
-    // `clk`, a known signal) but its column is 0, so the continuation-line
-    // rule rejects it: it must not be registered as a port label and falls
+    // The decoy at 0-based (10, 0) is a connection label named `clk`, but
+    // its column is 0, so the continuation-line rule rejects it. It falls
     // back to ordinary name-based resolution (which lands on the same
     // workspace `clk` declaration here).
     assert!(
@@ -4531,25 +3602,43 @@ fn port_label_synthesizes_missing_port_decl() {
     // tokens; file B instantiates it with a named connection.  The port
     // declaration is synthesized at the module header so goto-definition
     // still lands in the def file.
-    let node = |line: u32, col: u32, t: i32, name: &str, file: &str| VObjectInfo {
+    let node = |line: u32, col: u32, t: i32, name: &str, file: &str| TokenInfo {
         line,
         col,
         end_line: line,
         end_col: col + name.len() as u32,
-        vpi_type: t,
+        kind: t,
         name: Some(name.to_owned()),
         file: file.to_owned(),
     };
     let a_file = FileTokens {
         path: "/x/a.sv".to_owned(),
-        nodes: vec![node(1, 8, llg::ffi::vpi::vpiModule, "m", "/x/a.sv")],
+        nodes: vec![node(
+            1,
+            8,
+            tokens::TOKEN_SLANG_MODULE + tokens::TOKEN_DECLARATION_OFFSET,
+            "m",
+            "/x/a.sv",
+        )],
     };
     let b_file = FileTokens {
         path: "/x/b.sv".to_owned(),
         nodes: vec![
-            node(1, 13, llg::ffi::vpi::uhdmclass_defn, "m", "/x/b.sv"),
-            node(1, 15, llg::ffi::vpi::uhdmlogic_var, "u0", "/x/b.sv"),
-            node(1, 19, llg::ffi::vpi::vpiFunction, "clk", "/x/b.sv"),
+            node(1, 13, tokens::TOKEN_SLANG_MODULE, "m", "/x/b.sv"),
+            node(
+                1,
+                15,
+                tokens::TOKEN_SLANG_IDENTIFIER + tokens::TOKEN_DECLARATION_OFFSET,
+                "u0",
+                "/x/b.sv",
+            ),
+            node(
+                1,
+                19,
+                tokens::TOKEN_SLANG_PORT_CONNECTION_LABEL,
+                "clk",
+                "/x/b.sv",
+            ),
         ],
     };
     let module_m = ModuleDef {
@@ -4688,8 +3777,7 @@ fn analyze_full_pipeline_named_ports_resolve_to_child() {
 /// several lines: `m u0(\n  .clk(clk),\n  .o(o)\n);` inside module `top`,
 /// which itself declares signals named `clk`/`o`.  The continuation-line
 /// labels must resolve to the CHILD module's ports in a.sv, not the
-/// enclosing module's same-named signals.  Runs in a fresh temp dir
-/// (Surelog writes `slpp_all/` into the CWD).
+/// enclosing module's same-named signals.
 #[test]
 fn analyze_full_pipeline_multiline_named_ports_resolve_to_child() {
     let _guards = analysis_guards();
@@ -4710,7 +3798,7 @@ fn analyze_full_pipeline_multiline_named_ports_resolve_to_child() {
     .expect("write a.sv");
     std::fs::write(
         &b_sv,
-        "module top;\n  m u0(\n    .clk(clk),\n    .o(o)\n  );\n  logic clk;\n  logic [3:0] o;\nendmodule\n",
+        "module top;\n  logic clk;\n  logic [3:0] o;\n  m u0(\n    .clk(clk),\n    .o(o)\n  );\nendmodule\n",
     )
     .expect("write b.sv");
     let opts = CompileOpts {
@@ -4741,11 +3829,11 @@ fn analyze_full_pipeline_multiline_named_ports_resolve_to_child() {
     // The port-connection labels are the only tokens in b.sv carrying the
     // classifier's connection-label synthetic type; find them by name and
     // continuation line rather than hard-coding positions.
-    let label = |name: &str| -> VObjectInfo {
+    let label = |name: &str| -> TokenInfo {
         ft.nodes
             .iter()
             .find(|n| {
-                n.vpi_type == llg::ffi::vpi::TOKEN_PORT_CONN_LABEL
+                n.kind == tokens::TOKEN_SLANG_PORT_CONNECTION_LABEL
                     && n.name.as_deref() == Some(name)
                     && n.line > 2
             })
@@ -4776,7 +3864,7 @@ fn analyze_full_pipeline_multiline_named_ports_resolve_to_child() {
         a.index.port_labels
     );
     // `.clk` → m's clk port decl in a.sv (1-based (2,15) → 0-based
-    // (1,14)), NOT top's `logic clk` (0-based (5,8)).
+    // (1,14)), NOT top's `logic clk` (0-based (1,8)).
     let loc = definition_at(&a, &b_path, clk_pos.0, clk_pos.1).expect("definition of .clk label");
     assert_eq!(loc.uri, Url::from_file_path(&a_sv).unwrap());
     assert_eq!(loc.range.start, Position::new(1, 14), "loc: {loc:?}");
@@ -5037,13 +4125,12 @@ fn analyze_full_pipeline_multiline_named_param_overrides_resolve_to_child() {
 /// name-based resolution would pick.
 #[test]
 fn unresolved_param_override_label_yields_no_definition() {
-    use llg::ffi::vpi;
-    let node = |line: u32, col: u32, t: i32, name: &str| VObjectInfo {
+    let node = |line: u32, col: u32, t: i32, name: &str| TokenInfo {
         line,
         col,
         end_line: line,
         end_col: col + name.len() as u32,
-        vpi_type: t,
+        kind: t,
         name: Some(name.to_owned()),
         file: "/x/b.sv".to_owned(),
     };
@@ -5052,11 +4139,25 @@ fn unresolved_param_override_label_yields_no_definition() {
     let b_file = FileTokens {
         path: "/x/b.sv".to_owned(),
         nodes: vec![
-            node(1, 9, vpi::vpiModule, "top"),
-            node(2, 6, vpi::vpiParameter, "W"),
-            node(2, 6, vpi::vpiParameter, "W"),
-            node(3, 10, vpi::uhdmlogic_var, "u0"),
-            node(3, 15, vpi::vpiParameter, "W"),
+            node(
+                1,
+                9,
+                tokens::TOKEN_SLANG_MODULE + tokens::TOKEN_DECLARATION_OFFSET,
+                "top",
+            ),
+            node(
+                2,
+                6,
+                tokens::TOKEN_SLANG_PARAMETER + tokens::TOKEN_DECLARATION_OFFSET,
+                "W",
+            ),
+            node(
+                3,
+                10,
+                tokens::TOKEN_SLANG_IDENTIFIER + tokens::TOKEN_DECLARATION_OFFSET,
+                "u0",
+            ),
+            node(3, 15, tokens::TOKEN_SLANG_PARAMETER_CONNECTION_LABEL, "W"),
         ],
     };
     let u0 = InstanceModel {
@@ -5151,26 +4252,43 @@ fn unresolved_param_override_label_yields_no_definition() {
 /// module header, kept disjoint from synthesized port anchors.
 #[test]
 fn resolved_param_override_synthesizes_missing_child_decl() {
-    use llg::ffi::vpi;
-    let node = |line: u32, col: u32, t: i32, name: &str, file: &str| VObjectInfo {
+    let node = |line: u32, col: u32, t: i32, name: &str, file: &str| TokenInfo {
         line,
         col,
         end_line: line,
         end_col: col + name.len() as u32,
-        vpi_type: t,
+        kind: t,
         name: Some(name.to_owned()),
         file: file.to_owned(),
     };
     let a_file = FileTokens {
         path: "/x/a.sv".to_owned(),
-        nodes: vec![node(1, 8, vpi::vpiModule, "m", "/x/a.sv")],
+        nodes: vec![node(
+            1,
+            8,
+            tokens::TOKEN_SLANG_MODULE + tokens::TOKEN_DECLARATION_OFFSET,
+            "m",
+            "/x/a.sv",
+        )],
     };
     let b_file = FileTokens {
         path: "/x/b.sv".to_owned(),
         nodes: vec![
-            node(1, 13, vpi::uhdmclass_defn, "m", "/x/b.sv"),
-            node(1, 15, vpi::uhdmlogic_var, "u0", "/x/b.sv"),
-            node(1, 20, vpi::vpiParameter, "W", "/x/b.sv"),
+            node(1, 13, tokens::TOKEN_SLANG_MODULE, "m", "/x/b.sv"),
+            node(
+                1,
+                15,
+                tokens::TOKEN_SLANG_IDENTIFIER + tokens::TOKEN_DECLARATION_OFFSET,
+                "u0",
+                "/x/b.sv",
+            ),
+            node(
+                1,
+                20,
+                tokens::TOKEN_SLANG_PARAMETER_CONNECTION_LABEL,
+                "W",
+                "/x/b.sv",
+            ),
         ],
     };
     let module_m = ModuleDef {
@@ -5272,16 +4390,15 @@ fn resolved_param_override_synthesizes_missing_child_decl() {
 ///   (3,15), bare `P` / `IDLE` at (4,15)/(5,15), and a bare `my_pkg` at
 ///   (6,15).
 ///
-/// Token types mirror the real pipeline: package name `uhdmpackage`, param
-/// decls `vpiParameter`, enum const decls `uhdmenum_const`, expression
-/// references `vpiRefObj`.
+/// Token roles mirror the Slang snapshot: package, parameter, and enum member
+/// declarations carry the declaration offset, while uses are identifiers.
 fn package_item_analysis() -> Analysis {
-    let node = |line: u32, col: u32, t: i32, name: &str| VObjectInfo {
+    let node = |line: u32, col: u32, t: i32, name: &str| TokenInfo {
         line,
         col,
         end_line: line,
         end_col: col + name.len() as u32,
-        vpi_type: t,
+        kind: t,
         name: Some(name.to_owned()),
         file: String::new(), // filled below
     };
@@ -5301,23 +4418,46 @@ fn package_item_analysis() -> Analysis {
 
     let p_file = mk(
         vec![
-            (1, 9, llg::ffi::vpi::uhdmpackage, "my_pkg"),
-            (2, 17, llg::ffi::vpi::vpiParameter, "P"),
-            (2, 17, llg::ffi::vpi::vpiParameter, "P"),
-            (2, 17, llg::ffi::vpi::vpiParameter, "P"),
-            (3, 30, llg::ffi::vpi::uhdmenum_const, "IDLE"),
-            (3, 36, llg::ffi::vpi::uhdmenum_const, "RUN"),
+            (
+                1,
+                9,
+                tokens::TOKEN_SLANG_PACKAGE + tokens::TOKEN_DECLARATION_OFFSET,
+                "my_pkg",
+            ),
+            (
+                2,
+                17,
+                tokens::TOKEN_SLANG_PARAMETER + tokens::TOKEN_DECLARATION_OFFSET,
+                "P",
+            ),
+            (
+                3,
+                30,
+                tokens::TOKEN_SLANG_ENUM_MEMBER + tokens::TOKEN_DECLARATION_OFFSET,
+                "IDLE",
+            ),
+            (
+                3,
+                36,
+                tokens::TOKEN_SLANG_ENUM_MEMBER + tokens::TOKEN_DECLARATION_OFFSET,
+                "RUN",
+            ),
         ],
         "/x/p.sv",
     );
     let u_file = mk(
         vec![
-            (1, 8, llg::ffi::vpi::vpiModule, "top"),
-            (3, 16, llg::ffi::vpi::vpiRefObj, "my_pkg::P"),
-            (4, 16, llg::ffi::vpi::vpiRefObj, "my_pkg::IDLE"),
-            (5, 16, llg::ffi::vpi::vpiRefObj, "P"),
-            (6, 16, llg::ffi::vpi::vpiRefObj, "IDLE"),
-            (7, 16, llg::ffi::vpi::vpiRefObj, "my_pkg"),
+            (
+                1,
+                8,
+                tokens::TOKEN_SLANG_MODULE + tokens::TOKEN_DECLARATION_OFFSET,
+                "top",
+            ),
+            (3, 16, tokens::TOKEN_SLANG_IDENTIFIER, "my_pkg::P"),
+            (4, 16, tokens::TOKEN_SLANG_IDENTIFIER, "my_pkg::IDLE"),
+            (5, 16, tokens::TOKEN_SLANG_IDENTIFIER, "P"),
+            (6, 16, tokens::TOKEN_SLANG_IDENTIFIER, "IDLE"),
+            (7, 16, tokens::TOKEN_SLANG_IDENTIFIER, "my_pkg"),
         ],
         "/x/u.sv",
     );
@@ -5449,12 +4589,12 @@ fn parse_enum_binding_uses_member_range_and_rejects_ambiguous_target() {
             parse_enum_decls: vec![target.clone()],
             parse_enum_bindings: bindings,
             parse_enum_ref_positions: [use_key.clone()].into_iter().collect(),
-            parse_enum_tokens: vec![VObjectInfo {
+            parse_enum_tokens: vec![TokenInfo {
                 line: 4,
                 col: 24,
                 end_line: 4,
                 end_col: 28,
-                vpi_type: llg::ffi::vpi::uhdmenum_const,
+                kind: tokens::TOKEN_SLANG_ENUM_MEMBER + tokens::TOKEN_DECLARATION_OFFSET,
                 name: Some("IDLE".to_owned()),
                 file: "/x/u.sv".to_owned(),
             }],
@@ -5492,12 +4632,12 @@ fn parse_enum_binding_uses_member_range_and_rejects_ambiguous_target() {
             parse_enum_decls: vec![target, second],
             unresolved_enum_refs: [use_key.clone()].into_iter().collect(),
             parse_enum_ref_positions: [use_key.clone()].into_iter().collect(),
-            parse_enum_tokens: vec![VObjectInfo {
+            parse_enum_tokens: vec![TokenInfo {
                 line: 4,
                 col: 24,
                 end_line: 4,
                 end_col: 28,
-                vpi_type: llg::ffi::vpi::uhdmenum_const,
+                kind: tokens::TOKEN_SLANG_ENUM_MEMBER + tokens::TOKEN_DECLARATION_OFFSET,
                 name: Some("IDLE".to_owned()),
                 file: "/x/u.sv".to_owned(),
             }],
@@ -5537,12 +4677,12 @@ fn parse_class_qualified_enum_binding_targets_the_member() {
         empty_design(),
         vec![FileTokens {
             path: "/x/use.sv".to_owned(),
-            nodes: vec![VObjectInfo {
+            nodes: vec![TokenInfo {
                 line: 4,
                 col: 11,
                 end_line: 4,
                 end_col: 28,
-                vpi_type: llg::ffi::vpi::vpiRefObj,
+                kind: tokens::TOKEN_SLANG_IDENTIFIER,
                 name: Some("StateHolder::READY".to_owned()),
                 file: "/x/use.sv".to_owned(),
             }],
@@ -5553,12 +4693,12 @@ fn parse_class_qualified_enum_binding_targets_the_member() {
             parse_enum_decls: vec![target],
             parse_enum_bindings: bindings,
             parse_enum_ref_positions: [key].into_iter().collect(),
-            parse_enum_tokens: vec![VObjectInfo {
+            parse_enum_tokens: vec![TokenInfo {
                 line: 4,
                 col: 24,
                 end_line: 4,
                 end_col: 24,
-                vpi_type: llg::ffi::vpi::uhdmenum_const,
+                kind: tokens::TOKEN_SLANG_ENUM_MEMBER + tokens::TOKEN_DECLARATION_OFFSET,
                 name: Some("READY".to_owned()),
                 file: "/x/use.sv".to_owned(),
             }],
@@ -5629,12 +4769,9 @@ fn package_document_symbol_stays_flat() {
 
 /// Full compile of a two-file design with package items used from a
 /// module: `my_pkg::P` in a parameter context, qualified enum members,
-/// an imported bare member, and `my_pkg::RUN` in a case.  Runs in a fresh
-/// temp dir (Surelog writes `slpp_all/` into the CWD).
-///
-/// UHDM folds package enum expressions into constants.  The parse-backed
-/// pass preserves the member coordinates and supplies the missing
-/// reference bindings without changing the normal LSP provider path.
+/// an imported bare member, and `my_pkg::RUN` in a case. The Slang snapshot
+/// preserves the member coordinates and supplies reference bindings through
+/// the normal LSP provider path.
 #[test]
 fn analyze_full_pipeline_package_items() {
     let _guards = analysis_guards();
@@ -5723,7 +4860,9 @@ fn analyze_full_pipeline_package_items() {
         .find(|d| d.name == "P" && d.kind == SymKind::Param && d.scope.as_deref() == Some("my_pkg"))
         .expect("P decl in index");
     assert_eq!(p_decl.file, p_sv.to_string_lossy());
-    assert_eq!(p_decl.detail.as_deref(), Some("parameter P: int = 32'sd3"));
+    // Package parameters are non-overridable and Slang represents them as
+    // local parameters even when the source uses the `parameter` keyword.
+    assert_eq!(p_decl.detail.as_deref(), Some("localparam P: int = 32'sd3"));
     let idle_decl = a
         .index
         .decls
@@ -5802,10 +4941,8 @@ fn analyze_full_pipeline_package_items() {
 /// ```
 ///
 /// Model positions mirror the real pipeline: the class points at the
-/// `class` keyword, methods at the `function` keyword (Surelog's own
-/// position), the field at its identifier.  Tokens mirror the parse-tree
-/// name tokens (`uhdmclass_defn` for the class name, `vpiFunction` for
-/// method names) plus the VPI-walker field token (`uhdmint_var`).
+/// `class` keyword, methods at the `function` keyword, and the field at its
+/// identifier. Tokens use Slang's explicit declaration kinds.
 fn class_analysis() -> Analysis {
     let int_ty = || TypeInfo {
         kind: "int".to_owned(),
@@ -5859,39 +4996,39 @@ fn class_analysis() -> Analysis {
     let tokens = vec![FileTokens {
         path: "/x/c.sv".to_owned(),
         nodes: vec![
-            VObjectInfo {
+            TokenInfo {
                 line: 1,
                 col: 7,
                 end_line: 1,
                 end_col: 14,
-                vpi_type: llg::ffi::vpi::uhdmclass_defn,
+                kind: tokens::TOKEN_SLANG_CLASS + tokens::TOKEN_DECLARATION_OFFSET,
                 name: Some("Counter".to_owned()),
                 file: "/x/c.sv".to_owned(),
             },
-            VObjectInfo {
+            TokenInfo {
                 line: 2,
                 col: 7,
                 end_line: 2,
                 end_col: 12,
-                vpi_type: llg::ffi::vpi::uhdmint_var,
+                kind: tokens::TOKEN_SLANG_VARIABLE + tokens::TOKEN_DECLARATION_OFFSET,
                 name: Some("count".to_owned()),
                 file: "/x/c.sv".to_owned(),
             },
-            VObjectInfo {
+            TokenInfo {
                 line: 3,
                 col: 13,
                 end_line: 3,
                 end_col: 16,
-                vpi_type: llg::ffi::vpi::vpiFunction,
+                kind: tokens::TOKEN_SLANG_METHOD + tokens::TOKEN_DECLARATION_OFFSET,
                 name: Some("new".to_owned()),
                 file: "/x/c.sv".to_owned(),
             },
-            VObjectInfo {
+            TokenInfo {
                 line: 6,
                 col: 16,
                 end_line: 6,
                 end_col: 19,
-                vpi_type: llg::ffi::vpi::vpiFunction,
+                kind: tokens::TOKEN_SLANG_METHOD + tokens::TOKEN_DECLARATION_OFFSET,
                 name: Some("get".to_owned()),
                 file: "/x/c.sv".to_owned(),
             },
@@ -5991,8 +5128,7 @@ fn completion_after_class_scope_prefix_offers_members() {
 
 /// Full compile of a design with a class declaration used from a module:
 /// the model and index must pick up the class, its methods (`new`/`get`)
-/// and its field (`count`), and the LSP features must surface them.  Runs
-/// in a fresh temp dir (Surelog writes `slpp_all/` into the CWD).
+/// and its field (`count`), and the LSP features must surface them.
 #[test]
 fn analyze_full_pipeline_classes() {
     let _guards = analysis_guards();
@@ -6033,11 +5169,23 @@ fn analyze_full_pipeline_classes() {
         .iter()
         .find(|c| clean_name(&c.name) == "Counter")
         .expect("Counter class in model");
-    let method_names: Vec<&str> = cls.methods.iter().map(|m| m.name.as_str()).collect();
+    let source_method_names: Vec<&str> = cls
+        .methods
+        .iter()
+        .filter(|method| method.file.is_some())
+        .map(|method| method.name.as_str())
+        .collect();
     assert_eq!(
-        method_names,
+        source_method_names,
         vec!["new", "get"],
         "methods: {:?}",
+        cls.methods
+    );
+    assert!(
+        cls.methods
+            .iter()
+            .any(|method| method.name == "randomize" && method.file.is_none()),
+        "Slang built-in class methods remain available: {:?}",
         cls.methods
     );
     let get = cls
@@ -6045,7 +5193,11 @@ fn analyze_full_pipeline_classes() {
         .iter()
         .find(|m| m.name == "get")
         .expect("get method");
-    assert_eq!(get.ret.as_ref().map(|t| t.kind.as_str()), Some("int"));
+    let get_ret = get.ret.as_ref().expect("get return type");
+    assert_eq!(get_ret.type_name, None);
+    assert_eq!(get_ret.kind, "int");
+    assert_eq!(get_ret.width, Some(32));
+    assert!(get_ret.signed);
     assert_eq!(get.scope, "Counter", "method scope: {get:?}");
     let new = cls.methods.iter().find(|m| m.name == "new").expect("ctor");
     assert_eq!(new.ret, None, "constructor has no source return type");
@@ -6158,7 +5310,6 @@ fn real_path_rejects_paths_outside_shadow_tree() {
 
 /// Full compile of a design staged at its deterministic shadow path: the
 /// analysis must be keyed by the shadow path (model, tokens, lint).
-/// Runs in a fresh temp dir (Surelog writes `slpp_all/` into the CWD).
 #[test]
 fn analyze_full_pipeline_compiles_shadow_path() {
     let _guards = analysis_guards();

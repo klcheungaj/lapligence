@@ -1,4 +1,4 @@
-//! End-to-end simulator tests for `wait (cond) stmt;` support: Surelog compile
+//! End-to-end simulator tests for `wait (cond) stmt;` support: Slang compile
 //! → codegen → CMake build → run, asserting exact stdout against hand-simulated
 //! traces.
 //!
@@ -7,9 +7,9 @@
 //! writes, wait-bearing task inlining, and compound conditions waking only
 //! when the whole expression becomes true.
 //!
-//! Surelog writes `slpp_all/` into the process working directory, so the
+//! These tests temporarily change the process working directory, so the
 //! tests run with the CWD pointed at a fresh temp dir (serialized through a
-//! mutex, like the other Surelog integration tests).
+//! mutex, to avoid process-wide CWD races).
 
 use llg::core::compile;
 use llg::sim;
@@ -20,7 +20,7 @@ mod sim_harness;
 /// Compile + codegen + C-compile + run `sv` (top module `top`), returning the
 /// simulator's exact stdout, the codegen warnings and the generated C model.
 fn run_sim(sv: &str, top: &str, tag: &str) -> Result<(String, Vec<String>, String), String> {
-    sim_harness::with_surelog_temp_cwd(tag, |dir| {
+    sim_harness::with_frontend_temp_cwd(tag, |dir| {
         let source = dir.join("tb.sv");
         std::fs::write(&source, sv).map_err(|error| format!("write source: {error}"))?;
         let out = compile::compile_checked(&compile::CompileOpts {
@@ -29,9 +29,9 @@ fn run_sim(sv: &str, top: &str, tag: &str) -> Result<(String, Vec<String>, Strin
             ..Default::default()
         })
         .map_err(|error| format!("compile: {error}"))?;
-        let design = out.uhdm_design().ok_or("no UHDM design")?;
-        let generated =
-            sim::codegen::generate(design).map_err(|error| format!("codegen: {error}"))?;
+        let db =
+            llg::core::db::Db::from_slang(&out.snapshot).map_err(|error| format!("db: {error}"))?;
+        let generated = sim::codegen::generate(&db).map_err(|error| format!("codegen: {error}"))?;
         let executable =
             sim::build::build_model_cmake(dir, &[("model.c", generated.model_c.as_str())])
                 .map_err(|error| format!("cmake: {error}"))?;

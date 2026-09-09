@@ -295,9 +295,7 @@ pub fn rename(
 mod tests {
     use super::*;
     use llg::core::model::{DesignModel, Direction, InstanceModel, ModuleDef, PortModel, TypeInfo};
-    use llg::core::tokens::FileTokens;
-    use llg::ffi::surelog::VObjectInfo;
-    use llg::ffi::vpi;
+    use llg::core::tokens::{self, FileTokens, TokenInfo};
 
     /// Hand-built single-file analysis mirroring the real pipeline's token
     /// shapes for:
@@ -319,12 +317,12 @@ mod tests {
     /// 6: endmodule
     /// ```
     fn prefix_analysis() -> Analysis {
-        let node = |line: u32, col: u32, t: i32, name: &str| VObjectInfo {
+        let node = |line: u32, col: u32, t: i32, name: &str| TokenInfo {
             line,
             col,
             end_line: line,
             end_col: col + name.len() as u32,
-            vpi_type: t,
+            kind: t,
             name: Some(name.to_owned()),
             file: String::new(), // filled per file below
         };
@@ -344,15 +342,26 @@ mod tests {
 
         let ren_file = mk(
             vec![
-                (1, 8, vpi::vpiModule, "m"),
-                (1, 22, vpi::TOKEN_PORT_INPUT, "data"),
-                (1, 22, vpi::vpiNet, "data"),
-                (1, 22, vpi::vpiPort, "data"),
-                (1, 41, vpi::TOKEN_PORT_OUTPUT, "data_out"),
-                (1, 41, vpi::vpiNet, "data_out"),
-                (1, 41, vpi::vpiPort, "data_out"),
-                (2, 10, vpi::vpiRefObj, "data_out"),
-                (2, 21, vpi::vpiRefObj, "data"),
+                (
+                    1,
+                    8,
+                    tokens::TOKEN_SLANG_MODULE + tokens::TOKEN_DECLARATION_OFFSET,
+                    "m",
+                ),
+                (
+                    1,
+                    22,
+                    tokens::TOKEN_SLANG_PORT + tokens::TOKEN_DECLARATION_OFFSET,
+                    "data",
+                ),
+                (
+                    1,
+                    41,
+                    tokens::TOKEN_SLANG_PORT + tokens::TOKEN_DECLARATION_OFFSET,
+                    "data_out",
+                ),
+                (2, 10, tokens::TOKEN_SLANG_IDENTIFIER, "data_out"),
+                (2, 21, tokens::TOKEN_SLANG_IDENTIFIER, "data"),
                 // A parse-tree keyword token: named but never classified into
                 // the index, so it must not become a rename target.
                 (3, 1, 900_001, "module"),
@@ -361,9 +370,19 @@ mod tests {
         );
         let top_file = mk(
             vec![
-                (4, 8, vpi::vpiModule, "top"),
-                (5, 3, vpi::uhdmclass_defn, "m"),
-                (5, 5, vpi::uhdmlogic_var, "u0"),
+                (
+                    4,
+                    8,
+                    tokens::TOKEN_SLANG_MODULE + tokens::TOKEN_DECLARATION_OFFSET,
+                    "top",
+                ),
+                (5, 3, tokens::TOKEN_SLANG_IDENTIFIER, "m"),
+                (
+                    5,
+                    5,
+                    tokens::TOKEN_SLANG_IDENTIFIER + tokens::TOKEN_DECLARATION_OFFSET,
+                    "u0",
+                ),
             ],
             "/x/top.sv",
         );

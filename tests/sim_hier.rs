@@ -1,5 +1,5 @@
 //! End-to-end simulator tests for hierarchical WRITES (3+ parts, e.g.
-//! `tb.dut.sig = 8'h2a;` and `tb.dut.vec[3:0] = 4'hf;`): Surelog compile →
+//! `tb.dut.sig = 8'h2a;` and `tb.dut.vec[3:0] = 4'hf;`): Slang compile →
 //! codegen → CMake build → run, like tests/sim_counter.rs.
 //!
 //! Reads of N-part hierarchical paths already work; these tests exercise the
@@ -7,18 +7,15 @@
 //! child's reg, part-select/bit-select/indexed-part-select writes, and the
 //! wake-on-write behaviour of a child process watching the target signal.
 //! SystemVerilog implicit named (`.name`) and wildcard (`.*`) port
-//! connections are also pinned after Surelog expands them.
+//! connections are also pinned after Slang resolves them.
 //!
-//! Surelog writes `slpp_all/` into the process working directory, so each test
+//! These tests temporarily change the process working directory, so each test
 //! runs with the CWD pointed at a fresh temp dir (serialized through a mutex).
-
-use llg::core::compile;
-use llg::sim;
 
 #[path = "support/sim.rs"]
 mod sim_harness;
 
-/// Run `sv` in a fresh temp dir (holding the Surelog mutex) and assert the
+/// Run `sv` in a fresh temp dir (holding the CWD mutex) and assert the
 /// exact stdout.
 fn assert_stdout(tag: &str, sv: &str, expected: &str) {
     let stdout = sim_harness::run_sim(sv, "tb_top", tag).expect("simulation should run");
@@ -216,12 +213,9 @@ endmodule
     assert_stdout("hier_nba", sv, "cnt=2\n");
 }
 
-/// (d) v1 rejects hierarchical select indices/bounds that are not plain
-/// integer literals (the db does not capture the select expression, so only
-/// constant selects are recoverable).  The codegen must fail with a clear
-/// message rather than silently mis-lower the write.
+/// (d) A hierarchical bit-select can use a runtime variable index.
 #[test]
-fn sim_hier_write_rejects_variable_index() {
+fn sim_hier_write_variable_index() {
     if !llg::sim::build::cmake_available() {
         eprintln!("SKIP: cmake not available");
         return;
@@ -229,6 +223,7 @@ fn sim_hier_write_rejects_variable_index() {
     let sv = r#"`timescale 1ns/1ns
 module dut;
     reg [7:0] vec;
+    initial vec = 8'h00;
 endmodule
 
 module tb;
@@ -240,32 +235,12 @@ module tb_top;
     tb u_tb();
     initial begin
         i = 2;
+        #1;
         u_tb.u_dut.vec[i] = 1'b1;
+        #1 $display("vec=%h", u_tb.u_dut.vec);
         $finish;
     end
 endmodule
 "#;
-    let err = sim_harness::with_surelog_temp_cwd("hier_idx", |dir| {
-        let source = dir.join("tb.sv");
-        std::fs::write(&source, sv).map_err(|error| format!("write source: {error}"))?;
-        let out = compile::compile(&compile::CompileOpts {
-            files: vec![source.to_string_lossy().into_owned()],
-            top: Some("tb_top".to_string()),
-            ..Default::default()
-        })
-        .map_err(|error| format!("compile: {error}"))?;
-        if !out.ok() {
-            return Err(format!("compile diagnostics: {:?}", out.diagnostics));
-        }
-        let design = out.uhdm_design().ok_or("no UHDM design")?;
-        sim::codegen::generate(design)
-            .map(|_| ())
-            .map_err(|error| error.to_string())
-    })
-    .expect_err("variable index must be rejected");
-    assert!(
-        err.to_string()
-            .contains("constant integer indices/bounds only"),
-        "unexpected codegen error: {err}"
-    );
+    assert_stdout("hier_idx", sv, "vec=04\n");
 }

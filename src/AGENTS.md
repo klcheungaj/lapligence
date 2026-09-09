@@ -12,8 +12,7 @@ reports status and warnings to stderr.
 
 The `llg_ls` language-server and `llg` simulator-driver executables can
 enforce a process-wide memory ceiling. The ceiling covers Rust allocations and
-the in-process Surelog/UHDM and optional Slang frontends, including their
-C++ allocations.
+the in-process Slang frontend, including its C++ allocations.
 
 The safeguard is disabled by default. Enable it with an environment variable
 before starting either `llg_ls` or `llg`:
@@ -44,11 +43,11 @@ Native enforcement is platform-specific:
   status and warnings to stderr.
 
 Choose a budget above the server's or driver's normal startup footprint:
-Surelog parsing and UHDM construction can temporarily require substantially
+Slang parsing and semantic capture can temporarily require substantially
 more memory than an idle server. A budget that is too small can terminate the
 server during its first analysis. The native limit and watchdog are
-process-wide, so the budget also covers concurrent LSP work and every Surelog
-session in `llg_ls`, or the driver-side work in `llg`.
+process-wide, so the budget also covers concurrent LSP work and every Slang
+compilation in `llg_ls`, or the driver-side work in `llg`.
 
 `llg` launches the generated simulator as a separate child process. The
 portable watchdog samples and terminates only the `llg` driver; it does not
@@ -73,12 +72,12 @@ Validation commands and CI scope live in [../tests/AGENTS.md](../tests/AGENTS.md
 - Keep open-buffer text authoritative while bounding closed-file reads to
   the configured maximum plus one byte; reuse the admitted snapshot afterward.
 - Preserve include authorization, canonical-path deduplication, and the
-  fail-closed rule that Surelog reads only staged shadow inputs and Slang
-  reads only admitted in-memory buffers through its cache-only source manager.
+  fail-closed rule that Slang reads only admitted in-memory buffers through
+  its cache-only source manager.
 - Keep invalid configuration atomic and retain the last valid config and
   last servable analysis snapshot where documented.
 - Verify scheduler and cache backpressure: stale revisions and saturated
-  flights must not start new Surelog work.
+  flights must not start new frontend work.
 - Keep emergency logging allocation-light, bounded, redacted, and off
   stdout; stdout remains the JSON-RPC transport.
 - Exercise Linux/macOS limit restoration and Windows Job Object ownership

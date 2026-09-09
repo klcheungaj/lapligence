@@ -1,24 +1,16 @@
-//! model — owned design model over the elaborated UHDM, shared by the LSP
+//! model — owned design projection over the Slang semantic database, shared by the LSP
 //! (symbols, hover, completion) and the simulator (codegen input).
 //!
-//! [`DesignModel`] is fully owned: no `VpiHandle`, no lifetimes, `Send + Sync`.
-//! It is extracted from the elaborated UHDM while the surelog session is alive
-//! (see [`DesignModel::build`]), after which all raw handles are gone.
-//!
-//! Extraction walks the elaborated UHDM once into [`core::db::Db`]; the node
-//! arena is then shaped into the model structures by
-//! [`DesignModel::from_db`].  The typespec helpers below (`typespec_info` and
-//! friends) are retained as a handle-based public API for callers that still
-//! hold VPI handles (tests, tooling); they read values through
-//! [`vpi::read_value`] with no raw FFI access.
+//! [`DesignModel`] is fully owned, has no frontend lifetime, and is `Send + Sync`.
+//! It is shaped from [`core::db::Db`] after the native Slang snapshot has been
+//! copied and validated; no native pointer or frontend lifetime is retained.
 
 use std::collections::HashSet;
 
 use crate::core::db::{self, NodeId};
 use crate::core::elab::Val;
-use crate::ffi::vpi::{self, OwnedHandle, ValueData, VpiHandle};
 
-/// Port direction, from `vpiDirection` on the port object.
+/// Direction of a semantic port.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Direction {
     Input,
@@ -142,8 +134,7 @@ pub struct FuncArgDef {
     pub has_default: bool,
 }
 
-/// A function or task definition, captured per instance (Surelog elaborates
-/// one clone per instantiated scope, with all refs re-bound).
+/// A function or task definition captured in an elaborated instance scope.
 #[derive(Debug, Clone, PartialEq)]
 pub struct FuncDef {
     pub name: String,
@@ -168,9 +159,7 @@ pub struct FuncDef {
 #[derive(Debug, Clone, PartialEq)]
 pub struct GenScopeModel {
     pub name: String,
-    /// `vpiFullName`, when Surelog provides it.  This includes the concrete
-    /// generate iteration (for example `work@top.g[0]`) and is therefore a
-    /// better identity for consumers than the display name alone.
+    /// Semantic full name including the concrete generate iteration.
     pub full_name: String,
     /// Gen-scope parameters (genvars) with their concrete values.
     pub params: Vec<ParamModel>,
@@ -181,17 +170,14 @@ pub struct GenScopeModel {
     pub children: Vec<InstanceModel>,
 }
 
-/// One module instance.  For the top instance `name` carries the module
-/// *definition* name (a Surelog quirk: the top instance's `vpiName` is the
-/// def name, and it has no `vpiFullName`).
+/// One elaborated module or interface instance.
 #[derive(Debug, Clone, PartialEq)]
 pub struct InstanceModel {
     pub name: String,
     pub def_name: String,
-    /// `vpiFullName`; falls back to `name` for the top instance.
+    /// Semantic hierarchical name; falls back to `name` for the top instance.
     pub full_name: String,
-    /// Instantiation site file; the top instance falls back to the parent's
-    /// file (its own `vpiFile` is the def file).
+    /// Instantiation or definition source file.
     pub file: Option<String>,
     /// Instantiation site line (1-based).
     pub line: u32,
@@ -221,8 +207,6 @@ impl InstanceModel {
     }
 }
 
-/// A module *definition* (flat object under `uhdmallModules`), carrying the
-/// declaration positions.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ModuleDef {
     pub name: String,
@@ -253,8 +237,6 @@ pub struct PackageDef {
 #[derive(Debug, Clone, PartialEq)]
 pub struct EnumConstDef {
     pub name: String,
-    /// Resolved enumerator value; `None` when the constant has no readable
-    /// value (e.g. an expression Surelog did not fold).
     pub value: Option<Val>,
     pub file: Option<String>,
     /// Declaration line (1-based).
@@ -302,20 +284,9 @@ pub struct DesignModel {
 }
 
 impl DesignModel {
-    /// Build the model from an elaborated UHDM design handle.  The owning
-    /// surelog session must stay alive for the duration of the call.
-    ///
-    /// Parameter values come from [`crate::core::elab::Resolver`];
-    /// unresolvable parameters (e.g. cyclic ones) are emitted with
-    /// `value: None` rather than failing the whole build.
-    pub fn build(design: VpiHandle) -> Result<DesignModel, db::DbError> {
-        Ok(Self::from_db(&db::Db::build(design)?))
-    }
-
     /// Shape an owned [`db::Db`] into the model structures.
     ///
-    /// Fully owned: the returned model shares nothing with the database or
-    /// the VPI session it was built from.
+    /// Fully owned: the returned model shares nothing with the database.
     pub fn from_db(db: &db::Db) -> DesignModel {
         let top_instances = db
             .tops()
@@ -346,11 +317,6 @@ impl DesignModel {
         }
     }
 
-    /// Find an instance by exact full name (e.g. `"top.u0"`).
-    ///
-    /// Surelog prefixes instance full names with the design unit
-    /// (`"work@top.u0"`); this method also accepts the name with that
-    /// `<library>@` prefix stripped, so both spellings match.
     pub fn instance(&self, full_name: &str) -> Option<&InstanceModel> {
         fn strip_lib(s: &str) -> &str {
             s.split_once('@').map(|(_, rest)| rest).unwrap_or(s)
@@ -415,9 +381,8 @@ fn instance_from_db(db: &db::Db, id: NodeId) -> InstanceModel {
                 _ => return None,
             };
             let name = db.node(*c).name.as_str();
-            // UHDM exposes the backing net/variable for many ports as a
-            // sibling of the port object.  Signals are internal-only in the
-            // explorer, so do not duplicate formal ports here.
+            // Signals are internal-only in the explorer, so do not duplicate
+            // the port's backing declaration here.
             if port_names.contains(name) {
                 return None;
             }
@@ -446,6 +411,7 @@ fn instance_from_db(db: &db::Db, id: NodeId) -> InstanceModel {
         .iter()
         .flat_map(|c| match db.node_kind(*c) {
             db::NodeKind::GenScopeArray => gen_scopes_from_db(db, *c),
+            db::NodeKind::GenScope => vec![gen_scope_from_db(db, *c, None)],
             _ => Vec::new(),
         })
         .collect();
@@ -459,6 +425,7 @@ fn instance_from_db(db: &db::Db, id: NodeId) -> InstanceModel {
                 is_task,
                 automatic,
                 ret,
+                ..
             } => Some(FuncDef {
                 name: db.node(*c).name.clone(),
                 is_task: *is_task,
@@ -544,7 +511,7 @@ fn model_direction(direction: db::Direction) -> Direction {
         db::Direction::Mixed
         | db::Direction::None
         | db::Direction::Ref
-        | db::Direction::Unknown(_) => Direction::None,
+        | db::Direction::Unsupported => Direction::None,
     }
 }
 
@@ -582,16 +549,16 @@ fn package_from_db(db: &db::Db, id: NodeId) -> PackageDef {
             _ => None,
         })
         .collect();
-    let enum_consts = node
-        .children
-        .iter()
-        .filter_map(|c| match db.node_kind(*c) {
+    let enum_consts = db
+        .node_ids()
+        .filter(|candidate| is_descendant_of(db, *candidate, id))
+        .filter_map(|c| match db.node_kind(c) {
             db::NodeKind::EnumConst { value } => Some(EnumConstDef {
-                name: db.node(*c).name.clone(),
+                name: db.node(c).name.clone(),
                 value: value.clone(),
-                file: db.node(*c).file.clone(),
-                line: db.node(*c).line,
-                col: db.node(*c).col,
+                file: db.node(c).file.clone(),
+                line: db.node(c).line,
+                col: db.node(c).col,
             }),
             _ => None,
         })
@@ -606,6 +573,16 @@ fn package_from_db(db: &db::Db, id: NodeId) -> PackageDef {
     }
 }
 
+fn is_descendant_of(db: &db::Db, mut node: NodeId, ancestor: NodeId) -> bool {
+    while let Some(parent) = db.node(node).parent {
+        if parent == ancestor {
+            return true;
+        }
+        node = parent;
+    }
+    false
+}
+
 fn class_from_db(db: &db::Db, id: NodeId) -> ClassDef {
     let node = db.node(id);
     let scope = clean_name(&node.name).to_owned();
@@ -617,11 +594,11 @@ fn class_from_db(db: &db::Db, id: NodeId) -> ClassDef {
                 is_task,
                 automatic,
                 ret,
+                ..
             } => {
                 let name = db.node(*c).name.clone();
-                // `function new()` returns the implicit class handle in UHDM;
-                // SystemVerilog source does not spell a return type, so the
-                // constructor projects as void.
+                // SystemVerilog does not spell a return type for `new`, so
+                // the constructor projects as void.
                 let ret = if name == "new" { None } else { ret.clone() };
                 Some(FuncDef {
                     name,
@@ -663,24 +640,23 @@ fn class_from_db(db: &db::Db, id: NodeId) -> ClassDef {
     }
 }
 
-/// Strip a Surelog library prefix (`lib@name` → `name`) from a design name.
 fn clean_name(name: &str) -> &str {
-    match name.split_once('@') {
-        Some((_, rest)) if !rest.is_empty() => rest,
-        _ => name,
-    }
+    name
 }
 
 fn port_from_db(db: &db::Db, id: NodeId) -> PortModel {
     let node = db.node(id);
-    let (direction, low) = match &node.kind {
-        db::NodeKind::Port { direction, low, .. } => (model_direction(*direction), *low),
-        _ => (Direction::None, None),
+    let (direction, ty, low) = match &node.kind {
+        db::NodeKind::Port {
+            direction, ty, low, ..
+        } => (model_direction(*direction), ty.clone(), *low),
+        _ => (Direction::None, TypeInfo::default(), None),
     };
-    // The port's type is the type of the net/var its low connection binds to
-    // (the child-side signal), which the database resolved during the walk.
-    let ty = low
-        .and_then(|lid| signal_type_of(db, lid))
+    // Incomplete diagnostic snapshots can lack a direct port type but still
+    // retain the child-side declaration that the port binds to.
+    let ty = (ty != TypeInfo::default())
+        .then_some(ty)
+        .or_else(|| low.and_then(|id| signal_type_of(db, id)))
         .unwrap_or_default();
     PortModel {
         name: node.name.clone(),
@@ -703,164 +679,44 @@ fn gen_scopes_from_db(db: &db::Db, gsa_id: NodeId) -> Vec<GenScopeModel> {
     gsa.children
         .iter()
         .filter(|c| matches!(db.node_kind(**c), db::NodeKind::GenScope))
-        .map(|g| {
-            let scope = db.node(*g);
-            let name = if scope.name.is_empty() {
-                gsa.name.clone()
-            } else {
-                scope.name.clone()
-            };
-            let params = scope
-                .children
-                .iter()
-                .filter_map(|c| match db.node_kind(*c) {
-                    db::NodeKind::Param { ty, value, local } => Some(ParamModel {
-                        name: db.node(*c).name.clone(),
-                        value: value.clone(),
-                        ty: ty.clone(),
-                        local: *local,
-                    }),
-                    _ => None,
-                })
-                .collect();
-            let children = scope
-                .children
-                .iter()
-                .filter(|&c| matches!(db.node_kind(*c), db::NodeKind::ModuleInst { .. }))
-                .map(|c| instance_from_db(db, *c))
-                .collect();
-            GenScopeModel {
-                name,
-                full_name: if scope.full_name.is_empty() {
-                    gsa.full_name.clone()
-                } else {
-                    scope.full_name.clone()
-                },
-                params,
-                children,
-            }
-        })
+        .map(|g| gen_scope_from_db(db, *g, Some(gsa_id)))
         .collect()
 }
 
-// ── Typespec handling ─────────────────────────────────────────────────────────
-
-/// Compute `(width, signed)` from a typespec handle, following `ref_typespec`
-/// `vpiActual` chains (guarded against cycles).  `None` when the width cannot
-/// be determined (unsized/unknown, arrays, unresolvable range bounds, …).
-///
-/// Exposed for future codegen use.
-pub fn typespec_info(ts: VpiHandle) -> Option<(u32, bool)> {
-    let mut visited: HashSet<(i32, String)> = HashSet::new();
-    let mut current: Option<OwnedHandle> = None;
-    loop {
-        let cur = current.as_ref().map_or(ts, OwnedHandle::raw);
-        let t = vpi::obj_type(cur);
-        // `vpiType` reports the *VPI-mapped* type (e.g. vpiRefTypespec), not
-        // the raw UHDM discriminant.
-        if t == vpi::vpiRefTypespec {
-            if !visited.insert((t, vpi::obj_full_name(cur))) {
-                return None;
-            }
-            current = Some(match current.as_ref() {
-                Some(owner) => owner.child(vpi::vpiActual)?,
-                None => vpi::handle(vpi::vpiActual, ts)?,
-            });
-            continue;
-        }
-        return concrete_typespec_info(cur, t);
+fn gen_scope_from_db(db: &db::Db, scope_id: NodeId, array: Option<NodeId>) -> GenScopeModel {
+    let scope = db.node(scope_id);
+    let fallback = array.map(|id| db.node(id));
+    let params = scope
+        .children
+        .iter()
+        .filter_map(|c| match db.node_kind(*c) {
+            db::NodeKind::Param { ty, value, local } => Some(ParamModel {
+                name: db.node(*c).name.clone(),
+                value: value.clone(),
+                ty: ty.clone(),
+                local: *local,
+            }),
+            _ => None,
+        })
+        .collect();
+    let children = scope
+        .children
+        .iter()
+        .filter(|&c| matches!(db.node_kind(*c), db::NodeKind::ModuleInst { .. }))
+        .map(|c| instance_from_db(db, *c))
+        .collect();
+    GenScopeModel {
+        name: if scope.name.is_empty() {
+            fallback.map_or_else(String::new, |node| node.name.clone())
+        } else {
+            scope.name.clone()
+        },
+        full_name: if scope.full_name.is_empty() {
+            fallback.map_or_else(String::new, |node| node.full_name.clone())
+        } else {
+            scope.full_name.clone()
+        },
+        params,
+        children,
     }
-}
-
-/// Width/signedness of a concrete (non-ref) typespec object.
-fn concrete_typespec_info(ts: VpiHandle, t: i32) -> Option<(u32, bool)> {
-    let signed = vpi::get(vpi::vpiSigned, ts) != 0;
-    match t {
-        vpi::vpiIntTypespec | vpi::vpiIntegerTypespec | vpi::vpiTimeTypespec => Some((32, signed)),
-        vpi::vpiLongIntTypespec => Some((64, signed)),
-        vpi::vpiByteTypespec => Some((8, true)),
-        vpi::vpiShortIntTypespec => Some((16, signed)),
-        vpi::vpiLogicTypespec | vpi::vpiBitTypespec | vpi::vpiPackedArrayTypespec => {
-            range_width(ts).map(|w| (w, signed))
-        }
-        vpi::vpiEnumTypespec => {
-            let base = vpi::handle(vpi::vpiBaseTypespec, ts)?;
-            typespec_info(base.raw())
-        }
-        vpi::vpiStructTypespec | vpi::vpiUnionTypespec => struct_width(ts).map(|w| (w, signed)),
-        // Arrays, strings, reals, classes and unknown types are v1-unsized.
-        _ => None,
-    }
-}
-
-/// Packed width of a logic/bit typespec: product of `|left - right| + 1`
-/// across all `vpiRange`s; 1 when there is no range.
-fn range_width(ts: VpiHandle) -> Option<u32> {
-    let mut total: u64 = 1;
-    let mut any = false;
-    for r in iter(vpi::vpiRange, ts) {
-        any = true;
-        let l = vpi::handle(vpi::vpiLeftRange, r.raw());
-        let rr = vpi::handle(vpi::vpiRightRange, r.raw());
-        // Borrow the OwnedHandles so they stay alive while the raw bound
-        // handles below are read (a raw pointer from a dropped OwnedHandle
-        // would have been released already).
-        let (lh, rh) = match (&l, &rr) {
-            (Some(l), Some(r)) => (l.raw(), r.raw()),
-            _ => return None,
-        };
-        let lv = const_i128(lh)?;
-        let rv = const_i128(rh)?;
-        let dim = (lv - rv).abs() + 1;
-        if dim <= 0 || dim > (1 << 24) {
-            return None;
-        }
-        total = total.saturating_mul(dim as u64);
-    }
-    if !any {
-        return Some(1);
-    }
-    if total == 0 || total > (1 << 24) {
-        None
-    } else {
-        Some(total as u32)
-    }
-}
-
-/// Sum of member widths for a struct/union typespec.
-fn struct_width(ts: VpiHandle) -> Option<u32> {
-    let mut total: u64 = 0;
-    let mut any = false;
-    for m in iter(vpi::vpiTypespecMember, ts) {
-        let mts = vpi::handle(vpi::vpiTypespec, m.raw())?;
-        let (w, _) = typespec_info(mts.raw())?;
-        total = total.saturating_add(w as u64);
-        any = true;
-    }
-    if !any {
-        return None;
-    }
-    if total > (1 << 24) {
-        None
-    } else {
-        Some(total as u32)
-    }
-}
-
-/// Read a range-bound constant as an integer.  Elaborated output folds every
-/// bound to a `constant`; anything else (operations, X/Z) yields `None`.
-fn const_i128(h: VpiHandle) -> Option<i128> {
-    match vpi::read_value(h) {
-        ValueData::Int(v) => Some(v as i128),
-        ValueData::UInt(v) => Some(v as i128),
-        ValueData::Scalar(v) => Some(v as i128),
-        _ => None,
-    }
-}
-
-/// Collect owned child handles of a 1-to-many relationship.
-fn iter(type_: i32, obj: VpiHandle) -> Vec<OwnedHandle> {
-    vpi::iterate(type_, obj)
-        .map(|it| it.collect())
-        .unwrap_or_default()
 }

@@ -449,7 +449,7 @@ impl Backend {
         root.all_diagnostics = all;
         // Feature-serving gate: an analysis replaces the retained snapshot
         // when it carries servable navigation data — best-effort for
-        // Parse/Compile outcomes (Surelog still elaborated the surviving
+        // Parse/Compile outcomes (Slang still elaborated the surviving
         // files), never for Fatal ones.  An analysis without feature data
         // neither replaces nor clears the snapshot: before the first
         // servable commit the root keeps serving None.  Watcher

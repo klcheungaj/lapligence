@@ -42,7 +42,9 @@ module tb;
             $finish;
         end
 
-        octet_queue.insert(1.5, 4.5);
+        // Queue indices are integral; the real element still exercises the
+        // method formal's assignment conversion.
+        octet_queue.insert(2, 4.5);
         wide_queue.push_back(2.5);
         if (octet_queue.size() !== 5 || octet_queue[2] !== 8'h05 ||
             octet_queue[3] !== 8'h33 || wide_queue[2] !== 128'd3) begin

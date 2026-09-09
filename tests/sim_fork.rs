@@ -1,16 +1,16 @@
-//! End-to-end fork/join simulator tests: Surelog compile → codegen → C
+//! End-to-end fork/join simulator tests: Slang compile → codegen → C
 //! compile → run, asserting the exact stdout against hand-simulated traces.
 //!
-//! Surelog writes `slpp_all/` into the process working directory, so the
+//! These tests temporarily change the process working directory, so the
 //! tests run with the CWD pointed at a fresh temp dir (serialized through a
-//! mutex, like the other Surelog integration tests).
+//! mutex, to avoid process-wide CWD races).
 
 use std::sync::Mutex;
 
 #[path = "support/sim.rs"]
 mod sim_harness;
 
-static SURELOG_LOCK: Mutex<()> = Mutex::new(());
+static CWD_LOCK: Mutex<()> = Mutex::new(());
 
 /// Compile `sv` (top module `top`), codegen, compile the model with the
 /// runtime + libaco and run it; returns the captured stdout.  Each call uses
@@ -58,7 +58,7 @@ fn fork_join_waits_for_all_children() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
+    let _guard = CWD_LOCK.lock().unwrap();
     let stdout = run_design(JOIN_SV, "tb", "join").expect("simulation should run");
     assert_eq!(
         stdout,
@@ -104,7 +104,7 @@ fn fork_join_any_resumes_on_first_branch() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
+    let _guard = CWD_LOCK.lock().unwrap();
     let stdout = run_design(JOIN_ANY_SV, "tb", "joinany").expect("simulation should run");
     assert_eq!(
         stdout,
@@ -149,7 +149,7 @@ fn fork_join_none_then_wait_fork() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
+    let _guard = CWD_LOCK.lock().unwrap();
     let stdout = run_design(JOIN_NONE_WAIT_SV, "tb", "joinnone").expect("simulation should run");
     assert_eq!(
         stdout,
@@ -200,7 +200,7 @@ fn disable_fork_discards_killed_children_nbas() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
+    let _guard = CWD_LOCK.lock().unwrap();
     let stdout = run_design(DISABLE_FORK_SV, "tb", "disable").expect("simulation should run");
     assert_eq!(stdout, "after disable at t=0 a=x\n");
 }
@@ -242,7 +242,33 @@ fn fork_join_inside_for_loop() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
+    let _guard = CWD_LOCK.lock().unwrap();
     let stdout = run_design(FORK_IN_FOR_SV, "tb", "for").expect("simulation should run");
     assert_eq!(stdout, "acc=3 at t=3\n");
+}
+
+#[test]
+fn fork_single_sequential_branch_preserves_order_and_delays() {
+    if !llg::sim::build::cmake_available() {
+        eprintln!("SKIP: cmake not available");
+        return;
+    }
+    let _guard = CWD_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+    let source = r#"module tb;
+        integer value;
+        initial begin
+            value = 0;
+            fork
+                begin
+                    #2 value = 1;
+                    #3 value = value + 1;
+                end
+            join
+            $display("value=%0d at t=%0t", value, $time);
+            $finish;
+        end
+    endmodule"#;
+    let stdout = run_design(source, "tb", "single_sequential")
+        .expect("a sequential fork branch should remain one process");
+    assert_eq!(stdout, "value=2 at t=5\n");
 }

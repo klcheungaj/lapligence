@@ -1,7 +1,7 @@
 //! End-to-end simulator tests for signed arithmetic coercion, assignment
 //! context sizing, and the signed 64-bit `INT64_MIN / -1` edge case.
 //!
-//! Each test runs Surelog compile + elaborate, codegen, CMake model build,
+//! Each test runs Slang compile + elaborate, codegen, CMake model build,
 //! and executable simulation, asserting the exact stdout.
 
 #[path = "support/sim.rs"]
@@ -10,14 +10,14 @@ use std::sync::Mutex;
 
 use llg::sim;
 
-static SURELOG_LOCK: Mutex<()> = Mutex::new(());
+static CWD_LOCK: Mutex<()> = Mutex::new(());
 
 fn run_sim(sv: &str, tag: &str) -> Result<String, String> {
     sim_harness::run_sim(sv, "tb", tag)
 }
 
 fn assert_stdout(tag: &str, sv: &str, expected: &str) {
-    let _guard = SURELOG_LOCK.lock().unwrap();
+    let _guard = CWD_LOCK.lock().unwrap();
     let stdout = run_sim(sv, tag).expect("simulation should run");
     assert_eq!(stdout, expected);
 }

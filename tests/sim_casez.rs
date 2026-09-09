@@ -2,7 +2,7 @@
 //! matching (LRM 12.5.1), z-literal display, and `===`/`!==` literal
 //! comparison of X vs Z bits.
 //!
-//! Each test: Surelog compile → codegen → CMake build → run, asserting the exact
+//! Each test: Slang compile → codegen → CMake build → run, asserting the exact
 //! stdout (hand-simulated traces in the comments).
 
 #[path = "support/sim.rs"]

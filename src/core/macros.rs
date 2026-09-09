@@ -1,16 +1,11 @@
 //! macros — preprocessor macro tables backing macro-usage hover.
 //!
-//! Surelog carves `` `define `` directives out of everything its frontend
-//! retains: the preprocessor removes definitions and expands usages before
-//! the main parser runs, so neither the UHDM model nor the parse-tree
-//! FileContents exposed over FFI contain macro information (the pp-level
-//! parse lives in `Design::m_ppFileContents`, internal to preprocessing).
-//! This module therefore recovers a conservative, fully documented
-//! approximation from inputs the LSP already commits:
+//! Slang expands directives before semantic capture, so this module builds a
+//! conservative macro view from the exact source buffers the LSP commits:
 //!
 //! 1. **Config defines seed every file.**  The root's `[compile] defines`
 //!    ([`parse_config_defines`] over `CompileOpts::defines`, i.e. the
-//!    validated `-DNAME[=VALUE]` arguments) act as if defined on the command
+//!    validated `NAME[=VALUE]` entries) act as if defined on the command
 //!    line before any source text of EVERY analyzed file.  They are the
 //!    authoritative base table and hot-reload through config changes.
 //! 2. **In-source directives resolve per file, positionally.**  Each
@@ -60,7 +55,7 @@ pub struct MacroDefinition {
     /// single space; surrounding whitespace is trimmed.  Empty for a bare
     /// `` `define NAME ``.
     pub body: String,
-    /// `true` when seeded from `[compile] defines` (a `-D` argument) rather
+    /// `true` when seeded from `[compile] defines` rather
     /// than from a source `` `define `` directive.
     pub from_config: bool,
     /// Defining source file (`None` for config defines).
@@ -191,19 +186,16 @@ fn is_identifier_continue(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'$'
 }
 
-/// Parse validated `-D` compile arguments (`-DNAME`, `-DNAME=VALUE`) into
+/// Parse validated compile definitions (`NAME`, `NAME=VALUE`) into
 /// config-origin macro definitions.  Entries that do not reduce to a plain
 /// identifier name are dropped defensively (the config layer already
 /// validates them).
 pub fn parse_config_defines(args: &[String]) -> Vec<MacroDefinition> {
     let mut out = Vec::new();
     for arg in args {
-        let Some(rest) = arg.strip_prefix("-D") else {
-            continue;
-        };
-        let (name, value) = match rest.split_once('=') {
+        let (name, value) = match arg.split_once('=') {
             Some((name, value)) => (name, value),
-            None => (rest, ""),
+            None => (arg.as_str(), ""),
         };
         if !is_identifier_start(name.as_bytes().first().copied())
             || !name.bytes().skip(1).all(is_identifier_continue)
@@ -218,7 +210,7 @@ pub fn parse_config_defines(args: &[String]) -> Vec<MacroDefinition> {
 /// Build the whole table: seed every source with the config defines, then run
 /// the single-pass scanner per file.  `sources` pairs absolute paths with the
 /// exact text each file was compiled from (shadow-staged buffer text wins
-/// exactly like it does for Surelog itself).
+/// exactly as it was admitted to Slang).
 pub fn build_table(
     config_defines_args: &[String],
     sources: &[(&str, &str)],
@@ -838,7 +830,7 @@ mod tests {
 
     /// Build a table over one file and return (usages, decls) for it.
     fn scan_one(config: &[&str], text: &str) -> (Vec<MacroUsage>, Vec<MacroDecl>, MacroTable) {
-        let args: Vec<String> = config.iter().map(|c| format!("-D{c}")).collect();
+        let args: Vec<String> = config.iter().map(|define| (*define).to_owned()).collect();
         let table = build_table(&args, &[("t.sv", text)], None);
         let entries = table.files.get("t.sv").expect("scanned file");
         (entries.usages.clone(), entries.decls.clone(), table)
@@ -931,7 +923,7 @@ mod tests {
             "x = `FAKE + `REAL;\n",
             "`define REAL 9\n",
         );
-        let args = vec!["-DREAL=5".to_owned()];
+        let args = vec!["REAL=5".to_owned()];
         let table = build_table(&args, &[("t.sv", text)], None);
         let entries = table.files.get("t.sv").expect("scanned");
         // Only the two usages on the x = line are real.
@@ -1139,7 +1131,7 @@ mod tests {
     #[test]
     fn undefineall_clears_everything() {
         let text = "`undefineall\nx = `GONE;\n";
-        let args = vec!["-DGONE=1".to_owned()];
+        let args = vec!["GONE=1".to_owned()];
         let table = build_table(&args, &[("t.sv", text)], None);
         let usages = &table.files["t.sv"].usages;
         assert!(usages.first().unwrap().definition.is_none());
@@ -1148,7 +1140,7 @@ mod tests {
     #[test]
     fn per_file_scoping_keeps_tables_independent() {
         let text_b = "y = `SHARED;\n";
-        let args = vec!["-DSHARED=cfg".to_owned()];
+        let args = vec!["SHARED=cfg".to_owned()];
         let table = build_table(
             &args,
             &[
@@ -1179,13 +1171,13 @@ mod tests {
     #[test]
     fn parse_config_defines_rejects_non_identifiers() {
         let args = vec![
-            "-DGOOD=1".to_owned(),
-            "-DBARE".to_owned(),
-            "-D_BAD_NAME=x".to_owned(),
-            "NOT_A_FLAG=2".to_owned(),
+            "GOOD=1".to_owned(),
+            "BARE".to_owned(),
+            "_BAD_NAME=x".to_owned(),
+            "9BAD=2".to_owned(),
         ];
-        // Leading underscores are valid SystemVerilog identifiers; only the
-        // entry without the `-D` prefix is dropped.
+        // Leading underscores are valid SystemVerilog identifiers; an entry
+        // beginning with a digit is dropped.
         let defs = parse_config_defines(&args);
         assert_eq!(defs.len(), 3);
         assert_eq!(defs[0].name, "GOOD");

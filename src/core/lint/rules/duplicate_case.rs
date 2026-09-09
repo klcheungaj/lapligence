@@ -1,10 +1,10 @@
 //! `duplicate-case-item` — repeated literal labels in exact-match cases.
 //!
-//! The rule compares only the exact captured literal representation.  It
+//! The rule compares exact owned literal spelling and captured value fields. It
 //! intentionally does not evaluate expressions or normalize radix,
 //! signedness, casts, widths, or extensions.
 
-use crate::core::db::{CaseKind, Db, ExprKind, NodeId, NodeKind, StmtKind};
+use crate::core::db::{CaseKind, ConstantSource, Db, ExprKind, NodeId, NodeKind, StmtKind};
 use crate::core::lint::rules::analysis::all_nodes;
 use crate::core::lint::{LintCtx, LintDiag, LintRule, LintSeverity};
 
@@ -39,21 +39,21 @@ impl LintRule for DuplicateCaseItemRule {
             let mut prior_literals = Vec::new();
             for item in items {
                 for expression in &item.exprs {
-                    if !is_literal(db, *expression) {
+                    let Some(expression) = literal_node(db, *expression) else {
                         continue;
-                    }
+                    };
                     if let Some(first) = prior_literals
                         .iter()
-                        .find(|first| same_literal(db, **first, *expression))
+                        .find(|first| same_literal(db, **first, expression))
                         .copied()
                     {
-                        let later = db.node(*expression);
+                        let later = db.node(expression);
                         let earlier = db.node(first);
                         let line = later.line.max(1);
                         let col = later.col.max(1);
                         let message = format!(
                             "duplicate case item literal {}; earlier identical literal at {}:{}",
-                            literal_description(db, *expression),
+                            literal_description(db, expression),
                             earlier.line,
                             earlier.col
                         );
@@ -74,7 +74,7 @@ impl LintRule for DuplicateCaseItemRule {
                             message,
                         });
                     }
-                    prior_literals.push(*expression);
+                    prior_literals.push(expression);
                 }
             }
         }
@@ -83,17 +83,30 @@ impl LintRule for DuplicateCaseItemRule {
     }
 }
 
-fn is_literal(db: &Db, id: NodeId) -> bool {
-    matches!(db.node_kind(id), NodeKind::Expr(ExprKind::Constant { .. }))
+fn literal_node(db: &Db, mut id: NodeId) -> Option<NodeId> {
+    // Context conversions preserve the source literal's identity. Explicit
+    // casts are expressions and remain outside this rule.
+    for _ in 0..db.nodes().len() {
+        if !db.is_implicit_conversion(id) {
+            return matches!(db.node_kind(id), NodeKind::Expr(ExprKind::Constant { .. }))
+                .then_some(id);
+        }
+        let NodeKind::Expr(ExprKind::Cast { operand, .. }) = db.node_kind(id) else {
+            return None;
+        };
+        id = *operand;
+    }
+    None
 }
 
-/// Compare the captured fields exactly.  `ValueData` deliberately uses its
-/// own `PartialEq`; no radix/value normalization belongs in this rule.
+/// Compare owned spelling and captured fields exactly. Slang normalizes
+/// numeric payloads, so spelling is required to preserve radix distinctions.
 fn same_literal(db: &Db, left: NodeId, right: NodeId) -> bool {
     let NodeKind::Expr(ExprKind::Constant {
         value: left_value,
         size: left_size,
         const_type: left_const_type,
+        source: left_source,
         ..
     }) = db.node_kind(left)
     else {
@@ -103,12 +116,20 @@ fn same_literal(db: &Db, left: NodeId, right: NodeId) -> bool {
         value: right_value,
         size: right_size,
         const_type: right_const_type,
+        source: right_source,
         ..
     }) = db.node_kind(right)
     else {
         return false;
     };
-    left_const_type == right_const_type && left_size == right_size && left_value == right_value
+    let same_spelling = match (left_source, right_source) {
+        (ConstantSource::Exact(left), ConstantSource::Exact(right)) => left == right,
+        _ => false,
+    };
+    same_spelling
+        && left_const_type == right_const_type
+        && left_size == right_size
+        && left_value == right_value
 }
 
 /// Render only owned captured data, with `Debug` escaping for string content.
@@ -124,7 +145,7 @@ fn literal_description(db: &Db, id: NodeId) -> String {
     else {
         return "<literal>".to_string();
     };
-    format!("{:?} (const_type={const_type}, size={size})", value)
+    format!("{:?} (const_type={const_type:?}, size={size})", value)
 }
 
 #[cfg(test)]
@@ -190,6 +211,26 @@ mod tests {
                    b: y = 1'b1;\n\
                  endcase end endmodule\n";
         assert!(check(sv).is_empty(), "references are not literal labels");
+    }
+
+    #[test]
+    fn explicit_casts_and_different_literal_spellings_are_quiet() {
+        let sv = "module t; logic [1:0] sel, y; always_comb case (sel)
+\
+                  2'd0: y = 0;
+\
+                  2'b00: y = 1;
+\
+                  2'(1): y = 0;
+\
+                  2'(1): y = 1;
+\
+                  endcase endmodule
+";
+        assert!(
+            check(sv).is_empty(),
+            "source identity is not numeric equivalence"
+        );
     }
 
     #[test]

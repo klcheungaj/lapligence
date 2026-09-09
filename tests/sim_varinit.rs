@@ -1,14 +1,12 @@
 //! End-to-end simulator tests for scalar VARIABLE declaration initializers
-//! (`logic l = 1'b0;`, `int x = 5;` — the form whose init lives on the var's
-//! `vpiExpr`, captured by `core::db` in `Db::vars_init`): Surelog compile →
-//! codegen → CMake build → run.
+//! (`logic l = 1'b0;`, `int x = 5;`, captured by `core::db` in
+//! `Db::vars_init`): Slang compile → codegen → CMake build → run.
 //!
-//! The `reg`/`wire` initializer forms (which surface as `vpiNetDeclAssign`
-//! continuous assignments) are covered in `tests/sim_geninit.rs`.
+//! The `reg`/`wire` initializer forms are covered in `tests/sim_geninit.rs`.
 //!
-//! Surelog writes `slpp_all/` into the process working directory, so each
+//! These tests temporarily change the process working directory, so each
 //! test runs with the CWD pointed at a fresh temp dir (serialized through a
-//! mutex, like the other Surelog integration tests).
+//! mutex, to avoid process-wide CWD races).
 
 use llg::core::compile;
 use llg::sim;
@@ -22,7 +20,7 @@ fn run_sim(sv: &str, tag: &str) -> Result<String, String> {
 }
 
 /// Variable declaration initializers (`logic l = 1'b0;`, `logic [7:0] v =
-/// 8'ha5;`, `int x = 5;` — the var-`vpiExpr` form, previously left X) must be
+/// 8'ha5;`, `int x = 5;`, previously left X) must be
 /// applied in `main()` before any process runs, so a t=0 `$display` sees the
 /// declared values.
 ///
@@ -160,7 +158,7 @@ fn sim_var_init_nonconst_rejected() {
 endmodule
 "#;
 
-    let result = sim_harness::with_surelog_temp_cwd("varnc", |dir| {
+    let result = sim_harness::with_frontend_temp_cwd("varnc", |dir| {
         let source = dir.join("var_nonconst.sv");
         std::fs::write(&source, sv).map_err(|error| format!("write source: {error}"))?;
         let out = compile::compile(&compile::CompileOpts {
@@ -172,8 +170,9 @@ endmodule
         if !out.ok() {
             return Err(format!("compile diagnostics: {:?}", out.diagnostics));
         }
-        let design = out.uhdm_design().ok_or("no UHDM design")?;
-        sim::codegen::generate(design)
+        let db =
+            llg::core::db::Db::from_slang(&out.snapshot).map_err(|error| format!("db: {error}"))?;
+        sim::codegen::generate(&db)
             .map(|_| ())
             .map_err(|error| error.to_string())
     });

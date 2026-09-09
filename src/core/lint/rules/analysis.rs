@@ -1,7 +1,7 @@
 //! Shared analysis helpers for lint rules.
 //!
 //! Read/write collection, expression-width computation, scope/instance
-//! iteration and port-link bookkeeping.  Everything is owned-db based (no VPI
+//! iteration and port-link bookkeeping.  Everything is owned-db based (no native AST
 //! access) and deterministic: results are deduped and returned in
 //! first-encounter order.
 //!
@@ -16,12 +16,13 @@
 //! - `collect_driver_writes` is the active-driver variant used by rules that
 //!   must distinguish `force` from `release`/`deassign`.
 
-#![allow(non_upper_case_globals)] // vpi op-type constants are lowercase by convention
-
 use std::collections::{HashMap, HashSet};
 
-use crate::core::db::{AlwaysKind, Db, Direction, ExprKind, NodeId, NodeKind, StmtKind};
-use crate::ffi::vpi::{self, ValueData};
+use crate::core::db::Operation;
+use crate::core::db::{
+    AlwaysKind, Db, Direction, ExprKind, IntraControl, NodeId, NodeKind, StmtKind,
+};
+use crate::core::value::ValueData;
 
 /// True when `id` is a net, variable or array node.
 pub fn is_signal(db: &Db, id: NodeId) -> bool {
@@ -57,7 +58,7 @@ pub fn object_width(db: &Db, id: NodeId) -> Option<u32> {
 
 /// Computed width of an expression, per LRM self-determined width rules.
 ///
-/// - `Constant` → `vpiSize` (unsized literals like `'1` report size -1 → None).
+/// - `Constant` → captured width (unsized literals like `'1` report size -1 → None).
 /// - `Ref` → width of the referenced object (signal or parameter).
 /// - `BitSelect` → 1; `PartSelect` → `|left - right| + 1`; `IndexedPartSelect`
 ///   → the width expression.
@@ -65,15 +66,19 @@ pub fn object_width(db: &Db, id: NodeId) -> Option<u32> {
 /// - `Operation` → per-op rule (see [`op_width`]).
 /// - Anything else (calls, hier paths, unknown) → `None`.
 pub fn expr_width(db: &Db, id: NodeId) -> Option<u32> {
+    if db.is_implicit_conversion(id) {
+        if let NodeKind::Expr(ExprKind::Cast { operand, .. }) = db.node_kind(id) {
+            return expr_width(db, *operand);
+        }
+    }
     match db.node_kind(id) {
         NodeKind::Expr(ExprKind::Constant { size, value, .. }) => {
             if *size <= 0 {
                 // Unsupported size or unsized literal (`'1`, `'x`): unknown.
                 return None;
             }
-            // Surelog folds `vpiSize` to the LHS width during elaboration but
-            // keeps the literal's full value string; taking the max of the two
-            // still catches real truncation (e.g. `8'hff` into 4 bits).
+            // Preserve explicitly sized literal width when contextual typing
+            // has changed the containing expression's width.
             let size = *size as u32;
             Some(constant_value_bits(value).map_or(size, |b| size.max(b)))
         }
@@ -81,104 +86,97 @@ pub fn expr_width(db: &Db, id: NodeId) -> Option<u32> {
         NodeKind::Expr(ExprKind::BitSelect { .. }) => Some(1),
         NodeKind::Expr(ExprKind::PartSelect { left, right, .. }) => {
             match (const_i128(db, *left), const_i128(db, *right)) {
-                (Some(l), Some(r)) => Some(((l - r).abs() + 1) as u32),
+                (Some(l), Some(r)) => u32::try_from(l.abs_diff(r).checked_add(1)?).ok(),
                 _ => None,
             }
         }
         NodeKind::Expr(ExprKind::IndexedPartSelect { width_expr, .. }) => {
-            expr_width(db, *width_expr)
+            u32::try_from(const_i128(db, *width_expr)?).ok()
         }
         NodeKind::Expr(ExprKind::Cast { ty, .. }) => ty.width,
-        NodeKind::Expr(ExprKind::Operation { op, operands, .. }) => {
-            op_width(db, op.as_raw(), operands)
-        }
+        NodeKind::Expr(ExprKind::Operation { op, operands, .. }) => op_width(db, *op, operands),
         _ => None,
     }
 }
 
 /// Width of an operation result from its operands.
-fn op_width(db: &Db, op: i32, operands: &[NodeId]) -> Option<u32> {
-    use vpi::{
-        vpiAddOp, vpiArithLShiftOp, vpiArithRShiftOp, vpiBitAndOp, vpiBitNegOp, vpiBitOrOp,
-        vpiBitXNorOp, vpiBitXorOp, vpiCaseEqOp, vpiCaseNeqOp, vpiConcatOp, vpiConditionOp,
-        vpiDivOp, vpiEqOp, vpiGeOp, vpiGtOp, vpiLShiftOp, vpiLeOp, vpiLogAndOp, vpiLogOrOp,
-        vpiLtOp, vpiMinusOp, vpiModOp, vpiMultOp, vpiMultiConcatOp, vpiNeqOp, vpiNotOp, vpiPlusOp,
-        vpiPowerOp, vpiRShiftOp, vpiSubOp, vpiUnaryAndOp, vpiUnaryNandOp, vpiUnaryNorOp,
-        vpiUnaryOrOp, vpiUnaryXNorOp, vpiUnaryXorOp, vpiWildEqOp, vpiWildNeqOp,
-    };
+fn op_width(db: &Db, op: Operation, operands: &[NodeId]) -> Option<u32> {
     // Self-determined arithmetic / bitwise ops: max operand width.
     if matches!(
         op,
-        vpiAddOp
-            | vpiSubOp
-            | vpiMultOp
-            | vpiDivOp
-            | vpiModOp
-            | vpiMinusOp
-            | vpiPlusOp
-            | vpiBitNegOp
-            | vpiBitAndOp
-            | vpiBitOrOp
-            | vpiBitXorOp
-            | vpiBitXNorOp
-            | vpiPowerOp
+        Operation::Add
+            | Operation::Subtract
+            | Operation::Multiply
+            | Operation::Divide
+            | Operation::Modulo
+            | Operation::UnaryMinus
+            | Operation::UnaryPlus
+            | Operation::BitwiseNot
+            | Operation::BitwiseAnd
+            | Operation::BitwiseOr
+            | Operation::BitwiseXor
+            | Operation::BitwiseXnor
+            | Operation::Power
     ) {
         return operands.iter().filter_map(|o| expr_width(db, *o)).max();
     }
     // Shifts: width of the left operand (the shift amount is self-determined).
     if matches!(
         op,
-        vpiLShiftOp | vpiRShiftOp | vpiArithLShiftOp | vpiArithRShiftOp
+        Operation::ShiftLeft
+            | Operation::ShiftRight
+            | Operation::ArithmeticShiftLeft
+            | Operation::ArithmeticShiftRight
     ) {
         return operands.first().and_then(|o| expr_width(db, *o));
     }
     // Comparisons, logical and reduction ops produce exactly one bit.
     if matches!(
         op,
-        vpiEqOp
-            | vpiNeqOp
-            | vpiCaseEqOp
-            | vpiCaseNeqOp
-            | vpiWildEqOp
-            | vpiWildNeqOp
-            | vpiGtOp
-            | vpiGeOp
-            | vpiLtOp
-            | vpiLeOp
-            | vpiLogAndOp
-            | vpiLogOrOp
-            | vpiNotOp
-            | vpiUnaryAndOp
-            | vpiUnaryNandOp
-            | vpiUnaryOrOp
-            | vpiUnaryNorOp
-            | vpiUnaryXorOp
-            | vpiUnaryXNorOp
+        Operation::Equal
+            | Operation::NotEqual
+            | Operation::CaseEqual
+            | Operation::CaseNotEqual
+            | Operation::WildEqual
+            | Operation::WildNotEqual
+            | Operation::Greater
+            | Operation::GreaterEqual
+            | Operation::Less
+            | Operation::LessEqual
+            | Operation::LogicalAnd
+            | Operation::LogicalOr
+            | Operation::LogicalNot
+            | Operation::ReductionAnd
+            | Operation::ReductionNand
+            | Operation::ReductionOr
+            | Operation::ReductionNor
+            | Operation::ReductionXor
+            | Operation::ReductionXnor
     ) {
         return Some(1);
     }
-    if op == vpiConcatOp {
+    if op == Operation::Concat {
         // Sum of operand widths; unknown operand → unknown total.
-        return operands
-            .iter()
-            .map(|o| expr_width(db, *o))
-            .sum::<Option<u32>>();
+        return operands.iter().try_fold(0_u32, |width, operand| {
+            width.checked_add(expr_width(db, *operand)?)
+        });
     }
-    if op == vpiMultiConcatOp {
+    if op == Operation::MultiConcat {
         // Replication: first operand is the repeat count, the rest are parts.
         return match (
-            operands.first().and_then(|o| expr_width(db, *o)),
             operands
-                .iter()
-                .skip(1)
-                .map(|o| expr_width(db, *o))
-                .sum::<Option<u32>>(),
+                .first()
+                .and_then(|o| const_i128(db, *o))
+                .and_then(|count| u32::try_from(count).ok()),
+            operands.iter().skip(1).try_fold(0_u32, |width, operand| {
+                width.checked_add(expr_width(db, *operand)?)
+            }),
         ) {
-            (Some(count), Some(parts)) => Some(count * parts),
+            (Some(count), Some(parts)) => count.checked_mul(parts),
             _ => None,
         };
     }
-    if op == vpiConditionOp {
+    if op == Operation::Conditional {
         // Mux: width of the data branches (skip the selector).
         return operands
             .iter()
@@ -193,12 +191,7 @@ fn op_width(db: &Db, op: i32, operands: &[NodeId]) -> Option<u32> {
 /// int/uint/scalar constant.
 pub fn const_i128(db: &Db, id: NodeId) -> Option<i128> {
     match db.node_kind(id) {
-        NodeKind::Expr(ExprKind::Constant { value, .. }) => match value {
-            ValueData::Int(v) => Some(*v as i128),
-            ValueData::UInt(v) => Some(*v as i128),
-            ValueData::Scalar(v) => Some(*v as i128),
-            _ => None,
-        },
+        NodeKind::Expr(ExprKind::Constant { value, .. }) => value.to_i128(),
         _ => None,
     }
 }
@@ -218,6 +211,7 @@ fn constant_value_bits(value: &ValueData) -> Option<u32> {
         ValueData::Int(v) => Some(bits_needed(v.unsigned_abs() as u128)),
         ValueData::UInt(v) => Some(bits_needed(*v as u128)),
         ValueData::Scalar(_) => Some(1),
+        ValueData::Vector { bit_width, .. } => u32::try_from(*bit_width).ok(),
         _ => None,
     }
 }
@@ -268,10 +262,33 @@ pub fn collect_driver_writes(db: &Db, root: NodeId) -> Vec<NodeId> {
 
 fn walk_reads(db: &Db, node: NodeId, seen: &mut HashSet<NodeId>, out: &mut Vec<NodeId>) {
     match db.node_kind(node) {
-        NodeKind::Stmt(StmtKind::Assign { .. })
-        | NodeKind::Stmt(StmtKind::ProcContAssign { .. })
-        | NodeKind::Stmt(StmtKind::Force { .. })
-        | NodeKind::ContAssign { .. } => {
+        NodeKind::Stmt(StmtKind::DelayControl { delay })
+        | NodeKind::Stmt(StmtKind::Assign {
+            delay: Some(IntraControl::Delay(delay)),
+            ..
+        }) => walk_reads(db, *delay, seen, out),
+        _ => {}
+    }
+    match db.node_kind(node) {
+        NodeKind::Stmt(StmtKind::ProcContAssign { lhs, rhs } | StmtKind::Force { lhs, rhs }) => {
+            walk_reads(db, *rhs, seen, out);
+            walk_lhs_select_reads(db, *lhs, seen, out);
+            return;
+        }
+        NodeKind::Stmt(StmtKind::VariableDecl { declaration }) => {
+            if let Some(initializer) = db.var_initializer(*declaration) {
+                walk_reads(db, initializer, seen, out);
+            }
+            return;
+        }
+        NodeKind::Expr(ExprKind::NewArray { size, initializer }) => {
+            walk_reads(db, *size, seen, out);
+            if let Some(initializer) = initializer {
+                walk_reads(db, *initializer, seen, out);
+            }
+            return;
+        }
+        NodeKind::Stmt(StmtKind::Assign { .. }) | NodeKind::ContAssign { .. } => {
             if let Some(rhs) = db.node(node).children.get(1) {
                 walk_reads(db, *rhs, seen, out);
             }
@@ -344,12 +361,22 @@ fn add_read(db: &Db, node: NodeId, seen: &mut HashSet<NodeId>, out: &mut Vec<Nod
 
 fn walk_writes(db: &Db, node: NodeId, seen: &mut HashSet<NodeId>, out: &mut Vec<NodeId>) {
     match db.node_kind(node) {
-        NodeKind::Stmt(StmtKind::Assign { .. })
-        | NodeKind::Stmt(StmtKind::ProcContAssign { .. })
-        | NodeKind::Stmt(StmtKind::Force { .. })
-        | NodeKind::Stmt(StmtKind::Release { .. })
-        | NodeKind::Stmt(StmtKind::Deassign { .. })
-        | NodeKind::ContAssign { .. } => {
+        NodeKind::Stmt(
+            StmtKind::ProcContAssign { lhs, .. }
+            | StmtKind::Force { lhs, .. }
+            | StmtKind::Release { lhs }
+            | StmtKind::Deassign { lhs },
+        ) => {
+            add_lhs_write(db, *lhs, seen, out);
+            return;
+        }
+        NodeKind::Stmt(StmtKind::VariableDecl { declaration }) => {
+            if db.var_initializer(*declaration).is_some() {
+                add_lhs_write(db, *declaration, seen, out);
+            }
+            return;
+        }
+        NodeKind::Stmt(StmtKind::Assign { .. }) | NodeKind::ContAssign { .. } => {
             if let Some(lhs) = db.node(node).children.first() {
                 add_lhs_write(db, *lhs, seen, out);
             }
@@ -364,10 +391,17 @@ fn walk_writes(db: &Db, node: NodeId, seen: &mut HashSet<NodeId>, out: &mut Vec<
 
 fn walk_driver_writes(db: &Db, node: NodeId, seen: &mut HashSet<NodeId>, out: &mut Vec<NodeId>) {
     match db.node_kind(node) {
-        NodeKind::Stmt(StmtKind::Assign { .. })
-        | NodeKind::Stmt(StmtKind::ProcContAssign { .. })
-        | NodeKind::Stmt(StmtKind::Force { .. })
-        | NodeKind::ContAssign { .. } => {
+        NodeKind::Stmt(StmtKind::ProcContAssign { lhs, .. } | StmtKind::Force { lhs, .. }) => {
+            add_driver_lhs_write(db, *lhs, seen, out);
+            return;
+        }
+        NodeKind::Stmt(StmtKind::VariableDecl { declaration }) => {
+            if db.var_initializer(*declaration).is_some() {
+                add_driver_lhs_write(db, *declaration, seen, out);
+            }
+            return;
+        }
+        NodeKind::Stmt(StmtKind::Assign { .. }) | NodeKind::ContAssign { .. } => {
             if let Some(lhs) = db.node(node).children.first() {
                 add_driver_lhs_write(db, *lhs, seen, out);
             }
@@ -506,7 +540,7 @@ pub fn scope_path(db: &Db, id: NodeId) -> String {
             node.kind,
             NodeKind::ModuleInst { .. } | NodeKind::GenScopeArray | NodeKind::GenScope
         ) {
-            let name = strip_lib(&node.name);
+            let name = node.name.as_str();
             if !name.is_empty() {
                 parts.push(name.to_string());
             }
@@ -515,108 +549,6 @@ pub fn scope_path(db: &Db, id: NodeId) -> String {
     }
     parts.reverse();
     parts.join(".")
-}
-
-/// Arena nodes of Surelog's SYNTHESIZED per-port COPY interface instances.
-///
-/// For every interface-typed port of an instance, Surelog clones the whole
-/// interface into the child module as one synthetic interface instance per
-/// port (named after the port).  These copies are implementation views, not
-/// user-written instantiation sites: their ports carry no parent-side
-/// connection by construction.  Identification starts exactly like
-/// `sim::codegen::Codegen::collect_iface_copies`: a copy is the `low`
-/// connection target of some port — either directly (bare interface port) or
-/// through the copy's modport whose parent is the copy instance — reachable
-/// from any top through child instances and generate scopes.
-///
-/// The pinned Surelog additionally emits an UNWIRED twin clone next to the wired
-/// one for bare-interface ports (verified empirically; the twin is referenced
-/// by nothing).  Those twins are caught conservatively: a sibling interface
-/// instance sharing a wired copy's (parent, name) can only be another clone
-/// of the same port view — SystemVerilog forbids two same-named instances in
-/// one scope, so a user-written instance can never match.
-pub fn iface_copy_instances(db: &Db) -> HashSet<NodeId> {
-    /// Interface instances grouped by (parent scope, raw name).
-    fn collect_iface_groups(
-        db: &Db,
-        inst: NodeId,
-        groups: &mut HashMap<(NodeId, String), Vec<NodeId>>,
-    ) {
-        for c in &db.node(inst).children {
-            match db.node_kind(*c) {
-                NodeKind::ModuleInst {
-                    is_interface: true, ..
-                } => {
-                    groups
-                        .entry((inst, db.node(*c).name.clone()))
-                        .or_default()
-                        .push(*c);
-                    collect_iface_groups(db, *c, groups);
-                }
-                NodeKind::ModuleInst { .. } => collect_iface_groups(db, *c, groups),
-                NodeKind::GenScopeArray => {
-                    for gs in &db.node(*c).children {
-                        if matches!(db.node_kind(*gs), NodeKind::GenScope) {
-                            collect_iface_groups(db, *gs, groups);
-                        }
-                    }
-                }
-                _ => {}
-            }
-        }
-    }
-
-    /// The `low`-reachable wired copies (mirrors codegen's collector).
-    fn walk_wired(db: &Db, inst: NodeId, out: &mut HashSet<NodeId>) {
-        for c in &db.node(inst).children {
-            match db.node_kind(*c) {
-                NodeKind::Port { low: Some(l), .. } => match db.node_kind(*l) {
-                    NodeKind::ModPort => {
-                        if let Some(iface) = db.node(*l).parent {
-                            if matches!(
-                                db.node_kind(iface),
-                                NodeKind::ModuleInst {
-                                    is_interface: true,
-                                    ..
-                                }
-                            ) {
-                                out.insert(iface);
-                            }
-                        }
-                    }
-                    NodeKind::ModuleInst {
-                        is_interface: true, ..
-                    } => {
-                        out.insert(*l);
-                    }
-                    _ => {}
-                },
-                NodeKind::ModuleInst { .. } => walk_wired(db, *c, out),
-                NodeKind::GenScopeArray => {
-                    for gs in &db.node(*c).children {
-                        if matches!(db.node_kind(*gs), NodeKind::GenScope) {
-                            walk_wired(db, *gs, out);
-                        }
-                    }
-                }
-                _ => {}
-            }
-        }
-    }
-
-    let mut wired = HashSet::new();
-    let mut groups = HashMap::new();
-    for top in db.tops() {
-        walk_wired(db, *top, &mut wired);
-        collect_iface_groups(db, *top, &mut groups);
-    }
-    let mut out = wired;
-    for (_scope, members) in groups {
-        if members.iter().any(|m| out.contains(m)) {
-            out.extend(members);
-        }
-    }
-    out
 }
 
 /// Display path of the scope declaring `sig` (its parent scope); empty when
@@ -628,12 +560,7 @@ pub fn signal_scope_path(db: &Db, sig: NodeId) -> String {
         .unwrap_or_default()
 }
 
-/// Strip the `lib@` prefix Surelog puts on library-qualified names.
-pub(crate) fn strip_lib(s: &str) -> &str {
-    s.split_once('@').map(|(_, rest)| rest).unwrap_or(s)
-}
-
-/// Every signal connected to a port (as `vpiHighConn` or `vpiLowConn`).
+/// Every signal connected to a port on either side of a binding.
 ///
 /// Port-connected signals are exempt from the unused-signal rule: the port
 /// binding is the use.
@@ -694,7 +621,7 @@ pub fn port_link_drivers(db: &Db) -> HashMap<NodeId, u32> {
                         (*low, *high)
                     }
                 }
-                Direction::Mixed | Direction::None | Direction::Ref | Direction::Unknown(_) => {
+                Direction::Mixed | Direction::None | Direction::Ref | Direction::Unsupported => {
                     (None, None)
                 }
             };
@@ -751,7 +678,7 @@ pub fn connected_port_link_drivers(db: &Db) -> HashSet<NodeId> {
                         out.insert(*sig);
                     }
                 }
-                Direction::Mixed | Direction::None | Direction::Ref | Direction::Unknown(_) => {}
+                Direction::Mixed | Direction::None | Direction::Ref | Direction::Unsupported => {}
             }
         }
     }
@@ -808,7 +735,7 @@ pub fn port_link_reads(db: &Db) -> HashSet<NodeId> {
                         out.insert(*sig);
                     }
                 }
-                Direction::Mixed | Direction::None | Direction::Ref | Direction::Unknown(_) => {}
+                Direction::Mixed | Direction::None | Direction::Ref | Direction::Unsupported => {}
             }
         }
     }
@@ -1032,6 +959,36 @@ mod tests {
     }
 
     #[test]
+    fn procedural_drivers_use_typed_operands_for_reads_and_writes() {
+        let db = db_of(
+            "module t; reg q, source; initial begin \
+             force q = source; release q; assign q = source; deassign q; end endmodule",
+        );
+        let q = find_signal(&db, "q");
+        let source = find_signal(&db, "source");
+        let mut assignments = 0;
+        let mut cancellations = 0;
+        for id in db.node_ids() {
+            match db.node_kind(id) {
+                NodeKind::Stmt(StmtKind::Force { .. } | StmtKind::ProcContAssign { .. }) => {
+                    assert_eq!(collect_reads(&db, id), vec![source]);
+                    assert_eq!(collect_writes(&db, id), vec![q]);
+                    assert_eq!(collect_driver_writes(&db, id), vec![q]);
+                    assignments += 1;
+                }
+                NodeKind::Stmt(StmtKind::Release { .. } | StmtKind::Deassign { .. }) => {
+                    assert!(collect_reads(&db, id).is_empty());
+                    assert_eq!(collect_writes(&db, id), vec![q]);
+                    assert!(collect_driver_writes(&db, id).is_empty());
+                    cancellations += 1;
+                }
+                _ => {}
+            }
+        }
+        assert_eq!((assignments, cancellations), (2, 2));
+    }
+
+    #[test]
     fn collect_writes_finds_assign_and_cont_assign_lhs() {
         let db = db_of(
             "module t; logic clk, a, b; always @(posedge clk) a <= b; assign b = a; endmodule",
@@ -1065,6 +1022,27 @@ mod tests {
             .expect("a process");
         let reads = collect_reads(&db, proc);
         assert!(reads.contains(&clk), "posedge clk is a read");
+    }
+
+    #[test]
+    fn collect_reads_includes_statement_and_assignment_delay_values() {
+        let db = db_of(
+            "module t; int before_delay, assignment_delay; logic x; \
+             initial begin #before_delay x = #assignment_delay 1'b0; end endmodule",
+        );
+        let process = db
+            .tops()
+            .iter()
+            .flat_map(|top| db.node(*top).children.iter().copied())
+            .find(|id| matches!(db.node_kind(*id), NodeKind::Process { .. }))
+            .expect("initial process");
+        let reads = collect_reads(&db, process);
+        assert!(reads.contains(&find_signal(&db, "before_delay")));
+        assert!(reads.contains(&find_signal(&db, "assignment_delay")));
+        assert!(
+            !reads.contains(&find_signal(&db, "x")),
+            "assignment target is not a read"
+        );
     }
 
     #[test]
@@ -1105,6 +1083,23 @@ mod tests {
         // (a & c) | d → max(max(4,8), 8) = 8
         let mix = db.node(cas[3]).children[1];
         assert_eq!(expr_width(&db, mix), Some(8));
+    }
+
+    #[test]
+    fn expr_width_uses_select_and_replication_values() {
+        let db = db_of(
+            "module t; logic [7:0] a; logic [2:0] b; logic [23:0] c; \
+             assign b = a[1 +: 3]; assign c = {3{a}}; endmodule",
+        );
+        let assignments = top_cont_assigns(&db);
+        assert_eq!(
+            expr_width(&db, db.node(assignments[0]).children[1]),
+            Some(3)
+        );
+        assert_eq!(
+            expr_width(&db, db.node(assignments[1]).children[1]),
+            Some(24)
+        );
     }
 
     #[test]

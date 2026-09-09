@@ -20,15 +20,13 @@ impl Codegen<'_> {
         let fmt = match self.kind(*first) {
             NodeKind::Expr(ExprKind::Constant {
                 const_type: ConstantType::String,
-                value: ValueData::Str(value),
+                value,
                 ..
-            }) => value.clone(),
+            }) => decoded_string_bytes(value)?,
             _ => return Err("string display requires a literal format".to_owned()),
         };
-        let fmt = decode_verilog_string(&fmt)?
-            .into_iter()
-            .map(char::from)
-            .collect::<String>();
+        let fmt = String::from_utf8(fmt)
+            .map_err(|_| "string display format must contain valid UTF-8".to_owned())?;
         let mut result = Vec::new();
         let mut text = String::new();
         let mut arg = 0usize;
@@ -262,18 +260,23 @@ impl Codegen<'_> {
                 matches!(name.as_str(), "toupper" | "tolower" | "substr")
                     && self.is_string_expr(path, *receiver)
             }
-            NodeKind::Expr(ExprKind::Operation { op, operands, .. })
-                if matches!(op.as_raw(), vpi::vpiConcatOp | vpi::vpiMultiConcatOp) =>
-            {
-                operands
-                    .iter()
-                    .any(|operand| self.is_string_expr(path, *operand))
-            }
+            NodeKind::Expr(ExprKind::Operation {
+                op: Operation::Concat | Operation::MultiConcat,
+                operands,
+                ..
+            }) => operands
+                .iter()
+                .any(|operand| self.is_string_expr(path, *operand)),
             _ => false,
         }
     }
 
     pub(super) fn lower_chandle(&self, path: &str, node: NodeId) -> Result<IrChandleExpr, String> {
+        if let NodeKind::Expr(ExprKind::Cast { operand, ty, .. }) = self.kind(node) {
+            if ty.kind == "chandle" {
+                return self.lower_chandle(path, *operand);
+            }
+        }
         if matches!(
             self.kind(node),
             NodeKind::Expr(ExprKind::Constant {
@@ -433,7 +436,7 @@ impl Codegen<'_> {
             return Err("chandle cannot be converted to string".to_owned());
         }
         match self.kind(node) {
-            NodeKind::Expr(ExprKind::Constant { const_type: ConstantType::String, value: ValueData::Str(value), .. }) => Ok(IrStringExpr::Literal(decode_verilog_string(value)?)),
+            NodeKind::Expr(ExprKind::Constant { const_type: ConstantType::String, value, .. }) => Ok(IrStringExpr::Literal(decoded_string_bytes(value)?)),
             NodeKind::Expr(ExprKind::Ref {target:Some(target)}) if matches!(self.kind(*target),NodeKind::Param {ty,..} if ty.kind=="string") => self.lower_string(path,*target),
             NodeKind::Param {ty,value,..} if ty.kind=="string" => {
                 match self.param_vals.get(&node).or(value.as_ref()) {
@@ -448,8 +451,8 @@ impl Codegen<'_> {
                 if value.is_real() { return Err("real to string cast is unsupported".to_owned()); }
                 Ok(IrStringExpr::FromPacked(Box::new(value)))
             }
-            NodeKind::Expr(ExprKind::Operation {op,operands,reordered}) if matches!(op.as_raw(), vpi::vpiConcatOp|vpi::vpiMultiConcatOp) => {
-                let repeat = op.as_raw() == vpi::vpiMultiConcatOp;
+            NodeKind::Expr(ExprKind::Operation {op,operands,reordered}) if matches!(op, Operation::Concat | Operation::MultiConcat) => {
+                let repeat = *op == Operation::MultiConcat;
                 let mut operands = operands.clone();
                 if *reordered { operands.reverse(); }
                 let count = if repeat {
@@ -482,7 +485,7 @@ impl Codegen<'_> {
     ) -> Result<Option<IrExpr>, String> {
         let query = match self.kind(node) {
             NodeKind::Expr(ExprKind::Operation { op, operands, .. })
-                if op.as_raw() == vpi::vpiNotOp
+                if *op == Operation::LogicalNot
                     && operands.len() == 1
                     && self
                         .object_of(path, operands[0])
@@ -573,19 +576,19 @@ impl Codegen<'_> {
                 }
             }
             NodeKind::Expr(ExprKind::Operation { op, operands, .. }) if operands.len() == 2 => {
-                let op = op.as_raw();
+                let op = *op;
                 let (a, b) = (operands[0], operands[1]);
                 let is_chandle = [a, b].iter().any(|node| {
                     self.object_of(path, *node)
                         .is_some_and(|i| self.model.objects[i].ty == IrObjectType::Chandle)
                 });
                 if is_chandle {
-                    if matches!(op, vpi::vpiLogAndOp | vpi::vpiLogOrOp) {
+                    if matches!(op, Operation::LogicalAnd | Operation::LogicalOr) {
                         let a = self.lower_boolean_expr(path, a)?;
                         let b = self.lower_boolean_expr(path, b)?;
                         return Ok(Some(IrExpr::new(
                             IrExprKind::Bin {
-                                op: if op == vpi::vpiLogAndOp {
+                                op: if op == Operation::LogicalAnd {
                                     IrBinOp::LogAnd
                                 } else {
                                     IrBinOp::LogOr
@@ -600,7 +603,10 @@ impl Codegen<'_> {
                     }
                     if !matches!(
                         op,
-                        vpi::vpiEqOp | vpi::vpiNeqOp | vpi::vpiCaseEqOp | vpi::vpiCaseNeqOp
+                        Operation::Equal
+                            | Operation::NotEqual
+                            | Operation::CaseEqual
+                            | Operation::CaseNotEqual
                     ) {
                         return Err("operator is not valid for chandle".to_owned());
                     }
@@ -612,30 +618,32 @@ impl Codegen<'_> {
                         1,
                         false,
                     );
-                    return Ok(Some(if matches!(op, vpi::vpiNeqOp | vpi::vpiCaseNeqOp) {
-                        IrExpr::new(
-                            IrExprKind::Un {
-                                op: IrUnOp::LogNot,
-                                a: Box::new(value),
-                            },
-                            1,
-                            false,
-                            None,
-                        )
-                    } else {
-                        value
-                    }));
+                    return Ok(Some(
+                        if matches!(op, Operation::NotEqual | Operation::CaseNotEqual) {
+                            IrExpr::new(
+                                IrExprKind::Un {
+                                    op: IrUnOp::LogNot,
+                                    a: Box::new(value),
+                                },
+                                1,
+                                false,
+                                None,
+                            )
+                        } else {
+                            value
+                        },
+                    ));
                 }
                 if !self.is_string_expr(path, a) && !self.is_string_expr(path, b) {
                     return Ok(None);
                 }
                 let bin = match op {
-                    vpi::vpiEqOp => IrBinOp::Eq,
-                    vpi::vpiNeqOp => IrBinOp::Neq,
-                    vpi::vpiLtOp => IrBinOp::Lt,
-                    vpi::vpiLeOp => IrBinOp::Le,
-                    vpi::vpiGtOp => IrBinOp::Gt,
-                    vpi::vpiGeOp => IrBinOp::Ge,
+                    Operation::Equal => IrBinOp::Eq,
+                    Operation::NotEqual => IrBinOp::Neq,
+                    Operation::Less => IrBinOp::Lt,
+                    Operation::LessEqual => IrBinOp::Le,
+                    Operation::Greater => IrBinOp::Gt,
+                    Operation::GreaterEqual => IrBinOp::Ge,
                     _ => return Err("operator is not valid for string".to_owned()),
                 };
                 let compare = object_query(
@@ -678,7 +686,7 @@ impl Codegen<'_> {
         lhs: NodeId,
         rhs: NodeId,
         blocking: bool,
-        op: i32,
+        op: Operation,
     ) -> Result<Option<IrStmt>, String> {
         let indexed = match self.kind(lhs) {
             NodeKind::Expr(ExprKind::BitSelect { base, index }) => Some((*base, *index)),
@@ -739,7 +747,7 @@ impl Codegen<'_> {
                     .to_owned(),
             );
         }
-        if op != 0 && op != vpi::vpiAssignmentOp {
+        if op != Operation::Assignment {
             return Err("compound assignment to non-integral storage is unsupported".to_owned());
         }
         if let Some(target) = chandle_target {

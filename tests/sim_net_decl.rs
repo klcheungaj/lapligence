@@ -20,8 +20,9 @@ fn compile_and_generate(
         ..Default::default()
     })
     .map_err(|error| format!("compile: {error}"))?;
-    let design = out.uhdm_design().ok_or("no UHDM design")?;
-    sim::codegen::generate(design).map_err(|error| format!("codegen: {error}"))
+    let db =
+        llg::core::db::Db::from_slang(&out.snapshot).map_err(|error| format!("db: {error}"))?;
+    sim::codegen::generate(&db).map_err(|error| format!("codegen: {error}"))
 }
 
 #[test]
@@ -79,7 +80,7 @@ endmodule
 
 #[test]
 fn net_declaration_rejects_unrepresentable_sensitivity_and_net_class() {
-    let array_error = sim_harness::with_surelog_temp_cwd("net_decl_array_reject", |dir| {
+    let array_error = sim_harness::with_frontend_temp_cwd("net_decl_array_reject", |dir| {
         compile_and_generate(
             dir,
             "array_reject.sv",
@@ -101,7 +102,7 @@ endmodule
         "unexpected array rejection: {array_error}"
     );
 
-    let net_class_error = sim_harness::with_surelog_temp_cwd("net_class_reject", |dir| {
+    let net_class_error = sim_harness::with_frontend_temp_cwd("net_class_reject", |dir| {
         compile_and_generate(
             dir,
             "net_class_reject.sv",

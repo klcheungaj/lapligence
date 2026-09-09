@@ -6,6 +6,7 @@
 //! the last-good navigation behavior used while a buffer has an error.  The
 //! backend must add `serde_json` as a dev dependency for this integration
 //! test.
+#![cfg(feature = "lsp")]
 
 use std::fs;
 #[path = "lsp_stdio/genvar.rs"]
@@ -612,7 +613,6 @@ fn has_error_or_warning(params: &Value) -> bool {
 
 // ── Contract tests ───────────────────────────────────────────────────────────
 
-#[cfg(feature = "slang")]
 #[test]
 fn lsp_stdio_slang_diagnostics_publish_utf16_and_clear() {
     let id = NEXT_FIXTURE_ID.fetch_add(1, Ordering::Relaxed);
@@ -642,9 +642,7 @@ fn lsp_stdio_slang_diagnostics_publish_utf16_and_clear() {
     );
     fs::write(&path, invalid).expect("write initial malformed source");
     let uri = file_uri(&path);
-    let mut client = LspProcess::spawn_configured(&base, |command| {
-        command.env("LLG_SLANG_DIAGNOSTICS", "1");
-    });
+    let mut client = LspProcess::spawn(&base);
     client
         .initialize(&[("slang-diagnostics", &root)], default_init_options())
         .expect("initialize Slang diagnostics workspace");
@@ -661,11 +659,6 @@ fn lsp_stdio_slang_diagnostics_publish_utf16_and_clear() {
             })
     });
     assert_no_shadow_uris(&published);
-    assert!(published["diagnostics"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .any(|diagnostic| diagnostic.get("source").and_then(Value::as_str) == Some("surelog")));
     let diagnostic = published["diagnostics"]
         .as_array()
         .unwrap()
@@ -2037,7 +2030,7 @@ fn lsp_stdio_publishes_and_clears_diagnostics_for_never_opened_files() {
     let good = root.join("good.sv");
     let broken = root.join("broken.sv");
     // The fix removes the broken assignment; the file stays closed.  The
-    // remaining diagnostics may still carry Surelog's own warnings (e.g. the
+    // remaining diagnostics may still carry frontend warnings (e.g. the
     // missing-timescale notice), so the refresh is asserted as "the syntax
     // error is gone", not "the list is empty".
     let original = fs::read_to_string(&broken).expect("read broken source");
@@ -2091,10 +2084,9 @@ fn lsp_stdio_publishes_and_clears_diagnostics_for_never_opened_files() {
     client.shutdown();
 }
 
-/// A project whose sources contain a Surelog ERROR still serves navigation
-/// features from the partial analysis: Surelog elaborates the surviving set
-/// (the error here is a failed include, which does not abort the UHDM
-/// stage), so documentSymbol returns modules and hover resolves the
+/// A project whose sources contain a frontend error still serves navigation
+/// features from the partial analysis: Slang retains the surviving semantic
+/// data when an include fails, so documentSymbol returns modules and hover resolves the
 /// declaration even though the whole-project analysis never reaches strict
 /// validity.  Diagnostics keep publishing regardless.
 #[test]
@@ -2122,7 +2114,7 @@ fn lsp_stdio_error_project_still_serves_features() {
         "endmodule\n"
     );
     fs::write(&clean, clean_text).expect("write clean source");
-    // Guaranteed Surelog ERROR (Severity::Error, no syntax cascade): the
+    // Guaranteed frontend error (Severity::Error, no syntax cascade): the
     // include target does not exist anywhere in the configured dirs.
     let broken = src.join("broken_include.sv");
     fs::write(
@@ -2173,8 +2165,8 @@ fn lsp_stdio_error_project_still_serves_features() {
     client.shutdown();
 }
 
-/// A project with a SYNTAX error makes Surelog skip its whole compile/UHDM
-/// stage, but the parse tree survives: declaration-level features must serve
+/// A project with a syntax error lacks complete semantic data, but its lexical
+/// snapshot survives: declaration-level features must serve
 /// (parse-tree fallback) instead of leaving the root feature-less until the
 /// file is fixed.  The opened clean file gets its module document symbol and
 /// hover, and the workspace index finds declarations even inside the
@@ -2203,8 +2195,8 @@ fn lsp_stdio_syntax_error_still_serves_declarations() {
         "endmodule\n"
     );
     fs::write(&clean, clean_text).expect("write clean source");
-    // Unterminated module: a guaranteed Severity::Syntax error that skips
-    // Surelog's compile/elaborate/UHDM stages entirely.
+    // Unterminated module: a guaranteed syntax error that prevents a complete
+    // semantic snapshot.
     let broken = src.join("broken.sv");
     fs::write(
         &broken,
@@ -2237,7 +2229,7 @@ fn lsp_stdio_syntax_error_still_serves_declarations() {
     assert_no_shadow_uris(&symbols);
 
     // The workspace index finds the clean module AND the broken unit's
-    // declaration (Surelog's parse-error recovery keeps its header).
+    // declaration (the frontend's error recovery keeps its header).
     let workspace = wait_for_workspace_symbols(&mut client, "clean_mod", |result| {
         names(result).iter().any(|name| name == "clean_mod")
     });
@@ -2348,7 +2340,7 @@ fn lsp_stdio_fatal_analysis_stays_featureless() {
 }
 
 /// Fixing the broken file through a watched-file event upgrades the
-/// analysis.  While the syntax error stands Surelog produces no UHDM at all,
+/// analysis. While the syntax error stands, no complete semantic model exists,
 /// so only DECLARATION-LEVEL data serves (the module name comes from the
 /// parse-tree fallback); after the fix the analysis becomes strictly valid —
 /// the error publication disappears and the recovered module keeps its
@@ -2536,15 +2528,20 @@ fn lsp_stdio_shared_external_file_aggregates_labeled_findings() {
         .filter_map(|diagnostic| diagnostic.get("message").and_then(Value::as_str))
         .collect();
 
-    // Identical finding from both roots appears exactly once, unlabeled.
-    let unused_plain = messages
-        .iter()
-        .filter(|message| message.contains("unused_shared_signal") && !message.contains('['))
-        .count();
-    assert_eq!(
-        unused_plain, 1,
-        "identical findings must appear once without a label: {messages:?}"
-    );
+    // Each distinct rule finding from both roots appears once, unlabeled.
+    for expected in [
+        "unused variable 'unused_shared_signal'",
+        "signal `unused_shared_signal` in `AggShared` is never used",
+    ] {
+        assert_eq!(
+            messages
+                .iter()
+                .filter(|message| **message == expected)
+                .count(),
+            1,
+            "identical {expected:?} findings must be deduplicated: {messages:?}"
+        );
+    }
 
     // The same-location finding differs per root (define-renamed signal):
     // the owner copy stays unlabeled, the non-owner copy carries [agg-b].
@@ -2734,9 +2731,9 @@ fn lsp_stdio_semantic_tokens_use_current_open_buffer_and_cached_unopened_snapsho
 /// carries the custom `connectionLabel` modifier while the connected
 /// actual/RHS identifiers stay plain.  Asserted in BOTH serving paths:
 ///
-/// * the cached PROJECT path (unopened document, full analysis with UHDM),
-/// * the ISOLATED open-buffer path (`-parseonly` over the staged buffer —
-///   no project model, so the marking must be purely syntactic).
+/// * the cached project path (unopened document, full semantic analysis),
+/// * the admitted open-buffer path (no committed project model, so the
+///   marking must be lexical).
 #[test]
 fn lsp_stdio_semantic_tokens_mark_connection_labels_in_both_serving_paths() {
     let fixture = FixtureTree::new();
@@ -2881,6 +2878,28 @@ fn lsp_stdio_read_only_shadow_and_clean_shutdown() {
     let root_a = fixture.root("root-a");
     let path = root_a.join("navigation").join("snapshot.sv");
     let valid = fs::read_to_string(&path).expect("read snapshot fixture");
+    fn tree_entries(root: &Path) -> Vec<PathBuf> {
+        fn visit(root: &Path, dir: &Path, entries: &mut Vec<PathBuf>) {
+            for entry in fs::read_dir(dir).expect("read fixture tree") {
+                let entry = entry.expect("fixture entry");
+                let path = entry.path();
+                entries.push(
+                    path.strip_prefix(root)
+                        .expect("entry below root")
+                        .to_owned(),
+                );
+                if entry.file_type().expect("entry type").is_dir() {
+                    visit(root, &path, entries);
+                }
+            }
+        }
+
+        let mut entries = Vec::new();
+        visit(root, root, &mut entries);
+        entries.sort();
+        entries
+    }
+    let original_entries = tree_entries(fixture.base());
     let mut client = LspProcess::spawn(&fixture.root);
     client
         .initialize(&[("root-a", &root_a)], default_init_options())
@@ -2899,26 +2918,11 @@ fn lsp_stdio_read_only_shadow_and_clean_shutdown() {
         "project tree gained a stray directory"
     );
 
-    // The server was launched with its CWD inside this fixture tree; Surelog
-    // side-effects (slpp_all/, logs) must never appear anywhere inside it.
-    fn assert_no_surelog_artifacts(dir: &Path) {
-        for entry in fs::read_dir(dir).expect("read fixture tree") {
-            let entry = entry.expect("fixture entry");
-            let name = entry.file_name();
-            assert!(
-                name != std::ffi::OsStr::new("slpp_all")
-                    && name != std::ffi::OsStr::new("surelog.log")
-                    && name != std::ffi::OsStr::new("uhdm.log")
-                    && name != std::ffi::OsStr::new("surelog.uhdm.log"),
-                "Surelog artifact leaked into the project tree: {}",
-                entry.path().display()
-            );
-            if entry.file_type().expect("entry type").is_dir() {
-                assert_no_surelog_artifacts(&entry.path());
-            }
-        }
-    }
-    assert_no_surelog_artifacts(fixture.base());
+    assert_eq!(
+        tree_entries(fixture.base()),
+        original_entries,
+        "frontend analysis changed the project tree"
+    );
 }
 
 /// Full lifecycle contract: init → ready → shutdown → exit must terminate the
@@ -3402,8 +3406,8 @@ fn single_location(response: &Value, what: &str) -> (String, Value) {
 }
 
 /// Goto-definition is binding-precise: two modules in distinct files each
-/// declare `logic clk;`, and tb instantiates both with plain signal uses of
-/// each instance-scope net.  A request at every use returns exactly ONE
+/// declare an input port named `clk`, and tb connects distinct parent signals
+/// to each instance. A request at every use returns exactly ONE
 /// location equal to that module's declaration file+line, and a request on a
 /// declaration resolves to itself.
 #[test]
@@ -3427,18 +3431,18 @@ fn lsp_stdio_goto_definition_is_binding_precise() {
     client.open(&tb_path, &tb_text).expect("open tb source");
     wait_for_diagnostics(&mut client, &file_uri(&tb_path), has_no_severity_1);
 
-    // The declaration positions of `logic clk;` in both module files.
-    let ma_decl_start = position_at(&ma_text, "logic clk", 6);
-    let mb_decl_start = position_at(&mb_text, "logic clk", 6);
+    // The declaration positions of `input logic clk` in both module files.
+    let ma_decl_start = position_at(&ma_text, "input logic clk", 12);
+    let mb_decl_start = position_at(&mb_text, "input logic clk", 12);
 
-    // Definition at the `clk` USE inside m_a (`assign clk = ...`) → exactly
-    // one location: m_a's own `logic clk` declaration.
+    // Definition at the `clk` use inside m_a (`observed = clk`) → exactly one
+    // location: m_a's own input-port declaration.
     let response = client
         .request(
             "textDocument/definition",
             json!({
                 "textDocument": { "uri": file_uri(&ma_path) },
-                "position": position_at(&ma_text, "assign clk", 7)
+                "position": position_at(&ma_text, "observed = clk", 11)
             }),
         )
         .expect("definition request at m_a clk use");
@@ -3453,7 +3457,7 @@ fn lsp_stdio_goto_definition_is_binding_precise() {
             "textDocument/definition",
             json!({
                 "textDocument": { "uri": file_uri(&mb_path) },
-                "position": position_at(&mb_text, "assign clk", 7)
+                "position": position_at(&mb_text, "observed = clk", 11)
             }),
         )
         .expect("definition request at m_b clk use");
@@ -3500,14 +3504,14 @@ fn lsp_stdio_goto_definition_is_binding_precise() {
     // the LAST character column of the same identifier (col + name_len - 1)
     // must return the identical single Location — ref bindings are keyed at
     // the token-start column, which a mid-identifier cursor now reuses.
-    let clk_use_col = 7;
+    let clk_use_col = 11;
     let clk_name_len = "clk".chars().count();
     let response = client
         .request(
             "textDocument/definition",
             json!({
                 "textDocument": { "uri": file_uri(&ma_path) },
-                "position": position_at(&ma_text, "assign clk", clk_use_col + clk_name_len - 1)
+                "position": position_at(&ma_text, "observed = clk", clk_use_col + clk_name_len - 1)
             }),
         )
         .expect("definition request at m_a clk use (last character)");
@@ -3698,8 +3702,8 @@ fn lsp_stdio_goto_definition_port_label() {
 }
 
 /// Connection navigation survives a SYNTAX-BROKEN sibling: with `broken.v`
-/// keeping the whole root at outcome=parse (Surelog skips UHDM entirely),
-/// the parse-tree fallback still binds both sides of a named port connection
+/// keeping the whole root at a partial analysis outcome, the lexical fallback
+/// still binds both sides of a named port connection
 /// — the `.clk` LABEL to the child module's port declaration and the
 /// ACTUAL to its own declaration in the instantiating scope — visible in
 /// `llg/dumpTokens` `bind=` rows (`via=label` / `via=connection`) and
@@ -3719,7 +3723,7 @@ fn lsp_stdio_parse_fallback_binds_port_connections_to_child_ports() {
     .expect("write fb_child");
     let tb_text = "module tb_fb;\n  logic wa;\n  logic t_q;\n\n  fb_child u_fb(.clk(wa), .q(t_q));\nendmodule\n";
     fs::write(&tb_path, tb_text).expect("write tb_fb");
-    // Unterminated module on purpose: Severity::Syntax ⇒ no UHDM.
+    // Unterminated module on purpose: no complete semantic model is available.
     fs::write(&broken_path, "module broken(\n   input clk\n").expect("write broken.v");
     fs::write(
         ws.join(CONFIG_FILE),
@@ -3802,13 +3806,13 @@ fn lsp_stdio_parse_fallback_binds_port_connections_to_child_ports() {
     assert!(
         actual_row.contains("REF")
             && actual_row.contains("via=connection")
-            && actual_row.contains("bind=tb_fb.sv:1:8[wa,var]"),
+            && actual_row.contains("bind=tb_fb.sv:1:8[wa,variable]"),
         "actual row must bind to its parent-scope declaration: {actual_row}"
     );
     let q_actual_row = row("tb_fb.sv:4:29");
     assert!(
         q_actual_row.contains("via=connection")
-            && q_actual_row.contains("bind=tb_fb.sv:2:8[t_q,var]"),
+            && q_actual_row.contains("bind=tb_fb.sv:2:8[t_q,variable]"),
         "t_q row must bind to its parent-scope declaration: {q_actual_row}"
     );
 
@@ -3997,8 +4001,8 @@ fn lsp_stdio_goto_definition_param_label() {
 }
 
 /// Parameter-override navigation survives a SYNTAX-BROKEN sibling: with
-/// `broken.v` keeping the whole root at outcome=parse (Surelog skips UHDM
-/// entirely), the parse-tree fallback still binds both sides of a named
+/// `broken.v` keeping the whole root at a partial analysis outcome, the
+/// lexical fallback still binds both sides of a named
 /// parameter override — the `.PW` LABEL to the child module's parameter
 /// declaration and the RHS reference to its own declaration in the
 /// instantiating scope — visible in `llg/dumpTokens` `bind=` rows
@@ -4040,7 +4044,7 @@ fn lsp_stdio_parse_fallback_binds_param_overrides_to_child_params() {
         "endmodule\n",
     );
     fs::write(&tb_path, tb_text).expect("write tb_fb2");
-    // Unterminated module on purpose: Severity::Syntax ⇒ no UHDM.
+    // Unterminated module on purpose: no complete semantic model is available.
     fs::write(&broken_path, "module broken(\n   input clk\n").expect("write broken.v");
     fs::write(
         ws.join(CONFIG_FILE),
@@ -4145,7 +4149,7 @@ fn lsp_stdio_parse_fallback_binds_param_overrides_to_child_params() {
     assert!(
         rhs_row.contains("via=connection")
             && rhs_row.contains(&format!(
-                "bind=tb_fb2.sv:{}:{}[wa,var]",
+                "bind=tb_fb2.sv:{}:{}[wa,variable]",
                 wa_decl["line"].as_u64().unwrap(),
                 wa_decl["character"].as_u64().unwrap()
             )),
@@ -4267,8 +4271,8 @@ fn lsp_stdio_serves_custom_dump_tokens_request() {
 }
 
 /// The module explorer is an end-to-end read of the committed analysis.  The
-/// configured top deliberately leaves `unrelated` out of UHDM while the
-/// source graph still sees every definition and source edge.  This catches
+/// configured top deliberately leaves `unrelated` out of the elaborated
+/// hierarchy while the source graph still sees every definition and source edge. This catches
 /// both the top-child-leaf root regression and the declaration-only contents
 /// fallback over the actual JSON-RPC boundary.
 #[test]
@@ -5668,14 +5672,14 @@ fn lsp_stdio_repeats_identical_definition_requests_from_memo_cache() {
 //   model (`InstanceModel.params` / gen-scope / package parameters).  No
 //   parsing or elaboration happens in the hover request path; unresolved
 //   values omit the line silently.
-// * `[compile.param_overrides]` (Surelog `-P`) values show up wherever the
+// * `[compile.param_overrides]` values show up wherever the
 //   overridden value is committed — declaration and in-instance use sites
 //   alike.
 // * identical repeat hovers return byte-identical responses served by the
 //   request cache: the `# request-cache:` hits counter grows while misses
 //   stay put (no recompute).
 
-/// Single-root generated workspace with a `-PWIDTH=8` override applied to its
+/// Single-root generated workspace with a `WIDTH=8` override applied to its
 /// top module (modeled on the config_effect generate-branch scenario).
 const POV_TOP_SV: &str = "\
 module pov_top #(parameter int WIDTH = 4)();
@@ -6154,7 +6158,7 @@ fn lsp_stdio_macro_hover_shows_resolved_config_and_undefined_values() {
         .initialize(&[("macro-ws", &ws)], default_init_options())
         .expect("initialize macro-hover workspace");
     client.open(&path, MACRO_TOP_SV).expect("open macro_top.sv");
-    // The undefined `NOWHERE makes Surelog report an error; the analysis is
+    // The undefined `NOWHERE makes Slang report an error; the analysis is
     // still feature-servable, which is exactly what this wait observes.
     wait_for_diagnostics(&mut client, &uri, has_severity_1);
 

@@ -123,7 +123,7 @@ wide_unknown=x\n\
 wide_wild=1\n\
 constant=1 1 x\n";
 
-    sim_harness::with_surelog_temp_cwd("wildcard_eq", |dir| {
+    sim_harness::with_frontend_temp_cwd("wildcard_eq", |dir| {
         let path = dir.join("tb.sv");
         std::fs::write(&path, source).map_err(|error| error.to_string())?;
         let compiled = compile::compile_checked(&compile::CompileOpts {
@@ -132,8 +132,7 @@ constant=1 1 x\n";
             ..Default::default()
         })
         .map_err(|error| error.to_string())?;
-        let db = Db::build(compiled.uhdm_design().ok_or("no design")?)
-            .map_err(|error| error.to_string())?;
+        let db = Db::from_slang(&compiled.snapshot).map_err(|error| error.to_string())?;
 
         for (variant, opts) in [
             ("opt_on", OptConfig::default()),
@@ -165,7 +164,7 @@ fn wildcard_equality_accepts_wide_expression_context() {
     }
     let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/sim/wildcard_eq/wide_context.sv");
-    sim_harness::with_surelog_temp_cwd("wildcard_eq_wide_context", |dir| {
+    sim_harness::with_frontend_temp_cwd("wildcard_eq_wide_context", |dir| {
         let path = dir.join("wide_context.sv");
         std::fs::copy(&fixture, &path).map_err(|error| format!("copy fixture: {error}"))?;
         let compiled = compile::compile_checked(&compile::CompileOpts {
@@ -174,11 +173,7 @@ fn wildcard_equality_accepts_wide_expression_context() {
             ..Default::default()
         })
         .map_err(|error| error.to_string())?;
-        let db = Db::build_with_source_files(
-            compiled.uhdm_design().ok_or("no design")?,
-            &compiled.frontend_source_files(),
-        )
-        .map_err(|error| error.to_string())?;
+        let db = Db::from_slang(&compiled.snapshot).map_err(|error| error.to_string())?;
         for (variant, options) in [
             ("opt_on", OptConfig::default()),
             ("opt_off", OptConfig::none()),

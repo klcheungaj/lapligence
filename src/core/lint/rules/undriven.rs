@@ -32,7 +32,6 @@ impl LintRule for UndrivenSignalRule {
         let (reads, drivers) = design_activity(db);
         let mut exempt = top_external_port_signals(db);
         exempt.extend(unconnected_port_signals(db));
-        let interface_copies = crate::core::lint::rules::analysis::iface_copy_instances(db);
 
         // `all_nodes` follows owned reference bases as well as structural
         // children, so a declaration can occur more than once in that walk.
@@ -47,9 +46,8 @@ impl LintRule for UndrivenSignalRule {
             if !reads.contains(&id)
                 || drivers.contains(&id)
                 || exempt.contains(&id)
-                || in_interface_copy(db, id, &interface_copies)
                 || has_intrinsic_net_driver(db, id)
-                || is_implicit_net(db, id)
+                || db.is_implicit_net(id)
             {
                 continue;
             }
@@ -133,27 +131,6 @@ fn function_body(db: &Db, id: NodeId) -> Option<NodeId> {
         .rev()
         .copied()
         .find(|child| matches!(db.node_kind(*child), NodeKind::Stmt(_)))
-}
-
-/// True when `id` is inside a synthesized interface-copy instance.
-fn in_interface_copy(db: &Db, id: NodeId, copies: &HashSet<NodeId>) -> bool {
-    let mut cur = Some(id);
-    while let Some(current) = cur {
-        if copies.contains(&current) {
-            return true;
-        }
-        cur = db.node(current).parent;
-    }
-    false
-}
-
-/// Surelog creates these one-bit nets for undeclared identifiers.  The
-/// implicit-net rule owns that diagnostic, so this rule must not duplicate it.
-fn is_implicit_net(db: &Db, id: NodeId) -> bool {
-    matches!(
-        db.node_kind(id),
-        NodeKind::Net { ty, .. } if ty.kind == "other"
-    )
 }
 
 /// Net declarations with an intrinsic pull/supply value are conservatively
@@ -284,7 +261,7 @@ mod tests {
         );
 
         let implicit = run_rule(
-            "module top;\n  logic sink;\n  assign sink = undeclared_signal;\nendmodule\n",
+            "module child(input wire value); endmodule\nmodule top;\n  child u0(undeclared_signal);\nendmodule\n",
             "top",
         );
         assert!(

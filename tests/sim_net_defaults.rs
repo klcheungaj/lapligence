@@ -7,7 +7,7 @@ use llg::core::{compile, db::Db};
 use llg::sim::{self, opt::OptConfig};
 
 fn generate_error(tag: &str, source: &str) -> String {
-    sim_harness::with_surelog_temp_cwd(tag, |dir| {
+    sim_harness::with_frontend_temp_cwd(tag, |dir| {
         let path = dir.join("tb.sv");
         std::fs::write(&path, source).map_err(|error| error.to_string())?;
         let compiled = compile::compile_checked(&compile::CompileOpts {
@@ -16,7 +16,8 @@ fn generate_error(tag: &str, source: &str) -> String {
             ..Default::default()
         })
         .map_err(|error| error.to_string())?;
-        match sim::codegen::generate(compiled.uhdm_design().ok_or("no design")?) {
+        let db = Db::from_slang(&compiled.snapshot).map_err(|error| error.to_string())?;
+        match sim::codegen::generate(&db) {
             Ok(_) => Err("net-default design unexpectedly generated".to_owned()),
             Err(error) => Ok(error.to_string()),
         }
@@ -104,7 +105,7 @@ endmodule
                     unknown=xx/xx supply=01\n\
                     conflict=xx/xx supply=01\n\
                     rereleased=00/11 supply=01\n";
-    sim_harness::with_surelog_temp_cwd("net_defaults", |dir| {
+    sim_harness::with_frontend_temp_cwd("net_defaults", |dir| {
         let path = dir.join("tb.sv");
         std::fs::write(&path, source).map_err(|error| error.to_string())?;
         let compiled = compile::compile_checked(&compile::CompileOpts {
@@ -113,8 +114,7 @@ endmodule
             ..Default::default()
         })
         .map_err(|error| error.to_string())?;
-        let db = Db::build(compiled.uhdm_design().ok_or("no design")?)
-            .map_err(|error| error.to_string())?;
+        let db = Db::from_slang(&compiled.snapshot).map_err(|error| error.to_string())?;
         for (variant, opts) in [("on", OptConfig::default()), ("off", OptConfig::none())] {
             let model = sim::codegen::generate_from_db_with_opts(&db, &opts)
                 .map_err(|error| error.to_string())?;
@@ -177,7 +177,7 @@ module tb;
     end
 endmodule
 "#;
-    sim_harness::with_surelog_temp_cwd("net_defaults_no_refire", |dir| {
+    sim_harness::with_frontend_temp_cwd("net_defaults_no_refire", |dir| {
         let path = dir.join("tb.sv");
         std::fs::write(&path, source).map_err(|error| error.to_string())?;
         let compiled = compile::compile_checked(&compile::CompileOpts {
@@ -186,8 +186,7 @@ endmodule
             ..Default::default()
         })
         .map_err(|error| error.to_string())?;
-        let db = Db::build(compiled.uhdm_design().ok_or("no design")?)
-            .map_err(|error| error.to_string())?;
+        let db = Db::from_slang(&compiled.snapshot).map_err(|error| error.to_string())?;
         for (variant, opts) in [("on", OptConfig::default()), ("off", OptConfig::none())] {
             let model = sim::codegen::generate_from_db_with_opts(&db, &opts)
                 .map_err(|error| error.to_string())?;

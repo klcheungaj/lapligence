@@ -28,13 +28,15 @@
 use std::collections::HashSet;
 
 use crate::core::elab::{self, Bit, Value};
+use crate::sim::execution::{ExecutionModel, ExecutionProcess, TriggerPlan};
 use crate::sim::ir::{
     IrBinOp, IrCallArg, IrCaseKind, IrConst, IrElemSel, IrExpr, IrExprKind, IrInsideItem, IrLhs,
     IrModel, IrPreFn, IrRealBinOp, IrRealUnOp, IrStmt, IrSysFunc, IrUnOp, IrWaitSrc,
 };
 
 /// Run the enabled passes over `model` in a fixed order.
-pub fn run(model: &mut IrModel, cfg: &OptConfig) {
+#[cfg(test)]
+pub(crate) fn run_ir(model: &mut IrModel, cfg: &OptConfig) {
     if cfg.fold_constants || cfg.identities {
         // Identities and constant folding interleave to a bounded fixpoint:
         // folding collapses operands so identity rules can fire (e.g. a
@@ -52,41 +54,83 @@ pub fn run(model: &mut IrModel, cfg: &OptConfig) {
         }
     }
     if cfg.prune_branches {
-        for p in &mut model.processes {
-            prune_stmt_list(&mut p.body);
-            for pre in &mut p.pre_fns {
-                if let IrPreFn::Branch { body, .. } = pre {
-                    prune_stmt_list(body);
-                }
+        prune_model_control(model);
+    }
+    if cfg.unused_storage {
+        mark_unused_storage(model, None);
+    }
+}
+
+/// Optimize executable blocks in place. No block is copied through or rebuilt
+/// from the staging process shape, so distinct resume blocks remain distinct.
+pub(crate) fn run_execution(model: &mut ExecutionModel, cfg: &OptConfig) {
+    let (ir, processes) = model.optimization_parts();
+    if cfg.fold_constants || cfg.identities {
+        let rounds = if cfg.identities { 2 } else { 1 };
+        for _ in 0..rounds {
+            if cfg.fold_constants {
+                walk_model_exprs_mut(ir, &mut fold_expr);
+                walk_execution_exprs_mut(processes, &mut fold_expr);
             }
-            // Pruning can drop the branch carrying the only `goto` to a
-            // control-flow label; strip the orphans so the emitted C stays
-            // `-Wall` clean.
-            strip_unreferenced_labels(&mut p.body);
-            for pre in &mut p.pre_fns {
-                if let IrPreFn::Branch { body, .. } = pre {
-                    strip_unreferenced_labels(body);
+            if cfg.identities {
+                for _ in 0..2 {
+                    walk_model_exprs_mut(ir, &mut ident_expr);
+                    walk_execution_exprs_mut(processes, &mut ident_expr);
                 }
             }
         }
-        for func in &mut model.funcs {
-            prune_stmt_list(&mut func.body);
-            for pre in &mut func.pre_fns {
-                if let IrPreFn::Branch { body, .. } = pre {
-                    prune_stmt_list(body);
-                }
-            }
-            strip_unreferenced_labels(&mut func.body);
-            for pre in &mut func.pre_fns {
-                if let IrPreFn::Branch { body, .. } = pre {
-                    strip_unreferenced_labels(body);
-                }
+    }
+    if cfg.prune_branches {
+        prune_model_control(ir);
+        for process in processes.iter_mut() {
+            for block in &mut process.blocks {
+                prune_stmt_list(&mut block.operations);
+                strip_unreferenced_labels(&mut block.operations);
             }
         }
     }
     if cfg.unused_storage {
-        mark_unused_storage(model);
+        mark_unused_storage(ir, Some(processes));
     }
+}
+
+fn prune_model_control(model: &mut IrModel) {
+    for process in &mut model.processes {
+        prune_stmt_list(&mut process.body);
+        for pre in &mut process.pre_fns {
+            if let IrPreFn::Branch { body, .. } = pre {
+                prune_stmt_list(body);
+            }
+        }
+        // Pruning can drop the branch carrying the only `goto` to a
+        // control-flow label; strip the orphans so the emitted C stays
+        // `-Wall` clean.
+        strip_unreferenced_labels(&mut process.body);
+        for pre in &mut process.pre_fns {
+            if let IrPreFn::Branch { body, .. } = pre {
+                strip_unreferenced_labels(body);
+            }
+        }
+    }
+    for function in &mut model.funcs {
+        prune_stmt_list(&mut function.body);
+        for pre in &mut function.pre_fns {
+            if let IrPreFn::Branch { body, .. } = pre {
+                prune_stmt_list(body);
+            }
+        }
+        strip_unreferenced_labels(&mut function.body);
+        for pre in &mut function.pre_fns {
+            if let IrPreFn::Branch { body, .. } = pre {
+                strip_unreferenced_labels(body);
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+fn run(model: &mut IrModel, cfg: &OptConfig) {
+    run_ir(model, cfg);
 }
 
 /// Which optimization passes to run.
@@ -444,6 +488,14 @@ fn walk_model_exprs_mut(model: &mut IrModel, f: &mut impl FnMut(&mut IrExpr)) {
             walk_pre_fn_mut(pre, f);
         }
         walk_stmts_mut(&mut p.body, f);
+    }
+}
+
+fn walk_execution_exprs_mut(processes: &mut [ExecutionProcess], f: &mut impl FnMut(&mut IrExpr)) {
+    for process in processes {
+        for block in &mut process.blocks {
+            walk_stmts_mut(&mut block.operations, f);
+        }
     }
 }
 
@@ -1155,7 +1207,7 @@ impl Rw {
     }
 }
 
-fn mark_unused_storage(model: &mut IrModel) {
+fn mark_unused_storage(model: &mut IrModel, execution: Option<&[ExecutionProcess]>) {
     let mut rw = Rw::default();
     for object in &model.objects {
         if let Some(initial) = &object.initial {
@@ -1180,6 +1232,22 @@ fn mark_unused_storage(model: &mut IrModel) {
             }
         }
     }
+    if let Some(processes) = execution {
+        for process in processes {
+            for block in &process.blocks {
+                for statement in &block.operations {
+                    sens_lists_of(statement, &mut sens);
+                }
+                if let crate::sim::execution::ExecutionTerminator::Suspend {
+                    trigger: TriggerPlan::Signals(signals),
+                    ..
+                } = &block.terminator
+                {
+                    sens.extend(signals.iter().cloned());
+                }
+            }
+        }
+    }
     for func in &model.funcs {
         for local in &func.locals {
             if let Some(initial) = &local.initial {
@@ -1192,6 +1260,13 @@ fn mark_unused_storage(model: &mut IrModel) {
     for p in &model.processes {
         collect_pre_fns_rw(&p.pre_fns, model, &mut rw);
         collect_stmts_rw(&p.body, model, &mut rw);
+    }
+    if let Some(processes) = execution {
+        for process in processes {
+            for block in &process.blocks {
+                collect_stmts_rw(&block.operations, model, &mut rw);
+            }
+        }
     }
     for name in &sens {
         if let Some(i) = model.signals.iter().position(|sg| sg.c_name == *name) {
@@ -1766,6 +1841,9 @@ mod tests {
                 shape: IrShape::RunOnce,
                 pre_fns: Vec::new(),
                 body,
+                origin: crate::sim::semantic::Origin::Synthetic {
+                    reason: "optimizer fixture".to_owned(),
+                },
             }],
             init_steps: Vec::new(),
             spawns: Vec::new(),

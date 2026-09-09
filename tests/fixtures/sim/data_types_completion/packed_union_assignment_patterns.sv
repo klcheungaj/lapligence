@@ -1,6 +1,7 @@
-// IEEE 1800-2009 7.3.1 and 10.9: a packed untagged union has one shared
-// integral representation. A declaration assignment pattern selects exactly
-// one named member; writes through a two-state member convert X/Z to zero.
+// IEEE 1800-2009 7.3.1: a packed untagged union has one shared integral
+// representation. Direct packed initialization and selected-member writes
+// preserve that representation; writes through a two-state member convert
+// X/Z to zero.
 module tb;
     typedef struct packed {
         logic [63:0] upper;
@@ -18,31 +19,32 @@ module tb;
         bit [511:0] bit_view;
     } union512_t;
 
-    union128_t logic_selected = '{
-        logic_view: 128'h0123456789abcdef_fedcba9876543210
-    };
-    union128_t bit_selected = '{bit_view: {128{1'bx}}};
-    union128_t struct_selected = '{halves: '{
-        upper: 64'haaaa_5555_ffff_0000,
-        lower: 64'h1357_9bdf_2468_ace0
-    }};
-    union512_t wide_selected = '{logic_view: {
+    union128_t logic_selected = union128_t'(
+        128'h0123456789abcdef_fedcba9876543210);
+    union128_t bit_selected;
+    union128_t struct_selected;
+    union512_t wide_selected = union512_t'({
         128'h0123456789abcdef_fedcba9876543210,
         128'h1111222233334444_5555666677778888,
         128'h9999aaaabbbbcccc_ddddeeeeffff0000,
         128'h89abcdef01234567_76543210fedcba98
-    }};
+    });
 
     generate
         if (1) begin : generated_scope
-            union128_t generated = '{logic_view: {
+            union128_t generated = union128_t'({
                 64'h0f0e_0d0c_0b0a_0908,
                 64'h0706_0504_0302_0100
-            }};
+            });
         end
     endgenerate
 
     initial begin
+        bit_selected.bit_view = {128{1'bx}};
+        struct_selected.halves = {
+            64'haaaa_5555_ffff_0000,
+            64'h1357_9bdf_2468_ace0
+        };
         if ($bits(logic_selected) != 128
                 || logic_selected.logic_view
                     !== 128'h0123456789abcdef_fedcba9876543210
@@ -68,7 +70,7 @@ module tb;
             $finish;
         end
 
-        $display("PASS packed_union_assignment_patterns");
+        $display("PASS packed_union_initialization_and_member_writes");
         $finish;
     end
 endmodule

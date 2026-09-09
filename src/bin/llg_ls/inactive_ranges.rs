@@ -17,7 +17,7 @@
 //! comment/string content is never lexed as directives (state machine
 //! mirroring the client-side folding scanner).
 //!
-//! The computation is a pure lexical scan: it runs no Surelog work and never
+//! The computation is a pure lexical scan: it runs no frontend work and never
 //! triggers parsing.
 
 use std::collections::HashSet;

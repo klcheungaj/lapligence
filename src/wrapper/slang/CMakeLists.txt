@@ -2,6 +2,18 @@ cmake_minimum_required(VERSION 3.20...3.31)
 
 project(llg_slang_wrapper LANGUAGES CXX)
 
+option(LLG_SLANG_MUSL "Build Slang with a musl C++ toolchain" OFF)
+
+if(LLG_SLANG_MUSL)
+  if(NOT UNIX OR APPLE)
+    message(FATAL_ERROR "LLG_SLANG_MUSL requires a Linux target")
+  endif()
+  # The wrapper and frontend are archives; Cargo performs the final static
+  # executable link. Limit dependency discovery to static libraries so a
+  # cross build cannot accidentally capture a host shared object.
+  set(CMAKE_FIND_LIBRARY_SUFFIXES ".a")
+endif()
+
 if(NOT LLG_SLANG_SOURCE_DIR OR
    NOT EXISTS "${LLG_SLANG_SOURCE_DIR}/CMakeLists.txt")
   message(FATAL_ERROR "LLG_SLANG_SOURCE_DIR must name a Slang source checkout")

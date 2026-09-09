@@ -2,7 +2,7 @@
 name = "llg"
 version = "0.1.0"
 edition = "2021"
-description = "Lapligence (llg): Verilog/SystemVerilog simulation and language tooling based on Surelog/UHDM"
+description = "Lapligence (llg): Verilog/SystemVerilog simulation and language tooling based on Slang"
 
 [lib]
 name = "llg"
@@ -10,9 +10,6 @@ path = "src/lib.rs"
 
 [features]
 default = ["lsp"]
-# Builds the experimental Slang frontend and its C ABI shim alongside the
-# current Surelog frontend. Slang remains opt-in until the migration gates pass.
-slang = []
 # LSP-only dependencies.  They are used exclusively by the `llg_ls` binary
 # (src/bin/llg_ls), never by the library; the feature is default-on so the
 # normal `cargo build --bin llg_ls` flow is unchanged, and can be disabled for
@@ -37,8 +34,8 @@ required-features = ["lsp"]
 [dependencies]
 # `llg_ls` and `helloworld` select MiMalloc as their Rust global allocator.
 # The `override` feature stays disabled to avoid exporting replacement C++
-# allocation symbols. On musl, build.rs separately wraps C malloc/free for all
-# binaries with mimalloc_shim.c.
+# allocation symbols. On musl, build.rs separately wraps C malloc/free in all
+# Rust binaries and their linked native frontend with mimalloc_shim.c.
 mimalloc = { version = "0.1", default-features = false }
 
 # LSP framework (optional; enabled via the `lsp` feature)
@@ -54,7 +51,6 @@ tower = { version = "0.4", default-features = false, optional = true }
 toml = { version = "0.8", optional = true }
 serde = { version = "1", features = ["derive"], optional = true }
 
-num_enum = "0.7"
 
 [target.'cfg(unix)'.dependencies]
 # Shared process-memory primitives used by both binaries.  All unsafe calls

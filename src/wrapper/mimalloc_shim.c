@@ -5,9 +5,9 @@
  * `malloc` in every input object/archive to `__wrap_malloc`, and makes the
  * original definition available as `__real_malloc`.  These shims forward to
  * the mi_* functions so that every C/C++ allocation in the binary — including
- * all of Surelog, UHDM, ANTLR and Cap'n Proto — goes through mimalloc without
- * touching operator new/delete (avoiding the duplicate-symbol conflict with
- * static libstdc++).
+ * all of Slang, fmt, and the generated simulator runtime — goes through
+ * mimalloc without touching operator new/delete (avoiding the duplicate-symbol
+ * conflict with static libstdc++).
  *
  * Forward-declarations of the mi_* functions are inlined here so that this
  * file compiles without needing the mimalloc include path; the definitions are

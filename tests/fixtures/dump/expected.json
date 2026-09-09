@@ -1,9 +1,9 @@
 {
-  "_comment": "Golden for tests/dump_tokens.rs::json_golden_matches_fixture (schema llg.tokenDump/v1); regenerate with LLG_DUMP_BLESS=1 cargo test --test dump_tokens. Conventions: coordinates are the SAME 0-based values the --dump-tokens text prints; one source occurrence may appear as SEVERAL entries (one per UHDM/parse-tree object view); entries are in text-dump emission order (sorted by file, line0, col0); \"module\" is the innermost module or package body in the same file whose line range contains the entry — package bodies render as \"package:<name>\", rows outside every scope render \"\"; \"sym\" is the semantic-token legend string \"type[/mod1+mod2...]\" or null when no token covers the position; \"binding\" is null for unbound rows (bind=-) and otherwise the resolved declaration target, with viaLabel marking named-port-connection label folds (target = the child module's port) and viaConnection marking the connected-signal side of the same fold (target = the actual's own declaration in the instantiating/parent scope). Entries carrying \"knownIssue\": true reproduce suspicious-but-current output verbatim (assessments live in the repository report); the comparator ignores this marker.",
+  "_comment": "Golden for tests/dump_tokens.rs::json_golden_matches_fixture (schema llg.tokenDump/v1); regenerate with LLG_DUMP_BLESS=1 cargo test --test dump_tokens. Conventions: coordinates are the SAME 0-based values the --dump-tokens text prints; one source occurrence appears once as a typed Slang lexical record; entries are in text-dump emission order (sorted by file, line0, col0); \"module\" is the innermost module or package body in the same file whose line range contains the entry — package bodies render as \"package:<name>\", rows outside every scope render \"\"; \"sym\" is the semantic-token legend string \"type[/mod1+mod2...]\" or null when no token covers the position; \"binding\" is null for unbound rows (bind=-) and otherwise the resolved declaration target, with viaLabel marking named-port-connection label folds (target = the child module's port) and viaConnection marking the connected-signal side of the same fold (target = the actual's own declaration in the instantiating/parent scope). Entries carrying \"knownIssue\": true reproduce suspicious-but-current output verbatim (assessments live in the repository report); the comparator ignores this marker.",
   "fixture": "proj",
   "schema": "llg.tokenDump/v1",
   "summary": {
-    "bindings": 14,
+    "bindings": 20,
     "modules": 3,
     "outcome": "valid"
   },
@@ -17,8 +17,8 @@
       "line": 1,
       "module": "package:p",
       "role": "DECL",
-      "sym": "namespace",
-      "vpiKind": "uhdmpackage"
+      "sym": "namespace/declaration",
+      "tokenKind": "package-declaration"
     },
     {
       "binding": null,
@@ -29,32 +29,8 @@
       "line": 2,
       "module": "package:p",
       "role": "DECL",
-      "sym": "property/readonly",
-      "vpiKind": "vpiParameter"
-    },
-    {
-      "binding": null,
-      "col": 16,
-      "endCol": 17,
-      "file": "a_pkg.sv",
-      "identifier": "W",
-      "line": 2,
-      "module": "package:p",
-      "role": "DECL",
-      "sym": "property/readonly",
-      "vpiKind": "vpiParameter"
-    },
-    {
-      "binding": null,
-      "col": 16,
-      "endCol": 17,
-      "file": "a_pkg.sv",
-      "identifier": "W",
-      "line": 2,
-      "module": "package:p",
-      "role": "DECL",
-      "sym": "property/readonly",
-      "vpiKind": "vpiParameter"
+      "sym": "property/declaration+readonly",
+      "tokenKind": "parameter-declaration"
     },
     {
       "binding": null,
@@ -65,8 +41,8 @@
       "line": 1,
       "module": "m_a",
       "role": "DECL",
-      "sym": "namespace",
-      "vpiKind": "vpiModule"
+      "sym": "namespace/declaration",
+      "tokenKind": "module-declaration"
     },
     {
       "binding": null,
@@ -77,32 +53,8 @@
       "line": 1,
       "module": "m_a",
       "role": "DECL",
-      "sym": "parameter/readonly",
-      "vpiKind": "TOKEN_PORT_INPUT"
-    },
-    {
-      "binding": null,
-      "col": 23,
-      "endCol": 26,
-      "file": "m_a.sv",
-      "identifier": "clk",
-      "line": 1,
-      "module": "m_a",
-      "role": "DECL",
-      "sym": "parameter/readonly",
-      "vpiKind": "vpiNet"
-    },
-    {
-      "binding": null,
-      "col": 23,
-      "endCol": 26,
-      "file": "m_a.sv",
-      "identifier": "clk",
-      "line": 1,
-      "module": "m_a",
-      "role": "DECL",
-      "sym": "parameter/readonly",
-      "vpiKind": "vpiPort"
+      "sym": "parameter/declaration+readonly",
+      "tokenKind": "port-declaration"
     },
     {
       "binding": null,
@@ -113,32 +65,8 @@
       "line": 1,
       "module": "m_a",
       "role": "DECL",
-      "sym": "variable",
-      "vpiKind": "TOKEN_PORT_OUTPUT"
-    },
-    {
-      "binding": null,
-      "col": 41,
-      "endCol": 42,
-      "file": "m_a.sv",
-      "identifier": "q",
-      "line": 1,
-      "module": "m_a",
-      "role": "DECL",
-      "sym": "variable",
-      "vpiKind": "vpiNet"
-    },
-    {
-      "binding": null,
-      "col": 41,
-      "endCol": 42,
-      "file": "m_a.sv",
-      "identifier": "q",
-      "line": 1,
-      "module": "m_a",
-      "role": "DECL",
-      "sym": "variable",
-      "vpiKind": "vpiPort"
+      "sym": "parameter/declaration+readonly",
+      "tokenKind": "port-declaration"
     },
     {
       "binding": null,
@@ -149,20 +77,8 @@
       "line": 2,
       "module": "m_a",
       "role": "DECL",
-      "sym": "variable",
-      "vpiKind": "vpiNet"
-    },
-    {
-      "binding": null,
-      "col": 8,
-      "endCol": 12,
-      "file": "m_a.sv",
-      "identifier": "busy",
-      "line": 2,
-      "module": "m_a",
-      "role": "DECL",
-      "sym": "variable",
-      "vpiKind": "uhdmlogic_var"
+      "sym": "variable/declaration",
+      "tokenKind": "variable-declaration"
     },
     {
       "binding": {
@@ -170,7 +86,7 @@
         "file": "m_a.sv",
         "identifier": "q",
         "line": 1,
-        "targetKind": "net",
+        "targetKind": "port",
         "viaConnection": false,
         "viaLabel": false
       },
@@ -181,28 +97,8 @@
       "line": 3,
       "module": "m_a",
       "role": "REF",
-      "sym": "variable",
-      "vpiKind": "vpiRefObj"
-    },
-    {
-      "binding": {
-        "col": 41,
-        "file": "m_a.sv",
-        "identifier": "q",
-        "line": 1,
-        "targetKind": "net",
-        "viaConnection": false,
-        "viaLabel": false
-      },
-      "col": 9,
-      "endCol": 10,
-      "file": "m_a.sv",
-      "identifier": "q",
-      "line": 3,
-      "module": "m_a",
-      "role": "REF",
-      "sym": "variable",
-      "vpiKind": "vpiNet"
+      "sym": "parameter/readonly",
+      "tokenKind": "port"
     },
     {
       "binding": {
@@ -210,7 +106,7 @@
         "file": "m_a.sv",
         "identifier": "clk",
         "line": 1,
-        "targetKind": "net",
+        "targetKind": "port",
         "viaConnection": false,
         "viaLabel": false
       },
@@ -221,28 +117,8 @@
       "line": 3,
       "module": "m_a",
       "role": "REF",
-      "sym": "variable",
-      "vpiKind": "vpiRefObj"
-    },
-    {
-      "binding": {
-        "col": 23,
-        "file": "m_a.sv",
-        "identifier": "clk",
-        "line": 1,
-        "targetKind": "net",
-        "viaConnection": false,
-        "viaLabel": false
-      },
-      "col": 13,
-      "endCol": 16,
-      "file": "m_a.sv",
-      "identifier": "clk",
-      "line": 3,
-      "module": "m_a",
-      "role": "REF",
-      "sym": "variable",
-      "vpiKind": "vpiPort"
+      "sym": "parameter/readonly",
+      "tokenKind": "port"
     },
     {
       "binding": {
@@ -250,7 +126,7 @@
         "file": "m_a.sv",
         "identifier": "busy",
         "line": 2,
-        "targetKind": "net",
+        "targetKind": "variable",
         "viaConnection": false,
         "viaLabel": false
       },
@@ -262,27 +138,7 @@
       "module": "m_a",
       "role": "REF",
       "sym": "variable",
-      "vpiKind": "vpiRefObj"
-    },
-    {
-      "binding": {
-        "col": 8,
-        "file": "m_a.sv",
-        "identifier": "busy",
-        "line": 2,
-        "targetKind": "net",
-        "viaConnection": false,
-        "viaLabel": false
-      },
-      "col": 20,
-      "endCol": 24,
-      "file": "m_a.sv",
-      "identifier": "busy",
-      "line": 3,
-      "module": "m_a",
-      "role": "REF",
-      "sym": "variable",
-      "vpiKind": "uhdmlogic_var"
+      "tokenKind": "variable"
     },
     {
       "binding": null,
@@ -293,8 +149,8 @@
       "line": 1,
       "module": "m_b",
       "role": "DECL",
-      "sym": "namespace",
-      "vpiKind": "vpiModule"
+      "sym": "namespace/declaration",
+      "tokenKind": "module-declaration"
     },
     {
       "binding": null,
@@ -305,32 +161,8 @@
       "line": 1,
       "module": "m_b",
       "role": "DECL",
-      "sym": "parameter/readonly",
-      "vpiKind": "TOKEN_PORT_INPUT"
-    },
-    {
-      "binding": null,
-      "col": 23,
-      "endCol": 26,
-      "file": "m_b.sv",
-      "identifier": "clk",
-      "line": 1,
-      "module": "m_b",
-      "role": "DECL",
-      "sym": "parameter/readonly",
-      "vpiKind": "vpiNet"
-    },
-    {
-      "binding": null,
-      "col": 23,
-      "endCol": 26,
-      "file": "m_b.sv",
-      "identifier": "clk",
-      "line": 1,
-      "module": "m_b",
-      "role": "DECL",
-      "sym": "parameter/readonly",
-      "vpiKind": "vpiPort"
+      "sym": "parameter/declaration+readonly",
+      "tokenKind": "port-declaration"
     },
     {
       "binding": null,
@@ -341,20 +173,8 @@
       "line": 2,
       "module": "m_b",
       "role": "DECL",
-      "sym": "variable",
-      "vpiKind": "vpiNet"
-    },
-    {
-      "binding": null,
-      "col": 8,
-      "endCol": 12,
-      "file": "m_b.sv",
-      "identifier": "busy",
-      "line": 2,
-      "module": "m_b",
-      "role": "DECL",
-      "sym": "variable",
-      "vpiKind": "uhdmlogic_var"
+      "sym": "variable/declaration",
+      "tokenKind": "variable-declaration"
     },
     {
       "binding": {
@@ -362,7 +182,7 @@
         "file": "m_b.sv",
         "identifier": "busy",
         "line": 2,
-        "targetKind": "net",
+        "targetKind": "variable",
         "viaConnection": false,
         "viaLabel": false
       },
@@ -374,27 +194,7 @@
       "module": "m_b",
       "role": "REF",
       "sym": "variable",
-      "vpiKind": "vpiRefObj"
-    },
-    {
-      "binding": {
-        "col": 8,
-        "file": "m_b.sv",
-        "identifier": "busy",
-        "line": 2,
-        "targetKind": "net",
-        "viaConnection": false,
-        "viaLabel": false
-      },
-      "col": 9,
-      "endCol": 13,
-      "file": "m_b.sv",
-      "identifier": "busy",
-      "line": 3,
-      "module": "m_b",
-      "role": "REF",
-      "sym": "variable",
-      "vpiKind": "vpiNet"
+      "tokenKind": "variable"
     },
     {
       "binding": {
@@ -402,7 +202,7 @@
         "file": "m_b.sv",
         "identifier": "clk",
         "line": 1,
-        "targetKind": "net",
+        "targetKind": "port",
         "viaConnection": false,
         "viaLabel": false
       },
@@ -413,40 +213,8 @@
       "line": 3,
       "module": "m_b",
       "role": "REF",
-      "sym": "variable",
-      "vpiKind": "vpiRefObj"
-    },
-    {
-      "binding": {
-        "col": 23,
-        "file": "m_b.sv",
-        "identifier": "clk",
-        "line": 1,
-        "targetKind": "net",
-        "viaConnection": false,
-        "viaLabel": false
-      },
-      "col": 17,
-      "endCol": 20,
-      "file": "m_b.sv",
-      "identifier": "clk",
-      "line": 3,
-      "module": "m_b",
-      "role": "REF",
-      "sym": "variable",
-      "vpiKind": "vpiPort"
-    },
-    {
-      "binding": null,
-      "col": 0,
-      "endCol": 6,
-      "file": "tb.sv",
-      "identifier": "module",
-      "line": 1,
-      "module": "tb",
-      "role": "DECL",
-      "sym": "keyword",
-      "vpiKind": "paModule_keyword"
+      "sym": "parameter/readonly",
+      "tokenKind": "port"
     },
     {
       "binding": null,
@@ -457,8 +225,8 @@
       "line": 1,
       "module": "tb",
       "role": "DECL",
-      "sym": "namespace",
-      "vpiKind": "vpiModule"
+      "sym": "namespace/declaration",
+      "tokenKind": "module-declaration"
     },
     {
       "binding": null,
@@ -469,20 +237,8 @@
       "line": 2,
       "module": "tb",
       "role": "DECL",
-      "sym": "variable",
-      "vpiKind": "vpiNet"
-    },
-    {
-      "binding": null,
-      "col": 8,
-      "endCol": 10,
-      "file": "tb.sv",
-      "identifier": "wa",
-      "line": 2,
-      "module": "tb",
-      "role": "DECL",
-      "sym": "variable",
-      "vpiKind": "uhdmlogic_var"
+      "sym": "variable/declaration",
+      "tokenKind": "variable-declaration"
     },
     {
       "binding": null,
@@ -493,20 +249,8 @@
       "line": 3,
       "module": "tb",
       "role": "DECL",
-      "sym": "variable",
-      "vpiKind": "vpiNet"
-    },
-    {
-      "binding": null,
-      "col": 8,
-      "endCol": 10,
-      "file": "tb.sv",
-      "identifier": "wb",
-      "line": 3,
-      "module": "tb",
-      "role": "DECL",
-      "sym": "variable",
-      "vpiKind": "uhdmlogic_var"
+      "sym": "variable/declaration",
+      "tokenKind": "variable-declaration"
     },
     {
       "binding": null,
@@ -517,23 +261,19 @@
       "line": 4,
       "module": "tb",
       "role": "DECL",
-      "sym": "variable",
-      "vpiKind": "vpiNet"
+      "sym": "variable/declaration",
+      "tokenKind": "variable-declaration"
     },
     {
-      "binding": null,
-      "col": 8,
-      "endCol": 11,
-      "file": "tb.sv",
-      "identifier": "t_q",
-      "line": 4,
-      "module": "tb",
-      "role": "DECL",
-      "sym": "variable",
-      "vpiKind": "uhdmlogic_var"
-    },
-    {
-      "binding": null,
+      "binding": {
+        "col": 7,
+        "file": "m_a.sv",
+        "identifier": "m_a",
+        "line": 1,
+        "targetKind": "module",
+        "viaConnection": false,
+        "viaLabel": false
+      },
       "col": 2,
       "endCol": 5,
       "file": "tb.sv",
@@ -541,11 +281,19 @@
       "line": 6,
       "module": "tb",
       "role": "REF",
-      "sym": "class",
-      "vpiKind": "uhdmclass_defn"
+      "sym": "namespace",
+      "tokenKind": "module"
     },
     {
-      "binding": null,
+      "binding": {
+        "col": 7,
+        "file": "m_a.sv",
+        "identifier": "m_a",
+        "line": 1,
+        "targetKind": "module",
+        "viaConnection": false,
+        "viaLabel": false
+      },
       "col": 6,
       "endCol": 9,
       "file": "tb.sv",
@@ -553,8 +301,8 @@
       "line": 6,
       "module": "tb",
       "role": "DECL",
-      "sym": "variable",
-      "vpiKind": "uhdmlogic_var"
+      "sym": "variable/declaration",
+      "tokenKind": "identifier-declaration"
     },
     {
       "binding": {
@@ -574,7 +322,7 @@
       "module": "tb",
       "role": "REF",
       "sym": "function/connectionLabel",
-      "vpiKind": "TOKEN_PORT_CONN_LABEL"
+      "tokenKind": "port-connection-label"
     },
     {
       "binding": {
@@ -582,7 +330,7 @@
         "file": "tb.sv",
         "identifier": "wa",
         "line": 2,
-        "targetKind": "net",
+        "targetKind": "variable",
         "viaConnection": true,
         "viaLabel": false
       },
@@ -594,7 +342,7 @@
       "module": "tb",
       "role": "REF",
       "sym": "variable",
-      "vpiKind": "uhdmlogic_var"
+      "tokenKind": "variable"
     },
     {
       "binding": {
@@ -614,7 +362,7 @@
       "module": "tb",
       "role": "REF",
       "sym": "function/connectionLabel",
-      "vpiKind": "TOKEN_PORT_CONN_LABEL"
+      "tokenKind": "port-connection-label"
     },
     {
       "binding": {
@@ -622,7 +370,7 @@
         "file": "tb.sv",
         "identifier": "t_q",
         "line": 4,
-        "targetKind": "net",
+        "targetKind": "variable",
         "viaConnection": true,
         "viaLabel": false
       },
@@ -634,10 +382,18 @@
       "module": "tb",
       "role": "REF",
       "sym": "variable",
-      "vpiKind": "uhdmlogic_var"
+      "tokenKind": "variable"
     },
     {
-      "binding": null,
+      "binding": {
+        "col": 7,
+        "file": "m_b.sv",
+        "identifier": "m_b",
+        "line": 1,
+        "targetKind": "module",
+        "viaConnection": false,
+        "viaLabel": false
+      },
       "col": 2,
       "endCol": 5,
       "file": "tb.sv",
@@ -645,11 +401,19 @@
       "line": 7,
       "module": "tb",
       "role": "REF",
-      "sym": "class",
-      "vpiKind": "uhdmclass_defn"
+      "sym": "namespace",
+      "tokenKind": "module"
     },
     {
-      "binding": null,
+      "binding": {
+        "col": 7,
+        "file": "m_b.sv",
+        "identifier": "m_b",
+        "line": 1,
+        "targetKind": "module",
+        "viaConnection": false,
+        "viaLabel": false
+      },
       "col": 6,
       "endCol": 9,
       "file": "tb.sv",
@@ -657,8 +421,8 @@
       "line": 7,
       "module": "tb",
       "role": "DECL",
-      "sym": "variable",
-      "vpiKind": "uhdmlogic_var"
+      "sym": "variable/declaration",
+      "tokenKind": "identifier-declaration"
     },
     {
       "binding": {
@@ -678,7 +442,7 @@
       "module": "tb",
       "role": "REF",
       "sym": "function/connectionLabel",
-      "vpiKind": "TOKEN_PORT_CONN_LABEL"
+      "tokenKind": "port-connection-label"
     },
     {
       "binding": {
@@ -686,7 +450,7 @@
         "file": "tb.sv",
         "identifier": "wb",
         "line": 3,
-        "targetKind": "net",
+        "targetKind": "variable",
         "viaConnection": true,
         "viaLabel": false
       },
@@ -698,7 +462,7 @@
       "module": "tb",
       "role": "REF",
       "sym": "variable",
-      "vpiKind": "uhdmlogic_var"
+      "tokenKind": "variable"
     },
     {
       "binding": {
@@ -706,7 +470,7 @@
         "file": "tb.sv",
         "identifier": "t_q",
         "line": 4,
-        "targetKind": "net",
+        "targetKind": "variable",
         "viaConnection": false,
         "viaLabel": false
       },
@@ -718,27 +482,47 @@
       "module": "tb",
       "role": "REF",
       "sym": "variable",
-      "vpiKind": "vpiRefObj"
+      "tokenKind": "variable"
     },
     {
       "binding": {
-        "col": 8,
+        "col": 6,
         "file": "tb.sv",
-        "identifier": "t_q",
-        "line": 4,
-        "targetKind": "net",
+        "identifier": "u_a",
+        "line": 6,
+        "targetKind": "module",
         "viaConnection": false,
         "viaLabel": false
       },
-      "col": 9,
-      "endCol": 12,
+      "col": 15,
+      "endCol": 18,
       "file": "tb.sv",
-      "identifier": "t_q",
+      "identifier": "u_a",
       "line": 9,
       "module": "tb",
       "role": "REF",
       "sym": "variable",
-      "vpiKind": "vpiNet"
+      "tokenKind": "identifier"
+    },
+    {
+      "binding": {
+        "col": 8,
+        "file": "m_a.sv",
+        "identifier": "busy",
+        "line": 2,
+        "targetKind": "variable",
+        "viaConnection": false,
+        "viaLabel": false
+      },
+      "col": 19,
+      "endCol": 23,
+      "file": "tb.sv",
+      "identifier": "busy",
+      "line": 9,
+      "module": "tb",
+      "role": "REF",
+      "sym": "variable",
+      "tokenKind": "variable"
     },
     {
       "binding": {
@@ -746,7 +530,7 @@
         "file": "tb.sv",
         "identifier": "wa",
         "line": 2,
-        "targetKind": "net",
+        "targetKind": "variable",
         "viaConnection": false,
         "viaLabel": false
       },
@@ -758,27 +542,7 @@
       "module": "tb",
       "role": "REF",
       "sym": "variable",
-      "vpiKind": "vpiRefObj"
-    },
-    {
-      "binding": {
-        "col": 8,
-        "file": "tb.sv",
-        "identifier": "wa",
-        "line": 2,
-        "targetKind": "net",
-        "viaConnection": false,
-        "viaLabel": false
-      },
-      "col": 26,
-      "endCol": 28,
-      "file": "tb.sv",
-      "identifier": "wa",
-      "line": 9,
-      "module": "tb",
-      "role": "REF",
-      "sym": "variable",
-      "vpiKind": "uhdmlogic_var"
+      "tokenKind": "variable"
     },
     {
       "binding": {
@@ -786,7 +550,7 @@
         "file": "tb.sv",
         "identifier": "wb",
         "line": 3,
-        "targetKind": "net",
+        "targetKind": "variable",
         "viaConnection": false,
         "viaLabel": false
       },
@@ -798,27 +562,7 @@
       "module": "tb",
       "role": "REF",
       "sym": "variable",
-      "vpiKind": "vpiRefObj"
-    },
-    {
-      "binding": {
-        "col": 8,
-        "file": "tb.sv",
-        "identifier": "wb",
-        "line": 3,
-        "targetKind": "net",
-        "viaConnection": false,
-        "viaLabel": false
-      },
-      "col": 31,
-      "endCol": 33,
-      "file": "tb.sv",
-      "identifier": "wb",
-      "line": 9,
-      "module": "tb",
-      "role": "REF",
-      "sym": "variable",
-      "vpiKind": "uhdmlogic_var"
+      "tokenKind": "variable"
     }
   ]
 }

@@ -1,10 +1,10 @@
 //! Architectural decoupling test for the simulator pipeline.
 //!
 //! The C11 backend (`sim::emit_c`) must consume only IR types — never the
-//! lowering frontend's database or the Surelog binding layer — and the
+//! lowering frontend's semantic database or the Slang binding layer — and the
 //! lowering (`sim::codegen`) must build IR instead of emitting runtime C
 //! calls directly.  This pins the
-//! `core::db (lowering) → IrModel → optimization passes → C11 emit backend`
+//! `SemanticModel → ExecutionModel → optimization passes → C11 emit backend`
 //! pipeline shape, in the spirit of the repo's other grep-based invariants.
 
 use std::path::{Path, PathBuf};
@@ -33,7 +33,7 @@ fn collect_rust_sources(path: &Path, sources: &mut Vec<(PathBuf, String)>) {
     }
 }
 
-/// `emit_c.rs` is a pure IR consumer: no database access, no Surelog/VPI
+/// `emit_c.rs` is a pure execution-IR consumer: no semantic database access or FFI
 /// bindings, no `unsafe`.
 #[test]
 fn emit_c_consumes_only_ir() {
@@ -48,7 +48,7 @@ fn emit_c_consumes_only_ir() {
     }
 }
 
-/// The lowering builds an `IrModel`; raw runtime-call emission moved to the
+/// The lowering builds an `ExecutionModel`; raw runtime-call emission moved to the
 /// backend.
 #[test]
 fn codegen_builds_ir_not_c_text() {
@@ -91,7 +91,7 @@ fn codegen_builds_ir_not_c_text() {
     let emit = sim_sources("emit_c");
     assert!(
         emit.iter().any(|(_, source)| source
-            .contains("pub fn render(model: &IrModel) -> Result<String, EmitError>")),
-        "the backend entry point renders a complete IrModel"
+            .contains("pub fn render(execution: &ExecutionModel) -> Result<String, EmitError>")),
+        "the backend entry point renders a complete ExecutionModel"
     );
 }

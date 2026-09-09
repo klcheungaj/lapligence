@@ -13,6 +13,8 @@
 //! as `#[ignore = "known gap: …"]` tests; the shadowing-resolution follow-up
 //! closed those gaps, the ignores are gone, and the whole suite runs as
 //! ordinary contract tests.
+#![cfg(feature = "lsp")]
+
 mod support;
 
 use std::fs;
@@ -23,11 +25,11 @@ use support::lsp::{default_init_options, file_uri, LspProcess};
 
 use serde_json::{json, Value};
 
-/// Generous because the suite spawns one server per test and cargo runs them
-/// in parallel: every server compiles behind Surelog's blocking frontend, so
-/// a busy machine stretches each analysis well past the debounce window.
-const POLL_TIMEOUT: Duration = Duration::from_secs(180);
+/// Bound each analysis-state poll and follow-up response independently so a
+/// stalled server fails with the request context instead of hanging the suite.
+const POLL_TIMEOUT: Duration = Duration::from_secs(45);
 const POLL_REQUEST_TIMEOUT: Duration = Duration::from_millis(750);
+const RESPONSE_TIMEOUT: Duration = Duration::from_secs(10);
 const POLL_INTERVAL: Duration = Duration::from_millis(100);
 const CONFIG_FILE_NAME: &str = "llg.toml";
 const CONFIG_TEXT: &str = "schema_version = 1\n\n[sources]\ndirectories = [\".\"]\ninclude = [\"**/*.v\", \"**/*.sv\"]\n\n[lint]\nenabled = false\n";
@@ -203,12 +205,13 @@ fn definition_starts_at(
     offset: usize,
 ) -> (String, Value) {
     let response = client
-        .request(
+        .request_with_timeout(
             "textDocument/definition",
             json!({
                 "textDocument": { "uri": file_uri(path) },
                 "position": position_at(text, needle, offset)
             }),
+            RESPONSE_TIMEOUT,
         )
         .unwrap_or_else(|error| panic!("definition request at {needle:?}: {error}"));
     assert_no_shadow_uris(&response);
@@ -223,12 +226,13 @@ fn hover_markup(
     offset: usize,
 ) -> String {
     let hover = client
-        .request(
+        .request_with_timeout(
             "textDocument/hover",
             json!({
                 "textDocument": { "uri": file_uri(path) },
                 "position": position_at(text, needle, offset)
             }),
+            RESPONSE_TIMEOUT,
         )
         .unwrap_or_else(|error| panic!("hover request at {needle:?}: {error}"));
     let contents = hover
@@ -251,13 +255,14 @@ fn reference_starts(
     include_declaration: bool,
 ) -> Vec<Value> {
     let response = client
-        .request(
+        .request_with_timeout(
             "textDocument/references",
             json!({
                 "textDocument": { "uri": file_uri(path) },
                 "position": position_at(text, needle, offset),
                 "context": { "includeDeclaration": include_declaration }
             }),
+            RESPONSE_TIMEOUT,
         )
         .unwrap_or_else(|error| panic!("references request at {needle:?}: {error}"));
     assert_no_shadow_uris(&response);
@@ -435,8 +440,8 @@ endmodule
 
 // ── Contract tests ───────────────────────────────────────────────────────────
 
-/// Named `begin : blk` block shadowing a module-level reg/wire: UHDM captures
-/// elaboration bindings for both use sites, so goto-definition is
+/// Named `begin : blk` block shadowing a module-level reg/wire: the semantic
+/// snapshot captures bindings for both use sites, so goto-definition is
 /// binding-precise — refs INSIDE the block reach the INNER declaration and
 /// refs OUTSIDE keep using the OUTER declaration.  (A request on the inner
 /// declaration itself is covered by `shadowing_declaration_resolves_to_itself`.)
@@ -456,12 +461,12 @@ fn named_begin_block_shadow_resolves_inner_and_outer_definitions() {
         &ws,
         "blk.sv",
         BLK_SV,
-        "bind=blk.sv:5:16[val,var]",
+        "bind=blk.sv:5:16[val,variable]",
     );
     assert!(
         lines
             .iter()
-            .any(|l| l.contains("bind=blk.sv:1:14[val,net]")),
+            .any(|l| l.contains("bind=blk.sv:1:14[val,variable]")),
         "outer-use binding must also be captured: {lines:?}"
     );
 
@@ -512,7 +517,7 @@ fn shadowing_declaration_resolves_to_itself() {
         &ws,
         "blk.sv",
         BLK_SV,
-        "bind=blk.sv:5:16[val,var]",
+        "bind=blk.sv:5:16[val,variable]",
     );
 
     let (uri, start) = definition_starts_at(&mut client, &path, BLK_SV, "[3:0] val", 6);
@@ -543,7 +548,7 @@ fn unshadowed_sibling_variable_navigates_normally() {
         &ws,
         "blk.sv",
         BLK_SV,
-        "bind=blk.sv:2:8[en,net]",
+        "bind=blk.sv:2:8[en,variable]",
     );
 
     // `en` is used both inside and outside the block and is never shadowed:
@@ -579,7 +584,7 @@ fn named_begin_block_hover_shows_the_shadowing_declaration_type() {
         &ws,
         "blk.sv",
         BLK_SV,
-        "bind=blk.sv:5:16[val,var]",
+        "bind=blk.sv:5:16[val,variable]",
     );
 
     let markup = hover_markup(&mut client, &path, BLK_SV, "val = en", 2);
@@ -619,7 +624,7 @@ fn named_begin_block_references_respect_shadow_scopes() {
         &ws,
         "blk.sv",
         BLK_SV,
-        "bind=blk.sv:5:16[val,var]",
+        "bind=blk.sv:5:16[val,variable]",
     );
 
     let inner_decl = position_at(BLK_SV, "[3:0] val", 6);
@@ -661,7 +666,7 @@ fn function_local_shadow_call_site_stays_on_module_signal() {
         &ws,
         "func.sv",
         FUNC_SV,
-        "bind=func.sv:2:14[out,net]",
+        "bind=func.sv:2:14[out,variable]",
     );
 
     // Call-site arg `dat[1:0]` inside f_sh(...) → the module-level `dat`.
@@ -692,7 +697,7 @@ fn function_local_use_resolves_to_the_function_local_declaration() {
         &ws,
         "func.sv",
         FUNC_SV,
-        "bind=func.sv:2:14[out,net]",
+        "bind=func.sv:2:14[out,variable]",
     );
 
     for (needle, offset) in [("dat = {2'b00", 1), ("return dat", 8)] {
@@ -725,7 +730,7 @@ fn task_local_shadow_outside_uses_stay_on_module_signal() {
         &ws,
         "task.sv",
         TASK_SV,
-        "bind=task.sv:2:8[go,net]",
+        "bind=task.sv:2:8[go,variable]",
     );
 
     // Module-level use AFTER the task call → the module-level `cap`.
@@ -765,7 +770,7 @@ fn task_local_use_resolves_to_the_task_local_declaration() {
         &ws,
         "task.sv",
         TASK_SV,
-        "bind=task.sv:2:8[go,net]",
+        "bind=task.sv:2:8[go,variable]",
     );
 
     let (uri, start) = definition_starts_at(&mut client, &path, TASK_SV, "cap = {12'h0", 1);
@@ -779,7 +784,7 @@ fn task_local_use_resolves_to_the_task_local_declaration() {
 }
 
 /// Named generate block shadowing a module signal: uses BEFORE and AFTER the
-/// generate keep resolving to the OUTER declaration (UHDM binds those).
+/// generate keep resolving to the outer declaration.
 #[test]
 fn generate_block_shadow_outer_uses_before_and_after_generate() {
     let ws = Workspace::new("gen");
@@ -796,7 +801,7 @@ fn generate_block_shadow_outer_uses_before_and_after_generate() {
         &ws,
         "gen.sv",
         GEN_SV,
-        "bind=gen.sv:1:14[val,net]",
+        "bind=gen.sv:1:14[val,variable]",
     );
 
     let (uri, start) = definition_starts_at(&mut client, &path, GEN_SV, "pre = val", 7);
@@ -835,7 +840,7 @@ fn generate_block_interior_use_resolves_to_the_genblk_local_declaration() {
         &ws,
         "gen.sv",
         GEN_SV,
-        "bind=gen.sv:1:14[val,net]",
+        "bind=gen.sv:1:14[val,variable]",
     );
 
     let (uri, start) = definition_starts_at(&mut client, &path, GEN_SV, "assign val = 4'h0", 7);
@@ -851,7 +856,7 @@ fn generate_block_interior_use_resolves_to_the_genblk_local_declaration() {
 /// Two-level nesting (block inside block): the middle scope wins over the
 /// module level, the innermost wins inside the inner block, and the
 /// module-level use keeps the outer net.  All three directions are
-/// binding-precise today because UHDM captured every use site.
+/// binding-precise because the semantic snapshot captures every use site.
 #[test]
 fn two_level_nesting_each_scope_wins_inside_itself() {
     let ws = Workspace::new("two");
@@ -868,9 +873,12 @@ fn two_level_nesting_each_scope_wins_inside_itself() {
         &ws,
         "two.sv",
         TWO_SV,
-        "bind=two.sv:7:18[sig,var]",
+        "bind=two.sv:7:18[sig,variable]",
     );
-    for want in ["bind=two.sv:5:16[sig,var]", "bind=two.sv:1:15[sig,net]"] {
+    for want in [
+        "bind=two.sv:5:16[sig,variable]",
+        "bind=two.sv:1:15[sig,variable]",
+    ] {
         assert!(
             lines.iter().any(|l| l.contains(want)),
             "missing oracle binding {want}: {lines:?}"
@@ -924,7 +932,7 @@ fn two_level_hover_shows_the_innermost_scope_type() {
         &ws,
         "two.sv",
         TWO_SV,
-        "bind=two.sv:7:18[sig,var]",
+        "bind=two.sv:7:18[sig,variable]",
     );
 
     let markup = hover_markup(&mut client, &path, TWO_SV, "sig = {3'b000", 2);
@@ -1085,10 +1093,10 @@ fn opened_buffer_client_side_block_shadows_module_signal() {
                     .unwrap_or_default();
                 let ready = lines
                     .iter()
-                    .any(|l| l.contains("bind=edit.sv:4:16[val,var]"))
+                    .any(|l| l.contains("bind=edit.sv:4:16[val,variable]"))
                     && lines
                         .iter()
-                        .any(|l| l.contains("bind=edit.sv:1:14[val,net]"));
+                        .any(|l| l.contains("bind=edit.sv:1:14[val,variable]"));
                 if ready {
                     break;
                 }

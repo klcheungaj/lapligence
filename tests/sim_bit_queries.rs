@@ -4,6 +4,7 @@
 mod sim_harness;
 
 use llg::core::{compile, db::Db};
+use llg::ffi::slang::DiagnosticSeverity;
 use llg::sim::{self, opt::OptConfig};
 
 #[test]
@@ -69,7 +70,7 @@ module tb;
 endmodule
 "#;
     let expected = "init=2 1 1 1\nparam=2 1 1 1\n0 0 1 0\n1 1 1 1\n2 0 0 1\n0 0 1 1\nwide=1024 0 0 0\nhigh=1 1 1 1\nwidth=32 1 1 1\nsigned=-1\nliteral=1 1 1 0\nsample=0\nsample=0\nsample=1\nsample=1\ncalls=4\n";
-    sim_harness::with_surelog_temp_cwd("bit_queries", |dir| {
+    sim_harness::with_frontend_temp_cwd("bit_queries", |dir| {
         let path = dir.join("tb.sv");
         std::fs::write(&path, source).map_err(|error| error.to_string())?;
         let compiled = compile::compile_checked(&compile::CompileOpts {
@@ -78,8 +79,7 @@ endmodule
             ..Default::default()
         })
         .map_err(|error| error.to_string())?;
-        let db = Db::build(compiled.uhdm_design().ok_or("no design")?)
-            .map_err(|error| error.to_string())?;
+        let db = Db::from_slang(&compiled.snapshot).map_err(|error| error.to_string())?;
         for (variant, opts) in [("on", OptConfig::default()), ("off", OptConfig::none())] {
             let model = sim::codegen::generate_from_db_with_opts(&db, &opts)
                 .map_err(|error| error.to_string())?;
@@ -96,29 +96,15 @@ endmodule
 #[test]
 fn bit_queries_reject_real_operands() {
     for name in ["$countones", "$onehot", "$onehot0", "$isunknown"] {
-        sim_harness::with_surelog_temp_cwd("bit_query_real", |dir| {
-            let path = dir.join("tb.sv");
-            std::fs::write(
-                &path,
-                format!("module tb; real r; initial $display(\"%0d\", {name}(r)); endmodule"),
-            )
-            .map_err(|error| error.to_string())?;
-            let compiled = compile::compile_checked(&compile::CompileOpts {
-                files: vec![path.to_string_lossy().into_owned()],
-                top: Some("tb".to_owned()),
-                ..Default::default()
-            })
-            .map_err(|error| error.to_string())?;
-            let error = match sim::codegen::generate(compiled.uhdm_design().ok_or("no design")?) {
-                Ok(_) => return Err("real query unexpectedly succeeded".to_owned()),
-                Err(error) => error.to_string(),
-            };
-            assert!(
-                error.contains("requires a packed integral argument"),
-                "{name}: {error}"
-            );
-            Ok(())
-        })
-        .expect("real operand rejection");
+        let source = format!("module tb; real r; initial $display(\"%0d\", {name}(r)); endmodule");
+        let diagnostics =
+            sim_harness::frontend_diagnostics(&source, "tb").expect("compile real query");
+        assert!(
+            diagnostics.iter().any(|diagnostic| {
+                diagnostic.severity == DiagnosticSeverity::Error
+                    && diagnostic.name == "BadSystemSubroutineArg"
+            }),
+            "{name} must report BadSystemSubroutineArg: {diagnostics:?}"
+        );
     }
 }

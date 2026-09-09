@@ -26,32 +26,26 @@
 # ── Stage 1: Toolchain ───────────────────────────────────────────────────────
 FROM alpine:3.20 AS toolchain
 
-# Build toolchain and Surelog's non-Rust dependencies:
+# Build toolchain and Slang's non-Rust dependencies:
 #   build-base   – gcc, g++, make, binutils (all target musl natively on Alpine)
 #   cmake        – CMake ≥ 3.20 is provided by Alpine 3.20
-#   python3      – required by Surelog's CMake grammar-generation scripts
-#   openjdk21-jre-headless – Java runtime for the ANTLR grammar generator jar
-#   zlib-dev / zlib-static – Surelog links zlib statically (ZLIB_USE_STATIC_LIBS ON)
+#   python3      – required by Slang's syntax and diagnostic generators
+#   zlib-dev / zlib-static – generated FST waveform models link zlib statically
 #   curl         – used by the Rust installer
+#   patch        – applies vendored fixes even when submodule Git metadata is
+#                  unavailable through a bind mount
 RUN apk update
 RUN apk add --no-cache \
         build-base \
         cmake \
         python3 \
-        openjdk21-jre-headless \
         zlib-dev \
         zlib-static \
         libstdc++-dev \
         curl \
         linux-headers \
-        py3-pip \
         git \
-        # GNU patch needed by build.rs to apply vendor patches without git
-        # metadata (submodule gitdir pointers dangle under bind-mount-only
-        # containers).
         patch
-
-RUN pip3 install --break-system-packages orderedmultidict
 
 # Install Rust into /opt so any user can access the toolchain.
 # RUSTUP_HOME  – toolchain binaries (rustc, cargo, …)
@@ -99,13 +93,13 @@ COPY --chown=builder:builder Cargo.toml Cargo.lock ./
 # graph without requiring the real sources.
 RUN mkdir -p src/bin && \
     echo 'fn main(){}' > src/main.rs && \
-    echo 'fn main(){}' > src/bin/hellouhdm.rs
+    echo 'fn main(){}' > src/bin/helloslang.rs
 
 # Fetch all crates into the image (no cache mount – crates must live in the layer).
 RUN cargo fetch --locked --target x86_64-unknown-linux-musl
 
 # Remove stubs; real sources are bind-mounted from the host at runtime.
-RUN rm -f src/main.rs src/bin/hellouhdm.rs
+RUN rm -f src/main.rs src/bin/helloslang.rs
 
 # Default command builds the project in debug mode against the musl target.
 # Override by passing a different `cargo` invocation to `docker run`.

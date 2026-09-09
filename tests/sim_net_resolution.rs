@@ -4,11 +4,12 @@
 mod sim_harness;
 
 use llg::core::{compile, db::Db};
+use llg::ffi::slang::DiagnosticSeverity;
 use llg::sim::{self, opt::OptConfig};
 use std::path::Path;
 
 fn generate_error(tag: &str, source: &str) -> String {
-    sim_harness::with_surelog_temp_cwd(tag, |dir| {
+    sim_harness::with_frontend_temp_cwd(tag, |dir| {
         let path = dir.join("tb.sv");
         std::fs::write(&path, source).map_err(|error| error.to_string())?;
         let compiled = compile::compile_checked(&compile::CompileOpts {
@@ -17,7 +18,8 @@ fn generate_error(tag: &str, source: &str) -> String {
             ..Default::default()
         })
         .map_err(|error| error.to_string())?;
-        match sim::codegen::generate(compiled.uhdm_design().ok_or("no design")?) {
+        let db = Db::from_slang(&compiled.snapshot).map_err(|error| error.to_string())?;
+        match sim::codegen::generate(&db) {
             Ok(_) => Err("wired-net design unexpectedly generated".to_owned()),
             Err(error) => Ok(error.to_string()),
         }
@@ -109,7 +111,7 @@ endmodule
     let expected = "matrix=01xz/10xz\nsites=11/11\nwide=00xz/1x1z\n\
                     allpairs=zx10xxx01x100000/zx10xx1x11110x10\nmax=111/000\n\
                     known=00/11\nxdom=00/xx\nzneutral=00/00\n";
-    sim_harness::with_surelog_temp_cwd("wired_resolution", |dir| {
+    sim_harness::with_frontend_temp_cwd("wired_resolution", |dir| {
         let path = dir.join("tb.sv");
         std::fs::write(&path, source).map_err(|error| error.to_string())?;
         let compiled = compile::compile_checked(&compile::CompileOpts {
@@ -118,8 +120,7 @@ endmodule
             ..Default::default()
         })
         .map_err(|error| error.to_string())?;
-        let db = Db::build(compiled.uhdm_design().ok_or("no design")?)
-            .map_err(|error| error.to_string())?;
+        let db = Db::from_slang(&compiled.snapshot).map_err(|error| error.to_string())?;
         for (variant, opts) in [("on", OptConfig::default()), ("off", OptConfig::none())] {
             let model = sim::codegen::generate_from_db_with_opts(&db, &opts)
                 .map_err(|error| error.to_string())?;
@@ -141,7 +142,7 @@ fn ordinary_wire_selected_continuous_drivers_resolve_with_optimizer_parity() {
     }
     let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/sim/net_resolution/selected_continuous_wire.v");
-    sim_harness::with_surelog_temp_cwd("selected_continuous_wire", |dir| {
+    sim_harness::with_frontend_temp_cwd("selected_continuous_wire", |dir| {
         let source = dir.join("selected_continuous_wire.v");
         std::fs::copy(&fixture, &source).map_err(|error| format!("copy fixture: {error}"))?;
         let compiled = compile::compile_checked(&compile::CompileOpts {
@@ -150,11 +151,7 @@ fn ordinary_wire_selected_continuous_drivers_resolve_with_optimizer_parity() {
             ..Default::default()
         })
         .map_err(|error| format!("compile fixture: {error}"))?;
-        let db = Db::build_with_source_files(
-            compiled.uhdm_design().ok_or("no design")?,
-            &compiled.frontend_source_files(),
-        )
-        .map_err(|error| error.to_string())?;
+        let db = Db::from_slang(&compiled.snapshot).map_err(|error| error.to_string())?;
         for (variant, options) in [
             ("unoptimized", OptConfig::none()),
             ("optimized", OptConfig::default()),
@@ -181,32 +178,21 @@ fn ordinary_wire_selected_continuous_drivers_resolve_with_optimizer_parity() {
 fn ordinary_wire_continuous_assignment_rejects_variable_target_select() {
     let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/sim/net_resolution/variable_selected_continuous_wire.sv");
-    let error = sim_harness::with_surelog_temp_cwd("variable_selected_continuous_wire", |dir| {
-        let source = dir.join("variable_selected_continuous_wire.sv");
-        std::fs::copy(&fixture, &source).map_err(|error| format!("copy fixture: {error}"))?;
-        let compiled = match compile::compile_checked(&compile::CompileOpts {
-            files: vec![source.to_string_lossy().into_owned()],
-            top: Some("tb".to_owned()),
-            ..Default::default()
-        }) {
-            Ok(compiled) => compiled,
-            Err(error) => return Ok(error.to_string()),
-        };
-        match sim::codegen::generate(compiled.uhdm_design().ok_or("no design")?) {
-            Ok(_) => Err("variable target select was accepted as a net lvalue".to_owned()),
-            Err(error) => Ok(error.to_string()),
-        }
-    })
-    .expect("variable target select must be rejected");
+    let source = std::fs::read_to_string(&fixture).expect("read variable-select fixture");
+    let diagnostics =
+        sim_harness::frontend_diagnostics(&source, "tb").expect("compile variable target select");
     assert!(
-        error.contains("constant") && error.contains("select"),
-        "unexpected diagnostic: {error}"
+        diagnostics.iter().any(|diagnostic| {
+            diagnostic.severity == DiagnosticSeverity::Error
+                && diagnostic.name == "ConstEvalNonConstVariable"
+        }),
+        "variable target select must report ConstEvalNonConstVariable: {diagnostics:?}"
     );
 }
 
 #[test]
 fn wired_nets_reject_unimplemented_driver_paths() {
-    let cases = [
+    let lowering_cases = [
         (
             "select",
             "module tb; logic a; wand [1:0] w; assign w[0]=a; endmodule",
@@ -223,21 +209,6 @@ fn wired_nets_reject_unimplemented_driver_paths() {
             "concatenated/complex continuous-assignment LHS",
         ),
         (
-            "blocking",
-            "module tb; logic a; wand w; initial w=a; endmodule",
-            "procedural blocking assignment",
-        ),
-        (
-            "nba",
-            "module tb; logic a; wand w; initial w<=a; endmodule",
-            "procedural nonblocking assignment",
-        ),
-        (
-            "pca",
-            "module tb; logic a; wand w; initial assign w=a; endmodule",
-            "procedural continuous assignment",
-        ),
-        (
             "force",
             "module tb; wand w; initial force w=1'b1; endmodule",
             "force of wired net",
@@ -251,16 +222,6 @@ fn wired_nets_reject_unimplemented_driver_paths() {
             "gate",
             "module tb; logic a; wand w; buf g(w,a); endmodule",
             "gate output driving wired net",
-        ),
-        (
-            "task_output",
-            "module tb; wand w; task t(output logic x); x=1; endtask initial t(w); endmodule",
-            "function/task output/inout driving wired net",
-        ),
-        (
-            "function_output",
-            "module tb; wand w; function automatic logic f(output logic x); begin x=1; f=0; end endfunction initial $display(f(w)); endmodule",
-            "function/task output/inout driving wired net",
         ),
         (
             "port",
@@ -283,11 +244,49 @@ fn wired_nets_reject_unimplemented_driver_paths() {
             "drive-strength continuous assignment",
         ),
     ];
-    for (tag, source, expected) in cases {
+    for (tag, source, expected) in lowering_cases {
         let source =
             format!("// llg-test-fixture: tests/sim_net_resolution.rs/{tag}.sv\n{source}\n");
         let error = generate_error(&format!("wired_{tag}"), &source);
         assert!(error.contains(expected), "{tag}: {error}");
+    }
+
+    let frontend_cases = [
+        (
+            "blocking",
+            "module tb; logic a; wand w; initial w=a; endmodule",
+            "AssignToNet",
+        ),
+        (
+            "nba",
+            "module tb; logic a; wand w; initial w<=a; endmodule",
+            "AssignToNet",
+        ),
+        (
+            "pca",
+            "module tb; logic a; wand w; initial assign w=a; endmodule",
+            "BadProceduralAssign",
+        ),
+        (
+            "task_output",
+            "module tb; wand w; task t(output logic x); x=1; endtask initial t(w); endmodule",
+            "AssignToNet",
+        ),
+        (
+            "function_output",
+            "module tb; wand w; function automatic logic f(output logic x); begin x=1; f=0; end endfunction initial $display(f(w)); endmodule",
+            "AssignToNet",
+        ),
+    ];
+    for (tag, source, expected_name) in frontend_cases {
+        let diagnostics =
+            sim_harness::frontend_diagnostics(source, "tb").expect("compile invalid net write");
+        assert!(
+            diagnostics.iter().any(|diagnostic| {
+                diagnostic.severity == DiagnosticSeverity::Error && diagnostic.name == expected_name
+            }),
+            "{tag}: expected {expected_name}: {diagnostics:?}"
+        );
     }
 }
 

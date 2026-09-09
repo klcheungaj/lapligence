@@ -98,51 +98,18 @@ pub(crate) mod tests {
     use crate::core::lint::{lint, LintDiag};
     use crate::core::model::DesignModel;
 
-    /// Serializes every Surelog-touching lib test (they share one process and
-    /// Surelog writes `slpp_all/` into the CWD).
-    pub(crate) static SURELOG_LOCK: Mutex<()> = Mutex::new(());
+    /// Serializes the remaining tests that mutate the process working directory.
+    pub(crate) static CWD_LOCK: Mutex<()> = Mutex::new(());
 
-    /// Restores the process CWD and removes the temp dir even when the body
-    /// panics, so a failing test cannot strand other tests in a deleted CWD.
-    struct TempDirGuard {
-        dir: std::path::PathBuf,
-        orig: std::path::PathBuf,
-    }
-
-    impl Drop for TempDirGuard {
-        fn drop(&mut self) {
-            let _ = std::env::set_current_dir(&self.orig);
-            let _ = std::fs::remove_dir_all(&self.dir);
-        }
-    }
-
-    /// Compile `sv` in a fresh temp dir (the CWD is moved there while the
-    /// compile runs), build the db + model, and return them.
+    /// Compile an in-memory design and retain only owned semantic data.
     pub(crate) fn build_design(sv: &str, top: &str) -> (Db, DesignModel) {
-        let _guard = SURELOG_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let dir = std::env::temp_dir().join(format!("llg_lint_{}", std::process::id()));
-        std::fs::create_dir_all(&dir).expect("create temp dir");
-        let orig_cwd = std::env::current_dir().expect("current dir");
-        let _restore = TempDirGuard {
-            dir: dir.clone(),
-            orig: orig_cwd,
-        };
-        std::env::set_current_dir(&dir).expect("chdir to temp dir");
-        let file = dir.join("design.sv");
-        std::fs::write(&file, sv).expect("write design");
-        let out = compile::compile(&compile::CompileOpts {
-            files: vec![file.to_string_lossy().into_owned()],
-            top: if top.is_empty() {
-                None
-            } else {
-                Some(top.to_string())
-            },
+        let out = compile::compile_checked(&compile::CompileOpts {
+            sources: vec![compile::OwnedSource::compilation_unit("design.sv", sv)],
+            top: (!top.is_empty()).then(|| top.to_owned()),
             ..Default::default()
         })
-        .expect("compile should start");
-        assert!(out.ok(), "compile must succeed: {:?}", out.diagnostics);
-        let design = out.uhdm_design().expect("no uhdm design handle");
-        let db = Db::build(design).expect("db build");
+        .expect("design should compile");
+        let db = Db::from_slang(&out.snapshot).expect("semantic capture");
         let model = DesignModel::from_db(&db);
         (db, model)
     }

@@ -13,6 +13,6 @@
 - `lsp.rs` and `lsp/` own workspace state, scheduling, staging, diagnostics,
   configuration, and wire handlers.
 
-- Boundary: the backend serializes blocking Surelog work and returns only owned
-  data to request handling. The transport keeps stdout exclusively for JSON-RPC,
-  while filesystem/compiler side effects stay in the private shadow workspace.
+- Boundary: the backend passes bounded, admitted source buffers to Slang and
+  returns only owned snapshots and indexes to request handling. The transport
+  keeps stdout exclusively for JSON-RPC.

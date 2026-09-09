@@ -1,22 +1,22 @@
 //! End-to-end simulator tests for interface body processes: always/initial/
 //! always_comb blocks declared INSIDE an interface definition.
 //!
-//! The pinned Surelog elaborates the definition's processes onto the ACTUAL
+//! Slang elaborates the definition's processes onto the actual
 //! interface instance only (`top.u_bus`), never onto the per-port copies
 //! (`top.u_cons.s`), which are just views kept in sync by the interface link
-//! processes.  The codegen emits the processes for the actual instance and
+//! processes. The codegen emits the processes for the actual instance and
 //! skips the copies.
 //!
-//! Surelog writes `slpp_all/` into the process working directory, so the tests
+//! These tests temporarily change the process working directory, so the tests
 //! run with the CWD pointed at a fresh temp dir (serialized through a mutex,
-//! like the other Surelog integration tests).
+//! to avoid process-wide CWD races).
 
 use std::sync::Mutex;
 
 use llg::core::compile;
 use llg::sim;
 
-static SURELOG_LOCK: Mutex<()> = Mutex::new(());
+static CWD_LOCK: Mutex<()> = Mutex::new(());
 
 #[path = "support/sim.rs"]
 mod sim_harness;
@@ -36,8 +36,9 @@ fn run_design(sv: &str, tag: &str) -> Result<String, String> {
         if !out.ok() {
             return Err(format!("compile diagnostics: {:?}", out.diagnostics));
         }
-        let design = out.uhdm_design().ok_or("no UHDM design")?;
-        let gen = sim::codegen::generate(design).map_err(|e| format!("codegen: {e}"))?;
+        let db =
+            llg::core::db::Db::from_slang(&out.snapshot).map_err(|error| format!("db: {error}"))?;
+        let gen = sim::codegen::generate(&db).map_err(|e| format!("codegen: {e}"))?;
         assert!(
             !gen.warnings
                 .iter()
@@ -89,7 +90,7 @@ fn sim_iface_body_clock_gen() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
+    let _guard = CWD_LOCK.lock().unwrap();
     let sv = r#"interface bus_if;
     logic clk;
     modport slave(input clk);
@@ -143,7 +144,7 @@ fn sim_iface_body_comb_data() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
+    let _guard = CWD_LOCK.lock().unwrap();
     let sv = r#"interface bus_if;
     logic [7:0] data;
     modport slave(input data);
@@ -188,7 +189,7 @@ fn sim_iface_body_initial() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
+    let _guard = CWD_LOCK.lock().unwrap();
     let sv = r#"interface bus_if;
     logic rst;
     modport slave(input rst);

@@ -1,7 +1,7 @@
 # Shared linter
 
 - Purpose: run the same owned-design checks in the simulator and language server.
-- Inputs: `core::db::Db` and `core::model::DesignModel`; no live VPI or LSP dependencies.
+- Inputs: `core::db::Db` and `core::model::DesignModel`; no native AST access or LSP dependencies.
 - Rules: 24 enabled by default, with stable IDs and configurable severities.
   - Categories: signal usage, widths, drivers, control flow, and assignment style.
   - See the [registry](rules/mod.rs) and [rule modules](rules/readme.md).

@@ -110,7 +110,7 @@ endmodule
         "wide_z=1 case=1\n",
     );
 
-    sim_harness::with_surelog_temp_cwd("fill_literal_contexts", |dir| {
+    sim_harness::with_frontend_temp_cwd("fill_literal_contexts", |dir| {
         let path = dir.join("tb.sv");
         std::fs::write(&path, source).map_err(|error| error.to_string())?;
         let compiled = compile::compile_checked(&compile::CompileOpts {
@@ -119,8 +119,7 @@ endmodule
             ..Default::default()
         })
         .map_err(|error| error.to_string())?;
-        let db = Db::build(compiled.uhdm_design().ok_or("no design")?)
-            .map_err(|error| error.to_string())?;
+        let db = Db::from_slang(&compiled.snapshot).map_err(|error| error.to_string())?;
 
         for (variant, opts) in [
             ("opt_off", OptConfig::none()),
@@ -152,7 +151,7 @@ fn nested_division_accepts_wide_comparison_context() {
     }
     let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/sim/wide_datatype_regressions/nested_wide_div_context.sv");
-    sim_harness::with_surelog_temp_cwd("fill_wide_div_context", |dir| {
+    sim_harness::with_frontend_temp_cwd("fill_wide_div_context", |dir| {
         let path = dir.join("tb.sv");
         std::fs::copy(&fixture, &path).map_err(|error| error.to_string())?;
         let compiled = compile::compile_checked(&compile::CompileOpts {
@@ -161,8 +160,7 @@ fn nested_division_accepts_wide_comparison_context() {
             ..Default::default()
         })
         .map_err(|error| error.to_string())?;
-        let db = Db::build(compiled.uhdm_design().ok_or("no design")?)
-            .map_err(|error| error.to_string())?;
+        let db = Db::from_slang(&compiled.snapshot).map_err(|error| error.to_string())?;
         for (variant, opts) in [
             ("opt_off", OptConfig::none()),
             ("opt_on", OptConfig::default()),

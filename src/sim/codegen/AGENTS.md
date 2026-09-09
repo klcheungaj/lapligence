@@ -11,11 +11,11 @@ contracts. `lower_expr`/`lower_stmt`/`lower_lhs` produce typed IR only.
   LHS base signal must NEVER be in the sensitivity list (self-wake bug).
 - Event or-lists (`@(posedge a or negedge b)`) must be ONE atomic
   `llg_wait_any_events` call, never sequential waits.
-- Port connections become link processes (input: child←parent; output:
-  parent←child) — no aliasing, so edge detection stays per-signal.  Inout
-  ports emit no link — the net group IS the connection.  Interface body
-  processes emit under the ACTUAL interface instance only (per-port copies
-  are views; `collect_iface_copies`).
+- Plain port connections become link processes (input: child←parent; output:
+  parent←child) — no aliasing, so edge detection stays per-signal. Inout
+  ports emit no link — the net group IS the connection. Slang binds interface
+  and modport member references directly to storage on the actual interface
+  instance, where interface body processes also emit.
 - `wait (cond) stmt` lowers to `for(;;){ if (sv4_to_bool(cond)) break;
   wait_any(reads(cond)); } <body>`; wait-bearing tasks are inlined.
 - `$display` format strings are parsed at codegen time; `%t` consumes an
@@ -27,17 +27,21 @@ contracts. `lower_expr`/`lower_stmt`/`lower_lhs` produce typed IR only.
   impose a fixed 1024-bit or 64-bit arithmetic cap, and division/modulo/power
   preserve the model-sized limb width. Keep defensive checks at the backend
   and runtime boundaries; silent truncation in `sv4_concat` is a real bug.
-- `for_stmt` in UHDM: `vpiForInitStmt`/`vpiForIncStmt` (not vpiStmt/
-  vpiElseStmt) for init/incr, `vpiCondition` = condition, `vpiStmt` = body.
-- `delay_control` values are NOT exposed via VPI in Surelog v1.87 — the
-  `core::db` build recovers integer ticks or the delay expression spelling
-  from source (`StmtKind::DelayControl { ticks, expression }`). Constant
-  expression evaluation and timescale scaling happen in codegen.
+- `for` initializer, condition, increment and body relationships come from the
+  typed owned database. Do not recover them from syntax or frontend numeric
+  object codes.
+- Slang delay controls retain a typed expression `NodeId` for statement,
+  intra-assignment, continuous-assignment, and primitive delays. Evaluate that
+  identity through owned constants and resolved parameters, round a complete
+  real-valued delay once at the owning module precision, and reject unsupported
+  dynamic forms rather than recovering or guessing source text.
 - Generated C uses GNU statement-expressions `({ ... })` for select-LHS
   write-back (gcc/clang OK, not strict ISO C).
-- Packed streaming expressions retain the operand width and are unsigned;
+- Packed streaming expressions retain Slang's resolved direction, slice size,
+  ordered stream operands, aggregate width, and unsigned result;
   streaming assignment targets retain typed component LHS expressions and
   explicit component widths so the RHS is evaluated once before unpacking.
+  Stream `with` selectors remain an explicit unsupported boundary.
   `inside` evaluates its selector and every scalar/range endpoint once, using
   wildcard equality for scalar items and ordinary inclusive comparisons for
   ranges.
@@ -117,19 +121,25 @@ See `tests/sim_net_defaults.rs`.
   assignments. Reject dynamic true-net drivers reading unpacked arrays and
   unsupported resolved-net classes when sensitivity/resolution is unrepresentable.
 - Variable initializers run in `main()` before processes, so a t=0 process
-  write wins. Order: unpacked-array fills, scalar `reg` fills (`reg y = 0;`
-  appears as `vpiNetDeclAssign`), then scalar variable fills (`logic l = 1'b0;`,
-  `int x = 5;`, `logic [7:0] v = 8'ha5;` from `vpiExpr` → `Db::vars_init`).
+  write wins. Order: unpacked-array fills, scalar `reg` fills (`reg y = 0;`),
+  then scalar variable fills (`logic l = 1'b0;`, `int x = 5;`,
+  `logic [7:0] v = 8'ha5;` through `Db::vars_init`).
   Fold RHS constants using collected parameters (`int y = P + 1;`); reject
   nonconstant variable initializers (`logic z = a;`).
+- Slang's resolved variable lifetime controls procedural block storage.
+  Static block locals use hidden model signals and initialize once before
+  processes start; automatic locals remain lexical C storage initialized on
+  each declaration entry. This distinction includes inherited default-static
+  locals and automatic loop/block scopes; explicit qualifier syntax alone is
+  not sufficient to recover it.
 - Generate-scope processes inline concrete genvar parameter values. Generated
   module instances retain per-iteration paths (`top.g[0].u`), parameters,
   signals, processes and links. Array-element port actuals (`.cnt(cnts[i])`)
   require compile-time constant indices, including elaborated genvars;
   reject dynamic array-element connections.
-- Interfaces support actuals, per-port views, modport links and parameter-folded
-  widths. Emit interface always/initial/always_comb bodies only under the
-  actual instance; per-port copies are views, not cloned body processes.
+- Interfaces support actuals, direct modport member bindings and
+  parameter-folded widths. Emit interface always/initial/always_comb bodies
+  under the actual instance named by the owned semantic binding.
 
 ## Control flow and procedural drivers
 
@@ -190,12 +200,11 @@ See `tests/sim_net_defaults.rs`.
 
 Hierarchical reads (`top.u0.sig`, any resolved N-part signal path) work in
 expressions/display/monitor; whole-signal blocking/NBA writes target the
-resolved instance, including collapsed inout-net drivers. Trailing write
-selects (`top.u0.sig[3:0]`, `[2]`, `[3 +: 4]`) require constant integer
-indices/bounds. Surelog v1.87 drops part-select bounds and retains constant
-bit-select indices only in names: recover trailing selects from the node name/
-source line; reject variable/expression indices or bounds. Hierarchical SELECT
-reads still return the whole signal because the DB lacks the select.
+resolved instance, including collapsed inout-net drivers. Slang's typed select
+expressions preserve hierarchical bit, part, and indexed-part writes: bit and
+indexed-part base expressions can be runtime integral values, while part-select
+bounds and indexed-part widths must resolve statically. Reject an absent bound
+or selector rather than recovering one from a name or source line.
 
 `$monitor`/`$monitoron`/`$monitoroff` detect changes after each NBA commit;
 only the most recent monitor is active. `$strobe` prints once with post-NBA
@@ -216,9 +225,8 @@ returns a real-valued expression from a decimal prefix, and `realtoa` applies
 ordinary real argument conversion before replacing the string value.
 
 Packed Verilog string literals are unsigned integral byte vectors, with the
-leftmost character most significant. Escapes retained by Surelog are decoded
-  before the generated model-width limit is checked; an empty literal is one
-  zero byte.
+leftmost character most significant. Slang supplies owned decoded bytes before
+the generated model-width limit is checked; an empty literal is one zero byte.
 Assignments pad/truncate as packed values, and explicitly packed parameters
 can initialize packed storage. SystemVerilog `string`-typed storage is
 separate from packed Verilog byte vectors: basic declarations, assignment/
@@ -243,9 +251,8 @@ operands, including arithmetic/bitwise expressions, comparisons, conditional
 branches, assignments, and function arguments. Ordinary case/casez/casex
 selectors and items share the maximum operand width and common signedness.
 Concatenation/replication operands and other self-determined positions stay
-one bit. If Surelog loses the fill marker, source recovery requires an exact
-two-character literal span; never reinterpret a folded compound expression
-from its first token. Context widening must preserve model-sized division,
+one bit. The semantic importer must preserve the fill operation explicitly;
+never infer it from an unrelated source token. Context widening must preserve model-sized division,
 modulo, and power operations. See `tests/sim_fill_literals.rs`.
 
 Wildcard equality (`==?`/`!=?`) treats only RHS X/Z bits as wildcards after
@@ -268,11 +275,9 @@ Shortreal assignment rounds through C `float`; real-to-packed rounds nearest
 (halves away from zero) for targets up to the generated model width.
 Packed-to-real accepts the model width, treating X/Z positions as zero.
 
-Surelog can incorrectly fold comparisons involving explicitly cast real
-parameters. Lowering can reconstruct simple parameter/numeric-literal
-comparisons from exact, admitted one-bit constant source spans. This bounded
-recovery is not a general source-expression parser and must preserve lexical
-shadowing; it must not treat identifier spellings as numeric literals.
+Slang supplies typed explicit conversions and resolved real parameters.
+Lowering consumes those operations directly and must not reconstruct
+comparisons by parsing source text.
 
 `$rtoi` truncates toward zero into signed 32-bit storage (non-finite inputs
 yield X; finite overflow wraps modulo 2^32). `$itor` preserves integral
@@ -291,50 +296,28 @@ before C compilation. `tests/sim_real.rs` pins support and rejection messages.
 
 ## Timescale
 
-- Delays are timescale-aware (Verilator practice): the codegen parses the
-  FIRST `` `timescale <unit>/<precision> `` directive of each source file
-  (simple text scan, optional whitespace around `/`; units s/ms/us/ns/ps/fs
-  with 1/10/100 multipliers) and scales every `#N` in that file by
-  `N * unit / design_precision` before calling `llg_wait_time`.
+- Delays are timescale-aware: codegen reads the resolved time unit and
+  precision from the nearest owning Slang module instance and scales every
+  delay by `N * unit / design_precision` before calling `llg_wait_time`.
   `$time` returns the current time in the calling module's unit
   (`llg_time() * design_precision / unit`), so `%t`/`%0d` displays show the
   unit-scaled time; `$printtimescale` prints the calling module's
-  unit/precision.  Modules without a directive default to 1ns/1ps with a
-  TIMESCALEMOD-style warning (once per file).
+  unit/precision. Compilation-unit and declaration inheritance are frontend
+  responsibilities.
 - The scheduler runs in design-precision ticks: the design precision is the
   FINEST precision across every module (default 1ns/1ps for modules without a
   directive), so 1 tick = design_precision ps.  The runtime itself stays
   timescale-agnostic (`llg_wait_time` receives already-scaled ticks), so no
   runtime change was needed.
-- `core::db` retains raw `#N` ticks or source-recovered constant-expression
-  spelling. Statement and intra-assignment delays accept resolved integer
-  parameters, decimal literals with underscores, parentheses, unary `+/-/~`,
-  arithmetic `+`, `-`, `*`, `/`, `%`, shifts `<<`/`>>`, and bitwise `&/^/|`. Evaluation
-  preserves operand widths/signedness for its accepted subset, with at most
-  128-bit operands and 256 parser steps; final ticks must fit a nonnegative
-  `u64`. Mixed-width arithmetic and outer signedness changes affecting an
-  already-computed operand are rejected until full context propagation exists.
-  Nonnegative fixed-point literals and literals suffixed with `s/ms/us/ns/ps/fs`
-  additionally work in procedural/intra-assignment delays, including enclosing
-  parentheses. Exact decimal-rational arithmetic rounds to the calling module's
-  precision (nearest, halves upward) before conversion to global scheduler ticks;
-  check both evaluation and scaling overflow. Parenthesized scientific literals
-  (bounded decimal exponent magnitude ≤38, including exponent underscores) and
-  whole resolved real parameters also round locally; nearest declarations shadow
-  outer parameters. Surelog rejects bare scientific delay syntax before lowering.
-  Runtime values, arithmetic containing real/time literals or real parameters, based literals,
-  logical/comparison/ternary and system-function forms remain unsupported.
-  Exact time literals in runtime value expressions become module-unit realtime
-  values after local-precision rounding, using source spans owned by `core::db`.
-  Build the DB with `Db::build_with_source_files` and explicitly admitted physical
-  sources (the CLI uses `CompileOut::frontend_source_files`); bare-handle
-  `generate` uses ordinary `Db::build` and rejects suspect source-dependent
-  values. Macros and unadmitted headers are rejected when provenance is missing.
-  Reject parameter/declaration initializers and frontend-folded compounds
-  containing time literals rather than accepting transformed integer payloads.
-  Existing real-expression restrictions and the 64-bit local-tick bound apply.
-  Sub-picosecond
-  timescale precision still clamps up to 1 ps in the ps-integer representation.
+- `core::db` retains the typed expression identity for statement and
+  intra-assignment delays. Lowering evaluates resolved integer/real parameters,
+  casts, integer operations, and real/time arithmetic without reading source
+  spelling. It rounds the complete real-valued delay once to the local precision,
+  then converts to nonnegative 64-bit scheduler ticks. Ordinary time-literal
+  value expressions preserve Slang v11's unrounded, module-scaled `real` value;
+  parameter and declaration initializers use the same typed constant path.
+  Dynamic expressions and unsupported constant system functions fail cleanly.
+  Sub-picosecond precision still clamps up to 1 ps in the runtime representation.
   See `tests/sim_delay.rs`, `tests/sim_time_literals.rs`, and `tests/sim_time_values.rs`.
 
 ## Unpacked arrays and memories
@@ -344,9 +327,7 @@ before C compilation. `tests/sim_real.rs` pins support and rejection messages.
   start all-X for four-state elements or zero for two-state elements (a loop
   in `main()` fills them, since a function call is not a
   valid static initializer).  Declaration initializers (`= '{…}`) — captured
-  by `core::db` either on the array object's `vpiExpr` (`logic`/`bit` arrays)
-  or as a `vpiNetDeclAssign` continuous assignment (`reg` arrays, which
-  Surelog models as `array_net`s) — are applied in `main()` before any
+  by `core::db` on the declaration initializer relationship — are applied in `main()` before any
   process runs; each pattern operand is a constant, in linear-index order.
 - Indexed access: `mem[i]` (1-D), `a[i][j]` (N-D) and element-level selects
   `mem[i][3:0]` / `mem[i][2]` are supported on both the read and write paths.
@@ -358,9 +339,8 @@ before C compilation. `tests/sim_real.rs` pins support and rejection messages.
   Guard code uses `sv4_to_index_i64` to preserve index signedness and reject
   high-limb overflow, checks declared bounds before subtracting offsets, then
   computes the flat element address.
-- Rejected with a clear message: dimension bounds that are not plain
-  constants (Surelog keeps an implicit `[N]` size as `[0:N-1]` with an
-  un-folded subtraction — declare `[0:N-1]` explicitly), array slices
+- Rejected with a clear message: dimension bounds that are not resolved
+  constants, array slices
   (`a[i]` on a 2-D array — partial indexing), indexed part-selects on an
   element (`mem[i][3+:4]`), non-constant declaration-initializer elements,
   and arrays wider than `LLG_MAX_WIDTH` per element.

@@ -73,7 +73,7 @@ impl LintRule for EmptyImplicitSensitivityRule {
 }
 
 /// Return the immediate implicit event control and its body only when the
-/// owned tree has the complete shape produced by Surelog v1.87.
+/// owned tree has the complete shape required by the semantic capture contract.
 fn implicit_body(db: &Db, process: NodeId) -> Option<(NodeId, NodeId)> {
     let [event] = db.node(process).children.as_slice() else {
         return None;
@@ -166,7 +166,7 @@ mod tests {
                     .then(|| implicit_body(&db, id).map(|(event, body)| (id, event, body)))
                     .flatten()
             })
-            .expect("Surelog v1.87 must expose the implicit event and body");
+            .expect("semantic capture must expose the implicit event and body");
         assert_eq!(db.node(process).children, vec![event]);
         assert_eq!(db.node(event).children, vec![body]);
         assert!(!collect_writes(&db, body).is_empty());

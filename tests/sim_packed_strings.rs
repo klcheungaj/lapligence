@@ -9,7 +9,7 @@ use llg::sim;
 use llg::sim::opt::OptConfig;
 
 fn run_both(sv: &str, tag: &str) -> Result<(String, String), String> {
-    sim_harness::with_surelog_temp_cwd(tag, |dir| {
+    sim_harness::with_frontend_temp_cwd(tag, |dir| {
         let source = dir.join("tb.v");
         std::fs::write(&source, sv).map_err(|error| format!("write source: {error}"))?;
         let compiled = compile::compile_checked(&compile::CompileOpts {
@@ -18,8 +18,7 @@ fn run_both(sv: &str, tag: &str) -> Result<(String, String), String> {
             ..Default::default()
         })
         .map_err(|error| format!("compile: {error}"))?;
-        let design = compiled.uhdm_design().ok_or("no UHDM design")?;
-        let db = Db::build(design).map_err(|error| format!("db: {error}"))?;
+        let db = Db::from_slang(&compiled.snapshot).map_err(|error| format!("db: {error}"))?;
 
         let variants = [
             ("opt_on", OptConfig::default()),

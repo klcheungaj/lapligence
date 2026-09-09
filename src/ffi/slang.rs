@@ -14,7 +14,7 @@ use std::ptr;
 use std::slice;
 use std::str;
 
-const ABI_VERSION: u32 = 1;
+const ABI_VERSION: u32 = 2;
 const INVALID_ID: u64 = u64::MAX;
 
 const STATUS_OK: u32 = 0;
@@ -87,6 +87,12 @@ pub struct Limits {
     pub max_value_bits: u64,
     pub max_related_diagnostics: u64,
     pub max_output_bytes: u64,
+    pub max_semantic_nodes: u64,
+    pub max_semantic_edges: u64,
+    pub max_lexical_tokens: u64,
+    pub max_type_ranges: u64,
+    pub max_type_members: u64,
+    pub max_constants: u64,
 }
 
 impl Default for Limits {
@@ -101,6 +107,12 @@ impl Default for Limits {
             max_value_bits: 256 * 1024 * 1024,
             max_related_diagnostics: 80_000,
             max_output_bytes: 128 * 1024 * 1024,
+            max_semantic_nodes: 4_000_000,
+            max_semantic_edges: 16_000_000,
+            max_lexical_tokens: 8_000_000,
+            max_type_ranges: 4_000_000,
+            max_type_members: 4_000_000,
+            max_constants: 1_000_000,
         }
     }
 }
@@ -184,6 +196,30 @@ pub enum DiagnosticSeverity {
     Fatal,
 }
 
+/// Repository-owned projection of Slang v11's diagnostic subsystem.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum DiagnosticSubsystem {
+    Invalid,
+    General,
+    Lexer,
+    Numeric,
+    Preprocessor,
+    Parser,
+    Declarations,
+    Expressions,
+    Statements,
+    Types,
+    Lookup,
+    SysFuncs,
+    ConstEval,
+    Compilation,
+    Analysis,
+    Meta,
+    Driver,
+    Tidy,
+    Netlist,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SourceRange {
     pub file_id: u64,
@@ -201,7 +237,7 @@ pub struct RelatedDiagnostic {
 pub struct Diagnostic {
     pub provider: DiagnosticProvider,
     pub severity: DiagnosticSeverity,
-    pub subsystem: u32,
+    pub subsystem: DiagnosticSubsystem,
     pub code: u32,
     pub name: String,
     pub option_name: String,
@@ -215,6 +251,8 @@ pub struct File {
     pub id: u64,
     pub name: String,
     pub byte_len: u64,
+    /// Exact admitted in-memory contents; never populated by a disk read.
+    pub text: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -243,7 +281,43 @@ pub enum TypeKind {
     Floating,
     String,
     Aggregate,
+    Enum,
+    PackedArray,
+    FixedUnpackedArray,
+    DynamicArray,
+    AssociativeArray,
+    Queue,
+    PackedStruct,
+    PackedUnion,
+    UnpackedStruct,
+    UnpackedUnion,
+    Class,
+    Chandle,
+    Event,
+    Void,
     Other,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TypeRangeKind {
+    Packed,
+    Unpacked,
+    QueueBound,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TypeRange {
+    pub left: i64,
+    pub right: i64,
+    pub kind: TypeRangeKind,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TypeMember {
+    pub name: String,
+    pub type_id: u64,
+    pub bit_offset: u64,
+    pub bit_width: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -255,6 +329,12 @@ pub struct Type {
     pub is_fixed_size: bool,
     pub bit_width: u64,
     pub display_name: String,
+    pub element_type_id: Option<u64>,
+    pub index_type_id: Option<u64>,
+    pub range_start: u64,
+    pub range_count: u64,
+    pub member_start: u64,
+    pub member_count: u64,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -296,6 +376,277 @@ pub struct Parameter {
     pub constant_id: Option<u64>,
 }
 
+/// Frontend-independent category of one elaborated semantic record.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum SemanticKind {
+    Instance,
+    Package,
+    Class,
+    GenerateScope,
+    Port,
+    Modport,
+    InterfaceConnection,
+    Net,
+    Variable,
+    Array,
+    NamedEvent,
+    Parameter,
+    Process,
+    ContinuousAssign,
+    Primitive,
+    Subroutine,
+    Argument,
+    Statement,
+    Expression,
+    SystemCall,
+    MethodCall,
+    FunctionCall,
+    EnumConstant,
+    Definition,
+    Scope,
+    TimingControl,
+    Unsupported,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum SemanticOperation {
+    None,
+    Plus,
+    Minus,
+    Multiply,
+    Divide,
+    Modulo,
+    Power,
+    BitNot,
+    BitAnd,
+    BitOr,
+    BitXor,
+    BitNand,
+    BitNor,
+    BitXnor,
+    LogicalNot,
+    LogicalAnd,
+    LogicalOr,
+    LogicalImplication,
+    LogicalEquivalence,
+    Equal,
+    NotEqual,
+    CaseEqual,
+    CaseNotEqual,
+    WildcardEqual,
+    WildcardNotEqual,
+    Greater,
+    GreaterEqual,
+    Less,
+    LessEqual,
+    ShiftLeft,
+    ShiftRight,
+    ArithmeticShiftLeft,
+    ArithmeticShiftRight,
+    PreIncrement,
+    PreDecrement,
+    PostIncrement,
+    PostDecrement,
+    Concat,
+    Replicate,
+    Conditional,
+    StreamLeft,
+    StreamRight,
+    Assign,
+    Inside,
+    AssignmentPattern,
+    MinTypMax,
+    MultiAssignmentPattern,
+    List,
+}
+
+/// Exact source time scale attached by Slang to a definition or instance.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct SemanticTimeScale {
+    pub unit: SemanticTimeUnit,
+    pub magnitude: u32,
+    pub precision_unit: SemanticTimeUnit,
+    pub precision_magnitude: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum SemanticTimeUnit {
+    Seconds,
+    Milliseconds,
+    Microseconds,
+    Nanoseconds,
+    Picoseconds,
+    Femtoseconds,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum SemanticDefinitionKind {
+    Module,
+    Interface,
+    Program,
+}
+
+/// Meaning of one relationship in the flat semantic graph.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum SemanticEdgeRole {
+    Child,
+    HighConnection,
+    LowConnection,
+    Initializer,
+    Lhs,
+    Rhs,
+    Condition,
+    Then,
+    Else,
+    Body,
+    Operand,
+    Index,
+    Left,
+    Right,
+    Base,
+    Width,
+    Delay,
+    Event,
+    Argument,
+    Receiver,
+    Callee,
+    Actual,
+    DefaultValue,
+    CaseItem,
+    CaseExpression,
+    Branch,
+    Increment,
+    Declaration,
+    Reference,
+    SourceIdentity,
+    ReturnOwner,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SemanticEdge {
+    pub role: SemanticEdgeRole,
+    pub index: u32,
+    pub target_id: u64,
+}
+
+/// One node in the bounded, owned elaborated semantic graph.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SemanticNode {
+    pub id: u64,
+    pub parent_id: Option<u64>,
+    pub kind: SemanticKind,
+    /// Repository-owned subtype tag defined by the C ABI.
+    pub subkind: u32,
+    pub operation: SemanticOperation,
+    pub is_bad: bool,
+    pub is_uninstantiated: bool,
+    pub is_automatic: bool,
+    pub is_static: bool,
+    pub is_top: bool,
+    pub is_implicit: bool,
+    pub is_local: bool,
+    pub is_nonblocking: bool,
+    pub is_input: bool,
+    pub is_output: bool,
+    pub is_inout: bool,
+    pub is_ref: bool,
+    pub is_implicit_conversion: bool,
+    pub is_propagated_conversion: bool,
+    pub is_indexed_up: bool,
+    pub is_indexed_down: bool,
+    pub case_wildcard_x_or_z: bool,
+    pub case_wildcard_z: bool,
+    pub case_inside: bool,
+    pub is_posedge: bool,
+    pub is_negedge: bool,
+    pub is_both_edges: bool,
+    pub is_primitive_declaration: bool,
+    pub is_primitive_instance: bool,
+    pub is_primitive_port: bool,
+    pub is_task: bool,
+    pub port_connection_present: bool,
+    pub port_connection_open: bool,
+    pub method_with_clause: bool,
+    pub definition_kind: Option<SemanticDefinitionKind>,
+    pub name: String,
+    /// Exact Slang kind spelling, retained for unsupported constructs.
+    pub detail: String,
+    pub definition_name: String,
+    pub range: Option<SourceRange>,
+    pub type_id: Option<u64>,
+    pub constant_id: Option<u64>,
+    pub target_id: Option<u64>,
+    pub edge_start: u64,
+    pub edge_count: u64,
+    pub time_scale: Option<SemanticTimeScale>,
+    pub strength0: SemanticDriveStrength,
+    pub strength1: SemanticDriveStrength,
+    /// Kind-specific scalar metadata. Streaming expressions store their exact
+    /// Slang slice size; variables store their resolved lifetime tag.
+    pub auxiliary: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SemanticDriveStrength {
+    Unspecified,
+    Supply,
+    Strong,
+    Pull,
+    Weak,
+    HighZ,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum LexicalKind {
+    Unknown,
+    Module,
+    Interface,
+    Program,
+    Package,
+    Class,
+    Struct,
+    Union,
+    Enum,
+    EnumMember,
+    TypeAlias,
+    Parameter,
+    Port,
+    Variable,
+    Net,
+    Function,
+    Task,
+    Method,
+    Macro,
+    Keyword,
+    String,
+    Number,
+    Operator,
+    Identifier,
+    Genvar,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum LexicalRole {
+    None,
+    Declaration,
+    Reference,
+    ConnectionLabel,
+    Keyword,
+    ConnectionActual,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LexicalToken {
+    pub range: Option<SourceRange>,
+    pub kind: LexicalKind,
+    pub role: LexicalRole,
+    pub is_missing: bool,
+    pub is_skipped: bool,
+    pub is_macro_expansion: bool,
+    pub semantic_id: Option<u64>,
+    pub text: String,
+}
+
 /// Fully owned observations from one Slang compilation.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Snapshot {
@@ -306,6 +657,11 @@ pub struct Snapshot {
     pub parameters: Vec<Parameter>,
     pub types: Vec<Type>,
     pub constants: Vec<Constant>,
+    pub semantic_nodes: Vec<SemanticNode>,
+    pub semantic_edges: Vec<SemanticEdge>,
+    pub lexical_tokens: Vec<LexicalToken>,
+    pub type_ranges: Vec<TypeRange>,
+    pub type_members: Vec<TypeMember>,
 }
 
 impl Snapshot {
@@ -357,6 +713,12 @@ struct RawLimits {
     max_value_bits: u64,
     max_related_diagnostics: u64,
     max_output_bytes: u64,
+    max_semantic_nodes: u64,
+    max_semantic_edges: u64,
+    max_lexical_tokens: u64,
+    max_type_ranges: u64,
+    max_type_members: u64,
+    max_constants: u64,
 }
 
 #[repr(C)]
@@ -436,6 +798,30 @@ struct RawType {
     flags: u32,
     bit_width: u64,
     display_name: RawString,
+    element_type_id: u64,
+    index_type_id: u64,
+    range_start: u64,
+    range_count: u64,
+    member_start: u64,
+    member_count: u64,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct RawTypeRange {
+    left: i64,
+    right: i64,
+    kind: u32,
+    reserved: u32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct RawTypeMember {
+    name: RawString,
+    type_id: u64,
+    bit_offset: u64,
+    bit_width: u64,
 }
 
 #[repr(C)]
@@ -464,6 +850,53 @@ struct RawParameter {
 }
 
 #[repr(C)]
+#[derive(Clone, Copy)]
+struct RawSemanticNode {
+    id: u64,
+    parent_id: u64,
+    kind: u32,
+    subkind: u32,
+    operation: u32,
+    flags: u32,
+    name: RawString,
+    detail: RawString,
+    definition_name: RawString,
+    range: RawRange,
+    type_id: u64,
+    constant_id: u64,
+    target_id: u64,
+    edge_start: u64,
+    edge_count: u64,
+    time_unit: u32,
+    time_unit_magnitude: u32,
+    time_precision_unit: u32,
+    time_precision_magnitude: u32,
+    strength0: u32,
+    strength1: u32,
+    auxiliary: u64,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct RawSemanticEdge {
+    role: u32,
+    index: u32,
+    target_id: u64,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct RawLexicalToken {
+    range: RawRange,
+    kind: u32,
+    role: u32,
+    flags: u32,
+    reserved: u32,
+    semantic_id: u64,
+    text: RawString,
+}
+
+#[repr(C)]
 struct RawSnapshotView {
     abi_version: u32,
     flags: u32,
@@ -483,6 +916,16 @@ struct RawSnapshotView {
     constant_count: u64,
     value_words: *const u64,
     value_word_count: u64,
+    semantic_nodes: *const RawSemanticNode,
+    semantic_node_count: u64,
+    semantic_edges: *const RawSemanticEdge,
+    semantic_edge_count: u64,
+    lexical_tokens: *const RawLexicalToken,
+    lexical_token_count: u64,
+    type_ranges: *const RawTypeRange,
+    type_range_count: u64,
+    type_members: *const RawTypeMember,
+    type_member_count: u64,
 }
 
 #[repr(C)]
@@ -610,6 +1053,12 @@ pub fn compile(request: &CompileRequest<'_>) -> Result<Snapshot, SlangError> {
             max_value_bits: limits.max_value_bits,
             max_related_diagnostics: limits.max_related_diagnostics,
             max_output_bytes: limits.max_output_bytes,
+            max_semantic_nodes: limits.max_semantic_nodes,
+            max_semantic_edges: limits.max_semantic_edges,
+            max_lexical_tokens: limits.max_lexical_tokens,
+            max_type_ranges: limits.max_type_ranges,
+            max_type_members: limits.max_type_members,
+            max_constants: limits.max_constants,
         },
     };
 
@@ -633,7 +1082,20 @@ pub fn compile(request: &CompileRequest<'_>) -> Result<Snapshot, SlangError> {
         return Err(invalid_native("successful compile returned no snapshot"));
     }
     let snapshot = SnapshotOwner(snapshot);
-    let decoded = decode_snapshot(&snapshot, &limits)?;
+    let mut decoded = decode_snapshot(&snapshot, &limits)?;
+    for file in &mut decoded.files {
+        let source = request
+            .sources
+            .iter()
+            .find(|source| source.name == file.name)
+            .ok_or_else(|| invalid_native("snapshot file was not an admitted source"))?;
+        if source.text.len() as u64 != file.byte_len {
+            return Err(invalid_native(
+                "snapshot file length does not match admitted source",
+            ));
+        }
+        file.text = source.text.to_owned();
+    }
     drop(unexpected_error);
     Ok(decoded)
 }
@@ -735,6 +1197,12 @@ fn validate_request(request: &CompileRequest<'_>) -> Result<(), SlangError> {
         limits.max_value_bits,
         limits.max_related_diagnostics,
         limits.max_output_bytes,
+        limits.max_semantic_nodes,
+        limits.max_semantic_edges,
+        limits.max_lexical_tokens,
+        limits.max_type_ranges,
+        limits.max_type_members,
+        limits.max_constants,
     ]
     .contains(&0)
     {
@@ -799,6 +1267,16 @@ fn decode_snapshot(owner: &SnapshotOwner, limits: &Limits) -> Result<Snapshot, S
         constant_count: 0,
         value_words: ptr::null(),
         value_word_count: 0,
+        semantic_nodes: ptr::null(),
+        semantic_node_count: 0,
+        semantic_edges: ptr::null(),
+        semantic_edge_count: 0,
+        lexical_tokens: ptr::null(),
+        lexical_token_count: 0,
+        type_ranges: ptr::null(),
+        type_range_count: 0,
+        type_members: ptr::null(),
+        type_member_count: 0,
     };
     let mut error = ptr::null_mut();
     // SAFETY: owner contains a live snapshot and output pointers are writable.
@@ -827,6 +1305,27 @@ fn decode_snapshot(owner: &SnapshotOwner, limits: &Limits) -> Result<Snapshot, S
     enforce_count(view.parameter_count, limits.max_parameters, "parameters")?;
     enforce_count(view.type_count, limits.max_types, "types")?;
     enforce_count(
+        view.semantic_node_count,
+        limits.max_semantic_nodes,
+        "semantic nodes",
+    )?;
+    enforce_count(
+        view.semantic_edge_count,
+        limits.max_semantic_edges,
+        "semantic edges",
+    )?;
+    enforce_count(
+        view.lexical_token_count,
+        limits.max_lexical_tokens,
+        "lexical tokens",
+    )?;
+    enforce_count(view.type_range_count, limits.max_type_ranges, "type ranges")?;
+    enforce_count(
+        view.type_member_count,
+        limits.max_type_members,
+        "type members",
+    )?;
+    enforce_count(
         view.related_diagnostic_count,
         limits.max_related_diagnostics,
         "related diagnostics",
@@ -839,7 +1338,7 @@ fn decode_snapshot(owner: &SnapshotOwner, limits: &Limits) -> Result<Snapshot, S
         .saturating_add(view.constant_count)
         .saturating_mul(2);
     enforce_count(view.value_word_count, max_words, "constant value words")?;
-    enforce_count(view.constant_count, limits.max_parameters, "constants")?;
+    enforce_count(view.constant_count, limits.max_constants, "constants")?;
 
     let mut output_bytes = 0_u64;
     for (count, size) in [
@@ -854,6 +1353,20 @@ fn decode_snapshot(owner: &SnapshotOwner, limits: &Limits) -> Result<Snapshot, S
         (view.type_count, std::mem::size_of::<RawType>()),
         (view.constant_count, std::mem::size_of::<RawConstant>()),
         (view.value_word_count, std::mem::size_of::<u64>()),
+        (
+            view.semantic_node_count,
+            std::mem::size_of::<RawSemanticNode>(),
+        ),
+        (
+            view.semantic_edge_count,
+            std::mem::size_of::<RawSemanticEdge>(),
+        ),
+        (
+            view.lexical_token_count,
+            std::mem::size_of::<RawLexicalToken>(),
+        ),
+        (view.type_range_count, std::mem::size_of::<RawTypeRange>()),
+        (view.type_member_count, std::mem::size_of::<RawTypeMember>()),
     ] {
         let bytes = count
             .checked_mul(size as u64)
@@ -899,6 +1412,36 @@ fn decode_snapshot(owner: &SnapshotOwner, limits: &Limits) -> Result<Snapshot, S
             "constant value words",
         )?
     };
+    // SAFETY: same snapshot-view contract as above.
+    let raw_semantic_nodes = unsafe {
+        foreign_slice(
+            view.semantic_nodes,
+            view.semantic_node_count,
+            "semantic nodes",
+        )?
+    };
+    // SAFETY: same snapshot-view contract as above.
+    let raw_semantic_edges = unsafe {
+        foreign_slice(
+            view.semantic_edges,
+            view.semantic_edge_count,
+            "semantic edges",
+        )?
+    };
+    // SAFETY: same snapshot-view contract as above.
+    let raw_lexical_tokens = unsafe {
+        foreign_slice(
+            view.lexical_tokens,
+            view.lexical_token_count,
+            "lexical tokens",
+        )?
+    };
+    // SAFETY: same snapshot-view contract as above.
+    let raw_type_ranges =
+        unsafe { foreign_slice(view.type_ranges, view.type_range_count, "type ranges")? };
+    // SAFETY: same snapshot-view contract as above.
+    let raw_type_members =
+        unsafe { foreign_slice(view.type_members, view.type_member_count, "type members")? };
 
     for item in raw_files {
         charge_output_string(&mut output_bytes, item.name, limits.max_output_bytes)?;
@@ -929,6 +1472,17 @@ fn decode_snapshot(owner: &SnapshotOwner, limits: &Limits) -> Result<Snapshot, S
     for item in raw_constants {
         charge_output_string(&mut output_bytes, item.text, limits.max_output_bytes)?;
     }
+    for item in raw_semantic_nodes {
+        for value in [item.name, item.detail, item.definition_name] {
+            charge_output_string(&mut output_bytes, value, limits.max_output_bytes)?;
+        }
+    }
+    for item in raw_lexical_tokens {
+        charge_output_string(&mut output_bytes, item.text, limits.max_output_bytes)?;
+    }
+    for item in raw_type_members {
+        charge_output_string(&mut output_bytes, item.name, limits.max_output_bytes)?;
+    }
 
     let mut file_ids = HashSet::with_capacity(raw_files.len());
     let mut files = Vec::with_capacity(raw_files.len());
@@ -948,17 +1502,28 @@ fn decode_snapshot(owner: &SnapshotOwner, limits: &Limits) -> Result<Snapshot, S
             // SAFETY: native strings borrow from the live snapshot.
             name: unsafe { copy_string(raw.name, "file name")? },
             byte_len: raw.byte_len,
+            text: String::new(),
         });
     }
 
     let related = decode_related(raw_related, &files)?;
     let diagnostics = decode_diagnostics(raw_diagnostics, &related, &files)?;
-    let types = decode_types(raw_types)?;
+    let (types, type_ranges, type_members) =
+        decode_types(raw_types, raw_type_ranges, raw_type_members)?;
     let constants = decode_constants(raw_constants, value_words, limits)?;
     let instances = decode_instances(raw_instances, &files, raw_parameters.len())?;
     let parameters =
         decode_parameters(raw_parameters, &files, &instances, &types, constants.len())?;
     validate_parameter_windows(&instances, &parameters)?;
+    let semantic_edges = decode_semantic_edges(raw_semantic_edges, raw_semantic_nodes)?;
+    let semantic_nodes = decode_semantic_nodes(
+        raw_semantic_nodes,
+        &semantic_edges,
+        &files,
+        &types,
+        constants.len(),
+    )?;
+    let lexical_tokens = decode_lexical_tokens(raw_lexical_tokens, &files, &semantic_nodes)?;
 
     drop(unexpected_error);
     Ok(Snapshot {
@@ -969,6 +1534,521 @@ fn decode_snapshot(owner: &SnapshotOwner, limits: &Limits) -> Result<Snapshot, S
         parameters,
         types,
         constants,
+        semantic_nodes,
+        semantic_edges,
+        lexical_tokens,
+        type_ranges,
+        type_members,
+    })
+}
+
+fn decode_semantic_edges(
+    raw: &[RawSemanticEdge],
+    nodes: &[RawSemanticNode],
+) -> Result<Vec<SemanticEdge>, SlangError> {
+    let node_ids: HashSet<_> = nodes.iter().map(|node| node.id).collect();
+    raw.iter()
+        .map(|edge| {
+            if !node_ids.contains(&edge.target_id) {
+                return Err(invalid_native("semantic edge target does not exist"));
+            }
+            let role = match edge.role {
+                1 => SemanticEdgeRole::Child,
+                2 => SemanticEdgeRole::HighConnection,
+                3 => SemanticEdgeRole::LowConnection,
+                4 => SemanticEdgeRole::Initializer,
+                5 => SemanticEdgeRole::Lhs,
+                6 => SemanticEdgeRole::Rhs,
+                7 => SemanticEdgeRole::Condition,
+                8 => SemanticEdgeRole::Then,
+                9 => SemanticEdgeRole::Else,
+                10 => SemanticEdgeRole::Body,
+                11 => SemanticEdgeRole::Operand,
+                12 => SemanticEdgeRole::Index,
+                13 => SemanticEdgeRole::Left,
+                14 => SemanticEdgeRole::Right,
+                15 => SemanticEdgeRole::Base,
+                16 => SemanticEdgeRole::Width,
+                17 => SemanticEdgeRole::Delay,
+                18 => SemanticEdgeRole::Event,
+                19 => SemanticEdgeRole::Argument,
+                20 => SemanticEdgeRole::Receiver,
+                21 => SemanticEdgeRole::Callee,
+                22 => SemanticEdgeRole::Actual,
+                23 => SemanticEdgeRole::DefaultValue,
+                24 => SemanticEdgeRole::CaseItem,
+                25 => SemanticEdgeRole::CaseExpression,
+                26 => SemanticEdgeRole::Branch,
+                27 => SemanticEdgeRole::Increment,
+                28 => SemanticEdgeRole::Declaration,
+                29 => SemanticEdgeRole::Reference,
+                30 => SemanticEdgeRole::SourceIdentity,
+                31 => SemanticEdgeRole::ReturnOwner,
+                _ => return Err(invalid_native("semantic edge has an unknown role")),
+            };
+            Ok(SemanticEdge {
+                role,
+                index: edge.index,
+                target_id: edge.target_id,
+            })
+        })
+        .collect()
+}
+
+fn decode_semantic_nodes(
+    raw: &[RawSemanticNode],
+    edges: &[SemanticEdge],
+    files: &[File],
+    types: &[Type],
+    constant_len: usize,
+) -> Result<Vec<SemanticNode>, SlangError> {
+    let ids: HashSet<_> = raw.iter().map(|node| node.id).collect();
+    if ids.len() != raw.len() || ids.contains(&INVALID_ID) {
+        return Err(invalid_native(
+            "snapshot contains duplicate or invalid semantic node ids",
+        ));
+    }
+    if raw
+        .iter()
+        .enumerate()
+        .any(|(index, node)| node.id != index as u64)
+    {
+        return Err(invalid_native(
+            "semantic node ids are not contiguous arena indices",
+        ));
+    }
+    let type_ids: HashSet<_> = types.iter().map(|ty| ty.id).collect();
+    let mut claimed_edges = vec![false; edges.len()];
+    for node in raw {
+        let window = checked_window(
+            node.edge_start,
+            node.edge_count,
+            edges.len(),
+            "semantic node edges",
+        )?;
+        for index in window {
+            if claimed_edges[index] {
+                return Err(invalid_native("semantic node edge windows overlap"));
+            }
+            claimed_edges[index] = true;
+        }
+    }
+    if claimed_edges.iter().any(|claimed| !claimed) {
+        return Err(invalid_native("semantic edge is not owned by a node"));
+    }
+    raw.iter()
+        .map(|node| {
+            if (node.flags & ((1 << 8) | (1 << 9) | (1 << 10) | (1 << 11))).count_ones() > 1 {
+                return Err(invalid_native(
+                    "semantic node has conflicting direction flags",
+                ));
+            }
+            if node.flags & (1 << 2) != 0 && node.flags & (1 << 3) != 0 {
+                return Err(invalid_native("semantic node is both automatic and static"));
+            }
+            if (node.flags & ((1 << 13) | (1 << 14) | (1 << 15))).count_ones() > 1 {
+                return Err(invalid_native(
+                    "semantic node has conflicting definition-kind flags",
+                ));
+            }
+            if node.flags & (1 << 29) != 0 && node.flags & (1 << 28) == 0 {
+                return Err(invalid_native(
+                    "semantic node has an open port connection without a connection",
+                ));
+            }
+            if node.flags & (1 << 31) != 0 && node.kind != 21 {
+                return Err(invalid_native(
+                    "semantic with-clause flag is set on a non-method call",
+                ));
+            }
+            validate_semantic_subkind(node.kind, node.subkind)?;
+            validate_semantic_auxiliary(node)?;
+            if (node.flags & ((1 << 16) | (1 << 17))).count_ones() > 1
+                || (node.flags & ((1 << 18) | (1 << 19) | (1 << 20))).count_ones() > 1
+                || (node.flags & ((1 << 21) | (1 << 22) | (1 << 23))).count_ones() > 1
+            {
+                return Err(invalid_native(
+                    "semantic node has conflicting subtype flags",
+                ));
+            }
+            if (node.flags & ((1 << 24) | (1 << 25) | (1 << 26))).count_ones() > 1 {
+                return Err(invalid_native(
+                    "semantic node has conflicting primitive-role flags",
+                ));
+            }
+            let parent_id = (node.parent_id != INVALID_ID).then_some(node.parent_id);
+            let target_id = (node.target_id != INVALID_ID).then_some(node.target_id);
+            if parent_id.is_some_and(|id| !ids.contains(&id))
+                || target_id.is_some_and(|id| !ids.contains(&id))
+            {
+                return Err(invalid_native(
+                    "semantic node refers to an unknown semantic node",
+                ));
+            }
+            let type_id = (node.type_id != INVALID_ID).then_some(node.type_id);
+            if type_id.is_some_and(|id| !type_ids.contains(&id)) {
+                return Err(invalid_native("semantic node type does not exist"));
+            }
+            let constant_id = (node.constant_id != INVALID_ID).then_some(node.constant_id);
+            if constant_id
+                .is_some_and(|id| usize::try_from(id).map_or(true, |id| id >= constant_len))
+            {
+                return Err(invalid_native("semantic node constant does not exist"));
+            }
+            let window = checked_window(
+                node.edge_start,
+                node.edge_count,
+                edges.len(),
+                "semantic node edges",
+            )?;
+            let mut edge_keys = HashSet::new();
+            for edge in &edges[window] {
+                if !edge_keys.insert((edge.role, edge.index)) {
+                    return Err(invalid_native(
+                        "semantic node has duplicate role/index edges",
+                    ));
+                }
+            }
+            Ok(SemanticNode {
+                id: node.id,
+                parent_id,
+                kind: decode_semantic_kind(node.kind)?,
+                subkind: node.subkind,
+                operation: decode_semantic_operation(node.operation)?,
+                is_bad: node.flags & 1 != 0,
+                is_uninstantiated: node.flags & 2 != 0,
+                is_automatic: node.flags & 4 != 0,
+                is_static: node.flags & 8 != 0,
+                is_top: node.flags & (1 << 4) != 0,
+                is_implicit: node.flags & (1 << 5) != 0,
+                is_local: node.flags & (1 << 6) != 0,
+                is_nonblocking: node.flags & (1 << 7) != 0,
+                is_input: node.flags & (1 << 8) != 0,
+                is_output: node.flags & (1 << 9) != 0,
+                is_inout: node.flags & (1 << 10) != 0,
+                is_ref: node.flags & (1 << 11) != 0,
+                is_implicit_conversion: node.flags & (1 << 12) != 0,
+                is_propagated_conversion: node.flags & (1 << 30) != 0,
+                is_indexed_up: node.flags & (1 << 16) != 0,
+                is_indexed_down: node.flags & (1 << 17) != 0,
+                case_wildcard_x_or_z: node.flags & (1 << 18) != 0,
+                case_wildcard_z: node.flags & (1 << 19) != 0,
+                case_inside: node.flags & (1 << 20) != 0,
+                is_posedge: node.flags & (1 << 21) != 0,
+                is_negedge: node.flags & (1 << 22) != 0,
+                is_both_edges: node.flags & (1 << 23) != 0,
+                is_primitive_declaration: node.flags & (1 << 24) != 0,
+                is_primitive_instance: node.flags & (1 << 25) != 0,
+                is_primitive_port: node.flags & (1 << 26) != 0,
+                is_task: node.flags & (1 << 27) != 0,
+                port_connection_present: node.flags & (1 << 28) != 0,
+                port_connection_open: node.flags & (1 << 29) != 0,
+                method_with_clause: node.flags & (1 << 31) != 0,
+                definition_kind: if node.flags & (1 << 13) != 0 {
+                    Some(SemanticDefinitionKind::Module)
+                } else if node.flags & (1 << 14) != 0 {
+                    Some(SemanticDefinitionKind::Interface)
+                } else if node.flags & (1 << 15) != 0 {
+                    Some(SemanticDefinitionKind::Program)
+                } else {
+                    None
+                },
+                // SAFETY: native strings borrow from the live snapshot.
+                name: unsafe { copy_string(node.name, "semantic node name")? },
+                // SAFETY: native strings borrow from the live snapshot.
+                detail: unsafe { copy_string(node.detail, "semantic node detail")? },
+                // SAFETY: native strings borrow from the live snapshot.
+                definition_name: unsafe {
+                    copy_string(node.definition_name, "semantic node definition name")?
+                },
+                range: decode_range(node.range, files)?,
+                type_id,
+                constant_id,
+                target_id,
+                edge_start: node.edge_start,
+                edge_count: node.edge_count,
+                time_scale: decode_time_scale(node)?,
+                strength0: decode_drive_strength(node.strength0)?,
+                strength1: decode_drive_strength(node.strength1)?,
+                auxiliary: node.auxiliary,
+            })
+        })
+        .collect()
+}
+
+fn decode_semantic_kind(raw: u32) -> Result<SemanticKind, SlangError> {
+    Ok(match raw {
+        1 => SemanticKind::Instance,
+        2 => SemanticKind::Package,
+        3 => SemanticKind::Class,
+        4 => SemanticKind::GenerateScope,
+        5 => SemanticKind::Port,
+        6 => SemanticKind::Modport,
+        7 => SemanticKind::InterfaceConnection,
+        8 => SemanticKind::Net,
+        9 => SemanticKind::Variable,
+        10 => SemanticKind::Array,
+        11 => SemanticKind::NamedEvent,
+        12 => SemanticKind::Parameter,
+        13 => SemanticKind::Process,
+        14 => SemanticKind::ContinuousAssign,
+        15 => SemanticKind::Primitive,
+        16 => SemanticKind::Subroutine,
+        17 => SemanticKind::Argument,
+        18 => SemanticKind::Statement,
+        19 => SemanticKind::Expression,
+        20 => SemanticKind::SystemCall,
+        21 => SemanticKind::MethodCall,
+        22 => SemanticKind::FunctionCall,
+        23 => SemanticKind::EnumConstant,
+        24 => SemanticKind::Definition,
+        25 => SemanticKind::Scope,
+        26 => SemanticKind::TimingControl,
+        255 => SemanticKind::Unsupported,
+        _ => return Err(invalid_native("semantic node has an unknown kind")),
+    })
+}
+
+fn validate_semantic_subkind(kind: u32, subkind: u32) -> Result<(), SlangError> {
+    let valid = match kind {
+        1 => matches!(subkind, 0 | 192 | 193),
+        4 => matches!(subkind, 0 | 195 | 196),
+        8 => matches!(subkind, 0 | 128..=141),
+        13 => matches!(subkind, 0..=6),
+        14 => matches!(subkind, 0 | 228),
+        15 => matches!(subkind, 0 | 160..=164 | 200..=227),
+        18 => matches!(subkind, 0 | 32..=60),
+        19 => matches!(subkind, 0 | 64..=78 | 80..=89),
+        25 => matches!(subkind, 0 | 194),
+        26 => matches!(subkind, 0 | 112..=117),
+        20..=22 => matches!(subkind, 0 | 76),
+        9 => matches!(subkind, 0 | 229),
+        2 | 3 | 5..=7 | 10..=12 | 16 | 17 | 23 | 24 | 255 => subkind == 0,
+        _ => true,
+    };
+    if !valid {
+        return Err(invalid_native(
+            "semantic node has a subkind incompatible with its kind",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_semantic_auxiliary(node: &RawSemanticNode) -> Result<(), SlangError> {
+    let valid = match (node.kind, node.subkind, node.operation) {
+        // An incomplete declaration placeholder may not carry its resolved
+        // lifetime yet; complete variable nodes use static or automatic.
+        (9 | 11, _, _) => matches!(node.auxiliary, 0..=2),
+        // A bad expression may not have reached Slang's stream normalization.
+        (19, 69, 40) => node.auxiliary == 0 || node.flags & 1 != 0,
+        (19, 69, 41) => node.auxiliary > 0 || node.flags & 1 != 0,
+        _ => node.auxiliary == 0,
+    };
+    if !valid {
+        return Err(invalid_native(
+            "semantic node has invalid kind-specific auxiliary metadata",
+        ));
+    }
+    Ok(())
+}
+
+fn decode_semantic_operation(raw: u32) -> Result<SemanticOperation, SlangError> {
+    Ok(match raw {
+        0 => SemanticOperation::None,
+        1 => SemanticOperation::Plus,
+        2 => SemanticOperation::Minus,
+        3 => SemanticOperation::Multiply,
+        4 => SemanticOperation::Divide,
+        5 => SemanticOperation::Modulo,
+        6 => SemanticOperation::Power,
+        7 => SemanticOperation::BitNot,
+        8 => SemanticOperation::BitAnd,
+        9 => SemanticOperation::BitOr,
+        10 => SemanticOperation::BitXor,
+        11 => SemanticOperation::BitNand,
+        12 => SemanticOperation::BitNor,
+        13 => SemanticOperation::BitXnor,
+        14 => SemanticOperation::LogicalNot,
+        15 => SemanticOperation::LogicalAnd,
+        16 => SemanticOperation::LogicalOr,
+        17 => SemanticOperation::LogicalImplication,
+        18 => SemanticOperation::LogicalEquivalence,
+        19 => SemanticOperation::Equal,
+        20 => SemanticOperation::NotEqual,
+        21 => SemanticOperation::CaseEqual,
+        22 => SemanticOperation::CaseNotEqual,
+        23 => SemanticOperation::WildcardEqual,
+        24 => SemanticOperation::WildcardNotEqual,
+        25 => SemanticOperation::Greater,
+        26 => SemanticOperation::GreaterEqual,
+        27 => SemanticOperation::Less,
+        28 => SemanticOperation::LessEqual,
+        29 => SemanticOperation::ShiftLeft,
+        30 => SemanticOperation::ShiftRight,
+        31 => SemanticOperation::ArithmeticShiftLeft,
+        32 => SemanticOperation::ArithmeticShiftRight,
+        33 => SemanticOperation::PreIncrement,
+        34 => SemanticOperation::PreDecrement,
+        35 => SemanticOperation::PostIncrement,
+        36 => SemanticOperation::PostDecrement,
+        37 => SemanticOperation::Concat,
+        38 => SemanticOperation::Replicate,
+        39 => SemanticOperation::Conditional,
+        40 => SemanticOperation::StreamLeft,
+        41 => SemanticOperation::StreamRight,
+        42 => SemanticOperation::Assign,
+        43 => SemanticOperation::Inside,
+        44 => SemanticOperation::AssignmentPattern,
+        45 => SemanticOperation::MinTypMax,
+        46 => SemanticOperation::MultiAssignmentPattern,
+        47 => SemanticOperation::List,
+        _ => return Err(invalid_native("semantic node has an unknown operation")),
+    })
+}
+
+fn decode_time_scale(node: &RawSemanticNode) -> Result<Option<SemanticTimeScale>, SlangError> {
+    let values = [
+        node.time_unit,
+        node.time_unit_magnitude,
+        node.time_precision_unit,
+        node.time_precision_magnitude,
+    ];
+    if values.iter().all(|value| *value == 0) {
+        return Ok(None);
+    }
+    if values.contains(&0)
+        || !matches!(node.time_unit_magnitude, 1 | 10 | 100)
+        || !matches!(node.time_precision_magnitude, 1 | 10 | 100)
+    {
+        return Err(invalid_native("semantic node has an invalid time scale"));
+    }
+    let scale = SemanticTimeScale {
+        unit: decode_time_unit(node.time_unit)?,
+        magnitude: node.time_unit_magnitude,
+        precision_unit: decode_time_unit(node.time_precision_unit)?,
+        precision_magnitude: node.time_precision_magnitude,
+    };
+    if semantic_time_exponent(scale.precision_unit, scale.precision_magnitude)
+        > semantic_time_exponent(scale.unit, scale.magnitude)
+    {
+        return Err(invalid_native(
+            "semantic node time precision is coarser than its time unit",
+        ));
+    }
+    Ok(Some(scale))
+}
+
+fn semantic_time_exponent(unit: SemanticTimeUnit, magnitude: u32) -> i32 {
+    let base = match unit {
+        SemanticTimeUnit::Seconds => 0,
+        SemanticTimeUnit::Milliseconds => -3,
+        SemanticTimeUnit::Microseconds => -6,
+        SemanticTimeUnit::Nanoseconds => -9,
+        SemanticTimeUnit::Picoseconds => -12,
+        SemanticTimeUnit::Femtoseconds => -15,
+    };
+    base + match magnitude {
+        1 => 0,
+        10 => 1,
+        100 => 2,
+        _ => unreachable!("magnitude validated by decode_time_scale"),
+    }
+}
+
+fn decode_drive_strength(value: u32) -> Result<SemanticDriveStrength, SlangError> {
+    Ok(match value {
+        0 => SemanticDriveStrength::Unspecified,
+        1 => SemanticDriveStrength::Supply,
+        2 => SemanticDriveStrength::Strong,
+        3 => SemanticDriveStrength::Pull,
+        4 => SemanticDriveStrength::Weak,
+        5 => SemanticDriveStrength::HighZ,
+        _ => {
+            return Err(invalid_native(
+                "semantic node has an unknown drive strength",
+            ))
+        }
+    })
+}
+
+fn decode_time_unit(value: u32) -> Result<SemanticTimeUnit, SlangError> {
+    Ok(match value {
+        1 => SemanticTimeUnit::Seconds,
+        2 => SemanticTimeUnit::Milliseconds,
+        3 => SemanticTimeUnit::Microseconds,
+        4 => SemanticTimeUnit::Nanoseconds,
+        5 => SemanticTimeUnit::Picoseconds,
+        6 => SemanticTimeUnit::Femtoseconds,
+        _ => return Err(invalid_native("semantic node has an unknown time unit")),
+    })
+}
+
+fn decode_lexical_tokens(
+    raw: &[RawLexicalToken],
+    files: &[File],
+    semantic_nodes: &[SemanticNode],
+) -> Result<Vec<LexicalToken>, SlangError> {
+    let semantic_ids: HashSet<_> = semantic_nodes.iter().map(|node| node.id).collect();
+    raw.iter()
+        .map(|token| {
+            if token.reserved != 0 || token.flags & !0b111 != 0 {
+                return Err(invalid_native("lexical token has unknown flags"));
+            }
+            let semantic_id = (token.semantic_id != INVALID_ID).then_some(token.semantic_id);
+            if semantic_id.is_some_and(|id| !semantic_ids.contains(&id)) {
+                return Err(invalid_native("lexical token semantic id does not exist"));
+            }
+            Ok(LexicalToken {
+                range: decode_range(token.range, files)?,
+                kind: decode_lexical_kind(token.kind)?,
+                role: match token.role {
+                    0 => LexicalRole::None,
+                    1 => LexicalRole::Declaration,
+                    2 => LexicalRole::Reference,
+                    3 => LexicalRole::ConnectionLabel,
+                    4 => LexicalRole::Keyword,
+                    5 => LexicalRole::ConnectionActual,
+                    _ => return Err(invalid_native("lexical token has an unknown role")),
+                },
+                is_missing: token.flags & 1 != 0,
+                is_skipped: token.flags & 2 != 0,
+                is_macro_expansion: token.flags & 4 != 0,
+                semantic_id,
+                // SAFETY: native strings borrow from the live snapshot.
+                text: unsafe { copy_string(token.text, "lexical token text")? },
+            })
+        })
+        .collect()
+}
+
+fn decode_lexical_kind(raw: u32) -> Result<LexicalKind, SlangError> {
+    Ok(match raw {
+        0 => LexicalKind::Unknown,
+        1 => LexicalKind::Module,
+        2 => LexicalKind::Interface,
+        3 => LexicalKind::Program,
+        4 => LexicalKind::Package,
+        5 => LexicalKind::Class,
+        6 => LexicalKind::Struct,
+        7 => LexicalKind::Union,
+        8 => LexicalKind::Enum,
+        9 => LexicalKind::EnumMember,
+        10 => LexicalKind::TypeAlias,
+        11 => LexicalKind::Parameter,
+        12 => LexicalKind::Port,
+        13 => LexicalKind::Variable,
+        14 => LexicalKind::Net,
+        15 => LexicalKind::Function,
+        16 => LexicalKind::Task,
+        17 => LexicalKind::Method,
+        18 => LexicalKind::Macro,
+        19 => LexicalKind::Keyword,
+        20 => LexicalKind::String,
+        21 => LexicalKind::Number,
+        22 => LexicalKind::Operator,
+        23 => LexicalKind::Identifier,
+        24 => LexicalKind::Genvar,
+        _ => return Err(invalid_native("lexical token has an unknown kind")),
     })
 }
 
@@ -1014,7 +2094,7 @@ fn decode_diagnostics(
                     4 => DiagnosticSeverity::Fatal,
                     _ => return Err(invalid_native("diagnostic has an unknown severity")),
                 },
-                subsystem: item.subsystem,
+                subsystem: decode_diagnostic_subsystem(item.subsystem)?,
                 code: item.code,
                 // SAFETY: native strings borrow from the live snapshot.
                 name: unsafe { copy_string(item.name, "diagnostic name")? },
@@ -1027,6 +2107,31 @@ fn decode_diagnostics(
             })
         })
         .collect()
+}
+
+fn decode_diagnostic_subsystem(raw: u32) -> Result<DiagnosticSubsystem, SlangError> {
+    Ok(match raw {
+        0 => DiagnosticSubsystem::Invalid,
+        1 => DiagnosticSubsystem::General,
+        2 => DiagnosticSubsystem::Lexer,
+        3 => DiagnosticSubsystem::Numeric,
+        4 => DiagnosticSubsystem::Preprocessor,
+        5 => DiagnosticSubsystem::Parser,
+        6 => DiagnosticSubsystem::Declarations,
+        7 => DiagnosticSubsystem::Expressions,
+        8 => DiagnosticSubsystem::Statements,
+        9 => DiagnosticSubsystem::Types,
+        10 => DiagnosticSubsystem::Lookup,
+        11 => DiagnosticSubsystem::SysFuncs,
+        12 => DiagnosticSubsystem::ConstEval,
+        13 => DiagnosticSubsystem::Compilation,
+        14 => DiagnosticSubsystem::Analysis,
+        15 => DiagnosticSubsystem::Meta,
+        16 => DiagnosticSubsystem::Driver,
+        17 => DiagnosticSubsystem::Tidy,
+        18 => DiagnosticSubsystem::Netlist,
+        _ => return Err(invalid_native("diagnostic has an unknown subsystem")),
+    })
 }
 
 fn decode_instances(
@@ -1042,6 +2147,9 @@ fn decode_instances(
     }
     raw.iter()
         .map(|item| {
+            if item.reserved != 0 {
+                return Err(invalid_native("instance reserved field is nonzero"));
+            }
             let parent_id = (item.parent_id != INVALID_ID).then_some(item.parent_id);
             if parent_id.is_some_and(|id| !ids.contains(&id)) {
                 return Err(invalid_native("instance parent does not exist"));
@@ -1076,17 +2184,92 @@ fn decode_instances(
         .collect()
 }
 
-fn decode_types(raw: &[RawType]) -> Result<Vec<Type>, SlangError> {
-    let mut ids = HashSet::with_capacity(raw.len());
-    raw.iter()
-        .map(|item| {
-            if item.id == INVALID_ID || !ids.insert(item.id) {
-                return Err(invalid_native(
-                    "snapshot contains duplicate or invalid type ids",
-                ));
+type DecodedTypes = (Vec<Type>, Vec<TypeRange>, Vec<TypeMember>);
+
+fn decode_types(
+    raw: &[RawType],
+    raw_ranges: &[RawTypeRange],
+    raw_members: &[RawTypeMember],
+) -> Result<DecodedTypes, SlangError> {
+    let ids: HashSet<_> = raw.iter().map(|item| item.id).collect();
+    if ids.len() != raw.len() || ids.contains(&INVALID_ID) {
+        return Err(invalid_native(
+            "snapshot contains duplicate or invalid type ids",
+        ));
+    }
+
+    let ranges = raw_ranges
+        .iter()
+        .map(|range| {
+            if range.reserved != 0 {
+                return Err(invalid_native("type range reserved field is nonzero"));
             }
+            let kind = match range.kind {
+                1 => TypeRangeKind::Packed,
+                2 => TypeRangeKind::Unpacked,
+                3 => TypeRangeKind::QueueBound,
+                _ => return Err(invalid_native("type range has an unknown kind")),
+            };
+            Ok(TypeRange {
+                left: range.left,
+                right: range.right,
+                kind,
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let members = raw_members
+        .iter()
+        .map(|member| {
+            if !ids.contains(&member.type_id) {
+                return Err(invalid_native("type member refers to an unknown type"));
+            }
+            Ok(TypeMember {
+                // SAFETY: native strings borrow from the live snapshot.
+                name: unsafe { copy_string(member.name, "type member name")? },
+                type_id: member.type_id,
+                bit_offset: member.bit_offset,
+                bit_width: member.bit_width,
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+
+    let mut claimed_ranges = vec![false; ranges.len()];
+    let mut claimed_members = vec![false; members.len()];
+    let types = raw
+        .iter()
+        .map(|item| {
             if item.flags & !0b111 != 0 {
                 return Err(invalid_native("type contains unknown flags"));
+            }
+            for index in checked_window(
+                item.range_start,
+                item.range_count,
+                ranges.len(),
+                "type ranges",
+            )? {
+                if claimed_ranges[index] {
+                    return Err(invalid_native("type range windows overlap"));
+                }
+                claimed_ranges[index] = true;
+            }
+            for index in checked_window(
+                item.member_start,
+                item.member_count,
+                members.len(),
+                "type members",
+            )? {
+                if claimed_members[index] {
+                    return Err(invalid_native("type member windows overlap"));
+                }
+                claimed_members[index] = true;
+            }
+            let element_type_id =
+                (item.element_type_id != INVALID_ID).then_some(item.element_type_id);
+            let index_type_id = (item.index_type_id != INVALID_ID).then_some(item.index_type_id);
+            if element_type_id.is_some_and(|id| !ids.contains(&id))
+                || index_type_id.is_some_and(|id| !ids.contains(&id))
+            {
+                return Err(invalid_native("type refers to an unknown component type"));
             }
             Ok(Type {
                 id: item.id,
@@ -1095,6 +2278,20 @@ fn decode_types(raw: &[RawType]) -> Result<Vec<Type>, SlangError> {
                     2 => TypeKind::Floating,
                     3 => TypeKind::String,
                     4 => TypeKind::Aggregate,
+                    5 => TypeKind::Enum,
+                    6 => TypeKind::PackedArray,
+                    7 => TypeKind::FixedUnpackedArray,
+                    8 => TypeKind::DynamicArray,
+                    9 => TypeKind::AssociativeArray,
+                    10 => TypeKind::Queue,
+                    11 => TypeKind::PackedStruct,
+                    12 => TypeKind::PackedUnion,
+                    13 => TypeKind::UnpackedStruct,
+                    14 => TypeKind::UnpackedUnion,
+                    15 => TypeKind::Class,
+                    16 => TypeKind::Chandle,
+                    17 => TypeKind::Event,
+                    18 => TypeKind::Void,
                     255 => TypeKind::Other,
                     _ => return Err(invalid_native("type has an unknown kind")),
                 },
@@ -1104,9 +2301,22 @@ fn decode_types(raw: &[RawType]) -> Result<Vec<Type>, SlangError> {
                 bit_width: item.bit_width,
                 // SAFETY: native strings borrow from the live snapshot.
                 display_name: unsafe { copy_string(item.display_name, "type display name")? },
+                element_type_id,
+                index_type_id,
+                range_start: item.range_start,
+                range_count: item.range_count,
+                member_start: item.member_start,
+                member_count: item.member_count,
             })
         })
-        .collect()
+        .collect::<Result<Vec<_>, _>>()?;
+    if claimed_ranges.iter().any(|claimed| !claimed) {
+        return Err(invalid_native("type range is not owned by a type"));
+    }
+    if claimed_members.iter().any(|claimed| !claimed) {
+        return Err(invalid_native("type member is not owned by a type"));
+    }
+    Ok((types, ranges, members))
 }
 
 fn decode_constants(
@@ -1418,6 +2628,9 @@ fn take_native_error(status: u32, error: *mut RawError) -> SlangError {
     if view.status != status {
         return invalid_native("native error status does not match the call status");
     }
+    if view.reserved != 0 {
+        return invalid_native("native error reserved field is nonzero");
+    }
     // SAFETY: the message borrows from `owner`, which remains live through copy.
     let message = unsafe { copy_string(view.message, "native error message") }
         .unwrap_or_else(|_| format!("Slang failed with status {status}"));
@@ -1460,6 +2673,53 @@ mod tests {
             word_count: 1,
             real_bits: 0,
             text: empty_raw_string(),
+        }
+    }
+
+    fn raw_type(id: u64) -> RawType {
+        RawType {
+            id,
+            kind: 1,
+            flags: 0b111,
+            bit_width: 1,
+            display_name: empty_raw_string(),
+            element_type_id: INVALID_ID,
+            index_type_id: INVALID_ID,
+            range_start: 0,
+            range_count: 0,
+            member_start: 0,
+            member_count: 0,
+        }
+    }
+
+    fn raw_semantic_node(edge_count: u64) -> RawSemanticNode {
+        RawSemanticNode {
+            id: 0,
+            parent_id: INVALID_ID,
+            kind: 25,
+            subkind: 0,
+            operation: 0,
+            flags: 0,
+            name: empty_raw_string(),
+            detail: empty_raw_string(),
+            definition_name: empty_raw_string(),
+            range: RawRange {
+                file_id: INVALID_ID,
+                start: 0,
+                end: 0,
+            },
+            type_id: INVALID_ID,
+            constant_id: INVALID_ID,
+            target_id: INVALID_ID,
+            edge_start: 0,
+            edge_count,
+            time_unit: 0,
+            time_unit_magnitude: 0,
+            time_precision_unit: 0,
+            time_precision_magnitude: 0,
+            strength0: 0,
+            strength1: 0,
+            auxiliary: 0,
         }
     }
 
@@ -1515,5 +2775,171 @@ mod tests {
         let error = decode_diagnostics(&[diagnostic], &related, &[])
             .expect_err("out-of-bounds related window must fail");
         assert_eq!(error.kind(), SlangErrorKind::InvalidNativeData);
+    }
+
+    #[test]
+    fn malformed_type_component_and_windows_are_rejected() {
+        let mut ty = raw_type(0);
+        ty.element_type_id = 17;
+        let error = decode_types(&[ty], &[], &[]).expect_err("unknown element type must fail");
+        assert_eq!(error.kind(), SlangErrorKind::InvalidNativeData);
+
+        let mut ty = raw_type(0);
+        ty.range_count = 1;
+        let error =
+            decode_types(&[ty], &[], &[]).expect_err("out-of-bounds type range window must fail");
+        assert_eq!(error.kind(), SlangErrorKind::InvalidNativeData);
+
+        let mut ty = raw_type(0);
+        ty.member_count = 1;
+        let member = RawTypeMember {
+            name: empty_raw_string(),
+            type_id: 9,
+            bit_offset: 0,
+            bit_width: 1,
+        };
+        let error = decode_types(&[ty], &[], &[member]).expect_err("unknown member type must fail");
+        assert_eq!(error.kind(), SlangErrorKind::InvalidNativeData);
+    }
+
+    #[test]
+    fn duplicate_semantic_role_index_is_rejected() {
+        let node = raw_semantic_node(2);
+        let raw_edges = [
+            RawSemanticEdge {
+                role: 1,
+                index: 0,
+                target_id: 0,
+            },
+            RawSemanticEdge {
+                role: 1,
+                index: 0,
+                target_id: 0,
+            },
+        ];
+        let edges = decode_semantic_edges(&raw_edges, std::slice::from_ref(&node))
+            .expect("edge records decode before per-owner validation");
+        let error = decode_semantic_nodes(&[node], &edges, &[], &[], 0)
+            .expect_err("duplicate role/index pair must fail");
+        assert_eq!(error.kind(), SlangErrorKind::InvalidNativeData);
+    }
+
+    #[test]
+    fn invalid_semantic_strength_and_port_state_are_rejected() {
+        let mut node = raw_semantic_node(0);
+        node.strength0 = 6;
+        let error = decode_semantic_nodes(&[node], &[], &[], &[], 0)
+            .expect_err("unknown drive strength must fail");
+        assert_eq!(error.kind(), SlangErrorKind::InvalidNativeData);
+
+        let mut node = raw_semantic_node(0);
+        node.flags = 1 << 29;
+        let error = decode_semantic_nodes(&[node], &[], &[], &[], 0)
+            .expect_err("open port state without a present connection must fail");
+        assert_eq!(error.kind(), SlangErrorKind::InvalidNativeData);
+
+        let mut node = raw_semantic_node(0);
+        node.flags = 1 << 31;
+        let error = decode_semantic_nodes(&[node], &[], &[], &[], 0)
+            .expect_err("method with-clause flag on a scope must fail");
+        assert_eq!(error.kind(), SlangErrorKind::InvalidNativeData);
+
+        let mut node = raw_semantic_node(0);
+        node.subkind = 32;
+        let error = decode_semantic_nodes(&[node], &[], &[], &[], 0)
+            .expect_err("statement subkind on a scope must fail");
+        assert_eq!(error.kind(), SlangErrorKind::InvalidNativeData);
+
+        let mut node = raw_semantic_node(0);
+        node.time_unit = 4;
+        node.time_unit_magnitude = 1;
+        node.time_precision_unit = 2;
+        node.time_precision_magnitude = 1;
+        let error = decode_semantic_nodes(&[node], &[], &[], &[], 0)
+            .expect_err("coarser time precision must fail");
+        assert_eq!(error.kind(), SlangErrorKind::InvalidNativeData);
+
+        let mut node = raw_semantic_node(0);
+        node.auxiliary = 1;
+        let error = decode_semantic_nodes(&[node], &[], &[], &[], 0)
+            .expect_err("variable lifetime metadata on a scope must fail");
+        assert_eq!(error.kind(), SlangErrorKind::InvalidNativeData);
+    }
+
+    #[test]
+    fn current_statement_and_expression_subkinds_are_admitted() {
+        assert!(validate_semantic_subkind(18, 49).is_ok());
+        assert!(validate_semantic_subkind(18, 59).is_ok());
+        assert!(validate_semantic_subkind(18, 60).is_ok());
+        assert!(validate_semantic_subkind(19, 86).is_ok());
+        assert!(validate_semantic_subkind(19, 89).is_ok());
+        assert!(validate_semantic_subkind(9, 229).is_ok());
+        assert!(validate_semantic_subkind(18, 61).is_err());
+        assert!(validate_semantic_subkind(19, 79).is_err());
+        assert_eq!(
+            decode_semantic_operation(47).expect("list operation must decode"),
+            SemanticOperation::List
+        );
+
+        let mut method = raw_semantic_node(0);
+        method.kind = 21;
+        method.subkind = 76;
+        method.flags = 1 << 31;
+        let decoded = decode_semantic_nodes(&[method], &[], &[], &[], 0)
+            .expect("method with-clause flag must decode on a method call");
+        assert!(decoded[0].method_with_clause);
+
+        let mut variable = raw_semantic_node(0);
+        variable.kind = 9;
+        variable.auxiliary = 2;
+        let decoded = decode_semantic_nodes(&[variable], &[], &[], &[], 0)
+            .expect("resolved variable lifetime must decode");
+        assert_eq!(decoded[0].auxiliary, 2);
+
+        variable.kind = 11;
+        let decoded = decode_semantic_nodes(&[variable], &[], &[], &[], 0)
+            .expect("named-event variable lifetime must decode");
+        assert_eq!(decoded[0].auxiliary, 2);
+
+        variable.auxiliary = 3;
+        let error = decode_semantic_nodes(&[variable], &[], &[], &[], 0)
+            .expect_err("unknown resolved variable lifetime must fail");
+        assert_eq!(error.kind(), SlangErrorKind::InvalidNativeData);
+
+        let owner = raw_semantic_node(2);
+        let edges = decode_semantic_edges(
+            &[
+                RawSemanticEdge {
+                    role: 30,
+                    index: 0,
+                    target_id: 0,
+                },
+                RawSemanticEdge {
+                    role: 31,
+                    index: 0,
+                    target_id: 0,
+                },
+            ],
+            std::slice::from_ref(&owner),
+        )
+        .expect("semantic identity roles must decode");
+        assert_eq!(edges[0].role, SemanticEdgeRole::SourceIdentity);
+        assert_eq!(edges[1].role, SemanticEdgeRole::ReturnOwner);
+    }
+
+    #[test]
+    fn semantic_and_type_table_limits_are_exact() {
+        assert!(enforce_count(4, 4, "semantic nodes").is_ok());
+        assert!(enforce_count(5, 4, "semantic nodes").is_err());
+        assert!(enforce_count(4, 4, "semantic edges").is_ok());
+        assert!(enforce_count(5, 4, "semantic edges").is_err());
+        assert!(enforce_count(4, 4, "lexical tokens").is_ok());
+        assert!(enforce_count(5, 4, "lexical tokens").is_err());
+        assert!(enforce_count(4, 4, "type ranges").is_ok());
+        assert!(enforce_count(5, 4, "type ranges").is_err());
+        assert!(enforce_count(4, 4, "type members").is_ok());
+        assert!(enforce_count(5, 4, "type members").is_err());
+        assert!(enforce_count(4, 4, "constants").is_ok());
+        assert!(enforce_count(5, 4, "constants").is_err());
     }
 }

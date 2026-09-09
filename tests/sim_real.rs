@@ -7,7 +7,7 @@
 //! cases retain unsupported procedural contexts: combinational processes,
 //! waits, monitors, arrays, ports/links, and functions.
 //!
-//! Surelog writes `slpp_all/` into the process working directory, so each
+//! Each
 //! test uses a fresh temp directory and the process-wide mutex serializes
 //! compile/codegen runs with the other simulator integration tests.
 #[path = "support/sim.rs"]
@@ -16,9 +16,10 @@ mod sim_harness;
 use std::sync::Mutex;
 
 use llg::core::compile;
+use llg::ffi::slang::DiagnosticSeverity;
 use llg::sim;
 
-static SURELOG_LOCK: Mutex<()> = Mutex::new(());
+static CWD_LOCK: Mutex<()> = Mutex::new(());
 
 fn run_sim(sv: &str, tag: &str) -> Result<String, String> {
     sim_harness::run_sim(sv, "tb", tag)
@@ -42,8 +43,9 @@ fn codegen_result(
         if !out.ok() {
             return Err(format!("compile diagnostics: {:?}", out.diagnostics));
         }
-        let design = out.uhdm_design().ok_or("no UHDM design")?;
-        Ok(sim::codegen::generate(design).map_err(|error| error.to_string()))
+        let db =
+            llg::core::db::Db::from_slang(&out.snapshot).map_err(|error| format!("db: {error}"))?;
+        Ok(sim::codegen::generate(&db).map_err(|error| error.to_string()))
     })
 }
 
@@ -53,7 +55,7 @@ fn sim_real_assignment_and_arithmetic() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
+    let _guard = CWD_LOCK.lock().unwrap();
     let sv = r#"module tb;
     real r;
     shortreal sr;
@@ -86,7 +88,7 @@ fn sim_real_parameter_constant_arithmetic() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
+    let _guard = CWD_LOCK.lock().unwrap();
     let sv = r#"module tb;
     parameter real BASE = 1.25;
     parameter real SCALE = 2.0;
@@ -122,7 +124,7 @@ fn sim_real_integer_conditional_has_real_result_type() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
+    let _guard = CWD_LOCK.lock().unwrap();
     let sv = r#"module tb;
     logic choose_real;
 
@@ -146,7 +148,7 @@ fn sim_real_control_flow_uses_scalar_truth_conversion() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
+    let _guard = CWD_LOCK.lock().unwrap();
     let sv = r#"module tb;
     real condition;
     integer while_count;
@@ -196,7 +198,7 @@ fn sim_shortreal_rounds_to_single_precision() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
+    let _guard = CWD_LOCK.lock().unwrap();
     let sv = r#"module tb;
     real full_precision;
     shortreal rounded;
@@ -226,7 +228,7 @@ fn sim_real_to_integer_assignment_rounds_to_nearest() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
+    let _guard = CWD_LOCK.lock().unwrap();
     let sv = r#"module tb;
     real source;
     integer rounded;
@@ -258,7 +260,7 @@ fn sim_real_display_formats() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
+    let _guard = CWD_LOCK.lock().unwrap();
     let sv = r#"module tb;
     real value;
 
@@ -280,7 +282,7 @@ fn sim_real_display_precision_rounds_fractional_digits() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
+    let _guard = CWD_LOCK.lock().unwrap();
     let sv = r#"module tb;
     real value;
 
@@ -302,7 +304,7 @@ fn sim_real_nonblocking_assignment_commits_after_inactive_region() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
+    let _guard = CWD_LOCK.lock().unwrap();
     let sv = r#"module tb;
     real r;
     shortreal sr;
@@ -337,7 +339,7 @@ fn sim_real_to_128_bit_packed_conversion() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
+    let _guard = CWD_LOCK.lock().unwrap();
     let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/sim/data_type_edges/real_to_wide.sv");
     let source = std::fs::read_to_string(&fixture).expect("read real-to-wide fixture");
@@ -347,11 +349,21 @@ fn sim_real_to_128_bit_packed_conversion() {
 
 #[test]
 fn sim_real_unsupported_contexts_are_rejected() {
-    if !llg::sim::build::cmake_available() {
-        eprintln!("SKIP: cmake not available");
-        return;
-    }
-    let _guard = SURELOG_LOCK.lock().unwrap();
+    let _guard = CWD_LOCK.lock().unwrap();
+    let continuous = r#"module tb;
+    wire real r;
+    assign r = 1.0;
+endmodule
+"#;
+    let diagnostics =
+        sim_harness::frontend_diagnostics(continuous, "tb").expect("compile real net");
+    assert!(
+        diagnostics.iter().any(|diagnostic| {
+            diagnostic.severity == DiagnosticSeverity::Error && diagnostic.name == "InvalidNetType"
+        }),
+        "real net must report InvalidNetType: {diagnostics:?}"
+    );
+
     let cases = [
         (
             "comb",
@@ -361,15 +373,6 @@ fn sim_real_unsupported_contexts_are_rejected() {
 endmodule
 "#,
             "comb",
-        ),
-        (
-            "continuous",
-            r#"module tb;
-    wire real r;
-    assign r = 1.0;
-endmodule
-"#,
-            "continuous",
         ),
         (
             "repeat",
@@ -442,7 +445,7 @@ endmodule
     ];
 
     for (tag, sv, expected) in cases {
-        let result = codegen_result(sv, tag).expect("Surelog compile should succeed");
+        let result = codegen_result(sv, tag).expect("Slang compile should succeed");
         let err = match result {
             Ok(_) => panic!("codegen should reject the unsupported real context"),
             Err(err) => err,

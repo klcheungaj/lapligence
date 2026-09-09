@@ -32,13 +32,6 @@ impl<'a> Codegen<'a> {
                 if let Some(comparison) = self.recover_folded_real_parameter_comparison(h) {
                     return Ok(comparison);
                 }
-                if let Some(literal) = self.source_time_literal(h) {
-                    let timescale = self.timescale_of_node(h);
-                    let value = time_literal_to_real(&literal, timescale)?.ok_or_else(|| {
-                        format!("invalid time literal `{literal}` in `{scope_path}`")
-                    })?;
-                    return Ok(real_literal_expr(value));
-                }
                 let c = self.const_of_node(h)?;
                 Ok(IrExpr::new(
                     IrExprKind::Const(c.clone()),
@@ -99,16 +92,16 @@ impl<'a> Codegen<'a> {
                         ));
                     }
                 }
-                let (_, info) = self.base_signal(scope_path, *base)?;
-                if info.real {
+                let base_value = self.lower_expr(scope_path, *base)?;
+                if base_value.is_real() {
                     return Err(format!(
                         "select on real-valued signal in `{scope_path}` is not supported"
                     ));
                 }
-                let ie = self.lower_expr(scope_path, *index)?;
+                let ie = self.lower_member_select_index(scope_path, *base, *index)?;
                 Ok(IrExpr::new(
                     IrExprKind::BitSel {
-                        base: Box::new(sig_read_expr_full(&info)),
+                        base: Box::new(base_value),
                         idx: Box::new(ie),
                     },
                     1,
@@ -198,18 +191,30 @@ impl<'a> Codegen<'a> {
                 ))
             }
             NodeKind::Expr(ExprKind::PartSelect { base, left, right }) => {
-                let (_, info) = self.base_signal(scope_path, *base)?;
-                if info.real {
+                let base_value = self.lower_expr(scope_path, *base)?;
+                if base_value.is_real() {
                     return Err(format!(
                         "select on real-valued signal in `{scope_path}` is not supported"
                     ));
                 }
-                let l = self.eval_bound_i128(*left)?;
-                let r = self.eval_bound_i128(*right)?;
+                let mut l = self.eval_bound_i128(*left)?;
+                let mut r = self.eval_bound_i128(*right)?;
+                if let Some((_, member)) = self.packed_member_info(*base) {
+                    l = i128::from(self.aggregate_member_relative_bound(
+                        &member.name,
+                        &member.packed_ranges,
+                        l,
+                    )?);
+                    r = i128::from(self.aggregate_member_relative_bound(
+                        &member.name,
+                        &member.packed_ranges,
+                        r,
+                    )?);
+                }
                 let (l, r, width) = checked_select_bounds(l, r, "part select")?;
                 Ok(IrExpr::new(
                     IrExprKind::PartSel {
-                        base: Box::new(sig_read_expr_full(&info)),
+                        base: Box::new(base_value),
                         left: l,
                         right: r,
                     },
@@ -224,8 +229,8 @@ impl<'a> Codegen<'a> {
                 width_expr,
                 neg,
             }) => {
-                let (_, info) = self.base_signal(scope_path, *base)?;
-                if info.real {
+                let base_value = self.lower_expr(scope_path, *base)?;
+                if base_value.is_real() {
                     return Err(format!(
                         "select on real-valued signal in `{scope_path}` is not supported"
                     ));
@@ -235,10 +240,69 @@ impl<'a> Codegen<'a> {
                 let width = self.indexed_part_select_width(*width_expr, scope_path)?;
                 Ok(IrExpr::new(
                     IrExprKind::IdxPartSel {
-                        base: Box::new(sig_read_expr_full(&info)),
+                        base: Box::new(base_value),
                         base_idx: Box::new(be),
                         width_expr: Box::new(we),
                         neg: *neg,
+                    },
+                    width,
+                    false,
+                    None,
+                ))
+            }
+            NodeKind::Expr(ExprKind::Streaming {
+                direction,
+                slice_size,
+                streams,
+            }) => {
+                if streams.is_empty() {
+                    return Err(format!("empty streaming concatenation in `{scope_path}`"));
+                }
+                if streams.iter().any(|stream| stream.with_expr.is_some()) {
+                    return Err(format!(
+                        "streaming concatenation with a `with` selector in `{scope_path}` is not supported"
+                    ));
+                }
+                let mut parts = Vec::with_capacity(streams.len());
+                for stream in streams {
+                    let value = self.lower_expr(scope_path, stream.value)?;
+                    if value.is_real() {
+                        return Err(format!(
+                            "streaming concatenation of real value in `{scope_path}` is not supported"
+                        ));
+                    }
+                    parts.push(value);
+                }
+                let width = parts
+                    .iter()
+                    .try_fold(0u32, |width, part| {
+                        width
+                            .checked_add(part.width)
+                            .filter(|width| *width <= LLG_MAX_WIDTH)
+                    })
+                    .ok_or_else(|| {
+                        format!(
+                            "streaming concatenation in `{scope_path}` exceeds the runtime maximum width of {LLG_MAX_WIDTH} bits"
+                        )
+                    })?;
+                let value = if let [value] = parts.as_slice() {
+                    value.clone()
+                } else {
+                    IrExpr::new(IrExprKind::Concat { parts }, width, false, None)
+                };
+                let slice = if *slice_size == 0 {
+                    1
+                } else {
+                    (*slice_size).min(u64::from(width)) as u32
+                };
+                Ok(IrExpr::new(
+                    IrExprKind::Stream {
+                        value: Box::new(value),
+                        slice,
+                        direction: match direction {
+                            DbStreamingDirection::LeftToRight => IrStreamDirection::LeftToRight,
+                            DbStreamingDirection::RightToLeft => IrStreamDirection::RightToLeft,
+                        },
                     },
                     width,
                     false,
@@ -249,7 +313,7 @@ impl<'a> Codegen<'a> {
                 op,
                 reordered,
                 operands,
-            }) => self.lower_operation(scope_path, op.as_raw(), *reordered, operands),
+            }) => self.lower_operation(scope_path, *op, *reordered, operands),
             NodeKind::Expr(ExprKind::Cast {
                 operand,
                 ty,
@@ -257,10 +321,11 @@ impl<'a> Codegen<'a> {
                 size_cast_expr,
                 cast_kind_known,
                 two_state,
+                propagated,
             }) => {
                 if !cast_kind_known {
                     return Err(format!(
-                        "cast kind cannot be determined without admitted source or UHDM decompile in `{scope_path}`"
+                        "cast kind cannot be determined without admitted source or semantic type metadata in `{scope_path}`"
                     ));
                 }
                 let v = self.lower_expr(scope_path, *operand)?;
@@ -294,6 +359,14 @@ impl<'a> Codegen<'a> {
                          runtime maximum supported width is {LLG_MAX_WIDTH}"
                     ));
                 }
+                // Context propagation extends using the target signedness
+                // (§11.8.2); assignment and explicit casts use the source (§11.8.3).
+                let v = if *propagated {
+                    let source_width = v.width;
+                    IrExpr::resize_to(v, source_width, s)
+                } else {
+                    v
+                };
                 // Value-preserving conversion (LRM 1800-2009 §6.24.1: the
                 // cast yields the value a variable of the cast type holds
                 // after the assignment — extension follows the SOURCE's
@@ -323,58 +396,6 @@ impl<'a> Codegen<'a> {
                         })?,
                         member.ty.signed,
                     );
-                    if let Some(select) = self.packed_member_select(h)? {
-                        let selected = match select {
-                            PackedMemberSelect::Bit(index) => {
-                                let index = self.aggregate_member_relative_bound(
-                                    &member.name,
-                                    &member.packed_ranges,
-                                    index,
-                                )?;
-                                IrExpr::new(
-                                    IrExprKind::BitSel {
-                                        base: Box::new(member_value),
-                                        idx: Box::new(lhs_integer_expr(i128::from(index))),
-                                    },
-                                    1,
-                                    false,
-                                    None,
-                                )
-                            }
-                            PackedMemberSelect::Part(left, right) => {
-                                let left = self.aggregate_member_relative_bound(
-                                    &member.name,
-                                    &member.packed_ranges,
-                                    left,
-                                )?;
-                                let right = self.aggregate_member_relative_bound(
-                                    &member.name,
-                                    &member.packed_ranges,
-                                    right,
-                                )?;
-                                let (left, right, width) = checked_select_bounds(
-                                    i128::from(left),
-                                    i128::from(right),
-                                    "unpacked aggregate member part select",
-                                )?;
-                                IrExpr::new(
-                                    IrExprKind::PartSel {
-                                        base: Box::new(member_value),
-                                        left,
-                                        right,
-                                    },
-                                    width,
-                                    false,
-                                    None,
-                                )
-                            }
-                        };
-                        return Ok(if member.two_state {
-                            IrExpr::to_two_state(selected)
-                        } else {
-                            selected
-                        });
-                    }
                     return Ok(if member.two_state {
                         IrExpr::to_two_state(member_value)
                     } else {
@@ -393,58 +414,6 @@ impl<'a> Codegen<'a> {
                         false,
                         None,
                     );
-                    if let Some(select) = self.packed_member_select(h)? {
-                        let selected = match select {
-                            PackedMemberSelect::Bit(index) => {
-                                let index = self.aggregate_member_relative_bound(
-                                    &member.name,
-                                    &member.packed_ranges,
-                                    index,
-                                )?;
-                                IrExpr::new(
-                                    IrExprKind::BitSel {
-                                        base: Box::new(member_value),
-                                        idx: Box::new(lhs_integer_expr(i128::from(index))),
-                                    },
-                                    1,
-                                    false,
-                                    None,
-                                )
-                            }
-                            PackedMemberSelect::Part(left, right) => {
-                                let left = self.aggregate_member_relative_bound(
-                                    &member.name,
-                                    &member.packed_ranges,
-                                    left,
-                                )?;
-                                let right = self.aggregate_member_relative_bound(
-                                    &member.name,
-                                    &member.packed_ranges,
-                                    right,
-                                )?;
-                                let (left, right, width) = checked_select_bounds(
-                                    i128::from(left),
-                                    i128::from(right),
-                                    "packed-member part select",
-                                )?;
-                                IrExpr::new(
-                                    IrExprKind::PartSel {
-                                        base: Box::new(member_value),
-                                        left,
-                                        right,
-                                    },
-                                    width,
-                                    false,
-                                    None,
-                                )
-                            }
-                        };
-                        return Ok(if member.two_state {
-                            IrExpr::to_two_state(selected)
-                        } else {
-                            selected
-                        });
-                    }
                     let selected = IrExpr::resize_to(member_value, member.width, member.signed);
                     return Ok(if member.two_state {
                         IrExpr::to_two_state(selected)
@@ -452,8 +421,8 @@ impl<'a> Codegen<'a> {
                         selected
                     });
                 }
-                // 2-part interface member access (`m.data`): a read of the
-                // resolved per-port copy var.
+                // Interface and ordinary hierarchical members both resolve
+                // to their concrete owned storage identity.
                 if let Some(info) = self.hier_path_signal(h) {
                     return Ok(sig_read_expr_full(info));
                 }
@@ -567,6 +536,9 @@ impl<'a> Codegen<'a> {
         target: Option<NodeId>,
     ) -> Result<IrExpr, String> {
         if let Some((_, info)) = self.lexical_proc_local(r) {
+            if let Some(signal) = &info.static_signal {
+                return Ok(sig_read_expr_full(signal));
+            }
             return Ok(IrExpr::new(
                 IrExprKind::LocalRead(info.c_name.clone()),
                 info.width,
@@ -575,6 +547,7 @@ impl<'a> Codegen<'a> {
             ));
         }
         if let Some(t) = target {
+            let t = self.canonical_func_target(t).unwrap_or(t);
             if self.unpacked_aggregates.contains_key(&t) {
                 return Err(format!(
                     "whole unpacked aggregate `{}` is not supported in scalar expression `{scope_path}`",
@@ -586,6 +559,9 @@ impl<'a> Codegen<'a> {
             }
             if !self.proc_local_is_shadowed(r) {
                 if let Some(info) = self.proc_locals.get(&t) {
+                    if let Some(signal) = &info.static_signal {
+                        return Ok(sig_read_expr_full(signal));
+                    }
                     return Ok(IrExpr::new(
                         IrExprKind::LocalRead(info.c_name.clone()),
                         info.width,
@@ -658,8 +634,13 @@ impl<'a> Codegen<'a> {
             if let NodeKind::EnumConst { value } = self.kind(t) {
                 return enum_value_expr(value.as_ref(), &self.node(t).name);
             }
+            return Err(format!(
+                "cannot resolve bound expression reference `{}` in `{scope_path}`",
+                self.node(r).name
+            ));
         }
-        // Name fallback within the current scope.
+        // Unbound enum references can still arise in the flat definition
+        // view. Any captured target identity must resolve above.
         let name = self.node(r).name.clone();
         if !name.is_empty() {
             // io_decls are not indexed, so formals resolve by name.
@@ -701,8 +682,8 @@ impl<'a> Codegen<'a> {
             {
                 return Ok(sig_read_expr_full(info));
             }
-            // Surelog v1.87 leaves some unqualified module-local enum uses
-            // without `vpiActual`.  Resolve those only against the current
+            // Some unqualified module-local enum uses can lack a resolved
+            // target. Resolve those only against the current
             // instance's matching flat module definition and only when the
             // enumerator name is unique there.
             let def_name = match self.kind(self.inst) {
@@ -743,22 +724,6 @@ impl<'a> Codegen<'a> {
     pub(super) fn const_of_node(&self, node: NodeId) -> Result<IrConst, String> {
         match self.kind(node) {
             NodeKind::Expr(ExprKind::Constant { value, size, .. }) => {
-                if let Some(literal) = self.source_time_literal(node) {
-                    return Err(format!(
-                        "time literal `{literal}` requires a runtime expression context"
-                    ));
-                }
-                if let Some(literal) = self.embedded_source_time_literal(node) {
-                    return Err(format!(
-                        "folded expression containing time literal `{literal}` is not supported"
-                    ));
-                }
-                if self.unverified_time_literal_candidate(node) {
-                    return Err(
-                        "cannot verify unsigned constant source after possible time-literal rewriting"
-                            .to_owned(),
-                    );
-                }
                 let mut c = if let Some(fill) = self.source_fill_literal(node) {
                     IrConst {
                         bits: vec![(fill == 1) as u64],
@@ -810,89 +775,16 @@ impl<'a> Codegen<'a> {
         Ok(width)
     }
 
-    /// Recover a time literal only when the UHDM constant's exact source span
-    /// is one complete token. Surelog v1.87 rewrites these constants to an
-    /// unsigned femtosecond payload and loses `vpiTimeConst`; accepting a
-    /// prefix or a folded compound span would silently invent the wrong unit.
-    pub(super) fn source_time_literal(&self, node: NodeId) -> Option<String> {
-        let NodeKind::Expr(ExprKind::Constant {
-            source: ConstantSource::Exact(token),
-            const_type: ConstantType::UnsignedInteger,
-            ..
-        }) = self.kind(node)
-        else {
-            return None;
-        };
-        if time_literal_token(token).is_some_and(|literal| literal == token) {
-            Some(token.clone())
-        } else {
-            None
-        }
-    }
-
-    pub(super) fn embedded_source_time_literal(&self, node: NodeId) -> Option<String> {
-        let NodeKind::Expr(ExprKind::Constant {
-            source: ConstantSource::Exact(source),
-            const_type: ConstantType::UnsignedInteger,
-            ..
-        }) = self.kind(node)
-        else {
-            return None;
-        };
-        time_literal_token(source).map(str::to_owned)
-    }
-
-    pub(super) fn unverified_time_literal_candidate(&self, node: NodeId) -> bool {
-        matches!(
-            self.kind(node),
-            NodeKind::Expr(ExprKind::Constant {
-                source: ConstantSource::Unavailable | ConstantSource::NotCaptured,
-                time_literal_candidate: true,
-                ..
-            })
-                | NodeKind::Expr(ExprKind::Constant {
-                    source: ConstantSource::Exact(_),
-                    time_literal_candidate: true,
-                    ..
-                }) if self.source_time_literal(node).is_none()
-                    && self.embedded_source_time_literal(node).is_none()
-        )
-    }
-
-    pub(super) fn time_literal_in_subtree(&self, node: NodeId) -> Option<String> {
-        if let Some(literal) = self.source_time_literal(node) {
-            return Some(literal);
-        }
-        if let Some(literal) = self.embedded_source_time_literal(node) {
-            return Some(literal);
-        }
-        for child in &self.node(node).children {
-            if let Some(literal) = self.time_literal_in_subtree(*child) {
-                return Some(literal);
-            }
-        }
-        None
-    }
-
-    pub(super) fn unverified_time_literal_in_subtree(&self, node: NodeId) -> bool {
-        self.unverified_time_literal_candidate(node)
-            || self
-                .node(node)
-                .children
-                .iter()
-                .any(|child| self.unverified_time_literal_in_subtree(*child))
-    }
-
     /// Lower one operation, mirroring the pre-IR emitter's operand shapes,
     /// result widths/signedness and error strings arm-for-arm.
     fn lower_operation(
         &mut self,
         scope_path: &str,
-        otype: i32,
+        otype: Operation,
         reordered: bool,
         operands: &[NodeId],
     ) -> Result<IrExpr, String> {
-        use vpi::*;
+        super::validate_operation_arity(otype, operands.len(), scope_path)?;
         macro_rules! op {
             ($i:expr) => {
                 self.lower_expr(scope_path, operands[$i])?
@@ -901,7 +793,7 @@ impl<'a> Codegen<'a> {
         let maxw = |a: &IrExpr, b: &IrExpr| a.width.max(b.width);
 
         match otype {
-            vpiAddOp => {
+            Operation::Add => {
                 let a = op!(0);
                 let b = op!(1);
                 if a.is_real() || b.is_real() {
@@ -909,7 +801,7 @@ impl<'a> Codegen<'a> {
                 }
                 common_bin_expr_with_context(IrBinOp::Add, a, b, scope_path)
             }
-            vpiSubOp => {
+            Operation::Subtract => {
                 let a = op!(0);
                 let b = op!(1);
                 if a.is_real() || b.is_real() {
@@ -917,7 +809,7 @@ impl<'a> Codegen<'a> {
                 }
                 common_bin_expr_with_context(IrBinOp::Sub, a, b, scope_path)
             }
-            vpiMultOp => {
+            Operation::Multiply => {
                 let a = op!(0);
                 let b = op!(1);
                 if a.is_real() || b.is_real() {
@@ -925,20 +817,20 @@ impl<'a> Codegen<'a> {
                 }
                 common_bin_expr_with_context(IrBinOp::Mul, a, b, scope_path)
             }
-            vpiDivOp | vpiModOp | vpiPowerOp => {
+            Operation::Divide | Operation::Modulo | Operation::Power => {
                 let a = op!(0);
                 let b = op!(1);
                 if a.is_real() || b.is_real() {
                     let rop = match otype {
-                        vpiDivOp => IrRealBinOp::Div,
-                        vpiModOp => IrRealBinOp::Mod,
+                        Operation::Divide => IrRealBinOp::Div,
+                        Operation::Modulo => IrRealBinOp::Mod,
                         _ => IrRealBinOp::Pow,
                     };
                     return Ok(real_bin_expr(rop, a, b));
                 }
                 let f = match otype {
-                    vpiDivOp => IrBinOp::Div,
-                    vpiModOp => IrBinOp::Mod,
+                    Operation::Divide => IrBinOp::Div,
+                    Operation::Modulo => IrBinOp::Mod,
                     _ => IrBinOp::Pow,
                 };
                 if matches!(f, IrBinOp::Div | IrBinOp::Mod) {
@@ -957,7 +849,7 @@ impl<'a> Codegen<'a> {
                     ))
                 }
             }
-            vpiBitAndOp => {
+            Operation::BitwiseAnd => {
                 let a = op!(0);
                 let b = op!(1);
                 if a.is_real() || b.is_real() {
@@ -967,7 +859,7 @@ impl<'a> Codegen<'a> {
                 }
                 common_bin_expr_with_context(IrBinOp::BitAnd, a, b, scope_path)
             }
-            vpiBitOrOp => {
+            Operation::BitwiseOr => {
                 let a = op!(0);
                 let b = op!(1);
                 if a.is_real() || b.is_real() {
@@ -977,7 +869,7 @@ impl<'a> Codegen<'a> {
                 }
                 common_bin_expr_with_context(IrBinOp::BitOr, a, b, scope_path)
             }
-            vpiBitXorOp => {
+            Operation::BitwiseXor => {
                 let a = op!(0);
                 let b = op!(1);
                 if a.is_real() || b.is_real() {
@@ -987,7 +879,7 @@ impl<'a> Codegen<'a> {
                 }
                 common_bin_expr_with_context(IrBinOp::BitXor, a, b, scope_path)
             }
-            vpiBitXNorOp => {
+            Operation::BitwiseXnor => {
                 let a = op!(0);
                 let b = op!(1);
                 if a.is_real() || b.is_real() {
@@ -997,27 +889,27 @@ impl<'a> Codegen<'a> {
                 }
                 common_bin_expr_with_context(IrBinOp::BitXNor, a, b, scope_path)
             }
-            vpiLogAndOp => {
+            Operation::LogicalAnd => {
                 let a = op!(0);
                 let b = op!(1);
                 Ok(cmp_expr_ir(IrBinOp::LogAnd, a, b))
             }
-            vpiLogOrOp => {
+            Operation::LogicalOr => {
                 let a = op!(0);
                 let b = op!(1);
                 Ok(cmp_expr_ir(IrBinOp::LogOr, a, b))
             }
-            vpiEqOp => {
+            Operation::Equal => {
                 let a = op!(0);
                 let b = op!(1);
                 common_cmp_expr_ir(IrBinOp::Eq, a, b, scope_path)
             }
-            vpiNeqOp => {
+            Operation::NotEqual => {
                 let a = op!(0);
                 let b = op!(1);
                 common_cmp_expr_ir(IrBinOp::Neq, a, b, scope_path)
             }
-            vpiCaseEqOp => {
+            Operation::CaseEqual => {
                 let a = op!(0);
                 let b = op!(1);
                 if a.is_real() || b.is_real() {
@@ -1027,7 +919,7 @@ impl<'a> Codegen<'a> {
                 }
                 common_cmp_expr_ir(IrBinOp::CaseEq, a, b, scope_path)
             }
-            vpiCaseNeqOp => {
+            Operation::CaseNotEqual => {
                 let a = op!(0);
                 let b = op!(1);
                 if a.is_real() || b.is_real() {
@@ -1037,7 +929,7 @@ impl<'a> Codegen<'a> {
                 }
                 common_cmp_expr_ir(IrBinOp::CaseNeq, a, b, scope_path)
             }
-            vpiWildEqOp | vpiWildNeqOp => {
+            Operation::WildEqual | Operation::WildNotEqual => {
                 let a = op!(0);
                 let b = op!(1);
                 if a.is_real() || b.is_real() {
@@ -1049,34 +941,37 @@ impl<'a> Codegen<'a> {
                 let signed = a.signed && b.signed;
                 let a = wildcard_operand_with_context(a, width, signed, scope_path)?;
                 let b = wildcard_operand_with_context(b, width, signed, scope_path)?;
-                let op = if otype == vpiWildEqOp {
+                let op = if otype == Operation::WildEqual {
                     IrBinOp::WildEq
                 } else {
                     IrBinOp::WildNeq
                 };
                 Ok(cmp_expr_ir(op, a, b))
             }
-            vpiLtOp => {
+            Operation::Less => {
                 let a = op!(0);
                 let b = op!(1);
                 common_cmp_expr_ir(IrBinOp::Lt, a, b, scope_path)
             }
-            vpiLeOp => {
+            Operation::LessEqual => {
                 let a = op!(0);
                 let b = op!(1);
                 common_cmp_expr_ir(IrBinOp::Le, a, b, scope_path)
             }
-            vpiGtOp => {
+            Operation::Greater => {
                 let a = op!(0);
                 let b = op!(1);
                 common_cmp_expr_ir(IrBinOp::Gt, a, b, scope_path)
             }
-            vpiGeOp => {
+            Operation::GreaterEqual => {
                 let a = op!(0);
                 let b = op!(1);
                 common_cmp_expr_ir(IrBinOp::Ge, a, b, scope_path)
             }
-            vpiLShiftOp | vpiRShiftOp | vpiArithLShiftOp | vpiArithRShiftOp => {
+            Operation::ShiftLeft
+            | Operation::ShiftRight
+            | Operation::ArithmeticShiftLeft
+            | Operation::ArithmeticShiftRight => {
                 let a = op!(0);
                 let b = op!(1);
                 if a.is_real() || b.is_real() {
@@ -1085,9 +980,9 @@ impl<'a> Codegen<'a> {
                     ));
                 }
                 let f = match otype {
-                    vpiLShiftOp => IrBinOp::Shl,
-                    vpiRShiftOp => IrBinOp::Shr,
-                    vpiArithLShiftOp => IrBinOp::Ashl,
+                    Operation::ShiftLeft => IrBinOp::Shl,
+                    Operation::ShiftRight => IrBinOp::Shr,
+                    Operation::ArithmeticShiftLeft => IrBinOp::Ashl,
                     _ => IrBinOp::Ashr,
                 };
                 let (w, s) = (a.width, a.signed);
@@ -1102,7 +997,7 @@ impl<'a> Codegen<'a> {
                     None,
                 ))
             }
-            vpiConditionOp => {
+            Operation::Conditional => {
                 let sel = op!(0);
                 let a = op!(1);
                 let b = op!(2);
@@ -1130,14 +1025,14 @@ impl<'a> Codegen<'a> {
                     None,
                 ))
             }
-            vpiMinusOp => {
+            Operation::UnaryMinus => {
                 let a = op!(0);
                 let w = a.width;
                 if a.is_real() {
                     return Ok(real_un_expr(a));
                 }
-                // Unary minus of an unsized decimal literal (`-3`): Surelog
-                // represents the literal as an unsigned 64-bit UInt constant,
+                // Unary minus of an unsized decimal literal (`-3`): a normalized
+                // literal can be an unsigned 64-bit constant,
                 // dropping the LRM signedness (unsized decimal literals are
                 // signed, LRM 5.7.1).  Restore it so `$display("%d", -3)`
                 // prints "-3" instead of the unsigned wrap.  Sized radix
@@ -1165,11 +1060,11 @@ impl<'a> Codegen<'a> {
                     Ok(neg)
                 }
             }
-            vpiPlusOp => {
+            Operation::UnaryPlus => {
                 let a = op!(0);
                 Ok(a)
             }
-            vpiNotOp => {
+            Operation::LogicalNot => {
                 let a = op!(0);
                 Ok(IrExpr::new(
                     IrExprKind::Un {
@@ -1181,7 +1076,7 @@ impl<'a> Codegen<'a> {
                     None,
                 ))
             }
-            vpiBitNegOp => {
+            Operation::BitwiseNot => {
                 let a = op!(0);
                 if a.is_real() {
                     return Err(format!(
@@ -1200,7 +1095,7 @@ impl<'a> Codegen<'a> {
                     None,
                 ))
             }
-            vpiUnaryAndOp => {
+            Operation::ReductionAnd => {
                 let a = op!(0);
                 if a.is_real() {
                     return Err(format!(
@@ -1209,7 +1104,7 @@ impl<'a> Codegen<'a> {
                 }
                 Ok(un_expr(IrUnOp::RedAnd, a))
             }
-            vpiUnaryNandOp => {
+            Operation::ReductionNand => {
                 let a = op!(0);
                 if a.is_real() {
                     return Err(format!(
@@ -1218,7 +1113,7 @@ impl<'a> Codegen<'a> {
                 }
                 Ok(un_expr(IrUnOp::RedNand, a))
             }
-            vpiUnaryOrOp => {
+            Operation::ReductionOr => {
                 let a = op!(0);
                 if a.is_real() {
                     return Err(format!(
@@ -1227,7 +1122,7 @@ impl<'a> Codegen<'a> {
                 }
                 Ok(un_expr(IrUnOp::RedOr, a))
             }
-            vpiUnaryNorOp => {
+            Operation::ReductionNor => {
                 let a = op!(0);
                 if a.is_real() {
                     return Err(format!(
@@ -1236,7 +1131,7 @@ impl<'a> Codegen<'a> {
                 }
                 Ok(un_expr(IrUnOp::RedNor, a))
             }
-            vpiUnaryXorOp => {
+            Operation::ReductionXor => {
                 let a = op!(0);
                 if a.is_real() {
                     return Err(format!(
@@ -1245,7 +1140,7 @@ impl<'a> Codegen<'a> {
                 }
                 Ok(un_expr(IrUnOp::RedXor, a))
             }
-            vpiUnaryXNorOp => {
+            Operation::ReductionXnor => {
                 let a = op!(0);
                 if a.is_real() {
                     return Err(format!(
@@ -1254,71 +1149,7 @@ impl<'a> Codegen<'a> {
                 }
                 Ok(un_expr(IrUnOp::RedXNor, a))
             }
-            vpiStreamLROp | vpiStreamRLOp => {
-                let (slice, value_node) = match operands {
-                    [value] => (None, *value),
-                    [slice, value] => {
-                        let slice_value = self.eval_bits(*slice).map_err(|error| {
-                            format!(
-                                "streaming slice size must be a positive constant in \
-                                 `{scope_path}`: {error}"
-                            )
-                        })?;
-                        if slice_value.is_unknown() {
-                            return Err(format!(
-                                "streaming slice size must be known in `{scope_path}`"
-                            ));
-                        }
-                        if slice_value.signed
-                            && slice_value.width() != 0
-                            && slice_value.bit_lsb(slice_value.width() - 1) == Bit::One
-                        {
-                            return Err(format!(
-                                "streaming slice size must be positive in `{scope_path}`"
-                            ));
-                        }
-                        let slice = slice_value.to_u128().unwrap_or(u128::MAX);
-                        if slice == 0 {
-                            return Err(format!(
-                                "streaming slice size must be positive in `{scope_path}`"
-                            ));
-                        }
-                        (Some(slice), *value)
-                    }
-                    _ => {
-                        return Err(format!(
-                            "malformed streaming concatenation in `{scope_path}`"
-                        ));
-                    }
-                };
-                let value = self.lower_expr(scope_path, value_node)?;
-                if value.is_real() {
-                    return Err(format!(
-                        "streaming concatenation of real value in `{scope_path}` is not supported"
-                    ));
-                }
-                let width = value.width;
-                let slice = slice
-                    .unwrap_or(1)
-                    .min(u128::from(width))
-                    .try_into()
-                    .expect("packed stream width fits u32");
-                Ok(IrExpr::new(
-                    IrExprKind::Stream {
-                        value: Box::new(value),
-                        slice,
-                        direction: if otype == vpiStreamLROp {
-                            IrStreamDirection::LeftToRight
-                        } else {
-                            IrStreamDirection::RightToLeft
-                        },
-                    },
-                    width,
-                    false,
-                    None,
-                ))
-            }
-            vpiInsideOp => {
+            Operation::Inside => {
                 let Some((value_node, item_nodes)) = operands.split_first() else {
                     return Err(format!("empty inside expression in `{scope_path}`"));
                 };
@@ -1381,7 +1212,7 @@ impl<'a> Codegen<'a> {
                     None,
                 ))
             }
-            vpiConcatOp => {
+            Operation::Concat => {
                 let mut parts = Vec::new();
                 for operand in operands {
                     parts.push(self.lower_expr(scope_path, *operand)?);
@@ -1414,7 +1245,7 @@ impl<'a> Codegen<'a> {
                     None,
                 ))
             }
-            vpiMultiConcatOp => {
+            Operation::MultiConcat => {
                 let count = {
                     let value = self.eval_bits(operands[0])?;
                     if value.is_unknown() {
@@ -1460,18 +1291,39 @@ impl<'a> Codegen<'a> {
                     None,
                 ))
             }
-            vpiCastOp => Err(format!(
+            Operation::Cast => Err(format!(
                 "cast expressions are not supported in `{scope_path}` \
                  (the database does not capture the cast typespec)"
             )),
-            vpiMinTypMaxOp => {
+            Operation::MinTypMax => {
                 let a = op!(0);
                 Ok(a)
             }
             other => Err(format!(
-                "unsupported operation op type {other} in `{scope_path}`"
+                "unsupported operation op type {other:?} in `{scope_path}`"
             )),
         }
+    }
+
+    fn lower_member_select_index(
+        &mut self,
+        scope_path: &str,
+        base: NodeId,
+        index: NodeId,
+    ) -> Result<IrExpr, String> {
+        if let Some((_, member)) = self.packed_member_info(base) {
+            let canonical = matches!(member.packed_ranges.as_slice(), [range]
+                if range.right == 0 && range.left == i128::from(member.width) - 1);
+            if !canonical {
+                let relative = self.aggregate_member_relative_bound(
+                    &member.name,
+                    &member.packed_ranges,
+                    self.eval_bound_i128(index)?,
+                )?;
+                return Ok(lhs_integer_expr(i128::from(relative)));
+            }
+        }
+        self.lower_expr(scope_path, index)
     }
 
     /// Lower system-function expressions ($clog2/$time/$stime/$bits/$signed/
@@ -1500,16 +1352,9 @@ impl<'a> Codegen<'a> {
                         None,
                     )),
                     "$itor" => {
-                        let arg = if arg.is_real() {
-                            IrExpr::new(
-                                IrExprKind::CastToPacked { a: Box::new(arg) },
-                                32,
-                                true,
-                                None,
-                            )
-                        } else {
-                            arg
-                        };
+                        if arg.is_real() {
+                            return Ok(arg);
+                        }
                         Ok(IrExpr::new(
                             IrExprKind::SysFunc(IrSysFunc::Itor(Box::new(arg))),
                             0,
@@ -1679,12 +1524,12 @@ impl<'a> Codegen<'a> {
         path: &str,
         lhs: NodeId,
         rhs: NodeId,
-        op: i32,
+        op: Operation,
     ) -> Result<Option<IrExpr>, String> {
         if !matches!(
             self.kind(rhs),
             NodeKind::Expr(ExprKind::Operation { op, .. })
-                if *op == vpi::vpiAssignmentPatternOp
+                if *op == Operation::AssignmentPattern
         ) {
             return Ok(None);
         }
@@ -1704,7 +1549,7 @@ impl<'a> Codegen<'a> {
         ) {
             return Ok(None);
         }
-        if op != 0 && op != vpi::vpiAssignmentOp {
+        if op != Operation::Assignment {
             return Err(format!(
                 "compound assignment of packed aggregate pattern in `{path}` is not supported"
             ));
@@ -1736,7 +1581,7 @@ impl<'a> Codegen<'a> {
                 if matches!(
                     self.kind(value_node),
                     NodeKind::Expr(ExprKind::Operation { op, .. })
-                        if *op == vpi::vpiAssignmentPatternOp
+                        if *op == Operation::AssignmentPattern
                 ) {
                     if !matches!(
                         nested.kind,
@@ -1784,14 +1629,14 @@ impl<'a> Codegen<'a> {
         lhs: NodeId,
         rhs: NodeId,
         nba: bool,
-        op: i32,
+        op: Operation,
     ) -> Result<Option<IrStmt>, String> {
         let lhs_aggregate = self.unpacked_aggregate_info(lhs);
         let rhs_aggregate = self.unpacked_aggregate_info(rhs);
         let rhs_is_pattern = matches!(
             self.kind(rhs),
             NodeKind::Expr(ExprKind::Operation { op, .. })
-                if *op == vpi::vpiAssignmentPatternOp
+                if *op == Operation::AssignmentPattern
         );
         if lhs_aggregate.is_none() && rhs_aggregate.is_none() {
             return Ok(None);
@@ -1800,7 +1645,7 @@ impl<'a> Codegen<'a> {
             format!("unpacked aggregate used as a scalar assignment RHS in `{path}`")
         })?;
         if rhs_is_pattern {
-            if op != 0 && op != vpi::vpiAssignmentOp {
+            if op != Operation::Assignment {
                 return Err(format!(
                     "compound assignment of unpacked aggregate pattern in `{path}` is not supported"
                 ));
@@ -1842,7 +1687,7 @@ impl<'a> Codegen<'a> {
         if lhs_aggregate.kind == AggregateKind::UnpackedStruct
             && matches!(self.kind(rhs), NodeKind::Expr(ExprKind::Constant { .. }))
         {
-            // Surelog folds constant unpacked-structure assignment patterns
+            // The frontend folds constant unpacked-structure assignment patterns
             // to one integral payload. Recover the positional member values
             // from the standard first-member-most-significant layout.
             let total_width = lhs_aggregate
@@ -1898,7 +1743,7 @@ impl<'a> Codegen<'a> {
         let (rhs_target, rhs_aggregate) = rhs_aggregate.ok_or_else(|| {
             format!("unpacked aggregate used as a scalar assignment LHS in `{path}`")
         })?;
-        if op != 0 && op != vpi::vpiAssignmentOp {
+        if op != Operation::Assignment {
             return Err(format!(
                 "compound assignment of unpacked aggregates in `{path}` is not supported"
             ));
@@ -2160,87 +2005,6 @@ fn parse_decimal_real_literal(token: &str) -> Option<f64> {
         .filter(|value| value.is_finite())
 }
 
-fn time_literal_token(source: &str) -> Option<&str> {
-    let bytes = source.as_bytes();
-    let mut start = 0usize;
-    while start < bytes.len() {
-        if bytes[start] == b'/' && bytes.get(start + 1) == Some(&b'/') {
-            return None;
-        }
-        if bytes[start] == b'/' && bytes.get(start + 1) == Some(&b'*') {
-            start += 2;
-            while start + 1 < bytes.len() && !(bytes[start] == b'*' && bytes[start + 1] == b'/') {
-                start += 1;
-            }
-            start = (start + 2).min(bytes.len());
-            continue;
-        }
-        if bytes[start] == b'"' {
-            start += 1;
-            while start < bytes.len() {
-                if bytes[start] == b'\\' {
-                    start = (start + 2).min(bytes.len());
-                } else if bytes[start] == b'"' {
-                    start += 1;
-                    break;
-                } else {
-                    start += 1;
-                }
-            }
-            continue;
-        }
-        if bytes[start] == b'\\' {
-            while start < bytes.len() && !bytes[start].is_ascii_whitespace() {
-                start += 1;
-            }
-            continue;
-        }
-        if !bytes[start].is_ascii_digit()
-            || start > 0
-                && matches!(
-                    bytes[start - 1],
-                    b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_' | b'$'
-                )
-        {
-            start += 1;
-            continue;
-        }
-        let mut end = start;
-        while matches!(bytes.get(end), Some(b'0'..=b'9' | b'_')) {
-            end += 1;
-        }
-        if bytes.get(end) == Some(&b'.') {
-            end += 1;
-            let fraction = end;
-            while matches!(bytes.get(end), Some(b'0'..=b'9' | b'_')) {
-                end += 1;
-            }
-            if !bytes[fraction..end].iter().any(u8::is_ascii_digit) {
-                start += 1;
-                continue;
-            }
-        }
-        let suffix_end = ["ms", "us", "ns", "ps", "fs", "s"]
-            .iter()
-            .find_map(|suffix| {
-                source[end..]
-                    .starts_with(suffix)
-                    .then(|| end + suffix.len())
-            });
-        if let Some(suffix_end) = suffix_end {
-            let boundary = bytes.get(suffix_end);
-            if !matches!(
-                boundary,
-                Some(b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_' | b'$')
-            ) {
-                return source.get(start..suffix_end);
-            }
-        }
-        start += 1;
-    }
-    None
-}
-
 #[cfg(test)]
 mod cast_tests {
     use super::{ir_to_explicit_cast_storage, parse_decimal_real_literal};
@@ -2308,7 +2072,7 @@ mod cast_tests {
 
         for config in [OptConfig::none(), OptConfig::default()] {
             let mut model = build();
-            opt::run(&mut model, &config);
+            opt::run_ir(&mut model, &config);
             let IrStmt::Assign { rhs, .. } = &model.processes[0].body[0] else {
                 panic!("optimizer replaced the cast assignment")
             };
@@ -2319,27 +2083,5 @@ mod cast_tests {
                 assert_eq!(value.fill(), None);
             }
         }
-    }
-}
-
-#[cfg(test)]
-mod time_literal_source_tests {
-    use super::time_literal_token;
-
-    #[test]
-    fn source_scanner_ignores_non_token_text() {
-        assert_eq!(time_literal_token("8'd1 /* 2ns */ + 8'd2"), None);
-        assert_eq!(time_literal_token("8'd1 + 8'd2 // 2ns"), None);
-        assert_eq!(time_literal_token(r#""2ns""#), None);
-        assert_eq!(time_literal_token(r"\2ns + 1"), None);
-        assert_eq!(time_literal_token("design2ns + 1"), None);
-        assert_eq!(time_literal_token("design22ns + _12ns"), None);
-    }
-
-    #[test]
-    fn source_scanner_finds_standalone_time_tokens() {
-        assert_eq!(time_literal_token("2.1ns"), Some("2.1ns"));
-        assert_eq!(time_literal_token("(2ns + 1ns)"), Some("2ns"));
-        assert_eq!(time_literal_token("3 + 40ps"), Some("40ps"));
     }
 }

@@ -4,6 +4,21 @@ use super::*;
 use crate::sim::ir::{IrContainerReduction, IrObjectType};
 
 impl<'a> Codegen<'a> {
+    fn container_method_arguments(
+        &self,
+        path: &str,
+        call: NodeId,
+        receiver: NodeId,
+    ) -> Result<Vec<NodeId>, String> {
+        let mut arguments = self.node(call).children.clone();
+        let receiver_index = arguments
+            .iter()
+            .position(|child| *child == receiver)
+            .ok_or_else(|| format!("container method in `{path}` has no receiver child"))?;
+        arguments.remove(receiver_index);
+        Ok(arguments)
+    }
+
     fn lower_container_value(
         &mut self,
         path: &str,
@@ -65,7 +80,7 @@ impl<'a> Codegen<'a> {
             if let Some(local) = self.proc_locals.get(&target) {
                 return Ok((
                     format!("&{}", local.c_name),
-                    None,
+                    local.static_signal.as_ref().map(|signal| signal.ir),
                     local.width,
                     local.signed,
                     local.two_state,
@@ -207,7 +222,7 @@ impl<'a> Codegen<'a> {
                         "container method `{name}` with a `with` clause in `{path}` is not supported"
                     ));
                 }
-                let args = self.node(node).children[1..].to_vec();
+                let args = self.container_method_arguments(path, node, *receiver)?;
                 match (name.as_str(), args.as_slice()) {
                     ("size" | "num", []) => IrContainerExpr::Size(container.ir),
                     ("sum" | "product" | "and" | "or" | "xor", []) => IrContainerExpr::Reduce {
@@ -324,7 +339,7 @@ impl<'a> Codegen<'a> {
         lhs: NodeId,
         rhs: NodeId,
         blocking: bool,
-        op: i32,
+        op: Operation,
     ) -> Result<Option<IrStmt>, String> {
         let selected = match self.kind(lhs) {
             NodeKind::Expr(ExprKind::BitSelect { base, index }) => self
@@ -341,7 +356,7 @@ impl<'a> Codegen<'a> {
                     "nonblocking assignment to resizable container element in `{path}` is illegal"
                 ));
             }
-            if !matches!(op, 0 | vpi::vpiAssignmentOp) {
+            if op != Operation::Assignment {
                 return Err(format!(
                     "compound assignment to resizable container element in `{path}` is not supported"
                 ));
@@ -371,7 +386,7 @@ impl<'a> Codegen<'a> {
                 "nonblocking assignment to resizable container in `{path}` is illegal"
             ));
         }
-        if !matches!(op, 0 | vpi::vpiAssignmentOp) {
+        if op != Operation::Assignment {
             return Err(format!(
                 "compound assignment to resizable container in `{path}` is not supported"
             ));
@@ -382,7 +397,7 @@ impl<'a> Codegen<'a> {
             reordered,
         }) = self.kind(rhs)
         {
-            if *pattern_op == vpi::vpiAssignmentPatternOp {
+            if *pattern_op == Operation::AssignmentPattern {
                 if matches!(
                     self.model.containers[dst.ir].kind,
                     IrContainerKind::Associative { .. }
@@ -415,47 +430,37 @@ impl<'a> Codegen<'a> {
                 })));
             }
         }
-        if let NodeKind::MethodCall {
-            name,
-            receiver: None,
-        } = self.kind(rhs)
-        {
-            if name == "new" {
-                if !matches!(self.model.containers[dst.ir].kind, IrContainerKind::Dynamic) {
-                    return Err(format!("new[] target in `{path}` is not a dynamic array"));
-                }
-                let args = self.node(rhs).children.clone();
-                if !(1..=2).contains(&args.len()) {
-                    return Err(format!(
-                        "dynamic-array new[] in `{path}` has {} arguments; expected size and optional initializer",
-                        args.len()
-                    ));
-                }
-                let size = ir_to_storage(self.lower_expr(path, args[0])?, 64, true, true)?;
-                let initializer = args
-                    .get(1)
-                    .map(|node| {
-                        self.container_of(*node)
-                            .filter(|source| {
-                                matches!(
-                                    self.model.containers[source.ir].kind,
-                                    IrContainerKind::Dynamic
-                                )
-                            })
-                            .map(|source| source.ir)
-                            .ok_or_else(|| {
-                                format!(
-                                    "dynamic-array new[] initializer in `{path}` must be a compatible dynamic array"
-                                )
-                            })
-                    })
-                    .transpose()?;
-                return Ok(Some(IrStmt::Container(IrContainerStmt::DynamicNew {
-                    container: dst.ir,
-                    size,
-                    initializer,
-                })));
+        let new_array = match self.kind(rhs) {
+            NodeKind::Expr(ExprKind::NewArray { size, initializer }) => Some((*size, *initializer)),
+            _ => None,
+        };
+        if let Some((size, initializer)) = new_array {
+            if !matches!(self.model.containers[dst.ir].kind, IrContainerKind::Dynamic) {
+                return Err(format!("new[] target in `{path}` is not a dynamic array"));
             }
+            let size = ir_to_storage(self.lower_expr(path, size)?, 64, true, true)?;
+            let initializer = initializer
+                .map(|node| {
+                    self.container_of(node)
+                        .filter(|source| {
+                            matches!(
+                                self.model.containers[source.ir].kind,
+                                IrContainerKind::Dynamic
+                            )
+                        })
+                        .map(|source| source.ir)
+                        .ok_or_else(|| {
+                            format!(
+                                "dynamic-array new[] initializer in `{path}` must be a compatible dynamic array"
+                            )
+                        })
+                })
+                .transpose()?;
+            return Ok(Some(IrStmt::Container(IrContainerStmt::DynamicNew {
+                container: dst.ir,
+                size,
+                initializer,
+            })));
         }
         let src = self.container_of(rhs).ok_or_else(|| {
             format!(
@@ -489,7 +494,7 @@ impl<'a> Codegen<'a> {
                 "container method `{name}` with a `with` clause in `{path}` is not supported"
             ));
         }
-        let args = self.node(node).children[1..].to_vec();
+        let args = self.container_method_arguments(path, node, receiver)?;
         let operation = match (name.as_str(), args.as_slice()) {
             ("delete", []) => IrContainerStmt::Delete(container.ir),
             ("delete", [index]) => match self.model.containers[container.ir].kind {

@@ -1,12 +1,12 @@
-//! codegen — lower an elaborated UHDM design (pinned Surelog `-elabuhdm`) to a
-//! C11 model for the `llg` runtime (`crate::sim::rt`).
+//! codegen — lower a Slang-backed, owned semantic database to a C11 model for
+//! the `llg` runtime (`crate::sim::rt`).
 //!
 //! # Pipeline
 //!
-//! [`generate`] builds the owned design database ([`crate::core::db::Db`]) with
-//! a single VPI walk, then emits one C file (`model.c`) from the database — no
-//! VPI access outside the db build.  Compiled together with `llg_rt.c` and
-//! libaco, the model is a standalone simulator executable:
+//! [`generate`] accepts the owned design database ([`crate::core::db::Db`]),
+//! forms the semantic and executable IR layers, and emits one C file
+//! (`model.c`). Compiled together with `llg_rt.c` and libaco, the model is a
+//! standalone simulator executable:
 //!
 //! - every packed scalar signal becomes a global `sv4_t G_<instance path>_<name>`
 //!   (path dots become underscores), starting as all-X; procedural scalar
@@ -97,9 +97,8 @@
 //! signal) on both the READ and WRITE sides of an assignment; hierarchical
 //! write targets may carry a trailing select (`top.u0.sig[3:0]`,
 //! `top.u0.sig[2]`, `top.u0.sig[3 +: 4]`) with constant integer
-//! indices/bounds only (the trailing select is recovered from the node name /
-//! source line — the pinned Surelog's elaborated model drops part-select bounds
-//! and only keeps constant bit-select indices in the object name).
+//! indices/bounds only (the trailing select is recovered from the node name or
+//! admitted source when the semantic snapshot omits its bounds).
 //!
 //! The supported real subset covers procedural scalar variables, real and
 //! shortreal parameters, mixed arithmetic and conditions, packed/real casts and
@@ -139,13 +138,12 @@
 //! `$displayoff` are skipped with a warning. Waveform controls (`$dumpfile`/
 //! `$dumpvars`/`$dumpon`/`$dumpoff`/`$dumpall`/`$dumpflush`/`$dumplimit`)
 //! lower explicitly into the IR.
-//! Interface instances are captured by the database walk (actuals and
-//! per-port copies), including inside generate scopes.  Interface body
+//! Interface instances are captured by the database walk, including inside
+//! generate scopes. Slang resolves interface and modport member references
+//! directly to storage on the connected concrete interface instance, so no
+//! per-port storage copy or runtime link process is needed. Interface body
 //! processes (always/initial/always_comb blocks inside an interface
-//! definition) are emitted for the ACTUAL interface instance only — the
-//! definition's processes are not cloned into the per-port copies (verified
-//! against the pinned Surelog elaboration), which are just views kept in sync by
-//! the interface link processes.
+//! definition) emit under that actual instance.
 //!
 //! # Database capture notes
 //!
@@ -212,23 +210,19 @@
 //!   rhs change, including at t=0; there is no pulse filtering — each wake
 //!   writes the CURRENT rhs value D later (warned).
 
-#![allow(non_upper_case_globals)]
-
 use std::collections::{HashMap, HashSet};
 
-use super::timescale::{
-    eval_procedural_delay, parse_timescale, time_literal_to_real, DelayParameter, DelayValue,
-    Timescale,
-};
+use super::timescale::{real_delay_ticks, Timescale};
 use super::CodegenError;
 use crate::core::db::{
     AggregateKind, AggregateMember, ArrayKind, AssignmentPatternKeyType, AssociativeIndex,
     CaseKind as DbCaseKind, ConstantSource, ConstantType, Db, Direction as DbDirection, EventSpec,
     ExprKind, IntraControl, JoinKind as DbJoinKind, NetType, NodeId, NodeKind, Operation,
-    PackedMember, PrimClass, PrimitiveType, ProcessKind, StmtKind, Strength,
+    PackedMember, PrimClass, PrimitiveType, ProcessKind, StmtKind,
+    StreamingDirection as DbStreamingDirection, Strength, VariableLifetime,
 };
 use crate::core::elab::{self, Bit, Val};
-use crate::ffi::vpi::{self, ValueData, VpiHandle};
+use crate::core::value::ValueData;
 use crate::sim::emit_c::{
     escaped_char, event_global_name, global_name, ident, real_global_name, render_expr, strip_lib,
     RCtx, LLG_MAX_WIDTH,
@@ -281,10 +275,6 @@ const REAL_EXPR_WIDTH: u32 = 0;
 /// the top of every emitted function returns all-X beyond this.
 const LLG_MAX_FUNC_DEPTH: u32 = 256;
 
-/// VPI case statement subtypes (vendor/Surelog/third_party/UHDM/include/
-/// vpi_user.h): `vpiCaseExact` = 1 (`case`, re-exported from `ffi::vpi`),
-/// `vpiCaseX` = 2 (`casex`), `vpiCaseZ` = 3 (`casez`).  Defined here rather
-/// than in `ffi::vpi` to keep the FFI module untouched.
 /// The generated C model plus non-fatal warnings collected while lowering.
 pub struct GeneratedModel {
     /// Complete `model.c` source: `#include "llg_rt.h"`, signal globals,
@@ -292,41 +282,29 @@ pub struct GeneratedModel {
     pub model_c: String,
     /// The design name (also embedded in the model's first comment line).
     pub design_name: String,
-    /// Non-fatal warnings (unsupported constructs that were skipped or
-    /// degraded, e.g. `$dumpvars` skipped).
+    /// Non-fatal diagnostics about supported lowering limitations.
     pub warnings: Vec<String>,
 }
 
-/// Lower the elaborated design into C11 with the default optimization
-/// configuration (all passes on).  Call while the surelog session is alive
-/// (the design handle is only valid then); returns `Err` with a message
-/// naming the construct and instance when the design uses something outside
-/// the supported subset.
-///
-/// Source-dependent time-literal values require an explicitly admitted
-/// [`Db::build_with_source_files`] snapshot passed to
-/// [`generate_from_db_with_opts`]; this bare-handle entry point does not admit
-/// new constant-source reads.
-pub fn generate(design: VpiHandle) -> Result<GeneratedModel, CodegenError> {
-    generate_with_opts(design, &crate::sim::opt::OptConfig::default())
+/// Lower an owned Slang semantic database with default optimizations.
+pub fn generate(db: &Db) -> Result<GeneratedModel, CodegenError> {
+    generate_with_opts(db, &crate::sim::opt::OptConfig::default())
 }
 
-/// Lower the elaborated design into C11 with an explicit optimization
-/// configuration.  See [`generate`] for the calling contract.
+/// Lower an owned Slang semantic database with explicit optimizations.
 pub fn generate_with_opts(
-    design: VpiHandle,
+    db: &Db,
     cfg: &crate::sim::opt::OptConfig,
 ) -> Result<GeneratedModel, CodegenError> {
-    let db = Db::build(design).map_err(|error| CodegenError::new(error.to_string()))?;
-    generate_from_db_with_opts(&db, cfg)
+    generate_from_db_with_opts(db, cfg)
 }
 
 /// Lower an already-owned database with an explicit optimization
 /// configuration.
 ///
 /// Reuse this entry point when producing multiple variants of one elaborated
-/// design. It avoids repeated VPI traversal and is robust to frontend
-/// relationships that can be consumed while building the owned database.
+/// design. The executable lowering remains independent of the frontend
+/// snapshot lifetime because the database owns its semantic relationships.
 pub fn generate_from_db_with_opts(
     db: &Db,
     cfg: &crate::sim::opt::OptConfig,
@@ -338,8 +316,8 @@ fn generate_from_db_with_opts_impl(
     db: &Db,
     cfg: &crate::sim::opt::OptConfig,
 ) -> Result<GeneratedModel, String> {
-    let mut cg = Codegen::new(db);
-    cg.collect_iface_copies();
+    let semantic = crate::sim::semantic::SemanticModel::from_db(db);
+    let mut cg = Codegen::new(&semantic);
     let tops = cg.collect_design()?;
     if tops.is_empty() {
         return Err("no top modules in the elaborated design".to_string());
@@ -398,9 +376,11 @@ fn generate_from_db_with_opts_impl(
         .collect();
     model.final_spawns = final_names;
     model.validate().map_err(|error| error.to_string())?;
-    crate::sim::opt::run(&mut model, cfg);
-    model.validate().map_err(|error| error.to_string())?;
-    let model_c = crate::sim::emit_c::render(&model)?;
+    let mut execution =
+        crate::sim::execution::ExecutionModel::lower(model).map_err(|error| error.to_string())?;
+    crate::sim::opt::run(&mut execution, cfg).map_err(|error| error.to_string())?;
+    execution.validate().map_err(|error| error.to_string())?;
+    let model_c = crate::sim::emit_c::render(&execution)?;
     Ok(GeneratedModel {
         design_name: cg.design_name.clone(),
         model_c,
@@ -432,6 +412,9 @@ struct ProcLocalInfo {
     width: u32,
     signed: bool,
     two_state: bool,
+    /// Static procedural locals use hidden model storage; automatic locals
+    /// remain C block locals and are recreated on each declaration entry.
+    static_signal: Option<SignalInfo>,
 }
 
 /// A lowered unpacked array: a flat C array of `sv4_t` elements plus the
@@ -479,8 +462,8 @@ struct EventInfo {
     ir: usize,
 }
 
-/// An element-level select applied after the array index (the last `vpiIndex`
-/// of a `mem[addr][3:0]`-style `var_select`).
+/// An element-level select applied after the array index of a
+/// `mem[addr][3:0]`-style selection.
 enum ElemSel {
     /// Whole element.
     Whole,
@@ -547,9 +530,8 @@ enum MemberWrite {
     Select,
 }
 
-/// Declaration kind targeted by a `vpiNetDeclAssign`. Surelog uses that
-/// marker for both true-net continuous drivers and legacy reg declaration
-/// initializers, whose simulator scheduling is intentionally different.
+/// Declaration kind targeted by a declaration assignment. True-net drivers
+/// and variable initializers have intentionally different scheduling.
 #[derive(Copy, Clone)]
 enum NetDeclTarget {
     Array,
@@ -560,6 +542,7 @@ enum NetDeclTarget {
 }
 
 struct Codegen<'a> {
+    origins: Vec<crate::sim::semantic::Origin>,
     db: &'a Db,
     warnings: Vec<String>,
     /// The typed IR being built (signals/arrays/functions/processes); the C
@@ -588,7 +571,7 @@ struct Codegen<'a> {
     scope_object_names: HashMap<String, HashMap<String, usize>>,
     /// Top-level unpacked aggregate variables lowered to member storage.
     unpacked_aggregates: HashMap<NodeId, UnpackedAggregateInfo>,
-    /// Inline procedural declaration node → lexical C local information.
+    /// Procedural declaration node → automatic C local or hidden static signal.
     proc_locals: HashMap<NodeId, ProcLocalInfo>,
     /// Legacy storage for scalar declaration-initializer fills that need a
     /// collapsed-net driver slot. True-net declarations now lower as
@@ -610,8 +593,8 @@ struct Codegen<'a> {
     /// any process runs (mirrors the array declaration-initializer handling).
     scalar_inits: Vec<(SignalInfo, IrConst)>,
     /// (signal info, constant) declaration-initializer fills for scalar
-    /// VARIABLES whose initializer lives on the var's `vpiExpr` (`logic
-    /// l = 1'b0;`, `int x = 5;` — captured in `Db::vars_init`), applied in
+    /// variables whose initializer is captured in `Db::vars_init` (`logic
+    /// l = 1'b0;`, `int x = 5;`), applied in
     /// `main()` after the net-decl fills and before any process runs.
     var_inits: Vec<(SignalInfo, IrConst)>,
     /// ContAssign arena nodes already collected as scalar variable
@@ -626,16 +609,6 @@ struct Codegen<'a> {
     scope_sig_names: HashMap<String, HashMap<String, SignalInfo>>,
     /// gen_scope node → its path (e.g. "top.genblk").
     gen_scope_paths: HashMap<NodeId, String>,
-    /// Actual interface members already driven by an interface output link
-    /// (last-writer-wins; used for the multiple-driver warning).
-    iface_driven: HashSet<String>,
-    /// Per-port COPY interface instance arena nodes: the `low` targets of
-    /// interface-typed ports (a `ModPort`'s owning interface, or a bare-port
-    /// `ModuleInst` directly).  Interface body processes are emitted only for
-    /// the ACTUAL interface instances — the copies are just views and never
-    /// carry the definition's processes (verified in the pinned Surelog
-    /// elaboration).
-    iface_copy_insts: HashSet<NodeId>,
     /// FuncTask arena node → emitted C function name.
     func_names: HashMap<NodeId, String>,
     /// Current function/task body context while emitting one (`None` in
@@ -651,11 +624,6 @@ struct Codegen<'a> {
     inst: NodeId,
     design_name: String,
     proc_seq: usize,
-    /// Timescale per source file (parsed once per file; files without a
-    /// `timescale directive get the 1ns/1ps default).
-    file_timescale: HashMap<String, Timescale>,
-    /// Source files already warned about a missing `timescale directive.
-    warned_no_timescale: HashSet<String>,
     /// Design time precision in ps: the finest precision across every module,
     /// which sets the scheduler tick unit (1 tick = `design_precision_ps` ps).
     design_precision_ps: u64,
@@ -684,9 +652,10 @@ struct Codegen<'a> {
 }
 
 impl<'a> Codegen<'a> {
-    fn new(db: &'a Db) -> Codegen<'a> {
+    fn new(semantic: &crate::sim::semantic::SemanticModel<'a>) -> Codegen<'a> {
         Codegen {
-            db,
+            origins: semantic.origins().to_vec(),
+            db: semantic.db(),
             warnings: Vec::new(),
             model: IrModel::new(String::new(), Timescale::DEFAULT.precision_ps)
                 .expect("the default timescale has non-zero precision"),
@@ -714,16 +683,12 @@ impl<'a> Codegen<'a> {
             param_vals: HashMap::new(),
             scope_sig_names: HashMap::new(),
             gen_scope_paths: HashMap::new(),
-            iface_driven: HashSet::new(),
-            iface_copy_insts: HashSet::new(),
             func_names: HashMap::new(),
             func: None,
             depth_arg: "0".to_string(),
             inst: NodeId(0),
             design_name: String::new(),
             proc_seq: 0,
-            file_timescale: HashMap::new(),
-            warned_no_timescale: HashSet::new(),
             design_precision_ps: Timescale::DEFAULT.precision_ps,
             pca_sites: HashMap::new(),
             pca_seq: 0,
@@ -731,6 +696,14 @@ impl<'a> Codegen<'a> {
             final_procs: Vec::new(),
             warned_dumpvars_filtering: false,
         }
+    }
+
+    fn origin(&self, node: NodeId) -> crate::sim::semantic::Origin {
+        self.origins.get(node.index()).cloned().unwrap_or_else(|| {
+            crate::sim::semantic::Origin::Synthetic {
+                reason: format!("lowered {}", self.node(node).full_name()),
+            }
+        })
     }
 
     /// The node at `id` (borrowed from the database, not from `self`).
@@ -771,66 +744,41 @@ impl<'a> Codegen<'a> {
         }
     }
 
-    /// Fold a procedural delay recovered from source text. Identifier lookup
-    /// follows the owned parent chain so generate-local parameters shadow
-    /// parameters in their enclosing module instance.
+    /// Evaluate a typed delay expression and round it once to the owning
+    /// module's precision before converting to design scheduler ticks.
     fn procedural_delay_ticks(
         &mut self,
         delay_node: NodeId,
-        expression: &str,
+        expression: NodeId,
     ) -> Result<u64, String> {
         let timescale = self.timescale_of_node(delay_node);
-        let delay = eval_procedural_delay(expression, timescale, |name| {
-            let mut scope = Some(delay_node);
-            while let Some(node_id) = scope {
-                for child in &self.node(node_id).children {
-                    if self.node(*child).name != name {
-                        continue;
-                    }
-                    if let Some(Val::Real(value)) = self.param_vals.get(child) {
-                        return Some(DelayParameter::Real(*value));
-                    }
-                    if let Some(Val::Bits(value)) = self.param_vals.get(child) {
-                        let (declared_width, declared_signed) = match self.kind(*child) {
-                            NodeKind::Param { ty, .. } => (ty.width, Some(ty.signed)),
-                            _ => (None, None),
-                        };
-                        let width = declared_width.or_else(|| u32::try_from(value.width()).ok())?;
-                        return value
-                            .to_u128()
-                            .and_then(|raw| {
-                                DelayValue::from_raw(
-                                    raw,
-                                    width,
-                                    declared_signed.unwrap_or(value.signed),
-                                )
-                            })
-                            .map(DelayParameter::Integer);
-                    }
-                    // A nearer nonconstant declaration shadows outer parameters.
-                    if matches!(
-                        self.kind(*child),
-                        NodeKind::Var { .. }
-                            | NodeKind::Net { .. }
-                            | NodeKind::Param { .. }
-                            | NodeKind::FuncArg { .. }
-                            | NodeKind::Array { .. }
-                            | NodeKind::Port { .. }
-                    ) {
-                        return None;
-                    }
-                }
-                scope = self.node(node_id).parent;
-            }
-            None
-        })
-        .map_err(|error| {
+        let (ticks, unit_ps) = match self.eval_decl_value(expression).map_err(|error| {
             format!(
-                "cannot evaluate procedural `#({expression})` in `{}`: {error}",
+                "procedural delay in `{}` is runtime-valued or uses an unsupported \
+                 constant expression: {error}",
                 self.instance_path_of(self.inst)
             )
-        })?;
-        let (ticks, unit_ps) = delay.ticks_and_unit_ps(timescale);
+        })? {
+            Val::Bits(value) => {
+                let raw = if value.signed {
+                    let signed = value
+                        .to_i128()
+                        .ok_or_else(|| "procedural delay must be a known integer".to_owned())?;
+                    u128::try_from(signed).map_err(|_| {
+                        "procedural delay must be a known nonnegative integer".to_owned()
+                    })?
+                } else {
+                    value.to_u128().ok_or_else(|| {
+                        "procedural delay must be a known nonnegative integer".to_owned()
+                    })?
+                };
+                let ticks = u64::try_from(raw)
+                    .map_err(|_| "procedural delay exceeds 64 bits".to_owned())?;
+                (ticks, timescale.unit_ps)
+            }
+            Val::Real(value) => (real_delay_ticks(value, timescale)?, timescale.precision_ps),
+            Val::Str(_) => return Err("procedural delay cannot be a string".to_owned()),
+        };
         scale_delay_ticks(
             ticks,
             unit_ps,
@@ -846,7 +794,9 @@ impl<'a> Codegen<'a> {
     fn hier_path_signal(&self, node: NodeId) -> Option<&SignalInfo> {
         if let NodeKind::Expr(ExprKind::HierPath { parts, refs }) = self.kind(node) {
             if let Some(t) = refs.last().copied().flatten() {
-                return self.signal_of(t);
+                if let Some(info) = self.signal_of(t) {
+                    return Some(info);
+                }
             }
             let (target, base_index) = self.hier_path_signal_target(parts, refs)?;
             if base_index + 1 == parts.len() {
@@ -856,9 +806,9 @@ impl<'a> Codegen<'a> {
         None
     }
 
-    /// Recover a signal target when Surelog omits every `vpiActual` reference
-    /// from a generated-scope hierarchical path. Scope/name lookup remains on
-    /// the already-collected owned model and requires an exact scope prefix.
+    /// Resolve a signal target when a semantic hierarchical path has no target
+    /// identity. Scope/name lookup remains on the already-collected owned model
+    /// and requires an exact scope prefix.
     fn hier_path_signal_target(
         &self,
         parts: &[String],
@@ -1017,81 +967,6 @@ impl<'a> Codegen<'a> {
         Some((target, aggregate.kind, member))
     }
 
-    fn packed_member_select(&self, node: NodeId) -> Result<Option<PackedMemberSelect>, String> {
-        let name = &self.node(node).name;
-        let Some(select) = name
-            .strip_suffix(']')
-            .and_then(|prefix| prefix.rfind('[').map(|open| &prefix[open + 1..]))
-        else {
-            return Ok(None);
-        };
-        if let Some((left, right)) = select.split_once(':') {
-            return Ok(Some(PackedMemberSelect::Part(
-                self.packed_member_bound(left)?,
-                self.packed_member_bound(right)?,
-            )));
-        }
-        Ok(Some(PackedMemberSelect::Bit(
-            self.packed_member_bound(select)?,
-        )))
-    }
-
-    fn packed_member_bound(&self, index: &str) -> Result<i128, String> {
-        let parameter_value = |parameter: &str| {
-            self.param_vals.iter().find_map(|(node, value)| {
-                (self.node(*node).name == parameter)
-                    .then_some(value)
-                    .and_then(|value| match value {
-                        Val::Bits(value) if !value.is_unknown() => value.to_i128(),
-                        _ => None,
-                    })
-            })
-        };
-        let term = |text: &str| {
-            let text = text.trim().replace('_', "");
-            text.parse::<i128>().ok().or_else(|| parameter_value(&text))
-        };
-        for operator in ['+', '-'] {
-            let split = index
-                .char_indices()
-                .skip(1)
-                .find(|(_, ch)| *ch == operator)
-                .map(|(at, _)| (&index[..at], &index[at + 1..]));
-            if let Some((left, right)) = split {
-                if let (Some(left), Some(right)) = (term(left), term(right)) {
-                    let value = if operator == '+' {
-                        left.checked_add(right)
-                    } else {
-                        left.checked_sub(right)
-                    }
-                    .ok_or_else(|| format!("packed-member index `{index}` overflows"))?;
-                    return Ok(value);
-                }
-            }
-        }
-        if let Some(value) = term(index) {
-            return Ok(value);
-        }
-        let delay = eval_procedural_delay(index, Timescale::DEFAULT, |parameter| {
-            self.param_vals.iter().find_map(|(node, value)| {
-                if self.node(*node).name != parameter {
-                    return None;
-                }
-                let Val::Bits(value) = value else {
-                    return None;
-                };
-                let width = u32::try_from(value.width()).ok()?;
-                value
-                    .to_u128()
-                    .and_then(|raw| DelayValue::from_raw(raw, width, value.signed))
-                    .map(DelayParameter::Integer)
-            })
-        })
-        .map_err(|error| format!("packed-member index `{index}`: {error}"))?;
-        let (index, _) = delay.ticks_and_unit_ps(Timescale::DEFAULT);
-        Ok(i128::from(index))
-    }
-
     fn aggregate_member_relative_bound(
         &self,
         member_name: &str,
@@ -1202,13 +1077,12 @@ impl<'a> Codegen<'a> {
         Ok(Some((info, lsb, width)))
     }
 
-    /// Recover a parameterized function return range from its declaration.
-    /// The pinned Surelog can retain the module's default parameter value on the
-    /// return object even when the enclosing instance overrides it.
+    /// Recover a parameterized function return range from admitted source when
+    /// the semantic type projection is incomplete.
     fn declared_source_width(&self, declaration: NodeId, inst: NodeId) -> Option<u32> {
         let node = self.node(declaration);
         let file = node.file.as_deref()?;
-        let source = std::fs::read_to_string(file).ok()?;
+        let source = self.db.source_text(file)?;
         let line = source.lines().nth(node.line.checked_sub(1)? as usize)?;
         let range = line.split_once('[')?.1.split_once(']')?.0;
         let (left, right) = range.split_once(':')?;
@@ -1274,89 +1148,53 @@ impl<'a> Codegen<'a> {
         u32::try_from(value).ok().filter(|width| *width != 0)
     }
 
-    /// Timescale of the source file at `path`, parsed once and cached.  Files
-    /// without a `timescale directive (or unreadable files) get the 1ns/1ps
-    /// default plus a TIMESCALEMOD-style warning the first time they are seen.
-    fn timescale_of_file(&mut self, path: &str) -> Timescale {
-        if let Some(ts) = self.file_timescale.get(path) {
-            return *ts;
+    /// Resolved timescale of the nearest owning module instance. Slang has
+    /// already applied compilation-unit and declaration inheritance.
+    fn timescale_of_node(&self, node: NodeId) -> Timescale {
+        let mut current = Some(node);
+        while let Some(id) = current {
+            if let NodeKind::ModuleInst {
+                timeunit,
+                timeprecision,
+                ..
+            } = self.kind(id)
+            {
+                return Timescale {
+                    unit_ps: time_exponent_to_ps(*timeunit),
+                    precision_ps: time_exponent_to_ps(*timeprecision),
+                };
+            }
+            current = self.node(id).parent;
         }
-        let found = std::fs::read_to_string(path)
-            .ok()
-            .and_then(|text| parse_timescale(&text));
-        let ts = found.unwrap_or(Timescale::DEFAULT);
-        if found.is_none() && !path.is_empty() && self.warned_no_timescale.insert(path.to_string())
-        {
-            self.warnings.push(format!(
-                "module in `{path}` has no `timescale directive; assuming \
-                 1ns/1ps (Verilator-style TIMESCALEMOD)"
-            ));
-        }
-        self.file_timescale.insert(path.to_string(), ts);
-        ts
+        Timescale::DEFAULT
     }
 
-    /// Timescale of the module whose source file contains `node` (the node's
-    /// own `file`, i.e. the file where the delay/`$time` is written).
-    fn timescale_of_node(&mut self, node: NodeId) -> Timescale {
-        let file = self.node(node).file.clone().unwrap_or_default();
-        self.timescale_of_file(&file)
-    }
-
-    /// Recover the signed marker of a based literal from its source token.
-    /// The pinned Surelog does not expose `vpiSigned` on `vpiConstant` objects and
-    /// returns signed based literals through the unsigned value arm.
+    /// Retain a signed marker present in a legacy textual literal payload.
     fn signed_based_constant(&self, node: NodeId) -> bool {
         self.signed_based_literal_info(node).0
     }
 
-    /// Recover the explicit width and signed marker of a based literal.  The
-    /// elaborated initializer may report the destination width instead of the
-    /// literal width, so the source token is also needed for sign extension.
+    /// Read an explicit width and signed marker from a legacy textual literal.
+    /// Slang vector values normally carry both directly.
     fn signed_based_literal_info(&self, node: NodeId) -> (bool, Option<u32>) {
         let node = self.node(node);
         if is_signed_based_literal(&node.name) {
             return (true, based_literal_width(&node.name));
         }
-        let (Some(file), line) = (node.file.as_deref(), node.line) else {
-            return (false, None);
-        };
-        if line == 0 {
-            return (false, None);
-        }
-        let Ok(content) = std::fs::read_to_string(file) else {
-            return (false, None);
-        };
-        let Some(text) = content.lines().nth(line as usize - 1) else {
-            return (false, None);
-        };
-        let Some(token) = signed_based_literal_token_at(text, node.col) else {
-            return (false, None);
-        };
-        (true, based_literal_width(token))
+        (false, None)
     }
 
-    /// Recover an unbased unsized fill literal from its source spelling.
-    /// Surelog can constant-fold a fill used below an operator or in a case
-    /// item into an ordinary sized 0/1/X/Z constant, losing `vpiSize == -1`.
+    /// Retain an unbased unsized fill literal present in a legacy textual
+    /// payload. Slang normally preserves it as a typed operation.
     fn source_fill_literal(&self, node: NodeId) -> Option<u8> {
-        let node = self.node(node);
-        if let Some(fill) = fill_literal_token(&node.name) {
-            return Some(fill);
+        match self.kind(node) {
+            NodeKind::Expr(ExprKind::Constant {
+                source: ConstantSource::Exact(source),
+                ..
+            }) => fill_literal_token(source),
+            NodeKind::Expr(ExprKind::Cast { operand, .. }) => self.source_fill_literal(*operand),
+            _ => fill_literal_token(&self.node(node).name),
         }
-        // Folded compound constants can inherit the compound expression's
-        // starting column. Only a two-character source span identifies the
-        // constant itself as the fill token.
-        if node.end_line != node.line || node.end_col != node.col.saturating_add(2) {
-            return None;
-        }
-        let (file, line) = (node.file.as_deref()?, node.line);
-        if line == 0 {
-            return None;
-        }
-        let content = std::fs::read_to_string(file).ok()?;
-        let text = content.lines().nth(line as usize - 1)?;
-        fill_literal_token_at(text, node.col)
     }
 
     /// Parse the timescale of every distinct source file referenced by the
@@ -1423,13 +1261,10 @@ impl<'a> Codegen<'a> {
         Ok(())
     }
 
-    /// Visit every node under `node`, parsing the timescale of each distinct
-    /// source file (the per-file cache dedupes; the design precision is the
-    /// minimum precision seen).
+    /// Visit every node and select the finest resolved module precision.
     fn walk_files(&mut self, node: NodeId) {
-        let file = self.node(node).file.clone().unwrap_or_default();
-        if !file.is_empty() {
-            let ts = self.timescale_of_file(&file);
+        if matches!(self.kind(node), NodeKind::ModuleInst { .. }) {
+            let ts = self.timescale_of_node(node);
             self.design_precision_ps = self.design_precision_ps.min(ts.precision_ps);
         }
         let kids: Vec<NodeId> = self.node(node).children.clone();
@@ -1443,6 +1278,13 @@ impl<'a> Codegen<'a> {
 
 fn is_real_kind(kind: &str) -> bool {
     matches!(kind, "real" | "shortreal")
+}
+
+fn time_exponent_to_ps(exponent: i32) -> u64 {
+    // The current runtime's public time and waveform contracts use integer
+    // picoseconds. Preserve its established 1ps floor for fs precisions.
+    let power = exponent.saturating_add(12).clamp(0, 12) as u32;
+    10_u64.pow(power)
 }
 
 /// SystemVerilog two-state integral types (IEEE 1800-2009 Table 6-8).
@@ -1497,37 +1339,6 @@ fn union(
     }
 }
 
-/// Extract the raw (source-unit) tick count of a folded continuous-assignment
-/// delay constant.  Fractional, X/Z, negative or >64-bit values are rejected
-/// with a clear message.
-fn const_delay_ticks(c: &IrConst, path: &str) -> Result<u64, String> {
-    if c.real.is_some() || c.fill.is_some() {
-        return Err(format!(
-            "continuous-assignment delay must be an integer constant in `{path}`"
-        ));
-    }
-    if c.width > 64 || c.bits.len() > 1 {
-        return Err(format!(
-            "continuous-assignment delay must be a 64-bit-or-less constant in `{path}`"
-        ));
-    }
-    if c.x.iter().any(|&x| x != 0) || c.z.iter().any(|&z| z != 0) {
-        return Err(format!(
-            "continuous-assignment delay must be a known (non-X/Z) constant in `{path}`"
-        ));
-    }
-    // Negative signed constants carry their two's-complement bit pattern, so
-    // the raw limb alone would wrap to a huge tick count; reject via the sign
-    // bit instead.
-    if c.signed && c.width > 0 && ((c.bits.first().copied().unwrap_or(0) >> (c.width - 1)) & 1) == 1
-    {
-        return Err(format!(
-            "continuous-assignment delay must be a non-negative constant in `{path}`"
-        ));
-    }
-    Ok(c.bits.first().copied().unwrap_or(0))
-}
-
 /// Scale a raw `#N` tick count from the calling module's time unit to
 /// design-precision ticks (`N * unit / precision`).  Products beyond the u64
 /// range are rejected instead of silently truncating through the `as u64`
@@ -1574,8 +1385,11 @@ fn checked_select_bounds(
 /// live in separate `x`/`z` limb arrays (x & z == 0), matching the runtime's
 /// 4-state split.
 ///
-/// Convert a captured constant (`ValueData` + `vpiSize`) to an [`IrConst`].
+/// Convert a captured semantic constant and resolved width to an [`IrConst`].
 fn read_const_from(vd: &ValueData, size: i32) -> Result<IrConst, String> {
+    if let ValueData::Bytes(bytes) = vd {
+        return val_to_const(&bytes_to_value(bytes)?);
+    }
     match val_from_value_data(vd, size)? {
         Val::Bits(value) => val_to_const(&value),
         Val::Real(value) => Ok(IrConst {
@@ -1599,7 +1413,25 @@ fn string_to_const(value: &str) -> Result<IrConst, String> {
 }
 
 fn string_to_value(value: &str) -> Result<elab::Value, String> {
-    let mut decoded = decode_verilog_string(value)?;
+    bytes_to_value(&decode_verilog_string(value)?)
+}
+
+fn decoded_string_bytes(value: &ValueData) -> Result<Vec<u8>, String> {
+    match value {
+        ValueData::Bytes(bytes) => Ok(bytes.clone()),
+        ValueData::Str(value) => decode_verilog_string(value),
+        _ => Err("string constant has no byte value".to_owned()),
+    }
+}
+
+fn decoded_string_text(value: &ValueData, context: &str) -> Result<String, String> {
+    String::from_utf8(decoded_string_bytes(value)?).map_err(|_| {
+        format!("{context} must contain valid UTF-8; arbitrary bytes are supported only as values")
+    })
+}
+
+fn bytes_to_value(value: &[u8]) -> Result<elab::Value, String> {
+    let mut decoded = value.to_vec();
     // An empty packed string has the same 8-bit zero representation used by
     // established Verilog simulators.
     if decoded.is_empty() {
@@ -1628,7 +1460,7 @@ fn string_to_value(value: &str) -> Result<elab::Value, String> {
     Ok(elab::Value::from_bits(bits, false))
 }
 
-/// Decode the escape spellings retained in Surelog's owned string payload.
+/// Decode legacy source-spelled escapes when the semantic value is textual.
 fn decode_verilog_string(value: &str) -> Result<Vec<u8>, String> {
     let bytes = value.as_bytes();
     let mut decoded = Vec::with_capacity(bytes.len());
@@ -1755,97 +1587,9 @@ fn decl_value_to_const(value: Val) -> Result<IrConst, String> {
     }
 }
 
-/// Parse the contents of a hierarchical select bracket (`3:0`, `2`, `3 +: 4`,
-/// `8'h2a`) into a [`HierSelect`].  Only plain integer literals are accepted;
-/// identifiers (variable indices) and expressions are rejected.
-fn hier_select_from_text(inner: &str, target_name: &str) -> Result<HierSelect, String> {
-    let s = inner.trim();
-    let bad = || {
-        format!(
-            "hierarchical select `[{inner}]` on `{target_name}` is not \
-             supported (constant integer indices/bounds only)"
-        )
-    };
-    if let Some(plus) = s.find("+:") {
-        let (base, width) = (s[..plus].trim(), s[plus + 2..].trim());
-        let base = parse_select_int(base).ok_or_else(bad)?;
-        let width = parse_select_int(width).ok_or_else(bad)?;
-        if width <= 0 {
-            return Err(format!(
-                "indexed part-select `[{inner}]` on `{target_name}` must have \
-                 a positive width"
-            ));
-        }
-        return Ok(HierSelect::IdxPart(base, width, false));
-    }
-    if let Some(minus) = s.find("-:") {
-        let (base, width) = (s[..minus].trim(), s[minus + 2..].trim());
-        let base = parse_select_int(base).ok_or_else(bad)?;
-        let width = parse_select_int(width).ok_or_else(bad)?;
-        if width <= 0 {
-            return Err(format!(
-                "indexed part-select `[{inner}]` on `{target_name}` must have \
-                 a positive width"
-            ));
-        }
-        return Ok(HierSelect::IdxPart(base, width, true));
-    }
-    if let Some(colon) = s.find(':') {
-        let (left, right) = (s[..colon].trim(), s[colon + 1..].trim());
-        let left = parse_select_int(left).ok_or_else(bad)?;
-        let right = parse_select_int(right).ok_or_else(bad)?;
-        return Ok(HierSelect::Part(left, right));
-    }
-    let bit = parse_select_int(s).ok_or_else(bad)?;
-    Ok(HierSelect::Bit(bit))
-}
-
-/// Parse a plain Verilog integer literal (decimal, sized/unsized radix form,
-/// optional sign) into an `i128`.  `None` for identifiers, x/z digits, or any
-/// other form the hierarchical-select support does not handle.
-fn parse_select_int(s: &str) -> Option<i128> {
-    let s = s.trim();
-    if s.is_empty() {
-        return None;
-    }
-    let (neg, s) = match s.strip_prefix('-') {
-        Some(rest) => (true, rest),
-        None => (false, s),
-    };
-    let (radix, digits) = if let Some(q) = s.find('\'') {
-        let rest = &s[q + 1..];
-        let rest = rest
-            .strip_prefix('s')
-            .or_else(|| rest.strip_prefix('S'))
-            .unwrap_or(rest);
-        let mut chars = rest.chars();
-        let base = chars.next()?;
-        match base {
-            'd' | 'D' => (10, chars.as_str()),
-            'h' | 'H' => (16, chars.as_str()),
-            'b' | 'B' => (2, chars.as_str()),
-            'o' | 'O' => (8, chars.as_str()),
-            _ => return None,
-        }
-    } else {
-        (10, s)
-    };
-    let digits = digits.replace('_', "");
-    if digits.is_empty()
-        || digits
-            .chars()
-            .any(|c| matches!(c, 'x' | 'X' | 'z' | 'Z' | '?'))
-    {
-        return None;
-    }
-    let v = i128::from_str_radix(&digits, radix).ok()?;
-    Some(if neg { -v } else { v })
-}
-
 // ── Shared lowering helpers and statement state ──────────────────────────────
 
-/// Convert a captured constant (`ValueData` + `vpiSize`) to a `Val`, mirroring
-/// `elab::read_value` without a VPI handle.
+/// Convert a captured semantic constant and resolved width to a `Val`.
 fn val_from_value_data(vd: &ValueData, size: i32) -> Result<Val, String> {
     elab::decode_value_data(vd, size).map_err(|error| error.to_string())
 }
@@ -2039,24 +1783,6 @@ enum Lhs {
         slice: Option<u128>,
         direction: IrStreamDirection,
     },
-}
-
-/// A trailing select on a hierarchical assignment target, recovered from the
-/// node name / source line (the pinned Surelog's elaborated model does not carry
-/// hierarchical selects as structured expressions — see
-/// [`Codegen::hier_lhs_select`]).
-enum HierSelect {
-    /// `[i]` — bit select.
-    Bit(i128),
-    /// `[l:r]` — part select.
-    Part(i128, i128),
-    /// `[b +: w]` / `[b -: w]` — indexed part select.
-    IdxPart(i128, i128, bool),
-}
-
-enum PackedMemberSelect {
-    Bit(i128),
-    Part(i128, i128),
 }
 
 /// One side of a port connection: a plain global signal, or an element of an
@@ -2565,6 +2291,27 @@ fn lhs_integer_expr(value: i128) -> IrExpr {
     )
 }
 
+/// Reject malformed semantic operations before expression lowering indexes an
+/// operand. Both runtime expression lowering and constant evaluation use this
+/// boundary, so a partial frontend projection becomes a diagnostic rather
+/// than a process panic.
+fn validate_operation_arity(
+    operation: Operation,
+    actual: usize,
+    context: &str,
+) -> Result<(), String> {
+    let Some(expected) = crate::sim::semantic::operation_arity_requirement(operation) else {
+        return Ok(());
+    };
+    if actual < expected.0 || expected.1.is_some_and(|maximum| actual > maximum) {
+        return Err(format!(
+            "malformed {operation:?} operation in `{context}`: expected {} operands, got {actual}",
+            expected.2
+        ));
+    }
+    Ok(())
+}
+
 fn is_signed_based_literal(text: &str) -> bool {
     let bytes = text.as_bytes();
     bytes.windows(3).any(|window| {
@@ -2583,41 +2330,6 @@ fn based_literal_width(text: &str) -> Option<u32> {
     digits.parse().ok()
 }
 
-fn signed_based_literal_token_at(line: &str, col: u32) -> Option<&str> {
-    let bytes = line.as_bytes();
-    if bytes.is_empty() {
-        return None;
-    }
-    // UHDM columns are normally 1-based, but accepting the adjacent byte
-    // also handles producers that point at the apostrophe or use 0-based
-    // columns.
-    let base = col.saturating_sub(1) as usize;
-    for pos in [
-        base,
-        col as usize,
-        base.saturating_sub(1),
-        base.saturating_add(1),
-    ] {
-        if pos >= bytes.len() {
-            continue;
-        }
-        let is_literal_char =
-            |byte: u8| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'\'');
-        let mut start = pos;
-        while start > 0 && is_literal_char(bytes[start - 1]) {
-            start -= 1;
-        }
-        let mut end = pos;
-        while end < bytes.len() && is_literal_char(bytes[end]) {
-            end += 1;
-        }
-        if start < end && is_signed_based_literal(&line[start..end]) {
-            return Some(&line[start..end]);
-        }
-    }
-    None
-}
-
 fn fill_literal_token(text: &str) -> Option<u8> {
     let bytes = text.trim().as_bytes();
     if bytes.len() != 2 || bytes[0] != b'\'' {
@@ -2630,38 +2342,6 @@ fn fill_literal_token(text: &str) -> Option<u8> {
         b'z' => Some(3),
         _ => None,
     }
-}
-
-fn fill_literal_token_at(line: &str, col: u32) -> Option<u8> {
-    let bytes = line.as_bytes();
-    let base = col.saturating_sub(1) as usize;
-    for pos in [
-        base,
-        col as usize,
-        base.saturating_sub(1),
-        base.saturating_add(1),
-    ] {
-        for start in [pos, pos.saturating_sub(1)] {
-            let Some(token) = bytes.get(start..start.saturating_add(2)) else {
-                continue;
-            };
-            if start > 0 && (bytes[start - 1].is_ascii_alphanumeric() || bytes[start - 1] == b'_') {
-                continue;
-            }
-            if bytes
-                .get(start + 2)
-                .is_some_and(|next| next.is_ascii_alphanumeric() || *next == b'_')
-            {
-                continue;
-            }
-            if let Ok(token) = std::str::from_utf8(token) {
-                if let Some(fill) = fill_literal_token(token) {
-                    return Some(fill);
-                }
-            }
-        }
-    }
-    None
 }
 
 /// The IR form of a formal read; the backend spells the C shape (`a{idx}` or
@@ -2721,4 +2401,64 @@ fn ir_to_storage(e: IrExpr, width: u32, signed: bool, two_state: bool) -> Result
 /// §10.7).
 fn ir_arg_resize(e: IrExpr, width: u32, signed: bool) -> IrExpr {
     IrExpr::convert_to(e, width, signed)
+}
+
+#[cfg(test)]
+mod operation_arity_tests {
+    use super::*;
+
+    #[test]
+    fn malformed_indexed_operations_are_rejected_before_lowering() {
+        for (operation, operands) in [
+            (Operation::Add, 0),
+            (Operation::Add, 1),
+            (Operation::Conditional, 2),
+            (Operation::MultiConcat, 1),
+        ] {
+            let error = validate_operation_arity(operation, operands, "top.initial").unwrap_err();
+            assert!(error.contains("malformed"));
+            assert!(error.contains("top.initial"));
+            assert!(error.contains(&format!("got {operands}")));
+        }
+    }
+
+    #[test]
+    fn legal_variable_and_fixed_operation_arities_are_accepted() {
+        for (operation, operands) in [
+            (Operation::UnaryMinus, 1),
+            (Operation::Add, 2),
+            (Operation::Conditional, 3),
+            (Operation::Concat, 1),
+            (Operation::MultiConcat, 2),
+            (Operation::StreamLeftToRight, 2),
+        ] {
+            validate_operation_arity(operation, operands, "top.initial").unwrap();
+        }
+    }
+}
+
+#[cfg(test)]
+mod semantic_string_tests {
+    use super::*;
+
+    #[test]
+    fn native_string_bytes_are_not_escape_decoded_twice() {
+        assert_eq!(
+            decoded_string_bytes(&ValueData::Bytes(b"line\\n".to_vec())).unwrap(),
+            b"line\\n"
+        );
+        assert_eq!(
+            decoded_string_bytes(&ValueData::Str("line\\n".to_owned())).unwrap(),
+            b"line\n"
+        );
+    }
+
+    #[test]
+    fn display_format_accepts_native_string_bytes() {
+        assert_eq!(
+            decoded_string_text(&ValueData::Bytes(b"count=%0d".to_vec()), "$display format")
+                .unwrap(),
+            "count=%0d"
+        );
+    }
 }

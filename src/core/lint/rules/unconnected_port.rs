@@ -1,53 +1,11 @@
 //! `unconnected-port` — instance ports left unconnected.
 //!
-//! A port of a module instantiation without a parent-side connection usually
-//! means an unfinished or mistyped instantiation: unconnected inputs leave
-//! the child logic undriven (the input floats to `x`/`z`), unconnected
-//! outputs silently drop their results, and unconnected inouts break
-//! bidirectional links.  The rule flags every port of a non-top instance
-//! with no usable connection, covering all three source shapes:
-//!
-//! - ports omitted from the connection list entirely (`child u0 ();`),
-//! - positional gaps (`child u0 (a, , c);`),
-//! - explicitly-empty named connections (`.o()`).
-//!
-//! In the owned db these are exactly the ports where Surelog recorded no
-//! `vpiHighConn` object at all, or only its explicit-empty marker (a
-//! `vpiNullOp` operation without operands; see
-//! [`crate::core::db::NodeKind::Port`] for the signature, recovered at
-//! db-capture time because `high: None` alone is ambiguous).  Everything else
-//! counts as connected: resolved signal refs, expression connections
-//! (`.i(a & b)`), constant connections (`.v(4'd0)`) and the `` `.* `` /
-//! `.name` shorthand forms — Surelog resolves those to ordinary signal refs,
-//! so they need no special handling and cannot be distinguished from
-//! explicit connections (nor do they need to be).
-//!
-//! Scope decisions: top instances are skipped (their ports have no
-//! instantiation site); all port directions are flagged uniformly at Warning,
-//! including intentionally-open inputs `.i()` (an undriven input is usually
-//! NOT what the user wants); interface instances follow the same rule as
-//! module instances.  Findings are positioned at the instantiation site (the
-//! instance node), not at the child's port declaration.  Ports whose
-//! declaration carries a default value that the instantiation leaves
-//! omitted are NOT flagged: Surelog binds the default expression as the
-//! port's high connection during elaboration, so they look connected here.
-//!
-//! Surelog also SYNTHESIZES one per-port copy of a connected interface into
-//! the child module for every interface-typed port (named after the port).
-//! Those copies are implementation views, not user-written instantiation
-//! sites: their ports have no parent-side connection by construction, so
-//! flagging them would only duplicate findings for instances nobody wrote —
-//! they are skipped via
-//! [`crate::core::lint::rules::analysis::iface_copy_instances`].
-//! User-written interface instances (`bus u_bus ();`) are still linted like
-//! any other instance.  Messages name the instance by its hierarchical
-//! display path (`top.blk[0].u0`), and positions are clamped to the 1-based
-//! [`LintDiag`] contract (some synthetic nodes carry a 0 column).
+//! Reports omitted, positional-gap, and explicitly open ports of non-top
+//! instances. Resolved expressions and declaration defaults count as connected.
+//! Findings identify the concrete instantiation and use its source location.
 
 use crate::core::db::NodeKind;
-use crate::core::lint::rules::analysis::{
-    iface_copy_instances, iter_instances, port_unconnected, strip_lib,
-};
+use crate::core::lint::rules::analysis::{iter_instances, port_unconnected};
 use crate::core::lint::{LintCtx, LintDiag, LintRule, LintSeverity};
 
 /// Flags instance ports left unconnected.
@@ -64,7 +22,6 @@ impl LintRule for UnconnectedPortRule {
 
     fn check(&self, ctx: &LintCtx<'_>) -> Vec<LintDiag> {
         let db = ctx.db;
-        let copies = iface_copy_instances(db);
         let mut out = Vec::new();
         for (inst_id, inst_path) in iter_instances(db) {
             let NodeKind::ModuleInst {
@@ -73,11 +30,11 @@ impl LintRule for UnconnectedPortRule {
             else {
                 continue;
             };
-            if *is_top || copies.contains(&inst_id) {
+            if *is_top {
                 continue;
             }
             let inst = db.node(inst_id);
-            let module = strip_lib(def_name);
+            let module = def_name;
             for c in &inst.children {
                 if !matches!(db.node_kind(*c), NodeKind::Port { .. }) {
                     continue;
@@ -127,8 +84,8 @@ mod tests {
             "message names module, hierarchical instance path and port: {}",
             d.message
         );
-        // Positioned at the instantiation site, not the child declaration.
-        assert_eq!((d.line, d.col), (6, 3), "{diags:?}");
+        // Positioned at the instance identifier.
+        assert_eq!((d.line, d.col), (6, 9), "{diags:?}");
     }
 
     #[test]
@@ -221,10 +178,7 @@ mod tests {
         );
     }
 
-    /// Interface designs: Surelog synthesizes per-port COPY interface
-    /// instances into every child with an interface-typed port.  Those copies
-    /// have no parent-side connection by construction and must never be
-    /// flagged — only user-written instances are linted.
+    /// Only the actual interface instantiation contributes an unconnected port.
     #[test]
     fn interface_port_left_empty_is_reported_once() {
         let diags = lint_design(

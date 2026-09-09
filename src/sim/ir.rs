@@ -1,8 +1,9 @@
 //! ir — typed intermediate representation for the simulator model.
 //!
-//! The simulator pipeline is `core::db` (lowering, in [`crate::sim::codegen`])
-//! → [`IrModel`] → optimization passes ([`crate::sim::opt`]) → C11 text
-//! ([`crate::sim::emit_c`]).  Every lowering decision — widths, signedness,
+//! The simulator pipeline is `core::db` → [`crate::sim::semantic::SemanticModel`]
+//! → typed operation staging here → [`crate::sim::execution::ExecutionModel`]
+//! → optimization passes ([`crate::sim::opt`]) → C11 text
+//! ([`crate::sim::emit_c`]). Every lowering decision — widths, signedness,
 //! unsized-fill markers, sensitivity/read sets, timescale scaling, C names —
 //! is made once at lowering time and recorded here; the backend renders the
 //! recorded decisions verbatim and the optimizer transforms the model
@@ -830,7 +831,7 @@ pub enum IrLhs {
     },
 }
 
-/// Case statement matching kind (`vpiCaseExact`/`vpiCaseX`/`vpiCaseZ`).
+/// Case statement matching behavior.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum IrCaseKind {
     Exact,
@@ -964,8 +965,8 @@ pub enum IrStmt {
         specs: Vec<(IrWaitSrc, IrEdge)>,
     },
     /// `-> ev;` — trigger the named event (index into [`IrModel::events`]);
-    /// wakes ALL current waiters.  Non-blocking triggers (`->>`) are lowered
-    /// the same way: the pinned Surelog loses the distinction in its UHDM output.
+    /// wakes ALL current waiters. Non-blocking triggers (`->>`) currently lower
+    /// the same way because the owned semantic projection lacks the distinction.
     EventTrigger {
         ev: usize,
     },
@@ -1082,12 +1083,12 @@ pub enum IrShape {
     /// Evaluate the body once, then loop `wait_any(reads); body`
     /// (continuous assignments, links, combinational processes).  `reads`
     /// are wait-source C names; the LHS base signals are never included
-    /// (self-wake prevention happened at lowering).  The in-loop body copy
-    /// indents one level deeper than the first evaluation.
+    /// (self-wake prevention happened at lowering). Execution lowering uses
+    /// one self-resuming block, so the body has a single owner.
     SensLoop { reads: Vec<String> },
 }
 
-/// A coroutine process (comb driver, port/interface link, always/initial
+/// A coroutine process (comb driver, plain port link, always/initial
 /// block, or fork branch group host).  Push order equals spawn order.
 #[derive(Clone, Debug, PartialEq)]
 pub struct IrProcess {
@@ -1097,6 +1098,7 @@ pub struct IrProcess {
     pub(in crate::sim) shape: IrShape,
     pub(in crate::sim) pre_fns: Vec<IrPreFn>,
     pub(in crate::sim) body: Vec<IrStmt>,
+    pub(in crate::sim) origin: crate::sim::semantic::Origin,
 }
 
 impl IrProcess {
@@ -1110,12 +1112,27 @@ impl IrProcess {
         pre_fns: Vec<IrPreFn>,
         body: Vec<IrStmt>,
     ) -> Self {
+        let origin = crate::sim::semantic::Origin::Synthetic {
+            reason: format!("manually constructed process {label}"),
+        };
+        Self::new_with_origin(c_name, label, shape, pre_fns, body, origin)
+    }
+
+    pub(in crate::sim) fn new_with_origin(
+        c_name: String,
+        label: String,
+        shape: IrShape,
+        pre_fns: Vec<IrPreFn>,
+        body: Vec<IrStmt>,
+        origin: crate::sim::semantic::Origin,
+    ) -> Self {
         Self {
             c_name,
             label,
             shape,
             pre_fns,
             body,
+            origin,
         }
     }
 
@@ -1133,6 +1150,10 @@ impl IrProcess {
     }
     pub fn body(&self) -> &[IrStmt] {
         &self.body
+    }
+
+    pub fn origin(&self) -> &crate::sim::semantic::Origin {
+        &self.origin
     }
 }
 
@@ -1173,15 +1194,14 @@ impl IrFormal {
     }
 }
 
-/// A function/task local (`_l{n}` or `_i{site}_{n}`).
+/// Persistent function/task local (`_l{n}` or `_i{site}_{n}`).
 #[derive(Clone, Debug, PartialEq)]
 pub struct IrLocal {
     pub(in crate::sim) c_name: String,
     pub(in crate::sim) width: u32,
     pub(in crate::sim) signed: bool,
     pub(in crate::sim) two_state: bool,
-    /// Constant declaration initializer. Static subprograms apply it once;
-    /// automatic subprograms apply it on each call.
+    /// Constant declaration initializer, applied once to static storage.
     pub(in crate::sim) initial: Option<IrExpr>,
 }
 
@@ -1223,7 +1243,9 @@ pub struct IrFunc {
     /// Return type; `None` for tasks and void functions.
     pub(in crate::sim) ret: Option<IrType>,
     pub(in crate::sim) formals: Vec<IrFormal>,
-    /// In emission order (node-id sorted at lowering).
+    /// Resolved-static locals in emission order (node-id sorted at lowering).
+    /// Resolved-automatic locals remain declaration-site [`IrStmt::DeclLocal`]
+    /// operations so nested block reentry recreates them correctly.
     pub(in crate::sim) locals: Vec<IrLocal>,
     pub(in crate::sim) pre_fns: Vec<IrPreFn>,
     pub(in crate::sim) body: Vec<IrStmt>,
@@ -1548,7 +1570,11 @@ impl IrEvent {
     }
 }
 
-/// The complete lowered model: input to optimization and C11 emission.
+/// Typed operation staging used while building an executable model.
+///
+/// [`crate::sim::execution::ExecutionModel::lower`] moves process bodies into
+/// executable blocks. Optimization and whole-model emission do not accept this
+/// staging representation directly.
 #[derive(Clone, Debug)]
 pub struct IrModel {
     pub(in crate::sim) design_name: String,

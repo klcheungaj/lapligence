@@ -17,21 +17,17 @@ fn run_fixture(file: &str, label: &str, width: usize) {
         .join("tests/fixtures/sim/data_type_edges")
         .join(file);
     let expected = format!("PASS {label} WIDTH={width}\n");
-    sim_harness::with_surelog_temp_cwd("data-type-edges", |dir| {
+    sim_harness::with_frontend_temp_cwd("data-type-edges", |dir| {
         let source = dir.join(file);
         std::fs::copy(&fixture, &source).map_err(|error| format!("copy fixture: {error}"))?;
         let compiled = compile::compile_checked(&compile::CompileOpts {
             files: vec![source.to_string_lossy().into_owned()],
             top: Some("tb".to_owned()),
-            param_overrides: vec![format!("-PWIDTH={width}")],
+            param_overrides: vec![format!("WIDTH={width}")],
             ..Default::default()
         })
         .map_err(|error| format!("{file}, width {width}: compile: {error}"))?;
-        let db = Db::build_with_source_files(
-            compiled.uhdm_design().ok_or("no UHDM design")?,
-            &compiled.frontend_source_files(),
-        )
-        .map_err(|error| error.to_string())?;
+        let db = Db::from_slang(&compiled.snapshot).map_err(|error| error.to_string())?;
 
         let mut failures = Vec::new();
         for (variant, options) in [
@@ -210,18 +206,17 @@ fn numeric_size_casts_with_bare_db_are_correct_or_explicitly_unsupported() {
         .join("tests/fixtures/sim/data_type_edges")
         .join(file);
     let expected = format!("PASS numeric_size_casts WIDTH={width}\n");
-    sim_harness::with_surelog_temp_cwd("numeric-size-cast-bare-db", |dir| {
+    sim_harness::with_frontend_temp_cwd("numeric-size-cast-bare-db", |dir| {
         let source = dir.join(file);
         std::fs::copy(&fixture, &source).map_err(|error| format!("copy fixture: {error}"))?;
         let compiled = compile::compile_checked(&compile::CompileOpts {
             files: vec![source.to_string_lossy().into_owned()],
             top: Some("tb".to_owned()),
-            param_overrides: vec![format!("-PWIDTH={width}")],
+            param_overrides: vec![format!("WIDTH={width}")],
             ..Default::default()
         })
         .map_err(|error| format!("compile: {error}"))?;
-        let db = Db::build(compiled.uhdm_design().ok_or("no UHDM design")?)
-            .map_err(|error| error.to_string())?;
+        let db = Db::from_slang(&compiled.snapshot).map_err(|error| error.to_string())?;
         for (variant, options) in [
             ("bare-db-unoptimized", OptConfig::none()),
             ("bare-db-optimized", OptConfig::default()),
@@ -251,19 +246,19 @@ fn numeric_size_casts_with_public_generate_are_correct_or_explicitly_unsupported
         .join("tests/fixtures/sim/data_type_edges")
         .join(file);
     let expected = format!("PASS numeric_size_casts WIDTH={width}\n");
-    sim_harness::with_surelog_temp_cwd("numeric-size-cast-public-generate", |dir| {
+    sim_harness::with_frontend_temp_cwd("numeric-size-cast-public-generate", |dir| {
         let source = dir.join(file);
         std::fs::copy(&fixture, &source).map_err(|error| format!("copy fixture: {error}"))?;
         let compiled = compile::compile_checked(&compile::CompileOpts {
             files: vec![source.to_string_lossy().into_owned()],
             top: Some("tb".to_owned()),
-            param_overrides: vec![format!("-PWIDTH={width}")],
+            param_overrides: vec![format!("WIDTH={width}")],
             ..Default::default()
         })
         .map_err(|error| format!("compile: {error}"))?;
+        let db = Db::from_slang(&compiled.snapshot).map_err(|error| error.to_string())?;
         check_source_less_cast_result(
-            sim::codegen::generate(compiled.uhdm_design().ok_or("no UHDM design")?)
-                .map_err(|error| error.to_string()),
+            sim::codegen::generate(&db).map_err(|error| error.to_string()),
             &dir.join("public-generate"),
             "public-generate",
             &expected,

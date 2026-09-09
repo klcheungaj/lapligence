@@ -240,7 +240,7 @@ fn insert_cache_stats_line(lines: &mut Vec<String>, (stats, entries): (CacheStat
 impl Backend {
     /// Start an isolated open-document parse whose completion is detached
     /// from the request future.  The blocking closure owns the coordinator,
-    /// so request cancellation cannot remove the flight while Surelog is
+    /// so request cancellation cannot remove the flight while Slang is
     /// still running.  Successful cache publication happens before the
     /// coordinator removes the registry entry and wakes followers.
     fn spawn_open_token_coordinator(
@@ -703,11 +703,26 @@ impl LanguageServer for Backend {
         if let Some(root) = &root {
             notification.set_root(|| root.to_string_lossy().into_owned());
         }
-        let (initialized, admission) = {
+        let (initialized, admission, cached_diagnostics) = {
             let mut state = self.lock_state();
             let admission =
                 Self::admit_document_text(&mut state, uri.clone(), params.text_document.text, true);
-            (state.initialized, admission)
+            let cached_diagnostics = match (root.as_ref(), path.as_ref()) {
+                (Some(root), Some(path)) => state
+                    .roots
+                    .get(root)
+                    .and_then(|root| root.all_diagnostics.get(path).cloned()),
+                _ => None,
+            };
+            // Opening a document starts a new client-side lifecycle for this
+            // URI. Ensure the following root commit republishes its current
+            // diagnostics even when the payload matches the closed-file
+            // snapshot published during initialization.
+            if let Some(root) = root.as_ref().and_then(|root| state.roots.get_mut(root)) {
+                root.published_digests.remove(&uri);
+            }
+            state.published_shared.remove(&uri);
+            (state.initialized, admission, cached_diagnostics)
         };
         // Store the didOpen buffer before any await so a concurrent change
         // cannot be overwritten by the older open text. Discovery itself is
@@ -721,6 +736,17 @@ impl LanguageServer for Backend {
         match admission {
             Ok(_) => {
                 if initialized {
+                    // A client can ignore project-wide diagnostics published
+                    // before it opens a document. Replay the retained payload
+                    // (or an authoritative empty one) at didOpen; later root
+                    // commits still use digest suppression.
+                    self.client
+                        .publish_diagnostics(
+                            uri.clone(),
+                            cached_diagnostics.unwrap_or_default(),
+                            None,
+                        )
+                        .await;
                     if let Some(root) = root {
                         self.schedule_roots_with_parent(vec![root], Some(notification.id()));
                     }
@@ -851,14 +877,7 @@ impl LanguageServer for Backend {
             request.set_root(|| root.descriptor.id.clone());
             let analysis = root.last_good.clone();
             let open_document = state.documents.get(&uri).cloned().map(|text| {
-                let defines: Vec<String> = root
-                    .descriptor
-                    .effective_config()
-                    .compile
-                    .defines
-                    .into_iter()
-                    .map(|define| format!("-D{define}"))
-                    .collect();
+                let defines = root.descriptor.effective_config().compile.defines;
                 (real.clone(), text, defines)
             });
             let max_file_bytes = open_document
@@ -1898,7 +1917,7 @@ impl Backend {
     ///
     /// Serves COMMITTED state only — the staged open-buffer text (same store
     /// `semantic_tokens/full` reads) or the on-disk source otherwise.  The
-    /// computation is a pure lexical scan (`inactive_ranges`): no Surelog
+    /// computation is a pure lexical scan (`inactive_ranges`): no Slang
     /// work, no parsing, no diagnostics, no snapshot mutation.  Unknown or
     /// unowned documents answer an EMPTY range list; nothing here fails.
     pub(crate) async fn inactive_ranges(

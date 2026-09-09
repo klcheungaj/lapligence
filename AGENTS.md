@@ -1,10 +1,10 @@
 # Lapligence agent guide
 
 Lapligence (`llg`) implements a Verilog/SystemVerilog simulator and language
-server over vendored Surelog v1.87 + UHDM. Both use the shared Rust core:
+server over vendored Slang v11.0. Both use the shared Rust core:
 
-- Simulator: source → parse/compile/elaborate → UHDM → owned `core::db` →
-  `sim::ir::IrModel` → optimization → C11 emission → CMake-built executable
+- Simulator: source → Slang parse/compile/elaborate → owned `core::db` →
+  semantic/execution IR → optimization → C11 emission → CMake-built executable
   containing the runtime and libaco coroutines.
 - LSP: the same frontend → owned analysis → diagnostics, semantic tokens,
   hover, definition, symbols, completion, references, rename/prepareRename,
@@ -20,7 +20,7 @@ contracts in their owning guide and link to them instead of copying them here.
 | --- | --- |
 | Shared source policy | [src/AGENTS.md](src/AGENTS.md): process-memory guard and safeguard review rules |
 | Shared core | [core](src/core/AGENTS.md): compile, owned DB/model, elaboration, tokens, macros |
-| FFI | [ffi](src/ffi/AGENTS.md): sessions, ownership, UHDM/VPI field notes, platform memory primitives |
+| FFI | [ffi](src/ffi/AGENTS.md): snapshot ownership, checked decoding, platform memory primitives |
 | C wrapper | [wrapper](src/wrapper/AGENTS.md): C ABI and C++ conventions |
 | Simulator | [sim](src/sim/AGENTS.md): IR, optimization, emission, model builds; links to lowering and runtime guides |
 | Executables | [bin](src/bin/AGENTS.md): driver modes, allocators, entry points |
@@ -38,11 +38,11 @@ contracts in their owning guide and link to them instead of copying them here.
 - `unsafe` is confined to `src/ffi/`, with soundness explanations. Enforcement:
   `grep -rn "unsafe" src --include=*.rs | grep -v src/ffi` must be empty.
   Everyone else uses stable safe FFI APIs.
-- `core::db::Db::build(design)` is the single elaborated-design VPI traversal
-  into an owned arena. Model, lint, simulator and LSP analysis consumers read
-  owned nodes; extend the DB instead of adding consumer VPI walks.
-- Read values through `vpi::read_value` → owned `ValueData`; the raw
-  `VpiValueData` union is read only inside `ffi/vpi.rs`.
+- `core::db::Db::from_slang` is the single import of the owned Slang semantic
+  graph into the validated database. Model, lint, simulator and LSP consumers
+  read owned data; extend capture instead of adding native AST traversals.
+- Values use frontend-neutral `core::value` and exact four-state/byte payloads.
+  Slang AST pointers and borrowed native memory never cross the safe FFI API.
 - LSP-only dependencies (tower-lsp/tokio/dashmap) stay in `llg_ls`, behind the
   default-on `lsp` feature and the bin's `required-features = ["lsp"]`.
   `cargo build --lib --no-default-features` must work without them.
@@ -52,7 +52,7 @@ contracts in their owning guide and link to them instead of copying them here.
 
 ## Build and references
 
-Cargo's root `build.rs` drives CMake for Surelog/UHDM/ANTLR and the C wrapper.
+Cargo's root `build.rs` drives CMake for Slang, fmt, and the C ABI wrapper.
 Even `cargo check` can require a native build. The release workflow targets
 static-musl Linux on x86_64/arm64, MSVC Windows on x86_64/arm64, and Apple
 Silicon macOS, and audits their linkage contracts. Do not treat a configured
@@ -64,11 +64,10 @@ limitations in local `persistence/platforms.md`.
 - `llg_ls` and `helloworld` select mimalloc as their Rust global allocator. On
   musl Linux, `build.rs` and `mimalloc_shim.c` redirect C `malloc`/`free`
   through `--wrap` for every binary.
-- Preserve the native `#[link]` attributes in `ffi/surelog.rs` and
-  `ffi/vpi.rs`; they carry the wrapper and frontend archives through the Rust
-  library boundary.
-- Wrapper changes rebuild quickly; vendored Surelog/CMake changes trigger a
-  full frontend rebuild.
+- Preserve the native `#[link]` attributes in `ffi/slang.rs`; they carry the
+  wrapper, Slang, and fmt archives through the Rust library boundary.
+- Wrapper changes rebuild the shim; vendored Slang/CMake changes can rebuild
+  the frontend. Musl uses static target archives and the shared allocator shim.
 - `vendor/libaco` documents `aco_create`, `aco_resume`, `aco_yield`, `aco_exit`,
   shared stacks and per-coroutine save stacks.
   Verilog/SystemVerilog LRMs are PDFs in `docs/specification/`.
@@ -83,15 +82,15 @@ APIs/flags against vendored headers, be precise and conservative, state
 uncertainty, and ask only when needed for correctness.
 
 Use the Cargo.toml Rust edition, rustfmt defaults, idiomatic `Result`/`Option`
-over panics, and existing error types (`surelog::Diag`, `elab::ElabError`). Add
+over panics, and existing error types (`compile::Diag`, `elab::ElabError`). Add
 error enums or explicit lifetimes only when needed; favor clarity over clever
 generics. Do not optimize without evidence: explain expected benefit and
 trade-offs; avoid unsolicited micro-optimizations. C++ conventions live in the
 wrapper guide. Do not add Python comments/docstrings unless requested.
 
 Prefer Rust unit/integration tests, including Rust-side FFI tests; new code
-needs coverage unless clearly trivial. Surelog tests use a fresh temporary CWD
-and serialized execution; execution/elaboration uses `compile_checked`, while
+needs coverage unless clearly trivial. Prefer exact in-memory source fixtures. Tests mutating the process CWD must
+restore it and use serialized execution; execution/elaboration uses `compile_checked`, while
 raw `compile` is reserved for partial-result/diagnostic tests. See the test
 guide for cleanup and regression requirements.
 

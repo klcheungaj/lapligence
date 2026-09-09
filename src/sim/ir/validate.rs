@@ -13,7 +13,7 @@ pub struct IrValidationError {
 }
 
 impl IrValidationError {
-    pub(super) fn new(path: impl Into<String>, detail: impl Into<String>) -> Self {
+    pub(in crate::sim) fn new(path: impl Into<String>, detail: impl Into<String>) -> Self {
         Self {
             path: path.into(),
             detail: detail.into(),
@@ -1324,6 +1324,9 @@ mod tests {
             shape: IrShape::RunOnce,
             pre_fns: Vec::new(),
             body: vec![IrStmt::Release { sig: 1 }],
+            origin: crate::sim::semantic::Origin::Synthetic {
+                reason: "validation fixture".to_owned(),
+            },
         });
         model.spawns.push("proc".to_string());
 

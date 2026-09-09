@@ -17,7 +17,7 @@
 use crate::core::db::{CaseKind, Db, ExprKind, NodeId, NodeKind, StmtKind};
 use crate::core::lint::rules::analysis::all_nodes;
 use crate::core::lint::{LintCtx, LintDiag, LintRule, LintSeverity};
-use crate::ffi::vpi::ValueData;
+use crate::core::value::ValueData;
 
 /// Warns about overlapping wildcard items and constant selectors in
 /// `casez`/`casex` statements.
@@ -133,6 +133,28 @@ fn pattern_of(db: &Db, id: NodeId) -> Option<Vec<Bit>> {
         NodeKind::Expr(ExprKind::Constant { value, size, .. }) => (value, *size),
         _ => return None,
     };
+    if let ValueData::Vector {
+        bit_width,
+        value_words,
+        unknown_words,
+        ..
+    } = value
+    {
+        let width = usize::try_from(*bit_width).ok()?;
+        return (0..width)
+            .rev()
+            .map(|bit| {
+                let mask = 1_u64 << (bit % 64);
+                let unknown = *unknown_words.get(bit / 64)? & mask != 0;
+                let value = *value_words.get(bit / 64)? & mask != 0;
+                Some(if unknown {
+                    Bit::Wild
+                } else {
+                    Bit::Known(value)
+                })
+            })
+            .collect();
+    }
     let (digits, bits_per_digit): (&str, u32) = match value {
         ValueData::Bin(s) => (s, 1),
         ValueData::Oct(s) => (s, 3),

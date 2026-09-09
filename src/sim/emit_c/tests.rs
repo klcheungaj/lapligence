@@ -1,6 +1,53 @@
 use super::*;
 use crate::sim::ir::{IrExpr, IrExprKind, IrModel, IrPreFn, IrStmt};
 
+fn render(model: &IrModel) -> Result<String, EmitError> {
+    let execution = crate::sim::execution::ExecutionModel::lower(model.clone())
+        .map_err(EmitError::InvalidIr)?;
+    super::render(&execution)
+}
+
+#[test]
+fn executable_sensitivity_blocks_drive_process_emission() {
+    use crate::sim::ir::{IrModelParts, IrProcess, IrShape, IrSignal, IrType};
+
+    let process = IrProcess::new(
+        "p_comb".into(),
+        "top.comb".into(),
+        IrShape::SensLoop {
+            reads: vec!["signal_a".into()],
+        },
+        vec![],
+        vec![IrStmt::Finish],
+    );
+    let ir = IrModel::from_parts(
+        "top".into(),
+        1,
+        IrModelParts {
+            signals: vec![IrSignal::new(
+                "signal_a".into(),
+                Some("top.signal_a".into()),
+                IrType::packed(1, false).unwrap(),
+                None,
+            )
+            .unwrap()],
+            processes: vec![process],
+            spawns: vec!["p_comb".into()],
+            ..IrModelParts::default()
+        },
+    )
+    .unwrap();
+    let execution = crate::sim::execution::ExecutionModel::lower(ir).unwrap();
+
+    let rendered = super::render(&execution).unwrap();
+
+    assert_eq!(rendered.matches("llg_rt_finish();").count(), 1);
+    let loop_start = rendered.find("for (;;) {").unwrap();
+    let wait = rendered.find("llg_wait_any").unwrap();
+    let finish = rendered.find("llg_rt_finish();").unwrap();
+    assert!(loop_start < finish && finish < wait);
+}
+
 #[test]
 fn runtime_width_limit_is_a_backend_policy_not_an_ir_invariant() {
     let model = IrModel::new("wide".to_owned(), 1).unwrap();

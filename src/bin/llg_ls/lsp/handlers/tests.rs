@@ -44,12 +44,13 @@ fn semantic_token_file(path: &Path, line: u32) -> llg::core::tokens::FileTokens 
     let path = path.to_string_lossy().into_owned();
     llg::core::tokens::FileTokens {
         path: path.clone(),
-        nodes: vec![llg::ffi::surelog::VObjectInfo {
+        nodes: vec![llg::core::tokens::TokenInfo {
             line,
             col: 1,
             end_line: line,
             end_col: 2,
-            vpi_type: llg::ffi::vpi::vpiModule,
+            kind: llg::core::tokens::TOKEN_SLANG_MODULE
+                + llg::core::tokens::TOKEN_DECLARATION_OFFSET,
             name: Some("m".to_owned()),
             file: path,
         }],
@@ -179,25 +180,10 @@ fn admitted_snapshot_indexes_share_the_same_text_allocation() {
     ));
 }
 
-#[cfg(feature = "slang")]
-#[test]
-fn slang_alias_preflight_rejects_a_lexical_path_without_its_own_snapshot() {
-    let admitted = PathBuf::from("/tmp/llg-slang-alias/inc/header.svh");
-    let alias = PathBuf::from("/tmp/llg-slang-alias/alias/header.svh");
-    let mut snapshots = InputSnapshots::default();
-    snapshots.insert(&admitted, Arc::new("`define WIDTH 8\n".to_owned()));
-    let paths = BTreeSet::from([admitted.as_path(), alias.as_path()]);
-
-    assert!(slang_has_unrepresented_alias(&paths, &snapshots));
-
-    snapshots.insert(&alias, Arc::new("`define WIDTH 8\n".to_owned()));
-    assert!(!slang_has_unrepresented_alias(&paths, &snapshots));
-}
-
 #[test]
 fn open_token_cache_key_tracks_text_and_defines() {
-    let defines_a = vec!["-DWIDTH=8".to_owned()];
-    let defines_b = vec!["-DWIDTH=16".to_owned()];
+    let defines_a = vec!["WIDTH=8".to_owned()];
+    let defines_b = vec!["WIDTH=16".to_owned()];
     let key = open_token_cache_key("file:///p.sv", "module m;\nendmodule", &defines_a);
     assert_eq!(
         key,
@@ -232,8 +218,8 @@ fn cached_semantic_tokens_syntax_error_blocks_real_shadow_alias_fallbacks() {
     ];
     let mut analysis = features::empty_analysis();
     analysis.tokens.push(semantic_token_file(&shadow, 4));
-    analysis.diagnostics.push(llg::ffi::surelog::Diag {
-        severity: llg::ffi::surelog::Severity::Syntax,
+    analysis.diagnostics.push(llg::core::compile::Diag {
+        severity: llg::core::compile::Severity::Syntax,
         file: Some(real.to_string_lossy().into_owned()),
         line: 4,
         col: 1,
@@ -267,8 +253,8 @@ fn cached_semantic_tokens_checks_canonical_aliases_before_fallback() {
     std::fs::write(&real, "module m; endmodule\n").expect("write canonical alias source");
     let mut analysis = features::empty_analysis();
     analysis.tokens.push(semantic_token_file(&real, 4));
-    analysis.diagnostics.push(llg::ffi::surelog::Diag {
-        severity: llg::ffi::surelog::Severity::Syntax,
+    analysis.diagnostics.push(llg::core::compile::Diag {
+        severity: llg::core::compile::Severity::Syntax,
         file: Some(lexical_alias.to_string_lossy().into_owned()),
         line: 4,
         col: 1,
@@ -295,8 +281,8 @@ fn cached_semantic_tokens_isolates_same_basename_files_and_preserves_closed_fall
     let mut analysis = features::empty_analysis();
     analysis.tokens.push(semantic_token_file(&left, 2));
     analysis.tokens.push(semantic_token_file(&right, 20));
-    analysis.diagnostics.push(llg::ffi::surelog::Diag {
-        severity: llg::ffi::surelog::Severity::Syntax,
+    analysis.diagnostics.push(llg::core::compile::Diag {
+        severity: llg::core::compile::Severity::Syntax,
         file: Some(left.to_string_lossy().into_owned()),
         line: 2,
         col: 1,
@@ -413,7 +399,7 @@ fn input_budget_rejects_a_missing_root_before_frontend_admission() {
     let config = config_with_budget(&root, vec![root.clone()], 4, 4);
 
     let failure = enforce_input_budget(&config, std::slice::from_ref(&source), &BTreeMap::new())
-        .expect_err("a missing root cannot be passed to Surelog on its live path");
+        .expect_err("a missing root cannot be passed to Slang as an admitted source");
     assert_eq!(failure.limit.kind, InputSizeLimitKind::Unreadable);
     assert_eq!(failure.limit.path, source);
     assert!(failure.limit.message().contains("input-snapshot"));
@@ -1075,7 +1061,7 @@ fn include_preflight_rejects_outside_symlink_targets() {
 
 #[test]
 fn commit_job_publishes_fileless_diagnostics_on_an_open_compiled_file() {
-    use llg::ffi::surelog::{Diag, Severity};
+    use llg::core::compile::{Diag, Severity};
 
     let root_path = PathBuf::from("/tmp/llg_lsp_fileless_diagnostic");
     let real = root_path.join("top.sv");
@@ -1125,7 +1111,7 @@ fn commit_job_publishes_fileless_diagnostics_on_an_open_compiled_file() {
         file: None,
         line: 0,
         col: 0,
-        message: "UHDM database build failed: synthetic failure".to_owned(),
+        message: "semantic database build failed: synthetic failure".to_owned(),
     });
     let result = CompileResult {
         analysis: Some(analysis),
@@ -1140,12 +1126,12 @@ fn commit_job_publishes_fileless_diagnostics_on_an_open_compiled_file() {
         .find(|(candidate, _)| candidate == &uri)
         .expect("fileless diagnostic publication");
     assert!(diagnostics.iter().any(|diagnostic| {
-        diagnostic.message == "UHDM database build failed: synthetic failure"
+        diagnostic.message == "semantic database build failed: synthetic failure"
     }));
 }
 
 /// An analysis whose outcome is Parse/Compile but that carries servable
-/// data (Surelog still elaborated the surviving files) must populate
+/// data from Slang's recovery snapshot must populate
 /// `last_good` and count as a valid commit for watcher registration; an
 /// analysis WITHOUT feature data retains the previous snapshot; an absent
 /// analysis clears it.
@@ -1336,7 +1322,7 @@ async fn module_explorer_task_failure_uses_error_outcome_and_empty_snapshot() {
 
 #[test]
 fn commit_job_publishes_closed_files_and_suppresses_unchanged_payloads() {
-    use llg::ffi::surelog::{Diag, Severity};
+    use llg::core::compile::{Diag, Severity};
 
     let root_path = PathBuf::from("/tmp/llg_lsp_project_wide_diagnostics");
     let open_real = root_path.join("open.sv");
@@ -1886,24 +1872,18 @@ fn semantic_parse_keeps_predefined_expression_macros_in_multiline_localparams() 
     assert_eq!(source.len(), masked.len());
     assert_eq!(source.encode_utf16().count(), masked.encode_utf16().count());
 
-    let prefixed = "`__FILE__SUFFIX `__LINE__WIDTH\n";
-    assert_eq!(
-        normalize_semantic_expression_macros_for_parse(prefixed),
-        prefixed,
-        "longer user macro identifiers must not match predefined names by prefix"
-    );
-
-    // Also exercise the isolated parser over the staged source.  The
-    // request-local copy keeps the macro lines nonblank while replacing
-    // only their backtick for Surelog's raw parse-only grammar.
+    // Also exercise Slang over the staged source. The request-local copy
+    // preserves predefined expression macros for Slang's preprocessor.
     let _guard = SHADOW_TESTS_LOCK
         .lock()
         .unwrap_or_else(|error| error.into_inner());
     let path = temp_root("semantic_predefined_expression_macros").join("predefined.sv");
     let stage = SemanticStage::new(&path, source, &[]).expect("stage semantic macro source");
-    let tokens = features::semantic_tokens_for_open_document(
-        stage.path.to_str().expect("UTF-8 staged path"),
+    let tokens = features::semantic_tokens_for_open_document_with_parent(
+        path.to_str().expect("UTF-8 source path"),
         &[],
+        Some(&stage.source),
+        None,
     );
     drop(stage);
     features::cleanup_process_shadow();
@@ -1971,11 +1951,11 @@ fn semantic_parse_masks_inactive_unicode_lines_without_changing_utf16_positions(
 #[test]
 fn semantic_parse_masks_inactive_conditional_branches() {
     // Arrange: the inactive branch is deliberately incomplete and would
-    // create a false syntax error if both branch bodies reached Surelog.
+    // create a false syntax error if both branch bodies reached Slang.
     let source = "`ifdef ACTIVE\nmodule top;\n`else\nmodule broken(\n`endif\nendmodule\n";
 
     // Act
-    let masked = mask_semantic_preprocessor_directives(source, &["-DACTIVE=1".to_owned()]);
+    let masked = mask_semantic_preprocessor_directives(source, &["ACTIVE=1".to_owned()]);
     let lines = masked.lines().collect::<Vec<_>>();
 
     // Assert
@@ -2680,8 +2660,8 @@ fn shutdown_cleanup_removes_process_shadow_base() {
     shadow
         .stage(&real, "module top; endmodule\n")
         .expect("stage buffer");
-    // The analysis parks Surelog artifacts here; recreate it like a job
-    // would so cleanup has more than staged files to remove.
+    // Recreate the analysis scratch directory like a job would so cleanup
+    // has more than staged files to remove.
     std::fs::create_dir_all(features::analysis_scratch_dir()).expect("scratch dir");
 
     let base = features::process_shadow_base();

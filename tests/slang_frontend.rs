@@ -1,15 +1,22 @@
-#![cfg(feature = "slang")]
-
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use llg::core::compile::slang::{
-    self, CompileError, CompileOptions, CompileRequest, ConstantValue, DiagnosticProvider,
-    DiagnosticSeverity, SlangErrorKind, Source,
+use llg::ffi::slang::{
+    self, CompileOptions, CompileRequest, ConstantValue, DiagnosticProvider, DiagnosticSeverity,
+    SlangErrorKind, Source,
 };
 
 fn request<'a>(sources: &'a [Source<'a>], options: &'a CompileOptions) -> CompileRequest<'a> {
     CompileRequest { sources, options }
+}
+
+fn compile_valid(request: &CompileRequest<'_>) -> Result<slang::Snapshot, String> {
+    let snapshot = slang::compile(request).map_err(|error| error.to_string())?;
+    if snapshot.has_errors() {
+        Err(format!("blocking diagnostics: {:?}", snapshot.diagnostics))
+    } else {
+        Ok(snapshot)
+    }
 }
 
 fn integer_value(snapshot: &slang::Snapshot, constant_id: u64) -> Option<u64> {
@@ -47,8 +54,8 @@ endmodule
         ..CompileOptions::default()
     };
 
-    let snapshot = slang::compile_checked(&request(&sources, &options))
-        .expect("valid hierarchy should compile");
+    let snapshot =
+        compile_valid(&request(&sources, &options)).expect("valid hierarchy should compile");
     assert!(!snapshot.has_errors());
     assert!(snapshot.analysis_ran());
 
@@ -108,22 +115,163 @@ fn syntax_diagnostics_remain_owned_and_checked_compile_rejects_them() {
             .is_some_and(|range| range.file_id == snapshot.files[0].id)
     }));
 
-    match slang::compile_checked(&request(&sources, &options)) {
-        Err(CompileError::Diagnostics(diagnostics)) => assert!(!diagnostics.is_empty()),
-        other => panic!("expected owned diagnostics, got {other:?}"),
+    let owned_sources = [llg::core::compile::OwnedSource::compilation_unit(
+        "broken.sv",
+        "module broken(input logic a; endmodule\n",
+    )];
+    let error = llg::core::compile::compile_sources_checked(
+        &owned_sources,
+        &llg::core::compile::CompileOpts::default(),
+    )
+    .expect_err("checked facade must reject the same diagnostics");
+    assert!(matches!(
+        error,
+        llg::core::compile::CompileError::FrontendDiagnostics(ref diagnostics)
+            if !diagnostics.is_empty()
+    ));
+}
+
+#[test]
+fn malformed_and_semantically_invalid_sources_report_exact_slang_diagnostics() {
+    struct RejectionCase {
+        name: &'static str,
+        source: &'static str,
+        diagnostic: &'static str,
+        message: &'static str,
+    }
+
+    let cases = [
+        RejectionCase {
+            name: "missing-semicolon.sv",
+            source: "// llg-test-fixture: tests/slang_frontend.rs/missing-semicolon.sv\nmodule top; logic value endmodule",
+            diagnostic: "ExpectedToken",
+            message: "expected ';'",
+        },
+        RejectionCase {
+            name: "unclosed-block.sv",
+            source: "// llg-test-fixture: tests/slang_frontend.rs/unclosed-block.sv\nmodule top; initial begin $display(\"x\"); endmodule",
+            diagnostic: "ExpectedToken",
+            message: "expected 'end'",
+        },
+        RejectionCase {
+            name: "malformed-expression.sv",
+            source: "// llg-test-fixture: tests/slang_frontend.rs/malformed-expression.sv\nmodule top; logic value; assign value = 1 + ; endmodule",
+            diagnostic: "ExpectedExpression",
+            message: "expected expression",
+        },
+        RejectionCase {
+            name: "packed-union-pattern.sv",
+            source: "// llg-test-fixture: tests/slang_frontend.rs/packed-union-pattern.sv\nmodule top; typedef union packed { logic [7:0] a; bit [7:0] b; } u_t; u_t value = '{a: 8'h1}; endmodule",
+            diagnostic: "AssignmentPatternMissingElements",
+            message: "not all elements of array are covered by an assignment pattern key",
+        },
+        RejectionCase {
+            name: "unpacked-union-pattern.sv",
+            source: "// llg-test-fixture: tests/slang_frontend.rs/unpacked-union-pattern.sv\nmodule top; typedef union { logic [7:0] a; bit [7:0] b; } u_t; u_t value = '{a: 8'h1}; endmodule",
+            diagnostic: "BadAssignmentPatternType",
+            message: "invalid target type 'u_t' for assignment pattern",
+        },
+        RejectionCase {
+            name: "chandle-binary-logical.sv",
+            source: "// llg-test-fixture: tests/slang_frontend.rs/chandle-binary-logical.sv\nmodule top; chandle value; initial if (1'b0 || value) $finish; endmodule",
+            diagnostic: "BadBinaryExpression",
+            message: "invalid operands to binary expression ('bit[0:0]' and 'chandle')",
+        },
+        RejectionCase {
+            name: "missing-port.sv",
+            source: "// llg-test-fixture: tests/slang_frontend.rs/missing-port.sv\nmodule child; endmodule module top; logic signal; child inst(.clk(signal)); endmodule",
+            diagnostic: "PortDoesNotExist",
+            message: "port 'clk' does not exist in 'child'",
+        },
+    ];
+
+    for case in cases {
+        let sources = [Source::compilation_unit(case.name, case.source)];
+        let options = CompileOptions::default();
+        let snapshot = slang::compile(&request(&sources, &options))
+            .unwrap_or_else(|error| panic!("{} startup failure: {error}", case.name));
+        let diagnostic = snapshot
+            .diagnostics
+            .iter()
+            .find(|diagnostic| diagnostic.name == case.diagnostic)
+            .unwrap_or_else(|| {
+                panic!(
+                    "{} must report {}: {:?}",
+                    case.name, case.diagnostic, snapshot.diagnostics
+                )
+            });
+        assert_eq!(
+            diagnostic.severity,
+            DiagnosticSeverity::Error,
+            "{}",
+            case.name
+        );
+        assert_eq!(
+            diagnostic.provider,
+            DiagnosticProvider::Compilation,
+            "{}",
+            case.name
+        );
+        assert_eq!(diagnostic.message, case.message, "{}", case.name);
+
+        let range = diagnostic
+            .primary
+            .unwrap_or_else(|| panic!("{} diagnostic must have a source range", case.name));
+        assert_eq!(range.file_id, snapshot.files[0].id, "{}", case.name);
+        let start = usize::try_from(range.start).expect("diagnostic start fits usize");
+        let end = usize::try_from(range.end).expect("diagnostic end fits usize");
+        assert!(
+            start <= end && end <= case.source.len(),
+            "{} invalid diagnostic range {start}..{end}",
+            case.name
+        );
+        assert!(
+            case.source.is_char_boundary(start) && case.source.is_char_boundary(end),
+            "{} diagnostic range must follow source byte boundaries",
+            case.name
+        );
+        assert_eq!(
+            case.source[..start]
+                .bytes()
+                .filter(|byte| *byte == b'\n')
+                .count(),
+            1,
+            "{} diagnostic must point into the single HDL source line",
+            case.name
+        );
+
+        let owned_sources = [llg::core::compile::OwnedSource::compilation_unit(
+            case.name,
+            case.source,
+        )];
+        let checked = llg::core::compile::compile_sources_checked(
+            &owned_sources,
+            &llg::core::compile::CompileOpts::default(),
+        );
+        match checked {
+            Err(llg::core::compile::CompileError::FrontendDiagnostics(diagnostics)) => {
+                assert!(
+                    diagnostics.iter().any(|checked| {
+                        checked.file.as_deref() == Some(case.name)
+                            && checked.message == diagnostic.message
+                    }),
+                    "{} checked facade lost the exact frontend diagnostic: {diagnostics:?}",
+                    case.name
+                );
+            }
+            Err(error) => panic!("{} returned the wrong error class: {error}", case.name),
+            Ok(_) => panic!("{} checked facade exposed an invalid snapshot", case.name),
+        }
     }
 }
 
 #[test]
 fn invalid_requests_are_startup_failures() {
     let options = CompileOptions::default();
-    match slang::compile_checked(&request(&[], &options)) {
-        Err(CompileError::Startup(error)) => {
-            assert_eq!(error.kind(), SlangErrorKind::InvalidArgument);
-            assert!(error.message().contains("source"));
-        }
-        other => panic!("expected startup failure, got {other:?}"),
-    }
+    let error = slang::compile(&request(&[], &options))
+        .expect_err("empty request must be a startup failure");
+    assert_eq!(error.kind(), SlangErrorKind::InvalidArgument);
+    assert!(error.message().contains("source"));
 }
 
 #[test]
@@ -140,7 +288,7 @@ fn resource_limits_accept_the_boundary_and_reject_the_next_record() {
         },
         ..CompileOptions::default()
     };
-    slang::compile_checked(&request(&top_only, &exact_options))
+    compile_valid(&request(&top_only, &exact_options))
         .expect("one source and one instance meet the exact limits");
 
     let two_sources = [
@@ -171,7 +319,7 @@ fn warnings_do_not_turn_a_valid_snapshot_into_failure() {
         "module top; logic [3:0] value = 32'hffff_ffff; endmodule\n",
     )];
     let options = CompileOptions::default();
-    let snapshot = slang::compile_checked(&request(&sources, &options))
+    let snapshot = compile_valid(&request(&sources, &options))
         .expect("warnings should preserve frontend success");
 
     assert!(snapshot
@@ -197,7 +345,7 @@ endmodule
 "#,
     )];
     let options = CompileOptions::default();
-    let snapshot = slang::compile_checked(&request(&sources, &options))
+    let snapshot = compile_valid(&request(&sources, &options))
         .expect("analysis warnings should preserve success");
     let analysis: Vec<_> = snapshot
         .diagnostics
@@ -248,8 +396,7 @@ fn concurrent_compiles_keep_project_state_isolated() {
                 );
                 let sources = [Source::compilation_unit(&name, &text)];
                 let options = CompileOptions::default();
-                slang::compile_checked(&request(&sources, &options))
-                    .expect("concurrent project compile")
+                compile_valid(&request(&sources, &options)).expect("concurrent project compile")
             })
         })
         .collect();
@@ -277,7 +424,7 @@ fn systemverilog_string_parameters_preserve_non_utf8_bytes() {
 "#,
     )];
     let options = CompileOptions::default();
-    let snapshot = slang::compile_checked(&request(&sources, &options))
+    let snapshot = compile_valid(&request(&sources, &options))
         .expect("byte-valued string parameter should compile");
     let parameter = snapshot
         .parameters
@@ -310,8 +457,8 @@ endmodule
 "#,
     )];
     let options = CompileOptions::default();
-    let snapshot = slang::compile_checked(&request(&sources, &options))
-        .expect("typed constants should compile");
+    let snapshot =
+        compile_valid(&request(&sources, &options)).expect("typed constants should compile");
     let value = |name: &str| {
         let parameter = snapshot
             .parameters
@@ -352,7 +499,7 @@ fn admitted_include_buffers_resolve_without_filesystem_reads() {
         include_dirs: vec!["/virtual/project/include".into()],
         ..CompileOptions::default()
     };
-    let snapshot = slang::compile_checked(&request(&sources, &options))
+    let snapshot = compile_valid(&request(&sources, &options))
         .expect("admitted include should resolve from the source cache");
     let value = snapshot
         .parameters

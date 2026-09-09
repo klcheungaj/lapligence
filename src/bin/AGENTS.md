@@ -8,8 +8,8 @@ LSP-only tower-lsp/tokio/dashmap code stays in `llg_ls`.
 | --- | --- |
 | `llg_ls` (`llg_ls/`) | tower-lsp stdio language server; [guide](llg_ls/AGENTS.md) |
 | `llg` (`llg.rs`) | Simulator: compile → lower/IR/opt/emit → automatic CMake build → run |
-| `elab_check` (`elab_check.rs`) | Verifies instance tree, reference bindings, resolved parameters through core compile/elab and FFI |
-| `hellouhdm`, `helloworld`, `llg_demo` | Raw-API demos |
+| `elab_check` (`elab_check.rs`) | Verifies the owned Slang semantic database and resolved hierarchy |
+| `helloslang`, `helloworld`, `llg_demo` | Owned Slang snapshot demonstrations |
 
 ## Simulator driver
 
@@ -28,8 +28,7 @@ LSP-only tower-lsp/tokio/dashmap code stays in `llg_ls`.
 ## Startup and process state
 
 `llg_ls` and `helloworld` set mimalloc's `#[global_allocator]`; musl builds
-also wrap C allocation for every binary in the root build script. Both
-frontends may install
+also wrap C allocation for every binary in the root build script. Binaries may install
 `llg::memory_limit::install[_with_logger]`; policy, defaults, native behavior,
 and generated-child limits are in [../AGENTS.md](../AGENTS.md).
 Platform calls stay in `ffi/process_memory.rs`. The LSP logger uses `LLG_LOG`

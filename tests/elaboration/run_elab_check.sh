@@ -1,14 +1,12 @@
 #!/usr/bin/env bash
-# run_elab_check.sh — verify Surelog elaboration output on the test designs.
+# run_elab_check.sh — verify Slang elaboration output on the test designs.
 #
-# For each design, runs `elab_check` (which forces parse+compile+elaborate+
-# -elabuhdm) and prints the elaborated UHDM summary: instance tree, per-instance
-# object counts, ref-binding ratio, and any residual elaboration gaps
-# (unfolded ranges, implicit sensitivity, unfolded param expressions).
+# For each design, runs `elab_check` and prints the owned semantic summary:
+# instance tree, resolved parameters, database size, and ref-binding ratio.
 #
 # Usage: run_elab_check.sh [path-to-elab_check-binary]
 
-set -u
+set -eu
 
 ELAB_CHECK="${1:-$(dirname "$0")/../../target/debug/elab_check}"
 DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -22,7 +20,7 @@ fi
 run() {
     local top="$1" file="$2"
     echo "===================== $top ($file) ====================="
-    "$ELAB_CHECK" -top "$top" "$DIR/$file" 2>/dev/null
+    "$ELAB_CHECK" --top "$top" "$DIR/$file" 2>/dev/null
     echo
 }
 

@@ -2,13 +2,12 @@
 //! delays (`a = #5 b;`, `a <= #5 b;` — LRM 1364-1995 §9.7.4) and
 //! continuous-assignment delays (`assign #2 y = a;` — §1364-1995 §6.1.3),
 //! procedural parameter/constant-expression delays, plus clean codegen
-//! rejections for event/repeat/dynamic forms. Surelog compile → codegen →
+//! rejections for event/repeat/dynamic forms. Slang compile → codegen →
 //! CMake build → run, asserting exact
 //! stdout against hand-simulated traces.
 //!
-//! Surelog writes `slpp_all/` into the process working directory, so the
-//! tests run with the CWD pointed at a fresh temp dir (serialized through a
-//! mutex, like the other Surelog integration tests).
+//! Tests run with the CWD pointed at a fresh temp dir and serialize process-CWD
+//! changes with the other native integration tests.
 #[path = "support/sim.rs"]
 mod sim_harness;
 
@@ -25,7 +24,7 @@ fn codegen_result(
     sv: &str,
     tag: &str,
 ) -> Result<Result<sim::codegen::GeneratedModel, String>, String> {
-    sim_harness::with_surelog_temp_cwd(tag, |dir| {
+    sim_harness::with_frontend_temp_cwd(tag, |dir| {
         let src = dir.join("tb.sv");
         std::fs::write(&src, sv).map_err(|error| format!("write source: {error}"))?;
         let out = compile::compile_checked(&compile::CompileOpts {
@@ -34,8 +33,9 @@ fn codegen_result(
             ..Default::default()
         })
         .map_err(|e| format!("compile: {e}"))?;
-        let design = out.uhdm_design().ok_or("no UHDM design")?;
-        Ok(sim::codegen::generate(design).map_err(|error| error.to_string()))
+        let db =
+            llg::core::db::Db::from_slang(&out.snapshot).map_err(|error| format!("db: {error}"))?;
+        Ok(sim::codegen::generate(&db).map_err(|error| error.to_string()))
     })
 }
 
@@ -373,8 +373,7 @@ endmodule
 
 /// (g) Event-controlled intra-assignment (`a = @(posedge clk) b;`) is
 /// rejected at codegen with the documented error instead of being silently
-/// degraded (Surelog models the form as an unrecoverable control on the
-/// assignment).
+/// degraded.
 #[test]
 fn sim_intra_delay_event_form_rejected() {
     if !llg::sim::build::cmake_available() {
@@ -613,17 +612,16 @@ endmodule
         Err(error) => error,
     };
     assert!(
-        error.contains("negative or exceeds 64 bits"),
+        error.contains("procedural delay must be a known nonnegative integer"),
         "unexpected codegen error: {error}"
     );
 }
 
 /// Nested mixed-width arithmetic must not be eagerly folded: Verilog widens
 /// `(A+B)` from four to five bits through the outer `+ C`, preserving its
-/// carry and producing 16. The source-only evaluator rejects this form until
-/// it can propagate the complete expression context.
+/// carry and producing a delay of 16.
 #[test]
-fn sim_stmt_mixed_width_delay_expression_rejected() {
+fn sim_stmt_mixed_width_delay_expression_runs_at_16() {
     if !llg::sim::build::cmake_available() {
         eprintln!("SKIP: cmake not available");
         return;
@@ -632,26 +630,22 @@ fn sim_stmt_mixed_width_delay_expression_rejected() {
     parameter logic [3:0] A = 15;
     parameter logic [3:0] B = 1;
     parameter logic [4:0] C = 0;
-    initial #((A + B) + C) $finish;
+    initial begin
+        #((A + B) + C) $display("t=%0t", $time);
+        $finish;
+    end
 endmodule
 "#;
 
-    let result = codegen_result(sv, "mixed_width_stmt_delay").expect("compile should succeed");
-    let error = match result {
-        Ok(_) => panic!("mixed-width procedural delay should be rejected"),
-        Err(error) => error,
-    };
-    assert!(
-        error.contains("full Verilog context propagation"),
-        "unexpected codegen error: {error}"
-    );
+    let stdout = run_sim(sv, "mixed_width_stmt_delay").expect("simulation should run");
+    assert_eq!(stdout, "t=16\n");
 }
 
 /// A mixed-signedness outer expression can reinterpret an already-computed
 /// child. With unsigned outer context, `4'sb1000 / 2` must be treated as
 /// unsigned 8/2 rather than eagerly folded as signed -8/2.
 #[test]
-fn sim_stmt_nested_mixed_signedness_delay_rejected() {
+fn sim_stmt_nested_mixed_signedness_delay_runs_at_4() {
     if !llg::sim::build::cmake_available() {
         eprintln!("SKIP: cmake not available");
         return;
@@ -660,19 +654,15 @@ fn sim_stmt_nested_mixed_signedness_delay_rejected() {
     parameter logic signed [3:0] A = -8;
     parameter logic signed [3:0] B = 2;
     parameter logic        [3:0] C = 0;
-    initial #((A / B) + C) $finish;
+    initial begin
+        #((A / B) + C) $display("t=%0t", $time);
+        $finish;
+    end
 endmodule
 "#;
 
-    let result = codegen_result(sv, "mixed_sign_stmt_delay").expect("compile should succeed");
-    let error = match result {
-        Ok(_) => panic!("nested mixed-signedness procedural delay should be rejected"),
-        Err(error) => error,
-    };
-    assert!(
-        error.contains("mixed signedness") && error.contains("full Verilog context propagation"),
-        "unexpected codegen error: {error}"
-    );
+    let stdout = run_sim(sv, "mixed_sign_stmt_delay").expect("simulation should run");
+    assert_eq!(stdout, "t=4\n");
 }
 
 /// Signal-dependent delay expressions need a runtime-valued delay IR and are
@@ -698,7 +688,7 @@ endmodule
         Err(error) => error,
     };
     assert!(
-        error.contains("is not a resolved integer parameter"),
+        error.contains("procedural delay") && error.contains("runtime-valued"),
         "unexpected codegen error: {error}"
     );
 }
@@ -731,7 +721,7 @@ endmodule
     match result {
         Ok(_) => panic!("codegen should reject negative continuous-assignment delays"),
         Err(e) => assert!(
-            e.contains("must be a non-negative constant"),
+            e.contains("procedural delay must be a known nonnegative integer"),
             "unexpected codegen error: {e}"
         ),
     }
@@ -828,10 +818,9 @@ endmodule
     }
 
     // Compile once and lower the same owned frontend snapshot with both
-    // optimizer configurations. Surelog v1.87 does not reliably start a
-    // second full session in the same process, and recompilation is not part
-    // of the behavior this differential test is intended to compare.
-    let (on, off) = sim_harness::with_surelog_temp_cwd("delay-opt", |dir| {
+    // optimizer configurations; recompilation is outside the behavior this
+    // differential test compares.
+    let (on, off) = sim_harness::with_frontend_temp_cwd("delay-opt", |dir| {
         let src_path = dir.join("tb.sv");
         std::fs::write(&src_path, sv).map_err(|error| format!("write source: {error}"))?;
         let out = compile::compile_checked(&compile::CompileOpts {
@@ -842,12 +831,8 @@ endmodule
         .map_err(|e| format!("compile: {e}"));
         Ok(match out {
             Ok(out) => {
-                let database = out
-                    .uhdm_design()
-                    .ok_or_else(|| "no UHDM design".to_string())
-                    .and_then(|design| {
-                        llg::core::db::Db::build(design).map_err(|error| error.to_string())
-                    });
+                let database =
+                    llg::core::db::Db::from_slang(&out.snapshot).map_err(|error| error.to_string());
                 match database {
                     Ok(database) => (
                         build_and_run(dir, &database, &OptConfig::default()),

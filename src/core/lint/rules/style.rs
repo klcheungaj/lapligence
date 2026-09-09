@@ -10,11 +10,8 @@
 //!
 //! Module and package names come from the design model (they carry the
 //! declaration positions); signal/port/parameter names come from the db
-//! instance tree so positions point at each declaration.  Surelog prefixes
-//! library-qualified names with `<lib>@` (e.g. `work@MyMod_Bad`); the prefix
-//! is stripped before matching.  Flat (not instantiated) module definitions
-//! are name-checked only: their signals/parameters are not captured in the
-//! db (flat module nodes carry no children), so those declarations are not checked.
+//! instance tree so positions point at each declaration. Identifiers retain
+//! their source spelling; library or hierarchy names are separate metadata.
 
 use crate::core::db::NodeKind;
 use crate::core::lint::rules::analysis::iter_instances;
@@ -77,7 +74,7 @@ impl LintRule for StyleRule {
         // Module and package names from the model, which carries their
         // declaration positions.
         for m in &ctx.model.modules {
-            let name = clean_name(&m.name);
+            let name = m.name.as_str();
             if name.is_empty() || (self.module_ok)(name) {
                 continue;
             }
@@ -89,7 +86,7 @@ impl LintRule for StyleRule {
             ));
         }
         for p in &ctx.model.packages {
-            let name = clean_name(&p.name);
+            let name = p.name.as_str();
             if name.is_empty() || (self.module_ok)(name) {
                 continue;
             }
@@ -142,12 +139,6 @@ impl LintRule for StyleRule {
         }
         out
     }
-}
-
-/// Strip the `<library>@` prefix Surelog puts on library-qualified names
-/// (e.g. `work@MyMod_Bad` → `MyMod_Bad`).
-fn clean_name(s: &str) -> &str {
-    s.split_once('@').map(|(_, rest)| rest).unwrap_or(s)
 }
 
 fn diag(message: String, file: Option<String>, line: u32, col: u32) -> LintDiag {
@@ -212,7 +203,7 @@ endmodule
             .iter()
             .find(|d| d.message.contains("MyMod_Bad"))
             .unwrap();
-        assert_eq!((module.line, module.col), (1, 1));
+        assert_eq!((module.line, module.col), (1, 8));
         let param = got
             .iter()
             .find(|d| d.message.contains("parameter name `width`"))

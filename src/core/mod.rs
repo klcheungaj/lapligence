@@ -8,4 +8,4 @@ pub mod lint;
 pub mod macros;
 pub mod model;
 pub mod tokens;
-pub mod vobject_types;
+pub mod value;

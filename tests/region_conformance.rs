@@ -1,6 +1,6 @@
 //! Simulation-region conformance tests (IEEE 1800-2017 §4 scheduling regions).
 //!
-//! Each test compiles a small design (Surelog → codegen → C11 via CMake),
+//! Each test compiles a small design (Slang → semantic DB → codegen → C11 via CMake),
 //! runs the simulator executable and asserts the exact stdout against a
 //! hand-simulated trace of the region loop:
 //!
@@ -12,9 +12,9 @@
 //! region and the NBA region (LRM §4.4.2): a `#0` continuation reads the
 //! pre-NBA values of the same time step.
 //!
-//! Surelog writes `slpp_all/` into the process working directory, so every
+//! These tests temporarily change the process working directory, so every
 //! test runs with the CWD pointed at a fresh temp dir (serialized through a
-//! mutex, like the other Surelog integration tests).
+//! mutex, to avoid process-wide CWD races).
 
 use std::process::Command;
 use std::sync::Mutex;
@@ -26,7 +26,7 @@ use llg::sim;
 #[path = "support/sim.rs"]
 mod sim_harness;
 
-static SURELOG_LOCK: Mutex<()> = Mutex::new(());
+static CWD_LOCK: Mutex<()> = Mutex::new(());
 
 /// Compile `sv` (top module `tb`), codegen, compile the model with the
 /// runtime + libaco and run it; returns `(stdout, stderr)`.  Each call uses
@@ -44,8 +44,9 @@ fn run_design(sv: &str, tag: &str) -> Result<(String, String), String> {
         if !out.ok() {
             return Err(format!("compile diagnostics: {:?}", out.diagnostics));
         }
-        let design = out.uhdm_design().ok_or("no UHDM design")?;
-        let gen = sim::codegen::generate(design).map_err(|e| format!("codegen: {e}"))?;
+        let db =
+            llg::core::db::Db::from_slang(&out.snapshot).map_err(|error| format!("db: {error}"))?;
+        let gen = sim::codegen::generate(&db).map_err(|e| format!("codegen: {e}"))?;
         let exe = sim::build::build_model_cmake(dir, &[("model.c", gen.model_c.as_str())])
             .map_err(|e| format!("cmake: {e}"))?;
         let output = sim_harness::run_command(&mut Command::new(&exe), Duration::from_secs(60))?;
@@ -117,7 +118,7 @@ fn region_nba_visibility() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
+    let _guard = CWD_LOCK.lock().unwrap();
     let (stdout, _stderr) = run_design(NBA_VISIBILITY_SV, "nba").expect("simulation should run");
     assert_eq!(
         stdout,
@@ -152,7 +153,7 @@ fn region_zero_delay_inactive() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
+    let _guard = CWD_LOCK.lock().unwrap();
     let (stdout, _stderr) =
         run_design(ZERO_DELAY_INACTIVE_SV, "zero_inactive").expect("simulation should run");
     assert_eq!(stdout, "a=0\n");
@@ -189,7 +190,7 @@ fn region_zero_delay_multi_proc() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
+    let _guard = CWD_LOCK.lock().unwrap();
     let (stdout, _stderr) =
         run_design(ZERO_DELAY_MULTI_PROC_SV, "zero_multi").expect("simulation should run");
     assert_eq!(stdout, "a=0 b=0\n");
@@ -261,7 +262,7 @@ fn region_multi_delta_settle() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
+    let _guard = CWD_LOCK.lock().unwrap();
     let (stdout, _stderr) =
         run_design(MULTI_DELTA_SETTLE_SV, "delta").expect("simulation should run");
     assert_eq!(
@@ -314,7 +315,7 @@ fn region_blocking_order_fifo() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
+    let _guard = CWD_LOCK.lock().unwrap();
     let (stdout, _stderr) =
         run_design(BLOCKING_ORDER_FIFO_SV, "fifo").expect("simulation should run");
     assert_eq!(stdout, "after p1: a=1\nafter p2: a=0\nfinal: a=0\n");
@@ -365,7 +366,7 @@ fn region_wait_edge_nba_commit() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
+    let _guard = CWD_LOCK.lock().unwrap();
     let (stdout, _stderr) =
         run_design(WAIT_EDGE_NBA_COMMIT_SV, "edge").expect("simulation should run");
     assert_eq!(stdout, "NBA recorded: t=1 clk=0\nposedge seen: t=1 clk=1\n");
@@ -401,7 +402,7 @@ fn region_zero_delay_loop_guard() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
+    let _guard = CWD_LOCK.lock().unwrap();
     let (stdout, stderr) =
         run_design(ZERO_DELAY_LOOP_GUARD_SV, "zeroloop").expect("simulation should terminate");
     assert_eq!(stdout, "");
@@ -459,7 +460,7 @@ fn region_fork_join_delta() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
+    let _guard = CWD_LOCK.lock().unwrap();
     let (stdout, _stderr) =
         run_design(FORK_JOIN_DELTA_SV, "forkjoin").expect("simulation should run");
     assert_eq!(

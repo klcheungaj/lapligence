@@ -7,15 +7,13 @@
 //! unsupported expressions and ambiguous multi-dimensional packed types are
 //! consequently quiet.
 
-#![allow(non_upper_case_globals)] // VPI operator constants use this style.
-
 use std::collections::HashSet;
 
 use crate::core::db::{Db, ExprKind, NodeId, NodeKind, Operation};
 use crate::core::elab::{Bit, Val, Value};
 use crate::core::lint::rules::analysis::{all_nodes, scope_path};
 use crate::core::lint::{LintCtx, LintDiag, LintRule, LintSeverity};
-use crate::ffi::vpi::{self, ValueData};
+use crate::core::value::ValueData;
 
 /// Flags bit, part and indexed-part selects whose known bounds are outside
 /// the selected object's declared packed or unpacked dimensions.
@@ -109,8 +107,8 @@ impl SelectViolation {
 }
 
 /// Check a simple bit select.  A direct bit select whose base is an unpacked
-/// array is the one-dimensional array-select shape emitted by some UHDM
-/// objects; ordinary packed selects use the owned packed-range projection.
+/// array is the one-dimensional array-select shape emitted by some captured
+/// array expressions; ordinary packed selects use the owned packed-range projection.
 fn check_bit_or_array_select(db: &Db, base: NodeId, index: NodeId) -> Option<SelectViolation> {
     let object = declaration_object(db, base)?;
     if matches!(db.node_kind(object), NodeKind::Array { .. }) {
@@ -250,7 +248,7 @@ fn check_array_select(db: &Db, base: NodeId, indices: &[NodeId]) -> Option<Selec
             check_packed_indexed_part_select(db, object, *base_expr, *width_expr, *neg)
         }
         _ => {
-            // In the compact UHDM shape, the trailing element bit index is a
+            // In the compact array-select shape, the trailing element bit index is a
             // plain constant/ref rather than a nested bit_select.
             check_packed_bit_select(db, object, extra)
         }
@@ -464,41 +462,7 @@ fn eval_integer(db: &Db, id: NodeId) -> Option<i128> {
 }
 
 fn value_to_i128(value: &ValueData) -> Option<i128> {
-    match value {
-        ValueData::Int(value) => Some(*value as i128),
-        ValueData::UInt(value) => Some(i128::from(*value)),
-        ValueData::Bin(digits) => parse_radix(digits, 2),
-        ValueData::Oct(digits) => parse_radix(digits, 8),
-        ValueData::Hex(digits) => parse_radix(digits, 16),
-        ValueData::Dec(digits) => digits
-            .chars()
-            .filter(|digit| *digit != '_')
-            .collect::<String>()
-            .parse::<i128>()
-            .ok(),
-        ValueData::Scalar(scalar) => match *scalar {
-            vpi::vpi0 | vpi::vpiL => Some(0),
-            vpi::vpi1 | vpi::vpiH => Some(1),
-            _ => None,
-        },
-        _ => None,
-    }
-}
-
-fn parse_radix(digits: &str, radix: u32) -> Option<i128> {
-    let mut value = 0i128;
-    let mut any = false;
-    for digit in digits.chars() {
-        if digit == '_' {
-            continue;
-        }
-        let digit = digit.to_digit(radix)?;
-        value = value
-            .checked_mul(i128::from(radix))?
-            .checked_add(i128::from(digit))?;
-        any = true;
-    }
-    any.then_some(value)
+    value.to_i128()
 }
 
 fn bits_to_i128(value: &Value) -> Option<i128> {

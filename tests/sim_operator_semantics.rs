@@ -1,6 +1,6 @@
 //! End-to-end operator conformance tests.
 //!
-//! Each case runs the standard Surelog → codegen → CMake → executable path
+//! Each case runs the standard Slang → semantic DB → codegen → CMake path
 //! and checks the complete stdout trace.
 
 #[path = "support/sim.rs"]
@@ -14,7 +14,7 @@ use llg::core::db::Db;
 use llg::sim;
 use llg::sim::opt::OptConfig;
 
-static SURELOG_LOCK: Mutex<()> = Mutex::new(());
+static CWD_LOCK: Mutex<()> = Mutex::new(());
 
 /// Run an action from a fresh temporary CWD, then restore the caller's CWD
 /// before removing the temporary design tree.
@@ -49,8 +49,8 @@ fn codegen_error(sv: &str, tag: &str) -> Result<String, String> {
         if !out.ok() {
             return Err(format!("compile diagnostics: {:?}", out.diagnostics));
         }
-        let design = out.uhdm_design().ok_or("no UHDM design")?;
-        match sim::codegen::generate(design) {
+        let db = Db::from_slang(&out.snapshot).map_err(|error| format!("db: {error}"))?;
+        match sim::codegen::generate(&db) {
             Ok(_) => Err("codegen unexpectedly succeeded".to_string()),
             Err(error) => Ok(error.to_string()),
         }
@@ -68,8 +68,7 @@ fn run_optimized_variants(sv: &str, tag: &str) -> Result<(String, String), Strin
         if !out.ok() {
             return Err(format!("compile diagnostics: {:?}", out.diagnostics));
         }
-        let design = out.uhdm_design().ok_or("no UHDM design")?;
-        let db = Db::build(design).map_err(|e| format!("db: {e}"))?;
+        let db = Db::from_slang(&out.snapshot).map_err(|e| format!("db: {e}"))?;
         let optimized = sim::codegen::generate_from_db_with_opts(&db, &OptConfig::default())
             .map_err(|e| format!("codegen(opt-on): {e}"))?;
         let unoptimized = sim::codegen::generate_from_db_with_opts(&db, &OptConfig::none())
@@ -92,7 +91,7 @@ fn run_optimized_variants(sv: &str, tag: &str) -> Result<(String, String), Strin
 }
 
 fn assert_stdout(tag: &str, sv: &str, expected: &str) {
-    let _guard = SURELOG_LOCK
+    let _guard = CWD_LOCK
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     let stdout = run_sim(sv, tag).expect("simulation should run");
@@ -195,7 +194,7 @@ endmodule
 
 #[test]
 fn sim_increment_and_compound_assignment_reject_unsupported_positions() {
-    let _guard = SURELOG_LOCK
+    let _guard = CWD_LOCK
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
 
@@ -400,14 +399,14 @@ fn sim_optimizer_preserves_double_negation_of_z() {
 
     initial begin
         z_value = 8'bzzzz_zzzz;
-        double_negated = ~~z_value;
+        double_negated = ~(~z_value);
         $display("double=%b", double_negated);
         $finish;
     end
 endmodule
 "#;
 
-    let _guard = SURELOG_LOCK
+    let _guard = CWD_LOCK
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     let (optimized, unoptimized) =

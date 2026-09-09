@@ -1,25 +1,22 @@
 #!/bin/sh
 # clean.sh — reclaim disk space from llg build/cache artifacts.
 #
-# What accumulates and why: cargo keys the Surelog CMake build under
-# target/surelog/<triple>/<profile>/ so switching triples or profiles piles up
-# full copies (gigabytes each); simulator model outputs pile up one directory
-# per design under target/sim/; Surelog drops slpp_all/ into whatever CWD a
-# manual run used.  None of these are garbage-collected by cargo or the code.
+# What accumulates and why: cargo keys the Slang CMake build under
+# target/slang/<triple>/<profile>/<workspace-path-key>/ so switching triples,
+# profiles, or container mount paths can accumulate full copies (gigabytes
+# each); simulator model outputs pile up one directory per design under
+# target/sim/. None of these are garbage-collected by cargo.
 #
 # Removes, by default:
-#   (a) target/surelog/<triple>/<profile>/  for every triple/profile EXCEPT the
+#   (a) target/slang/<triple>/<profile>/     for every triple/profile EXCEPT the
 #       currently selected one ($CARGO_BUILD_TARGET, else the uncommented
 #       `[build] target` from .cargo/config.toml, else `rustc -vV` host
 #       triple; $CARGO_BUILD_PROFILE, else "debug")
 #   (b) target/sim/<design>/                generated simulator model trees
-#   (c) slpp_all/                           Surelog preprocess/UHDM scratch in
-#                                           the repository root
-#
 # Options:
 #   --dry-run   list what would be removed (with sizes); delete nothing
-#   --all       also remove the currently selected target/surelog tree
-#               (forces a full multi-minute Surelog rebuild on next build)
+#   --all       also remove the currently selected target/slang tree
+#               (forces a full Slang rebuild on next build)
 #   --logs      additionally remove stale *.log files at depth <= 2 under the
 #               repo root and target/
 #   --help      this text
@@ -40,7 +37,7 @@ dry=0
 all=0
 logs=0
 usage() {
-    sed -n '2,32p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//'
     exit "${1:-0}"
 }
 while [ $# -gt 0 ]; do
@@ -77,8 +74,8 @@ remove() {
 printf 'repository: %s\n' "$repo"
 [ "$dry" = 1 ] && printf 'mode: DRY RUN (nothing deleted)\n'
 
-# ---- (a) target/surelog: keep only the selected triple/profile unless --all
-if [ -d "$target/surelog" ]; then
+# ---- (a) target/slang: keep only the selected triple/profile unless --all
+if [ -d "$target/slang" ]; then
     cur_triple=${CARGO_BUILD_TARGET:-}
     if [ -z "$cur_triple" ]; then
         # Honor a configured default target so its tree is never deleted as
@@ -98,9 +95,9 @@ if [ -d "$target/surelog" ]; then
         printf 'clean.sh: set CARGO_BUILD_TARGET or pass --all to remove everything\n' >&2
         exit 1
     fi
-    for tdir in "$target/surelog"/*/; do
+    for tdir in "$target/slang"/*/; do
         [ -d "$tdir" ] || continue
-        triple=${tdir#"$target/surelog/"}
+        triple=${tdir#"$target/slang/"}
         triple=${triple%/}
         for pdir in "$tdir"*/; do
             [ -d "$pdir" ] || continue
@@ -108,12 +105,12 @@ if [ -d "$target/surelog" ]; then
             profile=${profile##*/}
             rel=$triple/$profile
             if [ "$all" = 1 ]; then
-                remove "${pdir%/}" "surelog build $rel (forced by --all)"
+                remove "${pdir%/}" "slang build $rel (forced by --all)"
             elif [ "$rel" = "$cur_triple/$cur_profile" ]; then
-                printf 'keeping       %8s  surelog/%s (selected)\n' \
+                printf 'keeping       %8s  slang/%s (selected)\n' \
                     "$(du -sh "$pdir" 2>/dev/null | cut -f1)" "$rel"
             else
-                remove "${pdir%/}" "surelog build $rel (selected: $cur_triple/$cur_profile)"
+                remove "${pdir%/}" "slang build $rel (selected: $cur_triple/$cur_profile)"
             fi
         done
     done
@@ -127,10 +124,7 @@ if [ -d "$target/sim" ]; then
     done
 fi
 
-# ---- (c) slpp_all/: Surelog scratch dropped into the repo root
-remove "$repo/slpp_all" "Surelog preprocess/UHDM scratch"
-
-# ---- (d) optional: stale logs near the root
+# ---- (c) optional: stale logs near the root
 if [ "$logs" = 1 ]; then
     find "$repo" -maxdepth 2 -name '*.log' -type f 2>/dev/null | while IFS= read -r f; do
         remove "$f" "stale log"

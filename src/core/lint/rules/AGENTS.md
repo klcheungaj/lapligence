@@ -7,7 +7,7 @@ Assignment and comparison width rules skip unknown operand widths.
 Keep shared graph/data-flow helpers in `analysis.rs` rather than duplicating
 them across rules. New rules need registry entries plus focused behavior and
 configuration tests. Rules consume owned data through `LintCtx`, with no live
-VPI traversal or I/O.
+native traversal or I/O.
 
 - `unused.rs` — `unused-signal`: signals that are never read or used.
 - `width.rs` — `width-mismatch`: assignments and port links with different known widths.
@@ -20,15 +20,8 @@ VPI traversal or I/O.
 - `blocking_in_ff.rs` — `blocking-in-always_ff`: blocking assignments in clocked processes.
 - `nba_in_comb.rs` — `nba-in-always_comb`: nonblocking assignments in combinational processes.
 - `unused_param.rs` — `unused-parameter`: parameters that are never referenced.
-- `implicit_net.rs` — `implicit-net`: flags nets Surelog auto-created from
-  undeclared identifiers.  Signature in the owned db: a [`NodeKind::Net`]
-  whose type info carries no typespec (kind `"other"`) — every declared
-  net/var gets one; the auto-created `logic_net` does not, and its position
-  is the creating use site.  Undeclared identifiers in other positions are
-  not seen here: procedural LHS uses are Surelog elaboration errors
-  ("Illegal lhs of type wire"), plain expression uses leave an unbound ref
-  without a net object, and `` `default_nettype none`` makes Surelog report
-  "Illegal implicit net" itself.
+- `implicit_net.rs` — `implicit-net`: uses the owned Slang implicit-net
+  declaration flag, independent of resolved type spelling or width.
 - `case_default.rs` — `case-default-missing`: case/casex/casez without a
   default arm OUTSIDE the incomplete-case domain (which owns the exact
   case in combinational/latch processes): casex/casez anywhere, exact case
@@ -38,24 +31,10 @@ VPI traversal or I/O.
 - `comparison_width.rs` — `comparison-width-mismatch`: comparisons (`==`,
   `!=`, `<`, `<=`, `>`, `>=`, `===`, `!==`) whose operands both have known
   self-determined widths that differ; skips when either width is unknown.
-- `unconnected_port.rs` — `unconnected-port`: flags instance ports left
-  unconnected — omitted from the connection list, positional gaps, and
-  explicitly-empty `.p()` connections — uniformly at Warning.  The db
-  captures per-port high-connection presence facts (`high_present`,
-  `high_open`) and an owned `high_expr` tree because a resolved `high: None`
-  alone is ambiguous:
-  omitted ports have no `vpiHighConn`, `.p()` is a `vpiNullOp` operation
-  marker (zero operands), and expression/constant connections
-  (`.i(a & b)`, `.v(4'd0)`) are real objects that count as connected.
-  `` `.* ``/`.name` shorthand resolve to ordinary refs.  Ports whose
-  declaration carries a default value that the instantiation leaves
-  omitted are NOT flagged: Surelog binds the default expression as the
-  port's high connection.  Top instances and Surelog's SYNTHESIZED
-  per-port copy interface instances (`analysis::iface_copy_instances` —
-  the `low`-reachable clones plus their unwired same-(parent, name)
-  twins) are skipped; findings sit at the instantiation site (the instance
-  node), messages name the hierarchical display path, positions are
-  clamped to the 1-based contract.
+- `unconnected_port.rs` — `unconnected-port`: flags omitted, positional-gap,
+  and explicitly open child ports. Resolved expressions and declaration
+  defaults count as connected; top ports are external boundaries. Interface
+  connections refer to actual instances, without frontend-generated copies.
 - `mixed_assign.rs` — `mixed-assignments`: one Error per process whose
   statement body contains BOTH blocking (`=`) and non-blocking (`<=`)
   assignments ([`StmtKind::Assign`] only; proc-cont assign, force/release
@@ -68,7 +47,7 @@ VPI traversal or I/O.
   but has no active procedural/continuous driver, declaration initializer,
   connected output/inout flow, or primitive output terminal. Top-level
   external inputs/inouts, explicitly open child ports, implicit nets,
-  intrinsic pull/supply nets, and synthesized interface copies are skipped.
+  and intrinsic pull/supply nets are skipped.
   Input/inout actual expressions are read through the owned port
   `high_expr`, while the historical direct `high` target remains available
   to model/codegen consumers.
@@ -96,7 +75,7 @@ VPI traversal or I/O.
   calls, opaque/unresolved nodes, and nested timing controls are skipped;
   cloned elaborated instances are source-deduplicated.
 - `assignment_condition.rs` — `assignment-in-condition`: flags a captured
-  `vpiAssignmentOp` consumed as an `if`, `while`, `for`, `wait`, or ternary
+  assignment operation consumed as an `if`, `while`, `for`, `wait`, or ternary
   truth predicate. Nested operations are traversed, but explicit equality
   and relational expressions form a boundary; standalone assignments and
   `repeat`/`case`/event expressions are outside the rule.
@@ -106,5 +85,4 @@ VPI traversal or I/O.
 - `analysis.rs` — shared owned-db helpers: read/write collection,
   expression-width computation, scope/instance iteration, port-link
   bookkeeping (deterministic, deduped, first-encounter order),
-  unconnected-port classification (`port_unconnected`), synthesized
-  per-port interface-copy identification (`iface_copy_instances`).
+  and unconnected-port classification (`port_unconnected`).

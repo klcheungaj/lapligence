@@ -2,10 +2,10 @@
 //! only supported model-build path — and the `llg` driver's build-time
 //! `--generator` flag.
 //!
-//! Surelog writes `slpp_all/` into the process working directory, so the
+//! The
 //! library-level cases run with the CWD pointed at a fresh harness temp dir;
 //! the driver-level cases spawn `llg` with its own temp CWD instead.
-//! Every test holds one shared mutex: besides serializing Surelog (like the
+//! Every test holds one shared mutex to serialize process-CWD changes (like the
 //! other simulator suites), it also keeps the process-global `$LLG_CMAKE`
 //! mutation in `missing_cmake_error` from racing another test's
 //! `build_model_cmake` call (and its `cmake_available()` probe).
@@ -110,7 +110,7 @@ fn generator_supported(generator: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// Compile + codegen the counter design (Surelog needs the CWD juggling).
+/// Compile + codegen the counter design in an isolated CWD.
 fn compile_counter(dir: &std::path::Path) -> Result<sim::codegen::GeneratedModel, String> {
     let src = dir.join("counter.sv");
     std::fs::write(&src, COUNTER_SV).expect("write source");
@@ -123,8 +123,9 @@ fn compile_counter(dir: &std::path::Path) -> Result<sim::codegen::GeneratedModel
     if !out.ok() {
         return Err(format!("compile diagnostics: {:?}", out.diagnostics));
     }
-    let design = out.uhdm_design().ok_or("no UHDM design")?;
-    sim::codegen::generate(design).map_err(|e| format!("codegen: {e}"))
+    let db =
+        llg::core::db::Db::from_slang(&out.snapshot).map_err(|error| format!("db: {error}"))?;
+    sim::codegen::generate(&db).map_err(|e| format!("codegen: {e}"))
 }
 
 /// Run a built simulator executable and return its captured stdout.

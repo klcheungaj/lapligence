@@ -13,7 +13,7 @@ A rule engine over the owned database + design model (`core::db::Db`,
   `--lint-config <path>` loads a `llg-lint.toml` (see below) that
   enables/disables rules and overrides severities for the pass.
 
-Rules read only owned data — no VPI access, no raw FFI, no LSP dependencies.
+Rules read only owned data — no native AST access, no raw FFI, no LSP dependencies.
 
 ## API
 
@@ -66,8 +66,8 @@ Stable order: `unused-signal`, `width-mismatch`, `incomplete-case`,
 
 - **No `unsafe`** — enforced by the repo grep rule
   (`grep -rn "unsafe" src --include=*.rs | grep -v src/ffi` must be empty).
-- **No VPI access** — rules work on the owned `db`/`model` built by
-  `core::db::Db::build`; `core::db` is the single VPI traversal point.
+- **No native AST access** — rules work on the owned `db`/`model` captured
+  through Slang; `core::db` is the single semantic import authority.
 - **No LSP dependencies** (tower-lsp/tokio/dashmap stay in `src/bin/llg_ls`).
 - `unused-signal` still uses its historical activity model, but
   `undriven-signal` additionally accounts for captured structural primitive

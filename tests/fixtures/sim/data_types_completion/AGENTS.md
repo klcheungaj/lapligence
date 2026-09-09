@@ -11,10 +11,10 @@ execution contracts and one explicit unsupported-boundary contract:
 - `packed_struct_assignment_patterns.sv`: 128-/512-bit positional, named,
   default, simple-type, and named-type patterns with mixed state and generate
   scope.
-- `packed_union_assignment_patterns.sv`: single-member packed-union patterns
-  and shared 128-/512-bit representation.
-- `unpacked_aggregate_assignment_patterns.sv`: unpacked struct/union patterns
-  over fixed packed integral members.
+- `packed_union_assignment_patterns.sv`: direct packed-union initialization,
+  selected-member writes, and shared 128-/512-bit representation.
+- `unpacked_aggregate_assignment_patterns.sv`: unpacked struct patterns and
+  unpacked-union selected-member writes over fixed packed integral members.
 - `dynamic_array_reductions.sv`, `queue_reductions.sv`, and
   `associative_array_reductions.sv`: typed wide reductions, modular arithmetic,
   X/Z behavior, order independence, and empty identities.
@@ -29,8 +29,8 @@ Original contract table and local LRM basis:
 | `string_real_conversion.sv` | Positive: numeric-prefix, whitespace/sign/exponent, invalid-string `atoreal`, and nonempty exact-value `realtoa` round trips | §6.16.10, §6.16.15 |
 | `string_wide_real_contexts.sv` | Positive: 128-/512-bit real/integral assignment and argument conversions above 64 bits | §6.12.2, §6.16.10, §6.16.15 |
 | `packed_struct_assignment_patterns.sv` | Positive: 128-/512-bit positional, named, default, simple-type, and named-type declaration patterns, including mixed two-/four-state members and generate scope | §7.2.1, §10.9.2 |
-| `packed_union_assignment_patterns.sv` | Positive: single-member packed-union declaration patterns and shared 128-/512-bit representation | §7.3.1, §10.9 |
-| `unpacked_aggregate_assignment_patterns.sv` | Positive: unpacked struct and union declaration patterns over fixed packed integral members | §7.2, §7.3, §10.9.2 |
+| `packed_union_assignment_patterns.sv` | Positive: direct packed initialization, selected-member writes, two-state conversion, and shared 128-/512-bit representation | §7.3.1 |
+| `unpacked_aggregate_assignment_patterns.sv` | Positive: unpacked struct declaration patterns and unpacked-union selected-member writes over fixed packed integral members | §7.2, §7.3, §10.9.2 |
 | `dynamic_array_reductions.sv` | Positive: element-typed 128-bit reductions, modular arithmetic, X/Z propagation, and empty identities | §7.12.3 |
 | `queue_reductions.sv` | Positive: signed 512-bit reductions and empty identities | §7.12.3 |
 | `associative_array_reductions.sv` | Positive: order-independent 128-bit reductions retaining high bits and empty identities | §7.12.3 |

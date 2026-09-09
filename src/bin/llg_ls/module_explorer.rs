@@ -1,7 +1,7 @@
 //! Read-only module hierarchy snapshots for the HDL Modules explorer.
 //!
 //! The snapshot is deliberately built from a committed [`DesignModel`].  It
-//! does not parse, touch the filesystem, or inspect a live Surelog handle, so
+//! does not parse, touch the filesystem, or inspect a live Slang handle, so
 //! requests are cheap and cannot race an analysis job.  The model contains
 //! elaborated instances (including concrete parameterized types), while the
 //! analysis also retains a source definition/instance graph for definitions
@@ -2002,7 +2002,7 @@ fn generated_scope_matches(
     ) {
         return true;
     }
-    // Surelog names an unlabeled source block `genblkN`, so its display name
+    // Slang names an unlabeled source block `genblkN`, so its display name
     // cannot always be matched to the source fallback name. A direct child
     // name/type pair is a safe second identity because the source graph keeps
     // each instance declaration position in the node ID.

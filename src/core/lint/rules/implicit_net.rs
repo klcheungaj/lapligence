@@ -1,20 +1,7 @@
-//! `implicit-net` — signals implicitly declared from an undeclared identifier.
+//! `implicit-net` — signals implicitly declared from undeclared identifiers.
 //!
-//! When an identifier is used where a net is expected but never declared,
-//! Surelog's elaboration silently promotes it to a 1-bit wire (the
-//! `` `default_nettype`` default).  Such a typo usually surfaces as a signal
-//! that is stuck at `z`: it is connected but never driven by anything real.
-//! The created `logic_net` carries **no typespec**, while every explicitly
-//! declared net/variable gets one, so in the owned database the signature of
-//! an implicitly-declared net is a [`NodeKind::Net`] whose [`TypeInfo`] kind
-//! is `"other"` (verified against the pinned Surelog elaboration output; the
-//! object is positioned at its creating use site).
-//!
-//! Undeclared identifiers in other positions degrade differently and are not
-//! seen here: procedural-assignment LHS uses are rejected by Surelog as
-//! elaboration errors ("Illegal lhs of type wire"), plain expression uses
-//! leave an unbound ref without a net object, and `` `default_nettype none``
-//! makes Surelog report "Illegal implicit net" itself.
+//! Slang records whether a net declaration was implicit. The owned database
+//! retains that fact independently of the net's resolved type.
 
 use crate::core::db::NodeKind;
 use crate::core::lint::rules::analysis::{all_nodes, signal_scope_path};
@@ -36,10 +23,10 @@ impl LintRule for ImplicitNetRule {
         let db = ctx.db;
         let mut out = Vec::new();
         for id in all_nodes(db) {
-            let NodeKind::Net { ty, .. } = db.node_kind(id) else {
+            let NodeKind::Net { .. } = db.node_kind(id) else {
                 continue;
             };
-            if ty.kind != "other" {
+            if !db.is_implicit_net(id) {
                 continue;
             }
             let node = db.node(id);
@@ -124,7 +111,7 @@ mod tests {
 
     /// Pins the db signature the rule relies on: a bare explicitly-declared
     /// 1-bit `wire` carries a typespec in the owned db (kind != "other"), so
-    /// it must never fire.  If a Surelog/UHDM bump changes that signature,
+    /// it must never fire.  If frontend capture loses the implicit declaration flag,
     /// this test fails before every declared net starts being flagged.
     #[test]
     fn declared_bare_wire_is_quiet() {

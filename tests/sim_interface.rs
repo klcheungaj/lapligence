@@ -1,14 +1,14 @@
 //! End-to-end simulator tests for interface / modport simulation.
 //!
-//! Surelog writes `slpp_all/` into the process working directory, so the tests
+//! These tests temporarily change the process working directory, so the tests
 //! run with the CWD pointed at a fresh temp dir (serialized through a mutex,
-//! like the other Surelog integration tests).
+//! to avoid process-wide CWD races).
 
 #[path = "support/sim.rs"]
 mod sim_harness;
 use std::sync::Mutex;
 
-static SURELOG_LOCK: Mutex<()> = Mutex::new(());
+static CWD_LOCK: Mutex<()> = Mutex::new(());
 
 fn run_design(sv: &str, tag: &str) -> Result<String, String> {
     sim_harness::run_sim(sv, "top", tag)
@@ -57,7 +57,7 @@ fn sim_interface_modport_propagation() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
+    let _guard = CWD_LOCK.lock().unwrap();
     let sv = r#"interface bus_if #(parameter int W = 8);
     logic [W-1:0] data;
     logic valid;
@@ -116,7 +116,7 @@ fn sim_interface_param_width() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
+    let _guard = CWD_LOCK.lock().unwrap();
     let sv = r#"interface bus_if #(parameter int W = 4);
     logic [W-1:0] data;
     logic valid;

@@ -1,6 +1,6 @@
 //! End-to-end VCD/FST waveform tests.
 //!
-//! These cases exercise the complete Surelog -> IR -> generated C -> CMake
+//! These cases exercise the complete Slang -> semantic IR -> execution IR -> CMake
 //! pipeline.  The runtime's lower-level self-test separately validates queue
 //! wraparound and reopens FST output with GTKWave's official reader.
 
@@ -13,7 +13,7 @@ use std::time::Duration;
 use llg::core::compile;
 use llg::sim;
 
-static SURELOG_LOCK: Mutex<()> = Mutex::new(());
+static CWD_LOCK: Mutex<()> = Mutex::new(());
 fn run_waveform(
     sv: &str,
     tag: &str,
@@ -29,9 +29,9 @@ fn run_waveform(
             ..Default::default()
         })
         .map_err(|error| format!("compile: {error}"))?;
-        let design = output.uhdm_design().ok_or("no UHDM design")?;
-        let generated =
-            sim::codegen::generate(design).map_err(|error| format!("codegen: {error}"))?;
+        let db = llg::core::db::Db::from_slang(&output.snapshot)
+            .map_err(|error| format!("db: {error}"))?;
+        let generated = sim::codegen::generate(&db).map_err(|error| format!("codegen: {error}"))?;
         if !generated.model_c.contains("#define LLG_WAVEFORM 1") {
             return Err("waveform controls did not enable generated runtime support".to_string());
         }
@@ -63,7 +63,7 @@ fn vcd_records_controls_four_state_real_and_final_changes() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
+    let _guard = CWD_LOCK.lock().unwrap();
     let sv = r#"`timescale 1ns/1ps
 module wave_child;
     reg \a.b ;
@@ -145,7 +145,7 @@ fn fst_is_written_by_the_generated_model() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
+    let _guard = CWD_LOCK.lock().unwrap();
     let sv = r#"`timescale 10ps/1ps
 module tb;
     reg [7:0] value;

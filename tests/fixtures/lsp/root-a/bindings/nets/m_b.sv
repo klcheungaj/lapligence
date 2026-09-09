@@ -1,6 +1,6 @@
 // llg-lsp-fixture: root-a/bindings/nets/m_b.sv
-module m_b;
-  logic clk;
+module m_b(input logic clk);
+  logic observed;
 
-  assign clk = 1'b1;
+  assign observed = clk;
 endmodule

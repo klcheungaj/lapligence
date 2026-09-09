@@ -101,8 +101,8 @@ impl LintRule for IncompleteSensitivityListRule {
 /// Return the process's immediate explicit event control, its body, and the
 /// listed signal nodes when the captured representation is trustworthy.
 ///
-/// `Db::walk_event_control` stores one child for each captured sensitivity
-/// expression followed by the body.  Checking that invariant prevents a
+/// The owned event control stores its sensitivity expressions followed by
+/// the body.  Checking that invariant prevents a
 /// partially captured complex expression from being mistaken for a complete
 /// sensitivity list.
 fn simple_sensitivity(db: &Db, process: NodeId) -> Option<(NodeId, NodeId, HashSet<NodeId>)> {
@@ -140,7 +140,7 @@ fn simple_sensitivity(db: &Db, process: NodeId) -> Option<(NodeId, NodeId, HashS
         let EventSpec::AnyChange { sig } = spec else {
             return None;
         };
-        if *child != *sig || db.node(*child).parent != Some(event) {
+        if *child != *sig {
             return None;
         }
 

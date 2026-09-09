@@ -116,7 +116,7 @@ mod tests {
             "{}",
             d.message
         );
-        // Positioned at the process keyword line (Surelog anchors processes
+        // Positioned at the process keyword line (process nodes are anchored
         // at column 1 of their source line).
         assert_eq!(d.line, 4, "{diags:?}");
         assert_eq!(d.col, 1, "{diags:?}");

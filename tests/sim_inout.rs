@@ -2,9 +2,9 @@
 //! child nets through an inout port collapse into one resolved simulated net
 //! (LRM §23.3.3.7) with per-driver resolution (wire/tri, equal strengths).
 //!
-//! Surelog writes `slpp_all/` into the process working directory, so the tests
+//! These tests temporarily change the process working directory, so the tests
 //! run with the CWD pointed at a fresh temp dir (serialized through a mutex,
-//! like the other Surelog integration tests).
+//! to avoid process-wide CWD races).
 
 use std::sync::Mutex;
 
@@ -14,7 +14,7 @@ use llg::sim;
 #[path = "support/sim.rs"]
 mod sim_harness;
 
-static SURELOG_LOCK: Mutex<()> = Mutex::new(());
+static CWD_LOCK: Mutex<()> = Mutex::new(());
 
 /// Compile, codegen, build and run `sv` (top module `tb`); returns the exact
 /// stdout plus the non-fatal codegen warnings.
@@ -31,8 +31,9 @@ fn run_design(sv: &str, tag: &str) -> Result<(String, Vec<String>), String> {
         if !out.ok() {
             return Err(format!("compile diagnostics: {:?}", out.diagnostics));
         }
-        let design = out.uhdm_design().ok_or("no UHDM design")?;
-        let gen = sim::codegen::generate(design).map_err(|e| format!("codegen: {e}"))?;
+        let db =
+            llg::core::db::Db::from_slang(&out.snapshot).map_err(|error| format!("db: {error}"))?;
+        let gen = sim::codegen::generate(&db).map_err(|e| format!("codegen: {e}"))?;
         let exe = sim::build::build_model_cmake(dir, &[("model.c", gen.model_c.as_str())])
             .map_err(|e| format!("cmake: {e}"))?;
         let stdout = sim_harness::run_executable(&exe)?;
@@ -84,7 +85,7 @@ fn sim_inout_bus_resolution() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
+    let _guard = CWD_LOCK.lock().unwrap();
     let sv = r#"`timescale 1ns/1ps
 module ram16 #(parameter W=8)(input wire en, input wire [W-1:0] d, inout wire [W-1:0] bus);
     assign bus = en ? d : 8'hzz;
@@ -150,7 +151,7 @@ fn sim_inout_equal_drivers_no_refire() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
+    let _guard = CWD_LOCK.lock().unwrap();
     let sv = r#"`timescale 1ns/1ps
 module ram16 #(parameter W=8)(input wire en, input wire [W-1:0] d, inout wire [W-1:0] bus);
     assign bus = en ? d : 8'hzz;
@@ -196,7 +197,7 @@ fn sim_inout_skip_warning() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
+    let _guard = CWD_LOCK.lock().unwrap();
     let sv = r#"module child(input wire en, inout wire [7:0] bus);
     assign bus[0] = en;
 endmodule

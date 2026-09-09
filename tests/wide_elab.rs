@@ -1,5 +1,5 @@
 //! End-to-end coverage for wide constants flowing from SystemVerilog source
-//! through Surelog elaboration into the fully owned design model.
+//! through Slang elaboration into the fully owned design model.
 
 use std::fs;
 use std::path::PathBuf;
@@ -8,7 +8,7 @@ use std::sync::Mutex;
 use llg::core::compile::{self, CompileError, CompileOpts, Severity};
 use llg::core::{elab, model};
 
-static SURELOG_LOCK: Mutex<()> = Mutex::new(());
+static CWD_LOCK: Mutex<()> = Mutex::new(());
 
 struct TempCwd {
     path: PathBuf,
@@ -40,7 +40,7 @@ impl Drop for TempCwd {
 }
 
 fn in_temp_cwd(tag: &str, f: impl FnOnce(&TempCwd)) {
-    let _lock = SURELOG_LOCK
+    let _lock = CWD_LOCK
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     let cwd = TempCwd::enter(tag);
@@ -55,8 +55,9 @@ fn compile_model(cwd: &TempCwd, source: &str) -> model::DesignModel {
         ..Default::default()
     })
     .expect("wide design must compile and elaborate cleanly");
-    let design = out.uhdm_design().expect("wide design must have UHDM");
-    let owned = model::DesignModel::build(design).expect("build owned wide design model");
+    let database =
+        llg::core::db::Db::from_slang(&out.snapshot).expect("build owned wide semantic database");
+    let owned = model::DesignModel::from_db(&database);
     drop(out);
     owned
 }
@@ -96,7 +97,7 @@ endmodule
 "#,
         );
 
-        // Assert against the owned model after the Surelog session is gone.
+        // Assert against the owned model after the native compile has returned.
         let child = design
             .instance("wide_top.u_wide")
             .expect("elaborated wide child instance");

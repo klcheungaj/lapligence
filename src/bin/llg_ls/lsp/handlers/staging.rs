@@ -338,9 +338,6 @@ impl ShadowPaths {
             staged: Arc::new(Mutex::new(BTreeSet::new())),
         }
     }
-    pub fn base(&self) -> &Path {
-        &self.base
-    }
     pub fn shadow_path(&self, real: &Path) -> Option<PathBuf> {
         real.is_absolute()
             .then(|| features::shadow_path(real, &self.base))
@@ -391,47 +388,35 @@ impl ShadowPaths {
 
 static NEXT_SEMANTIC_STAGE_ID: AtomicU64 = AtomicU64::new(0);
 
-/// One request-local copy of an open buffer under the private process shadow
-/// base.  The directory is unique so semantic parsing cannot overwrite the
-/// project-analysis shadow copy of the same document.
+/// One request-local open-buffer transformation guarded by a unique private
+/// directory so cleanup stays isolated from project-analysis shadow state.
 pub(super) struct SemanticStage {
     pub(super) directory: PathBuf,
-    pub(super) path: PathBuf,
+    pub(super) source: String,
 }
 
 impl SemanticStage {
-    pub(super) fn new(real: &Path, text: &str, defines: &[String]) -> std::io::Result<Self> {
+    pub(super) fn new(_real: &Path, text: &str, defines: &[String]) -> std::io::Result<Self> {
         let id = NEXT_SEMANTIC_STAGE_ID.fetch_add(1, Ordering::Relaxed);
         let directory = features::process_shadow_base()
             .join("semantic")
             .join(format!("{}-{id}", std::process::id()));
         std::fs::create_dir_all(&directory)?;
-        let file_name = real
-            .file_name()
-            .unwrap_or_else(|| std::ffi::OsStr::new("document.sv"));
-        let path = directory.join(file_name);
-        let masked = mask_semantic_preprocessor_directives(text, defines);
-        let parse_text = normalize_semantic_expression_macros_for_parse(&masked);
-        if let Err(error) = std::fs::write(&path, parse_text) {
-            let _ = std::fs::remove_dir_all(&directory);
-            return Err(error);
-        }
-        Ok(Self { directory, path })
+        Ok(Self {
+            directory,
+            source: mask_semantic_preprocessor_directives(text, defines),
+        })
     }
 }
 
 /// Replace standalone compiler-directive lines with spaces while preserving
-/// every newline and UTF-16 source column. Surelog's `-parseonly` mode bypasses
+/// every newline and UTF-16 source column. Slang's `-parseonly` mode bypasses
 /// preprocessing and otherwise diagnoses valid directives such as
 /// `` `include`` as parser syntax errors. Semantic-token collection is
 /// intentionally source-local, so masking the directives both avoids that
 /// false error and guarantees that includes are not consumed.
 pub(super) fn mask_semantic_preprocessor_directives(text: &str, defines: &[String]) -> String {
-    let inactive_defines = defines
-        .iter()
-        .map(|define| define.strip_prefix("-D").unwrap_or(define).to_owned())
-        .collect::<Vec<_>>();
-    let inactive = crate::inactive_ranges::inactive_line_ranges(text, &inactive_defines);
+    let inactive = crate::inactive_ranges::inactive_line_ranges(text, defines);
     let mut inactive_index = 0usize;
     let mut output = String::with_capacity(text.len());
     let mut continuation = false;
@@ -480,77 +465,6 @@ pub(super) fn mask_semantic_source_line(line: &str) -> String {
         }
     }
     masked
-}
-
-/// Surelog's parse-only mode does not run the preprocessor, so a raw
-/// backtick expression macro is rejected by the parser. Keep the expression
-/// macro line intact in the masker above, then remove only its backtick in the
-/// private staged parse copy; the identifier remains at the same byte and
-/// UTF-16 position and is syntactically valid as an expression operand.
-pub(super) fn normalize_semantic_expression_macros_for_parse(text: &str) -> String {
-    let bytes = text.as_bytes();
-    let mut normalized = bytes.to_vec();
-    let mut index = 0usize;
-    let mut in_block_comment = false;
-    let mut in_string = false;
-    let mut escaped = false;
-
-    while index < bytes.len() {
-        if in_block_comment {
-            if bytes[index..].starts_with(b"*/") {
-                in_block_comment = false;
-                index += 2;
-            } else {
-                index += 1;
-            }
-            continue;
-        }
-        if in_string {
-            if escaped {
-                escaped = false;
-            } else if bytes[index] == b'\\' {
-                escaped = true;
-            } else if bytes[index] == b'"' {
-                in_string = false;
-            }
-            index += 1;
-            continue;
-        }
-        if bytes[index..].starts_with(b"//") {
-            index += 2;
-            while index < bytes.len() && bytes[index] != b'\n' {
-                index += 1;
-            }
-            continue;
-        }
-        if bytes[index..].starts_with(b"/*") {
-            in_block_comment = true;
-            index += 2;
-            continue;
-        }
-        if bytes[index] == b'"' {
-            in_string = true;
-            index += 1;
-            continue;
-        }
-        if bytes[index] == b'`'
-            && SEMANTIC_PREDEFINED_EXPRESSION_MACROS
-                .iter()
-                .any(|macro_name| {
-                    let name = macro_name.as_bytes();
-                    let rest = &bytes[index + 1..];
-                    rest.starts_with(name)
-                        && rest.get(name.len()).is_none_or(|next| {
-                            !next.is_ascii_alphanumeric() && !matches!(*next, b'_' | b'$')
-                        })
-                })
-        {
-            normalized[index] = b' ';
-        }
-        index += 1;
-    }
-
-    String::from_utf8(normalized).expect("macro normalization preserves source UTF-8")
 }
 
 /// Whether the first non-whitespace, non-comment token on this line is one
@@ -671,7 +585,7 @@ pub(super) fn cached_semantic_tokens(
     }
 
     // Preserve the historical basename lookup for closed/project requests,
-    // where Surelog can report a compatible path spelling.  It is disabled
+    // where Slang can report a compatible path spelling.  It is disabled
     // for open buffers so two files with the same basename cannot contaminate
     // an isolated request's cache fallback.  Do not serve a partial stream
     // from a fallback file that is itself syntax-invalid.
@@ -706,7 +620,7 @@ pub(super) fn cached_semantic_file_matches(left: &str, right: &str) -> bool {
 
 pub(super) fn cached_semantic_syntax_diagnostic_matches(analysis: &Analysis, path: &str) -> bool {
     analysis.diagnostics.iter().any(|diagnostic| {
-        matches!(diagnostic.severity, llg::ffi::surelog::Severity::Syntax)
+        matches!(diagnostic.severity, llg::core::compile::Severity::Syntax)
             && diagnostic
                 .file
                 .as_deref()
@@ -745,7 +659,7 @@ pub(super) fn compute_open_document_semantic_tokens(
 }
 
 /// Memoization key of one open-buffer isolated token stream: document URI,
-/// buffer text digest and effective `-D` defines.  These are exactly the
+/// buffer text digest and effective configured defines. These are exactly the
 /// inputs of the request-local `-parseonly` run, so any edit or defines
 /// hot-reload produces a different key while an unchanged repeat hits.
 pub(super) fn open_token_cache_key(uri: &str, text: &str, defines: &[String]) -> String {
@@ -787,7 +701,7 @@ pub(super) fn open_document_semantic_tokens_if_current(
     }
     // Project jobs acquire these locks in the same order.  Holding the
     // staging lock through parse and cleanup also prevents shutdown from
-    // deleting the process shadow base while Surelog reads this copy.
+    // deleting the process shadow base while Slang reads this copy.
     let staging_wait_started = std::time::Instant::now();
     crate::llg_debug!(
         "event=semantic_tokens.staging_lock.begin file={} parent_id={:?}",
@@ -839,26 +753,28 @@ pub(super) fn open_document_semantic_tokens_if_current(
         "event=semantic_tokens.open_stage.cleanup outcome=ok file={}",
         real.display()
     );
-    let result = stage
-        .path
+    let result = real
         .to_str()
-        .ok_or_else(|| "staged semantic source path is not UTF-8".to_owned())
+        .ok_or_else(|| "semantic source path is not UTF-8".to_owned())
         .and_then(|path| {
             // A revision can change while the request-local stage is being
-            // written.  Check again immediately before entering Surelog so a
+            // written.  Check again immediately before entering Slang so a
             // stale buffer cannot start the expensive parse.
             if !current() {
                 crate::llg_debug!(
-                    "event=semantic_tokens.open_parse.frontend outcome=stale-before-surelog file={} elapsed_us={}",
+                    "event=semantic_tokens.open_parse.frontend outcome=stale-before-slang file={} elapsed_us={}",
                     real.display(),
                     started.elapsed().as_micros()
                 );
                 Err(STALE_OPEN_TOKEN_ERROR.to_owned())
             } else {
+                // Slang consumes the admitted buffer and never reads this
+                // path. Preserve the real document identity in its snapshot;
+                // the private stage only serializes cleanup and masking.
                 features::semantic_tokens_for_open_document_with_parent(
                     path,
                     defines,
-                    Some(text),
+                    Some(&stage.source),
                     parent_id,
                 )
                     .map_err(|error| error.to_string())
@@ -948,7 +864,7 @@ pub(super) fn cleanup_shadow_state_blocking(shadows: Vec<ShadowPaths>) {
 /// Empty the shared analysis scratch directory (keeping the directory
 /// itself, which may be a running job's CWD).
 ///
-/// Surelog artifacts (`slpp_all/`, logs, caches) accumulate there across
+/// Private mirrors and transient analysis artifacts accumulate there across
 /// jobs; jobs are serialized behind the shadow-staging lock, so removing the
 /// contents between jobs cannot race a running analysis.
 pub(super) fn clean_analysis_scratch() {
@@ -1088,7 +1004,7 @@ pub(super) fn canonical_include_target(
             }
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            // A missing include is left to Surelog to diagnose, but an
+            // A missing include is left to Slang to diagnose, but an
             // existing symlinked parent must not hide an outside resolution.
             let mut parent = resolved.parent();
             while let Some(candidate) = parent {
@@ -1152,7 +1068,7 @@ pub(super) enum IncludeResolutionError {
 }
 
 /// Resolve a literal include using the same search order as the `-I` arguments
-/// handed to Surelog: an absolute target is used as-is; a relative target is
+/// handed to Slang: an absolute target is used as-is; a relative target is
 /// tried beside the including file first, then in each configured source or
 /// explicit include directory.  Each candidate goes through the existing
 /// lexical and symlink containment policy before it is accepted.
@@ -1295,7 +1211,7 @@ pub(super) fn read_closed_input_snapshot(
 
 /// Return the exact admitted text, preferring the captured snapshot over any
 /// live document text.  Root compilation units must always have an admitted
-/// snapshot before they reach staging or Surelog.
+/// snapshot before they reach staging or Slang.
 pub(super) fn prepared_input_text<'a>(
     path: &Path,
     open_documents: &'a OpenDocuments,
@@ -1312,7 +1228,7 @@ pub(super) fn prepared_input_text<'a>(
 /// the total budget.  Readable closed inputs are retained as exact snapshots
 /// for the subsequent isolation and staging passes.  Every discovered root
 /// must yield a bounded UTF-8 snapshot; an unreadable or missing root is
-/// rejected before it can reach Surelog on its live real path.
+/// rejected before it can reach Slang on its live real path.
 pub(super) fn enforce_input_budget(
     config: &LlgConfig,
     files: &[PathBuf],

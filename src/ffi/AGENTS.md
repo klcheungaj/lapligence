@@ -1,103 +1,86 @@
-# ffi — Rust ↔ C(++) FFI layer
+# ffi — Rust ↔ native boundary
 
 ## Purpose
 
-The only module that talks to vendored native frontend code over a C-ABI
-boundary (`src/wrapper/`):
+This directory is the only Rust code that calls native APIs:
 
-- `surelog.rs` — Surelog compile sessions: `SurelogSession`, `SessionBuilder`
-  (parse/compile/elaborate/`-elabuhdm` flags), structured `Diag`/`Severity`.
-- `vpi.rs` — safe wrapper over the UHDM VPI traversal API: `iterate`/`handle`
-  (with the `OwnedHandle` lifetime rule), `get`/`get_str`/`read_value`.
-- `slang.rs` (feature `slang`) — safe in-memory Slang compilation and bounded,
-  owned diagnostics, hierarchy, parameter, type, and constant observations.
-- `process_memory.rs` — platform-specific physical-footprint sampler
-  (Linux/macOS/Windows) backing the shared `memory_limit` safeguard; the only
-  place `unsafe` platform calls live.
+- `slang.rs` provides the safe, blocking Slang compilation API and converts
+  the versioned C ABI snapshot into owned Rust data.
+- `process_memory.rs` samples the process's physical footprint on Linux,
+  macOS, and Windows for the shared memory-limit safeguard.
 
-## Requirements
+The native Slang implementation and public C declarations live under
+[`../wrapper/`](../wrapper/AGENTS.md). Core, simulator, LSP, and binary code
+must use the safe APIs from this directory and must not call the C ABI.
 
-- **This is the ONLY module allowed to contain `unsafe`** (extern blocks,
-  `unsafe impl Send`, the single union read inside `vpi::read_value`).
-  Enforced: `grep -rn "unsafe" src --include=*.rs | grep -v src/ffi` must be
-  empty.
-- Exposes **stable safe APIs** for `core`, `sim`, and the binaries: values are
-  read via `vpi::read_value -> ValueData` (owned), never via the raw
-  `VpiValueData` union.
-- `SessionBuilder` owns its three C++ construction handles until `build()`
-  explicitly transfers them to `SurelogSession`; abandoning the builder frees
-  them in dependency order. The legacy `start_compiler()` API returns `None`
-  instead of wrapping a null C++ compiler pointer.
-- Use `#[repr(C)]` for shared structs and `extern "C"` for exported functions.
-  Read [../wrapper/AGENTS.md](../wrapper/AGENTS.md) for boundary ownership.
-- Preserve the static `surelog_c_wrapper` link attributes (root build rule).
-- Preserve the Slang wrapper, `svlang`, and `fmt` static link attributes on its
-  feature-gated extern block so native archives cross the Rust library target.
-- Slang inputs distinguish compilation units from admitted include-only
-  buffers. The shim permits cache-only reads, and the Rust facade copies and
-  validates all output before destroying the native snapshot. SystemVerilog
-  string constants remain byte vectors because their contents need not be
-  UTF-8. No native pointer is public.
-- Safe APIs must not expose fabricatable pointers or outlive foreign resources.
-  Validate foreign strings, unions, sizes, and handles before use.
-- Each Rust FFI module denies Clippy's `undocumented_unsafe_blocks` lint and
-  `unsafe_op_in_unsafe_fn`. Every unsafe operation needs a local safety
-  explanation; extern declarations, functions, and trait implementations also
-  carry explicit contracts at their declaration sites.
-- Fallible public APIs use module-specific errors with preserved sources;
-  process-memory operations return `MemoryError` rather than string errors.
+## Safety boundary
 
-## Interactions
+- This is the only source directory allowed to contain Rust `unsafe`.
+  Enforcement:
+  `grep -rn "unsafe" src --include=*.rs | grep -v src/ffi` must be empty.
+- Shared layouts use `#[repr(C)]`; declarations must exactly mirror
+  `src/wrapper/slang_c_api.h`. Treat any ABI version, enum tag, flag, reserved
+  field, pointer, length, ID, range, or table window mismatch as invalid native
+  data.
+- Each module denies `clippy::undocumented_unsafe_blocks` and
+  `unsafe_op_in_unsafe_fn`. Document the validity, lifetime, alignment,
+  initialization, and ownership basis at every unsafe operation.
+- Safe APIs never expose native pointers or a lifetime tied to native storage.
+  Do not add `Send` or `Sync` implementations for native owners. The compile
+  call and snapshot decoding remain on the calling thread.
+- Fallible APIs use their module error types. Preserve native failure status
+  and message where available; malformed native output is a separate
+  `InvalidNativeData` failure.
 
-- Below: `src/wrapper/` (C ABI) and `vendor/Surelog` (C++).
-- Above: `src/core/` (compile, elab, db, model, tokens) — all UHDM access
-  goes through here; `src/sim/` and the binaries consume `core`'s owned data
-  and never call VPI directly.
+## Slang ABI v2 contract
 
-## UHDM/VPI field notes (Surelog v1.87)
+- `CompileRequest` borrows admitted source buffers and typed options for one
+  blocking `llg_slang_compile` call. Input arrays and strings remain alive
+  until it returns. Sources are explicitly compilation units or include-only
+  buffers.
+- The native source manager performs cache-only reads with lexical path
+  normalization. Include directories define lookup prefixes over admitted
+  buffers; they do not authorize filesystem reads.
+- Defines, top modules, include directories, parameter overrides, source bytes,
+  diagnostics, value bits, output bytes, semantic records, edges, and lexical
+  tokens are bounded before or during allocation on both sides of the ABI.
+- An OK native status transfers one unique opaque snapshot owner. Non-OK status
+  transfers an error owner and must not leak an unexpected snapshot. Both
+  destroy functions accept null.
+- HDL compilation errors are represented by a successful snapshot whose
+  `has_errors()` flag is set. Argument, resource, frontend setup, exception,
+  and bridge failures return `SlangError`.
+- `llg_slang_snapshot_view` borrows arrays and strings from the snapshot. Rust
+  validates every table and copies all records before the RAII owner calls
+  `llg_slang_snapshot_destroy`. Error views follow the same copy-before-drop
+  rule.
+- Preserve the unconditional static link attributes for
+  `llg_slang_wrapper`, `svlang`, and `fmt`; they carry the native archives
+  through the Rust library target.
 
-- **Handle lifetimes**: handles from `vpi::iterate` are borrowed; handles from
-  `vpi::handle(...)` return `vpi::OwnedHandle` which frees the wrapper on drop
-  — keep the OwnedHandle alive in a local and use `.raw()` for nested calls.
-  Never store the raw pointer of a dropped OwnedHandle (use-after-free).
-- **1-to-1 vs 1-to-many**: `vpi_iterate` returns null for single-object
-  relationships (`vpiRhs`, `vpiLhs`, `vpiStmt` on a single stmt, …) — use
-  `vpi_handle` for those. Prefer the `iter`/`child_handle`/`each_child` helper
-  pattern from `src/bin/elab_check.rs`.
-- **No `vpiValue` string property** in this UHDM build: read constants and
-  parameter values via the safe `vpi::read_value` → `ValueData` (formats
-  `vpiBinStrVal`…, `vpiIntVal`, `vpiUIntVal`, `vpiStringVal`). The raw
-  `VpiValueData` union is read in exactly one place (inside `ffi/vpi.rs`).
-  `vpiSize == -1` means an unsized literal (`'1`, `'x`): fill-on-resize
-  semantics (see `elab::Value::fill`).
-- **Operation op-types** use UHDM's numbering (`vpiAddOp`=24, `vpiSubOp`=11,
-  `vpiEqOp`=14, …) — use the `vpi.rs` constants, never magic numbers.
-- Top-level `module_inst` objects have **no `vpiFullName`** (use `vpiName`).
-- `vpi_get(vpiType, …)` returns VPI-mapped constants (e.g. `vpiRefTypespec`),
-  not the raw `uhdm*` discriminants.
-- Port typespecs live under `vpiTypedef`; nets/vars/params under
-  `vpiTypespec`.
-- `gen_scope` is reached with `vpi_iterate(vpiGenScope, gen_scope_array)`
-  (`vpi_handle` returns null there).
-- `initial` processes report `vpiAlwaysType` = 1 (same as `always`) —
-  distinguish by object type (`vpiInitial`).
-- Concat operands may be reversed (Surelog sets `vpiReordered`); respect it.
-- `indexed_part_select` uses `vpiBaseExpr`/`vpiWidthExpr`, not `vpiIndex`/`vpiSize`.
-- Surelog prefixes top design-unit names with the library, e.g.
-  `work@param_top` — strip that known top-level `lib@` qualifier for display
-  and source matching. Do not apply this rule to arbitrary `vpiName` values:
-  an escaped SystemVerilog source identifier can legally contain `@`.
-- `-nowarning` **removes** warnings from the error container at add-time (not
-  just at print time); `-noinfo` still leaks one `CM0023` info diagnostic.
-- Driving flags via setters requires `set_write_pp_output()`; without it the
-  design comes out empty.
-- `vpi_iterate(vpiParamAssign, …)`/`vpiParameter` work on gen_scope objects too.
-- The parse-tree C ABI (`SL_VObjectInfo` → `surelog::ParseNode`) carries
-  `parent_index`, `child_index`, and `sibling_index`; zero is Surelog's
-  invalid-node sentinel.  These are owned links used by the LSP's source
-  graph and enum scanners.  Parse-node positions remain 1-based and may be
-  zero/unknown, so convert with `saturating_sub` when forming 0-based keys.
+The owned snapshot contains admitted files; compiler and analysis diagnostics
+with related locations; elaborated instances, parameters, types, and constant
+values; a flat semantic node/edge graph; and lexical tokens linked to semantic
+records where Slang supplies a relationship. Semantic kinds, operations,
+subkinds, flags, edge roles, and lexical categories are repository-owned stable
+codes. Slang's C++ enum values and AST pointers never cross the ABI.
 
-The complete parse/compile/elaborate setter contract is in
-[../core/AGENTS.md](../core/AGENTS.md). For native memory limits and their
-platform-validation requirements, read [../AGENTS.md](../AGENTS.md).
+Source ranges use admitted file IDs and zero-based half-open byte offsets.
+Absent IDs use the ABI's invalid-ID sentinel. Four-state integers use paired
+value/unknown limb arrays; real and short-real retain distinct widths;
+SystemVerilog string constants remain byte vectors because their content need
+not be UTF-8. All other ABI strings must decode as UTF-8.
+
+## Process-memory contract
+
+- Linux reads resident pages from `/proc/self/statm`; macOS uses
+  `task_info`; Windows uses `GetProcessMemoryInfo`.
+- Platform handles and returned structures are validated before conversion.
+  Footprint multiplication saturates at `u64::MAX`; errors retain the platform
+  source where possible.
+- Unsupported platforms return a typed error. They must not silently report a
+  zero footprint, because that would disable the shared safeguard.
+
+For memory-limit policy and platform validation, read
+[`../AGENTS.md`](../AGENTS.md). For native ownership and exception handling,
+read [`../wrapper/AGENTS.md`](../wrapper/AGENTS.md).

@@ -1,5 +1,5 @@
 //! End-to-end simulator stress tests: larger, realistic regression designs
-//! exercised through the full Surelog compile → codegen → CMake build → run
+//! exercised through the full Slang compile → codegen → CMake build → run
 //! pipeline, asserting the exact stdout against hand-simulated traces.
 //!
 //! Designs:
@@ -25,20 +25,20 @@
 //!      propagation and that instances inside
 //!      generate scopes run.
 //!
-//! Surelog writes `slpp_all/` into the process working directory, so each test
+//! These tests temporarily change the process working directory, so each test
 //! runs with the CWD pointed at a fresh temp dir (serialized through a mutex,
-//! like the other Surelog integration tests).
+//! to avoid process-wide CWD races).
 
 use std::sync::Mutex;
 
 #[path = "support/sim.rs"]
 mod sim_harness;
 
-static SURELOG_LOCK: Mutex<()> = Mutex::new(());
+static CWD_LOCK: Mutex<()> = Mutex::new(());
 
 /// Compile `sv`, codegen the model, build the simulator executable and run it,
 /// returning the exact stdout.  Fails the test on any compile/codegen/cmake/run
-/// error.  The caller must hold `SURELOG_LOCK`; the CWD is moved to a fresh
+/// error.  The caller must hold `CWD_LOCK`; the CWD is moved to a fresh
 /// temp dir and restored afterwards.
 fn run_sim(name: &str, sv: &str) -> String {
     sim_harness::run_sim(sv, "tb", name).expect("simulation should run")
@@ -127,7 +127,7 @@ fn stress_fifo_push_pop() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
+    let _guard = CWD_LOCK.lock().unwrap();
     let sv = r#"module fifo #(parameter DEPTH = 4, parameter DW = 8) (
     input  logic        clk,
     input  logic        rst_n,
@@ -308,7 +308,7 @@ fn stress_cpu_lite_datapath() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
+    let _guard = CWD_LOCK.lock().unwrap();
     let sv = r#"module alu (
     input  logic [1:0] op,
     input  logic [3:0] a,
@@ -501,7 +501,7 @@ fn stress_uart_shift_baud_ps() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
+    let _guard = CWD_LOCK.lock().unwrap();
     let sv = r#"module uart_tx #(parameter DIV = 4) (
     input  logic clk,
     input  logic rst_n,
@@ -617,7 +617,7 @@ fn stress_uart_shift_baud() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
+    let _guard = CWD_LOCK.lock().unwrap();
     let sv = r#"module uart_tx #(parameter DIV = 4) (
     input  logic clk,
     input  logic rst_n,
@@ -765,7 +765,7 @@ fn stress_wide_comb_tree() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
+    let _guard = CWD_LOCK.lock().unwrap();
     let sv = r#"module tb;
     reg [63:0] a, b, c, d;
     reg [1:0] sel;
@@ -854,7 +854,7 @@ fn stress_gen_loop_instances() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
+    let _guard = CWD_LOCK.lock().unwrap();
     let sv = r#"module gen_counter #(parameter WIDTH = 4) (
     input logic clk, input logic rst_n,
     output logic [WIDTH-1:0] cnt

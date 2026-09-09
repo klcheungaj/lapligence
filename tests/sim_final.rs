@@ -1,18 +1,17 @@
 //! End-to-end simulator tests for `final begin … end` blocks (SV 1800-2005
-//! §10.7): Surelog compile → codegen → CMake build → run, asserting exact
+//! §10.7): Slang compile → codegen → CMake build → run, asserting exact
 //! stdout against hand-simulated traces.
 //!
 //! Regression coverage: finals execute ONCE after the scheduler exits
 //! ($finish ordering), they observe NBA-committed values and the end-of-run
 //! time, a deadlock termination still runs them, multiple finals run in
 //! source order, `$finish` inside a final terminates the final phase, timing
-//! controls inside a final are clean codegen
-//! rejects, nonblocking assignments, task calls, and deferred output tasks are
-//! rejected,
+//! controls and task calls are frontend rejects, nonblocking assignments are
+//! diagnosed by Slang and rejected by executable lowering, and deferred output
+//! tasks are also rejected during lowering,
 //! and optimizer on/off runs agree.
 //!
-//! Note: Surelog parses `final` only in `.sv` files (frontend limitation),
-//! which every design here satisfies.
+//! `final` is a SystemVerilog construct, so every design here uses `.sv`.
 
 #[path = "support/sim.rs"]
 mod sim_harness;
@@ -20,10 +19,11 @@ mod sim_harness;
 use std::sync::Mutex;
 
 use llg::core::compile;
+use llg::ffi::slang::DiagnosticSeverity;
 use llg::sim;
 use llg::sim::opt::OptConfig;
 
-static SURELOG_LOCK: Mutex<()> = Mutex::new(());
+static CWD_LOCK: Mutex<()> = Mutex::new(());
 
 /// Compile, generate, build, and run one design.
 fn run_sim(sv: &str, tag: &str) -> Result<(String, String), String> {
@@ -32,9 +32,9 @@ fn run_sim(sv: &str, tag: &str) -> Result<(String, String), String> {
 }
 
 /// Compile + codegen `sv`, returning the codegen error message.
-/// Holds [`SURELOG_LOCK`] for the whole pipeline.
+/// Holds [`CWD_LOCK`] for the whole pipeline.
 fn codegen_error(sv: &str, tag: &str) -> Result<String, String> {
-    let _guard = SURELOG_LOCK.lock().unwrap();
+    let _guard = CWD_LOCK.lock().unwrap();
     sim_harness::with_temp_cwd(tag, |dir| {
         let src = dir.join("tb.sv");
         std::fs::write(&src, sv).map_err(|error| format!("write source: {error}"))?;
@@ -47,8 +47,9 @@ fn codegen_error(sv: &str, tag: &str) -> Result<String, String> {
         if !out.ok() {
             return Err(format!("compile diagnostics: {:?}", out.diagnostics));
         }
-        let design = out.uhdm_design().ok_or("no UHDM design")?;
-        match sim::codegen::generate(design) {
+        let db =
+            llg::core::db::Db::from_slang(&out.snapshot).map_err(|error| format!("db: {error}"))?;
+        match sim::codegen::generate(&db) {
             Ok(_) => panic!("codegen should reject the design ({tag})"),
             Err(e) => Ok(e.to_string()),
         }
@@ -129,10 +130,10 @@ endmodule
     assert_eq!(stdout, "cnt=2 at t=22\n");
 }
 
-/// Final procedures permit function statements only, so a nonblocking
-/// assignment is rejected instead of creating an NBA after simulation ends.
+/// Slang diagnoses a nonblocking assignment in a final block because it has
+/// no effect after the scheduler has stopped.
 #[test]
-fn sim_final_rejects_nonblocking_assignment() {
+fn sim_final_reports_and_rejects_nonblocking_assignment() {
     let sv = r#"module tb;
     reg [7:0] x;
 
@@ -147,10 +148,19 @@ fn sim_final_rejects_nonblocking_assignment() {
 endmodule
 "#;
 
-    let err = codegen_error(sv, "final-nba").expect("compile should succeed");
+    let diagnostics =
+        sim_harness::frontend_diagnostics(sv, "tb").expect("compile final nonblocking assignment");
     assert!(
-        err.contains("nonblocking assignment inside a final block"),
-        "unexpected codegen error: {err}"
+        diagnostics.iter().any(|diagnostic| {
+            diagnostic.severity == DiagnosticSeverity::Warning
+                && diagnostic.name == "NonblockingInFinal"
+        }),
+        "final nonblocking assignment must report NonblockingInFinal: {diagnostics:?}"
+    );
+    let error = codegen_error(sv, "final-nba").expect("final NBA should reach lowering");
+    assert!(
+        error.contains("unsupported executable statement kind UnsupportedStatement"),
+        "unexpected codegen error: {error}"
     );
 }
 
@@ -229,7 +239,7 @@ endmodule
     );
 }
 
-/// (e) Timing controls inside a final are clean codegen rejects (LRM
+/// (e) Timing controls inside a final are frontend rejects (LRM
 /// 1800-2005 §10.7).
 #[test]
 fn sim_final_rejects_timing_controls() {
@@ -269,10 +279,14 @@ endmodule
         ),
     ];
     for (i, (sv, needle)) in cases.iter().enumerate() {
-        let err = codegen_error(sv, &format!("reject{i}")).expect("compile should succeed");
+        let diagnostics = sim_harness::frontend_diagnostics(sv, "tb")
+            .unwrap_or_else(|error| panic!("case {i} compilation failed to start: {error}"));
         assert!(
-            err.contains("no timing controls in final"),
-            "case {needle}: unexpected codegen error: {err}"
+            diagnostics.iter().any(|diagnostic| {
+                diagnostic.severity == DiagnosticSeverity::Error
+                    && diagnostic.name == "TimingInFuncNotAllowed"
+            }),
+            "case {needle}: expected TimingInFuncNotAllowed: {diagnostics:?}"
         );
     }
 }
@@ -305,7 +319,7 @@ endmodule
 "#;
     std::fs::write(&src, sv).expect("write source");
 
-    let _guard = SURELOG_LOCK.lock().unwrap();
+    let _guard = CWD_LOCK.lock().unwrap();
     let result = sim_harness::with_cwd(dir.path(), || {
         let out = compile::compile(&compile::CompileOpts {
             files: vec![src.to_string_lossy().into_owned()],
@@ -316,8 +330,7 @@ endmodule
         if !out.ok() {
             return Err(format!("compile diagnostics: {:?}", out.diagnostics));
         }
-        let design = out.uhdm_design().ok_or("no UHDM design")?;
-        let db = llg::core::db::Db::build(design).map_err(|e| format!("db: {e}"))?;
+        let db = llg::core::db::Db::from_slang(&out.snapshot).map_err(|e| format!("db: {e}"))?;
         let on = sim::codegen::generate_from_db_with_opts(&db, &OptConfig::default())
             .map_err(|e| format!("codegen(opt-on): {e}"))?;
         let off = sim::codegen::generate_from_db_with_opts(&db, &OptConfig::none())
@@ -354,8 +367,7 @@ fn sim_final_rejects_deferred_output_tasks() {
     }
 }
 
-/// Task calls are not function-legal statements and may suspend or otherwise
-/// schedule work after the final phase has begun.
+/// Task calls are forbidden in final blocks by the frontend.
 #[test]
 fn sim_final_rejects_task_calls() {
     let sv = r#"module tb;
@@ -367,9 +379,12 @@ fn sim_final_rejects_task_calls() {
     final report();
 endmodule
 "#;
-    let err = codegen_error(sv, "task-call").expect("compile should succeed");
+    let diagnostics =
+        sim_harness::frontend_diagnostics(sv, "tb").expect("compile task call in final");
     assert!(
-        err.contains("task call `report` inside a final block"),
-        "unexpected codegen error: {err}"
+        diagnostics.iter().any(|diagnostic| {
+            diagnostic.severity == DiagnosticSeverity::Error && diagnostic.name == "TaskFromFinal"
+        }),
+        "task call in final must report TaskFromFinal: {diagnostics:?}"
     );
 }

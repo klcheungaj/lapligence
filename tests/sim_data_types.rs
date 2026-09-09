@@ -17,21 +17,17 @@ fn run_fixture(file: &str, width: usize, expected: &str) {
     let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/sim/data_types")
         .join(file);
-    sim_harness::with_surelog_temp_cwd("data-types", |dir| {
+    sim_harness::with_frontend_temp_cwd("data-types", |dir| {
         let source = dir.join(file);
         std::fs::copy(&fixture, &source).map_err(|error| format!("copy fixture: {error}"))?;
         let compiled = compile::compile_checked(&compile::CompileOpts {
             files: vec![source.to_string_lossy().into_owned()],
             top: Some("tb".to_owned()),
-            param_overrides: vec![format!("-PWIDTH={width}")],
+            param_overrides: vec![format!("WIDTH={width}")],
             ..Default::default()
         })
         .map_err(|error| format!("{file}, width {width}: compile: {error}"))?;
-        let db = Db::build_with_source_files(
-            compiled.uhdm_design().ok_or("no UHDM design")?,
-            &compiled.frontend_source_files(),
-        )
-        .map_err(|error| error.to_string())?;
+        let db = Db::from_slang(&compiled.snapshot).map_err(|error| error.to_string())?;
         // Exercise both variants even when one fails, so a conformance gap
         // records whether optimization affects the result.
         let mut failures = Vec::new();

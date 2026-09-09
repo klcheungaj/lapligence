@@ -7,12 +7,10 @@
 //! present at either operand (through transparent casts); parameter values
 //! and constant-expression trees are not followed.
 
-#![allow(non_upper_case_globals)] // VPI operator/scalar constants use this style.
-
 use crate::core::db::{Db, ExprKind, NodeId, NodeKind, Operation};
 use crate::core::lint::rules::analysis::all_nodes;
 use crate::core::lint::{LintCtx, LintDiag, LintRule, LintSeverity};
-use crate::ffi::vpi::{self, ValueData};
+use crate::core::value::{ScalarValue, ValueData};
 
 /// Flags `==`/`!=` whose direct operand visibly contains X, Z or `?`.
 pub struct XzLogicalEqualityRule;
@@ -78,7 +76,7 @@ fn has_visible_xz_literal(db: &Db, id: NodeId) -> bool {
     }
 }
 
-/// Inspect the owned VPI value representation without evaluating or
+/// Inspect the owned value representation without evaluating or
 /// expanding it.  `bval` is nonzero for every unknown bit in a vector.
 fn value_contains_xz(value: &ValueData) -> bool {
     match value {
@@ -88,8 +86,11 @@ fn value_contains_xz(value: &ValueData) -> bool {
         | ValueData::Hex(digits) => digits
             .chars()
             .any(|digit| matches!(digit, 'x' | 'X' | 'z' | 'Z' | '?')),
-        ValueData::Scalar(scalar) => matches!(*scalar, vpi::vpiX | vpi::vpiZ | vpi::vpiDontCare),
-        ValueData::Vector(words) => words.iter().any(|(_, bval)| *bval != 0),
+        ValueData::Scalar(scalar) => matches!(
+            *scalar,
+            ScalarValue::X | ScalarValue::Z | ScalarValue::DontCare
+        ),
+        ValueData::Vector { unknown_words, .. } => unknown_words.iter().any(|word| *word != 0),
         _ => false,
     }
 }

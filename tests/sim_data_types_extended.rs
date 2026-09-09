@@ -20,15 +20,11 @@ fn compile_fixture(file: &str, width: usize, source: &Path) -> Result<Db, String
     let compiled = compile::compile_checked(&compile::CompileOpts {
         files: vec![source.to_string_lossy().into_owned()],
         top: Some("tb".to_owned()),
-        param_overrides: vec![format!("-PWIDTH={width}")],
+        param_overrides: vec![format!("WIDTH={width}")],
         ..Default::default()
     })
     .map_err(|error| format!("{file}, width {width}: compile: {error}"))?;
-    Db::build_with_source_files(
-        compiled.uhdm_design().ok_or("no UHDM design")?,
-        &compiled.frontend_source_files(),
-    )
-    .map_err(|error| error.to_string())
+    Db::from_slang(&compiled.snapshot).map_err(|error| error.to_string())
 }
 
 fn run_fixture(file: &str, label: &str, width: usize) {
@@ -38,7 +34,7 @@ fn run_fixture(file: &str, label: &str, width: usize) {
     }
     let fixture = fixture_path(file);
     let expected = format!("PASS {label} WIDTH={width}\n");
-    sim_harness::with_surelog_temp_cwd("data-types-extended", |dir| {
+    sim_harness::with_frontend_temp_cwd("data-types-extended", |dir| {
         let source = dir.join(file);
         std::fs::copy(&fixture, &source).map_err(|error| format!("copy fixture: {error}"))?;
         let db = compile_fixture(file, width, &source)?;
@@ -76,7 +72,7 @@ fn run_fixture(file: &str, label: &str, width: usize) {
 
 fn reject_fixture_at_width(file: &str, width: usize, rejected_width: usize) {
     let fixture = fixture_path(file);
-    sim_harness::with_surelog_temp_cwd("data-types-width-limit", |dir| {
+    sim_harness::with_frontend_temp_cwd("data-types-width-limit", |dir| {
         let source = dir.join(file);
         std::fs::copy(&fixture, &source).map_err(|error| format!("copy fixture: {error}"))?;
         let db = compile_fixture(file, width, &source)?;

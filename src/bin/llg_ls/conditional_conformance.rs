@@ -38,7 +38,10 @@ fn assert_probe_liveness(name: &str, source: &str, defines: &[&str], expect_live
         .iter()
         .any(|range| range.start_line <= probe_line0 && probe_line0 <= range.end_line);
 
-    let args = defines.iter().map(|d| format!("-D{d}")).collect::<Vec<_>>();
+    let args = defines
+        .iter()
+        .map(|define| (*define).to_owned())
+        .collect::<Vec<_>>();
     let table = build_table(&args, &[(FILE, source)], None);
     // Column 1 sits inside the probe's `` `NAME `` span (backtick occupies
     // column 0); dead regions record no usage at all.

@@ -1,6 +1,6 @@
 //! End-to-end simulator tests for procedural `force` / `release` and
 //! procedural continuous assignment (`assign <reg> = expr;` /
-//! `deassign <reg>;`, LRM 1364-1995 §9.4 / 2001 §9.5): Surelog compile →
+//! `deassign <reg>;`, LRM 1364-1995 §9.4 / 2001 §9.5): Slang compile →
 //! codegen → CMake build → run, asserting exact stdout against hand-simulated
 //! traces.
 //!
@@ -14,9 +14,8 @@
 //! LOWERS before the process carrying the matching `assign` (two-phase site
 //! discovery), and a loop revisiting an earlier `deassign`.
 //!
-//! Surelog writes `slpp_all/` into the process working directory, so the
-//! tests run with the CWD pointed at a fresh temp dir (serialized through a
-//! mutex, like the other Surelog integration tests).
+//! Tests run with the CWD pointed at a fresh temp dir and serialize process-CWD
+//! changes with the other native integration tests.
 
 #[path = "support/sim.rs"]
 mod sim_harness;
@@ -24,9 +23,10 @@ mod sim_harness;
 use std::sync::Mutex;
 
 use llg::core::compile;
+use llg::ffi::slang::DiagnosticSeverity;
 use llg::sim;
 
-static SURELOG_LOCK: Mutex<()> = Mutex::new(());
+static CWD_LOCK: Mutex<()> = Mutex::new(());
 
 /// Compile + codegen `sv`, returning the codegen error message (`Err` for
 /// unsupported constructs like a PCA on a net target).
@@ -57,8 +57,9 @@ fn codegen_result(
         if !out.ok() {
             return Err(format!("compile diagnostics: {:?}", out.diagnostics));
         }
-        let design = out.uhdm_design().ok_or("no UHDM design")?;
-        Ok(sim::codegen::generate(design).map_err(|error| error.to_string()))
+        let db =
+            llg::core::db::Db::from_slang(&out.snapshot).map_err(|error| format!("db: {error}"))?;
+        Ok(sim::codegen::generate(&db).map_err(|error| error.to_string()))
     })
 }
 
@@ -78,7 +79,7 @@ fn sim_force_overrides_process_write() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
+    let _guard = CWD_LOCK.lock().unwrap();
     let sv = r#"module tb;
     reg [7:0] x;
 
@@ -122,7 +123,7 @@ fn sim_force_overrides_continuous_assign() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
+    let _guard = CWD_LOCK.lock().unwrap();
     let sv = r#"module tb;
     reg a = 1'b1;
     wire w;
@@ -161,7 +162,7 @@ fn sim_force_wakes_waiters() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
+    let _guard = CWD_LOCK.lock().unwrap();
     let sv = r#"module tb;
     reg w = 0;
 
@@ -202,7 +203,7 @@ fn sim_force_nba_dropped() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
+    let _guard = CWD_LOCK.lock().unwrap();
     let sv = r#"module tb;
     reg clk = 0;
     reg [7:0] x = 8'h00;
@@ -246,7 +247,7 @@ fn sim_pca_lifecycle() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
+    let _guard = CWD_LOCK.lock().unwrap();
     let sv = r#"module tb;
     reg [7:0] x;
     reg [7:0] src;
@@ -305,7 +306,7 @@ fn sim_pca_force_overrides_and_release_restores() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
+    let _guard = CWD_LOCK.lock().unwrap();
     let sv = r#"module tb;
     reg [7:0] x;
     reg [7:0] src;
@@ -340,14 +341,9 @@ endmodule
     assert_eq!(stdout, "x=ff\nx=04\n");
 }
 
-/// (g) Clean codegen rejects: PCA on a net target (LRM: variables only).
+/// (g) Frontend rejection: PCA on a net target (LRM: variables only).
 #[test]
 fn sim_pca_net_target_rejected() {
-    if !llg::sim::build::cmake_available() {
-        eprintln!("SKIP: cmake not available");
-        return;
-    }
-    let _guard = SURELOG_LOCK.lock().unwrap();
     let sv = r#"module tb;
     wire w;
     assign w = 1'b1;
@@ -357,22 +353,20 @@ fn sim_pca_net_target_rejected() {
     initial #5 $finish;
 endmodule
 "#;
-    let err = codegen_error(sv, "tb", "pcanet").expect("compile should succeed");
+    let diagnostics = sim_harness::frontend_diagnostics(sv, "tb").expect("compile net PCA");
     assert!(
-        err.contains("variables only"),
-        "unexpected codegen error: {err}"
+        diagnostics.iter().any(|diagnostic| {
+            diagnostic.severity == DiagnosticSeverity::Error
+                && diagnostic.name == "BadProceduralAssign"
+        }),
+        "net PCA must report BadProceduralAssign: {diagnostics:?}"
     );
 }
 
-/// (h) Clean codegen rejects: PCA on a part-select target (whole variables
+/// (h) Frontend rejection: PCA on a part-select target (whole variables
 /// only).
 #[test]
 fn sim_pca_select_target_rejected() {
-    if !llg::sim::build::cmake_available() {
-        eprintln!("SKIP: cmake not available");
-        return;
-    }
-    let _guard = SURELOG_LOCK.lock().unwrap();
     let sv = r#"module tb;
     reg [7:0] x;
     reg c;
@@ -382,10 +376,13 @@ fn sim_pca_select_target_rejected() {
     initial #5 $finish;
 endmodule
 "#;
-    let err = codegen_error(sv, "tb", "pcasel").expect("compile should succeed");
+    let diagnostics = sim_harness::frontend_diagnostics(sv, "tb").expect("compile select PCA");
     assert!(
-        err.contains("whole variables only"),
-        "unexpected codegen error: {err}"
+        diagnostics.iter().any(|diagnostic| {
+            diagnostic.severity == DiagnosticSeverity::Error
+                && diagnostic.name == "BadProceduralAssign"
+        }),
+        "select PCA must report BadProceduralAssign: {diagnostics:?}"
     );
 }
 
@@ -399,7 +396,7 @@ fn sim_pca_multi_site_rejected() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
+    let _guard = CWD_LOCK.lock().unwrap();
     let sv = r#"module tb;
     reg [7:0] x;
     reg c;
@@ -432,7 +429,7 @@ fn sim_pca_deassign_before_assign_across_processes() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
+    let _guard = CWD_LOCK.lock().unwrap();
     let sv = r#"module tb;
     reg [7:0] q;
     reg [7:0] d;
@@ -503,7 +500,7 @@ fn sim_pca_loop_revisits_earlier_deassign() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
+    let _guard = CWD_LOCK.lock().unwrap();
     let sv = r#"module tb;
     reg [7:0] x;
     reg [7:0] src;

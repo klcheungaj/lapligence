@@ -1,7 +1,7 @@
 //! `assignment-in-condition` — assignment operations used as predicates.
 //!
 //! The owned expression tree distinguishes an assignment expression
-//! (`vpiAssignmentOp`) from an ordinary procedural assignment statement.
+//! (the semantic assignment operation) from an ordinary procedural assignment statement.
 //! This rule checks only truth-valued positions: `if`, `while`, `for`,
 //! `wait`, and the condition operand of a ternary. Explicit equality and
 //! relational operations form a boundary because the assignment result is
@@ -144,7 +144,7 @@ mod tests {
     #[test]
     fn warns_for_supported_statement_and_ternary_predicates() {
         let diags = lint_design(
-            "module t(input logic a, b, c, output logic y);\n\
+            "module t(input logic b, c, output logic y); logic a;\n\
              \x20 initial begin\n\
              \x20   if ((a = b)) y = c;\n\
              \x20   while ((a = b)) y = c;\n\
@@ -169,9 +169,9 @@ mod tests {
     }
 
     #[test]
-    fn v187_predicate_contains_assignment_operation() {
+    fn predicate_contains_assignment_operation() {
         let (db, _) = build_design(
-            "module t(input logic a, b, output logic y); always_comb if ((a = b)) y = 1'b1; endmodule\n",
+            "module t(input logic b, output logic y); logic a; always_comb if ((a = b)) y = 1'b1; endmodule\n",
             "t",
         );
         let cond = all_design_nodes(&db)
@@ -180,7 +180,7 @@ mod tests {
                 NodeKind::Stmt(StmtKind::IfElse { cond }) => Some(*cond),
                 _ => None,
             })
-            .expect("Surelog v1.87 must expose the if condition");
+            .expect("semantic capture must expose the if condition");
         assert!(matches!(
             db.node_kind(cond),
             NodeKind::Expr(ExprKind::Operation { op, .. }) if *op == Operation::Assignment
@@ -190,13 +190,13 @@ mod tests {
     #[test]
     fn comparisons_and_non_predicate_assignments_are_quiet() {
         let diags = lint_design(
-            "module t(input logic a, b, c, output logic y);\n\
+            "module t(input logic b, c, output logic y); logic a;\n\
              \x20 initial begin\n\
              \x20   a = b;\n\
              \x20   if (((a = b)) == c) y = 1'b1;\n\
              \x20   repeat ((a = b)) y = c;\n\
              \x20   case ((a = b)) 1'b1: y = c; default: y = 0; endcase\n\
-             \x20   @((a = b)) y = c;\n\
+             \x20   @(a) y = c;\n\
              \x20 end\nendmodule\n",
             "t",
         );
@@ -209,10 +209,10 @@ mod tests {
     #[test]
     fn nested_operation_warns_and_cloned_instances_deduplicate() {
         let diags = lint_design(
-            "module child(input logic a, b, output logic y);\n\
+            "module child(input logic b, output logic y); logic a;\n\
              \x20 always_comb if (!(a = b)) y = 1'b1;\nendmodule\n\
              module top(input logic a, b, output logic y0, y1);\n\
-             \x20 child u0(a, b, y0); child u1(a, b, y1);\nendmodule\n",
+             \x20 child u0(b, y0); child u1(b, y1);\nendmodule\n",
             "top",
         );
         assert_eq!(

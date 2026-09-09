@@ -1,7 +1,7 @@
 //! core::lint — shared Verilog/SystemVerilog linter.
 //!
 //! Rule engine over the owned database + design model.  Consumed by the LSP
-//! (lint diagnostics) and the simulator (`llg --lint` gate).  No VPI
+//! (lint diagnostics) and the simulator (`llg --lint` gate).  No native AST
 //! access, no raw FFI, no LSP dependencies.
 //!
 //! The default rule set lives in [`rules::default_rules`] and currently runs
@@ -23,7 +23,7 @@ use std::collections::HashMap;
 use crate::core::db::Db;
 use crate::core::model::DesignModel;
 
-/// Severity of a lint finding, mirroring the compile/Surelog ladder.
+/// Severity of a lint finding, mirroring the compiler severity ladder.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LintSeverity {
     Error,
@@ -403,10 +403,10 @@ mod tests {
     use crate::core::compile;
 
     /// Run a compile with the CWD in a fresh temp dir, serialized against the
-    /// other Surelog-touching lib tests.  Restores the CWD and cleans up even
+    /// other working-directory-mutating tests.  Restores the CWD and cleans up even
     /// on panic, so a failing test cannot strand other tests in a deleted CWD.
     fn in_temp_dir<R>(f: impl FnOnce() -> R) -> R {
-        let _guard = crate::core::lint::rules::tests::SURELOG_LOCK
+        let _guard = crate::core::lint::rules::tests::CWD_LOCK
             .lock()
             .unwrap_or_else(|e| e.into_inner());
         struct Restore(std::path::PathBuf, std::path::PathBuf);
@@ -438,14 +438,13 @@ mod tests {
                 "module tiny;\n  logic a;\n  assign a = 1'b0;\nendmodule\n",
             )
             .expect("write design");
-            let out = compile::compile(&compile::CompileOpts {
+            let out = compile::compile_checked(&compile::CompileOpts {
                 files: vec![sv.to_string_lossy().into_owned()],
                 ..Default::default()
             })
             .expect("compile should start");
             assert!(out.ok(), "compile must succeed: {:?}", out.diagnostics);
-            let design = out.uhdm_design().expect("no uhdm design handle");
-            let db = Db::build(design).expect("db build");
+            let db = Db::from_slang(&out.snapshot).expect("semantic capture");
             let model = DesignModel::from_db(&db);
 
             assert!(lint(&db, &model).is_empty());

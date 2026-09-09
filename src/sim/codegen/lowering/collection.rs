@@ -3,11 +3,11 @@
 use super::*;
 
 impl<'a> Codegen<'a> {
-    /// Register storage for a declaration local to a procedural loop.
+    /// Register storage for a procedural declaration.
     ///
-    /// Keeping this arena-node mapping separate from model signals preserves
-    /// lexical storage and prevents loop indices from appearing as waveform
-    /// globals.
+    /// Automatic variables remain lexical C locals. Static variables become
+    /// hidden model signals so they retain values across block reentry and
+    /// participate in typed optimizer read/write accounting.
     pub(super) fn collect_loop_var(
         &mut self,
         path: &str,
@@ -31,11 +31,50 @@ impl<'a> Codegen<'a> {
             ));
         }
         let width = self.signal_width(path, &self.node(node).name, &ty)?;
+        let (c_name, static_signal) = match self.db.variable_lifetime(node) {
+            VariableLifetime::Automatic => (format!("_lv{}", node.index()), None),
+            VariableLifetime::Static => {
+                let ir = self.model.signals.len();
+                let signal = SignalInfo {
+                    global: format!("_ls{}", node.index()),
+                    width,
+                    signed: ty.signed,
+                    two_state: self.db.is_two_state_type(node) || is_two_state_kind(&ty.kind),
+                    real: false,
+                    shortreal: false,
+                    net_driver: None,
+                    ir,
+                };
+                self.model.signals.push(IrSignal {
+                    c_name: signal.global.clone(),
+                    hdl_name: None,
+                    ty: IrType::Packed {
+                        width: signal.width,
+                        signed: signal.signed,
+                        two_state: signal.two_state,
+                    },
+                    net_driver: None,
+                    omit: false,
+                });
+                if let Some(initializer) = self.db.var_initializer(node) {
+                    let value = self.var_decl_init(path, &self.node(node).name, initializer)?;
+                    self.var_inits.push((signal.clone(), value));
+                }
+                (signal.global.clone(), Some(signal))
+            }
+            VariableLifetime::Unavailable => {
+                return Err(format!(
+                    "resolved lifetime is unavailable for procedural variable `{}` in `{path}`",
+                    self.node(node).name
+                ));
+            }
+        };
         let info = ProcLocalInfo {
-            c_name: format!("_lv{}", node.index()),
+            c_name,
             width,
             signed: ty.signed,
             two_state: self.db.is_two_state_type(node) || is_two_state_kind(&ty.kind),
+            static_signal,
         };
         self.proc_locals.insert(node, info.clone());
         Ok(info)
@@ -43,16 +82,33 @@ impl<'a> Codegen<'a> {
 
     pub(super) fn proc_local_target(&self, node: NodeId) -> Option<NodeId> {
         if let Some((variable, _)) = self.lexical_proc_local(node) {
-            return Some(variable);
+            return self
+                .proc_locals
+                .get(&variable)
+                .is_some_and(|info| info.static_signal.is_none())
+                .then_some(variable);
         }
         if self.proc_local_is_shadowed(node) {
             return None;
         }
         match self.kind(node) {
-            NodeKind::Var { .. } if self.proc_locals.contains_key(&node) => Some(node),
+            NodeKind::Var { .. }
+                if self
+                    .proc_locals
+                    .get(&node)
+                    .is_some_and(|info| info.static_signal.is_none()) =>
+            {
+                Some(node)
+            }
             NodeKind::Expr(ExprKind::Ref {
                 target: Some(target),
-            }) if self.proc_locals.contains_key(target) => Some(*target),
+            }) if self
+                .proc_locals
+                .get(target)
+                .is_some_and(|info| info.static_signal.is_none()) =>
+            {
+                Some(*target)
+            }
             _ => None,
         }
     }
@@ -115,8 +171,8 @@ impl<'a> Codegen<'a> {
     }
 
     pub(super) fn nested_proc_local_ref(&self, node: NodeId) -> Option<NodeId> {
-        if let Some((variable, _)) = self.lexical_proc_local(node) {
-            return Some(variable);
+        if let Some((variable, info)) = self.lexical_proc_local(node) {
+            return info.static_signal.is_none().then_some(variable);
         }
         if self.proc_local_is_shadowed(node) {
             return self
@@ -129,7 +185,11 @@ impl<'a> Codegen<'a> {
             target: Some(target),
         }) = self.kind(node)
         {
-            if self.proc_locals.contains_key(target) {
+            if self
+                .proc_locals
+                .get(target)
+                .is_some_and(|info| info.static_signal.is_none())
+            {
                 return Some(*target);
             }
         }
@@ -142,7 +202,6 @@ impl<'a> Codegen<'a> {
     /// Walk the instance tree, collecting signals, parameters and gen-scope
     /// paths.  Returns the top module nodes.
     pub(super) fn collect_design(&mut self) -> Result<Vec<NodeId>, String> {
-        self.reject_time_literal_parameter_initializers()?;
         let mut tops = Vec::new();
         for top in self.db.tops() {
             let path = strip_lib(&self.node(*top).name);
@@ -158,76 +217,6 @@ impl<'a> Codegen<'a> {
             tops.push(*top);
         }
         Ok(tops)
-    }
-
-    fn reject_time_literal_parameter_initializers(&self) -> Result<(), String> {
-        for node in self.db.node_ids() {
-            if !matches!(self.kind(node), NodeKind::ParamAssign { .. }) {
-                continue;
-            }
-            if let Some(literal) = self.time_literal_in_subtree(node) {
-                return Err(format!(
-                    "time literal `{literal}` in a parameter initializer is not supported"
-                ));
-            }
-            if self.unverified_time_literal_in_subtree(node) {
-                return Err(
-                    "cannot verify parameter initializer after possible time-literal rewriting"
-                        .to_owned(),
-                );
-            }
-        }
-        Ok(())
-    }
-
-    /// Collect the arena nodes of every per-port COPY interface instance: the
-    /// `low` targets of interface-typed ports.  A modport port's `low` is the
-    /// copy's `vpiModport` (whose parent is the copy interface instance); a
-    /// bare interface port's `low` is the copy interface instance itself.
-    /// This mirrors `emit_iface_link`'s copy lookup.
-    pub(super) fn collect_iface_copies(&mut self) {
-        let mut copies = HashSet::new();
-        for top in self.db.tops() {
-            self.collect_iface_copies_in(*top, &mut copies);
-        }
-        self.iface_copy_insts = copies;
-    }
-
-    fn collect_iface_copies_in(&self, inst: NodeId, copies: &mut HashSet<NodeId>) {
-        for c in &self.node(inst).children {
-            match self.kind(*c) {
-                NodeKind::Port { low: Some(l), .. } => match self.kind(*l) {
-                    NodeKind::ModPort => {
-                        if let Some(iface) = self.node(*l).parent {
-                            if matches!(
-                                self.kind(iface),
-                                NodeKind::ModuleInst {
-                                    is_interface: true,
-                                    ..
-                                }
-                            ) {
-                                copies.insert(iface);
-                            }
-                        }
-                    }
-                    NodeKind::ModuleInst {
-                        is_interface: true, ..
-                    } => {
-                        copies.insert(*l);
-                    }
-                    _ => {}
-                },
-                NodeKind::ModuleInst { .. } => self.collect_iface_copies_in(*c, copies),
-                NodeKind::GenScopeArray => {
-                    for gs in &self.node(*c).children {
-                        if matches!(self.kind(*gs), NodeKind::GenScope) {
-                            self.collect_iface_copies_in(*gs, copies);
-                        }
-                    }
-                }
-                _ => {}
-            }
-        }
     }
 
     fn collect_aggregate(&mut self, path: &str, node: NodeId) -> Result<bool, String> {
@@ -255,10 +244,23 @@ impl<'a> Codegen<'a> {
             AggregateKind::UnpackedStruct | AggregateKind::UnpackedUnion => {}
         }
         if !matches!(self.kind(node), NodeKind::Var { .. }) {
-            return Err(format!(
-                "unpacked aggregate net/port `{}` in `{path}` is not supported",
-                self.node(node).name
-            ));
+            if matches!(
+                self.kind(node),
+                NodeKind::Net { .. }
+                    | NodeKind::Array { .. }
+                    | NodeKind::Port { .. }
+                    | NodeKind::FuncArg { .. }
+                    | NodeKind::IoDecl { .. }
+            ) {
+                return Err(format!(
+                    "unpacked aggregate net/array/port `{}` in `{path}` is not supported",
+                    self.node(node).name
+                ));
+            }
+            // Slang projects aggregate layouts onto type declarations as well
+            // as the variables that use them. Type-only nodes allocate no
+            // runtime storage; the corresponding Var is collected separately.
+            return Ok(false);
         }
         if self.db.nodes().iter().any(|candidate| {
             matches!(
@@ -297,6 +299,7 @@ impl<'a> Codegen<'a> {
                         | "byte"
                         | "shortint"
                         | "logic"
+                        | "reg"
                         | "bit"
                         | "enum"
                         | "array"
@@ -538,7 +541,7 @@ impl<'a> Codegen<'a> {
                     self.event_globals.insert(nid, info);
                 }
                 // A declaration initializer on an `array_net` (`reg [7:0] m
-                // [0:3] = '{…}` — Surelog models the pattern as a
+                // [0:3] = '{…}` — represented as a
                 // net-decl-assign continuous assignment whose LHS is the
                 // array).  Applied to the array's `ArrayInfo`; the assignment
                 // itself is skipped at emission. A scalar reg initializer is
@@ -587,8 +590,10 @@ impl<'a> Codegen<'a> {
         // see `walk_module_inst`).
         self.collect_var_inits(path, inst)?;
         for c in &self.node(inst).children {
-            if matches!(self.kind(*c), NodeKind::GenScopeArray) {
-                self.collect_gen_scope_array(*c, path)?;
+            match self.kind(*c) {
+                NodeKind::GenScopeArray => self.collect_gen_scope_array(*c, path)?,
+                NodeKind::GenScope => self.collect_gen_scope(*c, path)?,
+                _ => {}
             }
         }
         for c in &self.node(inst).children {
@@ -605,11 +610,11 @@ impl<'a> Codegen<'a> {
     }
 
     /// Fold every declaration initializer of a scalar VARIABLE whose init
-    /// lives on the var's `vpiExpr` (`logic l = 1'b0;`, `int x = 5;` —
+    /// is attached to the variable (`logic l = 1'b0;`, `int x = 5;` —
     /// captured in [`Db::vars_init`]) into a constant and queue it for
     /// `main()`.  Called after the scope's parameters are collected so
     /// `P + 1`-style RHS refs resolve via `param_vals`.  Vars that are not
-    /// collected as signals (function/block locals, per-port copies) carry no
+    /// collected as signals (function/block locals) carry no
     /// fill; their initializers are handled by their own paths.
     fn collect_var_inits(&mut self, path: &str, inst: NodeId) -> Result<(), String> {
         for c in &self.node(inst).children {
@@ -635,7 +640,7 @@ impl<'a> Codegen<'a> {
                 ) && matches!(
                     self.kind(init),
                     NodeKind::Expr(ExprKind::Operation { op, .. })
-                        if *op == vpi::vpiAssignmentPatternOp
+                        if *op == Operation::AssignmentPattern
                 ) {
                     let value = self.packed_aggregate_decl_init(path, init, layout, &info)?;
                     self.var_inits.push((info, value));
@@ -712,7 +717,7 @@ impl<'a> Codegen<'a> {
             if matches!(
                 self.kind(value_node),
                 NodeKind::Expr(ExprKind::Operation { op, .. })
-                    if *op == vpi::vpiAssignmentPatternOp
+                    if *op == Operation::AssignmentPattern
             ) {
                 if !matches!(
                     layout.kind,
@@ -815,7 +820,7 @@ impl<'a> Codegen<'a> {
                 "declaration initializer for aggregate in `{path}` is not an assignment pattern"
             ));
         };
-        if *op != vpi::vpiAssignmentPatternOp {
+        if *op != Operation::AssignmentPattern {
             return Err(format!(
                 "declaration initializer for aggregate in `{path}` is not an assignment pattern"
             ));
@@ -851,7 +856,7 @@ impl<'a> Codegen<'a> {
             )
         }) {
             if !is_union && operands.len() == layout.members.len() {
-                // UHDM's checked flattener replaces resolved member/default
+                // The elaborated snapshot replaces resolved member/default
                 // keys with their values but retains resolved type keys as
                 // tagged operands, all in declaration order.
                 return operands
@@ -1032,8 +1037,8 @@ impl<'a> Codegen<'a> {
                     "string/class signals are not supported: `{name}` in `{path}`"
                 ))
             }
-            "int" | "integer" | "time" | "longint" | "byte" | "shortint" | "logic" | "bit"
-            | "enum" => ty.width.unwrap_or(1),
+            "int" | "integer" | "time" | "longint" | "byte" | "shortint" | "logic" | "reg"
+            | "bit" | "enum" => ty.width.unwrap_or(1),
             "struct" | "union" | "array" => ty.width.ok_or_else(|| {
                 format!("packed type of signal `{name}` in `{path}` has no resolved width")
             })?,
@@ -1062,8 +1067,8 @@ impl<'a> Codegen<'a> {
     }
 
     fn collect_gen_scope(&mut self, gs: NodeId, path: &str) -> Result<(), String> {
-        // Surelog names the enclosing `gen_scope_array` (e.g. `g[0]` for the
-        // genvar-loop iteration) and leaves the `gen_scope` itself unnamed;
+        // An enclosing generate-scope array can hold the iteration name (for
+        // example `g[0]`) while the generate scope itself is unnamed;
         // fall back to the array's name so per-iteration paths stay distinct.
         let gs_node = self.node(gs);
         let gs_name = if gs_node.name.is_empty() {
@@ -1207,6 +1212,13 @@ impl<'a> Codegen<'a> {
         // Variable declaration initializers, folded after the scope's own
         // parameters are collected (see `collect_var_inits`).
         self.collect_var_inits(&gs_path, gs)?;
+        for child in self.node(gs).children.clone() {
+            match self.kind(child) {
+                NodeKind::GenScope => self.collect_gen_scope(child, &gs_path)?,
+                NodeKind::GenScopeArray => self.collect_gen_scope_array(child, &gs_path)?,
+                _ => {}
+            }
+        }
         // Module instances inside the generate scope are collected like
         // regular child instances (signals, arrays, params, processes,
         // nested gen scopes), under their full instance path.
@@ -1221,8 +1233,8 @@ impl<'a> Codegen<'a> {
 
     // ── Collapsed inout-net groups ────────────────────────────────────────
 
-    /// Collapse inout-port net pairs (parent `vpiHighConn` + child
-    /// `vpiLowConn`) into one resolved simulated net per connected set
+    /// Collapse inout-port net pairs (parent high connection + child low
+    /// connection) into one resolved simulated net per connected set
     /// (LRM §23.3.3.7), run after [`collect_design`](Self::collect_design)
     /// and before any emission.
     ///
@@ -1234,6 +1246,20 @@ impl<'a> Codegen<'a> {
     /// writes) are skipped with an explicit warning — never silently.
     pub(super) fn build_net_groups(&mut self) -> Result<(), String> {
         let nodes = self.design_nodes();
+        if let Some(array) = nodes.iter().find(|id| {
+            matches!(
+                self.kind(**id),
+                NodeKind::Gate {
+                    class: PrimClass::Array,
+                    ..
+                }
+            )
+        }) {
+            return Err(format!(
+                "primitive array `{}` is not supported",
+                self.display_name(*array)
+            ));
+        }
         self.build_wired_net_groups(&nodes)?;
         // Union-find over the parent/child nets of every inout port.
         let mut parent: HashMap<NodeId, NodeId> = HashMap::new();
@@ -1346,7 +1372,6 @@ impl<'a> Codegen<'a> {
             if let Some(bad) = members.iter().find(|m| match self.kind(**m) {
                 NodeKind::Net { net_type, .. } => {
                     !matches!(*net_type, NetType::Wire | NetType::Tri | NetType::Logic)
-                        && *net_type != vpi::vpiNet
                 }
                 _ => true,
             }) {
@@ -1355,7 +1380,7 @@ impl<'a> Codegen<'a> {
                     _ => NetType::None,
                 };
                 self.warnings.push(format!(
-                    "{joined}: member `{}` has unsupported net type {net_type} \
+                    "{joined}: member `{}` has unsupported net type {net_type:?} \
                      (only wire/tri/logic nets resolve); group skipped (inout \
                      connection dropped)",
                     self.display_name(*bad)
@@ -1853,9 +1878,9 @@ impl<'a> Codegen<'a> {
         Ok(())
     }
 
-    /// Surelog can leave a top-self hierarchical continuous LHS unresolved.
-    /// Use its owned source location only as a rejection fallback; accepted
-    /// direct drivers still require an owned target identity.
+    /// Use admitted source text only as a rejection fallback for an unresolved
+    /// top-self hierarchical continuous LHS. Accepted direct drivers still
+    /// require an owned target identity.
     fn cont_assign_source_has_hier_lhs(&self, ca: NodeId, net: NodeId) -> bool {
         let node = self.node(ca);
         let Some(file) = node.file.as_deref() else {
@@ -1864,7 +1889,7 @@ impl<'a> Codegen<'a> {
         if node.line == 0 {
             return false;
         }
-        let Ok(source) = std::fs::read_to_string(file) else {
+        let Some(source) = self.db.source_text(file) else {
             return false;
         };
         let Some(line) = source.lines().nth(node.line as usize - 1) else {
@@ -1923,8 +1948,8 @@ impl<'a> Codegen<'a> {
                 scope.kind,
                 NodeKind::ModuleInst { .. } | NodeKind::GenScopeArray | NodeKind::GenScope
             ) {
-                // Surelog library-qualifies top design units (`work@tb`).
-                // Other `vpiName` components are source identifiers, where
+                // A frontend can library-qualify top design units (`work@tb`).
+                // Other name components are source identifiers, where
                 // `@` is legal in an escaped spelling and must be preserved.
                 let name = match &scope.kind {
                     NodeKind::ModuleInst { is_top: true, .. } => strip_lib(&scope.name),
@@ -2121,7 +2146,7 @@ impl<'a> Codegen<'a> {
         }
     }
 
-    /// The array a `vpiNetDeclAssign` continuous assignment initializes (its
+    /// The array a net-declaration continuous assignment initializes (its
     /// LHS resolves to an `Array` node), or `None` for other assignments.
     fn cont_assign_array_target(&self, ca: NodeId) -> Option<NodeId> {
         self.node(ca)
@@ -2157,7 +2182,7 @@ impl<'a> Codegen<'a> {
         if !matches!(
             self.kind(rhs),
             NodeKind::Expr(ExprKind::Operation { op, .. })
-                if *op == vpi::vpiAssignmentPatternOp
+                if *op == Operation::AssignmentPattern
         ) {
             return Ok(false);
         }
@@ -2195,19 +2220,11 @@ impl<'a> Codegen<'a> {
             NodeKind::Net { .. } | NodeKind::Var { .. } | NodeKind::Array { .. } => Some(lhs),
             _ => None,
         };
-        let aggregate_storage = target
-            .and_then(|target| self.signal_of(target))
-            .is_some_and(|info| {
-                self.sig_globals.iter().any(|(candidate, candidate_info)| {
-                    candidate_info.ir == info.ir && self.db.aggregate_layout(*candidate).is_some()
-                })
-            });
         match target.map(|target| self.kind(target)) {
             Some(NodeKind::Array { .. }) => NetDeclTarget::Array,
             Some(NodeKind::Var { .. }) => NetDeclTarget::Variable,
             Some(NodeKind::Net { net_type, .. }) => match *net_type {
                 NetType::None => NetDeclTarget::Variable,
-                other if other.as_raw() == 0 && aggregate_storage => NetDeclTarget::Variable,
                 NetType::Wire
                 | NetType::Tri
                 | NetType::Logic
@@ -2219,7 +2236,6 @@ impl<'a> Codegen<'a> {
                 | NetType::Tri1
                 | NetType::Supply0
                 | NetType::Supply1 => NetDeclTarget::TrueNet,
-                other if other == vpi::vpiNet => NetDeclTarget::TrueNet,
                 NetType::Reg => NetDeclTarget::Variable,
                 other => NetDeclTarget::UnsupportedNet(other),
             },
@@ -2227,7 +2243,7 @@ impl<'a> Codegen<'a> {
         }
     }
 
-    /// The declaration-initializer constants of a `vpiNetDeclAssign`
+    /// The declaration-initializer constants of a net-declaration
     /// continuous assignment whose LHS resolves to an unpacked array
     /// (`reg [7:0] m [0:3] = '{…}`), or `None` when the assignment is not an
     /// array initializer.
@@ -2254,7 +2270,7 @@ impl<'a> Codegen<'a> {
         Ok(Some((target, vals)))
     }
 
-    /// The declaration-initializer constant of a `vpiNetDeclAssign` whose LHS
+    /// The declaration-initializer constant of a net-declaration assignment whose LHS
     /// is a scalar variable-like object (`reg y = 0`). The caller classifies
     /// the target first; true nets never enter this constant-only path.
     fn scalar_decl_init(
@@ -2270,17 +2286,6 @@ impl<'a> Codegen<'a> {
             Some(r) => *r,
             None => return Ok(None),
         };
-        if let Some(literal) = self.time_literal_in_subtree(rhs) {
-            return Err(format!(
-                "time literal `{literal}` in a scalar declaration initializer is not supported"
-            ));
-        }
-        if self.unverified_time_literal_in_subtree(rhs) {
-            return Err(
-                "cannot verify scalar declaration initializer after possible time-literal rewriting"
-                    .to_owned(),
-            );
-        }
         // Whole-signal LHS only: `resolve_signal_id` rejects selects and
         // arrays (the latter are registered as refs to `Array` nodes, which
         // carry no `SignalInfo`).
@@ -2288,8 +2293,7 @@ impl<'a> Codegen<'a> {
             Ok(g) => g,
             Err(_) => return Ok(None),
         };
-        // The RHS is a constant expression in practice (Surelog folds
-        // declaration-initializer expressions at elaboration); a plain
+        // The RHS is a constant expression after elaboration; try a plain
         // constant first, then constant-foldable operations/params.  Anything
         // non-constant falls through to the emission error path.
         let c = match self.const_of_node(rhs) {
@@ -2303,9 +2307,8 @@ impl<'a> Codegen<'a> {
     }
 
     /// The declaration-initializer constant of a scalar VARIABLE whose init
-    /// lives on the var's `vpiExpr` (`logic l = 1'b0;`, `int x = 5;`).  The
-    /// RHS is a constant expression in practice (Surelog folds
-    /// declaration-initializer expressions at elaboration): a plain constant
+    /// is attached to the variable (`logic l = 1'b0;`, `int x = 5;`). The RHS
+    /// is a constant expression after elaboration: try a plain constant
     /// first, then constant-foldable operations/params via `eval_bits` (which
     /// resolves parameter references through `param_vals`).  Anything
     /// non-constant is rejected because variable initializers must be constant
@@ -2316,16 +2319,6 @@ impl<'a> Codegen<'a> {
         name: &str,
         init: NodeId,
     ) -> Result<IrConst, String> {
-        if let Some(literal) = self.time_literal_in_subtree(init) {
-            return Err(format!(
-                "time literal `{literal}` in variable initializer `{name}` in `{path}` is not supported"
-            ));
-        }
-        if self.unverified_time_literal_in_subtree(init) {
-            return Err(format!(
-                "cannot verify variable initializer `{name}` in `{path}` after possible time-literal rewriting"
-            ));
-        }
         match self.const_of_node(init) {
             Ok(c) => Ok(c),
             Err(_) => match self.eval_decl_value(init) {
@@ -2347,7 +2340,7 @@ impl<'a> Codegen<'a> {
     ) -> Result<Vec<IrConst>, String> {
         let operands: Vec<NodeId> = match self.kind(init) {
             NodeKind::Expr(ExprKind::Operation { op, operands, .. })
-                if *op == vpi::vpiAssignmentPatternOp =>
+                if *op == Operation::AssignmentPattern =>
             {
                 operands.clone()
             }
@@ -2360,12 +2353,16 @@ impl<'a> Codegen<'a> {
         };
         operands
             .iter()
-            .map(|o| match self.kind(*o) {
-                NodeKind::Expr(ExprKind::Constant { .. }) => self.const_of_node(*o),
-                other => Err(format!(
-                    "array `{name}` in `{path}`: initializer element is not a \
-                     constant ({other:?})"
-                )),
+            .map(|operand| {
+                self.const_of_node(*operand)
+                    .or_else(|_| self.eval_decl_value(*operand).and_then(decl_value_to_const))
+                    .map_err(|_| {
+                        format!(
+                            "array `{name}` in `{path}`: initializer element is not a \
+                             supported constant expression ({:?})",
+                            self.kind(*operand)
+                        )
+                    })
             })
             .collect()
     }
@@ -2393,9 +2390,8 @@ impl<'a> Codegen<'a> {
                     ty.kind
                 ))
             }
-            "int" | "integer" | "time" | "longint" | "byte" | "shortint" | "logic" | "bit" => {
-                ty.width.unwrap_or(1)
-            }
+            "int" | "integer" | "time" | "longint" | "byte" | "shortint" | "logic" | "reg"
+            | "bit" => ty.width.unwrap_or(1),
             _ => {
                 return Err(format!(
                     "array `{name}` in `{path}` has unsupported element type `{}`",
@@ -2469,9 +2465,8 @@ impl<'a> Codegen<'a> {
             ));
         }
         let elem_width = match ty.kind.as_str() {
-            "int" | "integer" | "time" | "longint" | "byte" | "shortint" | "logic" | "bit" => {
-                ty.width.unwrap_or(1)
-            }
+            "int" | "integer" | "time" | "longint" | "byte" | "shortint" | "logic" | "reg"
+            | "bit" => ty.width.unwrap_or(1),
             kind => {
                 return Err(format!(
                     "container `{name}` in `{path}` has unsupported element type `{kind}`"
@@ -2599,6 +2594,16 @@ impl<'a> Codegen<'a> {
                     let mut local_seq = 0;
                     self.collect_func_locals(body, inst, &mut locals, &mut local_seq, "")?;
                     for (local, (_, width, signed, two_state)) in locals {
+                        match self.db.variable_lifetime(local) {
+                            VariableLifetime::Automatic => continue,
+                            VariableLifetime::Static => {}
+                            VariableLifetime::Unavailable => {
+                                return Err(format!(
+                                    "resolved lifetime is unavailable for task local `{}`",
+                                    self.node(local).name
+                                ));
+                            }
+                        }
                         let signal = self.model.signals.len();
                         let info = SignalInfo {
                             global: format!("S_f{}_{}_l{}", inst.index(), c.index(), local.index()),
@@ -2777,7 +2782,7 @@ impl<'a> Codegen<'a> {
     /// `(is_task, return width/signed, (io_decl node, is_output) in formal
     /// order)` of a FuncTask node.  The return width is `None` for void
     /// functions and tasks.
-    // The tuple mirrors UHDM's function/task signature without introducing a
+    // The tuple mirrors the semantic function/task signature without introducing a
     // public one-off type solely for this private lowering boundary.
     #[allow(clippy::type_complexity)]
     pub(super) fn func_info(
@@ -2846,18 +2851,9 @@ impl<'a> Codegen<'a> {
         Ok((is_task, ret, formals))
     }
 
-    /// The body statement of a function/task definition: the last child that
-    /// is not the return variable or a formal argument (children are laid out
-    /// in fixed order — return var, formals, then the body).  An empty body is
-    /// captured by the database walk as a `StmtKind::Empty` placeholder, so
-    /// this always finds a body when the children exist.
+    /// The body statement identified by Slang's semantic `Body` relationship.
     pub(super) fn func_body(&self, ft: NodeId) -> Option<NodeId> {
-        self.node(ft).children.iter().rev().copied().find(|c| {
-            !matches!(
-                self.kind(*c),
-                NodeKind::Var { .. } | NodeKind::FuncArg { .. }
-            )
-        })
+        self.db.subroutine_body(ft)
     }
 
     /// Emit one static C function for a function/task definition.  The body
@@ -2899,11 +2895,9 @@ impl<'a> Codegen<'a> {
             .cloned()
             .ok_or_else(|| format!("function `{}` has no C name", self.node(ft).name))?;
         let has_ret = ret.is_some() || ret_chandle || ret_string;
-        let ret_var = if has_ret {
-            self.node(ft).children.first().copied()
-        } else {
-            None
-        };
+        // Slang binds an assignment to the function name directly to the
+        // subroutine symbol; that symbol is the return-storage identity.
+        let ret_var = has_ret.then_some(ft);
         let body = self
             .func_body(ft)
             .ok_or_else(|| format!("function `{}` without a body", self.node(ft).name))?;
@@ -3144,6 +3138,9 @@ impl<'a> Codegen<'a> {
             names.sort_by_key(|(id, _)| id.0);
             let mut initial_by_name = HashMap::new();
             for (local, (c_name, width, signed, two_state)) in &names {
+                if self.db.variable_lifetime(*local) != VariableLifetime::Static {
+                    continue;
+                }
                 let initializer = self
                     .db
                     .var_initializer(*local)
@@ -3176,6 +3173,7 @@ impl<'a> Codegen<'a> {
             let mut emitted = HashSet::new();
             names
                 .into_iter()
+                .filter(|(local, _)| self.db.variable_lifetime(*local) == VariableLifetime::Static)
                 .filter(|(_, (c_name, ..))| emitted.insert(c_name.clone()))
                 .map(|(_, (c_name, width, signed, two_state))| {
                     let initial = initial_by_name.remove(&c_name);
@@ -3357,8 +3355,8 @@ impl<'a> Codegen<'a> {
         if let NodeKind::Stmt(StmtKind::For { body, .. }) = self.kind(node) {
             // IEEE 1800-2009 §12.7 restricts for-initialization to variable
             // assignments and for-step assignments to operator assignments,
-            // increment/decrement expressions, or function calls. Surelog
-            // omits vpiBlocking on an inline declaration initializer, but
+            // increment/decrement expressions, or function calls. Inline
+            // declaration initializers are emitted as blocking assignments;
             // lower_for deliberately emits those assignments as blocking.
             // Only the loop body can therefore contain an NBA owned by this
             // subroutine.
@@ -3395,7 +3393,11 @@ impl<'a> Codegen<'a> {
                     if target == subroutine {
                         return declaration.is_some_and(|declaration| {
                             match self.kind(declaration) {
-                                NodeKind::FuncArg { .. } | NodeKind::Var { .. } => automatic,
+                                NodeKind::FuncArg { .. } => automatic,
+                                NodeKind::Var { .. } => {
+                                    self.db.variable_lifetime(declaration)
+                                        == VariableLifetime::Automatic
+                                }
                                 NodeKind::Array { .. } => true,
                                 _ => false,
                             }
@@ -3491,7 +3493,7 @@ impl<'a> Codegen<'a> {
         }
     }
 
-    /// A call argument Surelog synthesizes for a *missing named* argument: a
+    /// A call argument a frontend can synthesize for a *missing named* argument: a
     /// location-less `0` constant (genuine `0` literals carry a source line).
     fn is_synthetic_arg(&self, a: NodeId) -> bool {
         if self.node(a).line != 0 {
@@ -3500,14 +3502,16 @@ impl<'a> Codegen<'a> {
         match self.kind(a) {
             NodeKind::Expr(ExprKind::Constant { value, .. }) => matches!(
                 value,
-                ValueData::Int(0) | ValueData::UInt(0) | ValueData::Scalar(vpi::vpi0)
+                ValueData::Int(0)
+                    | ValueData::UInt(0)
+                    | ValueData::Scalar(crate::core::value::ScalarValue::Zero)
             ),
             _ => false,
         }
     }
 
     /// Bind a call's positional arguments to the callee's formals, in formal
-    /// order.  Missing (or Surelog-synthesized) arguments fall back to the
+    /// order. Missing (or frontend-synthesized) arguments fall back to the
     /// formal's default expression; a formal without a default errors.
     pub(super) fn bind_call_args(
         &self,
@@ -3516,7 +3520,7 @@ impl<'a> Codegen<'a> {
         args: &[NodeId],
     ) -> Result<Vec<BoundArg>, String> {
         let mut bound = Vec::with_capacity(formals.len());
-        for (idx, (io, _)) in formals.iter().enumerate() {
+        for (idx, (io, is_out)) in formals.iter().enumerate() {
             let (w, s, two_state) = match self.kind(*io) {
                 NodeKind::FuncArg { ty, .. } => {
                     if ty.kind == "chandle" {
@@ -3551,25 +3555,42 @@ impl<'a> Codegen<'a> {
                 }
                 _ => unreachable!("non-FuncArg in formals"),
             };
-            let (expr, is_default) = match args.get(idx) {
-                Some(a) if !self.is_synthetic_arg(*a) => (*a, false),
-                _ => match self.kind(*io) {
-                    NodeKind::FuncArg { default, .. } => (
-                        default.ok_or_else(|| {
-                            format!(
-                                "missing argument for formal `{}` of `{}`",
-                                self.node(*io).name,
-                                self.node(*io)
-                                    .parent
-                                    .map(|p| self.node(p).name.clone())
-                                    .unwrap_or_default()
-                            )
-                        })?,
-                        true,
-                    ),
-                    _ => unreachable!(),
-                },
+            let default = match self.kind(*io) {
+                NodeKind::FuncArg { default, .. } => *default,
+                _ => unreachable!(),
             };
+            let (mut expr, is_default) = match args.get(idx) {
+                // Slang inserts the formal's owned default expression node
+                // directly into the elaborated call argument list.
+                Some(a) if Some(*a) == default => (*a, true),
+                Some(a) if !self.is_synthetic_arg(*a) => (*a, false),
+                _ => (
+                    default.ok_or_else(|| {
+                        format!(
+                            "missing argument for formal `{}` of `{}`",
+                            self.node(*io).name,
+                            self.node(*io)
+                                .parent
+                                .map(|p| self.node(p).name.clone())
+                                .unwrap_or_default()
+                        )
+                    })?,
+                    true,
+                ),
+            };
+            if *is_out && !is_default {
+                if let NodeKind::Expr(ExprKind::Operation { op, operands, .. }) = self.kind(expr) {
+                    if *op == Operation::Assignment {
+                        let [actual, _converted] = operands.as_slice() else {
+                            return Err(format!(
+                                "output argument for formal `{}` has a malformed assignment wrapper",
+                                self.node(*io).name
+                            ));
+                        };
+                        expr = *actual;
+                    }
+                }
+            }
             bound.push(BoundArg {
                 width: w,
                 signed: s,
@@ -3634,6 +3655,10 @@ impl<'a> Codegen<'a> {
                 string_write: HashMap::new(),
                 locals: HashMap::new(),
                 ret_node: None,
+                // Formal defaults carry exact references to the same formal
+                // NodeIds used as keys above. Avoid remapping them through an
+                // executable function context while arguments are being
+                // assembled.
                 def_node: None,
             };
             let saved = self.func.take();
@@ -3693,8 +3718,8 @@ impl<'a> Codegen<'a> {
         }
         let args: Vec<NodeId> = self.node(h).children.clone();
         let bound = self.bind_call_args(self.inst, &formals, &args)?;
-        // `ret` is `None` for void functions; using one as a value (legal in
-        // Surelog's parse, e.g. `out <= vf(4'd2);`) emits the call for its
+        // `ret` is `None` for void functions; when the frontend accepts one as
+        // a value (for example `out <= vf(4'd2);`), emit the call for its
         // side effects and yields all-X.
         let ret_val = meta.ret;
         let (ret_w, ret_s, _) = ret_val.unwrap_or((1, false, false));
@@ -3788,6 +3813,7 @@ impl<'a> Codegen<'a> {
     /// return var are indexed), then `name`.
     fn func_write_target(&self, node: NodeId, name: &str) -> Option<Lhs> {
         let f = self.func.as_ref()?;
+        let node = self.canonical_func_target(node).unwrap_or(node);
         if let Some(info) = f.persistent.get(&node) {
             return Some(Lhs::Whole(info.clone()));
         }
@@ -3857,12 +3883,100 @@ impl<'a> Codegen<'a> {
         None
     }
 
+    /// Normalize a Slang instantiated subroutine declaration identity to the
+    /// definition identity used by the current function context. The match is
+    /// structural: same subroutine signature plus formal ordinal. This avoids
+    /// redirecting an unrelated same-named declaration.
+    pub(super) fn canonical_func_target(&self, node: NodeId) -> Option<NodeId> {
+        let definition = self.func.as_ref()?.def_node?;
+        if node == definition {
+            return Some(node);
+        }
+        match self.kind(node) {
+            NodeKind::FuncTask { .. } => self
+                .same_subroutine_signature(node, definition)
+                .then_some(definition),
+            NodeKind::FuncArg { .. } => {
+                let owner = self.enclosing_func_task(node)?;
+                if !self.same_subroutine_signature(owner, definition) {
+                    return None;
+                }
+                let ordinal = self
+                    .node(owner)
+                    .children
+                    .iter()
+                    .filter(|child| matches!(self.kind(**child), NodeKind::FuncArg { .. }))
+                    .position(|child| *child == node)?;
+                self.node(definition)
+                    .children
+                    .iter()
+                    .filter(|child| matches!(self.kind(**child), NodeKind::FuncArg { .. }))
+                    .nth(ordinal)
+                    .copied()
+            }
+            _ => None,
+        }
+    }
+
+    fn enclosing_func_task(&self, node: NodeId) -> Option<NodeId> {
+        let mut parent = self.node(node).parent;
+        while let Some(candidate) = parent {
+            if matches!(self.kind(candidate), NodeKind::FuncTask { .. }) {
+                return Some(candidate);
+            }
+            parent = self.node(candidate).parent;
+        }
+        None
+    }
+
+    fn same_subroutine_signature(&self, left: NodeId, right: NodeId) -> bool {
+        let same_kind = match (self.kind(left), self.kind(right)) {
+            (
+                NodeKind::FuncTask {
+                    is_task: left_task,
+                    ret: left_return,
+                    ..
+                },
+                NodeKind::FuncTask {
+                    is_task: right_task,
+                    ret: right_return,
+                    ..
+                },
+            ) => {
+                left_task == right_task
+                    && left_return
+                        .as_ref()
+                        .map(|ty| (&ty.kind, ty.width, ty.signed))
+                        == right_return
+                            .as_ref()
+                            .map(|ty| (&ty.kind, ty.width, ty.signed))
+            }
+            _ => false,
+        };
+        if !same_kind || self.node(left).name != self.node(right).name {
+            return false;
+        }
+        let formals = |subroutine: NodeId| {
+            self.node(subroutine)
+                .children
+                .iter()
+                .filter_map(|child| match self.kind(*child) {
+                    NodeKind::FuncArg { direction, ty, .. } => {
+                        Some((*direction, ty.kind.clone(), ty.width, ty.signed))
+                    }
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        };
+        formals(left) == formals(right)
+    }
+
     // ── PCA site pre-scan (two-phase discovery, phase 1) ─────────────────────
 
     /// Allocate every procedural continuous assignment site in the instance
     /// tree BEFORE any body lowers.  Traverses module instances, generate
     /// scopes and per-iteration instances exactly like the Procs emission
-    /// pass (interface copies excluded — they never emit processes), so
+    /// pass, so
     /// lower-time lookups into [`Codegen::pca_sites`] see every site
     /// regardless of process/source order: a `deassign` in a process that
     /// lowers BEFORE the process carrying the matching `assign` must still
@@ -3872,53 +3986,60 @@ impl<'a> Codegen<'a> {
     /// scanned here: they always lower before any process body, so sites
     /// inside them still allocate ahead of every process-body deassign.
     pub(super) fn prescan_pca_sites(&mut self, inst: NodeId, path: &str) -> Result<(), String> {
-        let iface_copy = matches!(
-            self.kind(inst),
-            NodeKind::ModuleInst {
-                is_interface: true,
-                ..
+        for c in &self.node(inst).children {
+            if matches!(self.kind(*c), NodeKind::Process { .. }) {
+                self.prescan_pca_proc(inst, path, *c)?;
             }
-        ) && self.iface_copy_insts.contains(&inst);
-        if !iface_copy {
-            for c in &self.node(inst).children {
-                if matches!(self.kind(*c), NodeKind::Process { .. }) {
-                    self.prescan_pca_proc(inst, path, *c)?;
-                }
-            }
-            for c in &self.node(inst).children {
-                if !matches!(self.kind(*c), NodeKind::GenScopeArray) {
-                    continue;
-                }
-                for gs in &self.node(*c).children {
-                    if !matches!(self.kind(*gs), NodeKind::GenScope) {
-                        continue;
-                    }
-                    let gs_path = self
-                        .gen_scope_paths
-                        .get(gs)
-                        .cloned()
-                        .unwrap_or_else(|| path.to_string());
-                    for cc in &self.node(*gs).children {
-                        match self.kind(*cc) {
-                            NodeKind::Process { .. } => {
-                                self.prescan_pca_proc(inst, &gs_path, *cc)?
-                            }
-                            // Per-iteration instances under a gen scope own
-                            // their processes; recurse like the Procs pass.
-                            NodeKind::ModuleInst { .. } => {
-                                let child_path = self.instance_path_of(*cc);
-                                self.prescan_pca_sites(*cc, &child_path)?;
-                            }
-                            _ => {}
+        }
+        for c in &self.node(inst).children {
+            match self.kind(*c) {
+                NodeKind::GenScope => self.prescan_pca_gen_scope(inst, *c, path)?,
+                NodeKind::GenScopeArray => {
+                    for gs in self.node(*c).children.clone() {
+                        if matches!(self.kind(gs), NodeKind::GenScope) {
+                            self.prescan_pca_gen_scope(inst, gs, path)?;
                         }
                     }
                 }
+                _ => {}
             }
         }
         for c in &self.node(inst).children {
             if matches!(self.kind(*c), NodeKind::ModuleInst { .. }) {
                 let child_path = self.instance_path_of(*c);
                 self.prescan_pca_sites(*c, &child_path)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn prescan_pca_gen_scope(
+        &mut self,
+        inst: NodeId,
+        gs: NodeId,
+        parent_path: &str,
+    ) -> Result<(), String> {
+        let gs_path = self
+            .gen_scope_paths
+            .get(&gs)
+            .cloned()
+            .unwrap_or_else(|| parent_path.to_string());
+        for child in self.node(gs).children.clone() {
+            match self.kind(child) {
+                NodeKind::Process { .. } => self.prescan_pca_proc(inst, &gs_path, child)?,
+                NodeKind::GenScope => self.prescan_pca_gen_scope(inst, child, &gs_path)?,
+                NodeKind::GenScopeArray => {
+                    for nested in self.node(child).children.clone() {
+                        if matches!(self.kind(nested), NodeKind::GenScope) {
+                            self.prescan_pca_gen_scope(inst, nested, &gs_path)?;
+                        }
+                    }
+                }
+                NodeKind::ModuleInst { .. } => {
+                    let child_path = self.instance_path_of(child);
+                    self.prescan_pca_sites(child, &child_path)?;
+                }
+                _ => {}
             }
         }
         Ok(())
@@ -3965,43 +4086,6 @@ impl<'a> Codegen<'a> {
     }
 
     fn emit_pass_inst(&mut self, inst: NodeId, path: &str, pass: Pass) -> Result<(), String> {
-        // Instances inside generate scopes (per-iteration instances) are
-        // emitted like the instance's own children: their links, processes and
-        // continuous assignments all run under the gen-scope path.
-        let emit_gen_scope_children =
-            |cg: &mut Self, gs: &NodeId, pass: Pass, path: &str| -> Result<(), String> {
-                let gs_path = cg
-                    .gen_scope_paths
-                    .get(gs)
-                    .cloned()
-                    .unwrap_or_else(|| path.to_string());
-                for cc in &cg.node(*gs).children {
-                    match cg.kind(*cc) {
-                        NodeKind::ContAssign { .. } if pass == Pass::Comb => {
-                            cg.emit_cont_assign(inst, &gs_path, *cc)?
-                        }
-                        NodeKind::Gate { .. } if pass == Pass::Comb => {
-                            cg.emit_gate(inst, &gs_path, *cc)?
-                        }
-                        NodeKind::Process { .. } if pass == Pass::Procs => {
-                            cg.emit_process(inst, &gs_path, *cc)?;
-                        }
-                        NodeKind::ModuleInst { .. } => {
-                            let child_path = cg.instance_path_of(*cc);
-                            match pass {
-                                Pass::Comb => cg.emit_pass_inst(*cc, &child_path, Pass::Comb)?,
-                                Pass::Links => {
-                                    cg.emit_links(&gs_path, *cc)?;
-                                    cg.emit_pass_inst(*cc, &child_path, Pass::Links)?;
-                                }
-                                Pass::Procs => cg.emit_pass_inst(*cc, &child_path, Pass::Procs)?,
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-                Ok(())
-            };
         match pass {
             Pass::Comb => {
                 for c in &self.node(inst).children {
@@ -4012,12 +4096,16 @@ impl<'a> Codegen<'a> {
                     }
                 }
                 for c in &self.node(inst).children {
-                    if matches!(self.kind(*c), NodeKind::GenScopeArray) {
-                        for gs in &self.node(*c).children {
-                            if matches!(self.kind(*gs), NodeKind::GenScope) {
-                                emit_gen_scope_children(self, gs, Pass::Comb, path)?;
+                    match self.kind(*c) {
+                        NodeKind::GenScope => self.emit_gen_scope(inst, *c, path, Pass::Comb)?,
+                        NodeKind::GenScopeArray => {
+                            for gs in self.node(*c).children.clone() {
+                                if matches!(self.kind(gs), NodeKind::GenScope) {
+                                    self.emit_gen_scope(inst, gs, path, Pass::Comb)?;
+                                }
                             }
                         }
+                        _ => {}
                     }
                 }
                 for c in &self.node(inst).children {
@@ -4029,12 +4117,16 @@ impl<'a> Codegen<'a> {
             }
             Pass::Links => {
                 for c in &self.node(inst).children {
-                    if matches!(self.kind(*c), NodeKind::GenScopeArray) {
-                        for gs in &self.node(*c).children {
-                            if matches!(self.kind(*gs), NodeKind::GenScope) {
-                                emit_gen_scope_children(self, gs, Pass::Links, path)?;
+                    match self.kind(*c) {
+                        NodeKind::GenScope => self.emit_gen_scope(inst, *c, path, Pass::Links)?,
+                        NodeKind::GenScopeArray => {
+                            for gs in self.node(*c).children.clone() {
+                                if matches!(self.kind(gs), NodeKind::GenScope) {
+                                    self.emit_gen_scope(inst, gs, path, Pass::Links)?;
+                                }
                             }
                         }
+                        _ => {}
                     }
                 }
                 for c in &self.node(inst).children {
@@ -4046,24 +4138,8 @@ impl<'a> Codegen<'a> {
                 }
             }
             Pass::Procs => {
-                // Interface body processes (always/initial/always_comb blocks
-                // inside an interface definition) belong to the ACTUAL
-                // interface instance. The pinned Surelog does not clone them into
-                // the per-port copies (they are just views); emitting one on a
-                // copy would double-drive the member through the interface
-                // link, so copies are always skipped here.
-                let iface_copy = matches!(
-                    self.kind(inst),
-                    NodeKind::ModuleInst {
-                        is_interface: true,
-                        ..
-                    }
-                ) && self.iface_copy_insts.contains(&inst);
                 for c in &self.node(inst).children {
                     if matches!(self.kind(*c), NodeKind::Process { .. }) {
-                        if iface_copy {
-                            continue;
-                        }
                         self.emit_process(inst, path, *c)?;
                     }
                 }
@@ -4071,15 +4147,17 @@ impl<'a> Codegen<'a> {
                 // instance processes (mirroring the Comb pass's gen-scope
                 // walk); genvar references inline to the gen-scope parameter
                 // values collected by `collect_gen_scope`.
-                if !iface_copy {
-                    for c in &self.node(inst).children {
-                        if matches!(self.kind(*c), NodeKind::GenScopeArray) {
-                            for gs in &self.node(*c).children {
-                                if matches!(self.kind(*gs), NodeKind::GenScope) {
-                                    emit_gen_scope_children(self, gs, Pass::Procs, path)?;
+                for c in &self.node(inst).children {
+                    match self.kind(*c) {
+                        NodeKind::GenScope => self.emit_gen_scope(inst, *c, path, Pass::Procs)?,
+                        NodeKind::GenScopeArray => {
+                            for gs in self.node(*c).children.clone() {
+                                if matches!(self.kind(gs), NodeKind::GenScope) {
+                                    self.emit_gen_scope(inst, gs, path, Pass::Procs)?;
                                 }
                             }
                         }
+                        _ => {}
                     }
                 }
                 for c in &self.node(inst).children {
@@ -4088,6 +4166,52 @@ impl<'a> Codegen<'a> {
                         self.emit_pass_inst(*c, &child_path, Pass::Procs)?;
                     }
                 }
+            }
+        }
+        Ok(())
+    }
+
+    /// Emit one elaborated generate scope, recursively preserving its concrete
+    /// hierarchy path for nested scopes and generated instances.
+    fn emit_gen_scope(
+        &mut self,
+        inst: NodeId,
+        gs: NodeId,
+        parent_path: &str,
+        pass: Pass,
+    ) -> Result<(), String> {
+        let gs_path = self
+            .gen_scope_paths
+            .get(&gs)
+            .cloned()
+            .unwrap_or_else(|| parent_path.to_string());
+        for child in self.node(gs).children.clone() {
+            match self.kind(child) {
+                NodeKind::ContAssign { .. } if pass == Pass::Comb => {
+                    self.emit_cont_assign(inst, &gs_path, child)?
+                }
+                NodeKind::Gate { .. } if pass == Pass::Comb => {
+                    self.emit_gate(inst, &gs_path, child)?
+                }
+                NodeKind::Process { .. } if pass == Pass::Procs => {
+                    self.emit_process(inst, &gs_path, child)?
+                }
+                NodeKind::GenScope => self.emit_gen_scope(inst, child, &gs_path, pass)?,
+                NodeKind::GenScopeArray => {
+                    for nested in self.node(child).children.clone() {
+                        if matches!(self.kind(nested), NodeKind::GenScope) {
+                            self.emit_gen_scope(inst, nested, &gs_path, pass)?;
+                        }
+                    }
+                }
+                NodeKind::ModuleInst { .. } => {
+                    let child_path = self.instance_path_of(child);
+                    if pass == Pass::Links {
+                        self.emit_links(&gs_path, child)?;
+                    }
+                    self.emit_pass_inst(child, &child_path, pass)?;
+                }
+                _ => {}
             }
         }
         Ok(())
@@ -4110,7 +4234,7 @@ impl<'a> Codegen<'a> {
                 NetDeclTarget::UnsupportedNet(net_type) => {
                     return Err(format!(
                         "net declaration assignment in `{path}` targets unsupported net type \
-                         {net_type} (trireg and biased/resolved net classes outside the \
+                         {net_type:?} (trireg and biased/resolved net classes outside the \
                          standalone subset are not supported)"
                     ));
                 }
@@ -4197,31 +4321,7 @@ impl<'a> Codegen<'a> {
         let scaled_delay = match self.kind(ca) {
             NodeKind::ContAssign {
                 delay: Some(de), ..
-            } => {
-                let dir = self.lower_expr(path, *de)?;
-                if dir.is_real() {
-                    return Err(format!(
-                        "real-valued continuous-assignment delays are not \
-                         supported in `{path}`"
-                    ));
-                }
-                let raw = match dir.kind {
-                    IrExprKind::Const(c) => const_delay_ticks(&c, path)?,
-                    _ => {
-                        return Err(format!(
-                            "continuous-assignment delay must be a constant or \
-                             parameter in `{path}`"
-                        ))
-                    }
-                };
-                let unit_ps = self.timescale_of_node(ca).unit_ps;
-                Some(scale_delay_ticks(
-                    raw,
-                    unit_ps,
-                    self.design_precision_ps,
-                    path,
-                )?)
-            }
+            } => Some(self.procedural_delay_ticks(ca, *de)?),
             _ => None,
         };
         // Backend approximation (LRM 1364-1995 §6.1.3): no pulse filtering — the
@@ -4246,13 +4346,15 @@ impl<'a> Codegen<'a> {
         } else {
             IrShape::SensLoop { reads: sigs }
         };
-        self.model.processes.push(IrProcess {
-            c_name: fn_name,
-            label: format!("{path}.assign"),
+        let origin = self.origin(ca);
+        self.model.processes.push(IrProcess::new_with_origin(
+            fn_name,
+            format!("{path}.assign"),
             shape,
-            pre_fns: Vec::new(),
+            Vec::new(),
             body,
-        });
+            origin,
+        ));
         Ok(())
     }
 
@@ -4473,7 +4575,7 @@ impl<'a> Codegen<'a> {
             PrimitiveType::Pulldown => GateOp::Pull(false),
             _ => {
                 return Err(format!(
-                    "primitive type {prim_type} of `{shown}` in `{path}` is not \
+                    "primitive type {prim_type:?} of `{shown}` in `{path}` is not \
                      supported"
                 ))
             }
@@ -4537,13 +4639,13 @@ impl<'a> Codegen<'a> {
             ));
         }
         // Terminal-count/direction validation per kind.  Directions come from
-        // Surelog's per-term classification (terminal 0 = output, except
+        // The semantic per-term classification (terminal 0 = output, except
         // buf/not where all but the last are outputs).
         let out_positions: Vec<usize> = terms
             .iter()
             .zip(infos.iter())
             .enumerate()
-            .filter(|(_, (t, _))| t.direction == vpi::vpiOutput)
+            .filter(|(_, (t, _))| t.direction == DbDirection::Output)
             .map(|(i, _)| i)
             .collect();
         let shape_ok = match op {
@@ -4667,29 +4769,7 @@ impl<'a> Codegen<'a> {
         // Gate delay `#D`: folded through the parameter values like a
         // continuous-assignment delay and scaled to design-precision ticks.
         let scaled_delay = match delay {
-            Some(de) => {
-                let dir = self.lower_expr(path, de)?;
-                if dir.is_real() {
-                    return Err(format!(
-                        "real-valued gate delays are not supported in `{path}`"
-                    ));
-                }
-                let raw = match dir.kind {
-                    IrExprKind::Const(c) => const_delay_ticks(&c, path)?,
-                    _ => {
-                        return Err(format!(
-                            "gate delay must be a constant or parameter in `{path}`"
-                        ))
-                    }
-                };
-                let unit_ps = self.timescale_of_node(g).unit_ps;
-                Some(scale_delay_ticks(
-                    raw,
-                    unit_ps,
-                    self.design_precision_ps,
-                    path,
-                )?)
-            }
+            Some(de) => Some(self.procedural_delay_ticks(g, de)?),
             None => None,
         };
         let mut body = Vec::new();
@@ -4712,13 +4792,15 @@ impl<'a> Codegen<'a> {
             IrShape::SensLoop { reads: sens }
         };
         let fn_name = self.new_fn_name(path, "gate");
-        self.model.processes.push(IrProcess {
-            c_name: fn_name,
-            label: format!("{path}.{shown}"),
+        let origin = self.origin(g);
+        self.model.processes.push(IrProcess::new_with_origin(
+            fn_name,
+            format!("{path}.{shown}"),
             shape,
-            pre_fns: Vec::new(),
+            Vec::new(),
             body,
-        });
+            origin,
+        ));
         Ok(())
     }
 
@@ -4737,18 +4819,24 @@ impl<'a> Codegen<'a> {
                 } => (*direction, *high, *low),
                 _ => continue,
             };
-            // Interface ports are wired through dedicated link processes; the
-            // plain signal link machinery does not apply.
-            if let Some((actual, modport)) =
+            // Slang resolves interface and modport member references directly
+            // to storage on the connected concrete interface instance. There
+            // is no per-port storage copy or runtime link process.
+            if let Some(actual) =
                 self.node(port)
                     .children
                     .iter()
                     .find_map(|cc| match self.kind(*cc) {
-                        NodeKind::IfaceConn { actual, modport } => Some((*actual, modport.clone())),
+                        NodeKind::IfaceConn { actual, .. } => Some(*actual),
                         _ => None,
                     })
             {
-                self.emit_iface_link(parent_path, port, actual, &modport, &child_path)?;
+                if high != Some(actual) {
+                    return Err(format!(
+                        "interface port `{}` of `{child_path}` has inconsistent bound actual identities",
+                        self.node(port).name
+                    ));
+                }
                 continue;
             }
             if direction == DbDirection::Inout {
@@ -4823,20 +4911,22 @@ impl<'a> Codegen<'a> {
                 (write, child_name.clone())
             };
             let fn_name = self.new_fn_name(parent_path, "link");
-            self.model.processes.push(IrProcess {
-                c_name: fn_name,
-                label: format!("{child_path}.link"),
-                shape: IrShape::SensLoop {
+            let origin = self.origin(port);
+            self.model.processes.push(IrProcess::new_with_origin(
+                fn_name,
+                format!("{child_path}.link"),
+                IrShape::SensLoop {
                     reads: vec![wait_sig],
                 },
-                pre_fns: Vec::new(),
-                body: vec![write],
-            });
+                Vec::new(),
+                vec![write],
+                origin,
+            ));
         }
         Ok(())
     }
 
-    /// Resolve the parent side of a port connection (the `vpiHighConn`): a
+    /// Resolve the parent side of a port connection: a
     /// plain global signal, or an element of an unpacked array (when the
     /// connection selects into one — e.g. `.cnt(cnts[i])`, whose index
     /// expression the db walk captured as a child of the port).
@@ -4847,18 +4937,24 @@ impl<'a> Codegen<'a> {
         hc: NodeId,
     ) -> Result<LinkSide, String> {
         if let Some(ai) = self.array_of(hc).cloned() {
-            let sel = self.node(port).children.iter().find_map(|c| {
-                matches!(
-                    self.kind(*c),
+            let sel = match self.kind(port) {
+                NodeKind::Port {
+                    high_expr: Some(expression),
+                    ..
+                } if matches!(
+                    self.kind(*expression),
                     NodeKind::Expr(
                         ExprKind::BitSelect { .. }
                             | ExprKind::PartSelect { .. }
                             | ExprKind::IndexedPartSelect { .. }
                             | ExprKind::ArraySelect { .. }
                     )
-                )
-                .then_some(*c)
-            });
+                ) =>
+                {
+                    Some(*expression)
+                }
+                _ => None,
+            };
             return match sel {
                 Some(s) => Ok(LinkSide::ArrayElem(ai, s)),
                 None => Err(format!(
@@ -4907,163 +5003,6 @@ impl<'a> Codegen<'a> {
             idx - l as i128
         };
         Ok(format!("{}[({off})]", ai.global))
-    }
-
-    /// Emit the link processes wiring an interface port to its actual
-    /// interface instance.  Values are copied between the per-port copy's
-    /// vars and the actual interface's vars, matched by name:
-    ///
-    /// - modport ports: each io_decl is wired in its declared direction
-    ///   (outputs flow child → actual, inputs flow actual → child);
-    /// - bare interface ports: every member is wired bidirectionally (the
-    ///   pair converges because same-value writes do not re-fire the wait).
-    ///
-    /// Every link is one process (initial copy at spawn, then `wait_any` on
-    /// the source followed by a re-copy), mirroring the plain port links.
-    fn emit_iface_link(
-        &mut self,
-        parent_path: &str,
-        port: NodeId,
-        actual_id: NodeId,
-        modport: &str,
-        child_path: &str,
-    ) -> Result<(), String> {
-        // The per-port copy inside the child: `low` resolves to the copy's
-        // modport (modport ports) or to the copy interface instance itself
-        // (bare interface ports).
-        let low = match self.kind(port) {
-            NodeKind::Port { low, .. } => *low,
-            _ => return Ok(()),
-        };
-        let copy_id = match low.and_then(|l| match self.kind(l) {
-            NodeKind::ModPort => self.node(l).parent,
-            NodeKind::ModuleInst { .. } => Some(l),
-            _ => None,
-        }) {
-            Some(c) => c,
-            None => {
-                self.warnings.push(format!(
-                    "interface port `{}` of `{child_path}`: per-port copy not \
-                     found; skipped",
-                    self.node(port).name
-                ));
-                return Ok(());
-            }
-        };
-        let actual_vars = self.collect_iface_vars(actual_id);
-        let copy_vars = self.collect_iface_vars(copy_id);
-        if actual_vars.is_empty() || copy_vars.is_empty() {
-            self.warnings.push(format!(
-                "interface port `{}` of `{child_path}`: no interface members \
-                 found on the actual instance or the per-port copy; skipped",
-                self.node(port).name
-            ));
-            return Ok(());
-        }
-
-        // (source global, source info, destination global)
-        let mut links: Vec<(String, SignalInfo, String)> = Vec::new();
-        if modport.is_empty() {
-            // Bare interface port: bidirectional pair per member.
-            for (name, cv) in &copy_vars {
-                if let Some(av) = actual_vars.get(name) {
-                    links.push((cv.global.clone(), cv.clone(), av.global.clone()));
-                    links.push((av.global.clone(), av.clone(), cv.global.clone()));
-                }
-            }
-        } else {
-            let mp_node = self.node(copy_id).children.iter().find(|cc| {
-                matches!(self.kind(**cc), NodeKind::ModPort) && self.node(**cc).name == modport
-            });
-            match mp_node {
-                Some(mp) => {
-                    for io in &self.node(*mp).children {
-                        let (direction, expr) = match self.kind(*io) {
-                            NodeKind::IoDecl { direction, expr } => (*direction, *expr),
-                            _ => continue,
-                        };
-                        // The io_decl's expr resolves to the copy's own var.
-                        let Some(cv) = expr.and_then(|e| self.signal_of(e)) else {
-                            continue;
-                        };
-                        let name = self.node(*io).name.clone();
-                        let Some(av) = actual_vars.get(&name) else {
-                            continue;
-                        };
-                        match direction {
-                            // Output: the child drives the actual member.
-                            DbDirection::Output => {
-                                links.push((cv.global.clone(), cv.clone(), av.global.clone()));
-                            }
-                            // Input: the child reads the actual member.
-                            DbDirection::Input => {
-                                links.push((av.global.clone(), av.clone(), cv.global.clone()));
-                            }
-                            _ => {}
-                        }
-                    }
-                }
-                None => {
-                    self.warnings.push(format!(
-                        "modport `{modport}` not found on the per-port copy of \
-                         `{child_path}`; interface link skipped"
-                    ));
-                    return Ok(());
-                }
-            }
-        }
-
-        for (src, src_info, dst) in links {
-            let dst_real = self
-                .signals
-                .iter()
-                .any(|info| info.global == dst && info.real);
-            if src_info.real || dst_real {
-                return Err(format!(
-                    "interface links involving real-valued member `{child_path}` are not supported"
-                ));
-            }
-            let dst_ir = self
-                .signals
-                .iter()
-                .find(|info| info.global == dst)
-                .map(|info| info.ir)
-                .ok_or_else(|| format!("interface link destination `{dst}` not collected"))?;
-            let fn_name = self.new_fn_name(parent_path, "ilink");
-            let write = IrStmt::Assign {
-                lhs: IrLhs::Whole(dst_ir),
-                rhs: sig_read_expr_full(&src_info),
-                nba: false,
-            };
-            self.model.processes.push(IrProcess {
-                c_name: fn_name,
-                label: format!("{child_path}.ilink"),
-                shape: IrShape::SensLoop { reads: vec![src] },
-                pre_fns: Vec::new(),
-                body: vec![write],
-            });
-            // Writing an actual member from a child drives it; several
-            // children driving the same member is last-writer-wins.
-            if !self.iface_driven.insert(dst.clone()) {
-                self.warnings
-                    .push(format!("multiple interface drivers on `{dst}`"));
-            }
-        }
-        Ok(())
-    }
-
-    /// Name → lowered signal info for every Net/Var child of an interface
-    /// instance node (the actual instance or a per-port copy).
-    fn collect_iface_vars(&self, inst: NodeId) -> HashMap<String, SignalInfo> {
-        let mut out = HashMap::new();
-        for c in &self.node(inst).children {
-            if matches!(self.kind(*c), NodeKind::Net { .. } | NodeKind::Var { .. }) {
-                if let Some(info) = self.signal_of(*c) {
-                    out.insert(self.node(*c).name.clone(), info.clone());
-                }
-            }
-        }
-        out
     }
 
     // ── Processes ──────────────────────────────────────────────────────────
@@ -5125,13 +5064,15 @@ impl<'a> Codegen<'a> {
         } else {
             "always"
         };
-        self.model.processes.push(IrProcess {
-            c_name: fn_name.clone(),
-            label: format!("{path}.{kind_label}"),
+        let origin = self.origin(proc);
+        self.model.processes.push(IrProcess::new_with_origin(
+            fn_name.clone(),
+            format!("{path}.{kind_label}"),
             shape,
             pre_fns,
-            body: body_stmts,
-        });
+            body_stmts,
+            origin,
+        ));
         if is_final {
             self.final_procs.push(fn_name);
         }
@@ -5366,15 +5307,6 @@ impl<'a> Codegen<'a> {
             }
             _ => {}
         }
-        if !name.is_empty() {
-            if let Some(info) = self
-                .scope_sig_names
-                .get(scope_path)
-                .and_then(|m| m.get(&name))
-            {
-                return Ok((info.global.clone(), info.clone()));
-            }
-        }
         Err(format!(
             "cannot resolve signal reference `{name}` in `{scope_path}`"
         ))
@@ -5410,8 +5342,7 @@ impl<'a> Codegen<'a> {
         ))
     }
 
-    /// Resolve a whole-signal assignment target (by arena node, then by name
-    /// across every scope).
+    /// Resolve a whole-signal assignment target by its bound declaration.
     fn resolve_lhs_target(
         &self,
         node: NodeId,
@@ -5423,11 +5354,6 @@ impl<'a> Codegen<'a> {
             }
         }
         let name = self.node(node).name.clone();
-        for names in self.scope_sig_names.values() {
-            if let Some(info) = names.get(&name) {
-                return Ok((info.global.clone(), info.clone()));
-            }
-        }
         Err(format!("cannot resolve assignment target `{name}`"))
     }
 
@@ -5435,58 +5361,35 @@ impl<'a> Codegen<'a> {
 
     pub(super) fn analyze_lhs(&mut self, path: &str, lhs: NodeId) -> Result<Lhs, String> {
         match self.kind(lhs) {
-            NodeKind::Expr(ExprKind::Operation { op, operands, .. })
-                if matches!(op.as_raw(), vpi::vpiStreamLROp | vpi::vpiStreamRLOp) =>
-            {
-                let (slice, value_node) = match operands.as_slice() {
-                    [value] => (None, *value),
-                    [slice, value_node] => {
-                        let value = self.eval_bits(*slice).map_err(|error| {
-                            format!(
-                                "streaming slice size must be a positive constant in `{path}`: \
-                                 {error}"
-                            )
-                        })?;
-                        if value.is_unknown()
-                            || (value.signed
-                                && value.width() != 0
-                                && value.bit_lsb(value.width() - 1) == Bit::One)
-                        {
-                            return Err(format!(
-                                "streaming slice size must be positive and known in `{path}`"
-                            ));
-                        }
-                        let value = value.to_u128().unwrap_or(u128::MAX);
-                        if value == 0 {
-                            return Err(format!(
-                                "streaming slice size must be positive in `{path}`"
-                            ));
-                        }
-                        (Some(value), *value_node)
-                    }
-                    _ => {
-                        return Err(format!("malformed streaming assignment target in `{path}`"));
-                    }
-                };
-                let NodeKind::Expr(ExprKind::Operation {
-                    op: concat_op,
-                    reordered,
-                    operands: concat_operands,
-                }) = self.kind(value_node)
-                else {
+            NodeKind::Expr(ExprKind::Streaming {
+                direction,
+                slice_size,
+                streams,
+            }) => {
+                if streams.is_empty() {
+                    return Err(format!("empty streaming assignment target in `{path}`"));
+                }
+                if streams.iter().any(|stream| stream.with_expr.is_some()) {
                     return Err(format!(
-                        "streaming assignment target must contain a concatenation in `{path}`"
-                    ));
-                };
-                if concat_op.as_raw() != vpi::vpiConcatOp || concat_operands.is_empty() {
-                    return Err(format!(
-                        "streaming assignment target must contain a non-empty concatenation in \
-                         `{path}`"
+                        "streaming assignment target with a `with` selector in `{path}` is not supported"
                     ));
                 }
-                let mut targets = concat_operands.clone();
-                if *reordered {
-                    targets.reverse();
+                let mut targets = Vec::new();
+                for stream in streams {
+                    match self.kind(stream.value) {
+                        NodeKind::Expr(ExprKind::Operation {
+                            op: Operation::Concat,
+                            reordered,
+                            operands,
+                        }) => {
+                            let mut operands = operands.clone();
+                            if *reordered {
+                                operands.reverse();
+                            }
+                            targets.extend(operands);
+                        }
+                        _ => targets.push(stream.value),
+                    }
                 }
                 let mut parts = Vec::with_capacity(targets.len());
                 for target in targets {
@@ -5494,33 +5397,38 @@ impl<'a> Codegen<'a> {
                 }
                 Ok(Lhs::Stream {
                     parts,
-                    slice,
-                    direction: if op.as_raw() == vpi::vpiStreamLROp {
-                        IrStreamDirection::LeftToRight
-                    } else {
-                        IrStreamDirection::RightToLeft
+                    slice: (*slice_size != 0).then_some(u128::from(*slice_size)),
+                    direction: match direction {
+                        DbStreamingDirection::LeftToRight => IrStreamDirection::LeftToRight,
+                        DbStreamingDirection::RightToLeft => IrStreamDirection::RightToLeft,
                     },
                 })
             }
             NodeKind::Var { .. } => {
-                if let Some(target) = self.func_write_target(lhs, &self.node(lhs).name) {
-                    return Ok(target);
+                if let Some(info) = self.proc_locals.get(&lhs) {
+                    if let Some(signal) = &info.static_signal {
+                        return Ok(Lhs::Whole(signal.clone()));
+                    }
+                    return Ok(Lhs::WholeRef {
+                        addr: format!("&{}", info.c_name),
+                        width: info.width,
+                        signed: info.signed,
+                        two_state: info.two_state,
+                    });
                 }
-                let info = self.proc_locals.get(&lhs).ok_or_else(|| {
-                    format!(
-                        "cannot resolve procedural variable `{}` in `{path}`",
-                        self.node(lhs).name
-                    )
-                })?;
-                Ok(Lhs::WholeRef {
-                    addr: format!("&{}", info.c_name),
-                    width: info.width,
-                    signed: info.signed,
-                    two_state: info.two_state,
-                })
+                self.func_write_target(lhs, &self.node(lhs).name)
+                    .ok_or_else(|| {
+                        format!(
+                            "cannot resolve procedural variable `{}` in `{path}`",
+                            self.node(lhs).name
+                        )
+                    })
             }
             NodeKind::Expr(ExprKind::Ref { target }) => {
                 if let Some((_, info)) = self.lexical_proc_local(lhs) {
+                    if let Some(signal) = &info.static_signal {
+                        return Ok(Lhs::Whole(signal.clone()));
+                    }
                     return Ok(Lhs::WholeRef {
                         addr: format!("&{}", info.c_name),
                         width: info.width,
@@ -5534,6 +5442,9 @@ impl<'a> Codegen<'a> {
                     }
                     if !self.proc_local_is_shadowed(lhs) {
                         if let Some(info) = self.proc_locals.get(&t) {
+                            if let Some(signal) = &info.static_signal {
+                                return Ok(Lhs::Whole(signal.clone()));
+                            }
                             return Ok(Lhs::WholeRef {
                                 addr: format!("&{}", info.c_name),
                                 width: info.width,
@@ -5549,7 +5460,7 @@ impl<'a> Codegen<'a> {
                     }
                 }
                 let name = self.node(lhs).name.clone();
-                if !name.is_empty() {
+                if target.is_none() && !name.is_empty() {
                     // io_decls are not indexed, so formals resolve by name.
                     if let Some(lh) = self.func_write_target(NodeId(0), &name) {
                         return Ok(lh);
@@ -5562,6 +5473,19 @@ impl<'a> Codegen<'a> {
                 }))
             }
             NodeKind::Expr(ExprKind::BitSelect { base, index }) => {
+                if let Some((info, member)) = self.packed_member_info(*base) {
+                    let index = self.eval_bound_i128(*index)?;
+                    let relative = self.aggregate_member_relative_bound(
+                        &member.name,
+                        &member.packed_ranges,
+                        index,
+                    )?;
+                    return Ok(Lhs::Bit(
+                        info,
+                        lhs_integer_expr(i128::from(member.lsb) + i128::from(relative)),
+                        member.two_state,
+                    ));
+                }
                 if let Some(ai) = self.array_of(*base).cloned() {
                     if ai.dims.len() != 1 {
                         return Err(format!(
@@ -5664,6 +5588,24 @@ impl<'a> Codegen<'a> {
                 ))
             }
             NodeKind::Expr(ExprKind::PartSelect { base, left, right }) => {
+                if let Some((info, member)) = self.packed_member_info(*base) {
+                    let left = self.aggregate_member_relative_bound(
+                        &member.name,
+                        &member.packed_ranges,
+                        self.eval_bound_i128(*left)?,
+                    )?;
+                    let right = self.aggregate_member_relative_bound(
+                        &member.name,
+                        &member.packed_ranges,
+                        self.eval_bound_i128(*right)?,
+                    )?;
+                    return Ok(Lhs::Part(
+                        info,
+                        i128::from(member.lsb) + i128::from(left),
+                        i128::from(member.lsb) + i128::from(right),
+                        member.two_state,
+                    ));
+                }
                 let (_, info) = self.base_signal(path, *base)?;
                 if info.real {
                     return Err(format!(
@@ -5700,78 +5642,9 @@ impl<'a> Codegen<'a> {
                     })?;
                     let info = member_info.signal;
                     let two_state = member.two_state;
-                    if let Some(select) = self.packed_member_select(lhs)? {
-                        return match select {
-                            PackedMemberSelect::Bit(index) => {
-                                let index = self.aggregate_member_relative_bound(
-                                    &member.name,
-                                    &member.packed_ranges,
-                                    index,
-                                )?;
-                                Ok(Lhs::Bit(
-                                    info,
-                                    lhs_integer_expr(i128::from(index)),
-                                    two_state,
-                                ))
-                            }
-                            PackedMemberSelect::Part(left, right) => {
-                                let left = self.aggregate_member_relative_bound(
-                                    &member.name,
-                                    &member.packed_ranges,
-                                    left,
-                                )?;
-                                let right = self.aggregate_member_relative_bound(
-                                    &member.name,
-                                    &member.packed_ranges,
-                                    right,
-                                )?;
-                                Ok(Lhs::Part(
-                                    info,
-                                    i128::from(left),
-                                    i128::from(right),
-                                    two_state,
-                                ))
-                            }
-                        };
-                    }
                     return Ok(Lhs::Part(info, i128::from(member_width - 1), 0, two_state));
                 }
                 if let Some((info, member)) = self.packed_member_info(lhs) {
-                    if let Some(select) = self.packed_member_select(lhs)? {
-                        let two_state = member.two_state;
-                        return match select {
-                            PackedMemberSelect::Bit(index) => {
-                                let index = self.aggregate_member_relative_bound(
-                                    &member.name,
-                                    &member.packed_ranges,
-                                    index,
-                                )?;
-                                Ok(Lhs::Bit(
-                                    info,
-                                    lhs_integer_expr(i128::from(member.lsb + index)),
-                                    two_state,
-                                ))
-                            }
-                            PackedMemberSelect::Part(left, right) => {
-                                let left = self.aggregate_member_relative_bound(
-                                    &member.name,
-                                    &member.packed_ranges,
-                                    left,
-                                )?;
-                                let right = self.aggregate_member_relative_bound(
-                                    &member.name,
-                                    &member.packed_ranges,
-                                    right,
-                                )?;
-                                Ok(Lhs::Part(
-                                    info,
-                                    i128::from(member.lsb + left),
-                                    i128::from(member.lsb + right),
-                                    two_state,
-                                ))
-                            }
-                        };
-                    }
                     let two_state = member.two_state;
                     return Ok(Lhs::Part(
                         info,
@@ -5783,12 +5656,9 @@ impl<'a> Codegen<'a> {
                 // A whole-signal hierarchical WRITE (`m.data`, `tb.dut.sig`,
                 // …) lowers to the resolved target signal's global, so
                 // `llg_ba`/`llg_nba` (and the collapsed inout-net driver
-                // path in `assign_statement`) apply unchanged.  A trailing
-                // select on the target is recovered from the node name /
-                // source line — the pinned Surelog's elaborated model drops
-                // part-select bounds and only keeps constant bit-select
-                // indices (in the object name); only constant indices/bounds
-                // are supported.
+                // path in `assign_statement`) apply unchanged. Selects are
+                // represented by their own typed expression nodes and lower
+                // through the corresponding arms above.
                 let info = self.hier_path_signal(lhs).cloned().ok_or_else(|| {
                     format!(
                         "cannot resolve hierarchical assignment LHS `{}` in \
@@ -5797,117 +5667,10 @@ impl<'a> Codegen<'a> {
                         self.node(lhs).name
                     )
                 })?;
-                if let Some(sel) = self.hier_lhs_select(lhs)? {
-                    return Ok(match sel {
-                        HierSelect::Bit(idx) => {
-                            let two_state = info.two_state;
-                            Lhs::Bit(info, lhs_integer_expr(idx), two_state)
-                        }
-                        HierSelect::Part(left, right) => {
-                            let two_state = info.two_state;
-                            Lhs::Part(info, left, right, two_state)
-                        }
-                        HierSelect::IdxPart(base, width, neg) => {
-                            let selected_width = u32::try_from(width).map_err(|_| {
-                                format!("indexed part-select width must be positive in `{path}`")
-                            })?;
-                            if selected_width == 0 || selected_width > LLG_MAX_WIDTH {
-                                return Err(format!(
-                                    "indexed part-select width {width} is outside 1..={LLG_MAX_WIDTH} in `{path}`"
-                                ));
-                            }
-                            let two_state = info.two_state;
-                            Lhs::IdxPart(
-                                info,
-                                lhs_integer_expr(base),
-                                lhs_integer_expr(width),
-                                selected_width,
-                                neg,
-                                two_state,
-                            )
-                        }
-                    });
-                }
                 Ok(Lhs::Whole(info))
             }
             _ => Err("unsupported assignment LHS".to_string()),
         }
-    }
-
-    /// Recover a trailing select on a hierarchical assignment target.
-    ///
-    /// The pinned Surelog's elaborated UHDM is lossy here: constant bit-select
-    /// indices survive in the object's VPI name (`u.dut.sig[2]`), but
-    /// part-select bounds (`u.dut.sig[3:0]`) are dropped entirely, so they
-    /// are read back from the source line the node points at (the same
-    /// recovery pattern as `#delay` ticks).  Only plain integer-literal
-    /// indices/bounds are supported; anything else is rejected with a
-    /// clear error.  Returns `Ok(None)` when the target is a whole signal.
-    fn hier_lhs_select(&self, lhs: NodeId) -> Result<Option<HierSelect>, String> {
-        let name = self.node(lhs).name.clone();
-        // Bit-selects keep their constant index in the VPI name.
-        if let Some(inner) = name
-            .strip_suffix(']')
-            .and_then(|rest| rest.rfind('[').map(|i| &rest[i + 1..]))
-        {
-            if !inner.contains('[') {
-                return hier_select_from_text(inner, &name).map(Some);
-            }
-        }
-        // Part-selects (and anything else) are recovered from the source line.
-        let file = self.node(lhs).file.clone().unwrap_or_default();
-        let line = self.node(lhs).line;
-        if file.is_empty() || line == 0 {
-            return Err(format!(
-                "cannot recover the select of hierarchical assignment LHS \
-                 `{name}` (no source location)"
-            ));
-        }
-        let content = std::fs::read_to_string(&file).map_err(|e| {
-            format!(
-                "cannot read `{file}` to recover the select of hierarchical \
-                 assignment LHS `{name}`: {e}"
-            )
-        })?;
-        let text = content.lines().nth(line as usize - 1).ok_or_else(|| {
-            format!(
-                "cannot read line {line} of `{file}` to recover the select of \
-                 hierarchical assignment LHS `{name}`"
-            )
-        })?;
-        let NodeKind::Expr(ExprKind::HierPath { parts, .. }) = self.kind(lhs) else {
-            return Ok(None);
-        };
-        let path_text = parts.join(".");
-        let mut search_from = 0usize;
-        while let Some(rel) = text[search_from..].find(&path_text) {
-            let pos = search_from + rel;
-            let after = text[pos + path_text.len()..].trim_start();
-            if after.starts_with('[') {
-                let close = after.find(']').ok_or_else(|| {
-                    format!(
-                        "unterminated select on hierarchical assignment LHS \
-                         `{name}` at {file}:{line}"
-                    )
-                })?;
-                let inner = &after[1..close];
-                if inner.contains('[') || inner.contains(']') {
-                    return Err(format!(
-                        "nested select on hierarchical assignment LHS `{name}` \
-                         is not supported"
-                    ));
-                }
-                return hier_select_from_text(inner, &name).map(Some);
-            }
-            if after.starts_with('=') || after.starts_with('<') {
-                return Ok(None); // whole-signal target
-            }
-            search_from = pos + path_text.len();
-        }
-        Err(format!(
-            "cannot locate hierarchical assignment LHS `{name}` in `{file}` \
-             line {line}"
-        ))
     }
 
     // ── Constant-ish bound evaluation ──────────────────────────────────────
@@ -5932,17 +5695,6 @@ impl<'a> Codegen<'a> {
     pub(super) fn eval_bits(&self, node: NodeId) -> Result<elab::Value, String> {
         match self.kind(node) {
             NodeKind::Expr(ExprKind::Constant { value, size, .. }) => {
-                if let Some(literal) = self.time_literal_in_subtree(node) {
-                    return Err(format!(
-                        "time literal `{literal}` is not supported in a constant-only context"
-                    ));
-                }
-                if self.unverified_time_literal_candidate(node) {
-                    return Err(
-                        "cannot verify constant-only source after possible time-literal rewriting"
-                            .to_owned(),
-                    );
-                }
                 let mut value = val_from_value_data(value, *size)?;
                 if self.signed_based_constant(node) {
                     if let Val::Bits(bits) = &mut value {
@@ -5988,7 +5740,15 @@ impl<'a> Codegen<'a> {
                 op,
                 reordered,
                 operands,
-            }) => self.eval_operation_bits(op.as_raw(), *reordered, operands),
+            }) => self.eval_operation_bits(*op, *reordered, operands),
+            NodeKind::Expr(ExprKind::Cast { ty, .. })
+                if !is_real_kind(&ty.kind) && ty.kind != "string" && ty.kind != "chandle" =>
+            {
+                match self.eval_decl_value(node)? {
+                    Val::Bits(value) => Ok(value),
+                    _ => Err("non-integral cast in bound".to_owned()),
+                }
+            }
             NodeKind::SysCall { name }
                 if matches!(
                     name.as_str(),
@@ -6078,7 +5838,7 @@ impl<'a> Codegen<'a> {
     /// Evaluate the packed/real constants accepted in scalar declaration
     /// initializers.  This stays on the owned database and extends the
     /// integer-only bound evaluator only for conversion system functions.
-    fn eval_decl_value(&self, node: NodeId) -> Result<Val, String> {
+    pub(super) fn eval_decl_value(&self, node: NodeId) -> Result<Val, String> {
         // Explicit casts are value-materialization boundaries. Handle them
         // before the general integral evaluator, whose Value result retains
         // an unbased fill marker for surrounding expression contexts.
@@ -6093,23 +5853,51 @@ impl<'a> Codegen<'a> {
         }
         match self.kind(node) {
             NodeKind::Expr(ExprKind::Constant { value, size, .. }) => {
-                if let Some(literal) = self.time_literal_in_subtree(node) {
-                    Err(format!(
-                        "time literal `{literal}` is not supported in a declaration initializer"
-                    ))
-                } else {
-                    if self.unverified_time_literal_candidate(node) {
-                        return Err(
-                            "cannot verify declaration initializer after possible time-literal rewriting"
-                                .to_owned(),
-                        );
-                    }
-                    val_from_value_data(value, *size)
-                }
+                val_from_value_data(value, *size)
             }
             NodeKind::Expr(ExprKind::Ref { target }) => target
                 .and_then(|target| self.param_vals.get(&target).cloned())
                 .ok_or_else(|| "unresolved reference in declaration initializer".to_string()),
+            NodeKind::Expr(ExprKind::Operation { op, operands, .. }) => {
+                super::validate_operation_arity(*op, operands.len(), "constant expression")?;
+                if *op == Operation::MinTypMax {
+                    return self.eval_decl_value(operands[1]);
+                }
+                if *op == Operation::Conditional {
+                    let condition = self.eval_bits(operands[0])?;
+                    let known = condition
+                        .to_u128()
+                        .ok_or("unknown condition in constant real expression")?;
+                    return self.eval_decl_value(operands[if known == 0 { 2 } else { 1 }]);
+                }
+                let values = operands
+                    .iter()
+                    .map(|operand| self.eval_decl_value(*operand))
+                    .collect::<Result<Vec<_>, _>>()?;
+                if !values.iter().any(|value| matches!(value, Val::Real(_))) {
+                    return Err("integral constant operation could not be evaluated".to_owned());
+                }
+                let real = |value: &Val| match value {
+                    Val::Real(value) => Ok(*value),
+                    Val::Bits(value) => Ok(value.to_real()),
+                    Val::Str(_) => Err("string operand in constant real expression".to_owned()),
+                };
+                let value = match *op {
+                    Operation::UnaryPlus => real(&values[0])?,
+                    Operation::UnaryMinus => -real(&values[0])?,
+                    Operation::Add => real(&values[0])? + real(&values[1])?,
+                    Operation::Subtract => real(&values[0])? - real(&values[1])?,
+                    Operation::Multiply => real(&values[0])? * real(&values[1])?,
+                    Operation::Divide => real(&values[0])? / real(&values[1])?,
+                    Operation::Modulo => real(&values[0])? % real(&values[1])?,
+                    Operation::Power => real(&values[0])?.powf(real(&values[1])?),
+                    _ => return Err(format!("unsupported constant real operation {op:?}")),
+                };
+                value
+                    .is_finite()
+                    .then_some(Val::Real(value))
+                    .ok_or_else(|| "constant real expression is not finite".to_owned())
+            }
             NodeKind::Expr(ExprKind::Cast { operand, ty, .. }) if is_real_kind(&ty.kind) => {
                 let value = match self.eval_decl_value(*operand)? {
                     Val::Bits(value) => value.to_real(),
@@ -6134,6 +5922,7 @@ impl<'a> Codegen<'a> {
                 size_cast_expr,
                 cast_kind_known,
                 two_state,
+                propagated,
             }) if !is_real_kind(&ty.kind) && ty.kind != "string" && ty.kind != "chandle" => {
                 if !cast_kind_known {
                     return Err("declaration-initializer cast kind cannot be determined".to_owned());
@@ -6148,7 +5937,10 @@ impl<'a> Codegen<'a> {
                         "declaration-initializer cast is {width} bits wide; maximum supported width is {LLG_MAX_WIDTH}"
                     ));
                 }
-                let cast_bits = |value: elab::Value| {
+                let cast_bits = |mut value: elab::Value| {
+                    if *propagated {
+                        value.signed = ty.signed;
+                    }
                     let signed = if *size_cast { value.signed } else { ty.signed };
                     Val::Bits(materialize_decl_cast_value(
                         value,
@@ -6186,9 +5978,7 @@ impl<'a> Codegen<'a> {
                     ("$rtoi", Val::Real(value)) => Ok(Val::Bits(elab::rtoi_value(value))),
                     ("$rtoi", Val::Bits(value)) => Ok(Val::Bits(elab::rtoi_value(value.to_real()))),
                     ("$itor", Val::Bits(value)) => Ok(Val::Real(value.to_real())),
-                    ("$itor", Val::Real(value)) => {
-                        Ok(Val::Real(elab::real_to_bits(value, 32, true).to_real()))
-                    }
+                    ("$itor", Val::Real(value)) => Ok(Val::Real(value)),
                     ("$realtobits", Val::Real(value)) => {
                         Ok(Val::Bits(elab::real_to_ieee_bits(value)))
                     }
@@ -6222,11 +6012,11 @@ impl<'a> Codegen<'a> {
 
     fn eval_operation_bits(
         &self,
-        op: i32,
+        op: Operation,
         reordered: bool,
         operands: &[NodeId],
     ) -> Result<elab::Value, String> {
-        use vpi::*;
+        super::validate_operation_arity(op, operands.len(), "constant expression")?;
         let u = |i: usize| self.eval_bits(operands[i]);
         macro_rules! b {
             ($i:expr) => {
@@ -6234,45 +6024,45 @@ impl<'a> Codegen<'a> {
             };
         }
         match op {
-            vpiMinusOp => Ok(elab::minus(&b!(0))),
-            vpiPlusOp => Ok(b!(0)),
-            vpiNotOp => Ok(elab::log_not(&b!(0))),
-            vpiBitNegOp => Ok(elab::bit_neg(&b!(0))),
-            vpiUnaryAndOp => Ok(elab::unary_and(&b!(0))),
-            vpiUnaryNandOp => Ok(elab::unary_nand(&b!(0))),
-            vpiUnaryOrOp => Ok(elab::unary_or(&b!(0))),
-            vpiUnaryNorOp => Ok(elab::unary_nor(&b!(0))),
-            vpiUnaryXorOp => Ok(elab::unary_xor(&b!(0))),
-            vpiUnaryXNorOp => Ok(elab::unary_xnor(&b!(0))),
-            vpiSubOp => Ok(elab::sub(&b!(0), &b!(1))),
-            vpiDivOp => Ok(elab::div(&b!(0), &b!(1))),
-            vpiModOp => Ok(elab::rem(&b!(0), &b!(1))),
-            vpiEqOp => Ok(elab::eq(&b!(0), &b!(1))),
-            vpiNeqOp => Ok(elab::neq(&b!(0), &b!(1))),
-            vpiCaseEqOp => Ok(elab::case_eq(&b!(0), &b!(1))),
-            vpiCaseNeqOp => Ok(elab::case_neq(&b!(0), &b!(1))),
-            vpiWildEqOp => Ok(elab::wildcard_eq(&b!(0), &b!(1))),
-            vpiWildNeqOp => Ok(elab::wildcard_neq(&b!(0), &b!(1))),
-            vpiGtOp => Ok(elab::gt(&b!(0), &b!(1))),
-            vpiGeOp => Ok(elab::ge(&b!(0), &b!(1))),
-            vpiLtOp => Ok(elab::lt(&b!(0), &b!(1))),
-            vpiLeOp => Ok(elab::le(&b!(0), &b!(1))),
-            vpiLShiftOp => Ok(elab::shl(&b!(0), &b!(1))),
-            vpiRShiftOp => Ok(elab::shr(&b!(0), &b!(1))),
-            vpiArithLShiftOp => Ok(elab::arith_shl(&b!(0), &b!(1))),
-            vpiArithRShiftOp => Ok(elab::arith_shr(&b!(0), &b!(1))),
-            vpiAddOp => Ok(elab::add(&b!(0), &b!(1))),
-            vpiMultOp => Ok(elab::mul(&b!(0), &b!(1))),
-            vpiPowerOp => Ok(elab::power(&b!(0), &b!(1))),
-            vpiLogAndOp => Ok(elab::log_and(&b!(0), &b!(1))),
-            vpiLogOrOp => Ok(elab::log_or(&b!(0), &b!(1))),
-            vpiBitAndOp => Ok(elab::bit_and(&b!(0), &b!(1))),
-            vpiBitOrOp => Ok(elab::bit_or(&b!(0), &b!(1))),
-            vpiBitXorOp => Ok(elab::bit_xor(&b!(0), &b!(1))),
-            vpiBitXNorOp => Ok(elab::bit_xnor(&b!(0), &b!(1))),
-            vpiConditionOp => Ok(elab::cond(&b!(0), &b!(1), &b!(2))),
-            vpiMinTypMaxOp => Ok(b!(0)),
-            vpiConcatOp => {
+            Operation::UnaryMinus => Ok(elab::minus(&b!(0))),
+            Operation::UnaryPlus => Ok(b!(0)),
+            Operation::LogicalNot => Ok(elab::log_not(&b!(0))),
+            Operation::BitwiseNot => Ok(elab::bit_neg(&b!(0))),
+            Operation::ReductionAnd => Ok(elab::unary_and(&b!(0))),
+            Operation::ReductionNand => Ok(elab::unary_nand(&b!(0))),
+            Operation::ReductionOr => Ok(elab::unary_or(&b!(0))),
+            Operation::ReductionNor => Ok(elab::unary_nor(&b!(0))),
+            Operation::ReductionXor => Ok(elab::unary_xor(&b!(0))),
+            Operation::ReductionXnor => Ok(elab::unary_xnor(&b!(0))),
+            Operation::Subtract => Ok(elab::sub(&b!(0), &b!(1))),
+            Operation::Divide => Ok(elab::div(&b!(0), &b!(1))),
+            Operation::Modulo => Ok(elab::rem(&b!(0), &b!(1))),
+            Operation::Equal => Ok(elab::eq(&b!(0), &b!(1))),
+            Operation::NotEqual => Ok(elab::neq(&b!(0), &b!(1))),
+            Operation::CaseEqual => Ok(elab::case_eq(&b!(0), &b!(1))),
+            Operation::CaseNotEqual => Ok(elab::case_neq(&b!(0), &b!(1))),
+            Operation::WildEqual => Ok(elab::wildcard_eq(&b!(0), &b!(1))),
+            Operation::WildNotEqual => Ok(elab::wildcard_neq(&b!(0), &b!(1))),
+            Operation::Greater => Ok(elab::gt(&b!(0), &b!(1))),
+            Operation::GreaterEqual => Ok(elab::ge(&b!(0), &b!(1))),
+            Operation::Less => Ok(elab::lt(&b!(0), &b!(1))),
+            Operation::LessEqual => Ok(elab::le(&b!(0), &b!(1))),
+            Operation::ShiftLeft => Ok(elab::shl(&b!(0), &b!(1))),
+            Operation::ShiftRight => Ok(elab::shr(&b!(0), &b!(1))),
+            Operation::ArithmeticShiftLeft => Ok(elab::arith_shl(&b!(0), &b!(1))),
+            Operation::ArithmeticShiftRight => Ok(elab::arith_shr(&b!(0), &b!(1))),
+            Operation::Add => Ok(elab::add(&b!(0), &b!(1))),
+            Operation::Multiply => Ok(elab::mul(&b!(0), &b!(1))),
+            Operation::Power => Ok(elab::power(&b!(0), &b!(1))),
+            Operation::LogicalAnd => Ok(elab::log_and(&b!(0), &b!(1))),
+            Operation::LogicalOr => Ok(elab::log_or(&b!(0), &b!(1))),
+            Operation::BitwiseAnd => Ok(elab::bit_and(&b!(0), &b!(1))),
+            Operation::BitwiseOr => Ok(elab::bit_or(&b!(0), &b!(1))),
+            Operation::BitwiseXor => Ok(elab::bit_xor(&b!(0), &b!(1))),
+            Operation::BitwiseXnor => Ok(elab::bit_xnor(&b!(0), &b!(1))),
+            Operation::Conditional => Ok(elab::cond(&b!(0), &b!(1), &b!(2))),
+            Operation::MinTypMax => Ok(b!(0)),
+            Operation::Concat => {
                 let mut parts = Vec::with_capacity(operands.len());
                 for i in 0..operands.len() {
                     parts.push(b!(i));
@@ -6282,7 +6072,7 @@ impl<'a> Codegen<'a> {
                 }
                 Ok(elab::concat(&parts))
             }
-            vpiMultiConcatOp => {
+            Operation::MultiConcat => {
                 let count = b!(0);
                 if count.is_unknown() {
                     return Err("unknown replication count".to_string());
@@ -6311,7 +6101,7 @@ impl<'a> Codegen<'a> {
                 }
                 Ok(elab::Value::from_bits(bits, false))
             }
-            other => Err(format!("unsupported operation op type {other} in bound")),
+            other => Err(format!("unsupported operation op type {other:?} in bound")),
         }
     }
 }
@@ -6385,7 +6175,7 @@ fn aggregate_member_matches_type_key(
 fn is_integral_pattern_key_kind(kind: &str) -> bool {
     matches!(
         kind,
-        "bit" | "logic" | "byte" | "shortint" | "int" | "longint" | "integer" | "time"
+        "bit" | "logic" | "reg" | "byte" | "shortint" | "int" | "longint" | "integer" | "time"
     )
 }
 
@@ -6394,7 +6184,7 @@ fn materialize_parameter_value(value: &Val) -> Val {
         Val::Bits(value) => {
             let mut value = value.clone();
             // A parameter reference denotes its declared/inferred finite
-            // value (IEEE 1800-2009 §6.20.2). Surelog can retain the
+            // value (IEEE 1800-2009 §6.20.2). A frontend can retain the
             // initializer's unbased fill marker after it has already resized
             // the payload, so preserve the elaborated width/bits/signedness
             // but clear that stale contextual marker.
@@ -6406,7 +6196,7 @@ fn materialize_parameter_value(value: &Val) -> Val {
     }
 }
 
-/// Convert UHDM/VPI drive-strength properties to the ordered IEEE 1800-2009
+/// Convert semantic drive strengths to the ordered IEEE 1800-2009
 /// Table 28-7 scale used by the generated runtime. Charge strengths are valid
 /// for trireg storage, not continuous-assignment drive strengths.
 fn continuous_assignment_strengths(
@@ -6424,8 +6214,8 @@ fn continuous_assignment_strengths(
             Strength::Large | Strength::Medium | Strength::Small => Err(format!(
                 "charge strength on continuous assignment to net `{net_name}` is not supported"
             )),
-            Strength::Unknown(raw) => Err(format!(
-                "unknown drive strength {raw} on continuous assignment to net `{net_name}`"
+            Strength::Unsupported => Err(format!(
+                "unsupported drive strength on continuous assignment to net `{net_name}`"
             )),
         }
     }

@@ -1,5 +1,5 @@
 //! End-to-end simulator tests for `disable <label>;` (1364-1995 §11) and
-//! `break` / `continue` and `do … while` (1800-2005 §12.7): Surelog compile → codegen → CMake
+//! `break` / `continue` and `do … while` (1800-2005 §12.7): Slang compile → codegen → CMake
 //! build → run, asserting exact stdout against hand-simulated traces.
 //!
 //! Covered: disabling an enclosing named begin block mid-loop (statements
@@ -13,9 +13,9 @@
 //! Post-test loops are pinned for execute-once behavior and for `continue`
 //! evaluating the condition before the next iteration.
 //!
-//! Surelog writes `slpp_all/` into the process working directory, so the
+//! These tests temporarily change the process working directory, so the
 //! tests run with the CWD pointed at a fresh temp dir (serialized through a
-//! mutex, like the other Surelog integration tests).
+//! mutex, to avoid process-wide CWD races).
 
 #[path = "support/sim.rs"]
 mod sim_harness;
@@ -26,7 +26,7 @@ use llg::core::compile;
 use llg::sim;
 use llg::sim::opt::OptConfig;
 
-static SURELOG_LOCK: Mutex<()> = Mutex::new(());
+static CWD_LOCK: Mutex<()> = Mutex::new(());
 
 /// Compile, generate, build, and run one design.
 fn run_sim(sv: &str, top: &str, tag: &str) -> Result<(String, Vec<String>), String> {
@@ -48,8 +48,9 @@ fn codegen_error(sv: &str, top: &str, tag: &str) -> Result<String, String> {
         if !out.ok() {
             return Err(format!("compile diagnostics: {:?}", out.diagnostics));
         }
-        let design = out.uhdm_design().ok_or("no UHDM design")?;
-        match sim::codegen::generate(design) {
+        let db =
+            llg::core::db::Db::from_slang(&out.snapshot).map_err(|error| format!("db: {error}"))?;
+        match sim::codegen::generate(&db) {
             Ok(_) => Err("codegen unexpectedly succeeded".to_string()),
             Err(e) => Ok(e.to_string()),
         }
@@ -71,7 +72,7 @@ fn do_while_is_post_test_and_honors_loop_control() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
+    let _guard = CWD_LOCK.lock().unwrap();
     let sv = r#"`timescale 1ns/1ps
 module tb;
     integer once;
@@ -111,7 +112,7 @@ fn disable_enclosing_named_block_midloop() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
+    let _guard = CWD_LOCK.lock().unwrap();
     let sv = r#"module tb;
     integer i;
     reg [7:0] acc;
@@ -155,7 +156,7 @@ fn disable_self_named_loop_block() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
+    let _guard = CWD_LOCK.lock().unwrap();
     let sv = r#"module tb;
     integer i;
     reg [7:0] mem [0:3];
@@ -205,7 +206,7 @@ fn disable_task_inside_task_plain_early_return() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
+    let _guard = CWD_LOCK.lock().unwrap();
     let sv = r#"module tb;
     reg [3:0] r;
 
@@ -250,7 +251,7 @@ fn disable_inlined_task_early_return() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
+    let _guard = CWD_LOCK.lock().unwrap();
     let sv = r#"module tb;
     reg [3:0] r;
 
@@ -299,7 +300,7 @@ fn break_continue_all_loop_shapes() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
+    let _guard = CWD_LOCK.lock().unwrap();
     let sv = r#"module tb;
     integer i;
     reg [7:0] b, c;
@@ -378,7 +379,7 @@ fn nested_break_vs_disable_levels() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
+    let _guard = CWD_LOCK.lock().unwrap();
     let sv = r#"module tb;
     integer i, j, hits;
     reg [7:0] out;
@@ -430,7 +431,7 @@ fn cross_process_disable_rejected() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
+    let _guard = CWD_LOCK.lock().unwrap();
     let sv = r#"module tb;
     reg done;
     initial begin : victim
@@ -455,7 +456,7 @@ endmodule
 /// a same-process block jump.
 #[test]
 fn named_fork_disable_rejected() {
-    let _guard = SURELOG_LOCK.lock().unwrap();
+    let _guard = CWD_LOCK.lock().unwrap();
     let sv = r#"module tb;
     initial begin
         fork : workers
@@ -472,7 +473,7 @@ endmodule
 
     let err = codegen_error(sv, "tb", "namedfork").expect("codegen should fail");
     assert!(
-        err.contains("cross-process disables are not supported"),
+        err.contains("disable of `workers`") && err.contains("named forks"),
         "unexpected error message: {err}"
     );
 }
@@ -488,7 +489,7 @@ fn disable_loop_body_block_is_iteration_scoped() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
+    let _guard = CWD_LOCK.lock().unwrap();
     let sv = r#"module tb;
     integer i, count;
 
@@ -536,7 +537,7 @@ fn disable_line_with_utf8_comment_recovers_target() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
+    let _guard = CWD_LOCK.lock().unwrap();
     let sv = r#"module tb;
     integer i, count;
 
@@ -554,7 +555,7 @@ endmodule
 "#;
 
     // Hand-simulation: identical to (b') — the nested-construct disable
-    // loses its UHDM target and is recovered from this exact source line,
+    // target is recovered from this exact source line,
     // whose leading multi-byte characters must not disturb the byte scan.
     //
     // Expected stdout (exactly):
@@ -612,7 +613,7 @@ endmodule
 "#;
     std::fs::write(&src, sv).expect("write source");
 
-    let _guard = SURELOG_LOCK.lock().unwrap();
+    let _guard = CWD_LOCK.lock().unwrap();
     let result = sim_harness::with_cwd(dir.path(), || {
         let out = compile::compile(&compile::CompileOpts {
             files: vec![src.to_string_lossy().into_owned()],
@@ -623,8 +624,7 @@ endmodule
         if !out.ok() {
             return Err(format!("compile diagnostics: {:?}", out.diagnostics));
         }
-        let design = out.uhdm_design().ok_or("no UHDM design")?;
-        let db = llg::core::db::Db::build(design).map_err(|e| format!("db: {e}"))?;
+        let db = llg::core::db::Db::from_slang(&out.snapshot).map_err(|e| format!("db: {e}"))?;
         let on = sim::codegen::generate_from_db_with_opts(&db, &OptConfig::default())
             .map_err(|e| format!("codegen(opt-on): {e}"))?;
         let off = sim::codegen::generate_from_db_with_opts(&db, &OptConfig::none())

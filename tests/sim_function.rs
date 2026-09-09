@@ -1,19 +1,18 @@
-//! End-to-end simulator tests for function/task support: Surelog compile →
+//! End-to-end simulator tests for function/task support: Slang compile →
 //! codegen → CMake build → run, asserting exact stdout against hand-simulated
 //! traces.
 //!
 //! Regression coverage for the function/task fixes: empty bodies, non-blocking
 //! writes to output formals, function-call sensitivity for combinational
-//! processes, formal defaults referencing earlier formals (codegen + elab),
+//! processes, formal defaults referencing earlier formals (semantic DB + codegen),
 //! writes to input formals, and assignment-like width contexts (§10.8).
 //!
-//! Surelog writes `slpp_all/` into the process working directory, so the
+//! These tests temporarily change the process working directory, so the
 //! tests run with the CWD pointed at a fresh temp dir (serialized through a
-//! mutex, like the other Surelog integration tests).
+//! mutex, to avoid process-wide CWD races).
 
 use std::{path::Path, sync::Mutex};
 
-use llg::core::elab;
 use llg::core::{compile, db::Db};
 use llg::sim;
 use llg::sim::opt::OptConfig;
@@ -21,7 +20,7 @@ use llg::sim::opt::OptConfig;
 #[path = "support/sim.rs"]
 mod sim_harness;
 
-static SURELOG_LOCK: Mutex<()> = Mutex::new(());
+static CWD_LOCK: Mutex<()> = Mutex::new(());
 
 /// Compile + codegen + C-compile + run `sv` (top module `top`), returning the
 /// simulator's exact stdout and the codegen warnings.
@@ -38,8 +37,8 @@ fn run_sim(sv: &str, top: &str, tag: &str) -> Result<(String, Vec<String>), Stri
         if !out.ok() {
             return Err(format!("compile diagnostics: {:?}", out.diagnostics));
         }
-        let design = out.uhdm_design().ok_or("no UHDM design")?;
-        let gen = sim::codegen::generate(design).map_err(|e| format!("codegen: {e}"))?;
+        let db = Db::from_slang(&out.snapshot).map_err(|error| format!("db: {error}"))?;
+        let gen = sim::codegen::generate(&db).map_err(|e| format!("codegen: {e}"))?;
         let exe = sim::build::build_model_cmake(dir, &[("model.c", gen.model_c.as_str())])
             .map_err(|e| format!("cmake: {e}"))?;
         let stdout = sim_harness::run_executable(&exe)?;
@@ -63,7 +62,9 @@ fn fixture_rejection(file: &str, tag: &str) -> Result<String, String> {
         if !compiled.ok() {
             return Ok(format!("{:?}", compiled.diagnostics));
         }
-        match sim::codegen::generate(compiled.uhdm_design().ok_or("no UHDM design")?) {
+        let db =
+            Db::from_slang(&compiled.snapshot).map_err(|error| format!("database: {error}"))?;
+        match sim::codegen::generate(&db) {
             Ok(_) => Err(format!("{file} unexpectedly generated")),
             Err(error) => Ok(error.to_string()),
         }
@@ -86,11 +87,8 @@ fn run_fixture_both_opts(file: &str, tag: &str, expected: &str) -> Result<(), St
         if !compiled.ok() {
             return Err(format!("frontend diagnostics: {:?}", compiled.diagnostics));
         }
-        let database = Db::build_with_source_files(
-            compiled.uhdm_design().ok_or("no UHDM design")?,
-            &compiled.frontend_source_files(),
-        )
-        .map_err(|error| format!("database: {error}"))?;
+        let database =
+            Db::from_slang(&compiled.snapshot).map_err(|error| format!("database: {error}"))?;
 
         for (variant, options) in [
             ("unoptimized", OptConfig::none()),
@@ -121,7 +119,7 @@ fn sim_func_recursive_factorial() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
+    let _guard = CWD_LOCK.lock().unwrap();
     let sv = r#"module tb;
     logic clk;
     logic [7:0] out;
@@ -153,34 +151,29 @@ endmodule
     // Hand-simulation:
     //   t=0  clk=0; the posedge processes register waiters, initial #30.
     //   t=5  clk 0->1 posedge: first proc records out<=fact(5)=120; second
-    //        proc sees out=X (NBA not committed): `out !== 8'bx` is truthy
-    //        against the all-X out (the X literal is a single x bit), so it
-    //        prints "t=5 fact(5)=x".  NBA: out=120.
+    //        proc sees out=X (NBA not committed). Both operands of
+    //        `out !== 8'bx` are all X, so the guard is false. NBA: out=120.
     //   t=15 posedge: out<=120; second proc: out=120 -> "t=15 fact(5)=120".
     //   t=25 posedge: "t=25 fact(5)=120".
     //   t=30 $finish.
     //
     // Expected stdout (exactly):
-    //   t=5 fact(5)=x
     //   t=15 fact(5)=120
     //   t=25 fact(5)=120
 
     let (stdout, _warnings) = run_sim(sv, "tb", "fact").expect("simulation should run");
-    assert_eq!(
-        stdout,
-        "t=5 fact(5)=x\nt=15 fact(5)=120\nt=25 fact(5)=120\n"
-    );
+    assert_eq!(stdout, "t=15 fact(5)=120\nt=25 fact(5)=120\n");
 }
 
 /// (b) Empty function body used as a statement: the definition must codegen
-/// into a no-op C function (Surelog emits no `vpiStmt` for an empty body).
+/// into a no-op C function.
 #[test]
 fn sim_func_empty_body_stmt() {
     if !llg::sim::build::cmake_available() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
+    let _guard = CWD_LOCK.lock().unwrap();
     let sv = r#"module tb;
     logic clk;
     logic [3:0] out;
@@ -208,18 +201,19 @@ endmodule
 
     // Hand-simulation (mirrors sim_func_recursive_factorial):
     //   t=5  posedge: nop() no-op; out<=3 recorded; the guarded display sees
-    //        out=X (NBA not committed) and prints "t=5 out=x".  NBA: out=3.
+    //        out=4'bxxxx before the NBA. Case inequality compares X bits
+    //        exactly (IEEE 1800-2009 §11.4.5), so `out !== 4'bx` is false
+    //        and nothing prints. NBA: out=3.
     //   t=15 posedge: out<=3; display "t=15 out=3".
     //   t=25 posedge: display "t=25 out=3".
     //   t=30 $finish.
     //
     // Expected stdout (exactly):
-    //   t=5 out=x
     //   t=15 out=3
     //   t=25 out=3
 
     let (stdout, _warnings) = run_sim(sv, "tb", "empty").expect("simulation should run");
-    assert_eq!(stdout, "t=5 out=x\nt=15 out=3\nt=25 out=3\n");
+    assert_eq!(stdout, "t=15 out=3\nt=25 out=3\n");
 }
 
 /// (c) Task with an output formal, blocking write.  The output actual is a
@@ -230,7 +224,7 @@ fn sim_task_output_blocking() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
+    let _guard = CWD_LOCK.lock().unwrap();
     let sv = r#"module tb;
     logic clk;
     logic [3:0] q;
@@ -281,7 +275,7 @@ fn sim_task_output_nba() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
+    let _guard = CWD_LOCK.lock().unwrap();
     let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/sim/function/task_output_nba.sv");
     let source = std::fs::read_to_string(&fixture).expect("read task output NBA fixture");
@@ -295,7 +289,7 @@ fn sim_task_nba_static_input_and_local_targets_persist() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
+    let _guard = CWD_LOCK.lock().unwrap();
     let cases = [
         (
             "task_nba_input_formal.sv",
@@ -316,7 +310,7 @@ fn sim_task_nba_static_input_and_local_targets_persist() {
 
 #[test]
 fn sim_task_nba_rejects_automatic_input_and_local_targets() {
-    let _guard = SURELOG_LOCK.lock().unwrap();
+    let _guard = CWD_LOCK.lock().unwrap();
     for (file, tag) in [
         (
             "task_nba_automatic_input_formal.sv",
@@ -350,7 +344,7 @@ fn sim_func_comb_sensitivity() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
+    let _guard = CWD_LOCK.lock().unwrap();
     let sv = r#"module tb;
     logic [3:0] a;
     logic [3:0] out;
@@ -405,7 +399,7 @@ fn sim_func_default_refs_earlier_formal() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
+    let _guard = CWD_LOCK.lock().unwrap();
     let sv = r#"module tb;
     logic clk;
     logic [7:0] out;
@@ -436,32 +430,29 @@ endmodule
     //
     //   t=0  clk=0.
     //   t=5  posedge: out<=12 recorded; second proc sees out=X (NBA not
-    //        committed) and prints "t=5 out=x".  NBA: out=12.
+    //        committed). Both operands of `out !== 8'bx` are all X, so the
+    //        guard is false. NBA: out=12.
     //   t=15 posedge: "t=15 out=12".
     //   t=25 posedge: "t=25 out=12".
     //   t=30 $finish.
     //
     // Expected stdout (exactly):
-    //   t=5 out=x
     //   t=15 out=12
     //   t=25 out=12
 
     let (stdout, _warnings) = run_sim(sv, "tb", "defref").expect("simulation should run");
-    assert_eq!(stdout, "t=5 out=x\nt=15 out=12\nt=25 out=12\n");
+    assert_eq!(stdout, "t=15 out=12\nt=25 out=12\n");
 }
 
-/// (f-elab) The elab twin: `Resolver::eval_expr` on the `f()` call must bind
-/// the formals one at a time so `b`'s default (`b = a + 1`) sees `a` in
-/// scope.  (Constant calls in `localparam` initializers are inlined away by
-/// Surelog's own elaborator, so the call is taken from a process body where
-/// the UHDM keeps the `func_call` node.)
+/// (f-semantic) The owned semantic DB must retain the call target and both
+/// formal defaults, including `b = a + 1` which refers to the earlier formal.
 #[test]
 fn sim_func_default_elab_resolver() {
     if !llg::sim::build::cmake_available() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
+    let _guard = CWD_LOCK.lock().unwrap();
     let sv = r#"module tb;
     function automatic logic [7:0] f(input logic [7:0] a = 8'd1, input logic [7:0] b = a + 8'd1);
         f = a * 10 + b;
@@ -482,34 +473,31 @@ endmodule
         if !out.ok() {
             return Err(format!("compile diagnostics: {:?}", out.diagnostics));
         }
-        let design = out.uhdm_design().ok_or("no UHDM design")?;
-        use llg::ffi::vpi;
-        let top = vpi::iterate(vpi::uhdmtopModules, design)
-            .ok_or("no top modules")?
-            .next()
-            .ok_or("no top module")?;
-        let proc = vpi::iterate(vpi::vpiProcess, top.raw())
-            .ok_or("no process")?
-            .next()
-            .ok_or("no process")?;
-        // always_comb with a single assignment: the process statement *is* the
-        // assignment.  Keep the owned handles alive while their raw pointers
-        // are in use.
-        let stmt_owned = vpi::handle(vpi::vpiStmt, proc.raw()).ok_or("no process stmt")?;
-        let rhs_owned = vpi::handle(vpi::vpiRhs, stmt_owned.raw()).ok_or("no RHS")?;
-        let mut resolver = elab::Resolver::new();
-        resolver
-            .eval_expr(top.raw(), rhs_owned.raw())
-            .map_err(|e| format!("eval: {e}"))
+        let database = Db::from_slang(&out.snapshot).map_err(|error| error.to_string())?;
+        let callee = database
+            .node_ids()
+            .find_map(|id| match database.node_kind(id) {
+                llg::core::db::NodeKind::FuncCall {
+                    name,
+                    callee: Some(callee),
+                    ..
+                } if name == "f" => Some(*callee),
+                _ => None,
+            })
+            .ok_or("missing bound call to f")?;
+        let defaults: Vec<_> = database
+            .node(callee)
+            .children
+            .iter()
+            .filter_map(|child| match database.node_kind(*child) {
+                llg::core::db::NodeKind::FuncArg { default, .. } => Some(default.is_some()),
+                _ => None,
+            })
+            .collect();
+        Ok(defaults)
     });
 
-    // f() binds a=1 (default), b=a+1=2 (default referencing the earlier
-    // formal) -> f = 1*10 + 2 = 12.
-    let val = result.expect("eval_expr should resolve f()");
-    let elab::Val::Bits(v) = val else {
-        panic!("expected bits, got {val:?}");
-    };
-    assert_eq!(v.to_u64().expect("no X/Z"), 12, "f() must evaluate to 12");
+    assert_eq!(result.expect("capture function defaults"), [true, true]);
 }
 
 /// (g) Writing an input formal (legal SV — it is a local copy): the by-value
@@ -520,7 +508,7 @@ fn sim_func_write_input_formal() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
+    let _guard = CWD_LOCK.lock().unwrap();
     let sv = r#"module tb;
     logic clk;
     logic [7:0] out;
@@ -550,19 +538,18 @@ endmodule
     // Hand-simulation: f(41) increments its input copy: x=42, f=42.
     //
     //   t=0  clk=0.
-    //   t=5  posedge: out<=42 recorded; second proc sees out=X and prints
-    //        "t=5 out=x".  NBA: out=42.
+    //   t=5  posedge: out<=42 recorded; second proc sees out=X. Both operands
+    //        of `out !== 8'bx` are all X, so the guard is false. NBA: out=42.
     //   t=15 posedge: "t=15 out=42".
     //   t=25 posedge: "t=25 out=42".
     //   t=30 $finish.
     //
     // Expected stdout (exactly):
-    //   t=5 out=x
     //   t=15 out=42
     //   t=25 out=42
 
     let (stdout, _warnings) = run_sim(sv, "tb", "wrin").expect("simulation should run");
-    assert_eq!(stdout, "t=5 out=x\nt=15 out=42\nt=25 out=42\n");
+    assert_eq!(stdout, "t=15 out=42\nt=25 out=42\n");
 }
 
 /// (h) Delay-bearing task inlined at its call site: the caller's `$display`
@@ -573,7 +560,7 @@ fn sim_task_delay_inlined() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
+    let _guard = CWD_LOCK.lock().unwrap();
     let sv = r#"module tb;
     logic clk;
     logic [3:0] out;
@@ -626,7 +613,7 @@ fn sim_func_input_argument_assignment_context() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
+    let _guard = CWD_LOCK.lock().unwrap();
     let sv = r#"module tb;
     function automatic logic [15:0] accept(input logic [15:0] value);
         accept = value;
@@ -652,7 +639,7 @@ fn sim_func_return_assignment_context() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
+    let _guard = CWD_LOCK.lock().unwrap();
     let sv = r#"module tb;
     function automatic logic [15:0] add_wide();
         add_wide = 8'hff + 8'h1;

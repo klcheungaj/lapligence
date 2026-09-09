@@ -13,13 +13,10 @@
 //! Best-effort by design: when either width is unknown (unsized literals,
 //! function calls, hierarchical refs, …) the comparison is skipped.
 
+use crate::core::db::Operation;
 use crate::core::db::{ExprKind, NodeKind};
 use crate::core::lint::rules::analysis::{all_nodes, expr_width};
 use crate::core::lint::{LintCtx, LintDiag, LintRule, LintSeverity};
-use crate::ffi::vpi::{
-    vpiCaseEqOp, vpiCaseNeqOp, vpiEqOp, vpiGeOp, vpiGtOp, vpiLeOp, vpiLtOp, vpiNeqOp, vpiWildEqOp,
-    vpiWildNeqOp,
-};
 
 /// Flags comparisons with differing operand widths.
 pub struct ComparisonWidthRule;
@@ -40,7 +37,7 @@ impl LintRule for ComparisonWidthRule {
             let NodeKind::Expr(ExprKind::Operation { op, operands, .. }) = db.node_kind(id) else {
                 continue;
             };
-            if !is_comparison(op.as_raw()) {
+            if !is_comparison(*op) {
                 continue;
             }
             let (Some(lhs), Some(rhs)) = (operands.first(), operands.get(1)) else {
@@ -71,20 +68,19 @@ impl LintRule for ComparisonWidthRule {
 
 /// True for the binary comparison operators (including the case equalities
 /// `===`/`!==` and the wildcard equalities `==?`/`!=?`).
-#[allow(non_upper_case_globals)] // vpi op-type constants are lowercase by convention
-fn is_comparison(op: i32) -> bool {
+fn is_comparison(op: Operation) -> bool {
     matches!(
         op,
-        vpiEqOp
-            | vpiNeqOp
-            | vpiLtOp
-            | vpiLeOp
-            | vpiGtOp
-            | vpiGeOp
-            | vpiCaseEqOp
-            | vpiCaseNeqOp
-            | vpiWildEqOp
-            | vpiWildNeqOp
+        Operation::Equal
+            | Operation::NotEqual
+            | Operation::Less
+            | Operation::LessEqual
+            | Operation::Greater
+            | Operation::GreaterEqual
+            | Operation::CaseEqual
+            | Operation::CaseNotEqual
+            | Operation::WildEqual
+            | Operation::WildNotEqual
     )
 }
 

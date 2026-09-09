@@ -11,18 +11,18 @@
 //! enable gate turns a data Z into X like buf/not (LRM 1364-1995 §7.4
 //! Table 7-5).
 //!
-//! Surelog writes `slpp_all/` into the process working directory, so each
-//! test uses a fresh temp directory and the process-wide mutex serializes
-//! compile/codegen runs with the other simulator integration tests.
+//! Each test uses a fresh temp directory and the process-wide mutex serializes
+//! process-CWD changes with the other simulator integration tests.
 
 #[path = "support/sim.rs"]
 mod sim_harness;
 use std::sync::Mutex;
 
 use llg::core::compile;
+use llg::ffi::slang::DiagnosticSeverity;
 use llg::sim;
 
-static SURELOG_LOCK: Mutex<()> = Mutex::new(());
+static CWD_LOCK: Mutex<()> = Mutex::new(());
 
 fn run_sim(sv: &str, tag: &str) -> Result<String, String> {
     sim_harness::run_sim(sv, "tb", tag)
@@ -43,8 +43,9 @@ fn codegen_error(sv: &str, tag: &str) -> Result<String, String> {
         if !out.ok() {
             return Err(format!("compile diagnostics: {:?}", out.diagnostics));
         }
-        let design = out.uhdm_design().ok_or("no UHDM design")?;
-        match sim::codegen::generate(design) {
+        let db =
+            llg::core::db::Db::from_slang(&out.snapshot).map_err(|error| format!("db: {error}"))?;
+        match sim::codegen::generate(&db) {
             Ok(_) => Err("codegen unexpectedly succeeded".to_string()),
             Err(e) => Ok(e.to_string()),
         }
@@ -69,7 +70,7 @@ fn sim_gates_two_input_truth_tables_with_xz() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
+    let _guard = CWD_LOCK.lock().unwrap();
     let sv = r#"module tb;
     reg a, b;
     wire y_and, y_or, y_nand, y_nor, y_xor, y_xnor, y_not;
@@ -120,7 +121,7 @@ fn sim_gates_multi_input_three_terminals() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
+    let _guard = CWD_LOCK.lock().unwrap();
     let sv = r#"module tb;
     reg i0, i1, i2;
     wire y_and, y_or, y_nand, y_nor, y_xor, y_xnor;
@@ -156,7 +157,7 @@ fn sim_gates_vector_bitwise_width4() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
+    let _guard = CWD_LOCK.lock().unwrap();
     let sv = r#"module tb;
     reg [3:0] va, vb;
     wire [3:0] vy_and, vy_or, vy_xor;
@@ -209,7 +210,7 @@ fn sim_gates_enable_gates_table_7_5() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
+    let _guard = CWD_LOCK.lock().unwrap();
     let sv = r#"module tb;
     reg en, data;
     wire y_b1, y_b0, y_n1, y_n0;
@@ -257,7 +258,7 @@ fn sim_gates_pullup_pulldown_drive_undriven_wire() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
+    let _guard = CWD_LOCK.lock().unwrap();
     let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/sim/gates/pull_undriven.v");
     let source = std::fs::read_to_string(&fixture).expect("read pull fixture");
@@ -274,7 +275,7 @@ fn sim_gates_gate_chain_settles() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
+    let _guard = CWD_LOCK.lock().unwrap();
     let sv = r#"module tb;
     reg a, b;
     wire t, y;
@@ -303,7 +304,7 @@ fn sim_gates_comb_process_wakes_on_gate_write() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
+    let _guard = CWD_LOCK.lock().unwrap();
     let sv = r#"module tb;
     reg a;
     wire y;
@@ -347,7 +348,7 @@ fn sim_gates_delay_lags_timestamps() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
+    let _guard = CWD_LOCK.lock().unwrap();
     let sv = r#"`timescale 1ns/1ps
 module tb;
     reg a;
@@ -376,13 +377,13 @@ fn sim_gates_parameterized_delay() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
+    let _guard = CWD_LOCK.lock().unwrap();
     let sv = r#"`timescale 1ns/1ps
 module tb #(parameter D = 3) ();
     reg a;
     wire y;
-    and #D g(y, a, a2);
     wire a2 = 1'b1;
+    and #D g(y, a, a2);
     initial begin
         a = 1'b1;                          // t=0: gate writes y=1 at t=D=3
         #2 $display("%0t %b", $time, y);   // t=2: pending -> x
@@ -404,7 +405,7 @@ fn sim_gates_delay_rejects_short_pulse() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
+    let _guard = CWD_LOCK.lock().unwrap();
     let sv = r#"module tb;
     reg a;
     wire y;
@@ -437,7 +438,7 @@ fn sim_gates_inside_generate_scope() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
+    let _guard = CWD_LOCK.lock().unwrap();
     // Each iteration gets its own per-iteration gate and initial block
     // under `g_0_`/`g_1_`; the genvar comparison folds to a per-iteration
     // constant.
@@ -466,7 +467,7 @@ endmodule
 
 #[test]
 fn sim_gates_reject_udp_instance() {
-    let _guard = SURELOG_LOCK.lock().unwrap();
+    let _guard = CWD_LOCK.lock().unwrap();
     let sv = r#"primitive mux2 (out, sel, a, b);
     output out;
     input sel, a, b;
@@ -499,10 +500,7 @@ endmodule
 
 #[test]
 fn sim_gates_reject_switch_primitive() {
-    let _guard = SURELOG_LOCK.lock().unwrap();
-    // Surelog's UHDM lint rejects wire terminals on switch primitives
-    // ("Illegal lhs of type wire"), so this design uses regs to reach the
-    // codegen boundary being pinned here.
+    // Variables are invalid on the primitive's inout terminals.
     let sv = r#"module tb;
     reg y, a;
     tran t1(y, a);
@@ -512,16 +510,20 @@ fn sim_gates_reject_switch_primitive() {
     end
 endmodule
 "#;
-    let err = codegen_error(sv, "switch").expect("compile should succeed");
+    let diagnostics =
+        sim_harness::frontend_diagnostics(sv, "tb").expect("compile switch primitive");
     assert!(
-        err.contains("switch/transistor primitive"),
-        "unexpected error: {err}"
+        diagnostics.iter().any(|diagnostic| {
+            diagnostic.severity == DiagnosticSeverity::Error
+                && diagnostic.name == "InOutVarPortConn"
+        }),
+        "variable switch terminals must report InOutVarPortConn: {diagnostics:?}"
     );
 }
 
 #[test]
 fn sim_gates_reject_gate_array() {
-    let _guard = SURELOG_LOCK.lock().unwrap();
+    let _guard = CWD_LOCK.lock().unwrap();
     let sv = r#"module tb;
     reg a, b;
     wire [3:0] y;
@@ -550,7 +552,7 @@ fn sim_gates_gate_output_drives_inout_net_member() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    let _guard = SURELOG_LOCK.lock().unwrap();
+    let _guard = CWD_LOCK.lock().unwrap();
     let sv = r#"`timescale 1ns/1ps
 module child(input wire a, b, inout wire y);
     and g(y, a, b);
@@ -575,7 +577,7 @@ endmodule
 
 #[test]
 fn sim_gates_reject_select_terminal() {
-    let _guard = SURELOG_LOCK.lock().unwrap();
+    let _guard = CWD_LOCK.lock().unwrap();
     // Select-connected terminals are a clean v1 reject: gates drive/read
     // whole signals only.
     let sv = r#"module tb;
@@ -597,7 +599,7 @@ endmodule
 
 #[test]
 fn sim_gates_reject_mixed_width_terminals() {
-    let _guard = SURELOG_LOCK.lock().unwrap();
+    let _guard = CWD_LOCK.lock().unwrap();
     let sv = r#"module tb;
     reg a;
     reg [3:0] wide;

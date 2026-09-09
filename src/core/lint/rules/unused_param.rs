@@ -6,14 +6,11 @@
 //! per-instance elaboration re-binds every ref to the instance's own
 //! parameter node, so a read in any process, continuous assignment, or
 //! function/task body of the design is the use of exactly that instance's
-//! parameter.  Localparams are skipped (a localparam's only legal "use" is
-//! its own default value, which elaboration folds away).
+//! parameter. Localparams are excluded from unused-parameter diagnostics.
 //!
-//! Frontend limitation: the pinned Surelog folds constant uses of parameters during
-//! elaboration, so parameters used only in ranges (`logic [W-1:0] x`), in
-//! other parameters' defaults (`localparam X = UNUSED + 1`), in generate
-//! conditions, or in fully-constant continuous assigns leave no `Ref` node in
-//! the db and are reported as unused even when the source reads them.  Only
+//! This residual rule sees expression references. Parameters used only in ranges (`logic [W-1:0] x`), in
+//! generate conditions, or fully-folded constants may leave no `Ref` node in
+//! the semantic graph. Slang analysis supplies source-aware diagnostics.  Only
 //! reads that survive elaboration as expression refs (process bodies,
 //! non-constant continuous assigns) are detected.
 //!
@@ -118,21 +115,27 @@ mod tests {
         assert!(got.is_empty(), "localparams are skipped: {:?}", diags);
     }
 
-    /// v1 limitation: a param read only in another param's default is folded
-    /// to a constant by elaboration, so the read leaves no `Ref` node and the
-    /// parameter is reported.  (Documented in the module docs.)
     #[test]
-    fn param_read_only_in_another_params_default_is_reported_known_limitation() {
-        let diags = lint_design(
-            "module up4;\n  parameter UNUSED = 3;\n  localparam X = UNUSED + 1;\nendmodule\n",
+    fn param_read_in_another_params_default_is_quiet() {
+        let (db, _) = crate::core::lint::rules::tests::build_design(
+            "module up4;\n  parameter USED = 3;\n  localparam X = USED + 1;\nendmodule\n",
             "up4",
         );
-        let got = rule_diags(&diags, "unused-parameter");
-        assert_eq!(got.len(), 1, "UNUSED flagged, X skipped: {:?}", diags);
         assert!(
-            got[0].message.contains("`UNUSED`"),
-            "message: {}",
-            got[0].message
+            all_nodes(&db).iter().any(|id| matches!(
+                db.node_kind(*id),
+                NodeKind::Expr(ExprKind::Ref { target: Some(target) })
+                    if db.node(*target).name == "USED"
+            )),
+            "the default expression must retain its parameter reference"
+        );
+        let diags = lint_design(
+            "module up4;\n  parameter USED = 3;\n  localparam X = USED + 1;\nendmodule\n",
+            "up4",
+        );
+        assert!(
+            rule_diags(&diags, "unused-parameter").is_empty(),
+            "{diags:?}"
         );
     }
 
@@ -170,26 +173,28 @@ mod tests {
     }
 
     #[test]
-    fn unused_gen_scope_param_is_reported_per_unrolled_scope() {
-        let diags = lint_design(
-            "module up7;\n  genvar i;\n\
+    fn generated_parameters_are_local_and_excluded() {
+        let source = "module up7;\n  genvar i;\n\
              \x20 for (i = 0; i < 2; i = i + 1) begin : g\n\
              \x20   parameter P2 = 3;\n\
-             \x20 end\nendmodule\n",
-            "up7",
+             \x20 end\nendmodule\n";
+        let (db, _) = crate::core::lint::rules::tests::build_design(source, "up7");
+        let parameters = all_nodes(&db)
+            .into_iter()
+            .filter(|id| db.node(*id).name == "P2")
+            .collect::<Vec<_>>();
+        assert_eq!(
+            parameters.len(),
+            2,
+            "one local parameter per generated scope"
         );
-        let got = rule_diags(&diags, "unused-parameter");
-        assert_eq!(got.len(), 2, "one finding per unrolled scope: {:?}", diags);
-        let msgs: Vec<&str> = got.iter().map(|d| d.message.as_str()).collect();
+        assert!(parameters
+            .iter()
+            .all(|id| matches!(db.node_kind(*id), NodeKind::Param { local: true, .. })));
+        let diags = lint_design(source, "up7");
         assert!(
-            msgs.iter()
-                .any(|m| m.contains("`P2`") && m.contains("`up7.g[0]`")),
-            "gen scope path: {msgs:?}"
-        );
-        assert!(
-            msgs.iter()
-                .any(|m| m.contains("`P2`") && m.contains("`up7.g[1]`")),
-            "gen scope path: {msgs:?}"
+            rule_diags(&diags, "unused-parameter").is_empty(),
+            "{diags:?}"
         );
     }
 }

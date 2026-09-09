@@ -2,9 +2,8 @@
 //!
 //! Each test runs the built binary over a copy of `tests/fixtures/dump/proj`
 //! and asserts targeted facts about the emitted rows rather than byte-golden
-//! output.  One occurrence can yield several rows (Surelog/UHDM expose the
-//! same identifier through multiple object views — port/net/var…), so
-//! position-keyed assertions apply to EVERY row sharing that location.
+//! output. Slang provides one typed lexical record per occurrence, so
+//! position-keyed assertions apply directly to that record.
 //!
 //! The asserted facts double as machine-checkable navigation-correctness
 //! statements: duplicate identifiers disambiguate per module, named port
@@ -24,6 +23,7 @@
 //! `expected.module_inst.json`.  Regenerate either with
 //! `LLG_DUMP_BLESS=1 cargo test --test dump_tokens`; see the `_comment`
 //! key inside each golden for the exact field conventions.
+#![cfg(feature = "lsp")]
 
 use std::collections::HashMap;
 use std::fs;
@@ -196,11 +196,11 @@ fn port_connections_bind_labels_to_child_ports_and_actuals_to_parent_scope() {
     // … while the actuals resolve to tb.sv's OWN declarations.
     dump.assert_rows(
         "tb.sv:6:15",
-        &["REF", "via=connection", "bind=tb.sv:2:8[wa,net]"],
+        &["REF", "via=connection", "bind=tb.sv:2:8[wa,variable]"],
     );
     dump.assert_rows(
         "tb.sv:6:23",
-        &["REF", "via=connection", "bind=tb.sv:4:8[t_q,net]"],
+        &["REF", "via=connection", "bind=tb.sv:4:8[t_q,variable]"],
     );
     // u_b(.clk(wb)) — same split for the second instantiation.
     dump.assert_rows(
@@ -209,7 +209,7 @@ fn port_connections_bind_labels_to_child_ports_and_actuals_to_parent_scope() {
     );
     dump.assert_rows(
         "tb.sv:7:15",
-        &["REF", "via=connection", "bind=tb.sv:3:8[wb,net]"],
+        &["REF", "via=connection", "bind=tb.sv:3:8[wb,variable]"],
     );
 
     // Highlighting: labels carry `connectionLabel`, actuals do not.
@@ -268,23 +268,21 @@ fn unbound_occurrences_print_an_explicit_marker() {
     let root = materialize_fixture();
     let dump = Dump::run(&root);
 
-    // Known-unbound shape today: the instantiation-type occurrence (the
-    // module type name at its use site).  It must render an explicit
-    // `bind=-` rather than an empty field.  (Connection ACTUALS are bound
-    // to their parent-scope declarations and labels to the child ports, so
-    // neither qualifies as unbound anymore.)
-    let type_occurrences = dump.rows_at("tb.sv:6:2");
+    // Declarations have no target binding and render an explicit `bind=-`
+    // rather than an empty field. Module type uses, connection actuals, and
+    // labels all resolve to their semantic declarations.
+    let module_declarations = dump.rows_at("m_a.sv:1:7");
     assert!(
-        type_occurrences.iter().any(|row| row.contains("bind=-")),
-        "instantiation type occurrence should be explicit about being unbound"
+        module_declarations.iter().any(|row| row.contains("bind=-")),
+        "module declaration should be explicit about having no target binding"
     );
     fs::remove_dir_all(&root).ok();
 }
 
 /// THE production regression: a syntax-broken sibling file must NOT starve
 /// the other files' token surface.  With `top.v` next to an unterminated
-/// module, Surelog skips UHDM entirely (`outcome=parse`); the parse-tree
-/// fallback must still surface ALL 7 identifier occurrences of top.v —
+/// module, Slang's recovery snapshot must still surface all seven identifier
+/// occurrences of top.v —
 /// module name, both port declarations, the reg declaration, and three
 /// references — each with the correct DECL/REF role.
 #[test]
@@ -303,7 +301,7 @@ fn syntax_broken_sibling_still_dumps_all_top_v_tokens() {
         "\nmodule top(\n    input clk,\n    output dat\n);\n\nreg[31:0] counter;\n\nalways @(posedge clk) begin\n    counter <= dat;\nend\n\nendmodule\n",
     )
     .expect("write top.v");
-    // Unterminated module on purpose: Severity::Syntax ⇒ no UHDM.
+    // Unterminated module on purpose: this is the single syntax fault.
     fs::write(root.join("broken.v"), "module broken(\n   input clk\n").expect("write broken.v");
 
     let output = Command::new(env!("CARGO_BIN_EXE_llg_ls"))
@@ -334,15 +332,18 @@ fn syntax_broken_sibling_still_dumps_all_top_v_tokens() {
     dump.assert_rows("top.v:9:4", &["counter", "REF"]);
     dump.assert_rows("top.v:9:15", &["dat", "REF"]);
 
-    // Parse mode has no UHDM bindings; every row must say so explicitly.
+    // Slang retains exact bindings for the valid unit even though its sibling
+    // is syntax-broken. Declarations remain binding targets, while each
+    // reference points to its declaration in `top`.
     let top_rows = dump.rows_at("top.v:");
     assert!(top_rows.len() >= 7, "expected ≥7 rows, got {:?}", top_rows);
-    for row in &top_rows {
-        assert!(
-            row.contains("bind=-"),
-            "unexpected binding in parse mode: {row}"
-        );
-    }
+    dump.assert_rows("top.v:1:7", &["DECL", "bind=-"]);
+    dump.assert_rows("top.v:2:10", &["DECL", "bind=-"]);
+    dump.assert_rows("top.v:3:11", &["DECL", "bind=-"]);
+    dump.assert_rows("top.v:6:10", &["DECL", "bind=-"]);
+    dump.assert_rows("top.v:8:17", &["REF", "bind=top.v:2:10[clk,port]"]);
+    dump.assert_rows("top.v:9:4", &["REF", "bind=top.v:6:10[counter,variable]"]);
+    dump.assert_rows("top.v:9:15", &["REF", "bind=top.v:3:11[dat,port]"]);
     fs::remove_dir_all(&root).ok();
 }
 
@@ -411,7 +412,7 @@ fn golden_comment(golden_test: &str) -> String {
         "Golden for tests/dump_tokens.rs::{golden_test} \
 (schema llg.tokenDump/v1); regenerate with LLG_DUMP_BLESS=1 cargo test --test dump_tokens. \
 Conventions: coordinates are the SAME 0-based values the --dump-tokens text prints; one source \
-occurrence may appear as SEVERAL entries (one per UHDM/parse-tree object view); entries are in \
+occurrence appears once as a typed Slang lexical record; entries are in \
 text-dump emission order (sorted by file, line0, col0); \"module\" is the innermost module or \
 package body in the same file whose line range contains the entry — package bodies render as \
 \"package:<name>\", rows outside every scope render \"\"; \"sym\" is the semantic-token legend \
@@ -573,7 +574,7 @@ fn strip_known_issue_markers(document: &mut Value) {
 
 // ── Text-row decoding ─────────────────────────────────────────────────────────
 
-/// Convert one text dump row (`file:l:c-e\tname\tvpi=…\tDECL|REF\tsym=…\t
+/// Convert one text dump row (`file:l:c-e\tname\tkind=…\tDECL|REF\tsym=…\t
 /// bind=…[\tvias]`) into its golden-schema JSON object.
 fn data_row_to_json(row: &str) -> Value {
     let fields: Vec<&str> = row.split('\t').collect();
@@ -582,10 +583,10 @@ fn data_row_to_json(row: &str) -> Value {
     let (line, span) = position.split_once(':').expect("line:col-end");
     let (col, end_col) = span.split_once('-').expect("col-end");
 
-    let vpi_kind = fields
+    let token_kind = fields
         .iter()
-        .find_map(|field| field.strip_prefix("vpi="))
-        .expect("vpi field")
+        .find_map(|field| field.strip_prefix("kind="))
+        .expect("kind field")
         .to_owned();
     let role = fields
         .iter()
@@ -618,7 +619,7 @@ fn data_row_to_json(row: &str) -> Value {
         "line": line.parse::<u32>().expect("numeric line"),
         "col": col.parse::<u32>().expect("numeric col"),
         "endCol": end_col.parse::<u32>().expect("numeric endCol"),
-        "vpiKind": vpi_kind,
+        "tokenKind": token_kind,
         "role": role,
         "module": "",
         "sym": sym,

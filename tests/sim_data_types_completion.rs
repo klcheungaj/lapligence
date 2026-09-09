@@ -20,7 +20,7 @@ fn run_fixture(file: &str, label: &str) {
         .join(file);
     let expected = format!("PASS {label}\n");
 
-    sim_harness::with_surelog_temp_cwd("data-types-completion", |dir| {
+    sim_harness::with_frontend_temp_cwd("data-types-completion", |dir| {
         let source = dir.join(file);
         std::fs::copy(&fixture, &source).map_err(|error| format!("copy fixture: {error}"))?;
         let compiled = compile::compile_checked(&compile::CompileOpts {
@@ -29,11 +29,8 @@ fn run_fixture(file: &str, label: &str) {
             ..Default::default()
         })
         .map_err(|error| format!("{file}: compile: {error}"))?;
-        let database = Db::build_with_source_files(
-            compiled.uhdm_design().ok_or("no UHDM design")?,
-            &compiled.frontend_source_files(),
-        )
-        .map_err(|error| format!("{file}: database: {error}"))?;
+        let database = Db::from_slang(&compiled.snapshot)
+            .map_err(|error| format!("{file}: database: {error}"))?;
 
         let mut failures = Vec::new();
         for (variant, options) in [
@@ -73,7 +70,7 @@ fn run_reduction_with_rejection_fixture(file: &str) {
         .join("tests/fixtures/sim/data_types_completion")
         .join(file);
 
-    sim_harness::with_surelog_temp_cwd("data-types-completion-rejection", |dir| {
+    sim_harness::with_frontend_temp_cwd("data-types-completion-rejection", |dir| {
         let source = dir.join(file);
         std::fs::copy(&fixture, &source).map_err(|error| format!("copy fixture: {error}"))?;
         let compiled = compile::compile_checked(&compile::CompileOpts {
@@ -82,11 +79,8 @@ fn run_reduction_with_rejection_fixture(file: &str) {
             ..Default::default()
         })
         .map_err(|error| format!("{file}: compile: {error}"))?;
-        let database = Db::build_with_source_files(
-            compiled.uhdm_design().ok_or("no UHDM design")?,
-            &compiled.frontend_source_files(),
-        )
-        .map_err(|error| format!("{file}: database: {error}"))?;
+        let database = Db::from_slang(&compiled.snapshot)
+            .map_err(|error| format!("{file}: database: {error}"))?;
 
         let mut failures = Vec::new();
         for (variant, options) in [
@@ -135,18 +129,18 @@ fn packed_aggregate_assignment_patterns() {
 }
 
 #[test]
-fn packed_union_single_member_assignment_patterns() {
+fn packed_union_initialization_and_member_writes() {
     run_fixture(
         "packed_union_assignment_patterns.sv",
-        "packed_union_assignment_patterns",
+        "packed_union_initialization_and_member_writes",
     );
 }
 
 #[test]
-fn unpacked_aggregate_assignment_patterns() {
+fn unpacked_struct_patterns_and_union_member_writes() {
     run_fixture(
         "unpacked_aggregate_assignment_patterns.sv",
-        "unpacked_aggregate_assignment_patterns",
+        "unpacked_struct_patterns_and_union_member_writes",
     );
 }
 

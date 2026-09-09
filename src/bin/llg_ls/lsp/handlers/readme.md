@@ -8,5 +8,5 @@
 - `diagnostics`: result commits, publication, and aggregation.
 - `tests`: backend regressions kept private to the module.
 
-- Boundary: handlers consume owned results; blocking Surelog work and
+- Boundary: handlers consume owned results; blocking Slang work and
   filesystem isolation remain in the established scheduling/staging paths.

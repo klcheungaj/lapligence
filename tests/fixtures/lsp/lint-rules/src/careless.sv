@@ -18,7 +18,7 @@ module careless_top (
 );
   reg [7:0] shreg;
 
-  // `data_bus` is never declared: Surelog promotes it to a one-bit wire at
+  // `data_bus` is never declared: SystemVerilog creates a one-bit wire at
   // this connection, leaving the child input undriven.
   careless_child u_child (.data(data_bus), .ack(strobe_err));
 

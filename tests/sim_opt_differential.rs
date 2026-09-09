@@ -1,6 +1,6 @@
 //! Optimization on/off differential harness.
 //!
-//! For each design: one Surelog compile and one owned-DB build, then
+//! For each design: one Slang compile and one owned-DB build, then
 //! `codegen::generate_from_db_with_opts` twice — once with
 //! [`sim::opt::OptConfig::default`] (all passes) and once
 //! with `OptConfig::none` — building BOTH models with the CMake builder
@@ -18,7 +18,7 @@ use llg::core::compile;
 use llg::sim;
 use llg::sim::opt::OptConfig;
 
-static SURELOG_LOCK: Mutex<()> = Mutex::new(());
+static CWD_LOCK: Mutex<()> = Mutex::new(());
 
 /// Compile `sv` once (top `top`), generate + build + run both variants in
 /// PID-keyed sibling directories, and return their two stdouts.
@@ -26,18 +26,18 @@ fn run_both(sv: &str, top: &str, tag: &str) -> Result<(String, String), String> 
     sim_harness::with_temp_cwd(tag, |dir| {
         let src = dir.join("tb.sv");
         std::fs::write(&src, sv).map_err(|error| format!("write source: {error}"))?;
-        // 1. Surelog compile + elaborate (once).
+        // 1. Slang compile + elaborate (once).
         let out = compile::compile_checked(&compile::CompileOpts {
             files: vec![src.to_string_lossy().into_owned()],
             top: Some(top.to_string()),
             ..Default::default()
         })
         .map_err(|e| format!("compile: {e}"))?;
-        let design = out.uhdm_design().ok_or("no UHDM design")?;
-        let database = llg::core::db::Db::build(design).map_err(|error| error.to_string())?;
+        let database =
+            llg::core::db::Db::from_slang(&out.snapshot).map_err(|error| error.to_string())?;
 
         // 2. Both configurations from one owned DB. Besides avoiding a second
-        // VPI walk, this keeps differential generation independent of
+        // semantic capture, this keeps differential generation independent of
         // consumable frontend iterator relationships.
         let opt_on = sim::codegen::generate_from_db_with_opts(&database, &OptConfig::default())
             .map_err(|e| format!("codegen(opt-on): {e}"))?;
@@ -60,9 +60,9 @@ fn run_both(sv: &str, top: &str, tag: &str) -> Result<(String, String), String> 
 fn assert_differential(sv: &str, top: &str, tag: &str) {
     // Hold the lock only while compiling/building/running (cwd safety);
     // release it BEFORE asserting, so a failure here cannot poison
-    // SURELOG_LOCK and cascade into every later test in this binary.
+    // CWD_LOCK and cascade into every later test in this binary.
     let both = {
-        let _guard = SURELOG_LOCK.lock().unwrap();
+        let _guard = CWD_LOCK.lock().unwrap();
         run_both(sv, top, tag)
     };
     let (on, off) = both.expect("both variants should run");
@@ -427,7 +427,7 @@ endmodule
     //   t=3 print
     let expected = "acc=5 done=1\nacc=10 done=1\nacc=0 done=0\n";
     let both = {
-        let _guard = SURELOG_LOCK.lock().unwrap();
+        let _guard = CWD_LOCK.lock().unwrap();
         run_both(sv, "tb", "combctl")
     };
     let (on, off) = both.expect("both variants should run");
@@ -494,7 +494,7 @@ endmodule
     let expected = "x=22 t=4\nx=22 t=6\nx=33 t=8\nforced x=ff t=14\n\
                     released-then-driven x=55 t=18\n";
     let both = {
-        let _guard = SURELOG_LOCK.lock().unwrap();
+        let _guard = CWD_LOCK.lock().unwrap();
         run_both(sv, "tb", "pca")
     };
     let (on, off) = both.expect("both variants should run");

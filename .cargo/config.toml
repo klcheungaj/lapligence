@@ -3,8 +3,9 @@
 
 [target.x86_64-unknown-linux-musl]
 # The linker must come from a musl cross-toolchain.
-# Override by setting the CC environment variable if your toolchain differs
-# (e.g. CC=clang with -target x86_64-linux-musl configured in your clang wrapper).
+# Override it with CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER when needed.
+# build.rs resolves native compilers through CC_<target>/CXX_<target>, their
+# underscore spellings, TARGET_CC/TARGET_CXX, and finally CC/CXX.
 linker = "x86_64-linux-musl-gcc"
 # Link the musl CRT statically so the final binary has no .so dependencies.
 rustflags = ["-C", "target-feature=+crt-static"]

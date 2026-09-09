@@ -11,7 +11,7 @@
   optional waveforms, and coroutine support. It is compiled with each model and
   is not linked into the Rust binaries.
 - **Boundaries:** lowering reads the owned database; the emitter depends only on
-  `sim::ir`; simulator code contains no `unsafe` or direct VPI access.
+  `sim::execution`; simulator code contains no `unsafe` or direct frontend access.
 - **Entry point:** `src/bin/llg.rs` drives compile → lower → optimize → emit →
   build → run.
 - **Validation:** simulator behavior is covered by `tests/sim_*.rs`, scheduler

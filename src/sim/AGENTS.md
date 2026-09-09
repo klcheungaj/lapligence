@@ -6,19 +6,19 @@ Compiles elaborated designs into C11 models that run as standalone
 executables:
 
 - `codegen.rs` — public facade for db → IR lowering in `codegen/lowering/`.
-  `generate(design)` builds the owned db (`core::db`) and lowers it into an
-  `IrModel`; `generate_with_opts` delegates to the optimizer and C backend.
+  `generate(&db)` and `generate_with_opts(&db, ...)` lower an already-owned
+  database through `SemanticModel` and `ExecutionModel`, then delegate to the
+  optimizer and C backend.
   The lower-expression/statement/LHS families and process/link/function/init
   builders live in the lowering modules. `GeneratedModel`
   carries a `pub design_name: String` plus the emitted `model_c` and warnings.
   The behavioral contracts below (inout nets, arrays, timescale, force/
   release, interface bodies, …) are decided here, at lowering time.
-- `ir.rs` — the typed IR: signals/arrays/net-groups/functions/processes
-  (`IrShape` = `RunOnce | Loop | SensLoop`) + init steps/spawns and
-  `IrExpr`/`IrStmt` trees.  Sensitivity and read sets are computed at
-  lowering and carried in the IR; the optimizer never recomputes wake
-  behavior.
-- `opt.rs` — conservative optimization passes over the IR, driven by
+- `ir.rs` — validated typed-operation staging: signals, arrays, net groups,
+  functions, process descriptions, initialization, and `IrExpr`/`IrStmt`
+  trees. `ExecutionModel` moves process operations into owned executable
+  blocks before optimization or emission.
+- `opt.rs` — conservative optimization passes over executable operations, driven by
   `OptConfig { fold_constants, identities, prune_branches, unused_storage }`
   with `default()`/`none()` and per-pass toggling for bisection.  Constant
   folding reuses `core::elab::Value` math (X/Z-correct; shortreal casts fold
@@ -28,7 +28,8 @@ executables:
   default only when ALL items are proven unmatched); unused-storage
   elimination uses an omit flag (no index remapping) with a read-collector
   covering processes, funcs, init steps, spawns, monitor eval fns, links,
-  force targets, display args, wait sensitivity lists, and task-call temps.
+  force targets, display args, statement waits, executable trigger plans, and
+  task-call temps.
 - `emit_c.rs` and `emit_c/` — the C11 backend, consuming ONLY IR types;
   decoupled from `core::db`/`ffi`/`vpi` (enforced by
   `tests/emit_decoupling.rs` greps, same spirit as the repo's
@@ -63,7 +64,16 @@ executables:
   runtime + libaco + extra sources into a build dir; consumed by the
   `build` module).
 
-The IR staging tables in `IrModelParts` are untrusted until
+The frontend-neutral owned database is wrapped by `semantic::SemanticModel`
+before simulator lowering. Synthesis classification belongs there and returns
+a checked `SynthDesignView` or origin-linked reasons. `execution::ExecutionModel`
+owns process operations, blocks, effects, suspend/resume plans and scheduling
+regions; optimization and whole-model C emission consume only that model. The
+C backend follows block terminators directly, including distinct resume
+blocks, and body-controlled suspension must contain a validated waiting
+operation.
+
+The typed-operation staging tables in `IrModelParts` are untrusted until
 `IrModel::from_parts` validates all table references, storage shapes, process
 registrations, and nested nodes. `IrModel::validate` and detached-node
 validation protect later optimization and emission indexing. The C emitter
@@ -99,11 +109,11 @@ standard width/signedness and X/Z rules.
 
 ## Requirements
 
-- **No `unsafe`** (all UHDM access is through `core::db`, which is safe).
-- **No direct VPI calls** outside the `generate` entry's db build.
+- **No `unsafe`** (all Slang access is copied through safe `core::db`).
+- **No direct frontend or FFI calls** in simulator code.
 - Multi-variant consumers should build `core::db::Db` once and call
-  `generate_from_db_with_opts`; do not traverse the same live VPI design once
-  per optimizer configuration.
+  `generate_from_db_with_opts`; do not rebuild the same owned Slang snapshot
+  once per optimizer configuration.
 - libaco is **not** a Rust dependency: it is compiled together with the
   generated C model at model-build time.
 - CMake is the only supported model-build path. Source output is pruned to the
@@ -115,4 +125,4 @@ standard width/signedness and X/Z rules.
   timescale, arrays, supported forms and explicit rejection boundaries.
 - Read [rt/AGENTS.md](rt/AGENTS.md) for value/scheduler/waveform ownership.
 - The runtime is pure C, emitted into `target/sim/<design>/` with the model.
-  `core::compile`, `core::db`, and `core::elab` supply frontend data and values.
+  `core::compile`, `core::db`, and `core::value` supply frontend data and values.

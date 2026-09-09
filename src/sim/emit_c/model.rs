@@ -10,16 +10,17 @@ use super::statements::{
     render_pre_fn_impl as render_pre_fn, render_stmt_impl as render_stmt, wait_any_text,
 };
 use super::EmitError;
+use crate::sim::execution::{ExecutionModel, ExecutionTerminator, TriggerPlan};
 use crate::sim::ir::{IrFunc, IrModel, IrNetKind, IrType};
-use std::collections::HashSet;
 
 // ── Model rendering ───────────────────────────────────────────────────────────
 
 /// Render the complete `model.c` for a lowered (and optimized) IR model:
 /// the header comment the driver parses, signal/net/array storage, function
 /// prototypes and bodies, process functions, and `main()`.
-pub fn render(model: &IrModel) -> Result<String, EmitError> {
-    let capacity = model
+pub fn render(execution: &ExecutionModel) -> Result<String, EmitError> {
+    execution.validate().map_err(EmitError::InvalidIr)?;
+    let capacity = execution
         .packed_capacity()
         .map_err(EmitError::InvalidIr)?
         .max(64);
@@ -29,10 +30,11 @@ pub fn render(model: &IrModel) -> Result<String, EmitError> {
             super::LLG_WIDTH_LIMIT
         )));
     }
-    render_model(model, capacity as u32).map_err(EmitError::new)
+    render_model(execution, capacity as u32).map_err(EmitError::new)
 }
 
-fn render_model(model: &IrModel, capacity: u32) -> Result<String, String> {
+fn render_model(execution: &ExecutionModel, capacity: u32) -> Result<String, String> {
+    let model = execution.ir();
     let mut out = format!(
         "// llg-generated C11 model for design `{}`\n",
         model.design_name
@@ -40,7 +42,7 @@ fn render_model(model: &IrModel, capacity: u32) -> Result<String, String> {
     out.push_str(&format!("#define LLG_MODEL_MAX_WIDTH {capacity}\n"));
     out.push_str(&format!(
         "#define LLG_MODEL_STACK_VALUES {}\n",
-        super::stack::stack_value_slots(model)?
+        super::stack::execution_stack_value_slots(execution)?
     ));
     if model.waveform {
         out.push_str("#define LLG_WAVEFORM 1\n");
@@ -115,11 +117,12 @@ fn render_model(model: &IrModel, capacity: u32) -> Result<String, String> {
     // Three passes lower comb drivers, links, then always/initial processes,
     // so every comb process, link, and process runs at t=0 in that order;
     // push order equals spawn order.
-    for p in &model.processes {
+    for executable in execution.processes() {
+        let p = &model.processes[executable.semantic_process];
         for pre in &p.pre_fns {
             out.push_str(&render_pre_fn(&ctx, pre)?);
         }
-        out.push_str(&render_process_fn(&ctx, p)?);
+        out.push_str(&render_process_fn(&ctx, p, executable)?);
     }
     out.push_str(&render_main(model)?);
     Ok(out)
@@ -369,139 +372,85 @@ fn block_stmts_of(ctx: &RCtx<'_>, stmts: &[crate::sim::ir::IrStmt]) -> Result<St
     Ok(out)
 }
 
-fn render_process_fn(ctx: &RCtx<'_>, p: &crate::sim::ir::IrProcess) -> Result<String, String> {
-    use crate::sim::ir::{IrShape, IrStmt};
+fn render_process_fn(
+    ctx: &RCtx<'_>,
+    p: &crate::sim::ir::IrProcess,
+    executable: &crate::sim::execution::ExecutionProcess,
+) -> Result<String, String> {
     let mut out = format!(
         "static void {}(llg_proc_t* self) {{\n    (void)self;\n",
         p.c_name
     );
-    let body = block_stmts_of(ctx, &p.body)?;
-    match &p.shape {
-        IrShape::RunOnce => {
-            out.push_str(&body);
+    let entry = &executable.blocks[executable.entry];
+    match &entry.terminator {
+        ExecutionTerminator::Complete if executable.blocks.len() == 1 => {
+            out.push_str(&block_stmts_of(ctx, &entry.operations)?);
             out.push_str("    llg_proc_done(self);\n    return;\n");
         }
-        IrShape::Loop => {
-            // always / always_comb / always_ff bodies contain their own waits.
+        ExecutionTerminator::Jump { target }
+            if executable.blocks.len() == 1 && *target == executable.entry =>
+        {
             out.push_str("for (;;) {\n");
-            out.push_str(&body);
+            out.push_str(&block_stmts_of(ctx, &entry.operations)?);
             out.push_str("    }\n");
         }
-        IrShape::SensLoop { reads } => {
-            out.push_str(&body);
-            out.push_str("    for (;;) {\n");
+        ExecutionTerminator::Suspend {
+            trigger: TriggerPlan::Signals(reads),
+            resume,
+            region: crate::sim::execution::ScheduleRegion::Active,
+        } if executable.blocks.len() == 1 && *resume == executable.entry => {
+            out.push_str("for (;;) {\n");
+            out.push_str(&block_stmts_of(ctx, &entry.operations)?);
             out.push_str(&wait_any_text(reads));
-            // The in-loop copy indents one level deeper than the first
-            // evaluation (plain drivers and begin blocks alike).
-            // Control-flow labels in the body (break/continue/disable
-            // targets) would be DEFINED twice — once per copy — so the
-            // copy is relabeled with a suffix.  Lowering guarantees every
-            // `goto` targets a label inside the same body tree, so the
-            // rename stays internally consistent.
-            let renamed = rename_stmt_labels(&p.body);
-            for s in &renamed {
-                let text = render_stmt(ctx, s)?;
-                out.push_str("    ");
-                out.push_str(&text);
-            }
             out.push_str("    }\n");
+        }
+        _ => {
+            let label =
+                |block: usize| format!("_llg_exec_{}_b{block}", executable.semantic_process);
+            out.push_str(&format!("    goto {};\n", label(executable.entry)));
+            for (index, block) in executable.blocks.iter().enumerate() {
+                // Keep declaration scopes independent between blocks. Values
+                // that must survive suspension belong in explicit frame
+                // storage rather than C locals reached through a goto.
+                out.push_str(&format!("{}: {{\n", label(index)));
+                out.push_str(&block_stmts_of(ctx, &block.operations)?);
+                match &block.terminator {
+                    ExecutionTerminator::Complete => {
+                        out.push_str("    llg_proc_done(self);\n    return;\n");
+                    }
+                    ExecutionTerminator::Jump { target } => {
+                        out.push_str(&format!("    goto {};\n", label(*target)));
+                    }
+                    ExecutionTerminator::Suspend {
+                        trigger: TriggerPlan::Signals(reads),
+                        resume,
+                        region: crate::sim::execution::ScheduleRegion::Active,
+                    } => {
+                        out.push_str(&wait_any_text(reads));
+                        out.push_str(&format!("    goto {};\n", label(*resume)));
+                    }
+                    ExecutionTerminator::Suspend {
+                        trigger: TriggerPlan::BodyControlled,
+                        resume,
+                        region: crate::sim::execution::ScheduleRegion::Active,
+                    } => {
+                        // A statement in the block already yielded; continuing
+                        // after it is the resume edge represented here.
+                        out.push_str(&format!("    goto {};\n", label(*resume)));
+                    }
+                    ExecutionTerminator::Suspend { .. } => {
+                        return Err(format!(
+                            "unsupported executable scheduling region for {}",
+                            p.label
+                        ));
+                    }
+                }
+                out.push_str("}\n");
+            }
         }
     }
-    let _ = IrStmt::Nop;
     out.push_str("}\n\n");
     Ok(out)
-}
-
-/// Suffix appended to control-flow labels in the re-evaluation copy of a
-/// combinational (`SensLoop`) process body.
-const LOOP_COPY_SUFFIX: &str = "_r";
-
-/// Collect every label DEFINED in a statement tree.
-fn collect_label_names(stmts: &[crate::sim::ir::IrStmt], out: &mut HashSet<String>) {
-    use crate::sim::ir::IrStmt;
-    for s in stmts {
-        match s {
-            IrStmt::Label(l) => {
-                out.insert(l.clone());
-            }
-            IrStmt::Block(b) | IrStmt::Forever { body: b } => collect_label_names(b, out),
-            IrStmt::If { then_, els, .. } => {
-                collect_label_names(then_, out);
-                if let Some(els) = els {
-                    collect_label_names(els, out);
-                }
-            }
-            IrStmt::While { body: b, .. } | IrStmt::Repeat { body: b, .. } => {
-                collect_label_names(b, out)
-            }
-            IrStmt::For {
-                init, incr, body, ..
-            } => {
-                collect_label_names(init, out);
-                collect_label_names(incr, out);
-                collect_label_names(body, out);
-            }
-            IrStmt::Case { items, .. } => {
-                for item in items {
-                    collect_label_names(&item.body, out);
-                }
-            }
-            IrStmt::WaitCond { body: b, .. } => collect_label_names(b, out),
-            _ => {}
-        }
-    }
-}
-
-/// Rewrite `Label`/`Goto` strings in place for the names defined in
-/// `names` (a goto can only target a label defined in the same tree).
-fn rename_labels_in(stmts: &mut [crate::sim::ir::IrStmt], names: &HashSet<String>) {
-    use crate::sim::ir::IrStmt;
-    for s in stmts {
-        match s {
-            IrStmt::Label(l) | IrStmt::Goto(l) => {
-                if names.contains(l.as_str()) {
-                    l.push_str(LOOP_COPY_SUFFIX);
-                }
-            }
-            IrStmt::Block(b) | IrStmt::Forever { body: b } => rename_labels_in(b, names),
-            IrStmt::If { then_, els, .. } => {
-                rename_labels_in(then_, names);
-                if let Some(els) = els {
-                    rename_labels_in(els, names);
-                }
-            }
-            IrStmt::While { body: b, .. } | IrStmt::Repeat { body: b, .. } => {
-                rename_labels_in(b, names)
-            }
-            IrStmt::For {
-                init, incr, body, ..
-            } => {
-                rename_labels_in(init, names);
-                rename_labels_in(incr, names);
-                rename_labels_in(body, names);
-            }
-            IrStmt::Case { items, .. } => {
-                for item in items {
-                    rename_labels_in(&mut item.body, names);
-                }
-            }
-            IrStmt::WaitCond { body: b, .. } => rename_labels_in(b, names),
-            _ => {}
-        }
-    }
-}
-
-/// A relabeled clone of a combinational process body for its re-evaluation
-/// copy (see the `SensLoop` renderer).  Bodies without labels are returned
-/// unchanged.
-fn rename_stmt_labels(stmts: &[crate::sim::ir::IrStmt]) -> Vec<crate::sim::ir::IrStmt> {
-    let mut names = HashSet::new();
-    collect_label_names(stmts, &mut names);
-    let mut out = stmts.to_vec();
-    if !names.is_empty() {
-        rename_labels_in(&mut out, &names);
-    }
-    out
 }
 
 fn render_main(model: &IrModel) -> Result<String, String> {
@@ -677,7 +626,9 @@ mod tests {
 
     #[test]
     fn non_waveform_model_has_no_waveform_integration() {
-        let c = render(&IrModel::new("plain".to_string(), 1).unwrap()).unwrap();
+        let model = IrModel::new("plain".to_string(), 1).unwrap();
+        let execution = ExecutionModel::lower(model).unwrap();
+        let c = render(&execution).unwrap();
 
         assert!(!c.contains("#define LLG_WAVEFORM 1"));
         assert!(!c.contains("llg_wave.h"));
@@ -763,10 +714,14 @@ mod tests {
             shape: IrShape::RunOnce,
             pre_fns: Vec::new(),
             body: controls,
+            origin: crate::sim::semantic::Origin::Synthetic {
+                reason: "emitter fixture".to_owned(),
+            },
         }];
         model.spawns = vec!["p_top_initial_0".to_string()];
 
-        let c = render(&model).unwrap();
+        let execution = ExecutionModel::lower(model).unwrap();
+        let c = render(&execution).unwrap();
 
         assert_eq!(c.matches("#define LLG_WAVEFORM 1").count(), 1);
         assert!(c.contains("#include \"llg_wave.h\""));

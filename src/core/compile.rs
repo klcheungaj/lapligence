@@ -1,34 +1,96 @@
-//! compile — unified Surelog compilation pipeline shared by the LSP and the
-//! simulator.  High-level facade over `surelog::SessionBuilder`.
+//! Slang-only compilation facade shared by the language server and simulator.
 //!
-//! Surelog work enters through [`compile`], [`compile_checked`], or
-//! [`parse_only`].  The full pipeline returns [`CompileOut::session`], which
-//! owns every C++ object and must be used (and dropped) on the calling thread.
-//! Execution and elaboration consumers should use [`compile_checked`], which
-//! never returns a session when blocking frontend diagnostics were reported.
-//! The raw [`compile`] API retains diagnostics in [`CompileOut`] so diagnostic
-//! consumers such as the LSP can inspect partial frontend results.
+//! The native compiler receives in-memory source buffers and returns an owned
+//! snapshot. No native Slang object escapes the FFI call.
 
-use crate::core::tokens::{self, FileTokens};
-use crate::ffi::surelog;
-use crate::ffi::vpi::VpiHandle;
-use std::sync::Mutex;
+use crate::core::tokens::FileTokens;
+use crate::ffi::slang::{self, CompileOptions, CompileRequest, Define, Limits, ParameterOverride};
+use std::collections::HashMap;
+use std::io::Read;
+use std::path::{Path, PathBuf};
 
-#[cfg(feature = "slang")]
-pub mod slang;
+pub use crate::ffi::slang::{
+    Diagnostic as SlangDiagnostic, DiagnosticProvider, DiagnosticSeverity, DiagnosticSubsystem,
+    Snapshot, Source, SourceRange,
+};
 
-pub use crate::ffi::surelog::{Diag, Severity};
+/// A source buffer owned by a compile request.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OwnedSource {
+    pub name: String,
+    pub text: String,
+    pub is_compilation_unit: bool,
+}
 
-/// Stage at which Surelog rejected an invocation before diagnostics existed.
+impl OwnedSource {
+    pub fn compilation_unit(name: impl Into<String>, text: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            text: text.into(),
+            is_compilation_unit: true,
+        }
+    }
+
+    pub fn include(name: impl Into<String>, text: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            text: text.into(),
+            is_compilation_unit: false,
+        }
+    }
+}
+
+/// Options controlling one Slang compilation and elaboration.
+#[derive(Debug, Clone, Default)]
+pub struct CompileOpts {
+    /// Path-based compilation units for CLI and test callers. Each path is
+    /// read once before entering Slang. The LSP uses [`sources`] exclusively.
+    pub files: Vec<String>,
+    /// Already-admitted compilation units and include buffers.
+    pub sources: Vec<OwnedSource>,
+    pub top: Option<String>,
+    /// Definitions in `NAME` or `NAME=VALUE` form.
+    pub defines: Vec<String>,
+    /// Top-level overrides in `NAME=VALUE` form.
+    pub param_overrides: Vec<String>,
+    /// Logical search prefixes. In-memory callers must also supply include
+    /// contents in [`sources`](Self::sources); path mode admits literal
+    /// includes through bounded Rust reads before entering Slang.
+    pub include_dirs: Vec<String>,
+    pub limits: Limits,
+}
+
+/// Frontend-neutral diagnostic class retained by Rust consumers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Severity {
+    Fatal,
+    Syntax,
+    Error,
+    Warning,
+    Note,
+    Info,
+}
+
+/// Compact diagnostic projection. Positions are one-based UTF-16; zero means
+/// unknown. The complete named Slang diagnostic remains in the snapshot.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Diag {
+    pub severity: Severity,
+    pub file: Option<String>,
+    pub line: u32,
+    pub col: u32,
+    pub message: String,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum StartupErrorKind {
     InvalidArgument,
-    Initialization,
-    Start,
+    Input,
+    Frontend,
+    Internal,
 }
 
-/// Failure preparing or starting Surelog, separate from HDL diagnostics.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StartupError {
     kind: StartupErrorKind,
@@ -42,16 +104,12 @@ impl StartupError {
             message: message.into(),
         }
     }
-
     pub fn kind(&self) -> StartupErrorKind {
         self.kind
     }
-
     pub fn message(&self) -> &str {
         &self.message
     }
-
-    /// Compatibility for diagnostic assertions; recovery should match `kind`.
     pub fn contains(&self, pattern: &str) -> bool {
         self.message.contains(pattern)
     }
@@ -62,311 +120,43 @@ impl std::fmt::Display for StartupError {
         f.write_str(&self.message)
     }
 }
-
 impl std::error::Error for StartupError {}
 
-/// Serializes every Surelog session in this process.
-///
-/// Surelog keeps process-global C++ singletons (its `FileSystem` captures the
-/// CWD at the first session and reuses it), so concurrent `compile`/`parse_only`
-/// calls from any lib consumer — tests, sim, demos, future code — would race
-/// that state.  The LSP binary already serializes its analyses behind
-/// `ANALYZE_LOCK` (plus the process-global shadow-staging lock), so this lib
-/// lock is defense-in-depth for non-LSP callers; it is acquired here, before
-/// any `SessionBuilder` work, and held for the whole Surelog session.
-static SURELOG_LOCK: Mutex<()> = Mutex::new(());
-
-/// Options controlling one compile+elaborate run.
-#[derive(Debug, Clone)]
-pub struct CompileOpts {
-    /// Source files, absolute or CWD-relative paths.
-    pub files: Vec<String>,
-    /// `-top <module>`; `None` lets Surelog auto-detect the top.
-    pub top: Option<String>,
-    /// Preprocessor defines, e.g. `-DNAME=1` (passed through verbatim).
-    pub defines: Vec<String>,
-    /// Top-level parameter overrides, e.g. `-PWIDTH=8` (passed through
-    /// verbatim).  Surelog applies them to top-level module instances during
-    /// elaboration; overriding a name that no top module declares produces a
-    /// Surelog error diagnostic.
-    pub param_overrides: Vec<String>,
-    /// Include directories, e.g. `-Isrc` (passed through verbatim).
-    pub include_dirs: Vec<String>,
-    /// Run Surelog elaboration (default `true`).
-    pub elaborate: bool,
-    /// Enable UHDM full elaboration / ref binding (default `true`).
-    pub elab_uhdm: bool,
-    /// Suppress Surelog's own stdout messages (default `true`).
-    pub mute_stdout: bool,
-    /// Filter informational diagnostics: adds `-noinfo -nonote`
-    /// (default `true`).  Error and warning diagnostics are never filtered,
-    /// so `CompileOut::ok()` and `diagnostics` stay reliable.
-    pub quiet: bool,
-}
-
-/// Surelog command-line parser modes configured through the C API setters.
-///
-/// These values are kept separate from [`SurelogInvocation::argv`] because
-/// the corresponding switches do not appear in the argument vector handed to
-/// Surelog.  `quiet` is included here as the logical mode even though its
-/// `-noinfo`/`-nonote` representation is part of `argv`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SurelogSetterModes {
-    pub parse: bool,
-    pub write_pp_output: bool,
-    pub compile: bool,
-    pub elaborate: bool,
-    pub elab_uhdm: bool,
-    pub mute_stdout: bool,
-    pub quiet: bool,
-}
-
-/// Exact Surelog invocation description used by the LSP diagnostic logger.
-///
-/// `argv` includes the program name (`llg`) at index zero, matching the
-/// vector passed to the native command-line parser.  It contains only the
-/// explicit strings accepted by [`surelog::SessionBuilder::add_arg`];
-/// setter-configured modes are reported in [`setters`].
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SurelogInvocation {
-    pub argv: Vec<String>,
-    pub setters: SurelogSetterModes,
-}
-
-impl Default for CompileOpts {
-    fn default() -> Self {
-        CompileOpts {
-            files: Vec::new(),
-            top: None,
-            defines: Vec::new(),
-            param_overrides: Vec::new(),
-            include_dirs: Vec::new(),
-            elaborate: true,
-            elab_uhdm: true,
-            mute_stdout: true,
-            quiet: true,
-        }
-    }
-}
-
-fn compile_setter_modes(opts: &CompileOpts) -> SurelogSetterModes {
-    SurelogSetterModes {
-        parse: true,
-        write_pp_output: true,
-        compile: true,
-        elaborate: opts.elaborate,
-        elab_uhdm: opts.elab_uhdm,
-        mute_stdout: opts.mute_stdout,
-        quiet: opts.quiet,
-    }
-}
-
-/// Visit the explicit compile arguments in the exact order used by
-/// [`compile`].  Keeping construction here avoids the logged representation
-/// drifting from the native invocation while allowing the normal compile
-/// path to avoid an extra allocation.
-fn visit_compile_args(opts: &CompileOpts, mut visit: impl FnMut(&str) -> bool) -> bool {
-    for arg in ["-nocache"] {
-        if !visit(arg) {
-            return false;
-        }
-    }
-    if opts.quiet {
-        for arg in ["-noinfo", "-nonote"] {
-            if !visit(arg) {
-                return false;
-            }
-        }
-    }
-    for arg in opts
-        .defines
-        .iter()
-        .chain(&opts.include_dirs)
-        .chain(&opts.param_overrides)
-        .chain(&opts.files)
-    {
-        if !visit(arg) {
-            return false;
-        }
-    }
-    if let Some(top) = &opts.top {
-        for arg in ["-top", top.as_str()] {
-            if !visit(arg) {
-                return false;
-            }
-        }
-    }
-    true
-}
-
-fn compile_argument_nul_error(arg: &str) -> StartupError {
-    StartupError::new(
-        StartupErrorKind::InvalidArgument,
-        format!("surelog compile argument contains NUL: {arg:?}"),
-    )
-}
-
-fn add_compile_args(
-    builder: &mut surelog::SessionBuilder,
-    opts: &CompileOpts,
-) -> Result<(), StartupError> {
-    let mut rejected_arg = None;
-    if visit_compile_args(opts, |arg| {
-        if builder.add_arg(arg) {
-            true
-        } else {
-            rejected_arg = Some(arg.to_owned());
-            false
-        }
-    }) {
-        Ok(())
-    } else {
-        Err(compile_argument_nul_error(
-            rejected_arg.as_deref().unwrap_or_default(),
-        ))
-    }
-}
-
-/// Return the exact explicit argv and setter modes for a full compile run.
-pub fn compile_invocation(opts: &CompileOpts) -> Result<SurelogInvocation, StartupError> {
-    let mut argv = vec!["llg".to_owned()];
-    let mut rejected_arg = None;
-    if !visit_compile_args(opts, |arg| {
-        if arg.contains('\0') {
-            rejected_arg = Some(arg.to_owned());
-            false
-        } else {
-            argv.push(arg.to_owned());
-            true
-        }
-    }) {
-        return Err(compile_argument_nul_error(
-            rejected_arg.as_deref().unwrap_or_default(),
-        ));
-    }
-    Ok(SurelogInvocation {
-        argv,
-        setters: compile_setter_modes(opts),
-    })
-}
-
-fn parse_only_setter_modes() -> SurelogSetterModes {
-    SurelogSetterModes {
-        parse: false,
-        write_pp_output: false,
-        compile: false,
-        elaborate: false,
-        elab_uhdm: false,
-        mute_stdout: true,
-        quiet: true,
-    }
-}
-
-/// Visit the explicit parse-only arguments in the exact order used by
-/// [`parse_only`].
-fn visit_parse_only_args(
-    file: &str,
-    defines: &[String],
-    mut visit: impl FnMut(&str) -> bool,
-) -> bool {
-    for arg in ["-parseonly", "-nocache", "-nobuiltin", "-noinfo", "-nonote"] {
-        if !visit(arg) {
-            return false;
-        }
-    }
-    for define in defines {
-        if !visit(define) {
-            return false;
-        }
-    }
-    visit(file)
-}
-
-/// Return the exact explicit argv and setter modes for an isolated parse.
-pub fn parse_only_invocation(
-    file: &str,
-    defines: &[String],
-) -> Result<SurelogInvocation, StartupError> {
-    let mut argv = vec!["llg".to_owned()];
-    let mut rejected_arg = None;
-    if !visit_parse_only_args(file, defines, |arg| {
-        if arg.contains('\0') {
-            rejected_arg = Some(arg.to_owned());
-            false
-        } else {
-            argv.push(arg.to_owned());
-            true
-        }
-    }) {
-        let rejected_arg = rejected_arg.as_deref().unwrap_or_default();
-        if rejected_arg == file {
-            return Err(StartupError::new(
-                StartupErrorKind::InvalidArgument,
-                "surelog parse-only source path contains NUL",
-            ));
-        }
-        if defines.iter().any(|define| define == rejected_arg) {
-            return Err(StartupError::new(
-                StartupErrorKind::InvalidArgument,
-                format!("surelog parse-only define contains NUL: {rejected_arg:?}"),
-            ));
-        }
-        return Err(StartupError::new(
-            StartupErrorKind::InvalidArgument,
-            format!("surelog parse-only argument contains NUL: {rejected_arg:?}"),
-        ));
-    }
-    Ok(SurelogInvocation {
-        argv,
-        setters: parse_only_setter_modes(),
-    })
-}
-
-/// The outcome of a [`compile`] run: the owning session plus a snapshot of
-/// its diagnostics.
+/// Owned result of one Slang compilation.
+#[derive(Debug)]
 pub struct CompileOut {
-    /// Owning session; drop order matters — it frees compiler, parser, error
-    /// container and symbol table in that order.
-    pub session: surelog::SurelogSession,
-    /// Diagnostics collected right after the compile finished.
     pub diagnostics: Vec<Diag>,
+    pub snapshot: Snapshot,
 }
 
-/// Failure from [`compile_checked`].
-///
-/// Session startup failures contain the message returned by the raw
-/// [`compile`] API.  Frontend failures own every diagnostic from the run,
-/// including warnings and informational records that accompanied a blocking
-/// fatal, syntax, or error diagnostic.  No failed Surelog session is retained.
-#[derive(Debug, Clone, PartialEq)]
+impl CompileOut {
+    pub fn ok(&self) -> bool {
+        !self.snapshot.has_errors()
+    }
+}
+
+#[derive(Debug)]
 pub enum CompileError {
-    /// Surelog could not validate the invocation or start a session.
-    SessionStart(StartupError),
-    /// Surelog started but reported at least one blocking frontend diagnostic.
+    Startup(StartupError),
     FrontendDiagnostics(Vec<Diag>),
 }
 
 impl CompileError {
-    /// Return the session-start message, if session creation failed.
-    pub fn session_start_message(&self) -> Option<&str> {
+    pub fn startup_message(&self) -> Option<&str> {
         match self {
-            Self::SessionStart(error) => Some(error.message()),
+            Self::Startup(error) => Some(error.message()),
             Self::FrontendDiagnostics(_) => None,
         }
     }
-
-    /// Return all owned frontend diagnostics, or `None` for startup failures.
     pub fn diagnostics(&self) -> Option<&[Diag]> {
         match self {
-            Self::SessionStart(_) => None,
+            Self::Startup(_) => None,
             Self::FrontendDiagnostics(diagnostics) => Some(diagnostics),
         }
     }
-
-    /// Consume the error and return all frontend diagnostics, if present.
     pub fn into_diagnostics(self) -> Option<Vec<Diag>> {
         match self {
-            Self::SessionStart(_) => None,
+            Self::Startup(_) => None,
             Self::FrontendDiagnostics(diagnostics) => Some(diagnostics),
         }
     }
@@ -375,402 +165,632 @@ impl CompileError {
 impl std::fmt::Display for CompileError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::SessionStart(error) => error.fmt(f),
-            Self::FrontendDiagnostics(diagnostics) => {
-                let blocking = diagnostics
+            Self::Startup(error) => error.fmt(f),
+            Self::FrontendDiagnostics(diagnostics) => write!(
+                f,
+                "Slang reported {} blocking frontend diagnostic(s)",
+                diagnostics
                     .iter()
-                    .filter(|diagnostic| {
-                        matches!(
-                            diagnostic.severity,
-                            Severity::Fatal | Severity::Syntax | Severity::Error
-                        )
-                    })
-                    .count();
-                write!(
-                    f,
-                    "surelog reported {blocking} blocking frontend diagnostic(s)"
-                )
-            }
+                    .filter(|d| matches!(
+                        d.severity,
+                        Severity::Fatal | Severity::Syntax | Severity::Error
+                    ))
+                    .count()
+            ),
         }
     }
 }
-
 impl std::error::Error for CompileError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::SessionStart(error) => Some(error),
+            Self::Startup(error) => Some(error),
             Self::FrontendDiagnostics(_) => None,
         }
     }
 }
 
-/// Owned result of a single-file Surelog parse-only run.
-///
-/// Unlike [`CompileOut`], this result does not expose the session: parse-tree
-/// tokens are collected while the session is alive, then the session is
-/// dropped before this value is returned.
+#[derive(Debug)]
 pub struct ParseOnlyOut {
-    /// Diagnostics collected after parsing the source file.
     pub diagnostics: Vec<Diag>,
-    /// Parse-tree semantic-token inputs.  `-parseonly` bypasses preprocessing,
-    /// so this contains only the requested source file.
     pub tokens: Vec<FileTokens>,
-    /// Number of token nodes collected directly from Surelog before source
-    /// supplementation.
     pub parsed_token_count: usize,
-    /// Number of token nodes added by the source-local module-boundary
-    /// supplement.
     pub supplemented_token_count: usize,
 }
 
-impl CompileOut {
-    /// `true` when there are no fatal, syntax or error diagnostics.
-    pub fn ok(&self) -> bool {
-        !self.diagnostics.iter().any(|d| {
-            matches!(
-                d.severity,
-                Severity::Fatal | Severity::Syntax | Severity::Error
-            )
-        })
-    }
-
-    /// The elaborated UHDM design handle, valid while the session is alive.
-    pub fn uhdm_design(&self) -> Option<VpiHandle<'_>> {
-        self.session.uhdm_design()
-    }
-
-    /// A borrowed handle to Surelog's `Design`, valid while the session is
-    /// alive.
-    pub fn design(&self) -> Option<surelog::Design<'_>> {
-        self.session.design()
-    }
-
-    /// Bounded physical parse-source paths exposed by the live Surelog design.
-    /// This inventory is suitable for explicitly admitting owned-DB source
-    /// recovery and excludes logical VPI `line remappings. Surelog does not
-    /// guarantee that preprocessed include files appear here.
-    pub fn frontend_source_files(&self) -> Vec<String> {
-        const MAX_SOURCE_FILES: usize = 1024;
-        const MAX_SOURCE_PATH_BYTES: usize = 4096;
-        let Some(design) = self.design() else {
-            return Vec::new();
-        };
-        let mut paths = Vec::new();
-        for path in (0..design.file_content_count())
-            .filter_map(|index| design.file_content(index))
-            .map(|content| content.path())
-        {
-            if path.is_empty()
-                || path.len() > MAX_SOURCE_PATH_BYTES
-                || paths.iter().any(|existing| existing == &path)
-            {
-                continue;
-            }
-            paths.push(path);
-            if paths.len() == MAX_SOURCE_FILES {
-                break;
-            }
-        }
-        paths.sort_unstable();
-        paths
-    }
-}
-
-/// Compile + elaborate (per `opts`) the given files.
-///
-/// Returns `Err` only when the Surelog session itself cannot be constructed
-/// (e.g. a bad argument); compilation problems are reported through
-/// `CompileOut::diagnostics`.  All Surelog work happens inside this call —
-/// the returned session must be used (and dropped) on the calling thread.
+/// Compile path-based and already-admitted in-memory sources with Slang.
 pub fn compile(opts: &CompileOpts) -> Result<CompileOut, StartupError> {
-    let _guard = SURELOG_LOCK
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let setters = compile_setter_modes(opts);
-    let mut builder = surelog::SessionBuilder::new().ok_or_else(|| {
-        StartupError::new(
-            StartupErrorKind::Initialization,
-            "surelog: failed to initialise session",
-        )
-    })?;
-    // write_pp_output is required for the full pipeline (Surelog's `-parse`
-    // flag enables it implicitly); the design is empty without it.
-    if setters.parse {
-        builder.set_parse();
-    }
-    if setters.write_pp_output {
-        builder.set_write_pp_output();
-    }
-    if setters.compile {
-        builder.set_compile();
-    }
-    // `-nocache`: Surelog's compilation cache is UNSAFE for repeated
-    // sessions inside one process — cached payloads carry file references
-    // from the session that produced them, so from the third sequential
-    // compile on, `vpiFile` strings (and anything derived from them, like
-    // the source-text recovery of `#N` delays and `disable` targets) point
-    // at earlier sessions' paths.  Correctness over cache speed.
-    if setters.elaborate {
-        builder.set_elaborate();
-    }
-    if setters.elab_uhdm {
-        builder.set_elab_uhdm();
-    }
-    if setters.mute_stdout {
-        builder.set_mute_stdout();
-    }
-
-    add_compile_args(&mut builder, opts)?;
-
-    let session = builder.build().ok_or_else(|| {
-        StartupError::new(StartupErrorKind::Start, "surelog compile failed to start")
-    })?;
-    let diagnostics = session.diagnostics();
-    Ok(CompileOut {
-        session,
-        diagnostics,
-    })
-}
-
-/// Compile + elaborate, returning a session only when the frontend is clean.
-///
-/// Unlike raw [`compile`], this is the contract for consumers that execute or
-/// inspect elaborated UHDM.  Fatal, syntax, and error diagnostics produce
-/// [`CompileError::FrontendDiagnostics`] containing the complete owned
-/// diagnostic snapshot.  The corresponding Surelog session is dropped before
-/// the error is returned.  Warnings, notes, and informational diagnostics do
-/// not block a successful result.
-pub fn compile_checked(opts: &CompileOpts) -> Result<CompileOut, CompileError> {
-    let out = compile(opts).map_err(CompileError::SessionStart)?;
-    if out.ok() {
-        return Ok(out);
-    }
-
-    let CompileOut {
-        session,
-        diagnostics,
-    } = out;
-    drop(session);
-    Err(CompileError::FrontendDiagnostics(diagnostics))
-}
-
-/// Parse exactly one source file without preprocessing, compilation,
-/// elaboration, builtins, or cache reuse.
-///
-/// Surelog's `-parseonly` mode feeds the original source directly to the
-/// parser.  Consequently, `` `include `` files and macro expansions are not
-/// consumed, preserving the source file's original positions.  `defines`
-/// accepts the same validated `-D...` arguments as [`CompileOpts::defines`].
-pub fn parse_only(file: &str, defines: &[String]) -> Result<ParseOnlyOut, StartupError> {
-    let _guard = SURELOG_LOCK
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let mut builder = surelog::SessionBuilder::new().ok_or_else(|| {
-        StartupError::new(
-            StartupErrorKind::Initialization,
-            "surelog: failed to initialise parse-only session",
-        )
-    })?;
-    let setters = parse_only_setter_modes();
-    if setters.mute_stdout {
-        builder.set_mute_stdout();
-    }
-    let mut rejected_arg = None;
-    if !visit_parse_only_args(file, defines, |arg| {
-        if builder.add_arg(arg) {
-            true
-        } else {
-            rejected_arg = Some(arg.to_owned());
-            false
-        }
-    }) {
-        let rejected_arg = rejected_arg.unwrap_or_default();
-        if rejected_arg == file {
-            return Err(StartupError::new(
-                StartupErrorKind::InvalidArgument,
-                "surelog parse-only source path contains NUL",
-            ));
-        }
-        if defines.iter().any(|define| define == &rejected_arg) {
-            return Err(StartupError::new(
-                StartupErrorKind::InvalidArgument,
-                format!("surelog parse-only define contains NUL: {rejected_arg:?}"),
-            ));
-        }
+    preflight_options(opts)?;
+    preflight_sources(&opts.sources, opts.limits)?;
+    let source_count = opts
+        .sources
+        .len()
+        .checked_add(opts.files.len())
+        .ok_or_else(|| {
+            StartupError::new(StartupErrorKind::InvalidArgument, "source count overflow")
+        })?;
+    if source_count > usize::try_from(opts.limits.max_sources).unwrap_or(usize::MAX) {
         return Err(StartupError::new(
             StartupErrorKind::InvalidArgument,
-            format!("surelog parse-only argument contains NUL: {rejected_arg:?}"),
+            "source count exceeds the configured Slang limit",
         ));
     }
+    let mut owned = Vec::new();
+    let admitted_bytes = opts
+        .sources
+        .iter()
+        .try_fold(0_u64, |total, source| {
+            total
+                .checked_add(source.name.len() as u64)?
+                .checked_add(source.text.len() as u64)
+        })
+        .ok_or_else(|| {
+            StartupError::new(
+                StartupErrorKind::InvalidArgument,
+                "source byte count overflow",
+            )
+        })?;
+    let mut remaining = opts.limits.max_source_bytes - admitted_bytes;
+    let mut identities = std::collections::HashSet::new();
+    for path in &opts.files {
+        let resolved = absolute_path(Path::new(path))?;
+        if !identities.insert(resolved.clone()) {
+            continue;
+        }
+        let name = resolved.to_string_lossy().into_owned();
+        let content_limit = remaining.checked_sub(name.len() as u64).ok_or_else(|| {
+            StartupError::new(
+                StartupErrorKind::InvalidArgument,
+                format!("source path {name} exceeds the configured Slang byte limit"),
+            )
+        })?;
+        let text = read_bounded(&name, content_limit)?;
+        remaining = remaining.saturating_sub(name.len() as u64 + text.len() as u64);
+        owned.push(OwnedSource::compilation_unit(name, text));
+    }
+    let mut cursor = 0;
+    while cursor < owned.len() {
+        let including = PathBuf::from(&owned[cursor].name);
+        let targets = literal_includes(&owned[cursor].text);
+        for target in targets {
+            let Some(path) = resolve_include(&including, &target, &opts.include_dirs) else {
+                continue;
+            };
+            if !identities.insert(path.clone()) {
+                continue;
+            }
+            if opts.sources.len().saturating_add(owned.len())
+                >= usize::try_from(opts.limits.max_sources).unwrap_or(usize::MAX)
+            {
+                return Err(StartupError::new(
+                    StartupErrorKind::InvalidArgument,
+                    "literal include graph exceeds the configured Slang source limit",
+                ));
+            }
+            let name = path.to_string_lossy().into_owned();
+            let content_limit = remaining.checked_sub(name.len() as u64).ok_or_else(|| {
+                StartupError::new(
+                    StartupErrorKind::InvalidArgument,
+                    format!("include path {name} exceeds the configured Slang byte limit"),
+                )
+            })?;
+            let text = read_bounded(&name, content_limit)?;
+            remaining = remaining.saturating_sub(name.len() as u64 + text.len() as u64);
+            owned.push(OwnedSource::include(name, text));
+        }
+        cursor += 1;
+    }
+    if opts.sources.len().saturating_add(owned.len())
+        > usize::try_from(opts.limits.max_sources).unwrap_or(usize::MAX)
+    {
+        return Err(StartupError::new(
+            StartupErrorKind::InvalidArgument,
+            "source count exceeds the configured Slang limit",
+        ));
+    }
+    compile_source_groups(&opts.sources, &owned, opts)
+}
 
-    let session = builder.build().ok_or_else(|| {
+/// Compile exact source buffers without reading the filesystem.
+pub fn compile_sources(
+    sources: &[OwnedSource],
+    opts: &CompileOpts,
+) -> Result<CompileOut, StartupError> {
+    preflight_options(opts)?;
+    preflight_sources(sources, opts.limits)?;
+    compile_source_groups(sources, &[], opts)
+}
+
+fn preflight_options(opts: &CompileOpts) -> Result<(), StartupError> {
+    const MAX_OPTIONS: usize = 4_096;
+    const MAX_OPTION_BYTES: u64 = 4 * 1024 * 1024;
+    if opts.defines.len() > MAX_OPTIONS
+        || opts.param_overrides.len() > MAX_OPTIONS
+        || opts.include_dirs.len() > MAX_OPTIONS
+    {
+        return Err(StartupError::new(
+            StartupErrorKind::InvalidArgument,
+            "frontend option count exceeds the Slang ABI limit",
+        ));
+    }
+    let bytes = opts
+        .defines
+        .iter()
+        .chain(&opts.param_overrides)
+        .chain(&opts.include_dirs)
+        .map(|value| value.len() as u64)
+        .chain(opts.top.iter().map(|value| value.len() as u64))
+        .try_fold(0_u64, u64::checked_add)
+        .ok_or_else(|| {
+            StartupError::new(
+                StartupErrorKind::InvalidArgument,
+                "frontend option byte count overflow",
+            )
+        })?;
+    if bytes > MAX_OPTION_BYTES {
+        return Err(StartupError::new(
+            StartupErrorKind::InvalidArgument,
+            "frontend options exceed the Slang ABI byte limit",
+        ));
+    }
+    Ok(())
+}
+
+fn compile_source_groups(
+    first: &[OwnedSource],
+    second: &[OwnedSource],
+    opts: &CompileOpts,
+) -> Result<CompileOut, StartupError> {
+    let borrowed: Vec<_> = first
+        .iter()
+        .chain(second)
+        .map(|source| Source {
+            name: &source.name,
+            text: &source.text,
+            is_compilation_unit: source.is_compilation_unit,
+        })
+        .collect();
+    let options = CompileOptions {
+        defines: opts
+            .defines
+            .iter()
+            .map(|value| parse_define(value))
+            .collect(),
+        top_modules: opts.top.iter().cloned().collect(),
+        include_dirs: opts
+            .include_dirs
+            .iter()
+            .map(|dir| normalize_include_dir(dir))
+            .collect(),
+        parameter_overrides: opts
+            .param_overrides
+            .iter()
+            .map(|value| parse_override(value))
+            .collect::<Result<_, _>>()?,
+        limits: opts.limits,
+    };
+    let snapshot = slang::compile(&CompileRequest {
+        sources: &borrowed,
+        options: &options,
+    })
+    .map_err(startup_from_slang)?;
+    let diagnostics = project_diagnostics(&snapshot);
+    Ok(CompileOut {
+        diagnostics,
+        snapshot,
+    })
+}
+
+fn preflight_sources(sources: &[OwnedSource], limits: Limits) -> Result<(), StartupError> {
+    if sources.len() > usize::try_from(limits.max_sources).unwrap_or(usize::MAX) {
+        return Err(StartupError::new(
+            StartupErrorKind::InvalidArgument,
+            "source count exceeds the configured Slang limit",
+        ));
+    }
+    let bytes = sources
+        .iter()
+        .try_fold(0_u64, |total, source| {
+            total
+                .checked_add(source.name.len() as u64)?
+                .checked_add(source.text.len() as u64)
+        })
+        .ok_or_else(|| {
+            StartupError::new(
+                StartupErrorKind::InvalidArgument,
+                "source byte count overflow",
+            )
+        })?;
+    if bytes > limits.max_source_bytes {
+        return Err(StartupError::new(
+            StartupErrorKind::InvalidArgument,
+            "source bytes exceed the configured Slang limit",
+        ));
+    }
+    Ok(())
+}
+
+fn read_bounded(path: &str, limit: u64) -> Result<String, StartupError> {
+    let file = std::fs::File::open(path).map_err(|error| {
         StartupError::new(
-            StartupErrorKind::Start,
-            "surelog parse-only failed to start",
+            StartupErrorKind::Input,
+            format!("cannot open SystemVerilog source {path}: {error}"),
         )
     })?;
-    let diagnostics = session.diagnostics();
-    let mut tokens = session
-        .design()
-        .map(|design| tokens::collect_parse_tokens(&design).0)
-        .unwrap_or_default();
-    let parsed_token_count = tokens.iter().map(|file| file.nodes.len()).sum();
-    if let Ok(source) = std::fs::read_to_string(file) {
-        tokens::supplement_source_local_module_tokens(file, &source, &mut tokens);
+    let mut bytes = Vec::new();
+    file.take(limit.saturating_add(1))
+        .read_to_end(&mut bytes)
+        .map_err(|error| {
+            StartupError::new(
+                StartupErrorKind::Input,
+                format!("cannot read SystemVerilog source {path}: {error}"),
+            )
+        })?;
+    if bytes.len() as u64 > limit {
+        return Err(StartupError::new(
+            StartupErrorKind::InvalidArgument,
+            format!("source {path} exceeds the configured Slang byte limit"),
+        ));
     }
-    let token_count: usize = tokens.iter().map(|file| file.nodes.len()).sum();
-    let supplemented_token_count = token_count.saturating_sub(parsed_token_count);
-    // The returned value owns no session-scoped data.  Drop explicitly so the
-    // LSP's post-return log can distinguish native teardown from token
-    // encoding, and so this guarantee remains obvious if the result grows.
-    drop(session);
+    String::from_utf8(bytes).map_err(|error| {
+        StartupError::new(
+            StartupErrorKind::Input,
+            format!("SystemVerilog source {path} is not UTF-8: {error}"),
+        )
+    })
+}
+
+fn absolute_path(path: &Path) -> Result<PathBuf, StartupError> {
+    path.canonicalize().map_err(|error| {
+        StartupError::new(
+            StartupErrorKind::Input,
+            format!(
+                "cannot resolve SystemVerilog source {}: {error}",
+                path.display()
+            ),
+        )
+    })
+}
+
+fn normalize_include_dir(value: &str) -> String {
+    let path = Path::new(value);
+    if path.is_absolute() {
+        return path.to_string_lossy().into_owned();
+    }
+    std::env::current_dir()
+        .map(|cwd| cwd.join(path).to_string_lossy().into_owned())
+        .unwrap_or_else(|_| value.to_owned())
+}
+
+fn resolve_include(including: &Path, target: &str, include_dirs: &[String]) -> Option<PathBuf> {
+    let target = Path::new(target);
+    let mut candidates = Vec::with_capacity(include_dirs.len().saturating_add(1));
+    if target.is_absolute() {
+        candidates.push(target.to_path_buf());
+    } else {
+        if let Some(parent) = including.parent() {
+            candidates.push(parent.join(target));
+        }
+        candidates.extend(include_dirs.iter().map(|dir| Path::new(dir).join(target)));
+    }
+    candidates.into_iter().find_map(|candidate| {
+        candidate
+            .is_file()
+            .then(|| candidate.canonicalize().ok())
+            .flatten()
+    })
+}
+
+/// Extract literal quoted includes without treating comments or ordinary
+/// strings as directives. Dynamic and macro-generated targets remain for
+/// Slang to diagnose because no bounded file can be admitted for them.
+fn literal_includes(source: &str) -> Vec<String> {
+    let bytes = source.as_bytes();
+    let mut targets = Vec::new();
+    let mut index = 0;
+    let mut block_comment = false;
+    while index < bytes.len() {
+        if block_comment {
+            if bytes[index..].starts_with(b"*/") {
+                block_comment = false;
+                index += 2;
+            } else {
+                index += 1;
+            }
+            continue;
+        }
+        if bytes[index..].starts_with(b"//") {
+            index += 2;
+            while index < bytes.len() && bytes[index] != b'\n' {
+                index += 1;
+            }
+            continue;
+        }
+        if bytes[index..].starts_with(b"/*") {
+            block_comment = true;
+            index += 2;
+            continue;
+        }
+        if bytes[index] == b'"' {
+            index += 1;
+            while index < bytes.len() {
+                if bytes[index] == b'\\' {
+                    index = index.saturating_add(2);
+                } else if bytes[index] == b'"' {
+                    index += 1;
+                    break;
+                } else {
+                    index += 1;
+                }
+            }
+            continue;
+        }
+        if bytes[index..].starts_with(b"`include") {
+            let after = index + b"`include".len();
+            if after == bytes.len()
+                || !matches!(bytes[after], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_' | b'$')
+            {
+                let mut start = after;
+                while start < bytes.len() && bytes[start].is_ascii_whitespace() {
+                    start += 1;
+                }
+                if start < bytes.len() && bytes[start] == b'"' {
+                    let mut end = start + 1;
+                    while end < bytes.len() && bytes[end] != b'"' && bytes[end] != b'\n' {
+                        end += 1;
+                    }
+                    if end < bytes.len() && bytes[end] == b'"' {
+                        targets.push(String::from_utf8_lossy(&bytes[start + 1..end]).into_owned());
+                        index = end + 1;
+                        continue;
+                    }
+                }
+            }
+        }
+        index += 1;
+    }
+    targets
+}
+
+pub fn compile_checked(opts: &CompileOpts) -> Result<CompileOut, CompileError> {
+    checked(compile(opts).map_err(CompileError::Startup)?)
+}
+
+pub fn compile_sources_checked(
+    sources: &[OwnedSource],
+    opts: &CompileOpts,
+) -> Result<CompileOut, CompileError> {
+    checked(compile_sources(sources, opts).map_err(CompileError::Startup)?)
+}
+
+fn checked(out: CompileOut) -> Result<CompileOut, CompileError> {
+    if out.ok() {
+        Ok(out)
+    } else {
+        Err(CompileError::FrontendDiagnostics(out.diagnostics))
+    }
+}
+
+pub fn parse_only(file: &str, defines: &[String]) -> Result<ParseOnlyOut, StartupError> {
+    let limits = Limits::default();
+    let content_limit = limits
+        .max_source_bytes
+        .checked_sub(file.len() as u64)
+        .ok_or_else(|| {
+            StartupError::new(
+                StartupErrorKind::InvalidArgument,
+                "source path exceeds the configured Slang byte limit",
+            )
+        })?;
+    let text = read_bounded(file, content_limit)?;
+    parse_source(file, &text, defines)
+}
+
+/// Compile one supplied buffer in isolation without a filesystem read.
+pub fn parse_source(
+    name: &str,
+    text: &str,
+    defines: &[String],
+) -> Result<ParseOnlyOut, StartupError> {
+    let limits = Limits::default();
+    let source_bytes = (name.len() as u64)
+        .checked_add(text.len() as u64)
+        .ok_or_else(|| {
+            StartupError::new(
+                StartupErrorKind::InvalidArgument,
+                "source byte count overflow",
+            )
+        })?;
+    let define_bytes = defines
+        .iter()
+        .try_fold(0_u64, |total, define| {
+            total.checked_add(define.len() as u64)
+        })
+        .ok_or_else(|| {
+            StartupError::new(
+                StartupErrorKind::InvalidArgument,
+                "define byte count overflow",
+            )
+        })?;
+    if source_bytes > limits.max_source_bytes
+        || defines.len() > 4_096
+        || define_bytes > 4 * 1024 * 1024
+    {
+        return Err(StartupError::new(
+            StartupErrorKind::InvalidArgument,
+            "isolated source or defines exceed the Slang ABI limit",
+        ));
+    }
+    let sources = vec![OwnedSource::compilation_unit(name, text)];
+    let opts = CompileOpts {
+        defines: defines.to_vec(),
+        limits,
+        ..CompileOpts::default()
+    };
+    let out = compile_sources(&sources, &opts)?;
+    let source_texts = [(name, text)];
+    let tokens = crate::core::tokens::from_slang_snapshot(&out.snapshot, &source_texts);
+    let parsed_token_count = tokens.iter().map(|file| file.nodes.len()).sum();
     Ok(ParseOnlyOut {
-        diagnostics,
+        diagnostics: out.diagnostics,
         tokens,
         parsed_token_count,
-        supplemented_token_count,
+        supplemented_token_count: 0,
     })
+}
+
+fn parse_define(value: &str) -> Define {
+    let (name, value) = value
+        .split_once('=')
+        .map_or((value, None), |(name, value)| {
+            (name, Some(value.to_owned()))
+        });
+    Define {
+        name: name.to_owned(),
+        value,
+    }
+}
+
+fn parse_override(value: &str) -> Result<ParameterOverride, StartupError> {
+    let Some((name, value)) = value.split_once('=') else {
+        return Err(StartupError::new(
+            StartupErrorKind::InvalidArgument,
+            format!("parameter override must have NAME=VALUE form: {value:?}"),
+        ));
+    };
+    if name.is_empty() {
+        return Err(StartupError::new(
+            StartupErrorKind::InvalidArgument,
+            "parameter override name cannot be empty",
+        ));
+    }
+    Ok(ParameterOverride {
+        name: name.to_owned(),
+        value: value.to_owned(),
+    })
+}
+
+fn startup_from_slang(error: slang::SlangError) -> StartupError {
+    use slang::SlangErrorKind;
+    let kind = match error.kind() {
+        SlangErrorKind::InvalidArgument | SlangErrorKind::LimitExceeded => {
+            StartupErrorKind::InvalidArgument
+        }
+        SlangErrorKind::Frontend => StartupErrorKind::Frontend,
+        SlangErrorKind::Internal | SlangErrorKind::InvalidNativeData => StartupErrorKind::Internal,
+    };
+    StartupError::new(kind, error.to_string())
+}
+
+fn project_diagnostics(snapshot: &Snapshot) -> Vec<Diag> {
+    let files: HashMap<_, _> = snapshot
+        .files
+        .iter()
+        .map(|file| (file.id, file.name.as_str()))
+        .collect();
+    let texts: HashMap<_, _> = snapshot
+        .files
+        .iter()
+        .map(|source| (source.name.as_str(), source.text.as_str()))
+        .collect();
+    snapshot
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.severity != DiagnosticSeverity::Ignored)
+        .map(|diagnostic| {
+            let (file, line, col) = diagnostic.primary.map_or((None, 0, 0), |range| {
+                let file = files.get(&range.file_id).copied();
+                let (line, col) = file
+                    .and_then(|file| texts.get(file).copied())
+                    .map(|text| one_based_utf16_position(text, range.start))
+                    .unwrap_or((0, 0));
+                (file.map(str::to_owned), line, col)
+            });
+            let severity = match diagnostic.severity {
+                DiagnosticSeverity::Ignored => Severity::Info,
+                DiagnosticSeverity::Note => Severity::Note,
+                DiagnosticSeverity::Warning => Severity::Warning,
+                DiagnosticSeverity::Error
+                    if matches!(
+                        diagnostic.subsystem,
+                        DiagnosticSubsystem::Lexer
+                            | DiagnosticSubsystem::Numeric
+                            | DiagnosticSubsystem::Preprocessor
+                            | DiagnosticSubsystem::Parser
+                    ) =>
+                {
+                    Severity::Syntax
+                }
+                DiagnosticSeverity::Error => Severity::Error,
+                DiagnosticSeverity::Fatal => Severity::Fatal,
+            };
+            Diag {
+                severity,
+                file,
+                line,
+                col,
+                message: diagnostic.message.clone(),
+            }
+        })
+        .collect()
+}
+
+fn one_based_utf16_position(text: &str, offset: u64) -> (u32, u32) {
+    let requested = usize::try_from(offset)
+        .unwrap_or(usize::MAX)
+        .min(text.len());
+    let mut end = requested;
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    let mut line = 1_u32;
+    let mut column = 1_u32;
+    let mut chars = text[..end].chars().peekable();
+    while let Some(character) = chars.next() {
+        match character {
+            '\r' => {
+                line = line.saturating_add(1);
+                column = 1;
+                if chars.peek() == Some(&'\n') {
+                    chars.next();
+                }
+            }
+            '\n' => {
+                line = line.saturating_add(1);
+                column = 1;
+            }
+            _ => column = column.saturating_add(character.len_utf16() as u32),
+        }
+    }
+    (line, column)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        compile_invocation, parse_only_invocation, CompileError, CompileOpts, StartupErrorKind,
-        SurelogSetterModes,
-    };
+    use super::*;
 
     #[test]
-    fn compile_invocation_matches_surelog_argument_order_and_setters() {
-        let opts = CompileOpts {
-            files: vec!["shadow/top.sv".to_owned(), "shadow/child.sv".to_owned()],
-            top: Some("top".to_owned()),
-            defines: vec!["-DDEBUG=1".to_owned()],
-            param_overrides: vec!["-PWIDTH=8".to_owned()],
-            include_dirs: vec!["-Ishadow/inc".to_owned(), "-Ireal/inc".to_owned()],
-            ..Default::default()
-        };
-
-        let invocation = compile_invocation(&opts).expect("valid compile arguments");
-
+    fn literal_include_scan_ignores_comments_and_strings() {
+        let source = r#"
+            // `include "commented.svh"
+            /* `include "blocked.svh" */
+            string message = "`include \"ordinary.svh\"";
+            `include "first.svh"
+            `include_next "not-an-include.svh"
+            `include "second.svh"
+        "#;
         assert_eq!(
-            invocation.argv,
-            vec![
-                "llg",
-                "-nocache",
-                "-noinfo",
-                "-nonote",
-                "-DDEBUG=1",
-                "-Ishadow/inc",
-                "-Ireal/inc",
-                "-PWIDTH=8",
-                "shadow/top.sv",
-                "shadow/child.sv",
-                "-top",
-                "top",
-            ]
-        );
-        assert_eq!(
-            invocation.setters,
-            SurelogSetterModes {
-                parse: true,
-                write_pp_output: true,
-                compile: true,
-                elaborate: true,
-                elab_uhdm: true,
-                mute_stdout: true,
-                quiet: true,
-            }
+            literal_includes(source),
+            vec!["first.svh".to_owned(), "second.svh".to_owned()]
         );
     }
 
     #[test]
-    fn compile_invocation_omits_disabled_quiet_and_top_arguments() {
-        let opts = CompileOpts {
-            files: vec!["top.sv".to_owned()],
-            elaborate: false,
-            elab_uhdm: false,
-            mute_stdout: false,
-            quiet: false,
-            ..Default::default()
-        };
-
-        let invocation = compile_invocation(&opts).expect("valid compile arguments");
-
-        assert_eq!(invocation.argv, vec!["llg", "-nocache", "top.sv"]);
+    fn utf16_positions_handle_crlf_and_non_ascii_text() {
+        let text = "a😀\r\nb";
+        assert_eq!(one_based_utf16_position(text, "a😀".len() as u64), (1, 4));
         assert_eq!(
-            invocation.setters,
-            SurelogSetterModes {
-                parse: true,
-                write_pp_output: true,
-                compile: true,
-                elaborate: false,
-                elab_uhdm: false,
-                mute_stdout: false,
-                quiet: false,
-            }
+            one_based_utf16_position(text, "a😀\r\n".len() as u64),
+            (2, 1)
         );
-    }
-
-    #[test]
-    fn parse_only_invocation_includes_flags_defines_and_file_in_order() {
-        let invocation = parse_only_invocation(
-            "/tmp/shadow/open.sv",
-            &["-DDEBUG".to_owned(), "-DWIDTH=8".to_owned()],
-        )
-        .expect("valid parse-only arguments");
-
-        assert_eq!(
-            invocation.argv,
-            vec![
-                "llg",
-                "-parseonly",
-                "-nocache",
-                "-nobuiltin",
-                "-noinfo",
-                "-nonote",
-                "-DDEBUG",
-                "-DWIDTH=8",
-                "/tmp/shadow/open.sv",
-            ]
-        );
-        assert_eq!(
-            invocation.setters,
-            SurelogSetterModes {
-                parse: false,
-                write_pp_output: false,
-                compile: false,
-                elaborate: false,
-                elab_uhdm: false,
-                mute_stdout: true,
-                quiet: true,
-            }
-        );
-    }
-
-    #[test]
-    fn invocation_rejects_nul_without_claiming_the_argument() {
-        let opts = CompileOpts {
-            files: vec!["top\0.sv".to_owned()],
-            ..Default::default()
-        };
-
-        let error = compile_invocation(&opts).expect_err("NUL must be rejected");
-        assert!(error.contains("NUL"));
-        assert!(error.contains("top\\0.sv"));
-
-        let error = parse_only_invocation("open\0.sv", &[]).expect_err("NUL must be rejected");
-        assert_eq!(error.kind(), StartupErrorKind::InvalidArgument);
-        assert_eq!(
-            error.message(),
-            "surelog parse-only source path contains NUL"
-        );
-
-        let checked = CompileError::SessionStart(error.clone());
-        assert_eq!(checked.session_start_message(), Some(error.message()));
-        assert_eq!(
-            std::error::Error::source(&checked).unwrap().to_string(),
-            error.to_string()
-        );
-        assert!(checked.diagnostics().is_none());
     }
 }

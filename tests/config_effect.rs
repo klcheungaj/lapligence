@@ -1,40 +1,30 @@
 //! Integration tests proving that configuration-driven compile inputs reach
-//! elaboration: preprocessor defines (`-D`) select `` `ifdef `` branches, and
-//! top-level parameter overrides (`-P`, from `[compile.param_overrides]`)
+//! elaboration: preprocessor defines select `` `ifdef `` branches, and
+//! top-level entries from `[compile.param_overrides]`
 //! drive parameter-conditioned generate selection.
 //!
 //! These mirror what the LSP does per root: `config::compile_opts` turns
-//! `llg.toml` entries into verbatim Surelog arguments on `CompileOpts`
+//! `llg.toml` entries into typed Slang options on `CompileOpts`
 //! (unit-tested in `src/bin/llg_ls/config.rs`); here the compiled DESIGN must
 //! observably change, so the oracle is the owned `DesignModel` (resolved
 //! parameter values + the single kept conditional-generate branch).
 //!
-//! Surelog writes `slpp_all/` into the process working directory, so every
+//! Every
 //! test runs with the CWD in a fresh temp dir (which also hosts the generated
 //! designs) and restores it afterwards.  Tests share one process and are
 //! serialized through a mutex.
 
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
 
 use llg::core::{compile, elab, model};
 
-static SURELOG_LOCK: Mutex<()> = Mutex::new(());
+#[path = "support/sim.rs"]
+mod sim_harness;
 
-/// Run `f` with the CWD set to a fresh temp dir, then restore it and clean up.
-/// Returns the temp dir path so tests can stage design files into it BEFORE
-/// compiling; cleanup happens via the returned guard's drop.
+/// Run `f` with the CWD set to a fresh temp dir, then restore and clean up.
 fn in_temp_dir<R>(f: impl FnOnce(&PathBuf) -> R) -> R {
-    let _guard = SURELOG_LOCK.lock().unwrap();
-    let dir = std::env::temp_dir().join(format!("llg_config_effect_{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).expect("create temp dir");
-    let orig_cwd = std::env::current_dir().expect("current dir");
-    std::env::set_current_dir(&dir).expect("chdir to temp dir");
-    let result = f(&dir);
-    std::env::set_current_dir(&orig_cwd).expect("restore cwd");
-    let _ = std::fs::remove_dir_all(&dir);
-    result
+    sim_harness::with_frontend_temp_cwd("config-effect", |dir| Ok(f(&dir.to_path_buf())))
+        .expect("enter temporary config-effect directory")
 }
 
 fn write_design(dir: &Path, name: &str, text: &str) -> String {
@@ -51,8 +41,8 @@ fn compile_and_model(opts: &compile::CompileOpts) -> model::DesignModel {
         "compile must succeed, diagnostics: {:?}",
         out.diagnostics
     );
-    let design = out.uhdm_design().expect("no UHDM design handle");
-    model::DesignModel::build(design).expect("build design model")
+    let database = llg::core::db::Db::from_slang(&out.snapshot).expect("build semantic database");
+    model::DesignModel::from_db(&database)
 }
 
 /// The integer value of a named parameter on an instance.
@@ -104,26 +94,26 @@ fn define_selects_ifdef_branch() {
 
         // Defining ENABLE_FOO selects the first branch.
         let foo = compile::CompileOpts {
-            defines: vec!["-DENABLE_FOO".to_owned()],
+            defines: vec!["ENABLE_FOO".to_owned()],
             ..base.clone()
         };
         let model = compile_and_model(&foo);
         assert_eq!(
             param_u64(&model.top_instances[0], "MODE"),
             1,
-            "-DENABLE_FOO: `ifdef branch"
+            "ENABLE_FOO: `ifdef branch"
         );
 
         // Defining only ENABLE_BAR selects the `elsif branch.
         let bar = compile::CompileOpts {
-            defines: vec!["-DENABLE_BAR".to_owned()],
+            defines: vec!["ENABLE_BAR".to_owned()],
             ..base.clone()
         };
         let model = compile_and_model(&bar);
         assert_eq!(
             param_u64(&model.top_instances[0], "MODE"),
             2,
-            "-DENABLE_BAR: `elsif branch"
+            "ENABLE_BAR: `elsif branch"
         );
     });
 }
@@ -178,7 +168,7 @@ fn param_override_flips_generate_branch() {
 
         // With the top-level override the wide branch is taken instead.
         let overridden = compile::CompileOpts {
-            param_overrides: vec!["-PWIDTH=8".to_owned()],
+            param_overrides: vec!["WIDTH=8".to_owned()],
             ..base
         };
         let model = compile_and_model(&overridden);
@@ -214,13 +204,13 @@ fn unknown_param_override_is_reported_as_error() {
         let opts = compile::CompileOpts {
             files: vec![file],
             top: Some("gen_top".to_owned()),
-            param_overrides: vec!["-PNO_SUCH_PARAM=1".to_owned()],
+            param_overrides: vec!["NO_SUCH_PARAM=1".to_owned()],
             ..Default::default()
         };
         let out = compile::compile(&opts).expect("compile should start");
         assert!(
             !out.ok(),
-            "Surelog reports ELAB_UNKNOWN_PARAMETER_COMMAND as an error"
+            "Slang reports an unknown parameter override as an error"
         );
         assert!(
             out.diagnostics
