@@ -107,7 +107,7 @@ impl Default for Limits {
             max_types: 1_000_000,
             max_value_bits: 256 * 1024 * 1024,
             max_related_diagnostics: 80_000,
-            max_output_bytes: 128 * 1024 * 1024,
+            max_output_bytes: 256 * 1024 * 1024,
             max_semantic_nodes: 4_000_000,
             max_semantic_edges: 16_000_000,
             max_lexical_tokens: 8_000_000,
