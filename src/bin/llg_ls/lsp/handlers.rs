@@ -1271,6 +1271,7 @@ impl LanguageServer for Backend {
             };
             request.set_root(|| root.descriptor.id.clone());
             let Some(analysis) = root.last_good.clone() else {
+                request.complete("no-analysis", 0);
                 return Ok(None);
             };
             // Shared files: label configuration-dependent hover sections with
@@ -1353,6 +1354,7 @@ impl LanguageServer for Backend {
             };
             request.set_root(|| root.descriptor.id.clone());
             let Some(analysis) = root.last_good.clone() else {
+                request.complete("no-analysis", 0);
                 return Ok(None);
             };
             (analysis, root.analysis_epoch, paths)

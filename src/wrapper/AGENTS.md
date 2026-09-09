@@ -41,7 +41,12 @@ Small, well-contained C-ABI translation layers over native C++ APIs so Rust
 - Library-unit recovery is the explicit exception for language-server feature
   continuity after an export limit: retain lexical tokens, declarations,
   source module topology, and module-type bindings while omitting expression
-  and statement records. Apply the same input and output limits.
+  and statement records. Visit each source module body and generate block once,
+  and capture expression references directly as lexical bindings. Check a
+  source body for referenced definitions as well as inferred roots; associate
+  temporary instances with their definition's parent scope. Resolve named
+  connections through Slang's scoped definition lookup and source ports and
+  parameters. Apply the same input and output limits.
 - Match Slang driver's default downstream analysis checks for unused and
   shadowed declarations. Changes to enabled checks require fixture evidence and
   corresponding language-server diagnostic policy review.

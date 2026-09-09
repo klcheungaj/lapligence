@@ -121,7 +121,10 @@ pub fn project_slang(
         .iter()
         .map(|file| (file.id, file.name.as_str()))
         .collect();
-    let texts: HashMap<_, _> = sources.iter().copied().collect();
+    let texts: HashMap<_, _> = sources
+        .iter()
+        .map(|&(file, text)| (file, SourcePositions::new(text)))
+        .collect();
     let semantic: HashMap<_, _> = snapshot
         .semantic_nodes
         .iter()
@@ -313,7 +316,7 @@ fn declaration_detail(node: &crate::ffi::slang::SemanticNode, snapshot: &Snapsho
 fn decl_target(
     node: &crate::ffi::slang::SemanticNode,
     files: &HashMap<u64, &str>,
-    texts: &HashMap<&str, &str>,
+    texts: &HashMap<&str, SourcePositions<'_>>,
 ) -> Option<DeclTarget> {
     use crate::ffi::slang::SemanticDefinitionKind;
     let range = node.range?;
@@ -330,43 +333,59 @@ fn decl_target(
 fn source_position<'a>(
     range: SourceRange,
     files: &HashMap<u64, &'a str>,
-    texts: &HashMap<&'a str, &'a str>,
+    texts: &HashMap<&'a str, SourcePositions<'a>>,
 ) -> Option<(&'a str, &'a str, u32, u32, u32, u32)> {
     let file = *files.get(&range.file_id)?;
-    let text = *texts.get(file)?;
-    let (line, col) = position(text, range.start);
-    let (end_line, end_col) = position(text, range.end.max(range.start));
-    Some((file, text, line, col, end_line, end_col))
+    let positions = texts.get(file)?;
+    let (line, col) = positions.position(range.start);
+    let (end_line, end_col) = positions.position(range.end.max(range.start));
+    Some((file, positions.text, line, col, end_line, end_col))
 }
 
-fn position(text: &str, offset: u64) -> (u32, u32) {
-    let requested = usize::try_from(offset)
-        .unwrap_or(usize::MAX)
-        .min(text.len());
-    let mut end = requested;
-    while !text.is_char_boundary(end) {
-        end -= 1;
-    }
-    let mut line = 1_u32;
-    let mut col = 1_u32;
-    let mut chars = text[..end].chars().peekable();
-    while let Some(ch) = chars.next() {
-        match ch {
-            '\r' => {
-                line += 1;
-                col = 1;
-                if chars.peek() == Some(&'\n') {
-                    chars.next();
+/// Borrowed source text with a newline index for repeated byte-to-UTF-16 lookups.
+pub struct SourcePositions<'a> {
+    text: &'a str,
+    line_starts: Vec<usize>,
+}
+
+impl<'a> SourcePositions<'a> {
+    /// Index CR, LF, and CRLF line endings without copying the source text.
+    pub fn new(text: &'a str) -> Self {
+        let mut line_starts = vec![0];
+        let mut bytes = text.bytes().enumerate().peekable();
+        while let Some((offset, byte)) = bytes.next() {
+            match byte {
+                b'\r' if bytes.peek().is_some_and(|(_, next)| *next == b'\n') => {
+                    bytes.next();
+                    line_starts.push(offset + 2);
                 }
+                b'\r' | b'\n' => line_starts.push(offset + 1),
+                _ => {}
             }
-            '\n' => {
-                line += 1;
-                col = 1;
-            }
-            _ => col += ch.len_utf16() as u32,
         }
+        Self { text, line_starts }
     }
-    (line, col)
+
+    /// Return one-based line and UTF-16 column, clamping to a character boundary.
+    pub fn position(&self, offset: u64) -> (u32, u32) {
+        let mut end = usize::try_from(offset)
+            .unwrap_or(usize::MAX)
+            .min(self.text.len());
+        while !self.text.is_char_boundary(end) {
+            end -= 1;
+        }
+        if end > 0
+            && self.text.as_bytes().get(end) == Some(&b'\n')
+            && self.text.as_bytes()[end - 1] == b'\r'
+        {
+            end += 1;
+        }
+        let line = self.line_starts.partition_point(|&start| start <= end) - 1;
+        let col = self.text[self.line_starts[line]..end]
+            .encode_utf16()
+            .count();
+        (line as u32 + 1, col as u32 + 1)
+    }
 }
 
 fn lexical_kind(kind: LexicalKind) -> i32 {
@@ -434,5 +453,30 @@ fn semantic_kind(kind: SemanticKind) -> &'static str {
         SemanticKind::EnumConstant => "enum member",
         SemanticKind::Definition => "definition",
         SemanticKind::Unsupported => "unsupported",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SourcePositions;
+
+    #[test]
+    fn source_positions_handle_utf16_newlines_and_clamped_offsets() {
+        let text = "a😀\r\nb\rc\nd";
+        let positions = SourcePositions::new(text);
+        for (offset, expected) in [
+            (0, (1, 1)),
+            (1, (1, 2)),
+            (2, (1, 2)),
+            (5, (1, 4)),
+            (6, (2, 1)),
+            (7, (2, 1)),
+            (8, (2, 2)),
+            (9, (3, 1)),
+            (11, (4, 1)),
+            (u64::MAX, (4, 2)),
+        ] {
+            assert_eq!(positions.position(offset), expected, "offset={offset}");
+        }
     }
 }

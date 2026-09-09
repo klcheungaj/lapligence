@@ -20,6 +20,67 @@ fn compile(source: &str) -> slang::Snapshot {
     snapshot
 }
 
+#[test]
+fn navigation_capture_shares_repeated_bodies_and_generate_declarations() {
+    let mut counts = Vec::new();
+    for repetitions in [1, 2048] {
+        let source = format!(
+            "module leaf(input logic clk, output logic data);\n\
+             always_comb data = clk; endmodule\n\
+             module top(input logic clk);\n\
+             for (genvar i = 0; i < {repetitions}; i++) begin : g\n\
+             logic data; leaf u(.clk(clk), .data(data)); end\n\
+             endmodule\n"
+        );
+        let options = CompileOptions {
+            library_units: true,
+            limits: slang::Limits {
+                max_semantic_nodes: 1000,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let snapshot = slang::compile(&CompileRequest {
+            sources: &[Source::compilation_unit("/virtual/navigation.sv", &source)],
+            options: &options,
+        })
+        .expect("navigation capture stays within the source-sized node budget");
+        assert!(snapshot
+            .semantic_nodes
+            .iter()
+            .any(|node| node.name == "leaf" && node.kind == SemanticKind::Definition));
+        assert!(snapshot
+            .semantic_nodes
+            .iter()
+            .all(|node| node.kind != SemanticKind::Expression
+                && node.kind != SemanticKind::Statement));
+        let reference = snapshot
+            .lexical_tokens
+            .iter()
+            .find(|token| {
+                token.text == "clk"
+                    && token.range.is_some_and(|range| {
+                        range.start == source.find("= clk").unwrap() as u64 + 2
+                    })
+            })
+            .expect("clk reference token");
+        let target = node_by_id(
+            &snapshot,
+            reference.semantic_id.expect("exact reference binding"),
+        );
+        assert_eq!(target.name, "clk");
+        assert_eq!(
+            target.range.unwrap().start,
+            source.find("clk,").unwrap() as u64
+        );
+        counts.push(snapshot.semantic_nodes.len());
+    }
+    assert_eq!(
+        counts[0], counts[1],
+        "source snapshot must not grow with generate iteration count"
+    );
+}
+
 fn node_by_id(snapshot: &slang::Snapshot, id: u64) -> &SemanticNode {
     snapshot
         .semantic_nodes

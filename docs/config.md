@@ -140,6 +140,18 @@ Config reloads are bounded independently of the analysis budgets: at most
 invalid-UTF-8 config files are reported as bounded `io::Error` load failures
 and do not replace the last valid configuration.
 
+## LSP analysis snapshots
+
+Large elaborated designs use a compact source-navigation snapshot when full
+capture exceeds 100,000 semantic nodes or another frontend limit. Tokens are
+stored per source file, module bodies and generate blocks are visited once,
+and references target source definitions. Hover, definition, references,
+symbols, semantic tokens, token dumps, and the module explorer remain
+available. The server reports this reduced mode explicitly; custom lint and
+instance-specific parameter values, widths, and elaborated hierarchy are not
+available in that snapshot. A previous full snapshot remains preferred after
+a failing edit. Simulator compilation retains its independent capture limits.
+
 ## LSP diagnostic logging
 
 Language-server logging uses stderr or `LLG_LOG_FILE`; stdout is reserved

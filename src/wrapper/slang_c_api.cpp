@@ -169,6 +169,15 @@ LlgSlangString storeString(LlgSlangSnapshot& snapshot, std::string_view value) {
 }
 
 void chargeRecord(LlgSlangSnapshot& snapshot, uint64_t bytes) {
+  if (bytes > snapshot.output_byte_limit ||
+      snapshot.output_bytes > snapshot.output_byte_limit - bytes) {
+    throw BridgeFailure(LLG_SLANG_STATUS_LIMIT_EXCEEDED,
+        "export byte limit exceeded (bytes=" + std::to_string(snapshot.output_bytes) +
+        ", nodes=" + std::to_string(snapshot.semantic_nodes.size()) +
+        ", types=" + std::to_string(snapshot.types.size()) +
+        ", constants=" + std::to_string(snapshot.constants.size()) +
+        ", instances=" + std::to_string(snapshot.instances.size()) + ")");
+  }
   addChecked(snapshot.output_bytes, bytes, snapshot.output_byte_limit,
              "export byte");
 }
@@ -1297,12 +1306,77 @@ class SemanticCapture final
 public:
   explicit SemanticCapture(Capture& capture) : capture(capture) {}
 
+  void bindSourceConnections(
+      Compilation& compilation,
+      const std::unordered_map<const Symbol*, const InstanceSymbol*>& instances) {
+    for (const auto* symbol : sourceConnections) {
+      const auto* syntaxNode = symbol->getSyntax();
+      const auto* scope = symbol->getParentScope();
+      if (!syntaxNode || !scope ||
+          syntaxNode->kind != syntax::SyntaxKind::HierarchicalInstance)
+        continue;
+      const auto* definition =
+          compilation.tryGetDefinition(symbol->definitionName, *scope).definition;
+      const auto found = instances.find(definition);
+      if (found == instances.end())
+        continue;
+      const auto& body = found->second->body;
+      const auto& instance = syntaxNode->as<syntax::HierarchicalInstanceSyntax>();
+      for (const auto* connection : instance.connections) {
+        if (connection->kind != syntax::SyntaxKind::NamedPortConnection)
+          continue;
+        const auto& named = connection->as<syntax::NamedPortConnectionSyntax>();
+        if (const auto* port = body.findPort(named.name.valueText()))
+          capture.lexicalBinding(named.name, captureReferenceTarget(*port),
+                                 LLG_SLANG_LEXICAL_ROLE_CONNECTION_LABEL);
+      }
+      if (!instance.parent ||
+          instance.parent->kind != syntax::SyntaxKind::HierarchyInstantiation)
+        continue;
+      const auto& hierarchy = instance.parent->as<syntax::HierarchyInstantiationSyntax>();
+      const uint64_t definitionId = capture.ensureSemantic(definition);
+      capture.lexicalBinding(hierarchy.type, definitionId, LLG_SLANG_LEXICAL_ROLE_REFERENCE);
+      const uint64_t id = capture.ensureSemantic(symbol);
+      auto& node = capture.output.semantic_nodes[static_cast<size_t>(id)];
+      node.kind = LLG_SLANG_SEMANTIC_INSTANCE;
+      node.subkind = LLG_SLANG_INSTANCE_SINGLE;
+      node.definition_name = storeString(capture.output, symbol->definitionName);
+      node.target_id = definitionId;
+      if (!hierarchy.parameters)
+        continue;
+      for (const auto* assignment : hierarchy.parameters->parameters) {
+        if (assignment->kind != syntax::SyntaxKind::NamedParamAssignment)
+          continue;
+        const auto& named = assignment->as<syntax::NamedParamAssignmentSyntax>();
+        for (const auto* parameter : body.getParameters()) {
+          if (parameter->symbol.name == named.name.valueText())
+            capture.lexicalBinding(named.name, captureReferenceTarget(parameter->symbol),
+                                   LLG_SLANG_LEXICAL_ROLE_CONNECTION_LABEL);
+        }
+      }
+    }
+  }
+
   template<std::derived_from<Symbol> T>
   void handle(const T& symbol) {
+    if constexpr (std::same_as<T, InstanceBodySymbol>) {
+      if (capture.declarationOnly &&
+          !sourceBodies.insert(symbol.getDefinition().getSyntax()).second)
+        return;
+    }
+    if constexpr (std::same_as<T, GenerateBlockSymbol>) {
+      if (capture.declarationOnly && symbol.getSyntax() &&
+          !sourceGenerateBlocks.insert(symbol.getSyntax()).second)
+        return;
+    }
     const uint64_t id = capture.ensureSemantic(&symbol);
     attach(id);
     if (!markVisited(id))
       return;
+    if constexpr (std::same_as<T, UninstantiatedDefSymbol>) {
+      if (capture.declarationOnly)
+        sourceConnections.push_back(&symbol);
+    }
     capture.sourceIdentity(symbol.getSyntax(), id);
     auto& result = capture.output.semantic_nodes[static_cast<size_t>(id)];
     result.kind = semanticSymbolKind(symbol.kind);
@@ -1518,6 +1592,8 @@ public:
                                      loopVariableId);
         }
         for (const GenerateBlockSymbol* entry : symbol.entries) {
+          if (capture.declarationOnly)
+            break;
           for (const ParameterSymbol& parameter :
                entry->membersOfType<ParameterSymbol>()) {
             if (parameter.isFromGenvar()) {
@@ -1547,6 +1623,8 @@ public:
         const uint64_t loopVariableId =
             capture.ensureSemantic(symbol.loopVariable);
         for (const GenerateBlockSymbol* entry : symbol.entries) {
+          if (capture.declarationOnly)
+            break;
           for (const ParameterSymbol& parameter :
                entry->membersOfType<ParameterSymbol>()) {
             if (parameter.isFromGenvar()) {
@@ -1558,13 +1636,38 @@ public:
       }
     }
     parents.pop_back();
-    if (!capture.declarationOnly || std::same_as<T, InstanceSymbol>)
+    if (!capture.declarationOnly)
       addSymbolRoles(symbol, id);
+    else if constexpr (std::same_as<T, InstanceSymbol>)
+      addConnectionLabelBindings(symbol);
   }
 
   template<std::derived_from<Expression> T>
   void handle(const T& expression) {
     if (capture.declarationOnly) {
+      if constexpr (std::same_as<T, NamedValueExpression> ||
+                    std::same_as<T, HierarchicalValueExpression> ||
+                    std::same_as<T, MemberAccessExpression>) {
+        if (expression.syntax) {
+          if (const Symbol* target = expression.getSymbolReference()) {
+            const auto token = expression.syntax->getLastToken();
+            if (token.valueText() == target->name)
+              capture.lexicalBinding(token, captureReferenceTarget(*target),
+                                     LLG_SLANG_LEXICAL_ROLE_REFERENCE);
+          }
+        }
+      }
+      if constexpr (std::same_as<T, CallExpression>) {
+        if (!expression.isSystemCall() && expression.syntax &&
+            expression.syntax->kind == syntax::SyntaxKind::InvocationExpression) {
+          const auto* target = std::get<0>(expression.subroutine);
+          const auto token = expression.syntax->template as<syntax::InvocationExpressionSyntax>()
+                                 .left->getLastToken();
+          if (token.valueText() == target->name)
+            capture.lexicalBinding(token, captureReferenceTarget(*target),
+                                   LLG_SLANG_LEXICAL_ROLE_REFERENCE);
+        }
+      }
       visitDefault(expression);
       return;
     }
@@ -1839,6 +1942,29 @@ private:
   Capture& capture;
   std::vector<uint64_t> parents;
   std::vector<bool> visited;
+  std::unordered_set<const syntax::SyntaxNode*> sourceBodies;
+  std::unordered_set<const syntax::SyntaxNode*> sourceGenerateBlocks;
+  std::vector<const UninstantiatedDefSymbol*> sourceConnections;
+
+  uint64_t captureReferenceTarget(const Symbol& symbol) {
+    const uint64_t id = capture.ensureSemantic(&symbol);
+    auto& node = capture.output.semantic_nodes[static_cast<size_t>(id)];
+    if (node.name.len == 0) {
+      node.kind = semanticSymbolKind(symbol.kind);
+      node.name = storeString(capture.output, symbol.name);
+      node.detail = storeString(capture.output, toString(symbol.kind));
+      node.range = capture.span(symbol.location, symbol.name.size());
+      capture.sourceIdentity(symbol.getSyntax(), id);
+    }
+    if (ValueSymbol::isKind(symbol.kind))
+      node.type_id = capture.type(symbol.as<ValueSymbol>().getType());
+    if (symbol.kind == SymbolKind::Port) {
+      const auto& port = symbol.as<PortSymbol>();
+      node.type_id = capture.type(port.getType());
+      addDirection(node, port.direction);
+    }
+    return id;
+  }
 
   bool markVisited(uint64_t id) {
     if (visited.size() <= id)
@@ -2157,7 +2283,9 @@ private:
         capture.connectionActual(named.expr->sourceRange());
       for (const PortConnection* connection : semanticConnections) {
         if (connection->port.name == named.name.valueText()) {
-          const uint64_t portId = capture.ensureSemantic(&connection->port);
+          const uint64_t portId = capture.declarationOnly
+              ? captureReferenceTarget(connection->port)
+              : capture.ensureSemantic(&connection->port);
           auto& portNode =
               capture.output.semantic_nodes[static_cast<size_t>(portId)];
           portNode.flags |= LLG_SLANG_SEMANTIC_PORT_CONNECTION_PRESENT;
@@ -2188,7 +2316,9 @@ private:
       for (const ParameterSymbolBase* parameter : symbol.body.getParameters()) {
         if (parameter->symbol.name == named.name.valueText()) {
           capture.lexicalBinding(named.name,
-                                 capture.ensureSemantic(&parameter->symbol),
+                                 capture.declarationOnly
+                                     ? captureReferenceTarget(parameter->symbol)
+                                     : capture.ensureSemantic(&parameter->symbol),
                                  LLG_SLANG_LEXICAL_ROLE_CONNECTION_LABEL);
           break;
         }
@@ -2872,6 +3002,24 @@ bool isKnownTopParameter(const RootSymbol& root, std::string_view requested) {
   return false;
 }
 
+void captureNavigation(Compilation& compilation, Capture& capture) {
+  SemanticCapture visitor(capture);
+  compilation.getRoot().visit(visitor);
+  std::unordered_map<const Symbol*, const InstanceSymbol*> sourceInstances;
+  for (const Symbol* definition : compilation.getDefinitions()) {
+    definition->visit(visitor);
+    if (definition->kind != SymbolKind::Definition)
+      continue;
+    auto& instance = InstanceSymbol::createInvalid(
+        compilation, definition->as<DefinitionSymbol>());
+    // Source instances live in the compilation arena but are not root members.
+    instance.setParent(*definition->getParentScope());
+    instance.visit(visitor);
+    sourceInstances.emplace(definition, &instance);
+  }
+  visitor.bindSourceConnections(compilation, sourceInstances);
+}
+
 std::unique_ptr<LlgSlangSnapshot> compileImpl(const LlgSlangCompileRequest& request) {
   if (request.abi_version != LLG_SLANG_ABI_VERSION)
     throw BridgeFailure(LLG_SLANG_STATUS_INVALID_ARGUMENT,
@@ -2968,6 +3116,8 @@ std::unique_ptr<LlgSlangSnapshot> compileImpl(const LlgSlangCompileRequest& requ
   }
 
   CompilationOptions compilationOptions;
+  if ((request.flags & LLG_SLANG_COMPILE_LIBRARY_UNITS) != 0)
+    compilationOptions.flags |= CompilationFlags::IgnoreUninstantiatedModules;
   compilationOptions.defaultTimeScale = TimeScale(
       TimeScaleValue(TimeUnit::Nanoseconds, TimeScaleMagnitude::One),
       TimeScaleValue(TimeUnit::Picoseconds, TimeScaleMagnitude::One));
@@ -3087,6 +3237,9 @@ std::unique_ptr<LlgSlangSnapshot> compileImpl(const LlgSlangCompileRequest& requ
     }
   }
 
+  // Capture source bodies before diagnostics are cached so their errors are included.
+  if (capture.declarationOnly)
+    captureNavigation(compilation, capture);
   const Diagnostics& compilationDiagnostics = compilation.getAllDiagnostics();
   DiagnosticEngine engine(sourceManager);
   auto compilationClient = std::make_shared<CaptureClient>(
@@ -3130,10 +3283,12 @@ std::unique_ptr<LlgSlangSnapshot> compileImpl(const LlgSlangCompileRequest& requ
     output->flags |= LLG_SLANG_SNAPSHOT_ANALYSIS_RAN;
   }
 
-  SemanticCapture semanticCapture(capture);
-  root.visit(semanticCapture);
-  for (const Symbol* definition : compilation.getDefinitions())
-    definition->visit(semanticCapture);
+  if (!capture.declarationOnly) {
+    SemanticCapture semanticCapture(capture);
+    root.visit(semanticCapture);
+    for (const Symbol* definition : compilation.getDefinitions())
+      definition->visit(semanticCapture);
+  }
   capture.finalizeSourceIdentities();
   capture.finalizeSemanticEdges();
 

@@ -940,12 +940,8 @@ pub(super) fn analyze_inner_slang(
             crate::llg_debug!("event=slang.compile.end outcome=error root={} generation={} elapsed_us={} error={}", root, generation, started.elapsed().as_micros(), bounded_log_text(&error.to_string(), 512));
             if error.kind() == llg::core::compile::StartupErrorKind::LimitExceeded
                 && !opts.library_units
-                && opts
-                    .sources
-                    .iter()
-                    .filter(|source| source.is_compilation_unit)
-                    .count()
-                    > 1
+                && opts.files.is_empty()
+                && opts.sources.iter().any(|source| source.is_compilation_unit)
             {
                 return analyze_library_units_after_limit(
                     opts,
@@ -969,6 +965,13 @@ pub(super) fn analyze_inner_slang(
         .collect();
     let (tokens, bindings, unresolved_bindings, decl_details, declarations) =
         tokens::project_slang(&out.snapshot, &source_texts);
+    crate::llg_debug!(
+        "event=slang.tokens.end root={} generation={} tokens={} elapsed_us={}",
+        root,
+        generation,
+        out.snapshot.lexical_tokens.len(),
+        started.elapsed().as_micros()
+    );
     let frontend_diagnostics = project_snapshot_diagnostics(
         &out.snapshot
             .files
@@ -982,16 +985,19 @@ pub(super) fn analyze_inner_slang(
         &out.snapshot,
     );
     let frontend_ok = out.ok();
-    let database = llg::core::db::Db::from_slang(&out.snapshot);
-    let module_graph =
-        module_graph_from_slang(&out.snapshot, &source_texts, database.as_ref().ok());
+    let database = (!opts.library_units).then(|| llg::core::db::Db::from_slang(&out.snapshot));
+    let module_graph = module_graph_from_slang(
+        &out.snapshot,
+        &source_texts,
+        database.as_ref().and_then(|result| result.as_ref().ok()),
+    );
     let (model, lint_diags, db_error) = match database {
-        Ok(db) => {
+        Some(Ok(db)) => {
             let model = DesignModel::from_db(&db);
             let lint_diags = lint::lint_with_config(&db, &model, lint_cfg);
             (model, lint_diags, None)
         }
-        Err(error) => {
+        other => {
             let mut model = empty_design();
             model.modules = module_graph
                 .definitions
@@ -1005,14 +1011,20 @@ pub(super) fn analyze_inner_slang(
                     end_col: definition.end_col,
                 })
                 .collect();
-            (model, Vec::new(), Some(error.to_string()))
+            (
+                model,
+                Vec::new(),
+                other.and_then(Result::err).map(|error| error.to_string()),
+            )
         }
     };
     let mut diagnostics = out.diagnostics;
     if let Some(error) = db_error {
         diagnostics.push(db_build_diagnostic(&error));
     }
-    let outcome = if !frontend_ok {
+    let outcome = if opts.library_units {
+        AnalysisOutcome::Compile
+    } else if !frontend_ok {
         outcome_from_diagnostics(&diagnostics)
     } else if diagnostics
         .iter()
@@ -1079,7 +1091,8 @@ fn analyze_library_units_after_limit(
             .count(),
         bounded_log_text(&failure, 512)
     );
-    let mut analysis = analyze_inner_slang(&recovery_opts, lint_cfg, root, generation, parent_id);
+    let mut analysis = analyze_inner_slang(&recovery_opts, lint_cfg, root, generation, parent_id)
+        .with_configured_top(opts.top.clone());
     if !analysis.has_feature_data() {
         crate::llg_debug!(
             "event=slang.limit_recovery.end outcome=error root={} generation={}",

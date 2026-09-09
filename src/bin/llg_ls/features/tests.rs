@@ -184,6 +184,100 @@ fn export_limit_recovers_declaration_level_workspace_features() {
     assert!(!explorer.roots.is_empty(), "snapshot: {explorer:#?}");
 }
 
+#[test]
+fn navigation_capture_keeps_repeated_instance_labels_and_scoped_references() {
+    let _guards = analysis_guards();
+    let leaf = "module leaf(input logic clk);\nfunction int f(input int value); f = value; endfunction\nendmodule\n";
+    let top = "module top(input logic clk);\nleaf first(.clk(clk));\nleaf second(.clk(clk));\nendmodule\n";
+    let analysis = analyze(&CompileOpts {
+        library_units: true,
+        sources: vec![
+            compile::OwnedSource::compilation_unit("/virtual/leaf.sv", leaf),
+            compile::OwnedSource::compilation_unit("/virtual/top.sv", top),
+        ],
+        ..Default::default()
+    });
+    assert!(analysis.has_feature_data(), "{:?}", analysis.diagnostics);
+    for line in [1, 2] {
+        let text = top.lines().nth(line).unwrap();
+        let label = text.find(".clk").unwrap() as u32 + 1;
+        let actual = text.find("(clk)").unwrap() as u32 + 1;
+        let target = definition_at(&analysis, "/virtual/top.sv", line as u32, label)
+            .expect("port label definition");
+        assert_eq!(target.uri.path(), "/virtual/leaf.sv");
+        let target = definition_at(&analysis, "/virtual/top.sv", line as u32, actual)
+            .expect("actual definition");
+        assert_eq!(target.uri.path(), "/virtual/top.sv");
+        assert_eq!(target.range.start.line, 0);
+    }
+    let reference = leaf.lines().nth(1).unwrap().find("= value").unwrap() as u32 + 2;
+    let target = definition_at(&analysis, "/virtual/leaf.sv", 1, reference)
+        .expect("formal argument definition");
+    assert_eq!(target.range.start.line, 1);
+    assert_eq!(target.range.start.character, 25);
+}
+
+#[test]
+fn navigation_capture_keeps_duplicate_module_contents_in_their_own_files() {
+    let _guards = analysis_guards();
+    let analysis = analyze(&CompileOpts {
+        library_units: true,
+        sources: vec![
+            compile::OwnedSource::compilation_unit(
+                "/virtual/one.sv",
+                "module debug_top(input logic left); endmodule",
+            ),
+            compile::OwnedSource::compilation_unit(
+                "/virtual/two.sv",
+                "module debug_top(input logic right); endmodule",
+            ),
+        ],
+        ..Default::default()
+    });
+    assert_eq!(analysis.module_graph.definitions.len(), 2);
+    for (file, port) in [("/virtual/one.sv", "left"), ("/virtual/two.sv", "right")] {
+        let definition = analysis
+            .module_graph
+            .definitions
+            .iter()
+            .find(|definition| definition.file.as_deref() == Some(file))
+            .unwrap();
+        assert_eq!(
+            definition
+                .ports
+                .iter()
+                .map(|port| port.name.as_str())
+                .collect::<Vec<_>>(),
+            [port]
+        );
+    }
+}
+
+#[test]
+fn single_unit_native_limit_recovers_navigation() {
+    let _guards = analysis_guards();
+    let source = format!(
+        "module top; int data; initial begin {} end endmodule",
+        "data = data + 1;".repeat(100)
+    );
+    let analysis = analyze(&CompileOpts {
+        sources: vec![compile::OwnedSource::compilation_unit(
+            "/virtual/top.sv",
+            &source,
+        )],
+        limits: llg::ffi::slang::Limits {
+            max_semantic_nodes: 128,
+            ..Default::default()
+        },
+        ..Default::default()
+    });
+    assert!(analysis.has_feature_data(), "{:?}", analysis.diagnostics);
+    assert!(analysis.diagnostics.iter().any(|diag| diag
+        .message
+        .contains("serving bounded declaration-level navigation")));
+    assert!(!workspace_symbols(&analysis, "data").is_empty());
+}
+
 /// Restores the process CWD and removes the temp dir even when the body
 /// panics, so a failing test cannot strand other tests in a deleted CWD.
 struct TempDirGuard {

@@ -76,6 +76,10 @@ pub const DEFAULT_MAX_FILE_BYTES: u64 = 1024 * 1024;
 /// Conservative default maximum size of all unique analysis inputs in bytes.
 pub const DEFAULT_MAX_TOTAL_INPUT_BYTES: u64 = 8 * 1024 * 1024;
 
+/// Full elaboration capture budget before the LSP switches to source navigation.
+/// Lexical-token and exported-byte limits remain independently enforced.
+pub const MAX_FULL_SEMANTIC_NODES: u64 = 100_000;
+
 /// Fixed maximum size of a configuration file read during reload.
 ///
 /// Configuration is control-plane input, but it still arrives from a path
@@ -462,6 +466,8 @@ pub fn compile_opts(
 }
 
 /// Build Slang options from the exact source buffers admitted by the LSP.
+/// Bound speculative full semantic capture independently of source-token data;
+/// large designs use the shared source-navigation recovery profile.
 pub fn compile_opts_sources(
     config: &LlgConfig,
     sources: Vec<llg::core::compile::OwnedSource>,
@@ -480,6 +486,10 @@ pub fn compile_opts_sources(
             .into_iter()
             .map(|path| path.to_string_lossy().into_owned())
             .collect(),
+        limits: llg::ffi::slang::Limits {
+            max_semantic_nodes: MAX_FULL_SEMANTIC_NODES,
+            ..Default::default()
+        },
         ..Default::default()
     }
 }

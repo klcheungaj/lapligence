@@ -129,6 +129,10 @@ pub(super) fn module_graph_from_slang(
         .map(|file| (file.id, file.name.as_str()))
         .collect();
     let texts: HashMap<_, _> = sources.iter().copied().collect();
+    let positions: HashMap<_, _> = sources
+        .iter()
+        .map(|&(file, text)| (file, tokens::SourcePositions::new(text)))
+        .collect();
     let declaration_types: HashMap<_, _> = database
         .into_iter()
         .flat_map(llg::core::db::Db::nodes)
@@ -154,6 +158,7 @@ pub(super) fn module_graph_from_slang(
         })
         .collect();
     let mut definitions = Vec::new();
+    let mut definition_keys = HashMap::new();
     for node in &snapshot.semantic_nodes {
         if node.kind != SemanticKind::Definition
             || node.definition_kind != Some(SemanticDefinitionKind::Module)
@@ -165,14 +170,16 @@ pub(super) fn module_graph_from_slang(
             .range
             .and_then(|range| {
                 let file = *files.get(&range.file_id)?;
-                let text = *texts.get(file)?;
-                let (line, col) = graph_position(text, range.start);
-                let (end_line, end_col) = graph_position(text, range.end);
+                let positions = positions.get(file)?;
+                let (line, col) = positions.position(range.start);
+                let (end_line, end_col) = positions.position(range.end);
                 Some((Some(file.to_owned()), line, col, end_line, end_col))
             })
             .unwrap_or((None, 0, 0, 0, 0));
+        let id = module_graph_definition_id(&node.name, file.as_deref(), line, col);
+        definition_keys.insert(node.id, id.clone());
         definitions.push(ModuleGraphDefinition {
-            id: module_graph_definition_id(&node.name, file.as_deref(), line, col),
+            id,
             name: node.name.clone(),
             file,
             line,
@@ -295,17 +302,19 @@ pub(super) fn module_graph_from_slang(
         {
             continue;
         }
-        let owner_name = if owner.kind == SemanticKind::Definition {
-            clean_name(&owner.name)
+        let owner_id = if owner.kind == SemanticKind::Definition {
+            Some(owner.id)
         } else {
-            clean_name(&owner.definition_name)
+            owner.target_id
+        };
+        let Some(owner_key) = owner_id.and_then(|id| definition_keys.get(&id)) else {
+            continue;
         };
         let (file, line, col) = node
             .range
             .and_then(|range| {
                 let file = *files.get(&range.file_id)?;
-                let text = *texts.get(file)?;
-                let (line, col) = graph_position(text, range.start);
+                let (line, col) = positions.get(file)?.position(range.start);
                 Some((Some(file.to_owned()), line, col))
             })
             .unwrap_or((None, 0, 0));
@@ -318,7 +327,7 @@ pub(super) fn module_graph_from_slang(
         };
         for definition in definitions
             .iter_mut()
-            .filter(|definition| clean_name(&definition.name) == owner_name)
+            .filter(|definition| &definition.id == owner_key)
         {
             if let Some(existing) = definition.children.iter_mut().find(|existing| {
                 existing.name == child.name && existing.module_type == child.module_type
@@ -365,12 +374,12 @@ pub(super) fn module_graph_from_slang(
         let mut ancestor = node
             .parent_id
             .and_then(|id| semantic_by_id.get(&id).copied());
-        let owner_name = loop {
+        let owner_id = loop {
             let Some(parent) = ancestor else { break None };
             match parent.kind {
-                SemanticKind::Definition => break Some(clean_name(&parent.name)),
+                SemanticKind::Definition => break Some(parent.id),
                 SemanticKind::Instance if !parent.definition_name.is_empty() => {
-                    break Some(clean_name(&parent.definition_name));
+                    break parent.target_id;
                 }
                 SemanticKind::Subroutine => break None,
                 _ => {
@@ -380,14 +389,14 @@ pub(super) fn module_graph_from_slang(
                 }
             }
         };
-        let Some(owner_name) = owner_name else {
+        let Some(owner_key) = owner_id.and_then(|id| definition_keys.get(&id)) else {
             continue;
         };
         let Some(location) = node.range.and_then(|range| {
             let file = *files.get(&range.file_id)?;
-            let text = *texts.get(file)?;
-            let (line, col) = graph_position(text, range.start);
-            let (end_line, end_col) = graph_position(text, range.end);
+            let positions = positions.get(file)?;
+            let (line, col) = positions.position(range.start);
+            let (end_line, end_col) = positions.position(range.end);
             Some(ModuleGraphLocation {
                 file: file.to_owned(),
                 line,
@@ -417,7 +426,7 @@ pub(super) fn module_graph_from_slang(
             .unwrap_or_default();
         for definition in definitions
             .iter_mut()
-            .filter(|definition| clean_name(&definition.name) == owner_name)
+            .filter(|definition| &definition.id == owner_key)
         {
             match node.kind {
                 SemanticKind::Port => {
@@ -682,35 +691,6 @@ fn source_decl_type(
         },
         (!detail.is_empty()).then_some(detail),
     ))
-}
-
-fn graph_position(text: &str, offset: u64) -> (u32, u32) {
-    let mut end = usize::try_from(offset)
-        .unwrap_or(usize::MAX)
-        .min(text.len());
-    while !text.is_char_boundary(end) {
-        end -= 1;
-    }
-    let mut line = 1;
-    let mut col = 1;
-    let mut chars = text[..end].chars().peekable();
-    while let Some(character) = chars.next() {
-        match character {
-            '\r' => {
-                line += 1;
-                col = 1;
-                if chars.peek() == Some(&'\n') {
-                    chars.next();
-                }
-            }
-            '\n' => {
-                line += 1;
-                col = 1;
-            }
-            _ => col += character.len_utf16() as u32,
-        }
-    }
-    (line, col)
 }
 
 #[cfg(test)]
