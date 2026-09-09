@@ -48,6 +48,10 @@ launch a stale language-server binary. Cover these contracts:
 - Module explorer: configured-top/source-graph roots, recursive children and
   leaves, declaration fallback, typed contents, no shadow URIs, and useful
   hierarchy roots surviving module-content budget truncation.
+- Semantic colors: parameters/localparams remain `property.readonly` in
+  dimensions, expressions, and instance actuals; data/net/direction words are
+  `type`. Cover cached project and isolated unsaved-buffer responses, including
+  absent child modules. Unit tests also cover compact capture and shadowing.
 
 Fixtures use `fixtures/lsp/test.json`, schema `llg.lsp.fixture/v1`, an
 effective `llg.toml` per root, and `// llg-lsp-fixture:` source headers. Keep

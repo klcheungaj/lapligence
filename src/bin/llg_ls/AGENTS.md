@@ -36,6 +36,10 @@ in isolation. A syntax error produces an authoritative empty token stream.
 Unopened documents use committed project tokens. Cache keys include the buffer,
 effective defines, URI, request arguments, and analysis epoch as appropriate.
 
+Parameter and localparam declarations and references use `property.readonly`.
+Built-in data/net types and port-direction words use `type`, matching the
+extension grammar; control-flow and module keywords remain `keyword`.
+
 ## Source identity and limits
 
 Each workspace root has independent config and scheduling. Only `.v` and

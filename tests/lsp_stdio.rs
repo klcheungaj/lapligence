@@ -2726,14 +2726,92 @@ fn lsp_stdio_semantic_tokens_use_current_open_buffer_and_cached_unopened_snapsho
     client.shutdown();
 }
 
-/// Connection LABELS are visually distinguishable from the SIGNALS connected
-/// to them: every named port `.label` and parameter-override `#.LABEL` token
-/// carries the custom `connectionLabel` modifier while the connected
-/// actual/RHS identifiers stay plain.  Asserted in BOTH serving paths:
-///
-/// * the cached project path (unopened document, full semantic analysis),
-/// * the admitted open-buffer path (no committed project model, so the
-///   marking must be lexical).
+/// Constant references and type words keep their classes through project and
+/// isolated unsaved-buffer analysis, including references to missing children.
+#[test]
+fn lsp_stdio_semantic_colors_preserve_constants_and_types_in_both_serving_paths() {
+    let fixture = FixtureTree::new();
+    let root = fixture.root("root-a");
+    let path = root.join("semantic_colors.sv");
+    let uri = file_uri(&path);
+    let source = "module color_top #(parameter int WIDTH = 8)(input logic [WIDTH-1:0] data, output wire [WIDTH-1:0] result, inout tri shared);\nlocalparam int LIMIT = WIDTH + 1;\nwire [LIMIT-1:0] buffer;\nint memory [LIMIT];\nassign buffer = data + LIMIT;\nassign result = data;\ncolor_child #(.P(WIDTH), .Q(LIMIT)) child(.data(data));\nendmodule\n";
+    fs::write(&path, source).expect("write semantic color fixture");
+    fs::write(
+        root.join("semantic_color_child.sv"),
+        "module color_child #(parameter int P = 8, Q = 4)(input logic [P-1:0] data); endmodule\n",
+    )
+    .expect("write separate child definition");
+    let mut client = LspProcess::spawn(&fixture.root);
+    let initialize = client
+        .initialize(&[("root-a", &root)], default_init_options())
+        .unwrap();
+    let legend = &initialize["capabilities"]["semanticTokensProvider"]["legend"];
+    let types = legend_names(legend, "tokenTypes");
+    let modifiers = legend_names(legend, "tokenModifiers");
+    wait_for_diagnostics(&mut client, &uri, |_| true);
+
+    for opened in [false, true] {
+        let buffer = if opened {
+            source.replace("LIMIT", "CEILING")
+        } else {
+            source.to_owned()
+        };
+        if opened {
+            client
+                .open(&path, &buffer)
+                .expect("open unsaved renamed constant");
+        }
+        let result = client
+            .request(
+                "textDocument/semanticTokens/full",
+                json!({
+                    "textDocument": { "uri": uri }
+                }),
+            )
+            .expect("semantic color response");
+        let rows = semantic_token_rows(&result, &types, &modifiers);
+        for name in ["WIDTH", if opened { "CEILING" } else { "LIMIT" }] {
+            let occurrences = buffer.match_indices(name).count();
+            assert!(occurrences >= 4);
+            for occurrence in 0..occurrences {
+                let (line, col) = position_of(&buffer, name, occurrence);
+                let row = row_at(&rows, line, col);
+                assert_eq!(
+                    row.token_type, "property",
+                    "opened={opened} {name}: {row:?}"
+                );
+                assert!(
+                    row.modifiers.iter().any(|name| name == "readonly"),
+                    "{row:?}"
+                );
+                assert_eq!(
+                    row.modifiers.iter().any(|name| name == "declaration"),
+                    occurrence == 0,
+                    "{row:?}"
+                );
+                assert!(
+                    !row.modifiers.iter().any(|name| name == "connectionLabel"),
+                    "actual is not a label: {row:?}"
+                );
+            }
+        }
+        for name in ["input", "logic", "output", "wire", "inout", "tri", "int"] {
+            for occurrence in 0..buffer.match_indices(name).count() {
+                let (line, col) = position_of(&buffer, name, occurrence);
+                assert_eq!(row_at(&rows, line, col).token_type, "type", "{name}");
+            }
+        }
+        for name in ["module color_top", "assign buffer", "endmodule"] {
+            let (line, col) = position_of(&buffer, name, 0);
+            assert_eq!(row_at(&rows, line, col).token_type, "keyword", "{name}");
+        }
+    }
+    assert_eq!(fs::read_to_string(&path).unwrap(), source);
+    client.shutdown();
+}
+
+/// Connection labels carry `connectionLabel`; actuals retain their own symbol
+/// classification in both cached-project and isolated open-buffer responses.
 #[test]
 fn lsp_stdio_semantic_tokens_mark_connection_labels_in_both_serving_paths() {
     let fixture = FixtureTree::new();

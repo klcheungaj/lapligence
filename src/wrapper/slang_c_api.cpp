@@ -23,6 +23,7 @@
 #include "slang/analysis/AnalysisManager.h"
 #include "slang/ast/ASTVisitor.h"
 #include "slang/ast/Compilation.h"
+#include "slang/ast/Lookup.h"
 #include "slang/ast/Scope.h"
 #include "slang/ast/SemanticFacts.h"
 #include "slang/ast/symbols/CompilationUnitSymbols.h"
@@ -1549,6 +1550,12 @@ public:
     }
 
     parents.push_back(id);
+    if constexpr (std::same_as<T, UninstantiatedDefSymbol>) {
+      for (const auto* parameter : symbol.paramExpressions)
+        parameter->visit(*this);
+      for (const auto* connection : symbol.getPortConnections())
+        connection->visit(*this);
+    }
     if constexpr (std::same_as<T, SubroutineSymbol>) {
       for (const FormalArgumentSymbol* argument : symbol.getArguments())
         handle(*argument);
@@ -1636,6 +1643,10 @@ public:
       }
     }
     parents.pop_back();
+    captureSourceReferences(symbol);
+    if constexpr (std::same_as<T, InstanceBodySymbol> ||
+                  std::same_as<T, GenerateBlockSymbol>)
+      captureScopeConnections(symbol);
     if (!capture.declarationOnly)
       addSymbolRoles(symbol, id);
     else if constexpr (std::same_as<T, InstanceSymbol>)
@@ -1939,6 +1950,73 @@ public:
   }
 
 private:
+  void captureNames(const syntax::SyntaxNode& syntaxNode, const ASTContext& context) {
+    auto visitor = syntax::makeSyntaxVisitor(
+        [&](auto&, const syntax::NameSyntax& name) {
+          LookupResult result;
+          Lookup::name(name, context, LookupFlags::None, result);
+          if (!result.found || result.hasError() || !result.selectors.empty())
+            return;
+          const auto token = name.getLastToken();
+          if (token.valueText() == result.found->name)
+            capture.lexicalBinding(token, captureReferenceTarget(*result.found),
+                                   LLG_SLANG_LEXICAL_ROLE_REFERENCE);
+        });
+    syntaxNode.visit(visitor);
+  }
+
+  void captureScopeConnections(const Scope& scope) {
+    const auto* syntaxNode = scope.asSymbol().getSyntax();
+    if (!syntaxNode)
+      return;
+    const ASTContext context(scope, LookupLocation::max);
+    auto visitor = syntax::makeSyntaxVisitor(
+        [&](auto&, const syntax::HierarchyInstantiationSyntax& instance) {
+          if (instance.parameters)
+            captureNames(*instance.parameters, context);
+          for (const auto* child : instance.instances) {
+            for (const auto* connection : child->connections)
+              captureNames(*connection, context);
+          }
+        },
+        [](auto& self, const syntax::GenerateRegionSyntax& region) {
+          self.visitDefault(region);
+        },
+        [](auto&, const syntax::MemberSyntax&) {});
+    // Nested generate / module scopes are captured with their own symbol tables.
+    if (syntaxNode->kind == syntax::SyntaxKind::HierarchyInstantiation)
+      syntaxNode->visit(visitor);
+    else
+      visitor.visitDefault(*syntaxNode);
+  }
+
+  void captureSourceReferences(const Symbol& symbol) {
+    const auto* declaredType = symbol.getDeclaredType();
+    const auto* scope = symbol.getParentScope();
+    if (!scope || (!declaredType &&
+        !(capture.declarationOnly && symbol.kind == SymbolKind::ContinuousAssign)))
+      return;
+    // Slang's AST visitor visits initializers, but not names in type dimensions.
+    const ASTContext context(*scope, LookupLocation::before(symbol));
+    if (declaredType) {
+      if (const auto* typeSyntax = declaredType->getTypeSyntax())
+        captureNames(*typeSyntax, context);
+      if (const auto* dimensions = declaredType->getDimensionSyntax()) {
+        for (const auto* dimension : *dimensions)
+          captureNames(*dimension, context);
+      }
+      if (capture.declarationOnly) {
+        if (const auto* initializer = declaredType->getInitializerSyntax())
+          captureNames(*initializer, context);
+      }
+    }
+    // Invalid source instances can have an error-typed assignment with no AST operands.
+    if (capture.declarationOnly && symbol.kind == SymbolKind::ContinuousAssign) {
+      if (const auto* syntaxNode = symbol.getSyntax())
+        captureNames(*syntaxNode, context);
+    }
+  }
+
   Capture& capture;
   std::vector<uint64_t> parents;
   std::vector<bool> visited;

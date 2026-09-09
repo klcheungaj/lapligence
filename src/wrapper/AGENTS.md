@@ -47,6 +47,12 @@ Small, well-contained C-ABI translation layers over native C++ APIs so Rust
   temporary instances with their definition's parent scope. Resolve named
   connections through Slang's scoped definition lookup and source ports and
   parameters. Apply the same input and output limits.
+- Capture exact scoped bindings for names in declared type dimensions, which
+  Slang's default AST visitor omits. In library-unit recovery, also resolve
+  initializer and continuous-assignment syntax when error-typed expressions
+  have lost their AST operands; never resolve these names across unrelated scopes.
+  Capture instance parameter/port actuals in their enclosing module or generate
+  scope even when the child definition is absent from isolated analysis.
 - Match Slang driver's default downstream analysis checks for unused and
   shadowed declarations. Changes to enabled checks require fixture evidence and
   corresponding language-server diagnostic policy review.

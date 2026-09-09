@@ -76,9 +76,12 @@ pub fn encode(nodes: &[TokenInfo]) -> SemanticTokens {
         if node.line == 0 {
             continue;
         }
-        let Some((token_type, modifiers)) = token_type_for(node.kind) else {
+        let Some((mut token_type, modifiers)) = token_type_for(node.kind) else {
             continue;
         };
+        if token_type == TT_KEYWORD && node.name.as_deref().is_some_and(is_type_keyword) {
+            token_type = TT_TYPE;
+        }
         let length = node
             .name
             .as_ref()
@@ -129,6 +132,53 @@ pub fn encode(nodes: &[TokenInfo]) -> SemanticTokens {
     }
 }
 
+fn is_type_keyword(name: &str) -> bool {
+    // Match the extension grammar's built-in, net, and port-direction types.
+    matches!(
+        name,
+        "bit"
+            | "logic"
+            | "reg"
+            | "byte"
+            | "shortint"
+            | "int"
+            | "longint"
+            | "integer"
+            | "time"
+            | "genvar"
+            | "shortreal"
+            | "real"
+            | "realtime"
+            | "supply0"
+            | "supply1"
+            | "tri"
+            | "triand"
+            | "trior"
+            | "trireg"
+            | "tri0"
+            | "tri1"
+            | "uwire"
+            | "wire"
+            | "wand"
+            | "wor"
+            | "var"
+            | "void"
+            | "signed"
+            | "unsigned"
+            | "string"
+            | "const"
+            | "chandle"
+            | "event"
+            | "struct"
+            | "union"
+            | "enum"
+            | "input"
+            | "output"
+            | "inout"
+            | "ref"
+    )
+}
+
 fn token_type_for(kind: i32) -> Option<(u32, u32)> {
     let (kind, slang_declaration) = token_base_kind(kind);
     let declaration = slang_declaration || matches!(kind, TOKEN_GENVAR_DECL);
@@ -174,4 +224,117 @@ fn token_type_for(kind: i32) -> Option<(u32, u32)> {
         modifiers |= 1 << TM_CONNECTION_LABEL;
     }
     Some((token_type, modifiers))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use llg::core::compile::{self, CompileOpts, OwnedSource};
+
+    #[test]
+    fn parameter_references_keep_readonly_highlighting_in_both_capture_profiles() {
+        let source = "package sizes; parameter int DEPTH = 4; endpackage\nmodule top #(parameter int WIDTH = 8)(input logic [WIDTH-1:0] data);\nlocalparam int LIMIT = WIDTH + 1;\nwire [LIMIT-1:0] result;\nint memory [sizes::DEPTH];\nassign result = data + LIMIT;\nendmodule";
+        for library_units in [false, true] {
+            let out = compile::compile(&CompileOpts {
+                library_units,
+                sources: vec![OwnedSource::compilation_unit("/virtual/top.sv", source)],
+                ..Default::default()
+            })
+            .unwrap();
+            let files = from_slang_snapshot(&out.snapshot, &[("/virtual/top.sv", source)]);
+            for node in &files[0].nodes {
+                if matches!(node.name.as_deref(), Some("WIDTH" | "LIMIT" | "DEPTH")) {
+                    let (kind, modifiers) = token_type_for(node.kind).unwrap();
+                    assert_eq!(kind, TT_PROPERTY, "library={library_units} {node:?}");
+                    assert_ne!(modifiers & (1 << TM_READONLY), 0, "{node:?}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn type_and_direction_keywords_use_type_highlighting() {
+        let source = "module top(input logic signed [3:0] a, output wire b, inout tri c);\ninteger count; real value; string label;\nassign b = a[0];\nendmodule";
+        let parsed = compile::parse_source("/virtual/top.sv", source, &[]).unwrap();
+        let nodes = &parsed.tokens[0].nodes;
+        let encoded = encode(nodes);
+        assert_eq!(encoded.data.len(), nodes.len());
+        for (node, token) in nodes.iter().zip(&encoded.data) {
+            match node.name.as_deref().unwrap_or_default() {
+                "input" | "logic" | "signed" | "output" | "wire" | "inout" | "tri" | "integer"
+                | "real" | "string" => assert_eq!(token.token_type, TT_TYPE, "{node:?}"),
+                "module" | "endmodule" | "assign" => {
+                    assert_eq!(token.token_type, TT_KEYWORD, "{node:?}")
+                }
+                _ => {}
+            }
+        }
+    }
+
+    #[test]
+    fn parameter_highlighting_does_not_leak_into_shadowing_arguments() {
+        let source = "module top; parameter int WIDTH = 8;\nfunction automatic int f(input int WIDTH); return WIDTH + 1; endfunction\nendmodule";
+        for library_units in [false, true] {
+            let out = compile::compile(&CompileOpts {
+                library_units,
+                sources: vec![OwnedSource::compilation_unit("/virtual/top.sv", source)],
+                ..Default::default()
+            })
+            .unwrap();
+            let files = from_slang_snapshot(&out.snapshot, &[("/virtual/top.sv", source)]);
+            let arguments: Vec<_> = files[0]
+                .nodes
+                .iter()
+                .filter(|node| node.line == 2 && node.name.as_deref() == Some("WIDTH"))
+                .collect();
+            assert_eq!(arguments.len(), 2);
+            for node in arguments {
+                let (kind, modifiers) = token_type_for(node.kind).unwrap();
+                assert_ne!(kind, TT_PROPERTY, "library={library_units} {node:?}");
+                assert_eq!(modifiers & (1 << TM_READONLY), 0, "{node:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn isolated_parameter_actuals_keep_readonly_highlighting_without_the_child_module() {
+        let source = "module top; parameter int WIDTH = 8; localparam int LIMIT = 4;\nmissing #(.WIDTH(WIDTH), .LIMIT(LIMIT)) child(.data(LIMIT));\nendmodule";
+        let parsed = compile::parse_source("/virtual/top.sv", source, &[]).unwrap();
+        let parameters: Vec<_> = parsed.tokens[0]
+            .nodes
+            .iter()
+            .filter(|node| matches!(node.name.as_deref(), Some("WIDTH" | "LIMIT")))
+            .collect();
+        assert_eq!(parameters.len(), 7);
+        for node in parameters {
+            let (kind, modifiers) = token_type_for(node.kind).unwrap();
+            assert_eq!(kind, TT_PROPERTY, "{node:?}");
+            assert_ne!(modifiers & (1 << TM_READONLY), 0, "{node:?}");
+        }
+    }
+
+    #[test]
+    fn missing_module_actuals_use_their_generate_scope() {
+        let source = "module top; parameter int WIDTH = 8;\nif (1) begin : nested int WIDTH; missing #(.P(WIDTH)) child(); end\nendmodule";
+        for library_units in [false, true] {
+            let out = compile::compile(&CompileOpts {
+                library_units,
+                sources: vec![OwnedSource::compilation_unit("/virtual/top.sv", source)],
+                ..Default::default()
+            })
+            .unwrap();
+            let files = from_slang_snapshot(&out.snapshot, &[("/virtual/top.sv", source)]);
+            let locals: Vec<_> = files[0]
+                .nodes
+                .iter()
+                .filter(|node| node.line == 2 && node.name.as_deref() == Some("WIDTH"))
+                .collect();
+            assert_eq!(locals.len(), 2);
+            for node in locals {
+                let (kind, modifiers) = token_type_for(node.kind).unwrap();
+                assert_eq!(kind, TT_VARIABLE, "library={library_units} {node:?}");
+                assert_eq!(modifiers & (1 << TM_READONLY), 0, "{node:?}");
+            }
+        }
+    }
 }
