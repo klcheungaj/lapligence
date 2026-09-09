@@ -58,6 +58,8 @@ coverage for the same rule IDs.
 
 ## Suite map
 
+- `cli_info.rs` checks help/version output, early exit with stdin held open,
+  and usage errors before memory guards, logging or LSP serving start.
 - `slang_frontend.rs` probes the release-pinned native
   bridge through safe Rust APIs: owned hierarchy/parameters/constants,
   compiler/analysis diagnostics, checked failure, repeated/concurrent compilation

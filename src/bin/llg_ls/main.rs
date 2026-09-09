@@ -29,7 +29,38 @@ mod conditional_conformance;
 
 mod transport;
 
+fn main() -> std::process::ExitCode {
+    let args: Vec<_> = std::env::args_os().skip(1).collect();
+    if let Some(first) = args.first() {
+        if args.len() == 1 && (first == "--help" || first == "-h") {
+            println!(
+                "Lapligence Verilog/SystemVerilog language server
+
+Usage: llg_ls [OPTIONS]
+
+With no arguments, serve LSP over stdin/stdout.
+
+Options:
+  -h, --help                Print help and exit
+  -V, --version             Print the package version and exit
+      --stdio               Serve LSP over stdin/stdout (default)
+      --dump-tokens <PATH>  Print token bindings for a file or directory"
+            );
+            return std::process::ExitCode::SUCCESS;
+        }
+        if args.len() == 1 && (first == "--version" || first == "-V") {
+            println!("llg_ls {}", env!("CARGO_PKG_VERSION"));
+            return std::process::ExitCode::SUCCESS;
+        }
+        if !(args.len() == 1 && first == "--stdio" || args.len() == 2 && first == "--dump-tokens") {
+            eprintln!("llg_ls: invalid arguments; use --help for usage");
+            return std::process::ExitCode::from(2);
+        }
+    }
+    std::process::ExitCode::from(run_server() as u8)
+}
+
 #[tokio::main]
-async fn main() -> std::process::ExitCode {
-    std::process::ExitCode::from(transport::run().await as u8)
+async fn run_server() -> i32 {
+    transport::run().await
 }

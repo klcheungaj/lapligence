@@ -65,10 +65,12 @@ struct DriverOptions {
 }
 
 fn main() -> std::process::ExitCode {
-    let memory_report = llg::memory_limit::install();
-    let _memory_guard = memory_report.guard;
     let code = match parse_args(std::env::args().skip(1).collect()) {
-        Ok(options) => run(options),
+        Ok(options) => {
+            let memory_report = llg::memory_limit::install();
+            let _memory_guard = memory_report.guard;
+            run(options)
+        }
         Err(code) => code,
     };
     std::process::ExitCode::from(code as u8)
@@ -95,6 +97,28 @@ fn parse_args(args: Vec<String>) -> Result<DriverOptions, i32> {
     let mut it = args.into_iter().peekable();
     while let Some(a) = it.next() {
         match a.as_str() {
+            "--help" | "-h" => {
+                println!(
+                    "Lapligence Verilog/SystemVerilog simulator
+
+Usage: llg [OPTIONS] <file.sv>...
+
+Options:
+  -h, --help                 Print help and exit
+  -V, --version              Print the package version and exit
+      --top <module>         Select the top module
+      --lint                 Run lint before simulation
+      --lint-json [<path>]   Report lint as JSON and exit
+      --lint-config <file>   Load lint configuration
+      --gen-only             Emit C model sources without building
+      --generator <backend>  Select the CMake generator"
+                );
+                return Err(0);
+            }
+            "--version" | "-V" => {
+                println!("llg {}", env!("CARGO_PKG_VERSION"));
+                return Err(0);
+            }
             "--top" | "-top" => top = it.next(),
             "--generator" | "-generator" => match it.next() {
                 Some(g) => generator = Some(g),

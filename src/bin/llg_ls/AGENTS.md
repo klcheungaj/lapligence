@@ -14,8 +14,10 @@ explorer.
 - Shared memory safeguards are in [../../AGENTS.md](../../AGENTS.md), and
   validation contracts are in [../../../tests/AGENTS.md](../../../tests/AGENTS.md).
 - LSP dependencies stay in this binary behind the default-on `lsp` feature.
-  Keep stdout exclusively for JSON-RPC framing and send logs to stderr or a
-  configured file.
+  While serving, keep stdout exclusively for JSON-RPC framing and send logs
+  to stderr or a configured file. Standalone help, version and token-dump
+  modes print ordinary text and exit without serving. Invalid CLI arguments
+  exit 2 with usage guidance on stderr.
 
 ## Frontend boundary
 

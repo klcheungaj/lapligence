@@ -27,6 +27,10 @@ LSP-only tower-lsp/tokio/dashmap code stays in `llg_ls`.
 
 ## Startup and process state
 
+Both `llg` and `llg_ls` accept `--help`/`-h` and `--version`/`-V`.
+These modes print to stdout and exit successfully before installing memory
+guards, compiling, or serving. Version text uses `env!("CARGO_PKG_VERSION")`.
+
 `llg_ls` and `helloworld` set mimalloc's `#[global_allocator]`; musl builds
 also wrap C allocation for every binary in the root build script. Binaries may install
 `llg::memory_limit::install[_with_logger]`; policy, defaults, native behavior,

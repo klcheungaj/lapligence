@@ -9,5 +9,9 @@
 - `elab_check`: owned semantic-database and instance-tree checker.
 - `helloslang`, `helloworld`, `llg_demo`: Slang snapshot demonstrations.
 
+Both `llg` and `llg_ls` support `--help` (`-h`) and `--version` (`-V`).
+The version is the package version from `Cargo.toml`. These commands print
+to stdout and exit without compiling sources or starting the language server.
+
 - Boundary: binaries use the shared core/FFI/simulator libraries; LSP-specific
   dependencies remain behind the `lsp` feature.
