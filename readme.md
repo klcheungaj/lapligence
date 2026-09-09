@@ -132,11 +132,17 @@ musl toolchain and native dependencies:
 ```sh
 docker build --platform linux/amd64 --build-arg UID=$(id -u) \
   --build-arg GID=$(id -g) -t llg-dev .
+mkdir -p target
 docker run --rm --platform linux/amd64 -v "$(pwd)":/workspace \
-  -v llg-target:/workspace/target \
   llg-dev cargo build --release --bin llg --bin llg_ls \
   --target x86_64-unknown-linux-musl
 ```
+
+The image runs as a non-root user with the UID/GID supplied at image build
+time. The repository mount already includes `target`; create it as your host
+user before running Docker. If an earlier run created root-owned build output,
+restore its ownership with `sudo chown -R "$(id -u):$(id -g)" target`.
+Rebuild the image with the arguments above if its user does not match yours.
 
 ### macOS arm64
 
