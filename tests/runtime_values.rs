@@ -302,12 +302,27 @@ static int check_numeric_conversions(void) {
     return 0;
 }
 
+static int check_negative_powers(void) {
+    sv4_t minus_one = sv4_resize(sv4_from_u64(UINT64_MAX, 64, 1), 65, 1);
+    sv4_t odd = sv4_from_u64(UINT64_MAX, 64, 1);
+    sv4_t even = sv4_from_u64(UINT64_MAX - 1, 64, 1);
+    CHECK(sv4_to_bool(sv4_case_eq(sv4_pow(minus_one, odd), minus_one)));
+    CHECK(sv4_to_bool(sv4_case_eq(sv4_pow(minus_one, even),
+                                sv4_from_u64(1, 65, 1))));
+    sv4_t minus_two = minus_one;
+    minus_two.bits[0] &= ~UINT64_C(1);
+    CHECK(sv4_to_bool(sv4_case_eq(sv4_pow(minus_two, odd),
+                                sv4_from_u64(0, 65, 1))));
+    return 0;
+}
+
 int main(void) {
     CHECK(check_wide_four_state_ops() == 0);
     CHECK(check_signed_resize() == 0);
     CHECK(check_queries() == 0);
     CHECK(check_net_resolution() == 0);
     CHECK(check_numeric_conversions() == 0);
+    CHECK(check_negative_powers() == 0);
     puts("runtime value isolation ok");
     return 0;
 }

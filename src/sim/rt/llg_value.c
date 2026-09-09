@@ -773,9 +773,9 @@ sv4_t sv4_div(sv4_t a, sv4_t b) { return sv4_divmod(a, b, 0); }
 sv4_t sv4_mod(sv4_t a, sv4_t b) { return sv4_divmod(a, b, 1); }
 
 static int sv4_is_all_ones(sv4_t v) {
-    for (int i = 0; i < sv4_nlimbs(v.width); i++) {
-        if ((v.bits[i] & sv4_limb_mask(v.width, i)) !=
-            sv4_limb_mask(v.width, i)) {
+    for (unsigned i = 0; i < (unsigned)sv4_nlimbs(v.width); i++) {
+        uint64_t mask = sv4_limb_mask(v.width, (int)i);
+        if ((v.bits[i] & mask) != mask) {
             return 0;
         }
     }
