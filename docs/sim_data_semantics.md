@@ -181,9 +181,11 @@ inventory above. Focused aggregate member/part-select, packed-union,
 unpacked-struct/union, RHS/LHS streaming, and `inside` cases are being used to
 validate lowering. Procedural positional and complete member-named aggregate
 assignment patterns, including the staged queue/dynamic-element contexts, are
-covered. Current packed/unpacked struct and untagged-union declaration
-patterns support positional, named, default, built-in, and packed-integral
-typedef keys with exact range/state/signedness matching and member overrides.
+covered. Current packed/unpacked struct declaration patterns support
+positional, named, default, built-in, and packed-integral typedef keys with
+exact range/state/signedness matching and member overrides. Packed unions
+support direct width-matched initialization; packed and unpacked unions cover
+selected-member writes over the tested fixed packed members.
 Nominal type keys, nested recursive defaults, nested unpacked or object
 members, aggregate ports/nets/subprogram storage, tagged unions, classes,
 virtual interfaces, and general aggregate slices remain outside the profile.
@@ -338,7 +340,7 @@ The complete operator inventory is in 1800-2009 §11.4 (and 1364-2001 §§2.4,
 | Select/index | `a[i]`, `a[msb:lsb]`, `a[base +: width]`, `a[base -: width]` | Bit/part/indexed-part select; out-of-range or X/Z index reads as X for packed values (§11.5) |
 | Member/hierarchy | `obj.member`, `scope::name`, `pkg::name`, hierarchical `top.u.signal` | Field/member and scoped-name lookup; `.` on a class/interface handle is a handle/member operation (§8.22, §23.7) |
 | Allocation | `new`, `new[size]` | Class construction or dynamic-array allocation; result is a handle/array, not an arithmetic value (§7.5, §8.4) |
-| Assignment pattern | `'{...}`, `'{default: expr}`, `'{type: expr}` | Initializes/assigns packed or unpacked aggregates by position, member, type, or default (§10.9) |
+| Assignment pattern | `'{...}`, `'{default: expr}`, `'{type: expr}` | Initializes/assigns arrays and structures by position, member, type, or default (§10.9) |
 | Tagged construction | `tagged Member(expr)`, `tagged Member` | Constructs a tagged-union value; member access checks the active tag (§11.9) |
 
 Operator overloading is a SystemVerilog class/subroutine facility, not a new

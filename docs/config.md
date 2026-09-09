@@ -118,11 +118,11 @@ severity = "error"
 
 Open UTF-8 buffer text is measured in preference to disk metadata. Discovery
 is unchanged, so files over either limit remain watched; the root analysis is
-rejected before staging or Surelog and publishes an `input-size-limit`
+rejected before Slang compilation and publishes an `input-size-limit`
 diagnostic while retaining the last-good snapshot. Every discovered/root
 compilation unit must also produce a bounded UTF-8 snapshot; a missing or
 unreadable root produces an `input-snapshot` diagnostic and is never passed to
-Surelog on its live path. Open-buffer admission applies the same positive
+Slang on its live path. Open-buffer admission applies the same positive
 per-file bound before storing or scheduling the buffer, using the built-in
 default until a root-specific config is available. A rejected buffer is not
 used by a later compile.
@@ -130,14 +130,10 @@ used by a later compile.
 Literal includes are resolved beside the including file first, then in the
 configured source directories followed by `compile.include_dirs`, in the same
 order used for admission. A readable closed input is bounded-read once during
-admission and that exact text is reused for isolation and shadow staging. LSP
-compile options contain only the staged shadow include directories: this keeps
-literal includes working while missing or macro-generated/dynamic includes
-produce Surelog diagnostics instead of reading a live, unmeasured file. The
-separate dump/general compile-options path retains live include directories
-intentionally. Include or root staging failures are `input-staging`
-diagnostics and reject the root, so a file changing after admission cannot
-bypass either budget.
+admission, and that exact text is supplied to Slang as an owned source buffer.
+The frontend resolves includes only from admitted buffers. Missing or
+macro-generated includes that were not admitted produce diagnostics without
+reading an unmeasured file. Open buffers use their in-memory contents.
 
 Config reloads are bounded independently of the analysis budgets: at most
 `MAX_CONFIG_BYTES` (1 MiB) plus one byte is read from `llg.toml`. Oversized and
@@ -146,15 +142,9 @@ and do not replace the last valid configuration.
 
 ## LSP diagnostic logging
 
-Surelog invocation details are emitted only when LLG_LOG is set to debug or
-trace, through the normal stderr or LLG_LOG_FILE logger; stdout remains clean
-for JSON-RPC. Records include the accepted argv count, setter modes, a
-per-argument representation bounded to 128 bytes, an overall representation
-bounded to 2048 bytes, and a fixed-width fingerprint. Flag names and bounded
-file/include paths remain visible for diagnosis. Values on -D and -P
-arguments are replaced with <redacted>. A NUL-rejected argument is recorded
-as a rejected invocation with argv_count=0 and is never included in an
-accepted argv representation. Source contents are never logged.
+Language-server logging uses stderr or `LLG_LOG_FILE`; stdout is reserved
+for framed JSON-RPC messages. Slang diagnostics are captured through the
+frontend bridge and published by Rust.
 
 At `LLG_LOG=trace`, the transport wrapper also records every decoded request
 or notification (`event=transport.receive`) and its completed dispatch

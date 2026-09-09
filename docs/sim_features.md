@@ -41,17 +41,17 @@ final blocks ≤ 1024.
 | § | Area | Verilog ✅ | Verilog 🟨 | Verilog ❌ | SV ✅ | SV 🟨 | SV ❌ |
 |---|---|---:|---:|---:|---:|---:|---:|
 | 1 | Lexical & preprocessing | 10 | 0 | 0 | 1 | 1 | 0 |
-| 2 | Data types | 10 | 4 | 2 | 5 | 6 | 0 |
-| 3 | Modules & hierarchy | 8 | 1 | 1 | 2 | 1 | 0 |
+| 2 | Data types | 10 | 4 | 2 | 4 | 7 | 0 |
+| 3 | Modules & hierarchy | 9 | 0 | 1 | 2 | 1 | 0 |
 | 4 | Scheduling & processes | 8 | 1 | 0 | 7 | 1 | 1 |
-| 5 | Procedural statements | 17 | 2 | 1 | 4 | 3 | 0 |
-| 6 | Timing controls | 2 | 3 | 1 | 0 | 0 | 0 |
+| 5 | Procedural statements | 16 | 3 | 1 | 4 | 3 | 0 |
+| 6 | Timing controls | 2 | 3 | 0 | 0 | 0 | 0 |
 | 7 | Expressions & operators | 16 | 4 | 0 | 1 | 5 | 1 |
 | 8 | Continuous assign & structural | 5 | 5 | 6 | 0 | 0 | 0 |
 | 9 | Functions & tasks | 4 | 0 | 5 | 3 | 0 | 1 |
 | 10 | System tasks & functions | 11 | 2 | 14 | 3 | 0 | 6 |
 | 11 | Compiler directives affecting sim | 5 | 0 | 0 | 4 | 0 | 0 |
-| — | **Total** | **96** | **22** | **30** | **30** | **17** | **9** |
+| — | **Total** | **96** | **22** | **29** | **29** | **18** | **9** |
 
 In-section ⬜ items (not counted above): §3 configurations [V], ref ports /
 default port values, extern/nested modules [SV] · §4 fine-grain process control
@@ -67,17 +67,17 @@ Verilog era:
 - ✅ **Signed literals** `` `-8'd6`, `4'shf` `` — §1364-2001 2.5.1 **[2001]**
 - ✅ **Real literals** `1.2`, `2.5e10` — §1364-2001 2.5.2 **[1995]**
 - ✅ **String literals** `"..."` as display format strings — §1364-2001 2.6 **[1995]** (SystemVerilog `string` is a separate partial type, see §2)
-- ✅ **Lexical base** comments, identifiers, escaped identifiers, operators — §1364-2001 2.1–2.7 **[1995]** via Surelog frontend
+- ✅ **Lexical base** comments, identifiers, escaped identifiers, operators — §1364-2001 2.1–2.7 **[1995]** via the Slang frontend
 - ✅ **Attributes** `(* full_case *)` parsed+ignored — §1364-2001 2.8 **[2001]** consumed by frontend, no sim effect
 - ✅ **`` `define ``/`` `undef `` macros incl. arguments** — §1364-2001 19.3 **[1995]** expanded pre-elaboration
 - ✅ **`` `ifdef `` family incl. `` `elsif ``/`` `ifndef ``** — §1364-2001 19.4 **[1995]** (`elsif`/`ifndef` are [2001])
 - ✅ **`` `include ``** — §1364-2001 19.5 **[1995]** resolved by frontend
-- ✅ **`` `timescale `` honored** scales `#N` and `$time` per file — §1364-2001 19.8 **[1995]** first directive/file only; missing → 1ns/1ps warning; fs clamps to 1ps (implemented, untested; sim_timescale.rs pins ns/ps scaling)
+- ✅ **`` `timescale `` honored** scales `#N` and `$time` with Slang's resolved owning-module time unit and precision — §1364-2001 19.8 **[1995]** compilation-unit/declaration inheritance is resolved by the frontend; fs clamps to the runtime's 1ps floor (sim_timescale.rs pins ns/ps scaling)
 
 SystemVerilog era:
 
 - ✅ **Fill literals** `'0/'1/'x/'z` — §1800-2009 5.7.1 **[SV-2005]** context sizing in supported packed arithmetic/bitwise expressions, comparisons, conditional branches, assignments, function arguments, and case/casez/casex; self-determined concatenation/replication operands remain one bit (sim_fill_literals.rs, optimization on/off)
-- 🟨 **Time literals** `2.1ns` — §1800-2009 5.8 **[SV-2005]** integer/fixed-point literals with `s/ms/us/ns/ps/fs` suffixes work in procedural/intra-assignment delays and runtime value expressions, rounded locally and scaled to module-unit realtime values (sim_time_literals.rs, sim_time_values.rs); value recovery requires explicitly admitted exact source spans; macros, unadmitted includes, parameter/declaration initializers and captured frontend-folded compounds are rejected; existing real-context and 64-bit local-tick bounds apply, and scheduler precision remains at least 1ps
+- 🟨 **Time literals** `2.1ns` — §1800-2009 5.8 **[SV-2005]** the owned semantic model retains Slang's typed unit and unrounded module-scaled `real` value. Ordinary expression evaluation preserves that value, following Slang v11's IEEE 1800-2023 behavior; conversion of a complete procedural delay expression rounds once to the local time precision. Runtime scheduling remains bounded to 64-bit ticks and a minimum 1ps design precision
 
 ## 2. Data types
 
@@ -108,9 +108,9 @@ SystemVerilog era:
 - ✅ **typedef simple/packed-vector aliases** — §1800-2009 6.18 **[SV-2005]** resolved by frontend (probed)
 - ✅ **Array declaration initializers** `'{…}` patterns applied element-wise in linear-index order — §1800-2009 10.9.1 **[SV-2005]** constant elements only (sim_memory.rs)
 - ✅ **enum-typed scalar variables** — §1800-2009 6.19 **[SV-2005]** stored at the elaborated packed base width; enum constants fold through the frontend. Base-state and signedness behavior pass at both exercised widths (sim_operator_semantics.rs)
-- 🟨 **packed/unpacked struct and union aggregates** — §1800-2009 7.2–7.3, 7.4 **[SV-2005]** packed/unpacked struct and untagged-union declaration patterns support positional, named, default, built-in, and packed-integral typedef keys with exact range/state/signedness matching and member overrides. Nested recursive defaults, nominal type keys, nested unpacked/object members, aggregate ports/nets/subprogram storage, tagged unions, and general aggregate slices remain unsupported; the bounded `sim_data_types_next` and `sim_data_types_completion` inventories are not an exhaustive conformance claim
+- 🟨 **packed/unpacked struct and union aggregates** — §1800-2009 7.2–7.3, 7.4 **[SV-2005]** packed/unpacked struct assignment patterns support positional, named, default, built-in, and packed-integral typedef keys with exact range/state/signedness matching and member overrides. Packed unions support direct width-matched initialization, and packed/unpacked unions support selected-member writes over the tested fixed packed members. Nested recursive defaults, nominal type keys, nested unpacked/object members, aggregate ports/nets/subprogram storage, tagged unions, and general aggregate slices remain unsupported; the bounded `sim_data_types_next` and `sim_data_types_completion` inventories are not an exhaustive conformance claim
 - 🟨 **string type/signals/params** — §1800-2009 6.16 **[SV-2005]** focused basic declaration, cast/copy, display-extra, automatic string-return-with-packed-input, and 128/512-bit `.atoreal`/`.realtoa` conversion cases are covered in both modes; string formals are not supported. Module/generate storage and other core methods remain bounded; string subroutine forms, ports, continuous-assignment/sensitivity paths, and unverified formatted/real methods remain outside this claim
-- ✅ **event data type** scalar `event ev;` declarations — §1800-2009 6.17 **[SV-2005]** (sim_events.rs); event arrays rejected by the Surelog frontend (grammar cannot parse them)
+- 🟨 **event data type** scalar `event ev;` declarations and direct references are captured — §1800-2009 6.17 **[SV-2005]**; event arrays and hierarchical event references are not yet projected into the owned semantic database
 - 🟨 **dynamic arrays / associative arrays / queues** — §1800-2009 7.5/7.8/7.10 **[SV-2005]** bounded dynamic-array, queue, and integral/string-key associative cases cover element reductions and positional assignment patterns; legal reductions with width-changing `with` clauses are explicitly diagnosed unsupported rather than silently dropping the clause. Containers are bounded to 1-D packed elements, not general nested/object-member forms
 - 🟨 **chandle** — §1800-2009 6.14 **[SV-2005]** focused native-chandle call cases are reported passing in both modes, limited to null/copy/compare/Boolean operations and chandle-input→chandle-return functions
 
@@ -126,13 +126,13 @@ Verilog era:
 - ✅ **Module instance arrays** `sub u[1:0](e);` elaborated per index — §1800-2009 23.3.2 **[1995]** (probed)
 - ✅ **Hierarchical name reads** `top.u.sig` in expressions/display args — §1364-2001 12.4 **[1995]** (sim_hier.rs)
 - ✅ **Upward name references** partially-qualified paths (`mid.sig` from an inner scope, up-then-down included) resolve through the elaborated ref binding — §1364-2001 12.4 **[1995]** (probed)
-- 🟨 **Hierarchical select reads & writes** — §1364-2001 12.4 **[1995]** select reads stay whole-signal; writes need constant bounds recovered from source text
-- ❌ **defparam** — §1364-2001 12.2.1 **[1995]** frontend drops override; model build fails (probed)
+- ✅ **Hierarchical select reads & writes** — §1364-2001 12.4 **[1995]** typed bit/part-select expressions preserve blocking and nonblocking targets, including variable bit indices (sim_hier.rs)
+- ❌ **defparam** — §1364-2001 12.2.1 **[1995]** has no dedicated owned semantic mapping yet
 - ⬜ **Configurations/libraries** — §1364-2001 ch13 **[2001]** out of scope
 
 SystemVerilog era:
 
-- ✅ **Interfaces + modports** actuals, per-port copies, modport links; interface-body processes emitted on actual instance only — §1800-2009 25.3/25.5 **[SV-2005]** (sim_interface.rs, sim_interface_body.rs)
+- ✅ **Interfaces + modports** actuals and member references bind directly to concrete interface storage; interface-body processes emit on the actual instance — §1800-2009 25.3/25.5 **[SV-2005]** (sim_interface.rs, sim_interface_body.rs)
 - 🟨 **Packages** params/types via frontend folding — §1800-2009 26 **[SV-2005]** package subprograms not lowered ("return type has no width", probed)
 - ✅ **`.name` / `.*` connection shorthands** — §1800-2009 23.3.2.3–4 **[SV-2005]** expanded by the frontend and preserved through port-link lowering (sim_hier.rs)
 - ⬜ **ref ports / default port values** — §1800-2009 23.2.2.2/23.2.2.4 **[SV-2005]** out of scope
@@ -150,7 +150,7 @@ Verilog era:
 - ✅ **Named forks/blocks** `fork : name … join` — §1364-2001 9.8.3 **[1995]**
 - ✅ **wait(cond)** level-sensitive, re-evaluated on condition reads — §1364-2001 9.7.6 **[1995]** false constant spins until zero-delay guard trips (region_conformance.rs)
 - 🟨 **Wait-free always treated as combinational** — §1364-2001 9.9.2 **[1995]** documented approximation; warns when it reads nothing
-- ✅ **disable `<label>` / task early return** — §1364-2001 ch11 **[1995]** (sim_disable.rs) same-process only: enclosing named begin blocks and self-disabling loop blocks lower to goto-exit-label; disabling the current task/function is an early return (plain C-function tasks AND inlined wait-bearing expansions); disabling a named block that IS a loop body ends that block execution only (incr/condition still run — the Verilog-1995 `continue` idiom); cross-process disables, named forks and outer inlined tasks are clean codegen rejects. Surelog quirk: nested disables lose their resolved target (`vpiExpr` empty), recovered from source text against the enclosing scope chain
+- ✅ **disable `<label>` / task early return** — §1364-2001 ch11 **[1995]** Slang's resolved target identity drives same-process named/nested block exits and inlined task early return; cross-process and named-fork targets remain explicit rejects (sim_disable.rs)
 
 SystemVerilog era:
 
@@ -160,7 +160,7 @@ SystemVerilog era:
 - ✅ **join_any/join_none** — §1800-2009 9.3.2 **[SV-2005]** (sim_fork.rs)
 - ✅ **wait fork** — §1800-2009 9.6.1 **[SV-2005]**
 - ✅ **disable fork** — §1800-2009 9.6.3 **[SV-2005]**
-- ✅ **final blocks at end of simulation** — §1800-2009 9.2.3 **[SV-2005]** (sim_final.rs) run ONCE after the scheduler exits ($finish, deadlock or no future events); they see values committed before simulation ended and `$time` reports the end-of-run time. Nonblocking assignments, task calls, deferred `$strobe`/`$monitor`, and timing controls (`#`/`@`/`wait`/fork) are clean codegen rejects because finals permit function statements only and no scheduled events execute afterward. `$finish` inside a final terminates that final immediately and skips all remaining finals. Surelog parses `final` only in `.sv` files (frontend limitation)
+- ✅ **final blocks at end of simulation** — §1800-2009 9.2.3 **[SV-2005]** (sim_final.rs) are captured as typed final processes independent of file extension and run ONCE after the scheduler exits ($finish, deadlock or no future events); they see values committed before simulation ended and `$time` reports the end-of-run time. Nonblocking assignments, task calls, deferred `$strobe`/`$monitor`, and timing controls (`#`/`@`/`wait`/fork) are clean codegen rejects because finals permit function statements only and no scheduled events execute afterward. `$finish` inside a final terminates that final immediately and skips all remaining finals
 - 🟨 **Observe/reactive/preponed regions** — §1800-2009 4.4 **[SV-2005]** absent; single monitor region, no program/clocking contexts to trigger them
 - ❌ **$exit** program control task — §1800-2009 24.7 **[SV-2005]** unsupported system task
 - ⬜ **Fine-grain process control** `process::self()` — §1800-2009 9.7 **[SV-2005]** class-based tier
@@ -187,8 +187,8 @@ Verilog era:
 - 🟨 **Condition event expressions** `@(a && b)` — §1364-2001 9.7.2 **[1995]** wait on body read set instead of condition operands
 - ✅ **Intra-assignment timing** `a = #5 b;` / `a <= #5 b;` — §1364-2001 9.7.7 **[1995]** (sim_delay.rs) RHS evaluated immediately into a temp, LHS updated after the scaled delay; event/repeat forms rejected; the executing process suspends across the window for both kinds (current approximation)
 - ❌ **Repeat event control** `repeat (n) @ev` — §1364-2001 9.7.7 **[1995]** clean codegen rejection
-- ✅ **Named events** `event ev; -> ev; @ ev;` — §1364-1995 §9.7.3 **[1995]** (sim_events.rs, re-run with Surelog v1.87) trigger wakes ALL current waiters (registration order), edge-triggered (no latch); mixed or-lists `@(a or ev)` lower to ONE atomic wait (`llg_wait_mixed`); zero-delay trigger loops trip the runtime guard (sim_events.rs); 🟨 caveats: non-blocking `->>` lowers identically to `->` because v1.87 still reports `vpiBlocking=1` for both forms, and block-local event declarations behave as ordinary 1-bit logic vars; event arrays and hierarchical event references are rejected by the frontend before codegen
-- ✅ **Procedural continuous assign/deassign** — §1364-2001 9.3.1 **[1995]** (sim_force.rs) `assign <reg> = expr;` lowers to a per-site enable-guarded process plus an immediate blocking write; `deassign` clears the enable only (the variable KEEPS its last value); RHS changes propagate while assigned and re-executing the same `assign` statement re-enables the site; while assigned, ordinary procedural writes to the target (blocking AND non-blocking) still take effect immediately, and the guard re-drives from the CURRENT rhs on its next wake (an RHS-read or enable change — it never wakes on changes of the target itself); sites are pre-scanned over every process body before any body lowers, so a `deassign` resolves its site regardless of process/source order; `force` keeps priority over an active PCA, `release` restores it. Clean rejects: net targets (variables only; Surelog models module-level `reg` as Net with net_type vpiReg, which counts as a variable), selects/part-selects/array elements, hierarchical targets, real variables, and multiple active sites on one variable (deterministic static reject — reuse one site through control flow)
+- 🟨 **Named events** `event ev; -> ev; @ ev;` — §1364-1995 §9.7.3 **[1995]** the runtime wakes all current waiters in registration order and mixed or-lists lower to one atomic wait; the Slang importer currently captures direct named-event declarations/references but does not retain the `->>` distinction, event arrays, or hierarchical event resolution, so those forms remain explicit semantic-import gaps
+- ✅ **Procedural continuous assign/deassign** — §1364-2001 9.3.1 **[1995]** (sim_force.rs) `assign <reg> = expr;` lowers to a per-site enable-guarded process plus an immediate blocking write; `deassign` clears the enable only (the variable KEEPS its last value); RHS changes propagate while assigned and re-executing the same `assign` statement re-enables the site; while assigned, ordinary procedural writes to the target (blocking AND non-blocking) still take effect immediately, and the guard re-drives from the CURRENT rhs on its next wake (an RHS-read or enable change — it never wakes on changes of the target itself); sites are pre-scanned over every process body before any body lowers, so a `deassign` resolves its site regardless of process/source order; `force` keeps priority over an active PCA, `release` restores it. Clean rejects: net targets, selects/part-selects/array elements, hierarchical targets, real variables, and multiple active sites on one variable (deterministic static reject — reuse one site through control flow)
 
 SystemVerilog era:
 
@@ -207,9 +207,8 @@ Verilog era:
 - ✅ **#delay integer literal**, timescale-scaled — §1364-2001 9.7.1 **[1995]** (sim_timescale.rs)
 - ✅ **@\* / @(\*) implicit sensitivity** from body read set — §1364-2001 9.7.5 **[2001]**
 - 🟨 **Comb sensitivity to array elements** — §1364-2001 9.7.5 **[2001]** wakes on index signals only, not array writes
-- 🟨 **Fractional delays** `#0.5` — §1364-2001 9.7.1 **[1995]** nonnegative fixed-point literals, parenthesized scientific literals (exponent magnitude ≤38), and whole real parameters round to local precision before global tick conversion in procedural/intra-assignment delays (sim_delay.rs, sim_time_literals.rs); bare scientific syntax is frontend-rejected; real arithmetic, fractional continuous/gate delays, and sub-ps scheduling remain unsupported
-- 🟨 **Expression/parameter delays** `#(expr)` / `#P`, underscored `#10_000` and unit-suffixed `#5ns` literals — §1364-2001 9.7.1 **[1995]** resolved integer parameters, whole real parameters, decimal literals, bounded integer arithmetic/bitwise expressions, and fixed-point/unit-suffixed/parenthesized-scientific literals work in statement and intra-assignment delays (sim_delay.rs, sim_time_literals.rs); mixed-width/context-sensitive signed arithmetic, dynamic values, based literals, logical/comparison/ternary expressions, system functions, and arithmetic containing real/time literals or real parameters remain rejected
-- ❌ **min:typ:max delays** `#(1:2:3)` — §1364-2001 4.3 **[1995]**
+- 🟨 **Fractional delays** `#0.5` — §1364-2001 9.7.1 **[1995]** typed integer, real, scientific, and unit-suffixed values in statement and intra-assignment delays round once to the local time precision before conversion to design scheduler ticks; fractional continuous/gate delays and sub-ps scheduling remain unsupported
+- 🟨 **Expression/parameter delays** `#(expr)` / `#P`, underscored `#10_000` and unit-suffixed `#5ns` literals — §1364-2001 9.7.1 **[1995]** Slang expression identities and resolved integer/real parameters are consumed directly, including constant integer operations and real/time `+`, `-`, `*`, `/`, `%`, power, conditional, and min/typ/max forms in statement and intra-assignment delays (sim_delay.rs, sim_time_literals.rs); dynamic values and unsupported constant system functions are rejected
 
 SystemVerilog era:
 
@@ -242,7 +241,7 @@ Verilog era:
 
 SystemVerilog era:
 
-- 🟨 **Static casts** `int'(e)`, `signed'()`, `unsigned'()`, size casts `n'(e)` — §1800-2009 6.24.1 **[SV-2005]** source-signed extension, predefined/size/typedef casts, packed/real conversions and bitcasts are covered by the model-sized `sim_data_types.rs` matrix. Numeric source-enabled and source-less cast paths pass; ambiguous source-less provenance is explicitly rejected rather than silently changing width/sign. Unsupported aggregate/net paths remain outside this claim. Based-constant signedness is recovered from exact source spelling when Surelog omits it
+- 🟨 **Static casts** `int'(e)`, `signed'()`, `unsigned'()`, size casts `n'(e)` — §1800-2009 6.24.1 **[SV-2005]** Slang retains explicit/implicit conversion identity and resolved target width, signedness, and state domain. Scalar/vector typed and numeric size casts are covered through declaration, runtime-expression, and function contexts; unsupported aggregate/net paths remain outside this claim (sim_data_types.rs, sim_data_type_edges.rs, sim_data_types_next.rs)
 - 🟨 **Increment/decrement** `++ --` — §1800-2009 11.4.2 **[SV-2005]** statement-position pre/post forms on whole scalar variables, including `for` increments, are supported; expression-valued and select/array-element forms remain unsupported (sim_operator_semantics.rs)
 - 🟨 **Assignment operators** `+= -= *= /= %= &= |= ^= <<= >>= <<<= >>>=` — §1800-2009 11.4.1 **[SV-2005]** whole scalar variables are supported; select and array-element targets are cleanly rejected until LHS index evaluation can be preserved exactly once (sim_operator_semantics.rs)
 - ✅ **Wildcard equality** `==? !=?` — §1800-2009 11.4.6 **[SV-2005]** RHS X/Z bits are wildcards; remaining LHS unknown bits yield X unless a known mismatch decides the result. Common-width/signed extension and model-sized operands are covered with optimization on/off (sim_wildcard_eq.rs).

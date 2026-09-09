@@ -35,7 +35,7 @@ two programs:
 Verilog/SystemVerilog
         |
         v
- Parse and elaborate (using Surelog)
+ Parse and elaborate (using Slang)
         |
         v
        IR
@@ -74,14 +74,15 @@ targets:
 
 | Platform | Target | `llg_ls`, lint, and C generation | Generated simulator |
 | --- | --- | --- | --- |
-| Linux x86_64 | `x86_64-unknown-linux-musl` | Supported | Supported |
+| Linux x86_64 | `x86_64-unknown-linux-musl` | Release target; validation pending | Musl validation pending |
 | Linux arm64 | `aarch64-unknown-linux-musl` | Release target | Not yet supported |
 | Windows x86_64 | `x86_64-pc-windows-msvc` | Release target | Not yet supported |
 | Windows arm64 | `aarch64-pc-windows-msvc` | Release target | Not yet supported |
 | macOS arm64 | `aarch64-apple-darwin` | Release target | Not yet supported |
 
 The matrix lists configured release targets, not equivalent validation claims.
-Full native-run evidence is currently recorded only for Linux x86_64.
+The Slang-only pipeline has native test evidence on Linux x86_64 with glibc.
+Musl build support has been source-reviewed but has not been run locally.
 
 CI tests and builds all targets above on pushes to `master`, or when you select
 a branch under **Actions → CI and Release → Run workflow**. Publishing a release
@@ -106,18 +107,9 @@ All platforms require:
 - Stable Rust and Cargo from [rustup](https://rustup.rs/).
 - CMake 3.20 or newer.
 - A C and C++ compiler with the platform's standard build tools.
-- Python 3 with the `orderedmultidict` package.
-- A Java 11 or newer runtime for the parser generator.
+- Python 3 for Slang's syntax and diagnostic generators.
 - `patch`, or Git with `git apply` support.
 - zlib development files for waveform-enabled generated models.
-
-A Python virtual environment keeps the build dependency local:
-
-```sh
-python3 -m venv .venv
-. .venv/bin/activate
-python -m pip install orderedmultidict
-```
 
 ### Linux
 
@@ -125,8 +117,7 @@ On Ubuntu or Debian, install the native prerequisites:
 
 ```sh
 sudo apt-get update
-sudo apt-get install build-essential cmake patch python3 python3-venv \
-  default-jre zlib1g-dev
+sudo apt-get install build-essential cmake patch python3 zlib1g-dev
 ```
 
 Build both programs:
@@ -150,9 +141,8 @@ docker run --rm --platform linux/amd64 -v "$(pwd)":/workspace \
 ### macOS arm64
 
 - Install Xcode Command Line Tools: `xcode-select --install`.
-- Install CMake, Python 3, and Java 11+ with your package manager. The Xcode
-  SDK supplies zlib.
-- Create the Python environment shown above.
+- Install CMake and Python 3 with your package manager. The Xcode SDK supplies
+  zlib.
 - Add and build the Rust target:
 
 ```sh
@@ -165,15 +155,8 @@ cargo build --release --bin llg --bin llg_ls \
 
 - Install Visual Studio Build Tools with the **Desktop development with C++**
   workload and the Windows SDK.
-- Install CMake, Python 3, Java 11+, Git, and stable Rust.
+- Install CMake, Python 3, Git, and stable Rust.
 - Run the build from a matching MSVC Developer PowerShell.
-- Create and activate the Python environment:
-
-```powershell
-py -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install orderedmultidict
-```
 
 Build for x86_64:
 
