@@ -30,6 +30,13 @@ formatted message in `frontend_diagnostics`. The compact core diagnostic list
 only classifies snapshot validity and supplies preflight failures. Syntax or
 compile failures must not replace a root's last-good navigation snapshot.
 
+If a multi-unit workspace exceeds a native export limit before any snapshot
+can be returned, retry the same already-admitted buffers once as Slang library
+units. This bounded recovery keeps lexical tokens, declarations, module source
+topology, and cross-file module bindings, but omits expression and statement
+capture, lint, and elaborated hierarchy. It must never raise the native limit
+or read additional files.
+
 ## Requests
 
 Request projections are pure reads of committed `Analysis`. Open-document

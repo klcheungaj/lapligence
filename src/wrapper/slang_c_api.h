@@ -62,6 +62,12 @@ typedef struct {
   uint64_t max_constants;
 } LlgSlangLimits;
 
+enum {
+  /* Parse all compilation units as library units. Definitions are checked as
+   * uninstantiated scopes instead of being inferred as recursive design tops. */
+  LLG_SLANG_COMPILE_LIBRARY_UNITS = 1u << 0
+};
+
 typedef struct {
   uint32_t abi_version;
   uint32_t flags;

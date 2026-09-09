@@ -243,10 +243,12 @@ struct Capture {
       sourceIdentityGroups;
   uint64_t valueBits = 0;
   uint64_t semanticEdgeCount = 0;
+  bool declarationOnly = false;
 
   Capture(LlgSlangSnapshot& output, const SourceManager& sourceManager,
-          const LlgSlangLimits& limits)
-      : output(output), sourceManager(sourceManager), limits(limits) {}
+          const LlgSlangLimits& limits, bool declarationOnly = false)
+      : output(output), sourceManager(sourceManager), limits(limits),
+        declarationOnly(declarationOnly) {}
 
   uint64_t maxDiagnostics() const {
     return effectiveLimit(limits.max_diagnostics, kDefaultMaxDiagnostics,
@@ -1556,11 +1558,16 @@ public:
       }
     }
     parents.pop_back();
-    addSymbolRoles(symbol, id);
+    if (!capture.declarationOnly || std::same_as<T, InstanceSymbol>)
+      addSymbolRoles(symbol, id);
   }
 
   template<std::derived_from<Expression> T>
   void handle(const T& expression) {
+    if (capture.declarationOnly) {
+      visitDefault(expression);
+      return;
+    }
     const uint64_t id = capture.ensureSemantic(&expression);
     attach(id);
     if (!markVisited(id))
@@ -1707,6 +1714,18 @@ public:
 
   template<std::derived_from<Statement> T>
   void handle(const T& statement) {
+    if (capture.declarationOnly) {
+      if constexpr (std::same_as<T, VariableDeclStatement>)
+        handle(statement.symbol);
+      if constexpr (std::same_as<T, ForeachLoopStatement>) {
+        for (const auto& dimension : statement.loopDims) {
+          if (dimension.loopVar)
+            handle(*dimension.loopVar);
+        }
+      }
+      visitDefault(statement);
+      return;
+    }
     const uint64_t id = capture.ensureSemantic(&statement);
     attach(id);
     if (!markVisited(id))
@@ -1781,6 +1800,10 @@ public:
              std::derived_from<T, AssertionExpr> ||
              std::derived_from<T, Pattern>)
   void handle(const T& node) {
+    if (capture.declarationOnly) {
+      visitDefault(node);
+      return;
+    }
     const uint64_t id = capture.ensureSemantic(&node);
     attach(id);
     if (!markVisited(id))
@@ -2853,7 +2876,7 @@ std::unique_ptr<LlgSlangSnapshot> compileImpl(const LlgSlangCompileRequest& requ
   if (request.abi_version != LLG_SLANG_ABI_VERSION)
     throw BridgeFailure(LLG_SLANG_STATUS_INVALID_ARGUMENT,
                         "unsupported Slang ABI version");
-  if (request.flags != 0)
+  if ((request.flags & ~LLG_SLANG_COMPILE_LIBRARY_UNITS) != 0)
     throw BridgeFailure(LLG_SLANG_STATUS_INVALID_ARGUMENT,
                         "unknown compile request flags");
   if (request.source_count != 0 && request.sources == nullptr)
@@ -3028,8 +3051,11 @@ std::unique_ptr<LlgSlangSnapshot> compileImpl(const LlgSlangCompileRequest& requ
     if ((request.sources[i].flags & LLG_SLANG_SOURCE_COMPILATION_UNIT) == 0)
       continue;
     anyCompilationUnit = true;
-    compilation.addSyntaxTree(syntax::SyntaxTree::fromBuffer(
-        buffers[static_cast<size_t>(i)], sourceManager, parseOptions));
+    auto tree = syntax::SyntaxTree::fromBuffer(
+        buffers[static_cast<size_t>(i)], sourceManager, parseOptions);
+    if ((request.flags & LLG_SLANG_COMPILE_LIBRARY_UNITS) != 0)
+      tree->isLibraryUnit = true;
+    compilation.addSyntaxTree(std::move(tree));
   }
   if (!anyCompilationUnit)
     throw BridgeFailure(LLG_SLANG_STATUS_INVALID_ARGUMENT,
@@ -3038,7 +3064,8 @@ std::unique_ptr<LlgSlangSnapshot> compileImpl(const LlgSlangCompileRequest& requ
   auto output = std::make_unique<LlgSlangSnapshot>();
   output->output_byte_limit = effectiveLimit(request.limits.max_output_bytes,
       kDefaultMaxOutputBytes, kHardMaxOutputBytes);
-  Capture capture{*output, sourceManager, request.limits};
+  Capture capture{*output, sourceManager, request.limits,
+                  (request.flags & LLG_SLANG_COMPILE_LIBRARY_UNITS) != 0};
   for (uint64_t i = 0; i < request.source_count; i++) {
     chargeRecord(*output, sizeof(LlgSlangFile));
     output->files.push_back({i, storeString(*output, sourceNames[i]),

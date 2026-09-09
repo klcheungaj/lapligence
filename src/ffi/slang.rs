@@ -23,6 +23,7 @@ const STATUS_LIMIT_EXCEEDED: u32 = 2;
 const STATUS_FRONTEND_ERROR: u32 = 3;
 const STATUS_INTERNAL_ERROR: u32 = 4;
 
+const COMPILE_LIBRARY_UNITS: u32 = 1 << 0;
 const SNAPSHOT_HAS_ERRORS: u32 = 1 << 0;
 const SNAPSHOT_ANALYSIS_RAN: u32 = 1 << 1;
 const SNAPSHOT_KNOWN_FLAGS: u32 = SNAPSHOT_HAS_ERRORS | SNAPSHOT_ANALYSIS_RAN;
@@ -129,6 +130,9 @@ pub struct CompileOptions {
     pub include_dirs: Vec<String>,
     /// Top-level elaboration parameter overrides.
     pub parameter_overrides: Vec<ParameterOverride>,
+    /// Treat compilation units as library units so definitions are checked
+    /// once without inferring and recursively elaborating design tops.
+    pub library_units: bool,
     pub limits: Limits,
 }
 
@@ -1032,7 +1036,11 @@ pub fn compile(request: &CompileRequest<'_>) -> Result<Snapshot, SlangError> {
     let limits = request.options.limits;
     let raw_request = RawCompileRequest {
         abi_version: ABI_VERSION,
-        flags: 0,
+        flags: if request.options.library_units {
+            COMPILE_LIBRARY_UNITS
+        } else {
+            0
+        },
         sources: raw_sources.as_ptr(),
         source_count: raw_sources.len() as u64,
         defines: raw_defines.as_ptr(),

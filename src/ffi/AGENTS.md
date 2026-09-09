@@ -38,6 +38,9 @@ must use the safe APIs from this directory and must not call the C ABI.
   blocking `llg_slang_compile` call. Input arrays and strings remain alive
   until it returns. Sources are explicitly compilation units or include-only
   buffers.
+- The library-unit request flag keeps the same admitted buffers and limits but
+  requests a declaration-only snapshot for bounded language-server recovery.
+  Unknown request flags remain invalid ABI input.
 - The native source manager performs cache-only reads with lexical path
   normalization. Include directories define lookup prefixes over admitted
   buffers; they do not authorize filesystem reads.

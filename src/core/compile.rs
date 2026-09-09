@@ -57,6 +57,9 @@ pub struct CompileOpts {
     /// contents in [`sources`](Self::sources); path mode admits literal
     /// includes through bounded Rust reads before entering Slang.
     pub include_dirs: Vec<String>,
+    /// Check every definition as an uninstantiated library unit instead of
+    /// recursively elaborating inferred top-level designs.
+    pub library_units: bool,
     pub limits: Limits,
 }
 
@@ -87,6 +90,7 @@ pub struct Diag {
 pub enum StartupErrorKind {
     InvalidArgument,
     Input,
+    LimitExceeded,
     Frontend,
     Internal,
 }
@@ -366,6 +370,7 @@ fn compile_source_groups(
             .iter()
             .map(|value| parse_override(value))
             .collect::<Result<_, _>>()?,
+        library_units: opts.library_units,
         limits: opts.limits,
     };
     let snapshot = slang::compile(&CompileRequest {
@@ -672,9 +677,8 @@ fn parse_override(value: &str) -> Result<ParameterOverride, StartupError> {
 fn startup_from_slang(error: slang::SlangError) -> StartupError {
     use slang::SlangErrorKind;
     let kind = match error.kind() {
-        SlangErrorKind::InvalidArgument | SlangErrorKind::LimitExceeded => {
-            StartupErrorKind::InvalidArgument
-        }
+        SlangErrorKind::InvalidArgument => StartupErrorKind::InvalidArgument,
+        SlangErrorKind::LimitExceeded => StartupErrorKind::LimitExceeded,
         SlangErrorKind::Frontend => StartupErrorKind::Frontend,
         SlangErrorKind::Internal | SlangErrorKind::InvalidNativeData => StartupErrorKind::Internal,
     };

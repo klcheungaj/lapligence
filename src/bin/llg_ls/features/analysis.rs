@@ -938,6 +938,24 @@ pub(super) fn analyze_inner_slang(
         Ok(out) => out,
         Err(error) => {
             crate::llg_debug!("event=slang.compile.end outcome=error root={} generation={} elapsed_us={} error={}", root, generation, started.elapsed().as_micros(), bounded_log_text(&error.to_string(), 512));
+            if error.kind() == llg::core::compile::StartupErrorKind::LimitExceeded
+                && !opts.library_units
+                && opts
+                    .sources
+                    .iter()
+                    .filter(|source| source.is_compilation_unit)
+                    .count()
+                    > 1
+            {
+                return analyze_library_units_after_limit(
+                    opts,
+                    lint_cfg,
+                    root,
+                    generation,
+                    parent_id,
+                    error.to_string(),
+                );
+            }
             return Analysis::fatal_preflight(error.to_string());
         }
     };
@@ -1026,6 +1044,69 @@ pub(super) fn analyze_inner_slang(
     .with_module_graph(module_graph)
     .with_configured_top(opts.top.clone());
     analysis.attach_frontend_diagnostics(frontend_diagnostics);
+    analysis
+}
+
+/// Recover a bounded declaration-level workspace after full elaboration
+/// exceeds a native export limit. Slang receives the same admitted buffers in
+/// one cross-file compilation but treats every unit as a library unit, which
+/// prevents inferred top hierarchies from recursively expanding.
+fn analyze_library_units_after_limit(
+    opts: &CompileOpts,
+    lint_cfg: &LintConfig,
+    root: &str,
+    generation: u64,
+    parent_id: Option<u64>,
+    failure: String,
+) -> Analysis {
+    let recovery_opts = CompileOpts {
+        sources: opts.sources.clone(),
+        top: None,
+        defines: opts.defines.clone(),
+        include_dirs: opts.include_dirs.clone(),
+        library_units: true,
+        limits: opts.limits,
+        ..CompileOpts::default()
+    };
+    crate::llg_debug!(
+        "event=slang.limit_recovery.begin root={} generation={} files={} error={}",
+        root,
+        generation,
+        recovery_opts
+            .sources
+            .iter()
+            .filter(|source| source.is_compilation_unit)
+            .count(),
+        bounded_log_text(&failure, 512)
+    );
+    let mut analysis = analyze_inner_slang(&recovery_opts, lint_cfg, root, generation, parent_id);
+    if !analysis.has_feature_data() {
+        crate::llg_debug!(
+            "event=slang.limit_recovery.end outcome=error root={} generation={}",
+            root,
+            generation
+        );
+        return Analysis::fatal_preflight(failure);
+    }
+    analysis.outcome = AnalysisOutcome::Compile;
+    analysis.diagnostics.push(Diag {
+        severity: Severity::Warning,
+        file: None,
+        line: 0,
+        col: 0,
+        message: format!(
+            "full workspace elaboration exceeded a frontend limit; serving bounded declaration-level navigation ({failure})"
+        ),
+    });
+    analysis.lint.clear();
+    crate::llg_debug!(
+        "event=slang.limit_recovery.end outcome=ok root={} generation={} tokens={} declarations={} definitions={}",
+        root,
+        generation,
+        analysis.tokens.iter().map(|file| file.nodes.len()).sum::<usize>(),
+        analysis.index.decls.len(),
+        analysis.module_graph.definitions.len()
+    );
     analysis
 }
 

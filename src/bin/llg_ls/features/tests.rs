@@ -125,6 +125,65 @@ fn slang_module_explorer_keeps_repeated_nested_instances_and_source_roots() {
     }
 }
 
+#[test]
+fn export_limit_recovers_declaration_level_workspace_features() {
+    let _guards = analysis_guards();
+    let mut top = String::from("module top; leaf u_leaf(); integer value; initial begin\n");
+    for _ in 0..600 {
+        top.push_str("value = value + 1;\n");
+    }
+    top.push_str("end endmodule\n");
+
+    let mut limits = llg::ffi::slang::Limits::default();
+    limits.max_output_bytes = 256 * 1024;
+    let analysis = analyze(&CompileOpts {
+        sources: vec![
+            llg::core::compile::OwnedSource::compilation_unit(
+                "/virtual/leaf.sv",
+                "module leaf; endmodule\n",
+            ),
+            llg::core::compile::OwnedSource::compilation_unit("/virtual/top.sv", &top),
+        ],
+        limits,
+        ..CompileOpts::default()
+    });
+
+    assert_eq!(analysis.outcome, AnalysisOutcome::Compile);
+    assert!(
+        !analysis
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.severity == Severity::Fatal),
+        "diagnostics: {:?}",
+        analysis.diagnostics
+    );
+    assert!(
+        analysis.diagnostics.iter().any(|diagnostic| diagnostic
+            .message
+            .contains("serving bounded declaration-level navigation")),
+        "diagnostics: {:?}",
+        analysis.diagnostics
+    );
+    assert!(workspace_symbols(&analysis, "leaf")
+        .iter()
+        .any(|symbol| symbol.name == "leaf"));
+    assert!(!semantic_tokens_for(&analysis, "/virtual/top.sv")
+        .data
+        .is_empty());
+    let definition = definition_at(&analysis, "/virtual/top.sv", 0, 12)
+        .expect("definition of the leaf module reference");
+    assert_eq!(definition.uri.path(), "/virtual/leaf.sv");
+
+    let explorer = crate::module_explorer::snapshot_analysis("workspace", &analysis, |path| {
+        Some(path.to_owned())
+    });
+    assert!(
+        explorer.modules.iter().any(|module| module.name == "leaf"),
+        "snapshot: {explorer:#?}"
+    );
+    assert!(!explorer.roots.is_empty(), "snapshot: {explorer:#?}");
+}
+
 /// Restores the process CWD and removes the temp dir even when the body
 /// panics, so a failing test cannot strand other tests in a deleted CWD.
 struct TempDirGuard {
