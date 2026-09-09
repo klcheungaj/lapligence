@@ -126,6 +126,79 @@ fn slang_module_explorer_keeps_repeated_nested_instances_and_source_roots() {
 }
 
 #[test]
+fn resource_limit_failures_log_errors_with_actionable_guidance() {
+    const CHILD: &str = "LLG_RESOURCE_LIMIT_LOG_CHILD";
+    if std::env::var_os(CHILD).is_some() {
+        {
+            let _guards = analysis_guards();
+            for source_limit in [false, true] {
+                let limits = if source_limit {
+                    llg::ffi::slang::Limits {
+                        max_source_bytes: 1,
+                        ..Default::default()
+                    }
+                } else {
+                    llg::ffi::slang::Limits {
+                        max_output_bytes: 1,
+                        ..Default::default()
+                    }
+                };
+                let analysis = analyze(&CompileOpts {
+                    library_units: true,
+                    sources: vec![compile::OwnedSource::compilation_unit(
+                        "/virtual/top.sv",
+                        "module top; endmodule",
+                    )],
+                    limits,
+                    ..Default::default()
+                });
+                assert!(!analysis.has_feature_data());
+                assert!(
+                    analysis.diagnostics.iter().any(|diagnostic| {
+                        diagnostic
+                            .message
+                            .contains(crate::config::FRONTEND_LIMIT_GUIDANCE)
+                    }),
+                    "{:?}",
+                    analysis.diagnostics
+                );
+            }
+        }
+        export_limit_recovers_declaration_level_workspace_features();
+        return;
+    }
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "features::tests::resource_limit_failures_log_errors_with_actionable_guidance",
+            "--nocapture",
+        ])
+        .env(CHILD, "1")
+        .env("LLG_LOG", "error")
+        .env_remove("LLG_LOG_FILE")
+        .output()
+        .expect("run isolated limit logging regression");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "{stderr}\n{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    assert!(
+        stderr.matches("[ERROR] event=slang.resource_limit").count() >= 3,
+        "{stderr}"
+    );
+    for expected in [
+        "max_source_bytes=1",
+        "max_output_bytes=1",
+        "max_output_bytes=262144",
+        crate::config::FRONTEND_LIMIT_GUIDANCE,
+    ] {
+        assert!(stderr.contains(expected), "missing {expected}: {stderr}");
+    }
+}
+
+#[test]
 fn export_limit_recovers_declaration_level_workspace_features() {
     let _guards = analysis_guards();
     let mut top = String::from("module top; leaf u_leaf(); integer value; initial begin\n");

@@ -54,6 +54,8 @@ references fail construction.
   layers should use the direct validated database builder.
 - Unsupported executable constructs must reach a typed rejection path; never
   silently lower them to an empty statement or a fabricated default.
+- Source-byte budget rejections use `StartupErrorKind::LimitExceeded`, including
+  Rust preflight and isolated parsing, so callers can report resource guidance.
 
 ## Interactions
 

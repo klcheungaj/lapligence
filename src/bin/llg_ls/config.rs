@@ -80,6 +80,12 @@ pub const DEFAULT_MAX_TOTAL_INPUT_BYTES: u64 = 8 * 1024 * 1024;
 /// Lexical-token and exported-byte limits remain independently enforced.
 pub const MAX_FULL_SEMANTIC_NODES: u64 = 100_000;
 
+/// Actionable guidance for configurable LSP source admission limits.
+pub const SOURCE_SIZE_LIMIT_GUIDANCE: &str = "Exclude unneeded directories/files using [sources].exclude in llg.toml, or increase [analysis].max_file_bytes / max_total_input_bytes if sufficient memory is available. If a process-memory ceiling is configured, also allow sufficient LLG_MEMORY_LIMIT_MB; that setting alone does not raise source-size limits.";
+
+/// Native frontend caps are separate from the process-wide memory ceiling.
+pub const FRONTEND_LIMIT_GUIDANCE: &str = "Exclude unneeded directories/files using [sources].exclude in llg.toml, or increase the server's frontend capture limits if sufficient memory is available (these native limits are not llg.toml settings). Increasing LLG_MEMORY_LIMIT_MB alone does not raise native source/export limits.";
+
 /// Fixed maximum size of a configuration file read during reload.
 ///
 /// Configuration is control-plane input, but it still arrives from a path

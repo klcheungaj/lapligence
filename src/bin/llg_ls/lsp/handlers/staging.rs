@@ -20,7 +20,7 @@ pub(super) struct InputSizeLimit {
 
 impl InputSizeLimit {
     pub(super) fn message(&self) -> String {
-        match self.kind {
+        let message = match self.kind {
             InputSizeLimitKind::PerFile => format!(
                 "input-size-limit: {} measured {} bytes, exceeding max_file_bytes={} (per-file budget)",
                 self.path.display(),
@@ -40,6 +40,23 @@ impl InputSizeLimit {
                 self.measured_bytes,
                 self.configured_limit
             ),
+        };
+        if self.kind == InputSizeLimitKind::Unreadable {
+            message
+        } else {
+            format!("{message}. {}", config::SOURCE_SIZE_LIMIT_GUIDANCE)
+        }
+    }
+
+    pub(super) fn log_rejection(&self) {
+        if self.kind != InputSizeLimitKind::Unreadable {
+            crate::llg_error!(
+                "event=analysis.input_limit outcome=rejected kind={:?} path={} measured_bytes={} total_bytes={:?} configured_limit={} advice={}",
+                self.kind,
+                crate::logging::bounded_field(&self.path.to_string_lossy()),
+                self.measured_bytes, self.total_bytes, self.configured_limit,
+                config::SOURCE_SIZE_LIMIT_GUIDANCE
+            );
         }
     }
 }

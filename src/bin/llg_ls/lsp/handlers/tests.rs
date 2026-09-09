@@ -325,6 +325,27 @@ fn cached_semantic_tokens_isolates_same_basename_files_and_preserves_closed_fall
 }
 
 #[test]
+fn source_limit_guidance_distinguishes_sizes_from_unreadable_files() {
+    for kind in [
+        InputSizeLimitKind::PerFile,
+        InputSizeLimitKind::Total,
+        InputSizeLimitKind::Unreadable,
+    ] {
+        let limit = InputSizeLimit {
+            path: PathBuf::from("/virtual/top.sv"),
+            measured_bytes: 5,
+            configured_limit: 4,
+            total_bytes: Some(5),
+            kind: kind.clone(),
+        };
+        assert_eq!(
+            limit.message().contains(config::SOURCE_SIZE_LIMIT_GUIDANCE),
+            kind != InputSizeLimitKind::Unreadable
+        );
+    }
+}
+
+#[test]
 fn oversized_open_token_buffer_is_rejected_before_flight_admission() {
     let path = PathBuf::from("/tmp/llg-open-too-large.sv");
     let open_document = (path.clone(), Arc::new("12345".to_owned()), Vec::new());

@@ -182,7 +182,22 @@ pub(crate) fn semantic_tokens_for_open_document_with_parent(
         Some(source) => compile::parse_source(file, source, defines),
         None => compile::parse_only(file, defines),
     }
-    .map_err(|error| OpenDocumentTokensError::new(error.to_string()))?;
+    .map_err(|error| {
+        if error.kind() == compile::StartupErrorKind::LimitExceeded {
+            crate::llg_error!(
+                "event=semantic_tokens.resource_limit file={} error={} advice={}",
+                crate::logging::bounded_field(file),
+                crate::logging::bounded_field(&error.to_string()),
+                crate::config::FRONTEND_LIMIT_GUIDANCE
+            );
+            OpenDocumentTokensError::new(format!(
+                "{error}. {}",
+                crate::config::FRONTEND_LIMIT_GUIDANCE
+            ))
+        } else {
+            OpenDocumentTokensError::new(error.to_string())
+        }
+    })?;
     let blocking_diagnostics = parsed
         .diagnostics
         .iter()

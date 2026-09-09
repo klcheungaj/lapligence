@@ -127,6 +127,14 @@ per-file bound before storing or scheduling the buffer, using the built-in
 default until a root-specific config is available. A rejected buffer is not
 used by a later compile.
 
+Source-size rejections and native frontend capture-limit failures emit `ERROR`
+logs, including when a compact navigation snapshot can be recovered. The log
+and diagnostic advise excluding generated or unnecessary paths with
+`[sources].exclude`. For source-size limits, you can instead raise the relevant
+`[analysis]` budget if memory permits. `LLG_MEMORY_LIMIT_MB` controls a separate
+process-memory ceiling: raising it alone does not raise source/export caps.
+Native frontend caps are currently server-side limits, not `llg.toml` settings.
+
 Literal includes are resolved beside the including file first, then in the
 configured source directories followed by `compile.include_dirs`, in the same
 order used for admission. A readable closed input is bounded-read once during

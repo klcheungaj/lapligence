@@ -558,11 +558,12 @@ impl Backend {
             .collect();
         for (uri, measured_bytes, max_file_bytes) in rejected {
             if state.documents.remove(&uri).is_some() {
-                crate::llg_debug!(
-                    "event=document.admission outcome=rejected reason=too-large uri={} bytes={} max_file_bytes={}",
+                crate::llg_error!(
+                    "event=document.admission outcome=rejected reason=too-large uri={} bytes={} max_file_bytes={} advice={}",
                     crate::logging::bounded_field(uri.as_str()),
                     measured_bytes,
-                    max_file_bytes
+                    max_file_bytes,
+                    config::SOURCE_SIZE_LIMIT_GUIDANCE
                 );
             }
         }

@@ -36,6 +36,11 @@ files and exact UTF-8 byte lengths for open buffers. Reject unreadable,
 unmeasurable, invalid UTF-8, changed-during-admission, and over-budget inputs
 before native compilation. Never fall back to a live path after admission.
 
+Size rejections log an error with bounded path/size fields and guidance for
+`[sources].exclude` or the configurable `[analysis]` budgets. Publish the same
+guidance with admission diagnostics. Do not suggest that the independent
+`LLG_MEMORY_LIMIT_MB` process ceiling raises source or native export caps.
+
 Pass the complete admitted `InputSnapshots` set to
 `config::compile_opts_sources`: root files are compilation units and resolved
 includes are include-only sources. Slang must receive no permission to open

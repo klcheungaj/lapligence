@@ -938,6 +938,16 @@ pub(super) fn analyze_inner_slang(
         Ok(out) => out,
         Err(error) => {
             crate::llg_debug!("event=slang.compile.end outcome=error root={} generation={} elapsed_us={} error={}", root, generation, started.elapsed().as_micros(), bounded_log_text(&error.to_string(), 512));
+            if error.kind() == compile::StartupErrorKind::LimitExceeded {
+                crate::llg_error!(
+                    "event=slang.resource_limit root={} generation={} library_units={} max_source_bytes={} max_output_bytes={} max_semantic_nodes={} error={} advice={}",
+                    crate::logging::bounded_field(root), generation, opts.library_units,
+                    opts.limits.max_source_bytes, opts.limits.max_output_bytes,
+                    opts.limits.max_semantic_nodes,
+                    bounded_log_text(&error.to_string(), 512),
+                    crate::config::FRONTEND_LIMIT_GUIDANCE
+                );
+            }
             if error.kind() == llg::core::compile::StartupErrorKind::LimitExceeded
                 && !opts.library_units
                 && opts.files.is_empty()
@@ -952,7 +962,12 @@ pub(super) fn analyze_inner_slang(
                     error.to_string(),
                 );
             }
-            return Analysis::fatal_preflight(error.to_string());
+            let message = if error.kind() == compile::StartupErrorKind::LimitExceeded {
+                format!("{error}. {}", crate::config::FRONTEND_LIMIT_GUIDANCE)
+            } else {
+                error.to_string()
+            };
+            return Analysis::fatal_preflight(message);
         }
     };
     crate::llg_debug!("event=slang.compile.end outcome={} root={} generation={} diagnostics={} semantic_nodes={} lexical_tokens={} elapsed_us={}", if out.ok() { "ok" } else { "error" }, root, generation, out.diagnostics.len(), out.snapshot.semantic_nodes.len(), out.snapshot.lexical_tokens.len(), started.elapsed().as_micros());
@@ -1099,7 +1114,10 @@ fn analyze_library_units_after_limit(
             root,
             generation
         );
-        return Analysis::fatal_preflight(failure);
+        return Analysis::fatal_preflight(format!(
+            "{failure}. {}",
+            crate::config::FRONTEND_LIMIT_GUIDANCE
+        ));
     }
     analysis.outcome = AnalysisOutcome::Compile;
     analysis.diagnostics.push(Diag {
@@ -1108,7 +1126,8 @@ fn analyze_library_units_after_limit(
         line: 0,
         col: 0,
         message: format!(
-            "full workspace elaboration exceeded a frontend limit; serving bounded declaration-level navigation ({failure})"
+            "full workspace elaboration exceeded a frontend limit; serving bounded declaration-level navigation ({failure}). {}",
+            crate::config::FRONTEND_LIMIT_GUIDANCE
         ),
     });
     analysis.lint.clear();

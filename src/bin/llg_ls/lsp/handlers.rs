@@ -754,6 +754,7 @@ impl LanguageServer for Backend {
                 notification.complete(if initialized { "scheduled" } else { "deferred" }, 1);
             }
             Err(limit) => {
+                limit.log_rejection();
                 crate::llg_debug!(
                     "event=document.admission outcome=rejected reason=too-large uri={} bytes={} max_file_bytes={}",
                     crate::logging::bounded_field(uri.as_str()),
@@ -789,6 +790,7 @@ impl LanguageServer for Backend {
         let changed = match admission {
             Ok(changed) => changed,
             Err(limit) => {
+                limit.log_rejection();
                 crate::llg_debug!(
                     "event=document.admission outcome=rejected reason=too-large uri={} bytes={} max_file_bytes={}",
                     crate::logging::bounded_field(uri.as_str()),
@@ -937,6 +939,7 @@ impl LanguageServer for Backend {
                     request.complete("stale", tokens.data.len());
                     return Ok(Some(SemanticTokensResult::Tokens(tokens)));
                 }
+                limit.log_rejection();
                 crate::llg_debug!("semantic tokens rejected: {}", limit.message());
                 let tokens = cached_semantic_tokens(
                     fallback_analysis.as_deref(),
@@ -1706,6 +1709,7 @@ impl LanguageServer for Backend {
                     match read_closed_input_snapshot(&path, max_file_bytes) {
                         Ok(text) => text,
                         Err(error) => {
+                            error.log_rejection();
                             crate::llg_debug!(
                                 "event=completion.source outcome=unavailable path={} message={}",
                                 error.path.display(),
@@ -1716,6 +1720,7 @@ impl LanguageServer for Backend {
                     }
                 }
                 CompletionSource::TooLarge(limit) => {
+                    limit.log_rejection();
                     crate::llg_debug!(
                         "event=completion.source outcome=too-large path={} message={}",
                         limit.path.display(),
@@ -1958,6 +1963,7 @@ impl Backend {
         let text = match source {
             Source::Open(text) => text,
             Source::TooLarge(limit) => {
+                limit.log_rejection();
                 crate::llg_debug!(
                     "event=llg.inactive_ranges.source outcome=too-large path={} message={}",
                     limit.path.display(),
@@ -1974,6 +1980,7 @@ impl Backend {
                 {
                     Ok(Ok(text)) => text,
                     Ok(Err(limit)) => {
+                        limit.log_rejection();
                         crate::llg_debug!(
                             "event=llg.inactive_ranges.source outcome=unavailable path={} message={}",
                             limit.path.display(),

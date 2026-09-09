@@ -243,7 +243,7 @@ pub fn compile(opts: &CompileOpts) -> Result<CompileOut, StartupError> {
         let name = resolved.to_string_lossy().into_owned();
         let content_limit = remaining.checked_sub(name.len() as u64).ok_or_else(|| {
             StartupError::new(
-                StartupErrorKind::InvalidArgument,
+                StartupErrorKind::LimitExceeded,
                 format!("source path {name} exceeds the configured Slang byte limit"),
             )
         })?;
@@ -407,7 +407,7 @@ fn preflight_sources(sources: &[OwnedSource], limits: Limits) -> Result<(), Star
         })?;
     if bytes > limits.max_source_bytes {
         return Err(StartupError::new(
-            StartupErrorKind::InvalidArgument,
+            StartupErrorKind::LimitExceeded,
             "source bytes exceed the configured Slang limit",
         ));
     }
@@ -432,7 +432,7 @@ fn read_bounded(path: &str, limit: u64) -> Result<String, StartupError> {
         })?;
     if bytes.len() as u64 > limit {
         return Err(StartupError::new(
-            StartupErrorKind::InvalidArgument,
+            StartupErrorKind::LimitExceeded,
             format!("source {path} exceeds the configured Slang byte limit"),
         ));
     }
@@ -582,7 +582,7 @@ pub fn parse_only(file: &str, defines: &[String]) -> Result<ParseOnlyOut, Startu
         .checked_sub(file.len() as u64)
         .ok_or_else(|| {
             StartupError::new(
-                StartupErrorKind::InvalidArgument,
+                StartupErrorKind::LimitExceeded,
                 "source path exceeds the configured Slang byte limit",
             )
         })?;
@@ -616,13 +616,16 @@ pub fn parse_source(
                 "define byte count overflow",
             )
         })?;
-    if source_bytes > limits.max_source_bytes
-        || defines.len() > 4_096
-        || define_bytes > 4 * 1024 * 1024
-    {
+    if source_bytes > limits.max_source_bytes {
+        return Err(StartupError::new(
+            StartupErrorKind::LimitExceeded,
+            "isolated source bytes exceed the configured Slang limit",
+        ));
+    }
+    if defines.len() > 4_096 || define_bytes > 4 * 1024 * 1024 {
         return Err(StartupError::new(
             StartupErrorKind::InvalidArgument,
-            "isolated source or defines exceed the Slang ABI limit",
+            "isolated defines exceed the Slang ABI limit",
         ));
     }
     let sources = vec![OwnedSource::compilation_unit(name, text)];

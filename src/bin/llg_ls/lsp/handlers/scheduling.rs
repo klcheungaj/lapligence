@@ -795,6 +795,7 @@ impl Backend {
                 budget.snapshots
             }
             Err(failure) => {
+                failure.limit.log_rejection();
                 let message = failure.limit.message();
                 let diagnostic_file = failure.limit.path.to_string_lossy().into_owned();
                 let measured_bytes = failure.limit.measured_bytes;

@@ -41,6 +41,11 @@ instance-specific elaboration. Do not import this intentionally partial graph
 into the execution database or report its missing expression data as a DB
 failure. It must never raise the native limit or read additional files.
 
+Log native source/export/capture limit failures at error level before recovery,
+including configured limits and exclusion guidance. Retain that guidance in
+fatal or reduced-mode diagnostics even when recovery succeeds. Native caps are
+not `llg.toml` settings and do not increase with `LLG_MEMORY_LIMIT_MB`.
+
 ## Requests
 
 Request projections are pure reads of committed `Analysis`. Open-document
