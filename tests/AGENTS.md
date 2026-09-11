@@ -1,8 +1,11 @@
 # Repository validation
 
 Prefer Rust unit and integration tests, including Rust-side FFI probes.
-Tests must be deterministic. Prefer admitted in-memory Slang sources; tests
-which change the process CWD must serialize that change, use a fresh temporary
+Tests must be deterministic. End-to-end simulation designs belong in checked-in
+`.v` or `.sv` fixtures passed to the `llg` executable; do not embed or generate
+those designs in Rust test source. Rust owns orchestration and independent
+expected-result oracles. In-memory sources remain suitable for focused library,
+frontend and IR tests. Tests which change the process CWD must serialize that change, use a fresh temporary
 directory, and restore it through an unwind-safe guard. Use `compile_checked`
 for successful execution/elaboration. Raw `compile` is for tests inspecting
 partial snapshots and diagnostics; assert that the checked contract withholds
@@ -73,7 +76,9 @@ coverage for the same rule IDs.
   timing and event edges, type ranges and aggregate members, and paired module
   port declarations and actuals.
 - `support_harness.rs` verifies that simulator test CWD restoration and mutex
-  recovery remain sound when a test action unwinds.
+  recovery remain sound when a test action unwinds, and that command timeouts
+  stop descendants holding output pipes. Unix commands use a separate process
+  group; timeout cleanup uses `kill` there and `taskkill /T` on Windows.
 - `sim_data_types.rs`, `sim_data_types_extended.rs`, and
   `sim_data_type_edges.rs` cover datatype semantics and boundaries; detailed
   contracts are in [data_types/AGENTS.md](fixtures/sim/data_types/AGENTS.md),
@@ -85,6 +90,22 @@ coverage for the same rule IDs.
 - `sim_data_types_completion.rs` freezes eight positive completion contracts
   plus one explicit unsupported reduction case; its contract is in
   [data_types_completion/AGENTS.md](fixtures/sim/data_types_completion/AGENTS.md).
+- `sim_type_conformance.rs` checks independent data/data and data/net
+  operation matrices, all three-driver resolution combinations, conversion and
+  storage-boundary checks, and 65,536/1,048,575-bit net/state-conversion probes.
+  It requires CMake and compares exact specification-derived output in both
+  optimizer modes through `llg` / `llg --no-opt`, rejecting unexpected lowering
+  warnings. Its HDL lives in `fixtures/sim/type_conformance/`. The human coverage map and
+  limits are in [readme.md](readme.md).
+- `sim_partial_features.rs` covers expression/default/ref ports, trigger-time
+  event qualification, expression/LSB edges, constant waits, delayed and selected
+  NBAs, runtime procedural delays, real blocking captures, declared packed
+  ranges and array indexed part-selects, inertial driver scheduling and settled
+  strobe output, runtime real math and fractional time. HDL lives
+  in `fixtures/sim/partial_features/`; the shared `support/sim_cli.rs` harness
+  passes each file to `llg` in both optimizer modes, isolates child working
+  directories, compares specification-derived output and asserts diagnostics.
+  Both suites require CMake and run in the sanitizer job.
 - `elab_resolve.rs` exercises resolved Slang parameter values; `config_effect.rs` observes
   configured defines and top-level parameter overrides driving
   generate branches through the owned `DesignModel`.
@@ -134,8 +155,10 @@ coverage for the same rule IDs.
   driver release and unchanged resolved-value notifications.
 - `model_tests.rs` covers the explorer-facing model projection: formal
   ports are not duplicated as backing signals, concrete net kinds are kept,
-  and packed ranges remain owned per elaborated instance without absorbing
-  unpacked dimensions.
+  and packed ranges remain owned by declaration identity without absorbing
+  unpacked dimensions or merging same-named locals in unnamed blocks.
+  Continuous-assignment and primitive rise/fall/turn-off delays retain every
+  expression in order, even when simulation rejects the multi-delay form.
 - `sim_memory_guard.rs` exercises the shared `memory_limit` safeguard
   end-to-end via `LLG_MEMORY_LIMIT_MB`.
 - `sim_waveform.rs` covers HDL→VCD/FST dump controls, X/Z and real values,
@@ -145,8 +168,8 @@ coverage for the same rule IDs.
   `sim_wildcard_eq.rs`, and `sim_loops.rs` compare optimized/unoptimized
   execution for packed strings, bit queries, numeric conversions, wildcard
   equality/case-inside, and lexical loop declarations/fixed-array foreach.
-  `sim_delay.rs` covers typed constant delay expressions and explicit dynamic,
-  negative and unsupported-control boundaries.
+  `sim_delay.rs` covers typed constant/runtime delay expressions, negative packed
+  time conversion, overflow and unsupported-control boundaries.
   `sim_time_literals.rs` checks typed unit-suffixed, scientific and real
   parameter delays, lexical shadowing, and rounding of completed delays to the
   local precision before global scheduling, with optimizer parity.
@@ -207,8 +230,9 @@ other repositories. Runner working-disk usage is separate from these quotas.
 
 The `generated-runtime-sanitizers` job has a 180-minute limit and
 runs `runtime_values`, `runtime_boundaries`, `sim_counter`, `sim_data_types`,
-`sim_data_types_next`, `sim_data_types_completion`, `sim_function`, and
-`sim_loops` with GCC ASan/UBSan.
+`sim_data_types_next`, `sim_data_types_completion`, `sim_type_conformance`,
+`sim_partial_features`, `sim_net_resolution`, `sim_net_defaults`, `sim_function`, and `sim_loops`
+with GCC ASan/UBSan.
 This checks
 generated C/runtime memory safety, not LSP admission. The 15-minute
 `dependency-audit` job runs `cargo audit` on those triggers and Mondays at
@@ -229,3 +253,10 @@ Packages use `lapligence-<version>-<os>-<arch>.<ext>`, removing the tag's leadin
 `v`, with `linux`/`windows`/`macos`, `x64`/`arm64`, and `tar.gz` for Unix or
 `zip` for Windows. Each contains both executables, `readme.md`, and `LICENSE`.
 Keep platform claims aligned with local `persistence/platforms.md` evidence.
+
+## Documentation ownership
+
+- Testing methodology, limitations and commands belong in concise, hierarchical
+  bullets in `tests/readme.md`.
+- Simulator feature-status updates belong only in `docs/sim_features.md`.
+- Session findings, plans and run evidence belong in ignored `persistence/`.

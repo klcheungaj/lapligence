@@ -11,9 +11,13 @@ contracts. `lower_expr`/`lower_stmt`/`lower_lhs` produce typed IR only.
   LHS base signal must NEVER be in the sensitivity list (self-wake bug).
 - Event or-lists (`@(posedge a or negedge b)`) must be ONE atomic
   `llg_wait_any_events` call, never sequential waits.
-- Plain port connections become link processes (input: child←parent; output:
-  parent←child) — no aliasing, so edge detection stays per-signal. Inout
-  ports emit no link — the net group IS the connection. Slang binds interface
+- Input/output port connections become link processes, with input expressions
+  evaluated in the parent's context and output selections retaining untouched
+  bits. Constants and omitted-port defaults evaluate once; an explicitly open
+  input does not use its default. Matching whole packed-variable `ref` ports
+  share canonical storage, including nested references; they emit no copy link.
+  Selected/object/array ref actuals remain unsupported. Inout ports emit no
+  link — the net group IS the connection. Slang binds interface
   and modport member references directly to storage on the actual interface
   instance, where interface body processes also emit.
 - `wait (cond) stmt` lowers to `for(;;){ if (sv4_to_bool(cond)) break;
@@ -30,11 +34,13 @@ contracts. `lower_expr`/`lower_stmt`/`lower_lhs` produce typed IR only.
 - `for` initializer, condition, increment and body relationships come from the
   typed owned database. Do not recover them from syntax or frontend numeric
   object codes.
-- Slang delay controls retain a typed expression `NodeId` for statement,
-  intra-assignment, continuous-assignment, and primitive delays. Evaluate that
-  identity through owned constants and resolved parameters, round a complete
-  real-valued delay once at the owning module precision, and reject unsupported
-  dynamic forms rather than recovering or guessing source text.
+- Statement and intra-assignment delays retain a typed expression `NodeId`;
+  continuous-assignment and primitive delays retain the ordered `DriverDelay`
+  form. Evaluate these identities through owned constants or typed runtime IR,
+  and round a complete real-valued delay once at the owning module precision.
+  Reject separate transition delays explicitly until their scheduling is
+  implemented; never use only the first expression. Unsupported forms must fail
+  without recovering or guessing source text.
 - Generated C uses GNU statement-expressions `({ ... })` for select-LHS
   write-back (gcc/clang OK, not strict ISO C).
 - Packed streaming expressions retain Slang's resolved direction, slice size,
@@ -84,7 +90,7 @@ writes, force/release, gate and function/task-output drivers, and explicit
 drive strengths. This does not change the older per-member wire/inout model.
 See `tests/sim_net_resolution.rs` and standalone `tests/runtime_values.rs`.
 
-Standalone scalar and packed `wire/tri` declarations use the same per-site
+Standalone scalar and packed `wire/tri/uwire` declarations use the same per-site
 driver identity, including ordinary whole-net and selected continuous
 assignments with constant indices and bounds. A selected site rebuilds its
 complete contribution from Z on each evaluation before setting its
@@ -102,7 +108,8 @@ unsupported. Port/interface nets retain the link/collapsed-inout path. A
 single gate-only net and a forced net with at most one continuous driver retain
 their established direct-write path; mixed gate/continuous, multiple gate, or
 forced multidriver nets are rejected until those writers have independent
-contribution slots.
+contribution slots. Slang rejects overlapping `uwire` drivers; disjoint
+constant selected drivers remain legal and preserve Z in undriven bits.
 
 The same bounded standalone-driver path supports `tri0/tri1` and
 `supply0/supply1`. Pull defaults replace only all-Z bits after ordinary wire
@@ -110,7 +117,8 @@ resolution; X and conflicting active drivers remain X. Supply defaults dominate
 ordinary implicit-strength drivers. Resolved cells start at their default before
 processes run, while individual contribution slots start at Z. Explicit strengths
 remain rejected for wired nets, pull/supply defaults, ports, and gates;
-`trireg` charge storage is not implemented.
+`trireg` charge storage is not implemented: every elaborated declaration,
+including undriven nets and arrays, is rejected before collecting storage.
 See `tests/sim_net_defaults.rs`.
 
 
@@ -120,8 +128,12 @@ See `tests/sim_net_defaults.rs`.
   use the same event-driven `RunOnce`/`SensLoop` path as explicit continuous
   assignments. Reject dynamic true-net drivers reading unpacked arrays and
   unsupported resolved-net classes when sensitivity/resolution is unrepresentable.
+- Ungrouped ordinary nets (including ports, interface members and net-array
+  elements) start at Z. Resolved-group cells retain their resolution defaults;
+  pending delayed continuous and gate-driver contributions retain their
+  explicit X initialization, including collapsed inout gate drivers.
 - Variable initializers run in `main()` before processes, so a t=0 process
-  write wins. Order: unpacked-array fills, scalar `reg` fills (`reg y = 0;`),
+  write wins. Order: ordinary-net defaults, unpacked-array fills, scalar `reg` fills (`reg y = 0;`),
   then scalar variable fills (`logic l = 1'b0;`, `int x = 5;`,
   `logic [7:0] v = 8'ha5;` through `Db::vars_init`).
   Fold RHS constants using collected parameters (`int y = P + 1;`); reject
@@ -185,8 +197,16 @@ See `tests/sim_net_defaults.rs`.
   retaining first-match/default ordering. Evaluate the selector exactly once
   into a local temporary before testing members (`tests/sim_wildcard_eq.rs`).
 - `wait (expr) stmt` re-evaluates on changes to read signals, then runs its body
-  once when true. Constant true executes immediately; constant false spins
-  until the runtime zero-delay guard trips. See the lowering loop above.
+  once when true. Constant true executes immediately; a false/unknown constant
+  remains suspended on an empty dependency set, allowing time to advance.
+- Event expressions compare successive expression values, rather than waking
+  for every operand change. Packed edges observe the LSB; `iff` is evaluated
+  at the trigger, before resuming the waiter. Qualified named events and mixed
+  event lists retain one atomic registration. Evaluator helpers use owned IR;
+  array dependencies, function calls, and callbacks capturing procedural/
+  subroutine locals or formals remain explicit rejections. Function callbacks
+  need reentrant effect handling before they may mutate scheduler-observed
+  storage while waiter lists are being traversed. See `tests/sim_partial_features.rs`.
 - Whole-signal `force sig = expr;` ignores procedural blocking/NBA writes while
   forced. `release sig;` restores the pre-force value without re-evaluating
   drivers changed during force (current approximation). Re-force changes the
@@ -204,11 +224,18 @@ resolved instance, including collapsed inout-net drivers. Slang's typed select
 expressions preserve hierarchical bit, part, and indexed-part writes: bit and
 indexed-part base expressions can be runtime integral values, while part-select
 bounds and indexed-part widths must resolve statically. Reject an absent bound
-or selector rather than recovering one from a name or source line.
+or selector rather than recovering one from a name or source line. Single
+packed dimensions use owned declared bounds to translate ascending/nonzero
+ranges to storage offsets, including fixed-array element bit/part selections.
+Widen index arithmetic before translation, preserving signedness and X/Z;
+invalid bit indices do not write. Partially out-of-range part-select reads
+retain in-range bits and fill only missing bits with X. File-based regressions
+live in `tests/fixtures/sim/partial_features/*select_ranges.sv`.
 
-`$monitor`/`$monitoron`/`$monitoroff` detect changes after each NBA commit;
+`$monitor`/`$monitoron`/`$monitoroff` check changes after active/inactive/NBA settling;
 only the most recent monitor is active. `$strobe` prints once with post-NBA
-values for its timestep. `$write` uses display formatting without a newline.
+values for its timestep, including combinational updates triggered by NBAs.
+`$write` uses display formatting without a newline.
 `%d` prints two's-complement negatives when `is_signed` is set; negative
 unsized decimal literals such as `-3` emit signed per the LRM.
 
@@ -289,12 +316,26 @@ the inverse bitcasts require exactly 64/32 bits, with X/Z positions treated
 as zero. Typed parameters and constant declaration initializers use the same conversion rules.
 See `tests/sim_real_conversions.rs`.
 
+All 21 real mathematical functions from IEEE 1800-2009 table 20-4 lower to
+validated typed IR and the specified C math functions. Each argument evaluates
+once with numeric real conversion; domain/non-finite behavior follows C libm.
+`$realtime` returns fractional module-unit time without integral rounding.
+These procedural real expressions retain the real-context restrictions below.
+See `tests/sim_partial_features/system_functions.rs`.
+
 Reject real ports/links, arrays, function/task types, continuous/comb processes,
 real event controls/wait conditions, monitor/strobe args, force/release/select/
 case/repeat contexts, and bitwise/reduction/shift/concat/case-equality operations
 before C compilation. `tests/sim_real.rs` pins support and rejection messages.
 
 ## Timescale
+
+- Continuous/gate delay lowering uses `IrStmt::InertialAssign` for whole packed
+  driver storage. Its evaluation never suspends: the runtime captures the
+  converted value and maintains one cancelable active-region propagation event
+  per site. Delayed driver initialization is emitted after ordinary storage
+  defaults, including output ports and collapsed net slots. Keep driver values
+  separate from the net's resolved value when comparing pending updates.
 
 - Delays are timescale-aware: codegen reads the resolved time unit and
   precision from the nearest owning Slang module instance and scales every
@@ -316,7 +357,11 @@ before C compilation. `tests/sim_real.rs` pins support and rejection messages.
   then converts to nonnegative 64-bit scheduler ticks. Ordinary time-literal
   value expressions preserve Slang v11's unrounded, module-scaled `real` value;
   parameter and declaration initializers use the same typed constant path.
-  Dynamic expressions and unsupported constant system functions fail cleanly.
+  Runtime procedural expressions remain typed `IrDelay` operands with the
+  owning module's unit/precision scaling. Evaluate them once when encountered;
+  X/Z means zero delay, and negative packed values convert to unsigned 64-bit
+  time before checked scaling. Runtime real values round once to local
+  precision; nonfinite/negative real values and tick overflow fail explicitly.
   Sub-picosecond precision still clamps up to 1 ps in the runtime representation.
   See `tests/sim_delay.rs`, `tests/sim_time_literals.rs`, and `tests/sim_time_values.rs`.
 
@@ -324,13 +369,16 @@ before C compilation. `tests/sim_real.rs` pins support and rejection messages.
 
 - Storage: every array becomes a flat C array `sv4_t G_<path>_<name>[N]`
   (`N` = product of the per-dimension sizes `|left - right| + 1`); elements
-  start all-X for four-state elements or zero for two-state elements (a loop
+  start all-X for four-state variable elements, zero for two-state elements,
+  or Z for ordinary net elements (a loop
   in `main()` fills them, since a function call is not a
   valid static initializer).  Declaration initializers (`= '{…}`) — captured
   by `core::db` on the declaration initializer relationship — are applied in `main()` before any
   process runs; each pattern operand is a constant, in linear-index order.
 - Indexed access: `mem[i]` (1-D), `a[i][j]` (N-D) and element-level selects
-  `mem[i][3:0]` / `mem[i][2]` are supported on both the read and write paths.
+  `mem[i][3:0]` / `mem[i][2]` / `mem[i][base +: width]` lower on both read
+  and write paths. Indexed part-selects use a constant width and normalize the
+  runtime base/direction against the declared packed range.
   The linear index is row-major with the **leftmost dimension slowest**
   (matching Verilog); descending ranges (`[255:0]`) map `left` to offset 0.
 - Out-of-range semantics (matching Verilog): an index outside the declared
@@ -341,13 +389,15 @@ before C compilation. `tests/sim_real.rs` pins support and rejection messages.
   computes the flat element address.
 - Rejected with a clear message: dimension bounds that are not resolved
   constants, array slices
-  (`a[i]` on a 2-D array — partial indexing), indexed part-selects on an
-  element (`mem[i][3+:4]`), non-constant declaration-initializer elements,
+  (`a[i]` on a 2-D array — partial indexing), non-constant declaration-initializer elements,
   and arrays wider than `LLG_MAX_WIDTH` per element.
-- Non-blocking writes to a whole element record the element address and are
-  committed in the NBA region like any other signal; a non-blocking write to
-  an element *part* does its read-modify-write at record time (the value is
-  computed from the element as seen when the assignment executes).
+- Nonblocking writes capture the element address and RHS when issued. Bit/part/indexed-part
+  writes store an update mask and merge into current storage at NBA commit,
+  preserving disjoint updates and intervening writes to other bits. The same
+  contract applies to packed selections and constant/runtime-delay NBAs. Future NBAs
+  outlive their issuing process and do not suspend it; blocking delayed
+  assignments retain the capture-then-suspend path, including real/shortreal
+  values captured in local C doubles before assignment conversion.
 - Comb-sensitivity limitation: an `always_comb`/`@*` process reading an array
   element wakes only on its index signals, not on writes to the array
   (element writes through `llg_ba`/`llg_nba` still notify waiters watching

@@ -33,3 +33,11 @@ commands and residual risks when they materially affect users. Use
 release-platform caveats; the gate includes serialized tests, generated-runtime
 sanitizers and dependency audit, not just fmt/check/clippy. Do not imply that
 untested Windows/macOS release legs establish platform support.
+
+## Simulator documentation ownership
+
+- Maintain all simulator feature-status updates only in `sim_features.md`.
+- Put testing methodology, limitations and commands in `../tests/readme.md`,
+  using concise hierarchical bullets.
+- Keep dated investigations, plans and validation evidence in ignored
+  `../persistence/`; do not publish separate transient status reports in docs.

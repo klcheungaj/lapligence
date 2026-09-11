@@ -17,7 +17,8 @@ the generated `model.c` into a standalone executable and is deliberately
     `$display`, casez/casex wildcards and `===`/`!==`.
   - Value ops — arithmetic/logic/reduction/compare/wildcard-equality/casez/casex, mux, concat,
     repeat, part/bit/indexed-part selects, resize/fill/clog2, format and
-    decimal conversion; semantics mirror `core::elab::Value` (kept in sync).
+    decimal conversion; partially out-of-range part-select reads retain valid
+    bits and fill missing positions with X. Semantics mirror `core::elab::Value` (kept in sync).
     `sv4_resolve` combines equal-strength driver values independently of the
     scheduler; `sv4_resolve_strengths` additionally applies per-driver 0/1
     endpoints for ordinary wires. An X contribution represents both endpoint
@@ -37,6 +38,10 @@ the generated `model.c` into a standalone executable and is deliberately
     scheduling contexts are rejected before generated C is compiled.
     `$rtoi` truncates rather than using assignment rounding; real/shortreal
     bitcasts use `memcpy` and require 64-bit `double`/32-bit `float` storage.
+    Delay conversion accepts explicit unit/precision tick scales: packed X/Z
+    maps to zero, negative packed values convert to unsigned 64-bit time, and
+    real values round once at local precision. Scaling overflow and nonfinite
+    or negative real delays produce fatal diagnostics before scheduling.
     See the [lowering guide](../codegen/AGENTS.md) for conversion bounds.
 - `llg_rt.h` / `llg_rt.c` — event scheduler and simulation-facing services.
   The header includes `llg_value.h` as a source-compatible facade; the C
@@ -96,9 +101,25 @@ the generated `model.c` into a standalone executable and is deliberately
 
 One coroutine runs each always/initial (including generated scopes),
 continuous assignment and port link; fork branches use `llg_fork`. Active
-coroutines are FIFO; NBA commits per-process `llg_nba` lists, re-iterating to
-quiescence before advancing time, and stops on `$finish` or deadlock.
-Per-waiter last-seen values detect posedge 0→1, 0→X, X→1 (negedge mirrored).
+coroutines are FIFO. Immediate NBA lists and the global timed NBA queue commit
+in issue order within the NBA region, re-iterating to quiescence before advancing
+time. Future NBAs own captured values and persistent destination pointers,
+remain scheduled after process completion, and can advance time without a timed
+process waiter. Masked NBA writes merge only selected bits into current storage.
+Inertial drivers own one pending active-region update per site and remain live
+after their evaluation process ends. A changed pending value cancels its event;
+an unchanged value retains its deadline; returning to the current contribution
+cancels without replacement. The sorted event queue advances time independently
+of process waiters. Static generated handles are reset by cleanup before their
+runtime-owned driver storage is freed; reinitialization releases pending events.
+Zero-delay driver updates drain in the active region. Strobe and change-driven
+monitor checks run only after active/inactive/NBA work has reached quiescence.
+The scheduler stops on `$finish` or deadlock.
+Per-waiter snapshots detect posedge 0→1, 0→X/Z, X/Z→1 (negedge mirrored), using
+only the LSB for packed vector edges. Expression waits own copied dependency
+lists and value snapshots; `iff` callbacks run at the trigger, including named
+events. Wakeup, disable and teardown free these allocations and unregister all
+named events. A zero-dependency signal wait remains suspended without polling.
 `llg_wait_any` uses snapshots; event or-lists require atomic
 `llg_wait_any_events`, never sequential waits. See the lowering guide for
 force/release and inout resolution approximations.

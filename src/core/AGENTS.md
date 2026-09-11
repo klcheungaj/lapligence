@@ -31,12 +31,20 @@ the arena; those entries are also normalized into the enclosing instance's
 child list used by downstream hierarchy consumers. Explicit statement blocks
 remain nodes.
 
+Elaborated packed-range entries are keyed by declaration `NodeId`, not display
+paths: sibling unnamed blocks can contain same-named objects with different
+ranges. Consumers must match declaration identity; names remain display data.
+
 Types, constants, packed dimensions, aggregate members, array categories,
 port bindings, definition kinds, source ranges, and time scales come from
 typed ABI fields. Unknown legal constructs remain explicit `Unsupported`
 values. Never infer semantic categories from display text or raw Slang enum
 numbers. Preserve implicit conversions because lint rules need to distinguish
 source-determined and context-determined widths.
+
+Continuous-assignment and primitive delays retain their complete ordered
+expression list in `DriverDelay`. Validate every referenced expression; never
+collapse rise/fall/turn-off lists to the first expression for a consumer.
 
 `Db` owns every admitted source buffer and exposes it through `source_text`.
 Source-dependent lowering may use that bounded text; it must not open a path

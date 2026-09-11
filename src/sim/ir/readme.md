@@ -19,3 +19,12 @@ invariants.
 into executable basic blocks. The staging process entries retain names,
 helpers, and spawn identity because functions, storage, and call references
 share their checked index tables.
+
+Variable aliases identify canonical storage explicitly. Event-evaluation helpers,
+read dependencies, delayed NBA operations and real math functions are validated
+before optimization/emission; deferred updates remain distinct from suspension.
+Procedural delays retain either constant ticks or a typed runtime expression
+with module-unit and precision scales. Validation, effect analysis, optimization
+and stack sizing traverse that expression like other statement operands.
+Inertial driver operations capture packed values for cancelable active-region
+updates; their validation requires persistent whole-driver storage.

@@ -111,9 +111,10 @@ standard width/signedness and X/Z rules.
 
 - **No `unsafe`** (all Slang access is copied through safe `core::db`).
 - **No direct frontend or FFI calls** in simulator code.
-- Multi-variant consumers should build `core::db::Db` once and call
-  `generate_from_db_with_opts`; do not rebuild the same owned Slang snapshot
-  once per optimizer configuration.
+- Library consumers comparing optimizer variants should build `core::db::Db`
+  once and call `generate_from_db_with_opts`. End-to-end tests instead pass
+  checked-in HDL fixtures to `llg` in both CLI modes, covering independent
+  frontend-to-executable runs as required by the test guide.
 - libaco is **not** a Rust dependency: it is compiled together with the
   generated C model at model-build time.
 - CMake is the only supported model-build path. Source output is pruned to the
