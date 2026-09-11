@@ -3,6 +3,21 @@
 #[path = "support/sim.rs"]
 mod sim_harness;
 
+#[cfg(unix)]
+#[test]
+fn command_timeout_stops_descendants_holding_output_pipes() {
+    use std::process::Command;
+    use std::time::{Duration, Instant};
+
+    let start = Instant::now();
+    let result = sim_harness::run_command(
+        Command::new("sh").args(["-c", "sleep 30 & wait"]),
+        Duration::from_millis(100),
+    );
+    assert!(result.unwrap_err().contains("timed out"));
+    assert!(start.elapsed() < Duration::from_secs(5));
+}
+
 #[test]
 fn cwd_lock_recovers_after_an_action_panics() {
     let original = std::env::current_dir().expect("current directory");

@@ -4,7 +4,7 @@
 //!
 //! ```text
 //! llg [generate options] [build options] <file.sv>...
-//! generate: --top <module>  --lint  --lint-json [<path>]  --lint-config <file>  --gen-only
+//! generate: --top <module>  --lint  --lint-json [<path>]  --lint-config <file>  --gen-only  --no-opt
 //! build:    --generator <backend>        # cmake -G backend (Ninja, "Unix Makefiles", ...)
 //! ```
 //!
@@ -62,6 +62,7 @@ struct DriverOptions {
     lint_config_path: Option<PathBuf>,
     generator: Option<String>,
     gen_only: bool,
+    no_opt: bool,
 }
 
 fn main() -> std::process::ExitCode {
@@ -80,7 +81,7 @@ fn parse_args(args: Vec<String>) -> Result<DriverOptions, i32> {
     if args.is_empty() {
         eprintln!(
             "usage: llg [generate options] [build options] <file.sv>...\n\
-             generate: --top <module>  --lint  --lint-json [<path>]  --lint-config <file>  --gen-only\n\
+             generate: --top <module>  --lint  --lint-json [<path>]  --lint-config <file>  --gen-only  --no-opt\n\
              build:    --generator <backend>        # cmake -G backend (Ninja, \"Unix Makefiles\", ...)"
         );
         return Err(2);
@@ -94,6 +95,7 @@ fn parse_args(args: Vec<String>) -> Result<DriverOptions, i32> {
     let mut lint_config_path: Option<PathBuf> = None;
     let mut generator: Option<String> = None;
     let mut gen_only = false;
+    let mut no_opt = false;
     let mut it = args.into_iter().peekable();
     while let Some(a) = it.next() {
         match a.as_str() {
@@ -111,6 +113,7 @@ Options:
       --lint-json [<path>]   Report lint as JSON and exit
       --lint-config <file>   Load lint configuration
       --gen-only             Emit C model sources without building
+      --no-opt               Disable simulator optimization passes
       --generator <backend>  Select the CMake generator"
                 );
                 return Err(0);
@@ -128,6 +131,7 @@ Options:
                 }
             },
             "--gen-only" | "-gen-only" => gen_only = true,
+            "--no-opt" => no_opt = true,
             "--lint" | "-lint" => lint_mode = true,
             "--lint-json" | "-lint-json" => {
                 lint_mode = true;
@@ -164,6 +168,7 @@ Options:
         lint_config_path,
         generator,
         gen_only,
+        no_opt,
     })
 }
 
@@ -177,6 +182,7 @@ fn run(options: DriverOptions) -> i32 {
         lint_config_path,
         generator,
         gen_only,
+        no_opt,
     } = options;
     // 0. Optional lint config: read + parse before compiling so a missing or
     //    malformed file aborts fast and with a clear message.
@@ -312,8 +318,12 @@ fn run(options: DriverOptions) -> i32 {
     }
 
     // 3. Reuse the validated owned semantic database.
-    let generated =
-        sim::codegen::generate_from_db_with_opts(&codegen_db, &sim::opt::OptConfig::default());
+    let optimization = if no_opt {
+        sim::opt::OptConfig::none()
+    } else {
+        sim::opt::OptConfig::default()
+    };
+    let generated = sim::codegen::generate_from_db_with_opts(&codegen_db, &optimization);
     let gen = match generated {
         Ok(g) => g,
         Err(e) => {

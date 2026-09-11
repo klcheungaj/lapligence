@@ -52,6 +52,8 @@ fn check_information(binary: &str, name: &str, mode: &str) {
 #[test]
 fn simulator_information_exits_without_compiling_or_installing_memory_limits() {
     check_information(env!("CARGO_BIN_EXE_llg"), "llg", "--gen-only");
+    let output = invoke(env!("CARGO_BIN_EXE_llg"), &["--help"]);
+    assert!(String::from_utf8_lossy(&output.stdout).contains("--no-opt"));
 }
 
 #[cfg(feature = "lsp")]

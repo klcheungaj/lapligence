@@ -16,6 +16,8 @@ LSP-only tower-lsp/tokio/dashmap code stays in `llg_ls`.
 - `--generator <backend>` selects CMake `-G`; `--gen-only` stops after model
   sources + `CMakeLists.txt`. CMake is the only model builder; see
   [../sim/AGENTS.md](../sim/AGENTS.md) for compiler/flags/environment selection.
+- `--no-opt` disables simulator IR optimization passes; the default enables
+  them. File-based conformance tests exercise both CLI modes.
 - `--lint` runs the shared linter before codegen and exits 1 on lint errors.
   `--lint-config <path>` loads `llg-lint.toml` rule enable/severity settings.
 - `--lint-json [<path>]` is report-only: one JSON object to stdout or file,

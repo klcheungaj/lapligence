@@ -114,6 +114,11 @@ pub(crate) fn frontend_diagnostics(
 }
 
 pub(crate) fn run_command(command: &mut Command, timeout: Duration) -> Result<Output, String> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
+    }
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
     let mut child = command.spawn().map_err(|error| format!("spawn: {error}"))?;
     let stdout = child.stdout.take().ok_or("capture stdout")?;
@@ -135,6 +140,20 @@ pub(crate) fn run_command(command: &mut Command, timeout: Duration) -> Result<Ou
             Some(status) => break status,
             None if Instant::now() < deadline => thread::sleep(Duration::from_millis(10)),
             None => {
+                // The CLI launches CMake and a simulator that inherit its
+                // output pipes. Stop descendants before joining the readers.
+                #[cfg(unix)]
+                let _ = Command::new("kill")
+                    .args(["-KILL", "--", &format!("-{}", child.id())])
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .status();
+                #[cfg(windows)]
+                let _ = Command::new("taskkill")
+                    .args(["/F", "/T", "/PID", &child.id().to_string()])
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .status();
                 let _ = child.kill();
                 let _ = child.wait();
                 let _ = stdout_reader.join();
