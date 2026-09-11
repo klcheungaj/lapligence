@@ -12,6 +12,8 @@ mod ports;
 mod select_ranges;
 #[path = "support/sim.rs"]
 mod sim_harness;
+#[path = "sim_partial_features/system_functions.rs"]
+mod system_functions;
 #[path = "sim_partial_features/timing.rs"]
 mod timing;
 

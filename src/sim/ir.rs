@@ -531,6 +531,10 @@ pub enum IrRealUnOp {
 /// $time) or carry a folded width ($bits).
 #[derive(Clone, Debug, PartialEq)]
 pub enum IrSysFunc {
+    /// Real math functions defined by IEEE 1800-2009 table 20-4.
+    Math { kind: IrMathFunc, args: Vec<IrExpr> },
+    /// Fractional time in the calling module's time unit.
+    Realtime { precision_ps: u64, unit_ps: u64 },
     /// `$clog2(x)` → `sv4_clog2(code)` (32-bit unsigned).
     Clog2(Box<IrExpr>),
     /// `$time`/`$stime` scaled to the calling module's unit.
@@ -555,6 +559,42 @@ pub enum IrSysFunc {
     ShortRealToBits(Box<IrExpr>),
     /// `$bitstoshortreal(bits)` reinterprets exactly 32 packed bits as a float.
     BitsToShortReal(Box<IrExpr>),
+}
+
+/// The standard real-valued mathematical system functions.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IrMathFunc {
+    Ln,
+    Log10,
+    Exp,
+    Sqrt,
+    Pow,
+    Floor,
+    Ceil,
+    Sin,
+    Cos,
+    Tan,
+    Asin,
+    Acos,
+    Atan,
+    Atan2,
+    Hypot,
+    Sinh,
+    Cosh,
+    Tanh,
+    Asinh,
+    Acosh,
+    Atanh,
+}
+
+impl IrMathFunc {
+    /// Number of real-valued arguments required by the standard.
+    pub const fn arity(self) -> usize {
+        match self {
+            Self::Pow | Self::Atan2 | Self::Hypot => 2,
+            _ => 1,
+        }
+    }
 }
 
 /// SystemVerilog bit-vector queries with a known two-state result.

@@ -728,6 +728,28 @@ impl Validator<'_> {
                 }
             }
             IrExprKind::SysFunc(sys) => match sys {
+                IrSysFunc::Math { kind, args } => {
+                    if args.len() != kind.arity() || !expr.is_real() {
+                        return self.fail(
+                            path,
+                            "math function requires its declared arity and a real result",
+                        );
+                    }
+                    for (index, arg) in args.iter().enumerate() {
+                        self.validate_expr(arg, formals, &format!("{path}.args[{index}]"))?;
+                    }
+                }
+                IrSysFunc::Realtime {
+                    precision_ps,
+                    unit_ps,
+                } => {
+                    if *precision_ps == 0 || *unit_ps == 0 || !expr.is_real() {
+                        return self.fail(
+                            path,
+                            "realtime requires nonzero scaling units and a real result",
+                        );
+                    }
+                }
                 IrSysFunc::Rtoi(arg) => {
                     self.validate_expr(arg, formals, &format!("{path}.arg"))?;
                     if expr.width != 32 || !expr.signed {
@@ -1572,6 +1594,44 @@ mod tests {
         assert!(model
             .validate_stmt(&statement(IrLhs::Whole(0), real), None)
             .is_err());
+    }
+
+    #[test]
+    fn math_and_realtime_require_valid_shapes_and_units() {
+        let model = valid_model();
+        let math = |args, width| {
+            IrExpr::new(
+                IrExprKind::SysFunc(IrSysFunc::Math {
+                    kind: IrMathFunc::Pow,
+                    args,
+                }),
+                width,
+                true,
+                None,
+            )
+        };
+        model
+            .validate_expr(&math(vec![packed_const(2, 2), packed_const(3, 2)], 0), None)
+            .unwrap();
+        assert!(model
+            .validate_expr(&math(vec![packed_const(2, 2)], 0), None)
+            .is_err());
+        assert!(model
+            .validate_expr(
+                &math(vec![packed_const(2, 2), packed_const(3, 2)], 32),
+                None
+            )
+            .is_err());
+        let time = IrExpr::new(
+            IrExprKind::SysFunc(IrSysFunc::Realtime {
+                precision_ps: 1,
+                unit_ps: 0,
+            }),
+            0,
+            true,
+            None,
+        );
+        assert!(model.validate_expr(&time, None).is_err());
     }
 
     #[test]

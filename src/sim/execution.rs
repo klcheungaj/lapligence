@@ -693,7 +693,12 @@ fn collect_expression_effects(
             }
         }
         IrExprKind::SysFunc(system) => match system {
-            IrSysFunc::Time { .. } => {}
+            IrSysFunc::Time { .. } | IrSysFunc::Realtime { .. } => {}
+            IrSysFunc::Math { args, .. } => {
+                for arg in args {
+                    collect_expression_effects(ir, arg, effects, visited_calls);
+                }
+            }
             IrSysFunc::Clog2(value)
             | IrSysFunc::Bits(value)
             | IrSysFunc::BitQuery { arg: value, .. }

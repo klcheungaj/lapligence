@@ -468,7 +468,10 @@ fn system_expr_slots(system: &IrSysFunc) -> Result<u64, String> {
         | IrSysFunc::BitsToReal(arg)
         | IrSysFunc::ShortRealToBits(arg)
         | IrSysFunc::BitsToShortReal(arg) => expr_slots(arg),
-        IrSysFunc::Time { .. } => Ok(0),
+        IrSysFunc::Time { .. } | IrSysFunc::Realtime { .. } => Ok(0),
+        IrSysFunc::Math { args, .. } => args.iter().try_fold(0, |total, arg| {
+            checked_add(total, expr_slots(arg)?, "math function arguments")
+        }),
     }
 }
 

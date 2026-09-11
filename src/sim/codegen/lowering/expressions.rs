@@ -1352,7 +1352,59 @@ impl<'a> Codegen<'a> {
         call: NodeId,
     ) -> Result<IrExpr, String> {
         let args: Vec<NodeId> = self.node(call).children.clone();
+        use crate::sim::ir::IrMathFunc;
+        let math = match name {
+            "$ln" => Some(IrMathFunc::Ln),
+            "$log10" => Some(IrMathFunc::Log10),
+            "$exp" => Some(IrMathFunc::Exp),
+            "$sqrt" => Some(IrMathFunc::Sqrt),
+            "$pow" => Some(IrMathFunc::Pow),
+            "$floor" => Some(IrMathFunc::Floor),
+            "$ceil" => Some(IrMathFunc::Ceil),
+            "$sin" => Some(IrMathFunc::Sin),
+            "$cos" => Some(IrMathFunc::Cos),
+            "$tan" => Some(IrMathFunc::Tan),
+            "$asin" => Some(IrMathFunc::Asin),
+            "$acos" => Some(IrMathFunc::Acos),
+            "$atan" => Some(IrMathFunc::Atan),
+            "$atan2" => Some(IrMathFunc::Atan2),
+            "$hypot" => Some(IrMathFunc::Hypot),
+            "$sinh" => Some(IrMathFunc::Sinh),
+            "$cosh" => Some(IrMathFunc::Cosh),
+            "$tanh" => Some(IrMathFunc::Tanh),
+            "$asinh" => Some(IrMathFunc::Asinh),
+            "$acosh" => Some(IrMathFunc::Acosh),
+            "$atanh" => Some(IrMathFunc::Atanh),
+            _ => None,
+        };
+        if let Some(kind) = math {
+            if args.len() != kind.arity() {
+                return Err(format!(
+                    "{name} requires {} arguments in `{scope_path}`",
+                    kind.arity()
+                ));
+            }
+            let args = args
+                .into_iter()
+                .map(|arg| self.lower_expr(scope_path, arg))
+                .collect::<Result<Vec<_>, _>>()?;
+            return Ok(IrExpr::new(
+                IrExprKind::SysFunc(IrSysFunc::Math { kind, args }),
+                0,
+                true,
+                None,
+            ));
+        }
         match name {
+            "$realtime" => Ok(IrExpr::new(
+                IrExprKind::SysFunc(IrSysFunc::Realtime {
+                    precision_ps: self.design_precision_ps,
+                    unit_ps: self.timescale_of_node(call).unit_ps,
+                }),
+                0,
+                true,
+                None,
+            )),
             "$rtoi" | "$itor" | "$realtobits" | "$bitstoreal" | "$shortrealtobits"
             | "$bitstoshortreal" => {
                 let [arg] = args.as_slice() else {

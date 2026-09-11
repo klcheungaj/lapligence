@@ -366,7 +366,12 @@ fn walk_expr_mut(e: &mut IrExpr, f: &mut impl FnMut(&mut IrExpr)) {
             | IrSysFunc::BitsToReal(a)
             | IrSysFunc::ShortRealToBits(a)
             | IrSysFunc::BitsToShortReal(a) => walk_expr_mut(a, f),
-            IrSysFunc::Time { .. } => {}
+            IrSysFunc::Math { args, .. } => {
+                for arg in args {
+                    walk_expr_mut(arg, f);
+                }
+            }
+            IrSysFunc::Time { .. } | IrSysFunc::Realtime { .. } => {}
         },
         _ => {}
     }
@@ -808,7 +813,12 @@ fn ident_children(e: &mut IrExpr) {
             | IrSysFunc::BitsToReal(a)
             | IrSysFunc::ShortRealToBits(a)
             | IrSysFunc::BitsToShortReal(a) => ident_expr(a),
-            IrSysFunc::Time { .. } => {}
+            IrSysFunc::Math { args, .. } => {
+                for arg in args {
+                    ident_expr(arg);
+                }
+            }
+            IrSysFunc::Time { .. } | IrSysFunc::Realtime { .. } => {}
         },
         _ => {}
     }
@@ -1657,7 +1667,12 @@ fn collect_children_reads(e: &IrExpr, model: &IrModel, rw: &mut Rw) {
             | IrSysFunc::BitsToReal(a)
             | IrSysFunc::ShortRealToBits(a)
             | IrSysFunc::BitsToShortReal(a) => collect_expr_reads(a, model, rw),
-            IrSysFunc::Time { .. } => {}
+            IrSysFunc::Math { args, .. } => {
+                for arg in args {
+                    collect_expr_reads(arg, model, rw);
+                }
+            }
+            IrSysFunc::Time { .. } | IrSysFunc::Realtime { .. } => {}
         },
         _ => {}
     }

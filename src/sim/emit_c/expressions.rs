@@ -493,6 +493,51 @@ pub(super) fn render_expr_impl(ctx: &RCtx<'_>, e: &IrExpr) -> Result<RenderedExp
             }
         }
         IrExprKind::SysFunc(f) => match f {
+            IrSysFunc::Math { kind, args } => {
+                use crate::sim::ir::IrMathFunc;
+                let name = match kind {
+                    IrMathFunc::Ln => "log",
+                    IrMathFunc::Log10 => "log10",
+                    IrMathFunc::Exp => "exp",
+                    IrMathFunc::Sqrt => "sqrt",
+                    IrMathFunc::Pow => "pow",
+                    IrMathFunc::Floor => "floor",
+                    IrMathFunc::Ceil => "ceil",
+                    IrMathFunc::Sin => "sin",
+                    IrMathFunc::Cos => "cos",
+                    IrMathFunc::Tan => "tan",
+                    IrMathFunc::Asin => "asin",
+                    IrMathFunc::Acos => "acos",
+                    IrMathFunc::Atan => "atan",
+                    IrMathFunc::Atan2 => "atan2",
+                    IrMathFunc::Hypot => "hypot",
+                    IrMathFunc::Sinh => "sinh",
+                    IrMathFunc::Cosh => "cosh",
+                    IrMathFunc::Tanh => "tanh",
+                    IrMathFunc::Asinh => "asinh",
+                    IrMathFunc::Acosh => "acosh",
+                    IrMathFunc::Atanh => "atanh",
+                };
+                let args = args
+                    .iter()
+                    .map(|arg| w(arg).map(|value| real_code(&value)))
+                    .collect::<Result<Vec<_>, _>>()?;
+                RenderedExpr {
+                    code: format!("{name}({})", args.join(", ")),
+                    width: 0,
+                    signed: true,
+                    fill: None,
+                }
+            }
+            IrSysFunc::Realtime {
+                precision_ps,
+                unit_ps,
+            } => RenderedExpr {
+                code: format!("((double)llg_time() * {precision_ps}.0 / {unit_ps}.0)"),
+                width: 0,
+                signed: true,
+                fill: None,
+            },
             IrSysFunc::Rtoi(arg) => {
                 let arg = w(arg)?;
                 RenderedExpr {
