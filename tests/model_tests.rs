@@ -322,6 +322,40 @@ fn db_owns_ordered_packed_ranges_per_elaborated_instance() {
 }
 
 #[test]
+fn packed_ranges_distinguish_same_named_locals_in_unnamed_blocks() {
+    let compiled = compile::compile_checked(&compile::CompileOpts {
+        sources: vec![compile::OwnedSource::compilation_unit(
+            "local_ranges.sv",
+            "module tb; initial begin
+                begin logic [7:0] value; value = 8'h81; $display(value); end
+                begin logic [64:0] value; value = '1; $display(value); end
+                begin logic [7:0] value; value = 8'h02; $display(value); end
+             end endmodule",
+        )],
+        top: Some("tb".to_owned()),
+        ..Default::default()
+    })
+    .expect("valid same-named locals");
+    let database = db::Db::from_slang(&compiled.snapshot).expect("distinct declaration identities");
+    let ranges: Vec<_> = database
+        .elaborated_type_ranges()
+        .iter()
+        .filter(|entry| entry.name == "value")
+        .collect();
+    assert_eq!(ranges.len(), 3);
+    let mut bounds = Vec::new();
+    let mut identities = std::collections::HashSet::new();
+    for entry in ranges {
+        assert!(identities.insert(entry.declaration));
+        assert_eq!(database.node(entry.declaration).name, "value");
+        assert_eq!(entry.packed_ranges.len(), 1);
+        bounds.push(entry.packed_ranges[0].expect("exact range").left);
+    }
+    bounds.sort_unstable();
+    assert_eq!(bounds, [7, 7, 64]);
+}
+
+#[test]
 fn db_owns_dynamic_net_declaration_assignment_shape() {
     in_temp_dir(|| {
         let source = PathBuf::from("net_decl_shape.sv");

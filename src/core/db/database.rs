@@ -51,12 +51,13 @@ pub struct PackedRange {
     pub right: i128,
 }
 
-/// Ordered packed dimensions for one object in one elaborated instance scope.
+/// Ordered packed dimensions for one elaborated declaration.
 ///
-/// The instance path is part of the identity: two instances of the same
-/// module may have different parameter-folded ranges.
+/// Arena identity distinguishes parameterized instances and same-named locals
+/// in unnamed scopes, whose display paths can coincide.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ElaboratedTypeRanges {
+    pub declaration: NodeId,
     pub instance: String,
     pub name: String,
     pub packed_ranges: Vec<Option<PackedRange>>,
@@ -2553,7 +2554,6 @@ impl Db {
             nodes[index].full_name = full_name;
         }
         let mut elaborated_type_ranges = Vec::new();
-        let mut elaborated_range_indices: HashMap<(String, String), usize> = HashMap::new();
         for (index, semantic) in snapshot.semantic_nodes.iter().enumerate() {
             let id = NodeId::from_index(index);
             let Some(type_id) = semantic.type_id else {
@@ -2587,20 +2587,12 @@ impl Db {
             let instance = enclosing_scope_name(&nodes, id)
                 .unwrap_or_else(|| nodes[id.index()].full_name.clone());
             if !instance.is_empty() {
-                let ranges =
-                    type_projector.elaborated_ranges(instance, semantic.name.clone(), type_id)?;
-                let key = (ranges.instance.clone(), ranges.name.clone());
-                if let Some(previous) = elaborated_range_indices.get(&key).copied() {
-                    if elaborated_type_ranges[previous] != ranges {
-                        return Err(DbError::InvalidSnapshot(format!(
-                            "conflicting packed ranges for `{}` in `{}`",
-                            key.1, key.0
-                        )));
-                    }
-                } else {
-                    elaborated_range_indices.insert(key, elaborated_type_ranges.len());
-                    elaborated_type_ranges.push(ranges);
-                }
+                elaborated_type_ranges.push(type_projector.elaborated_ranges(
+                    id,
+                    instance,
+                    semantic.name.clone(),
+                    type_id,
+                )?);
             }
         }
         let tops: Vec<NodeId> = snapshot

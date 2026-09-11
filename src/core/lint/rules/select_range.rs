@@ -1,7 +1,7 @@
 //! `out-of-range-select` — statically provable select bounds violations.
 //!
 //! The owned database keeps unpacked dimensions on their exact array node and
-//! packed dimensions in an elaborated-instance/object projection.  This rule
+//! packed dimensions keyed by elaborated declaration identity. This rule
 //! uses those two projections only; it never infers a range from a width or
 //! from another instance.  Unknown selectors, unresolved dimensions,
 //! unsupported expressions and ambiguous multi-dimensional packed types are
@@ -11,7 +11,7 @@ use std::collections::HashSet;
 
 use crate::core::db::{Db, ExprKind, NodeId, NodeKind, Operation};
 use crate::core::elab::{Bit, Val, Value};
-use crate::core::lint::rules::analysis::{all_nodes, scope_path};
+use crate::core::lint::rules::analysis::all_nodes;
 use crate::core::lint::{LintCtx, LintDiag, LintRule, LintSeverity};
 use crate::core::value::ValueData;
 
@@ -402,22 +402,10 @@ fn packed_bounds(db: &Db, object: NodeId) -> Option<(i128, i128)> {
     if !is_declaration_object(db, object) {
         return None;
     }
-    let node = db.node(object);
-    let parent = node.parent?;
-    let instance = scope_path(db, parent);
-    if instance.is_empty() {
-        return None;
-    }
-
-    let matching = db
+    let entry = db
         .elaborated_type_ranges()
         .iter()
-        .filter(|entry| entry.instance == instance && entry.name == node.name)
-        .collect::<Vec<_>>();
-    if matching.len() != 1 {
-        return None;
-    }
-    let entry = matching[0];
+        .find(|entry| entry.declaration == object)?;
     if entry.packed_ranges.len() != 1 {
         return None;
     }
@@ -519,6 +507,21 @@ mod tests {
             db: &db,
             model: &model,
         })
+    }
+
+    #[test]
+    fn unnamed_blocks_keep_same_named_declaration_bounds_distinct() {
+        let diags = rule_diags(
+            "module tb; initial begin
+                begin logic [7:0] value; $display(value[8]); end
+                begin logic [64:0] value; $display(value[8], value[65]); end
+                begin logic [7:0] value; $display(value[7]); end
+             end endmodule",
+            "tb",
+        );
+        assert_eq!(diags.len(), 2, "{diags:?}");
+        assert!(diags.iter().any(|d| d.message.contains("[7:0]")));
+        assert!(diags.iter().any(|d| d.message.contains("[64:0]")));
     }
 
     #[test]

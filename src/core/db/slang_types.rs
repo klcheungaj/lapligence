@@ -2,7 +2,7 @@
 
 use super::{
     AggregateKind, AggregateLayout, AggregateMember, ArrayKind, AssociativeIndex,
-    ElaboratedTypeRanges, PackedMember, PackedRange,
+    ElaboratedTypeRanges, NodeId, PackedMember, PackedRange,
 };
 use crate::core::model::TypeInfo;
 use crate::ffi::slang::{
@@ -93,11 +93,13 @@ impl<'a> SlangTypeProjector<'a> {
 
     pub fn elaborated_ranges(
         &self,
+        declaration: NodeId,
         instance: String,
         name: String,
         type_id: u64,
     ) -> Result<ElaboratedTypeRanges, String> {
         Ok(ElaboratedTypeRanges {
+            declaration,
             instance,
             name,
             packed_ranges: self

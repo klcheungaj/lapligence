@@ -133,16 +133,30 @@ impl Validator<'_> {
 
         let mut range_keys = HashSet::new();
         for (index, entry) in self.db.elaborated_type_ranges().iter().enumerate() {
+            let node = self.node(
+                entry.declaration,
+                &format!("elaborated_type_ranges[{index}].declaration"),
+            )?;
+            if !matches!(
+                node.kind,
+                NodeKind::Net { .. } | NodeKind::Var { .. } | NodeKind::Array { .. }
+            ) || node.name != entry.name
+            {
+                return self.fail(
+                    format!("elaborated_type_ranges[{index}]"),
+                    "range entry must identify its named storage declaration",
+                );
+            }
             if entry.instance.is_empty() || entry.name.is_empty() {
                 return self.fail(
                     format!("elaborated_type_ranges[{index}]"),
                     "instance and object names must be non-empty",
                 );
             }
-            if !range_keys.insert((entry.instance.as_str(), entry.name.as_str())) {
+            if !range_keys.insert(entry.declaration) {
                 return self.fail(
                     format!("elaborated_type_ranges[{index}]"),
-                    "duplicate instance/object range entry",
+                    "duplicate declaration range entry",
                 );
             }
         }
