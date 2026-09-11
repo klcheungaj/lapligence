@@ -183,14 +183,14 @@ endmodule
 /// skipped with an explicit warning while codegen still succeeds and the
 /// simulation runs: `assign bus[0] = en` on the child's inout net makes the
 /// group unscalable, so the inout connection is dropped (no link, no group)
-/// and `tb.bus` stays undriven (X).
+/// and `tb.bus` stays undriven (Z, per IEEE 1800-2009 §6.7).
 ///
 /// Hand-simulated trace:
 ///   t=0  group scan warns: "inout-net group {bus, tb.u.bus}: bit/part/select
 ///        LHS on member `tb.u.bus`; group skipped".  u.bus is a plain net
 ///        driven by `assign bus[0] = en`; tb.bus has no driver and no port
-///        link -> stays X.
-///   t=1  initial: $display("bus=xx"); $finish.
+///        link -> stays Z.
+///   t=1  initial: $display("bus=zz"); $finish.
 #[test]
 fn sim_inout_skip_warning() {
     if !llg::sim::build::cmake_available() {
@@ -213,7 +213,7 @@ module tb;
 endmodule
 "#;
     let (stdout, warnings) = run_design(sv, "skip").expect("skip-warning design should run");
-    assert_eq!(stdout, "bus=xx\n");
+    assert_eq!(stdout, "bus=zz\n");
     assert!(
         warnings
             .iter()

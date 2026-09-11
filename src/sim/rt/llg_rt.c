@@ -82,6 +82,7 @@ typedef enum {
     W_EVENTS,
     W_EVENT, // waiting on one or more named events
     W_MIXED, // atomic named-event + signal or-list (@(posedge a or ev))
+    W_EXPR,  // expressions and trigger-time qualifiers
     W_LEVEL,
     W_FORK,    // llg_join: waiting for a fork group
     W_FORK_ALL // llg_wait_fork: waiting for all of the current proc's groups
@@ -91,10 +92,27 @@ typedef struct llg_nba {
     struct llg_nba* next;
     sv4_t* target;
     sv4_t value;
+    sv4_t mask;
+    int has_mask;
+    uint64_t time;
+    uint64_t sequence;
     int is_real;
     double* real_target;
     double real_value;
 } llg_nba_t;
+
+struct llg_inertial {
+    struct llg_inertial* next_all;
+    struct llg_inertial* next_pending;
+    llg_inertial_t** handle;
+    sv4_t* target;
+    llg_net_t* net;
+    int slot;
+    int pending;
+    uint64_t time;
+    sv4_t current;
+    sv4_t value;
+};
 
 typedef struct llg_wait {
     struct llg_wait* next;         // all active waits (signal + timed + inactive)
@@ -103,6 +121,7 @@ typedef struct llg_wait {
     llg_proc_t* proc;
     llg_wait_kind_t kind;
     uint64_t time;                // W_TIME
+    llg_expr_event_spec_t* expressions;
     llg_event_spec_t* specs;     // W_EVENTS: copied array; W_MIXED: signal half
     sv4_t* last;                  // W_EVENTS/W_MIXED: last-seen values
     int n;                        // W_EVENTS/W_MIXED (signal entry count)
@@ -167,6 +186,10 @@ typedef struct {
     aco_share_stack_t* share_stack;
     llg_proc_t* ready_head;
     llg_proc_t* ready_tail;
+    llg_nba_t* delayed_nbas;
+    llg_inertial_t* inertial_drivers;
+    llg_inertial_t* inertial_pending;
+    uint64_t nba_sequence;
     llg_wait_t* timed_head;   // sorted ascending by time
     llg_wait_t* inactive_head; // #0 waiters at the current time (FIFO)
     llg_wait_t* inactive_tail;
@@ -318,6 +341,20 @@ static void insert_timed(llg_wait_t* w) {
     *pp = w;
 }
 
+static void free_expression_wait(llg_wait_t* w) {
+    if (!w->expressions) return;
+    for (int i = 0; i < w->n; i++) free(w->expressions[i].reads);
+    free(w->expressions);
+    w->expressions = NULL;
+}
+
+static int expression_qualifies(const llg_expr_event_spec_t* spec) {
+    if (!spec->condition) return 1;
+    sv4_t result;
+    spec->condition(&result);
+    return sv4_to_bool(result);
+}
+
 // Wake a suspended process: clear its wait node and schedule it.
 static void wake_proc(llg_proc_t* p) {
     llg_wait_t* w = &p->wait;
@@ -327,9 +364,10 @@ static void wake_proc(llg_proc_t* p) {
         remove_timed_entry(w);
         remove_inactive_entry(w);
     }
-    if (w->kind == W_EVENT || w->kind == W_MIXED) {
+    if (w->kind == W_EVENT || w->kind == W_MIXED || w->kind == W_EXPR) {
         event_unlink(w);
     }
+    free_expression_wait(w);
     free(w->specs);
     free(w->last);
     free(w->evs);
@@ -407,9 +445,10 @@ static void llg_kill_proc(llg_proc_t* p) {
             remove_timed_entry(w);
             remove_inactive_entry(w);
         }
-        if (w->kind == W_EVENT || w->kind == W_MIXED) {
+        if (w->kind == W_EVENT || w->kind == W_MIXED || w->kind == W_EXPR) {
             event_unlink(w);
         }
+        free_expression_wait(w);
         free(w->specs);
         free(w->last);
         free(w->evs);
@@ -616,6 +655,9 @@ static int sv4_is_one(sv4_t v) { return !sv4_is_unknown(v) && sv4_to_bool(v); }
 
 static int ev_matches(sv4_t old, sv4_t new, int kind) {
     if (kind == LLG_EV_ANY) return !sv4_same(old, new);
+    // IEEE 1800-2009 9.4.2: vector edge controls observe only the LSB.
+    old = sv4_bit_select(old, 0);
+    new = sv4_bit_select(new, 0);
     if (kind == LLG_EV_POSEDGE) {
         return (sv4_is_zero(old) && (!sv4_is_zero(new))) ||
                (sv4_is_unknown(old) && sv4_is_one(new));
@@ -649,6 +691,21 @@ static void sig_write(sv4_t* target, sv4_t value) {
                     w->last[i] = *target;
                     if (ev_matches(old, *target, w->specs[i].kind)) wake = 1;
                 }
+            }
+        } else if (w->kind == W_EXPR) {
+            for (int i = 0; i < w->n; i++) {
+                llg_expr_event_spec_t* spec = &w->expressions[i];
+                if (spec->event) continue;
+                int changed = spec->sig == target;
+                for (int j = 0; j < spec->n_reads; j++)
+                    if (spec->reads[j] == target) changed = 1;
+                if (!changed) continue;
+                sv4_t value;
+                if (spec->eval) spec->eval(&value);
+                else value = *spec->sig;
+                int matched = ev_matches(w->last[i], value, spec->kind);
+                w->last[i] = value;
+                if (matched && expression_qualifies(spec)) wake = 1;
             }
         } else if (w->kind == W_LEVEL) {
             if (w->sig == target && sv4_same(*target, w->level_val)) wake = 1;
@@ -751,6 +808,7 @@ static void free_proc_storage(llg_proc_t* p) {
         free(n);
         n = next;
     }
+    free_expression_wait(&p->wait);
     free(p->wait.specs);
     free(p->wait.last);
     free(p->wait.evs);
@@ -759,6 +817,17 @@ static void free_proc_storage(llg_proc_t* p) {
 }
 
 void llg_rt_cleanup(void) {
+    while (g.inertial_drivers) {
+        llg_inertial_t* driver = g.inertial_drivers;
+        g.inertial_drivers = driver->next_all;
+        *driver->handle = NULL;
+        free(driver);
+    }
+    while (g.delayed_nbas) {
+        llg_nba_t* next = g.delayed_nbas->next;
+        free(g.delayed_nbas);
+        g.delayed_nbas = next;
+    }
     // Groups own only child-list nodes; process objects are owned once by
     // all_procs and are released separately below.
     for (int i = 0; i < g.n_procs; i++) {
@@ -939,7 +1008,16 @@ void llg_event_trigger(llg_event_t* ev) {
     memcpy(wake, ev->waiters, (size_t)n * sizeof(llg_proc_t*));
     ev->n_waiters = 0;
     for (int i = 0; i < n; i++) {
-        wake_proc(wake[i]);
+        llg_wait_t* w = &wake[i]->wait;
+        int matched = w->kind != W_EXPR;
+        if (!matched) {
+            for (int j = 0; j < w->n; j++) {
+                if (w->expressions[j].event == ev && expression_qualifies(&w->expressions[j]))
+                    matched = 1;
+            }
+        }
+        if (matched) wake_proc(wake[i]);
+        else event_list_add(ev, wake[i]);
     }
 }
 
@@ -1000,19 +1078,98 @@ void llg_wait_mixed(llg_wait_src_t* srcs, int n) {
     aco_yield();
 }
 
-void llg_nba(sv4_t* target, sv4_t value) {
+void llg_wait_expressions(const llg_expr_event_spec_t* specs, int n) {
+    if (n < 0) abort();
     llg_proc_t* p = llg_current();
-    llg_nba_t* n = (llg_nba_t*)llg_checked_malloc(
-        1, sizeof(llg_nba_t), "nonblocking assignment");
-    n->target = target;
-    n->value = value;
+    llg_wait_t* w = &p->wait;
+    w->kind = W_EXPR;
+    w->n = n;
+    w->n_evs = 0;
+    w->expressions = (llg_expr_event_spec_t*)llg_checked_calloc(
+        (size_t)n, sizeof(llg_expr_event_spec_t), "expression event descriptors");
+    w->last = (sv4_t*)llg_checked_malloc((size_t)n, sizeof(sv4_t), "expression event snapshots");
+    w->evs = (const llg_event_t**)llg_checked_malloc((size_t)n, sizeof(llg_event_t*), "expression named events");
+    for (int i = 0; i < n; i++) {
+        if (specs[i].n_reads < 0) abort();
+        w->expressions[i] = specs[i];
+        w->expressions[i].reads = NULL;
+        if (specs[i].n_reads) {
+            w->expressions[i].reads = (sv4_t**)llg_checked_malloc(
+                (size_t)specs[i].n_reads, sizeof(sv4_t*), "expression dependencies");
+            memcpy(w->expressions[i].reads, specs[i].reads, (size_t)specs[i].n_reads * sizeof(sv4_t*));
+        }
+        if (specs[i].event) {
+            int seen = 0;
+            for (int j = 0; j < w->n_evs; j++) if (w->evs[j] == specs[i].event) seen = 1;
+            if (!seen) {
+                w->evs[w->n_evs++] = specs[i].event;
+                event_list_add((llg_event_t*)specs[i].event, p);
+            }
+        } else if (specs[i].eval) specs[i].eval(&w->last[i]);
+        else if (specs[i].sig) w->last[i] = *specs[i].sig;
+        else abort();
+    }
+    register_wait();
+    aco_yield();
+}
+
+static llg_nba_t* new_nba(uint64_t ticks) {
+    if (ticks > UINT64_MAX - g.now || g.nba_sequence == UINT64_MAX) {
+        fprintf(stderr, "llg: fatal: nonblocking assignment time or sequence overflow\n");
+        abort();
+    }
+    llg_nba_t* n = (llg_nba_t*)llg_checked_malloc(1, sizeof(llg_nba_t), "nonblocking assignment");
+    n->target = NULL;
     n->is_real = 0;
+    n->has_mask = 0;
     n->real_target = NULL;
     n->real_value = 0.0;
+    n->time = g.now + ticks;
+    n->sequence = g.nba_sequence++;
     n->next = NULL;
-    if (p->nba_tail) p->nba_tail->next = n;
-    else p->nba_head = n;
-    p->nba_tail = n;
+    return n;
+}
+
+static void enqueue_nba(llg_nba_t* n) {
+    if (n->time == g.now) {
+        llg_proc_t* p = llg_current();
+        if (p->nba_tail) p->nba_tail->next = n;
+        else p->nba_head = n;
+        p->nba_tail = n;
+    } else {
+        llg_nba_t** slot = &g.delayed_nbas;
+        while (*slot && (*slot)->time <= n->time) slot = &(*slot)->next;
+        n->next = *slot;
+        *slot = n;
+    }
+}
+
+void llg_nba_after(sv4_t* target, sv4_t value, uint64_t ticks) {
+    llg_nba_t* n = new_nba(ticks);
+    n->target = target;
+    n->value = value;
+    enqueue_nba(n);
+}
+
+void llg_nba(sv4_t* target, sv4_t value) {
+    llg_nba_after(target, value, 0);
+}
+
+void llg_nba_masked(sv4_t* target, sv4_t value, sv4_t mask, uint64_t ticks) {
+    llg_nba_t* n = new_nba(ticks);
+    n->target = target;
+    n->value = value;
+    n->mask = mask;
+    n->has_mask = 1;
+    enqueue_nba(n);
+}
+
+void llg_nba_d_after(double* target, double value, uint64_t ticks) {
+    llg_nba_t* n = new_nba(ticks);
+    n->is_real = 1;
+    n->real_target = target;
+    n->real_value = value;
+    enqueue_nba(n);
 }
 
 void llg_ba(sv4_t* target, sv4_t value) {
@@ -1022,18 +1179,7 @@ void llg_ba(sv4_t* target, sv4_t value) {
 }
 
 void llg_nba_d(double* target, double value) {
-    llg_proc_t* p = llg_current();
-    llg_nba_t* n = (llg_nba_t*)llg_checked_malloc(
-        1, sizeof(llg_nba_t), "real nonblocking assignment");
-    n->target = NULL;
-    n->value = sv4_x(0, 0);
-    n->is_real = 1;
-    n->real_target = target;
-    n->real_value = value;
-    n->next = NULL;
-    if (p->nba_tail) p->nba_tail->next = n;
-    else p->nba_head = n;
-    p->nba_tail = n;
+    llg_nba_d_after(target, value, 0);
 }
 
 void llg_ba_d(double* target, double value) {
@@ -1064,21 +1210,104 @@ void llg_net_write(llg_net_t* net, int idx, sv4_t value) {
     sig_write(&net->resolved, llg_net_compute(net));
 }
 
+static void inertial_update(llg_inertial_t** handle, sv4_t* target,
+                            llg_net_t* net, int slot, sv4_t value,
+                            uint64_t ticks) {
+    llg_inertial_t* driver = *handle;
+    if (!driver) {
+        driver = llg_checked_calloc(1, sizeof(*driver), "inertial driver");
+        driver->handle = handle;
+        driver->target = target;
+        driver->net = net;
+        driver->slot = slot;
+        driver->current = *target;
+        driver->next_all = g.inertial_drivers;
+        g.inertial_drivers = driver;
+        *handle = driver;
+    }
+    value = sv4_resize(value, target->width, target->is_signed);
+    if (driver->pending) {
+        // Unchanged expression values keep the original propagation time.
+        if (sv4_same(driver->value, value)) return;
+        llg_inertial_t** entry = &g.inertial_pending;
+        while (*entry && *entry != driver) entry = &(*entry)->next_pending;
+        if (*entry) *entry = driver->next_pending;
+        driver->pending = 0;
+        driver->next_pending = NULL;
+    }
+    if (sv4_same(driver->current, value)) return;
+    if (ticks > UINT64_MAX - g.now) {
+        fprintf(stderr, "llg: fatal: simulation time overflow while scheduling an inertial update\n");
+        abort();
+    }
+    driver->value = value;
+    driver->time = g.now + ticks;
+    driver->pending = 1;
+    llg_inertial_t** entry = &g.inertial_pending;
+    while (*entry && (*entry)->time <= driver->time) entry = &(*entry)->next_pending;
+    driver->next_pending = *entry;
+    *entry = driver;
+}
+
+void llg_inertial_assign(llg_inertial_t** handle, sv4_t* target,
+                         sv4_t value, uint64_t ticks) {
+    inertial_update(handle, target, NULL, 0, value, ticks);
+}
+
+void llg_inertial_net(llg_inertial_t** handle, llg_net_t* net, int slot,
+                      sv4_t value, uint64_t ticks) {
+    if (slot < 0 || slot >= net->n_drivers || !net->drivers[slot]) {
+        fprintf(stderr, "llg: fatal: invalid inertial net driver slot\n");
+        abort();
+    }
+    inertial_update(handle, net->drivers[slot], net, slot, value, ticks);
+}
+
+static int inertial_ready(void) {
+    return g.inertial_pending && g.inertial_pending->time == g.now;
+}
+
+static void commit_inertial(void) {
+    llg_inertial_t* driver = g.inertial_pending;
+    g.inertial_pending = driver->next_pending;
+    driver->next_pending = NULL;
+    driver->pending = 0;
+    driver->current = driver->value;
+    if (driver->net) llg_net_write(driver->net, driver->slot, driver->value);
+    else llg_ba(driver->target, driver->value);
+}
+
 static void commit_nbas(void) {
-    for (int i = 0; i < g.n_procs; i++) {
-        llg_proc_t* p = g.all_procs[i];
-        if (!p) continue; // slot freed by fork/join teardown or disable_fork
-        while (p->nba_head) {
-            llg_nba_t* n = p->nba_head;
-            p->nba_head = n->next;
-            if (!p->nba_head) p->nba_tail = NULL;
-            if (n->is_real) {
-                real_write(n->real_target, n->real_value);
-            } else if (!llg_is_forced(n->target)) {
-                sig_write(n->target, n->value);
+    for (;;) {
+        llg_nba_t* next = g.delayed_nbas && g.delayed_nbas->time == g.now ? g.delayed_nbas : NULL;
+        llg_proc_t* owner = NULL;
+        for (int i = 0; i < g.n_procs; i++) {
+            llg_proc_t* p = g.all_procs[i];
+            if (p && p->nba_head && (!next || p->nba_head->sequence < next->sequence)) {
+                next = p->nba_head;
+                owner = p;
             }
-            free(n);
         }
+        if (!next) break;
+        if (owner) {
+            owner->nba_head = next->next;
+            if (!owner->nba_head) owner->nba_tail = NULL;
+        } else g.delayed_nbas = next->next;
+        if (next->is_real) real_write(next->real_target, next->real_value);
+        else if (!llg_is_forced(next->target)) {
+            sv4_t value = next->value;
+            if (next->has_mask) {
+                value = *next->target;
+                for (uint32_t i = 0; i < (value.width + 63u) / 64u; i++) {
+                    uint64_t mask = next->mask.bits[i];
+                    value.bits[i] = (value.bits[i] & ~mask) | (next->value.bits[i] & mask);
+                    value.x[i] = (value.x[i] & ~mask) | (next->value.x[i] & mask);
+                    value.z[i] = (value.z[i] & ~mask) | (next->value.z[i] & mask);
+                }
+            }
+            sig_write(next->target, value);
+        }
+        free(next);
     }
 }
 
@@ -1180,7 +1409,7 @@ void llg_strobe(const char* fmt, int n, llg_mon_eval_fn eval) {
 }
 
 // Re-print the monitor line when any argument differs from the last printed
-// snapshot.  Called after every NBA commit (and on $monitoron resume).
+// snapshot. Called after active/inactive/NBA settling (and on $monitoron resume).
 static void check_monitor(void) {
     if (!g.mon.active || !g.mon.enabled) return;
     g.mon.eval(g.mon.work);
@@ -1195,8 +1424,7 @@ static void check_monitor(void) {
     llg_print_array(g.mon.fmt, g.mon.work, g.mon.n);
 }
 
-// Print every queued $strobe line with the values committed by the NBA region
-// of the current time step, then clear the queue.
+// Print queued $strobe lines after the current time step has settled.
 static void flush_strobes(void) {
     while (g.strobes) {
         llg_strobe_t* e = g.strobes;
@@ -1313,11 +1541,15 @@ void llg_rt_run(void) {
         // quiesces (e.g. two processes ping-ponging named-event triggers
         // with no suspension point) trips the guard instead of spinning
         // forever inside one region pass.
-        while (g.ready_head) {
+        while (g.ready_head || inertial_ready()) {
             if (++g.region_passes > LLG_ZERO_LOOP_LIMIT) {
                 report_zero_delay_loop();
                 zero_loop = 1;
                 break;
+            }
+            if (inertial_ready()) {
+                commit_inertial();
+                continue;
             }
             llg_proc_t* p = g.ready_head;
             g.ready_head = p->next_ready;
@@ -1346,11 +1578,15 @@ void llg_rt_run(void) {
                 wake_proc(w->proc);
                 w = next;
             }
-            while (g.ready_head) {
+            while (g.ready_head || inertial_ready()) {
                 if (++g.region_passes > LLG_ZERO_LOOP_LIMIT) {
                     report_zero_delay_loop();
                     zero_loop = 1;
                     break;
+                }
+                if (inertial_ready()) {
+                    commit_inertial();
+                    continue;
                 }
                 llg_proc_t* p = g.ready_head;
                 g.ready_head = p->next_ready;
@@ -1367,14 +1603,16 @@ void llg_rt_run(void) {
         // done children's NBAs were just committed, killed ones were
         // discarded by disable_fork, so freeing is safe here.
         process_zombie_groups();
+        if (g.ready_head || inertial_ready()) continue;
         // $strobe lines print with the values committed above; the monitor
         // re-prints when any of its arguments changed.
         flush_strobes();
         check_monitor();
-        if (g.ready_head) continue; // new events this time step
         if (g.finish) break;
-        if (g.timed_head) {
-            uint64_t t = g.timed_head->time;
+        if (g.timed_head || g.delayed_nbas || g.inertial_pending) {
+            uint64_t t = g.timed_head ? g.timed_head->time : UINT64_MAX;
+            if (g.delayed_nbas && g.delayed_nbas->time < t) t = g.delayed_nbas->time;
+            if (g.inertial_pending && g.inertial_pending->time < t) t = g.inertial_pending->time;
             if (t == g.now) {
                 // #0 waiters now live on the inactive list, so a timed
                 // wakeup at `now` cannot come from them; keep the guard for

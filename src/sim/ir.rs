@@ -604,6 +604,12 @@ pub enum IrElemSel {
     Part(i64, i64),
     /// Bit-select of the element by a runtime index expression.
     Bit(Box<IrExpr>),
+    /// Indexed part-select with a translated runtime base and constant width.
+    Indexed {
+        base: Box<IrExpr>,
+        width: u32,
+        negative: bool,
+    },
 }
 
 /// Direction of a packed streaming concatenation (LRM 1800-2009 §11.4.14).
@@ -884,6 +890,14 @@ pub enum IrEdge {
 /// (index into [`IrModel::events`]).
 #[derive(Clone, Debug, PartialEq)]
 pub enum IrWaitSrc {
+    /// A value expression, evaluated synchronously when a dependency changes.
+    Evaluated {
+        eval: String,
+        condition: Option<String>,
+        reads: Vec<String>,
+    },
+    /// Named event with a qualifier evaluated at trigger time.
+    FilteredEvent { event: usize, condition: String },
     /// Signal (or array-element address) C name; edge per the paired
     /// [`IrEdge`].
     Sig(String),
@@ -900,7 +914,36 @@ pub enum IrJoinKind {
     Any,
 }
 
-/// One statement.  Wait shapes carry their lowering-time read sets
+/// Delay evaluated once in the issuing process, before any suspension.
+#[derive(Clone, Debug, PartialEq)]
+pub enum IrDelay {
+    /// Already converted to design-precision ticks.
+    Constant(u64),
+    /// Numeric module-unit value, with integral scheduler scaling factors.
+    Runtime {
+        value: Box<IrExpr>,
+        unit_ticks: u64,
+        precision_ticks: u64,
+    },
+}
+
+impl IrDelay {
+    pub(in crate::sim) fn expression(&self) -> Option<&IrExpr> {
+        match self {
+            Self::Constant(_) => None,
+            Self::Runtime { value, .. } => Some(value),
+        }
+    }
+
+    pub(in crate::sim) fn expression_mut(&mut self) -> Option<&mut IrExpr> {
+        match self {
+            Self::Constant(_) => None,
+            Self::Runtime { value, .. } => Some(value),
+        }
+    }
+}
+
+/// One statement. Wait shapes carry their lowering-time read sets
 /// (`sens`/`reads`); those lists are never recomputed afterwards.
 #[derive(Clone, Debug, PartialEq)]
 pub enum IrStmt {
@@ -909,7 +952,8 @@ pub enum IrStmt {
     /// `{ stmts }` — a begin block.
     Block(Vec<IrStmt>),
     /// `sv4_t name = sv4_x(w, s);` (no init) or `sv4_t name = <init>;`
-    /// (caller-side temps and inlined-task locals/input copies).
+    /// (caller-side temps and inlined-task locals/input copies). Width zero
+    /// denotes a real capture and requires a real initializer.
     DeclLocal {
         name: String,
         width: u32,
@@ -917,8 +961,19 @@ pub enum IrStmt {
         init: Option<Box<IrExpr>>,
         two_state: bool,
     },
-    /// Blocking (`nba == false`: `llg_ba`) or non-blocking (`llg_nba`)
-    /// assignment; real companions use the `_d` variants.
+    /// Capture a nonblocking update now and commit in a future NBA region.
+    DelayedAssign {
+        lhs: IrLhs,
+        rhs: IrExpr,
+        ticks: IrDelay,
+    },
+    /// Capture a continuous-driver value and replace its pending active-region update.
+    InertialAssign {
+        lhs: IrLhs,
+        rhs: IrExpr,
+        ticks: u64,
+    },
+    /// Blocking (`nba == false`) or nonblocking assignment, including reals.
     Assign {
         lhs: IrLhs,
         rhs: IrExpr,
@@ -954,9 +1009,9 @@ pub enum IrStmt {
         kind: IrCaseKind,
         items: Vec<IrCaseItem>,
     },
-    /// `#ticks` — already scaled to design-precision ticks at lowering.
+    /// Suspend for a constant or runtime-valued delay.
     Delay {
-        ticks: u64,
+        ticks: IrDelay,
     },
     /// `@(posedge a or ev …)` — ONE atomic wait call; sources are
     /// [`IrWaitSrc`] entries (signal wait-address C names or named-event
@@ -1059,6 +1114,22 @@ pub enum IrStmt {
     Goto(String),
     /// Placeholder (source-level `;` or an empty construct).
     Nop,
+}
+
+impl IrStmt {
+    pub(in crate::sim) fn delay_expression(&self) -> Option<&IrExpr> {
+        match self {
+            Self::Delay { ticks } | Self::DelayedAssign { ticks, .. } => ticks.expression(),
+            _ => None,
+        }
+    }
+
+    pub(in crate::sim) fn delay_expression_mut(&mut self) -> Option<&mut IrExpr> {
+        match self {
+            Self::Delay { ticks } | Self::DelayedAssign { ticks, .. } => ticks.expression_mut(),
+            _ => None,
+        }
+    }
 }
 
 /// A helper function attached to (and rendered just before) its owning
@@ -1320,8 +1391,10 @@ impl IrFunc {
 /// One `main()` initialization step, applied before any process runs.
 #[derive(Clone, Debug, PartialEq)]
 pub enum IrInitStep {
-    /// Fill an unpacked array with all-X elements.
+    /// Fill an unpacked array with the variable type's X or two-state zero default.
     FillArrayX(usize),
+    /// Fill an unpacked array with all-Z elements before net drivers execute.
+    FillArrayZ(usize),
     /// Apply one declaration-initializer pattern element.
     SetArrayElem {
         arr: usize,
@@ -1350,6 +1423,8 @@ pub struct IrSignal {
     /// For members of a collapsed inout-net group: `(group index, driver
     /// slot)`.  `c_name` is then `<net>.resolved`.
     pub(in crate::sim) net_driver: Option<(usize, usize)>,
+    /// Canonical variable storage for a reference alias; never another alias.
+    pub(in crate::sim) alias: Option<usize>,
     /// Storage pruning marker (`unused_storage` pass): the declaration is
     /// skipped when set.  Indices are NEVER remapped.
     pub(in crate::sim) omit: bool,
@@ -1370,6 +1445,7 @@ impl IrSignal {
             hdl_name,
             ty,
             net_driver,
+            alias: None,
             omit: false,
         })
     }

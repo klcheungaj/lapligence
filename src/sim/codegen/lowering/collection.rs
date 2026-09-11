@@ -54,6 +54,7 @@ impl<'a> Codegen<'a> {
                         two_state: signal.two_state,
                     },
                     net_driver: None,
+                    alias: None,
                     omit: false,
                 });
                 if let Some(initializer) = self.db.var_initializer(node) {
@@ -202,6 +203,19 @@ impl<'a> Codegen<'a> {
     /// Walk the instance tree, collecting signals, parameters and gen-scope
     /// paths.  Returns the top module nodes.
     pub(super) fn collect_design(&mut self) -> Result<Vec<NodeId>, String> {
+        for node in self.design_nodes() {
+            let net_type = match self.kind(node) {
+                NodeKind::Net { net_type, .. } => Some(*net_type),
+                NodeKind::Array { .. } => self.db.array_meta(node).and_then(|meta| meta.net_type()),
+                _ => None,
+            };
+            if net_type == Some(NetType::TriReg) {
+                return Err(format!(
+                    "unsupported net type TriReg: trireg charge storage is not supported for `{}`; outside the standalone subset",
+                    self.display_name(node)
+                ));
+            }
+        }
         let mut tops = Vec::new();
         for top in self.db.tops() {
             let path = strip_lib(&self.node(*top).name);
@@ -421,6 +435,7 @@ impl<'a> Codegen<'a> {
                 two_state,
             },
             net_driver: None,
+            alias: None,
             omit: false,
         });
         self.signals.push(info.clone());
@@ -508,6 +523,7 @@ impl<'a> Codegen<'a> {
                             }
                         },
                         net_driver: None,
+                        alias: None,
                         omit: false,
                     });
                     self.signals.push(info.clone());
@@ -1144,6 +1160,7 @@ impl<'a> Codegen<'a> {
                             }
                         },
                         net_driver: None,
+                        alias: None,
                         omit: false,
                     });
                     self.signals.push(info.clone());
@@ -1511,7 +1528,7 @@ impl<'a> Codegen<'a> {
             .iter()
             .filter_map(|id| match self.kind(*id) {
                 NodeKind::Net { net_type, .. } => match net_type {
-                    NetType::Wire | NetType::Tri => {
+                    NetType::Wire | NetType::Tri | NetType::Uwire => {
                         let member_set = HashSet::from([*id]);
                         let in_interface = self.node(*id).parent.is_some_and(|parent| {
                             matches!(
@@ -1841,8 +1858,6 @@ impl<'a> Codegen<'a> {
             }
 
             for (slot, site) in sites.into_iter().enumerate() {
-                let delayed =
-                    matches!(self.kind(site), NodeKind::ContAssign { delay: Some(_), .. });
                 let signal = self.model.signals.len();
                 self.model.signals.push(IrSignal {
                     c_name: resolved.clone(),
@@ -1853,26 +1868,10 @@ impl<'a> Codegen<'a> {
                         two_state: false,
                     },
                     net_driver: Some((group, slot)),
+                    alias: None,
                     omit: false,
                 });
                 self.wired_driver_sites.insert(site, signal);
-                if delayed {
-                    let nlimbs = (info.width as usize).div_ceil(64);
-                    let mut x = vec![u64::MAX; nlimbs];
-                    if !info.width.is_multiple_of(64) {
-                        x[nlimbs - 1] = (1u64 << (info.width % 64)) - 1;
-                    }
-                    let initial_x = IrConst::packed(
-                        vec![0; nlimbs],
-                        x,
-                        vec![0; nlimbs],
-                        info.width,
-                        info.signed,
-                        None,
-                    )
-                    .map_err(|error| error.to_string())?;
-                    self.net_inits.push((name.clone(), slot, initial_x));
-                }
             }
         }
         Ok(())
@@ -1901,7 +1900,7 @@ impl<'a> Codegen<'a> {
 
     /// Every arena node of the instance tree (top instances + children +
     /// generate scopes), depth-first, in deterministic order.
-    fn design_nodes(&self) -> Vec<NodeId> {
+    pub(super) fn design_nodes(&self) -> Vec<NodeId> {
         fn walk(db: &Db, id: NodeId, out: &mut Vec<NodeId>) {
             out.push(id);
             for c in &db.node(id).children {
@@ -2227,6 +2226,7 @@ impl<'a> Codegen<'a> {
                 NetType::None => NetDeclTarget::Variable,
                 NetType::Wire
                 | NetType::Tri
+                | NetType::Uwire
                 | NetType::Logic
                 | NetType::Wand
                 | NetType::TriAnd
@@ -2442,6 +2442,7 @@ impl<'a> Codegen<'a> {
             global: global_name(path, name),
             elem_width,
             signed: ty.signed,
+            is_net: meta.net_type().is_some(),
             dims,
             init,
             ir,
@@ -2580,6 +2581,7 @@ impl<'a> Codegen<'a> {
                                 two_state: info.two_state,
                             },
                             net_driver: None,
+                            alias: None,
                             omit: false,
                         });
                         self.signals.push(info.clone());
@@ -2624,6 +2626,7 @@ impl<'a> Codegen<'a> {
                                 two_state,
                             },
                             net_driver: None,
+                            alias: None,
                             omit: false,
                         });
                         self.signals.push(info.clone());
@@ -4308,35 +4311,34 @@ impl<'a> Codegen<'a> {
                 "real-valued continuous assignments are not supported in `{path}`"
             ));
         }
-        let assign = IrStmt::Assign {
-            lhs: lh,
-            rhs: rhs_ir,
-            nba: false,
-        };
-        // `assign #d lhs = rhs;` — the delay folds to a constant through the
-        // collected parameter values and scales like a `#N` statement.  The
-        // write happens D after each RHS change; a change during an open
-        // window is picked up by the next iteration (no pulse filtering, see
-        // below), and the t=0 first evaluation waits D too.
+        // Driver evaluation must keep watching its inputs while a captured
+        // propagation event is pending (IEEE 1364-2001 6.1.3).
         let scaled_delay = match self.kind(ca) {
             NodeKind::ContAssign {
                 delay: Some(de), ..
-            } => Some(self.procedural_delay_ticks(ca, *de)?),
+            } => Some(self.driver_delay_ticks(ca, *de)?),
             _ => None,
         };
-        // Backend approximation (LRM 1364-1995 §6.1.3): no pulse filtering — the
-        // LHS is written with the CURRENT rhs value D after the wake, so an
-        // rhs pulse shorter than D still produces a (delayed) write with the
-        // post-pulse value instead of being swallowed.
-        let mut body = Vec::new();
-        if let Some(ticks) = scaled_delay {
-            self.warnings.push(format!(
-                "delayed continuous assignment in `{path}` uses the current \
-                 rhs value after the #delay window (no pulse filtering)"
-            ));
-            body.push(IrStmt::Delay { ticks });
-        }
-        body.push(assign);
+        let assign = if let Some(ticks) = scaled_delay {
+            let IrLhs::Whole(index) = lh else {
+                return Err(format!(
+                    "delayed continuous assignment in `{path}` requires a whole packed driver"
+                ));
+            };
+            self.initialize_delayed_driver(index)?;
+            IrStmt::InertialAssign {
+                lhs: lh,
+                rhs: rhs_ir,
+                ticks,
+            }
+        } else {
+            IrStmt::Assign {
+                lhs: lh,
+                rhs: rhs_ir,
+                nba: false,
+            }
+        };
+        let body = vec![assign];
         let fn_name = self.new_fn_name(path, "ca");
         let sigs = self.collect_read_signals(path, rhs)?;
         let shape = if sigs.is_empty() {
@@ -4395,7 +4397,11 @@ impl<'a> Codegen<'a> {
     /// unpacked array. Array element storage is not representable in an
     /// `IrShape::SensLoop` read set, so declaration drivers reject it rather
     /// than becoming stale after the first evaluation.
-    fn contains_unpacked_array(&self, node: NodeId, visited: &mut HashSet<NodeId>) -> bool {
+    pub(super) fn contains_unpacked_array(
+        &self,
+        node: NodeId,
+        visited: &mut HashSet<NodeId>,
+    ) -> bool {
         if !visited.insert(node) {
             return false;
         }
@@ -4450,6 +4456,7 @@ impl<'a> Codegen<'a> {
                 two_state: false,
             },
             net_driver: None,
+            alias: None,
             omit: false,
         });
         ir
@@ -4484,10 +4491,8 @@ impl<'a> Codegen<'a> {
     ///
     /// Multi-input logic gates reduce their inputs left-to-right with the
     /// two-input runtime op; nand/nor/xnor negate after the full reduce.
-    /// A gate delay `#D` prepends a scaled wait to the process body (the
-    /// t=0 first evaluation waits too) with no pulse filtering — each wake
-    /// writes the CURRENT input values D later (warned, like delayed
-    /// continuous assignments).  Unsupported primitives (switches, UDPs,
+    /// A gate delay `#D` schedules a captured inertial update while the
+    /// process continues watching its inputs. Unsupported primitives (switches, UDPs,
     /// arrays, strengths, multi-output buf/not, width mismatches, …) are
     /// rejected with explicit errors here at lowering time.
     fn emit_gate(&mut self, inst: NodeId, path: &str, g: NodeId) -> Result<(), String> {
@@ -4769,22 +4774,24 @@ impl<'a> Codegen<'a> {
         // Gate delay `#D`: folded through the parameter values like a
         // continuous-assignment delay and scaled to design-precision ticks.
         let scaled_delay = match delay {
-            Some(de) => Some(self.procedural_delay_ticks(g, de)?),
+            Some(de) => Some(self.driver_delay_ticks(g, de)?),
             None => None,
         };
         let mut body = Vec::new();
         if let Some(ticks) = scaled_delay {
-            self.warnings.push(format!(
-                "delayed gate `{shown}` in `{path}` uses the current input values \
-                 after the #delay window (no pulse filtering)"
-            ));
-            body.push(IrStmt::Delay { ticks });
+            self.initialize_delayed_driver(out_ir)?;
+            body.push(IrStmt::InertialAssign {
+                lhs: IrLhs::Whole(out_ir),
+                rhs: value,
+                ticks,
+            });
+        } else {
+            body.push(IrStmt::Assign {
+                lhs: IrLhs::Whole(out_ir),
+                rhs: value,
+                nba: false,
+            });
         }
-        body.push(IrStmt::Assign {
-            lhs: IrLhs::Whole(out_ir),
-            rhs: value,
-            nba: false,
-        });
         let shape = if sens.is_empty() {
             // Constant driver (pullup/pulldown): evaluate once at t=0.
             IrShape::RunOnce
@@ -4806,22 +4813,101 @@ impl<'a> Codegen<'a> {
 
     // ── Port links ─────────────────────────────────────────────────────────
 
+    pub(super) fn bind_reference_ports(&mut self) -> Result<(), String> {
+        let mut aliases = HashMap::new();
+        for port in self.design_nodes() {
+            let NodeKind::Port {
+                direction: DbDirection::Ref,
+                high_expr,
+                high,
+                low,
+                ..
+            } = self.kind(port)
+            else {
+                continue;
+            };
+            let actual = high_expr.or(*high).ok_or_else(|| {
+                format!("reference port `{}` has no actual", self.display_name(port))
+            })?;
+            let internal = low.ok_or_else(|| {
+                format!(
+                    "reference port `{}` has no storage",
+                    self.display_name(port)
+                )
+            })?;
+            let child = self.signal_of(internal).ok_or_else(|| {
+                "reference ports currently require packed scalar/vector storage".to_string()
+            })?;
+            let child_ir = child.ir;
+            let path = self
+                .owning_inst(port)
+                .map(|instance| self.instance_path_of(instance))
+                .unwrap_or_default();
+            let IrLhs::Whole(target) = self.lower_lhs(&path, actual)? else {
+                return Err(format!(
+                    "reference port `{}` requires a whole packed variable actual",
+                    self.display_name(port)
+                ));
+            };
+            if self.model.signals[target].ty != self.model.signals[child_ir].ty
+                || self.model.signals[target].net_driver.is_some()
+            {
+                return Err(format!(
+                    "reference port `{}` requires matching variable storage",
+                    self.display_name(port)
+                ));
+            }
+            aliases.insert(child_ir, target);
+        }
+        for (&alias, &target) in &aliases {
+            let mut target = target;
+            let mut seen = HashSet::from([alias]);
+            while let Some(next) = aliases.get(&target) {
+                if !seen.insert(target) {
+                    return Err("cyclic reference port storage".into());
+                }
+                target = *next;
+            }
+            let canonical = self.model.signals[target].clone();
+            self.model.signals[alias].alias = Some(target);
+            self.model.signals[alias].c_name = canonical.c_name;
+        }
+        let signals = &self.model.signals;
+        let canonicalize = |info: &mut SignalInfo| {
+            if let Some(target) = signals[info.ir].alias {
+                info.ir = target;
+                info.global = signals[target].c_name.clone();
+            }
+        };
+        for info in self.sig_globals.values_mut() {
+            canonicalize(info);
+        }
+        for info in &mut self.signals {
+            canonicalize(info);
+        }
+        for scope in self.scope_sig_names.values_mut() {
+            for info in scope.values_mut() {
+                canonicalize(info);
+            }
+        }
+        Ok(())
+    }
+
     fn emit_links(&mut self, parent_path: &str, child_inst: NodeId) -> Result<(), String> {
         let child_path = self.instance_path_of(child_inst);
+        self.inst = self.owning_inst(child_inst).unwrap_or(child_inst);
         for c in &self.node(child_inst).children {
             let port = *c;
-            let (direction, high, low) = match self.kind(port) {
+            let (direction, high, low, high_expr) = match self.kind(port) {
                 NodeKind::Port {
                     direction,
                     high,
                     low,
+                    high_expr,
                     ..
-                } => (*direction, *high, *low),
+                } => (*direction, *high, *low, *high_expr),
                 _ => continue,
             };
-            // Slang resolves interface and modport member references directly
-            // to storage on the connected concrete interface instance. There
-            // is no per-port storage copy or runtime link process.
             if let Some(actual) =
                 self.node(port)
                     .children
@@ -4839,24 +4925,17 @@ impl<'a> Codegen<'a> {
                 }
                 continue;
             }
-            if direction == DbDirection::Inout {
-                // The collapsed net group IS the connection; no link is
-                // emitted.  Groups that could not be formed were already
-                // warned about by `build_net_groups`.
+            if matches!(direction, DbDirection::Inout | DbDirection::Ref) {
                 continue;
             }
-            // Top-level ports have no parent side; nothing to link.
-            let Some(hc) = high else { continue };
-            let Some(lc) = low else { continue };
-            let parent_side = self.link_parent_side(parent_path, port, hc)?;
-            let (child_name, child_info) = self.resolve_signal_id(&child_path, lc)?;
-            // A link touching a collapsed-net member would copy through the
-            // resolution cell (or write it directly); the group itself is the
-            // connection, so such links are skipped with a warning.
-            let parent_member = match &parent_side {
-                LinkSide::Signal(info) => info.net_driver.is_some(),
-                LinkSide::ArrayElem(..) => false,
+            let Some(actual) = high_expr.or(high) else {
+                continue;
             };
+            let Some(internal) = low else { continue };
+            let (_, child_info) = self.resolve_signal_id(&child_path, internal)?;
+            let parent_member = high
+                .and_then(|node| self.signal_of(node))
+                .is_some_and(|info| info.net_driver.is_some());
             if parent_member || child_info.net_driver.is_some() {
                 self.warnings.push(format!(
                     "port `{}` of `{child_path}` links a collapsed inout-net \
@@ -4866,105 +4945,46 @@ impl<'a> Codegen<'a> {
                 ));
                 continue;
             }
-            // The source (whose changes re-copy) and its width/signedness.
-            let is_input = direction == DbDirection::Input;
-            let (write, wait_sig) = if is_input {
-                let (src_expr, wait_sig) = match &parent_side {
-                    LinkSide::Signal(pinfo) => (sig_read_expr_full(pinfo), pinfo.global.clone()),
-                    LinkSide::ArrayElem(ai, sel) => {
-                        let e = self.lower_expr(parent_path, *sel)?;
-                        (e, self.array_elem_addr(ai, *sel)?)
+            let (lhs, rhs, reads) = if direction == DbDirection::Input {
+                let rhs = self.lower_expr(parent_path, actual)?;
+                let reads = if let Some(array) = high.and_then(|node| self.array_of(node)) {
+                    vec![self.array_elem_addr(array, actual)?]
+                } else {
+                    if self.contains_unpacked_array(actual, &mut HashSet::new()) {
+                        return Err(format!("input port expression in `{parent_path}` reads an unpacked array whose sensitivity cannot be represented"));
                     }
+                    self.collect_read_signals(parent_path, actual)?
                 };
-                let write = IrStmt::Assign {
-                    lhs: IrLhs::Whole(child_info.ir),
-                    rhs: src_expr,
-                    nba: false,
-                };
-                (write, wait_sig)
+                (IrLhs::Whole(child_info.ir), rhs, reads)
             } else {
-                let src_expr = sig_read_expr_full(&child_info);
-                let write = match &parent_side {
-                    LinkSide::Signal(pinfo) => IrStmt::Assign {
-                        lhs: IrLhs::Whole(pinfo.ir),
-                        rhs: src_expr,
-                        nba: false,
-                    },
-                    LinkSide::ArrayElem(ai, sel) => {
-                        let lh = self.lower_lhs(parent_path, *sel)?;
-                        IrStmt::Assign {
-                            lhs: lh,
-                            rhs: IrExpr::new(
-                                IrExprKind::Verbatim {
-                                    code: child_name.clone(),
-                                    width: ai.elem_width,
-                                    signed: ai.signed,
-                                },
-                                ai.elem_width,
-                                ai.signed,
-                                None,
-                            ),
-                            nba: false,
-                        }
-                    }
-                };
-                (write, child_name.clone())
+                (
+                    self.lower_lhs(parent_path, actual)?,
+                    sig_read_expr_full(&child_info),
+                    vec![child_info.global.clone()],
+                )
+            };
+            let rhs = apply_lhs_assignment_context(&self.model, &lhs, rhs);
+            let shape = if reads.is_empty() {
+                IrShape::RunOnce
+            } else {
+                IrShape::SensLoop { reads }
             };
             let fn_name = self.new_fn_name(parent_path, "link");
             let origin = self.origin(port);
             self.model.processes.push(IrProcess::new_with_origin(
                 fn_name,
                 format!("{child_path}.link"),
-                IrShape::SensLoop {
-                    reads: vec![wait_sig],
-                },
+                shape,
                 Vec::new(),
-                vec![write],
+                vec![IrStmt::Assign {
+                    lhs,
+                    rhs,
+                    nba: false,
+                }],
                 origin,
             ));
         }
         Ok(())
-    }
-
-    /// Resolve the parent side of a port connection: a
-    /// plain global signal, or an element of an unpacked array (when the
-    /// connection selects into one — e.g. `.cnt(cnts[i])`, whose index
-    /// expression the db walk captured as a child of the port).
-    fn link_parent_side(
-        &self,
-        parent_path: &str,
-        port: NodeId,
-        hc: NodeId,
-    ) -> Result<LinkSide, String> {
-        if let Some(ai) = self.array_of(hc).cloned() {
-            let sel = match self.kind(port) {
-                NodeKind::Port {
-                    high_expr: Some(expression),
-                    ..
-                } if matches!(
-                    self.kind(*expression),
-                    NodeKind::Expr(
-                        ExprKind::BitSelect { .. }
-                            | ExprKind::PartSelect { .. }
-                            | ExprKind::IndexedPartSelect { .. }
-                            | ExprKind::ArraySelect { .. }
-                    )
-                ) =>
-                {
-                    Some(*expression)
-                }
-                _ => None,
-            };
-            return match sel {
-                Some(s) => Ok(LinkSide::ArrayElem(ai, s)),
-                None => Err(format!(
-                    "array-element port connection in `{parent_path}` is missing its \
-                     index expression"
-                )),
-            };
-        }
-        let (_, info) = self.resolve_signal_id(parent_path, hc)?;
-        Ok(LinkSide::Signal(info))
     }
 
     /// C address (without the leading `&`) of the array element addressed by a
@@ -5359,6 +5379,30 @@ impl<'a> Codegen<'a> {
 
     // ── LHS analysis ───────────────────────────────────────────────────────
 
+    fn array_element_lhs(
+        &mut self,
+        path: &str,
+        node: NodeId,
+    ) -> Result<Option<ArrayElemLhs>, String> {
+        let base = match self.kind(node) {
+            NodeKind::Expr(
+                ExprKind::BitSelect { base, .. } | ExprKind::ArraySelect { base, .. },
+            ) => *base,
+            _ => return Ok(None),
+        };
+        if self.array_of(base).is_none() {
+            return Ok(None);
+        }
+        match self.analyze_lhs(path, node)? {
+            Lhs::ArrayElem(element) if matches!(element.elem_sel, ElemSel::Whole) => {
+                Ok(Some(element))
+            }
+            _ => Err(format!(
+                "nested selects of an array element are not supported in `{path}`"
+            )),
+        }
+    }
+
     pub(super) fn analyze_lhs(&mut self, path: &str, lhs: NodeId) -> Result<Lhs, String> {
         match self.kind(lhs) {
             NodeKind::Expr(ExprKind::Streaming {
@@ -5473,6 +5517,10 @@ impl<'a> Codegen<'a> {
                 }))
             }
             NodeKind::Expr(ExprKind::BitSelect { base, index }) => {
+                if let Some(mut element) = self.array_element_lhs(path, *base)? {
+                    element.elem_sel = ElemSel::Bit(self.lower_packed_index(path, *base, *index)?);
+                    return Ok(Lhs::ArrayElem(element));
+                }
                 if let Some((info, member)) = self.packed_member_info(*base) {
                     let index = self.eval_bound_i128(*index)?;
                     let relative = self.aggregate_member_relative_bound(
@@ -5520,7 +5568,7 @@ impl<'a> Codegen<'a> {
                         "select on real-valued signal in `{path}` is not supported"
                     ));
                 }
-                let index = self.lower_expr(path, *index)?;
+                let index = self.lower_packed_index(path, *base, *index)?;
                 let two_state = info.two_state;
                 Ok(Lhs::Bit(info, index, two_state))
             }
@@ -5561,17 +5609,26 @@ impl<'a> Codegen<'a> {
                         .collect::<Result<Vec<_>, _>>()?;
                     let elem_sel = match self.kind(last) {
                         NodeKind::Expr(ExprKind::PartSelect { left, right, .. }) => {
-                            let l = self.eval_bound_i128(*left)?;
-                            let r = self.eval_bound_i128(*right)?;
+                            let l =
+                                self.packed_relative_bound(*base, self.eval_bound_i128(*left)?)?;
+                            let r =
+                                self.packed_relative_bound(*base, self.eval_bound_i128(*right)?)?;
                             ElemSel::Part(l, r)
                         }
-                        NodeKind::Expr(ExprKind::IndexedPartSelect { .. }) => {
-                            return Err(format!(
-                                "indexed part-select on an array element is not \
-                                 supported in `{path}`"
-                            ))
+                        NodeKind::Expr(ExprKind::IndexedPartSelect {
+                            base_expr,
+                            width_expr,
+                            neg,
+                            ..
+                        }) => {
+                            let width = self.indexed_part_select_width(*width_expr, path)?;
+                            ElemSel::Indexed(
+                                self.lower_packed_index(path, *base, *base_expr)?,
+                                width,
+                                *neg ^ self.packed_range_ascending(*base),
+                            )
                         }
-                        _ => ElemSel::Bit(self.lower_expr(path, last)?),
+                        _ => ElemSel::Bit(self.lower_packed_index(path, *base, last)?),
                     };
                     return Ok(Lhs::ArrayElem(ArrayElemLhs {
                         arr: ai,
@@ -5588,6 +5645,13 @@ impl<'a> Codegen<'a> {
                 ))
             }
             NodeKind::Expr(ExprKind::PartSelect { base, left, right }) => {
+                if let Some(mut element) = self.array_element_lhs(path, *base)? {
+                    element.elem_sel = ElemSel::Part(
+                        self.packed_relative_bound(*base, self.eval_bound_i128(*left)?)?,
+                        self.packed_relative_bound(*base, self.eval_bound_i128(*right)?)?,
+                    );
+                    return Ok(Lhs::ArrayElem(element));
+                }
                 if let Some((info, member)) = self.packed_member_info(*base) {
                     let left = self.aggregate_member_relative_bound(
                         &member.name,
@@ -5612,7 +5676,10 @@ impl<'a> Codegen<'a> {
                         "select on real-valued signal in `{path}` is not supported"
                     ));
                 }
-                let (l, r) = (self.eval_bound_i128(*left)?, self.eval_bound_i128(*right)?);
+                let (l, r) = (
+                    self.packed_relative_bound(*base, self.eval_bound_i128(*left)?)?,
+                    self.packed_relative_bound(*base, self.eval_bound_i128(*right)?)?,
+                );
                 let two_state = info.two_state;
                 Ok(Lhs::Part(info, l, r, two_state))
             }
@@ -5622,6 +5689,15 @@ impl<'a> Codegen<'a> {
                 width_expr,
                 neg,
             }) => {
+                if let Some(mut element) = self.array_element_lhs(path, *base)? {
+                    let width = self.indexed_part_select_width(*width_expr, path)?;
+                    element.elem_sel = ElemSel::Indexed(
+                        self.lower_packed_index(path, *base, *base_expr)?,
+                        width,
+                        *neg ^ self.packed_range_ascending(*base),
+                    );
+                    return Ok(Lhs::ArrayElem(element));
+                }
                 let (_, info) = self.base_signal(path, *base)?;
                 if info.real {
                     return Err(format!(
@@ -5629,10 +5705,18 @@ impl<'a> Codegen<'a> {
                     ));
                 }
                 let width = self.indexed_part_select_width(*width_expr, path)?;
-                let base = self.lower_expr(path, *base_expr)?;
+                let ascending = self.packed_range_ascending(*base);
+                let base = self.lower_packed_index(path, *base, *base_expr)?;
                 let width_expr = self.lower_expr(path, *width_expr)?;
                 let two_state = info.two_state;
-                Ok(Lhs::IdxPart(info, base, width_expr, width, *neg, two_state))
+                Ok(Lhs::IdxPart(
+                    info,
+                    base,
+                    width_expr,
+                    width,
+                    *neg ^ ascending,
+                    two_state,
+                ))
             }
             NodeKind::Expr(ExprKind::HierPath { .. }) => {
                 if let Some((_target, _kind, member_info)) = self.unpacked_member_info(lhs) {

@@ -212,6 +212,12 @@ impl Validator<'_> {
         for (idx, signal) in self.model.signals.iter().enumerate() {
             let path = format!("signals[{idx}]");
             self.validate_type(&signal.ty, &format!("{path}.ty"))?;
+            if signal.alias.is_some() && signal.net_driver.is_some() {
+                return self.fail(
+                    format!("{path}.alias"),
+                    "net driver cannot also be a variable alias",
+                );
+            }
             if let Some((group, slot)) = signal.net_driver {
                 let net = self.model.net_groups.get(group).ok_or_else(|| {
                     IrValidationError::new(
@@ -229,6 +235,22 @@ impl Validator<'_> {
                     return self.fail(
                         format!("{path}.net_driver"),
                         "signal type does not match its net group",
+                    );
+                }
+            } else if let Some(target) = signal.alias {
+                let canonical = self.model.signals.get(target).ok_or_else(|| {
+                    IrValidationError::new(format!("{path}.alias"), "alias target is out of bounds")
+                })?;
+                if target == idx
+                    || canonical.alias.is_some()
+                    || canonical.net_driver.is_some()
+                    || canonical.ty != signal.ty
+                    || canonical.c_name != signal.c_name
+                    || (!signal.omit && canonical.omit)
+                {
+                    return self.fail(
+                        format!("{path}.alias"),
+                        "alias must name matching canonical variable storage",
                     );
                 }
             } else if !signal.omit && !storage_names.insert(signal.c_name.as_str()) {
@@ -872,6 +894,10 @@ impl Validator<'_> {
             IrElemSel::Whole => Ok(()),
             IrElemSel::Part(left, right) => self.validate_select_width(*left, *right, path),
             IrElemSel::Bit(expr) => self.validate_expr(expr, formals, path),
+            IrElemSel::Indexed { base, width, .. } => {
+                self.validate_expr(base, formals, &format!("{path}.base"))?;
+                self.validate_width(*width, &format!("{path}.width"))
+            }
         }
     }
 
@@ -892,6 +918,7 @@ impl Validator<'_> {
                 IrElemSel::Whole => self.model.arrays.get(*arr)?.elem_width,
                 IrElemSel::Part(left, right) => ((left - right).abs() + 1) as u32,
                 IrElemSel::Bit(_) => 1,
+                IrElemSel::Indexed { width, .. } => *width,
             },
         };
         (width != 0).then_some(width)
@@ -991,6 +1018,19 @@ impl Validator<'_> {
     }
 
     fn validate_stmt(&self, stmt: &IrStmt, formals: &[IrFormal], path: &str) -> ValidationResult {
+        if let IrStmt::Delay { ticks } | IrStmt::DelayedAssign { ticks, .. } = stmt {
+            if let IrDelay::Runtime {
+                value,
+                unit_ticks,
+                precision_ticks,
+            } = ticks
+            {
+                if *unit_ticks == 0 || *precision_ticks == 0 || unit_ticks % precision_ticks != 0 {
+                    return self.fail(path, "runtime delay requires valid integral time scaling");
+                }
+                self.validate_expr(value, formals, &format!("{path}.delay"))?;
+            }
+        }
         match stmt {
             IrStmt::Container(operation) => {
                 operation.validate(self.model, self.string_return.get())?;
@@ -1025,13 +1065,56 @@ impl Validator<'_> {
             IrStmt::Block(body) | IrStmt::Forever { body } => {
                 self.validate_stmts(body, formals, &format!("{path}.body"))?;
             }
-            IrStmt::DeclLocal { width, init, .. } => {
-                self.validate_width(*width, &format!("{path}.width"))?;
+            IrStmt::DeclLocal {
+                width,
+                init,
+                two_state,
+                ..
+            } => {
+                if *width == 0 {
+                    if *two_state || !init.as_ref().is_some_and(|value| value.is_real()) {
+                        return self.fail(path, "real local capture requires a real initializer");
+                    }
+                } else {
+                    self.validate_width(*width, &format!("{path}.width"))?;
+                }
                 if let Some(init) = init {
                     self.validate_expr(init, formals, &format!("{path}.init"))?;
                 }
             }
-            IrStmt::Assign { lhs, rhs, .. } => {
+            IrStmt::Assign { lhs, rhs, .. }
+            | IrStmt::DelayedAssign { lhs, rhs, .. }
+            | IrStmt::InertialAssign { lhs, rhs, .. } => {
+                if matches!(stmt, IrStmt::InertialAssign { .. }) {
+                    let packed_driver = match lhs {
+                        IrLhs::Whole(index) => self
+                            .model
+                            .signals
+                            .get(*index)
+                            .is_some_and(|signal| matches!(signal.ty, IrType::Packed { .. })),
+                        _ => false,
+                    };
+                    if !packed_driver || rhs.is_real() {
+                        return self.fail(
+                            path,
+                            "inertial update requires a whole packed driver and packed value",
+                        );
+                    }
+                }
+                if matches!(stmt, IrStmt::DelayedAssign { .. }) {
+                    fn persistent(lhs: &IrLhs) -> bool {
+                        match lhs {
+                            IrLhs::WholeRef { .. } => false,
+                            IrLhs::Stream { parts, .. } => {
+                                parts.iter().all(|(part, _)| persistent(part))
+                            }
+                            _ => true,
+                        }
+                    }
+                    if !persistent(lhs) {
+                        return self.fail(path, "delayed NBA requires persistent target storage");
+                    }
+                }
                 self.validate_lhs(lhs, formals, &format!("{path}.lhs"))?;
                 self.validate_expr(rhs, formals, &format!("{path}.rhs"))?;
             }
@@ -1078,12 +1161,48 @@ impl Validator<'_> {
             }
             IrStmt::WaitEvents { specs } => {
                 for (idx, (source, _)) in specs.iter().enumerate() {
-                    if let IrWaitSrc::Event(event) = source {
-                        if *event >= self.model.events.len() {
+                    let event = match source {
+                        IrWaitSrc::Event(event) | IrWaitSrc::FilteredEvent { event, .. } => {
+                            Some(*event)
+                        }
+                        _ => None,
+                    };
+                    if event.is_some_and(|event| event >= self.model.events.len()) {
+                        return self.fail(
+                            format!("{path}.specs[{idx}]"),
+                            "event index is out of bounds",
+                        );
+                    }
+                    let helpers: Vec<&str> = match source {
+                        IrWaitSrc::Evaluated {
+                            eval, condition, ..
+                        } => std::iter::once(eval.as_str())
+                            .chain(condition.as_deref())
+                            .collect(),
+                        IrWaitSrc::FilteredEvent { condition, .. } => vec![condition.as_str()],
+                        _ => Vec::new(),
+                    };
+                    for helper in helpers {
+                        let valid = self.model.processes.iter().flat_map(|process| &process.pre_fns)
+                            .chain(self.model.funcs.iter().flat_map(|function| &function.pre_fns))
+                            .any(|pre| matches!(pre, IrPreFn::MonEval { c_name, args } if c_name == helper && args.len() == 1 && !args[0].is_real()));
+                        if !valid {
                             return self.fail(
                                 format!("{path}.specs[{idx}]"),
-                                format!("event index {event} is out of bounds"),
+                                "event evaluator must name a single packed-value helper",
                             );
+                        }
+                    }
+                    if let IrWaitSrc::Evaluated { reads, .. } = source {
+                        for read in reads {
+                            if !self.model.signals.iter().any(|signal| {
+                                signal.c_name == *read && !signal.omit && signal.ty.width() != 0
+                            }) {
+                                return self.fail(
+                                    format!("{path}.specs[{idx}]"),
+                                    "event dependency must name active packed storage",
+                                );
+                            }
                         }
                     }
                 }
@@ -1223,7 +1342,9 @@ impl Validator<'_> {
 
     fn validate_init_step(&self, step: &IrInitStep, path: &str) -> ValidationResult {
         match step {
-            IrInitStep::FillArrayX(array) | IrInitStep::SetArrayElem { arr: array, .. } => {
+            IrInitStep::FillArrayX(array)
+            | IrInitStep::FillArrayZ(array)
+            | IrInitStep::SetArrayElem { arr: array, .. } => {
                 if *array >= self.model.arrays.len() {
                     return self.fail(path, format!("array index {array} is out of bounds"));
                 }
@@ -1250,6 +1371,13 @@ impl Validator<'_> {
             | IrInitStep::SetScalar { value, .. }
             | IrInitStep::WriteNet { value, .. } => self.validate_const(value, path),
             IrInitStep::FillArrayX(_) => Ok(()),
+            IrInitStep::FillArrayZ(array) => {
+                if self.model.arrays[*array].two_state {
+                    self.fail(path, "Z initialization requires four-state array elements")
+                } else {
+                    Ok(())
+                }
+            }
         }
     }
 
@@ -1299,6 +1427,7 @@ mod tests {
                 two_state: false,
             },
             net_driver: None,
+            alias: None,
             omit: false,
         }];
         model
@@ -1358,6 +1487,172 @@ mod tests {
     #[test]
     fn accepts_a_minimal_well_formed_model() {
         valid_model().validate().expect("minimal model is valid");
+    }
+
+    #[test]
+    fn runtime_delays_validate_scaling_and_include_expression_capacity() {
+        let model = valid_model();
+        let delay = |unit_ticks, precision_ticks| IrStmt::Delay {
+            ticks: IrDelay::Runtime {
+                value: Box::new(packed_const(1, 129)),
+                unit_ticks,
+                precision_ticks,
+            },
+        };
+        assert_eq!(
+            model.statement_capacity(&delay(1000, 100), None).unwrap(),
+            129
+        );
+        for (unit, precision) in [(0, 1), (1, 0), (3, 2), (1, 10)] {
+            assert!(model.validate_stmt(&delay(unit, precision), None).is_err());
+        }
+    }
+
+    #[test]
+    fn real_local_captures_require_real_initializers() {
+        let model = valid_model();
+        let local = |init| IrStmt::DeclLocal {
+            name: "capture".into(),
+            width: 0,
+            signed: true,
+            two_state: false,
+            init,
+        };
+        assert!(model.validate_stmt(&local(None), None).is_err());
+        assert!(model
+            .validate_stmt(&local(Some(Box::new(packed_const(1, 32)))), None)
+            .is_err());
+        let real = IrExpr::new(IrExprKind::Const(IrConst::real(1.25)), 0, false, None);
+        model
+            .validate_stmt(&local(Some(Box::new(real))), None)
+            .unwrap();
+    }
+
+    #[test]
+    fn delayed_nba_rejects_unproven_pointer_lifetimes() {
+        let statement = IrStmt::DelayedAssign {
+            lhs: IrLhs::WholeRef {
+                addr: "&local".into(),
+                width: 1,
+                signed: false,
+                two_state: false,
+            },
+            rhs: packed_const(1, 1),
+            ticks: IrDelay::Constant(2),
+        };
+        let error = valid_model().validate_stmt(&statement, None).unwrap_err();
+        assert!(error.detail().contains("persistent"));
+    }
+
+    #[test]
+    fn inertial_updates_require_persistent_whole_packed_drivers() {
+        let model = valid_model();
+        let statement = |lhs, rhs| IrStmt::InertialAssign { lhs, rhs, ticks: 2 };
+        assert_eq!(
+            model
+                .statement_capacity(&statement(IrLhs::Whole(0), packed_const(1, 129)), None,)
+                .unwrap(),
+            129
+        );
+        for lhs in [
+            IrLhs::Whole(1),
+            IrLhs::Part(0, 0, 0, false),
+            IrLhs::WholeRef {
+                addr: "&local".into(),
+                width: 1,
+                signed: false,
+                two_state: false,
+            },
+        ] {
+            assert!(model
+                .validate_stmt(&statement(lhs, packed_const(1, 1)), None)
+                .is_err());
+        }
+        let real = IrExpr::new(IrExprKind::Const(IrConst::real(1.0)), 0, false, None);
+        assert!(model
+            .validate_stmt(&statement(IrLhs::Whole(0), real), None)
+            .is_err());
+    }
+
+    #[test]
+    fn variable_aliases_require_matching_canonical_storage() {
+        let mut model = valid_model();
+        let mut alias = model.signals[0].clone();
+        alias.hdl_name = Some("child.sig".into());
+        alias.alias = Some(0);
+        model.signals.push(alias);
+        model.validate().expect("alias shares canonical storage");
+
+        for target in [1, 2] {
+            model.signals[1].alias = Some(target);
+            assert!(model.validate().unwrap_err().path().ends_with(".alias"));
+        }
+        model.signals[1].alias = Some(0);
+        model.signals[0].omit = true;
+        assert!(model.validate().is_err(), "live alias retains its target");
+        model.signals[0].omit = false;
+        model.signals[1].c_name = "other".into();
+        assert!(model.validate().is_err(), "alias uses the same C storage");
+    }
+
+    #[test]
+    fn evaluated_waits_require_valid_helpers_and_dependencies() {
+        let mut model = valid_model();
+        let process = IrProcess::new(
+            "proc".into(),
+            "top.initial".into(),
+            IrShape::RunOnce,
+            vec![IrPreFn::MonEval {
+                c_name: "eval".into(),
+                args: vec![packed_const(1, 1)],
+            }],
+            vec![IrStmt::WaitEvents {
+                specs: vec![(
+                    IrWaitSrc::Evaluated {
+                        eval: "eval".into(),
+                        condition: None,
+                        reads: vec!["sig".into()],
+                    },
+                    IrEdge::Any,
+                )],
+            }],
+        );
+        model.processes.push(process);
+        model.spawns.push("proc".into());
+        model.validate().expect("valid expression wait");
+        model.processes[0].pre_fns.clear();
+        assert!(model.validate().unwrap_err().detail().contains("evaluator"));
+        model.processes[0].pre_fns.push(IrPreFn::MonEval {
+            c_name: "eval".into(),
+            args: vec![packed_const(1, 1)],
+        });
+        model.signals[0].omit = true;
+        assert!(model
+            .validate()
+            .unwrap_err()
+            .detail()
+            .contains("dependency"));
+    }
+
+    #[test]
+    fn z_array_initialization_requires_valid_four_state_storage() {
+        let mut model = valid_model();
+        model.init_steps.push(IrInitStep::FillArrayZ(0));
+        assert!(model
+            .validate()
+            .unwrap_err()
+            .detail()
+            .contains("array index"));
+        model
+            .arrays
+            .push(IrArray::new("array".into(), "array".into(), 65, false, vec![(0, 1)]).unwrap());
+        model.validate().expect("four-state Z initialization");
+        model.arrays[0].two_state = true;
+        assert!(model
+            .validate()
+            .unwrap_err()
+            .detail()
+            .contains("four-state"));
     }
 
     #[test]

@@ -50,7 +50,16 @@ pub(super) fn render_stmt_impl(
                 }
                 None => super::expressions::packed_default(*width, *signed, *two_state),
             };
-            format!("    sv4_t {name} = {init};\n")
+            let ty = if *width == 0 { "double" } else { "sv4_t" };
+            format!("    {ty} {name} = {init};\n")
+        }
+        IrStmt::DelayedAssign { lhs, rhs, ticks } => {
+            let delay = render_delay(ctx, ticks)?;
+            let assignment = super::assignments::render_nba(ctx, lhs, rhs, "_nba_delay")?;
+            format!("{{ uint64_t _nba_delay={delay}; {assignment} }}\n")
+        }
+        IrStmt::InertialAssign { lhs, rhs, ticks } => {
+            super::assignments::render_inertial(ctx, lhs, rhs, *ticks)?
         }
         IrStmt::Assign { lhs, rhs, nba } => {
             format!("    {}\n", render_assign(ctx, lhs, rhs, *nba)?)
@@ -143,7 +152,7 @@ pub(super) fn render_stmt_impl(
             }
             out
         }
-        IrStmt::Delay { ticks } => format!("    llg_wait_time({ticks});\n"),
+        IrStmt::Delay { ticks } => format!("    llg_wait_time({});\n", render_delay(ctx, ticks)?),
         IrStmt::WaitEvents { specs } => wait_events_text(ctx, specs)?,
         IrStmt::EventTrigger { ev } => {
             format!("    llg_event_trigger(&{});\n", ctx.model.event(*ev).c_name)
@@ -153,7 +162,7 @@ pub(super) fn render_stmt_impl(
             let rc = render_expr(ctx, cond)?;
             let mut out = format!("    for (;;) {{\n        if ({}) break;\n", bool_code(&rc));
             if sens.is_empty() {
-                out.push_str("        llg_wait_time(0);\n");
+                out.push_str("        llg_wait_any(NULL, 0);\n");
             } else {
                 out.push_str(&wait_any_text(sens));
             }
@@ -367,6 +376,57 @@ fn wait_events_text(
         IrEdge::Negedge => "LLG_EV_NEGEDGE",
         IrEdge::Any => "LLG_EV_ANY",
     };
+    if specs.iter().any(|(source, _)| {
+        matches!(
+            source,
+            IrWaitSrc::Evaluated { .. } | IrWaitSrc::FilteredEvent { .. }
+        )
+    }) {
+        let mut text = String::from("    {\n");
+        let mut entries = Vec::new();
+        for (index, (source, edge)) in specs.iter().enumerate() {
+            let kind = edge_kind(edge);
+            let entry = match source {
+                IrWaitSrc::Sig(name) => format!("{{ &{name}, 0, 0, 0, 0, 0, {kind} }}"),
+                IrWaitSrc::Event(event) => format!(
+                    "{{ 0, 0, 0, &{}, 0, 0, {kind} }}",
+                    ctx.model.event(*event).c_name
+                ),
+                IrWaitSrc::FilteredEvent { event, condition } => format!(
+                    "{{ 0, 0, {condition}, &{}, 0, 0, {kind} }}",
+                    ctx.model.event(*event).c_name
+                ),
+                IrWaitSrc::Evaluated {
+                    eval,
+                    condition,
+                    reads,
+                } => {
+                    let deps = if reads.is_empty() {
+                        "0".to_owned()
+                    } else {
+                        let deps = format!("_deps{index}");
+                        text.push_str(&format!(
+                            "        sv4_t* {deps}[] = {{{}}};\n",
+                            reads
+                                .iter()
+                                .map(|name| format!("&{name}"))
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        ));
+                        deps
+                    };
+                    format!(
+                        "{{ 0, {eval}, {}, 0, {deps}, {}, {kind} }}",
+                        condition.as_deref().unwrap_or("0"),
+                        reads.len()
+                    )
+                }
+            };
+            entries.push(entry);
+        }
+        text.push_str(&format!("        llg_expr_event_spec_t _events[] = {{{}}};\n        llg_wait_expressions(_events, {});\n    }}\n", entries.join(", "), entries.len()));
+        return Ok(text);
+    }
     let n_events = specs
         .iter()
         .filter(|(s, _)| matches!(s, IrWaitSrc::Event(_)))
@@ -421,6 +481,9 @@ fn wait_events_text(
             IrWaitSrc::Event(idx) => {
                 entries.push(format!("{{ 0, 0, &{} }}", ctx.model.event(*idx).c_name));
             }
+            IrWaitSrc::Evaluated { .. } | IrWaitSrc::FilteredEvent { .. } => {
+                unreachable!("evaluated events handled above")
+            }
         }
     }
     Ok(format!(
@@ -464,4 +527,26 @@ pub(super) fn render_pre_fn_impl(
             Ok(out)
         }
     }
+}
+
+fn render_delay(ctx: &RCtx<'_>, delay: &crate::sim::ir::IrDelay) -> Result<String, String> {
+    use crate::sim::ir::IrDelay;
+    Ok(match delay {
+        IrDelay::Constant(ticks) => format!("{ticks}ULL"),
+        IrDelay::Runtime {
+            value,
+            unit_ticks,
+            precision_ticks,
+        } => {
+            let value = render_expr(ctx, value)?;
+            if value.width == 0 {
+                format!(
+                    "sv4_real_delay_ticks({}, {unit_ticks}ULL, {precision_ticks}ULL)",
+                    value.code
+                )
+            } else {
+                format!("sv4_delay_ticks({}, {unit_ticks}ULL)", value.code)
+            }
+        }
+    })
 }

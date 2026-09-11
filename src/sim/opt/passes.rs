@@ -18,8 +18,8 @@
 //! - `prune_branches`: statements whose conditions are constants collapse to
 //!   the taken branch, under the runtime truthiness contract (a known one bit
 //!   is true; an otherwise X/Z-ambiguous value is false).
-//!   A `wait (cond)` with a false constant stays: it is a zero-delay guard
-//!   whose spin trips the runtime's deadlock guard.  Control-flow labels
+//!   A `wait (cond)` with a false or unknown constant stays suspended; it
+//!   must not become a fall-through path. Control-flow labels
 //!   whose only jump was pruned away are stripped afterwards.
 //! - `unused_storage`: signals that are neither read nor written anywhere get
 //!   `omit = true`; the emitter skips their declarations.  Indices are never
@@ -258,7 +258,7 @@ fn walk_lhs_mut(l: &mut IrLhs, f: &mut impl FnMut(&mut IrExpr)) {
             for i in indices {
                 walk_expr_mut(i, f);
             }
-            if let IrElemSel::Bit(idx) = elem_sel {
+            if let IrElemSel::Bit(idx) | IrElemSel::Indexed { base: idx, .. } = elem_sel {
                 walk_expr_mut(idx, f);
             }
         }
@@ -351,7 +351,7 @@ fn walk_expr_mut(e: &mut IrExpr, f: &mut impl FnMut(&mut IrExpr)) {
             for i in indices {
                 walk_expr_mut(i, f);
             }
-            if let IrElemSel::Bit(idx) = elem_sel {
+            if let IrElemSel::Bit(idx) | IrElemSel::Indexed { base: idx, .. } = elem_sel {
                 walk_expr_mut(idx, f);
             }
         }
@@ -375,6 +375,9 @@ fn walk_expr_mut(e: &mut IrExpr, f: &mut impl FnMut(&mut IrExpr)) {
 
 /// Visit every expression slot of one statement (recursively).
 fn walk_stmt_mut(s: &mut IrStmt, f: &mut impl FnMut(&mut IrExpr)) {
+    if let Some(value) = s.delay_expression_mut() {
+        walk_expr_mut(value, f);
+    }
     match s {
         IrStmt::Container(operation) => {
             operation.expressions_mut(&mut |child| walk_expr_mut(child, f))
@@ -390,7 +393,9 @@ fn walk_stmt_mut(s: &mut IrStmt, f: &mut impl FnMut(&mut IrExpr)) {
         IrStmt::DeclLocal {
             init: Some(init), ..
         } => walk_expr_mut(init, f),
-        IrStmt::Assign { lhs, rhs, .. } => {
+        IrStmt::Assign { lhs, rhs, .. }
+        | IrStmt::DelayedAssign { lhs, rhs, .. }
+        | IrStmt::InertialAssign { lhs, rhs, .. } => {
             walk_lhs_mut(lhs, f);
             walk_expr_mut(rhs, f);
         }
@@ -773,7 +778,7 @@ fn ident_children(e: &mut IrExpr) {
             for i in indices {
                 ident_expr(i);
             }
-            if let IrElemSel::Bit(idx) = elem_sel {
+            if let IrElemSel::Bit(idx) | IrElemSel::Indexed { base: idx, .. } = elem_sel {
                 ident_expr(idx);
             }
         }
@@ -822,7 +827,7 @@ fn ident_lhs(l: &mut IrLhs) {
             for i in indices {
                 ident_expr(i);
             }
-            if let IrElemSel::Bit(idx) = elem_sel {
+            if let IrElemSel::Bit(idx) | IrElemSel::Indexed { base: idx, .. } = elem_sel {
                 ident_expr(idx);
             }
         }
@@ -1280,7 +1285,7 @@ fn mark_unused_storage(model: &mut IrModel, execution: Option<&[ExecutionProcess
         }
     }
     let waveform = model.waveform;
-    let flags: Vec<bool> = model
+    let mut flags: Vec<bool> = model
         .signals
         .iter()
         .enumerate()
@@ -1290,6 +1295,13 @@ fn mark_unused_storage(model: &mut IrModel, execution: Option<&[ExecutionProcess
                 && !rw.writes.contains(&i)
         })
         .collect();
+    for (index, signal) in model.signals.iter().enumerate() {
+        if !flags[index] {
+            if let Some(target) = signal.alias {
+                flags[target] = false;
+            }
+        }
+    }
     for (sig, omit) in model.signals.iter_mut().zip(flags) {
         sig.omit = omit;
     }
@@ -1325,8 +1337,10 @@ fn sens_lists_of(s: &IrStmt, out: &mut Vec<String>) {
         }
         IrStmt::WaitEvents { specs } => {
             for (src, _) in specs {
-                if let IrWaitSrc::Sig(name) = src {
-                    out.push(name.clone());
+                match src {
+                    IrWaitSrc::Sig(name) => out.push(name.clone()),
+                    IrWaitSrc::Evaluated { reads, .. } => out.extend(reads.iter().cloned()),
+                    _ => {}
                 }
             }
         }
@@ -1374,6 +1388,9 @@ fn collect_stmts_rw(stmts: &[IrStmt], model: &IrModel, rw: &mut Rw) {
 }
 
 fn collect_stmt_rw(s: &IrStmt, model: &IrModel, rw: &mut Rw) {
+    if let Some(value) = s.delay_expression() {
+        collect_expr_reads(value, model, rw);
+    }
     match s {
         IrStmt::Container(operation) => {
             operation.expressions(&mut |child| collect_expr_reads(child, model, rw))
@@ -1385,7 +1402,9 @@ fn collect_stmt_rw(s: &IrStmt, model: &IrModel, rw: &mut Rw) {
         IrStmt::DeclLocal {
             init: Some(init), ..
         } => collect_expr_reads(init, model, rw),
-        IrStmt::Assign { lhs, rhs, .. } => {
+        IrStmt::Assign { lhs, rhs, .. }
+        | IrStmt::DelayedAssign { lhs, rhs, .. }
+        | IrStmt::InertialAssign { lhs, rhs, .. } => {
             collect_lhs_rw(lhs, model, rw);
             collect_expr_reads(rhs, model, rw);
         }
@@ -1437,7 +1456,12 @@ fn collect_stmt_rw(s: &IrStmt, model: &IrModel, rw: &mut Rw) {
         // event globals are always emitted, so they are simply skipped.
         IrStmt::WaitEvents { specs } => {
             for (src, _) in specs {
-                if let IrWaitSrc::Sig(name) = src {
+                let reads = match src {
+                    IrWaitSrc::Sig(name) => std::slice::from_ref(name),
+                    IrWaitSrc::Evaluated { reads, .. } => reads.as_slice(),
+                    _ => &[],
+                };
+                for name in reads {
                     if let Some(i) = model.signals.iter().position(|sg| sg.c_name == *name) {
                         rw.read(i);
                     }
@@ -1525,7 +1549,7 @@ fn collect_lhs_rw(l: &IrLhs, model: &IrModel, rw: &mut Rw) {
             for idx in indices {
                 collect_expr_reads(idx, model, rw);
             }
-            if let IrElemSel::Bit(idx) = elem_sel {
+            if let IrElemSel::Bit(idx) | IrElemSel::Indexed { base: idx, .. } = elem_sel {
                 collect_expr_reads(idx, model, rw);
             }
         }
@@ -1618,7 +1642,7 @@ fn collect_children_reads(e: &IrExpr, model: &IrModel, rw: &mut Rw) {
             for i in indices {
                 collect_expr_reads(i, model, rw);
             }
-            if let IrElemSel::Bit(idx) = elem_sel {
+            if let IrElemSel::Bit(idx) | IrElemSel::Indexed { base: idx, .. } = elem_sel {
                 collect_expr_reads(idx, model, rw);
             }
         }
@@ -1818,6 +1842,7 @@ mod tests {
                     two_state: false,
                 },
                 net_driver: None,
+                alias: None,
                 omit: false,
             })
             .collect()

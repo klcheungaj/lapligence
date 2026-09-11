@@ -1417,6 +1417,39 @@ static void time_overflow_proc(llg_proc_t* self) {
     llg_proc_done(self);
 }
 
+static llg_inertial_t* inertial_handle;
+static sv4_t inertial_target;
+
+static void inertial_producer(llg_proc_t* self) {
+    llg_inertial_assign(&inertial_handle, &inertial_target, SV4_C(1, 1), 2);
+    llg_proc_done(self);
+}
+
+static void inertial_observer(llg_proc_t* self) {
+    llg_wait_time(3);
+    CHECK(sv4_same(inertial_target, SV4_C(1, 1)));
+    llg_rt_finish();
+    llg_proc_done(self);
+}
+
+static void test_inertial_lifetime(void) {
+    for (int run = 0; run < 2; run++) {
+        llg_rt_init();
+        inertial_target = sv4_x(1, 0);
+        llg_spawn(inertial_producer, "inertial-producer");
+        llg_spawn(inertial_observer, "inertial-observer");
+        llg_rt_run();
+        CHECK(inertial_handle == NULL);
+    }
+    llg_rt_init();
+    inertial_target = sv4_x(1, 0);
+    llg_inertial_assign(&inertial_handle, &inertial_target, SV4_C(0, 1), 100);
+    CHECK(inertial_handle != NULL);
+    llg_rt_init();
+    CHECK(inertial_handle == NULL);
+    llg_rt_cleanup();
+}
+
 static int run_time_overflow_probe(void) {
     llg_rt_init();
     llg_spawn(time_overflow_proc, "time-overflow");
@@ -1451,6 +1484,7 @@ int main(int argc, char** argv) {
     test_force_release();
     test_force_nba_dropped();
     test_force_wakes_waiters();
+    test_inertial_lifetime();
     if (failures == 0) {
         printf("llg_rt selftest: all ok\n");
         return 0;

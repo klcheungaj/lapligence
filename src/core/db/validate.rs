@@ -2,7 +2,7 @@ use std::collections::HashSet;
 use std::error::Error;
 use std::fmt;
 
-use super::{Db, EventSpec, ExprKind, IntraControl, NodeId, NodeKind, StmtKind};
+use super::{Db, DriverDelay, ExprKind, IntraControl, NodeId, NodeKind, StmtKind};
 
 /// A structural invariant violation in an owned [`Db`].
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -296,9 +296,9 @@ impl NodeKind {
             } => refs.extend([*high, *low, *high_expr].into_iter().flatten()),
             NodeKind::IoDecl { expr, .. } => refs.extend(*expr),
             NodeKind::IfaceConn { actual, .. } => refs.push(*actual),
-            NodeKind::ContAssign { delay, .. } => refs.extend(*delay),
+            NodeKind::ContAssign { delay, .. } => driver_delay_refs(*delay, refs),
             NodeKind::Gate { delay, terms, .. } => {
-                refs.extend(*delay);
+                driver_delay_refs(*delay, refs);
                 refs.extend(terms.iter().map(|term| term.expr));
             }
             NodeKind::MethodCall { receiver, .. } => refs.extend(*receiver),
@@ -326,6 +326,17 @@ impl NodeKind {
             | NodeKind::EnumConst { .. }
             | NodeKind::Other => {}
         }
+    }
+}
+
+fn driver_delay_refs(delay: Option<DriverDelay>, refs: &mut Vec<NodeId>) {
+    match delay {
+        Some(DriverDelay::Single(delay)) => refs.push(delay),
+        Some(DriverDelay::RiseFall(rise, fall)) => refs.extend([rise, fall]),
+        Some(DriverDelay::RiseFallTurnOff(rise, fall, turn_off)) => {
+            refs.extend([rise, fall, turn_off]);
+        }
+        None => {}
     }
 }
 
@@ -364,11 +375,7 @@ fn statement_refs(statement: &StmtKind, refs: &mut Vec<NodeId>) {
         StmtKind::Forever { body } => refs.push(*body),
         StmtKind::EventControl { specs, body, .. } => {
             for spec in specs {
-                match spec {
-                    EventSpec::Edge { sig, .. }
-                    | EventSpec::AnyChange { sig }
-                    | EventSpec::Named(sig) => refs.push(*sig),
-                }
+                spec.referenced_nodes(refs);
             }
             refs.extend(*body);
         }
@@ -538,6 +545,43 @@ mod tests {
             let error = from_nodes(vec![node(kind)])
                 .expect_err("all typed operands must belong to the owned arena");
             assert!(error.to_string().contains("out of bounds"));
+        }
+    }
+
+    #[test]
+    fn checks_every_driver_delay_reference() {
+        let valid = NodeId(0);
+        let invalid = NodeId(2);
+        for (position, delay) in [
+            DriverDelay::Single(invalid),
+            DriverDelay::RiseFall(valid, invalid),
+            DriverDelay::RiseFallTurnOff(valid, valid, invalid),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            for kind in [
+                NodeKind::ContAssign {
+                    net_decl: false,
+                    delay: Some(delay),
+                    strength0: super::super::Strength::Unspecified,
+                    strength1: super::super::Strength::Unspecified,
+                },
+                NodeKind::Gate {
+                    class: super::super::PrimClass::Gate,
+                    prim_type: super::super::PrimitiveType::Buf,
+                    strength0: super::super::Strength::Unspecified,
+                    strength1: super::super::Strength::Unspecified,
+                    delay: Some(delay),
+                    terms: Vec::new(),
+                },
+            ] {
+                let error = from_nodes(vec![node(NodeKind::Other), node(kind)])
+                    .expect_err("every transition delay reference must be checked");
+                assert!(error
+                    .to_string()
+                    .contains(&format!("nodes[1].kind.refs[{position}]")));
+            }
         }
     }
 

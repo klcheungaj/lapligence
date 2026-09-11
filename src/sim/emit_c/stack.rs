@@ -187,7 +187,7 @@ fn stmt_temp_frame_slots(stmts: &[IrStmt]) -> Result<u64, String> {
 }
 
 fn stmt_temp_slots(stmt: &IrStmt) -> Result<u64, String> {
-    match stmt {
+    let slots = match stmt {
         IrStmt::Container(operation) => {
             let mut slots = Ok(1);
             operation.expressions(&mut |child| {
@@ -212,7 +212,9 @@ fn stmt_temp_slots(stmt: &IrStmt) -> Result<u64, String> {
             .map(expr_slots)
             .transpose()
             .map(Option::unwrap_or_default),
-        IrStmt::Assign { lhs, rhs, .. } => checked_add(
+        IrStmt::Assign { lhs, rhs, .. }
+        | IrStmt::DelayedAssign { lhs, rhs, .. }
+        | IrStmt::InertialAssign { lhs, rhs, .. } => checked_add(
             lhs_slots(lhs)?,
             expr_slots(rhs)?,
             "assignment temporary slots",
@@ -306,7 +308,13 @@ fn stmt_temp_slots(stmt: &IrStmt) -> Result<u64, String> {
         | IrStmt::Label(_)
         | IrStmt::Goto(_)
         | IrStmt::Nop => Ok(0),
-    }
+    }?;
+    let delay_slots = stmt
+        .delay_expression()
+        .map(expr_slots)
+        .transpose()?
+        .unwrap_or(0);
+    checked_add(slots, delay_slots, "runtime delay temporary slots")
 }
 
 fn call_slots(call: &IrCall) -> Result<u64, String> {
@@ -492,7 +500,7 @@ fn lhs_slots(lhs: &IrLhs) -> Result<u64, String> {
 
 fn elem_sel_slots(select: &IrElemSel) -> Result<u64, String> {
     match select {
-        IrElemSel::Bit(index) => expr_slots(index),
+        IrElemSel::Bit(index) | IrElemSel::Indexed { base: index, .. } => expr_slots(index),
         IrElemSel::Whole | IrElemSel::Part(..) => Ok(0),
     }
 }

@@ -14,6 +14,8 @@
 //! Each test uses a fresh temp directory and the process-wide mutex serializes
 //! process-CWD changes with the other simulator integration tests.
 
+#[path = "support/sim_cli.rs"]
+mod sim_cli;
 #[path = "support/sim.rs"]
 mod sim_harness;
 use std::sync::Mutex;
@@ -338,10 +340,8 @@ endmodule
 
 // ── Gate delay lags the write behind input changes (%t timestamps) ──────────
 
-// Spawn order pins determinism: the delayed gate registers its t=2 timer at
-// t=0 (during the Comb pass) before the initial block registers anything,
-// so on ties the gate always resumes first and its stale-value window is
-// observable exactly as below.
+// The runtime drains due driver updates in the active region before resuming
+// timed coroutines, so the displays at t=2 and t=4 observe committed values.
 #[test]
 fn sim_gates_delay_lags_timestamps() {
     if !llg::sim::build::cmake_available() {
@@ -399,35 +399,14 @@ endmodule
 /// A delayed gate rejects a short pulse and schedules the later stable
 /// transition using inertial delay semantics.
 #[test]
-#[ignore = "DELAY-BUG: delayed gates need inertial update scheduling"]
 fn sim_gates_delay_rejects_short_pulse() {
-    if !llg::sim::build::cmake_available() {
-        eprintln!("SKIP: cmake not available");
-        return;
-    }
-    let _guard = CWD_LOCK.lock().unwrap();
-    let sv = r#"module tb;
-    reg a;
-    wire y;
-    not #3 g(y, a);
-
-    initial begin
-        a = 1'b0;
-        #1 a = 1'b1;
-        #1 a = 1'b0;
-        #1 $display("t=%0t y=%b", $time, y);
-        #1 a = 1'b1;
-        #2 $display("t=%0t y=%b", $time, y);
-        #1 $display("t=%0t y=%b", $time, y);
-        $finish;
-    end
-endmodule
-"#;
-
-    // IEEE inertial scheduling rejects the short pulse, leaving y unknown
-    // until the stable transition scheduled for t=7.
-    let stdout = run_sim(sv, "current").expect("simulation should run");
-    assert_eq!(stdout, "t=3 y=x\nt=6 y=x\nt=7 y=0\n");
+    sim_cli::run_case(
+        "partial_features",
+        "inertial_gate_pulse",
+        "3 x\n6 x\n7 0\n",
+        "",
+        &[],
+    );
 }
 
 // ── Gates inside generate scopes elaborate per iteration ────────────────────

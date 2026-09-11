@@ -367,6 +367,19 @@ pub(super) fn render_expr_impl(ctx: &RCtx<'_>, e: &IrExpr) -> Result<RenderedExp
                         false,
                     )
                 }
+                IrElemSel::Indexed {
+                    base,
+                    width,
+                    negative,
+                } => (
+                    format!(
+                        "sv4_idx_part_select_value({elem}, {}, {width}, {})",
+                        w(base)?.code,
+                        *negative as u8
+                    ),
+                    *width,
+                    false,
+                ),
             };
             RenderedExpr {
                 code,
@@ -717,12 +730,15 @@ pub(super) fn render_assign(
     rhs: &IrExpr,
     nba: bool,
 ) -> Result<String, String> {
+    if nba {
+        return super::assignments::render_nba(ctx, lh, rhs, "0ULL");
+    }
     // Real companion targets copy the (possibly converted) real value.
     if let IrLhs::Whole(idx) = lh {
         let sig = ctx.model.signal(*idx);
         if let IrType::Real { shortreal } = sig.ty {
             let rr = render_expr_impl(ctx, rhs)?;
-            let call = if nba { "llg_nba_d" } else { "llg_ba_d" };
+            let call = "llg_ba_d";
             return Ok(format!(
                 "{call}(&{}, {});",
                 sig.c_name,
@@ -763,7 +779,7 @@ pub(super) fn render_assign(
                 false,
                 None,
             );
-            statements.push_str(&render_assign(ctx, part, &part_value, nba)?);
+            statements.push_str(&render_assign(ctx, part, &part_value, false)?);
             cursor = right;
         }
         return Ok(format!(
@@ -789,6 +805,7 @@ pub(super) fn render_assign(
                 }
                 IrElemSel::Part(left, right) => (((left - right).abs() + 1) as u32, false),
                 IrElemSel::Bit(_) => (1, false),
+                IrElemSel::Indexed { width, .. } => (*width, false),
             },
             IrLhs::Stream { width, .. } => (*width, false),
         };
@@ -814,7 +831,7 @@ pub(super) fn render_assign(
     } = lh
     {
         let ai = ctx.model.array(*arr);
-        let call = if nba { "llg_nba" } else { "llg_ba" };
+        let call = "llg_ba";
         // Assignment padding follows the RHS's OWN signedness (LRM §10.7);
         // `sv4_cast` keys the extension off the value, so the tags stay the
         // pre-existing target shapes.  Fill literals keep the target shape
@@ -863,6 +880,19 @@ pub(super) fn render_assign(
                         ),
                     )
                 }
+                IrElemSel::Indexed {
+                    base: index,
+                    width,
+                    negative,
+                } => {
+                    let value = resize(*width, false);
+                    let index = render_expr_impl(ctx, index)?.code;
+                    let negative = *negative as u8;
+                    (target, format!(
+                        "({{ sv4_t _t = {base}[({lin})]; \
+                         sv4_idx_part_select_set_value(&_t, {index}, {width}, {negative}, {value}); _t; }})"
+                    ))
+                }
             })
         };
         return Ok(match array_guard(ai, &index_codes) {
@@ -882,11 +912,6 @@ pub(super) fn render_assign(
         let sig = ctx.model.signal(*idx);
         if let Some((gidx, slot)) = sig.net_driver {
             let net = &ctx.model.net_group(gidx).c_name;
-            if nba {
-                return Err("nonblocking assignment to an inout-net member is not \
-                     supported (nets cannot be nonblocking targets)"
-                    .to_string());
-            }
             let value = if real_converted {
                 rhs_code.clone()
             } else {
@@ -912,9 +937,6 @@ pub(super) fn render_assign(
     if let IrLhs::Bit(idx, ..) | IrLhs::Part(idx, ..) | IrLhs::IdxPart(idx, ..) = lh {
         let sig = ctx.model.signal(*idx);
         if let Some((gidx, slot)) = sig.net_driver {
-            if nba {
-                return Err("nonblocking assignment to a net select is not supported".to_string());
-            }
             let net = &ctx.model.net_group(gidx).c_name;
             let selected_two_state = match lh {
                 IrLhs::Bit(_, _, two_state)
@@ -962,7 +984,7 @@ pub(super) fn render_assign(
         }
     }
 
-    let call = if nba { "llg_nba" } else { "llg_ba" };
+    let call = "llg_ba";
     let two_state = match lh {
         IrLhs::Whole(idx) => ctx.model.signal(*idx).ty.two_state(),
         IrLhs::Bit(idx, _, selected_two_state)

@@ -187,6 +187,45 @@ int sv4_to_bool(sv4_t v) {
 
 uint64_t sv4_to_u64(sv4_t v) { return v.bits[0] & LLG_MASK(v.width); }
 
+static uint64_t checked_delay_product(uint64_t value, uint64_t scale) {
+    if (!scale || value > UINT64_MAX / scale) {
+        fprintf(stderr, "llg runtime fatal: delay exceeds the 64-bit tick range\n");
+        abort();
+    }
+    return value * scale;
+}
+
+uint64_t sv4_delay_ticks(sv4_t value, uint64_t unit_ticks) {
+    if (sv4_is_unknown(value)) return 0;
+    int negative = value.is_signed && value.width &&
+        ((value.bits[(value.width - 1) / 64] >> ((value.width - 1) % 64)) & 1);
+    uint64_t raw = sv4_to_u64(value);
+    if (negative && value.width < 64) raw |= ~LLG_MASK(value.width);
+    if (!negative) {
+        for (int i = 1; i < sv4_nlimbs(value.width); i++) {
+            if (value.bits[i]) {
+                fprintf(stderr, "llg runtime fatal: delay exceeds the 64-bit tick range\n");
+                abort();
+            }
+        }
+    }
+    return checked_delay_product(raw, unit_ticks);
+}
+
+uint64_t sv4_real_delay_ticks(double value, uint64_t unit_ticks,
+                              uint64_t precision_ticks) {
+    if (!isfinite(value) || value < 0.0 || !precision_ticks || !unit_ticks) {
+        fprintf(stderr, "llg runtime fatal: real delay must be finite and nonnegative\n");
+        abort();
+    }
+    double rounded = round(value * ((double)unit_ticks / (double)precision_ticks));
+    if (!isfinite(rounded) || rounded >= 18446744073709551616.0) {
+        fprintf(stderr, "llg runtime fatal: delay exceeds the 64-bit tick range\n");
+        abort();
+    }
+    return checked_delay_product((uint64_t)rounded, precision_ticks);
+}
+
 uint64_t sv4_to_index(sv4_t v) {
     if (sv4_is_unknown(v)) return UINT64_MAX;
     if (v.is_signed && v.width > 0 &&
@@ -1292,16 +1331,13 @@ static uint32_t llg_part_select_width(int64_t left, int64_t right) {
 
 sv4_t sv4_part_select(sv4_t v, int64_t left, int64_t right) {
     uint32_t w = llg_part_select_width(left, right);
-    if (left < 0 || right < 0 || left >= (int64_t)v.width || right >= (int64_t)v.width) {
-        return sv4_x(w, 0);
-    }
     sv4_t r;
     memset(&r, 0, sizeof(r));
     r.width = w;
     int64_t step = left > right ? -1 : 1;
     int out = 0;
     for (int64_t i = left; ; i += step) {
-        int b = sv4_lsb_bit(v, (int)i);
+        int b = i < 0 || i >= (int64_t)v.width ? 2 : sv4_lsb_bit(v, (int)i);
         int pos = w - 1 - out; // first index (left) is the MSB
         sv4_lsb_bit_set(&r, pos, b);
         out++;

@@ -454,6 +454,69 @@ fn compile_diagnostics() {
 }
 
 #[test]
+fn db_retains_every_continuous_and_gate_delay_expression() {
+    in_temp_dir(|| {
+        for (fixture, expected) in [
+            ("inertial_continuous_two_delays", &[2, 3][..]),
+            ("inertial_continuous_three_delays", &[2, 3, 4][..]),
+            ("inertial_gate_two_delays", &[2, 3][..]),
+            ("inertial_gate_three_delays", &[2, 3, 4][..]),
+        ] {
+            let source = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/sim/partial_features")
+                .join(format!("{fixture}.sv"));
+            let out = compile::compile_checked(&compile::CompileOpts {
+                files: vec![source.to_string_lossy().into_owned()],
+                top: Some("tb".to_owned()),
+                ..Default::default()
+            })
+            .expect("compile driver delay fixture");
+            let database = db::Db::from_slang(&out.snapshot).expect("build owned database");
+            drop(out);
+            let delays = database
+                .node_ids()
+                .filter_map(|id| match database.node_kind(id) {
+                    db::NodeKind::ContAssign { delay, .. } | db::NodeKind::Gate { delay, .. } => {
+                        *delay
+                    }
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(delays.len(), 1, "{fixture}");
+            let expressions = match delays[0] {
+                db::DriverDelay::Single(delay) => vec![delay],
+                db::DriverDelay::RiseFall(rise, fall) => vec![rise, fall],
+                db::DriverDelay::RiseFallTurnOff(rise, fall, turn_off) => {
+                    vec![rise, fall, turn_off]
+                }
+            };
+            let actual = expressions
+                .into_iter()
+                .map(|mut id| {
+                    while let db::NodeKind::Expr(db::ExprKind::Cast { operand, .. }) =
+                        database.node_kind(id)
+                    {
+                        id = *operand;
+                    }
+                    let db::NodeKind::Expr(db::ExprKind::Constant { value, size, .. }) =
+                        database.node_kind(id)
+                    else {
+                        panic!("{fixture}: delay is not a constant");
+                    };
+                    let elab::Val::Bits(value) =
+                        elab::decode_value_data(value, *size).expect("decode delay")
+                    else {
+                        panic!("{fixture}: delay is not integral");
+                    };
+                    value.to_u64().expect("known delay")
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(actual, expected, "{fixture}: preserve transition order");
+        }
+    });
+}
+
+#[test]
 fn owned_snapshot_survives_native_compile_teardown() {
     in_temp_dir(|| {
         let out = compile::compile_checked(&compile::CompileOpts {

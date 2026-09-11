@@ -72,6 +72,15 @@ typedef struct {
 void llg_net_resolve(llg_net_t* net); /* strength-aware resolution, per limb */
 void llg_net_write(llg_net_t* net, int idx, sv4_t value);
 
+// The runtime owns each inertial driver and its pending event. The caller's
+// initially NULL handle, target and net must persist until cleanup, which
+// resets the handle to NULL. Repeated evaluation never suspends the caller.
+typedef struct llg_inertial llg_inertial_t;
+void llg_inertial_assign(llg_inertial_t** handle, sv4_t* target,
+                         sv4_t value, uint64_t ticks);
+void llg_inertial_net(llg_inertial_t** handle, llg_net_t* net, int slot,
+                      sv4_t value, uint64_t ticks);
+
 // ── Scheduler ─────────────────────────────────────────────────────────────────
 
 typedef struct llg_proc llg_proc_t;
@@ -121,7 +130,8 @@ typedef void (*llg_mon_eval_fn)(sv4_t* out);
 void llg_monitor(const char* fmt, int n, llg_mon_eval_fn eval);
 // Queue a $strobe: prints `fmt` once with the argument values read after the
 // NBA region of the current time step commits (unlike $display, which reads
-// them when the statement executes).
+// them when the statement executes). Printing waits for active/inactive/NBA
+// iteration to settle, including driver updates triggered by NBAs.
 void llg_strobe(const char* fmt, int n, llg_mon_eval_fn eval);
 // $monitoron / $monitoroff: resume / suspend the active monitor.  While
 // suspended the last-printed snapshot is kept; resuming re-prints if any
@@ -174,7 +184,8 @@ void llg_rt_run_finals(void);
 // `llg_wait_fork` suspends until every live group of the current process is
 // done (useful after join_none / join_any, whose groups outlive the parent's
 // wait).  `llg_disable_fork` kills all descendants of the current process;
-// killed children's pending NBAs are discarded and never committed.
+// killed children's immediate NBA lists are discarded. Future updates already
+// in the global timed NBA queue retain their persistent targets.
 
 typedef struct llg_fork_group llg_fork_group_t;
 
@@ -194,7 +205,7 @@ llg_proc_t* llg_fork(void (*fn)(llg_proc_t*), const char* name, llg_fork_group_t
 void llg_join(llg_fork_group_t* grp);
 // Suspend until every live group of the current process has completed.
 void llg_wait_fork(void);
-// Kill every descendant of the current process (pending NBAs are discarded).
+// Kill every descendant of the current process (immediate NBA lists are discarded).
 void llg_disable_fork(void);
 
 void llg_wait_time(uint64_t ticks);   // #delay; 0 yields into the inactive region of the same time step
@@ -249,9 +260,29 @@ typedef struct {
 // entry is triggered.
 void llg_wait_mixed(llg_wait_src_t* srcs, int n);
 
+// Evaluators and dependencies refer to model storage. The runtime copies
+// every descriptor and dependency array before suspending the caller.
+// Callbacks must not suspend or mutate scheduler-observed storage.
+typedef struct {
+    sv4_t* sig;
+    llg_mon_eval_fn eval;
+    llg_mon_eval_fn condition;
+    const llg_event_t* event;
+    sv4_t** reads;
+    int n_reads;
+    int kind;
+} llg_expr_event_spec_t;
+void llg_wait_expressions(const llg_expr_event_spec_t* specs, int n);
+
 // Assignments.  llg_nba records on the current process's list and commits in
 // the NBA region; llg_ba writes immediately and notifies waiters.
 void llg_nba(sv4_t* target, sv4_t value);
+// Capture values now, retaining target storage through the future NBA commit.
+// A zero tick delay stays in the current time slot's NBA region.
+void llg_nba_after(sv4_t* target, sv4_t value, uint64_t ticks);
+void llg_nba_d_after(double* target, double value, uint64_t ticks);
+// Merge only known-one mask positions into the target at commit time.
+void llg_nba_masked(sv4_t* target, sv4_t value, sv4_t mask, uint64_t ticks);
 void llg_ba(sv4_t* target, sv4_t value);
 void llg_nba_d(double* target, double value);
 void llg_ba_d(double* target, double value);

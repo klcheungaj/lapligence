@@ -302,6 +302,36 @@ static int check_numeric_conversions(void) {
     return 0;
 }
 
+static int check_partial_selects(void) {
+    sv4_t value = sv4_from_u64(0xa5, 8, 0);
+    sv4_t high = sv4_part_select(value, 9, 6);
+    CHECK(high.width == 4);
+    CHECK(high.bits[0] == 2 && high.x[0] == 12 && high.z[0] == 0);
+    sv4_t low = sv4_part_select(value, 1, -2);
+    CHECK(low.width == 4);
+    CHECK(low.bits[0] == 4 && low.x[0] == 3 && low.z[0] == 0);
+    sv4_t outside = sv4_part_select(value, -1, -4);
+    CHECK(outside.width == 4 && outside.x[0] == 15);
+    sv4_t reversed = sv4_part_select(value, 6, 9);
+    CHECK(reversed.width == 4);
+    CHECK(reversed.bits[0] == 4 && reversed.x[0] == 3);
+    return 0;
+}
+
+static int check_delay_conversion(void) {
+    CHECK(sv4_delay_ticks(sv4_from_u64(3, 8, 0), 100) == 300);
+    CHECK(sv4_delay_ticks(sv4_from_i64(-2, 8), 1) == UINT64_MAX - 1);
+    CHECK(sv4_delay_ticks(sv4_from_i64(-2, 129), 1) == UINT64_MAX - 1);
+    CHECK(sv4_delay_ticks(sv4_from_u64(UINT64_MAX, 64, 0), 1) == UINT64_MAX);
+    CHECK(sv4_delay_ticks(sv4_x(129, 0), 100) == 0);
+    CHECK(sv4_delay_ticks(sv4_fill(3, 65, 0), 100) == 0);
+    CHECK(sv4_real_delay_ticks(0.24, 1000, 100) == 200);
+    CHECK(sv4_real_delay_ticks(0.25, 1000, 100) == 300);
+    CHECK(sv4_real_delay_ticks(0.049, 1000, 100) == 0);
+    CHECK(sv4_real_delay_ticks(0.05, 1000, 100) == 100);
+    return 0;
+}
+
 static int check_negative_powers(void) {
     sv4_t minus_one = sv4_resize(sv4_from_u64(UINT64_MAX, 64, 1), 65, 1);
     sv4_t odd = sv4_from_u64(UINT64_MAX, 64, 1);
@@ -323,6 +353,8 @@ int main(void) {
     CHECK(check_net_resolution() == 0);
     CHECK(check_numeric_conversions() == 0);
     CHECK(check_negative_powers() == 0);
+    CHECK(check_partial_selects() == 0);
+    CHECK(check_delay_conversion() == 0);
     puts("runtime value isolation ok");
     return 0;
 }

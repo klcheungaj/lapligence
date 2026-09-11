@@ -9,7 +9,7 @@
 //! standalone simulator executable:
 //!
 //! - every packed scalar signal becomes a global `sv4_t G_<instance path>_<name>`
-//!   (path dots become underscores), starting as all-X; procedural scalar
+//!   (path dots become underscores), using its variable or net defaults; procedural scalar
 //!   real/shortreal signals use `double` storage; every unpacked array of packed
 //!   elements becomes a flat `sv4_t G_<path>_<name>[N]` (product of the
 //!   dimension sizes) with
@@ -185,9 +185,8 @@
 //!   a TIMESCALEMOD-style warning), and `$time` returns the current time in
 //!   the calling module's unit.  The scheduler runs in design-precision ticks
 //!   (the finest precision across the design), so the runtime itself is
-//!   timescale-agnostic. Fixed-point/unit-suffixed procedural delay literals
-//!   first round to local module precision; real expressions and sub-ps
-//!   scheduler precision remain unsupported.
+//!   timescale-agnostic. Procedural delay expressions first round to local
+//!   module precision before conversion to design ticks.
 //! - Unsized fill literals propagate through packed expression and case
 //!   contexts; self-determined concatenation/replication operands stay one bit.
 //! - Generate-block processes are supported: processes inside gen scopes are
@@ -198,17 +197,13 @@
 //!   `wait (cond)`) is treated as combinational: it
 //!   evaluates once at t=0, then re-runs when any signal it reads changes (a
 //!   warning is emitted when it reads nothing, and it runs once).
-//! - Intra-assignment delays (`a = #5 b;`, `a <= #5 b;`) evaluate the RHS
-//!   into a temp immediately and apply it after the scaled delay; the
-//!   executing process suspends across the window for BOTH assignment kinds
-//!   (LRM 1364-1995 §9.7.4 lets a nonblocking assignment continue without
-//!   blocking — a documented backend approximation). Event/repeat-controlled
-//!   forms are rejected;
-//!   bounded integer parameter expressions and fixed-point/time literals work.
-//!   Continuous-assignment delays
-//!   (`assign #N lhs = rhs;`) delay every write by N after the triggering
-//!   rhs change, including at t=0; there is no pulse filtering — each wake
-//!   writes the CURRENT rhs value D later (warned).
+//! - Intra-assignment delays capture the RHS immediately. Blocking writes
+//!   suspend until the scaled delay expires; NBAs capture their destination
+//!   and schedule a future NBA without suspending the issuing process.
+//!   Selected NBAs merge only their selected bits at commit time.
+//!   Continuous and gate drivers capture inertial updates independently of
+//!   their evaluation processes. See `docs/sim_features.md` for supported
+//!   timing forms and remaining boundaries.
 
 use std::collections::{HashMap, HashSet};
 
@@ -216,9 +211,9 @@ use super::timescale::{real_delay_ticks, Timescale};
 use super::CodegenError;
 use crate::core::db::{
     AggregateKind, AggregateMember, ArrayKind, AssignmentPatternKeyType, AssociativeIndex,
-    CaseKind as DbCaseKind, ConstantSource, ConstantType, Db, Direction as DbDirection, EventSpec,
-    ExprKind, IntraControl, JoinKind as DbJoinKind, NetType, NodeId, NodeKind, Operation,
-    PackedMember, PrimClass, PrimitiveType, ProcessKind, StmtKind,
+    CaseKind as DbCaseKind, ConstantSource, ConstantType, Db, Direction as DbDirection,
+    DriverDelay, EventSpec, ExprKind, IntraControl, JoinKind as DbJoinKind, NetType, NodeId,
+    NodeKind, Operation, PackedMember, PrimClass, PrimitiveType, ProcessKind, StmtKind,
     StreamingDirection as DbStreamingDirection, Strength, VariableLifetime,
 };
 use crate::core::elab::{self, Bit, Val};
@@ -230,7 +225,7 @@ use crate::sim::emit_c::{
 use crate::sim::ir::{
     IrAssocKey, IrAssocTraversal, IrBinOp, IrBitQuery, IrCall, IrCallArg, IrCallExpr, IrCaseItem,
     IrCaseKind, IrChandleExpr, IrConst, IrContainer, IrContainerExpr, IrContainerKind,
-    IrContainerStmt, IrDepth, IrEdge, IrElemSel, IrEvent, IrExpr, IrExprKind, IrFormal,
+    IrContainerStmt, IrDelay, IrDepth, IrEdge, IrElemSel, IrEvent, IrExpr, IrExprKind, IrFormal,
     IrInsideItem, IrJoinKind, IrLhs, IrModel, IrProcess, IrRealBinOp, IrRealUnOp, IrShape,
     IrSignal, IrStmt, IrStreamDirection, IrSysFunc, IrTimeKind, IrType, IrUnOp, IrWaitSrc,
     LLG_MAX_NET_DRIVERS,
@@ -325,6 +320,7 @@ fn generate_from_db_with_opts_impl(
     // Collapse inout-port net groups (parent + child nets → one resolved
     // simulated net) before any signal/process lowering so member reads and
     // writes use the resolution cell.
+    cg.bind_reference_ports()?;
     cg.build_net_groups()?;
     // Timescales must be fixed before any `#delay`/`$time` is lowered so the
     // design precision (scheduler tick unit) is consistent across the model.
@@ -425,6 +421,8 @@ struct ArrayInfo {
     /// Element vector width in bits.
     elem_width: u32,
     signed: bool,
+    /// Net elements initialize to Z; variable elements use their type default.
+    is_net: bool,
     /// `(left, right)` per declared dimension, in declaration order.
     dims: Vec<(i32, i32)>,
     /// Declaration-initializer constants (`'{…}` pattern) in linear-index
@@ -471,6 +469,8 @@ enum ElemSel {
     Part(i128, i128),
     /// Bit-select of the element by a runtime index expression.
     Bit(IrExpr),
+    /// Indexed part-select with a translated runtime base and constant width.
+    Indexed(IrExpr, u32, bool),
 }
 
 /// LHS of an assignment to one array element (with optional element-level
@@ -577,6 +577,8 @@ struct Codegen<'a> {
     /// collapsed-net driver slot. True-net declarations now lower as
     /// continuous processes, so ordinary wire/tri entries do not use it.
     net_inits: Vec<(String, usize, IrConst)>,
+    /// Initial contributions of delayed drivers, applied after storage defaults.
+    delayed_driver_inits: Vec<crate::sim::ir::IrInitStep>,
     /// All lowered arrays, in collection order (deterministic emission).
     arrays: Vec<ArrayInfo>,
     /// Array arena node → lowered array info.
@@ -671,6 +673,7 @@ impl<'a> Codegen<'a> {
             unpacked_aggregates: HashMap::new(),
             proc_locals: HashMap::new(),
             net_inits: Vec::new(),
+            delayed_driver_inits: Vec::new(),
             arrays: Vec::new(),
             array_globals: HashMap::new(),
             container_globals: HashMap::new(),
@@ -744,6 +747,35 @@ impl<'a> Codegen<'a> {
         }
     }
 
+    fn lower_procedural_delay(
+        &mut self,
+        path: &str,
+        delay_node: NodeId,
+        expression: NodeId,
+    ) -> Result<IrDelay, String> {
+        let resolved = self.eval_decl_value(expression);
+        let constant_nonnegative = match &resolved {
+            Ok(Val::Bits(value)) => {
+                value.to_u128().is_some()
+                    && (!value.signed || value.to_i128().is_some_and(|value| value >= 0))
+            }
+            Ok(Val::Real(_)) => true,
+            _ => false,
+        };
+        if constant_nonnegative {
+            return self
+                .procedural_delay_ticks(delay_node, expression)
+                .map(IrDelay::Constant);
+        }
+        let timescale = self.timescale_of_node(delay_node);
+        let value = self.lower_expr(path, expression)?;
+        Ok(IrDelay::Runtime {
+            value: Box::new(value),
+            unit_ticks: timescale.unit_ps / self.design_precision_ps,
+            precision_ticks: timescale.precision_ps / self.design_precision_ps,
+        })
+    }
+
     /// Evaluate a typed delay expression and round it once to the owning
     /// module's precision before converting to design scheduler ticks.
     fn procedural_delay_ticks(
@@ -785,6 +817,15 @@ impl<'a> Codegen<'a> {
             self.design_precision_ps,
             &self.instance_path_of(self.inst),
         )
+    }
+
+    fn driver_delay_ticks(&mut self, node: NodeId, delay: DriverDelay) -> Result<u64, String> {
+        match delay {
+            DriverDelay::Single(expression) => self.procedural_delay_ticks(node, expression),
+            DriverDelay::RiseFall(..) | DriverDelay::RiseFallTurnOff(..) => {
+                Err("separate rise/fall/turn-off driver delays are not supported".to_owned())
+            }
+        }
     }
 
     /// Resolve a hierarchical reference read (`a.b.sig`, or the 2-part
@@ -1077,6 +1118,53 @@ impl<'a> Codegen<'a> {
         Ok(Some((info, lsb, width)))
     }
 
+    fn packed_range_ascending(&self, base: NodeId) -> bool {
+        matches!(self.db.packed_dimensions(base), Some([range]) if range.left < range.right)
+    }
+
+    fn packed_relative_bound(&self, base: NodeId, index: i128) -> Result<i128, String> {
+        let Some([range]) = self.db.packed_dimensions(base) else {
+            return Ok(index);
+        };
+        if range.left < range.right {
+            range.right.checked_sub(index)
+        } else {
+            index.checked_sub(range.right)
+        }
+        .ok_or_else(|| "packed select offset overflows".into())
+    }
+
+    fn lower_packed_index(
+        &mut self,
+        path: &str,
+        base: NodeId,
+        index: NodeId,
+    ) -> Result<IrExpr, String> {
+        let index = self.lower_expr(path, index)?;
+        let Some([range]) = self.db.packed_dimensions(base) else {
+            return Ok(index);
+        };
+        if range.left >= range.right && range.right == 0 {
+            return Ok(index);
+        }
+        let ascending = range.left < range.right;
+        let right = lhs_integer_expr(range.right);
+        // Extend before subtracting so narrow or unsigned source indices do
+        // not wrap into a valid bit position. Preserve X/Z in the arithmetic.
+        let width = index
+            .width
+            .max(right.width)
+            .checked_add(1)
+            .ok_or_else(|| "packed index width overflows".to_string())?;
+        let index = IrExpr::convert_to(index, width, true);
+        let right = IrExpr::convert_to(right, width, true);
+        Ok(if ascending {
+            bin_expr(IrBinOp::Sub, right, index)
+        } else {
+            bin_expr(IrBinOp::Sub, index, right)
+        })
+    }
+
     /// Recover a parameterized function return range from admitted source when
     /// the semantic type projection is incomplete.
     fn declared_source_width(&self, declaration: NodeId, inst: NodeId) -> Option<u32> {
@@ -1217,13 +1305,47 @@ impl<'a> Codegen<'a> {
     }
 
     /// Convert the collected declaration initializers into `main()` init
-    /// steps, in application order: unpacked-array fills (+ pattern
+    /// steps, in application order: ungrouped-net defaults, array fills (+ pattern
     /// elements), then scalar net-decl fills, then variable fills, then
     /// collapsed-net member writes.
     fn build_init_steps(&self, model: &mut IrModel) -> Result<(), String> {
         use crate::sim::ir::IrInitStep;
+        // Ungrouped nets include ordinary ports, interface members and gate
+        // outputs. Their initial Z value must not inherit a variable's X.
+        for node in self.design_nodes() {
+            let Some(info) = self.sig_globals.get(&node) else {
+                continue;
+            };
+            if matches!(self.kind(node), NodeKind::Net { .. })
+                && model.signals[info.ir].net_driver.is_none()
+                && !info.real
+            {
+                let limbs = (info.width as usize).div_ceil(64);
+                let mut z = vec![u64::MAX; limbs];
+                if !info.width.is_multiple_of(64) {
+                    z[limbs - 1] = (1u64 << (info.width % 64)) - 1;
+                }
+                let value = IrConst::packed(
+                    vec![0; limbs],
+                    vec![0; limbs],
+                    z,
+                    info.width,
+                    info.signed,
+                    None,
+                )
+                .map_err(|error| error.to_string())?;
+                model.init_steps.push(IrInitStep::SetScalar {
+                    sig: info.ir,
+                    value,
+                });
+            }
+        }
         for ai in &self.arrays {
-            model.init_steps.push(IrInitStep::FillArrayX(ai.ir));
+            model.init_steps.push(if ai.is_net {
+                IrInitStep::FillArrayZ(ai.ir)
+            } else {
+                IrInitStep::FillArrayX(ai.ir)
+            });
             if let Some(vals) = &ai.init {
                 for (i, c) in vals.iter().enumerate() {
                     model.init_steps.push(IrInitStep::SetArrayElem {
@@ -1258,6 +1380,34 @@ impl<'a> Codegen<'a> {
                 value: c.clone(),
             });
         }
+        model
+            .init_steps
+            .extend(self.delayed_driver_inits.iter().cloned());
+        Ok(())
+    }
+
+    fn initialize_delayed_driver(&mut self, index: usize) -> Result<(), String> {
+        use crate::sim::ir::IrInitStep;
+        let signal = self.model.signal(index);
+        let width = signal.ty.width();
+        let limbs = (width as usize).div_ceil(64);
+        let mut x = vec![u64::MAX; limbs];
+        if !width.is_multiple_of(64) {
+            x[limbs - 1] = (1u64 << (width % 64)) - 1;
+        }
+        let value = IrConst::packed(
+            vec![0; limbs],
+            x,
+            vec![0; limbs],
+            width,
+            signal.ty.signed(),
+            None,
+        )
+        .map_err(|error| error.to_string())?;
+        self.delayed_driver_inits.push(match signal.net_driver {
+            Some((group, slot)) => IrInitStep::WriteNet { group, slot, value },
+            None => IrInitStep::SetScalar { sig: index, value },
+        });
         Ok(())
     }
 
@@ -1785,14 +1935,6 @@ enum Lhs {
     },
 }
 
-/// One side of a port connection: a plain global signal, or an element of an
-/// unpacked array (the parent side of a connection like `.cnt(cnts[i])`,
-/// addressed by the select expression the db captured on the port).
-enum LinkSide {
-    Signal(SignalInfo),
-    ArrayElem(ArrayInfo, NodeId),
-}
-
 // ── Expression seam: IR lowering + rendering ──────────────────────────────────
 
 fn enum_value_expr(value: Option<&Val>, name: &str) -> Result<IrExpr, String> {
@@ -1950,6 +2092,7 @@ fn packed_lhs_width(model: &IrModel, lhs: &IrLhs) -> Option<u32> {
             IrElemSel::Whole => model.array(*arr).elem_width,
             IrElemSel::Part(left, right) => ((left - right).abs() + 1) as u32,
             IrElemSel::Bit(_) => 1,
+            IrElemSel::Indexed { width, .. } => *width,
         },
         IrLhs::Stream { width, .. } => *width,
     };

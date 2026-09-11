@@ -394,9 +394,12 @@ fn collect_effects(
 ) {
     for statement in statements {
         match statement {
-            IrStmt::Assign { nba: true, .. } => effects.push(ExecutionEffect::EnqueueUpdate(
-                ScheduleRegion::NonblockingAssign,
-            )),
+            IrStmt::InertialAssign { .. } => {
+                effects.push(ExecutionEffect::EnqueueUpdate(ScheduleRegion::Active))
+            }
+            IrStmt::Assign { nba: true, .. } | IrStmt::DelayedAssign { .. } => effects.push(
+                ExecutionEffect::EnqueueUpdate(ScheduleRegion::NonblockingAssign),
+            ),
             IrStmt::Assign { nba: false, .. }
             | IrStmt::DeclLocal { .. }
             | IrStmt::Force { .. }
@@ -500,6 +503,9 @@ fn collect_statement_expression_effects(
     effects: &mut Vec<ExecutionEffect>,
     visited_calls: &mut HashSet<usize>,
 ) {
+    if let Some(value) = statement.delay_expression() {
+        collect_expression_effects(ir, value, effects, visited_calls);
+    }
     match statement {
         IrStmt::Container(operation) => operation.expressions(&mut |expression| {
             collect_expression_effects(ir, expression, effects, visited_calls)
@@ -513,7 +519,9 @@ fn collect_statement_expression_effects(
         IrStmt::DeclLocal {
             init: Some(init), ..
         } => collect_expression_effects(ir, init, effects, visited_calls),
-        IrStmt::Assign { lhs, rhs, .. } => {
+        IrStmt::Assign { lhs, rhs, .. }
+        | IrStmt::DelayedAssign { lhs, rhs, .. }
+        | IrStmt::InertialAssign { lhs, rhs, .. } => {
             collect_expression_effects(ir, rhs, effects, visited_calls);
             collect_lhs_expression_effects(ir, lhs, effects, visited_calls);
         }
@@ -680,7 +688,7 @@ fn collect_expression_effects(
             for index in indices {
                 collect_expression_effects(ir, index, effects, visited_calls);
             }
-            if let IrElemSel::Bit(index) = elem_sel {
+            if let IrElemSel::Bit(index) | IrElemSel::Indexed { base: index, .. } = elem_sel {
                 collect_expression_effects(ir, index, effects, visited_calls);
             }
         }
@@ -822,7 +830,7 @@ fn collect_lhs_expression_effects(
             for index in indices {
                 collect_expression_effects(ir, index, effects, visited_calls);
             }
-            if let IrElemSel::Bit(index) = elem_sel {
+            if let IrElemSel::Bit(index) | IrElemSel::Indexed { base: index, .. } = elem_sel {
                 collect_expression_effects(ir, index, effects, visited_calls);
             }
         }
@@ -920,7 +928,7 @@ mod tests {
     }
 
     #[test]
-    fn effects_distinguish_blocking_and_nba_updates() {
+    fn effects_distinguish_blocking_nba_and_inertial_updates() {
         use crate::sim::ir::{IrConst, IrExpr, IrExprKind, IrLhs, IrSignal, IrType};
         let constant = IrConst::packed(vec![0], vec![], vec![], 1, false, None).unwrap();
         let rhs = IrExpr::try_new(IrExprKind::Const(constant), 1, false, None).unwrap();
@@ -937,8 +945,13 @@ mod tests {
                 },
                 IrStmt::Assign {
                     lhs: IrLhs::Whole(0),
-                    rhs,
+                    rhs: rhs.clone(),
                     nba: true,
+                },
+                IrStmt::InertialAssign {
+                    lhs: IrLhs::Whole(0),
+                    rhs,
+                    ticks: 3,
                 },
             ],
         );
@@ -965,6 +978,8 @@ mod tests {
         assert!(effects.contains(&ExecutionEffect::EnqueueUpdate(
             ScheduleRegion::NonblockingAssign
         )));
+        assert!(effects.contains(&ExecutionEffect::EnqueueUpdate(ScheduleRegion::Active)));
+        assert!(!effects.contains(&ExecutionEffect::Suspend));
     }
 
     #[test]
@@ -1069,7 +1084,12 @@ mod tests {
 
         use crate::sim::ir::IrTimeKind;
 
-        let mut model = execution(IrShape::RunOnce, vec![IrStmt::Delay { ticks: 3 }]);
+        let mut model = execution(
+            IrShape::RunOnce,
+            vec![IrStmt::Delay {
+                ticks: crate::sim::ir::IrDelay::Constant(3),
+            }],
+        );
         model.processes[0].blocks[0].terminator = ExecutionTerminator::Suspend {
             trigger: TriggerPlan::BodyControlled,
             resume: 1,
@@ -1103,7 +1123,7 @@ mod tests {
 
         let c = crate::sim::emit_c::render(&model).unwrap();
         let entry = c.find("_llg_exec_0_b0: {").unwrap();
-        let wait = c.find("llg_wait_time(3);").unwrap();
+        let wait = c.find("llg_wait_time(3ULL);").unwrap();
         let resume = wait + c[wait..].find("goto _llg_exec_0_b1;").unwrap();
         let resumed_block = c.find("_llg_exec_0_b1: {").unwrap();
         let finish = c.find("llg_rt_finish();").unwrap();

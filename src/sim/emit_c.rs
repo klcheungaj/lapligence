@@ -1,5 +1,6 @@
 //! Public façade for rendering validated simulator IR as C11.
 
+mod assignments;
 mod constants;
 mod containers;
 mod context;

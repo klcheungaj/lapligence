@@ -139,6 +139,11 @@ uint64_t sv4_to_u64(sv4_t v);     // low limb; meaningful only when width <= 64
 // negative, and wider-than-uint64 values return UINT64_MAX (always out of
 // range for an admitted packed value).
 uint64_t sv4_to_index(sv4_t v);
+// Procedural delays: X/Z is zero; negative packed values convert to unsigned
+// 64-bit time. Real values round to local precision before scheduler scaling.
+uint64_t sv4_delay_ticks(sv4_t value, uint64_t unit_ticks);
+uint64_t sv4_real_delay_ticks(double value, uint64_t unit_ticks,
+                              uint64_t precision_ticks);
 // Exact signed host index conversion honoring the packed value's signedness.
 // Returns zero for X/Z or an out-of-range value without modifying `result`.
 int sv4_to_index_i64(sv4_t v, int64_t* result);

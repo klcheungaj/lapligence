@@ -154,20 +154,34 @@ impl<'a> Codegen<'a> {
                         .collect::<Result<Vec<_>, _>>()?;
                     let (elem_sel, width) = match self.kind(last) {
                         NodeKind::Expr(ExprKind::PartSelect { left, right, .. }) => {
-                            let l = self.eval_bound_i128(*left)?;
-                            let r = self.eval_bound_i128(*right)?;
+                            let l =
+                                self.packed_relative_bound(*base, self.eval_bound_i128(*left)?)?;
+                            let r =
+                                self.packed_relative_bound(*base, self.eval_bound_i128(*right)?)?;
                             let (l, r, width) =
                                 checked_select_bounds(l, r, "array-element part select")?;
                             (IrElemSel::Part(l, r), width)
                         }
-                        NodeKind::Expr(ExprKind::IndexedPartSelect { .. }) => {
-                            return Err(format!(
-                                "indexed part-select on an array element is not \
-                                 supported in `{scope_path}`"
-                            ))
+                        NodeKind::Expr(ExprKind::IndexedPartSelect {
+                            base_expr,
+                            width_expr,
+                            neg,
+                            ..
+                        }) => {
+                            let width = self.indexed_part_select_width(*width_expr, scope_path)?;
+                            (
+                                IrElemSel::Indexed {
+                                    base: Box::new(
+                                        self.lower_packed_index(scope_path, *base, *base_expr)?,
+                                    ),
+                                    width,
+                                    negative: *neg ^ self.packed_range_ascending(*base),
+                                },
+                                width,
+                            )
                         }
                         _ => {
-                            let ie = self.lower_expr(scope_path, last)?;
+                            let ie = self.lower_packed_index(scope_path, *base, last)?;
                             (IrElemSel::Bit(Box::new(ie)), 1)
                         }
                     };
@@ -210,6 +224,9 @@ impl<'a> Codegen<'a> {
                         &member.packed_ranges,
                         r,
                     )?);
+                } else {
+                    l = self.packed_relative_bound(*base, l)?;
+                    r = self.packed_relative_bound(*base, r)?;
                 }
                 let (l, r, width) = checked_select_bounds(l, r, "part select")?;
                 Ok(IrExpr::new(
@@ -235,7 +252,7 @@ impl<'a> Codegen<'a> {
                         "select on real-valued signal in `{scope_path}` is not supported"
                     ));
                 }
-                let be = self.lower_expr(scope_path, *base_expr)?;
+                let be = self.lower_packed_index(scope_path, *base, *base_expr)?;
                 let we = self.lower_expr(scope_path, *width_expr)?;
                 let width = self.indexed_part_select_width(*width_expr, scope_path)?;
                 Ok(IrExpr::new(
@@ -243,7 +260,7 @@ impl<'a> Codegen<'a> {
                         base: Box::new(base_value),
                         base_idx: Box::new(be),
                         width_expr: Box::new(we),
-                        neg: *neg,
+                        neg: *neg ^ self.packed_range_ascending(*base),
                     },
                     width,
                     false,
@@ -1323,7 +1340,7 @@ impl<'a> Codegen<'a> {
                 return Ok(lhs_integer_expr(i128::from(relative)));
             }
         }
-        self.lower_expr(scope_path, index)
+        self.lower_packed_index(scope_path, base, index)
     }
 
     /// Lower system-function expressions ($clog2/$time/$stime/$bits/$signed/
@@ -1863,6 +1880,11 @@ impl<'a> Codegen<'a> {
                         IrElemSel::Part(left, right)
                     }
                     ElemSel::Bit(index) => IrElemSel::Bit(Box::new(index)),
+                    ElemSel::Indexed(base, width, negative) => IrElemSel::Indexed {
+                        base: Box::new(base),
+                        width,
+                        negative,
+                    },
                 },
             },
             Lhs::Stream {

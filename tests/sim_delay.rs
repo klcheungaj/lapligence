@@ -1,13 +1,15 @@
 //! End-to-end simulator tests for delayed assignments: intra-assignment
 //! delays (`a = #5 b;`, `a <= #5 b;` — LRM 1364-1995 §9.7.4) and
 //! continuous-assignment delays (`assign #2 y = a;` — §1364-1995 §6.1.3),
-//! procedural parameter/constant-expression delays, plus clean codegen
-//! rejections for event/repeat/dynamic forms. Slang compile → codegen →
+//! procedural parameter/runtime-expression delays, plus clean codegen
+//! rejections for event/repeat forms. Slang compile → codegen →
 //! CMake build → run, asserting exact
 //! stdout against hand-simulated traces.
 //!
 //! Tests run with the CWD pointed at a fresh temp dir and serialize process-CWD
 //! changes with the other native integration tests.
+#[path = "support/sim_cli.rs"]
+mod sim_cli;
 #[path = "support/sim.rs"]
 mod sim_harness;
 
@@ -75,9 +77,7 @@ endmodule
 /// (b) NBA intra-assignment delay commit time: `a <= #4 8'h07;` executed at
 /// t=0 lands in the NBA region of t=4.  A plain read at t=2 sees nothing,
 /// `$strobe` (end-of-step values) pins the commit inside step t=4, and the
-/// writer itself observes the committed value afterwards. The current backend's
-/// executing process suspends across the delay window for both assignment
-/// kinds — see the documented approximation in src/sim/AGENTS.md.)
+/// writer continues immediately and observes the old value at t=1.
 #[test]
 fn sim_intra_delay_nba_commit_time() {
     if !llg::sim::build::cmake_available() {
@@ -100,32 +100,19 @@ fn sim_intra_delay_nba_commit_time() {
 endmodule
 "#;
 
-    // Hand-simulation:
-    //   t=0  writer: a=00 (X->0); `a <= #4 07` evaluates the RHS into a
-    //        temp and suspends until t=4.
-    //   t=2  prober display a=00 (nothing committed yet).
-    //   t=4  ACTIVE region: the writer resumes and RECORDS the NBA (temp
-    //        value 07); the NBA region commits a := 07 within the same
-    //        step.  $strobe runs with the post-step values: a=07.
-    //   t=5  writer's own read after the commit: a=07.
-    //
-    // $strobe defers to the end of the step, so every assertion holds
-    // regardless of the two processes' wakeup order at t=4.
-    //
-    // Expected stdout (exactly):
-    //   t=2 a=00
-    //   strobe t=4 a=07
-    //   t=5 a=07
+    // At t=0 the writer captures 07 and schedules an NBA for t=4 without
+    // suspending. Its t=1 read and the prober's t=2 read both see 00. The
+    // postponed strobe at t=4 observes the committed NBA regardless of the
+    // active processes' wakeup order.
     let stdout = run_sim(sv, "nba").expect("simulation should run");
     assert_eq!(
-        stdout, "t=2 a=00\nstrobe t=4 a=07\nt=5 a=07\n",
+        stdout, "t=1 a=00\nt=2 a=00\nstrobe t=4 a=07\n",
         "stdout: {stdout}"
     );
 }
 
 /// (c) Continuous-assignment delay: the output lags every input change by
-/// exactly D (input changes spaced further apart than D, where the
-/// no-pulse-filter approximation agrees with the LRM).
+/// exactly D when input changes are spaced further apart than D.
 #[test]
 fn sim_ca_delay_lags_by_d() {
     if !llg::sim::build::cmake_available() {
@@ -148,13 +135,12 @@ fn sim_ca_delay_lags_by_d() {
 endmodule
 "#;
 
-    // Hand-simulation (body = delay D, then write CURRENT rhs):
-    //   t=0  CA starts its first evaluation but suspends for #2 (nothing
-    //        written yet).  Display y=xxxx.  src X->1.
-    //   t=2  CA writes y = current src = 0001, then waits on src.
-    //   t=3  src 1->0 wakes the CA, which suspends for #2 (until t=5).
+    // Hand-simulation (captured inertial driver updates):
+    //   t=0  Display y=xxxx. src X->1 schedules 0001 for t=2.
+    //   t=2  CA commits the captured value 0001.
+    //   t=3  src 1->0 schedules 0000 for t=5.
     //   t=4  display y=0001 (change has not landed yet).
-    //   t=5  CA writes y = current src = 0000.
+    //   t=5  CA commits 0000.
     //   t=6  display y=0000.
     //
     // Expected stdout (exactly):
@@ -192,7 +178,7 @@ endmodule
 "#;
 
     // Hand-simulation (P=2, 1ns/1ps default timescale):
-    //   t=0  src=1; CA suspends for its first-evaluation #P.
+    //   t=0  src=1; CA schedules its first update for t=P.
     //   t=1  display y=x (write due at t=P).
     //   t=2  CA writes y=1.
     //   t=3  display y=1.
@@ -204,7 +190,7 @@ endmodule
     assert_eq!(stdout, "t=1 y=x\nt=3 y=1\n", "stdout: {stdout}");
 }
 
-/// (d) The continuous assign's t=0 first evaluation ALSO waits D: with
+/// (d) The continuous assign's first update is delayed by D: with
 /// nothing else driving `src`, `y` stays X until t=D even though `src` was
 /// set to 1 in the same active region.
 #[test]
@@ -229,10 +215,10 @@ endmodule
 "#;
 
     // Hand-simulation:
-    //   t=0  CA suspends for its first-evaluation #3.  src=1.  Display
+    //   t=0  src=1 schedules the first CA update for t=3. Display
     //        y=x (an UNDELAYED assign would already print 1 here).
     //   t=2  still x (write due at t=3).
-    //   t=3  CA writes y=current src=1; display y=1.
+    //   t=3  CA commits captured value 1; display y=1.
     //
     // Expected stdout (exactly):
     //   t=0 y=x
@@ -245,35 +231,14 @@ endmodule
 /// A delayed continuous assignment rejects a short pulse and schedules the
 /// later stable transition using inertial delay semantics.
 #[test]
-#[ignore = "DELAY-BUG: delayed continuous assignments need inertial update scheduling"]
 fn sim_ca_delay_rejects_short_pulse() {
-    if !llg::sim::build::cmake_available() {
-        eprintln!("SKIP: cmake not available");
-        return;
-    }
-    let sv = r#"module tb;
-    reg src;
-    wire y;
-
-    assign #3 y = src;
-
-    initial begin
-        src = 1'b0;
-        #1 src = 1'b1;
-        #1 src = 1'b0;
-        #1 $display("t=%0t y=%b", $time, y);
-        #1 src = 1'b1;
-        #2 $display("t=%0t y=%b", $time, y);
-        #1 $display("t=%0t y=%b", $time, y);
-        $finish;
-    end
-endmodule
-"#;
-
-    // IEEE inertial scheduling rejects the short pulse, leaving y unknown
-    // until the stable transition scheduled for t=7.
-    let stdout = run_sim(sv, "current").expect("simulation should run");
-    assert_eq!(stdout, "t=3 y=x\nt=6 y=x\nt=7 y=1\n");
+    sim_cli::run_case(
+        "partial_features",
+        "inertial_continuous_pulse",
+        "3 x\n6 x\n7 1\n",
+        "",
+        &[],
+    );
 }
 
 /// (e) Timescale interplay: in a module with `` `timescale 10ns/1ns `` the
@@ -303,7 +268,7 @@ endmodule
 "#;
 
     // Hand-simulation (unit=10ns, precision=1ns → 1 unit = 10 ticks):
-    //   t=0     CA suspends for scaled #2 = 20 ticks (= 2 units).
+    //   t=0     CA schedules an update after scaled #2 = 20 ticks (= 2 units).
     //           src=1.
     //   t=10    (plain #1): display y=x (CA write due tick 20 — if the CA
     //           delay failed to scale, y would already be 1 here).
@@ -349,11 +314,9 @@ endmodule
     // Hand-simulation (IEEE 1800 §4: the inactive region drains every #0
     // continuation BEFORE the NBA region runs):
     //   active:           temp_a=5a; wait_time(0) reschedules inactive.
-    //   inactive pass 1:  a := 5a; display "t=0 a=5a"; `c <= #0 1`
-    //                     suspends into a further inactive pass.
-    //   inactive pass 2:  RECORD NBA(c=1); display "d1 c=x" (recorded, not
-    //                     yet committed); wait_time(0) again.
-    //   inactive pass 3:  display "d2 c=x" — still pre-NBA, since all #0
+    //   inactive pass 1:  a := 5a; display "t=0 a=5a"; RECORD NBA(c=1);
+    //                     display "d1 c=x"; wait_time(0) again.
+    //   inactive pass 2:  display "d2 c=x" — still pre-NBA, since all #0
     //                     continuations drain first; then #1 moves the
     //                     process to the timed queue, ending the drain.
     //   NBA region:       commit c=1.
@@ -593,27 +556,15 @@ endmodule
     );
 }
 
-/// Signed negative parameter delays are rejected before scale conversion.
+/// Negative packed delays convert to unsigned 64-bit time (IEEE 1800-2009 9.4.1).
 #[test]
-fn sim_stmt_negative_parameter_delay_rejected() {
-    if !llg::sim::build::cmake_available() {
-        eprintln!("SKIP: cmake not available");
-        return;
-    }
-    let sv = r#"module tb;
-    parameter signed N = -1;
-    initial #N $finish;
-endmodule
-"#;
-
-    let result = codegen_result(sv, "negative_stmt_delay").expect("compile should succeed");
-    let error = match result {
-        Ok(_) => panic!("negative procedural delay should be rejected"),
-        Err(error) => error,
-    };
-    assert!(
-        error.contains("procedural delay must be a known nonnegative integer"),
-        "unexpected codegen error: {error}"
+fn sim_stmt_negative_parameter_delay_uses_unsigned_time() {
+    sim_cli::run_case(
+        "partial_features",
+        "negative_constant_delay",
+        "18446744073709551614\n",
+        "",
+        &[],
     );
 }
 
@@ -665,31 +616,15 @@ endmodule
     assert_eq!(stdout, "t=4\n");
 }
 
-/// Signal-dependent delay expressions need a runtime-valued delay IR and are
-/// rejected explicitly by the current constant-expression path.
+/// Runtime delay values are sampled before suspension.
 #[test]
-fn sim_stmt_dynamic_delay_expression_rejected() {
-    if !llg::sim::build::cmake_available() {
-        eprintln!("SKIP: cmake not available");
-        return;
-    }
-    let sv = r#"module tb;
-    reg [7:0] delay;
-    initial begin
-        delay = 2;
-        #(delay + 1) $finish;
-    end
-endmodule
-"#;
-
-    let result = codegen_result(sv, "dynamic_delay").expect("compile should succeed");
-    let error = match result {
-        Ok(_) => panic!("dynamic delay expression should be rejected"),
-        Err(error) => error,
-    };
-    assert!(
-        error.contains("procedural delay") && error.contains("runtime-valued"),
-        "unexpected codegen error: {error}"
+fn sim_stmt_dynamic_delay_expression() {
+    sim_cli::run_case(
+        "partial_features",
+        "dynamic_delay_capture",
+        "first 3\nsecond 6\ncall 8 1\ntask 11\n",
+        "",
+        &[],
     );
 }
 
@@ -787,12 +722,10 @@ endmodule
 "#;
 
     // Hand-simulation:
-    //   t=0  b=1; `a=#5 b` captures b==1 and suspends; CA suspends for #2
-    //        (its first evaluation reads nothing yet).
-    //   t=2  CA writes y = current src = x (src is untouched so far).
+    //   t=0  b=1; `a=#5 b` captures b==1 and suspends; src and y remain X.
     //   t=5  a:=1; b=2; display "t=5 a=1 b=2 y=x"; src=1 wakes the CA
-    //        (#2 window open until t=7).
-    //   t=7  CA writes y = current src = 1.
+    //        (captures 1 for propagation at t=7).
+    //   t=7  CA commits the captured value 1.
     //   t=9  display y=1.
     //   t=11 display y=1.
     //

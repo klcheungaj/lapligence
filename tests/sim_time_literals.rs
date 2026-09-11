@@ -4,6 +4,8 @@
 //! that rule to time literals. Statement and intra-assignment forms are run
 //! with optimization enabled and disabled against one owned frontend model.
 
+#[path = "support/sim_cli.rs"]
+mod sim_cli;
 #[path = "support/sim.rs"]
 mod sim_harness;
 
@@ -182,22 +184,13 @@ fn sim_local_variable_shadows_real_delay_parameter() {
 }
 
 #[test]
-fn sim_task_argument_delay_is_rejected_as_runtime_valued() {
-    let source = r#"module tb;
-    parameter real P = 0.25;
-    task t(input integer P);
-        #P;
-    endtask
-    initial begin
-        t(1);
-        $finish;
-    end
-endmodule
-"#;
-    let error = codegen_error(source, "shadowed-task-delay");
-    assert!(
-        error.contains("procedural delay") && error.contains("runtime-valued"),
-        "{error}"
+fn sim_task_argument_delay_preserves_formal_shadowing() {
+    sim_cli::run_case(
+        "partial_features",
+        "dynamic_delay_shadowed_task",
+        "task 1\ntask 3\n",
+        "",
+        &[],
     );
 }
 

@@ -132,7 +132,11 @@ fn render_model(execution: &ExecutionModel, capacity: u32) -> Result<String, Str
 fn render_signal_decls(model: &IrModel, out: &mut String) {
     let mut emitted: std::collections::HashSet<&str> = std::collections::HashSet::new();
     for sig in &model.signals {
-        if sig.net_driver.is_some() || sig.omit || !emitted.insert(sig.c_name.as_str()) {
+        if sig.net_driver.is_some()
+            || sig.alias.is_some()
+            || sig.omit
+            || !emitted.insert(sig.c_name.as_str())
+        {
             // Net-group members: storage is emitted with its group; omitted
             // signals are pruned by `unused_storage`.
             continue;
@@ -471,6 +475,13 @@ fn render_main(model: &IrModel) -> Result<String, String> {
                     packed_default(a.elem_width, a.signed, a.two_state)
                 ));
             }
+            IrInitStep::FillArrayZ(arr) => {
+                let a = model.array(*arr);
+                out.push_str(&format!(
+                    "    {{ for (uint64_t _i = 0; _i < {}; _i++) {}[_i] = sv4_fill(3, {}, {}); }}\n",
+                    a.total, a.c_name, a.elem_width, a.signed as u8
+                ));
+            }
             IrInitStep::SetArrayElem { arr, index, value } => {
                 let a = model.array(*arr);
                 out.push_str(&format!(
@@ -659,6 +670,7 @@ mod tests {
                     two_state: false,
                 },
                 net_driver: None,
+                alias: None,
                 omit: false,
             },
             IrSignal {
@@ -670,6 +682,7 @@ mod tests {
                     two_state: false,
                 },
                 net_driver: Some((0, 0)),
+                alias: None,
                 omit: false,
             },
             IrSignal {
@@ -677,6 +690,7 @@ mod tests {
                 hdl_name: Some("top\u{1f}r".to_string()),
                 ty: IrType::Real { shortreal: false },
                 net_driver: None,
+                alias: None,
                 omit: false,
             },
             IrSignal {
@@ -688,6 +702,7 @@ mod tests {
                     two_state: false,
                 },
                 net_driver: None,
+                alias: None,
                 omit: false,
             },
         ];

@@ -329,7 +329,7 @@ impl EmitCtx<'_, '_> {
                             self.path
                         ));
                     }
-                    let scaled = self.cg.procedural_delay_ticks(h, *delay)?;
+                    let scaled = self.cg.lower_procedural_delay(&self.path, h, *delay)?;
                     self.lower_delayed_assignment(h, *blocking, scaled)
                 }
                 Some(IntraControl::EventOrRepeat) => Err(format!(
@@ -354,7 +354,7 @@ impl EmitCtx<'_, '_> {
                         self.path
                     ));
                 }
-                let scaled = self.cg.procedural_delay_ticks(h, *delay)?;
+                let scaled = self.cg.lower_procedural_delay(&self.path, h, *delay)?;
                 self.saw_wait = true;
                 let mut out = vec![IrStmt::Delay { ticks: scaled }];
                 // The body may be a `Stmt(Empty)` placeholder for a bare
@@ -931,17 +931,13 @@ impl EmitCtx<'_, '_> {
         })
     }
 
-    /// Lower an intra-assignment-delayed assignment (`lhs = #N rhs;`,
-    /// `lhs <= #N rhs;`; LRM 1364-1995 §9.7.4): the RHS is evaluated once,
-    /// immediately, into a temp; the process suspends N ticks; then the LHS
-    /// is updated from the temp — as a blocking write, or recorded for the
-    /// delayed step's NBA region.  `#0` suspends through the runtime's
-    /// zero-delay (inactive-region) wait.
+    /// Capture a delayed assignment's RHS immediately. Blocking assignments
+    /// suspend; nonblocking assignments enqueue a future NBA and continue.
     fn lower_delayed_assignment(
         &mut self,
         h: NodeId,
         blocking: bool,
-        scaled_ticks: u64,
+        scaled_ticks: IrDelay,
     ) -> Result<Vec<IrStmt>, String> {
         if self.func.is_some() && self.inline.is_none() {
             return Err(format!(
@@ -971,11 +967,17 @@ impl EmitCtx<'_, '_> {
         };
         let rhs_ir = self.lower_assignment_rhs(lhs, rhs, op, &lh)?;
         let rhs_ir = apply_lhs_assignment_context(&self.cg.model, &lh, rhs_ir);
-        if rhs_ir.is_real() {
-            return Err(format!(
-                "real-valued intra-assignment delays are not supported in `{}`",
-                self.path
-            ));
+        if !blocking {
+            if self.cg.proc_local_target(lhs).is_some() || matches!(lh, IrLhs::WholeRef { .. }) {
+                return Err(
+                    "nonblocking delayed assignment requires persistent target storage".into(),
+                );
+            }
+            return Ok(vec![IrStmt::DelayedAssign {
+                lhs: lh,
+                rhs: rhs_ir,
+                ticks: scaled_ticks,
+            }]);
         }
         self.saw_wait = true;
         // The temp name is unique per assignment node; each site's Block keeps
@@ -1042,62 +1044,130 @@ impl EmitCtx<'_, '_> {
         &mut self,
         specs: &[EventSpec],
     ) -> Result<Vec<(IrWaitSrc, IrEdge)>, String> {
-        let mut out = Vec::new();
-        for s in specs {
-            match s {
-                EventSpec::Edge { sig, posedge } => {
-                    // Edge controls on named events are rejected cleanly
-                    // because an event has no value, so posedge/negedge have no
-                    // meaning (LRM 1364-1995 §9.7.3 note).
-                    if let Some(ev) = self.cg.event_target_of(*sig) {
-                        let name = self.cg.node(ev).name.clone();
-                        return Err(format!(
-                            "edge control on a named event is not supported \
-                             (`{name}` in `{}`)",
-                            self.path
-                        ));
-                    }
-                    let (name, info) = self.cg.resolve_signal_id(&self.path, *sig)?;
-                    if info.real {
-                        return Err(format!(
-                            "real-valued signals cannot be event-controlled in `{}`",
-                            self.path
-                        ));
-                    }
-                    out.push((
-                        IrWaitSrc::Sig(name),
-                        if *posedge {
-                            IrEdge::Posedge
-                        } else {
-                            IrEdge::Negedge
-                        },
+        specs
+            .iter()
+            .map(|spec| self.lower_event_spec(spec, None))
+            .collect()
+    }
+
+    fn event_evaluator(&mut self, expression: NodeId) -> Result<String, String> {
+        fn contains_call(cg: &Codegen<'_>, node: NodeId, visited: &mut HashSet<NodeId>) -> bool {
+            if !visited.insert(node) {
+                return false;
+            }
+            matches!(cg.kind(node), NodeKind::FuncCall { .. })
+                || cg
+                    .node(node)
+                    .children
+                    .iter()
+                    .any(|child| contains_call(cg, *child, visited))
+        }
+        // Callbacks execute while walking waiter lists. Function effects need
+        // a reentrant scheduler contract before they can run in this context.
+        if contains_call(self.cg, expression, &mut HashSet::new()) {
+            return Err("function calls in evaluated event controls are not yet supported".into());
+        }
+        if self.cg.nested_proc_local_ref(expression).is_some() {
+            return Err("event-expression callbacks cannot yet capture automatic locals".into());
+        }
+        let value = self.cg.lower_expr(&self.path, expression)?;
+        if value.is_real() {
+            return Err(format!(
+                "real-valued signals cannot be event-controlled in `{}`",
+                self.path
+            ));
+        }
+        if self.func.is_some() || self.inline.is_some() {
+            return Err(
+                "event-expression callbacks cannot yet capture subroutine locals or formals".into(),
+            );
+        }
+        let name = self.cg.new_fn_name(&self.path, "event_eval");
+        self.pre_fns.push(crate::sim::ir::IrPreFn::MonEval {
+            c_name: name.clone(),
+            args: vec![value],
+        });
+        Ok(name)
+    }
+
+    fn lower_event_spec(
+        &mut self,
+        spec: &EventSpec,
+        condition: Option<NodeId>,
+    ) -> Result<(IrWaitSrc, IrEdge), String> {
+        let (expression, edge, event) = match spec {
+            EventSpec::Qualified { event, condition } => {
+                return self.lower_event_spec(event, Some(*condition))
+            }
+            EventSpec::Named(event) => (None, IrEdge::Any, Some(*event)),
+            EventSpec::AnyChange { sig } => {
+                (Some(*sig), IrEdge::Any, self.cg.event_target_of(*sig))
+            }
+            EventSpec::Edge { sig, posedge } => {
+                if self.cg.event_target_of(*sig).is_some() {
+                    return Err(format!(
+                        "edge control on a named event is not supported in `{}`",
+                        self.path
                     ));
                 }
-                EventSpec::AnyChange { sig } => {
-                    if let Some(ev) = self.cg.event_target_of(*sig) {
-                        let idx = self.cg.event_index_of(ev, &self.path)?;
-                        out.push((IrWaitSrc::Event(idx), IrEdge::Any));
-                        continue;
-                    }
-                    let (name, info) = self.cg.resolve_signal_id(&self.path, *sig)?;
-                    if info.real {
-                        return Err(format!(
-                            "real-valued signals cannot be event-controlled in `{}`",
-                            self.path
-                        ));
-                    }
-                    out.push((IrWaitSrc::Sig(name), IrEdge::Any));
-                }
-                EventSpec::Named(ev) => {
-                    // `@(ev)` — wait on the event trigger itself; events are
-                    // edge-triggered (a trigger before the wait does not
-                    // latch).
-                    let idx = self.cg.event_index_of(*ev, &self.path)?;
-                    out.push((IrWaitSrc::Event(idx), IrEdge::Any));
-                }
+                (
+                    Some(*sig),
+                    if *posedge {
+                        IrEdge::Posedge
+                    } else {
+                        IrEdge::Negedge
+                    },
+                    None,
+                )
             }
+        };
+        let condition = condition
+            .map(|expression| self.event_evaluator(expression))
+            .transpose()?;
+        if let Some(event) = event {
+            let event = self.cg.event_index_of(event, &self.path)?;
+            return Ok((
+                match condition {
+                    Some(condition) => IrWaitSrc::FilteredEvent { event, condition },
+                    None => IrWaitSrc::Event(event),
+                },
+                edge,
+            ));
         }
-        Ok(out)
+        let expression = expression.ok_or_else(|| "event control has no expression".to_string())?;
+        let simple = matches!(
+            self.cg.kind(expression),
+            NodeKind::Expr(ExprKind::Ref { .. } | ExprKind::HierPath { .. })
+        );
+        if simple && condition.is_none() {
+            let (name, info) = self.cg.resolve_signal_id(&self.path, expression)?;
+            if info.real {
+                return Err(format!(
+                    "real-valued signals cannot be event-controlled in `{}`",
+                    self.path
+                ));
+            }
+            return Ok((IrWaitSrc::Sig(name), edge));
+        }
+        let reads = self.cg.collect_read_signals(&self.path, expression)?;
+        if self
+            .cg
+            .contains_unpacked_array(expression, &mut HashSet::new())
+        {
+            return Err(
+                "event expressions reading unpacked arrays require array sensitivity support"
+                    .into(),
+            );
+        }
+        let eval = self.event_evaluator(expression)?;
+        Ok((
+            IrWaitSrc::Evaluated {
+                eval,
+                condition,
+                reads,
+            },
+            edge,
+        ))
     }
 
     fn lower_case(&mut self, h: NodeId) -> Result<Vec<IrStmt>, String> {

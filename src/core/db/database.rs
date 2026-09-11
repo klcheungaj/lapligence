@@ -374,7 +374,7 @@ pub enum NodeKind {
     },
     ContAssign {
         net_decl: bool,
-        delay: Option<NodeId>,
+        delay: Option<DriverDelay>,
         /// Drive strengths retained so consumers can reject unsupported
         /// strength-aware resolution instead of silently treating it as
         /// equal-strength.
@@ -386,7 +386,7 @@ pub enum NodeKind {
         prim_type: PrimitiveType,
         strength0: Strength,
         strength1: Strength,
-        delay: Option<NodeId>,
+        delay: Option<DriverDelay>,
         terms: Vec<GateTerm>,
     },
     Stmt(StmtKind),
@@ -600,6 +600,17 @@ pub enum StmtKind {
     },
 }
 
+/// Ordered propagation-delay expressions on a continuous assignment or primitive.
+#[derive(Clone, Copy, Debug)]
+pub enum DriverDelay {
+    /// One expression supplies every transition delay.
+    Single(NodeId),
+    /// Separate rise and fall expressions; turn-off is their minimum.
+    RiseFall(NodeId, NodeId),
+    /// Separate rise, fall and turn-off expressions, in that order.
+    RiseFallTurnOff(NodeId, NodeId, NodeId),
+}
+
 #[derive(Debug)]
 pub enum IntraControl {
     /// Delay expression evaluated in the assignment's owning scope.
@@ -612,6 +623,11 @@ pub enum IntraControl {
 /// One sensitivity entry of an event control.
 #[derive(Debug)]
 pub enum EventSpec {
+    /// An event whose qualifier is sampled when its source triggers.
+    Qualified {
+        event: Box<EventSpec>,
+        condition: NodeId,
+    },
     Edge {
         sig: NodeId,
         posedge: bool,
@@ -623,6 +639,18 @@ pub enum EventSpec {
     /// [`NodeKind::NamedEvent`] declaration (resolved through the operand's
     /// ref or from the direct object).
     Named(NodeId),
+}
+
+impl EventSpec {
+    pub(crate) fn referenced_nodes(&self, nodes: &mut Vec<NodeId>) {
+        match self {
+            Self::Qualified { event, condition } => {
+                event.referenced_nodes(nodes);
+                nodes.push(*condition);
+            }
+            Self::Edge { sig, .. } | Self::AnyChange { sig } | Self::Named(sig) => nodes.push(*sig),
+        }
+    }
 }
 
 /// Kind of a captured expression.
@@ -1082,11 +1110,11 @@ fn direction_from_slang(node: &SemanticNode) -> Direction {
     }
 }
 
-fn delay_expression(
+fn driver_delay(
     snapshot: &SlangSnapshot,
     ids: &HashMap<u64, NodeId>,
     edges: &[crate::ffi::slang::SemanticEdge],
-) -> Result<Option<NodeId>, DbError> {
+) -> Result<Option<DriverDelay>, DbError> {
     let Some(delay) = edge_target(ids, edges, SemanticEdgeRole::Delay)? else {
         return Ok(None);
     };
@@ -1095,13 +1123,23 @@ fn delay_expression(
         .get(delay.index())
         .ok_or_else(|| DbError::InvalidSnapshot("delay semantic node is missing".into()))?;
     if semantic.kind != SemanticKind::TimingControl {
-        return Ok(Some(delay));
+        return Ok(Some(DriverDelay::Single(delay)));
     }
-    edge_target(
+    let expressions = edge_targets(
         ids,
         semantic_edges(snapshot, semantic)?,
         SemanticEdgeRole::Delay,
-    )
+    )?;
+    Ok(Some(match expressions.as_slice() {
+        [delay] => DriverDelay::Single(*delay),
+        [rise, fall] => DriverDelay::RiseFall(*rise, *fall),
+        [rise, fall, turn_off] => DriverDelay::RiseFallTurnOff(*rise, *fall, *turn_off),
+        _ => {
+            return Err(DbError::InvalidSnapshot(
+                "driver timing control requires one to three delay expressions".into(),
+            ));
+        }
+    }))
 }
 
 fn value_data_from_slang(value: &SlangConstantValue) -> ValueData {
@@ -1416,7 +1454,7 @@ fn node_kind_from_slang(
         },
         SemanticKind::ContinuousAssign => NodeKind::ContAssign {
             net_decl: node.subkind == 228,
-            delay: delay_expression(snapshot, ids, edges)?,
+            delay: driver_delay(snapshot, ids, edges)?,
             strength0: strength_from_slang(node.strength0),
             strength1: strength_from_slang(node.strength1),
         },
@@ -1485,7 +1523,7 @@ fn node_kind_from_slang(
                 prim_type,
                 strength0: strength_from_slang(node.strength0),
                 strength1: strength_from_slang(node.strength1),
-                delay: delay_expression(snapshot, ids, edges)?,
+                delay: driver_delay(snapshot, ids, edges)?,
                 terms,
             }
         }
@@ -1837,6 +1875,18 @@ fn event_specs(
             } else {
                 vec![EventSpec::AnyChange { sig }]
             };
+            let specs =
+                if let Some(condition) = edge_target(ids, edges, SemanticEdgeRole::Condition)? {
+                    specs
+                        .into_iter()
+                        .map(|event| EventSpec::Qualified {
+                            event: Box::new(event),
+                            condition,
+                        })
+                        .collect()
+                } else {
+                    specs
+                };
             Ok((specs, false))
         }
         114 => {
@@ -2502,14 +2552,10 @@ impl Db {
             } else if semantic.kind == SemanticKind::Statement && semantic.subkind == 40 {
                 children = match &kind {
                     NodeKind::Stmt(StmtKind::EventControl { specs, body, .. }) => {
-                        let mut values = specs
-                            .iter()
-                            .map(|spec| match spec {
-                                EventSpec::Edge { sig, .. }
-                                | EventSpec::AnyChange { sig }
-                                | EventSpec::Named(sig) => *sig,
-                            })
-                            .collect::<Vec<_>>();
+                        let mut values = Vec::new();
+                        for spec in specs {
+                            spec.referenced_nodes(&mut values);
+                        }
                         values.extend(*body);
                         values
                     }

@@ -11,7 +11,7 @@ mod validate;
 
 pub use database::{
     AggregateKind, AggregateLayout, AggregateMember, ArrayKind, ArrayMeta,
-    AssignmentPatternKeyType, AssociativeIndex, CaseItem, ConstantSource, Db, DbError,
+    AssignmentPatternKeyType, AssociativeIndex, CaseItem, ConstantSource, Db, DbError, DriverDelay,
     ElaboratedTypeRanges, EventSpec, ExprKind, GateTerm, IntraControl, Node, NodeId, NodeKind,
     PackedMember, PackedRange, PrimClass, ProcessKind, StmtKind, StreamOperand, StreamingDirection,
     VariableLifetime, VariableLifetimeQualifier,
