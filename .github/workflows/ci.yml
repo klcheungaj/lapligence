@@ -127,6 +127,7 @@ jobs:
           cargo test --jobs 2 --all-features
           --test runtime_values --test runtime_boundaries --test sim_counter
           --test sim_data_types --test sim_data_types_next --test sim_data_types_completion
+          --test sim_type_conformance --test sim_partial_features --test sim_net_resolution --test sim_net_defaults
           --test sim_function --test sim_loops
           -- --test-threads=1
 
