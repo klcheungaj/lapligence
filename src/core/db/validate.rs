@@ -361,6 +361,7 @@ impl NodeKind {
             } => refs.extend([*high, *low, *high_expr].into_iter().flatten()),
             NodeKind::IoDecl { expr, .. } => refs.extend(*expr),
             NodeKind::IfaceConn { actual, .. } => refs.push(*actual),
+            NodeKind::NetAlias { nets } => refs.extend(nets.iter().copied()),
             NodeKind::ContAssign { delay, .. } => driver_delay_refs(*delay, refs),
             NodeKind::Gate { delay, terms, .. } => {
                 driver_delay_refs(*delay, refs);

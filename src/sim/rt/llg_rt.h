@@ -101,10 +101,14 @@ typedef struct {
 // separate `sv4_t` globals whose addresses the codegen wires into `drivers`.
 
 #define LLG_MAX_NET_DRIVERS 16
+#define LLG_MAX_NET_ALIASES 256
 
 typedef struct llg_inertial llg_inertial_t;
+typedef struct llg_net llg_net_t;
+typedef struct llg_net_alias_part llg_net_alias_part_t;
+typedef struct llg_net_alias llg_net_alias_t;
 
-typedef struct {
+struct llg_net {
     sv4_t resolved;                       /* what readers/waiters see */
     uint32_t width;
     int8_t is_signed;
@@ -118,10 +122,31 @@ typedef struct {
     uint64_t propagation_rise;
     uint64_t propagation_fall;
     uint64_t propagation_turn_off;
-} llg_net_t;
+    int n_aliases;
+    llg_net_alias_t* aliases[LLG_MAX_NET_ALIASES];
+};
+
+struct llg_net_alias_part {
+    llg_net_t* net;
+    int slot;
+    uint32_t signal_bit;
+    uint32_t group_bit;
+};
+
+struct llg_net_alias {
+    sv4_t* storage;
+    sv4_t visible;
+    uint32_t width;
+    int8_t is_signed;
+    const llg_net_alias_part_t* parts;
+    uint32_t n_parts;
+};
 
 void llg_net_resolve(llg_net_t* net); /* strength-aware resolution, per limb */
 void llg_net_write(llg_net_t* net, int idx, sv4_t value);
+void llg_net_alias_bind(llg_net_alias_t* alias);
+sv4_t llg_net_alias_read(llg_net_alias_t* alias);
+void llg_net_alias_write(llg_net_alias_t* alias, sv4_t value);
 
 // The runtime owns each inertial driver and its pending event. The caller's
 // initially NULL handle, target and net must persist until cleanup, which

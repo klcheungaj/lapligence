@@ -11,6 +11,10 @@
 - **Reference layer:** `llg_ref_t` describes a whole packed value or legal
   packed/array selection; `llg_ref_read` and `llg_ref_write` preserve immediate
   alias visibility while routing writes through normal force/PCA notifications.
+- **True-net aliases:** generated `llg_net_alias_t` descriptors project each
+  aliased bit from its canonical resolved net group into visible storage;
+  net publication refreshes dependencies and waveform observations for every
+  alias name.
 - **Simulation layer:** `llg_rt.h/.c` implements typed IEEE event-region
   scheduling, signal/driver updates, process services, simulator system tasks,
   region callback hooks, immutable sampled views, nonreturning `$finish`

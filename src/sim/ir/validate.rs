@@ -275,11 +275,22 @@ impl Validator<'_> {
 
     fn valid_dependency(&self, dependency: &IrDependency) -> bool {
         match dependency {
-            IrDependency::Scalar(name) => self
-                .model
-                .signals
-                .iter()
-                .any(|signal| signal.c_name == *name && !signal.omit && signal.ty.width() != 0),
+            IrDependency::Scalar(name) => {
+                let alias_index = name
+                    .strip_prefix("llg_net_alias_")
+                    .and_then(|name| name.strip_suffix(".visible"))
+                    .and_then(|index| index.parse::<usize>().ok());
+                self.model
+                    .signals
+                    .iter()
+                    .enumerate()
+                    .any(|(index, signal)| {
+                        (signal.c_name == *name
+                            || (alias_index == Some(index) && !signal.net_alias.is_empty()))
+                            && !signal.omit
+                            && signal.ty.width() != 0
+                    })
+            }
             IrDependency::Real(name) => self.model.signals.iter().any(|signal| {
                 signal.c_name == *name && !signal.omit && matches!(signal.ty, IrType::Real { .. })
             }),
@@ -432,6 +443,70 @@ impl Validator<'_> {
         for (idx, signal) in self.model.signals.iter().enumerate() {
             let path = format!("signals[{idx}]");
             self.validate_type(&signal.ty, &format!("{path}.ty"))?;
+            if !signal.net_alias.is_empty() {
+                if !matches!(signal.ty, IrType::Packed { .. }) {
+                    return self.fail(
+                        format!("{path}.net_alias"),
+                        "true-net alias bindings require packed signal storage",
+                    );
+                }
+                if signal.alias.is_some() {
+                    return self.fail(
+                        format!("{path}.net_alias"),
+                        "true-net alias storage cannot also be a variable alias",
+                    );
+                }
+                if signal.net_driver.is_some() {
+                    return self.fail(
+                        format!("{path}.net_alias"),
+                        "true-net alias storage cannot also be an inout driver",
+                    );
+                }
+                let mut signal_bits = HashSet::new();
+                for (binding_idx, binding) in signal.net_alias.iter().enumerate() {
+                    let binding_path = format!("{path}.net_alias[{binding_idx}]");
+                    let group = self.model.net_groups.get(binding.group).ok_or_else(|| {
+                        IrValidationError::new(
+                            format!("{binding_path}.group"),
+                            format!("net-group index {} is out of bounds", binding.group),
+                        )
+                    })?;
+                    if binding.slot >= group.n_drivers {
+                        return self.fail(
+                            format!("{binding_path}.slot"),
+                            format!(
+                                "driver slot {} is out of bounds for group {}",
+                                binding.slot, binding.group
+                            ),
+                        );
+                    }
+                    if binding.group_bit >= group.width {
+                        return self.fail(
+                            format!("{binding_path}.group_bit"),
+                            format!(
+                                "group bit {} is out of bounds for group {}",
+                                binding.group_bit, binding.group
+                            ),
+                        );
+                    }
+                    if binding.signal_bit >= signal.ty.width() {
+                        return self.fail(
+                            format!("{binding_path}.signal_bit"),
+                            format!(
+                                "signal bit {} is out of bounds for signal width {}",
+                                binding.signal_bit,
+                                signal.ty.width()
+                            ),
+                        );
+                    }
+                    if !signal_bits.insert(binding.signal_bit) {
+                        return self.fail(
+                            format!("{binding_path}.signal_bit"),
+                            "signal bit has more than one canonical alias binding",
+                        );
+                    }
+                }
+            }
             if signal.alias.is_some() && signal.net_driver.is_some() {
                 return self.fail(
                     format!("{path}.alias"),
@@ -3529,6 +3604,7 @@ mod tests {
                 two_state: false,
             },
             net_driver: None,
+            net_alias: Vec::new(),
             alias: None,
             omit: false,
         }];

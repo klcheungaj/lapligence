@@ -537,6 +537,7 @@ pub enum SemanticKind {
     Definition,
     Scope,
     TimingControl,
+    NetAlias,
     Unsupported,
 }
 
@@ -684,6 +685,7 @@ pub enum SemanticEdgeRole {
     Reference,
     SourceIdentity,
     ReturnOwner,
+    AliasNet,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1774,6 +1776,7 @@ fn decode_semantic_edges(
                 29 => SemanticEdgeRole::Reference,
                 30 => SemanticEdgeRole::SourceIdentity,
                 31 => SemanticEdgeRole::ReturnOwner,
+                32 => SemanticEdgeRole::AliasNet,
                 _ => return Err(invalid_native("semantic edge has an unknown role")),
             };
             Ok(SemanticEdge {
@@ -1999,6 +2002,7 @@ fn decode_semantic_kind(raw: u32) -> Result<SemanticKind, SlangError> {
         24 => SemanticKind::Definition,
         25 => SemanticKind::Scope,
         26 => SemanticKind::TimingControl,
+        27 => SemanticKind::NetAlias,
         255 => SemanticKind::Unsupported,
         _ => return Err(invalid_native("semantic node has an unknown kind")),
     })
@@ -2018,7 +2022,7 @@ fn validate_semantic_subkind(kind: u32, subkind: u32) -> Result<(), SlangError> 
         26 => matches!(subkind, 0 | 112..=118),
         20..=22 => matches!(subkind, 0 | 76),
         9 => matches!(subkind, 0 | 229 | SEMANTIC_VARIABLE_CLOCKING),
-        2 | 3 | 5..=7 | 10..=12 | 16 | 17 | 23 | 24 | 255 => subkind == 0,
+        2 | 3 | 5..=7 | 10..=12 | 16 | 17 | 23 | 24 | 27 | 255 => subkind == 0,
         _ => true,
     };
     if !valid {

@@ -2546,8 +2546,48 @@ fn force_target_address(ctx: &RCtx<'_>, signal: usize) -> (String, String) {
             let name = &ctx.model.net_group(group).c_name;
             (format!("&{name}.resolved"), format!("&{name}"))
         }
+        None if target.net_alias.len() == 1 => {
+            let group = target.net_alias[0].group();
+            let name = &ctx.model.net_group(group).c_name;
+            (format!("&{name}.resolved"), format!("&{name}"))
+        }
         None => (format!("&{}", target.c_name), "NULL".to_string()),
     }
+}
+
+fn constant_alias_bit(expr: &IrExpr) -> Option<u32> {
+    let IrExprKind::Const(value) = expr.kind() else {
+        return None;
+    };
+    if value.real_value().is_some()
+        || value.fill().is_some()
+        || value.x_mask().iter().any(|mask| *mask != 0)
+        || value.z_mask().iter().any(|mask| *mask != 0)
+        || value.bits().iter().skip(1).any(|limb| *limb != 0)
+    {
+        return None;
+    }
+    value.bits().first().copied()?.try_into().ok()
+}
+
+fn push_alias_force_part(
+    ctx: &RCtx<'_>,
+    binding: &crate::sim::ir::IrNetAliasBinding,
+    value_lsb: u32,
+    two_state: bool,
+    seen: &mut HashSet<(usize, u32)>,
+    out: &mut Vec<String>,
+) {
+    if !seen.insert((binding.group(), binding.group_bit())) {
+        return;
+    }
+    let group = &ctx.model.net_group(binding.group()).c_name;
+    out.push(format!(
+        "{{ &{group}.resolved, &{group}, {}, {}, 1, {value_lsb}, {} }}",
+        binding.group_bit(),
+        binding.group_bit(),
+        two_state as u8,
+    ));
 }
 
 fn force_part(
@@ -2561,6 +2601,20 @@ fn force_part(
             let signal = ctx.model.signal(*index);
             if matches!(signal.ty, IrType::Real { .. }) {
                 return Err("real force target cannot be a packed force part".to_string());
+            }
+            if !signal.net_alias.is_empty() {
+                let mut seen = HashSet::new();
+                for binding in &signal.net_alias {
+                    push_alias_force_part(
+                        ctx,
+                        binding,
+                        value_lsb + binding.signal_bit(),
+                        signal.ty.two_state(),
+                        &mut seen,
+                        out,
+                    );
+                }
+                return Ok(());
             }
             let (target, net) = force_target_address(ctx, *index);
             let width = signal.ty.width();
@@ -2587,6 +2641,28 @@ fn force_part(
         }
         IrLhs::Bit(index, select, two_state) => {
             let signal = ctx.model.signal(*index);
+            if !signal.net_alias.is_empty() {
+                let bit = constant_alias_bit(select).ok_or_else(|| {
+                    "selected force on a net alias requires a constant index".to_string()
+                })?;
+                let binding = signal
+                    .net_alias
+                    .iter()
+                    .find(|binding| binding.signal_bit() == bit)
+                    .ok_or_else(|| {
+                        "selected force on a net alias has an unmapped bit".to_string()
+                    })?;
+                let mut seen = HashSet::new();
+                push_alias_force_part(
+                    ctx,
+                    binding,
+                    value_lsb,
+                    signal.ty.two_state() || *two_state,
+                    &mut seen,
+                    out,
+                );
+                return Ok(());
+            }
             let (target, net) = force_target_address(ctx, *index);
             let select = render_expr(ctx, select)?.code;
             out.push(format!(
@@ -2596,6 +2672,28 @@ fn force_part(
         }
         IrLhs::Part(index, left, right, two_state) => {
             let signal = ctx.model.signal(*index);
+            if !signal.net_alias.is_empty() {
+                let width = left.abs_diff(*right) as u32 + 1;
+                let step = if left <= right { 1 } else { -1 };
+                let mut seen = HashSet::new();
+                for offset in 0..width {
+                    let bit = left + i64::from(offset) * step;
+                    let Some(binding) = signal.net_alias.iter().find(|binding| {
+                        binding.signal_bit() == u32::try_from(bit).ok().unwrap_or(u32::MAX)
+                    }) else {
+                        return Err("selected force on a net alias has an unmapped bit".to_string());
+                    };
+                    push_alias_force_part(
+                        ctx,
+                        binding,
+                        value_lsb + width - 1 - offset,
+                        signal.ty.two_state() || *two_state,
+                        &mut seen,
+                        out,
+                    );
+                }
+                return Ok(());
+            }
             let (target, net) = force_target_address(ctx, *index);
             let width = left.abs_diff(*right) as u32 + 1;
             out.push(format!(
@@ -2638,7 +2736,14 @@ fn force_reads(ctx: &RCtx<'_>, reads: &[usize]) -> Result<(String, usize), Strin
             .ok_or_else(|| format!("force dependency signal {index} is out of bounds"))?;
         let entry = match signal.ty {
             IrType::Real { .. } => format!("{{ NULL, &{}, 1 }}", signal.c_name),
-            IrType::Packed { .. } => format!("{{ &{}, NULL, 0 }}", signal.c_name),
+            IrType::Packed { .. } => {
+                let pointer = if signal.net_alias.is_empty() {
+                    format!("&{}", signal.c_name)
+                } else {
+                    format!("&llg_net_alias_{}.visible", index)
+                };
+                format!("{{ {pointer}, NULL, 0 }}")
+            }
         };
         entries.push(entry);
     }

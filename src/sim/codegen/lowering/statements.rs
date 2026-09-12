@@ -1978,7 +1978,10 @@ impl EmitCtx<'_, '_> {
                 }
                 return Ok((IrWaitSrc::Real(name), edge));
             }
-            return Ok((IrWaitSrc::Sig(name), edge));
+            return Ok((
+                IrWaitSrc::Sig(self.cg.signal_dependency_name(info.ir)),
+                edge,
+            ));
         }
         let reads = self.cg.collect_read_signals(&self.path, expression)?;
         let (eval, real) = self.event_evaluator(expression)?;
@@ -3092,6 +3095,18 @@ impl EmitCtx<'_, '_> {
                 .signals
                 .iter()
                 .position(|signal| signal.c_name == name)
+                .or_else(|| {
+                    name.strip_prefix("llg_net_alias_")
+                        .and_then(|name| name.strip_suffix(".visible"))
+                        .and_then(|index| index.parse::<usize>().ok())
+                        .filter(|index| {
+                            self.cg
+                                .model
+                                .signals
+                                .get(*index)
+                                .is_some_and(|signal| !signal.net_alias.is_empty())
+                        })
+                })
                 .ok_or_else(|| {
                     format!(
                         "force dependency `{name}` in `{diagnostic_path}` has no lowered storage"
@@ -5806,13 +5821,14 @@ fn force_constant_index(expr: &IrExpr) -> bool {
         return false;
     };
     value.real_value().is_none()
+        && value.fill().is_none()
         && value.x_mask().iter().all(|mask| *mask == 0)
         && value.z_mask().iter().all(|mask| *mask == 0)
 }
 
 /// Validate the force/release target shape shared by lowering and emission.
-/// Packed variable selects are intentionally rejected; a selected net is
-/// represented by a fixed part descriptor and can therefore preserve all
+/// Packed variable selects are intentionally rejected; constant selected nets
+/// are represented by fixed part descriptors and can therefore preserve all
 /// current driver contributions on release.
 fn validate_force_lhs(model: &IrModel, lhs: &IrLhs, path: &str) -> Result<bool, String> {
     match lhs {
@@ -5832,7 +5848,7 @@ fn validate_force_lhs(model: &IrModel, lhs: &IrLhs, path: &str) -> Result<bool, 
             let signal = model.signals.get(*index).ok_or_else(|| {
                 format!("force target signal {index} is out of bounds in `{path}`")
             })?;
-            if signal.net_driver.is_none() {
+            if signal.net_driver.is_none() && signal.net_alias.is_empty() {
                 return Err(format!(
                     "force/release of a variable bit-select in `{path}` is not supported"
                 ));
@@ -5848,7 +5864,7 @@ fn validate_force_lhs(model: &IrModel, lhs: &IrLhs, path: &str) -> Result<bool, 
             let signal = model.signals.get(*index).ok_or_else(|| {
                 format!("force target signal {index} is out of bounds in `{path}`")
             })?;
-            if signal.net_driver.is_none() {
+            if signal.net_driver.is_none() && signal.net_alias.is_empty() {
                 return Err(format!(
                     "force/release of a variable part-select in `{path}` is not supported"
                 ));

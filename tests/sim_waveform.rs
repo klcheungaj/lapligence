@@ -475,6 +475,27 @@ fn checked_in_vcd_dumpvars_aliases_share_a_value_identity() {
 }
 
 #[test]
+fn vcd_records_true_net_alias_values_in_both_optimizer_modes() {
+    if !sim::build::cmake_available() {
+        eprintln!("SKIP: cmake not available");
+        return;
+    }
+    for optimized in [true, false] {
+        let (_dir, vcd) = read_fixture_vcd("true_net_alias", optimized);
+        let declarations = assert_vcd_names(&vcd, &["tb.a", "tb.b"]);
+        assert_eq!(declarations["tb.a"].1, "1");
+        assert_eq!(declarations["tb.b"].1, "1");
+        for name in ["tb.a", "tb.b"] {
+            let id = &declarations[name].2;
+            assert!(
+                vcd.contains(&format!("1{id}")),
+                "true-net alias value for {name} missing: {vcd}"
+            );
+        }
+    }
+}
+
+#[test]
 fn checked_in_vcd_controls_are_identical_in_both_optimizer_modes() {
     if !sim::build::cmake_available() {
         eprintln!("SKIP: cmake not available");

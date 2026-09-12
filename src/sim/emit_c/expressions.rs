@@ -124,8 +124,13 @@ pub(super) fn render_expr_impl(ctx: &RCtx<'_>, e: &IrExpr) -> Result<RenderedExp
         },
         IrExprKind::SigRead(idx) => {
             let s = ctx.model.signal(*idx);
+            let code = if s.net_alias.is_empty() {
+                s.c_name.clone()
+            } else {
+                format!("llg_net_alias_read(&llg_net_alias_{idx})")
+            };
             RenderedExpr {
-                code: s.c_name.clone(),
+                code,
                 width: s.ty.width(),
                 signed: s.ty.signed(),
                 fill: None,

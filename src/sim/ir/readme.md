@@ -25,6 +25,9 @@ typed evaluator contexts, read dependencies, delayed NBA operations and real mat
 functions are validated before optimization/emission; deferred updates remain
 distinct from suspension. Evaluator contexts carry activation-owned storage
 identities rather than transient C addresses.
+True-net aliases retain bit-level bindings to canonical resolved net groups so
+optimized storage pruning cannot disconnect alias reads, dependencies, force/
+release descriptors, or waveform observations.
 `IrInitialization` keeps declaration identity, `StorageLifetime`, source origin,
 and the Verilog/SystemVerilog execution phase attached to scalar static
 initializers. Automatic declaration values remain activation-local operations;

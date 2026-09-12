@@ -3201,6 +3201,10 @@ pub struct IrSignal {
     /// For members of a collapsed inout-net group: `(group index, driver
     /// slot)`.  `c_name` is then `<net>.resolved`.
     pub(in crate::sim) net_driver: Option<(usize, usize)>,
+    /// Bit-level canonical network memberships for a true SystemVerilog net
+    /// alias. Each entry identifies one signal bit and the resolved group bit
+    /// that owns its electrical value.
+    pub(in crate::sim) net_alias: Vec<IrNetAliasBinding>,
     /// Canonical variable storage for a reference alias; never another alias.
     pub(in crate::sim) alias: Option<usize>,
     /// Storage pruning marker (`unused_storage` pass): the declaration is
@@ -3223,6 +3227,7 @@ impl IrSignal {
             hdl_name,
             ty,
             net_driver,
+            net_alias: Vec::new(),
             alias: None,
             omit: false,
         })
@@ -3240,8 +3245,38 @@ impl IrSignal {
     pub fn net_driver(&self) -> Option<(usize, usize)> {
         self.net_driver
     }
+    pub fn net_alias(&self) -> &[IrNetAliasBinding] {
+        &self.net_alias
+    }
     pub fn is_omitted(&self) -> bool {
         self.omit
+    }
+}
+
+/// One bit-level membership in a canonical true-net-alias network.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct IrNetAliasBinding {
+    pub(in crate::sim) group: usize,
+    pub(in crate::sim) slot: usize,
+    pub(in crate::sim) signal_bit: u32,
+    pub(in crate::sim) group_bit: u32,
+}
+
+impl IrNetAliasBinding {
+    pub fn group(&self) -> usize {
+        self.group
+    }
+
+    pub fn signal_bit(&self) -> u32 {
+        self.signal_bit
+    }
+
+    pub fn slot(&self) -> usize {
+        self.slot
+    }
+
+    pub fn group_bit(&self) -> u32 {
+        self.group_bit
     }
 }
 

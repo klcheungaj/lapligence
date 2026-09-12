@@ -244,11 +244,11 @@ use crate::sim::ir::{
     IrConst, IrContainer, IrContainerExpr, IrContainerKind, IrContainerStmt, IrDelay, IrDependency,
     IrDepth, IrDisplayRadix, IrEdge, IrElemSel, IrEvent, IrEventCapture, IrEventContext,
     IrEventRef, IrExpr, IrExprKind, IrFormal, IrImmediateAssertionKind, IrInitPhase, IrInitTarget,
-    IrInitialization, IrJoinKind, IrLhs, IrMemoryRadix, IrModel, IrProcess, IrProcessKind,
-    IrRealBinOp, IrRealUnOp, IrSeverityLevel, IrShape, IrSignal, IrStmt, IrStochasticStmt,
-    IrStreamDirection, IrStreamTarget, IrSysFunc, IrTimeKind, IrTransitionDelay, IrType, IrUnOp,
-    IrUniquePriorityCheck, IrWaitSrc, StorageKind, StorageLifetime, StorageOwnership, StorageRef,
-    LLG_MAX_NET_DRIVERS,
+    IrInitialization, IrJoinKind, IrLhs, IrMemoryRadix, IrModel, IrNetAliasBinding, IrProcess,
+    IrProcessKind, IrRealBinOp, IrRealUnOp, IrSeverityLevel, IrShape, IrSignal, IrStmt,
+    IrStochasticStmt, IrStreamDirection, IrStreamTarget, IrSysFunc, IrTimeKind, IrTransitionDelay,
+    IrType, IrUnOp, IrUniquePriorityCheck, IrWaitSrc, StorageKind, StorageLifetime,
+    StorageOwnership, StorageRef, LLG_MAX_NET_DRIVERS,
 };
 
 mod collection;
@@ -1439,6 +1439,18 @@ impl<'a> Codegen<'a> {
         }
     }
 
+    pub(super) fn signal_dependency_name(&self, index: usize) -> String {
+        let signal = self.model.signal(index);
+        if signal.net_alias.is_empty() {
+            signal.c_name.clone()
+        } else {
+            // Alias-visible storage is refreshed by the runtime whenever any
+            // canonical group bit changes. Dependencies therefore point at
+            // the descriptor's visible cell rather than retained raw storage.
+            format!("llg_net_alias_{index}.visible")
+        }
+    }
+
     pub(super) fn reference_dependency(&self, info: &SignalInfo) -> IrDependency {
         let target = self
             .reference_lhs(IrLhs::Whole(info.ir))
@@ -1446,12 +1458,10 @@ impl<'a> Codegen<'a> {
         match target {
             IrLhs::Whole(index) => match self.model.signal(index).ty {
                 IrType::Real { .. } => IrDependency::real(self.model.signal(index).c_name.clone()),
-                IrType::Packed { .. } => {
-                    IrDependency::scalar(self.model.signal(index).c_name.clone())
-                }
+                IrType::Packed { .. } => IrDependency::scalar(self.signal_dependency_name(index)),
             },
             IrLhs::Bit(index, ..) | IrLhs::Part(index, ..) | IrLhs::IdxPart(index, ..) => {
-                IrDependency::scalar(self.model.signal(index).c_name.clone())
+                IrDependency::scalar(self.signal_dependency_name(index))
             }
             IrLhs::ArrayElem { arr, indices, .. } => {
                 let arr = self.reference_array(arr);
@@ -2478,6 +2488,7 @@ impl<'a> Codegen<'a> {
                         two_state: source.two_state,
                     },
                     net_driver: None,
+                    net_alias: Vec::new(),
                     alias: None,
                     omit: false,
                 });
@@ -2831,6 +2842,56 @@ fn is_two_state_kind(kind: &str) -> bool {
 }
 
 // ── Union-find (collapsed inout-net groups) ───────────────────────────────────
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+struct AliasBit {
+    net: NodeId,
+    bit: u32,
+}
+
+fn alias_find(parent: &mut HashMap<AliasBit, AliasBit>, x: AliasBit) -> AliasBit {
+    let mut cur = x;
+    while parent.get(&cur).copied() != Some(cur) {
+        match parent.get(&cur).copied() {
+            Some(p) => {
+                if let Some(gp) = parent.get(&p).copied() {
+                    parent.insert(cur, gp);
+                }
+                cur = p;
+            }
+            None => {
+                parent.insert(cur, cur);
+                return cur;
+            }
+        }
+    }
+    cur
+}
+
+fn alias_union(
+    parent: &mut HashMap<AliasBit, AliasBit>,
+    rank: &mut HashMap<AliasBit, u8>,
+    a: AliasBit,
+    b: AliasBit,
+) {
+    let ra = alias_find(parent, a);
+    let rb = alias_find(parent, b);
+    if ra == rb {
+        return;
+    }
+    let (ka, kb) = (
+        rank.get(&ra).copied().unwrap_or(0),
+        rank.get(&rb).copied().unwrap_or(0),
+    );
+    if ka < kb {
+        parent.insert(ra, rb);
+    } else if ka > kb {
+        parent.insert(rb, ra);
+    } else {
+        parent.insert(rb, ra);
+        rank.insert(ra, ka + 1);
+    }
+}
 
 fn find(parent: &mut HashMap<NodeId, NodeId>, x: NodeId) -> NodeId {
     let mut cur = x;

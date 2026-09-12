@@ -279,6 +279,36 @@ fn render_signal_decls(model: &IrModel, out: &mut String) {
             propagation_turn_off,
         ));
     }
+    // True net aliases retain their source storage for ABI/debug visibility,
+    // while reads and sensitivity use the canonical resolved bits described by
+    // these runtime descriptors.  Descriptors are emitted after all net
+    // groups so every part can refer to its resolved group object.
+    for (index, sig) in model.signals.iter().enumerate() {
+        if sig.net_alias.is_empty() {
+            continue;
+        }
+        let parts = sig
+            .net_alias
+            .iter()
+            .map(|binding| {
+                let group = &model.net_group(binding.group).c_name;
+                format!(
+                    "{{ &{group}, {}, {}, {} }}",
+                    binding.slot, binding.signal_bit, binding.group_bit
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        let visible = emit_all_x_init(sig.ty.width(), sig.ty.signed());
+        out.push_str(&format!(
+            "static const llg_net_alias_part_t llg_net_alias_{index}__parts[] = {{ {parts} }};\n\
+             static llg_net_alias_t llg_net_alias_{index} = {{ &{}, {visible}, {}, {}, llg_net_alias_{index}__parts, {} }};\n",
+            sig.c_name,
+            sig.ty.width(),
+            sig.ty.signed() as u8,
+            sig.net_alias.len(),
+        ));
+    }
     // Named events use a stable waiter-table object plus an assignable handle.
     for ev in &model.events {
         if ev.is_array() {
@@ -668,6 +698,13 @@ fn render_main(execution: &ExecutionModel) -> Result<String, String> {
     let mut out = String::from(
         "int main(int argc, char** argv) {\n    llg_rt_init_with_args(argc, argv);\n    if (llg_rt_failed()) {\n        llg_rt_cleanup();\n        return 1;\n    }\n",
     );
+    for (index, signal) in model.signals.iter().enumerate() {
+        if !signal.net_alias.is_empty() {
+            out.push_str(&format!(
+                "    llg_net_alias_bind(&llg_net_alias_{index});\n"
+            ));
+        }
+    }
     for array in &model.arrays {
         let bind_element = if array.real {
             format!(
@@ -834,18 +871,22 @@ fn render_main(execution: &ExecutionModel) -> Result<String, String> {
             "    if (llg_wave_model_init({}ULL) != 0) return 1;\n",
             model.precision_fs
         ));
-        for sig in &model.signals {
+        for (index, sig) in model.signals.iter().enumerate() {
             let Some(hdl_name) = &sig.hdl_name else {
                 continue;
             };
-            if sig.omit {
+            if sig.omit && sig.net_alias.is_empty() {
                 continue;
             }
             let registration = match sig.ty {
                 IrType::Packed { width, .. } => format!(
-                    "llg_wave_register_sv4({}, &{}, {})",
+                    "llg_wave_register_sv4({}, {}, {})",
                     c_string_literal(hdl_name),
-                    sig.c_name,
+                    if sig.net_alias.is_empty() {
+                        format!("&{}", sig.c_name)
+                    } else {
+                        format!("&llg_net_alias_{index}.visible")
+                    },
                     width
                 ),
                 IrType::Real { .. } => format!(
@@ -1032,6 +1073,7 @@ mod tests {
                     two_state: false,
                 },
                 net_driver: None,
+                net_alias: Vec::new(),
                 alias: None,
                 omit: false,
             },
@@ -1044,6 +1086,7 @@ mod tests {
                     two_state: false,
                 },
                 net_driver: Some((0, 0)),
+                net_alias: Vec::new(),
                 alias: None,
                 omit: false,
             },
@@ -1052,6 +1095,7 @@ mod tests {
                 hdl_name: Some("top\u{1f}r".to_string()),
                 ty: IrType::Real { shortreal: false },
                 net_driver: None,
+                net_alias: Vec::new(),
                 alias: None,
                 omit: false,
             },
@@ -1064,6 +1108,7 @@ mod tests {
                     two_state: false,
                 },
                 net_driver: None,
+                net_alias: Vec::new(),
                 alias: None,
                 omit: false,
             },

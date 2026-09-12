@@ -2242,6 +2242,7 @@ static void real_write(double* target, double value) {
 
 static sv4_t llg_net_compute(const llg_net_t* net);
 static void force_recompute_target(sv4_t* target, llg_net_t* net);
+static void llg_net_alias_refresh_all(llg_net_t* net);
 static void inertial_unlink_pending(llg_inertial_t* driver);
 
 // Is `sig` currently covered by a packed force part? Procedural writes are
@@ -2531,6 +2532,7 @@ static void force_recompute_target(sv4_t* target, llg_net_t* net) {
         }
     }
     sig_write(target, value);
+    if (net) llg_net_alias_refresh_all(net);
 }
 
 static void force_entry_targets(const llg_force_entry_t* entry) {
@@ -4731,6 +4733,29 @@ static sv4_t llg_net_compute(const llg_net_t* net) {
         net->n_drivers, net->width, net->is_signed, net->resolution);
 }
 
+static void llg_net_alias_refresh(llg_net_alias_t* alias) {
+    if (!alias || !alias->storage) return;
+    sv4_t value = *alias->storage;
+    for (uint32_t i = 0; i < alias->n_parts; i++) {
+        const llg_net_alias_part_t* part = &alias->parts[i];
+        if (!part->net || part->signal_bit >= value.width ||
+            part->group_bit >= part->net->resolved.width)
+            continue;
+        sv4_t bit = sv4_bit_select(part->net->resolved, part->group_bit);
+        sv4_bit_select_set(&value, part->signal_bit, bit);
+    }
+    // The visible cell is a first-class dependency/waveform target. Route
+    // updates through the ordinary signal writer so waiters and waveform
+    // callbacks observe canonical alias changes.
+    sig_write(&alias->visible, value);
+}
+
+static void llg_net_alias_refresh_all(llg_net_t* net) {
+    if (!net) return;
+    for (int i = 0; i < net->n_aliases; i++)
+        llg_net_alias_refresh(net->aliases[i]);
+}
+
 static void llg_net_publish(llg_net_t* net, sv4_t resolved) {
     if (net->propagation_enabled) {
         llg_inertial_assign(&net->propagation, &net->resolved, resolved,
@@ -4739,6 +4764,7 @@ static void llg_net_publish(llg_net_t* net, sv4_t resolved) {
     } else {
         sig_write(&net->resolved, resolved);
     }
+    llg_net_alias_refresh_all(net);
 }
 
 void llg_net_resolve(llg_net_t* net) {
@@ -4761,6 +4787,54 @@ void llg_net_write(llg_net_t* net, int idx, sv4_t value) {
     sv4_t resolved = llg_net_compute(net);
     if (llg_is_forced(&net->resolved)) force_recompute_target(&net->resolved, net);
     else llg_net_publish(net, resolved);
+}
+
+void llg_net_alias_bind(llg_net_alias_t* alias) {
+    if (!alias || !alias->parts || alias->n_parts == 0) return;
+    for (uint32_t i = 0; i < alias->n_parts; i++) {
+        llg_net_t* net = alias->parts[i].net;
+        if (!net) continue;
+        int seen = 0;
+        for (int j = 0; j < net->n_aliases; j++)
+            if (net->aliases[j] == alias) seen = 1;
+        if (seen) continue;
+        if (net->n_aliases >= LLG_MAX_NET_ALIASES) {
+            fprintf(stderr, "llg: too many aliases on one resolved net\n");
+            abort();
+        }
+        net->aliases[net->n_aliases++] = alias;
+    }
+    llg_net_alias_refresh(alias);
+}
+
+sv4_t llg_net_alias_read(llg_net_alias_t* alias) {
+    llg_net_alias_refresh(alias);
+    return alias ? alias->visible : sv4_from_u64(0, 1, 0);
+}
+
+void llg_net_alias_write(llg_net_alias_t* alias, sv4_t value) {
+    if (!alias || !alias->parts || !region_can_mutate("net alias write")) return;
+    for (uint32_t i = 0; i < alias->n_parts; i++) {
+        const llg_net_alias_part_t* part = &alias->parts[i];
+        if (!part->net) continue;
+        int seen = 0;
+        for (uint32_t j = 0; j < i; j++) {
+            const llg_net_alias_part_t* prior = &alias->parts[j];
+            if (prior->net == part->net && prior->slot == part->slot) seen = 1;
+        }
+        if (seen) continue;
+        sv4_t contribution = sv4_fill(3, part->net->width, part->net->is_signed);
+        for (uint32_t j = i; j < alias->n_parts; j++) {
+            const llg_net_alias_part_t* mapped = &alias->parts[j];
+            if (mapped->net != part->net || mapped->slot != part->slot ||
+                mapped->signal_bit >= value.width ||
+                mapped->group_bit >= contribution.width)
+                continue;
+            sv4_t bit = sv4_bit_select(value, mapped->signal_bit);
+            sv4_bit_select_set(&contribution, mapped->group_bit, bit);
+        }
+        llg_net_write(part->net, part->slot, contribution);
+    }
 }
 
 static int inertial_bit(const sv4_t* value, uint32_t bit) {

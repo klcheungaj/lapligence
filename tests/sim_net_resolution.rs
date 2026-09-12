@@ -1,4 +1,4 @@
-//! Strength-aware standalone wired-net resolution and explicit subset bounds.
+//! Strength-aware wired-net resolution, true-net aliases, and explicit bounds.
 
 #[path = "support/sim_cli.rs"]
 mod sim_cli;
@@ -134,6 +134,169 @@ endmodule
         Ok(())
     })
     .expect("wired-net simulations");
+}
+
+#[test]
+fn net_aliases_share_one_resolved_network_with_optimizer_parity() {
+    sim_cli::run_case(
+        "net_resolution",
+        "true_net_alias",
+        "CHECK: initial=11\nCHECK: forced=00\nCHECK: released=11\n",
+        "",
+        &[],
+    );
+}
+
+#[test]
+fn forced_true_net_alias_reacts_to_alias_rhs_changes_with_optimizer_parity() {
+    sim_cli::run_case(
+        "net_resolution",
+        "force_alias_rhs",
+        "CHECK: force_rhs=11\nCHECK: force_rhs=00\nCHECK: force_rhs=00\n",
+        "",
+        &[],
+    );
+}
+
+#[test]
+fn selected_net_aliases_preserve_bit_order_with_optimizer_parity() {
+    sim_cli::run_case(
+        "net_resolution",
+        "selected_alias",
+        "CHECK: selected=1010/zzzz1010\nCHECK: selected_force=1100/11001100\nCHECK: selected_release=1010/zzzz1010\nCHECK: selected_part_force=0110/zzzz0110\nCHECK: selected_part_release=1010/zzzz1010\nCHECK: selected_bit_force=1000/zzzz1000\nCHECK: selected_bit_release=1010/zzzz1010\n",
+        "",
+        &[],
+    );
+}
+
+#[test]
+fn indexed_net_aliases_preserve_selected_bit_order() {
+    sim_cli::run_case(
+        "net_resolution",
+        "indexed_alias",
+        "CHECK: indexed=1010/1010\n",
+        "",
+        &[],
+    );
+}
+
+#[test]
+fn true_net_alias_changes_wake_alias_dependencies() {
+    sim_cli::run_case(
+        "net_resolution",
+        "sensitivity_alias",
+        "CHECK: alias_event=0\nCHECK: alias_event=1\n",
+        "",
+        &[],
+    );
+}
+
+#[test]
+fn net_aliases_preserve_declaration_continuous_drivers() {
+    sim_cli::run_case(
+        "net_resolution",
+        "declaration_alias",
+        "CHECK: declaration=11\n",
+        "",
+        &[],
+    );
+}
+
+#[test]
+fn concatenated_net_aliases_share_drivers_with_optimizer_parity() {
+    sim_cli::run_case(
+        "net_resolution",
+        "concat_alias",
+        "CHECK: concat=1001/1001\n",
+        "",
+        &[],
+    );
+}
+
+#[test]
+fn gate_drives_both_true_net_alias_names_with_optimizer_parity() {
+    sim_cli::run_case(
+        "net_resolution",
+        "gate_alias",
+        "CHECK: gate=11\nCHECK: gate=00\n",
+        "",
+        &[],
+    );
+}
+
+#[test]
+fn multi_output_gate_true_net_aliases_keep_independent_driver_slots() {
+    sim_cli::run_case(
+        "net_resolution",
+        "multi_output_gate_alias",
+        "CHECK: multi_gate=11\nCHECK: multi_gate=00\n",
+        "",
+        &[],
+    );
+}
+
+#[test]
+fn inout_port_true_net_aliases_collapse_into_one_network_with_optimizer_parity() {
+    sim_cli::run_case(
+        "net_resolution",
+        "inout_alias",
+        "CHECK: inout=11\n",
+        "",
+        &[],
+    );
+}
+
+#[test]
+fn input_port_true_net_aliases_use_link_driver_with_optimizer_parity() {
+    sim_cli::run_case(
+        "net_resolution",
+        "input_alias",
+        "CHECK: input=11\n",
+        "",
+        &[],
+    );
+}
+
+#[test]
+fn ascending_range_net_aliases_preserve_logical_order_with_optimizer_parity() {
+    sim_cli::run_case(
+        "net_resolution",
+        "ascending_alias",
+        "CHECK: ascending=1010/1010\n",
+        "",
+        &[],
+    );
+}
+
+#[test]
+fn output_port_from_true_net_alias_uses_alias_value_with_optimizer_parity() {
+    sim_cli::run_case(
+        "net_resolution",
+        "output_alias",
+        "CHECK: output=11\n",
+        "",
+        &[],
+    );
+}
+
+#[test]
+fn conflicting_true_net_alias_drivers_resolve_to_unknown() {
+    sim_cli::run_case(
+        "net_resolution",
+        "conflicting_alias",
+        "CHECK: conflict=xx\n",
+        "",
+        &[],
+    );
+}
+
+#[test]
+fn invalid_true_net_alias_width_is_rejected() {
+    sim_cli::reject_case(
+        "net_resolution",
+        "invalid_alias_width",
+        "all aliased nets must have the same width",
+    );
 }
 
 #[test]

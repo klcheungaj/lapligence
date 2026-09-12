@@ -436,6 +436,7 @@ fn semantic_kind(kind: SemanticKind) -> &'static str {
         SemanticKind::Modport => "modport",
         SemanticKind::InterfaceConnection => "interface connection",
         SemanticKind::Net => "net",
+        SemanticKind::NetAlias => "net alias",
         SemanticKind::Variable | SemanticKind::Array => "variable",
         SemanticKind::NamedEvent => "event",
         SemanticKind::Parameter => "parameter",

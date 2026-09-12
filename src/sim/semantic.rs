@@ -603,6 +603,7 @@ fn classify_simulation_node(
         | NodeKind::GenScope
         | NodeKind::ModPort
         | NodeKind::IfaceConn { .. }
+        | NodeKind::NetAlias { .. }
         | NodeKind::EnumConst { .. } => SimulationNodeClass::ElaborationConsumed,
         NodeKind::ModuleInst { .. }
         | NodeKind::Port { .. }

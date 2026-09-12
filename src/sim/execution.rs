@@ -379,11 +379,18 @@ fn collect_control_labels<'a>(
 
 fn is_emitted_trigger_storage(ir: &IrModel, dependency: &IrDependency) -> bool {
     match dependency {
-        IrDependency::Scalar(name) => ir.signals.iter().any(|signal| {
-            signal.c_name == *name
-                && !signal.omit
-                && matches!(signal.ty, crate::sim::ir::IrType::Packed { .. })
-        }),
+        IrDependency::Scalar(name) => {
+            let alias_index = name
+                .strip_prefix("llg_net_alias_")
+                .and_then(|name| name.strip_suffix(".visible"))
+                .and_then(|index| index.parse::<usize>().ok());
+            ir.signals.iter().enumerate().any(|(index, signal)| {
+                (signal.c_name == *name
+                    || (alias_index == Some(index) && !signal.net_alias().is_empty()))
+                    && !signal.omit
+                    && matches!(signal.ty, crate::sim::ir::IrType::Packed { .. })
+            })
+        }
         IrDependency::Real(name) => ir.signals.iter().any(|signal| {
             signal.c_name == *name
                 && !signal.omit

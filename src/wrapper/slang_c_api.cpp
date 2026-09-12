@@ -1032,6 +1032,7 @@ uint32_t semanticSymbolKind(SymbolKind kind) {
     case SymbolKind::Modport:
     case SymbolKind::ModportPort: return LLG_SLANG_SEMANTIC_MODPORT;
     case SymbolKind::Net: return LLG_SLANG_SEMANTIC_NET;
+    case SymbolKind::NetAlias: return LLG_SLANG_SEMANTIC_NET_ALIAS;
     case SymbolKind::Variable:
     case SymbolKind::Genvar:
     case SymbolKind::Field:
@@ -1762,6 +1763,11 @@ public:
         for (const EnumValueSymbol& value : target.as<EnumType>().values())
           handle(value);
       }
+    }
+    if constexpr (std::same_as<T, NetAliasSymbol>) {
+      uint32_t index = 0;
+      for (const Expression* expression : symbol.getNetReferences())
+        capture.semanticRole(id, expression, LLG_SLANG_EDGE_ALIAS_NET, index++);
     }
     visitDefault(symbol);
     if constexpr (std::same_as<T, GenerateBlockArraySymbol>) {

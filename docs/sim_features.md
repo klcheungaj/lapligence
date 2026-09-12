@@ -463,8 +463,8 @@ Tracked so nothing is lost; all de-prioritized behind RTL-simulation support.
 
 ## Remaining-work inventory
 
-The original audit IDs are stable. This inventory currently contains 64 remaining
-groups (22 missing, 42 partial); groups 9, 38, 50, 51, 57, 58, 59 and 60 are completed. Counts refer to grouped
+The original audit IDs are stable. This inventory currently contains 63 remaining
+groups (21 missing, 42 partial); groups 9, 27, 38, 50, 51, 57, 58, 59 and 60 are completed. Counts refer to grouped
 capabilities, not individual keywords, system functions or standard clauses.
 
 
@@ -496,7 +496,7 @@ capabilities, not individual keywords, system functions or standard clauses.
 | 24 | Partial | Port connections | Constants, input expressions, omitted defaults, selected output targets, packed/fixed-array reference aliases, recursive aggregate/object reference leaves, resolved packed net links and scalar real/shortreal links now work. Resizable containers, ordinary aggregate copy ports and heterogeneous links remain restricted. |
 | 25 | Missing | Libraries and configurations | The standard library/configuration selection flow is not provided as a supported simulator feature. |
 | 26 | Partial | Packages | Shared runtime package variables, dependent initialization, static package subroutines, qualified/imported/re-exported calls, and bounded `$unit` visibility retain owned namespace identity. General aggregate/package storage and broader compilation-unit/header forms remain outside this boundary. |
-| 27 | Missing | Net aliases | `alias a = b` does not provide net aliasing: a fresh probe drives `a=1` but observes `b=z`. |
+| 27 | Completed | Net aliases | True-net `alias` declarations merge legal whole-net, constant selected, constant indexed-selected and concatenated packed-net expressions into bit-level canonical networks. Continuous/gate drivers, packed input/output/inout links, force/release, dependency wakeups and waveform observations use one resolved network across alias names; dynamic selects, aggregate members and switch-level/resistive aliasing remain outside the bounded implementation — §1800-2009 10.11 **[SV-2009]** (sim_net_resolution.rs, optimizer on/off). |
 | 28 | Partial | SystemVerilog scheduling regions | The runtime has typed Preponed, Active, Inactive, Pre-NBA/NBA/Post-NBA, Pre-Observed/Observed/Post-Observed, Reactive/Re-Inactive/Re-NBA, Pre-Postponed/Postponed, and explicit PLI callback queues with fixed-point re-entry and immutable observation views. Clocking input sampling now consumes the preponed/observed paths; assertions, program blocks, output clocking drives and public VPI registration remain later feature work. |
 | 29 | Partial | Zero-delay process behavior | Ordinary wait-free `always` repeats with a cooperative, configurable zero-time budget; exhausted budgets produce a source-bearing nonconvergence diagnostic and nonzero simulator status. `always_comb`/`always_latch` keep their time-zero and sensitivity shaping. Constant-false/unknown `wait` remains suspended without preventing time advancement. |
 | 30 | Partial | Conditional event controls | Packed and scalar real expression changes, LSB edge semantics, trigger-time `iff`, fixed-array/container dependencies, legal input/const-ref calls, and evaluator captures of automatic procedural/subroutine locals and formals work, including mixed named events. Real edge descriptors and functions with output/inout/ref writes or other disallowed effects remain rejected. |

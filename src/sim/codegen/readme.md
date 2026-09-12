@@ -39,6 +39,11 @@
   preserved in `IrFormal`; lowering rejects non-lvalues and incompatible
   packed/state shapes, and emits canonical alias descriptors without
   copy-in/copy-out temporaries.
+- **True-net aliases:** Legal packed `alias` declarations are flattened into
+  bit-level canonical net groups; structural drivers, packed links, force/
+  release, dependencies, and waveform registration use the shared resolved
+  identities while dynamic selects, aggregate forms, and switch-level paths
+  remain explicit boundaries.
 
 See [`docs/sim_features.md`](../../../docs/sim_features.md) for the supported
 feature surface and rejection boundaries.

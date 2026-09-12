@@ -1762,11 +1762,22 @@ impl Rw {
 
 fn mark_dependency_read(dependency: &IrDependency, model: &IrModel, rw: &mut Rw) {
     if let IrDependency::Scalar(name) | IrDependency::Real(name) = dependency {
-        if let Some(i) = model
-            .signals
-            .iter()
-            .position(|signal| signal.c_name == *name)
-        {
+        let alias_index = name
+            .strip_prefix("llg_net_alias_")
+            .and_then(|name| name.strip_suffix(".visible"))
+            .and_then(|index| index.parse::<usize>().ok())
+            .filter(|index| {
+                model
+                    .signals
+                    .get(*index)
+                    .is_some_and(|signal| !signal.net_alias.is_empty())
+            });
+        if let Some(i) = alias_index.or_else(|| {
+            model
+                .signals
+                .iter()
+                .position(|signal| signal.c_name == *name)
+        }) {
             rw.read(i);
         }
     }
@@ -1860,6 +1871,14 @@ fn mark_unused_storage(model: &mut IrModel, execution: Option<&[ExecutionProcess
                 && !rw.writes.contains(&i)
         })
         .collect();
+    // Alias source cells are retained for descriptor refreshes and debug/
+    // waveform identity even when no generated expression directly reads the
+    // raw storage.
+    for (index, signal) in model.signals.iter().enumerate() {
+        if !signal.net_alias.is_empty() {
+            flags[index] = false;
+        }
+    }
     for (index, signal) in model.signals.iter().enumerate() {
         if !flags[index] {
             if let Some(target) = signal.alias {
@@ -2870,6 +2889,7 @@ mod tests {
                     two_state: false,
                 },
                 net_driver: None,
+                net_alias: Vec::new(),
                 alias: None,
                 omit: false,
             })

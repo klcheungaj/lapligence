@@ -12,6 +12,8 @@ These file-backed designs cover the ordinary Verilog waveform tasks in IEEE
   array names, and packed/real storage declarations.
 - `aliases.sv` checks that reference-port aliases retain every declared HDL
   identity while sharing one waveform value identifier.
+- `true_net_alias.sv` checks that both names of a true net alias receive the
+  resolved driver value in the VCD catalog.
 - `fst.sv` is the FST counterpart for the generated-model reader probe.
 
 The owning Rust suite runs every fixture in optimized and `--no-opt` modes and

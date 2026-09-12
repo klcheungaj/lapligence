@@ -329,6 +329,7 @@ enum {
   LLG_SLANG_SEMANTIC_DEFINITION = 24,
   LLG_SLANG_SEMANTIC_SCOPE = 25,
   LLG_SLANG_SEMANTIC_TIMING_CONTROL = 26,
+  LLG_SLANG_SEMANTIC_NET_ALIAS = 27,
   LLG_SLANG_SEMANTIC_UNSUPPORTED = 255
 };
 
@@ -649,7 +650,9 @@ enum {
    * declaration. Non-representatives target the lowest semantic node ID. */
   LLG_SLANG_EDGE_SOURCE_IDENTITY = 30,
   /* Synthesized function return storage targets its owning subroutine. */
-  LLG_SLANG_EDGE_RETURN_OWNER = 31
+  LLG_SLANG_EDGE_RETURN_OWNER = 31,
+  /* A net alias declaration's ordered net-reference expression. */
+  LLG_SLANG_EDGE_ALIAS_NET = 32
 };
 
 typedef struct {

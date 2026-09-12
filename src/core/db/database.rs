@@ -607,6 +607,12 @@ pub enum NodeKind {
         strength0: Strength,
         strength1: Strength,
     },
+    /// A structural SystemVerilog `alias` declaration. The expressions are
+    /// retained in source order so lowering can validate and merge their
+    /// canonical net identities before executable children are collected.
+    NetAlias {
+        nets: Vec<NodeId>,
+    },
     Var {
         ty: TypeInfo,
     },
@@ -2202,6 +2208,9 @@ fn node_kind_from_slang(
             net_type: net_type_from_subkind(node.subkind),
             strength0: strength_from_slang(node.strength0),
             strength1: strength_from_slang(node.strength1),
+        },
+        SemanticKind::NetAlias => NodeKind::NetAlias {
+            nets: edge_targets(ids, edges, SemanticEdgeRole::AliasNet)?,
         },
         SemanticKind::Variable if node.subkind == 229 => NodeKind::Genvar { ty },
         SemanticKind::Variable => NodeKind::Var { ty },

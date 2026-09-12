@@ -26,6 +26,11 @@
 - **Subroutine aliases:** `ref` and `const ref` formals retain typed modes and
   bind directly to caller lvalues, including legal packed selects and fixed
   array elements; writable aliases commit through the canonical runtime target.
+- **True-net aliases:** Legal packed `alias` declarations share bit-level
+  resolved driver groups across whole, selected, and concatenated net names;
+  force/release, packed port links, dependency wakeups, and waveform reads use
+  those groups. Dynamic selects, aggregate, and switch-level alias forms remain
+  unsupported.
 - **Entry point:** `src/bin/llg.rs` drives compile → lower → optimize → emit →
   build → run.
 - **Validation:** simulator behavior is covered by `tests/sim_*.rs`, scheduler
