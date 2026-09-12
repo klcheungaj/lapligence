@@ -225,10 +225,11 @@ use super::CodegenError;
 use crate::core::db::{
     AggregateKind, AggregateMember, AlwaysKind, ArrayKind, AssignmentPatternKeyType,
     AssociativeIndex, CaseKind as DbCaseKind, ConstantSource, ConstantType, Db,
-    Direction as DbDirection, DriverDelay, EventSpec, EventTriggerTiming, ExprKind, IntraControl,
-    JoinKind as DbJoinKind, NetType, NodeId, NodeKind, Operation, PackedMember, PrimClass,
-    PrimitiveType, ProcessKind, StmtKind, StreamingDirection as DbStreamingDirection, Strength,
-    TypeDescriptor, TypeShape, VariableLifetime,
+    Direction as DbDirection, DriverDelay, EventSpec, EventTriggerTiming, ExprKind,
+    ImmediateAssertionKind, IntraControl, JoinKind as DbJoinKind, NetType, NodeId, NodeKind,
+    Operation, PackedMember, PrimClass, PrimitiveType, ProcessKind, StmtKind,
+    StreamingDirection as DbStreamingDirection, Strength, TypeDescriptor, TypeShape,
+    VariableLifetime,
 };
 use crate::core::elab::{self, Bit, Val};
 use crate::core::value::ValueData;
@@ -242,11 +243,11 @@ use crate::sim::ir::{
     IrCapture, IrCapturedBranch, IrCaseItem, IrCaseKind, IrChandleExpr, IrConst, IrContainer,
     IrContainerExpr, IrContainerKind, IrContainerStmt, IrDelay, IrDependency, IrDepth,
     IrDisplayRadix, IrEdge, IrElemSel, IrEvent, IrEventCapture, IrEventContext, IrEventRef, IrExpr,
-    IrExprKind, IrFormal, IrInitPhase, IrInitTarget, IrInitialization, IrJoinKind, IrLhs, IrModel,
-    IrProcess, IrProcessKind, IrRealBinOp, IrRealUnOp, IrSeverityLevel, IrShape, IrSignal, IrStmt,
-    IrStochasticStmt, IrStreamDirection, IrSysFunc, IrTimeKind, IrTransitionDelay, IrType, IrUnOp,
-    IrUniquePriorityCheck, IrWaitSrc, StorageKind, StorageLifetime, StorageOwnership, StorageRef,
-    LLG_MAX_NET_DRIVERS,
+    IrExprKind, IrFormal, IrImmediateAssertionKind, IrInitPhase, IrInitTarget, IrInitialization,
+    IrJoinKind, IrLhs, IrModel, IrProcess, IrProcessKind, IrRealBinOp, IrRealUnOp, IrSeverityLevel,
+    IrShape, IrSignal, IrStmt, IrStochasticStmt, IrStreamDirection, IrSysFunc, IrTimeKind,
+    IrTransitionDelay, IrType, IrUnOp, IrUniquePriorityCheck, IrWaitSrc, StorageKind,
+    StorageLifetime, StorageOwnership, StorageRef, LLG_MAX_NET_DRIVERS,
 };
 
 mod collection;

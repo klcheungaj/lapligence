@@ -407,6 +407,15 @@ fn driver_delay_refs(delay: Option<DriverDelay>, refs: &mut Vec<NodeId>) {
 
 fn statement_refs(statement: &StmtKind, refs: &mut Vec<NodeId>) {
     match statement {
+        StmtKind::ImmediateAssertion {
+            cond,
+            if_true,
+            if_false,
+            ..
+        } => {
+            refs.push(*cond);
+            refs.extend(if_true.iter().chain(if_false.iter()).copied());
+        }
         StmtKind::IfElse { cond, .. } | StmtKind::Wait { cond } => refs.push(*cond),
         StmtKind::WaitOrder {
             events,

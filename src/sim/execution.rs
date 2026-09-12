@@ -349,6 +349,16 @@ fn collect_control_labels<'a>(
                     collect_control_labels(els, labels, gotos)?;
                 }
             }
+            IrStmt::ImmediateAssertion {
+                if_true, if_false, ..
+            } => {
+                if let Some(if_true) = if_true {
+                    collect_control_labels(if_true, labels, gotos)?;
+                }
+                if let Some(if_false) = if_false {
+                    collect_control_labels(if_false, labels, gotos)?;
+                }
+            }
             IrStmt::For {
                 init, incr, body, ..
             } => {
@@ -541,6 +551,7 @@ fn collect_effects(
             IrStmt::Display { .. }
             | IrStmt::DisplayTyped { .. }
             | IrStmt::Severity { .. }
+            | IrStmt::ImmediateAssertion { .. }
             | IrStmt::MonitorSet { .. }
             | IrStmt::FileControl { .. }
             | IrStmt::MonitorEnable(_)
@@ -586,6 +597,16 @@ fn collect_effects(
                 collect_effects(ir, then_, effects, visited_calls);
                 if let Some(els) = els {
                     collect_effects(ir, els, effects, visited_calls);
+                }
+            }
+            IrStmt::ImmediateAssertion {
+                if_true, if_false, ..
+            } => {
+                if let Some(if_true) = if_true {
+                    collect_effects(ir, if_true, effects, visited_calls);
+                }
+                if let Some(if_false) = if_false {
+                    collect_effects(ir, if_false, effects, visited_calls);
                 }
             }
             IrStmt::For {
@@ -729,6 +750,9 @@ fn collect_statement_expression_effects(
         | IrStmt::Repeat { count: rhs, .. }
         | IrStmt::WaitCond { cond: rhs, .. }
         | IrStmt::WaveLimit(rhs) => collect_expression_effects(ir, rhs, effects, visited_calls),
+        IrStmt::ImmediateAssertion { condition, .. } => {
+            collect_expression_effects(ir, condition, effects, visited_calls)
+        }
         IrStmt::WaitEventTriggered { body, .. } => {
             collect_effects(ir, body, effects, visited_calls)
         }

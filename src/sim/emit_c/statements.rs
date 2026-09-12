@@ -10,8 +10,9 @@ use super::expressions::{
 use super::EmitError;
 use crate::sim::execution::ScheduleRegion;
 use crate::sim::ir::{
-    IrCallArg, IrDependency, IrDisplayArg, IrExpr, IrExprKind, IrFileOp, IrLhs, IrSeverityLevel,
-    IrStochasticStmt, IrStreamDirection, IrType, IrUniquePriorityCheck, IrWaitSrc, StorageKind,
+    IrCallArg, IrDependency, IrDisplayArg, IrExpr, IrExprKind, IrFileOp, IrImmediateAssertionKind,
+    IrLhs, IrSeverityLevel, IrStochasticStmt, IrStreamDirection, IrType, IrUniquePriorityCheck,
+    IrWaitSrc, StorageKind,
 };
 
 // ── Statement rendering ───────────────────────────────────────────────────────
@@ -66,6 +67,16 @@ fn enclosed_labels(stmts: &[crate::sim::ir::IrStmt], labels: &mut HashSet<String
                 enclosed_labels(then_, labels);
                 if let Some(els) = els {
                     enclosed_labels(els, labels);
+                }
+            }
+            IrStmt::ImmediateAssertion {
+                if_true, if_false, ..
+            } => {
+                if let Some(if_true) = if_true {
+                    enclosed_labels(if_true, labels);
+                }
+                if let Some(if_false) = if_false {
+                    enclosed_labels(if_false, labels);
                 }
             }
             IrStmt::For {
@@ -826,6 +837,27 @@ fn render_stmt_scoped(
             location,
             *fatal_finish_number,
         )?,
+        IrStmt::ImmediateAssertion {
+            kind,
+            condition,
+            if_true,
+            if_false,
+            label,
+            location,
+            identity,
+        } => render_immediate_assertion(
+            ctx,
+            ImmediateAssertionRender {
+                kind: *kind,
+                condition,
+                if_true: if_true.as_deref(),
+                if_false: if_false.as_deref(),
+                label,
+                location,
+                identity: *identity,
+                scopes,
+            },
+        )?,
         IrStmt::MonitorSet {
             strobe,
             fmt,
@@ -1375,6 +1407,84 @@ fn render_severity(
         "    {{\n        {}\n    }}\n",
         assignments.join("\n        ")
     ))
+}
+
+struct ImmediateAssertionRender<'a> {
+    kind: IrImmediateAssertionKind,
+    condition: &'a IrExpr,
+    if_true: Option<&'a [crate::sim::ir::IrStmt]>,
+    if_false: Option<&'a [crate::sim::ir::IrStmt]>,
+    label: &'a str,
+    location: &'a str,
+    identity: u64,
+    scopes: &'a [&'a ActivationRenderScope],
+}
+
+fn render_immediate_assertion(
+    ctx: &RCtx<'_>,
+    assertion: ImmediateAssertionRender<'_>,
+) -> Result<String, String> {
+    let ImmediateAssertionRender {
+        kind,
+        condition,
+        if_true,
+        if_false,
+        label,
+        location,
+        identity,
+        scopes,
+    } = assertion;
+    let rendered = render_expr(ctx, condition)?;
+    let condition_name = "_llg_assert_condition";
+    let declaration = if rendered.width == 0 {
+        format!("double {condition_name} = {};", rendered.code)
+    } else {
+        format!("sv4_t {condition_name} = {};", rendered.code)
+    };
+    let condition_bool = if rendered.width == 0 {
+        format!("llg_real_to_bool({condition_name})")
+    } else {
+        format!("sv4_to_bool({condition_name})")
+    };
+    let label = c_string_literal(label);
+    let location = c_string_literal(location);
+    let mut out = format!("{{\n    {declaration}\n    if ({condition_bool}) {{\n");
+    if kind == IrImmediateAssertionKind::Cover {
+        out.push_str(&format!(
+            "        llg_assertion_cover({identity}ULL, {label}, {location});\n"
+        ));
+    }
+    if let Some(if_true) = if_true {
+        out.push_str(&block_stmts_for_assertion(ctx, if_true, scopes)?);
+    }
+    out.push_str("    } else {\n");
+    if let Some(if_false) = if_false {
+        out.push_str(&block_stmts_for_assertion(ctx, if_false, scopes)?);
+    } else if kind != IrImmediateAssertionKind::Cover {
+        let kind = match kind {
+            IrImmediateAssertionKind::Assert => "LLG_ASSERTION_ASSERT",
+            IrImmediateAssertionKind::Assume => "LLG_ASSERTION_ASSUME",
+            IrImmediateAssertionKind::Cover => unreachable!("cover has no default failure"),
+        };
+        out.push_str(&format!(
+            "        llg_assertion_failure({kind}, {identity}ULL, {label}, {location});\n"
+        ));
+    }
+    out.push_str("    }\n}\n");
+    Ok(out)
+}
+
+fn block_stmts_for_assertion(
+    ctx: &RCtx<'_>,
+    stmts: &[crate::sim::ir::IrStmt],
+    scopes: &[&ActivationRenderScope],
+) -> Result<String, String> {
+    let mut out = String::new();
+    for stmt in stmts {
+        out.push_str(&render_stmt_scoped(ctx, stmt, scopes)?);
+        out.push_str(&activation_guard(ctx));
+    }
+    Ok(out)
 }
 
 fn render_severity_call(

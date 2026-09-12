@@ -65,6 +65,12 @@ enum {
     LLG_SEVERITY_FATAL = 3,
 };
 
+enum {
+    LLG_ASSERTION_ASSERT = 0,
+    LLG_ASSERTION_ASSUME = 1,
+    LLG_ASSERTION_COVER = 2,
+};
+
 typedef struct {
     int kind;
     union {
@@ -315,6 +321,12 @@ _Noreturn void llg_rt_fatal_typed(int finish_number, const char* fmt,
 // Counts reset at llg_rt_init and remain available through final-block
 // execution. Invalid levels return zero.
 uint64_t llg_rt_severity_count(int severity);
+// Immediate assertion default-failure and successful-cover callbacks. The
+// identity is retained at the call boundary for future per-assertion APIs.
+void llg_assertion_failure(int kind, uint64_t identity, const char* label,
+                           const char* location);
+void llg_assertion_cover(uint64_t identity, const char* label, const char* location);
+uint64_t llg_assertion_count(int kind);
 
 // ── Command-line plusargs ───────────────────────────────────────────────────
 //

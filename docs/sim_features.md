@@ -194,7 +194,7 @@ SystemVerilog era:
 - ✅ **wait fork** — §1800-2009 9.6.1 **[SV-2005]**
 - ✅ **disable fork** — §1800-2009 9.6.3 **[SV-2005]**
 - ✅ **final blocks at end of simulation** — §1800-2009 9.2.3 **[SV-2005]** (sim_final.rs) are captured as typed final processes independent of file extension and run ONCE after the scheduler exits ($finish, deadlock or no future events); they see values committed before simulation ended and `$time` reports the end-of-run time. Nonblocking assignments, task calls, deferred `$strobe`/`$monitor`, and timing controls (`#`/`@`/`wait`/fork) are clean codegen rejects because finals permit function statements only and no scheduled events execute afterward. `$finish` inside a final terminates that final immediately and skips all remaining finals
-- 🟨 **Observe/reactive/preponed regions** — §1800-2009 4.4 **[SV-2005]** typed runtime regions, explicit sensitivity-wait migration, fixed-point re-entry and immutable observation views are present; assertion, program, clocking and public VPI constructs remain unsupported
+- 🟨 **Observe/reactive/preponed regions** — §1800-2009 4.4 **[SV-2005]** typed runtime regions, explicit sensitivity-wait migration, fixed-point re-entry and immutable observation views are present; immediate assertion actions run in the current process, while deferred/concurrent assertions, program, clocking and public VPI constructs remain unsupported
 - ❌ **$exit** program control task — §1800-2009 24.7 **[SV-2005]** unsupported system task
 - ⬜ **Fine-grain process control** `process::self()` — §1800-2009 9.7 **[SV-2005]** class-based tier
 
@@ -438,7 +438,7 @@ Tracked so nothing is lost; all de-prioritized behind RTL-simulation support.
 | Programs | `program … endprogram`, race-elimination region, `$exit` | §1800-2009 ch24 | [SV-2005] |
 | Clocking blocks | clocking decl/default/global, skews, synchronous drives, `##` delays | §1800-2009 ch14 | [SV-2005] |
 | Interprocess sync | semaphores, mailboxes, process suspend/resume/kill | §1800-2009 ch15 | [SV-2005] |
-| Assertions | immediate/deferred/concurrent assert-assume-cover, sequences/properties, assertion control tasks | §1800-2009 ch16, 20.11 | [SV-2005] |
+| Assertions | deferred/concurrent assert-assume-cover, sequences/properties, assertion control tasks; immediate forms are covered in the bounded simulator subset | §1800-2009 ch16, 20.11 | [SV-2005] |
 | Checkers | `checker … endchecker` | §1800-2009 ch17 | [SV-2009] |
 | Coverage | covergroups, coverpoints, cross | §1800-2009 ch18 | [SV-2005] |
 | Constrained randomization | `randomize()`, rand/c, constraints, `std::randomize` | §1800-2009 ch18 | [SV-2005] |
@@ -463,7 +463,7 @@ Tracked so nothing is lost; all de-prioritized behind RTL-simulation support.
 ## Remaining-work inventory
 
 The original audit IDs are stable. This inventory currently contains 66 remaining
-groups (27 missing, 39 partial); groups 9, 38, 57, 58, 59 and 60 are completed. Counts refer to grouped
+groups (26 missing, 40 partial); groups 9, 38, 57, 58, 59 and 60 are completed. Counts refer to grouped
 capabilities, not individual keywords, system functions or standard clauses.
 
 
@@ -534,7 +534,7 @@ capabilities, not individual keywords, system functions or standard clauses.
 | 63 | Missing | Program blocks | Program execution semantics, reactive scheduling and `$exit`. |
 | 64 | Missing | Clocking blocks | Clocking declarations, default/global clocking, input/output skews, synchronous drives and `##` cycle delays. |
 | 65 | Missing | Advanced interprocess synchronization | Semaphores, mailboxes, process handles/status/suspend/resume/kill/await; event `.triggered` and `wait_order` are covered in the named-events row, as are direct nonblocking named-event triggers. |
-| 66 | Missing | Assertions and sampled values | Immediate/deferred/concurrent assert/assume/cover, sequences/properties, `expect`, assertion-control tasks and sampled-value functions including `$sampled/$rose/$fell/$stable/$changed/$past` and the 2009 global-clocking forms. |
+| 66 | Partial | Assertions and sampled values | Immediate `assert`/`assume`/`cover` evaluate once with four-state truth, explicit or standard default actions, labels and optimizer-preserved cover callbacks (`sim_partial_features/assertions.rs`); deferred/concurrent forms, sequences/properties, `expect`, assertion-control tasks and sampled-value functions including `$sampled/$rose/$fell/$stable/$changed/$past` and the 2009 global-clocking forms remain. |
 | 67 | Missing | Checkers | Checker declarations, instances and checker execution. |
 | 68 | Missing | Functional coverage | Covergroups, coverpoints, bins, crosses, sampling, coverage queries/control and coverage database system tasks. |
 | 69 | Missing | Constrained and structured randomization | `rand/randc`, constraints, object and `std::randomize`, `randcase` and `randsequence`. |

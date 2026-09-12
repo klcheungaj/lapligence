@@ -679,6 +679,8 @@ static llg_dependency_binding_t* llg_dependency_bindings;
 static int llg_last_failure;
 static int llg_last_config_error;
 static uint64_t llg_severity_counts[4];
+static uint64_t llg_assertion_failure_counts[2];
+static uint64_t llg_assertion_cover_count;
 // Event objects are generated as file-scope storage and therefore survive
 // `llg_rt_cleanup`. Bump this generation at each teardown so their persistent
 // same-slot state cannot leak into a later runtime initialization without
@@ -2766,6 +2768,8 @@ void llg_rt_init_with_args(int argc, char** argv) {
     llg_last_failure = 0;
     llg_last_config_error = 0;
     memset(llg_severity_counts, 0, sizeof(llg_severity_counts));
+    memset(llg_assertion_failure_counts, 0, sizeof(llg_assertion_failure_counts));
+    llg_assertion_cover_count = 0;
     llg_n_finals = 0; // a fresh run never inherits final registrations
     if (!configure_limits() || !configure_stop_policy()) {
         llg_last_failure = 1;
@@ -3212,6 +3216,15 @@ static void report_finish(int verbosity, const char* location) {
                     (unsigned long long)llg_severity_counts[LLG_SEVERITY_WARNING],
                     (unsigned long long)llg_severity_counts[LLG_SEVERITY_ERROR],
                     (unsigned long long)llg_severity_counts[LLG_SEVERITY_FATAL]);
+        }
+        if (llg_assertion_failure_counts[LLG_ASSERTION_ASSERT] != 0 ||
+            llg_assertion_failure_counts[LLG_ASSERTION_ASSUME] != 0 ||
+            llg_assertion_cover_count != 0) {
+            fprintf(stderr,
+                    "llg: assertion counts: assert_failed=%llu assume_failed=%llu cover=%llu\n",
+                    (unsigned long long)llg_assertion_failure_counts[LLG_ASSERTION_ASSERT],
+                    (unsigned long long)llg_assertion_failure_counts[LLG_ASSERTION_ASSUME],
+                    (unsigned long long)llg_assertion_cover_count);
         }
     }
 }
@@ -5708,6 +5721,56 @@ _Noreturn void llg_rt_fatal_typed(int finish_number, const char* fmt,
 uint64_t llg_rt_severity_count(int severity) {
     if (severity < LLG_SEVERITY_INFO || severity > LLG_SEVERITY_FATAL) return 0;
     return llg_severity_counts[severity];
+}
+
+static const char* llg_assertion_name(int kind) {
+    switch (kind) {
+        case LLG_ASSERTION_ASSERT: return "assert";
+        case LLG_ASSERTION_ASSUME: return "assume";
+        default: return "invalid";
+    }
+}
+
+void llg_assertion_failure(int kind, uint64_t identity, const char* label,
+                           const char* location) {
+    if (kind < LLG_ASSERTION_ASSERT || kind > LLG_ASSERTION_ASSUME) {
+        fprintf(stderr, "llg runtime fatal: invalid assertion kind %d\n", kind);
+        abort();
+    }
+    if (llg_assertion_failure_counts[kind] == UINT64_MAX ||
+        llg_severity_counts[LLG_SEVERITY_ERROR] == UINT64_MAX) {
+        fprintf(stderr, "llg runtime fatal: assertion counter overflow\n");
+        abort();
+    }
+    // Keep the semantic identity in the ABI now; a later coverage/control
+    // registry can use it without changing generated call sites.
+    (void)identity;
+    llg_assertion_failure_counts[kind]++;
+    llg_severity_counts[LLG_SEVERITY_ERROR]++;
+    fprintf(stderr, "llg: assertion %s failed: %s",
+            llg_assertion_name(kind),
+            location && location[0] ? location : "<unknown>");
+    if (label && label[0]) fprintf(stderr, " (%s)", label);
+    fputc('\n', stderr);
+    fflush(stderr);
+}
+
+void llg_assertion_cover(uint64_t identity, const char* label, const char* location) {
+    (void)identity;
+    (void)label;
+    (void)location;
+    if (llg_assertion_cover_count == UINT64_MAX) {
+        fprintf(stderr, "llg runtime fatal: assertion coverage counter overflow\n");
+        abort();
+    }
+    llg_assertion_cover_count++;
+}
+
+uint64_t llg_assertion_count(int kind) {
+    if (kind == LLG_ASSERTION_COVER) return llg_assertion_cover_count;
+    if (kind == LLG_ASSERTION_ASSERT || kind == LLG_ASSERTION_ASSUME)
+        return llg_assertion_failure_counts[kind];
+    return 0;
 }
 
 static int llg_fmt_arg_same(const llg_fmt_arg_t* a, const llg_fmt_arg_t* b) {

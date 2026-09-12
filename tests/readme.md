@@ -22,7 +22,7 @@
 ### Coverage
 
 - [Datatype/net matrices](fixtures/sim/type_conformance/readme.md): mixed operators, resolution truth tables, casts, two/four-state storage and X/Z-to-zero conversion.
-- [Feature regressions](fixtures/sim/partial_features/readme.md): ports, events, timing, packed selections, real sensitivity/math, gated host commands, and resumable `$stop` control.
+- [Feature regressions](fixtures/sim/partial_features/readme.md): ports, events, timing, packed selections, real sensitivity/math, immediate four-state assertions, gated host commands, and resumable `$stop` control.
 - [Process semantic regressions](fixtures/sim/process_semantics/readme.md):
   always-family sensitivity, time-zero execution, writer/timing contracts and
   legal latch/flip-flop controls.

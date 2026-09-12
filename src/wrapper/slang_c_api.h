@@ -383,6 +383,14 @@ enum {
   LLG_SLANG_UNIQUE_PRIORITY_PRIORITY = 3
 };
 
+/* Immediate assertion metadata carried in LlgSlangSemanticNode::auxiliary.
+ * Deferred and final assertions remain explicit so downstream consumers can
+ * reject them rather than silently executing them as ordinary assertions. */
+enum {
+  LLG_SLANG_ASSERTION_DEFERRED = 1ull << 0,
+  LLG_SLANG_ASSERTION_FINAL = 1ull << 1
+};
+
 enum {
   LLG_SLANG_SUBKIND_NONE = 0,
   LLG_SLANG_PROCESS_INITIAL = 1,
@@ -420,6 +428,11 @@ enum {
   LLG_SLANG_STMT_FORK_JOIN_NONE = 58,
   LLG_SLANG_STMT_FOREACH = 59,
   LLG_SLANG_STMT_LIST = 60,
+  /* Immediate assertion statements use repository-owned tags so the safe
+   * facade never depends on Slang's StatementKind or AssertionKind values. */
+  LLG_SLANG_STMT_IMMEDIATE_ASSERT = 61,
+  LLG_SLANG_STMT_IMMEDIATE_ASSUME = 62,
+  LLG_SLANG_STMT_IMMEDIATE_COVER = 63,
   LLG_SLANG_EXPR_LITERAL = 64,
   LLG_SLANG_EXPR_REFERENCE = 65,
   LLG_SLANG_EXPR_UNARY = 66,

@@ -592,6 +592,20 @@ fn walk_stmt_mut(s: &mut IrStmt, f: &mut impl FnMut(&mut IrExpr)) {
                 walk_stmts_mut(els, f);
             }
         }
+        IrStmt::ImmediateAssertion {
+            condition,
+            if_true,
+            if_false,
+            ..
+        } => {
+            walk_expr_mut(condition, f);
+            if let Some(if_true) = if_true {
+                walk_stmts_mut(if_true, f);
+            }
+            if let Some(if_false) = if_false {
+                walk_stmts_mut(if_false, f);
+            }
+        }
         IrStmt::While { cond, body } => {
             walk_expr_mut(cond, f);
             walk_stmts_mut(body, f);
@@ -1374,6 +1388,16 @@ fn prune_stmt_list(stmts: &mut Vec<IrStmt>) {
 fn prune_nested_in_place(s: &mut IrStmt) {
     match s {
         IrStmt::Block(b) | IrStmt::ActivationScope { body: b, .. } => prune_stmt_list(b),
+        IrStmt::ImmediateAssertion {
+            if_true, if_false, ..
+        } => {
+            if let Some(if_true) = if_true {
+                prune_stmt_list(if_true);
+            }
+            if let Some(if_false) = if_false {
+                prune_stmt_list(if_false);
+            }
+        }
         // A qualified conditional may contain an else-if ladder. Keep its
         // source-level shape intact: pruning a constant nested condition can
         // turn an else-if into an apparent default and suppress a required
@@ -1460,6 +1484,16 @@ fn collect_goto_names(stmts: &[IrStmt], out: &mut HashSet<String>) {
                     collect_goto_names(els, out);
                 }
             }
+            IrStmt::ImmediateAssertion {
+                if_true, if_false, ..
+            } => {
+                if let Some(if_true) = if_true {
+                    collect_goto_names(if_true, out);
+                }
+                if let Some(if_false) = if_false {
+                    collect_goto_names(if_false, out);
+                }
+            }
             IrStmt::While { body: b, .. } | IrStmt::Repeat { body: b, .. } => {
                 collect_goto_names(b, out)
             }
@@ -1510,6 +1544,16 @@ fn strip_labels_in(stmts: &mut Vec<IrStmt>, referenced: &HashSet<String>) {
                 strip_labels_in(then_, referenced);
                 if let Some(els) = els {
                     strip_labels_in(els, referenced);
+                }
+            }
+            IrStmt::ImmediateAssertion {
+                if_true, if_false, ..
+            } => {
+                if let Some(if_true) = if_true {
+                    strip_labels_in(if_true, referenced);
+                }
+                if let Some(if_false) = if_false {
+                    strip_labels_in(if_false, referenced);
                 }
             }
             IrStmt::While { body: b, .. } | IrStmt::Repeat { body: b, .. } => {
@@ -1847,6 +1891,20 @@ fn sens_lists_of(s: &IrStmt, out: &mut Vec<IrDependency>) {
                 }
             }
         }
+        IrStmt::ImmediateAssertion {
+            if_true, if_false, ..
+        } => {
+            if let Some(if_true) = if_true {
+                for x in if_true {
+                    sens_lists_of(x, out);
+                }
+            }
+            if let Some(if_false) = if_false {
+                for x in if_false {
+                    sens_lists_of(x, out);
+                }
+            }
+        }
         IrStmt::For {
             init, incr, body, ..
         } => {
@@ -1978,6 +2036,20 @@ fn collect_stmt_rw(s: &IrStmt, model: &IrModel, rw: &mut Rw) {
             collect_stmts_rw(then_, model, rw);
             if let Some(els) = els {
                 collect_stmts_rw(els, model, rw);
+            }
+        }
+        IrStmt::ImmediateAssertion {
+            condition,
+            if_true,
+            if_false,
+            ..
+        } => {
+            collect_expr_reads(condition, model, rw);
+            if let Some(if_true) = if_true {
+                collect_stmts_rw(if_true, model, rw);
+            }
+            if let Some(if_false) = if_false {
+                collect_stmts_rw(if_false, model, rw);
             }
         }
         IrStmt::While { cond, body } | IrStmt::Repeat { count: cond, body } => {

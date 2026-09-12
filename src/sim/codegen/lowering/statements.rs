@@ -457,6 +457,53 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
             target: self.cg.activation_target(target)?,
         }])
     }
+
+    fn lower_immediate_assertion(
+        &mut self,
+        h: NodeId,
+        assertion: &StmtKind,
+    ) -> Result<Vec<IrStmt>, String> {
+        let StmtKind::ImmediateAssertion {
+            kind,
+            cond,
+            if_true,
+            if_false,
+            label,
+            deferred,
+            is_final,
+        } = assertion
+        else {
+            unreachable!("immediate assertion lowering received another statement kind")
+        };
+        if *deferred || *is_final {
+            let form = if *is_final { "final" } else { "deferred" };
+            return Err(format!(
+                "{form} immediate assertions are not supported at {}",
+                self.finish_location(h)
+            ));
+        }
+        let condition = self.cg.lower_boolean_expr(&self.path, *cond)?;
+        let if_true = (*if_true)
+            .map(|statement| self.lower_stmt(statement))
+            .transpose()?;
+        let if_false = (*if_false)
+            .map(|statement| self.lower_stmt(statement))
+            .transpose()?;
+        let kind = match *kind {
+            ImmediateAssertionKind::Assert => IrImmediateAssertionKind::Assert,
+            ImmediateAssertionKind::Assume => IrImmediateAssertionKind::Assume,
+            ImmediateAssertionKind::Cover => IrImmediateAssertionKind::Cover,
+        };
+        Ok(vec![IrStmt::ImmediateAssertion {
+            kind,
+            condition,
+            if_true,
+            if_false,
+            label: label.clone(),
+            location: self.finish_location(h),
+            identity: h.index() as u64,
+        }])
+    }
 }
 
 impl EmitCtx<'_, '_> {
@@ -526,6 +573,9 @@ impl EmitCtx<'_, '_> {
                     _ => unreachable!("named activation scope metadata mismatch"),
                 };
                 Ok(vec![statement])
+            }
+            NodeKind::Stmt(assertion @ StmtKind::ImmediateAssertion { .. }) => {
+                self.lower_immediate_assertion(h, assertion)
             }
             NodeKind::Stmt(StmtKind::IfElse { cond, check }) => {
                 let c = self.cg.lower_boolean_expr(&self.path, *cond)?;

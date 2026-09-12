@@ -1776,6 +1776,14 @@ impl IrSeverityLevel {
     }
 }
 
+/// Immediate assertion flavor retained through lowering for runtime dispatch.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum IrImmediateAssertionKind {
+    Assert,
+    Assume,
+    Cover,
+}
+
 /// Resolved identity of a named procedural activation. Declaration and
 /// elaborated-instance identities are kept separate so equal source names in
 /// different instances cannot alias at runtime.
@@ -2082,6 +2090,19 @@ pub enum IrStmt {
         /// Source context shown in the runtime diagnostic prefix.
         location: String,
         fatal_finish_number: Option<u8>,
+    },
+    /// Immediate `assert`, `assume` or `cover`. The condition is evaluated
+    /// once at this statement; omitted action arms remain `None` so codegen
+    /// can supply the standard default failure behavior. `identity` is the
+    /// owned semantic node identity reserved for future assertion APIs.
+    ImmediateAssertion {
+        kind: IrImmediateAssertionKind,
+        condition: IrExpr,
+        if_true: Option<Vec<IrStmt>>,
+        if_false: Option<Vec<IrStmt>>,
+        label: String,
+        location: String,
+        identity: u64,
     },
     /// `$monitor`/`$strobe` — `eval` is the C name of the re-evaluation
     /// function attached to the owning process/function's `pre_fns`, and

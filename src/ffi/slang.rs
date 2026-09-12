@@ -551,6 +551,15 @@ pub const SEMANTIC_UNIQUE_PRIORITY_UNIQUE: u64 = 1;
 pub const SEMANTIC_UNIQUE_PRIORITY_UNIQUE0: u64 = 2;
 pub const SEMANTIC_UNIQUE_PRIORITY_PRIORITY: u64 = 3;
 
+/// Immediate assertion statement tags owned by the C ABI.
+pub const SEMANTIC_STMT_IMMEDIATE_ASSERT: u32 = 61;
+pub const SEMANTIC_STMT_IMMEDIATE_ASSUME: u32 = 62;
+pub const SEMANTIC_STMT_IMMEDIATE_COVER: u32 = 63;
+
+/// Immediate assertion metadata carried in [`SemanticNode::auxiliary`].
+pub const SEMANTIC_ASSERTION_DEFERRED: u64 = 1 << 0;
+pub const SEMANTIC_ASSERTION_FINAL: u64 = 1 << 1;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SemanticOperation {
     None,
@@ -1991,7 +2000,7 @@ fn validate_semantic_subkind(kind: u32, subkind: u32) -> Result<(), SlangError> 
         13 => matches!(subkind, 0..=6),
         14 => matches!(subkind, 0 | 228),
         15 => matches!(subkind, 0 | 160..=164 | 200..=227),
-        18 => matches!(subkind, 0 | 32..=60),
+        18 => matches!(subkind, 0 | 32..=63),
         19 => matches!(subkind, 0 | 64..=78 | 80..=89),
         25 => matches!(subkind, 0 | 194),
         26 => matches!(subkind, 0 | 112..=117),
@@ -2021,6 +2030,9 @@ fn validate_semantic_auxiliary(node: &RawSemanticNode) -> Result<(), SlangError>
         // auxiliary marker distinguishes the ordered form. Conditional and
         // case statements use the same scalar for their qualifier.
         (18, 42, _) => node.auxiliary <= 1,
+        // Immediate assertions reserve two bits to preserve deferred/final
+        // syntax until the simulator can either execute or reject it.
+        (18, 61..=63, _) => node.auxiliary <= 3,
         // Foreach uses the auxiliary field for the number of source iterator
         // slots so omitted trailing dimensions survive the owned snapshot.
         // Keep the count bounded independently of the later DB allocation.
@@ -3057,10 +3069,13 @@ mod tests {
         assert!(validate_semantic_subkind(18, 49).is_ok());
         assert!(validate_semantic_subkind(18, 59).is_ok());
         assert!(validate_semantic_subkind(18, 60).is_ok());
+        assert!(validate_semantic_subkind(18, SEMANTIC_STMT_IMMEDIATE_ASSERT).is_ok());
+        assert!(validate_semantic_subkind(18, SEMANTIC_STMT_IMMEDIATE_ASSUME).is_ok());
+        assert!(validate_semantic_subkind(18, SEMANTIC_STMT_IMMEDIATE_COVER).is_ok());
         assert!(validate_semantic_subkind(19, 86).is_ok());
         assert!(validate_semantic_subkind(19, 89).is_ok());
         assert!(validate_semantic_subkind(9, 229).is_ok());
-        assert!(validate_semantic_subkind(18, 61).is_err());
+        assert!(validate_semantic_subkind(18, 64).is_err());
         assert!(validate_semantic_subkind(19, 79).is_err());
         assert_eq!(
             decode_semantic_operation(47).expect("list operation must decode"),

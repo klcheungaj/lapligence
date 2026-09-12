@@ -20,7 +20,9 @@ use crate::core::value::ValueData;
 use crate::ffi::slang::{
     ConstantValue as SlangConstantValue, LanguageEdition, SemanticDefinitionKind,
     SemanticDriveStrength, SemanticEdgeRole, SemanticKind, SemanticNode, SemanticOperation,
-    SemanticTimeScale, SemanticTimeUnit, Snapshot as SlangSnapshot,
+    SemanticTimeScale, SemanticTimeUnit, Snapshot as SlangSnapshot, SEMANTIC_ASSERTION_DEFERRED,
+    SEMANTIC_ASSERTION_FINAL, SEMANTIC_STMT_IMMEDIATE_ASSERT, SEMANTIC_STMT_IMMEDIATE_ASSUME,
+    SEMANTIC_STMT_IMMEDIATE_COVER,
 };
 use std::collections::{HashMap, HashSet};
 use std::error::Error;
@@ -738,9 +740,28 @@ impl CaseItem {
 }
 
 /// Kind of a captured statement.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ImmediateAssertionKind {
+    Assert,
+    Assume,
+    Cover,
+}
+
 #[derive(Debug)]
 pub enum StmtKind {
     Begin,
+    /// An immediate assertion with owned condition and action branches.
+    /// Deferred/final metadata is retained so unsupported forms fail closed
+    /// during simulator lowering instead of becoming ordinary assertions.
+    ImmediateAssertion {
+        kind: ImmediateAssertionKind,
+        cond: NodeId,
+        if_true: Option<NodeId>,
+        if_false: Option<NodeId>,
+        label: String,
+        deferred: bool,
+        is_final: bool,
+    },
     IfElse {
         cond: NodeId,
         check: UniquePriorityCheck,
@@ -1966,6 +1987,29 @@ fn statement_from_slang(
     };
     Ok(NodeKind::Stmt(match node.subkind {
         32 | 60 => StmtKind::Begin,
+        SEMANTIC_STMT_IMMEDIATE_ASSERT
+        | SEMANTIC_STMT_IMMEDIATE_ASSUME
+        | SEMANTIC_STMT_IMMEDIATE_COVER => {
+            if node.auxiliary & !(SEMANTIC_ASSERTION_DEFERRED | SEMANTIC_ASSERTION_FINAL) != 0 {
+                return Err(DbError::InvalidSnapshot(
+                    "immediate assertion has unknown metadata".into(),
+                ));
+            }
+            StmtKind::ImmediateAssertion {
+                kind: match node.subkind {
+                    SEMANTIC_STMT_IMMEDIATE_ASSERT => ImmediateAssertionKind::Assert,
+                    SEMANTIC_STMT_IMMEDIATE_ASSUME => ImmediateAssertionKind::Assume,
+                    SEMANTIC_STMT_IMMEDIATE_COVER => ImmediateAssertionKind::Cover,
+                    _ => unreachable!("immediate assertion subkind was prevalidated"),
+                },
+                cond: required(SemanticEdgeRole::Condition, "assertion condition")?,
+                if_true: first(SemanticEdgeRole::Then)?,
+                if_false: first(SemanticEdgeRole::Else)?,
+                label: node.name.clone(),
+                deferred: node.auxiliary & SEMANTIC_ASSERTION_DEFERRED != 0,
+                is_final: node.auxiliary & SEMANTIC_ASSERTION_FINAL != 0,
+            }
+        }
         33 => StmtKind::IfElse {
             cond: required(SemanticEdgeRole::Condition, "if condition")?,
             check: unique_priority_check(node.auxiliary)?,

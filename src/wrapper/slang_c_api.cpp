@@ -1083,6 +1083,7 @@ uint32_t semanticStatementKind(StatementKind kind) {
     case StatementKind::WaitOrder: return LLG_SLANG_STMT_WAIT;
     case StatementKind::WaitFork: return LLG_SLANG_STMT_WAIT_FORK;
     case StatementKind::EventTrigger: return LLG_SLANG_STMT_EVENT_TRIGGER;
+    case StatementKind::ImmediateAssertion: return LLG_SLANG_STMT_IMMEDIATE_ASSERT;
     case StatementKind::ProceduralAssign:
       return LLG_SLANG_STMT_PROCEDURAL_ASSIGN;
     case StatementKind::ProceduralDeassign:
@@ -2021,6 +2022,32 @@ public:
     }
     if constexpr (std::same_as<T, ConditionalStatement>)
       result.auxiliary = semanticUniquePriorityCheck(statement.check);
+    if constexpr (std::same_as<T, ImmediateAssertionStatement>) {
+      switch (statement.assertionKind) {
+        case AssertionKind::Assert:
+          result.subkind = LLG_SLANG_STMT_IMMEDIATE_ASSERT;
+          break;
+        case AssertionKind::Assume:
+          result.subkind = LLG_SLANG_STMT_IMMEDIATE_ASSUME;
+          break;
+        case AssertionKind::CoverProperty:
+        case AssertionKind::CoverSequence:
+          result.subkind = LLG_SLANG_STMT_IMMEDIATE_COVER;
+          break;
+        default:
+          // Keep assertion forms outside the Q03 subset explicit. The safe
+          // facade will retain the node but downstream lowering rejects it.
+          result.subkind = LLG_SLANG_SUBKIND_NONE;
+          result.flags |= LLG_SLANG_SEMANTIC_BAD;
+          break;
+      }
+      if (statement.syntax && statement.syntax->label)
+        result.name = storeString(capture.output, statement.syntax->label->name.valueText());
+      if (statement.isDeferred)
+        result.auxiliary |= LLG_SLANG_ASSERTION_DEFERRED;
+      if (statement.isFinal)
+        result.auxiliary |= LLG_SLANG_ASSERTION_FINAL;
+    }
     if constexpr (std::same_as<T, ProceduralAssignStatement>) {
       result.subkind = statement.isForce ? LLG_SLANG_STMT_FORCE
                                          : LLG_SLANG_STMT_PROCEDURAL_ASSIGN;
@@ -2748,6 +2775,13 @@ private:
         capture.semanticRole(id, statement.conditions[i].expr,
                              LLG_SLANG_EDGE_CONDITION, i);
       capture.semanticRole(id, &statement.ifTrue, LLG_SLANG_EDGE_THEN);
+      if (statement.ifFalse)
+        capture.semanticRole(id, statement.ifFalse, LLG_SLANG_EDGE_ELSE);
+    }
+    else if constexpr (std::same_as<T, ImmediateAssertionStatement>) {
+      capture.semanticRole(id, &statement.cond, LLG_SLANG_EDGE_CONDITION);
+      if (statement.ifTrue)
+        capture.semanticRole(id, statement.ifTrue, LLG_SLANG_EDGE_THEN);
       if (statement.ifFalse)
         capture.semanticRole(id, statement.ifFalse, LLG_SLANG_EDGE_ELSE);
     }

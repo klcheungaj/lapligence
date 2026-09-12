@@ -2678,6 +2678,24 @@ impl Validator<'_> {
                     }
                 }
             }
+            IrStmt::ImmediateAssertion {
+                condition,
+                if_true,
+                if_false,
+                location,
+                ..
+            } => {
+                if location.is_empty() {
+                    return self.fail(path, "assertion source location must not be empty");
+                }
+                self.validate_expr(condition, formals, &format!("{path}.condition"))?;
+                if let Some(if_true) = if_true {
+                    self.validate_stmts(if_true, formals, &format!("{path}.if_true"))?;
+                }
+                if let Some(if_false) = if_false {
+                    self.validate_stmts(if_false, formals, &format!("{path}.if_false"))?;
+                }
+            }
             IrStmt::WaveLimit(expr) => {
                 self.validate_expr(expr, formals, &format!("{path}.limit"))?;
             }

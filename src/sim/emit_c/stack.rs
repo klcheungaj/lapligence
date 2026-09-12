@@ -207,6 +207,19 @@ fn decl_slots(stmts: &[IrStmt]) -> Result<u64, String> {
                 els.as_deref().map(decl_slots).transpose()?.unwrap_or(0),
                 "if declaration slots",
             )?,
+            IrStmt::ImmediateAssertion {
+                if_true, if_false, ..
+            } => checked_sum(
+                [
+                    if_true.as_deref().map(decl_slots).transpose()?.unwrap_or(0),
+                    if_false
+                        .as_deref()
+                        .map(decl_slots)
+                        .transpose()?
+                        .unwrap_or(0),
+                ],
+                "assertion declaration slots",
+            )?,
             IrStmt::While { body, .. }
             | IrStmt::Repeat { body, .. }
             | IrStmt::WaitCond { body, .. }
@@ -361,6 +374,27 @@ fn stmt_temp_slots(stmt: &IrStmt) -> Result<u64, String> {
                     .unwrap_or(0),
             ],
             "if temporary slots",
+        ),
+        IrStmt::ImmediateAssertion {
+            condition,
+            if_true,
+            if_false,
+            ..
+        } => checked_sum(
+            [
+                expr_slots(condition)?,
+                if_true
+                    .as_deref()
+                    .map(stmt_temp_frame_slots)
+                    .transpose()?
+                    .unwrap_or(0),
+                if_false
+                    .as_deref()
+                    .map(stmt_temp_frame_slots)
+                    .transpose()?
+                    .unwrap_or(0),
+            ],
+            "assertion temporary slots",
         ),
         IrStmt::While { cond, body } => checked_add(
             expr_slots(cond)?,
