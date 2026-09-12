@@ -4,6 +4,17 @@ use super::objects::object_query;
 use super::*;
 use crate::sim::ir::{IrContainerElement, IrObjectQuery, IrObjectStmt, IrStringExpr};
 
+fn default_real_local_initializer(width: u32) -> Option<Box<IrExpr>> {
+    (width == 0).then(|| {
+        Box::new(IrExpr::new(
+            IrExprKind::Const(IrConst::real(0.0)),
+            0,
+            false,
+            None,
+        ))
+    })
+}
+
 fn lower_unique_priority_check(
     check: crate::core::db::UniquePriorityCheck,
     origin: crate::sim::semantic::Origin,
@@ -532,7 +543,7 @@ impl EmitCtx<'_, '_> {
                                     width: info.width,
                                     signed: info.signed,
                                     two_state: info.two_state,
-                                    init: None,
+                                    init: default_real_local_initializer(info.width),
                                 });
                             }
                         }
@@ -1012,6 +1023,7 @@ impl EmitCtx<'_, '_> {
                             .map(Box::new)
                         })
                         .transpose()?;
+                    let init = init.or_else(|| default_real_local_initializer(width));
                     let name = self
                         .func
                         .as_ref()
@@ -1047,6 +1059,7 @@ impl EmitCtx<'_, '_> {
                 ir_to_storage(expr, info.width, info.signed, info.two_state).map(Box::new)
             })
             .transpose()?;
+        let init = init.or_else(|| default_real_local_initializer(info.width));
         Ok(vec![IrStmt::DeclLocal {
             name: info.c_name,
             width: info.width,
@@ -2344,7 +2357,7 @@ impl EmitCtx<'_, '_> {
                 width: info.width,
                 signed: info.signed,
                 two_state: info.two_state,
-                init: None,
+                init: default_real_local_initializer(info.width),
             });
         }
         let mut init_stmts = Vec::with_capacity(init.len());
@@ -2467,7 +2480,7 @@ impl EmitCtx<'_, '_> {
             width: info.width,
             signed: info.signed,
             two_state: info.two_state,
-            init: None,
+            init: default_real_local_initializer(info.width),
         };
         let local_read = |info: &ProcLocalInfo| {
             IrExpr::new(
@@ -5517,7 +5530,9 @@ impl EmitCtx<'_, '_> {
                     width: b.width,
                     signed: b.signed,
                     two_state: b.two_state,
-                    init: init.map(Box::new),
+                    init: init
+                        .map(Box::new)
+                        .or_else(|| default_real_local_initializer(b.width)),
                 });
                 let read_ir = IrExpr::new(
                     IrExprKind::LocalRead(cname.clone()),

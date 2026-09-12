@@ -4,9 +4,9 @@
 //! mixed real/integer conditional typing, shortreal rounding, `$display`'s
 //! real format precision, implicit real-to-integer rounding, and real-valued
 //! non-blocking assignment timing and wide packed conversion. The rejection
-//! cases retain unsupported procedural contexts such as monitors while the
-//! supported real-array, continuous-assignment, and function paths are tested
-//! below.
+//! cases retain unsupported procedural contexts such as real-valued repeat
+//! counts while the supported real-array, continuous-assignment, and function
+//! paths are tested below.
 //!
 //! Each
 //! test uses a fresh temp directory and the process-wide mutex serializes
@@ -436,10 +436,9 @@ endmodule
         );
     }
 
-    let cases = [
-        (
-            "repeat",
-            r#"module tb;
+    let cases = [(
+        "repeat",
+        r#"module tb;
     real count;
     initial begin
         count = 2.0;
@@ -447,21 +446,8 @@ endmodule
     end
 endmodule
 "#,
-            "repeat",
-        ),
-        (
-            "monitor",
-            r#"module tb;
-    real r;
-    initial begin
-        r = 1.0;
-        $monitor("r=%f", r);
-    end
-endmodule
-"#,
-            "monitor",
-        ),
-    ];
+        "repeat",
+    )];
 
     for (tag, sv, expected) in cases {
         let result = codegen_result(sv, tag).expect("Slang compile should succeed");

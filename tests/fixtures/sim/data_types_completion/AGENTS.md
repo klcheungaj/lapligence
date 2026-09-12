@@ -18,6 +18,10 @@ execution contracts:
 - `recursive_unpacked_aggregates.sv`: nested fixed unpacked struct/array
   members with packed, real, and string leaves, deep value copy/member
   updates, and unequal-width untagged-union storage.
+- `recursive_assignment_patterns.sv`: nested typed assignment patterns over
+  fixed unpacked structs/arrays, with each source expression evaluated once.
+- `resizable_assignment_patterns.sv`: bounded dynamic-array, queue, and
+  associative-array assignment patterns.
 - `dynamic_array_reductions.sv`, `queue_reductions.sv`, and
   `associative_array_reductions.sv`: typed wide reductions, modular arithmetic,
   X/Z behavior, order independence, and empty identities.
@@ -37,6 +41,8 @@ Original contract table and local LRM basis:
 | `packed_union_assignment_patterns.sv` | Positive: direct packed initialization, selected-member writes, two-state conversion, and shared 128-/512-bit representation | §7.3.1 |
 | `unpacked_aggregate_assignment_patterns.sv` | Positive: unpacked struct declaration patterns and unpacked-union selected-member writes over fixed packed integral members | §7.2, §7.3, §10.9.2 |
 | `recursive_unpacked_aggregates.sv` | Positive: nested fixed unpacked structs/arrays with packed, real, and string leaves, deep copy/member updates, and unequal-width untagged-union storage | §7.2, §7.3 |
+| `recursive_assignment_patterns.sv` | Positive: nested typed assignment patterns over fixed unpacked structs/arrays; each distinct source expression is evaluated once before recursive writes | §7.2, §10.9.2 |
+| `resizable_assignment_patterns.sv` | Positive: bounded dynamic-array, queue, and associative-array assignment-pattern initialization and updates | §5.10, §5.11, §7.5, §7.8, §7.10, §10.9 |
 | `dynamic_array_reductions.sv` | Positive: element-typed 128-bit reductions, modular arithmetic, X/Z propagation, and empty identities | §7.12.3 |
 | `queue_reductions.sv` | Positive: signed 512-bit reductions and empty identities | §7.12.3 |
 | `associative_array_reductions.sv` | Positive: order-independent 128-bit reductions retaining high bits and empty identities | §7.12.3 |

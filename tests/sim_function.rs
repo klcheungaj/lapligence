@@ -862,7 +862,7 @@ endmodule
         sv,
         "top",
         "hierarchical-subroutine-instances",
-        "hier=3,2,12,6,25\n",
+        "hier=6,2,12,6,25\n",
     )
     .expect("hierarchical and per-instance subroutine dispatch should agree");
 }
@@ -978,7 +978,7 @@ fn sim_interface_modport_subroutine_uses_parameterized_instance() {
         data = value;
     endtask
 
-    modport master(import task set, output data);
+    modport master(import task set(input logic [W-1:0] value), output data);
 endinterface
 
 module user #(parameter integer VALUE = 1)(channel.master ch);

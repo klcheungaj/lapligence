@@ -485,7 +485,19 @@ fn assignment_pattern_metadata_node(db: &Db, id: NodeId) -> bool {
         }
         current = db.node(parent).parent();
     }
-    false
+
+    // Slang's assignment-pattern key metadata is sometimes captured as an
+    // anonymous `Other` node with no parent.  It is still retained in the
+    // tagged-pattern node's child list beside the value node.  Treat only
+    // that non-value child as elaboration metadata; an anonymous node used as
+    // the tagged value must continue to fail closed as an unsupported
+    // executable construct.
+    db.node_ids().any(|owner| {
+        let NodeKind::Expr(ExprKind::TaggedPattern { value, .. }) = db.node_kind(owner) else {
+            return false;
+        };
+        value != &Some(id) && db.node(owner).children().contains(&id)
+    })
 }
 
 fn scope_reference_is_metadata(db: &Db, owner: NodeId, reference: NodeId, target: NodeId) -> bool {

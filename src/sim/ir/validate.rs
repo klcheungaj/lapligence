@@ -2641,7 +2641,13 @@ impl Validator<'_> {
                 ..
             } => {
                 if *width == 0 {
-                    if *two_state || init.as_ref().is_some_and(|value| !value.is_real()) {
+                    // Width zero is the IR representation for a real
+                    // capture.  Unlike packed locals, a real capture must
+                    // always have an explicitly typed initializer: allowing
+                    // an omitted initializer would leave the generated C
+                    // local uninitialized and would make its first capture
+                    // depend on stack contents.
+                    if *two_state || init.as_ref().is_none_or(|value| !value.is_real()) {
                         return self.fail(path, "real local capture requires a real initializer");
                     }
                 } else {

@@ -277,6 +277,12 @@ impl IrStringExpr {
             ));
         }
         match self {
+            Self::LocalRead(name) if name == "_ret" && string_return != Some(true) => {
+                Err(super::IrValidationError::new(
+                    "string local",
+                    "string return storage requires its function context",
+                ))
+            }
             Self::LocalRead(name) if !name.is_empty() => Ok(()),
             Self::FormalRead(_) => Ok(()),
             Self::Call {

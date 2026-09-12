@@ -4883,16 +4883,28 @@ impl<'a> Codegen<'a> {
         prefix: &[AggregatePathPart],
         out: &mut Vec<(Vec<AggregatePathPart>, NodeId)>,
     ) -> Result<(), String> {
+        // Typed aggregate casts wrap the assignment-pattern operation in the
+        // owned Slang graph.  The cast supplies the destination type; it does
+        // not turn the nested pattern into a scalar default for every leaf.
+        // Peel only casts whose eventual operand is an assignment pattern so
+        // ordinary scalar casts remain value expressions.
+        let pattern_node = self.unwrap_assignment_pattern_cast(node);
         match &descriptor.shape {
             TypeShape::Aggregate(layout) => {
                 if matches!(
-                    self.kind(node),
+                    self.kind(pattern_node),
                     NodeKind::Expr(ExprKind::Operation { op, .. })
                         if *op == Operation::AssignmentPattern
                 ) {
-                    self.aggregate_pattern_leaf_values(path, node, layout, prefix, out)
+                    self.aggregate_pattern_leaf_values(path, pattern_node, layout, prefix, out)
                 } else {
-                    self.aggregate_descriptor_default_values(path, node, descriptor, prefix, out)
+                    self.aggregate_descriptor_default_values(
+                        path,
+                        pattern_node,
+                        descriptor,
+                        prefix,
+                        out,
+                    )
                 }
             }
             TypeShape::FixedArray {
@@ -4916,14 +4928,20 @@ impl<'a> Codegen<'a> {
                     }
                 };
                 if !matches!(
-                    self.kind(node),
+                    self.kind(pattern_node),
                     NodeKind::Expr(ExprKind::Operation { op, .. })
                         if *op == Operation::AssignmentPattern
                 ) {
-                    return self
-                        .aggregate_descriptor_default_values(path, node, &next, prefix, out);
+                    return self.aggregate_descriptor_default_values(
+                        path,
+                        pattern_node,
+                        &next,
+                        prefix,
+                        out,
+                    );
                 }
-                let values = self.fixed_pattern_operands(path, node, (left, right), &next)?;
+                let values =
+                    self.fixed_pattern_operands(path, pattern_node, (left, right), &next)?;
                 for (offset, value) in values.into_iter().enumerate() {
                     let index = if left >= right {
                         left - i32::try_from(offset).map_err(|_| {
@@ -4950,6 +4968,22 @@ impl<'a> Codegen<'a> {
                 out.push((prefix.to_vec(), node));
                 Ok(())
             }
+        }
+    }
+
+    fn unwrap_assignment_pattern_cast(&self, node: NodeId) -> NodeId {
+        let NodeKind::Expr(ExprKind::Cast { operand, .. }) = self.kind(node) else {
+            return node;
+        };
+        let operand = self.unwrap_assignment_pattern_cast(*operand);
+        if matches!(
+            self.kind(operand),
+            NodeKind::Expr(ExprKind::Operation { op, .. })
+                if *op == Operation::AssignmentPattern
+        ) {
+            operand
+        } else {
+            node
         }
     }
 

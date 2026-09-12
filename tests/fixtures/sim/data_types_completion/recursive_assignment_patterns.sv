@@ -34,7 +34,7 @@ module tb;
         },
         tail: 8'h3
     };
-    integer calls;
+    integer calls = 0;
 
     function automatic lane_t next_lane();
         calls = calls + 1;
