@@ -1832,7 +1832,7 @@ impl EmitCtx<'_, '_> {
     /// globals with edges, plus named events.  A mixed list stays ONE
     /// `WaitEvents` statement (one runtime call), so a trigger can never be
     /// lost between two separate waits.
-    fn lower_event_specs(
+    pub(super) fn lower_event_specs(
         &mut self,
         specs: &[EventSpec],
     ) -> Result<Vec<(IrWaitSrc, IrEdge)>, String> {

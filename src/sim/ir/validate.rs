@@ -2373,6 +2373,29 @@ impl Validator<'_> {
                 }
                 rhs.validate(self.model, self.string_return.get())?;
             }
+            IrStmt::ClockingSample { source, sample, .. } => {
+                let Some(source_signal) = self.model.signals.get(*source) else {
+                    return self.fail(
+                        path,
+                        format!("clocking source index {source} is out of bounds"),
+                    );
+                };
+                let Some(sample_signal) = self.model.signals.get(*sample) else {
+                    return self.fail(
+                        path,
+                        format!("clocking sample index {sample} is out of bounds"),
+                    );
+                };
+                if !matches!(source_signal.ty, IrType::Packed { .. })
+                    || !matches!(sample_signal.ty, IrType::Packed { .. })
+                    || source_signal.ty.width() != sample_signal.ty.width()
+                {
+                    return self.fail(
+                        path,
+                        "clocking sample source and destination must be matching packed signals",
+                    );
+                }
+            }
             IrStmt::Assign { lhs, rhs, .. }
             | IrStmt::DelayedAssign { lhs, rhs, .. }
             | IrStmt::InertialAssign { lhs, rhs, .. } => {
@@ -3160,6 +3183,14 @@ impl Validator<'_> {
                     return self.fail(path, format!("signal index {sig} is out of bounds"));
                 }
             }
+            IrInitStep::RegisterSampled(sig) => {
+                let Some(signal) = self.model.signals.get(*sig) else {
+                    return self.fail(path, format!("sampled signal index {sig} is out of bounds"));
+                };
+                if !matches!(signal.ty, IrType::Packed { .. }) {
+                    return self.fail(path, "sampled source must be a packed signal");
+                }
+            }
             IrInitStep::Initialize(initialization) => match &initialization.target {
                 IrInitTarget::Signal(signal) => {
                     if *signal >= self.model.signals.len() {
@@ -3202,6 +3233,7 @@ impl Validator<'_> {
             | IrInitStep::SetScalar { value, .. }
             | IrInitStep::WriteNet { value, .. } => self.validate_const(value, path),
             IrInitStep::FillArrayX(_) => Ok(()),
+            IrInitStep::RegisterSampled(_) => Ok(()),
             IrInitStep::FillArrayZ(array) => {
                 if self.model.arrays[*array].two_state {
                     self.fail(path, "Z initialization requires four-state array elements")

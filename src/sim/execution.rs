@@ -495,6 +495,10 @@ fn collect_effects(
             | IrStmt::Release { .. }
             | IrStmt::Container(_)
             | IrStmt::StreamAssign { .. } => effects.push(ExecutionEffect::ImmediateStore),
+            IrStmt::ClockingSample { .. } => {
+                effects.push(ExecutionEffect::ImmediateStore);
+                effects.push(ExecutionEffect::RuntimeService);
+            }
             IrStmt::PlusArg(_) | IrStmt::Stochastic(_) => {
                 effects.push(ExecutionEffect::ImmediateStore);
                 effects.push(ExecutionEffect::RuntimeService);
@@ -782,7 +786,9 @@ fn collect_statement_expression_effects(
                 collect_expression_effects(ir, expression, effects, visited_calls)
             });
         }
-        IrStmt::EventAssign { .. } | IrStmt::EventCapture { .. } => {}
+        IrStmt::EventAssign { .. }
+        | IrStmt::EventCapture { .. }
+        | IrStmt::ClockingSample { .. } => {}
         IrStmt::PcaAssign { value, .. } | IrStmt::PcaDrive { value, .. } => {
             collect_expression_effects(ir, value, effects, visited_calls);
         }

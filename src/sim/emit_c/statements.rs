@@ -10,9 +10,10 @@ use super::expressions::{
 use super::EmitError;
 use crate::sim::execution::ScheduleRegion;
 use crate::sim::ir::{
-    IrCallArg, IrDependency, IrDisplayArg, IrExpr, IrExprKind, IrFileOp, IrImmediateAssertionKind,
-    IrLhs, IrMemoryRadix, IrSeverityLevel, IrStochasticStmt, IrStreamDirection, IrStreamSelector,
-    IrStreamTarget, IrType, IrUniquePriorityCheck, IrWaitSrc, StorageKind,
+    IrCallArg, IrClockingSampleMode, IrDependency, IrDisplayArg, IrExpr, IrExprKind, IrFileOp,
+    IrImmediateAssertionKind, IrLhs, IrMemoryRadix, IrSeverityLevel, IrStochasticStmt,
+    IrStreamDirection, IrStreamSelector, IrStreamTarget, IrType, IrUniquePriorityCheck, IrWaitSrc,
+    StorageKind,
 };
 
 // ── Statement rendering ───────────────────────────────────────────────────────
@@ -810,6 +811,25 @@ fn render_stmt_scoped(
             out
         }
         IrStmt::Delay { ticks } => format!("    llg_wait_time({});\n", render_delay(ctx, ticks)?),
+        IrStmt::ClockingSample {
+            source,
+            sample,
+            mode,
+        } => {
+            let source = &ctx.model.signal(*source).c_name;
+            let sample = &ctx.model.signal(*sample).c_name;
+            match mode {
+                IrClockingSampleMode::OneStep => {
+                    format!("    (void)llg_sampled_copy(&{source}, &{sample});\n")
+                }
+                IrClockingSampleMode::Observed => {
+                    format!("    (void)llg_clocking_sample_observed(&{source}, &{sample});\n")
+                }
+                IrClockingSampleMode::History(ticks) => format!(
+                    "    (void)llg_clocking_sample_history(&{source}, &{sample}, {ticks}ULL);\n"
+                ),
+            }
+        }
         IrStmt::WaitEvents { specs } => wait_events_text(ctx, specs)?,
         IrStmt::EventTrigger { ev } => {
             format!("    llg_event_trigger({});\n", event_ref_code(ctx, ev)?)

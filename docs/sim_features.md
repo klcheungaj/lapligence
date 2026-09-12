@@ -194,7 +194,8 @@ SystemVerilog era:
 - ✅ **wait fork** — §1800-2009 9.6.1 **[SV-2005]**
 - ✅ **disable fork** — §1800-2009 9.6.3 **[SV-2005]**
 - ✅ **final blocks at end of simulation** — §1800-2009 9.2.3 **[SV-2005]** (sim_final.rs) are captured as typed final processes independent of file extension and run ONCE after the scheduler exits ($finish, deadlock or no future events); they see values committed before simulation ended and `$time` reports the end-of-run time. Nonblocking assignments, task calls, deferred `$strobe`/`$monitor`, and timing controls (`#`/`@`/`wait`/fork) are clean codegen rejects because finals permit function statements only and no scheduled events execute afterward. `$finish` inside a final terminates that final immediately and skips all remaining finals
-- 🟨 **Observe/reactive/preponed regions** — §1800-2009 4.4 **[SV-2005]** typed runtime regions, explicit sensitivity-wait migration, fixed-point re-entry and immutable observation views are present; immediate assertion actions run in the current process, while deferred/concurrent assertions, program, clocking and public VPI constructs remain unsupported
+- 🟨 **Observe/reactive/preponed regions** — §1800-2009 4.4 **[SV-2005]** typed runtime regions, explicit sensitivity-wait migration, fixed-point re-entry and immutable observation views are present; immediate assertion actions run in the current process, and clocking input sampling uses the supported preponed/observed regions, while deferred/concurrent assertions, programs and public VPI constructs remain unsupported
+- 🟨 **Clocking input events and sampling** — §§1800-2009 14.3, 14.4, 14.5, 14.6, 14.7, 14.8, 14.9, 14.10, 14.12, 14.13, 14.14, 14.15 **[SV-2005]** owned clocking declarations preserve input directions, aliases, default/global modifiers, concrete interface members and event controls; `#1step`, `#0` and constant positive input skews retain preponed, observed and history samples (sim_partial_features.rs). Output drives, inout driving and `##` cycle delays remain in the H14 boundary.
 - ❌ **$exit** program control task — §1800-2009 24.7 **[SV-2005]** unsupported system task
 - ⬜ **Fine-grain process control** `process::self()` — §1800-2009 9.7 **[SV-2005]** class-based tier
 
@@ -436,7 +437,7 @@ Tracked so nothing is lost; all de-prioritized behind RTL-simulation support.
 |---|---|---|---|
 | Classes | class/new/handles, properties/methods, inheritance, virtual methods, static/local, `::` | §1800-2009 ch8 | [SV-2005] |
 | Programs | `program … endprogram`, race-elimination region, `$exit` | §1800-2009 ch24 | [SV-2005] |
-| Clocking blocks | clocking decl/default/global, skews, synchronous drives, `##` delays | §1800-2009 ch14 | [SV-2005] |
+| Clocking output/cycle controls | output skews, synchronous drives, inout driving, `##` delays | §1800-2009 14.11, 14.16.2 | [SV-2005] |
 | Interprocess sync | semaphores, mailboxes, process suspend/resume/kill | §1800-2009 ch15 | [SV-2005] |
 | Assertions | deferred/concurrent assert-assume-cover, sequences/properties, assertion control tasks; immediate forms are covered in the bounded simulator subset | §1800-2009 ch16, 20.11 | [SV-2005] |
 | Checkers | `checker … endchecker` | §1800-2009 ch17 | [SV-2009] |
@@ -463,7 +464,7 @@ Tracked so nothing is lost; all de-prioritized behind RTL-simulation support.
 ## Remaining-work inventory
 
 The original audit IDs are stable. This inventory currently contains 64 remaining
-groups (24 missing, 40 partial); groups 9, 38, 50, 51, 57, 58, 59 and 60 are completed. Counts refer to grouped
+groups (23 missing, 41 partial); groups 9, 38, 50, 51, 57, 58, 59 and 60 are completed. Counts refer to grouped
 capabilities, not individual keywords, system functions or standard clauses.
 
 
@@ -496,7 +497,7 @@ capabilities, not individual keywords, system functions or standard clauses.
 | 25 | Missing | Libraries and configurations | The standard library/configuration selection flow is not provided as a supported simulator feature. |
 | 26 | Partial | Packages | Shared runtime package variables, dependent initialization, static package subroutines, qualified/imported/re-exported calls, and bounded `$unit` visibility retain owned namespace identity. General aggregate/package storage and broader compilation-unit/header forms remain outside this boundary. |
 | 27 | Missing | Net aliases | `alias a = b` does not provide net aliasing: a fresh probe drives `a=1` but observes `b=z`. |
-| 28 | Partial | SystemVerilog scheduling regions | The runtime has typed Preponed, Active, Inactive, Pre-NBA/NBA/Post-NBA, Pre-Observed/Observed/Post-Observed, Reactive/Re-Inactive/Re-NBA, Pre-Postponed/Postponed, and explicit PLI callback queues with fixed-point re-entry and immutable observation views. Assertions, clocking blocks, program blocks, and public VPI registration remain later feature work. |
+| 28 | Partial | SystemVerilog scheduling regions | The runtime has typed Preponed, Active, Inactive, Pre-NBA/NBA/Post-NBA, Pre-Observed/Observed/Post-Observed, Reactive/Re-Inactive/Re-NBA, Pre-Postponed/Postponed, and explicit PLI callback queues with fixed-point re-entry and immutable observation views. Clocking input sampling now consumes the preponed/observed paths; assertions, program blocks, output clocking drives and public VPI registration remain later feature work. |
 | 29 | Partial | Zero-delay process behavior | Ordinary wait-free `always` repeats with a cooperative, configurable zero-time budget; exhausted budgets produce a source-bearing nonconvergence diagnostic and nonzero simulator status. `always_comb`/`always_latch` keep their time-zero and sensitivity shaping. Constant-false/unknown `wait` remains suspended without preventing time advancement. |
 | 30 | Partial | Conditional event controls | Packed and scalar real expression changes, LSB edge semantics, trigger-time `iff`, fixed-array/container dependencies, legal input/const-ref calls, and evaluator captures of automatic procedural/subroutine locals and formals work, including mixed named events. Real edge descriptors and functions with output/inout/ref writes or other disallowed effects remain rejected. |
 | 31 | Partial | Named-event references | Direct scalar and fixed-array named events, qualified/hierarchical event-control sources, runtime array selects, reassignment/null identity, and task-formal aliases are tested. Dynamic/associative/queue event storage remains outside this boundary; advanced event operations are in item 65. |
@@ -532,7 +533,7 @@ capabilities, not individual keywords, system functions or standard clauses.
 | 61 | Partial | Waveform selection and extended VCD | `$dumpvars` depth/scope/variable filtering is implemented for ordinary VCD/FST catalogs; the `$dumpports` extended-VCD family remains unsupported. |
 | 62 | Missing | Classes | Class objects/handles, construction, properties, methods, inheritance, virtual dispatch and access/lifetime rules. |
 | 63 | Missing | Program blocks | Program execution semantics, reactive scheduling and `$exit`. |
-| 64 | Missing | Clocking blocks | Clocking declarations, default/global clocking, input/output skews, synchronous drives and `##` cycle delays. |
+| 64 | Partial | Clocking input sampling | Clocking declarations, default/global clocking, input directions/aliases, clocking events and constant `#1step`/`#0`/positive input skews use owned sample storage and optimizer-parity runtime scheduling. Output skews/drives, inout driving and `##` cycle delays remain unsupported. |
 | 65 | Missing | Advanced interprocess synchronization | Semaphores, mailboxes, process handles/status/suspend/resume/kill/await; event `.triggered` and `wait_order` are covered in the named-events row, as are direct nonblocking named-event triggers. |
 | 66 | Partial | Assertions and sampled values | Immediate `assert`/`assume`/`cover` evaluate once with four-state truth, explicit or standard default actions, labels and optimizer-preserved cover callbacks (`sim_partial_features/assertions.rs`); deferred/concurrent forms, sequences/properties, `expect`, assertion-control tasks and sampled-value functions including `$sampled/$rose/$fell/$stable/$changed/$past` and the 2009 global-clocking forms remain. |
 | 67 | Missing | Checkers | Checker declarations, instances and checker execution. |

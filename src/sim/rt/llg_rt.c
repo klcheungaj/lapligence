@@ -541,7 +541,17 @@ typedef struct llg_sampled_value {
     struct llg_sampled_value* next;
     sv4_t* signal;
     sv4_t value;
+    struct llg_sampled_history* history;
 } llg_sampled_value_t;
+
+typedef struct llg_sampled_history {
+    struct llg_sampled_history* next;
+    uint64_t time;
+    sv4_t value;
+} llg_sampled_history_t;
+
+static llg_sampled_value_t* find_sampled_value(const sv4_t* signal);
+static void sampled_record_write(sv4_t* signal);
 
 // An event-controlled `->>` is not a suspended process.  Its source
 // descriptors and snapshots live here until one source matches, then the
@@ -602,6 +612,8 @@ typedef struct {
     uint64_t callback_sequence;
     llg_region_callback_t* callbacks; // sorted by time, region, issue order
     llg_sampled_value_t* sampled;
+    uint64_t sampled_time;
+    int sampled_time_valid;
     llg_deferred_trigger_t* deferred_triggers;
     llg_deferred_trigger_t* deferred_trigger_tail;
     int in_deferred_action;
@@ -2121,6 +2133,7 @@ static void sig_write(sv4_t* target, sv4_t value) {
     }
     if (target->width == value.width && sv4_same(*target, value)) return;
     *target = value;
+    sampled_record_write(target);
     if (g.mon.active) {
         for (int i = 0; i < g.mon.n_reads; i++) {
             if (g.mon.reads[i] == target) {
@@ -2728,6 +2741,11 @@ static void free_region_callbacks(void) {
 static void free_sampled_values(void) {
     while (g.sampled) {
         llg_sampled_value_t* next = g.sampled->next;
+        while (g.sampled->history) {
+            llg_sampled_history_t* history = g.sampled->history;
+            g.sampled->history = history->next;
+            free(history);
+        }
         free(g.sampled);
         g.sampled = next;
     }
@@ -3432,6 +3450,36 @@ int llg_register_pli_callback(llg_region_t region,
     return llg_schedule_region_callback(region, callback, data);
 }
 
+static llg_sampled_value_t* find_sampled_value(const sv4_t* signal) {
+    if (!signal) return NULL;
+    for (llg_sampled_value_t* item = g.sampled; item; item = item->next) {
+        if (item->signal == signal) return item;
+    }
+    return NULL;
+}
+
+static void report_unregistered_sampled_signal(void) {
+    fprintf(stderr, "llg: sampled value requested for an unregistered signal\n");
+    llg_last_failure = 1;
+    g.finish = 1;
+}
+
+static void sampled_record_write(sv4_t* signal) {
+    llg_sampled_value_t* item = find_sampled_value(signal);
+    if (!item) return;
+    llg_sampled_history_t* last = item->history;
+    if (last && last->time == g.now) {
+        last->value = *signal;
+        return;
+    }
+    llg_sampled_history_t* history = (llg_sampled_history_t*)llg_checked_malloc(
+        1, sizeof(*history), "sampled history");
+    history->time = g.now;
+    history->value = *signal;
+    history->next = item->history;
+    item->history = history;
+}
+
 void llg_sampled_register(sv4_t* signal) {
     if (!signal) {
         fprintf(stderr, "llg: cannot register a null sampled signal\n");
@@ -3446,17 +3494,21 @@ void llg_sampled_register(sv4_t* signal) {
         1, sizeof(*item), "sampled value");
     item->signal = signal;
     item->value = *signal;
+    item->history = NULL;
+    llg_sampled_history_t* history = (llg_sampled_history_t*)llg_checked_malloc(
+        1, sizeof(*history), "sampled history");
+    history->time = g.now;
+    history->value = *signal;
+    history->next = NULL;
+    item->history = history;
     item->next = g.sampled;
     g.sampled = item;
 }
 
 const sv4_t* llg_sampled_value(const sv4_t* signal) {
-    for (llg_sampled_value_t* item = g.sampled; item; item = item->next) {
-        if (item->signal == signal) return &item->value;
-    }
-    fprintf(stderr, "llg: sampled value requested for an unregistered signal\n");
-    llg_last_failure = 1;
-    g.finish = 1;
+    llg_sampled_value_t* item = find_sampled_value(signal);
+    if (item) return &item->value;
+    report_unregistered_sampled_signal();
     return NULL;
 }
 
@@ -3469,8 +3521,74 @@ int llg_sampled_copy(const sv4_t* signal, sv4_t* out) {
 }
 
 static void sample_preponed_values(void) {
-    for (llg_sampled_value_t* item = g.sampled; item; item = item->next)
+    // The scheduler revisits PREPONED for zero-delay deltas in the same time
+    // slot. #1step samples are fixed at the slot boundary and must not observe
+    // values written by later active/NBA iterations.
+    if (g.sampled_time_valid && g.sampled_time == g.now) return;
+    g.sampled_time = g.now;
+    g.sampled_time_valid = 1;
+    for (llg_sampled_value_t* item = g.sampled; item; item = item->next) {
         item->value = *item->signal;
+        llg_sampled_history_t* last = item->history;
+        if (last && last->time == g.now) {
+            last->value = item->value;
+            continue;
+        }
+        llg_sampled_history_t* history = (llg_sampled_history_t*)llg_checked_malloc(
+            1, sizeof(*history), "sampled history");
+        history->time = g.now;
+        history->value = item->value;
+        history->next = item->history;
+        item->history = history;
+    }
+}
+
+typedef struct {
+    sv4_t* source;
+    sv4_t* sample;
+} llg_clocking_observed_t;
+
+static void clocking_copy_observed(void* data) {
+    llg_clocking_observed_t* copy = (llg_clocking_observed_t*)data;
+    *copy->sample = *copy->source;
+    free(copy);
+}
+
+int llg_clocking_sample_observed(sv4_t* source, sv4_t* sample) {
+    if (!source || !sample) return 0;
+    if (!find_sampled_value(source)) {
+        report_unregistered_sampled_signal();
+        return 0;
+    }
+    llg_clocking_observed_t* copy = (llg_clocking_observed_t*)llg_checked_malloc(
+        1, sizeof(*copy), "clocking observed sample");
+    copy->source = source;
+    copy->sample = sample;
+    if (!llg_schedule_region_callback(LLG_REGION_OBSERVED,
+                                      clocking_copy_observed, copy)) {
+        free(copy);
+        return 0;
+    }
+    return 1;
+}
+
+int llg_clocking_sample_history(sv4_t* source, sv4_t* sample, uint64_t ticks) {
+    if (!source || !sample) return 0;
+    llg_sampled_value_t* item = find_sampled_value(source);
+    if (!item) {
+        report_unregistered_sampled_signal();
+        return 0;
+    }
+    uint64_t target = g.now < ticks ? 0 : g.now - ticks;
+    llg_sampled_history_t* selected = NULL;
+    for (llg_sampled_history_t* history = item->history; history;
+         history = history->next) {
+        if (history->time > target) continue;
+        if (!selected || selected->time < history->time) selected = history;
+    }
+    if (selected) *sample = selected->value;
+    else *sample = item->value;
+    return 1;
 }
 
 uint64_t llg_time_scaled(uint64_t precision_fs, uint64_t unit_fs) {

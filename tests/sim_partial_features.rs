@@ -4,6 +4,8 @@
 mod activation_frames;
 #[path = "sim_partial_features/assertions.rs"]
 mod assertions;
+#[path = "sim_partial_features/clocking.rs"]
+mod clocking;
 #[path = "sim_partial_features/display.rs"]
 mod display;
 #[path = "sim_partial_features/dynamic_delays.rs"]

@@ -560,6 +560,17 @@ pub const SEMANTIC_STMT_IMMEDIATE_COVER: u32 = 63;
 pub const SEMANTIC_ASSERTION_DEFERRED: u64 = 1 << 0;
 pub const SEMANTIC_ASSERTION_FINAL: u64 = 1 << 1;
 
+/// Clocking metadata tags defined by the repository-owned semantic ABI.
+pub const SEMANTIC_TIMING_ONE_STEP_DELAY: u32 = 118;
+pub const SEMANTIC_SCOPE_CLOCKING_BLOCK: u32 = 230;
+pub const SEMANTIC_VARIABLE_CLOCKING: u32 = 231;
+pub const CLOCKING_BLOCK_DEFAULT: u64 = 1 << 0;
+pub const CLOCKING_BLOCK_GLOBAL: u64 = 1 << 1;
+pub const CLOCKING_INPUT_EDGE_SHIFT: u32 = 2;
+pub const CLOCKING_OUTPUT_EDGE_SHIFT: u32 = 4;
+pub const CLOCKING_VAR_OUTPUT_EDGE_SHIFT: u32 = 2;
+pub const CLOCKING_EDGE_MASK: u64 = 0x3;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SemanticOperation {
     None,
@@ -2002,10 +2013,10 @@ fn validate_semantic_subkind(kind: u32, subkind: u32) -> Result<(), SlangError> 
         15 => matches!(subkind, 0 | 160..=164 | 200..=227),
         18 => matches!(subkind, 0 | 32..=63),
         19 => matches!(subkind, 0 | 64..=78 | 80..=89),
-        25 => matches!(subkind, 0 | 194),
-        26 => matches!(subkind, 0 | 112..=117),
+        25 => matches!(subkind, 0 | 194 | SEMANTIC_SCOPE_CLOCKING_BLOCK),
+        26 => matches!(subkind, 0 | 112..=118),
         20..=22 => matches!(subkind, 0 | 76),
-        9 => matches!(subkind, 0 | 229),
+        9 => matches!(subkind, 0 | 229 | SEMANTIC_VARIABLE_CLOCKING),
         2 | 3 | 5..=7 | 10..=12 | 16 | 17 | 23 | 24 | 255 => subkind == 0,
         _ => true,
     };
@@ -2021,7 +2032,17 @@ fn validate_semantic_auxiliary(node: &RawSemanticNode) -> Result<(), SlangError>
     let valid = match (node.kind, node.subkind, node.operation) {
         // An incomplete declaration placeholder may not carry its resolved
         // lifetime yet; complete variable nodes use static or automatic.
+        (9 | 11, _, _) if node.subkind == SEMANTIC_VARIABLE_CLOCKING => {
+            node.auxiliary
+                & !(CLOCKING_EDGE_MASK | (CLOCKING_EDGE_MASK << CLOCKING_VAR_OUTPUT_EDGE_SHIFT))
+                == 0
+        }
         (9 | 11, _, _) => matches!(node.auxiliary, 0..=2),
+        (25, SEMANTIC_SCOPE_CLOCKING_BLOCK, _) => {
+            let edge_mask = CLOCKING_EDGE_MASK << CLOCKING_INPUT_EDGE_SHIFT
+                | CLOCKING_EDGE_MASK << CLOCKING_OUTPUT_EDGE_SHIFT;
+            node.auxiliary & !(CLOCKING_BLOCK_DEFAULT | CLOCKING_BLOCK_GLOBAL | edge_mask) == 0
+        }
         // Parameter auxiliary metadata carries the frontend's override bit.
         (12, _, _) => node.auxiliary <= 1,
         // Argument qualifiers carry const-ref and ref-static bits.
@@ -3076,6 +3097,10 @@ mod tests {
         assert!(validate_semantic_subkind(19, 89).is_ok());
         assert!(validate_semantic_subkind(9, 229).is_ok());
         assert!(validate_semantic_subkind(18, 64).is_err());
+        assert!(validate_semantic_subkind(25, SEMANTIC_SCOPE_CLOCKING_BLOCK).is_ok());
+        assert!(validate_semantic_subkind(9, SEMANTIC_VARIABLE_CLOCKING).is_ok());
+        assert!(validate_semantic_subkind(26, SEMANTIC_TIMING_ONE_STEP_DELAY).is_ok());
+        assert!(validate_semantic_subkind(18, 64).is_err());
         assert!(validate_semantic_subkind(19, 79).is_err());
         assert_eq!(
             decode_semantic_operation(47).expect("list operation must decode"),
@@ -3113,6 +3138,25 @@ mod tests {
         let decoded = decode_semantic_nodes(&[variable], &[], &[], &[], 0)
             .expect("named-event variable lifetime must decode");
         assert_eq!(decoded[0].auxiliary, 2);
+
+        let mut clocking_block = raw_semantic_node(0);
+        clocking_block.kind = 25;
+        clocking_block.subkind = SEMANTIC_SCOPE_CLOCKING_BLOCK;
+        clocking_block.auxiliary = CLOCKING_BLOCK_DEFAULT
+            | CLOCKING_BLOCK_GLOBAL
+            | (3 << CLOCKING_INPUT_EDGE_SHIFT)
+            | (2 << CLOCKING_OUTPUT_EDGE_SHIFT);
+        let decoded = decode_semantic_nodes(&[clocking_block], &[], &[], &[], 0)
+            .expect("clocking block metadata must decode");
+        assert_eq!(decoded[0].auxiliary, clocking_block.auxiliary);
+
+        let mut clocking_var = raw_semantic_node(0);
+        clocking_var.kind = 9;
+        clocking_var.subkind = SEMANTIC_VARIABLE_CLOCKING;
+        clocking_var.auxiliary = 1 | (3 << CLOCKING_VAR_OUTPUT_EDGE_SHIFT);
+        let decoded = decode_semantic_nodes(&[clocking_var], &[], &[], &[], 0)
+            .expect("clocking variable metadata must decode");
+        assert_eq!(decoded[0].auxiliary, clocking_var.auxiliary);
 
         variable.auxiliary = 3;
         let error = decode_semantic_nodes(&[variable], &[], &[], &[], 0)

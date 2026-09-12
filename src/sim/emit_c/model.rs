@@ -734,6 +734,10 @@ fn render_main(execution: &ExecutionModel) -> Result<String, String> {
                 };
                 out.push_str(&format!("    {} = {};\n", s.c_name, v));
             }
+            IrInitStep::RegisterSampled(sig) => {
+                let s = model.signal(*sig);
+                out.push_str(&format!("    llg_sampled_register(&{});\n", s.c_name));
+            }
             IrInitStep::WriteNet { group, slot, value } => {
                 let g = model.net_group(*group);
                 out.push_str(&format!(

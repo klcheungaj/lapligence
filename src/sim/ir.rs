@@ -1825,6 +1825,17 @@ pub struct IrActivationTarget {
     instance: u32,
 }
 
+/// When a clocking input is copied into its sampled storage.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IrClockingSampleMode {
+    /// Use the value captured by the scheduler in the current preponed region.
+    OneStep,
+    /// Copy from the live source in the current observed region.
+    Observed,
+    /// Copy the sampled history entry from the requested number of ticks ago.
+    History(u64),
+}
+
 impl IrActivationTarget {
     /// Construct a target from owned semantic identities.
     pub const fn new(declaration: u32, instance: u32) -> Self {
@@ -2003,6 +2014,13 @@ pub enum IrStmt {
     /// Suspend for a constant or runtime-valued delay.
     Delay {
         ticks: IrDelay,
+    },
+    /// Copy one clocking input into its owned sampled member. The source and
+    /// sample are packed signal indices; skew timing is represented by mode.
+    ClockingSample {
+        source: usize,
+        sample: usize,
+        mode: IrClockingSampleMode,
     },
     /// `@(posedge a or ev …)` — ONE atomic wait call; sources are
     /// [`IrWaitSrc`] entries (signal wait-address C names or named-event
@@ -2867,6 +2885,8 @@ pub enum IrInitStep {
     },
     /// Fill a scalar net/var declaration initializer.
     SetScalar { sig: usize, value: IrConst },
+    /// Register a source signal with the runtime's preponed sampling history.
+    RegisterSampled(usize),
     /// Fill a collapsed-net member through its driver slot.
     WriteNet {
         group: usize,

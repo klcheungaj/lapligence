@@ -956,6 +956,16 @@ impl<'a> Codegen<'a> {
                 Some(Val::Str(_)) => Err("string enum constant in expression".to_string()),
                 None => Err("enum constant without value in expression".to_string()),
             },
+            NodeKind::Expr(ExprKind::ScopeRef { target }) => {
+                if let Some(info) = self.sampled_signal_of(*target) {
+                    self.signal_read_expr(info)
+                } else {
+                    Err(format!(
+                        "clocking block scope `{}` is not a value in `{scope_path}`",
+                        self.node(*target).name
+                    ))
+                }
+            }
             NodeKind::Expr(ExprKind::Ref { target }) => self.lower_ref_expr(scope_path, h, *target),
             NodeKind::Expr(ExprKind::BitSelect { base, index }) => {
                 if let Some(ai) = self.array_of(*base).cloned() {
@@ -1660,6 +1670,9 @@ impl<'a> Codegen<'a> {
                     "whole unpacked aggregate `{}` is not supported in scalar expression `{scope_path}`",
                     self.node(t).name
                 ));
+            }
+            if let Some(info) = self.sampled_signal_of(t) {
+                return self.signal_read_expr(info);
             }
             if let Some(info) = self.signal_of(t) {
                 return self.signal_read_expr(info);
@@ -3831,6 +3844,11 @@ impl<'a> Codegen<'a> {
     /// converted to [`IrLhs`] (identical by construction during the seam
     /// transition; sub-expression codes ride along verbatim).
     pub(super) fn lower_lhs(&mut self, path: &str, lhs: NodeId) -> Result<IrLhs, String> {
+        if self.clocking_var_target(lhs).is_some() {
+            return Err(
+                "clocking input members are read-only sampled values in `".to_owned() + path + "`",
+            );
+        }
         if let Some(target) = self.capture_target(lhs) {
             let binding = self
                 .capture_binding(target)

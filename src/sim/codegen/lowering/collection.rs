@@ -1122,6 +1122,9 @@ impl<'a> Codegen<'a> {
                         .or_default()
                         .insert(name, info);
                 }
+                NodeKind::Var { .. }
+                    if self.db.is_clocking_var(nid)
+                        || self.db.virtual_interface_target(nid).is_some() => {}
                 NodeKind::Net { ty, .. } | NodeKind::Var { ty } => {
                     let name = self.node(nid).name.clone();
                     if name.is_empty() || !seen.insert(name.clone()) {
@@ -1264,6 +1267,9 @@ impl<'a> Codegen<'a> {
         self.inst = inst;
         for c in &self.node(inst).children {
             if !matches!(self.kind(*c), NodeKind::Var { .. }) {
+                continue;
+            }
+            if self.db.virtual_interface_target(*c).is_some() {
                 continue;
             }
             let init = match self.db.var_initializer(*c) {
@@ -1833,6 +1839,9 @@ impl<'a> Codegen<'a> {
                         .or_default()
                         .insert(name, info);
                 }
+                NodeKind::Var { .. }
+                    if self.db.is_clocking_var(nid)
+                        || self.db.virtual_interface_target(nid).is_some() => {}
                 NodeKind::Net { ty, .. } | NodeKind::Var { ty } => {
                     let name = self.node(nid).name.clone();
                     if name.is_empty() || !gseen.insert(name.clone()) {

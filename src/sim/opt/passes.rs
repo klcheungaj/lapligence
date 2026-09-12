@@ -2127,6 +2127,10 @@ fn collect_stmt_rw(s: &IrStmt, model: &IrModel, rw: &mut Rw) {
             collect_expr_reads(value, model, rw);
         }
         IrStmt::PcaDeassign { sig } => rw.write(*sig),
+        IrStmt::ClockingSample { source, sample, .. } => {
+            rw.read(*source);
+            rw.write(*sample);
+        }
         IrStmt::If {
             cond, then_, els, ..
         } => {

@@ -28,6 +28,7 @@
 #include "slang/ast/SemanticFacts.h"
 #include "slang/ast/symbols/CompilationUnitSymbols.h"
 #include "slang/ast/symbols/InstanceSymbols.h"
+#include "slang/ast/symbols/MemberSymbols.h"
 #include "slang/ast/symbols/ParameterSymbols.h"
 #include "slang/ast/symbols/VariableSymbols.h"
 #include "slang/ast/types/AllTypes.h"
@@ -1053,8 +1054,20 @@ uint32_t semanticSymbolKind(SymbolKind kind) {
     case SymbolKind::Root:
     case SymbolKind::CompilationUnit:
     case SymbolKind::StatementBlock: return LLG_SLANG_SEMANTIC_SCOPE;
+    case SymbolKind::ClockingBlock: return LLG_SLANG_SEMANTIC_SCOPE;
+    case SymbolKind::ClockVar: return LLG_SLANG_SEMANTIC_VARIABLE;
     default: return LLG_SLANG_SEMANTIC_UNSUPPORTED;
   }
+}
+
+uint64_t clockingEdgeCode(EdgeKind edge) {
+  switch (edge) {
+    case EdgeKind::None: return 0;
+    case EdgeKind::PosEdge: return 1;
+    case EdgeKind::NegEdge: return 2;
+    case EdgeKind::BothEdges: return 3;
+  }
+  return 0;
 }
 
 uint32_t semanticStatementKind(StatementKind kind) {
@@ -1238,8 +1251,8 @@ uint32_t semanticBinaryOperation(BinaryOperator op) {
 uint32_t semanticTimingKind(TimingControlKind kind) {
   switch (kind) {
     case TimingControlKind::Delay:
-    case TimingControlKind::Delay3:
-    case TimingControlKind::OneStepDelay: return LLG_SLANG_TIMING_DELAY;
+    case TimingControlKind::Delay3: return LLG_SLANG_TIMING_DELAY;
+    case TimingControlKind::OneStepDelay: return LLG_SLANG_TIMING_ONE_STEP_DELAY;
     case TimingControlKind::SignalEvent: return LLG_SLANG_TIMING_SIGNAL_EVENT;
     case TimingControlKind::EventList:
     case TimingControlKind::BlockEventList: return LLG_SLANG_TIMING_EVENT_LIST;
@@ -1620,7 +1633,28 @@ public:
         result.kind = LLG_SLANG_SEMANTIC_NAMED_EVENT;
       addExplicitVariableLifetime(result, symbol);
     }
-    if constexpr (std::derived_from<T, VariableSymbol>) {
+    if constexpr (std::same_as<T, ClockingBlockSymbol>) {
+      result.subkind = LLG_SLANG_SCOPE_CLOCKING_BLOCK;
+      if (symbol.isDefault)
+        result.auxiliary |= LLG_SLANG_CLOCKING_BLOCK_DEFAULT;
+      if (symbol.isGlobal)
+        result.auxiliary |= LLG_SLANG_CLOCKING_BLOCK_GLOBAL;
+      const ClockingSkew input = symbol.getDefaultInputSkew();
+      const ClockingSkew output = symbol.getDefaultOutputSkew();
+      result.auxiliary |= clockingEdgeCode(input.edge)
+                          << LLG_SLANG_CLOCKING_INPUT_EDGE_SHIFT;
+      result.auxiliary |= clockingEdgeCode(output.edge)
+                          << LLG_SLANG_CLOCKING_OUTPUT_EDGE_SHIFT;
+    }
+    if constexpr (std::same_as<T, ClockVarSymbol>) {
+      result.subkind = LLG_SLANG_VARIABLE_CLOCKING;
+      addDirection(result, symbol.direction);
+      result.auxiliary = clockingEdgeCode(symbol.inputSkew.edge)
+                       | (clockingEdgeCode(symbol.outputSkew.edge)
+                          << LLG_SLANG_CLOCKING_VAR_OUTPUT_EDGE_SHIFT);
+    }
+    if constexpr (std::derived_from<T, VariableSymbol> &&
+                  !std::same_as<T, ClockVarSymbol>) {
       if (result.kind == LLG_SLANG_SEMANTIC_VARIABLE ||
           result.kind == LLG_SLANG_SEMANTIC_NAMED_EVENT) {
         result.auxiliary = symbol.lifetime == VariableLifetime::Automatic
@@ -2337,6 +2371,29 @@ private:
     if constexpr (std::derived_from<T, ValueSymbol>) {
       if (const Expression* initializer = symbol.getInitializer())
         capture.semanticRole(id, initializer, LLG_SLANG_EDGE_INITIALIZER);
+    }
+    if constexpr (std::same_as<T, ClockingBlockSymbol>) {
+      capture.semanticRole(id, &symbol.getEvent(), LLG_SLANG_EDGE_EVENT);
+      const ClockingSkew input = symbol.getDefaultInputSkew();
+      if (input.delay) {
+        input.delay->visit(*this);
+        capture.semanticRole(id, input.delay, LLG_SLANG_EDGE_DELAY, 0);
+      }
+      const ClockingSkew output = symbol.getDefaultOutputSkew();
+      if (output.delay) {
+        output.delay->visit(*this);
+        capture.semanticRole(id, output.delay, LLG_SLANG_EDGE_DELAY, 1);
+      }
+    }
+    if constexpr (std::same_as<T, ClockVarSymbol>) {
+      if (symbol.inputSkew.delay) {
+        symbol.inputSkew.delay->visit(*this);
+        capture.semanticRole(id, symbol.inputSkew.delay, LLG_SLANG_EDGE_DELAY, 0);
+      }
+      if (symbol.outputSkew.delay) {
+        symbol.outputSkew.delay->visit(*this);
+        capture.semanticRole(id, symbol.outputSkew.delay, LLG_SLANG_EDGE_DELAY, 1);
+      }
     }
     if constexpr (std::same_as<T, PortSymbol>) {
       if (const Expression* internal = symbol.getInternalExpr()) {

@@ -224,10 +224,10 @@ use super::timescale::{real_delay_ticks, round_time_literal, time_literal_delay_
 use super::CodegenError;
 use crate::core::db::{
     AggregateKind, AggregateMember, AlwaysKind, ArrayKind, AssignmentPatternKeyType,
-    AssociativeIndex, CaseKind as DbCaseKind, ConstantSource, ConstantType, Db,
-    Direction as DbDirection, DriverDelay, EventSpec, EventTriggerTiming, ExprKind,
-    ImmediateAssertionKind, IntraControl, JoinKind as DbJoinKind, NetType, NodeId, NodeKind,
-    Operation, PackedMember, PrimClass, PrimitiveType, ProcessKind, StmtKind,
+    AssociativeIndex, CaseKind as DbCaseKind, ClockingEdge, ClockingSkew, ConstantSource,
+    ConstantType, Db, Direction as DbDirection, DriverDelay, EventSpec, EventTriggerTiming,
+    ExprKind, ImmediateAssertionKind, IntraControl, JoinKind as DbJoinKind, NetType, NodeId,
+    NodeKind, Operation, PackedMember, PrimClass, PrimitiveType, ProcessKind, StmtKind,
     StreamingDirection as DbStreamingDirection, Strength, TypeDescriptor, TypeShape,
     VariableLifetime,
 };
@@ -240,13 +240,13 @@ use crate::sim::emit_c::{
 };
 use crate::sim::ir::{
     FrameId, IrAssocKey, IrAssocTraversal, IrBinOp, IrBitQuery, IrCall, IrCallArg, IrCallExpr,
-    IrCapture, IrCapturedBranch, IrCaseItem, IrCaseKind, IrChandleExpr, IrConst, IrContainer,
-    IrContainerExpr, IrContainerKind, IrContainerStmt, IrDelay, IrDependency, IrDepth,
-    IrDisplayRadix, IrEdge, IrElemSel, IrEvent, IrEventCapture, IrEventContext, IrEventRef, IrExpr,
-    IrExprKind, IrFormal, IrImmediateAssertionKind, IrInitPhase, IrInitTarget, IrInitialization,
-    IrJoinKind, IrLhs, IrMemoryRadix, IrModel, IrProcess, IrProcessKind, IrRealBinOp, IrRealUnOp,
-    IrSeverityLevel, IrShape, IrSignal, IrStmt, IrStochasticStmt, IrStreamDirection,
-    IrStreamTarget, IrSysFunc, IrTimeKind, IrTransitionDelay, IrType, IrUnOp,
+    IrCapture, IrCapturedBranch, IrCaseItem, IrCaseKind, IrChandleExpr, IrClockingSampleMode,
+    IrConst, IrContainer, IrContainerExpr, IrContainerKind, IrContainerStmt, IrDelay, IrDependency,
+    IrDepth, IrDisplayRadix, IrEdge, IrElemSel, IrEvent, IrEventCapture, IrEventContext,
+    IrEventRef, IrExpr, IrExprKind, IrFormal, IrImmediateAssertionKind, IrInitPhase, IrInitTarget,
+    IrInitialization, IrJoinKind, IrLhs, IrMemoryRadix, IrModel, IrProcess, IrProcessKind,
+    IrRealBinOp, IrRealUnOp, IrSeverityLevel, IrShape, IrSignal, IrStmt, IrStochasticStmt,
+    IrStreamDirection, IrStreamTarget, IrSysFunc, IrTimeKind, IrTransitionDelay, IrType, IrUnOp,
     IrUniquePriorityCheck, IrWaitSrc, StorageKind, StorageLifetime, StorageOwnership, StorageRef,
     LLG_MAX_NET_DRIVERS,
 };
@@ -349,6 +349,7 @@ fn generate_from_db_with_opts_impl(
     // design precision (scheduler tick unit) is consistent across the model.
     cg.collect_timescales();
     cg.build_net_groups()?;
+    cg.collect_clocking_storage()?;
     cg.validate_process_semantics()?;
     // Two-phase PCA site discovery, phase 1: allocate every procedural
     // continuous `assign <var> = …;` site BEFORE any body lowers (see
@@ -391,6 +392,7 @@ fn generate_from_db_with_opts_impl(
     for top in &tops {
         cg.emit_pass(*top, Pass::Procs)?;
     }
+    cg.emit_clocking_processes()?;
     cg.emit_array_initializers()?;
     cg.emit_container_initializers()?;
     let mut model = std::mem::replace(
@@ -439,6 +441,12 @@ struct SignalInfo {
     net_driver: Option<(String, usize)>,
     /// Index into [`Codegen::model`].signals.
     ir: usize,
+}
+
+#[derive(Clone)]
+struct ClockingSampleInfo {
+    source: NodeId,
+    sample: SignalInfo,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -706,6 +714,8 @@ struct Codegen<'a> {
     signals: Vec<SignalInfo>,
     /// Net/Var arena node → lowered signal info (all instances + gen scopes).
     sig_globals: HashMap<NodeId, SignalInfo>,
+    /// Clocking block variable → synthesized sampled storage and source.
+    clocking_samples: HashMap<NodeId, ClockingSampleInfo>,
     /// Canonical lvalues for module `ref` port storage.  A target may be a
     /// whole signal, a packed selection, or one fixed-array element; keeping
     /// the typed lvalue here makes nested ref ports compose without creating
@@ -887,6 +897,7 @@ impl<'a> Codegen<'a> {
             static_task_chandle_locals: HashMap::new(),
             signals: Vec::new(),
             sig_globals: HashMap::new(),
+            clocking_samples: HashMap::new(),
             reference_signals: HashMap::new(),
             reference_arrays: HashMap::new(),
             reference_objects: HashMap::new(),
@@ -972,6 +983,32 @@ impl<'a> Codegen<'a> {
     /// Lowered info for a Net/Var arena node, if it was collected.
     fn signal_of(&self, id: NodeId) -> Option<&SignalInfo> {
         self.sig_globals.get(&id)
+    }
+
+    fn sampled_signal_of(&self, id: NodeId) -> Option<&SignalInfo> {
+        let id = self.db.resolve_clocking_member(id).unwrap_or(id);
+        self.clocking_samples.get(&id).map(|sample| &sample.sample)
+    }
+
+    fn clocking_var_target(&self, node: NodeId) -> Option<NodeId> {
+        if let Some(target) = self.db.resolve_clocking_member(node) {
+            return self.db.is_clocking_var(target).then_some(target);
+        }
+        match self.kind(node) {
+            NodeKind::Expr(ExprKind::Ref { target }) => {
+                target.filter(|target| self.db.is_clocking_var(*target))
+            }
+            NodeKind::Expr(ExprKind::ScopeRef { target }) => {
+                self.db.is_clocking_var(*target).then_some(*target)
+            }
+            NodeKind::Expr(ExprKind::HierPath { refs, .. }) => refs
+                .iter()
+                .rev()
+                .flatten()
+                .find(|target| self.db.is_clocking_var(**target))
+                .copied(),
+            _ => None,
+        }
     }
 
     /// Resolve a module-reference signal to its final typed lvalue.  The
@@ -1677,8 +1714,14 @@ impl<'a> Codegen<'a> {
     /// resolves to a captured Net/Var (per-instance, via the db's refs).
     /// Longer or unresolvable paths return `None`.
     fn hier_path_signal(&self, node: NodeId) -> Option<&SignalInfo> {
+        if let Some(info) = self.sampled_signal_of(node) {
+            return Some(info);
+        }
         if let NodeKind::Expr(ExprKind::HierPath { parts, refs }) = self.kind(node) {
             if let Some(t) = refs.last().copied().flatten() {
+                if let Some(info) = self.sampled_signal_of(t) {
+                    return Some(info);
+                }
                 if let Some(info) = self.signal_of(t) {
                     return Some(info);
                 }
@@ -1704,7 +1747,7 @@ impl<'a> Codegen<'a> {
             .enumerate()
             .find_map(|(index, target)| target.map(|target| (index, target)))
         {
-            if self.signal_of(target).is_some() {
+            if self.sampled_signal_of(target).is_some() || self.signal_of(target).is_some() {
                 return Some((target, index));
             }
         }
@@ -2333,6 +2376,186 @@ impl<'a> Codegen<'a> {
         self.model.precision_fs = self.design_precision_fs;
     }
 
+    /// Allocate one hidden sampled storage cell for every input/inout clocking
+    /// member. Sources are resolved through the ordinary signal table after
+    /// net groups have been built, so aliases and resolved nets retain their
+    /// canonical storage identity.
+    fn collect_clocking_storage(&mut self) -> Result<(), String> {
+        let design: HashSet<NodeId> = self.design_nodes().into_iter().collect();
+        let blocks: Vec<NodeId> = self
+            .design_nodes()
+            .into_iter()
+            .filter(|id| self.db.clocking_block(*id).is_some())
+            .collect();
+        for block in blocks {
+            let parent = self
+                .node(block)
+                .parent
+                .filter(|parent| design.contains(parent));
+            let scope = parent
+                .map(|parent| self.instance_path_of(parent))
+                .unwrap_or_else(|| self.design_name.clone());
+            let block_name = ident(&self.node(block).name);
+            for var in self.node(block).children.iter().copied() {
+                let Some(var_info) = self.db.clocking_var(var) else {
+                    continue;
+                };
+                if !matches!(var_info.direction, DbDirection::Input | DbDirection::Inout) {
+                    continue;
+                }
+                if self.clocking_samples.contains_key(&var) {
+                    continue;
+                }
+                let source = self.signal_of(var_info.source).cloned().ok_or_else(|| {
+                    format!(
+                        "clocking variable `{}` source `{}` is not a collected packed signal in `{scope}`",
+                        self.node(var).name,
+                        self.node(var_info.source).full_name
+                    )
+                })?;
+                if source.real {
+                    return Err(format!(
+                        "real-valued clocking input `{}` is not supported in `{scope}`",
+                        self.node(var).name
+                    ));
+                }
+                if source.width > LLG_MAX_WIDTH {
+                    return Err(format!(
+                        "clocking input `{}` in `{scope}` exceeds the runtime width limit",
+                        self.node(var).name
+                    ));
+                }
+                let storage_name = format!("{}_{}_sample", block_name, ident(&self.node(var).name));
+                let global = global_name(&scope, &storage_name);
+                let ir = self.model.signals.len();
+                let sample = SignalInfo {
+                    global: global.clone(),
+                    width: source.width,
+                    signed: source.signed,
+                    two_state: source.two_state,
+                    real: false,
+                    shortreal: false,
+                    net_driver: None,
+                    ir,
+                };
+                self.model.signals.push(IrSignal {
+                    c_name: global,
+                    hdl_name: None,
+                    ty: IrType::Packed {
+                        width: source.width,
+                        signed: source.signed,
+                        two_state: source.two_state,
+                    },
+                    net_driver: None,
+                    alias: None,
+                    omit: false,
+                });
+                self.signals.push(sample.clone());
+                self.clocking_samples.insert(
+                    var,
+                    ClockingSampleInfo {
+                        source: var_info.source,
+                        sample,
+                    },
+                );
+            }
+        }
+        Ok(())
+    }
+
+    fn clocking_sample_mode(
+        &mut self,
+        skew: &ClockingSkew,
+        path: &str,
+    ) -> Result<IrClockingSampleMode, String> {
+        let Some(delay) = skew.delay else {
+            return Ok(IrClockingSampleMode::OneStep);
+        };
+        if matches!(self.kind(delay), NodeKind::Other)
+            && self.db.semantic_detail(delay) == Some("OneStepDelay")
+        {
+            return Ok(IrClockingSampleMode::OneStep);
+        }
+        let expression = skew.delay_expression.ok_or_else(|| {
+            format!("clocking skew in `{path}` has unsupported non-constant timing control")
+        })?;
+        let ticks = self.procedural_delay_ticks(delay, expression)?;
+        if ticks == 0 {
+            Ok(IrClockingSampleMode::Observed)
+        } else {
+            Ok(IrClockingSampleMode::History(ticks))
+        }
+    }
+
+    /// Emit one synthetic sampler process per clocking block. The process
+    /// waits on the block event, then updates each input member independently;
+    /// input skews override block defaults and an omitted skew means #1step.
+    fn emit_clocking_processes(&mut self) -> Result<(), String> {
+        let blocks: Vec<NodeId> = self
+            .design_nodes()
+            .into_iter()
+            .filter(|id| self.db.clocking_block(*id).is_some())
+            .collect();
+        for block in blocks {
+            let Some(block_info) = self.db.clocking_block(block).cloned() else {
+                continue;
+            };
+            let Some(parent) = self.node(block).parent else {
+                return Err(format!(
+                    "clocking block `{}` has no owning instance",
+                    self.node(block).name
+                ));
+            };
+            let path = self.instance_path_of(parent);
+            let process_name =
+                self.new_fn_name(&path, &format!("clocking_{}", self.node(block).name));
+            let (event_specs, pre_fns) = {
+                let mut ctx = EmitCtx::new(self, path.clone(), parent, "0", None, None, false);
+                let event_specs = ctx.lower_event_specs(&block_info.event_specs)?;
+                (event_specs, std::mem::take(&mut ctx.pre_fns))
+            };
+            let mut body = vec![IrStmt::WaitEvents { specs: event_specs }];
+            for var in self.node(block).children.iter().copied() {
+                let Some(var_info) = self.db.clocking_var(var) else {
+                    continue;
+                };
+                if !matches!(var_info.direction, DbDirection::Input | DbDirection::Inout) {
+                    continue;
+                }
+                let Some(storage) = self.clocking_samples.get(&var).cloned() else {
+                    continue;
+                };
+                let skew = if var_info.input.delay.is_some()
+                    || !matches!(var_info.input.edge, ClockingEdge::None)
+                {
+                    &var_info.input
+                } else {
+                    &block_info.default_input
+                };
+                let mode = self.clocking_sample_mode(skew, &path)?;
+                body.push(IrStmt::ClockingSample {
+                    source: self
+                        .signal_of(storage.source)
+                        .ok_or_else(|| "clocking source storage disappeared".to_owned())?
+                        .ir,
+                    sample: storage.sample.ir,
+                    mode,
+                });
+            }
+            self.model.processes.push(IrProcess::new_with_origin(
+                process_name,
+                format!("{}.clocking", path),
+                IrShape::Loop,
+                pre_fns,
+                body,
+                crate::sim::semantic::Origin::Synthetic {
+                    reason: format!("clocking input sampler for {}", self.node(block).full_name),
+                },
+            ));
+        }
+        Ok(())
+    }
+
     /// Convert the collected declaration initializers into `main()` init
     /// steps, in application order: ungrouped-net defaults, array fills (+ pattern
     /// elements), then scalar net-decl fills, then variable fills, then
@@ -2421,6 +2644,19 @@ impl<'a> Codegen<'a> {
         model
             .init_steps
             .extend(self.delayed_driver_inits.iter().cloned());
+        let mut sampled_sources: Vec<(usize, usize)> = self
+            .clocking_samples
+            .values()
+            .filter_map(|sample| {
+                self.signal_of(sample.source)
+                    .map(|source| (source.ir, sample.sample.ir))
+            })
+            .collect();
+        sampled_sources.sort_unstable();
+        sampled_sources.dedup_by_key(|(source, _)| *source);
+        for (source, _) in sampled_sources {
+            model.init_steps.push(IrInitStep::RegisterSampled(source));
+        }
 
         let active_initializations: Vec<IrInitialization> = model
             .init_steps

@@ -746,6 +746,12 @@ int llg_register_pli_callback(llg_region_t region,
 void llg_sampled_register(sv4_t* signal);
 const sv4_t* llg_sampled_value(const sv4_t* signal);
 int llg_sampled_copy(const sv4_t* signal, sv4_t* out);
+// Clocking input copies. Observed copies are queued into the current time
+// slot's observed region; history copies read the preponed sample at or before
+// `ticks` simulation ticks in the past.
+int llg_clocking_sample_observed(sv4_t* source, sv4_t* sample);
+int llg_clocking_sample_history(sv4_t* source, sv4_t* sample,
+                                uint64_t ticks);
 
 // Assignments.  llg_nba records on the current process's list and commits in
 // the NBA region; llg_ba writes immediately and notifies waiters.

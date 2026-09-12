@@ -498,7 +498,7 @@ fn scope_reference_is_metadata(db: &Db, owner: NodeId, reference: NodeId, target
                     .iter()
                     .skip(1)
                     .any(|arg| *arg == reference)
-                && matches!(
+                && (matches!(
                     db.node_kind(target),
                     NodeKind::ModuleInst { .. }
                         | NodeKind::GenScope
@@ -509,7 +509,8 @@ fn scope_reference_is_metadata(db: &Db, owner: NodeId, reference: NodeId, target
                         | NodeKind::Net { .. }
                         | NodeKind::Var { .. }
                         | NodeKind::Array { .. }
-                )
+                ) || db.is_clocking_block(target)
+                    || db.is_clocking_var(target))
         }
         NodeKind::Port {
             high_expr: Some(actual_expr),
@@ -561,6 +562,15 @@ fn classify_simulation_node(
             SimulationNodeClass::ElaborationConsumed
         }
         NodeKind::Stmt(StmtKind::Unsupported { .. }) => SimulationNodeClass::Unsupported,
+        NodeKind::Var { .. } if db.is_clocking_var(id) => SimulationNodeClass::ElaborationConsumed,
+        NodeKind::Expr(ExprKind::ScopeRef { .. }) if db.is_virtual_interface_initializer(id) => {
+            SimulationNodeClass::ElaborationConsumed
+        }
+        NodeKind::Expr(ExprKind::ScopeRef { target })
+            if db.is_clocking_block(*target) || db.is_clocking_var(*target) =>
+        {
+            SimulationNodeClass::ElaborationConsumed
+        }
         NodeKind::Expr(ExprKind::ScopeRef { .. }) => {
             if elaboration_placeholder {
                 SimulationNodeClass::ElaborationConsumed

@@ -20,9 +20,12 @@ use crate::core::value::ValueData;
 use crate::ffi::slang::{
     ConstantValue as SlangConstantValue, LanguageEdition, SemanticDefinitionKind,
     SemanticDriveStrength, SemanticEdgeRole, SemanticKind, SemanticNode, SemanticOperation,
-    SemanticTimeScale, SemanticTimeUnit, Snapshot as SlangSnapshot, SEMANTIC_ASSERTION_DEFERRED,
-    SEMANTIC_ASSERTION_FINAL, SEMANTIC_STMT_IMMEDIATE_ASSERT, SEMANTIC_STMT_IMMEDIATE_ASSUME,
-    SEMANTIC_STMT_IMMEDIATE_COVER,
+    SemanticTimeScale, SemanticTimeUnit, Snapshot as SlangSnapshot, CLOCKING_BLOCK_DEFAULT,
+    CLOCKING_BLOCK_GLOBAL, CLOCKING_EDGE_MASK, CLOCKING_INPUT_EDGE_SHIFT,
+    CLOCKING_OUTPUT_EDGE_SHIFT, CLOCKING_VAR_OUTPUT_EDGE_SHIFT, SEMANTIC_ASSERTION_DEFERRED,
+    SEMANTIC_ASSERTION_FINAL, SEMANTIC_SCOPE_CLOCKING_BLOCK, SEMANTIC_STMT_IMMEDIATE_ASSERT,
+    SEMANTIC_STMT_IMMEDIATE_ASSUME, SEMANTIC_STMT_IMMEDIATE_COVER, SEMANTIC_TIMING_ONE_STEP_DELAY,
+    SEMANTIC_VARIABLE_CLOCKING,
 };
 use std::collections::{HashMap, HashSet};
 use std::error::Error;
@@ -429,6 +432,13 @@ pub struct Db {
     packed_dimensions: HashMap<NodeId, Vec<PackedRange>>,
     /// True for declarations whose complete packed type has a two-state base.
     two_state_types: HashSet<NodeId>,
+    /// Clocking block declarations and their resolved clock events/skews.
+    clocking_blocks: HashMap<NodeId, ClockingBlockInfo>,
+    /// Clocking block variables and the source signal each samples.
+    clocking_vars: HashMap<NodeId, ClockingVarInfo>,
+    /// Statically initialized virtual-interface variables and their concrete
+    /// interface instances. Runtime reassignment remains outside this map.
+    virtual_interface_targets: HashMap<NodeId, NodeId>,
     /// Nets declared implicitly by Slang's semantic analysis.
     implicit_nets: HashSet<NodeId>,
     /// Context conversions inserted by Slang rather than written as casts.
@@ -1001,7 +1011,7 @@ impl EventTriggerTiming {
 }
 
 /// One sensitivity entry of an event control.
-#[derive(Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum EventSpec {
     /// An event whose qualifier is sampled when its source triggers.
     Qualified {
@@ -1019,6 +1029,47 @@ pub enum EventSpec {
     /// remains an expression node so array selects and hierarchical paths keep
     /// their declaration identity and indices until simulator lowering.
     Named(NodeId),
+}
+
+/// Edge selector retained for clocking block input/output skews.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ClockingEdge {
+    None,
+    Posedge,
+    Negedge,
+    BothEdges,
+}
+
+/// Owned timing metadata for one clocking block skew. `delay` identifies the
+/// captured timing control while `delay_expression` identifies its scalar
+/// delay expression when the control is a regular `#` delay.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ClockingSkew {
+    pub edge: ClockingEdge,
+    pub delay: Option<NodeId>,
+    pub delay_expression: Option<NodeId>,
+}
+
+/// Owned declaration and event metadata for one clocking block.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ClockingBlockInfo {
+    pub event: NodeId,
+    pub event_specs: Vec<EventSpec>,
+    pub event_implicit: bool,
+    pub is_default: bool,
+    pub is_global: bool,
+    pub default_input: ClockingSkew,
+    pub default_output: ClockingSkew,
+}
+
+/// Owned source and skew metadata for one clocking block variable.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ClockingVarInfo {
+    pub block: NodeId,
+    pub source: NodeId,
+    pub direction: Direction,
+    pub input: ClockingSkew,
+    pub output: ClockingSkew,
 }
 
 impl EventSpec {
@@ -1252,6 +1303,19 @@ fn edge_target(
         .transpose()
 }
 
+fn edge_target_at(
+    ids: &HashMap<u64, NodeId>,
+    edges: &[crate::ffi::slang::SemanticEdge],
+    role: SemanticEdgeRole,
+    index: u32,
+) -> Result<Option<NodeId>, DbError> {
+    edges
+        .iter()
+        .find(|edge| edge.role == role && edge.index == index)
+        .map(|edge| semantic_id(ids, edge.target_id))
+        .transpose()
+}
+
 fn edge_targets(
     ids: &HashMap<u64, NodeId>,
     edges: &[crate::ffi::slang::SemanticEdge],
@@ -1390,10 +1454,9 @@ fn member_path_from_slang(
         };
         path
     } else if base_semantic.kind == SemanticKind::Expression && base_semantic.subkind == 65 {
-        let Some(target_id) = base_semantic.target_id else {
+        let Some(target) = expression_reference_target(snapshot, ids, base_semantic)? else {
             return Ok(None);
         };
-        let target = canonical_reference_target(snapshot, ids, target_id)?;
         let target_semantic = &snapshot.semantic_nodes[target.index()];
         (vec![target_semantic.name.clone()], vec![Some(target)])
     } else {
@@ -1414,6 +1477,305 @@ fn member_path_from_slang(
     parts.push(member_name);
     refs.push(member);
     Ok(Some((parts, refs)))
+}
+
+fn expression_reference_target(
+    snapshot: &SlangSnapshot,
+    ids: &HashMap<u64, NodeId>,
+    node: &SemanticNode,
+) -> Result<Option<NodeId>, DbError> {
+    if let Some(target) = node.target_id {
+        return canonical_reference_target(snapshot, ids, target).map(Some);
+    }
+    let edges = semantic_edges(snapshot, node)?;
+    edge_target(ids, edges, SemanticEdgeRole::Reference)
+}
+
+fn virtual_interface_instance_from_slang(
+    snapshot: &SlangSnapshot,
+    ids: &HashMap<u64, NodeId>,
+    variable: NodeId,
+) -> Result<Option<NodeId>, DbError> {
+    let variable_node = snapshot
+        .semantic_nodes
+        .get(variable.index())
+        .ok_or_else(|| DbError::InvalidSnapshot("virtual interface variable is missing".into()))?;
+    if variable_node.kind != SemanticKind::Variable {
+        return Ok(None);
+    }
+    let initializer = semantic_edges(snapshot, variable_node)?
+        .iter()
+        .find(|edge| edge.role == SemanticEdgeRole::Initializer)
+        .map(|edge| semantic_id(ids, edge.target_id))
+        .transpose()?;
+    let Some(initializer) = initializer else {
+        return Ok(None);
+    };
+    let Some(target) = expression_reference_target(
+        snapshot,
+        ids,
+        snapshot
+            .semantic_nodes
+            .get(initializer.index())
+            .ok_or_else(|| {
+                DbError::InvalidSnapshot("virtual interface initializer is missing".into())
+            })?,
+    )?
+    else {
+        return Ok(None);
+    };
+    let target_node = snapshot
+        .semantic_nodes
+        .get(target.index())
+        .ok_or_else(|| DbError::InvalidSnapshot("virtual interface target is missing".into()))?;
+    if target_node.kind != SemanticKind::Instance {
+        return Ok(None);
+    }
+    let Some(definition) = target_node.target_id else {
+        return Ok(None);
+    };
+    let definition = snapshot
+        .semantic_nodes
+        .get(definition as usize)
+        .ok_or_else(|| {
+            DbError::InvalidSnapshot("virtual interface definition is missing".into())
+        })?;
+    if definition.kind == SemanticKind::Definition
+        && definition.definition_kind == Some(crate::ffi::slang::SemanticDefinitionKind::Interface)
+    {
+        return Ok(Some(target));
+    }
+    Ok(None)
+}
+
+fn find_clocking_member_from_slang(
+    snapshot: &SlangSnapshot,
+    ids: &HashMap<u64, NodeId>,
+    owner: NodeId,
+    name: &str,
+    depth: usize,
+) -> Result<Option<NodeId>, DbError> {
+    if depth > snapshot.semantic_nodes.len() {
+        return Err(DbError::InvalidSnapshot(
+            "virtual interface member path contains a cycle".into(),
+        ));
+    }
+    let owner_node = snapshot
+        .semantic_nodes
+        .get(owner.index())
+        .ok_or_else(|| DbError::InvalidSnapshot("virtual interface owner is missing".into()))?;
+    for edge in semantic_edges(snapshot, owner_node)?
+        .iter()
+        .filter(|edge| edge.role == SemanticEdgeRole::Child)
+    {
+        let child = semantic_id(ids, edge.target_id)?;
+        let child_node = snapshot.semantic_nodes.get(child.index()).ok_or_else(|| {
+            DbError::InvalidSnapshot("virtual interface member is missing".into())
+        })?;
+        if child_node.name == name
+            && ((child_node.kind == SemanticKind::Scope
+                && child_node.subkind == SEMANTIC_SCOPE_CLOCKING_BLOCK)
+                || (child_node.kind == SemanticKind::Variable
+                    && child_node.subkind == SEMANTIC_VARIABLE_CLOCKING))
+        {
+            return Ok(Some(child));
+        }
+        if matches!(
+            child_node.kind,
+            SemanticKind::Instance | SemanticKind::Scope
+        ) {
+            if let Some(found) =
+                find_clocking_member_from_slang(snapshot, ids, child, name, depth + 1)?
+            {
+                return Ok(Some(found));
+            }
+        }
+    }
+    Ok(None)
+}
+
+fn clocking_block_from_expression(
+    snapshot: &SlangSnapshot,
+    ids: &HashMap<u64, NodeId>,
+    expression: NodeId,
+    depth: usize,
+) -> Result<Option<NodeId>, DbError> {
+    if depth > snapshot.semantic_nodes.len() {
+        return Err(DbError::InvalidSnapshot(
+            "clocking expression contains a cycle".into(),
+        ));
+    }
+    let node = snapshot
+        .semantic_nodes
+        .get(expression.index())
+        .ok_or_else(|| DbError::InvalidSnapshot("clocking expression is missing".into()))?;
+    if node.kind == SemanticKind::Scope && node.subkind == SEMANTIC_SCOPE_CLOCKING_BLOCK {
+        return Ok(Some(expression));
+    }
+    if node.kind != SemanticKind::Expression {
+        return Ok(None);
+    }
+    if let Some(target) = expression_reference_target(snapshot, ids, node)? {
+        let target_node = snapshot
+            .semantic_nodes
+            .get(target.index())
+            .ok_or_else(|| DbError::InvalidSnapshot("clocking target is missing".into()))?;
+        if target_node.kind == SemanticKind::Scope
+            && target_node.subkind == SEMANTIC_SCOPE_CLOCKING_BLOCK
+        {
+            return Ok(Some(target));
+        }
+    }
+    if node.subkind == 75 {
+        let base = edge_target(ids, semantic_edges(snapshot, node)?, SemanticEdgeRole::Base)?;
+        if let Some(base) = base {
+            let base_node = snapshot.semantic_nodes.get(base.index()).ok_or_else(|| {
+                DbError::InvalidSnapshot("virtual interface base is missing".into())
+            })?;
+            if let Some(variable) = expression_reference_target(snapshot, ids, base_node)? {
+                if let Some(interface) =
+                    virtual_interface_instance_from_slang(snapshot, ids, variable)?
+                {
+                    return find_clocking_member_from_slang(
+                        snapshot,
+                        ids,
+                        interface,
+                        &node.name,
+                        depth + 1,
+                    );
+                }
+            }
+        }
+    }
+    let edges = semantic_edges(snapshot, node)?;
+    let role = match node.subkind {
+        72 => SemanticEdgeRole::Operand,
+        73..=75 => SemanticEdgeRole::Base,
+        _ => return Ok(None),
+    };
+    edge_target(ids, edges, role)?
+        .map(|base| clocking_block_from_expression(snapshot, ids, base, depth + 1))
+        .transpose()
+        .map(|value| value.flatten())
+}
+
+fn clocking_source_from_expression(
+    snapshot: &SlangSnapshot,
+    ids: &HashMap<u64, NodeId>,
+    expression: NodeId,
+    depth: usize,
+) -> Result<Option<NodeId>, DbError> {
+    if depth > snapshot.semantic_nodes.len() {
+        return Err(DbError::InvalidSnapshot(
+            "clocking source expression contains a cycle".into(),
+        ));
+    }
+    let node = snapshot
+        .semantic_nodes
+        .get(expression.index())
+        .ok_or_else(|| DbError::InvalidSnapshot("clocking source expression is missing".into()))?;
+    if let Some(target) = expression_reference_target(snapshot, ids, node)? {
+        let target_node = snapshot
+            .semantic_nodes
+            .get(target.index())
+            .ok_or_else(|| DbError::InvalidSnapshot("clocking source target is missing".into()))?;
+        if matches!(
+            target_node.kind,
+            SemanticKind::Net
+                | SemanticKind::Variable
+                | SemanticKind::Port
+                | SemanticKind::Array
+                | SemanticKind::NamedEvent
+        ) {
+            return Ok(Some(target));
+        }
+    }
+    if node.kind != SemanticKind::Expression {
+        return Ok(None);
+    }
+    if node.subkind == 75 {
+        let base = edge_target(ids, semantic_edges(snapshot, node)?, SemanticEdgeRole::Base)?;
+        if let Some(base) = base {
+            let base_node = snapshot.semantic_nodes.get(base.index()).ok_or_else(|| {
+                DbError::InvalidSnapshot("virtual interface base is missing".into())
+            })?;
+            if let Some(variable) = expression_reference_target(snapshot, ids, base_node)? {
+                if let Some(interface) =
+                    virtual_interface_instance_from_slang(snapshot, ids, variable)?
+                {
+                    return find_clocking_member_from_slang(
+                        snapshot,
+                        ids,
+                        interface,
+                        &node.name,
+                        depth + 1,
+                    );
+                }
+            }
+        }
+    }
+    let edges = semantic_edges(snapshot, node)?;
+    let role = match node.subkind {
+        72 => SemanticEdgeRole::Operand,
+        73..=75 => SemanticEdgeRole::Base,
+        _ => return Ok(None),
+    };
+    edge_target(ids, edges, role)?
+        .map(|base| clocking_source_from_expression(snapshot, ids, base, depth + 1))
+        .transpose()
+        .map(|value| value.flatten())
+}
+
+fn clocking_edge(code: u64) -> Result<ClockingEdge, DbError> {
+    match code & CLOCKING_EDGE_MASK {
+        0 => Ok(ClockingEdge::None),
+        1 => Ok(ClockingEdge::Posedge),
+        2 => Ok(ClockingEdge::Negedge),
+        3 => Ok(ClockingEdge::BothEdges),
+        _ => unreachable!("clocking edge mask has four values"),
+    }
+}
+
+fn clocking_delay_expression(
+    snapshot: &SlangSnapshot,
+    ids: &HashMap<u64, NodeId>,
+    delay: Option<NodeId>,
+) -> Result<Option<NodeId>, DbError> {
+    let Some(delay) = delay else {
+        return Ok(None);
+    };
+    let timing = snapshot
+        .semantic_nodes
+        .get(delay.index())
+        .ok_or_else(|| DbError::InvalidSnapshot("clocking skew timing is missing".into()))?;
+    if timing.subkind == 112 {
+        return edge_target_at(
+            ids,
+            semantic_edges(snapshot, timing)?,
+            SemanticEdgeRole::Delay,
+            0,
+        );
+    }
+    if timing.subkind == SEMANTIC_TIMING_ONE_STEP_DELAY {
+        return Ok(None);
+    }
+    Err(DbError::InvalidSnapshot(format!(
+        "unsupported clocking skew timing subkind {}",
+        timing.subkind
+    )))
+}
+
+fn clocking_skew_from_slang(
+    snapshot: &SlangSnapshot,
+    ids: &HashMap<u64, NodeId>,
+    delay: Option<NodeId>,
+    edge: u64,
+) -> Result<ClockingSkew, DbError> {
+    Ok(ClockingSkew {
+        edge: clocking_edge(edge)?,
+        delay,
+        delay_expression: clocking_delay_expression(snapshot, ids, delay)?,
+    })
 }
 
 fn peel_gate_terminal(
@@ -2438,6 +2800,25 @@ fn event_specs(
         113 => {
             let sig = edge_target(ids, edges, SemanticEdgeRole::Event)?
                 .ok_or_else(|| DbError::InvalidSnapshot("signal event has no expression".into()))?;
+            if let Some(block) = clocking_block_from_expression(snapshot, ids, sig, 0)? {
+                let block_node = snapshot
+                    .semantic_nodes
+                    .get(block.index())
+                    .ok_or_else(|| DbError::InvalidSnapshot("clocking block is missing".into()))?;
+                let block_event = edge_target(
+                    ids,
+                    semantic_edges(snapshot, block_node)?,
+                    SemanticEdgeRole::Event,
+                )?
+                .ok_or_else(|| DbError::InvalidSnapshot("clocking block has no event".into()))?;
+                let event_node = snapshot
+                    .semantic_nodes
+                    .get(block_event.index())
+                    .ok_or_else(|| {
+                        DbError::InvalidSnapshot("clocking block event is missing".into())
+                    })?;
+                return event_specs(snapshot, event_node, ids);
+            }
             let named_event = is_named_event_expression(snapshot, ids, sig)?;
             let specs = if timing.is_both_edges {
                 vec![
@@ -2864,6 +3245,9 @@ impl Db {
             enum_types: HashMap::new(),
             packed_dimensions: HashMap::new(),
             two_state_types: HashSet::new(),
+            clocking_blocks: HashMap::new(),
+            clocking_vars: HashMap::new(),
+            virtual_interface_targets: HashMap::new(),
             implicit_nets: HashSet::new(),
             implicit_conversions: HashSet::new(),
             source_files: HashMap::new(),
@@ -2912,6 +3296,9 @@ impl Db {
             enum_types: HashMap::new(),
             packed_dimensions: HashMap::new(),
             two_state_types: HashSet::new(),
+            clocking_blocks: HashMap::new(),
+            clocking_vars: HashMap::new(),
+            virtual_interface_targets: HashMap::new(),
             implicit_nets: HashSet::new(),
             implicit_conversions: HashSet::new(),
             source_files: HashMap::new(),
@@ -2985,6 +3372,8 @@ impl Db {
         let mut type_descriptors = HashMap::new();
         let mut enum_types = HashMap::new();
         let mut packed_dimensions = HashMap::new();
+        let mut clocking_blocks = HashMap::new();
+        let mut clocking_vars = HashMap::new();
         for semantic in &snapshot.semantic_nodes {
             let id = ids[&semantic.id];
             let edges = semantic_edges(snapshot, semantic)?;
@@ -3097,10 +3486,102 @@ impl Db {
                     method_call_iterators.insert(id, semantic_id(&ids, iterator)?);
                 }
             }
+            if semantic.kind == SemanticKind::Scope
+                && semantic.subkind == SEMANTIC_SCOPE_CLOCKING_BLOCK
+            {
+                let event =
+                    edge_target(&ids, edges, SemanticEdgeRole::Event)?.ok_or_else(|| {
+                        DbError::InvalidSnapshot("clocking block has no event control".into())
+                    })?;
+                let event_node = snapshot.semantic_nodes.get(event.index()).ok_or_else(|| {
+                    DbError::InvalidSnapshot("clocking block event is missing".into())
+                })?;
+                let (event_specs, event_implicit) = event_specs(snapshot, event_node, &ids)?;
+                let input_delay = edge_target_at(&ids, edges, SemanticEdgeRole::Delay, 0)?;
+                let output_delay = edge_target_at(&ids, edges, SemanticEdgeRole::Delay, 1)?;
+                let default_input = clocking_skew_from_slang(
+                    snapshot,
+                    &ids,
+                    input_delay,
+                    semantic.auxiliary >> CLOCKING_INPUT_EDGE_SHIFT,
+                )?;
+                let default_output = clocking_skew_from_slang(
+                    snapshot,
+                    &ids,
+                    output_delay,
+                    semantic.auxiliary >> CLOCKING_OUTPUT_EDGE_SHIFT,
+                )?;
+                clocking_blocks.insert(
+                    id,
+                    ClockingBlockInfo {
+                        event,
+                        event_specs,
+                        event_implicit,
+                        is_default: semantic.auxiliary & CLOCKING_BLOCK_DEFAULT != 0,
+                        is_global: semantic.auxiliary & CLOCKING_BLOCK_GLOBAL != 0,
+                        default_input,
+                        default_output,
+                    },
+                );
+            }
+            if semantic.kind == SemanticKind::Variable
+                && semantic.subkind == SEMANTIC_VARIABLE_CLOCKING
+            {
+                let initializer = edge_target(&ids, edges, SemanticEdgeRole::Initializer)?
+                    .ok_or_else(|| {
+                        DbError::InvalidSnapshot(
+                            "clocking variable has no source expression".into(),
+                        )
+                    })?;
+                let source = clocking_source_from_expression(snapshot, &ids, initializer, 0)?
+                    .ok_or_else(|| {
+                        DbError::InvalidSnapshot("clocking variable source is unresolved".into())
+                    })?;
+                let parent_raw = semantic
+                    .parent_id
+                    .and_then(|parent| snapshot.semantic_nodes.get(parent as usize));
+                let block = semantic
+                    .parent_id
+                    .and_then(|parent| ids.get(&parent).copied())
+                    .filter(|_| {
+                        parent_raw.is_some_and(|parent| {
+                            parent.kind == SemanticKind::Scope
+                                && parent.subkind == SEMANTIC_SCOPE_CLOCKING_BLOCK
+                        })
+                    })
+                    .ok_or_else(|| {
+                        DbError::InvalidSnapshot(
+                            "clocking variable is not owned by a clocking block".into(),
+                        )
+                    })?;
+                let input_delay = edge_target_at(&ids, edges, SemanticEdgeRole::Delay, 0)?;
+                let output_delay = edge_target_at(&ids, edges, SemanticEdgeRole::Delay, 1)?;
+                clocking_vars.insert(
+                    id,
+                    ClockingVarInfo {
+                        block,
+                        source,
+                        direction: direction_from_slang(semantic),
+                        input: clocking_skew_from_slang(
+                            snapshot,
+                            &ids,
+                            input_delay,
+                            semantic.auxiliary,
+                        )?,
+                        output: clocking_skew_from_slang(
+                            snapshot,
+                            &ids,
+                            output_delay,
+                            semantic.auxiliary >> CLOCKING_VAR_OUTPUT_EDGE_SHIFT,
+                        )?,
+                    },
+                );
+            }
             if matches!(
                 semantic.kind,
                 SemanticKind::Variable | SemanticKind::NamedEvent
             ) && semantic.subkind != 229
+                && semantic.subkind != SEMANTIC_VARIABLE_CLOCKING
             {
                 let resolved_lifetime = match semantic.auxiliary {
                     0 => VariableLifetime::Unavailable,
@@ -3128,11 +3609,15 @@ impl Db {
                     .is_some_and(|projection| projection.array.is_some());
             let is_array = matches!(semantic.kind, SemanticKind::Variable | SemanticKind::Net)
                 && semantic.subkind != 229
+                && semantic.subkind != SEMANTIC_VARIABLE_CLOCKING
                 && projection
                     .as_ref()
                     .is_some_and(|projection| projection.array.is_some())
                 || semantic.kind == SemanticKind::Array;
-            if semantic.kind == SemanticKind::Variable && !is_array {
+            if semantic.kind == SemanticKind::Variable
+                && semantic.subkind != SEMANTIC_VARIABLE_CLOCKING
+                && !is_array
+            {
                 if let Some(initializer) = edge_target(&ids, edges, SemanticEdgeRole::Initializer)?
                 {
                     vars_init.insert(id, initializer);
@@ -3378,6 +3863,18 @@ impl Db {
             });
         }
 
+        // A virtual interface handle is an elaboration-time alias to a
+        // concrete interface instance.  Capture that static binding while
+        // the frontend identities are still available; lowering can then
+        // resolve clocking members without retaining native Slang objects.
+        let mut virtual_interface_targets = HashMap::new();
+        for &variable in vars_init.keys() {
+            if let Some(instance) = virtual_interface_instance_from_slang(snapshot, &ids, variable)?
+            {
+                virtual_interface_targets.insert(variable, instance);
+            }
+        }
+
         for index in 0..nodes.len() {
             let full_name = semantic_full_name(&nodes, NodeId::from_index(index))?;
             nodes[index].full_name = full_name;
@@ -3478,6 +3975,9 @@ impl Db {
             enum_types,
             packed_dimensions,
             two_state_types,
+            clocking_blocks,
+            clocking_vars,
+            virtual_interface_targets,
             implicit_nets,
             implicit_conversions,
             source_files: snapshot
@@ -3585,6 +4085,90 @@ impl Db {
 
     pub fn var_initializer(&self, id: NodeId) -> Option<NodeId> {
         self.vars_init.get(&id).copied()
+    }
+
+    /// Return owned clocking block metadata, if `id` names a clocking block.
+    pub fn clocking_block(&self, id: NodeId) -> Option<&ClockingBlockInfo> {
+        self.clocking_blocks.get(&id)
+    }
+
+    /// Return owned clocking variable metadata, if `id` names a clocking
+    /// block variable.
+    pub fn clocking_var(&self, id: NodeId) -> Option<&ClockingVarInfo> {
+        self.clocking_vars.get(&id)
+    }
+
+    pub fn is_clocking_block(&self, id: NodeId) -> bool {
+        self.clocking_blocks.contains_key(&id)
+    }
+
+    pub fn is_clocking_var(&self, id: NodeId) -> bool {
+        self.clocking_vars.contains_key(&id)
+    }
+
+    /// Return the concrete interface instance statically bound to a virtual
+    /// interface variable. Runtime reassignment is intentionally not modeled.
+    pub fn virtual_interface_target(&self, variable: NodeId) -> Option<NodeId> {
+        self.virtual_interface_targets.get(&variable).copied()
+    }
+
+    /// Whether an expression is the initializer of a statically bound virtual
+    /// interface variable. Such scope references are consumed by elaboration
+    /// and must not be lowered as executable values.
+    pub fn is_virtual_interface_initializer(&self, expression: NodeId) -> bool {
+        self.virtual_interface_targets.keys().any(|variable| {
+            self.vars_init
+                .get(variable)
+                .is_some_and(|initializer| *initializer == expression)
+        })
+    }
+
+    /// Resolve a clocking block/clocking variable referenced through a
+    /// statically initialized virtual interface handle. The returned identity
+    /// is the concrete interface member captured in the owned database.
+    pub fn resolve_clocking_member(&self, expression: NodeId) -> Option<NodeId> {
+        let NodeKind::Expr(ExprKind::HierPath { parts, refs }) = self.node_kind(expression) else {
+            return None;
+        };
+        let variable = refs.iter().flatten().find_map(|reference| {
+            self.virtual_interface_targets
+                .contains_key(reference)
+                .then_some(*reference)
+        })?;
+        let interface = self.virtual_interface_targets.get(&variable).copied()?;
+        let expression_name = self.node(expression).name.as_str();
+        let name = if expression_name.is_empty() {
+            parts.last().map(String::as_str).unwrap_or_default()
+        } else {
+            expression_name
+        };
+        if name.is_empty() {
+            return None;
+        }
+        let mut pending = vec![interface];
+        let mut visited = HashSet::new();
+        while let Some(owner) = pending.pop() {
+            if !visited.insert(owner) {
+                continue;
+            }
+            for child in self.node(owner).children.iter().copied() {
+                if self.node(child).name == name
+                    && (self.is_clocking_block(child) || self.is_clocking_var(child))
+                {
+                    return Some(child);
+                }
+                if matches!(
+                    self.node_kind(child),
+                    NodeKind::ModuleInst { .. }
+                        | NodeKind::Stmt(StmtKind::Begin)
+                        | NodeKind::GenScope
+                        | NodeKind::GenScopeArray
+                ) {
+                    pending.push(child);
+                }
+            }
+        }
+        None
     }
 
     /// Return the propagation delay declared on a net symbol, if any.
