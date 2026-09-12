@@ -3488,6 +3488,9 @@ impl EmitCtx<'_, '_> {
                 }
             }
         }
+        if name.starts_with("$q_") {
+            return Ok(vec![self.lower_stochastic_task(name, &args)?]);
+        }
         match name {
             "$cast" => {
                 let status = self.cg.lower_dynamic_cast(&self.path, &args)?;
@@ -3599,6 +3602,78 @@ impl EmitCtx<'_, '_> {
                     .warnings
                     .push(format!("{name} in `{}` skipped (not supported)", self.path));
                 Ok(vec![])
+            }
+            _ => Err(format!("unsupported system task {name} in `{}`", self.path)),
+        }
+    }
+
+    fn lower_stochastic_input(&mut self, node: NodeId, label: &str) -> Result<IrExpr, String> {
+        let value = self.cg.lower_expr(&self.path, node)?;
+        if value.is_real() {
+            return Err(format!(
+                "{label} must be a packed integer expression in `{}`",
+                self.path
+            ));
+        }
+        Ok(value)
+    }
+
+    fn lower_stochastic_output(&mut self, node: NodeId, label: &str) -> Result<IrLhs, String> {
+        self.cg.lower_stochastic_output(&self.path, node, label)
+    }
+
+    fn lower_stochastic_task(&mut self, name: &str, args: &[NodeId]) -> Result<IrStmt, String> {
+        let wrong_arity = || {
+            Err(format!(
+                "{name} requires exactly four arguments in `{}`",
+                self.path
+            ))
+        };
+        match name {
+            "$q_initialize" => {
+                let [q_id, q_type, max_length, status] = args else {
+                    return wrong_arity();
+                };
+                Ok(IrStmt::Stochastic(Box::new(IrStochasticStmt::Initialize {
+                    q_id: self.lower_stochastic_input(*q_id, "$q_initialize q_id")?,
+                    q_type: self.lower_stochastic_input(*q_type, "$q_initialize q_type")?,
+                    max_length: self
+                        .lower_stochastic_input(*max_length, "$q_initialize max_length")?,
+                    status: self.lower_stochastic_output(*status, "$q_initialize status")?,
+                })))
+            }
+            "$q_add" => {
+                let [q_id, job_id, inform_id, status] = args else {
+                    return wrong_arity();
+                };
+                Ok(IrStmt::Stochastic(Box::new(IrStochasticStmt::Add {
+                    q_id: self.lower_stochastic_input(*q_id, "$q_add q_id")?,
+                    job_id: self.lower_stochastic_input(*job_id, "$q_add job_id")?,
+                    inform_id: self.lower_stochastic_input(*inform_id, "$q_add inform_id")?,
+                    status: self.lower_stochastic_output(*status, "$q_add status")?,
+                })))
+            }
+            "$q_remove" => {
+                let [q_id, job_id, inform_id, status] = args else {
+                    return wrong_arity();
+                };
+                Ok(IrStmt::Stochastic(Box::new(IrStochasticStmt::Remove {
+                    q_id: self.lower_stochastic_input(*q_id, "$q_remove q_id")?,
+                    job_id: self.lower_stochastic_output(*job_id, "$q_remove job_id")?,
+                    inform_id: self.lower_stochastic_output(*inform_id, "$q_remove inform_id")?,
+                    status: self.lower_stochastic_output(*status, "$q_remove status")?,
+                })))
+            }
+            "$q_exam" => {
+                let [q_id, stat_code, stat_value, status] = args else {
+                    return wrong_arity();
+                };
+                Ok(IrStmt::Stochastic(Box::new(IrStochasticStmt::Exam {
+                    q_id: self.lower_stochastic_input(*q_id, "$q_exam q_id")?,
+                    stat_code: self.lower_stochastic_input(*stat_code, "$q_exam stat_code")?,
+                    stat_value: self.lower_stochastic_output(*stat_value, "$q_exam stat_value")?,
+                    status: self.lower_stochastic_output(*status, "$q_exam status")?,
+                })))
             }
             _ => Err(format!("unsupported system task {name} in `{}`", self.path)),
         }

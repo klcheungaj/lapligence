@@ -5,7 +5,7 @@ use crate::sim::execution::ExecutionModel;
 use crate::sim::ir::IrModel;
 use crate::sim::ir::{
     IrCall, IrCallArg, IrElemSel, IrExpr, IrExprKind, IrFunc, IrInsideItem, IrLhs, IrPlusArgText,
-    IrPreFn, IrStmt, IrStringExpr, IrSysFunc, IrType,
+    IrPreFn, IrStmt, IrStochasticStmt, IrStringExpr, IrSysFunc, IrType,
 };
 
 /// Keep aligned with the emitted function recursion guard in `model.rs`.
@@ -311,6 +311,42 @@ fn stmt_temp_slots(stmt: &IrStmt) -> Result<u64, String> {
             expr_slots(rhs)?,
             "assignment temporary slots",
         ),
+        IrStmt::Stochastic(operation) => match operation.as_ref() {
+            IrStochasticStmt::Initialize {
+                q_id,
+                q_type,
+                max_length,
+                ..
+            } => checked_sum(
+                [
+                    expr_slots(q_id)?,
+                    expr_slots(q_type)?,
+                    expr_slots(max_length)?,
+                ],
+                "stochastic queue initialization slots",
+            ),
+            IrStochasticStmt::Add {
+                q_id,
+                job_id,
+                inform_id,
+                ..
+            } => checked_sum(
+                [
+                    expr_slots(q_id)?,
+                    expr_slots(job_id)?,
+                    expr_slots(inform_id)?,
+                ],
+                "stochastic queue add slots",
+            ),
+            IrStochasticStmt::Remove { q_id, .. } => expr_slots(q_id),
+            IrStochasticStmt::Exam {
+                q_id, stat_code, ..
+            } => checked_add(
+                expr_slots(q_id)?,
+                expr_slots(stat_code)?,
+                "stochastic queue exam slots",
+            ),
+        },
         IrStmt::EventAssign { .. } | IrStmt::EventCapture { .. } => Ok(0),
         IrStmt::PcaAssign { value, .. } | IrStmt::PcaDrive { value, .. } => expr_slots(value),
         IrStmt::If {
@@ -740,6 +776,11 @@ fn system_expr_slots(system: &IrSysFunc) -> Result<u64, String> {
         IrSysFunc::Math { args, .. } => args.iter().try_fold(0, |total, arg| {
             checked_add(total, expr_slots(arg)?, "math function arguments")
         }),
+        IrSysFunc::QFull { q_id, status } => checked_add(
+            expr_slots(q_id)?,
+            lhs_slots(status)?,
+            "stochastic queue full expression slots",
+        ),
     }
 }
 

@@ -9,7 +9,8 @@ use std::collections::HashSet;
 use crate::sim::ir::{
     IrArrayQueryTarget, IrCallArg, IrChandleExpr, IrContainerExpr, IrDependency, IrDisplayArg,
     IrElemSel, IrExpr, IrExprKind, IrInsideItem, IrJoinKind, IrLhs, IrModel, IrObjectQuery,
-    IrObjectStmt, IrShape, IrStmt, IrStringExpr, IrStringInsideItem, IrSysFunc, IrValidationError,
+    IrObjectStmt, IrShape, IrStmt, IrStochasticStmt, IrStringExpr, IrStringInsideItem, IrSysFunc,
+    IrValidationError,
 };
 use crate::sim::semantic::{ExtensionRef, Origin};
 
@@ -483,7 +484,7 @@ fn collect_effects(
             | IrStmt::Force { .. }
             | IrStmt::Release { .. }
             | IrStmt::Container(_) => effects.push(ExecutionEffect::ImmediateStore),
-            IrStmt::PlusArg(_) => {
+            IrStmt::PlusArg(_) | IrStmt::Stochastic(_) => {
                 effects.push(ExecutionEffect::ImmediateStore);
                 effects.push(ExecutionEffect::RuntimeService);
             }
@@ -651,6 +652,52 @@ fn collect_statement_expression_effects(
             collect_expression_effects(ir, rhs, effects, visited_calls);
             collect_lhs_expression_effects(ir, lhs, effects, visited_calls);
         }
+        IrStmt::Stochastic(operation) => match operation.as_ref() {
+            IrStochasticStmt::Initialize {
+                q_id,
+                q_type,
+                max_length,
+                status,
+            } => {
+                collect_expression_effects(ir, q_id, effects, visited_calls);
+                collect_expression_effects(ir, q_type, effects, visited_calls);
+                collect_expression_effects(ir, max_length, effects, visited_calls);
+                collect_lhs_expression_effects(ir, status, effects, visited_calls);
+            }
+            IrStochasticStmt::Add {
+                q_id,
+                job_id,
+                inform_id,
+                status,
+            } => {
+                collect_expression_effects(ir, q_id, effects, visited_calls);
+                collect_expression_effects(ir, job_id, effects, visited_calls);
+                collect_expression_effects(ir, inform_id, effects, visited_calls);
+                collect_lhs_expression_effects(ir, status, effects, visited_calls);
+            }
+            IrStochasticStmt::Remove {
+                q_id,
+                job_id,
+                inform_id,
+                status,
+            } => {
+                collect_expression_effects(ir, q_id, effects, visited_calls);
+                collect_lhs_expression_effects(ir, job_id, effects, visited_calls);
+                collect_lhs_expression_effects(ir, inform_id, effects, visited_calls);
+                collect_lhs_expression_effects(ir, status, effects, visited_calls);
+            }
+            IrStochasticStmt::Exam {
+                q_id,
+                stat_code,
+                stat_value,
+                status,
+            } => {
+                collect_expression_effects(ir, q_id, effects, visited_calls);
+                collect_expression_effects(ir, stat_code, effects, visited_calls);
+                collect_lhs_expression_effects(ir, stat_value, effects, visited_calls);
+                collect_lhs_expression_effects(ir, status, effects, visited_calls);
+            }
+        },
         IrStmt::NonblockingEventAssignWhen {
             lhs,
             rhs,
@@ -1035,6 +1082,12 @@ fn collect_expression_effects(
             | IrSysFunc::ShortRealToBits(value)
             | IrSysFunc::BitsToShortReal(value) => {
                 collect_expression_effects(ir, value, effects, visited_calls)
+            }
+            IrSysFunc::QFull { q_id, status } => {
+                effects.push(ExecutionEffect::ImmediateStore);
+                effects.push(ExecutionEffect::RuntimeService);
+                collect_expression_effects(ir, q_id, effects, visited_calls);
+                collect_lhs_expression_effects(ir, status, effects, visited_calls);
             }
         },
         IrExprKind::Const(_)

@@ -4,12 +4,14 @@ use std::collections::{HashMap, HashSet};
 
 use super::constants::{c_string_literal, fs_to_timescale_str, round_shortreal};
 use super::context::RCtx;
-use super::expressions::{arg_resize, bool_code, render_assign, render_expr_impl as render_expr};
+use super::expressions::{
+    arg_resize, bool_code, render_assign, render_expr_impl as render_expr, render_lhs_address,
+};
 use super::EmitError;
 use crate::sim::execution::ScheduleRegion;
 use crate::sim::ir::{
     IrCallArg, IrDependency, IrDisplayArg, IrExpr, IrExprKind, IrLhs, IrSeverityLevel,
-    IrStreamDirection, IrType, IrUniquePriorityCheck, IrWaitSrc, StorageKind,
+    IrStochasticStmt, IrStreamDirection, IrType, IrUniquePriorityCheck, IrWaitSrc, StorageKind,
 };
 
 // ── Statement rendering ───────────────────────────────────────────────────────
@@ -214,6 +216,56 @@ fn render_stmt_scoped(
         IrStmt::Assign { lhs, rhs, nba } => {
             format!("    {}\n", render_assign(ctx, lhs, rhs, *nba)?)
         }
+        IrStmt::Stochastic(operation) => match operation.as_ref() {
+            IrStochasticStmt::Initialize {
+                q_id,
+                q_type,
+                max_length,
+                status,
+            } => format!(
+                "    llg_q_initialize({}, {}, {}, {});\n",
+                render_expr(ctx, q_id)?.code,
+                render_expr(ctx, q_type)?.code,
+                render_expr(ctx, max_length)?.code,
+                render_lhs_address(ctx, status)?
+            ),
+            IrStochasticStmt::Add {
+                q_id,
+                job_id,
+                inform_id,
+                status,
+            } => format!(
+                "    llg_q_add({}, {}, {}, {});\n",
+                render_expr(ctx, q_id)?.code,
+                render_expr(ctx, job_id)?.code,
+                render_expr(ctx, inform_id)?.code,
+                render_lhs_address(ctx, status)?
+            ),
+            IrStochasticStmt::Remove {
+                q_id,
+                job_id,
+                inform_id,
+                status,
+            } => format!(
+                "    llg_q_remove({}, {}, {}, {});\n",
+                render_expr(ctx, q_id)?.code,
+                render_lhs_address(ctx, job_id)?,
+                render_lhs_address(ctx, inform_id)?,
+                render_lhs_address(ctx, status)?
+            ),
+            IrStochasticStmt::Exam {
+                q_id,
+                stat_code,
+                stat_value,
+                status,
+            } => format!(
+                "    llg_q_exam({}, {}, {}, {});\n",
+                render_expr(ctx, q_id)?.code,
+                render_expr(ctx, stat_code)?.code,
+                render_lhs_address(ctx, stat_value)?,
+                render_lhs_address(ctx, status)?
+            ),
+        },
         IrStmt::EventAssign { target, source } => {
             let target = event_ref_code(ctx, target)?;
             match source {

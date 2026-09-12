@@ -2783,6 +2783,29 @@ impl<'a> Codegen<'a> {
         call: NodeId,
     ) -> Result<IrExpr, String> {
         let args: Vec<NodeId> = self.node(call).children.clone();
+        if name == "$q_full" {
+            let [q_id, status] = args.as_slice() else {
+                return Err(format!(
+                    "$q_full requires exactly two arguments in `{scope_path}`"
+                ));
+            };
+            let q_id = self.lower_expr(scope_path, *q_id)?;
+            if q_id.is_real() {
+                return Err(format!(
+                    "$q_full q_id must be a packed integer in `{scope_path}`"
+                ));
+            }
+            let status = self.lower_stochastic_output(scope_path, *status, "$q_full status")?;
+            return Ok(IrExpr::new(
+                IrExprKind::SysFunc(IrSysFunc::QFull {
+                    q_id: Box::new(q_id),
+                    status: Box::new(status),
+                }),
+                32,
+                true,
+                None,
+            ));
+        }
         if name == "index" {
             if let Some(iterator) = self.container_iterator {
                 let [receiver] = args.as_slice() else {
@@ -3171,6 +3194,68 @@ impl<'a> Codegen<'a> {
                 "unsupported system function {name} in `{scope_path}`"
             )),
         }
+    }
+
+    /// Lower one output argument of an IEEE stochastic queue task. The C ABI
+    /// receives a direct `sv4_t*`, so only whole packed storage is admitted;
+    /// selected aliases and real values remain explicit unsupported lowering
+    /// diagnostics rather than silently writing a temporary.
+    pub(super) fn lower_stochastic_output(
+        &mut self,
+        path: &str,
+        node: NodeId,
+        label: &str,
+    ) -> Result<IrLhs, String> {
+        // Slang wraps output actuals in an assignment conversion whose first
+        // operand is the caller's storage (the second is a frontend-only
+        // converted placeholder). Match ordinary output-formal binding and
+        // lower the actual itself as the direct runtime destination.
+        let node = match self.kind(node) {
+            NodeKind::Expr(ExprKind::Operation { op, operands, .. })
+                if *op == Operation::Assignment =>
+            {
+                operands
+                    .first()
+                    .copied()
+                    .ok_or_else(|| format!("{label} has a malformed output argument in `{path}`"))?
+            }
+            _ => node,
+        };
+        let lhs = self.lower_lhs(path, node).map_err(|error| {
+            let children = self
+                .node(node)
+                .children
+                .iter()
+                .map(|child| format!("{child:?}={:?}", self.kind(*child)))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!(
+                "{label} has an unsupported target ({:?}) children=[{children}] in `{path}`: {error}",
+                self.kind(node)
+            )
+        })?;
+        match &lhs {
+            IrLhs::Whole(index) => {
+                let signal = self.model.signal(*index);
+                if signal.net_driver.is_some() || !matches!(signal.ty, IrType::Packed { .. }) {
+                    return Err(format!(
+                        "{label} must name a whole packed integer variable, not a net, in `{path}`"
+                    ));
+                }
+            }
+            IrLhs::WholeRef { width, .. } if *width != 0 => {}
+            IrLhs::WholeRef { .. } => {
+                return Err(format!(
+                    "{label} must name a whole packed integer variable in `{path}`"
+                ));
+            }
+            _ => {
+                return Err(format!(
+                    "{label} must name a whole packed integer variable in `{path}`"
+                ));
+            }
+        }
+        Ok(lhs)
     }
 
     /// Lower an assignment LHS: the pre-IR [`Self::analyze_lhs`] decisions

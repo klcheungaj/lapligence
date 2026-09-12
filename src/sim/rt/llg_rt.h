@@ -260,6 +260,36 @@ uint64_t llg_time_scaled(uint64_t precision_fs, uint64_t unit_fs);
 // parents retained while detached descendants are still live.
 int llg_rt_process_count(void);
 
+// ── IEEE stochastic analysis queues ─────────────────────────────────────────
+//
+// These queues implement the Verilog stochastic analysis system tasks
+// (IEEE 1364-2001 §17.6 / IEEE 1800-2009 §20.16). They are deliberately
+// separate from SystemVerilog queue containers: each queue stores a job ID,
+// an information ID, and the simulation tick at which the job arrived.
+// Integer arguments are checked four-state values; unknown or out-of-range
+// values are reported as a controlled runtime failure instead of being
+// silently truncated. Output values are written through the ordinary
+// procedural-write path so force/PCA rules remain consistent with HDL.
+enum {
+    LLG_Q_OK = 0,
+    LLG_Q_FULL = 1,
+    LLG_Q_UNKNOWN_ID = 2,
+    LLG_Q_EMPTY = 3,
+    LLG_Q_BAD_TYPE = 4,
+    LLG_Q_BAD_LENGTH = 5,
+    LLG_Q_DUPLICATE_ID = 6,
+    LLG_Q_NO_MEMORY = 7,
+};
+
+void llg_q_initialize(sv4_t q_id, sv4_t q_type, sv4_t max_length,
+                      sv4_t* status);
+void llg_q_add(sv4_t q_id, sv4_t job_id, sv4_t inform_id, sv4_t* status);
+void llg_q_remove(sv4_t q_id, sv4_t* job_id, sv4_t* inform_id,
+                  sv4_t* status);
+sv4_t llg_q_full(sv4_t q_id, sv4_t* status);
+void llg_q_exam(sv4_t q_id, sv4_t stat_code, sv4_t* stat_value,
+                sv4_t* status);
+
 // Stable dependency markers used by generated fixed-array and container
 // readers. A marker's address remains valid when a resizable container moves
 // its backing storage. Bindings are cleared by llg_rt_cleanup.

@@ -1312,6 +1312,14 @@ impl Validator<'_> {
                         return self.fail(path, "time expression width disagrees with its kind");
                     }
                 }
+                IrSysFunc::QFull { q_id, status } => {
+                    self.validate_expr(q_id, formals, &format!("{path}.q_id"))?;
+                    if q_id.is_real() || expr.width != 32 || !expr.signed {
+                        return self
+                            .fail(path, "$q_full requires a packed q_id and signed int result");
+                    }
+                    self.validate_stochastic_output(status, formals, &format!("{path}.status"))?;
+                }
             },
         }
         Ok(())
@@ -1647,6 +1655,34 @@ impl Validator<'_> {
         (width != 0).then_some(width)
     }
 
+    fn validate_stochastic_output(
+        &self,
+        lhs: &IrLhs,
+        formals: &[IrFormal],
+        path: &str,
+    ) -> ValidationResult {
+        self.validate_lhs(lhs, formals, path)?;
+        match lhs {
+            IrLhs::Whole(signal) => {
+                let signal = &self.model.signals[*signal];
+                if signal.net_driver.is_some() || !matches!(signal.ty, IrType::Packed { .. }) {
+                    return self.fail(
+                        path,
+                        "stochastic queue output must be whole packed variable storage",
+                    );
+                }
+            }
+            IrLhs::WholeRef { width, .. } if *width != 0 => {}
+            _ => {
+                return self.fail(
+                    path,
+                    "stochastic queue output must be whole packed variable storage",
+                )
+            }
+        }
+        Ok(())
+    }
+
     fn validate_lhs(&self, lhs: &IrLhs, formals: &[IrFormal], path: &str) -> ValidationResult {
         match lhs {
             IrLhs::Whole(signal) | IrLhs::Part(signal, ..) => {
@@ -1911,6 +1947,72 @@ impl Validator<'_> {
             IrStmt::PlusArg(expression) => {
                 self.validate_expr(expression, formals, &format!("{path}.expression"))?;
             }
+            IrStmt::Stochastic(operation) => match operation.as_ref() {
+                IrStochasticStmt::Initialize {
+                    q_id,
+                    q_type,
+                    max_length,
+                    status,
+                } => {
+                    self.validate_expr(q_id, formals, &format!("{path}.q_id"))?;
+                    self.validate_expr(q_type, formals, &format!("{path}.q_type"))?;
+                    self.validate_expr(max_length, formals, &format!("{path}.max_length"))?;
+                    self.validate_stochastic_output(status, formals, &format!("{path}.status"))?;
+                    if q_id.is_real() || q_type.is_real() || max_length.is_real() {
+                        return self.fail(path, "stochastic queue inputs must be packed integers");
+                    }
+                }
+                IrStochasticStmt::Add {
+                    q_id,
+                    job_id,
+                    inform_id,
+                    status,
+                } => {
+                    self.validate_expr(q_id, formals, &format!("{path}.q_id"))?;
+                    self.validate_expr(job_id, formals, &format!("{path}.job_id"))?;
+                    self.validate_expr(inform_id, formals, &format!("{path}.inform_id"))?;
+                    self.validate_stochastic_output(status, formals, &format!("{path}.status"))?;
+                    if q_id.is_real() || job_id.is_real() || inform_id.is_real() {
+                        return self.fail(path, "stochastic queue inputs must be packed integers");
+                    }
+                }
+                IrStochasticStmt::Remove {
+                    q_id,
+                    job_id,
+                    inform_id,
+                    status,
+                } => {
+                    self.validate_expr(q_id, formals, &format!("{path}.q_id"))?;
+                    self.validate_stochastic_output(job_id, formals, &format!("{path}.job_id"))?;
+                    self.validate_stochastic_output(
+                        inform_id,
+                        formals,
+                        &format!("{path}.inform_id"),
+                    )?;
+                    self.validate_stochastic_output(status, formals, &format!("{path}.status"))?;
+                    if q_id.is_real() {
+                        return self.fail(path, "stochastic queue inputs must be packed integers");
+                    }
+                }
+                IrStochasticStmt::Exam {
+                    q_id,
+                    stat_code,
+                    stat_value,
+                    status,
+                } => {
+                    self.validate_expr(q_id, formals, &format!("{path}.q_id"))?;
+                    self.validate_expr(stat_code, formals, &format!("{path}.stat_code"))?;
+                    self.validate_stochastic_output(
+                        stat_value,
+                        formals,
+                        &format!("{path}.stat_value"),
+                    )?;
+                    self.validate_stochastic_output(status, formals, &format!("{path}.status"))?;
+                    if q_id.is_real() || stat_code.is_real() {
+                        return self.fail(path, "stochastic queue inputs must be packed integers");
+                    }
+                }
+            },
             IrStmt::Block(body) | IrStmt::Forever { body } => {
                 self.validate_stmts(body, formals, &format!("{path}.body"))?;
             }

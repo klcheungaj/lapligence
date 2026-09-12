@@ -893,6 +893,12 @@ pub enum IrSysFunc {
     ShortRealToBits(Box<IrExpr>),
     /// `$bitstoshortreal(bits)` reinterprets exactly 32 packed bits as a float.
     BitsToShortReal(Box<IrExpr>),
+    /// `$q_full(q_id)` reports whether an IEEE stochastic analysis queue is
+    /// at capacity. The status LHS receives the operation status code.
+    QFull {
+        q_id: Box<IrExpr>,
+        status: Box<IrLhs>,
+    },
 }
 
 /// A plusarg pattern or format string. String and integral expressions are
@@ -1735,6 +1741,9 @@ pub enum IrStmt {
     /// A system plusarg query used in statement position. The expression is
     /// retained so `$value$plusargs` still performs its destination write.
     PlusArg(IrExpr),
+    /// IEEE stochastic analysis queue system task. This facility is kept
+    /// separate from SystemVerilog queue containers and random streams.
+    Stochastic(Box<IrStochasticStmt>),
     /// `{ stmts }` — a begin block.
     Block(Vec<IrStmt>),
     /// `sv4_t name = sv4_x(w, s);` (no init) or `sv4_t name = <init>;`
@@ -2065,6 +2074,37 @@ pub enum IrStmt {
     Goto(String),
     /// Placeholder (source-level `;` or an empty construct).
     Nop,
+}
+
+/// IEEE 1364-2001 §17.6 / IEEE 1800-2009 §20.16 stochastic analysis queue
+/// operations. Queue identifiers and job/information values remain packed
+/// expressions; output arguments are ordinary integer LHS descriptors.
+#[derive(Clone, Debug, PartialEq)]
+pub enum IrStochasticStmt {
+    Initialize {
+        q_id: IrExpr,
+        q_type: IrExpr,
+        max_length: IrExpr,
+        status: IrLhs,
+    },
+    Add {
+        q_id: IrExpr,
+        job_id: IrExpr,
+        inform_id: IrExpr,
+        status: IrLhs,
+    },
+    Remove {
+        q_id: IrExpr,
+        job_id: IrLhs,
+        inform_id: IrLhs,
+        status: IrLhs,
+    },
+    Exam {
+        q_id: IrExpr,
+        stat_code: IrExpr,
+        stat_value: IrLhs,
+        status: IrLhs,
+    },
 }
 
 /// Owned selection metadata for one `$dumpvars` call.

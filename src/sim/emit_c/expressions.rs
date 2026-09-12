@@ -959,6 +959,16 @@ pub(super) fn render_expr_impl(ctx: &RCtx<'_>, e: &IrExpr) -> Result<RenderedExp
                     fill: None,
                 }
             }
+            IrSysFunc::QFull { q_id, status } => {
+                let q_id = w(q_id)?;
+                let status = render_lhs_address(ctx, status)?;
+                RenderedExpr {
+                    code: format!("llg_q_full({}, {})", q_id.code, status),
+                    width: 32,
+                    signed: true,
+                    fill: None,
+                }
+            }
             IrSysFunc::Bits(a) => {
                 let ra = w(a)?;
                 RenderedExpr {
@@ -1078,6 +1088,29 @@ fn render_value_plusargs(
         signed: result_signed,
         fill: None,
     })
+}
+
+/// Render the direct packed storage address accepted by the stochastic queue
+/// runtime outputs. Lowering currently restricts these LHS values to whole
+/// signals or whole packed subroutine storage, so selected aliases cannot be
+/// mistaken for pointer-compatible runtime arguments.
+pub(super) fn render_lhs_address(ctx: &RCtx<'_>, lhs: &IrLhs) -> Result<String, String> {
+    match lhs {
+        IrLhs::Whole(index) => {
+            let signal = ctx.model.signal(*index);
+            if signal.net_driver.is_some() || !matches!(signal.ty, IrType::Packed { .. }) {
+                return Err(
+                    "stochastic queue output reached emission with a non-net packed target".into(),
+                );
+            }
+            Ok(format!("&{}", signal.c_name))
+        }
+        IrLhs::WholeRef { addr, width, .. } if *width != 0 => Ok(addr.clone()),
+        IrLhs::WholeRef { .. } => {
+            Err("stochastic queue output reached emission with a real target".into())
+        }
+        _ => Err("stochastic queue output requires whole packed storage".into()),
+    }
 }
 
 /// Comparison/equality over two operands: real operands compare through their

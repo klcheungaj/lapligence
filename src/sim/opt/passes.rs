@@ -31,8 +31,8 @@ use crate::core::elab::{self, Bit, Value};
 use crate::sim::execution::{ExecutionModel, ExecutionProcess, TriggerPlan};
 use crate::sim::ir::{
     IrBinOp, IrCallArg, IrCaseKind, IrConst, IrDependency, IrElemSel, IrExpr, IrExprKind, IrFormal,
-    IrInsideItem, IrLhs, IrModel, IrPreFn, IrRealBinOp, IrRealUnOp, IrStmt, IrSysFunc, IrUnOp,
-    IrWaitSrc,
+    IrInsideItem, IrLhs, IrModel, IrPreFn, IrRealBinOp, IrRealUnOp, IrStmt, IrStochasticStmt,
+    IrSysFunc, IrUnOp, IrWaitSrc,
 };
 
 /// Run the enabled passes over `model` in a fixed order.
@@ -445,6 +445,10 @@ fn walk_expr_mut(e: &mut IrExpr, f: &mut impl FnMut(&mut IrExpr)) {
                     walk_expr_mut(arg, f);
                 }
             }
+            IrSysFunc::QFull { q_id, status } => {
+                walk_expr_mut(q_id, f);
+                walk_lhs_mut(status, f);
+            }
             IrSysFunc::Time { .. } | IrSysFunc::Realtime { .. } => {}
         },
         _ => {}
@@ -484,6 +488,52 @@ fn walk_stmt_mut(s: &mut IrStmt, f: &mut impl FnMut(&mut IrExpr)) {
             walk_lhs_mut(lhs, f);
             walk_expr_mut(rhs, f);
         }
+        IrStmt::Stochastic(operation) => match operation.as_mut() {
+            IrStochasticStmt::Initialize {
+                q_id,
+                q_type,
+                max_length,
+                status,
+            } => {
+                walk_expr_mut(q_id, f);
+                walk_expr_mut(q_type, f);
+                walk_expr_mut(max_length, f);
+                walk_lhs_mut(status, f);
+            }
+            IrStochasticStmt::Add {
+                q_id,
+                job_id,
+                inform_id,
+                status,
+            } => {
+                walk_expr_mut(q_id, f);
+                walk_expr_mut(job_id, f);
+                walk_expr_mut(inform_id, f);
+                walk_lhs_mut(status, f);
+            }
+            IrStochasticStmt::Remove {
+                q_id,
+                job_id,
+                inform_id,
+                status,
+            } => {
+                walk_expr_mut(q_id, f);
+                walk_lhs_mut(job_id, f);
+                walk_lhs_mut(inform_id, f);
+                walk_lhs_mut(status, f);
+            }
+            IrStochasticStmt::Exam {
+                q_id,
+                stat_code,
+                stat_value,
+                status,
+            } => {
+                walk_expr_mut(q_id, f);
+                walk_expr_mut(stat_code, f);
+                walk_lhs_mut(stat_value, f);
+                walk_lhs_mut(status, f);
+            }
+        },
         IrStmt::NonblockingEventAssignWhen {
             lhs,
             rhs,
@@ -1064,6 +1114,10 @@ fn ident_children(e: &mut IrExpr) {
                 for arg in args {
                     ident_expr(arg);
                 }
+            }
+            IrSysFunc::QFull { q_id, status } => {
+                ident_expr(q_id);
+                ident_lhs(status);
             }
             IrSysFunc::Time { .. } | IrSysFunc::Realtime { .. } => {}
         },
@@ -1774,6 +1828,52 @@ fn collect_stmt_rw(s: &IrStmt, model: &IrModel, rw: &mut Rw) {
             collect_lhs_rw(lhs, model, rw);
             collect_expr_reads(rhs, model, rw);
         }
+        IrStmt::Stochastic(operation) => match operation.as_ref() {
+            IrStochasticStmt::Initialize {
+                q_id,
+                q_type,
+                max_length,
+                status,
+            } => {
+                collect_expr_reads(q_id, model, rw);
+                collect_expr_reads(q_type, model, rw);
+                collect_expr_reads(max_length, model, rw);
+                collect_lhs_rw(status, model, rw);
+            }
+            IrStochasticStmt::Add {
+                q_id,
+                job_id,
+                inform_id,
+                status,
+            } => {
+                collect_expr_reads(q_id, model, rw);
+                collect_expr_reads(job_id, model, rw);
+                collect_expr_reads(inform_id, model, rw);
+                collect_lhs_rw(status, model, rw);
+            }
+            IrStochasticStmt::Remove {
+                q_id,
+                job_id,
+                inform_id,
+                status,
+            } => {
+                collect_expr_reads(q_id, model, rw);
+                collect_lhs_rw(job_id, model, rw);
+                collect_lhs_rw(inform_id, model, rw);
+                collect_lhs_rw(status, model, rw);
+            }
+            IrStochasticStmt::Exam {
+                q_id,
+                stat_code,
+                stat_value,
+                status,
+            } => {
+                collect_expr_reads(q_id, model, rw);
+                collect_expr_reads(stat_code, model, rw);
+                collect_lhs_rw(stat_value, model, rw);
+                collect_lhs_rw(status, model, rw);
+            }
+        },
         IrStmt::NonblockingEventAssignWhen {
             lhs,
             rhs,
@@ -2165,6 +2265,10 @@ fn collect_children_reads(e: &IrExpr, model: &IrModel, rw: &mut Rw) {
                 for arg in args {
                     collect_expr_reads(arg, model, rw);
                 }
+            }
+            IrSysFunc::QFull { q_id, status } => {
+                collect_expr_reads(q_id, model, rw);
+                collect_lhs_rw(status, model, rw);
             }
             IrSysFunc::Time { .. } | IrSysFunc::Realtime { .. } => {}
         },
