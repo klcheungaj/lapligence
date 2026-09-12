@@ -515,6 +515,11 @@ pub enum IrExprKind {
     /// is the old target value for post forms or the committed target value
     /// otherwise.
     Mutation(Box<IrMutationExpr>),
+    /// SystemVerilog `$cast` with an assignment target and an optional set of
+    /// legal values (used for enum destinations).  The expression returns a
+    /// one-bit status and commits the converted value only when the dynamic
+    /// validation succeeds.
+    DynamicCast(Box<IrDynamicCast>),
     Bin {
         op: IrBinOp,
         a: Box<IrExpr>,
@@ -607,6 +612,15 @@ pub enum IrExprKind {
     Convert {
         a: Box<IrExpr>,
     },
+    /// Fixed-size bit-stream conversion.  The source has already been
+    /// flattened in declaration/stream order; unlike `Convert`, no source
+    /// signedness extension is permitted and the source width must match the
+    /// target width recorded by the lowering boundary.
+    BitStreamCast {
+        a: Box<IrExpr>,
+        source_width: u32,
+        target_two_state: bool,
+    },
     /// Coerce every X/Z bit to zero without changing width or signedness.
     ToTwoState {
         a: Box<IrExpr>,
@@ -654,6 +668,20 @@ pub struct IrMutationExpr {
     pub(in crate::sim) current_signed: bool,
     pub(in crate::sim) reads_current: bool,
     pub(in crate::sim) post: bool,
+}
+
+/// Runtime-checked `$cast` operation.  `target_width == 0` denotes a real
+/// destination; otherwise the target is a packed four-state/two-state value.
+/// An empty `valid_values` list means the target has no enum membership check.
+#[derive(Clone, Debug, PartialEq)]
+pub struct IrDynamicCast {
+    pub(in crate::sim) lhs: IrLhs,
+    pub(in crate::sim) rhs: IrExpr,
+    pub(in crate::sim) target_width: u32,
+    pub(in crate::sim) target_signed: bool,
+    pub(in crate::sim) target_two_state: bool,
+    pub(in crate::sim) target_shortreal: bool,
+    pub(in crate::sim) valid_values: Vec<IrExpr>,
 }
 
 impl IrExpr {

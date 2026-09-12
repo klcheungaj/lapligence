@@ -459,6 +459,29 @@ datatype_case!(
     "query_functions"
 );
 datatype_case!(runtime_enum_methods, "enum_methods.sv", "enum_methods");
+#[test]
+fn dynamic_cast_probe() {
+    run_fixture_output(
+        "cast_probe.sv",
+        "status=1 dest=b\ntask dest=3\nenum_status=0 state=01\nPASS cast_probe\n",
+    );
+}
+
+#[test]
+fn bitstream_probe() {
+    run_fixture_output(
+        "bitstream_probe.sv",
+        "lanes=ab unpacked=ef\nfrom_word=cd\nPASS bitstream_probe\n",
+    );
+}
+
+#[test]
+fn bitstream_containers_probe() {
+    run_fixture(
+        "bitstream_containers_probe.sv",
+        "bitstream_containers_probe",
+    );
+}
 
 #[test]
 fn queue_slice_real_bound_is_rejected() {

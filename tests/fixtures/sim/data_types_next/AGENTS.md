@@ -36,6 +36,9 @@ Inventory:
 - `string.sv`, `string_conversions.sv`, `dynamic_string_formatting.sv`, and
   `chandle.sv`: values, conversions, casts/copy/display, and foreign handles;
   string formals remain unsupported.
+- `cast_probe.sv`, `bitstream_probe.sv`, and `bitstream_containers_probe.sv`:
+  dynamic cast status/failure, enum validation, static enum coercion, and
+  bounded aggregate/array/container bit-stream order and two-state conversion.
 - `string_return_packed_input.sv`: early automatic string returns with packed
   inputs and implicit function-name string copying.
 

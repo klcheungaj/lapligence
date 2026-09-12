@@ -487,6 +487,15 @@ impl<'a> Codegen<'a> {
                 ));
             }
         }
+        let nested_runtime_dimension = dimensions
+            .iter()
+            .skip(1)
+            .any(|dimension| dimension.left.is_none() || dimension.right.is_none());
+        if nested_runtime_dimension && dimension_node.is_some() && known_dimension != Some(1) {
+            return Err(format!(
+                "{name} cannot select a nested runtime dimension in `{path}`"
+            ));
+        }
         let selected = known_dimension
             .and_then(|index| usize::try_from(index - 1).ok())
             .and_then(|index| dimensions.get(index).copied());
@@ -980,8 +989,8 @@ impl<'a> Codegen<'a> {
                         "cast kind cannot be determined without admitted source or semantic type metadata in `{scope_path}`"
                     ));
                 }
-                let v = self.lower_expr(scope_path, *operand)?;
                 if matches!(ty.kind.as_str(), "real" | "shortreal") {
+                    let v = self.lower_expr(scope_path, *operand)?;
                     return Ok(IrExpr::new(
                         IrExprKind::CastToReal {
                             a: Box::new(v),
@@ -992,12 +1001,17 @@ impl<'a> Codegen<'a> {
                         None,
                     ));
                 }
+                let bitstream_source = self.lower_bitstream_source(scope_path, *operand)?;
+                let source_value = match &bitstream_source {
+                    Some(value) => value.clone(),
+                    None => self.lower_expr(scope_path, *operand)?,
+                };
                 let target_width = size_cast_expr
                     .as_deref()
                     .and_then(|expression| self.source_size_cast_width(expression))
                     .or(ty.width);
                 let (w, s) = match (target_width, ty.signed) {
-                    (Some(w), s) => (w, if *size_cast { v.signed } else { s }),
+                    (Some(w), s) => (w, if *size_cast { source_value.signed } else { s }),
                     (None, _) => {
                         return Err(format!(
                             "cast with unsized target type `{}` in `{scope_path}`",
@@ -1005,6 +1019,7 @@ impl<'a> Codegen<'a> {
                         ))
                     }
                 };
+                let v = source_value;
                 if w > LLG_MAX_WIDTH {
                     return Err(format!(
                         "cast target in `{scope_path}` is {w} bits wide; the v1 \
@@ -1019,6 +1034,24 @@ impl<'a> Codegen<'a> {
                 } else {
                     v
                 };
+                if let Some(source) = bitstream_source {
+                    if source.width != w {
+                        return Err(format!(
+                            "bit-stream cast source is {} bits but target is {} bits in `{scope_path}`",
+                            source.width, w
+                        ));
+                    }
+                    return Ok(IrExpr::new(
+                        IrExprKind::BitStreamCast {
+                            a: Box::new(source),
+                            source_width: w,
+                            target_two_state: *two_state || is_two_state_kind(&ty.kind),
+                        },
+                        w,
+                        s,
+                        None,
+                    ));
+                }
                 // Value-preserving conversion (LRM 1800-2009 §6.24.1: the
                 // cast yields the value a variable of the cast type holds
                 // after the assignment — extension follows the SOURCE's
@@ -2168,6 +2201,283 @@ impl<'a> Codegen<'a> {
         self.lower_packed_index(scope_path, base, index)
     }
 
+    fn dynamic_cast_lhs_shape(&self, lhs: &IrLhs) -> Result<(u32, bool, bool, bool), String> {
+        Ok(match lhs {
+            IrLhs::Whole(index) => match self.model.signal(*index).ty {
+                IrType::Real { shortreal } => (0, true, false, shortreal),
+                IrType::Packed {
+                    width,
+                    signed,
+                    two_state,
+                } => (width, signed, two_state, false),
+            },
+            IrLhs::WholeRef {
+                width,
+                signed,
+                two_state,
+                shortreal,
+                ..
+            } => (*width, *signed, *two_state, *shortreal),
+            IrLhs::Ref {
+                width,
+                signed,
+                two_state,
+                ..
+            } => (*width, *signed, *two_state, false),
+            IrLhs::Bit(_, _, two_state) => (1, false, *two_state, false),
+            IrLhs::Part(_, left, right, two_state) => {
+                (left.abs_diff(*right) as u32 + 1, false, *two_state, false)
+            }
+            IrLhs::IdxPart(_, _, _, width, _, two_state) => (*width, false, *two_state, false),
+            IrLhs::ArrayElem { arr, elem_sel, .. } => {
+                let array = self.model.array(*arr);
+                match elem_sel {
+                    IrElemSel::Whole if array.real => (0, true, false, array.shortreal),
+                    IrElemSel::Whole => (array.elem_width, array.signed, array.two_state, false),
+                    IrElemSel::Part(left, right) => (
+                        left.abs_diff(*right) as u32 + 1,
+                        false,
+                        array.two_state,
+                        false,
+                    ),
+                    IrElemSel::Bit(_) => (1, false, array.two_state, false),
+                    IrElemSel::Indexed { width, .. } => (*width, false, array.two_state, false),
+                }
+            }
+            IrLhs::Stream { .. } => {
+                return Err("$cast destination cannot be a streaming assignment target".to_owned())
+            }
+        })
+    }
+
+    /// Flatten one fixed-size unpacked value in the declaration order required
+    /// by a bit-stream cast. Dynamic containers, strings, real leaves, and
+    /// unions remain outside this fixed-size lowering boundary.
+    pub(super) fn lower_bitstream_source(
+        &mut self,
+        path: &str,
+        node: NodeId,
+    ) -> Result<Option<IrExpr>, String> {
+        if let Some(array) = self.array_of(node).cloned() {
+            if array.dims.is_empty() {
+                return Err(format!(
+                    "fixed array bit-stream source has no dimensions in `{path}`"
+                ));
+            }
+            if array.real {
+                return Err(format!(
+                    "real array bit-stream source is not supported in `{path}`"
+                ));
+            }
+            let mut parts = Vec::new();
+            for indices in inside_array_index_vectors(&array.dims) {
+                parts.push(IrExpr::new(
+                    IrExprKind::ArrayRead {
+                        arr: self.reference_array(array.ir),
+                        indices: indices
+                            .into_iter()
+                            .map(|index| lhs_integer_expr(i128::from(index)))
+                            .collect(),
+                        elem_sel: IrElemSel::Whole,
+                    },
+                    array.elem_width,
+                    array.signed,
+                    None,
+                ));
+            }
+            return Self::join_bitstream_parts(path, parts).map(Some);
+        }
+        if let Some((_, aggregate)) = self.unpacked_aggregate_info(node) {
+            if aggregate.kind == AggregateKind::UnpackedUnion {
+                return Err(format!(
+                    "unpacked union bit-stream source is not supported in `{path}`"
+                ));
+            }
+            let mut parts = Vec::with_capacity(aggregate.leaves.len());
+            for leaf in aggregate.leaves {
+                if leaf.object.is_some() {
+                    return Err(format!(
+                        "string/chandle aggregate bit-stream source is not supported in `{path}`"
+                    ));
+                }
+                let value = self.aggregate_leaf_read(&leaf)?;
+                if value.is_real() {
+                    return Err(format!(
+                        "real aggregate bit-stream source is not supported in `{path}`"
+                    ));
+                }
+                parts.push(value);
+            }
+            return Self::join_bitstream_parts(path, parts).map(Some);
+        }
+        Ok(None)
+    }
+
+    fn join_bitstream_parts(path: &str, parts: Vec<IrExpr>) -> Result<IrExpr, String> {
+        if parts.is_empty() {
+            return Err(format!(
+                "bit-stream source has no packed leaves in `{path}`"
+            ));
+        }
+        if let [part] = parts.as_slice() {
+            return Ok(part.clone());
+        }
+        let width = parts
+            .iter()
+            .try_fold(0u32, |total, part| {
+                total
+                    .checked_add(part.width)
+                    .filter(|width| *width <= LLG_MAX_WIDTH)
+            })
+            .ok_or_else(|| {
+                format!(
+                    "bit-stream source in `{path}` exceeds the runtime maximum width of {LLG_MAX_WIDTH} bits"
+                )
+            })?;
+        Ok(IrExpr::new(
+            IrExprKind::Concat { parts },
+            width,
+            false,
+            None,
+        ))
+    }
+
+    /// Lower the two-argument `$cast` system subroutine.  The destination is
+    /// retained as an IR LHS so the emitter can evaluate selectors once and
+    /// leave it unchanged when enum membership validation fails.
+    pub(super) fn lower_dynamic_cast(
+        &mut self,
+        path: &str,
+        args: &[NodeId],
+    ) -> Result<IrExpr, String> {
+        let [destination, source] = args else {
+            return Err(format!("$cast requires exactly two arguments in `{path}`"));
+        };
+        // Slang represents the output argument of a system task as the
+        // assignment expression that binds its hidden output temporary.  The
+        // first operand is the user's actual lvalue; the second is an owned
+        // placeholder and must not be lowered as a destination.
+        let destination = match self.kind(*destination) {
+            NodeKind::Expr(ExprKind::Operation {
+                op: Operation::Assignment,
+                operands,
+                ..
+            }) if operands.len() == 2
+                && matches!(self.kind(operands[1]), NodeKind::Expr(ExprKind::Other)) =>
+            {
+                operands[0]
+            }
+            _ => *destination,
+        };
+        let lhs = self.lower_lhs(path, destination)?;
+        let (target_width, target_signed, target_two_state, target_shortreal) =
+            self.dynamic_cast_lhs_shape(&lhs)?;
+        let target_descriptor = self.query_descriptor(destination).cloned();
+        if let Some(descriptor) = &target_descriptor {
+            match &descriptor.shape {
+                TypeShape::PackedAtom { .. } | TypeShape::Real { .. } => {}
+                TypeShape::Aggregate(layout)
+                    if matches!(
+                        layout.kind,
+                        AggregateKind::PackedStruct | AggregateKind::PackedUnion
+                    ) => {}
+                TypeShape::Aggregate(_) => {
+                    return Err(format!(
+                        "$cast destination must be a singular value in `{path}`"
+                    ));
+                }
+                TypeShape::FixedArray { .. }
+                | TypeShape::Container { .. }
+                | TypeShape::String
+                | TypeShape::Opaque { .. } => {
+                    return Err(format!(
+                        "$cast destination type is not supported in `{path}`"
+                    ));
+                }
+            }
+        }
+        let source_descriptor = self.query_descriptor(*source).cloned();
+        if let Some(descriptor) = &source_descriptor {
+            let unsupported = matches!(
+                descriptor.shape,
+                TypeShape::FixedArray { .. }
+                    | TypeShape::Container { .. }
+                    | TypeShape::String
+                    | TypeShape::Opaque { .. }
+            ) || matches!(
+                &descriptor.shape,
+                TypeShape::Aggregate(layout)
+                    if !matches!(
+                        layout.kind,
+                        AggregateKind::PackedStruct | AggregateKind::PackedUnion
+                    )
+            );
+            if unsupported {
+                return Err(format!("$cast source must be a singular value in `{path}`"));
+            }
+        }
+        let rhs = self.lower_expr(path, *source)?;
+
+        let mut valid_values = Vec::new();
+        let target_is_enum = target_descriptor
+            .as_ref()
+            .is_some_and(|descriptor| descriptor.info.kind == "enum");
+        if target_is_enum {
+            if rhs.is_real() {
+                return Err(format!("$cast enum source must be integral in `{path}`"));
+            }
+            let target_id = target_descriptor.as_ref().map(|descriptor| descriptor.id);
+            let enum_nodes = self
+                .db
+                .node_ids()
+                .filter(|node| {
+                    matches!(
+                        self.kind(*node),
+                        NodeKind::EnumConst {
+                            value: Some(Val::Bits(_))
+                        }
+                    ) && target_id.is_some_and(|id| {
+                        self.query_descriptor(*node)
+                            .is_some_and(|descriptor| descriptor.id == id)
+                    })
+                })
+                .collect::<Vec<_>>();
+            if enum_nodes.is_empty() {
+                return Err(format!(
+                    "$cast enum destination has no captured members in `{path}`"
+                ));
+            }
+            for node in enum_nodes {
+                let value = self.lower_expr(path, node)?;
+                if value.is_real() {
+                    return Err(format!(
+                        "$cast enum member is not an integral value in `{path}`"
+                    ));
+                }
+                valid_values.push(ir_to_storage(
+                    value,
+                    target_width,
+                    target_signed,
+                    target_two_state,
+                )?);
+            }
+        }
+        Ok(IrExpr::new(
+            IrExprKind::DynamicCast(Box::new(crate::sim::ir::IrDynamicCast {
+                lhs,
+                rhs,
+                target_width,
+                target_signed,
+                target_two_state,
+                target_shortreal,
+                valid_values,
+            })),
+            1,
+            false,
+            None,
+        ))
+    }
+
     /// Lower system-function expressions ($clog2/$time/$stime/$bits/$signed/
     /// $unsigned); timescale scaling happens here.
     fn lower_sys_func_expr(
@@ -2252,6 +2562,7 @@ impl<'a> Codegen<'a> {
             ));
         }
         match name {
+            "$cast" => self.lower_dynamic_cast(scope_path, &args),
             "$dimensions" | "$unpacked_dimensions" => {
                 let [arg] = args.as_slice() else {
                     return Err(format!(
@@ -2702,6 +3013,110 @@ impl<'a> Codegen<'a> {
         let (lhs_target, lhs_aggregate) = lhs_aggregate.ok_or_else(|| {
             format!("unpacked aggregate used as a scalar assignment RHS in `{path}`")
         })?;
+        let bitstream_cast_operand = match self.kind(rhs) {
+            NodeKind::Expr(ExprKind::Cast { operand, .. }) => Some(*operand),
+            _ => None,
+        };
+        let bitstream_cast_target = bitstream_cast_operand.is_some()
+            && self.query_descriptor(rhs).is_some_and(|descriptor| {
+                matches!(
+                    descriptor.shape,
+                    TypeShape::Aggregate(ref layout)
+                        if matches!(
+                            layout.kind,
+                            AggregateKind::UnpackedStruct | AggregateKind::UnpackedUnion
+                        )
+                )
+            });
+        if bitstream_cast_target {
+            if op != Operation::Assignment {
+                return Err(format!(
+                    "compound assignment of unpacked aggregate bit-stream cast in `{path}` is not supported"
+                ));
+            }
+            if lhs_aggregate.kind == AggregateKind::UnpackedUnion {
+                return Err(format!(
+                    "unpacked union bit-stream destination is not supported in `{path}`"
+                ));
+            }
+            let operand = bitstream_cast_operand.expect("bit-stream cast has an operand");
+            let source = match self.lower_bitstream_source(path, operand)? {
+                Some(value) => value,
+                None => self.lower_expr(path, operand)?,
+            };
+            if source.is_real() {
+                return Err(format!(
+                    "real bit-stream source cannot initialize an unpacked aggregate in `{path}`"
+                ));
+            }
+            let total_width = lhs_aggregate
+                .leaves
+                .iter()
+                .try_fold(0u32, |width, leaf| {
+                    leaf.object
+                        .is_none()
+                        .then_some(())
+                        .and_then(|_| width.checked_add(leaf.member.ty.width?))
+                })
+                .ok_or_else(|| {
+                    format!("unpacked aggregate bit-stream width is unresolved in `{path}`")
+                })?;
+            if source.width != total_width {
+                return Err(format!(
+                    "bit-stream cast source is {} bits but unpacked aggregate destination requires {} in `{path}`",
+                    source.width, total_width
+                ));
+            }
+            let source_name = format!("_bitstream_agg_{}_{}", lhs_target.0, rhs.0);
+            let source_width = source.width;
+            let source_signed = source.signed;
+            let captured = IrExpr::new(
+                IrExprKind::LocalRead(source_name.clone()),
+                source_width,
+                source_signed,
+                None,
+            );
+            // Keep one explicit capture so a source with side effects is
+            // evaluated exactly once before any member write.
+            let mut captures = vec![IrStmt::DeclLocal {
+                name: source_name.clone(),
+                width: source_width,
+                signed: source_signed,
+                init: Some(Box::new(source)),
+                two_state: false,
+            }];
+            let mut offsets = Vec::with_capacity(lhs_aggregate.leaves.len());
+            let mut right = 0u32;
+            for leaf in lhs_aggregate.leaves.iter().rev() {
+                let width = leaf.member.ty.width.ok_or_else(|| {
+                    format!(
+                        "unpacked member `{}` has unresolved width",
+                        leaf.member.name
+                    )
+                })?;
+                offsets.push((leaf, right, width));
+                right = right.checked_add(width).ok_or_else(|| {
+                    format!("unpacked aggregate bit-stream offset overflows in `{path}`")
+                })?;
+            }
+            offsets.reverse();
+            for (leaf, right, width) in offsets {
+                let value = IrExpr::new(
+                    IrExprKind::PartSel {
+                        base: Box::new(captured.clone()),
+                        left: i64::from(right + width - 1),
+                        right: i64::from(right),
+                    },
+                    width,
+                    false,
+                    None,
+                );
+                let lhs = self.aggregate_leaf_lhs(leaf)?;
+                let rhs = apply_lhs_assignment_context(&self.model, &lhs, value);
+                captures.push(IrStmt::Assign { lhs, rhs, nba });
+            }
+            return Ok(Some(IrStmt::Block(captures)));
+        }
         if rhs_is_pattern {
             if op != Operation::Assignment {
                 return Err(format!(

@@ -871,6 +871,53 @@ impl Validator<'_> {
                     self.validate_width(mutation.current_width, &format!("{path}.current_width"))?;
                 }
             }
+            IrExprKind::DynamicCast(cast) => {
+                if expr.width != 1 || expr.signed || expr.fill.is_some() {
+                    return self.fail(path, "$cast status must be a 1-bit unsigned value");
+                }
+                self.validate_lhs(&cast.lhs, formals, &format!("{path}.lhs"))?;
+                let lhs_width = self.lhs_packed_width(&cast.lhs);
+                if cast.target_width == 0 {
+                    if lhs_width.is_some() {
+                        return self.fail(path, "$cast real target metadata disagrees with LHS");
+                    }
+                } else {
+                    self.validate_width(cast.target_width, &format!("{path}.target_width"))?;
+                    if lhs_width != Some(cast.target_width) {
+                        return self.fail(path, "$cast target width disagrees with LHS");
+                    }
+                }
+                self.validate_expr(&cast.rhs, formals, &format!("{path}.rhs"))?;
+                for (idx, value) in cast.valid_values.iter().enumerate() {
+                    if cast.target_width == 0
+                        || value.width != cast.target_width
+                        || value.signed != cast.target_signed
+                    {
+                        return self.fail(
+                            format!("{path}.valid_values[{idx}]"),
+                            "$cast enum member shape disagrees with target",
+                        );
+                    }
+                    self.validate_expr(value, formals, &format!("{path}.valid_values[{idx}]"))?;
+                }
+            }
+            IrExprKind::BitStreamCast {
+                a,
+                source_width,
+                target_two_state: _,
+            } => {
+                if expr.width == 0 || *source_width == 0 || *source_width != expr.width {
+                    return self.fail(
+                        path,
+                        "fixed bit-stream cast requires equal nonzero source and target widths",
+                    );
+                }
+                self.validate_width(*source_width, &format!("{path}.source_width"))?;
+                self.validate_expr(a, formals, &format!("{path}.a"))?;
+                if a.width != *source_width || a.is_real() {
+                    return self.fail(path, "bit-stream source width disagrees with metadata");
+                }
+            }
             IrExprKind::Bin { a, b, .. } | IrExprKind::RealBin { a, b, .. } => {
                 self.validate_expr(a, formals, &format!("{path}.a"))?;
                 self.validate_expr(b, formals, &format!("{path}.b"))?;

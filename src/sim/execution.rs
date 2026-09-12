@@ -794,6 +794,14 @@ fn collect_expression_effects(
             collect_lhs_expression_effects(ir, &mutation.lhs, effects, visited_calls);
             collect_expression_effects(ir, &mutation.value, effects, visited_calls);
         }
+        IrExprKind::DynamicCast(cast) => {
+            effects.push(ExecutionEffect::ImmediateStore);
+            collect_lhs_expression_effects(ir, &cast.lhs, effects, visited_calls);
+            collect_expression_effects(ir, &cast.rhs, effects, visited_calls);
+            for value in &cast.valid_values {
+                collect_expression_effects(ir, value, effects, visited_calls);
+            }
+        }
         IrExprKind::CallFn(call) => {
             effects.push(ExecutionEffect::RuntimeService);
             if call.args().iter().any(|arg| {
@@ -891,6 +899,7 @@ fn collect_expression_effects(
         | IrExprKind::CastToPacked { a }
         | IrExprKind::Resize { a }
         | IrExprKind::Convert { a }
+        | IrExprKind::BitStreamCast { a, .. }
         | IrExprKind::ToTwoState { a }
         | IrExprKind::PartSel { base: a, .. }
         | IrExprKind::Stream { value: a, .. } => {

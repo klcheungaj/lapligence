@@ -3411,6 +3411,16 @@ impl EmitCtx<'_, '_> {
             }
         }
         match name {
+            "$cast" => {
+                let status = self.cg.lower_dynamic_cast(&self.path, &args)?;
+                Ok(vec![IrStmt::DeclLocal {
+                    name: format!("_llg_cast_status_{}", h.0),
+                    width: 1,
+                    signed: false,
+                    init: Some(Box::new(status)),
+                    two_state: false,
+                }])
+            }
             "$monitoron" => Ok(vec![IrStmt::MonitorEnable(true)]),
             "$monitoroff" => Ok(vec![IrStmt::MonitorEnable(false)]),
             "$dumpfile" => {

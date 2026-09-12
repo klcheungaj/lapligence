@@ -2196,6 +2196,86 @@ impl<'a> Codegen<'a> {
         captures: &mut Vec<IrStmt>,
         captured_indices: &mut HashMap<NodeId, (String, u32, bool)>,
     ) -> Result<Vec<IrExpr>, String> {
+        if let NodeKind::Expr(ExprKind::Cast { operand, .. }) = self.kind(rhs) {
+            let target_is_fixed = self
+                .query_descriptor(rhs)
+                .is_some_and(|descriptor| matches!(descriptor.shape, TypeShape::FixedArray { .. }));
+            if target_is_fixed {
+                let target_array = self
+                    .p30_array_prefix_base(lhs)
+                    .map(|(array, _)| array.clone())
+                    .ok_or_else(|| {
+                        format!("fixed bit-stream destination has no array storage in `{path}`")
+                    })?;
+                if target_array.real {
+                    return Err(format!(
+                        "real fixed-array bit-stream destination is not supported in `{path}`"
+                    ));
+                }
+                let source = match self.lower_bitstream_source(path, *operand)? {
+                    Some(value) => value,
+                    None => self.lower_expr(path, *operand)?,
+                };
+                if source.is_real() {
+                    return Err(format!(
+                        "real bit-stream source cannot initialize a packed array in `{path}`"
+                    ));
+                }
+                let count = target_dims
+                    .iter()
+                    .try_fold(1u64, |total, (left, right)| {
+                        total.checked_mul(
+                            (i64::from(*left) - i64::from(*right))
+                                .unsigned_abs()
+                                .checked_add(1)?,
+                        )
+                    })
+                    .ok_or_else(|| {
+                        format!("fixed bit-stream destination is too large in `{path}`")
+                    })?;
+                let expected = count
+                    .checked_mul(u64::from(target_array.elem_width))
+                    .and_then(|width| u32::try_from(width).ok())
+                    .ok_or_else(|| {
+                        format!("fixed bit-stream destination width overflows in `{path}`")
+                    })?;
+                if source.width != expected {
+                    return Err(format!(
+                        "bit-stream cast source is {} bits but fixed array destination requires {} in `{path}`",
+                        source.width, expected
+                    ));
+                }
+                let source = self.p30_capture_value(lhs, rhs, 0, source, captures);
+                let mut values = Vec::with_capacity(usize::try_from(count).unwrap_or(0));
+                let mut cursor = source.width;
+                for ordinal in 0..count {
+                    let width = target_array.elem_width;
+                    let right = cursor.checked_sub(width).ok_or_else(|| {
+                        format!("fixed bit-stream source cursor underflow in `{path}`")
+                    })?;
+                    let left = cursor - 1;
+                    let value = IrExpr::new(
+                        IrExprKind::PartSel {
+                            base: Box::new(source.clone()),
+                            left: i64::from(left),
+                            right: i64::from(right),
+                        },
+                        width,
+                        false,
+                        None,
+                    );
+                    values.push(self.p30_capture_value(
+                        lhs,
+                        rhs,
+                        usize::try_from(ordinal + 1).unwrap_or(usize::MAX),
+                        value,
+                        captures,
+                    ));
+                    cursor = right;
+                }
+                return Ok(values);
+            }
+        }
         let source_node = self.p30_unwrap_cast(rhs);
         let concat = match self.kind(source_node) {
             NodeKind::Expr(ExprKind::Operation {
@@ -2419,6 +2499,176 @@ impl<'a> Codegen<'a> {
         Ok(IrStmt::Block(captures))
     }
 
+    /// Lower a bit-stream cast from a packed-element dynamic array or queue
+    /// into a fixed unpacked array.  A bit-stream cast matches total width,
+    /// rather than requiring the source and destination element widths to be
+    /// identical.  The runtime size check is emitted before any destination
+    /// write, preserving the destination on a mismatch.
+    #[allow(clippy::too_many_arguments)]
+    fn lower_p30_bitstream_container_cast(
+        &mut self,
+        path: &str,
+        lhs: NodeId,
+        rhs: NodeId,
+        blocking: bool,
+        target: P30ArrayView,
+        source: ContainerInfo,
+        mut captures: Vec<IrStmt>,
+    ) -> Result<IrStmt, String> {
+        let source_model = self
+            .model
+            .containers
+            .get(source.ir)
+            .cloned()
+            .ok_or_else(|| format!("bit-stream source container is out of bounds in `{path}`"))?;
+        if !matches!(
+            source_model.kind,
+            IrContainerKind::Dynamic | IrContainerKind::Queue { .. }
+        ) {
+            return Err(format!(
+                "associative arrays are not legal bit-stream sources in `{path}`"
+            ));
+        }
+        let (source_width, source_signed, _) = source_model.element.packed().ok_or_else(|| {
+            format!("bit-stream source container requires a packed element in `{path}`")
+        })?;
+        if source_width == 0 {
+            return Err(format!(
+                "bit-stream source container has an empty packed element in `{path}`"
+            ));
+        }
+        let target_array = target.array;
+        if target_array.real {
+            return Err(format!(
+                "real fixed-array bit-stream destination is not supported in `{path}`"
+            ));
+        }
+        let target_count = u64::try_from(target.coordinates.len())
+            .map_err(|_| format!("fixed bit-stream destination is too large in `{path}`"))?;
+        let target_width = target_count
+            .checked_mul(u64::from(target_array.elem_width))
+            .and_then(|width| u32::try_from(width).ok())
+            .ok_or_else(|| format!("fixed bit-stream destination width overflows in `{path}`"))?;
+        if target_width == 0 || target_width % source_width != 0 {
+            return Err(format!(
+                "fixed bit-stream destination width {target_width} is not divisible by source element width {source_width} in `{path}`"
+            ));
+        }
+        let source_count = usize::try_from(target_width / source_width)
+            .map_err(|_| format!("bit-stream source element count overflows in `{path}`"))?;
+        let size = IrExpr::new(
+            IrExprKind::Container(Box::new(IrContainerExpr::Size(source.ir))),
+            32,
+            true,
+            None,
+        );
+        let expected = pattern_key_expr(
+            i128::from(u64::try_from(source_count).unwrap_or(u64::MAX)),
+            32,
+            true,
+            false,
+        );
+        let condition = IrExpr::new(
+            IrExprKind::Bin {
+                op: IrBinOp::Eq,
+                a: Box::new(size),
+                b: Box::new(expected),
+            },
+            1,
+            false,
+            None,
+        );
+        let mut source_parts = Vec::with_capacity(source_count);
+        for ordinal in 0..source_count {
+            let index = pattern_key_expr(
+                i128::try_from(ordinal).unwrap_or(i128::MAX),
+                32,
+                true,
+                false,
+            );
+            source_parts.push(IrExpr::new(
+                IrExprKind::Container(Box::new(IrContainerExpr::Get {
+                    container: source.ir,
+                    index: Box::new(index),
+                })),
+                source_width,
+                source_signed,
+                None,
+            ));
+        }
+        let source_value = if let [value] = source_parts.as_slice() {
+            value.clone()
+        } else {
+            IrExpr::new(
+                IrExprKind::Concat {
+                    parts: source_parts,
+                },
+                target_width,
+                false,
+                None,
+            )
+        };
+        let source_value = self.p30_capture_value(lhs, rhs, 0, source_value, &mut captures);
+        let destination_two_state = self.model.arrays[target_array.ir].two_state;
+        let mut then_body = Vec::with_capacity(target.coordinates.len() * 2);
+        let mut cursor = target_width;
+        for (ordinal, coordinates) in target.coordinates.into_iter().enumerate() {
+            let right = cursor
+                .checked_sub(target_array.elem_width)
+                .ok_or_else(|| format!("fixed bit-stream source cursor underflow in `{path}`"))?;
+            let value = IrExpr::new(
+                IrExprKind::PartSel {
+                    base: Box::new(source_value.clone()),
+                    left: i64::from(cursor - 1),
+                    right: i64::from(right),
+                },
+                target_array.elem_width,
+                false,
+                None,
+            );
+            let value =
+                self.p30_capture_value(lhs, rhs, ordinal.saturating_add(1), value, &mut then_body);
+            then_body.push(IrStmt::Assign {
+                lhs: IrLhs::ArrayElem {
+                    arr: self.reference_array(target_array.ir),
+                    indices: coordinates,
+                    elem_sel: IrElemSel::Whole,
+                },
+                rhs: ir_to_storage(
+                    value,
+                    target_array.elem_width,
+                    target_array.signed,
+                    destination_two_state,
+                )?,
+                nba: !blocking,
+            });
+            cursor = right;
+        }
+        let mismatch = IrExpr::new(
+            IrExprKind::Verbatim {
+                code: "({ fprintf(stderr, \"fixed bit-stream cast size mismatch\\n\"); abort(); sv4_from_u64(0, 1, 0); })".to_owned(),
+                width: 1,
+                signed: false,
+            },
+            1,
+            false,
+            None,
+        );
+        captures.push(IrStmt::If {
+            cond: condition,
+            then_: then_body,
+            els: Some(vec![IrStmt::DeclLocal {
+                name: format!("_bitstream_size_error_{}_{}", lhs.0, rhs.0),
+                width: 1,
+                signed: false,
+                init: Some(Box::new(mismatch)),
+                two_state: false,
+            }]),
+            check: IrUniquePriorityCheck::None,
+        });
+        Ok(IrStmt::Block(captures))
+    }
+
     fn lower_p30_fixed_array_assignment(
         &mut self,
         path: &str,
@@ -2437,6 +2687,24 @@ impl<'a> Codegen<'a> {
             return Err(format!(
                 "compound assignment to a fixed unpacked array in `{path}` is not supported"
             ));
+        }
+        if let NodeKind::Expr(ExprKind::Cast { operand, .. }) = self.kind(rhs) {
+            let target_is_fixed = self
+                .query_descriptor(rhs)
+                .is_some_and(|descriptor| matches!(descriptor.shape, TypeShape::FixedArray { .. }));
+            if target_is_fixed {
+                if let Some(source) = self.container_of(*operand) {
+                    return Ok(Some(self.lower_p30_bitstream_container_cast(
+                        path,
+                        lhs,
+                        rhs,
+                        blocking,
+                        target.clone(),
+                        source,
+                        captures,
+                    )?));
+                }
+            }
         }
         if let Some(source) = self.p30_container_source(rhs) {
             return Ok(Some(self.lower_p30_container_to_fixed(
@@ -2509,6 +2777,131 @@ impl<'a> Codegen<'a> {
             });
         }
         Ok(Some(IrStmt::Block(captures)))
+    }
+
+    /// Lower a fixed-width bit-stream cast into a packed-element dynamic
+    /// array or queue.  The target size is derived from the source width, so
+    /// the existing value-assignment runtime can replace the destination in a
+    /// single operation and apply its declared two-state conversion.
+    fn lower_bitstream_cast_container_assignment(
+        &mut self,
+        path: &str,
+        lhs: NodeId,
+        rhs: NodeId,
+        dst: &ContainerInfo,
+    ) -> Result<Option<IrStmt>, String> {
+        let NodeKind::Expr(ExprKind::Cast { operand, .. }) = self.kind(rhs) else {
+            return Ok(None);
+        };
+        let Some(descriptor) = self.query_descriptor(rhs) else {
+            return Ok(None);
+        };
+        if !matches!(descriptor.shape, TypeShape::Container { .. }) {
+            return Ok(None);
+        }
+        let target = self.model.containers.get(dst.ir).cloned().ok_or_else(|| {
+            format!("bit-stream cast target container is out of bounds in `{path}`")
+        })?;
+        if !matches!(
+            target.kind,
+            IrContainerKind::Dynamic | IrContainerKind::Queue { .. }
+        ) {
+            return Err(format!(
+                "associative arrays are not legal bit-stream cast destinations in `{path}`"
+            ));
+        }
+        let (element_width, _, _) = target.element.packed().ok_or_else(|| {
+            format!("bit-stream cast destination requires a packed container element in `{path}`")
+        })?;
+        if element_width == 0 {
+            return Err(format!(
+                "bit-stream cast destination has an empty packed element in `{path}`"
+            ));
+        }
+        let source_descriptor = self.query_descriptor(*operand);
+        if source_descriptor.is_some_and(|descriptor| {
+            matches!(
+                descriptor.shape,
+                TypeShape::Container { .. } | TypeShape::String | TypeShape::Opaque { .. }
+            )
+        }) {
+            return Err(format!(
+                "dynamic-size, string, or opaque bit-stream source is not supported in `{path}`"
+            ));
+        }
+        let source = match self.lower_bitstream_source(path, *operand)? {
+            Some(value) => value,
+            None => self.lower_expr(path, *operand)?,
+        };
+        if source.is_real() {
+            return Err(format!(
+                "real bit-stream source cannot initialize a resizable container in `{path}`"
+            ));
+        }
+        let count = if source.width == 0 {
+            return Err(format!("bit-stream source has no packed width in `{path}`"));
+        } else {
+            let remainder = source.width % element_width;
+            if remainder != 0 {
+                return Err(format!(
+                    "bit-stream cast source is {} bits but container element width is {} in `{path}`",
+                    source.width, element_width
+                ));
+            }
+            usize::try_from(source.width / element_width).map_err(|_| {
+                format!("bit-stream cast container element count overflows in `{path}`")
+            })?
+        };
+        if let IrContainerKind::Queue {
+            maximum_elements: Some(limit),
+        } = target.kind
+        {
+            if u64::try_from(count).ok().is_none_or(|count| count > limit) {
+                return Err(format!(
+                    "bit-stream cast result has {count} elements but bounded queue capacity is {limit} in `{path}`"
+                ));
+            }
+        }
+        let source_name = format!("_bitstream_container_{}_{}", lhs.0, rhs.0);
+        let source_width = source.width;
+        let source_signed = source.signed;
+        let captured = IrExpr::new(
+            IrExprKind::LocalRead(source_name.clone()),
+            source_width,
+            source_signed,
+            None,
+        );
+        let mut statements = vec![IrStmt::DeclLocal {
+            name: source_name,
+            width: source_width,
+            signed: source_signed,
+            init: Some(Box::new(source)),
+            two_state: false,
+        }];
+        let mut values = Vec::with_capacity(count);
+        let mut cursor = source_width;
+        for _ in 0..count {
+            let right = cursor
+                .checked_sub(element_width)
+                .ok_or_else(|| format!("bit-stream cast source cursor underflow in `{path}`"))?;
+            let left = cursor - 1;
+            values.push(IrExpr::new(
+                IrExprKind::PartSel {
+                    base: Box::new(captured.clone()),
+                    left: i64::from(left),
+                    right: i64::from(right),
+                },
+                element_width,
+                false,
+                None,
+            ));
+            cursor = right;
+        }
+        statements.push(IrStmt::Container(IrContainerStmt::AssignValues {
+            container: dst.ir,
+            values,
+        }));
+        Ok(Some(IrStmt::Block(statements)))
     }
 
     pub(super) fn lower_container_assignment(
@@ -2773,6 +3166,11 @@ impl<'a> Codegen<'a> {
             return Err(format!(
                 "compound assignment to resizable container in `{path}` is not supported"
             ));
+        }
+        if let Some(statement) =
+            self.lower_bitstream_cast_container_assignment(path, lhs, rhs, &dst)?
+        {
+            return Ok(Some(statement));
         }
         let descriptor = self.query_descriptor(lhs).cloned();
         if let NodeKind::Expr(ExprKind::Operation { op: pattern_op, .. }) = self.kind(rhs) {

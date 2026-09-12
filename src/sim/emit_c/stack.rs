@@ -613,6 +613,7 @@ fn expr_slots(expr: &IrExpr) -> Result<u64, String> {
         | IrExprKind::CastToPacked { a }
         | IrExprKind::Resize { a }
         | IrExprKind::Convert { a }
+        | IrExprKind::BitStreamCast { a, .. }
         | IrExprKind::ToTwoState { a }
         | IrExprKind::RealUn { a, .. } => expr_slots(a)?,
         IrExprKind::Mutation(mutation) => checked_add(
@@ -620,6 +621,17 @@ fn expr_slots(expr: &IrExpr) -> Result<u64, String> {
             expr_slots(&mutation.value)?,
             "mutation expression slots",
         )?,
+        IrExprKind::DynamicCast(cast) => {
+            let mut slots = checked_add(
+                lhs_slots(&cast.lhs)?,
+                expr_slots(&cast.rhs)?,
+                "dynamic cast expression slots",
+            )?;
+            for value in &cast.valid_values {
+                slots = checked_add(slots, expr_slots(value)?, "dynamic cast enum value slots")?;
+            }
+            slots
+        }
         IrExprKind::Mux { sel, a, b } => checked_sum(
             [expr_slots(sel)?, expr_slots(a)?, expr_slots(b)?],
             "conditional expression slots",

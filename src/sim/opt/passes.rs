@@ -343,6 +343,7 @@ fn walk_expr_mut(e: &mut IrExpr, f: &mut impl FnMut(&mut IrExpr)) {
         | IrExprKind::CastToPacked { a }
         | IrExprKind::Resize { a }
         | IrExprKind::Convert { a }
+        | IrExprKind::BitStreamCast { a, .. }
         | IrExprKind::ToTwoState { a } => walk_expr_mut(a, f),
         IrExprKind::CastToReal { a, .. } => walk_expr_mut(a, f),
         IrExprKind::Mux { sel, a, b } => {
@@ -406,6 +407,13 @@ fn walk_expr_mut(e: &mut IrExpr, f: &mut impl FnMut(&mut IrExpr)) {
         IrExprKind::Mutation(mutation) => {
             walk_lhs_mut(&mut mutation.lhs, f);
             walk_expr_mut(&mut mutation.value, f);
+        }
+        IrExprKind::DynamicCast(cast) => {
+            walk_lhs_mut(&mut cast.lhs, f);
+            walk_expr_mut(&mut cast.rhs, f);
+            for value in &mut cast.valid_values {
+                walk_expr_mut(value, f);
+            }
         }
         IrExprKind::SysFunc(sf) => match sf {
             IrSysFunc::Clog2(a)
@@ -893,6 +901,14 @@ fn ident_children(e: &mut IrExpr) {
         IrExprKind::Mutation(mutation) => {
             walk_lhs_mut(&mut mutation.lhs, &mut |child| ident_expr(child));
             ident_expr(&mut mutation.value);
+        }
+        IrExprKind::BitStreamCast { a, .. } => ident_expr(a),
+        IrExprKind::DynamicCast(cast) => {
+            walk_lhs_mut(&mut cast.lhs, &mut |child| ident_expr(child));
+            ident_expr(&mut cast.rhs);
+            for value in &mut cast.valid_values {
+                ident_expr(value);
+            }
         }
         IrExprKind::Inside { value, items } => {
             ident_expr(value);
@@ -1996,6 +2012,7 @@ fn collect_children_reads(e: &IrExpr, model: &IrModel, rw: &mut Rw) {
         | IrExprKind::CastToPacked { a }
         | IrExprKind::Resize { a }
         | IrExprKind::Convert { a }
+        | IrExprKind::BitStreamCast { a, .. }
         | IrExprKind::ToTwoState { a }
         | IrExprKind::CastToReal { a, .. } => collect_expr_reads(a, model, rw),
         IrExprKind::Mux { sel, a, b } => {
@@ -2037,6 +2054,13 @@ fn collect_children_reads(e: &IrExpr, model: &IrModel, rw: &mut Rw) {
         IrExprKind::Mutation(mutation) => {
             collect_lhs_rw(&mutation.lhs, model, rw);
             collect_expr_reads(&mutation.value, model, rw);
+        }
+        IrExprKind::DynamicCast(cast) => {
+            collect_lhs_rw(&cast.lhs, model, rw);
+            collect_expr_reads(&cast.rhs, model, rw);
+            for value in &cast.valid_values {
+                collect_expr_reads(value, model, rw);
+            }
         }
         IrExprKind::PartSel { base, .. } => collect_expr_reads(base, model, rw),
         IrExprKind::IdxPartSel {
