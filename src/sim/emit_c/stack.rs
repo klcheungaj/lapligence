@@ -273,6 +273,21 @@ fn stmt_temp_slots(stmt: &IrStmt) -> Result<u64, String> {
         IrStmt::System(command) => command.as_ref().map_or(Ok(0), string_expr_slots),
         IrStmt::RandomSeed { seed } => expr_slots(seed),
         IrStmt::RandomStateSet { state } => string_expr_slots(state),
+        IrStmt::Memory {
+            path,
+            start,
+            finish,
+            ..
+        } => {
+            let mut slots = string_expr_slots(path)?;
+            if let Some(start) = start {
+                slots = checked_add(slots, expr_slots(start)?, "memory start slots")?;
+            }
+            if let Some(finish) = finish {
+                slots = checked_add(slots, expr_slots(finish)?, "memory finish slots")?;
+            }
+            Ok(slots)
+        }
         IrStmt::Container(operation) => {
             let mut slots = Ok(1);
             operation.expressions(&mut |child| {

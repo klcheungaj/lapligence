@@ -28,6 +28,10 @@
   File output uses an owned 32-slot descriptor table: stdout/stderr masks,
   ordinary host files, multichannel fan-out, typed deferred output, and
   seek/rewind/flush/error/EOF controls are kept separate from scheduler state.
+  Memory-file tasks parse four-state binary/hex words, comments and address
+  jumps into bounded fixed packed memories, and write the same consumable
+  format in declaration/range order; resizable, multidimensional and real
+  memories remain an explicit lowering boundary.
   `LLG_ZERO_LOOP_LIMIT` bounds scheduler passes (default 10,000,000), while
   `LLG_PROCESS_STEP_LIMIT` bounds generated loop back-edges inside a coroutine
   (`LLG_NONCONVERGENCE_LIMIT` is an accepted alias). Both accept positive

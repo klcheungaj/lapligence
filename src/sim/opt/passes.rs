@@ -503,6 +503,20 @@ fn walk_stmt_mut(s: &mut IrStmt, f: &mut impl FnMut(&mut IrExpr)) {
         IrStmt::System(Some(command)) => {
             command.expressions_mut(&mut |child| walk_expr_mut(child, f));
         }
+        IrStmt::Memory {
+            path,
+            start,
+            finish,
+            ..
+        } => {
+            path.expressions_mut(&mut |child| walk_expr_mut(child, f));
+            if let Some(start) = start {
+                walk_expr_mut(start, f);
+            }
+            if let Some(finish) = finish {
+                walk_expr_mut(finish, f);
+            }
+        }
         IrStmt::Container(operation) => {
             operation.expressions_mut(&mut |child| walk_expr_mut(child, f))
         }
@@ -1989,6 +2003,20 @@ fn collect_stmt_rw(s: &IrStmt, model: &IrModel, rw: &mut Rw) {
         collect_expr_reads(value, model, rw);
     }
     match s {
+        IrStmt::Memory {
+            path,
+            start,
+            finish,
+            ..
+        } => {
+            path.expressions(&mut |child| collect_expr_reads(child, model, rw));
+            if let Some(start) = start {
+                collect_expr_reads(start, model, rw);
+            }
+            if let Some(finish) = finish {
+                collect_expr_reads(finish, model, rw);
+            }
+        }
         IrStmt::Container(operation) => {
             operation.expressions(&mut |child| collect_expr_reads(child, model, rw))
         }

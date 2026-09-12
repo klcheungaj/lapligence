@@ -2092,6 +2092,42 @@ impl Validator<'_> {
                 });
                 result?;
             }
+            IrStmt::Memory {
+                path: file,
+                array,
+                start,
+                finish,
+                ..
+            } => {
+                file.validate(self.model, self.string_return.get())?;
+                let mut result = Ok(());
+                file.expressions(&mut |child| {
+                    result = result
+                        .clone()
+                        .and_then(|_| self.validate_expr(child, formals, path));
+                });
+                result?;
+                let Some(array) = self.model.arrays.get(*array) else {
+                    return self.fail(path, "memory task array index is out of bounds");
+                };
+                if array.real {
+                    return self.fail(path, "memory task does not support real arrays");
+                }
+                if array.dims.len() != 1 {
+                    return self.fail(path, "memory task requires a one-dimensional array");
+                }
+                for (name, bound) in [("start", start), ("finish", finish)] {
+                    if let Some(bound) = bound {
+                        self.validate_expr(bound, formals, &format!("{path}.{name}"))?;
+                        if bound.is_real() {
+                            return self.fail(
+                                format!("{path}.{name}"),
+                                "memory task bound must be a packed integer",
+                            );
+                        }
+                    }
+                }
+            }
             IrStmt::Container(operation) => {
                 operation.validate(self.model, self.string_return.get())?;
                 let mut result = Ok(());

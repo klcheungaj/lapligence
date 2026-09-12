@@ -281,3 +281,199 @@ endmodule
 "#;
     assert_eq!(run_sim("implicit_size", sv), "m0=11 m7=77\n");
 }
+
+#[test]
+fn sim_mem_file_roundtrip() {
+    if !llg::sim::build::cmake_available() {
+        eprintln!("SKIP: cmake not available");
+        return;
+    }
+    let sv = r#"module tb;
+    reg [7:0] mem [3:0];
+    initial begin
+        mem[3] = 8'hax;
+        mem[2] = 8'h25;
+        mem[1] = 8'hz1;
+        mem[0] = 8'h4f;
+        $writememh("roundtrip.mem", mem);
+        mem[3] = 0;
+        mem[2] = 0;
+        mem[1] = 0;
+        mem[0] = 0;
+        $readmemh("roundtrip.mem", mem);
+        $display("m3=%h m2=%h m1=%h m0=%h", mem[3], mem[2], mem[1], mem[0]);
+        $finish;
+    end
+endmodule
+"#;
+    assert_eq!(run_sim("file_roundtrip", sv), "m3=ax m2=25 m1=z1 m0=4f\n");
+}
+
+#[test]
+fn sim_mem_file_roundtrip_optimizer_parity() {
+    if !llg::sim::build::cmake_available() {
+        eprintln!("SKIP: cmake not available");
+        return;
+    }
+    let sv = r#"module tb;
+    reg [7:0] mem [0:2];
+    initial begin
+        mem[0] = 8'h01;
+        mem[1] = 8'hx2;
+        mem[2] = 8'hf3;
+        $writememb("parity.mem", mem, 2, 0);
+        mem[0] = 0;
+        mem[1] = 0;
+        mem[2] = 0;
+        $readmemb("parity.mem", mem, 2, 0);
+        $display("m0=%h m1=%h m2=%h", mem[0], mem[1], mem[2]);
+        $finish;
+    end
+endmodule
+"#;
+    for (name, options) in [
+        ("memory_file_opt", llg::sim::opt::OptConfig::default()),
+        ("memory_file_no_opt", llg::sim::opt::OptConfig::none()),
+    ] {
+        let run = sim_harness::run_generated_sim_with_files_opts(sv, "tb", name, &[], &options)
+            .expect("simulation should run");
+        assert_eq!(run.stdout, "m0=01 m1=x2 m2=f3\n");
+    }
+}
+
+#[test]
+fn sim_mem_file_comments_addresses_and_negative_bounds() {
+    if !llg::sim::build::cmake_available() {
+        eprintln!("SKIP: cmake not available");
+        return;
+    }
+    let sv = r#"module tb;
+    reg [7:0] asc [10:13];
+    reg [7:0] neg [-2:1];
+    initial begin
+        asc[10] = 0;
+        $readmemh("fixture.mem", asc);
+        $display("asc10=%h asc11=%h asc12=%h asc13=%h", asc[10], asc[11], asc[12], asc[13]);
+        neg[-2] = 8'h11;
+        neg[-1] = 8'h22;
+        neg[0] = 8'h33;
+        neg[1] = 8'h44;
+        $writememh("neg.mem", neg, 1, -2);
+        neg[-2] = 0;
+        neg[-1] = 0;
+        neg[0] = 0;
+        neg[1] = 0;
+        $readmemh("neg.mem", neg, 1, -2);
+        $display("neg-2=%h neg-1=%h neg0=%h neg1=%h", neg[-2], neg[-1], neg[0], neg[1]);
+        $finish;
+    end
+endmodule
+"#;
+    let fixture = "// first word is skipped by the address jump\n@b\n aa // inline comment\n/* gap */ bb\n@d\ncc\n@20\nff\n";
+    let run = sim_harness::run_generated_sim_with_files(
+        sv,
+        "tb",
+        "file_comments_addresses",
+        &[("fixture.mem", fixture)],
+    )
+    .expect("simulation should run");
+    assert_eq!(
+        run.stdout,
+        "asc10=00 asc11=aa asc12=bb asc13=cc\nneg-2=11 neg-1=22 neg0=33 neg1=44\n"
+    );
+    assert!(run
+        .stderr
+        .contains("address jump is outside the destination memory"));
+}
+
+#[test]
+fn sim_mem_file_two_state_unknown_is_diagnosed_and_zeroed() {
+    if !llg::sim::build::cmake_available() {
+        eprintln!("SKIP: cmake not available");
+        return;
+    }
+    let sv = r#"module tb;
+    bit [3:0] mem [0:1];
+    initial begin
+        $readmemb("unknown.mem", mem);
+        $display("m0=%b m1=%b", mem[0], mem[1]);
+        $finish;
+    end
+endmodule
+"#;
+    let run = sim_harness::run_generated_sim_with_files(
+        sv,
+        "tb",
+        "file_two_state",
+        &[("unknown.mem", "1x0z\n1010\n")],
+    )
+    .expect("simulation should run");
+    assert_eq!(run.stdout, "m0=1000 m1=1010\n");
+    assert!(run
+        .stderr
+        .contains("X/Z memory data converted to a two-state element"));
+}
+
+#[test]
+fn sim_mem_file_short_and_extra_words_are_diagnosed() {
+    if !llg::sim::build::cmake_available() {
+        eprintln!("SKIP: cmake not available");
+        return;
+    }
+    let sv = r#"module tb;
+    reg [7:0] mem [0:1];
+    initial begin
+        $readmemh("short.mem", mem, 0, 1);
+        $display("short=%h,%h", mem[0], mem[1]);
+        $readmemh("extra.mem", mem, 0, 1);
+        $display("extra=%h,%h", mem[0], mem[1]);
+        $readmemh("oor.mem", mem, 9, 10);
+        $display("oor=%h,%h", mem[0], mem[1]);
+        $finish;
+    end
+endmodule
+"#;
+    let run = sim_harness::run_generated_sim_with_files(
+        sv,
+        "tb",
+        "file_word_counts",
+        &[
+            ("short.mem", "7f\n"),
+            ("extra.mem", "01\n02\n03\n"),
+            ("oor.mem", "aa\n"),
+        ],
+    )
+    .expect("simulation should run");
+    assert_eq!(run.stdout, "short=7f,xx\nextra=01,02\noor=01,02\n");
+    assert!(run
+        .stderr
+        .contains("memory file contains too few words for the selected range"));
+    assert!(run
+        .stderr
+        .contains("memory file contains more words than the selected range"));
+    assert!(run
+        .stderr
+        .contains("selected range includes an address outside the destination memory"));
+}
+
+#[test]
+fn sim_mem_file_open_error_is_diagnosed_without_writing() {
+    if !llg::sim::build::cmake_available() {
+        eprintln!("SKIP: cmake not available");
+        return;
+    }
+    let sv = r#"module tb;
+    reg [7:0] mem [0:1];
+    initial begin
+        mem[0] = 8'h5a;
+        $readmemh("missing.mem", mem);
+        $display("m0=%h m1=%h", mem[0], mem[1]);
+        $finish;
+    end
+endmodule
+"#;
+    let run = sim_harness::run_generated_sim_with_files(sv, "tb", "file_open_error", &[])
+        .expect("simulation should run");
+    assert_eq!(run.stdout, "m0=5a m1=xx\n");
+    assert!(run.stderr.contains("open for reading failed"));
+}

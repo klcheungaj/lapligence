@@ -388,6 +388,21 @@ void llg_file_display_typed(uint32_t descriptor, const char* fmt,
                             llg_fmt_arg_t* args, int n, const char* scope,
                             int newline);
 
+// ── Memory file tasks ────────────────────────────────────────────────────────
+// Consume an owned path and read/write a fixed one-dimensional packed memory.
+// `dims` carries the declaration's left/right bounds; start/finish are used
+// only when the corresponding flag is non-zero. Radix is 2 for binary and 16
+// for hexadecimal files. File syntax accepts whitespace, comments, radix
+// digits, and `@` address jumps while preserving four-state X/Z digits.
+void llg_memory_read(llg_string_t path, sv4_t* memory, uint64_t total,
+                     uint32_t elem_width, int8_t elem_signed, int8_t two_state,
+                     const int32_t* dims, int n_dims, sv4_t start, sv4_t finish,
+                     int has_start, int has_finish, int radix);
+void llg_memory_write(llg_string_t path, sv4_t* memory, uint64_t total,
+                      uint32_t elem_width, int8_t elem_signed, int8_t two_state,
+                      const int32_t* dims, int n_dims, sv4_t start, sv4_t finish,
+                      int has_start, int has_finish, int radix);
+
 // ── $monitor / $strobe ────────────────────────────────────────────────────────
 //
 // A monitor's or strobe's arguments are re-evaluated by generated code through

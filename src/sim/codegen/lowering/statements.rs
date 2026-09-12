@@ -3554,6 +3554,81 @@ impl EmitCtx<'_, '_> {
         )))
     }
 
+    fn lower_memory_task(&mut self, name: &str, args: &[NodeId]) -> Result<IrStmt, String> {
+        if !(2..=4).contains(&args.len()) {
+            return Err(format!(
+                "{name} requires two to four arguments in `{}`",
+                self.path
+            ));
+        }
+        let write = matches!(name, "$writememb" | "$writememh");
+        if write && self.cg.db.edition() == LanguageEdition::Verilog2001 {
+            return Err(format!(
+                "{name} is a SystemVerilog memory task and is not available in Verilog-2001 in `{}`",
+                self.path
+            ));
+        }
+        let path = self.cg.lower_string(&self.path, args[0])?;
+        let array = self.cg.array_of(args[1]).cloned().ok_or_else(|| {
+            if self.cg.container_of(args[1]).is_some() {
+                format!(
+                    "{name} does not support dynamic arrays, queues, or associative arrays in `{}`",
+                    self.path
+                )
+            } else {
+                format!(
+                    "{name} requires a fixed one-dimensional packed memory in `{}`",
+                    self.path
+                )
+            }
+        })?;
+        if array.dims.len() != 1 {
+            return Err(format!(
+                "{name} requires a one-dimensional memory; `{}` has {} dimensions in `{}`",
+                self.cg.node(args[1]).name,
+                array.dims.len(),
+                self.path
+            ));
+        }
+        if array.real {
+            return Err(format!(
+                "{name} does not support real or shortreal memory elements in `{}`",
+                self.path
+            ));
+        }
+        if array.is_net {
+            return Err(format!(
+                "{name} requires a variable memory, not a net, in `{}`",
+                self.path
+            ));
+        }
+        let mut lower_bound = |node| {
+            let value = self.cg.lower_expr(&self.path, node)?;
+            if value.is_real() {
+                return Err(format!(
+                    "{name} start/finish bounds must be packed integers in `{}`",
+                    self.path
+                ));
+            }
+            Ok(value)
+        };
+        let start = args.get(2).copied().map(&mut lower_bound).transpose()?;
+        let finish = args.get(3).copied().map(&mut lower_bound).transpose()?;
+        let radix = match name {
+            "$readmemb" | "$writememb" => IrMemoryRadix::Binary,
+            "$readmemh" | "$writememh" => IrMemoryRadix::Hex,
+            _ => unreachable!(),
+        };
+        Ok(IrStmt::Memory {
+            write,
+            path,
+            array: array.ir,
+            radix,
+            start,
+            finish,
+        })
+    }
+
     fn lower_sys_call(&mut self, h: NodeId, name: &str) -> Result<Vec<IrStmt>, String> {
         let args: Vec<NodeId> = self.cg.node(h).children.clone();
         if let Some(level) = severity_task_variant(name) {
@@ -3773,6 +3848,9 @@ impl EmitCtx<'_, '_> {
             "$test$plusargs" | "$value$plusargs" => Ok(vec![IrStmt::PlusArg(
                 self.cg.lower_plusarg_expr(&self.path, name, h)?,
             )]),
+            "$readmemb" | "$readmemh" | "$writememb" | "$writememh" => {
+                Ok(vec![self.lower_memory_task(name, &args)?])
+            }
             "$system" => Ok(vec![IrStmt::System(
                 self.cg.lower_system_command(&self.path, &args)?,
             )]),

@@ -549,7 +549,7 @@ fn collect_effects(
                 effects.push(ExecutionEffect::RuntimeService)
             }
             IrStmt::System(_) => effects.push(ExecutionEffect::RuntimeService),
-            IrStmt::RandomSeed { .. } | IrStmt::RandomStateSet { .. } => {
+            IrStmt::Memory { .. } | IrStmt::RandomSeed { .. } | IrStmt::RandomStateSet { .. } => {
                 effects.push(ExecutionEffect::RuntimeService)
             }
             IrStmt::Display { .. }
@@ -662,6 +662,20 @@ fn collect_statement_expression_effects(
         }
         IrStmt::RandomStateSet { state } => {
             collect_string_effects(ir, state, effects, visited_calls);
+        }
+        IrStmt::Memory {
+            path,
+            start,
+            finish,
+            ..
+        } => {
+            collect_string_effects(ir, path, effects, visited_calls);
+            if let Some(start) = start {
+                collect_expression_effects(ir, start, effects, visited_calls);
+            }
+            if let Some(finish) = finish {
+                collect_expression_effects(ir, finish, effects, visited_calls);
+            }
         }
         IrStmt::Container(operation) => operation.expressions(&mut |expression| {
             collect_expression_effects(ir, expression, effects, visited_calls)

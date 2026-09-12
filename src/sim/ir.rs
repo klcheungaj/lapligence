@@ -1761,6 +1761,13 @@ pub enum IrDisplayRadix {
     Hex,
 }
 
+/// Radix used by a memory file task.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum IrMemoryRadix {
+    Binary,
+    Hex,
+}
+
 /// File-control tasks that do not produce a packed value.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum IrFileOp {
@@ -1853,6 +1860,17 @@ pub enum IrStmt {
     /// `process::self().set_randstate(state)` consumes an owned state string.
     RandomStateSet {
         state: IrStringExpr,
+    },
+    /// `$readmem*`/`$writemem*` against one fixed unpacked memory. Bounds are
+    /// evaluated at the call site; `None` selects the declaration's complete
+    /// first dimension in declaration order.
+    Memory {
+        write: bool,
+        path: IrStringExpr,
+        array: usize,
+        radix: IrMemoryRadix,
+        start: Option<IrExpr>,
+        finish: Option<IrExpr>,
     },
     Container(IrContainerStmt),
     /// A streaming assignment with one or more packed lvalues and at most one

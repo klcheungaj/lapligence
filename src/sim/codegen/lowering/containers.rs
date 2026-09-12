@@ -1147,6 +1147,13 @@ impl<'a> Codegen<'a> {
                 .flatten()
                 .or_else(|| refs.last().copied().flatten())
                 .and_then(|target| self.container_globals.get(&target).cloned()),
+            NodeKind::Expr(ExprKind::Operation {
+                op: Operation::Assignment,
+                operands,
+                ..
+            }) => operands
+                .first()
+                .and_then(|operand| self.container_of(*operand)),
             _ => None,
         }
     }

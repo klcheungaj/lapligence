@@ -244,10 +244,11 @@ use crate::sim::ir::{
     IrContainerExpr, IrContainerKind, IrContainerStmt, IrDelay, IrDependency, IrDepth,
     IrDisplayRadix, IrEdge, IrElemSel, IrEvent, IrEventCapture, IrEventContext, IrEventRef, IrExpr,
     IrExprKind, IrFormal, IrImmediateAssertionKind, IrInitPhase, IrInitTarget, IrInitialization,
-    IrJoinKind, IrLhs, IrModel, IrProcess, IrProcessKind, IrRealBinOp, IrRealUnOp, IrSeverityLevel,
-    IrShape, IrSignal, IrStmt, IrStochasticStmt, IrStreamDirection, IrStreamTarget, IrSysFunc,
-    IrTimeKind, IrTransitionDelay, IrType, IrUnOp, IrUniquePriorityCheck, IrWaitSrc, StorageKind,
-    StorageLifetime, StorageOwnership, StorageRef, LLG_MAX_NET_DRIVERS,
+    IrJoinKind, IrLhs, IrMemoryRadix, IrModel, IrProcess, IrProcessKind, IrRealBinOp, IrRealUnOp,
+    IrSeverityLevel, IrShape, IrSignal, IrStmt, IrStochasticStmt, IrStreamDirection,
+    IrStreamTarget, IrSysFunc, IrTimeKind, IrTransitionDelay, IrType, IrUnOp,
+    IrUniquePriorityCheck, IrWaitSrc, StorageKind, StorageLifetime, StorageOwnership, StorageRef,
+    LLG_MAX_NET_DRIVERS,
 };
 
 mod collection;
@@ -1496,6 +1497,12 @@ impl<'a> Codegen<'a> {
                 .flatten()
                 .or_else(|| refs.last().copied().flatten())
                 .and_then(|target| self.array_globals.get(&target)),
+            NodeKind::Expr(ExprKind::Cast { operand, .. }) => self.array_of(*operand),
+            NodeKind::Expr(ExprKind::Operation {
+                op: Operation::Assignment,
+                operands,
+                ..
+            }) => operands.first().and_then(|operand| self.array_of(*operand)),
             _ => None,
         }
     }

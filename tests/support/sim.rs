@@ -206,6 +206,31 @@ pub(crate) fn run_generated_sim(sv: &str, top: &str, tag: &str) -> Result<SimRun
     run_generated_sim_inner(sv, top, tag, true)
 }
 
+/// Compile and run a source fixture after placing exact memory-file contents
+/// in the simulator's temporary working directory. This keeps file-task tests
+/// isolated while preserving the ordinary generated-model harness contract.
+pub(crate) fn run_generated_sim_with_files(
+    sv: &str,
+    top: &str,
+    tag: &str,
+    files: &[(&str, &str)],
+) -> Result<SimRun, String> {
+    run_generated_sim_with_files_opts(sv, top, tag, files, &llg::sim::opt::OptConfig::default())
+}
+
+pub(crate) fn run_generated_sim_with_files_opts(
+    sv: &str,
+    top: &str,
+    tag: &str,
+    files: &[(&str, &str)],
+    options: &llg::sim::opt::OptConfig,
+) -> Result<SimRun, String> {
+    let _guard = lock_process_cwd();
+    with_temp_cwd(tag, |dir| {
+        run_generated_sim_in_dir(sv, top, dir, true, files, options)
+    })
+}
+
 pub(crate) fn run_generated_sim_allow_failure(
     sv: &str,
     top: &str,
@@ -222,39 +247,59 @@ fn run_generated_sim_inner(
 ) -> Result<SimRun, String> {
     let _guard = lock_process_cwd();
     with_temp_cwd(tag, |dir| {
-        let source = dir.join("tb.sv");
-        std::fs::write(&source, sv).map_err(|error| format!("write source: {error}"))?;
-        let compiled = compile::compile_checked(&compile::CompileOpts {
-            files: vec![source.to_string_lossy().into_owned()],
-            top: Some(top.to_owned()),
-            ..Default::default()
-        })
-        .map_err(|error| format!("compile: {error}"))?;
-        let database = llg::core::db::Db::from_slang(&compiled.snapshot)
-            .map_err(|error| format!("database: {error}"))?;
-        let generated = sim::codegen::generate_from_db_with_opts(
-            &database,
+        run_generated_sim_in_dir(
+            sv,
+            top,
+            dir,
+            require_success,
+            &[],
             &llg::sim::opt::OptConfig::default(),
         )
+    })
+}
+
+fn run_generated_sim_in_dir(
+    sv: &str,
+    top: &str,
+    dir: &Path,
+    require_success: bool,
+    files: &[(&str, &str)],
+    options: &llg::sim::opt::OptConfig,
+) -> Result<SimRun, String> {
+    let source = dir.join("tb.sv");
+    std::fs::write(&source, sv).map_err(|error| format!("write source: {error}"))?;
+    let compiled = compile::compile_checked(&compile::CompileOpts {
+        files: vec![source.to_string_lossy().into_owned()],
+        top: Some(top.to_owned()),
+        ..Default::default()
+    })
+    .map_err(|error| format!("compile: {error}"))?;
+    let database = llg::core::db::Db::from_slang(&compiled.snapshot)
+        .map_err(|error| format!("database: {error}"))?;
+    let generated = sim::codegen::generate_from_db_with_opts(&database, options)
         .map_err(|error| format!("codegen: {error}"))?;
-        let executable =
-            sim::build::build_model_cmake(dir, &[("model.c", generated.model_c.as_str())])
-                .map_err(|error| format!("cmake: {error}"))?;
-        let output = run_command(&mut Command::new(&executable), MODEL_TIMEOUT)?;
-        if require_success && !output.status.success() {
-            return Err(format!(
-                "simulation exited with {:?}, stderr: {}",
-                output.status,
-                String::from_utf8_lossy(&output.stderr)
-            ));
-        }
-        Ok(SimRun {
-            status: output.status,
-            stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
-            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
-            warnings: generated.warnings,
-            model_c: generated.model_c,
-        })
+    let executable = sim::build::build_model_cmake(dir, &[("model.c", generated.model_c.as_str())])
+        .map_err(|error| format!("cmake: {error}"))?;
+    // The model builder intentionally removes stale entries from the output
+    // directory, so fixture files must be written after CMake generation.
+    for (name, contents) in files {
+        std::fs::write(dir.join(name), contents)
+            .map_err(|error| format!("write fixture {name}: {error}"))?;
+    }
+    let output = run_command(&mut Command::new(&executable), MODEL_TIMEOUT)?;
+    if require_success && !output.status.success() {
+        return Err(format!(
+            "simulation exited with {:?}, stderr: {}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    Ok(SimRun {
+        status: output.status,
+        stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+        stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+        warnings: generated.warnings,
+        model_c: generated.model_c,
     })
 }
 
