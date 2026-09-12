@@ -377,7 +377,7 @@ Control / misc:
 
 Waveforms:
 
-- 🟨 **$dumpfile/$dumpvars/$dumpon/$dumpoff/$dumplimit** to VCD or FST — §1364-2001 ch18 **[1995]** `$dumpfile` selects the format by `.vcd`/`.fst`; packed signals, unpacked-array elements, real values, X/Z, aliases, hierarchy, exact femtosecond timestamps, dump activation, and size limits are emitted by a separate OS writer thread through a bounded lossless SPSC ring (sim_waveform.rs, sim_physical_time.rs). `$dumpvars` carries owned depth/scope/variable identities into the catalog, and declared array bounds are retained in element names; `$dumpports` remains a separate unsupported extended-VCD family.
+- 🟨 **$dumpfile/$dumpvars/$dumpon/$dumpoff/$dumplimit** to VCD or FST — §1364-2001 ch18 **[1995]** `$dumpfile` selects the format by `.vcd`/`.fst`; packed signals, unpacked-array elements, real values, X/Z, aliases, hierarchy, exact femtosecond timestamps, dump activation, and size limits are emitted by a separate OS writer thread through a bounded lossless SPSC ring (sim_waveform.rs, sim_physical_time.rs). `$dumpvars` carries owned depth/scope/variable identities into the catalog, filters the catalog before the fixed header, and retains declared array bounds in element names; `$dumpports` remains a separate unsupported extended-VCD family.
 - ✅ **$dumpall/$dumpflush** — §1364-2001 ch18 **[1995]** snapshots and synchronous flush barriers work for both VCD and FST (sim_waveform.rs; runtime self-test)
 - ❌ **$dumpports extended VCD** — §1364-2001 18.3 **[2001]** unsupported-task reject
 
@@ -513,7 +513,7 @@ capabilities, not individual keywords, system functions or standard clauses.
 | 58 | Completed | Runtime mathematical functions | All 21 real functions from IEEE 1800-2009 table 20-4 now use typed IR and the specified C math functions, with numeric argument conversion. Procedural tests cover runtime arguments, one-time evaluation and C domain behavior. Existing real-context restrictions are counted in group 3. |
 | 59 | Missing | Runtime severity tasks | `$fatal/$error/$warning/$info`; elaboration-time frontend diagnostics are a separate capability. |
 | 60 | Missing | Host command execution | `$system`. |
-| 61 | Partial | Waveform selection and extended VCD | `$dumpvars` depth/scope/variable filtering and the `$dumpports` extended-VCD family; ordinary VCD/FST dumping works. |
+| 61 | Partial | Waveform selection and extended VCD | `$dumpvars` depth/scope/variable filtering is implemented for ordinary VCD/FST catalogs; the `$dumpports` extended-VCD family remains unsupported. |
 | 62 | Missing | Classes | Class objects/handles, construction, properties, methods, inheritance, virtual dispatch and access/lifetime rules. |
 | 63 | Missing | Program blocks | Program execution semantics, reactive scheduling and `$exit`. |
 | 64 | Missing | Clocking blocks | Clocking declarations, default/global clocking, input/output skews, synchronous drives and `##` cycle delays. |

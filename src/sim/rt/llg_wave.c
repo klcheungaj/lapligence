@@ -417,7 +417,9 @@ static void precision_string(uint64_t fs, char out[32]) {
 
 static int writer_bytes(writer_t* w, const char* bytes, size_t len) {
     if (!w->file || w->limit_reached) return 0;
-    if (w->byte_limit && w->bytes_written + len > w->byte_limit) {
+    if (w->byte_limit &&
+        (w->bytes_written > w->byte_limit ||
+         len > w->byte_limit - w->bytes_written)) {
         w->limit_reached = 1;
         return 0;
     }
@@ -464,11 +466,29 @@ static uint32_t separator_count(const char* name) {
     return count;
 }
 
+static int valid_hierarchy_name(const char* name) {
+    if (!name || !*name || name[0] == LLG_WAVE_HIER_SEP) return 0;
+    size_t length = strlen(name);
+    if (name[length - 1u] == LLG_WAVE_HIER_SEP) return 0;
+    for (size_t i = 1u; i < length; i++) {
+        if (name[i] == LLG_WAVE_HIER_SEP &&
+            name[i - 1u] == LLG_WAVE_HIER_SEP)
+            return 0;
+    }
+    return 1;
+}
+
 static int registration_matches(const registration_t* reg, const char* selection,
                                 uint32_t depth) {
+    if (!reg || !valid_hierarchy_name(reg->name) ||
+        !valid_hierarchy_name(selection))
+        return 0;
+    size_t registration_len = strlen(reg->name);
     size_t selection_len = strlen(selection);
-    if (strncmp(reg->name, selection, selection_len) != 0) return 0;
-    if (reg->name[selection_len] == '\0') return 1;
+    if (selection_len > registration_len ||
+        memcmp(reg->name, selection, selection_len) != 0)
+        return 0;
+    if (registration_len == selection_len) return 1;
     if (reg->name[selection_len] == '[') return 1;
     if (reg->name[selection_len] != LLG_WAVE_HIER_SEP) return 0;
     if (depth == 0) return 1;
@@ -504,8 +524,15 @@ static uint32_t scope_count(const char* name) {
 static void scope_segment(const char* name, uint32_t wanted, const char** start,
                           size_t* len) {
     const char* part = name;
-    for (uint32_t i = 0; i < wanted; i++)
-        part = strchr(part, LLG_WAVE_HIER_SEP) + 1;
+    for (uint32_t i = 0; i < wanted; i++) {
+        const char* separator = strchr(part, LLG_WAVE_HIER_SEP);
+        if (!separator) {
+            *start = part;
+            *len = strlen(part);
+            return;
+        }
+        part = separator + 1;
+    }
     const char* dot = strchr(part, LLG_WAVE_HIER_SEP);
     *start = part;
     *len = dot ? (size_t)(dot - part) : strlen(part);
@@ -1016,7 +1043,8 @@ static int register_value(const char* name, void* ptr, uint32_t width,
                    name ? name : "(null)");
         return -1;
     }
-    if (!name || !*name || !ptr || (!is_real && (width == 0 || width > LLG_MAX_WIDTH))) {
+    if (!valid_hierarchy_name(name) || !ptr ||
+        (!is_real && (width == 0 || width > LLG_MAX_WIDTH))) {
         wave_error("invalid waveform registration");
         return -1;
     }

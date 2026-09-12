@@ -276,7 +276,8 @@ unsized decimal literals such as `-3` emit signed per the LRM.
 
 `$dumpfile` chooses `.vcd` or `.fst`; `$dumpvars`/`$dumpon`/`$dumpoff`/
 `$dumpall`/`$dumpflush`/`$dumplimit` lower through IR to asynchronous waveforms.
-Dumpvars depth/scope arguments warn then select all registered user storage.
+`$dumpvars` retains an owned depth and source-identity list; the runtime matches
+that metadata against the catalog before emitting its fixed VCD/FST header.
 Models without waveform controls omit the waveform runtime and GTKWave libfst
 sources. Reject extended-VCD `$dumpports`; `$displayon`/`$displayoff` warn and
 skip. Basic SystemVerilog `string` storage is lowered for bounded module and

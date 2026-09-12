@@ -7,6 +7,8 @@
 use std::process::Command;
 #[path = "support/sim.rs"]
 mod sim_harness;
+use std::collections::BTreeMap;
+use std::path::Path;
 use std::sync::Mutex;
 use std::time::Duration;
 
@@ -64,6 +66,94 @@ fn run_waveform_with_opts(
         ))
     })?;
     Ok((dir, stderr, warnings))
+}
+
+fn run_checked_in_fixture(
+    fixture: &str,
+    optimized: bool,
+) -> Result<(sim_harness::TempDir, std::process::Output), String> {
+    let source = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/sim/waveform")
+        .join(format!("{fixture}.sv"));
+    if !source.is_file() {
+        return Err(format!("missing waveform fixture {}", source.display()));
+    }
+    let dir = sim_harness::TempDir::new(&format!("waveform-{fixture}"))?;
+    let mut command = Command::new(env!("CARGO_BIN_EXE_llg"));
+    command.current_dir(dir.path()).args(["--top", "tb"]);
+    if !optimized {
+        command.arg("--no-opt");
+    }
+    command.arg(source);
+    let output = sim_harness::run_command(&mut command, Duration::from_secs(180))
+        .map_err(|error| format!("run {fixture}: {error}"))?;
+    Ok((dir, output))
+}
+
+fn read_fixture_vcd(fixture: &str, optimized: bool) -> (sim_harness::TempDir, String) {
+    let (dir, output) = run_checked_in_fixture(fixture, optimized)
+        .unwrap_or_else(|error| panic!("{fixture}, optimized={optimized}: {error}"));
+    assert!(
+        output.status.success(),
+        "{fixture}, optimized={optimized}: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        output.stdout.is_empty(),
+        "{fixture}, optimized={optimized} wrote stdout: {}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    let diagnostics = String::from_utf8_lossy(&output.stderr);
+    let runtime_diagnostics = diagnostics
+        .lines()
+        .filter(|line| !line.starts_with("Warning: "))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        runtime_diagnostics.is_empty(),
+        "{fixture}, optimized={optimized} wrote runtime diagnostics: {runtime_diagnostics}"
+    );
+    let path = dir.path().join("trace.vcd");
+    let vcd = std::fs::read_to_string(&path)
+        .unwrap_or_else(|error| panic!("read {}: {error}", path.display()));
+    (dir, vcd)
+}
+
+fn vcd_declarations(vcd: &str) -> BTreeMap<String, (String, String, String)> {
+    let mut scopes: Vec<&str> = Vec::new();
+    let mut declarations = BTreeMap::new();
+    for line in vcd.lines() {
+        let fields: Vec<&str> = line.split_whitespace().collect();
+        match fields.as_slice() {
+            ["$scope", "module", name, "$end"] => scopes.push(name),
+            ["$upscope", "$end"] => {
+                scopes.pop().expect("VCD upscope without matching scope");
+            }
+            ["$var", kind, width, id, name, "$end"] => {
+                let path = if scopes.is_empty() {
+                    (*name).to_owned()
+                } else {
+                    format!("{}.{}", scopes.join("."), name)
+                };
+                declarations.insert(
+                    path,
+                    ((*kind).to_owned(), (*width).to_owned(), (*id).to_owned()),
+                );
+            }
+            _ => {}
+        }
+    }
+    assert!(scopes.is_empty(), "VCD hierarchy was not balanced");
+    declarations
+}
+
+fn assert_vcd_names(vcd: &str, expected: &[&str]) -> BTreeMap<String, (String, String, String)> {
+    let declarations = vcd_declarations(vcd);
+    let actual: Vec<&str> = declarations.keys().map(String::as_str).collect();
+    let mut expected = expected.to_vec();
+    expected.sort_unstable();
+    assert_eq!(actual, expected, "unexpected VCD catalog: {vcd}");
+    declarations
 }
 
 #[test]
@@ -269,40 +359,174 @@ endmodule
 }
 
 #[test]
+fn checked_in_vcd_dumpvars_finite_depth_has_an_exact_catalog() {
+    if !sim::build::cmake_available() {
+        eprintln!("SKIP: cmake not available");
+        return;
+    }
+    for optimized in [true, false] {
+        let (_dir, vcd) = read_fixture_vcd("depth", optimized);
+        let declarations = assert_vcd_names(
+            &vcd,
+            &[
+                "tb.memory$5B2$5D",
+                "tb.memory$5B3$5D",
+                "tb.omitted",
+                "tb.selected",
+            ],
+        );
+        assert_eq!(declarations["tb.selected"].0, "wire");
+        assert_eq!(declarations["tb.selected"].1, "4");
+        assert!(
+            !vcd.contains("child_value $end") && !vcd.contains("leaf_value $end"),
+            "finite depth leaked a descendant: {vcd}"
+        );
+        assert!(
+            !vcd.contains("$scope module child $end"),
+            "finite depth leaked a child scope: {vcd}"
+        );
+        assert!(
+            vcd.contains("b10100011 "),
+            "memory[3] initial value missing"
+        );
+        assert!(
+            vcd.contains("b10100010 "),
+            "memory[2] initial value missing"
+        );
+    }
+}
+
+#[test]
+fn checked_in_vcd_dumpvars_unlimited_preserves_identities_and_types() {
+    if !sim::build::cmake_available() {
+        eprintln!("SKIP: cmake not available");
+        return;
+    }
+    for optimized in [true, false] {
+        let (_dir, vcd) = read_fixture_vcd("unlimited", optimized);
+        let declarations = assert_vcd_names(
+            &vcd,
+            &[
+                "tb.a$24b",
+                "tb.a$2Db",
+                "tb.a$2Eb",
+                "tb.a_b",
+                "tb.analog",
+                "tb.memory$5B2$5D",
+                "tb.memory$5B3$5D",
+                "tb.sampled",
+                "tb.u.child_value",
+                "tb.hier$2Edot.child_value",
+            ],
+        );
+        assert_eq!(declarations["tb.analog"].0, "real");
+        assert_eq!(declarations["tb.sampled"].0, "real");
+        assert_eq!(declarations["tb.analog"].1, "64");
+        assert_eq!(declarations["tb.sampled"].1, "64");
+        assert!(vcd.contains("$scope module hier$2Edot $end"));
+        assert_eq!(vcd.matches("$scope module hier$2Edot $end").count(), 1);
+        assert!(vcd.contains("r2.5 "), "real value change missing: {vcd}");
+        assert!(vcd.contains("b10100011 "), "array[3] value missing: {vcd}");
+        assert!(vcd.contains("b10100010 "), "array[2] value missing: {vcd}");
+    }
+}
+
+#[test]
+fn checked_in_vcd_dumpvars_named_selection_is_lossless() {
+    if !sim::build::cmake_available() {
+        eprintln!("SKIP: cmake not available");
+        return;
+    }
+    for optimized in [true, false] {
+        let (_dir, vcd) = read_fixture_vcd("named", optimized);
+        let declarations = assert_vcd_names(
+            &vcd,
+            &["tb.memory$5B2$5D", "tb.memory$5B3$5D", "tb.selected"],
+        );
+        assert_eq!(declarations["tb.selected"].1, "4");
+        assert_eq!(declarations["tb.memory$5B3$5D"].1, "8");
+        assert!(
+            !vcd.contains(" omitted $end"),
+            "unselected scalar leaked: {vcd}"
+        );
+        assert!(
+            vcd.contains("b10100011 "),
+            "selected array element missing: {vcd}"
+        );
+    }
+}
+
+#[test]
+fn checked_in_vcd_dumpvars_aliases_share_a_value_identity() {
+    if !sim::build::cmake_available() {
+        eprintln!("SKIP: cmake not available");
+        return;
+    }
+    for optimized in [true, false] {
+        let (_dir, vcd) = read_fixture_vcd("aliases", optimized);
+        let declarations = assert_vcd_names(&vcd, &["tb.child.value", "tb.value"]);
+        assert_eq!(
+            declarations["tb.child.value"].2, declarations["tb.value"].2,
+            "reference aliases must use one VCD identifier: {vcd}"
+        );
+        assert!(vcd.contains("b0011 "), "initial alias value missing: {vcd}");
+        assert!(vcd.contains("b1100 "), "child alias value missing: {vcd}");
+    }
+}
+
+#[test]
+fn checked_in_vcd_controls_are_identical_in_both_optimizer_modes() {
+    if !sim::build::cmake_available() {
+        eprintln!("SKIP: cmake not available");
+        return;
+    }
+    for optimized in [true, false] {
+        let (_dir, vcd) = read_fixture_vcd("controls", optimized);
+        assert!(vcd.contains("$timescale 1ps $end"));
+        assert!(vcd.contains("$date\n  reproducible build\n$end"));
+        assert_eq!(vcd.matches("$scope module tb $end").count(), 1);
+        assert!(vcd.contains("$dumpvars\n"));
+        assert!(vcd.contains("$dumpoff\n"));
+        assert!(vcd.contains("$dumpon\n"));
+        assert!(vcd.contains("$dumpall\n"));
+        assert!(vcd.contains("#1000\n"));
+        assert!(vcd.contains("#5000\n"));
+        assert!(vcd.contains("b10z1 "));
+        assert!(vcd.contains("b0011 "));
+        assert!(vcd.contains("r2.5 "));
+    }
+}
+
+#[test]
 fn fst_is_written_by_the_generated_model() {
     if !sim::build::cmake_available() {
         eprintln!("SKIP: cmake not available");
         return;
     }
     let _guard = CWD_LOCK.lock().unwrap();
-    let sv = r#"`timescale 10ps/1ps
-module tb;
-    reg [7:0] value;
-    reg [7:0] omitted;
-    initial begin
-        $dumpfile("trace.fst");
-        value = 8'h00;
-        omitted = 8'hff;
-        $dumpvars(0, tb.value);
-        #1 value = 8'ha5;
-        #1 value = 8'h5a;
-        $dumpflush;
-        #1 $finish(0);
-    end
-endmodule
-"#;
 
-    for (optimized, opts) in [
-        (true, sim::opt::OptConfig::default()),
-        (false, sim::opt::OptConfig::none()),
-    ] {
-        let tag = if optimized { "fst_opt" } else { "fst_no_opt" };
-        let (dir, stderr, warnings) =
-            run_waveform_with_opts(sv, tag, &opts).expect("FST simulation should run");
-        assert!(stderr.is_empty(), "unexpected simulator stderr: {stderr}");
+    for optimized in [true, false] {
+        let (dir, output) = run_checked_in_fixture("fst", optimized)
+            .unwrap_or_else(|error| panic!("fst, optimized={optimized}: {error}"));
         assert!(
-            warnings.is_empty(),
-            "unexpected codegen warnings: {warnings:?}"
+            output.status.success(),
+            "fst, optimized={optimized}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            output.stdout.is_empty(),
+            "fst, optimized={optimized} wrote stdout: {}",
+            String::from_utf8_lossy(&output.stdout),
+        );
+        let diagnostics = String::from_utf8_lossy(&output.stderr);
+        let runtime_diagnostics = diagnostics
+            .lines()
+            .filter(|line| !line.starts_with("Warning: "))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            runtime_diagnostics.is_empty(),
+            "fst, optimized={optimized} wrote runtime diagnostics: {runtime_diagnostics}"
         );
         let metadata =
             std::fs::metadata(dir.path().join("trace.fst")).expect("generated FST metadata");
@@ -310,6 +534,11 @@ endmodule
             metadata.len() > 64,
             "generated FST should contain hierarchy and values"
         );
+
+        for (name, source) in llg::sim::rt::waveform_sources() {
+            std::fs::write(dir.path().join(name), source)
+                .unwrap_or_else(|error| panic!("write FST reader source {name}: {error}"));
+        }
 
         validate_generated_fst(dir.path())
             .expect("official FST reader should validate generated contents");

@@ -2787,7 +2787,11 @@ impl<'a> Codegen<'a> {
     fn waveform_name(&self, id: NodeId) -> String {
         const SEPARATOR: &str = "\u{1f}";
 
-        let mut parts = vec![self.node(id).name.clone()];
+        let root_name = match self.kind(id) {
+            NodeKind::ModuleInst { is_top: true, .. } => strip_lib(&self.node(id).name),
+            _ => self.node(id).name.clone(),
+        };
+        let mut parts = vec![root_name];
         let mut current = self.node(id).parent;
         while let Some(scope_id) = current {
             let scope = self.node(scope_id);
@@ -2872,13 +2876,27 @@ impl<'a> Codegen<'a> {
                     ));
                 }
                 let mut name = self.waveform_name(target);
-                for index in indices {
+                for (dimension, index) in indices.iter().enumerate() {
                     let value = self.eval_bound_i128(*index).map_err(|error| {
                         format!(
                             "`$dumpvars` array index for `{}` must be a resolved constant: {error}",
                             self.node(target).name
                         )
                     })?;
+                    let (left, right) = info.dims.get(dimension).copied().ok_or_else(|| {
+                        format!(
+                            "internal error while resolving `$dumpvars` array `{}`",
+                            self.node(target).name
+                        )
+                    })?;
+                    let low = i128::from(left.min(right));
+                    let high = i128::from(left.max(right));
+                    if value < low || value > high {
+                        return Err(format!(
+                            "`$dumpvars` array index {value} for `{}` is outside declared bounds [{left}:{right}]",
+                            self.node(target).name
+                        ));
+                    }
                     name.push('[');
                     name.push_str(&value.to_string());
                     name.push(']');

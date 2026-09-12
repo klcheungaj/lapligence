@@ -28,6 +28,9 @@
   legal latch/flip-flop controls.
 - [Physical-time regressions](fixtures/sim/physical_time/readme.md): 1fs–100s
   scheduling, checked overflow, and femtosecond waveform timestamps.
+- [Waveform regressions](fixtures/sim/waveform/readme.md): file-backed VCD/FST
+  catalogs, `$dumpvars` depth/name filtering, aliases, declared array indices,
+  value types and dump lifecycle controls.
 - [Procedural assignment regressions](fixtures/sim/procedural_assign/): PCA priority, replacement, dependencies and force layering.
 - `sim_reference_args`: typed `ref`/`const ref` aliasing, selected actuals, nested calls, recursion and suspension observation.
 - [Datatype basics](fixtures/sim/data_types/), [wide values](fixtures/sim/data_types_extended/) and [edge cases](fixtures/sim/data_type_edges/): operator/state combinations, limb boundaries and capacity rejection.
