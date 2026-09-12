@@ -796,6 +796,7 @@ impl<'a> Codegen<'a> {
             NodeKind::MethodCall {
                 name,
                 receiver: Some(receiver),
+                ..
             } => (name.clone(), *receiver),
             _ => return Ok(None),
         };
@@ -1491,6 +1492,7 @@ impl<'a> Codegen<'a> {
             NodeKind::MethodCall {
                 name,
                 receiver: Some(receiver),
+                ..
             } => {
                 let Some(container) = self.container_of(*receiver) else {
                     return Ok(None);
@@ -3548,6 +3550,7 @@ impl<'a> Codegen<'a> {
             NodeKind::MethodCall {
                 name,
                 receiver: Some(receiver),
+                ..
             } => (name.clone(), *receiver),
             _ => return Ok(None),
         };

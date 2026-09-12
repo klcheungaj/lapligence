@@ -2848,6 +2848,7 @@ mod tests {
             net_groups: Vec::new(),
             arrays: Vec::new(),
             objects: Vec::new(),
+            classes: Vec::new(),
             containers: Vec::new(),
             events: Vec::new(),
             funcs: Vec::new(),
@@ -3782,6 +3783,7 @@ mod tests {
                 IrCallArg::OutAddr("&G_s1".to_string()),
             ],
             depth: IrDepth::PROC,
+            receiver: None,
             temps: vec![(
                 "_a0".to_string(),
                 0,

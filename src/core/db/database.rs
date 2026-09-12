@@ -662,6 +662,10 @@ pub enum NodeKind {
     MethodCall {
         name: String,
         receiver: Option<NodeId>,
+        /// Arena node of the resolved method callee, when Slang exposed it.
+        /// Keeping this identity separate from the receiver lets simulator
+        /// lowering bind class methods without reconstructing a name lookup.
+        callee: Option<NodeId>,
     },
     FuncCall {
         name: String,
@@ -674,6 +678,8 @@ pub enum NodeKind {
     FuncTask {
         is_task: bool,
         automatic: bool,
+        /// `true` for a class method declared with the `static` qualifier.
+        is_static: bool,
         /// Return type, `None` for void functions and tasks.
         ret: Option<TypeInfo>,
         /// Exact executable body attached by Slang.
@@ -1177,6 +1183,13 @@ pub enum ExprKind {
     NewArray {
         size: NodeId,
         initializer: Option<NodeId>,
+    },
+    /// Class-object construction (`new(...)`). The class name is retained
+    /// from Slang's resolved expression type; the constructor call is the
+    /// owned initializer edge when one exists.
+    NewClass {
+        class_name: Option<String>,
+        constructor: Option<NodeId>,
     },
     Other,
 }
@@ -2299,6 +2312,7 @@ fn node_kind_from_slang(
         SemanticKind::Subroutine => NodeKind::FuncTask {
             is_task: node.is_task,
             automatic: node.is_automatic,
+            is_static: node.auxiliary & crate::ffi::slang::SUBROUTINE_STATIC != 0,
             ret: (!node.is_task && ty.kind != "void").then_some(ty),
             body: first(SemanticEdgeRole::Body)?,
         },
@@ -2319,6 +2333,7 @@ fn node_kind_from_slang(
         SemanticKind::MethodCall => NodeKind::MethodCall {
             name: node.name.clone(),
             receiver: first(SemanticEdgeRole::Receiver)?,
+            callee: first(SemanticEdgeRole::Callee)?,
         },
         SemanticKind::FunctionCall => NodeKind::FuncCall {
             name: node.name.clone(),
@@ -3035,6 +3050,10 @@ fn expression_from_slang(
         86 => ExprKind::NewArray {
             size: required(SemanticEdgeRole::Width, "dynamic-array size")?,
             initializer: first(SemanticEdgeRole::Initializer)?,
+        },
+        87 => ExprKind::NewClass {
+            class_name: ty.type_name.clone(),
+            constructor: first(SemanticEdgeRole::Initializer)?,
         },
         81..=84 => {
             let key_type = if node.subkind == 82 {

@@ -2386,6 +2386,9 @@ fn render_call_expr(
             }
         }
     }
+    if let Some(receiver) = &call.receiver {
+        call_args.insert(0, super::objects::chandle(ctx, receiver)?);
+    }
     call_args.push(call.depth.code());
     let call_code = format!("{}({})", f.c_name, call_args.join(", "));
 

@@ -1662,8 +1662,11 @@ public:
             : LLG_SLANG_VARIABLE_LIFETIME_STATIC;
       }
     }
-    if constexpr (std::same_as<T, SubroutineSymbol>)
+    if constexpr (std::same_as<T, SubroutineSymbol>) {
       addLifetime(result, symbol.defaultLifetime);
+      if (symbol.flags.has(MethodFlags::Static))
+        result.auxiliary |= LLG_SLANG_SUBROUTINE_STATIC;
+    }
     if constexpr (std::same_as<T, SubroutineSymbol>) {
       if (symbol.subroutineKind == SubroutineKind::Task)
         result.flags |= LLG_SLANG_SEMANTIC_TASK;
@@ -2730,6 +2733,10 @@ private:
       capture.semanticRole(id, &expression.sizeExpr(), LLG_SLANG_EDGE_WIDTH);
       if (const Expression* initializer = expression.initExpr())
         capture.semanticRole(id, initializer, LLG_SLANG_EDGE_INITIALIZER);
+    }
+    else if constexpr (std::same_as<T, NewClassExpression>) {
+      if (const Expression* constructor = expression.constructorCall())
+        capture.semanticRole(id, constructor, LLG_SLANG_EDGE_INITIALIZER);
     }
     else if constexpr (std::same_as<T, MinTypMaxExpression>) {
       capture.semanticRole(id, &expression.min(), LLG_SLANG_EDGE_OPERAND, 0);

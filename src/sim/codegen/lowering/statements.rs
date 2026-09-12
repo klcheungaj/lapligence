@@ -880,9 +880,28 @@ impl EmitCtx<'_, '_> {
                 }
                 Ok(vec![self.lower_task_call(h, name, *is_task, *callee)?])
             }
-            NodeKind::MethodCall { .. } => {
+            NodeKind::MethodCall {
+                name,
+                receiver: Some(receiver),
+                callee,
+                ..
+            } => {
                 if let Some(statement) = self.cg.lower_container_method(&self.path, h)? {
                     Ok(vec![statement])
+                } else if self.cg.is_class_method_call(h) {
+                    let is_task = matches!(
+                        callee.map(|callee| self.cg.kind(callee)),
+                        Some(NodeKind::FuncTask { is_task: true, .. })
+                    );
+                    if self.in_final && is_task {
+                        return Err(format!(
+                            "task call `{name}` inside a final block in `{}` is not allowed \
+                             (final permits function statements only)",
+                            self.path
+                        ));
+                    }
+                    let _ = receiver;
+                    Ok(vec![self.lower_task_call(h, name, is_task, *callee)?])
                 } else {
                     Ok(vec![self.cg.lower_object_method(&self.path, h)?])
                 }
@@ -908,7 +927,7 @@ impl EmitCtx<'_, '_> {
             return match self.cg.db.variable_lifetime(declaration) {
                 VariableLifetime::Static => Ok(Vec::new()),
                 VariableLifetime::Automatic => {
-                    if matches!(self.cg.kind(declaration), NodeKind::Var { ty } if ty.kind == "chandle")
+                    if matches!(self.cg.kind(declaration), NodeKind::Var { ty } if is_handle_kind(&ty.kind))
                     {
                         let name = self
                             .func
@@ -1733,6 +1752,7 @@ impl EmitCtx<'_, '_> {
                 NodeKind::MethodCall {
                     name,
                     receiver: Some(receiver),
+                    ..
                 } if name == "triggered" => Some(*receiver),
                 _ => None,
             };
@@ -4694,11 +4714,18 @@ impl EmitCtx<'_, '_> {
             .get(&ft)
             .ok_or_else(|| format!("task `{name}` has no C name"))?;
         let (_, _, formals) = self.cg.func_info(ft, callee_inst)?;
-        let args: Vec<NodeId> = self.cg.node(h).children.clone();
+        let args = self.cg.call_argument_nodes(h);
         let bound = self.cg.bind_call_args(self.inst, &formals, &args)?;
+        let receiver = self.cg.class_method_receiver(h)?;
         let has_event_formal = bound.iter().any(|argument| argument.is_event);
+        if is_task && self.cg.is_class_method_call(h) && self.cg.task_has_wait(ft, callee_inst) {
+            return Err(format!(
+                "timing-bearing class task `{name}` is not supported in `{}`",
+                self.path
+            ));
+        }
         if has_event_formal {
-            return self.lower_task_inline(ft, callee_inst, h, &formals, &bound);
+            return self.lower_task_inline(ft, callee_inst, h, &formals, &bound, receiver);
         }
         if is_task
             && (self.cg.task_has_disable(ft, callee_inst) || self.cg.task_is_disable_target(ft))
@@ -4708,7 +4735,7 @@ impl EmitCtx<'_, '_> {
             // carry an explicit cancellation result in the C ABI. The
             // declaration-level target check covers callers that disable a
             // task externally rather than from inside the task body.
-            self.lower_task_inline(ft, callee_inst, h, &formals, &bound)
+            self.lower_task_inline(ft, callee_inst, h, &formals, &bound, receiver)
         } else {
             let fidx = self
                 .cg
@@ -4716,7 +4743,7 @@ impl EmitCtx<'_, '_> {
                 .get(&ft)
                 .map(|m| m.ir)
                 .ok_or_else(|| format!("task `{name}` has no C name"))?;
-            self.lower_call_stmts(fidx, callee_inst, h, &formals, &bound)
+            self.lower_call_stmts(fidx, callee_inst, h, &formals, &bound, receiver)
         }
     }
 
@@ -4729,6 +4756,7 @@ impl EmitCtx<'_, '_> {
         h: NodeId,
         formals: &[(NodeId, bool)],
         bound: &[BoundArg],
+        receiver: Option<IrChandleExpr>,
     ) -> Result<IrStmt, String> {
         let mut temps: Vec<(String, usize, Option<IrExpr>)> = Vec::new();
         let mut copyouts: Vec<(IrLhs, String, u32, bool)> = Vec::new();
@@ -4743,7 +4771,7 @@ impl EmitCtx<'_, '_> {
         for (idx, (io, is_out)) in formals.iter().enumerate() {
             if matches!(
                 self.cg.kind(*io),
-                NodeKind::FuncArg { ty, .. } if ty.kind == "chandle"
+                NodeKind::FuncArg { ty, .. } if is_handle_kind(&ty.kind)
             ) {
                 let is_ref = matches!(
                     self.cg.kind(*io),
@@ -4919,7 +4947,7 @@ impl EmitCtx<'_, '_> {
             );
             if !*is_out
                 && !is_ref
-                && matches!(self.cg.kind(*io), NodeKind::FuncArg { ty, .. } if ty.kind == "chandle")
+                && matches!(self.cg.kind(*io), NodeKind::FuncArg { ty, .. } if is_handle_kind(&ty.kind))
             {
                 continue;
             }
@@ -4947,6 +4975,7 @@ impl EmitCtx<'_, '_> {
             f: fidx,
             args: out_args,
             depth,
+            receiver,
             temps,
             copyouts,
         });
@@ -4972,6 +5001,7 @@ impl EmitCtx<'_, '_> {
         h: NodeId,
         formals: &[(NodeId, bool)],
         bound: &[BoundArg],
+        class_receiver: Option<IrChandleExpr>,
     ) -> Result<IrStmt, String> {
         let tname = self.cg.node(ft).name.clone();
         let activation_target = self.cg.activation_target(ft)?;
@@ -5086,7 +5116,8 @@ impl EmitCtx<'_, '_> {
                 event_args.insert(*io, IrEventRef::Captured(captured));
                 continue;
             }
-            if matches!(self.cg.kind(*io), NodeKind::FuncArg { ty, .. } if ty.kind == "chandle") {
+            if matches!(self.cg.kind(*io), NodeKind::FuncArg { ty, .. } if is_handle_kind(&ty.kind))
+            {
                 let is_ref = matches!(
                     self.cg.kind(*io),
                     NodeKind::FuncArg {
@@ -5626,6 +5657,7 @@ impl EmitCtx<'_, '_> {
             string_addr,
             locals,
             ret_node: None,
+            class_receiver,
             // This expansion has no separate C function identity. Runtime
             // activation targets implement disable; only return uses done_label.
             def_node: None,

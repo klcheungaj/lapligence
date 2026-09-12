@@ -926,7 +926,22 @@ impl<'a> Codegen<'a> {
         if let Some(value) = self.lower_object_query(scope_path, h)? {
             return Ok(value);
         }
+        if let Some(value) = self.class_field_expr(scope_path, h)? {
+            return Ok(value);
+        }
         if let Some(value) = self.lower_enum_method(scope_path, h)? {
+            return Ok(value);
+        }
+        if matches!(self.kind(h), NodeKind::MethodCall { .. }) && self.is_class_method_call(h) {
+            let (name, callee) = match self.kind(h) {
+                NodeKind::MethodCall { name, callee, .. } => (name.clone(), *callee),
+                _ => return Err("malformed class method call".to_owned()),
+            };
+            let receiver = self.class_method_receiver(h)?;
+            let mut value = self.lower_func_call_expr(scope_path, h, &name, callee)?;
+            if let IrExprKind::CallFn(call) = &mut value.kind {
+                call.receiver = receiver;
+            }
             return Ok(value);
         }
         match self.kind(h) {
@@ -1439,6 +1454,7 @@ impl<'a> Codegen<'a> {
             NodeKind::MethodCall {
                 name,
                 receiver: Some(receiver),
+                ..
             } if name == "triggered" => {
                 let target = self.event_target_of(*receiver).ok_or_else(|| {
                     format!("event triggered property has an unresolved receiver in `{scope_path}`")
@@ -3860,6 +3876,9 @@ impl<'a> Codegen<'a> {
                 two_state: binding.local.two_state,
                 shortreal: false,
             });
+        }
+        if let Some(lhs) = self.class_field_lhs(path, lhs)? {
+            return Ok(lhs);
         }
         let lh = self.analyze_lhs(path, lhs)?;
         self.lhs_to_ir(lh)

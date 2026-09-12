@@ -435,7 +435,7 @@ Tracked so nothing is lost; all de-prioritized behind RTL-simulation support.
 
 | Area | Constructs | Reference | Tag |
 |---|---|---|---|
-| Classes | class/new/handles, properties/methods, inheritance, virtual methods, static/local, `::` | §1800-2009 ch8 | [SV-2005] |
+| Advanced classes | inheritance, virtual methods, parameterized classes, access/lifetime rules, and virtual-interface handles | §1800-2009 ch8, 25.9 | [SV-2005] |
 | Programs | `program … endprogram`, race-elimination region, `$exit` | §1800-2009 ch24 | [SV-2005] |
 | Clocking output/cycle controls | output skews, synchronous drives, inout driving, `##` delays | §1800-2009 14.11, 14.16.2 | [SV-2005] |
 | Interprocess sync | semaphores, mailboxes, process suspend/resume/kill | §1800-2009 ch15 | [SV-2005] |
@@ -464,7 +464,7 @@ Tracked so nothing is lost; all de-prioritized behind RTL-simulation support.
 ## Remaining-work inventory
 
 The original audit IDs are stable. This inventory currently contains 64 remaining
-groups (23 missing, 41 partial); groups 9, 38, 50, 51, 57, 58, 59 and 60 are completed. Counts refer to grouped
+groups (22 missing, 42 partial); groups 9, 38, 50, 51, 57, 58, 59 and 60 are completed. Counts refer to grouped
 capabilities, not individual keywords, system functions or standard clauses.
 
 
@@ -531,7 +531,7 @@ capabilities, not individual keywords, system functions or standard clauses.
 | 59 | Completed | Runtime severity tasks | `$fatal/$error/$warning/$info` use typed, exactly-once message evaluation with source-context prefixes; `$fatal` validates constant finish number 0/1/2, runs the existing termination/final handoff, and level-2 finish statistics include stable severity counters. Elaboration-time frontend diagnostics remain a separate capability. |
 | 60 | Completed | Host command execution | `$system` task/function forms preserve omitted (`system(NULL)`) versus explicit-empty commands, use one optional owned string and explicit generated-process permission, and return raw host `system()` status; shell syntax and status encoding remain platform-specific. |
 | 61 | Partial | Waveform selection and extended VCD | `$dumpvars` depth/scope/variable filtering is implemented for ordinary VCD/FST catalogs; the `$dumpports` extended-VCD family remains unsupported. |
-| 62 | Missing | Classes | Class objects/handles, construction, properties, methods, inheritance, virtual dispatch and access/lifetime rules. |
+| 62 | Partial | Classes | Nominal class handles, heap `new`, packed/real properties, default/explicit constructors, static packed/real properties and methods, this-bound methods, null checks, and shallow handle aliasing are covered by `sim_classes.rs` in both optimizer modes. Inheritance, virtual/parameterized classes, string/chandle/class properties, timing-bearing class tasks, access qualifiers, and virtual-interface handles remain missing. |
 | 63 | Missing | Program blocks | Program execution semantics, reactive scheduling and `$exit`. |
 | 64 | Partial | Clocking input sampling | Clocking declarations, default/global clocking, input directions/aliases, clocking events and constant `#1step`/`#0`/positive input skews use owned sample storage and optimizer-parity runtime scheduling. Output skews/drives, inout driving and `##` cycle delays remain unsupported. |
 | 65 | Missing | Advanced interprocess synchronization | Semaphores, mailboxes, process handles/status/suspend/resume/kill/await; event `.triggered` and `wait_order` are covered in the named-events row, as are direct nonblocking named-event triggers. |

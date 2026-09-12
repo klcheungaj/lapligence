@@ -31,9 +31,9 @@ pub use containers::{
     IrQueueBound, IrQueueSource, IrStreamSelector,
 };
 pub use objects::{
-    IrArrayDimension, IrArrayQuery, IrArrayQueryKind, IrArrayQueryTarget, IrChandleExpr,
-    IrDisplayArg, IrObject, IrObjectQuery, IrObjectStmt, IrObjectType, IrStringExpr,
-    IrStringInsideItem,
+    IrArrayDimension, IrArrayQuery, IrArrayQueryKind, IrArrayQueryTarget, IrChandleExpr, IrClass,
+    IrClassField, IrClassFieldType, IrDisplayArg, IrObject, IrObjectQuery, IrObjectStmt,
+    IrObjectType, IrStringExpr, IrStringInsideItem,
 };
 
 pub use validate::IrValidationError;
@@ -1220,6 +1220,8 @@ pub struct IrCallExpr {
     pub(in crate::sim) args: Vec<IrCallArg>,
     /// Recursion depth argument at the call site.
     pub(in crate::sim) depth: IrDepth,
+    /// Optional hidden receiver passed before ordinary method formals.
+    pub(in crate::sim) receiver: Option<IrChandleExpr>,
     /// Void callee used as a value: yield all-X (warning issued at lowering).
     pub(in crate::sim) void_x: bool,
 }
@@ -1232,8 +1234,16 @@ impl IrCallExpr {
             f,
             args,
             depth,
+            receiver: None,
             void_x,
         }
+    }
+
+    /// Bind a class/object receiver to this call while preserving the normal
+    /// typed formal ABI for the remaining arguments.
+    pub fn with_receiver(mut self, receiver: IrChandleExpr) -> Self {
+        self.receiver = Some(receiver);
+        self
     }
 
     pub fn function_index(&self) -> usize {
@@ -1259,6 +1269,8 @@ pub struct IrCall {
     pub(in crate::sim) f: usize,
     pub(in crate::sim) args: Vec<IrCallArg>,
     pub(in crate::sim) depth: IrDepth,
+    /// Optional hidden receiver passed before ordinary method formals.
+    pub(in crate::sim) receiver: Option<IrChandleExpr>,
     /// `(temp name, formal index, init)` triples declared right before the
     /// call; `init` is `None` for outputs (all-X temp sized by the formal)
     /// and the actual's current value for inouts.
@@ -1280,9 +1292,16 @@ impl IrCall {
             f,
             args,
             depth,
+            receiver: None,
             temps,
             copyouts,
         }
+    }
+
+    /// Bind a class/object receiver to this statement call.
+    pub fn with_receiver(mut self, receiver: IrChandleExpr) -> Self {
+        self.receiver = Some(receiver);
+        self
     }
 
     pub fn function_index(&self) -> usize {
@@ -2719,6 +2738,9 @@ pub struct IrFunc {
     pub(in crate::sim) ret_string: bool,
     /// Return type; `None` for tasks and void functions.
     pub(in crate::sim) ret: Option<IrType>,
+    /// Class-method functions receive one hidden `void *` receiver before
+    /// their ordinary formals. `None` denotes a module/package subprogram.
+    pub(in crate::sim) receiver_class: Option<usize>,
     pub(in crate::sim) formals: Vec<IrFormal>,
     /// Resolved-static locals in emission order (node-id sorted at lowering).
     /// Resolved-automatic locals remain declaration-site [`IrStmt::DeclLocal`]
@@ -2745,6 +2767,7 @@ impl IrFunc {
             ret_chandle: false,
             ret_string: false,
             ret,
+            receiver_class: None,
             formals,
             locals,
             pre_fns,
@@ -3219,6 +3242,8 @@ pub struct IrModel {
     pub(in crate::sim) arrays: Vec<IrArray>,
     pub(in crate::sim) containers: Vec<IrContainer>,
     pub(in crate::sim) objects: Vec<IrObject>,
+    /// Nominal class layouts used by class handles and method receivers.
+    pub(in crate::sim) classes: Vec<IrClass>,
     pub(in crate::sim) events: Vec<IrEvent>,
     pub(in crate::sim) funcs: Vec<IrFunc>,
     /// Comb drivers, then links, then always/initial processes — push order
@@ -3250,6 +3275,7 @@ pub struct IrModelParts {
     pub arrays: Vec<IrArray>,
     pub containers: Vec<IrContainer>,
     pub objects: Vec<IrObject>,
+    pub classes: Vec<IrClass>,
     pub events: Vec<IrEvent>,
     pub funcs: Vec<IrFunc>,
     pub processes: Vec<IrProcess>,
@@ -3285,6 +3311,7 @@ impl IrModel {
             arrays: parts.arrays,
             containers: parts.containers,
             objects: parts.objects,
+            classes: parts.classes,
             events: parts.events,
             funcs: parts.funcs,
             processes: parts.processes,

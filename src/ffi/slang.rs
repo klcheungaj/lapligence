@@ -542,6 +542,7 @@ pub enum SemanticKind {
 
 const ARGUMENT_CONST_REF: u64 = 1 << 0;
 const ARGUMENT_REF_STATIC: u64 = 1 << 1;
+pub(crate) const SUBROUTINE_STATIC: u64 = 1 << 0;
 
 /// Repository-owned qualifier tags stored in a statement's auxiliary field.
 /// Keep these values in lockstep with the C ABI, rather than exposing Slang's
@@ -2045,6 +2046,8 @@ fn validate_semantic_auxiliary(node: &RawSemanticNode) -> Result<(), SlangError>
         }
         // Parameter auxiliary metadata carries the frontend's override bit.
         (12, _, _) => node.auxiliary <= 1,
+        // Subroutine qualifiers carry the static-method bit.
+        (16, _, _) => node.auxiliary <= 1,
         // Argument qualifiers carry const-ref and ref-static bits.
         (17, _, _) => node.auxiliary <= 3,
         // Statement subkind 42 covers both `wait` and `wait_order`; the

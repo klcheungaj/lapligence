@@ -9,6 +9,35 @@ pub enum IrObjectType {
     Chandle,
 }
 
+/// C layout of one nominal SystemVerilog class. Handles are represented by a
+/// pointer to the emitted struct; the layout is kept in the execution IR so
+/// both optimized and unoptimized renderings share one source of truth.
+#[derive(Clone, Debug, PartialEq)]
+pub struct IrClass {
+    pub(in crate::sim) c_name: String,
+    pub(in crate::sim) fields: Vec<IrClassField>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct IrClassField {
+    pub(in crate::sim) c_name: String,
+    pub(in crate::sim) ty: IrClassFieldType,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IrClassFieldType {
+    Packed {
+        width: u32,
+        signed: bool,
+        two_state: bool,
+    },
+    Real {
+        shortreal: bool,
+    },
+    String,
+    Chandle,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 /// Persistent object storage. Strings default empty; chandles default null.
 pub struct IrObject {
@@ -151,6 +180,9 @@ impl IrDisplayArg {
 /// Native-pointer values; arithmetic and packed conversion are not represented.
 pub enum IrChandleExpr {
     Null,
+    /// A lowering-produced C fragment. Class allocation and member reads use
+    /// this escape hatch until they need a richer object-expression node.
+    Verbatim(String),
     Read(usize),
     LocalRead(String),
     FormalRead(usize),
@@ -904,6 +936,11 @@ impl IrChandleExpr {
     ) -> Result<(), super::IrValidationError> {
         match self {
             Self::Null => Ok(()),
+            Self::Verbatim(code) if !code.is_empty() => Ok(()),
+            Self::Verbatim(_) => Err(super::IrValidationError::new(
+                "chandle verbatim",
+                "verbatim pointer expression must not be empty",
+            )),
             Self::LocalRead(name) if name == "_ret" && chandle_return == Some(true) => Ok(()),
             Self::LocalRead(name) if !name.is_empty() => Ok(()),
             Self::LocalRead(_) => Err(super::IrValidationError::new(

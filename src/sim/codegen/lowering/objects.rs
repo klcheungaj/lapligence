@@ -1,8 +1,8 @@
 //! Lower non-integral values without encoding their storage as packed bits.
 use super::*;
 use crate::sim::ir::{
-    IrChandleExpr, IrDisplayArg, IrEnumMember, IrEnumMethod, IrEnumQuery, IrObject, IrObjectQuery,
-    IrObjectStmt, IrObjectType, IrStringExpr,
+    IrChandleExpr, IrDisplayArg, IrEnumMember, IrEnumMethod, IrEnumQuery, IrExpr, IrObject,
+    IrObjectQuery, IrObjectStmt, IrObjectType, IrStringExpr,
 };
 
 impl Codegen<'_> {
@@ -18,6 +18,376 @@ impl Codegen<'_> {
             }) => self.node(node).name == "self" || self.node(*target).name == "self",
             _ => self.node(node).name == "self",
         }
+    }
+
+    /// Lower class-valued declaration initializers into run-once processes.
+    /// They are inserted before user processes so allocation, property
+    /// defaults, and constructors have completed at time zero.
+    pub(super) fn emit_class_object_initializers(&mut self) -> Result<(), String> {
+        let initializers = std::mem::take(&mut self.class_object_initializers);
+        let mut processes = Vec::with_capacity(initializers.len());
+        for (index, (object_node, object, initializer, path)) in
+            initializers.into_iter().enumerate()
+        {
+            let owner = self.owning_inst(object_node).ok_or_else(|| {
+                format!(
+                    "class initializer for `{}` has no owning module instance",
+                    self.node(object_node).full_name
+                )
+            })?;
+            self.inst = owner;
+            let value = self.lower_chandle(&path, initializer)?;
+            let c_name = format!("p_{}_class_init_{index}", ident(&path));
+            let label = format!("{path}.class_initializer.{index}");
+            processes.push(IrProcess::new_with_origin(
+                c_name,
+                label,
+                IrShape::RunOnce,
+                Vec::new(),
+                vec![IrStmt::Object(IrObjectStmt::ChandleAssign(object, value))],
+                self.origin(object_node),
+            ));
+        }
+        self.model.processes.splice(0..0, processes);
+        Ok(())
+    }
+
+    fn class_field_target(&self, node: NodeId) -> Option<NodeId> {
+        match self.kind(node) {
+            NodeKind::Expr(ExprKind::Ref { target }) => target.filter(|target| {
+                self.class_fields.contains_key(target)
+                    || self.class_static_signals.contains_key(target)
+                    || self.class_static_objects.contains_key(target)
+            }),
+            NodeKind::Expr(ExprKind::HierPath { refs, .. }) => {
+                refs.iter().rev().flatten().copied().find(|target| {
+                    self.class_fields.contains_key(target)
+                        || self.class_static_signals.contains_key(target)
+                        || self.class_static_objects.contains_key(target)
+                })
+            }
+            NodeKind::Var { .. } if self.class_fields.contains_key(&node) => Some(node),
+            _ => None,
+        }
+    }
+
+    pub(super) fn is_class_method_call(&self, node: NodeId) -> bool {
+        let callee = match self.kind(node) {
+            NodeKind::MethodCall { callee, .. } | NodeKind::FuncCall { callee, .. } => *callee,
+            _ => None,
+        };
+        matches!(
+            callee,
+            Some(callee)
+                if self.class_nodes.contains_key(&self.node(callee).parent.unwrap_or(NodeId(0)))
+        )
+    }
+
+    /// Resolve the receiver for a class subroutine call. Explicit receivers
+    /// are evaluated at the call site; an omitted receiver means `this` when
+    /// lowering a method body (or a fresh allocation's constructor body).
+    pub(super) fn class_method_receiver(
+        &mut self,
+        node: NodeId,
+    ) -> Result<Option<IrChandleExpr>, String> {
+        let (callee, explicit) = match self.kind(node) {
+            NodeKind::MethodCall {
+                callee, receiver, ..
+            } => (*callee, *receiver),
+            NodeKind::FuncCall { callee, .. } => (*callee, None),
+            _ => return Ok(None),
+        };
+        let Some(callee) = callee else {
+            return Err("class method call has no resolved callee".to_owned());
+        };
+        if !self
+            .class_nodes
+            .contains_key(&self.node(callee).parent.unwrap_or(NodeId(0)))
+        {
+            return Ok(None);
+        }
+        if matches!(
+            self.kind(callee),
+            NodeKind::FuncTask {
+                is_static: true,
+                ..
+            }
+        ) {
+            return Ok(None);
+        }
+        if let Some(explicit) = explicit {
+            return self.lower_chandle("class method call", explicit).map(Some);
+        }
+        self.func
+            .as_ref()
+            .and_then(|function| function.class_receiver.clone())
+            .or_else(|| self.class_init_receiver.clone())
+            .map(Some)
+            .ok_or_else(|| "class method call has no receiver".to_owned())
+    }
+
+    fn class_receiver_code(&self, receiver: &IrChandleExpr) -> String {
+        match receiver {
+            IrChandleExpr::Null => "NULL".to_owned(),
+            IrChandleExpr::Verbatim(code) => code.clone(),
+            IrChandleExpr::Read(index) => self.model.objects[*index].c_name.clone(),
+            IrChandleExpr::LocalRead(name) => name.clone(),
+            IrChandleExpr::FormalRead(index) => self
+                .func
+                .as_ref()
+                .and_then(|function| function.chandle_read.get(&NodeId(*index as u32)))
+                .map(|_| format!("a{index}"))
+                .unwrap_or_else(|| format!("a{index}")),
+            IrChandleExpr::ContainerGet { .. }
+            | IrChandleExpr::ContainerGetNested { .. }
+            | IrChandleExpr::AssociativeGet { .. }
+            | IrChandleExpr::Call { .. } => "NULL".to_owned(),
+        }
+    }
+
+    fn class_receiver_for(
+        &mut self,
+        path: &str,
+        node: NodeId,
+        field: NodeId,
+    ) -> Result<IrChandleExpr, String> {
+        if let NodeKind::Expr(ExprKind::HierPath { refs, .. }) = self.kind(node) {
+            if let Some(base) = refs
+                .iter()
+                .take_while(|reference| **reference != Some(field))
+                .flatten()
+                .find(|base| self.object_of(path, **base).is_some())
+            {
+                return self.lower_chandle(path, *base);
+            }
+        }
+        self.func
+            .as_ref()
+            .and_then(|function| function.class_receiver.clone())
+            .or_else(|| self.class_init_receiver.clone())
+            .ok_or_else(|| {
+                format!(
+                    "class property `{}` has no receiver in `{path}`",
+                    self.node(field).name
+                )
+            })
+    }
+
+    fn class_field_layout(
+        &self,
+        field: NodeId,
+    ) -> Option<(usize, usize, &crate::sim::ir::IrClassField)> {
+        let (class, index) = self.class_fields.get(&field).copied()?;
+        Some((
+            class,
+            index,
+            self.model.classes.get(class)?.fields.get(index)?,
+        ))
+    }
+
+    fn class_field_value_shape(&self, field: NodeId) -> Result<(u32, bool, bool), String> {
+        match self.kind(field) {
+            NodeKind::Var { ty } if is_real_kind(&ty.kind) => Ok((0, false, false)),
+            NodeKind::Var { ty } => Ok((
+                ty.width.ok_or_else(|| {
+                    format!("class property `{}` has no width", self.node(field).name)
+                })?,
+                ty.signed,
+                self.db.is_two_state_type(field) || is_two_state_kind(&ty.kind),
+            )),
+            _ => Err(format!(
+                "class field target `{}` is not a variable",
+                self.node(field).name
+            )),
+        }
+    }
+
+    pub(super) fn class_field_expr(
+        &mut self,
+        path: &str,
+        node: NodeId,
+    ) -> Result<Option<IrExpr>, String> {
+        let Some(field) = self.class_field_target(node) else {
+            return Ok(None);
+        };
+        if let Some(info) = self.class_static_signals.get(&field).cloned() {
+            return Ok(Some(self.signal_read_expr(&info)?));
+        }
+        if self.class_static_objects.contains_key(&field) {
+            return Err(format!(
+                "string/class object static property `{}` is not a packed expression",
+                self.node(field).name
+            ));
+        }
+        let Some((class, _index, class_field)) = self.class_field_layout(field) else {
+            return Ok(None);
+        };
+        let (width, signed, _two_state) = self.class_field_value_shape(field)?;
+        let field_name = class_field.c_name.clone();
+        let receiver = self.class_receiver_for(path, node, field)?;
+        let receiver = self.class_receiver_code(&receiver);
+        let code = format!(
+            "((llg_class_{class}_t*)llg_class_require({receiver}, \"{}\"))->{}",
+            self.node(field).full_name,
+            field_name
+        );
+        Ok(Some(IrExpr::new(
+            IrExprKind::Verbatim {
+                code,
+                width,
+                signed,
+            },
+            width,
+            signed,
+            None,
+        )))
+    }
+
+    pub(super) fn class_field_lhs(
+        &mut self,
+        path: &str,
+        node: NodeId,
+    ) -> Result<Option<IrLhs>, String> {
+        let Some(field) = self.class_field_target(node) else {
+            return Ok(None);
+        };
+        if let Some(info) = self.class_static_signals.get(&field).cloned() {
+            return Ok(Some(IrLhs::Whole(info.ir)));
+        }
+        if self.class_static_objects.contains_key(&field) {
+            return Ok(None);
+        }
+        let Some((class, _index, class_field)) = self.class_field_layout(field) else {
+            return Ok(None);
+        };
+        let (width, signed, two_state) = self.class_field_value_shape(field)?;
+        let field_name = class_field.c_name.clone();
+        let shortreal = matches!(
+            class_field.ty,
+            crate::sim::ir::IrClassFieldType::Real { shortreal: true }
+        );
+        let receiver = self.class_receiver_for(path, node, field)?;
+        let receiver = self.class_receiver_code(&receiver);
+        let addr = format!(
+            "&(((llg_class_{class}_t*)llg_class_require({receiver}, \"{}\"))->{})",
+            self.node(field).full_name,
+            field_name
+        );
+        Ok(Some(IrLhs::WholeRef {
+            addr,
+            width,
+            signed,
+            two_state,
+            shortreal,
+        }))
+    }
+
+    fn lower_new_class(
+        &mut self,
+        path: &str,
+        node: NodeId,
+        class_name: Option<&str>,
+        constructor: Option<NodeId>,
+    ) -> Result<IrChandleExpr, String> {
+        let name = class_name
+            .ok_or_else(|| format!("class construction has no resolved type in `{path}`"))?;
+        let class = self
+            .db
+            .classes()
+            .iter()
+            .find(|class| self.node(**class).name == name)
+            .and_then(|class| self.class_nodes.get(class).copied())
+            .ok_or_else(|| format!("class `{name}` has no captured layout in `{path}`"))?;
+        let layout = self
+            .model
+            .classes
+            .get(class)
+            .ok_or_else(|| format!("class `{name}` has no execution layout"))?
+            .clone();
+        let mut code = format!(
+            "({{ llg_class_{}_t *_llg_obj = (llg_class_{}_t*)calloc(1, sizeof(llg_class_{}_t)); ",
+            class, class, class
+        );
+        code.push_str(
+            "if (!_llg_obj) { fprintf(stderr, \"llg: class allocation failed\\n\"); exit(EXIT_FAILURE); } ",
+        );
+        code.push_str(&format!("_llg_obj->_llg_class_id = {class}; "));
+        self.class_init_receiver = Some(IrChandleExpr::LocalRead("_llg_obj".to_owned()));
+        let mut class_fields = self
+            .class_fields
+            .iter()
+            .filter(|(_, (class_index, _))| *class_index == class)
+            .map(|(field_node, (_, field_index))| (*field_node, *field_index))
+            .collect::<Vec<_>>();
+        class_fields.sort_by_key(|(_, field_index)| *field_index);
+        for (field_node, field_index) in class_fields {
+            let field = &layout.fields[field_index];
+            match field.ty {
+                crate::sim::ir::IrClassFieldType::Packed {
+                    width,
+                    signed,
+                    two_state,
+                } => {
+                    let value = self
+                        .db
+                        .var_initializer(field_node)
+                        .map(|initializer| self.lower_expr(path, initializer))
+                        .transpose()?;
+                    let value = value
+                        .map(|value| {
+                            ir_to_storage(value, width, signed, two_state)
+                                .and_then(|value| self.render_ir_code(&value))
+                        })
+                        .transpose()?
+                        .unwrap_or_else(|| {
+                            if two_state {
+                                format!("sv4_from_u64(0, {width}, {})", signed as u8)
+                            } else {
+                                format!("sv4_x({width}, {})", signed as u8)
+                            }
+                        });
+                    code.push_str(&format!("_llg_obj->{} = {}; ", field.c_name, value));
+                }
+                crate::sim::ir::IrClassFieldType::Real { shortreal } => {
+                    let value = self
+                        .db
+                        .var_initializer(field_node)
+                        .map(|initializer| self.lower_expr(path, initializer))
+                        .transpose()?
+                        .map(|value| {
+                            self.render_ir_code(&IrExpr::new(
+                                IrExprKind::CastToReal {
+                                    a: Box::new(value),
+                                    shortreal,
+                                },
+                                0,
+                                true,
+                                None,
+                            ))
+                        })
+                        .transpose()?
+                        .unwrap_or_else(|| "0.0".to_owned());
+                    code.push_str(&format!("_llg_obj->{} = {}; ", field.c_name, value));
+                }
+                crate::sim::ir::IrClassFieldType::String
+                | crate::sim::ir::IrClassFieldType::Chandle => {}
+            }
+        }
+        if let Some(constructor) = constructor {
+            let (name, callee) = match self.kind(constructor) {
+                NodeKind::FuncCall { name, callee, .. } => (name.clone(), *callee),
+                _ => return Err("class constructor edge does not name a function call".to_owned()),
+            };
+            let mut call = self.lower_func_call_expr(path, constructor, &name, callee)?;
+            if let IrExprKind::CallFn(call) = &mut call.kind {
+                call.receiver = Some(IrChandleExpr::LocalRead("_llg_obj".to_owned()));
+            }
+            code.push_str(&format!("{}; ", self.render_ir_code(&call)?));
+        }
+        code.push_str("(void*)_llg_obj; })");
+        self.class_init_receiver = None;
+        let _ = node;
+        Ok(IrChandleExpr::Verbatim(code))
     }
 
     fn object_int_argument(
@@ -57,6 +427,7 @@ impl Codegen<'_> {
             NodeKind::Var { ty } => match ty.kind.as_str() {
                 "string" => IrObjectType::String,
                 "chandle" => IrObjectType::Chandle,
+                "class" => IrObjectType::Chandle,
                 _ => return Ok(false),
             },
             _ => return Ok(false),
@@ -82,7 +453,12 @@ impl Codegen<'_> {
                     self.model.objects[index].initial = Some(self.lower_string(path, init)?)
                 }
                 IrObjectType::Chandle => {
-                    if self.lower_chandle(path, init)? != IrChandleExpr::Null {
+                    let is_class =
+                        matches!(self.kind(node), NodeKind::Var { ty } if ty.kind == "class");
+                    if is_class {
+                        self.class_object_initializers
+                            .push((node, index, init, path.to_owned()));
+                    } else if self.lower_chandle(path, init)? != IrChandleExpr::Null {
                         return Err("chandle declaration initializer must be null".to_owned());
                     }
                 }
@@ -200,6 +576,7 @@ impl Codegen<'_> {
             NodeKind::MethodCall {
                 name,
                 receiver: Some(receiver),
+                ..
             } => {
                 (matches!(name.as_str(), "toupper" | "tolower" | "substr")
                     && self.is_string_expr(path, *receiver))
@@ -224,8 +601,11 @@ impl Codegen<'_> {
     /// to be backed by a model-global object. Function formals, automatic
     /// locals, and chandle-returning calls all live in the function context.
     pub(super) fn is_chandle_expr(&self, path: &str, node: NodeId) -> bool {
+        if matches!(self.kind(node), NodeKind::Expr(ExprKind::NewClass { .. })) {
+            return true;
+        }
         if let NodeKind::Expr(ExprKind::Cast { operand, ty, .. }) = self.kind(node) {
-            if ty.kind == "chandle" {
+            if is_handle_kind(&ty.kind) {
                 return true;
             }
             if self.is_chandle_expr(path, *operand) {
@@ -368,6 +748,7 @@ impl Codegen<'_> {
             NodeKind::MethodCall {
                 name,
                 receiver: Some(receiver),
+                ..
             } => (name.as_str(), *receiver),
             _ => return Ok(None),
         };
@@ -442,6 +823,7 @@ impl Codegen<'_> {
             NodeKind::MethodCall {
                 name,
                 receiver: Some(receiver),
+                ..
             } => (name.as_str(), *receiver),
             _ => return Ok(None),
         };
@@ -526,9 +908,16 @@ impl Codegen<'_> {
             return Ok(value);
         }
         if let NodeKind::Expr(ExprKind::Cast { operand, ty, .. }) = self.kind(node) {
-            if ty.kind == "chandle" {
+            if is_handle_kind(&ty.kind) {
                 return self.lower_chandle(path, *operand);
             }
+        }
+        if let NodeKind::Expr(ExprKind::NewClass {
+            class_name,
+            constructor,
+        }) = self.kind(node)
+        {
+            return self.lower_new_class(path, node, class_name.as_deref(), *constructor);
         }
         if matches!(
             self.kind(node),
@@ -588,7 +977,7 @@ impl Codegen<'_> {
             for (idx, (formal, is_out)) in meta.formals.iter().enumerate() {
                 let is_chandle = matches!(
                     self.kind(*formal),
-                    NodeKind::FuncArg { ty, .. } if ty.kind == "chandle"
+                    NodeKind::FuncArg { ty, .. } if is_handle_kind(&ty.kind)
                 );
                 let is_ref = matches!(
                     self.kind(*formal),
@@ -650,6 +1039,7 @@ impl Codegen<'_> {
         if let NodeKind::MethodCall {
             name,
             receiver: Some(receiver),
+            ..
         } = self.kind(node)
         {
             if name == "get_randstate"
@@ -889,7 +1279,7 @@ impl Codegen<'_> {
                 let result = IrStringExpr::Concat(parts);
                 Ok(match count {Some(count) => IrStringExpr::Repeat(Box::new(result),Box::new(count)),None => result})
             }
-            NodeKind::MethodCall { name, receiver: Some(receiver) } => {
+            NodeKind::MethodCall { name, receiver: Some(receiver), .. } => {
                 if name == "name" {
                     if let Some(value) = self.lower_enum_name(path, node)? {
                         return Ok(value);
@@ -989,6 +1379,7 @@ impl Codegen<'_> {
             NodeKind::MethodCall {
                 name,
                 receiver: Some(receiver),
+                ..
             } if self.is_string_expr(path, *receiver) => {
                 let name = name.clone();
                 let receiver = *receiver;
@@ -1273,6 +1664,7 @@ impl Codegen<'_> {
             NodeKind::MethodCall {
                 name,
                 receiver: Some(receiver),
+                ..
             } => (name.clone(), *receiver),
             _ => return Err("object method has no receiver".to_owned()),
         };

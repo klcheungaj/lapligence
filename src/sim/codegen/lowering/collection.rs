@@ -2,7 +2,8 @@
 
 use super::*;
 use crate::sim::ir::{
-    IrChandleExpr, IrContainerElement, IrContainerMember, IrObjectStmt, IrObjectType, IrStringExpr,
+    IrChandleExpr, IrClass, IrClassField, IrClassFieldType, IrContainerElement, IrContainerMember,
+    IrObjectStmt, IrObjectType, IrStringExpr,
 };
 
 fn lower_container_element(descriptor: &TypeDescriptor) -> Result<IrContainerElement, String> {
@@ -604,6 +605,7 @@ impl<'a> Codegen<'a> {
     /// Walk the instance tree, collecting signals, parameters and gen-scope
     /// paths.  Returns the top module nodes.
     pub(super) fn collect_design(&mut self) -> Result<Vec<NodeId>, String> {
+        self.collect_classes()?;
         for node in self.design_nodes() {
             let net_type = match self.kind(node) {
                 NodeKind::Net { net_type, .. } => Some(*net_type),
@@ -618,6 +620,9 @@ impl<'a> Codegen<'a> {
             }
         }
         let mut tops = Vec::new();
+        for class in self.db.classes() {
+            self.collect_class_funcs(*class)?;
+        }
         for top in self.db.tops() {
             let path = strip_lib(&self.node(*top).name);
             if path.is_empty() {
@@ -651,6 +656,229 @@ impl<'a> Codegen<'a> {
             self.collect_funcs(unit, &path)?;
         }
         Ok(tops)
+    }
+
+    fn collect_class_funcs(&mut self, class: NodeId) -> Result<(), String> {
+        let class_index = self
+            .class_nodes
+            .get(&class)
+            .copied()
+            .ok_or_else(|| format!("class `{}` has no layout", self.node(class).name))?;
+        for child in self.node(class).children.clone() {
+            if matches!(self.kind(child), NodeKind::FuncTask { .. }) {
+                let name = self.node(child).name.clone();
+                self.func_names
+                    .insert(child, format!("fn_class_{class_index}_{}", ident(&name)));
+            }
+        }
+        Ok(())
+    }
+
+    pub(super) fn emit_class_func_prototypes(&mut self) -> Result<(), String> {
+        for class in self.db.classes().to_vec() {
+            self.emit_func_prototypes(class)?;
+        }
+        Ok(())
+    }
+
+    pub(super) fn emit_class_func_bodies(&mut self) -> Result<(), String> {
+        for class in self.db.classes().to_vec() {
+            self.emit_func_bodies(class)?;
+        }
+        Ok(())
+    }
+
+    fn class_field_type(
+        &self,
+        field: NodeId,
+        ty: &crate::core::model::TypeInfo,
+    ) -> Result<IrClassFieldType, String> {
+        if is_real_kind(&ty.kind) {
+            return Ok(IrClassFieldType::Real {
+                shortreal: ty.kind == "shortreal",
+            });
+        }
+        if ty.kind == "string" || is_handle_kind(&ty.kind) {
+            return Err(format!(
+                "class property `{}` has unsupported object type `{}`; only packed and real properties are supported",
+                self.node(field).full_name,
+                ty.kind
+            ));
+        }
+        let width = ty.width.ok_or_else(|| {
+            format!(
+                "class property `{}` has no resolved packed width",
+                self.node(field).full_name
+            )
+        })?;
+        if width == 0 || width > LLG_MAX_WIDTH {
+            return Err(format!(
+                "class property `{}` has unsupported width {width}",
+                self.node(field).full_name
+            ));
+        }
+        Ok(IrClassFieldType::Packed {
+            width,
+            signed: ty.signed,
+            two_state: self.db.is_two_state_type(field) || is_two_state_kind(&ty.kind),
+        })
+    }
+
+    /// Capture nominal class layouts and allocate shared static properties.
+    /// Instance properties live in the emitted heap object and are mapped by
+    /// declaration identity, so same-named classes/properties cannot alias.
+    fn collect_classes(&mut self) -> Result<(), String> {
+        for class in self.db.classes() {
+            let class_index = self.model.classes.len();
+            self.class_nodes.insert(*class, class_index);
+            let mut fields = Vec::new();
+            for child in self.node(*class).children.clone() {
+                let NodeKind::Var { ty } = self.kind(child) else {
+                    continue;
+                };
+                let field_ty = self.class_field_type(child, ty)?;
+                if self.db.variable_lifetime(child) == VariableLifetime::Static {
+                    match field_ty {
+                        IrClassFieldType::Packed {
+                            width,
+                            signed,
+                            two_state,
+                        } => {
+                            let ir = self.model.signals.len();
+                            let info = SignalInfo {
+                                global: format!(
+                                    "G_class_{class_index}_{}",
+                                    ident(&self.node(child).name)
+                                ),
+                                width,
+                                signed,
+                                two_state,
+                                real: false,
+                                shortreal: false,
+                                net_driver: None,
+                                ir,
+                            };
+                            self.model.signals.push(IrSignal {
+                                c_name: info.global.clone(),
+                                hdl_name: None,
+                                ty: IrType::Packed {
+                                    width,
+                                    signed,
+                                    two_state,
+                                },
+                                net_driver: None,
+                                alias: None,
+                                omit: false,
+                            });
+                            self.signals.push(info.clone());
+                            self.class_static_signals.insert(child, info.clone());
+                            if let Some(initializer) = self.db.var_initializer(child) {
+                                let value = self.const_of_node(initializer).map_err(|error| {
+                                    format!(
+                                        "static class property `{}` initializer: {error}",
+                                        self.node(child).full_name
+                                    )
+                                })?;
+                                self.var_inits.push((info, value));
+                            }
+                        }
+                        IrClassFieldType::Real { shortreal } => {
+                            let ir = self.model.signals.len();
+                            let info = SignalInfo {
+                                global: format!(
+                                    "G_class_{class_index}_{}",
+                                    ident(&self.node(child).name)
+                                ),
+                                width: 0,
+                                signed: false,
+                                two_state: false,
+                                real: true,
+                                shortreal,
+                                net_driver: None,
+                                ir,
+                            };
+                            self.model.signals.push(IrSignal {
+                                c_name: info.global.clone(),
+                                hdl_name: None,
+                                ty: IrType::Real { shortreal },
+                                net_driver: None,
+                                alias: None,
+                                omit: false,
+                            });
+                            self.signals.push(info.clone());
+                            self.class_static_signals.insert(child, info.clone());
+                            if let Some(initializer) = self.db.var_initializer(child) {
+                                let value = self.const_of_node(initializer).map_err(|error| {
+                                    format!(
+                                        "static class property `{}` initializer: {error}",
+                                        self.node(child).full_name
+                                    )
+                                })?;
+                                self.var_inits.push((info, value));
+                            }
+                        }
+                        IrClassFieldType::String => {
+                            let index = self.model.objects.len();
+                            let initial = self
+                                .db
+                                .var_initializer(child)
+                                .map(|initializer| self.lower_string("$class", initializer))
+                                .transpose()?;
+                            self.model.objects.push(crate::sim::ir::IrObject {
+                                c_name: format!(
+                                    "O_class_{class_index}_{}",
+                                    ident(&self.node(child).name)
+                                ),
+                                ty: IrObjectType::String,
+                                initial,
+                            });
+                            self.class_static_objects.insert(child, index);
+                        }
+                        IrClassFieldType::Chandle => {
+                            let index = self.model.objects.len();
+                            if let Some(initializer) = self.db.var_initializer(child) {
+                                if !matches!(
+                                    self.kind(initializer),
+                                    NodeKind::Expr(ExprKind::Constant {
+                                        const_type: ConstantType::Null,
+                                        ..
+                                    })
+                                ) {
+                                    return Err(format!(
+                                        "static class handle property `{}` must initialize to null",
+                                        self.node(child).full_name
+                                    ));
+                                }
+                            }
+                            self.model.objects.push(crate::sim::ir::IrObject {
+                                c_name: format!(
+                                    "O_class_{class_index}_{}",
+                                    ident(&self.node(child).name)
+                                ),
+                                ty: IrObjectType::Chandle,
+                                initial: None,
+                            });
+                            self.class_static_objects.insert(child, index);
+                        }
+                    }
+                    continue;
+                }
+                let field_index = fields.len();
+                fields.push(IrClassField {
+                    c_name: format!(
+                        "f_{class_index}_{field_index}_{}",
+                        ident(&self.node(child).name)
+                    ),
+                    ty: field_ty,
+                });
+                self.class_fields.insert(child, (class_index, field_index));
+            }
+            self.model.classes.push(IrClass {
+                c_name: format!("llg_class_{class_index}"),
+                fields,
+            });
+        }
+        Ok(())
     }
 
     pub(super) fn compilation_unit_scopes(&self) -> Vec<NodeId> {
@@ -3732,7 +3960,7 @@ impl<'a> Codegen<'a> {
                                     mode,
                                     const_ref: *const_ref,
                                     ref_static: *ref_static,
-                                    width: if ty.kind == "chandle" || is_real_kind(&ty.kind) {
+                                    width: if is_handle_kind(&ty.kind) || is_real_kind(&ty.kind) {
                                         0
                                     } else {
                                         ty.width
@@ -3746,7 +3974,7 @@ impl<'a> Codegen<'a> {
                                         || is_two_state_kind(&ty.kind),
                                     real: is_real_kind(&ty.kind),
                                     shortreal: ty.kind == "shortreal",
-                                    chandle: ty.kind == "chandle",
+                                    chandle: is_handle_kind(&ty.kind),
                                     event: ty.kind == "event",
                                     string: ty.kind == "string",
                                 })
@@ -3954,7 +4182,7 @@ impl<'a> Codegen<'a> {
                         self.kind(*c),
                         NodeKind::FuncTask {
                             ret: Some(ty), ..
-                        } if ty.kind == "chandle"
+                        } if is_handle_kind(&ty.kind)
                     ),
                     ret_string: self.is_string_return(*c),
                     ret: ret.map(|(w, s, two_state, shortreal)| {
@@ -3967,6 +4195,15 @@ impl<'a> Codegen<'a> {
                                 two_state,
                             }
                         }
+                    }),
+                    receiver_class: self.class_nodes.get(&inst).copied().filter(|_| {
+                        !matches!(
+                            self.kind(*c),
+                            NodeKind::FuncTask {
+                                is_static: true,
+                                ..
+                            }
+                        )
                     }),
                     formals: formals_ir,
                     locals: Vec::new(),
@@ -4038,6 +4275,17 @@ impl<'a> Codegen<'a> {
             "sv4_t"
         };
         let mut params = Vec::new();
+        if self.class_nodes.contains_key(&inst)
+            && !matches!(
+                self.kind(ft),
+                NodeKind::FuncTask {
+                    is_static: true,
+                    ..
+                }
+            )
+        {
+            params.push("void *_this".to_string());
+        }
         // Address formals first (outputs/inouts use `o{idx}`, refs use
         // `r{idx}`), then by-value inputs. Names use the formal's declaration
         // index, matching the maps built when emitting the body.
@@ -4060,7 +4308,7 @@ impl<'a> Codegen<'a> {
                 );
                 let is_chandle = matches!(
                     self.kind(formals[idx].0),
-                    NodeKind::FuncArg { ty, .. } if ty.kind == "chandle"
+                    NodeKind::FuncArg { ty, .. } if is_handle_kind(&ty.kind)
                 );
                 params.push(if is_string {
                     format!(
@@ -4075,7 +4323,7 @@ impl<'a> Codegen<'a> {
             } else if *is_out {
                 let ty = match self.kind(formals[idx].0) {
                     NodeKind::FuncArg { ty, .. } if ty.kind == "string" => "llg_string_t",
-                    NodeKind::FuncArg { ty, .. } if ty.kind == "chandle" => "void *",
+                    NodeKind::FuncArg { ty, .. } if is_handle_kind(&ty.kind) => "void *",
                     NodeKind::FuncArg { ty, .. } if is_real_kind(&ty.kind) => "double",
                     _ => "sv4_t",
                 };
@@ -4093,7 +4341,7 @@ impl<'a> Codegen<'a> {
             if !*is_out && !is_ref {
                 let ty = match self.kind(formals[idx].0) {
                     NodeKind::FuncArg { ty, .. } if ty.kind == "string" => "llg_string_t",
-                    NodeKind::FuncArg { ty, .. } if ty.kind == "chandle" => "void *",
+                    NodeKind::FuncArg { ty, .. } if is_handle_kind(&ty.kind) => "void *",
                     NodeKind::FuncArg { ty, .. } if is_real_kind(&ty.kind) => "double",
                     _ => "sv4_t",
                 };
@@ -4112,7 +4360,7 @@ impl<'a> Codegen<'a> {
             self.kind(ft),
             NodeKind::FuncTask {
                 ret: Some(ty), ..
-            } if ty.kind == "chandle"
+            } if is_handle_kind(&ty.kind)
         )
     }
 
@@ -4148,7 +4396,7 @@ impl<'a> Codegen<'a> {
             .find(|child| matches!(self.kind(*child), NodeKind::Var { .. }))
             .is_some_and(|return_var| self.db.is_two_state_type(return_var));
         let ret = match ret {
-            Some(ty) if matches!(ty.kind.as_str(), "chandle" | "string") => None,
+            Some(ty) if matches!(ty.kind.as_str(), "chandle" | "class" | "string") => None,
             Some(ty) => {
                 if is_real_kind(&ty.kind) {
                     Some((0, false, false, ty.kind == "shortreal"))
@@ -4340,7 +4588,7 @@ impl<'a> Codegen<'a> {
                 // shape but has no packed formal storage.
                 continue;
             }
-            if matches!(self.kind(*io), NodeKind::FuncArg { ty, .. } if ty.kind == "chandle") {
+            if matches!(self.kind(*io), NodeKind::FuncArg { ty, .. } if is_handle_kind(&ty.kind)) {
                 let is_ref = matches!(
                     self.kind(*io),
                     NodeKind::FuncArg {
@@ -4590,6 +4838,19 @@ impl<'a> Codegen<'a> {
         let func_ctx = FuncCtx {
             name: self.node(ft).name.clone(),
             is_task,
+            class_receiver: self
+                .class_nodes
+                .get(&inst)
+                .filter(|_| {
+                    !matches!(
+                        self.kind(ft),
+                        NodeKind::FuncTask {
+                            is_static: true,
+                            ..
+                        }
+                    )
+                })
+                .map(|_| IrChandleExpr::LocalRead("_this".to_owned())),
             ret: ret_ctx.clone(),
             arg_read,
             arg_ir,
@@ -4634,9 +4895,11 @@ impl<'a> Codegen<'a> {
             (body_stmts, pre_fns)
         };
         pre_fns.extend(std::mem::take(&mut self.pending_container_pre_fns));
-        // Delay-free tasks need the same declaration-level activation as an
-        // inlined timed task. A self-disable must cancel every active invocation.
-        if is_task {
+        // Delay-free module tasks need the same declaration-level activation
+        // as an inlined timed task. Class methods have no module activation
+        // environment; the bounded class subset admits only direct,
+        // delay-free task calls, so they do not need this cancellation scope.
+        if is_task && !self.class_nodes.contains_key(&inst) {
             body_stmts = vec![IrStmt::ActivationScope {
                 target: self.activation_target(ft)?,
                 exit: self.new_fn_name(path, "task_exit"),
@@ -4747,7 +5010,7 @@ impl<'a> Codegen<'a> {
         }
         if let NodeKind::Var { ty } = self.kind(node) {
             self.explicit_local_lifetime(node)?;
-            if ty.kind == "chandle" {
+            if is_handle_kind(&ty.kind) {
                 chandle_locals.entry(node).or_insert_with(|| {
                     let cname = format!("{prefix}_l{seq}");
                     *seq += 1;
@@ -5027,6 +5290,7 @@ impl<'a> Codegen<'a> {
         while let Some(id) = current {
             if matches!(self.kind(id), NodeKind::ModuleInst { .. })
                 || self.is_runtime_environment(id)
+                || matches!(self.kind(id), NodeKind::ClassDef)
             {
                 return Some(id);
             }
@@ -5294,7 +5558,7 @@ impl<'a> Codegen<'a> {
                 NodeKind::FuncArg { ty, .. } => {
                     if ty.kind == "event" {
                         (0, false, false, false, false, true, false)
-                    } else if ty.kind == "chandle" {
+                    } else if is_handle_kind(&ty.kind) {
                         (0, false, false, false, false, false, false)
                     } else if ty.kind == "string" {
                         (0, false, false, false, false, false, true)
@@ -5382,6 +5646,20 @@ impl<'a> Codegen<'a> {
         Ok(bound)
     }
 
+    /// Return source arguments in formal order. Slang keeps a method receiver
+    /// as the first structural child, while ordinary function calls contain
+    /// only their argument expressions.
+    pub(super) fn call_argument_nodes(&self, call: NodeId) -> Vec<NodeId> {
+        let children = self.node(call).children.as_slice();
+        match self.kind(call) {
+            NodeKind::MethodCall {
+                receiver: Some(receiver),
+                ..
+            } if children.first() == Some(receiver) => children[1..].to_vec(),
+            _ => children.to_vec(),
+        }
+    }
+
     /// Lower the C value expression for bound argument `idx` of a call and
     /// record it in `arg_codes[idx]` (rendered, for the legacy string paths)
     /// and `arg_irs[idx]` (IR) for later formals' default expressions to
@@ -5441,6 +5719,7 @@ impl<'a> Codegen<'a> {
                 string_addr: HashMap::new(),
                 locals: HashMap::new(),
                 ret_node: None,
+                class_receiver: None,
                 // Formal defaults carry exact references to the same formal
                 // NodeIds used as keys above. Avoid remapping them through an
                 // executable function context while arguments are being
@@ -6045,7 +6324,7 @@ impl<'a> Codegen<'a> {
             ));
         }
         let formals = meta.formals.clone();
-        let args: Vec<NodeId> = self.node(h).children.clone();
+        let args = self.call_argument_nodes(h);
         let bound = self.bind_call_args(self.inst, &formals, &args)?;
         for (idx, (io, _is_out)) in formals.iter().enumerate() {
             if bound[idx].is_event {
@@ -6068,7 +6347,7 @@ impl<'a> Codegen<'a> {
         for (idx, (io, is_out)) in formals.iter().enumerate() {
             if matches!(
                 self.kind(*io),
-                NodeKind::FuncArg { ty, .. } if ty.kind == "chandle"
+                NodeKind::FuncArg { ty, .. } if is_handle_kind(&ty.kind)
             ) {
                 let is_ref = matches!(
                     self.kind(*io),
@@ -6209,7 +6488,7 @@ impl<'a> Codegen<'a> {
             );
             if !*is_out
                 && !is_ref
-                && matches!(self.kind(*io), NodeKind::FuncArg { ty, .. } if ty.kind == "chandle")
+                && matches!(self.kind(*io), NodeKind::FuncArg { ty, .. } if is_handle_kind(&ty.kind))
             {
                 in_args.push(IrCallArg::ChandleVal(
                     self.lower_chandle(scope_path, bound[idx].expr)?,
@@ -6233,7 +6512,24 @@ impl<'a> Codegen<'a> {
             }
         }
         out_args.extend(in_args);
-        if ret_val.is_none() {
+        // A class method written without an explicit receiver inside another
+        // class method is represented as a plain function call by Slang. Bind
+        // that call to the current `this` (or the object under construction).
+        let receiver = if self.model.funcs[meta.ir].receiver_class.is_some()
+            && matches!(self.kind(h), NodeKind::FuncCall { .. })
+        {
+            self.func
+                .as_ref()
+                .and_then(|function| function.class_receiver.clone())
+                .or_else(|| self.class_init_receiver.clone())
+        } else {
+            None
+        };
+        let is_class_constructor = self
+            .class_nodes
+            .contains_key(&self.node(ft).parent.unwrap_or(NodeId(0)))
+            && self.node(ft).name == "new";
+        if ret_val.is_none() && !is_class_constructor {
             self.warnings.push(format!(
                 "void function `{name}` used as a value in `{scope_path}`; result is X"
             ));
@@ -6244,6 +6540,7 @@ impl<'a> Codegen<'a> {
                 f: meta.ir,
                 args: out_args,
                 depth,
+                receiver,
                 void_x: ret_val.is_none(),
             })),
             ret_w,
@@ -9329,6 +9626,7 @@ impl<'a> Codegen<'a> {
             NodeKind::MethodCall {
                 name,
                 receiver: Some(receiver),
+                ..
             } if Self::mutating_container_method(name) => {
                 self.add_process_lhs_write(*receiver, writes);
             }
@@ -9607,6 +9905,7 @@ impl<'a> Codegen<'a> {
             NodeKind::MethodCall {
                 name,
                 receiver: Some(receiver),
+                ..
             } => {
                 if let Some(container) = self.container_of(*receiver) {
                     // A pure mutation statement has no read of the receiver.
@@ -11145,7 +11444,7 @@ impl<'a> Codegen<'a> {
                 ..
             }) => self.eval_operation_bits(*op, *reordered, operands),
             NodeKind::Expr(ExprKind::Cast { ty, .. })
-                if !is_real_kind(&ty.kind) && ty.kind != "string" && ty.kind != "chandle" =>
+                if !is_real_kind(&ty.kind) && ty.kind != "string" && !is_handle_kind(&ty.kind) =>
             {
                 match self.eval_decl_value(node)? {
                     Val::Bits(value) => Ok(value),
@@ -11209,7 +11508,7 @@ impl<'a> Codegen<'a> {
         let integral_cast = matches!(
             self.kind(assignment_rhs),
             NodeKind::Expr(ExprKind::Cast { ty, .. })
-                if !is_real_kind(&ty.kind) && ty.kind != "string" && ty.kind != "chandle"
+            if !is_real_kind(&ty.kind) && ty.kind != "string" && !is_handle_kind(&ty.kind)
         );
         if frontend_value.is_some()
             && !integral_cast
@@ -11283,7 +11582,7 @@ impl<'a> Codegen<'a> {
         if !matches!(
             self.kind(node),
             NodeKind::Expr(ExprKind::Cast { ty, .. })
-                if !is_real_kind(&ty.kind) && ty.kind != "string" && ty.kind != "chandle"
+                if !is_real_kind(&ty.kind) && ty.kind != "string" && !is_handle_kind(&ty.kind)
         ) {
             if let Ok(bits) = self.eval_bits(node) {
                 return Ok(Val::Bits(bits));
@@ -11405,7 +11704,7 @@ impl<'a> Codegen<'a> {
                 cast_kind_known,
                 two_state,
                 propagated,
-            }) if !is_real_kind(&ty.kind) && ty.kind != "string" && ty.kind != "chandle" => {
+            }) if !is_real_kind(&ty.kind) && ty.kind != "string" && !is_handle_kind(&ty.kind) => {
                 if !cast_kind_known {
                     return Err("declaration-initializer cast kind cannot be determined".to_owned());
                 }

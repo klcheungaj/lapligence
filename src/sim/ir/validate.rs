@@ -1494,6 +1494,16 @@ impl Validator<'_> {
         path: &str,
     ) -> ValidationResult {
         self.validate_call_target(call.f, &call.args, formals, path, false)?;
+        let callee = &self.model.funcs[call.f];
+        if callee.receiver_class.is_some() {
+            let receiver = call
+                .receiver
+                .as_ref()
+                .ok_or_else(|| IrValidationError::new(path, "class method call has no receiver"))?;
+            receiver.validate(self.model, formals, self.chandle_return.get())?;
+        } else if call.receiver.is_some() {
+            return self.fail(path, "non-method call cannot carry a receiver");
+        }
         for (idx, arg) in call.args.iter().enumerate() {
             if let IrCallArg::OutTemp {
                 init,
@@ -2964,6 +2974,14 @@ impl Validator<'_> {
             IrStmt::Call(call) => {
                 self.validate_call_target(call.f, &call.args, formals, path, true)?;
                 let callee = &self.model.funcs[call.f];
+                if callee.receiver_class.is_some() {
+                    let receiver = call.receiver.as_ref().ok_or_else(|| {
+                        IrValidationError::new(path, "class method call has no receiver")
+                    })?;
+                    receiver.validate(self.model, formals, self.chandle_return.get())?;
+                } else if call.receiver.is_some() {
+                    return self.fail(path, "non-method call cannot carry a receiver");
+                }
                 for (idx, (_, formal, init)) in call.temps.iter().enumerate() {
                     let formal_ty = callee.formals.get(*formal).ok_or_else(|| {
                         IrValidationError::new(

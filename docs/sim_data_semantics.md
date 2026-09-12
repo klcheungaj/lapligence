@@ -187,8 +187,14 @@ exact range/state/signedness matching and member overrides. Packed unions
 support direct width-matched initialization; packed and unpacked unions cover
 selected-member writes over the tested fixed packed members.
 Nominal type keys, nested recursive defaults, nested unpacked or object
-members, aggregate ports/nets/subprogram storage, tagged unions, classes,
-virtual interfaces, and general aggregate slices remain outside the profile.
+members, aggregate ports/nets/subprogram storage, tagged unions, and general
+aggregate slices remain outside the profile. The simulator's bounded class
+subset covers nominal handles, heap `new`, packed/real properties,
+default/explicit constructors, static packed/real properties and methods,
+this-bound methods, null checks, and shallow handle aliasing (§§8.3–8.10).
+Inheritance, virtual/parameterized classes, string/chandle/class properties,
+timing-bearing class tasks, access qualifiers, and virtual
+interfaces remain outside the profile.
 Resizable containers currently target one-dimensional
 packed elements; focused integral- and string-key associative access, element
 reductions, and static local/formal/NBA persistence are covered. A legal

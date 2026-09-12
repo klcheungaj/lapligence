@@ -1280,6 +1280,9 @@ fn render_stmt_scoped(
                     } => call_args.push(storage_addr.clone().unwrap_or_else(|| format!("&{name}"))),
                 }
             }
+            if let Some(receiver) = &call.receiver {
+                call_args.insert(0, super::objects::chandle(ctx, receiver)?);
+            }
             call_args.push(call.depth.code());
             out.push_str(&format!(
                 "        {}({});\n",

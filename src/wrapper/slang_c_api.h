@@ -373,6 +373,11 @@ enum {
   LLG_SLANG_ARGUMENT_REF_STATIC = 1ull << 1
 };
 
+/* Subroutine qualifiers carried in LlgSlangSemanticNode::auxiliary. */
+enum {
+  LLG_SLANG_SUBROUTINE_STATIC = 1ull << 0
+};
+
 /* Conditional/case qualifiers carried in LlgSlangSemanticNode::auxiliary.
  * These values are owned by this ABI; they intentionally do not depend on
  * Slang's enum representation. */

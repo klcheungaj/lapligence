@@ -155,6 +155,11 @@ coverage for the same rule IDs.
   recreated, static storage is per elaborated instance, declaration
   initializers preserve ordering, and the selected edition's initialization
   race boundary is respected.
+- `sim_classes.rs` runs checked-in class fixtures through the owned database in
+  both optimizer modes, covering bounded nominal handles, heap construction,
+  property defaults, constructors, static members, this-bound methods, shallow
+  aliasing, delay-free class tasks, and the null-handle runtime failure
+  contract.
 - `sim_cmake.rs` covers the build path (5 cases: library-level
   end-to-end CMake build, explicit `CmakeBuildOpts` generator backend,
   invalid-generator configure error, driver default, missing-cmake

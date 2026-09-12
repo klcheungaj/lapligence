@@ -209,6 +209,7 @@ fn render_string_format(
 pub(super) fn chandle(ctx: &RCtx<'_>, value: &IrChandleExpr) -> Result<String, String> {
     Ok(match value {
         IrChandleExpr::Null => "NULL".to_owned(),
+        IrChandleExpr::Verbatim(code) => code.clone(),
         IrChandleExpr::Read(index) => ctx.model.objects[*index].c_name.clone(),
         IrChandleExpr::LocalRead(name) => name.clone(),
         IrChandleExpr::FormalRead(index) => {

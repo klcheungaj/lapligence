@@ -1432,6 +1432,7 @@ mod tests {
                 NodeKind::FuncTask {
                     is_task: false,
                     automatic: true,
+                    is_static: false,
                     ret: None,
                     body: Some(NodeId(3)),
                 },

@@ -117,11 +117,11 @@
 //! and follows the generated model's packed capacity.
 //!
 //! Rejected with an `Err`: fork/join inside a function/task body, task calls
-//! inside function bodies, recursive delay-bearing tasks, unresolved
-//! cross-instance function/task calls, string/class signals and string
-//! parameters, unsupported aggregate/container/reference-real subprogram
-//! contexts, widths at or above the backend's exclusive generated-model
-//! capacity, and malformed
+//! inside function bodies, recursive delay-bearing tasks, timing-bearing
+//! class tasks, unresolved cross-instance function/task calls, string signals
+//! and string parameters, class string/chandle/nested-class properties, unsupported
+//! aggregate/container/reference-real subprogram contexts, widths at or above
+//! the backend's exclusive generated-model capacity, and malformed
 //! IR/value widths that exceed the runtime model capacity,
 //! hierarchical WRITES whose final path element does not resolve to a
 //! per-instance signal, hierarchical write targets with variable or
@@ -287,6 +287,13 @@ const REAL_EXPR_WIDTH: u32 = 0;
 /// the top of every emitted function returns all-X beyond this.
 const LLG_MAX_FUNC_DEPTH: u32 = 256;
 
+/// Native pointer-valued SystemVerilog declarations. Class handles share the
+/// existing object ABI with `chandle`; their nominal layout and method
+/// receiver are carried separately by the class tables below.
+pub(super) fn is_handle_kind(kind: &str) -> bool {
+    matches!(kind, "chandle" | "class")
+}
+
 /// The generated C model plus non-fatal warnings collected while lowering.
 pub struct GeneratedModel {
     /// Complete `model.c` source: `#include "llg_rt.h"`, signal globals,
@@ -362,6 +369,7 @@ fn generate_from_db_with_opts_impl(
     // Functions/tasks become static C functions (prototypes first so bodies
     // may call each other regardless of declaration order), lowered before any
     // process code references them.
+    cg.emit_class_func_prototypes()?;
     for top in &tops {
         cg.emit_func_prototypes(*top)?;
     }
@@ -371,6 +379,7 @@ fn generate_from_db_with_opts_impl(
     for unit in &compilation_units {
         cg.emit_func_prototypes(*unit)?;
     }
+    cg.emit_class_func_bodies()?;
     for top in &tops {
         cg.emit_func_bodies(*top)?;
     }
@@ -395,6 +404,7 @@ fn generate_from_db_with_opts_impl(
     cg.emit_clocking_processes()?;
     cg.emit_array_initializers()?;
     cg.emit_container_initializers()?;
+    cg.emit_class_object_initializers()?;
     let mut model = std::mem::replace(
         &mut cg.model,
         IrModel::new(String::new(), Timescale::DEFAULT.precision_fs)
@@ -727,6 +737,21 @@ struct Codegen<'a> {
     reference_objects: HashMap<usize, usize>,
     object_globals: HashMap<NodeId, usize>,
     scope_object_names: HashMap<String, HashMap<String, usize>>,
+    /// Nominal class declaration → execution-IR layout index.
+    class_nodes: HashMap<NodeId, usize>,
+    /// Class property declaration → `(layout index, field index)` for
+    /// non-static properties.
+    class_fields: HashMap<NodeId, (usize, usize)>,
+    /// Static class properties use ordinary model storage and retain their
+    /// declaration identity here.
+    class_static_signals: HashMap<NodeId, SignalInfo>,
+    class_static_objects: HashMap<NodeId, usize>,
+    /// Class variables with declaration-time `new(...)` initializers are
+    /// deferred until class methods have prototypes and can be called.
+    class_object_initializers: Vec<(NodeId, usize, NodeId, String)>,
+    /// Receiver used while lowering a class property's default expression or
+    /// constructor body during a fresh allocation.
+    class_init_receiver: Option<IrChandleExpr>,
     /// Top-level unpacked aggregate variables lowered to member storage.
     unpacked_aggregates: HashMap<NodeId, UnpackedAggregateInfo>,
     /// Synthetic owned string objects for recursive aggregate leaves. The
@@ -903,6 +928,12 @@ impl<'a> Codegen<'a> {
             reference_objects: HashMap::new(),
             object_globals: HashMap::new(),
             scope_object_names: HashMap::new(),
+            class_nodes: HashMap::new(),
+            class_fields: HashMap::new(),
+            class_static_signals: HashMap::new(),
+            class_static_objects: HashMap::new(),
+            class_object_initializers: Vec::new(),
+            class_init_receiver: None,
             unpacked_aggregates: HashMap::new(),
             aggregate_objects: HashMap::new(),
             proc_locals: HashMap::new(),
@@ -3160,6 +3191,9 @@ struct FuncCtx {
     /// `true` for a task, `false` for a function (task calls are rejected
     /// inside function bodies).
     is_task: bool,
+    /// Hidden class-object receiver for a method body. Ordinary functions
+    /// and tasks leave this unset.
+    class_receiver: Option<IrChandleExpr>,
     /// Return variable context; `None` for void functions and tasks.
     ret: Option<RetCtx>,
     /// io_decl arena node → C expression reading the formal.

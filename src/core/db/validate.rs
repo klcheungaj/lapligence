@@ -366,7 +366,12 @@ impl NodeKind {
                 driver_delay_refs(*delay, refs);
                 refs.extend(terms.iter().map(|term| term.expr));
             }
-            NodeKind::MethodCall { receiver, .. } => refs.extend(*receiver),
+            NodeKind::MethodCall {
+                receiver, callee, ..
+            } => {
+                refs.extend(*receiver);
+                refs.extend(*callee);
+            }
             NodeKind::FuncCall { callee, .. } => refs.extend(*callee),
             NodeKind::FuncTask { body, .. } => refs.extend(*body),
             NodeKind::FuncArg { default, .. } => refs.extend(*default),
@@ -498,6 +503,7 @@ fn expression_refs(expression: &ExprKind, refs: &mut Vec<NodeId>) {
             refs.push(*size);
             refs.extend(*initializer);
         }
+        ExprKind::NewClass { constructor, .. } => refs.extend(*constructor),
         ExprKind::Streaming { streams, .. } => {
             for stream in streams {
                 refs.push(stream.value);
@@ -608,6 +614,7 @@ mod tests {
             NodeKind::FuncTask {
                 is_task: false,
                 automatic: true,
+                is_static: false,
                 ret: None,
                 body: Some(NodeId(1)),
             },
@@ -705,6 +712,7 @@ mod tests {
         let function = node(NodeKind::FuncTask {
             is_task: true,
             automatic: false,
+            is_static: false,
             ret: None,
             body: Some(NodeId(1)),
         });

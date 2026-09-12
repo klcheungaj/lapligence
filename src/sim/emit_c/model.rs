@@ -70,6 +70,7 @@ fn render_model(execution: &ExecutionModel, capacity: u32) -> Result<String, Str
     }) {
         out.push_str(super::containers::string_adapters());
     }
+    render_class_decls(model, &mut out);
     render_signal_decls(model, &mut out);
     render_static_local_decls(model, &mut out);
     for container in &model.containers {
@@ -156,6 +157,38 @@ fn render_model(execution: &ExecutionModel, capacity: u32) -> Result<String, Str
     }
     out.push_str(&render_main(execution)?);
     Ok(out)
+}
+
+/// Emit nominal class layouts before any handle storage or method bodies.
+/// Class handles remain `void *` at the ABI boundary, while fields retain
+/// their exact packed/real/object representation inside the allocation.
+fn render_class_decls(model: &IrModel, out: &mut String) {
+    for class in &model.classes {
+        out.push_str("typedef struct {");
+        out.push_str(" uint32_t _llg_class_id;");
+        for field in &class.fields {
+            let ty = match field.ty {
+                crate::sim::ir::IrClassFieldType::Packed { .. } => "sv4_t",
+                crate::sim::ir::IrClassFieldType::Real { .. } => "double",
+                crate::sim::ir::IrClassFieldType::String => "llg_string_t",
+                crate::sim::ir::IrClassFieldType::Chandle => "void *",
+            };
+            out.push_str(&format!(" {ty} {};", field.c_name));
+        }
+        out.push_str(&format!(" }} {}_t;\n", class.c_name));
+    }
+    if !model.classes.is_empty() {
+        out.push_str(
+            "static void *llg_class_require(void *object, const char *site) {\n\
+             if (!object) {\n\
+             fprintf(stderr, \"llg: null class handle access: %s\\n\", site);\n\
+             exit(EXIT_FAILURE);\n\
+             }\n\
+             return object;\n\
+             }\n\n",
+        );
+        out.push('\n');
+    }
 }
 
 /// Signal globals plus collapsed inout-net group storage.
@@ -330,6 +363,9 @@ fn render_static_local_decls(model: &IrModel, out: &mut String) {
 /// idx}`), then inputs (`a{formal idx}`), then the recursion depth.
 fn func_params(f: &IrFunc) -> String {
     let mut params = Vec::new();
+    if f.receiver_class.is_some() {
+        params.push("void *_this".to_string());
+    }
     for (idx, form) in f.formals.iter().enumerate() {
         if form.is_ref() {
             if form.string {
