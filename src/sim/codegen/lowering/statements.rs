@@ -1625,6 +1625,7 @@ impl EmitCtx<'_, '_> {
                 c_name: name.clone(),
                 args: vec![value],
                 context,
+                item: false,
             });
         }
         Ok((name, real))

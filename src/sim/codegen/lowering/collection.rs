@@ -4568,7 +4568,7 @@ impl<'a> Codegen<'a> {
         // Lower the body under the function context; the guard, `_ret`
         // declaration and locals are rendered by the backend from the
         // `IrFunc` metadata.
-        let (mut body_stmts, pre_fns) = {
+        let (mut body_stmts, mut pre_fns) = {
             let mut ctx = EmitCtx::new(
                 self,
                 path.to_string(),
@@ -4583,6 +4583,7 @@ impl<'a> Codegen<'a> {
             let pre_fns = std::mem::take(&mut ctx.pre_fns);
             (body_stmts, pre_fns)
         };
+        pre_fns.extend(std::mem::take(&mut self.pending_container_pre_fns));
         // Delay-free tasks need the same declaration-level activation as an
         // inlined timed task. A self-disable must cancel every active invocation.
         if is_task {
@@ -9066,7 +9067,7 @@ impl<'a> Codegen<'a> {
             self.collect_process_writes(stmt)?.into_iter().collect();
         writes.sort_by_key(|dependency| self.dependency_label(dependency));
         let fn_name = self.new_fn_name(path, "proc");
-        let (body_stmts, pre_fns, shape) = {
+        let (body_stmts, mut pre_fns, shape) = {
             let mut ctx = EmitCtx::new(self, path.to_string(), inst, "0", None, None, is_final);
             ctx.process_kind = always_type;
             let body_stmts = ctx.lower_stmt(stmt)?;
@@ -9104,6 +9105,7 @@ impl<'a> Codegen<'a> {
             };
             (body_stmts, pre_fns, shape)
         };
+        pre_fns.extend(std::mem::take(&mut self.pending_container_pre_fns));
         let kind_label = if is_initial {
             "initial"
         } else if is_final {
@@ -9308,7 +9310,16 @@ impl<'a> Codegen<'a> {
     fn mutating_container_method(name: &str) -> bool {
         matches!(
             name,
-            "delete" | "push_front" | "push_back" | "pop_front" | "pop_back" | "insert"
+            "delete"
+                | "push_front"
+                | "push_back"
+                | "pop_front"
+                | "pop_back"
+                | "insert"
+                | "sort"
+                | "rsort"
+                | "reverse"
+                | "shuffle"
         )
     }
 
@@ -9541,7 +9552,14 @@ impl<'a> Codegen<'a> {
                     // methods (including pop_*) still read the receiver.
                     let receiver_is_read = !matches!(
                         name.as_str(),
-                        "delete" | "push_front" | "push_back" | "insert"
+                        "delete"
+                            | "push_front"
+                            | "push_back"
+                            | "insert"
+                            | "sort"
+                            | "rsort"
+                            | "reverse"
+                            | "shuffle"
                     );
                     if receiver_is_read {
                         let (contents, shape) = match name.as_str() {

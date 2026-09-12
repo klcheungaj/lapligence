@@ -2,8 +2,8 @@
 
 use super::*;
 use crate::sim::ir::{
-    IrChandleExpr, IrContainerElement, IrContainerReduction, IrObjectType, IrQueueBound,
-    IrQueueSource, IrStringExpr,
+    IrChandleExpr, IrContainerElement, IrContainerMethod, IrContainerReduction, IrObjectType,
+    IrQueueBound, IrQueueSource, IrStringExpr,
 };
 
 /// A fixed-array view represented by complete coordinates in logical
@@ -685,6 +685,192 @@ impl<'a> Codegen<'a> {
         Ok(arguments)
     }
 
+    /// Return the structural child carrying a method's `with` expression.
+    /// Slang visits that expression before adding the receiver edge, so this
+    /// intentionally removes the receiver by identity instead of relying on
+    /// child order.
+    fn container_method_with_node(
+        &self,
+        path: &str,
+        call: NodeId,
+        receiver: NodeId,
+    ) -> Result<Option<NodeId>, String> {
+        if !self.db.method_call_has_with_clause(call) {
+            return Ok(None);
+        }
+        let mut arguments = self.container_method_arguments(path, call, receiver)?;
+        if arguments.len() != 1 {
+            return Err(format!(
+                "container method in `{path}` has an invalid with-clause argument list"
+            ));
+        }
+        Ok(arguments.pop())
+    }
+
+    /// Lower one packed iterator expression into a callback understood by the
+    /// C container runtime. The callback uses the frontend-captured iterator
+    /// declaration identity, never a source spelling guessed from `item`.
+    fn lower_container_method_callback(
+        &mut self,
+        path: &str,
+        call: NodeId,
+        receiver: NodeId,
+        container: usize,
+    ) -> Result<Option<(String, u32, bool, bool)>, String> {
+        let Some(with_node) = self.container_method_with_node(path, call, receiver)? else {
+            return Ok(None);
+        };
+        if self.event_context(with_node)?.is_some() {
+            return Err(format!(
+                "container method with-clause in `{path}` cannot capture automatic locals or formals"
+            ));
+        }
+        let Some(iterator) = self.db.method_call_iterator(call) else {
+            return Err(format!(
+                "container method with-clause in `{path}` has no iterator binding"
+            ));
+        };
+        let Some((source_width, source_signed, _source_two_state)) =
+            self.model.containers[container].element.packed()
+        else {
+            return Err(format!(
+                "container method with-clause in `{path}` requires a packed element type"
+            ));
+        };
+        let (index_width, index_signed) = match self.model.containers[container].kind {
+            IrContainerKind::Dynamic | IrContainerKind::Queue { .. } => (32, true),
+            IrContainerKind::Associative {
+                key:
+                    IrAssocKey::Integral {
+                        width,
+                        signed,
+                        two_state: _,
+                    },
+            } => (width, signed),
+            IrContainerKind::Associative {
+                key: IrAssocKey::String | IrAssocKey::Wildcard,
+            } => (0, false),
+        };
+        let saved_iterator = self.container_iterator.replace(ContainerIterator {
+            node: iterator,
+            item_width: source_width,
+            item_signed: source_signed,
+            index_width,
+            index_signed,
+        });
+        let value = self.lower_expr(path, with_node);
+        self.container_iterator = saved_iterator;
+        let value = value?;
+        let result_width = value.width;
+        let result_signed = value.signed;
+        let result_two_state = self.db.is_two_state_type(with_node);
+        if value.is_real() || value.width == 0 {
+            return Err(format!(
+                "container method with-clause in `{path}` must produce an integral value"
+            ));
+        }
+        let callback = self.new_fn_name(path, "container_eval");
+        self.pending_container_pre_fns
+            .push(crate::sim::ir::IrPreFn::MonEval {
+                c_name: callback.clone(),
+                args: vec![value],
+                context: None,
+                item: true,
+            });
+        Ok(Some((
+            callback,
+            result_width,
+            result_signed,
+            result_two_state,
+        )))
+    }
+
+    fn container_method_result(
+        &mut self,
+        path: &str,
+        dst: usize,
+        rhs: NodeId,
+    ) -> Result<Option<IrContainerStmt>, String> {
+        let rhs = self.p30_unwrap_cast(rhs);
+        let (name, receiver) = match self.kind(rhs) {
+            NodeKind::MethodCall {
+                name,
+                receiver: Some(receiver),
+            } => (name.clone(), *receiver),
+            _ => return Ok(None),
+        };
+        let Some(source) = self.container_of(receiver) else {
+            return Ok(None);
+        };
+        let method = match name.as_str() {
+            "find" => IrContainerMethod::Find,
+            "find_index" => IrContainerMethod::FindIndex,
+            "find_first" => IrContainerMethod::FindFirst,
+            "find_first_index" => IrContainerMethod::FindFirstIndex,
+            "find_last" => IrContainerMethod::FindLast,
+            "find_last_index" => IrContainerMethod::FindLastIndex,
+            "min" => IrContainerMethod::Min,
+            "max" => IrContainerMethod::Max,
+            "unique" => IrContainerMethod::Unique,
+            "unique_index" => IrContainerMethod::UniqueIndex,
+            _ => return Ok(None),
+        };
+        if !matches!(
+            self.model.containers[dst].kind,
+            IrContainerKind::Queue { .. }
+        ) {
+            return Err(format!(
+                "array method `{name}` in `{path}` returns a queue and requires a queue destination"
+            ));
+        }
+        if !self.model.containers[source.ir].element.is_packed()
+            || !self.model.containers[dst].element.is_packed()
+        {
+            return Err(format!(
+                "array method `{name}` in `{path}` currently requires packed source and destination elements"
+            ));
+        }
+        if matches!(
+            self.model.containers[source.ir].kind,
+            IrContainerKind::Associative {
+                key: IrAssocKey::Wildcard | IrAssocKey::String
+            }
+        ) && matches!(
+            method,
+            IrContainerMethod::FindIndex
+                | IrContainerMethod::FindFirstIndex
+                | IrContainerMethod::FindLastIndex
+                | IrContainerMethod::UniqueIndex
+        ) {
+            return Err(format!(
+                "array method `{name}` in `{path}` requires an integral-key associative array for packed index results"
+            ));
+        }
+        let callback = self
+            .lower_container_method_callback(path, rhs, receiver, source.ir)?
+            .map(|(callback, _, _, _)| callback);
+        if matches!(
+            method,
+            IrContainerMethod::Find
+                | IrContainerMethod::FindIndex
+                | IrContainerMethod::FindFirst
+                | IrContainerMethod::FindFirstIndex
+                | IrContainerMethod::FindLast
+                | IrContainerMethod::FindLastIndex
+        ) && callback.is_none()
+        {
+            return Err(format!(
+                "array locator method `{name}` in `{path}` requires a with clause"
+            ));
+        }
+        Ok(Some(IrContainerStmt::MethodAssign {
+            dst,
+            src: source.ir,
+            method,
+            callback,
+        }))
+    }
+
     fn lower_container_value(
         &mut self,
         path: &str,
@@ -1303,12 +1489,63 @@ impl<'a> Codegen<'a> {
                     return Ok(None);
                 };
                 let name = name.clone();
-                if self.db.method_call_has_with_clause(node) {
+                let args = self.container_method_arguments(path, node, *receiver)?;
+                if matches!(name.as_str(), "sum" | "product" | "and" | "or" | "xor")
+                    && self.db.method_call_has_with_clause(node)
+                {
+                    let Some((callback, result_width, result_signed, result_two_state)) =
+                        self.lower_container_method_callback(path, node, *receiver, container.ir)?
+                    else {
+                        return Err(format!(
+                            "container reduction `{name}` in `{path}` has no with clause"
+                        ));
+                    };
+                    return Ok(Some(IrExpr::new(
+                        IrExprKind::Container(Box::new(IrContainerExpr::ReduceWith {
+                            container: container.ir,
+                            operation: match name.as_str() {
+                                "sum" => IrContainerReduction::Sum,
+                                "product" => IrContainerReduction::Product,
+                                "and" => IrContainerReduction::BitAnd,
+                                "or" => IrContainerReduction::BitOr,
+                                _ => IrContainerReduction::BitXor,
+                            },
+                            callback,
+                            result_width,
+                            result_signed,
+                            result_two_state,
+                        })),
+                        result_width,
+                        result_signed,
+                        None,
+                    )));
+                }
+                if self.db.method_call_has_with_clause(node)
+                    && !matches!(name.as_str(), "sum" | "product" | "and" | "or" | "xor")
+                {
+                    if matches!(
+                        name.as_str(),
+                        "find"
+                            | "find_index"
+                            | "find_first"
+                            | "find_first_index"
+                            | "find_last"
+                            | "find_last_index"
+                            | "min"
+                            | "max"
+                            | "unique"
+                            | "unique_index"
+                            | "sort"
+                            | "rsort"
+                    ) {
+                        return Err(format!(
+                            "array method `{name}` in `{path}` returns or mutates a container and is only valid in its statement/assignment context"
+                        ));
+                    }
                     return Err(format!(
                         "container method `{name}` with a `with` clause in `{path}` is not supported"
                     ));
                 }
-                let args = self.container_method_arguments(path, node, *receiver)?;
                 match (name.as_str(), args.as_slice()) {
                     ("size" | "num", []) => IrContainerExpr::Size(container.ir),
                     ("sum" | "product" | "and" | "or" | "xor", []) => IrContainerExpr::Reduce {
@@ -1408,6 +1645,11 @@ impl<'a> Codegen<'a> {
                 let container = &self.model.containers[*container];
                 (container.element.width(), container.element.signed())
             }
+            IrContainerExpr::ReduceWith {
+                result_width,
+                result_signed,
+                ..
+            } => (*result_width, *result_signed),
             IrContainerExpr::GetReal { .. } => (0, false),
             IrContainerExpr::GetStringReal { .. } => (0, false),
             _ => {
@@ -2542,6 +2784,9 @@ impl<'a> Codegen<'a> {
                 )?));
             }
         }
+        if let Some(operation) = self.container_method_result(path, dst.ir, rhs)? {
+            return Ok(Some(IrStmt::Container(operation)));
+        }
         let new_array = match self.kind(rhs) {
             NodeKind::Expr(ExprKind::NewArray { size, initializer }) => Some((*size, *initializer)),
             _ => None,
@@ -2612,12 +2857,8 @@ impl<'a> Codegen<'a> {
         let Some(container) = self.container_of(receiver) else {
             return Ok(None);
         };
-        if self.db.method_call_has_with_clause(node) {
-            return Err(format!(
-                "container method `{name}` with a `with` clause in `{path}` is not supported"
-            ));
-        }
         let args = self.container_method_arguments(path, node, receiver)?;
+        let with_clause = self.db.method_call_has_with_clause(node);
         let operation = match (name.as_str(), args.as_slice()) {
             ("delete", []) => IrContainerStmt::Delete(container.ir),
             ("delete", [index]) => match self.model.containers[container.ir].kind {
@@ -2747,6 +2988,86 @@ impl<'a> Codegen<'a> {
                         value: self.lower_container_value(path, container.ir, *value)?,
                     },
                 }
+            }
+            ("sort" | "rsort", []) if !with_clause => {
+                if !matches!(
+                    self.model.containers[container.ir].kind,
+                    IrContainerKind::Dynamic | IrContainerKind::Queue { .. }
+                ) || !self.model.containers[container.ir].element.is_packed()
+                {
+                    return Err(format!(
+                        "array method `{name}` in `{path}` currently requires a packed dynamic array or queue"
+                    ));
+                }
+                IrContainerStmt::Method {
+                    container: container.ir,
+                    method: if name == "sort" {
+                        IrContainerMethod::Sort
+                    } else {
+                        IrContainerMethod::RSort
+                    },
+                    callback: None,
+                }
+            }
+            ("sort" | "rsort", [_with]) if with_clause => {
+                if !matches!(
+                    self.model.containers[container.ir].kind,
+                    IrContainerKind::Dynamic | IrContainerKind::Queue { .. }
+                ) || !self.model.containers[container.ir].element.is_packed()
+                {
+                    return Err(format!(
+                        "array method `{name}` in `{path}` currently requires a packed dynamic array or queue"
+                    ));
+                }
+                let callback = self
+                    .lower_container_method_callback(path, node, receiver, container.ir)?
+                    .map(|(callback, _, _, _)| callback);
+                IrContainerStmt::Method {
+                    container: container.ir,
+                    method: if name == "sort" {
+                        IrContainerMethod::Sort
+                    } else {
+                        IrContainerMethod::RSort
+                    },
+                    callback,
+                }
+            }
+            ("reverse", []) if !with_clause => {
+                if !matches!(
+                    self.model.containers[container.ir].kind,
+                    IrContainerKind::Dynamic | IrContainerKind::Queue { .. }
+                ) || !self.model.containers[container.ir].element.is_packed()
+                {
+                    return Err(format!(
+                        "array method `reverse` in `{path}` currently requires a packed dynamic array or queue"
+                    ));
+                }
+                IrContainerStmt::Method {
+                    container: container.ir,
+                    method: IrContainerMethod::Reverse,
+                    callback: None,
+                }
+            }
+            ("shuffle", []) if !with_clause => {
+                if !matches!(
+                    self.model.containers[container.ir].kind,
+                    IrContainerKind::Dynamic | IrContainerKind::Queue { .. }
+                ) || !self.model.containers[container.ir].element.is_packed()
+                {
+                    return Err(format!(
+                        "array method `shuffle` in `{path}` currently requires a packed dynamic array or queue"
+                    ));
+                }
+                IrContainerStmt::Method {
+                    container: container.ir,
+                    method: IrContainerMethod::Shuffle,
+                    callback: None,
+                }
+            }
+            _ if with_clause => {
+                return Err(format!(
+                    "container method `{name}` with a `with` clause in `{path}` is not supported"
+                ));
             }
             _ => return Ok(None),
         };

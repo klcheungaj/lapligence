@@ -65,51 +65,6 @@ fn run_fixture(file: &str, label: &str) {
     .expect("datatype completion conformance");
 }
 
-fn run_reduction_with_rejection_fixture(file: &str) {
-    let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/sim/data_types_completion")
-        .join(file);
-
-    sim_harness::with_frontend_temp_cwd("data-types-completion-rejection", |dir| {
-        let source = dir.join(file);
-        std::fs::copy(&fixture, &source).map_err(|error| format!("copy fixture: {error}"))?;
-        let compiled = compile::compile_checked(&compile::CompileOpts {
-            files: vec![source.to_string_lossy().into_owned()],
-            top: Some("tb".to_owned()),
-            ..Default::default()
-        })
-        .map_err(|error| format!("{file}: compile: {error}"))?;
-        let database = Db::from_slang(&compiled.snapshot)
-            .map_err(|error| format!("{file}: database: {error}"))?;
-
-        let mut failures = Vec::new();
-        for (variant, options) in [
-            ("unoptimized", OptConfig::none()),
-            ("optimized", OptConfig::default()),
-        ] {
-            match sim::codegen::generate_from_db_with_opts(&database, &options) {
-                Ok(_) => failures.push(format!(
-                    "{variant}: codegen unexpectedly accepted reduction with clause"
-                )),
-                Err(error) => {
-                    let error = error.to_string();
-                    if !error.contains(
-                        "container method `sum` with a `with` clause in `tb` is not supported",
-                    ) {
-                        failures.push(format!("{variant}: unexpected diagnostic: {error}"));
-                    }
-                }
-            }
-        }
-        if failures.is_empty() {
-            Ok(())
-        } else {
-            Err(format!("{file}:\n{}", failures.join("\n")))
-        }
-    })
-    .expect("reduction with-clause rejection conformance");
-}
-
 fn run_assignment_pattern_rejection_fixture(file: &str, needles: &[&str]) {
     let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/sim/data_types_completion")
@@ -239,8 +194,13 @@ fn associative_array_reductions_include_wide_high_bits() {
 }
 
 #[test]
-fn reduction_with_is_explicitly_unsupported() {
-    run_reduction_with_rejection_fixture("reduction_with_unsupported.sv");
+fn array_methods_preserve_order_and_with_clause_values() {
+    run_fixture("array_methods.sv", "array_methods");
+}
+
+#[test]
+fn reduction_with_preserves_width_changing_expression() {
+    run_fixture("reduction_with_unsupported.sv", "reduction_with");
 }
 
 #[test]

@@ -1878,6 +1878,13 @@ public:
             info.getIteratorInfo();
         if (iteratorExpression || iteratorVariable)
           result.flags |= LLG_SLANG_SEMANTIC_METHOD_WITH_CLAUSE;
+        // Keep the iterator declaration identity on the owned call record.
+        // The iterator expression is visited as a structural child below,
+        // but its implicit `item` binding is not part of the call arguments.
+        // Capturing it here lets downstream consumers bind the callback
+        // without guessing from source names or child ordering.
+        if (iteratorVariable)
+          result.target_id = capture.ensureSemantic(iteratorVariable);
       }
       if (isSystemMethodCall(expression))
         result.kind = LLG_SLANG_SEMANTIC_METHOD_CALL;

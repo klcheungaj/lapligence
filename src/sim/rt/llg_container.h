@@ -23,6 +23,13 @@ enum {
 typedef void (*llg_container_notify_fn)(sv4_t* contents, sv4_t* shape,
                                         int change);
 
+/* Evaluate one packed array element for an array-method `with` clause. The
+ * callback receives the source element and its current index, then writes its
+ * self-determined packed result to `out`; `context` is reserved for a future
+ * captured environment. */
+typedef void (*llg_container_eval_fn)(sv4_t* out, sv4_t item, sv4_t index,
+                                      void* context);
+
 enum {
     LLG_VALUE_PACKED = 0,
     LLG_VALUE_REAL = 1,
@@ -133,6 +140,23 @@ int llg_dyn_value_set_nested_container(
 enum {
     LLG_CONTAINER_CHANGED_CONTENTS = 1,
     LLG_CONTAINER_CHANGED_SHAPE = 2,
+};
+
+enum {
+    LLG_CONTAINER_METHOD_FIND = 0,
+    LLG_CONTAINER_METHOD_FIND_INDEX = 1,
+    LLG_CONTAINER_METHOD_FIND_FIRST = 2,
+    LLG_CONTAINER_METHOD_FIND_FIRST_INDEX = 3,
+    LLG_CONTAINER_METHOD_FIND_LAST = 4,
+    LLG_CONTAINER_METHOD_FIND_LAST_INDEX = 5,
+    LLG_CONTAINER_METHOD_MIN = 6,
+    LLG_CONTAINER_METHOD_MAX = 7,
+    LLG_CONTAINER_METHOD_UNIQUE = 8,
+    LLG_CONTAINER_METHOD_UNIQUE_INDEX = 9,
+    LLG_CONTAINER_METHOD_SORT = 10,
+    LLG_CONTAINER_METHOD_RSORT = 11,
+    LLG_CONTAINER_METHOD_REVERSE = 12,
+    LLG_CONTAINER_METHOD_SHUFFLE = 13,
 };
 
 typedef struct {
@@ -272,6 +296,16 @@ size_t llg_dyn_size(const llg_dyn_array_t* array);
 sv4_t llg_dyn_get(const llg_dyn_array_t* array, sv4_t index);
 int llg_dyn_set(llg_dyn_array_t* array, sv4_t index, sv4_t value);
 sv4_t llg_dyn_reduce(const llg_dyn_array_t* array, int operation);
+sv4_t llg_dyn_reduce_with(const llg_dyn_array_t* array, int operation,
+                          uint32_t result_width, int8_t result_signed,
+                          int result_two_state, llg_container_eval_fn eval,
+                          void* context);
+void llg_dyn_method_assign(llg_queue_t* dst, const llg_dyn_array_t* src,
+                           int method, llg_container_eval_fn eval,
+                           void* context);
+void llg_dyn_method(llg_dyn_array_t* array, int method,
+                    llg_container_eval_fn eval, void* context);
+void llg_container_seed(uint64_t seed);
 
 struct llg_queue_t {
     sv4_t* data;
@@ -322,6 +356,15 @@ sv4_t llg_queue_pop_back(llg_queue_t* queue);
 sv4_t llg_queue_front(const llg_queue_t* queue);
 sv4_t llg_queue_back(const llg_queue_t* queue);
 sv4_t llg_queue_reduce(const llg_queue_t* queue, int operation);
+sv4_t llg_queue_reduce_with(const llg_queue_t* queue, int operation,
+                            uint32_t result_width, int8_t result_signed,
+                            int result_two_state, llg_container_eval_fn eval,
+                            void* context);
+void llg_queue_method_assign(llg_queue_t* dst, const llg_queue_t* src,
+                             int method, llg_container_eval_fn eval,
+                             void* context);
+void llg_queue_method(llg_queue_t* queue, int method,
+                      llg_container_eval_fn eval, void* context);
 uint64_t llg_queue_ref_identity(const llg_queue_t* queue, uint64_t index);
 sv4_t llg_queue_ref_read(const llg_queue_t* queue, uint64_t identity);
 int llg_queue_ref_write(llg_queue_t* queue, uint64_t identity, sv4_t value);
@@ -497,6 +540,13 @@ void llg_assoc_copy(llg_assoc_t* dst, const llg_assoc_t* src);
 size_t llg_assoc_count(const llg_assoc_t* array);
 sv4_t llg_assoc_value_at(const llg_assoc_t* array, size_t index);
 sv4_t llg_assoc_reduce(const llg_assoc_t* array, int operation);
+sv4_t llg_assoc_reduce_with(const llg_assoc_t* array, int operation,
+                            uint32_t result_width, int8_t result_signed,
+                            int result_two_state, llg_container_eval_fn eval,
+                            void* context);
+void llg_assoc_method_assign(llg_queue_t* dst, const llg_assoc_t* src,
+                             int method, llg_container_eval_fn eval,
+                             void* context);
 
 sv4_t llg_assoc_get_integral(const llg_assoc_t* array, sv4_t key);
 int llg_assoc_set_integral(llg_assoc_t* array, sv4_t key, sv4_t value);

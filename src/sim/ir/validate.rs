@@ -658,6 +658,11 @@ impl Validator<'_> {
                     IrContainerExpr::Exists { .. } | IrContainerExpr::ExistsString { .. } => {
                         (32, true)
                     }
+                    IrContainerExpr::ReduceWith {
+                        result_width,
+                        result_signed,
+                        ..
+                    } => (*result_width, *result_signed),
                     IrContainerExpr::Get { container, .. }
                     | IrContainerExpr::GetReal { container, .. }
                     | IrContainerExpr::GetString { container, .. }
@@ -2764,6 +2769,7 @@ mod tests {
                 c_name: "eval".into(),
                 args: vec![packed_const(1, 1)],
                 context: None,
+                item: false,
             }],
             vec![IrStmt::WaitEvents {
                 specs: vec![(
@@ -2785,6 +2791,7 @@ mod tests {
             c_name: "eval".into(),
             args: vec![packed_const(1, 1)],
             context: None,
+            item: false,
         });
         model.signals[0].omit = true;
         assert!(model

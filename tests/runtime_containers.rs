@@ -36,6 +36,36 @@ static uint64_t real_bits(double value) {
     return bits;
 }
 
+static void eval_gt_two(sv4_t* out, sv4_t item, sv4_t index, void* context) {
+    (void)index;
+    (void)context;
+    *out = sv4_gt(item, sv4_from_i64(2, 32));
+}
+
+static void eval_eq_one(sv4_t* out, sv4_t item, sv4_t index, void* context) {
+    (void)index;
+    (void)context;
+    *out = sv4_eq(item, sv4_from_i64(1, 32));
+}
+
+static void eval_scale_257(sv4_t* out, sv4_t item, sv4_t index, void* context) {
+    (void)index;
+    (void)context;
+    *out = sv4_mul(item, sv4_from_u64(257, 64, 0));
+}
+
+static void eval_identity(sv4_t* out, sv4_t item, sv4_t index, void* context) {
+    (void)index;
+    (void)context;
+    *out = item;
+}
+
+static void eval_index(sv4_t* out, sv4_t item, sv4_t index, void* context) {
+    (void)item;
+    (void)context;
+    *out = index;
+}
+
 static int check_packed_conversions(void) {
     llg_dyn_array_t source;
     llg_dyn_array_t destination;
@@ -115,6 +145,102 @@ static int check_queue_references(void) {
     CHECK(llg_queue_ref_write(&queue, surviving, sv4_from_i64(44, 32)));
     CHECK(!llg_queue_ref_write(&queue, removed, sv4_from_i64(99, 32)));
     llg_queue_destroy(&queue);
+    return 0;
+}
+
+static int check_array_methods(void) {
+    sv4_t values[5] = {
+        sv4_from_i64(1, 32), sv4_from_i64(3, 32), sv4_from_i64(2, 32),
+        sv4_from_i64(3, 32), sv4_from_i64(4, 32)
+    };
+    llg_queue_t source;
+    llg_queue_t result;
+    llg_queue_init(&source, 32, 1, 0, UINT64_MAX);
+    llg_queue_init(&result, 32, 1, 0, UINT64_MAX);
+    llg_queue_assign_values(&source, values, 5);
+
+    llg_queue_method_assign(&result, &source, LLG_CONTAINER_METHOD_FIND,
+                            eval_gt_two, NULL);
+    CHECK(result.size == 3 && sv4_to_i64(result.data[0]) == 3 &&
+          sv4_to_i64(result.data[1]) == 3 && sv4_to_i64(result.data[2]) == 4);
+    llg_queue_method_assign(&result, &source,
+                            LLG_CONTAINER_METHOD_FIND_LAST_INDEX, eval_gt_two,
+                            NULL);
+    CHECK(result.size == 1 && sv4_to_i64(result.data[0]) == 4);
+    llg_queue_method_assign(&result, &source,
+                            LLG_CONTAINER_METHOD_FIND_LAST_INDEX, eval_eq_one,
+                            NULL);
+    CHECK(result.size == 1 && sv4_to_i64(result.data[0]) == 0);
+    llg_queue_method_assign(&result, &source, LLG_CONTAINER_METHOD_MIN,
+                            eval_scale_257, NULL);
+    CHECK(result.size == 1 && sv4_to_i64(result.data[0]) == 1);
+    llg_queue_method_assign(&result, &source,
+                            LLG_CONTAINER_METHOD_UNIQUE_INDEX, NULL, NULL);
+    CHECK(result.size == 4 && sv4_to_i64(result.data[0]) == 0 &&
+          sv4_to_i64(result.data[1]) == 1 && sv4_to_i64(result.data[2]) == 2 &&
+          sv4_to_i64(result.data[3]) == 4);
+
+    sv4_t reduced = llg_queue_reduce_with(
+        &source, LLG_CONTAINER_REDUCE_SUM, 64, 0, 0, eval_scale_257, NULL);
+    CHECK(reduced.width == 64 && sv4_to_u64(reduced) == UINT64_C(3341));
+    reduced = llg_queue_reduce_with(
+        &source, LLG_CONTAINER_REDUCE_SUM, 32, 1, 0, eval_index, NULL);
+    CHECK(reduced.width == 32 && sv4_to_i64(reduced) == 10);
+
+    llg_queue_method(&source, LLG_CONTAINER_METHOD_SORT, eval_identity, NULL);
+    CHECK(sv4_to_i64(source.data[0]) == 1 && sv4_to_i64(source.data[1]) == 2 &&
+          sv4_to_i64(source.data[2]) == 3 && sv4_to_i64(source.data[3]) == 3 &&
+          sv4_to_i64(source.data[4]) == 4);
+    llg_queue_method(&source, LLG_CONTAINER_METHOD_REVERSE, NULL, NULL);
+    CHECK(sv4_to_i64(source.data[0]) == 4 && sv4_to_i64(source.data[4]) == 1);
+
+    llg_queue_t shuffled_a;
+    llg_queue_t shuffled_b;
+    llg_queue_init(&shuffled_a, 32, 1, 0, UINT64_MAX);
+    llg_queue_init(&shuffled_b, 32, 1, 0, UINT64_MAX);
+    llg_queue_assign_values(&shuffled_a, values, 5);
+    llg_queue_assign_values(&shuffled_b, values, 5);
+    llg_container_seed(UINT64_C(123));
+    llg_queue_method(&shuffled_a, LLG_CONTAINER_METHOD_SHUFFLE, NULL, NULL);
+    llg_container_seed(UINT64_C(123));
+    llg_queue_method(&shuffled_b, LLG_CONTAINER_METHOD_SHUFFLE, NULL, NULL);
+    for (size_t i = 0; i < 5; ++i)
+        CHECK(sv4_same(shuffled_a.data[i], shuffled_b.data[i]));
+
+    llg_dyn_array_t dynamic;
+    llg_dyn_init(&dynamic, 32, 1, 0);
+    llg_dyn_assign_values(&dynamic, values, 5);
+    llg_dyn_method_assign(&result, &dynamic,
+                          LLG_CONTAINER_METHOD_FIND_FIRST_INDEX, eval_gt_two,
+                          NULL);
+    CHECK(result.size == 1 && sv4_to_i64(result.data[0]) == 1);
+
+    llg_assoc_t associative;
+    llg_assoc_init_integral(&associative, 32, 1, 0, 8, 0, 0);
+    for (uint64_t i = 0; i < 5; ++i)
+        CHECK(llg_assoc_set_integral(&associative,
+                                     sv4_from_u64(i, 8, 0), values[i]));
+    llg_assoc_method_assign(&result, &associative,
+                            LLG_CONTAINER_METHOD_FIND_INDEX, eval_gt_two,
+                            NULL);
+    CHECK(result.size == 3 && sv4_to_i64(result.data[0]) == 1 &&
+          sv4_to_i64(result.data[1]) == 3 && sv4_to_i64(result.data[2]) == 4);
+    llg_assoc_method_assign(&result, &associative,
+                            LLG_CONTAINER_METHOD_UNIQUE, NULL, NULL);
+    CHECK(result.size == 4 && sv4_to_i64(result.data[0]) == 1 &&
+          sv4_to_i64(result.data[1]) == 3 && sv4_to_i64(result.data[2]) == 2 &&
+          sv4_to_i64(result.data[3]) == 4);
+    reduced = llg_assoc_reduce_with(
+        &associative, LLG_CONTAINER_REDUCE_SUM, 64, 0, 0, eval_scale_257,
+        NULL);
+    CHECK(reduced.width == 64 && sv4_to_u64(reduced) == UINT64_C(3341));
+
+    llg_assoc_destroy(&associative);
+    llg_dyn_destroy(&dynamic);
+    llg_queue_destroy(&shuffled_b);
+    llg_queue_destroy(&shuffled_a);
+    llg_queue_destroy(&result);
+    llg_queue_destroy(&source);
     return 0;
 }
 
@@ -198,6 +324,7 @@ static int check_recursive_values(void) {
 int main(void) {
     CHECK(check_packed_conversions() == 0);
     CHECK(check_queue_references() == 0);
+    CHECK(check_array_methods() == 0);
     CHECK(check_recursive_values() == 0);
     puts("runtime container isolation ok");
     return 0;

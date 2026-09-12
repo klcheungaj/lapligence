@@ -5,7 +5,7 @@ use super::expressions::render_expr_impl;
 use super::objects::string as render_string;
 use crate::sim::ir::{
     IrAssocKey, IrAssocTraversal, IrContainerElement, IrContainerExpr, IrContainerKind,
-    IrContainerReduction, IrContainerStmt, IrQueueBound, IrQueueSource,
+    IrContainerMethod, IrContainerReduction, IrContainerStmt, IrQueueBound, IrQueueSource,
 };
 
 fn name<'a>(ctx: &'a RCtx<'_>, index: usize) -> &'a str {
@@ -57,6 +57,29 @@ pub(super) fn expression(ctx: &RCtx<'_>, operation: &IrContainerExpr) -> Result<
                 IrContainerReduction::BitOr => "LLG_CONTAINER_REDUCE_OR",
                 IrContainerReduction::BitXor => "LLG_CONTAINER_REDUCE_XOR",
             }
+        ),
+        IrContainerExpr::ReduceWith {
+            container,
+            operation,
+            callback,
+            result_width,
+            result_signed,
+            result_two_state,
+        } => format!(
+            "{}_reduce_with(&{}, {}, {}, {}, {}, {}, NULL)",
+            prefix(&ctx.model.containers[*container].kind),
+            name(ctx, *container),
+            match operation {
+                IrContainerReduction::Sum => "LLG_CONTAINER_REDUCE_SUM",
+                IrContainerReduction::Product => "LLG_CONTAINER_REDUCE_PRODUCT",
+                IrContainerReduction::BitAnd => "LLG_CONTAINER_REDUCE_AND",
+                IrContainerReduction::BitOr => "LLG_CONTAINER_REDUCE_OR",
+                IrContainerReduction::BitXor => "LLG_CONTAINER_REDUCE_XOR",
+            },
+            result_width,
+            *result_signed as u8,
+            *result_two_state as u8,
+            callback,
         ),
         IrContainerExpr::Get { container, index } => {
             let method = match ctx.model.containers[*container].kind {
@@ -271,6 +294,44 @@ pub(super) fn statement(ctx: &RCtx<'_>, operation: &IrContainerStmt) -> Result<S
                 "    {function}(&{}, &{});\n",
                 name(ctx, *dst),
                 name(ctx, *src)
+            )
+        }
+        IrContainerStmt::MethodAssign {
+            dst,
+            src,
+            method,
+            callback,
+        } => {
+            let function = match ctx.model.containers[*src].kind {
+                IrContainerKind::Dynamic => "llg_dyn_method_assign",
+                IrContainerKind::Queue { .. } => "llg_queue_method_assign",
+                IrContainerKind::Associative { .. } => "llg_assoc_method_assign",
+            };
+            format!(
+                "    {function}(&{}, &{}, {}, {}, NULL);\n",
+                name(ctx, *dst),
+                name(ctx, *src),
+                method_code(*method),
+                callback.as_deref().unwrap_or("NULL")
+            )
+        }
+        IrContainerStmt::Method {
+            container,
+            method,
+            callback,
+        } => {
+            let function = match ctx.model.containers[*container].kind {
+                IrContainerKind::Dynamic => "llg_dyn_method",
+                IrContainerKind::Queue { .. } => "llg_queue_method",
+                IrContainerKind::Associative { .. } => {
+                    return Err("in-place array method cannot target an associative array".into())
+                }
+            };
+            format!(
+                "    {function}(&{}, {}, {}, NULL);\n",
+                name(ctx, *container),
+                method_code(*method),
+                callback.as_deref().unwrap_or("NULL")
             )
         }
         IrContainerStmt::AssignValues { container, values } => {
@@ -1300,6 +1361,25 @@ fn prefix(kind: &IrContainerKind) -> &'static str {
         IrContainerKind::Dynamic => "llg_dyn",
         IrContainerKind::Queue { .. } => "llg_queue",
         IrContainerKind::Associative { .. } => "llg_assoc",
+    }
+}
+
+fn method_code(method: IrContainerMethod) -> &'static str {
+    match method {
+        IrContainerMethod::Find => "LLG_CONTAINER_METHOD_FIND",
+        IrContainerMethod::FindIndex => "LLG_CONTAINER_METHOD_FIND_INDEX",
+        IrContainerMethod::FindFirst => "LLG_CONTAINER_METHOD_FIND_FIRST",
+        IrContainerMethod::FindFirstIndex => "LLG_CONTAINER_METHOD_FIND_FIRST_INDEX",
+        IrContainerMethod::FindLast => "LLG_CONTAINER_METHOD_FIND_LAST",
+        IrContainerMethod::FindLastIndex => "LLG_CONTAINER_METHOD_FIND_LAST_INDEX",
+        IrContainerMethod::Min => "LLG_CONTAINER_METHOD_MIN",
+        IrContainerMethod::Max => "LLG_CONTAINER_METHOD_MAX",
+        IrContainerMethod::Unique => "LLG_CONTAINER_METHOD_UNIQUE",
+        IrContainerMethod::UniqueIndex => "LLG_CONTAINER_METHOD_UNIQUE_INDEX",
+        IrContainerMethod::Sort => "LLG_CONTAINER_METHOD_SORT",
+        IrContainerMethod::RSort => "LLG_CONTAINER_METHOD_RSORT",
+        IrContainerMethod::Reverse => "LLG_CONTAINER_METHOD_REVERSE",
+        IrContainerMethod::Shuffle => "LLG_CONTAINER_METHOD_SHUFFLE",
     }
 }
 

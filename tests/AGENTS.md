@@ -87,8 +87,8 @@ coverage for the same rule IDs.
 - `sim_data_types_next.rs` is a bounded next-phase inventory for aggregate and
   container features, with explicit unsupported cases; its contract is in
   [data_types_next/AGENTS.md](fixtures/sim/data_types_next/AGENTS.md).
-- `sim_data_types_completion.rs` freezes eight positive completion contracts
-  plus one explicit unsupported reduction case; its contract is in
+- `sim_data_types_completion.rs` freezes thirteen positive completion contracts
+  for string, aggregate, reduction, and array-method behavior; its contract is in
   [data_types_completion/AGENTS.md](fixtures/sim/data_types_completion/AGENTS.md).
 - `sim_type_conformance.rs` checks independent data/data and data/net
   operation matrices, all three-driver resolution combinations, conversion and

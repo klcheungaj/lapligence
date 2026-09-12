@@ -1,8 +1,8 @@
 # Datatype completion fixture contracts
 
 These independently authored black-box fixtures were derived from the local
-IEEE 1800-2009 LRM before `llg` execution. The suite has eight positive
-execution contracts and one explicit unsupported-boundary contract:
+IEEE 1800-2009 LRM before `llg` execution. The suite has thirteen positive
+execution contracts:
 
 - `string_real_conversion.sv`: numeric-prefix, whitespace/sign/exponent,
   invalid-string `atoreal`, and nonempty exact-value `realtoa` round trips.
@@ -21,9 +21,11 @@ execution contracts and one explicit unsupported-boundary contract:
 - `dynamic_array_reductions.sv`, `queue_reductions.sv`, and
   `associative_array_reductions.sv`: typed wide reductions, modular arithmetic,
   X/Z behavior, order independence, and empty identities.
+- `array_methods.sv`: queue and integral-key associative locator/min/max/unique
+  result order, sort/rsort/reverse/shuffle mutation, and typed `with` callback
+  evaluation including `item.index()` bindings.
 - `reduction_with_unsupported.sv`: a legal width-changing reduction `with`
-  clause must fail with a clause-specific diagnostic rather than execute after
-  dropping the clause.
+  clause evaluates the callback and preserves its result width.
 
 Original contract table and local LRM basis:
 
@@ -38,12 +40,13 @@ Original contract table and local LRM basis:
 | `dynamic_array_reductions.sv` | Positive: element-typed 128-bit reductions, modular arithmetic, X/Z propagation, and empty identities | §7.12.3 |
 | `queue_reductions.sv` | Positive: signed 512-bit reductions and empty identities | §7.12.3 |
 | `associative_array_reductions.sv` | Positive: order-independent 128-bit reductions retaining high bits and empty identities | §7.12.3 |
-| `reduction_with_unsupported.sv` | Explicit unsupported boundary: a legal width-changing reduction `with` clause must fail codegen with a clause-specific diagnostic, never execute after silently dropping the clause | §7.12.3 |
+| `array_methods.sv` | Positive: queue and integral-key associative locator/min/max/unique result order, sort/rsort/reverse/shuffle mutation, and typed `with` callback evaluation including `item.index()` | §7.12 |
+| `reduction_with_unsupported.sv` | Positive: legal width-changing reduction `with` callback evaluates each item and retains the callback result type | §7.12.3 |
 
 Tagged unions, classes, virtual interfaces, nominal type keys, recursive
 defaults, resizable/object members, and aggregate ports/nets/subprogram
 storage remain outside the support contract. Root-run normal validation covers
-all ten cases in both optimization modes; ASan/UBSan/leak validation for the
+all thirteen cases in both optimization modes; ASan/UBSan/leak validation for the
 new recursive fixture remains a separate gate. This is bounded evidence, not
 exhaustive conformance.
 

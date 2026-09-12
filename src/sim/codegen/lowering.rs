@@ -747,6 +747,13 @@ struct Codegen<'a> {
     /// functions and processes exist, so nonconstant elements use the same
     /// expression/capture machinery as procedural assignments.
     container_initializers: Vec<(NodeId, usize)>,
+    /// Implicit iterator binding while lowering an array-method `with`
+    /// expression: declaration identity plus the packed source element and
+    /// index types.
+    container_iterator: Option<ContainerIterator>,
+    /// Method callback helpers are discovered while expression lowering, but
+    /// attach to the owning process/function only after its body is complete.
+    pending_container_pre_fns: Vec<crate::sim::ir::IrPreFn>,
     /// Fixed-array declaration assignments whose RHS is not a static constant
     /// pattern. These become run-once initialization processes after every
     /// array and container has been collected.
@@ -839,6 +846,18 @@ struct Codegen<'a> {
     final_procs: Vec<String>,
 }
 
+/// Runtime-visible bindings for one array-method `with` expression. A zero
+/// index width marks a legal receiver whose index is not representable by the
+/// packed callback ABI (for example, a string-key associative array).
+#[derive(Clone, Copy)]
+struct ContainerIterator {
+    node: NodeId,
+    item_width: u32,
+    item_signed: bool,
+    index_width: u32,
+    index_signed: bool,
+}
+
 impl<'a> Codegen<'a> {
     fn new(semantic: &crate::sim::semantic::SemanticModel<'a>) -> Codegen<'a> {
         let db = semantic.db();
@@ -876,6 +895,8 @@ impl<'a> Codegen<'a> {
             array_globals: HashMap::new(),
             container_globals: HashMap::new(),
             container_initializers: Vec::new(),
+            container_iterator: None,
+            pending_container_pre_fns: Vec::new(),
             array_initializers: Vec::new(),
             events: Vec::new(),
             event_globals: HashMap::new(),

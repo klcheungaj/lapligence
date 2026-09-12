@@ -1213,6 +1213,16 @@ impl<'a> Codegen<'a> {
         r: NodeId,
         target: Option<NodeId>,
     ) -> Result<IrExpr, String> {
+        if let Some(iterator) = self.container_iterator {
+            if target == Some(iterator.node) {
+                return Ok(IrExpr::new(
+                    IrExprKind::LocalRead("__llg_method_item".to_owned()),
+                    iterator.item_width,
+                    iterator.item_signed,
+                    None,
+                ));
+            }
+        }
         if let Some(captured) = self
             .capture_target(r)
             .or_else(|| target.filter(|target| self.capture_locals.contains_key(target)))
@@ -2151,6 +2161,37 @@ impl<'a> Codegen<'a> {
         call: NodeId,
     ) -> Result<IrExpr, String> {
         let args: Vec<NodeId> = self.node(call).children.clone();
+        if name == "index" {
+            if let Some(iterator) = self.container_iterator {
+                let [receiver] = args.as_slice() else {
+                    return Err(format!(
+                        "array-method iterator index in `{scope_path}` has an invalid argument list"
+                    ));
+                };
+                let is_iterator = matches!(
+                    self.kind(*receiver),
+                    NodeKind::Expr(ExprKind::Ref {
+                        target: Some(target)
+                    }) if *target == iterator.node
+                );
+                if !is_iterator {
+                    return Err(format!(
+                        "array-method iterator index in `{scope_path}` has an unresolved binding"
+                    ));
+                }
+                if iterator.index_width == 0 {
+                    return Err(format!(
+                        "array-method iterator index in `{scope_path}` is not representable for this receiver"
+                    ));
+                }
+                return Ok(IrExpr::new(
+                    IrExprKind::LocalRead("__llg_method_index".to_owned()),
+                    iterator.index_width,
+                    iterator.index_signed,
+                    None,
+                ));
+            }
+        }
         use crate::sim::ir::IrMathFunc;
         let math = match name {
             "$ln" => Some(IrMathFunc::Ln),

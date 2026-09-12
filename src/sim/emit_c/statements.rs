@@ -1642,10 +1642,20 @@ pub(super) fn render_pre_fn_impl(
             c_name,
             args,
             context,
+            item,
         } => {
             let mut out = format!(
-                "static void {c_name}(sv4_t* out, void* context) {{\n    (void)out;\n    (void)context;\n"
+                "static void {c_name}(sv4_t* out, {}void* context) {{\n    (void)out;\n    (void)context;\n",
+                if *item {
+                    "sv4_t __llg_method_item, sv4_t __llg_method_index, "
+                } else {
+                    ""
+                }
             );
+            if *item {
+                out.push_str("    (void)__llg_method_item;\n");
+                out.push_str("    (void)__llg_method_index;\n");
+            }
             for (i, e) in args.iter().enumerate() {
                 let rendered = render_expr(ctx, e)?.code;
                 out.push_str(&format!(

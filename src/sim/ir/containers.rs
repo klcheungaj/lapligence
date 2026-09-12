@@ -195,6 +195,17 @@ pub enum IrContainerExpr {
         container: usize,
         operation: IrContainerReduction,
     },
+    /// Reduction over the value produced by a typed iterator expression.
+    /// `result_*` is the self-determined type of that expression, which may
+    /// differ from the source element width.
+    ReduceWith {
+        container: usize,
+        operation: IrContainerReduction,
+        callback: String,
+        result_width: u32,
+        result_signed: bool,
+        result_two_state: bool,
+    },
     Get {
         container: usize,
         index: Box<IrExpr>,
@@ -273,6 +284,28 @@ pub enum IrContainerReduction {
     BitXor,
 }
 
+/// Array manipulation methods whose packed-element runtime implementation is
+/// shared by dynamic arrays, queues, and supported associative arrays. Methods
+/// returning a queue are represented by [`IrContainerStmt::MethodAssign`];
+/// in-place methods use [`IrContainerStmt::Method`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IrContainerMethod {
+    Find,
+    FindIndex,
+    FindFirst,
+    FindFirstIndex,
+    FindLast,
+    FindLastIndex,
+    Min,
+    Max,
+    Unique,
+    UniqueIndex,
+    Sort,
+    RSort,
+    Reverse,
+    Shuffle,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum IrContainerStmt {
     DynamicNew {
@@ -283,6 +316,21 @@ pub enum IrContainerStmt {
     Copy {
         dst: usize,
         src: usize,
+    },
+    /// Assign a queue-valued locator/min/max/unique method result. The source
+    /// is evaluated before replacing the destination, so aliasing a
+    /// destination with its receiver remains well-defined.
+    MethodAssign {
+        dst: usize,
+        src: usize,
+        method: IrContainerMethod,
+        callback: Option<String>,
+    },
+    /// Mutate a dynamic array or queue in place (sort/rsort/reverse/shuffle).
+    Method {
+        container: usize,
+        method: IrContainerMethod,
+        callback: Option<String>,
     },
     AssignValues {
         container: usize,
@@ -458,6 +506,21 @@ impl IrContainerExpr {
         let (index, expected) = match self {
             Self::Size(index) => (*index, None),
             Self::Reduce { container, .. } => (*container, None),
+            Self::ReduceWith {
+                container,
+                callback,
+                result_width,
+                ..
+            } => {
+                let container = container_kind(model, *container, None)?;
+                if !container.element.is_packed() || callback.is_empty() || *result_width == 0 {
+                    return Err(IrValidationError::new(
+                        "container",
+                        "with-clause reduction requires packed source/result types and a callback",
+                    ));
+                }
+                return Ok(());
+            }
             Self::Get { container, index } => {
                 let container = container_kind(model, *container, None)?;
                 if index.is_real() {
@@ -783,6 +846,135 @@ impl IrContainerStmt {
                         "container",
                         "container copy type mismatch",
                     ));
+                }
+                Ok(())
+            }
+            Self::MethodAssign {
+                dst,
+                src,
+                method,
+                callback,
+            } => {
+                let destination = container_kind(model, *dst, Some("queue"))?;
+                let source = container_kind(model, *src, None)?;
+                if !matches!(
+                    source.kind,
+                    IrContainerKind::Dynamic
+                        | IrContainerKind::Queue { .. }
+                        | IrContainerKind::Associative { .. }
+                ) || !destination.element.is_packed()
+                    || !source.element.is_packed()
+                {
+                    return Err(IrValidationError::new(
+                        "container",
+                        "array method result requires a packed source and queue destination",
+                    ));
+                }
+                if !matches!(
+                    method,
+                    IrContainerMethod::Find
+                        | IrContainerMethod::FindIndex
+                        | IrContainerMethod::FindFirst
+                        | IrContainerMethod::FindFirstIndex
+                        | IrContainerMethod::FindLast
+                        | IrContainerMethod::FindLastIndex
+                        | IrContainerMethod::Min
+                        | IrContainerMethod::Max
+                        | IrContainerMethod::Unique
+                        | IrContainerMethod::UniqueIndex
+                ) {
+                    return Err(IrValidationError::new(
+                        "container",
+                        "in-place array method cannot produce a queue result",
+                    ));
+                }
+                if matches!(
+                    method,
+                    IrContainerMethod::Find
+                        | IrContainerMethod::FindIndex
+                        | IrContainerMethod::FindFirst
+                        | IrContainerMethod::FindFirstIndex
+                        | IrContainerMethod::FindLast
+                        | IrContainerMethod::FindLastIndex
+                ) && callback.is_none()
+                {
+                    return Err(IrValidationError::new(
+                        "container",
+                        "locator method requires a with-clause callback",
+                    ));
+                }
+                if matches!(
+                    source.kind,
+                    IrContainerKind::Associative {
+                        key: IrAssocKey::Wildcard | IrAssocKey::String
+                    }
+                ) && matches!(
+                    method,
+                    IrContainerMethod::FindIndex
+                        | IrContainerMethod::FindFirstIndex
+                        | IrContainerMethod::FindLastIndex
+                        | IrContainerMethod::UniqueIndex
+                ) {
+                    return Err(IrValidationError::new(
+                        "container",
+                        "packed associative index results require an integral key",
+                    ));
+                }
+                if let Some(callback) = callback {
+                    if callback.is_empty() {
+                        return Err(IrValidationError::new(
+                            "container",
+                            "array method callback name is empty",
+                        ));
+                    }
+                }
+                Ok(())
+            }
+            Self::Method {
+                container,
+                method,
+                callback,
+            } => {
+                let container = container_kind(model, *container, None)?;
+                if !matches!(
+                    container.kind,
+                    IrContainerKind::Dynamic | IrContainerKind::Queue { .. }
+                ) || !container.element.is_packed()
+                {
+                    return Err(IrValidationError::new(
+                        "container",
+                        "in-place array method requires a packed dynamic array or queue",
+                    ));
+                }
+                if !matches!(
+                    method,
+                    IrContainerMethod::Sort
+                        | IrContainerMethod::RSort
+                        | IrContainerMethod::Reverse
+                        | IrContainerMethod::Shuffle
+                ) {
+                    return Err(IrValidationError::new(
+                        "container",
+                        "queue-valued array method cannot be used as an in-place method",
+                    ));
+                }
+                if matches!(
+                    method,
+                    IrContainerMethod::Reverse | IrContainerMethod::Shuffle
+                ) && callback.is_some()
+                {
+                    return Err(IrValidationError::new(
+                        "container",
+                        "reverse/shuffle do not accept a with-clause callback",
+                    ));
+                }
+                if let Some(callback) = callback {
+                    if callback.is_empty() {
+                        return Err(IrValidationError::new(
+                            "container",
+                            "array method callback name is empty",
+                        ));
+                    }
                 }
                 Ok(())
             }
@@ -1405,7 +1597,11 @@ impl IrContainerStmt {
             Self::AssignChandleValues { values, .. } => {
                 values.iter().for_each(|value| value.expressions(visit))
             }
-            Self::Copy { .. } | Self::Delete(_) | Self::ResetDefault(_) => {}
+            Self::Copy { .. }
+            | Self::MethodAssign { .. }
+            | Self::Method { .. }
+            | Self::Delete(_)
+            | Self::ResetDefault(_) => {}
         }
     }
 
@@ -1479,7 +1675,11 @@ impl IrContainerStmt {
             Self::AssignChandleValues { values, .. } => values
                 .iter_mut()
                 .for_each(|value| value.expressions_mut(visit)),
-            Self::Copy { .. } | Self::Delete(_) | Self::ResetDefault(_) => {}
+            Self::Copy { .. }
+            | Self::MethodAssign { .. }
+            | Self::Method { .. }
+            | Self::Delete(_)
+            | Self::ResetDefault(_) => {}
         }
     }
 }

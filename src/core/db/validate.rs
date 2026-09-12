@@ -163,6 +163,26 @@ impl Validator<'_> {
             }
         }
 
+        for (call, iterator) in self.db.method_call_iterator_nodes() {
+            let node = self.node(*call, &format!("method_call_iterators[{}]", call.0))?;
+            if !matches!(node.kind, NodeKind::MethodCall { .. }) {
+                return self.fail(
+                    format!("method_call_iterators[{}]", call.0),
+                    "iterator metadata key is not a method call",
+                );
+            }
+            if !self.db.method_call_has_with_clause(*call) {
+                return self.fail(
+                    format!("method_call_iterators[{}]", call.0),
+                    "iterator metadata requires with-clause metadata",
+                );
+            }
+            self.node(
+                *iterator,
+                &format!("method_call_iterators[{}].iterator", call.0),
+            )?;
+        }
+
         for variable in self.db.variable_lifetime_nodes().keys() {
             let node = self.node(*variable, &format!("variable_lifetimes[{}]", variable.0))?;
             if !matches!(

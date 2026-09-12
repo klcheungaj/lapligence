@@ -391,6 +391,10 @@ pub struct Db {
     var_lifetimes: HashMap<NodeId, VariableLifetime>,
     var_lifetime_qualifiers: HashMap<NodeId, VariableLifetimeQualifier>,
     method_calls_with_clause: HashSet<NodeId>,
+    /// Method-call node → the frontend-owned iterator declaration used by its
+    /// `with` expression.  Slang visits the expression itself as a structural
+    /// child, but the implicit iterator variable is not an argument edge.
+    method_call_iterators: HashMap<NodeId, NodeId>,
     /// Top-level packed struct/union layouts keyed by the declared object.
     packed_members: HashMap<NodeId, Vec<PackedMember>>,
     /// Structure/union category and members keyed by the declared object.
@@ -2756,6 +2760,7 @@ impl Db {
             var_lifetimes: HashMap::new(),
             var_lifetime_qualifiers: HashMap::new(),
             method_calls_with_clause: HashSet::new(),
+            method_call_iterators: HashMap::new(),
             packed_members: HashMap::new(),
             aggregate_layouts: HashMap::new(),
             type_descriptors: HashMap::new(),
@@ -2802,6 +2807,7 @@ impl Db {
             var_lifetimes: HashMap::new(),
             var_lifetime_qualifiers: HashMap::new(),
             method_calls_with_clause: HashSet::new(),
+            method_call_iterators: HashMap::new(),
             packed_members: HashMap::new(),
             aggregate_layouts: HashMap::new(),
             type_descriptors: HashMap::new(),
@@ -2874,6 +2880,7 @@ impl Db {
         let mut var_lifetimes = HashMap::new();
         let mut var_lifetime_qualifiers = HashMap::new();
         let mut method_calls_with_clause = HashSet::new();
+        let mut method_call_iterators = HashMap::new();
         let mut packed_members = HashMap::new();
         let mut aggregate_layouts = HashMap::new();
         let mut type_descriptors = HashMap::new();
@@ -2986,6 +2993,9 @@ impl Db {
             }
             if semantic.kind == SemanticKind::MethodCall && semantic.method_with_clause {
                 method_calls_with_clause.insert(id);
+                if let Some(iterator) = semantic.target_id {
+                    method_call_iterators.insert(id, semantic_id(&ids, iterator)?);
+                }
             }
             if matches!(
                 semantic.kind,
@@ -3330,6 +3340,7 @@ impl Db {
             var_lifetimes,
             var_lifetime_qualifiers,
             method_calls_with_clause,
+            method_call_iterators,
             packed_members,
             aggregate_layouts,
             type_descriptors,
@@ -3484,8 +3495,18 @@ impl Db {
         self.method_calls_with_clause.contains(&id)
     }
 
+    /// Return the declaration bound to a method's implicit iterator, when the
+    /// frontend supplied one for its `with` clause.
+    pub fn method_call_iterator(&self, id: NodeId) -> Option<NodeId> {
+        self.method_call_iterators.get(&id).copied()
+    }
+
     pub(crate) fn method_calls_with_clause_nodes(&self) -> &HashSet<NodeId> {
         &self.method_calls_with_clause
+    }
+
+    pub(crate) fn method_call_iterator_nodes(&self) -> &HashMap<NodeId, NodeId> {
+        &self.method_call_iterators
     }
 
     pub fn packed_members(&self, id: NodeId) -> Option<&[PackedMember]> {

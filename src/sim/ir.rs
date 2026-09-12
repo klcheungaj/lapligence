@@ -27,8 +27,8 @@ mod objects;
 mod validate;
 pub use containers::{
     IrAssocKey, IrAssocTraversal, IrContainer, IrContainerElement, IrContainerExpr,
-    IrContainerKind, IrContainerMember, IrContainerReduction, IrContainerStmt, IrQueueBound,
-    IrQueueSource,
+    IrContainerKind, IrContainerMember, IrContainerMethod, IrContainerReduction, IrContainerStmt,
+    IrQueueBound, IrQueueSource,
 };
 pub use objects::{
     IrArrayDimension, IrArrayQuery, IrArrayQueryKind, IrArrayQueryTarget, IrChandleExpr,
@@ -1880,13 +1880,17 @@ pub enum IrPreFn {
         captures: Vec<IrCapture>,
         body: Vec<IrStmt>,
     },
-    /// `static void c_name(sv4_t* out, void* context) { out[i] = arg; }`. An
-    /// evaluated event may carry a copied activation frame for local/formal
-    /// references; monitor callbacks use a null context.
+    /// `static void c_name(sv4_t* out, void* context) { out[i] = arg; }`.
+    /// When `item` is set, the helper additionally receives the packed
+    /// iterator value between `out` and `context`, allowing the same typed
+    /// evaluator ABI to serve array-method `with` clauses. An evaluated event
+    /// may carry a copied activation frame for local/formal references;
+    /// monitor and container callbacks normally use a null context.
     MonEval {
         c_name: String,
         args: Vec<IrExpr>,
         context: Option<IrEventContext>,
+        item: bool,
     },
     /// `static void c_name(llg_frame_t* frame) { ... }` for a deferred
     /// nonblocking event assignment. Captured values and selectors are read
