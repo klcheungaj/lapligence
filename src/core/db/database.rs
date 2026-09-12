@@ -820,10 +820,11 @@ pub enum StmtKind {
     Continue,
     /// `foreach (array[index, ...]) body` loop. The array target is resolved
     /// against an already-captured declaration; iterator variables belong to
-    /// this statement's lexical scope.
+    /// this statement's lexical scope. `None` entries preserve omitted
+    /// dimensions, including omitted trailing dimensions.
     Foreach {
         array: Option<NodeId>,
-        vars: Vec<NodeId>,
+        vars: Vec<Option<NodeId>>,
         body: NodeId,
     },
     Unsupported {
@@ -2095,11 +2096,52 @@ fn statement_from_slang(
                 branches,
             }
         }
-        59 => StmtKind::Foreach {
-            array: resolved_edge_target(snapshot, ids, edges, SemanticEdgeRole::Base)?,
-            vars: edge_targets(ids, edges, SemanticEdgeRole::Declaration)?,
-            body: required(SemanticEdgeRole::Body, "foreach body")?,
-        },
+        59 => {
+            let encoded_count = usize::try_from(node.auxiliary).map_err(|_| {
+                DbError::InvalidSnapshot("foreach dimension count is too large".into())
+            })?;
+            let edge_count = edges
+                .iter()
+                .filter(|edge| edge.role == SemanticEdgeRole::Declaration)
+                .map(|edge| {
+                    usize::try_from(edge.index).map_err(|_| {
+                        DbError::InvalidSnapshot("foreach declaration index is too large".into())
+                    })
+                })
+                .collect::<Result<Vec<_>, _>>()?
+                .into_iter()
+                .max()
+                .map_or(0, |index| index.saturating_add(1));
+            let count = if encoded_count == 0 {
+                edge_count
+            } else {
+                encoded_count
+            };
+            let mut vars = vec![None; count];
+            for edge in edges
+                .iter()
+                .filter(|edge| edge.role == SemanticEdgeRole::Declaration)
+            {
+                let index = usize::try_from(edge.index).map_err(|_| {
+                    DbError::InvalidSnapshot("foreach declaration index is too large".into())
+                })?;
+                let slot = vars.get_mut(index).ok_or_else(|| {
+                    DbError::InvalidSnapshot(
+                        "foreach declaration index exceeds its dimension count".into(),
+                    )
+                })?;
+                if slot.replace(semantic_id(ids, edge.target_id)?).is_some() {
+                    return Err(DbError::InvalidSnapshot(
+                        "foreach has duplicate declaration index".into(),
+                    ));
+                }
+            }
+            StmtKind::Foreach {
+                array: resolved_edge_target(snapshot, ids, edges, SemanticEdgeRole::Base)?,
+                vars,
+                body: required(SemanticEdgeRole::Body, "foreach body")?,
+            }
+        }
         40 => timing_statement(snapshot, node, edges, ids)?,
         41 => StmtKind::EventTrigger {
             blocking: !node.is_nonblocking,

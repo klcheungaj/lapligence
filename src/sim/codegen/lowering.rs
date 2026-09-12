@@ -718,6 +718,10 @@ struct Codegen<'a> {
     /// Procedural declaration node -> automatic C local or hidden static
     /// signal for the currently lowered process context.
     proc_locals: HashMap<NodeId, ProcLocalInfo>,
+    /// Automatic string locals used by foreach string-key iterators. Native
+    /// strings have a distinct C representation and therefore do not fit the
+    /// packed/real `ProcLocalInfo` table.
+    proc_string_locals: HashMap<NodeId, String>,
     /// Hidden static process-local storage keyed by elaborated instance and
     /// declaration. A declaration node is shared by module instances, while
     /// its static lifetime is per elaborated instance.
@@ -863,6 +867,7 @@ impl<'a> Codegen<'a> {
             unpacked_aggregates: HashMap::new(),
             aggregate_objects: HashMap::new(),
             proc_locals: HashMap::new(),
+            proc_string_locals: HashMap::new(),
             proc_local_instances: HashMap::new(),
             capture_locals: HashMap::new(),
             net_inits: Vec::new(),

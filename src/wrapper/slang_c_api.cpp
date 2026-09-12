@@ -2709,6 +2709,12 @@ private:
       capture.semanticRole(id, &statement.body, LLG_SLANG_EDGE_BODY);
     }
     else if constexpr (std::same_as<T, ForeachLoopStatement>) {
+      // Keep the source list length even when the last dimensions are
+      // omitted. Declaration edges carry their own dimension index; this
+      // scalar records the number of slots so the owned DB can preserve
+      // trailing omissions without exposing Slang AST pointers.
+      capture.output.semantic_nodes[static_cast<size_t>(id)].auxiliary =
+          statement.loopDims.size();
       capture.semanticRole(id, &statement.arrayRef, LLG_SLANG_EDGE_BASE);
       uint32_t index = 0;
       for (const auto& dimension : statement.loopDims) {

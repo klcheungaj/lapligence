@@ -169,6 +169,9 @@ impl Codegen<'_> {
         {
             return true;
         }
+        if self.lexical_proc_string_local(node).is_some() {
+            return true;
+        }
         if self.is_container_string_expr(node) {
             return true;
         }
@@ -437,6 +440,9 @@ impl Codegen<'_> {
             NodeKind::Expr(ExprKind::Ref { target }) => *target,
             _ => Some(node),
         };
+        if let Some((_, name)) = self.lexical_proc_string_local(node) {
+            return Ok(IrStringExpr::LocalRead(name.to_owned()));
+        }
         if let Some(function) = &self.func {
             if let Some(value) = target.and_then(|target| function.string_read.get(&target)) {
                 return Ok(value.clone());
@@ -912,6 +918,10 @@ impl Codegen<'_> {
                     .flatten()
                 })
         });
+        let string_target = string_target.or_else(|| {
+            self.lexical_proc_string_local(object_node)
+                .map(|(_, name)| name.to_owned())
+        });
         let string_const_ref = self.func.as_ref().is_some_and(|function| {
             target_node.is_some_and(|target| {
                 function.string_read.contains_key(&target)
@@ -997,19 +1007,25 @@ impl Codegen<'_> {
                 }) => Some(*target),
                 _ => Some(receiver),
             };
-            self.func.as_ref().and_then(|function| {
-                target
-                    .and_then(|target| function.string_write.get(&target).cloned())
-                    .or_else(|| {
-                        function
-                            .string_write
-                            .iter()
-                            .find(|(target, _)| {
-                                self.node(**target).name == self.node(receiver).name
-                            })
-                            .map(|(_, value)| value.clone())
-                    })
-            })
+            self.func
+                .as_ref()
+                .and_then(|function| {
+                    target
+                        .and_then(|target| function.string_write.get(&target).cloned())
+                        .or_else(|| {
+                            function
+                                .string_write
+                                .iter()
+                                .find(|(target, _)| {
+                                    self.node(**target).name == self.node(receiver).name
+                                })
+                                .map(|(_, value)| value.clone())
+                        })
+                })
+                .or_else(|| {
+                    self.lexical_proc_string_local(receiver)
+                        .map(|(_, name)| name.to_owned())
+                })
         } else {
             None
         };

@@ -1401,7 +1401,8 @@ impl<'a> Codegen<'a> {
         let (width, signed) = match &operation {
             IrContainerExpr::Size(_)
             | IrContainerExpr::AssocTraverse { .. }
-            | IrContainerExpr::AssocTraverseString { .. } => (32, true),
+            | IrContainerExpr::AssocTraverseString { .. }
+            | IrContainerExpr::AssocTraverseStringLocal { .. } => (32, true),
             IrContainerExpr::Exists { .. } | IrContainerExpr::ExistsString { .. } => (32, true),
             IrContainerExpr::Reduce { container, .. } => {
                 let container = &self.model.containers[*container];

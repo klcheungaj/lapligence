@@ -2011,6 +2011,10 @@ fn validate_semantic_auxiliary(node: &RawSemanticNode) -> Result<(), SlangError>
         // Statement subkind 42 covers both `wait` and `wait_order`; the
         // auxiliary marker distinguishes the ordered form.
         (18, 42, _) => node.auxiliary <= 1,
+        // Foreach uses the auxiliary field for the number of source iterator
+        // slots so omitted trailing dimensions survive the owned snapshot.
+        // Keep the count bounded independently of the later DB allocation.
+        (18, 59, _) => node.auxiliary <= 4096,
         (19, 69, 40) => node.auxiliary == 0 || node.flags & 1 != 0,
         (19, 69, 41) => node.auxiliary > 0 || node.flags & 1 != 0,
         _ => node.auxiliary == 0,

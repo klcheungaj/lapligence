@@ -195,6 +195,26 @@ pub(super) fn expression(ctx: &RCtx<'_>, operation: &IrContainerExpr) -> Result<
                 IrAssocTraversal::Prev => 3,
             }
         ),
+        IrContainerExpr::AssocTraverseStringLocal {
+            container,
+            direction,
+            key_name,
+        } => format!(
+            "sv4_from_u64({}(&{}, &{}, {}), 32, 1)",
+            if ctx.model.containers[*container].element.is_packed() {
+                "llg_model_assoc_traverse_string"
+            } else {
+                "llg_model_assoc_value_traverse_string"
+            },
+            name(ctx, *container),
+            key_name,
+            match direction {
+                IrAssocTraversal::First => 0,
+                IrAssocTraversal::Last => 1,
+                IrAssocTraversal::Next => 2,
+                IrAssocTraversal::Prev => 3,
+            }
+        ),
         IrContainerExpr::QueueFront(index) => {
             format!("llg_queue_front(&{})", name(ctx, *index))
         }

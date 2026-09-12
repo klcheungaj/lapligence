@@ -12,9 +12,6 @@
 //! runs with the CWD pointed at a fresh temp dir (serialized through a mutex,
 //! to avoid process-wide CWD races).
 
-use llg::core::compile;
-use llg::sim;
-
 #[path = "support/sim.rs"]
 mod sim_harness;
 
@@ -283,39 +280,4 @@ fn sim_mem_implicit_size_is_zero_based() {
 endmodule
 "#;
     assert_eq!(run_sim("implicit_size", sv), "m0=11 m7=77\n");
-}
-
-/// Foreach forms with an omitted dimension index remain an explicit codegen
-/// boundary rather than silently iterating the wrong shape.
-#[test]
-fn sim_mem_foreach_rejected() {
-    let sv = r#"module tb;
-    logic [7:0] mem [0:1][0:1];
-    initial begin
-        foreach (mem[i,]) mem[i][0] = i;
-    end
-endmodule
-"#;
-    let result = sim_harness::with_frontend_temp_cwd("mem_foreach_rej", |dir| {
-        let source = dir.join("foreach_rej.sv");
-        std::fs::write(&source, sv).map_err(|error| format!("write source: {error}"))?;
-        let out = compile::compile_checked(&compile::CompileOpts {
-            files: vec![source.to_string_lossy().into_owned()],
-            top: Some("tb".to_string()),
-            ..Default::default()
-        })
-        .map_err(|e| format!("compile: {e}"))?;
-        let db =
-            llg::core::db::Db::from_slang(&out.snapshot).map_err(|error| format!("db: {error}"))?;
-        match sim::codegen::generate(&db) {
-            Ok(_) => Err("codegen unexpectedly succeeded".to_string()),
-            Err(e) => Ok(e.to_string()),
-        }
-    });
-
-    let err = result.expect("codegen should fail");
-    assert!(
-        err.contains("requires one explicit index variable per dimension"),
-        "unexpected error: {err}"
-    );
 }

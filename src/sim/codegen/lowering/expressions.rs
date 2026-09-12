@@ -1227,6 +1227,12 @@ impl<'a> Codegen<'a> {
                 None,
             ));
         }
+        if self.lexical_proc_string_local(r).is_some() {
+            return Err(format!(
+                "string procedural local `{}` cannot be used as a packed expression in `{scope_path}`",
+                self.node(r).name
+            ));
+        }
         if let Some((_, info)) = self.lexical_proc_local(r) {
             if let Some(signal) = &info.static_signal {
                 return self.signal_read_expr(signal);

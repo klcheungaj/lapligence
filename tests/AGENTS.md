@@ -185,7 +185,8 @@ coverage for the same rule IDs.
 - `sim_packed_strings.rs`, `sim_bit_queries.rs`, `sim_real_conversions.rs`,
   `sim_wildcard_eq.rs`, and `sim_loops.rs` compare optimized/unoptimized
   execution for packed strings, bit queries, numeric conversions, wildcard
-  equality/case-inside, and lexical loop declarations/fixed-array foreach.
+  equality/case-inside, and lexical loop declarations/foreach over fixed arrays
+  and supported resizable containers.
   `sim_delay.rs` covers typed constant/runtime delay expressions, negative packed
   time conversion, overflow and unsupported-control boundaries.
   `sim_time_literals.rs` checks typed unit-suffixed, scientific and real

@@ -653,7 +653,8 @@ impl Validator<'_> {
                 let expected = match operation.as_ref() {
                     IrContainerExpr::Size(_)
                     | IrContainerExpr::AssocTraverse { .. }
-                    | IrContainerExpr::AssocTraverseString { .. } => (32, true),
+                    | IrContainerExpr::AssocTraverseString { .. }
+                    | IrContainerExpr::AssocTraverseStringLocal { .. } => (32, true),
                     IrContainerExpr::Exists { .. } | IrContainerExpr::ExistsString { .. } => {
                         (32, true)
                     }

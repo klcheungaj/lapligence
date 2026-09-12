@@ -286,6 +286,90 @@ impl<'a> Codegen<'a> {
         Ok(info)
     }
 
+    /// Register an automatic native-string foreach iterator. Strings use the
+    /// object ABI rather than packed/real `ProcLocalInfo`; the generated name
+    /// is still declaration-derived so nested loop scopes cannot collide.
+    pub(super) fn collect_loop_string_var(
+        &mut self,
+        path: &str,
+        node: NodeId,
+    ) -> Result<String, String> {
+        if let Some(name) = self.proc_string_locals.get(&node) {
+            return Ok(name.clone());
+        }
+        let is_string = matches!(
+            self.kind(node),
+            NodeKind::Var { ty } if ty.kind == "string"
+        );
+        if !is_string {
+            return Err(format!(
+                "foreach string iterator `{}` in `{path}` is not a string variable",
+                self.node(node).name
+            ));
+        }
+        if self.db.variable_lifetime(node) != VariableLifetime::Automatic {
+            return Err(format!(
+                "string foreach iterator `{}` in `{path}` must have automatic lifetime",
+                self.node(node).name
+            ));
+        }
+        let name = format!("_lv{}", node.index());
+        self.proc_string_locals.insert(node, name.clone());
+        Ok(name)
+    }
+
+    pub(super) fn proc_string_local_name(&self, node: NodeId) -> Option<&str> {
+        self.proc_string_locals.get(&node).map(String::as_str)
+    }
+
+    pub(super) fn is_foreach_iterator(&self, node: NodeId) -> bool {
+        self.db.node_ids().any(|id| match self.kind(id) {
+            NodeKind::Stmt(StmtKind::Foreach { vars, .. }) => {
+                vars.iter().flatten().any(|variable| *variable == node)
+            }
+            _ => false,
+        })
+    }
+
+    /// Resolve a string loop iterator through its lexical statement scopes.
+    /// This mirrors `lexical_proc_local` while keeping native-string storage
+    /// out of packed expression paths.
+    pub(super) fn lexical_proc_string_local(&self, reference: NodeId) -> Option<(NodeId, &str)> {
+        let name = self.node(reference).name.as_str();
+        let mut parent = self.node(reference).parent;
+        while let Some(scope) = parent {
+            if matches!(self.kind(scope), NodeKind::Stmt(StmtKind::Begin)) {
+                if let Some(variable) = self.node(scope).children.iter().find(|child| {
+                    matches!(self.kind(**child), NodeKind::Var { .. })
+                        && self.node(**child).name == name
+                }) {
+                    if let Some(c_name) = self.proc_string_local_name(*variable) {
+                        return Some((*variable, c_name));
+                    }
+                }
+            }
+            let variable = match self.kind(scope) {
+                NodeKind::Stmt(StmtKind::For { vars, .. }) => vars
+                    .iter()
+                    .find(|variable| self.node(**variable).name == name)
+                    .copied(),
+                NodeKind::Stmt(StmtKind::Foreach { vars, .. }) => vars
+                    .iter()
+                    .flatten()
+                    .find(|variable| self.node(**variable).name == name)
+                    .copied(),
+                _ => None,
+            };
+            if let Some(variable) = variable {
+                if let Some(c_name) = self.proc_string_local_name(variable) {
+                    return Some((variable, c_name));
+                }
+            }
+            parent = self.node(scope).parent;
+        }
+        None
+    }
+
     /// Resolve a process-local declaration in the current elaborated
     /// instance. Static declarations need the instance-qualified map because
     /// one owned declaration node can be instantiated more than once.
@@ -343,12 +427,21 @@ impl<'a> Codegen<'a> {
                 }
             }
             let vars = match self.kind(scope) {
-                NodeKind::Stmt(StmtKind::For { vars, .. })
-                | NodeKind::Stmt(StmtKind::Foreach { vars, .. }) => Some(vars.as_slice()),
+                NodeKind::Stmt(StmtKind::For { vars, .. }) => {
+                    return vars
+                        .iter()
+                        .find(|variable| self.node(**variable).name == name)
+                        .and_then(|variable| {
+                            self.proc_local_info(*variable)
+                                .map(|info| (*variable, info))
+                        });
+                }
+                NodeKind::Stmt(StmtKind::Foreach { vars, .. }) => Some(vars.as_slice()),
                 _ => None,
             };
             if let Some(variable) = vars.and_then(|vars| {
                 vars.iter()
+                    .flatten()
                     .find(|variable| self.node(**variable).name == name)
             }) {
                 if let Some(info) = self.proc_local_info(*variable) {
@@ -373,9 +466,12 @@ impl<'a> Codegen<'a> {
                 return true;
             }
             let is_loop_var = match self.kind(scope) {
-                NodeKind::Stmt(StmtKind::For { vars, .. })
-                | NodeKind::Stmt(StmtKind::Foreach { vars, .. }) => vars
+                NodeKind::Stmt(StmtKind::For { vars, .. }) => vars
                     .iter()
+                    .any(|variable| self.node(*variable).name == name),
+                NodeKind::Stmt(StmtKind::Foreach { vars, .. }) => vars
+                    .iter()
+                    .flatten()
                     .any(|variable| self.node(*variable).name == name),
                 _ => false,
             };
@@ -4588,6 +4684,16 @@ impl<'a> Codegen<'a> {
             // collected by `lower_for`; they are not function-entry locals.
             return self.collect_func_locals(*body, inst, locals, chandle_locals, seq, prefix);
         }
+        if let NodeKind::Stmt(StmtKind::Foreach { body, .. }) = self.kind(node) {
+            // Foreach iterator variables have the same loop-entry lifetime;
+            // omitted slots carry no declaration and are skipped naturally.
+            return self.collect_func_locals(*body, inst, locals, chandle_locals, seq, prefix);
+        }
+        if self.is_foreach_iterator(node) {
+            // Foreach iterators are declared by `lower_foreach` at loop entry,
+            // not as function-entry locals.
+            return Ok(());
+        }
         if let NodeKind::Var { ty } = self.kind(node) {
             self.explicit_local_lifetime(node)?;
             if ty.kind == "chandle" {
@@ -6156,6 +6262,9 @@ impl<'a> Codegen<'a> {
             }
             return Ok(format!("&{}", object.c_name));
         }
+        if let Some((_, name)) = self.lexical_proc_string_local(actual) {
+            return Ok(format!("&{name}"));
+        }
         let target = match self.kind(actual) {
             NodeKind::Expr(ExprKind::Ref { target }) => *target,
             _ => Some(actual),
@@ -6234,7 +6343,7 @@ impl<'a> Codegen<'a> {
                     .keys()
                     .any(|target| self.node(*target).name == self.node(actual).name))
         });
-        if writable {
+        if writable || self.lexical_proc_string_local(actual).is_some() {
             Ok(())
         } else {
             Err(format!(
@@ -7281,10 +7390,16 @@ impl<'a> Codegen<'a> {
                 NodeKind::Expr(ExprKind::Ref {
                     target: Some(target),
                 }) => Some(*target),
-                _ => cg.lexical_proc_local(node).map(|(target, _)| target),
+                _ => cg
+                    .lexical_proc_local(node)
+                    .map(|(target, _)| target)
+                    .or_else(|| cg.lexical_proc_string_local(node).map(|(target, _)| target)),
             };
             if let Some(target) = target {
-                if !cg.node_is_within(target, branch) && cg.capture_source(target).is_some() {
+                if !cg.node_is_within(target, branch)
+                    && (cg.capture_source(target).is_some()
+                        || cg.proc_string_local_name(target).is_some())
+                {
                     out.insert(target);
                 }
             }

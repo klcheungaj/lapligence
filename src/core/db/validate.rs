@@ -446,7 +446,7 @@ fn statement_refs(statement: &StmtKind, refs: &mut Vec<NodeId>) {
         StmtKind::Fork { branches, .. } => refs.extend(branches.iter().copied()),
         StmtKind::Foreach { array, vars, body } => {
             refs.extend(*array);
-            refs.extend(vars.iter().copied());
+            refs.extend(vars.iter().flatten().copied());
             refs.push(*body);
         }
         StmtKind::Begin

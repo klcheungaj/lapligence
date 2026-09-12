@@ -2,7 +2,7 @@
 
 use super::objects::object_query;
 use super::*;
-use crate::sim::ir::{IrObjectQuery, IrObjectStmt, IrStringExpr};
+use crate::sim::ir::{IrContainerElement, IrObjectQuery, IrObjectStmt, IrStringExpr};
 
 #[derive(Clone, Copy)]
 enum DisplayTaskKind {
@@ -287,6 +287,13 @@ impl EmitCtx<'_, '_> {
                 if self.func.is_none() {
                     for child in &children {
                         if matches!(self.cg.kind(*child), NodeKind::Var { .. }) {
+                            if matches!(self.cg.kind(*child), NodeKind::Var { ty } if ty.kind == "string")
+                                && self.cg.is_foreach_iterator(*child)
+                            {
+                                let name = self.cg.collect_loop_string_var(&self.path, *child)?;
+                                body.push(IrStmt::DeclString { name, init: None });
+                                continue;
+                            }
                             let info = self.cg.collect_loop_var(&self.path, *child)?;
                             if info.static_signal.is_none() {
                                 body.push(IrStmt::DeclLocal {
@@ -2121,94 +2128,366 @@ impl EmitCtx<'_, '_> {
                 self.path
             )
         })?;
-        let array_info = self.cg.array_globals.get(&array).cloned().ok_or_else(|| {
-            format!(
-                "`foreach` target `{}` in `{}` is not a fixed unpacked array",
+        let mut declarations = Vec::new();
+
+        // A zero-length foreach list is explicitly a no-op in SystemVerilog;
+        // it is useful for generated code and must not accidentally execute
+        // the body once.  The owned DB retains the list length, including
+        // trailing omitted dimensions, so this check is unambiguous.
+        if vars.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let local_decl = |info: &ProcLocalInfo| IrStmt::DeclLocal {
+            name: info.c_name.clone(),
+            width: info.width,
+            signed: info.signed,
+            two_state: info.two_state,
+            init: None,
+        };
+        let local_read = |info: &ProcLocalInfo| {
+            IrExpr::new(
+                IrExprKind::LocalRead(info.c_name.clone()),
+                info.width,
+                info.signed,
+                None,
+            )
+        };
+        let local_lhs = |info: &ProcLocalInfo| IrLhs::WholeRef {
+            addr: format!("&{}", info.c_name),
+            width: info.width,
+            signed: info.signed,
+            two_state: info.two_state,
+            shortreal: false,
+        };
+
+        if let Some(array_info) = self.cg.array_globals.get(&array).cloned() {
+            // A foreach list may name only a prefix of an unpacked array's
+            // dimensions.  Omitted entries in that prefix skip just that
+            // dimension; dimensions not present in the list are left for the
+            // body to index explicitly, as required by §12.7.3.
+            if vars.len() > array_info.dims.len() {
+                return Err(format!(
+                    "`foreach` over {}-dimensional array `{}` in `{}` has too many dimensions",
+                    array_info.dims.len(),
+                    self.cg.node(array).name,
+                    self.path
+                ));
+            }
+
+            // An omitted iterator does not synthesize a loop. If every source
+            // slot is omitted, there are no traversed dimensions and the body
+            // must not run.
+            if vars.iter().all(Option::is_none) {
+                return Ok(Vec::new());
+            }
+
+            let mut locals = Vec::with_capacity(vars.len());
+            for variable in &vars {
+                let info = variable
+                    .map(|variable| self.cg.collect_loop_var(&self.path, variable))
+                    .transpose()?;
+                if let Some(info) = &info {
+                    if info.width == 0 {
+                        return Err(format!(
+                            "`foreach` iterator `{}` in `{}` must be an integral index",
+                            variable
+                                .map(|id| self.cg.node(id).name.as_str())
+                                .unwrap_or(""),
+                            self.path
+                        ));
+                    }
+                    declarations.push(local_decl(info));
+                }
+                locals.push(info);
+            }
+
+            let (source_body, brk) = self.lower_loop_body(body)?;
+            let mut nested = source_body;
+            for (local, (left, right)) in locals
+                .iter()
+                .zip(array_info.dims.iter().take(vars.len()))
+                .rev()
+            {
+                let Some(local) = local else {
+                    // An omitted dimension is not traversed and does not
+                    // consume or synthesize an iterator local.
+                    continue;
+                };
+                let read = || local_read(local);
+                let init = IrStmt::Assign {
+                    lhs: local_lhs(local),
+                    rhs: IrExpr::resize_to(loop_index_expr(*left), local.width, local.signed),
+                    nba: false,
+                };
+                let increasing = left <= right;
+                let done = self.new_label("fe");
+                let at_endpoint = common_bin_expr(IrBinOp::Eq, read(), loop_index_expr(*right));
+                let next = common_bin_expr(
+                    if increasing {
+                        IrBinOp::Add
+                    } else {
+                        IrBinOp::Sub
+                    },
+                    read(),
+                    loop_index_expr(1),
+                );
+                let incr = IrStmt::Assign {
+                    lhs: local_lhs(local),
+                    rhs: IrExpr::resize_to(next, local.width, local.signed),
+                    nba: false,
+                };
+                nested.push(IrStmt::If {
+                    cond: at_endpoint,
+                    then_: vec![IrStmt::Goto(done.clone())],
+                    els: None,
+                });
+                nested.push(incr);
+                nested = vec![
+                    IrStmt::Block(vec![init, IrStmt::Forever { body: nested }]),
+                    IrStmt::Label(done),
+                ];
+            }
+            nested.extend(brk);
+            declarations.extend(nested);
+            return Ok(vec![IrStmt::Block(declarations)]);
+        }
+
+        let Some(container) = self.cg.container_globals.get(&array).cloned() else {
+            return Err(format!(
+                "`foreach` target `{}` in `{}` is not a supported fixed array or container",
                 self.cg.node(array).name,
                 self.path
-            )
-        })?;
-        if vars.len() != array_info.dims.len() {
+            ));
+        };
+        if vars.len() != 1 {
             return Err(format!(
-                "`foreach` over {}-dimensional array `{}` in `{}` requires one explicit index variable per dimension",
-                array_info.dims.len(),
+                "`foreach` over resizable container `{}` in `{}` supports one dimension",
                 self.cg.node(array).name,
                 self.path
             ));
         }
-
-        let mut declarations = Vec::with_capacity(vars.len());
-        let mut locals = Vec::with_capacity(vars.len());
-        for variable in vars {
-            let info = self.cg.collect_loop_var(&self.path, variable)?;
-            declarations.push(IrStmt::DeclLocal {
-                name: info.c_name.clone(),
-                width: info.width,
-                signed: info.signed,
-                two_state: info.two_state,
-                init: None,
-            });
-            locals.push(info);
+        let Some(variable) = vars[0] else {
+            // The one supplied dimension is omitted, so the loop has no
+            // traversed dimension and its body is not executed.
+            return Ok(Vec::new());
+        };
+        let element = self.cg.model.containers[container.ir].element.clone();
+        let kind = self.cg.model.containers[container.ir].kind.clone();
+        let is_associative = matches!(&kind, IrContainerKind::Associative { .. });
+        if is_associative
+            && matches!(
+                &kind,
+                IrContainerKind::Associative {
+                    key: IrAssocKey::Wildcard
+                }
+            )
+        {
+            return Err(format!(
+                "`foreach` over wildcard associative array `{}` in `{}` has no legal key iterator",
+                self.cg.node(array).name,
+                self.path
+            ));
         }
-
-        let (source_body, brk) = self.lower_loop_body(body)?;
-        let mut nested = source_body;
-        for (local, (left, right)) in locals.iter().zip(&array_info.dims).rev() {
-            let read = || {
-                IrExpr::new(
-                    IrExprKind::LocalRead(local.c_name.clone()),
-                    local.width,
-                    local.signed,
-                    None,
-                )
-            };
+        if !is_associative {
+            let local = self.cg.collect_loop_var(&self.path, variable)?;
+            if local.width == 0 {
+                return Err(format!(
+                    "`foreach` iterator `{}` in `{}` must be an integral key",
+                    self.cg.node(variable).name,
+                    self.path
+                ));
+            }
+            declarations.push(local_decl(&local));
+            let (source_body, brk) = self.lower_loop_body(body)?;
+            let read = || local_read(&local);
+            if !matches!(
+                &kind,
+                IrContainerKind::Dynamic | IrContainerKind::Queue { .. }
+            ) {
+                return Err(format!(
+                    "`foreach` target `{}` in `{}` has an unsupported container kind",
+                    self.cg.node(array).name,
+                    self.path
+                ));
+            }
+            if matches!(element, IrContainerElement::Container { .. }) {
+                return Err(format!(
+                    "nested resizable container foreach target `{}` in `{}` is not supported",
+                    self.cg.node(array).name,
+                    self.path
+                ));
+            }
+            let size = IrExpr::new(
+                IrExprKind::Container(Box::new(IrContainerExpr::Size(container.ir))),
+                32,
+                true,
+                None,
+            );
+            let cond = common_bin_expr(IrBinOp::Lt, read(), size);
+            let next = common_bin_expr(IrBinOp::Add, read(), loop_index_expr(1));
             let init = IrStmt::Assign {
-                lhs: IrLhs::WholeRef {
-                    addr: format!("&{}", local.c_name),
-                    width: local.width,
-                    signed: local.signed,
-                    two_state: local.two_state,
-                    shortreal: false,
-                },
-                rhs: IrExpr::resize_to(loop_index_expr(*left), local.width, local.signed),
+                lhs: local_lhs(&local),
+                rhs: IrExpr::resize_to(loop_index_expr(0), local.width, local.signed),
                 nba: false,
             };
-            let increasing = left <= right;
-            let done = self.new_label("fe");
-            let at_endpoint = common_bin_expr(IrBinOp::Eq, read(), loop_index_expr(*right));
-            let next = common_bin_expr(
-                if increasing {
-                    IrBinOp::Add
-                } else {
-                    IrBinOp::Sub
-                },
-                read(),
-                loop_index_expr(1),
-            );
             let incr = IrStmt::Assign {
-                lhs: IrLhs::WholeRef {
-                    addr: format!("&{}", local.c_name),
-                    width: local.width,
-                    signed: local.signed,
-                    two_state: local.two_state,
-                    shortreal: false,
-                },
+                lhs: local_lhs(&local),
                 rhs: IrExpr::resize_to(next, local.width, local.signed),
                 nba: false,
             };
-            nested.push(IrStmt::If {
-                cond: at_endpoint,
-                then_: vec![IrStmt::Goto(done.clone())],
-                els: None,
+            declarations.push(IrStmt::For {
+                init: vec![init],
+                cond,
+                incr: vec![incr],
+                body: source_body,
             });
-            nested.push(incr);
-            nested = vec![
-                IrStmt::Block(vec![init, IrStmt::Forever { body: nested }]),
-                IrStmt::Label(done),
-            ];
+            declarations.extend(brk);
+            return Ok(vec![IrStmt::Block(declarations)]);
         }
-        nested.extend(brk);
-        declarations.extend(nested);
+
+        // Associative arrays are ordered by key.  The traversal expressions
+        // update the iterator in place and return whether a key was found;
+        // the first/next choice is guarded by a one-bit state local so first
+        // is called once and mutations made by the body are observed by next.
+        enum AssocKeyStorage {
+            Integral(ProcLocalInfo, u32, bool, bool),
+            StringObject(usize),
+            StringLocal(String),
+        }
+        let key_storage = match &kind {
+            IrContainerKind::Associative {
+                key:
+                    IrAssocKey::Integral {
+                        width,
+                        signed,
+                        two_state,
+                    },
+            } => {
+                let local = self.cg.collect_loop_var(&self.path, variable)?;
+                if local.width == 0 {
+                    return Err(format!(
+                        "`foreach` iterator `{}` in `{}` must be an integral key",
+                        self.cg.node(variable).name,
+                        self.path
+                    ));
+                }
+                declarations.push(local_decl(&local));
+                AssocKeyStorage::Integral(local, *width, *signed, *two_state)
+            }
+            IrContainerKind::Associative {
+                key: IrAssocKey::String,
+            } => {
+                if let Some(object) = self.cg.object_of(&self.path, variable) {
+                    if self.cg.model.objects[object].ty != crate::sim::ir::IrObjectType::String {
+                        return Err(format!(
+                            "`foreach` iterator `{}` in `{}` is not a string key",
+                            self.cg.node(variable).name,
+                            self.path
+                        ));
+                    }
+                    AssocKeyStorage::StringObject(object)
+                } else {
+                    let name = if let Some(name) =
+                        self.cg.proc_string_local_name(variable).map(str::to_owned)
+                    {
+                        name
+                    } else {
+                        let name = self.cg.collect_loop_string_var(&self.path, variable)?;
+                        declarations.push(IrStmt::DeclString {
+                            name: name.clone(),
+                            init: None,
+                        });
+                        name
+                    };
+                    AssocKeyStorage::StringLocal(name)
+                }
+            }
+            _ => unreachable!("associative kind checked above"),
+        };
+        let (source_body, brk) = self.lower_loop_body(body)?;
+        let first_name = format!("_fe_first_{}", h.0);
+        let first_info = ProcLocalInfo {
+            c_name: first_name.clone(),
+            width: 1,
+            signed: false,
+            two_state: true,
+            static_signal: None,
+        };
+        declarations.push(IrStmt::DeclLocal {
+            name: first_name.clone(),
+            width: 1,
+            signed: false,
+            two_state: true,
+            init: Some(Box::new(loop_index_expr(1))),
+        });
+        let traverse = |direction: IrAssocTraversal| {
+            let operation = match &key_storage {
+                AssocKeyStorage::Integral(local, key_width, key_signed, key_two_state) => {
+                    IrContainerExpr::AssocTraverse {
+                        container: container.ir,
+                        direction,
+                        key_address: format!("&{}", local.c_name),
+                        key_signal: None,
+                        key_width: *key_width,
+                        key_signed: *key_signed,
+                        key_two_state: *key_two_state,
+                    }
+                }
+                AssocKeyStorage::StringObject(key_object) => IrContainerExpr::AssocTraverseString {
+                    container: container.ir,
+                    direction,
+                    key_object: *key_object,
+                },
+                AssocKeyStorage::StringLocal(key_name) => {
+                    IrContainerExpr::AssocTraverseStringLocal {
+                        container: container.ir,
+                        direction,
+                        key_name: key_name.clone(),
+                    }
+                }
+            };
+            IrExpr::new(IrExprKind::Container(Box::new(operation)), 32, true, None)
+        };
+        let done = self.new_label("fe");
+        let first_read = IrExpr::new(
+            IrExprKind::LocalRead(first_info.c_name.clone()),
+            first_info.width,
+            first_info.signed,
+            None,
+        );
+        let clear_first = IrStmt::Assign {
+            lhs: IrLhs::WholeRef {
+                addr: format!("&{}", first_info.c_name),
+                width: first_info.width,
+                signed: first_info.signed,
+                two_state: first_info.two_state,
+                shortreal: false,
+            },
+            rhs: loop_index_expr(0),
+            nba: false,
+        };
+        let stop_if_missing = |condition: IrExpr| IrStmt::If {
+            cond: condition,
+            then_: Vec::new(),
+            els: Some(vec![IrStmt::Goto(done.clone())]),
+        };
+        let select_next = stop_if_missing(traverse(IrAssocTraversal::Next));
+        let select_first = stop_if_missing(traverse(IrAssocTraversal::First));
+        let select = IrStmt::If {
+            cond: first_read,
+            then_: vec![clear_first, select_first],
+            els: Some(vec![select_next]),
+        };
+        declarations.push(IrStmt::Forever {
+            body: {
+                let mut body = vec![select];
+                body.extend(source_body);
+                body
+            },
+        });
+        declarations.push(IrStmt::Label(done));
+        declarations.extend(brk);
         Ok(vec![IrStmt::Block(declarations)])
     }
 

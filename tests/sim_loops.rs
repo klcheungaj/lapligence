@@ -1,11 +1,13 @@
 //! End-to-end simulator tests for inline SystemVerilog `for` declarations and
-//! `foreach` over fixed unpacked arrays.
+//! `foreach` over fixed unpacked arrays and resizable containers.
 //!
 //! Coverage includes lexical shadowing, nested loops, ascending and descending
 //! array ranges, multidimensional traversal, break/continue behavior, and
 //! optimizer parity. the Slang compilation uses the shared serialized temporary
 //! CWD harness because the frontend writes process-global artifacts.
 
+#[path = "support/sim_cli.rs"]
+mod sim_cli;
 #[path = "support/sim.rs"]
 mod sim_harness;
 
@@ -156,5 +158,16 @@ endmodule
             diagnostic.severity == DiagnosticSeverity::Error && diagnostic.name == "AutoVarTraced"
         }),
         "automatic strobe argument must report AutoVarTraced: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn foreach_omissions_containers_and_real_locals_follow_source_order() {
+    sim_cli::run_case(
+        "loops",
+        "foreach_extended",
+        "first=345 count=3 last=21 omitted=17 dynamic=15 queue=24 assoc=159 string_assoc=123 remaining=0 real=3.000000 shadow=221.000000 control=2.000000 fn=3 capture=3.000000\n",
+        "llg: $finish at time 0 at tb:124:9\n",
+        &[],
     );
 }

@@ -201,21 +201,24 @@ See `tests/sim_net_defaults.rs`.
   rejected rather than encoding pointers as integers.
 - Automatic, delay-free string-returning functions with packed input formals
   return owned `llg_string_t` values. Static string returns, string/chandle
-  formals, output/inout formals, and local string declarations are rejected
-  until persistent string ownership and typed object-formal copy semantics are
-  available.
+  formals, output/inout formals, and general local string declarations are
+  rejected until persistent string ownership and typed object-formal copy
+  semantics are available; automatic string-key `foreach` iterators are the
+  bounded loop-scoped exception.
 - Fork/join supports process bodies plus legal detached `join_none` branches in
   automatic packed subroutines. Captured branch values use owned activation
   frames and are released on completion or cancellation; blocking function
   joins, recursive timed tasks, richer subroutine storage, and cross-process
   `disable <label>;` remain rejected.
-- Inline `for` declarations use lexical packed locals, with unique names for
-  nested/shadowed declarations. `foreach` traverses fixed unpacked arrays in
-  declared dimension order and requires one explicit iterator per dimension.
-  Break/continue follow the innermost source loop. Reject real loop locals,
-  omitted foreach iterators, and nonblocking writes to loop locals whose stack
-  lifetime cannot cover NBA commit; legal packed loop captures retain each
-  iteration's value in its owned activation frame.
+- Inline `for` declarations use lexical packed or real locals, with unique
+  names for nested/shadowed declarations. `foreach` traverses fixed unpacked
+  arrays in declared dimension order, preserves omitted dimensions, and also
+  supports dynamic arrays, queues, and integral/string-keyed associative
+  arrays. Break/continue follow the innermost source loop. Nonblocking writes
+  to loop locals whose stack lifetime cannot cover NBA commit, nested
+  resizable-container elements, and captures of string iterators are rejected;
+  supported packed/real captures retain each iteration's value in
+  its owned activation frame; real loop captures use the same typed frame path.
   `tests/sim_loops.rs` compares optimized/unoptimized execution.
 - `case (...) inside` supports wildcard scalar members and inclusive ranges,
   retaining first-match/default ordering. Evaluate the selector exactly once

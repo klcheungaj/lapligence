@@ -243,6 +243,13 @@ pub enum IrContainerExpr {
         direction: IrAssocTraversal,
         key_object: usize,
     },
+    /// String-key traversal using an automatic native-string local rather
+    /// than model-global object storage.
+    AssocTraverseStringLocal {
+        container: usize,
+        direction: IrAssocTraversal,
+        key_name: String,
+    },
     QueueFront(usize),
     QueueBack(usize),
     QueuePopFront(usize),
@@ -662,6 +669,20 @@ impl IrContainerExpr {
                     return Err(IrValidationError::new(
                         "container",
                         "string associative traversal requires string variable storage",
+                    ));
+                }
+                return Ok(());
+            }
+            Self::AssocTraverseStringLocal {
+                container,
+                key_name,
+                ..
+            } => {
+                string_container(model, *container)?;
+                if key_name.is_empty() {
+                    return Err(IrValidationError::new(
+                        "container",
+                        "string associative traversal local name is empty",
                     ));
                 }
                 return Ok(());
