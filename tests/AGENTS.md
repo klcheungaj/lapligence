@@ -187,6 +187,10 @@ coverage for the same rule IDs.
   execution for packed strings, bit queries, numeric conversions, wildcard
   equality/case-inside, and lexical loop declarations/foreach over fixed arrays
   and supported resizable containers.
+  `sim_random.rs` covers the legacy `$random` and seven `$dist_*` functions
+  through checked-in HDL fixtures and exact Annex N vectors in both optimizer
+  modes; `runtime_random.rs` compiles the scheduler-independent C module at
+  `-O0`/`-O2` with signed-range and invalid-parameter boundaries.
   `sim_delay.rs` covers typed constant/runtime delay expressions, negative packed
   time conversion, overflow and unsupported-control boundaries.
 - `sim_plusargs.rs` runs checked-in plusarg fixtures through `llg` with

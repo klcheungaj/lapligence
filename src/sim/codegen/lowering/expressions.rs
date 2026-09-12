@@ -2806,6 +2806,9 @@ impl<'a> Codegen<'a> {
                 None,
             ));
         }
+        if let Some(kind) = Self::legacy_random_kind(name) {
+            return self.lower_legacy_random_expr(scope_path, kind, &args);
+        }
         if name == "index" {
             if let Some(iterator) = self.container_iterator {
                 let [receiver] = args.as_slice() else {
@@ -3367,6 +3370,107 @@ impl<'a> Codegen<'a> {
             }
         }
         Ok(lhs)
+    }
+
+    fn legacy_random_kind(name: &str) -> Option<crate::sim::ir::IrRandomFunc> {
+        use crate::sim::ir::IrRandomFunc;
+        Some(match name {
+            "$random" => IrRandomFunc::Random,
+            "$dist_uniform" => IrRandomFunc::Uniform,
+            "$dist_normal" => IrRandomFunc::Normal,
+            "$dist_exponential" => IrRandomFunc::Exponential,
+            "$dist_poisson" => IrRandomFunc::Poisson,
+            "$dist_chi_square" => IrRandomFunc::ChiSquare,
+            "$dist_t" => IrRandomFunc::StudentT,
+            "$dist_erlang" => IrRandomFunc::Erlang,
+            _ => return None,
+        })
+    }
+
+    fn lower_legacy_random_expr(
+        &mut self,
+        scope_path: &str,
+        kind: crate::sim::ir::IrRandomFunc,
+        args: &[NodeId],
+    ) -> Result<IrExpr, String> {
+        let (seed_node, parameter_nodes) = if kind == crate::sim::ir::IrRandomFunc::Random {
+            match args {
+                [] => (None, &[][..]),
+                [seed] => (Some(*seed), &[][..]),
+                _ => {
+                    return Err(format!(
+                        "$random accepts zero or one seed argument in `{scope_path}`"
+                    ))
+                }
+            }
+        } else {
+            let Some((seed, parameters)) = args.split_first() else {
+                return Err(format!(
+                    "legacy random function requires a writable seed in `{scope_path}`"
+                ));
+            };
+            (Some(*seed), parameters)
+        };
+        if parameter_nodes.len() != kind.arity() {
+            return Err(format!(
+                "legacy random function has {} parameter(s), got {} in `{scope_path}`",
+                kind.arity(),
+                parameter_nodes.len()
+            ));
+        }
+
+        let seed = seed_node
+            .map(|node| {
+                // Slang inserts an implicit integral cast when adapting the
+                // writable seed actual to the legacy system-function formal.
+                // The cast is a value-view node, not storage, so peel it
+                // before resolving the actual assignment target.
+                let mut node = node;
+                loop {
+                    match self.kind(node) {
+                        NodeKind::Expr(ExprKind::Cast { operand, .. }) => node = *operand,
+                        NodeKind::Expr(ExprKind::Operation {
+                            op: Operation::Assignment,
+                            operands,
+                            ..
+                        }) if !operands.is_empty() => node = operands[0],
+                        _ => break,
+                    }
+                }
+                let lhs = self.lower_lhs(scope_path, node)?;
+                let Some((width, _signed, _two_state, const_ref)) = self.ref_lhs_type(&lhs) else {
+                    return Err(format!(
+                        "legacy random seed must be an integral variable in `{scope_path}`"
+                    ));
+                };
+                if width == 0 || const_ref {
+                    return Err(format!(
+                        "legacy random seed must be a writable integral variable in `{scope_path}`"
+                    ));
+                }
+                Ok(Box::new(lhs))
+            })
+            .transpose()?;
+        let mut parameters = Vec::with_capacity(parameter_nodes.len());
+        for node in parameter_nodes {
+            let parameter = self.lower_expr(scope_path, *node)?;
+            if parameter.is_real() {
+                return Err(format!(
+                    "legacy random parameters must be integral in `{scope_path}`"
+                ));
+            }
+            parameters.push(parameter);
+        }
+        Ok(IrExpr::new(
+            IrExprKind::SysFunc(IrSysFunc::LegacyRandom {
+                kind,
+                seed,
+                args: parameters,
+            }),
+            32,
+            true,
+            None,
+        ))
     }
 
     /// Lower an assignment LHS: the pre-IR [`Self::analyze_lhs`] decisions

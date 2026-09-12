@@ -46,6 +46,9 @@
   10s/100s units, checked overflow rejection, and VCD femtosecond
   headers/timestamps.
 - `runtime_values`, `runtime_boundaries`, `region_conformance`: standalone C value checks, resource bounds and scheduling order.
+- `sim_random`, `runtime_random`: legacy `$random`/`$dist_*` Annex N vectors
+  through generated models and standalone C runtime boundary checks, each at
+  optimized and unoptimized levels.
 - `sim_opt_differential`: optimized/unoptimized equivalence against regression traces.
 
 ### Limits of the tests
@@ -77,7 +80,7 @@
 ```sh
 cargo test --locked --test sim_type_conformance --test sim_partial_features -- --test-threads=1
 cargo test --locked --test sim_data_types --test sim_data_types_extended --test sim_data_type_edges -- --test-threads=1
-cargo test --locked --test sim_data_types_next --test sim_data_types_completion --test sim_net_resolution --test sim_net_defaults --test runtime_values -- --test-threads=1
+cargo test --locked --test sim_data_types_next --test sim_data_types_completion --test sim_net_resolution --test sim_net_defaults --test runtime_values --test runtime_random -- --test-threads=1
 ```
 
 ```sh
@@ -98,7 +101,7 @@ LLG_CC=gcc \
 LLG_CFLAGS='-DACO_USE_ASAN -fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=all' \
 ASAN_OPTIONS='detect_leaks=1:strict_string_checks=1' \
 UBSAN_OPTIONS='print_stacktrace=1:halt_on_error=1' \
-cargo test --locked --test sim_partial_features --test sim_type_conformance --test sim_procedural_assign --test runtime_values -- --test-threads=1
+cargo test --locked --test sim_partial_features --test sim_type_conformance --test sim_procedural_assign --test runtime_values --test runtime_random -- --test-threads=1
 ```
 
 ### Repository gate

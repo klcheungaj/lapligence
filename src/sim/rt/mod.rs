@@ -1,8 +1,10 @@
 //! rt — the C11 simulation runtime embedded as strings.
 //!
 //! [`value_sources`] returns the scheduler-independent value types, operations,
-//! and conversions (`llg_value.h` / `llg_value.c`), [`container_sources`] and
-//! [`string_sources`] the dynamically sized value stores, [`runtime_sources`] the event
+//! and conversions (`llg_value.h` / `llg_value.c`), [`random_sources`] the
+//! scheduler-independent legacy probabilistic functions (`llg_random.h` /
+//! `llg_random.c`), [`container_sources`] and [`string_sources`] the dynamically
+//! sized value stores, [`runtime_sources`] the event
 //! scheduler (`llg_rt.h` / `llg_rt.c`), [`libaco_sources`] the vendored coroutine
 //! library (`aco.h` / `aco.c` / `acosw.S`), [`waveform_sources`] the optional
 //! asynchronous VCD/FST writer and vendored libfst sources, and
@@ -24,6 +26,12 @@ pub fn runtime_sources() -> (&'static str, &'static str) {
 /// This C11 module can be compiled independently, linking only the math library.
 pub fn value_sources() -> (&'static str, &'static str) {
     (include_str!("llg_value.h"), include_str!("llg_value.c"))
+}
+
+/// Scheduler-independent legacy `$random` and `$dist_*` implementations.
+/// Compile together with generated models or as a standalone C11 module.
+pub fn random_sources() -> (&'static str, &'static str) {
+    (include_str!("llg_random.h"), include_str!("llg_random.c"))
 }
 
 /// Scheduler-independent dynamic-array, queue, and associative-array storage.

@@ -48,6 +48,7 @@ fn render_model(execution: &ExecutionModel, capacity: u32) -> Result<String, Str
         out.push_str("#define LLG_WAVEFORM 1\n");
     }
     out.push_str("#include \"llg_rt.h\"\n");
+    out.push_str("#include \"llg_random.h\"\n");
     if !model.containers.is_empty() {
         out.push_str("#include \"llg_container.h\"\n");
     }

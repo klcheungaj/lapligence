@@ -370,8 +370,8 @@ Control / misc:
 - ❌ **PLA modeling tasks** `$async$and$array …` — §1364-2001 17.5 **[1995]**
 - 🟨 **Stochastic tasks** `$q_initialize/$q_add/$q_remove/$q_full/$q_exam` — §1364-2001 17.6 / §1800-2009 20.16 **[1995]**
   ID-indexed FIFO/LIFO queues retain job/information IDs and simulation-precision arrival ticks; full/empty/unknown/duplicate/type/length status codes and the six `$q_exam` statistics use checked integer arithmetic. Whole packed integer output variables are supported and tested in both optimizer modes (`sim_stochastic.rs`); selected or real output targets remain rejected.
-- ❌ **$random** — §1364-2001 17.9.1 **[1995]** unsupported-function reject
-- ❌ **$dist_uniform/$dist_normal/…** — §1364-2001 17.9.2 **[1995]** unsupported-function reject
+- ✅ **$random** — §1364-2001 17.9.1 **[1995]** writable-seed and implicit-stream calls use the Annex N reference algorithm (`sim_random.rs`, `runtime_random.rs`)
+- ✅ **$dist_uniform/$dist_normal/$dist_exponential/$dist_poisson/$dist_chi_square/$dist_t/$dist_erlang** — §1364-2001 17.9.2–17.9.3 **[1995]** checked integer arguments, writable seeds, specified parameter boundaries, and deterministic Annex N vectors (`sim_random.rs`, `runtime_random.rs`)
 - ✅ **Conversion** `$rtoi/$itor` — §1364-2001 17.8 **[1995]** truncation toward zero and signed/unsigned integral-to-real conversion, including implicit numeric argument coercion, typed parameters, and constant declaration initializers (sim_real_conversions.rs, optimization on/off)
 - ✅ **Conversion** `$realtobits/$bitstoreal` — §1364-2001 17.8 **[2001]** IEEE-754 bit reinterpretation; `$bitstoreal` requires 64 bits and maps X/Z positions to zero (sim_real_conversions.rs, optimization on/off)
 - ✅ **Plusargs** `$test$plusargs/$value$plusargs` — §1364-2001 17.10 / §1800-2009 21.6 **[1995]/[SV-2005]**. `llg` passes arguments after `--` to the generated model; test queries use exact leading-`+` prefix matching, and value queries support `%d/%h/%x/%o/%b/%f/%e/%g/%s`, literal `%%`, repeated-argument first-match behavior, wide 4-state destinations, and failure retention (sim_plusargs.rs)
@@ -463,7 +463,7 @@ Tracked so nothing is lost; all de-prioritized behind RTL-simulation support.
 ## Remaining-work inventory
 
 The original audit IDs are stable. This inventory currently contains 66 remaining
-groups (28 missing, 38 partial); groups 9, 38, 57, 58, 59 and 60 are completed. Counts refer to grouped
+groups (27 missing, 39 partial); groups 9, 38, 57, 58, 59 and 60 are completed. Counts refer to grouped
 capabilities, not individual keywords, system functions or standard clauses.
 
 
@@ -524,7 +524,7 @@ capabilities, not individual keywords, system functions or standard clauses.
 | 53 | Partial | Simulation suspension | `$stop` supports resumable coroutine suspension and explicit CLI resume/exit policy; a full interactive debugger/control protocol is outside this boundary. |
 | 54 | Missing | PLA modeling | Synchronous/asynchronous AND/NAND/OR/NOR array/plane system tasks. |
 | 55 | Partial | Stochastic queues | `$q_initialize/$q_add/$q_remove/$q_full/$q_exam` with FIFO/LIFO state, documented status codes, simulation-time statistics and whole packed integer outputs; selected/real output targets remain rejected. |
-| 56 | Missing | Random-number facilities | `$random`, `$urandom`, `$urandom_range`, random-state/seeding methods, and `$dist_uniform/$dist_normal/$dist_exponential/$dist_poisson/$dist_chi_square/$dist_t/$dist_erlang`. |
+| 56 | Partial | Random-number facilities | Legacy `$random` and all seven `$dist_*` functions are implemented with writable seeds and Annex N vectors; `$urandom`, `$urandom_range`, random-state/seeding methods, and other SystemVerilog randomization APIs remain. |
 | 57 | Completed | Command-line plusargs | `$test$plusargs/$value$plusargs` receive arguments after the `llg` `--` delimiter; exact prefix matching, typed decimal/hex/binary/octal/real/string conversion, wide 4-state values, literal percent escapes, repeated-argument first match, and unchanged destinations on failed queries are covered by `sim_plusargs.rs`. |
 | 58 | Completed | Runtime mathematical functions | All 21 real functions from IEEE 1800-2009 table 20-4 now use typed IR and the specified C math functions, with numeric argument conversion. Procedural tests cover runtime arguments, one-time evaluation and C domain behavior. Existing real-context restrictions are counted in group 3. |
 | 59 | Completed | Runtime severity tasks | `$fatal/$error/$warning/$info` use typed, exactly-once message evaluation with source-context prefixes; `$fatal` validates constant finish number 0/1/2, runs the existing termination/final handoff, and level-2 finish statistics include stable severity counters. Elaboration-time frontend diagnostics remain a separate capability. |

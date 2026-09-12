@@ -4,6 +4,10 @@
   they are not linked into Rust binaries.
 - **Value layer:** `llg_value.h/.c` implements model-width four-state values,
   operations, resolution, formatting, and numeric conversions.
+- **Legacy random layer:** `llg_random.h/.c` implements Verilog-2001
+  `$random` and the seven `$dist_*` functions using the specified Annex N
+  algorithms. It is scheduler-independent and can be compiled as a standalone
+  C11 translation unit.
 - **Reference layer:** `llg_ref_t` describes a whole packed value or legal
   packed/array selection; `llg_ref_read` and `llg_ref_write` preserve immediate
   alias visibility while routing writes through normal force/PCA notifications.

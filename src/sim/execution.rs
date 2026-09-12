@@ -1080,6 +1080,16 @@ fn collect_expression_effects(
                     collect_string_effects(ir, command, effects, visited_calls);
                 }
             }
+            IrSysFunc::LegacyRandom { seed, args, .. } => {
+                effects.push(ExecutionEffect::ImmediateStore);
+                effects.push(ExecutionEffect::RuntimeService);
+                if let Some(seed) = seed {
+                    collect_lhs_expression_effects(ir, seed, effects, visited_calls);
+                }
+                for arg in args {
+                    collect_expression_effects(ir, arg, effects, visited_calls);
+                }
+            }
             IrSysFunc::Time { .. } | IrSysFunc::Realtime { .. } => {}
             IrSysFunc::Math { args, .. } => {
                 for arg in args {

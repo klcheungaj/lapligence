@@ -44,6 +44,7 @@ use std::sync::OnceLock;
 
 /// The generated project file.  `{SOURCES}` is replaced with the actual
 /// source list (`model.c llg_value.c llg_container.c llg_string.c llg_rt.c
+/// llg_random.c
 /// aco.c acosw.S`, plus waveform/libfst C
 /// files when enabled); everything else is fixed.
 /// ASM is enabled because libaco's context switch lives in `acosw.S`.
@@ -255,11 +256,13 @@ pub fn generate_model_sources(out_dir: &Path, extra: &[(&str, &str)]) -> Result<
 
 /// File names [`super::write_sim_sources`] always writes (must mirror its
 /// fixed list there) plus this module's own `CMakeLists.txt`.
-const FIXED_SOURCE_NAMES: [&str; 13] = [
+const FIXED_SOURCE_NAMES: [&str; 15] = [
     "llg_rt.h",
     "llg_rt.c",
     "llg_value.h",
     "llg_value.c",
+    "llg_random.h",
+    "llg_random.c",
     "llg_container.h",
     "llg_container.c",
     "llg_string.h",
@@ -346,6 +349,7 @@ fn write_cmakelists(
     sources.extend([
         "llg_value.c",
         "llg_rt.c",
+        "llg_random.c",
         "aco.c",
         "acosw.S",
         "llg_container.c",

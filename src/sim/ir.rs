@@ -865,6 +865,15 @@ pub enum IrSysFunc {
     /// status. `None` preserves the standard's omitted-argument
     /// `system(NULL)` query, distinct from `Some(Literal(Vec::new()))`.
     System(Option<IrStringExpr>),
+    /// Verilog-2001 `$random` and the seven legacy probabilistic distribution
+    /// functions.  Distribution seeds are writable packed lvalues; keeping
+    /// the lvalue in IR lets emission evaluate it once, update it after the
+    /// runtime call, and preserve selected-index capture semantics.
+    LegacyRandom {
+        kind: IrRandomFunc,
+        seed: Option<Box<IrLhs>>,
+        args: Vec<IrExpr>,
+    },
     /// Real math functions defined by IEEE 1800-2009 table 20-4.
     Math { kind: IrMathFunc, args: Vec<IrExpr> },
     /// Fractional time in the calling module's time unit.
@@ -920,6 +929,45 @@ pub enum IrSysFunc {
     },
     /// `$feof(fd)` reports end-of-file for an ordinary descriptor.
     FileEof(Box<IrExpr>),
+}
+
+/// Legacy probabilistic functions defined by Verilog 1364-2001 §17.9 and
+/// SystemVerilog 1800-2009 §20.15 / Annex N.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IrRandomFunc {
+    Random,
+    Uniform,
+    Normal,
+    Exponential,
+    Poisson,
+    ChiSquare,
+    StudentT,
+    Erlang,
+}
+
+impl IrRandomFunc {
+    /// Number of integer parameters after the optional/required seed.
+    pub const fn arity(self) -> usize {
+        match self {
+            Self::Random => 0,
+            Self::Uniform | Self::Normal | Self::Erlang => 2,
+            Self::Exponential | Self::Poisson | Self::ChiSquare | Self::StudentT => 1,
+        }
+    }
+
+    /// C runtime entry point for an explicit seed.
+    pub const fn runtime_name(self) -> &'static str {
+        match self {
+            Self::Random => "llg_random_next",
+            Self::Uniform => "llg_dist_uniform",
+            Self::Normal => "llg_dist_normal",
+            Self::Exponential => "llg_dist_exponential",
+            Self::Poisson => "llg_dist_poisson",
+            Self::ChiSquare => "llg_dist_chi_square",
+            Self::StudentT => "llg_dist_t",
+            Self::Erlang => "llg_dist_erlang",
+        }
+    }
 }
 
 /// A plusarg pattern or format string. String and integral expressions are

@@ -48,6 +48,12 @@ the generated `model.c` into a standalone executable and is deliberately
     real values round once at local precision. Scaling overflow and nonfinite
     or negative real delays produce fatal diagnostics before scheduling.
     See the [lowering guide](../codegen/AGENTS.md) for conversion bounds.
+- `llg_random.h` / `llg_random.c` — scheduler-independent Verilog-2001
+  `$random` and `$dist_*` functions. The seed update uses explicit modulo-
+  2^32 unsigned arithmetic, and the distribution wrappers clamp checked
+  integer conversions rather than relying on a host `long` width. The
+  implementation follows the Annex N reference algorithms and is compiled
+  both with generated models and by the standalone runtime test.
 - `llg_rt.h` / `llg_rt.c` — event scheduler and simulation-facing services.
   The header includes `llg_value.h` as a source-compatible facade; the C
   implementation links value operations rather than including their source.
@@ -168,6 +174,7 @@ selected range contributes; lowering rejects dynamic net selectors.
 
 - All sources are embedded as strings via `include_str!` in `mod.rs`:
   - `value_sources()` → `(llg_value.h, llg_value.c)`;
+  - `random_sources()` → `(llg_random.h, llg_random.c)`;
   - `runtime_sources()` → `(llg_rt.h, llg_rt.c)`, requiring the value pair;
   - `string_sources()` → `(llg_string.h, llg_string.c)`, requiring the value pair;
   - `container_sources()` → `(llg_container.h, llg_container.c)`, requiring

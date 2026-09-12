@@ -5,7 +5,7 @@
 //!
 //! [`generate`] accepts the owned design database ([`crate::core::db::Db`]),
 //! forms the semantic and executable IR layers, and emits one C file
-//! (`model.c`). Compiled together with `llg_rt.c` and libaco, the model is a
+//! (`model.c`). Compiled together with `llg_rt.c`, `llg_random.c`, and libaco, the model is a
 //! standalone simulator executable:
 //!
 //! - every packed scalar signal becomes a global `sv4_t G_<instance path>_<name>`

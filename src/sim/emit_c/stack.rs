@@ -781,6 +781,13 @@ fn system_expr_slots(system: &IrSysFunc) -> Result<u64, String> {
             )
         }
         IrSysFunc::System(command) => command.as_ref().map_or(Ok(0), string_expr_slots),
+        IrSysFunc::LegacyRandom { seed, args, .. } => {
+            let seed_slots = seed.as_deref().map(lhs_slots).transpose()?.unwrap_or(0);
+            let arg_slots = args.iter().try_fold(0, |total, arg| {
+                checked_add(total, expr_slots(arg)?, "legacy random arguments")
+            })?;
+            checked_add(seed_slots, arg_slots, "legacy random expression slots")
+        }
         IrSysFunc::Clog2(arg)
         | IrSysFunc::Bits(arg)
         | IrSysFunc::BitQuery { arg, .. }

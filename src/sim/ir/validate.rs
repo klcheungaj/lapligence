@@ -1223,6 +1223,41 @@ impl Validator<'_> {
                         return self.fail(path, "$system requires a signed int result");
                     }
                 }
+                IrSysFunc::LegacyRandom { kind, seed, args } => {
+                    if args.len() != kind.arity() || (expr.width, expr.signed) != (32, true) {
+                        return self.fail(
+                            path,
+                            "legacy random function requires its declared arity and signed int result",
+                        );
+                    }
+                    match (kind, seed) {
+                        (IrRandomFunc::Random, None) => {}
+                        (_, Some(seed)) => {
+                            self.validate_lhs(seed, formals, &format!("{path}.seed"))?;
+                            if self.lhs_packed_width(seed).is_none() {
+                                return self.fail(
+                                    format!("{path}.seed"),
+                                    "legacy random seed must be packed storage",
+                                );
+                            }
+                        }
+                        (_, None) => {
+                            return self.fail(
+                                format!("{path}.seed"),
+                                "distribution function requires a seed",
+                            )
+                        }
+                    }
+                    for (index, arg) in args.iter().enumerate() {
+                        if arg.is_real() {
+                            return self.fail(
+                                format!("{path}.args[{index}]"),
+                                "legacy random parameters must be packed",
+                            );
+                        }
+                        self.validate_expr(arg, formals, &format!("{path}.args[{index}]"))?;
+                    }
+                }
                 IrSysFunc::Math { kind, args } => {
                     if args.len() != kind.arity() || !expr.is_real() {
                         return self.fail(

@@ -431,6 +431,14 @@ fn walk_expr_mut(e: &mut IrExpr, f: &mut impl FnMut(&mut IrExpr)) {
                 command.expressions_mut(&mut |child| walk_expr_mut(child, f));
             }
             IrSysFunc::System(None) => {}
+            IrSysFunc::LegacyRandom { seed, args, .. } => {
+                if let Some(seed) = seed {
+                    walk_lhs_mut(seed, f);
+                }
+                for arg in args {
+                    walk_expr_mut(arg, f);
+                }
+            }
             IrSysFunc::Clog2(a)
             | IrSysFunc::Bits(a)
             | IrSysFunc::BitQuery { arg: a, .. }
@@ -1133,6 +1141,14 @@ fn ident_children(e: &mut IrExpr) {
                 command.expressions_mut(&mut |child| ident_expr(child));
             }
             IrSysFunc::System(None) => {}
+            IrSysFunc::LegacyRandom { seed, args, .. } => {
+                if let Some(seed) = seed {
+                    ident_lhs(seed);
+                }
+                for arg in args {
+                    ident_expr(arg);
+                }
+            }
             IrSysFunc::Clog2(a)
             | IrSysFunc::Bits(a)
             | IrSysFunc::BitQuery { arg: a, .. }
@@ -2189,6 +2205,39 @@ fn collect_lhs_rw(l: &IrLhs, model: &IrModel, rw: &mut Rw) {
     }
 }
 
+fn collect_lhs_read(l: &IrLhs, model: &IrModel, rw: &mut Rw) {
+    match l {
+        IrLhs::Whole(i) | IrLhs::Bit(i, ..) | IrLhs::Part(i, ..) | IrLhs::IdxPart(i, ..) => {
+            rw.read(*i);
+            match l {
+                IrLhs::Bit(_, index, _) => collect_expr_reads(index, model, rw),
+                IrLhs::IdxPart(_, base, width, ..) => {
+                    collect_expr_reads(base, model, rw);
+                    collect_expr_reads(width, model, rw);
+                }
+                IrLhs::Whole(_) | IrLhs::Part(..) => {}
+                _ => unreachable!(),
+            }
+        }
+        IrLhs::ArrayElem {
+            indices, elem_sel, ..
+        } => {
+            for index in indices {
+                collect_expr_reads(index, model, rw);
+            }
+            if let IrElemSel::Bit(index) | IrElemSel::Indexed { base: index, .. } = elem_sel {
+                collect_expr_reads(index, model, rw);
+            }
+        }
+        IrLhs::Stream { parts, .. } => {
+            for (part, _) in parts {
+                collect_lhs_read(part, model, rw);
+            }
+        }
+        IrLhs::WholeRef { .. } | IrLhs::Ref { .. } => {}
+    }
+}
+
 fn collect_expr_reads(e: &IrExpr, model: &IrModel, rw: &mut Rw) {
     match &e.kind {
         IrExprKind::SigRead(i) => rw.read(*i),
@@ -2316,6 +2365,15 @@ fn collect_children_reads(e: &IrExpr, model: &IrModel, rw: &mut Rw) {
                 command.expressions(&mut |child| collect_expr_reads(child, model, rw));
             }
             IrSysFunc::System(None) => {}
+            IrSysFunc::LegacyRandom { seed, args, .. } => {
+                if let Some(seed) = seed {
+                    collect_lhs_rw(seed, model, rw);
+                    collect_lhs_read(seed, model, rw);
+                }
+                for arg in args {
+                    collect_expr_reads(arg, model, rw);
+                }
+            }
             IrSysFunc::Clog2(a)
             | IrSysFunc::Bits(a)
             | IrSysFunc::BitQuery { arg: a, .. }
