@@ -395,6 +395,32 @@ static int check_delay_conversion(void) {
     return 0;
 }
 
+static int check_enum_navigation(void) {
+    sv4_t values[4] = {
+        sv4_from_i64(-2, 8),
+        sv4_from_i64(3, 8),
+        sv4_from_i64(3, 8),
+        sv4_from_i64(9, 8),
+    };
+    sv4_t invalid = sv4_x(8, 1);
+    sv4_t current = sv4_from_i64(3, 8);
+    sv4_t one = sv4_from_u64(1, 32, 0);
+    sv4_t five = sv4_from_u64(5, 32, 0);
+    sv4_t unknown_step = sv4_x(32, 0);
+
+    /* Duplicate values use the last declaration, matching the lowering
+     * policy and making the alias result deterministic. */
+    CHECK(sv4_to_i64(sv4_enum_navigate(
+              current, one, values, 4, invalid, 1)) == 9);
+    CHECK(sv4_to_i64(sv4_enum_navigate(
+              current, five, values, 4, invalid, -1)) == 3);
+    CHECK(sv4_to_i64(sv4_enum_navigate(
+              current, unknown_step, values, 4, invalid, 1)) == 3);
+    CHECK(sv4_same(sv4_enum_navigate(
+              sv4_x(8, 1), one, values, 4, invalid, 1), invalid));
+    return 0;
+}
+
 static int check_negative_powers(void) {
     sv4_t minus_one = sv4_resize(sv4_from_u64(UINT64_MAX, 64, 1), 65, 1);
     sv4_t odd = sv4_from_u64(UINT64_MAX, 64, 1);
@@ -431,6 +457,7 @@ int main(void) {
     CHECK(check_logical_relations() == 0);
     CHECK(check_partial_selects() == 0);
     CHECK(check_delay_conversion() == 0);
+    CHECK(check_enum_navigation() == 0);
     puts("runtime value isolation ok");
     return 0;
 }

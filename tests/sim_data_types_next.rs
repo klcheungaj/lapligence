@@ -458,6 +458,7 @@ datatype_case!(
     "query_functions.sv",
     "query_functions"
 );
+datatype_case!(runtime_enum_methods, "enum_methods.sv", "enum_methods");
 
 #[test]
 fn queue_slice_real_bound_is_rejected() {

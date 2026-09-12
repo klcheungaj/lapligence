@@ -114,6 +114,29 @@ pub(super) fn string(ctx: &RCtx<'_>, value: &IrStringExpr) -> Result<String, Str
             "llg_string_from_packed({})",
             render_expr_impl(ctx, value)?.code
         ),
+        IrStringExpr::EnumName { receiver, members } => {
+            let receiver = render_expr_impl(ctx, receiver)?.code;
+            let mut code = format!(
+                "({{ sv4_t _llg_enum_name_value = {receiver}; \
+                 llg_string_t _llg_enum_name_result = llg_string_bytes(\"\", 0); "
+            );
+            for member in members {
+                let value = render_expr_impl(ctx, &member.value)?.code;
+                let literal = member
+                    .name
+                    .iter()
+                    .map(|byte| format!("\\{:03o}", byte))
+                    .collect::<String>();
+                code.push_str(&format!(
+                    "if (sv4_to_bool(sv4_case_eq(_llg_enum_name_value, {value}))) {{ \
+                     llg_string_destroy(&_llg_enum_name_result); \
+                     _llg_enum_name_result = llg_string_bytes(\"{literal}\", {}); }} ",
+                    member.name.len()
+                ));
+            }
+            code.push_str("_llg_enum_name_result; })");
+            code
+        }
         IrStringExpr::Case(value, upper) => format!(
             "llg_string_case({}, {})",
             string(ctx, value)?,

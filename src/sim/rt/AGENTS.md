@@ -16,6 +16,7 @@ the generated `model.c` into a standalone executable and is deliberately
     11.4.5) but is carried through identity/copy ops and distinguished by
     `$display`, casez/casex wildcards and `===`/`!==`.
   - Value ops — arithmetic/logic/reduction/compare/wildcard-equality/casez/casex, mux, concat,
+    declaration-ordered enum navigation,
     repeat, part/bit/indexed-part selects, resize/fill/clog2, format and
     decimal conversion; partially out-of-range part-select reads retain valid
     bits and fill missing positions with X. Semantics mirror `core::elab::Value` (kept in sync).

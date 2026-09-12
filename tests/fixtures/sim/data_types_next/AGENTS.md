@@ -39,6 +39,10 @@ Inventory:
 - `string_return_packed_input.sv`: early automatic string returns with packed
   inputs and implicit function-name string copying.
 
+enum_methods.sv covers declaration-order first/last/next/prev/num/name queries,
+sparse signed values, wrap counts, invalid four-state values, and two-state
+defaults.
+
 Runtime-dependent static initializers are evaluated once in the recorded
 edition-specific phase rather than lazily on first call. Normative provenance
 is local IEEE 1800-2009 text:

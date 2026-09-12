@@ -426,12 +426,73 @@ impl PartialEq for IrConst {
     }
 }
 
+/// One declaration-order member retained by an enum-method query.
+#[derive(Clone, Debug, PartialEq)]
+pub struct IrEnumMember {
+    /// The resolved packed value of the member.
+    pub value: IrExpr,
+    /// The owned bytes returned by `.name()` for this member.
+    pub name: Vec<u8>,
+}
+
+/// Runtime enum navigation method.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IrEnumMethod {
+    First,
+    Last,
+    Next,
+    Prev,
+    Num,
+}
+
+/// A lowered enum-method query.  `receiver` is intentionally optional for
+/// type-only methods (`first`, `last`, and `num`), preserving their
+/// unevaluated receiver semantics.
+#[derive(Clone, Debug, PartialEq)]
+pub struct IrEnumQuery {
+    pub method: IrEnumMethod,
+    pub receiver: Option<Box<IrExpr>>,
+    pub step: Option<Box<IrExpr>>,
+    pub members: Vec<IrEnumMember>,
+    /// The base-type default returned for an invalid receiver.
+    pub default: IrExpr,
+}
+
+impl IrEnumQuery {
+    pub(in crate::sim) fn expressions(&self, visit: &mut impl FnMut(&IrExpr)) {
+        if let Some(receiver) = &self.receiver {
+            visit(receiver);
+        }
+        if let Some(step) = &self.step {
+            visit(step);
+        }
+        for member in &self.members {
+            visit(&member.value);
+        }
+        visit(&self.default);
+    }
+
+    pub(in crate::sim) fn expressions_mut(&mut self, visit: &mut impl FnMut(&mut IrExpr)) {
+        if let Some(receiver) = &mut self.receiver {
+            visit(receiver);
+        }
+        if let Some(step) = &mut self.step {
+            visit(step);
+        }
+        for member in &mut self.members {
+            visit(&mut member.value);
+        }
+        visit(&mut self.default);
+    }
+}
+
 /// Structural expression kinds.  The self-determined width/signedness/fill of
 /// the whole expression lives on the enclosing [`IrExpr`].
 #[derive(Clone, Debug, PartialEq)]
 pub enum IrExprKind {
     Container(Box<IrContainerExpr>),
     ObjectQuery(Box<IrObjectQuery>),
+    EnumMethod(Box<IrEnumQuery>),
     /// A concrete constant.
     Const(IrConst),
     /// Read a lowered signal global (or real companion / collapsed-net

@@ -4,9 +4,9 @@ use super::constants::{emit_const, round_shortreal};
 use super::context::{RCtx, RenderedExpr};
 use super::EmitError;
 use crate::sim::ir::{
-    IrBinOp, IrBitQuery, IrCallArg, IrContainerElement, IrContainerKind, IrElemSel, IrExpr,
-    IrExprKind, IrInsideItem, IrLhs, IrRealBinOp, IrRealUnOp, IrStreamDirection, IrStringExpr,
-    IrSysFunc, IrType, IrUnOp,
+    IrBinOp, IrBitQuery, IrCallArg, IrContainerElement, IrContainerKind, IrElemSel, IrEnumMethod,
+    IrEnumQuery, IrExpr, IrExprKind, IrInsideItem, IrLhs, IrRealBinOp, IrRealUnOp,
+    IrStreamDirection, IrStringExpr, IrSysFunc, IrType, IrUnOp,
 };
 
 /// The real-value code of a rendered operand: bare for real expressions,
@@ -48,6 +48,51 @@ pub fn render_expr(ctx: &RCtx<'_>, e: &IrExpr) -> Result<RenderedExpr, EmitError
     render_expr_impl(ctx, e).map_err(EmitError::new)
 }
 
+fn render_enum_query(ctx: &RCtx<'_>, query: &IrEnumQuery) -> Result<String, String> {
+    let member_values = query
+        .members
+        .iter()
+        .map(|member| render_expr_impl(ctx, &member.value).map(|value| value.code))
+        .collect::<Result<Vec<_>, _>>()?
+        .join(", ");
+    let member_count = query.members.len();
+    Ok(match query.method {
+        IrEnumMethod::First => query
+            .members
+            .first()
+            .ok_or_else(|| "enum query has no first member".to_owned())
+            .and_then(|member| render_expr_impl(ctx, &member.value).map(|value| value.code))?,
+        IrEnumMethod::Last => query
+            .members
+            .last()
+            .ok_or_else(|| "enum query has no last member".to_owned())
+            .and_then(|member| render_expr_impl(ctx, &member.value).map(|value| value.code))?,
+        IrEnumMethod::Num => format!("sv4_from_u64({member_count}ULL, 32, 1)"),
+        IrEnumMethod::Next | IrEnumMethod::Prev => {
+            let receiver = query
+                .receiver
+                .as_ref()
+                .ok_or_else(|| "enum navigation query has no receiver".to_owned())?;
+            let step = query
+                .step
+                .as_ref()
+                .ok_or_else(|| "enum navigation query has no step".to_owned())?;
+            let receiver = render_expr_impl(ctx, receiver)?.code;
+            let step = render_expr_impl(ctx, step)?.code;
+            let default = render_expr_impl(ctx, &query.default)?.code;
+            let direction = if query.method == IrEnumMethod::Next {
+                1
+            } else {
+                -1
+            };
+            format!(
+                "sv4_enum_navigate({receiver}, {step}, (const sv4_t[]){{ {member_values} }}, \
+                 {member_count}, {default}, {direction})"
+            )
+        }
+    })
+}
+
 pub(super) fn render_expr_impl(ctx: &RCtx<'_>, e: &IrExpr) -> Result<RenderedExpr, String> {
     super::check_capacity(u128::from(e.width)).map_err(|error| error.to_string())?;
     let w = |x: &IrExpr| render_expr_impl(ctx, x);
@@ -60,6 +105,12 @@ pub(super) fn render_expr_impl(ctx: &RCtx<'_>, e: &IrExpr) -> Result<RenderedExp
         },
         IrExprKind::ObjectQuery(query) => RenderedExpr {
             code: super::objects::query(ctx, query, e.width, e.signed)?,
+            width: e.width,
+            signed: e.signed,
+            fill: None,
+        },
+        IrExprKind::EnumMethod(query) => RenderedExpr {
+            code: render_enum_query(ctx, query)?,
             width: e.width,
             signed: e.signed,
             fill: None,

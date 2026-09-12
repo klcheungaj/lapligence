@@ -136,6 +136,26 @@ pub struct TypeDescriptor {
     pub shape: TypeShape,
 }
 
+/// One declared member of an enumerated type, retained in declaration order.
+///
+/// Enum values are copied from Slang's resolved constants while the snapshot
+/// is imported.  Consumers therefore never need to revisit the native AST to
+/// implement enum queries.
+#[derive(Clone, Debug, PartialEq)]
+pub struct EnumMember {
+    pub name: String,
+    pub value: Val,
+}
+
+/// Complete owned metadata needed by the six SystemVerilog enum methods.
+#[derive(Clone, Debug, PartialEq)]
+pub struct EnumTypeMetadata {
+    pub width: u32,
+    pub signed: bool,
+    pub two_state: bool,
+    pub members: Vec<EnumMember>,
+}
+
 impl TypeDescriptor {
     pub fn copy_semantics(&self) -> ValueCopySemantics {
         match self.shape {
@@ -401,6 +421,8 @@ pub struct Db {
     aggregate_layouts: HashMap<NodeId, AggregateLayout>,
     /// Complete recursive type descriptors keyed by the declared object.
     type_descriptors: HashMap<NodeId, TypeDescriptor>,
+    /// Ordered enum members keyed by Slang's canonical type identity.
+    enum_types: HashMap<TypeId, EnumTypeMetadata>,
     /// Ordered ranges of multidimensional packed declarations.
     packed_dimensions: HashMap<NodeId, Vec<PackedRange>>,
     /// True for declarations whose complete packed type has a two-state base.
@@ -2764,6 +2786,7 @@ impl Db {
             packed_members: HashMap::new(),
             aggregate_layouts: HashMap::new(),
             type_descriptors: HashMap::new(),
+            enum_types: HashMap::new(),
             packed_dimensions: HashMap::new(),
             two_state_types: HashSet::new(),
             implicit_nets: HashSet::new(),
@@ -2811,6 +2834,7 @@ impl Db {
             packed_members: HashMap::new(),
             aggregate_layouts: HashMap::new(),
             type_descriptors: HashMap::new(),
+            enum_types: HashMap::new(),
             packed_dimensions: HashMap::new(),
             two_state_types: HashSet::new(),
             implicit_nets: HashSet::new(),
@@ -2884,6 +2908,7 @@ impl Db {
         let mut packed_members = HashMap::new();
         let mut aggregate_layouts = HashMap::new();
         let mut type_descriptors = HashMap::new();
+        let mut enum_types = HashMap::new();
         let mut packed_dimensions = HashMap::new();
         for semantic in &snapshot.semantic_nodes {
             let id = ids[&semantic.id];
@@ -3085,6 +3110,37 @@ impl Db {
                 }
                 if let Some(layout) = &projection.aggregate_layout {
                     aggregate_layouts.insert(id, layout.clone());
+                }
+            }
+            if semantic.kind == SemanticKind::EnumConstant {
+                if let (Some(type_id), Some(Val::Bits(value)), Some(enum_type)) = (
+                    semantic.type_id,
+                    semantic
+                        .constant_id
+                        .and_then(|constant_id| snapshot.constants.get(constant_id as usize))
+                        .and_then(|constant| val_from_slang(&constant.value)),
+                    projection.as_ref(),
+                ) {
+                    if enum_type.type_info.kind == "enum" {
+                        let width = enum_type.type_info.width.ok_or_else(|| {
+                            DbError::InvalidSnapshot(format!(
+                                "enum type {type_id} has no resolved width"
+                            ))
+                        })?;
+                        enum_types
+                            .entry(TypeId(type_id))
+                            .or_insert_with(|| EnumTypeMetadata {
+                                width,
+                                signed: enum_type.type_info.signed,
+                                two_state: enum_type.two_state,
+                                members: Vec::new(),
+                            })
+                            .members
+                            .push(EnumMember {
+                                name: semantic.name.clone(),
+                                value: Val::Bits(value),
+                            });
+                    }
                 }
             }
             let mut parent = if semantic.is_top
@@ -3344,6 +3400,7 @@ impl Db {
             packed_members,
             aggregate_layouts,
             type_descriptors,
+            enum_types,
             packed_dimensions,
             two_state_types,
             implicit_nets,
@@ -3521,6 +3578,11 @@ impl Db {
     /// declaration, when Slang supplied a type record for it.
     pub fn type_descriptor(&self, id: NodeId) -> Option<&TypeDescriptor> {
         self.type_descriptors.get(&id)
+    }
+
+    /// Return the owned declaration-order member table for an enum type.
+    pub fn enum_type_metadata(&self, id: TypeId) -> Option<&EnumTypeMetadata> {
+        self.enum_types.get(&id)
     }
 
     pub fn packed_dimensions(&self, id: NodeId) -> Option<&[PackedRange]> {

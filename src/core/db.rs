@@ -12,11 +12,11 @@ mod validate;
 pub use database::{
     AggregateKind, AggregateLayout, AggregateMember, ArrayKind, ArrayMeta,
     AssignmentPatternKeyType, AssociativeIndex, CaseItem, ConstantSource, Db, DbError, DriverDelay,
-    ElaboratedTypeRanges, EventSpec, EventTriggerTiming, ExprKind, GateTerm, IntraControl, Node,
-    NodeId, NodeKind, PackedMember, PackedRange, PrimClass, ProcessKind, StmtKind, StreamOperand,
-    StreamingDirection, TimeLiteralScale, TimeUnit, TypeDescriptor, TypeId, TypeShape,
-    ValueCopySemantics, ValueDefaultSemantics, ValueDestroySemantics, ValueEqualitySemantics,
-    VariableLifetime, VariableLifetimeQualifier,
+    ElaboratedTypeRanges, EnumMember, EnumTypeMetadata, EventSpec, EventTriggerTiming, ExprKind,
+    GateTerm, IntraControl, Node, NodeId, NodeKind, PackedMember, PackedRange, PrimClass,
+    ProcessKind, StmtKind, StreamOperand, StreamingDirection, TimeLiteralScale, TimeUnit,
+    TypeDescriptor, TypeId, TypeShape, ValueCopySemantics, ValueDefaultSemantics,
+    ValueDestroySemantics, ValueEqualitySemantics, VariableLifetime, VariableLifetimeQualifier,
 };
 pub use domain::{
     AlwaysKind, CapturedSemanticKind, CaseKind, ConstantType, Direction, JoinKind, NetType,

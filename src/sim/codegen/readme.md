@@ -17,6 +17,9 @@
   the resulting execution model.
 - **Reuse:** `generate_from_db_with_opts` supports multiple optimization
   variants from one owned database.
+- **Enum methods:** scalar enum first/last/next/prev/num/name calls capture
+  declaration-order values and owned names from the database; navigation keeps
+  the enum base shape and applies the specified wrap and default-value rules.
 - **Real subset:** Scalar `real`/`shortreal` ports, combinational reads,
   level-sensitive `wait`, any-change event controls, ordinary real `case`, and
   blocking/NBA writes lower through typed double storage. Shortreal writes use

@@ -559,6 +559,9 @@ impl<'a> Codegen<'a> {
         if let Some(value) = self.lower_object_query(scope_path, h)? {
             return Ok(value);
         }
+        if let Some(value) = self.lower_enum_method(scope_path, h)? {
+            return Ok(value);
+        }
         match self.kind(h) {
             NodeKind::Expr(ExprKind::Constant { .. }) => {
                 if let Some(comparison) = self.recover_folded_real_parameter_comparison(h) {

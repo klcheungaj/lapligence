@@ -17,6 +17,8 @@ Variable metadata keeps Slang's resolved static or automatic lifetime separate
 from the explicit source qualifier used for override diagnostics.
 Packed ranges retain declaration identity, so same-named locals in unnamed
 blocks and differently parameterized instances keep their own bounds.
+Enumerated types retain a canonical `TypeId`-keyed declaration-order table of
+resolved values and owned names for runtime enum methods.
 Subroutine bodies are explicit arena references; consumers never infer a body
 from the order of declarations or auxiliary statement children.
 

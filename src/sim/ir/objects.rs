@@ -1,6 +1,6 @@
 //! Non-integral storage and expressions, kept distinct from packed vectors.
 
-use super::{IrCallArg, IrExpr};
+use super::{IrCallArg, IrEnumMember, IrExpr};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 /// Non-integral scalar storage categories, independent of the packed backend.
@@ -57,6 +57,13 @@ pub enum IrStringExpr {
     Concat(Vec<IrStringExpr>),
     Repeat(Box<IrStringExpr>, Box<IrExpr>),
     FromPacked(Box<IrExpr>),
+    /// Return the declaration name matching a runtime enum value.  The
+    /// receiver and values remain typed packed expressions so optimizer
+    /// traversal and capacity accounting see every dependency.
+    EnumName {
+        receiver: Box<IrExpr>,
+        members: Vec<IrEnumMember>,
+    },
     Case(Box<IrStringExpr>, bool),
     Substr(Box<IrStringExpr>, Box<IrExpr>, Box<IrExpr>),
 }
@@ -352,6 +359,26 @@ impl IrStringExpr {
             Self::Repeat(value, _) | Self::Case(value, _) | Self::Substr(value, _, _) => {
                 value.validate(model, string_return)
             }
+            Self::EnumName { receiver, members } => {
+                if receiver.is_real() || members.is_empty() {
+                    return Err(super::IrValidationError::new(
+                        "string",
+                        "enum name requires a packed receiver and declared members",
+                    ));
+                }
+                if members.iter().any(|member| {
+                    member.name.is_empty()
+                        || member.value.is_real()
+                        || member.value.width != receiver.width
+                        || member.value.signed != receiver.signed
+                }) {
+                    return Err(super::IrValidationError::new(
+                        "string",
+                        "enum name member type or name is invalid",
+                    ));
+                }
+                Ok(())
+            }
             _ => Ok(()),
         }
     }
@@ -383,6 +410,12 @@ impl IrStringExpr {
                 visit(count);
             }
             Self::FromPacked(value) => visit(value),
+            Self::EnumName { receiver, members } => {
+                visit(receiver);
+                for member in members {
+                    visit(&member.value);
+                }
+            }
             Self::Case(value, _) => value.expressions(visit),
             Self::Substr(value, first, last) => {
                 value.expressions(visit);
@@ -419,6 +452,12 @@ impl IrStringExpr {
                 visit(count);
             }
             Self::FromPacked(value) => visit(value),
+            Self::EnumName { receiver, members } => {
+                visit(receiver);
+                for member in members {
+                    visit(&mut member.value);
+                }
+            }
             Self::Case(value, _) => value.expressions_mut(visit),
             Self::Substr(value, first, last) => {
                 value.expressions_mut(visit);

@@ -725,6 +725,64 @@ impl Validator<'_> {
                 });
                 result?;
             }
+            IrExprKind::EnumMethod(query) => {
+                if query.members.is_empty() {
+                    return self.fail(path, "enum method query has no declared members");
+                }
+                if query.default.is_real() {
+                    return self.fail(path, "enum method default must be packed");
+                }
+                let expected = match query.method {
+                    IrEnumMethod::Num => (32, true),
+                    IrEnumMethod::First
+                    | IrEnumMethod::Last
+                    | IrEnumMethod::Next
+                    | IrEnumMethod::Prev => (query.default.width, query.default.signed),
+                };
+                if (expr.width, expr.signed) != expected {
+                    return self.fail(path, "enum method result type disagrees with query type");
+                }
+                if expr.fill.is_some() {
+                    return self.fail(path, "enum method result carries a fill marker");
+                }
+                if matches!(query.method, IrEnumMethod::Next | IrEnumMethod::Prev) {
+                    if query.receiver.is_none() {
+                        return self.fail(path, "enum navigation query has no receiver");
+                    }
+                    if query.step.is_none() {
+                        return self.fail(path, "enum navigation query has no step");
+                    }
+                } else {
+                    if query.receiver.is_some() {
+                        return self.fail(path, "type-only enum query carries a receiver");
+                    }
+                    if query.step.is_some() {
+                        return self.fail(path, "type-only enum query carries a step");
+                    }
+                }
+                let mut result = Ok(());
+                query.expressions(&mut |child| {
+                    result = result.clone().and_then(|_| {
+                        if child.is_real() {
+                            self.fail(path, "enum method requires packed operands")
+                        } else {
+                            self.validate_expr(child, formals, path)
+                        }
+                    });
+                });
+                result?;
+                for (index, member) in query.members.iter().enumerate() {
+                    if member.value.is_real()
+                        || member.value.width != query.default.width
+                        || member.value.signed != query.default.signed
+                    {
+                        return self.fail(
+                            format!("{path}.members[{index}]"),
+                            "enum member value type disagrees with enum type",
+                        );
+                    }
+                }
+            }
             IrExprKind::Const(value) => {
                 self.validate_const(value, &format!("{path}.const"))?;
                 if value.width != expr.width

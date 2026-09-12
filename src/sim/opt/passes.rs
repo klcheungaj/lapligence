@@ -331,6 +331,9 @@ fn walk_expr_mut(e: &mut IrExpr, f: &mut impl FnMut(&mut IrExpr)) {
         IrExprKind::ObjectQuery(query) => {
             query.expressions_mut(&mut |child| walk_expr_mut(child, f))
         }
+        IrExprKind::EnumMethod(query) => {
+            query.expressions_mut(&mut |child| walk_expr_mut(child, f))
+        }
         IrExprKind::Bin { a, b, .. } | IrExprKind::RealBin { a, b, .. } => {
             walk_expr_mut(a, f);
             walk_expr_mut(b, f);
@@ -934,6 +937,9 @@ fn ident_children(e: &mut IrExpr) {
             if let IrElemSel::Bit(idx) | IrElemSel::Indexed { base: idx, .. } = elem_sel {
                 ident_expr(idx);
             }
+        }
+        IrExprKind::EnumMethod(query) => {
+            query.expressions_mut(&mut |child| ident_expr(child));
         }
         IrExprKind::CallFn(call) => {
             for arg in &mut call.args {

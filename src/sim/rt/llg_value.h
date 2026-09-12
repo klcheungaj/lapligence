@@ -264,6 +264,10 @@ sv4_t sv4_eq(sv4_t a, sv4_t b);
 sv4_t sv4_neq(sv4_t a, sv4_t b);
 sv4_t sv4_case_eq(sv4_t a, sv4_t b); // === (never X; X/Z compared literally)
 sv4_t sv4_case_neq(sv4_t a, sv4_t b);
+// Navigate a declaration-ordered enum table. Invalid/unknown receivers
+// return default_value; duplicate values select the last matching declaration.
+sv4_t sv4_enum_navigate(sv4_t current, sv4_t step, const sv4_t* values,
+                        uint32_t count, sv4_t default_value, int direction);
 // ==?/!=?: X/Z bits in rhs are wildcards; lhs X/Z on cared bits propagate X.
 sv4_t sv4_wild_eq(sv4_t lhs, sv4_t rhs);
 sv4_t sv4_wild_neq(sv4_t lhs, sv4_t rhs);

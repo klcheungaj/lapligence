@@ -1177,6 +1177,28 @@ sv4_t sv4_case_eq(sv4_t a, sv4_t b) {
     return sv4_cmp_bit(1, sv4_same(ra, rb));
 }
 
+sv4_t sv4_enum_navigate(sv4_t current, sv4_t step, const sv4_t* values,
+                        uint32_t count, sv4_t default_value, int direction) {
+    if (!values || count == 0) return default_value;
+    uint32_t found = count;
+    for (uint32_t index = 0; index < count; ++index) {
+        // Keep scanning after a match so aliases have one deterministic,
+        // declaration-order policy: the last matching member wins.
+        if (sv4_to_bool(sv4_case_eq(current, values[index]))) found = index;
+    }
+    if (found == count) return default_value;
+    // The lowering converts the optional int unsigned step to a 2-state
+    // 32-bit value. Keep this defensive normalization for direct callers.
+    uint64_t distance = sv4_is_unknown(step) ? 0 : sv4_to_u64(step);
+    uint32_t offset = (uint32_t)(distance % (uint64_t)count);
+    uint32_t target;
+    if (direction < 0)
+        target = (found + count - offset) % count;
+    else
+        target = (found + offset) % count;
+    return values[target];
+}
+
 sv4_t sv4_case_neq(sv4_t a, sv4_t b) {
     sv4_t r = sv4_case_eq(a, b);
     return sv4_from_u64(1 - sv4_to_u64(r), 1, 0);

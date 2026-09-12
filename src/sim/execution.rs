@@ -876,6 +876,11 @@ fn collect_expression_effects(
             });
             collect_object_query_effects(ir, query, effects, visited_calls);
         }
+        IrExprKind::EnumMethod(query) => {
+            query.expressions(&mut |child| {
+                collect_expression_effects(ir, child, effects, visited_calls)
+            });
+        }
         IrExprKind::Bin { a, b, .. } | IrExprKind::RealBin { a, b, .. } => {
             collect_expression_effects(ir, a, effects, visited_calls);
             collect_expression_effects(ir, b, effects, visited_calls);
@@ -1118,6 +1123,12 @@ fn collect_string_effects(
         }
         IrStringExpr::AssociativeGet { key, .. } => {
             collect_string_effects(ir, key, effects, visited_calls)
+        }
+        IrStringExpr::EnumName { receiver, members } => {
+            collect_expression_effects(ir, receiver, effects, visited_calls);
+            for member in members {
+                collect_expression_effects(ir, &member.value, effects, visited_calls);
+            }
         }
         IrStringExpr::Literal(_)
         | IrStringExpr::Read(_)

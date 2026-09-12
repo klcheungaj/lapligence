@@ -593,6 +593,15 @@ fn expr_slots(expr: &IrExpr) -> Result<u64, String> {
             });
             slots?
         }
+        IrExprKind::EnumMethod(query) => {
+            let mut slots = Ok(0);
+            query.expressions(&mut |child| {
+                slots = slots
+                    .clone()
+                    .and_then(|n| checked_add(n, expr_slots(child)?, "enum expression slots"));
+            });
+            slots?
+        }
         IrExprKind::CallFn(call) => call_arg_slots(call.args())?,
         IrExprKind::Bin { a, b, .. } | IrExprKind::RealBin { a, b, .. } => {
             checked_add(expr_slots(a)?, expr_slots(b)?, "binary expression slots")?
