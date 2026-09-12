@@ -18,6 +18,7 @@
 #include <math.h>
 #include <limits.h>
 #include <ctype.h>
+#include <errno.h>
 
 // Generated budgets include function frames through the recursion guard.
 #ifndef LLG_MODEL_STACK_VALUES
@@ -498,6 +499,7 @@ typedef struct {
     int n_typed_reads;
     char* scope;
     int typed;
+    uint32_t descriptor;
     llg_region_t region;
 } llg_monitor_state_t;
 
@@ -511,6 +513,7 @@ typedef struct llg_strobe {
     llg_fmt_arg_t* typed_work;
     char* scope;
     int typed;
+    uint32_t descriptor;
     llg_region_t region;
 } llg_strobe_t;
 
@@ -634,6 +637,33 @@ typedef struct {
 } llg_rt_ctx_t;
 
 static llg_rt_ctx_t g;
+
+// File descriptors deliberately live outside the scheduler context.  They
+// are ordinary host resources, while the generated model only carries the
+// portable 32-bit mask returned by `$fopen`.  Slots 0 and 1 borrow stdout and
+// stderr; slots 2..31 own one ordinary FILE each.
+#define LLG_FILE_SLOTS 32
+#define LLG_FILE_STDOUT 0u
+#define LLG_FILE_STDERR 1u
+
+typedef struct {
+    FILE* stream;
+    int open;
+    int owned;
+    int error;
+    int eof;
+    char message[160];
+} llg_file_slot_t;
+
+static llg_file_slot_t llg_file_slots[LLG_FILE_SLOTS];
+static int llg_files_initialized;
+static int llg_file_global_error;
+static char llg_file_global_message[160];
+// Keep ordinary streams alive between the scheduler and registered final
+// blocks; the final phase's cleanup closes them after its last output.
+static int llg_file_defer_cleanup;
+
+static void llg_file_cleanup(void);
 
 typedef struct llg_dependency_binding {
     struct llg_dependency_binding* next;
@@ -2714,6 +2744,7 @@ void llg_rt_cleanup(void) {
     if (g.share_stack) aco_share_stack_destroy(g.share_stack);
     if (g.main_co) aco_destroy(g.main_co);
     aco_gtls_co = NULL;
+    if (!llg_file_defer_cleanup) llg_file_cleanup();
     if (llg_event_generation == UINT64_MAX) {
         // A process cannot execute enough complete runtime lifetimes to wrap
         // this counter in practice. Keep the fallback deterministic if a
@@ -5301,6 +5332,275 @@ static size_t llg_format_typed(char* out, size_t cap, const char* fmt,
     return len;
 }
 
+static void llg_print_typed_to(uint32_t descriptor, const char* fmt,
+                               llg_fmt_arg_t* args, int n, const char* scope,
+                               int newline);
+
+static void llg_print_typed(const char* fmt, llg_fmt_arg_t* args, int n,
+                            const char* scope, int newline) {
+    llg_print_typed_to(1u, fmt, args, n, scope, newline);
+}
+
+static void llg_file_set_message(char* target, const char* message) {
+    const char* source = message ? message : "";
+    strncpy(target, source, sizeof(llg_file_global_message) - 1u);
+    target[sizeof(llg_file_global_message) - 1u] = 0;
+}
+
+static void llg_file_global_failure(const char* message) {
+    llg_file_global_error = 1;
+    llg_file_set_message(llg_file_global_message, message);
+}
+
+static void llg_file_slot_failure(llg_file_slot_t* slot, const char* message) {
+    slot->error = 1;
+    llg_file_set_message(slot->message, message);
+}
+
+static void llg_file_init_table(void) {
+    if (llg_files_initialized) return;
+    memset(llg_file_slots, 0, sizeof(llg_file_slots));
+    llg_file_slots[LLG_FILE_STDOUT].stream = stdout;
+    llg_file_slots[LLG_FILE_STDOUT].open = 1;
+    llg_file_slots[LLG_FILE_STDERR].stream = stderr;
+    llg_file_slots[LLG_FILE_STDERR].open = 1;
+    llg_files_initialized = 1;
+    llg_file_global_error = 0;
+    llg_file_global_message[0] = 0;
+}
+
+static int llg_file_mask_valid(uint32_t descriptor) {
+    if (descriptor == 0) {
+        llg_file_global_failure("invalid file descriptor");
+        return 0;
+    }
+    llg_file_init_table();
+    for (unsigned i = 0; i < LLG_FILE_SLOTS; i++) {
+        uint32_t bit = 1u << i;
+        if ((descriptor & bit) &&
+            (!llg_file_slots[i].open || !llg_file_slots[i].stream)) {
+            llg_file_global_failure("invalid or closed file descriptor");
+            return 0;
+        }
+    }
+    return 1;
+}
+
+static int llg_file_single_ordinary(uint32_t descriptor, llg_file_slot_t** out) {
+    if (!llg_file_mask_valid(descriptor) ||
+        (descriptor & (descriptor - 1u)) != 0 || descriptor <= 2u) {
+        llg_file_global_failure("file operation requires one ordinary descriptor");
+        return 0;
+    }
+    unsigned index = 0;
+    while (((descriptor >> index) & 1u) == 0u) index++;
+    if (index < 2u || index >= LLG_FILE_SLOTS) {
+        llg_file_global_failure("invalid ordinary file descriptor");
+        return 0;
+    }
+    *out = &llg_file_slots[index];
+    return 1;
+}
+
+uint32_t llg_file_descriptor(sv4_t value) {
+    if (value.width == 0 || value.width > 32 || sv4_is_unknown(value) ||
+        (value.is_signed && value.width > 0 &&
+         ((value.bits[(value.width - 1u) / 64u] >> ((value.width - 1u) % 64u)) & 1u))) {
+        llg_file_global_failure("file descriptor is not a known non-negative 32-bit value");
+        return 0;
+    }
+    uint32_t descriptor = (uint32_t)sv4_to_u64(value);
+    if (descriptor == 0) llg_file_global_failure("invalid file descriptor");
+    return descriptor;
+}
+
+uint32_t llg_file_open(llg_string_t path, llg_string_t mode, int has_mode) {
+    llg_file_init_table();
+    const char* selected_mode = has_mode ? mode.data : "w";
+    size_t mode_len = has_mode ? mode.len : 1u;
+    const char* selected_path = path.data ? path.data : "";
+    char* path_copy = (char*)llg_checked_malloc(path.len + 1u, 1, "file path");
+    memcpy(path_copy, selected_path, path.len);
+    path_copy[path.len] = 0;
+    char* mode_copy = (char*)llg_checked_malloc(mode_len + 1u, 1, "file mode");
+    memcpy(mode_copy, selected_mode ? selected_mode : "", mode_len);
+    mode_copy[mode_len] = 0;
+    llg_string_destroy(&path);
+    llg_string_destroy(&mode);
+
+    unsigned slot_index = LLG_FILE_SLOTS;
+    for (unsigned i = 2; i < LLG_FILE_SLOTS; i++) {
+        if (!llg_file_slots[i].open) {
+            slot_index = i;
+            break;
+        }
+    }
+    if (slot_index == LLG_FILE_SLOTS) {
+        llg_file_global_failure("file descriptor table is full");
+        free(path_copy);
+        free(mode_copy);
+        return 0;
+    }
+
+    static const char* const valid_modes[] = {"r", "w", "a", "r+", "w+", "a+"};
+    int mode_valid = 0;
+    for (size_t i = 0; i < sizeof(valid_modes) / sizeof(valid_modes[0]); i++) {
+        if (strcmp(mode_copy, valid_modes[i]) == 0) {
+            mode_valid = 1;
+            break;
+        }
+    }
+    if (!mode_valid) {
+        llg_file_global_failure("unsupported file open mode");
+        free(path_copy);
+        free(mode_copy);
+        return 0;
+    }
+    FILE* stream = fopen(path_copy, mode_copy);
+    if (!stream) {
+        char message[160];
+        snprintf(message, sizeof(message), "file open failed: %s", strerror(errno));
+        llg_file_global_failure(message);
+        free(path_copy);
+        free(mode_copy);
+        return 0;
+    }
+    free(path_copy);
+    free(mode_copy);
+    llg_file_slots[slot_index].stream = stream;
+    llg_file_slots[slot_index].open = 1;
+    llg_file_slots[slot_index].owned = 1;
+    llg_file_slots[slot_index].error = 0;
+    llg_file_slots[slot_index].eof = 0;
+    llg_file_slots[slot_index].message[0] = 0;
+    return 1u << slot_index;
+}
+
+void llg_file_close(uint32_t descriptor) {
+    if (!llg_file_mask_valid(descriptor)) return;
+    for (unsigned i = 2; i < LLG_FILE_SLOTS; i++) {
+        uint32_t bit = 1u << i;
+        if (!(descriptor & bit)) continue;
+        llg_file_slot_t* slot = &llg_file_slots[i];
+        int result = fclose(slot->stream);
+        slot->stream = NULL;
+        slot->open = 0;
+        slot->owned = 0;
+        if (result != 0) llg_file_slot_failure(slot, "file close failed");
+    }
+}
+
+int llg_file_flush(uint32_t descriptor, int all) {
+    llg_file_init_table();
+    if (all) descriptor = UINT32_MAX;
+    if (!all && !llg_file_mask_valid(descriptor)) return -1;
+    int result = 0;
+    for (unsigned i = 0; i < LLG_FILE_SLOTS; i++) {
+        uint32_t bit = 1u << i;
+        if (all ? !llg_file_slots[i].open : !(descriptor & bit)) continue;
+        if (!llg_file_slots[i].open || !llg_file_slots[i].stream) {
+            llg_file_global_failure("invalid or closed file descriptor");
+            result = -1;
+            continue;
+        }
+        if (fflush(llg_file_slots[i].stream) != 0) {
+            llg_file_slot_failure(&llg_file_slots[i], "file flush failed");
+            result = -1;
+        }
+    }
+    return result;
+}
+
+void llg_file_rewind(uint32_t descriptor) {
+    llg_file_slot_t* slot;
+    if (!llg_file_single_ordinary(descriptor, &slot)) return;
+    rewind(slot->stream);
+    slot->error = 0;
+    slot->eof = 0;
+    slot->message[0] = 0;
+}
+
+int64_t llg_file_tell(uint32_t descriptor) {
+    llg_file_slot_t* slot;
+    if (!llg_file_single_ordinary(descriptor, &slot)) return -1;
+    long position = ftell(slot->stream);
+    if (position < 0) {
+        llg_file_slot_failure(slot, "file tell failed");
+        return -1;
+    }
+    return (int64_t)position;
+}
+
+int llg_file_seek(uint32_t descriptor, sv4_t offset, sv4_t operation) {
+    llg_file_slot_t* slot;
+    int64_t signed_offset;
+    if (!llg_file_single_ordinary(descriptor, &slot) ||
+        !sv4_to_index_i64(offset, &signed_offset) || sv4_is_unknown(operation) ||
+        operation.width == 0 || sv4_to_u64(operation) > 2u) {
+        llg_file_global_failure("invalid file seek arguments");
+        return -1;
+    }
+    int whence = (int)sv4_to_u64(operation);
+    if (signed_offset < (int64_t)LONG_MIN || signed_offset > (int64_t)LONG_MAX ||
+        fseek(slot->stream, (long)signed_offset, whence) != 0) {
+        llg_file_slot_failure(slot, "file seek failed");
+        return -1;
+    }
+    slot->eof = 0;
+    return 0;
+}
+
+int llg_file_error(uint32_t descriptor, llg_string_t* message) {
+    const char* text = "";
+    int result = 0;
+    if (!llg_file_mask_valid(descriptor)) {
+        result = 1;
+        text = llg_file_global_message;
+    } else {
+        for (unsigned i = 0; i < LLG_FILE_SLOTS; i++) {
+            uint32_t bit = 1u << i;
+            if (!(descriptor & bit)) continue;
+            llg_file_slot_t* slot = &llg_file_slots[i];
+            if (ferror(slot->stream)) llg_file_slot_failure(slot, "host stream error");
+            if (slot->error) {
+                result = 1;
+                text = slot->message;
+                break;
+            }
+        }
+    }
+    if (message) llg_string_move(message, llg_string_bytes(text, strlen(text)));
+    return result;
+}
+
+int llg_file_eof(uint32_t descriptor) {
+    if (!llg_file_mask_valid(descriptor)) return -1;
+    int result = 0;
+    for (unsigned i = 0; i < LLG_FILE_SLOTS; i++) {
+        uint32_t bit = 1u << i;
+        if ((descriptor & bit) && feof(llg_file_slots[i].stream)) {
+            llg_file_slots[i].eof = 1;
+            result = 1;
+        }
+    }
+    return result;
+}
+
+static void llg_file_write_typed(uint32_t descriptor, const char* output,
+                                 size_t length, int newline) {
+    if (!llg_file_mask_valid(descriptor)) return;
+    for (unsigned i = 0; i < LLG_FILE_SLOTS; i++) {
+        uint32_t bit = 1u << i;
+        if (!(descriptor & bit)) continue;
+        llg_file_slot_t* slot = &llg_file_slots[i];
+        if (fwrite(output, 1, length, slot->stream) != length ||
+            (newline && fputc('\n', slot->stream) == EOF) ||
+            fflush(slot->stream) != 0) {
+            llg_file_slot_failure(slot, "file output failed");
+        }
+    }
+}
+
 static char* llg_typed_line_alloc(const char* fmt, llg_fmt_arg_t* args, int n,
                                   const char* scope, size_t* length) {
     size_t cap = strlen(fmt) + (scope ? strlen(scope) : 0) + 64u;
@@ -5320,20 +5620,32 @@ static char* llg_typed_line_alloc(const char* fmt, llg_fmt_arg_t* args, int n,
     return out;
 }
 
-static void llg_print_typed_to(FILE* stream, const char* fmt,
+static void llg_print_typed_to(uint32_t descriptor, const char* fmt,
                                llg_fmt_arg_t* args, int n, const char* scope,
                                int newline) {
     size_t len = 0;
     char* out = llg_typed_line_alloc(fmt, args, n, scope, &len);
-    fwrite(out, 1, len, stream);
-    if (newline) fputc('\n', stream);
-    fflush(stream);
+    llg_file_write_typed(descriptor, out, len, newline);
     free(out);
 }
 
-static void llg_print_typed(const char* fmt, llg_fmt_arg_t* args, int n,
-                            const char* scope, int newline) {
-    llg_print_typed_to(stdout, fmt, args, n, scope, newline);
+void llg_file_display_typed(uint32_t descriptor, const char* fmt,
+                            llg_fmt_arg_t* args, int n, const char* scope,
+                            int newline) {
+    llg_print_typed_to(descriptor, fmt, args, n, scope, newline);
+    llg_fmt_args_destroy(args, n);
+}
+
+static void llg_file_cleanup(void) {
+    if (!llg_files_initialized) return;
+    for (unsigned i = 2; i < LLG_FILE_SLOTS; i++) {
+        if (llg_file_slots[i].open && llg_file_slots[i].stream)
+            fclose(llg_file_slots[i].stream);
+    }
+    memset(llg_file_slots, 0, sizeof(llg_file_slots));
+    llg_files_initialized = 0;
+    llg_file_global_error = 0;
+    llg_file_global_message[0] = 0;
 }
 
 static const char* llg_severity_name(int severity) {
@@ -5482,6 +5794,12 @@ void llg_strobe(const char* fmt, int n, llg_mon_eval_fn eval) {
 void llg_monitor_with_typed_reads(const char* fmt, int n,
                                   llg_display_eval_fn eval, const char* scope,
                                   const llg_display_read_t* reads, int n_reads) {
+    llg_file_monitor_with_typed_reads(1u, fmt, n, eval, scope, reads, n_reads);
+}
+
+void llg_file_monitor_with_typed_reads(
+    uint32_t descriptor, const char* fmt, int n, llg_display_eval_fn eval,
+    const char* scope, const llg_display_read_t* reads, int n_reads) {
     if (!region_can_mutate("monitor scheduling")) return;
     reset_monitor_state();
     g.mon.active = 1;
@@ -5490,6 +5808,7 @@ void llg_monitor_with_typed_reads(const char* fmt, int n,
     g.mon.force_report = 1;
     g.mon.n = n;
     g.mon.typed = 1;
+    g.mon.descriptor = descriptor;
     g.mon.typed_eval = eval;
     g.mon.n_typed_reads = n_reads;
     g.mon.region = LLG_REGION_POSTPONED;
@@ -5513,6 +5832,11 @@ void llg_monitor_with_typed_reads(const char* fmt, int n,
 
 void llg_strobe_typed(const char* fmt, int n, llg_display_eval_fn eval,
                       const char* scope) {
+    llg_file_strobe_typed(1u, fmt, n, eval, scope);
+}
+
+void llg_file_strobe_typed(uint32_t descriptor, const char* fmt, int n,
+                           llg_display_eval_fn eval, const char* scope) {
     if (!region_can_mutate("strobe scheduling")) return;
     llg_strobe_t* e = (llg_strobe_t*)llg_checked_malloc(
         1, sizeof(llg_strobe_t), "typed strobe");
@@ -5521,6 +5845,7 @@ void llg_strobe_typed(const char* fmt, int n, llg_display_eval_fn eval,
     e->n = n;
     e->eval = NULL;
     e->typed = 1;
+    e->descriptor = descriptor;
     e->typed_eval = eval;
     e->scope = (char*)llg_checked_malloc(strlen(scope ? scope : "") + 1, 1,
                                          "strobe scope");
@@ -5562,8 +5887,8 @@ static void check_monitor(void) {
             llg_fmt_args_destroy(g.mon.typed_last, g.mon.n);
             for (int i = 0; i < g.mon.n; i++)
                 g.mon.typed_last[i] = llg_fmt_arg_clone(&g.mon.typed_work[i]);
-            llg_print_typed(g.mon.fmt, g.mon.typed_work, g.mon.n,
-                            g.mon.scope, 1);
+            llg_print_typed_to(g.mon.descriptor, g.mon.fmt, g.mon.typed_work,
+                               g.mon.n, g.mon.scope, 1);
         }
         llg_fmt_args_destroy(g.mon.typed_work, g.mon.n);
         return;
@@ -5593,7 +5918,8 @@ static void flush_strobes(void) {
         if (!g.strobes) g.strobe_tail = NULL;
         if (e->typed) {
             e->typed_eval(e->typed_work, NULL);
-            llg_print_typed(e->fmt, e->typed_work, e->n, e->scope, 1);
+            llg_print_typed_to(e->descriptor, e->fmt, e->typed_work, e->n,
+                               e->scope, 1);
             llg_fmt_args_destroy(e->typed_work, e->n);
             free(e->typed_work);
             free(e->scope);
@@ -6020,7 +6346,9 @@ void llg_rt_run(void) {
     // No pending update or deferred evaluator executes between $finish and
     // final procedures, regardless of whether its issuing process completed.
     g.running = 0;
+    llg_file_defer_cleanup = llg_n_finals != 0;
     llg_rt_cleanup();
+    llg_file_defer_cleanup = 0;
 }
 
 // ── $display / $write ─────────────────────────────────────────────────────────

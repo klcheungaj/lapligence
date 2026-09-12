@@ -19,74 +19,234 @@ fn lower_unique_priority_check(
 
 #[derive(Clone, Copy)]
 enum DisplayTaskKind {
-    Immediate { newline: bool },
-    Deferred { strobe: bool },
+    Immediate { newline: bool, file: bool },
+    Deferred { strobe: bool, file: bool },
 }
 
 fn display_task_variant(name: &str) -> Option<(DisplayTaskKind, IrDisplayRadix)> {
     let variant = match name {
         "$display" => (
-            DisplayTaskKind::Immediate { newline: true },
+            DisplayTaskKind::Immediate {
+                newline: true,
+                file: false,
+            },
             IrDisplayRadix::Decimal,
         ),
         "$displayb" => (
-            DisplayTaskKind::Immediate { newline: true },
+            DisplayTaskKind::Immediate {
+                newline: true,
+                file: false,
+            },
             IrDisplayRadix::Binary,
         ),
         "$displayo" => (
-            DisplayTaskKind::Immediate { newline: true },
+            DisplayTaskKind::Immediate {
+                newline: true,
+                file: false,
+            },
             IrDisplayRadix::Octal,
         ),
         "$displayh" => (
-            DisplayTaskKind::Immediate { newline: true },
+            DisplayTaskKind::Immediate {
+                newline: true,
+                file: false,
+            },
             IrDisplayRadix::Hex,
         ),
         "$write" => (
-            DisplayTaskKind::Immediate { newline: false },
+            DisplayTaskKind::Immediate {
+                newline: false,
+                file: false,
+            },
             IrDisplayRadix::Decimal,
         ),
         "$writeb" => (
-            DisplayTaskKind::Immediate { newline: false },
+            DisplayTaskKind::Immediate {
+                newline: false,
+                file: false,
+            },
             IrDisplayRadix::Binary,
         ),
         "$writeo" => (
-            DisplayTaskKind::Immediate { newline: false },
+            DisplayTaskKind::Immediate {
+                newline: false,
+                file: false,
+            },
             IrDisplayRadix::Octal,
         ),
         "$writeh" => (
-            DisplayTaskKind::Immediate { newline: false },
+            DisplayTaskKind::Immediate {
+                newline: false,
+                file: false,
+            },
             IrDisplayRadix::Hex,
         ),
         "$strobe" => (
-            DisplayTaskKind::Deferred { strobe: true },
+            DisplayTaskKind::Deferred {
+                strobe: true,
+                file: false,
+            },
             IrDisplayRadix::Decimal,
         ),
         "$strobeb" => (
-            DisplayTaskKind::Deferred { strobe: true },
+            DisplayTaskKind::Deferred {
+                strobe: true,
+                file: false,
+            },
             IrDisplayRadix::Binary,
         ),
         "$strobeo" => (
-            DisplayTaskKind::Deferred { strobe: true },
+            DisplayTaskKind::Deferred {
+                strobe: true,
+                file: false,
+            },
             IrDisplayRadix::Octal,
         ),
         "$strobeh" => (
-            DisplayTaskKind::Deferred { strobe: true },
+            DisplayTaskKind::Deferred {
+                strobe: true,
+                file: false,
+            },
             IrDisplayRadix::Hex,
         ),
         "$monitor" => (
-            DisplayTaskKind::Deferred { strobe: false },
+            DisplayTaskKind::Deferred {
+                strobe: false,
+                file: false,
+            },
             IrDisplayRadix::Decimal,
         ),
         "$monitorb" => (
-            DisplayTaskKind::Deferred { strobe: false },
+            DisplayTaskKind::Deferred {
+                strobe: false,
+                file: false,
+            },
             IrDisplayRadix::Binary,
         ),
         "$monitoro" => (
-            DisplayTaskKind::Deferred { strobe: false },
+            DisplayTaskKind::Deferred {
+                strobe: false,
+                file: false,
+            },
             IrDisplayRadix::Octal,
         ),
         "$monitorh" => (
-            DisplayTaskKind::Deferred { strobe: false },
+            DisplayTaskKind::Deferred {
+                strobe: false,
+                file: false,
+            },
+            IrDisplayRadix::Hex,
+        ),
+        "$fdisplay" => (
+            DisplayTaskKind::Immediate {
+                newline: true,
+                file: true,
+            },
+            IrDisplayRadix::Decimal,
+        ),
+        "$fdisplayb" => (
+            DisplayTaskKind::Immediate {
+                newline: true,
+                file: true,
+            },
+            IrDisplayRadix::Binary,
+        ),
+        "$fdisplayo" => (
+            DisplayTaskKind::Immediate {
+                newline: true,
+                file: true,
+            },
+            IrDisplayRadix::Octal,
+        ),
+        "$fdisplayh" => (
+            DisplayTaskKind::Immediate {
+                newline: true,
+                file: true,
+            },
+            IrDisplayRadix::Hex,
+        ),
+        "$fwrite" => (
+            DisplayTaskKind::Immediate {
+                newline: false,
+                file: true,
+            },
+            IrDisplayRadix::Decimal,
+        ),
+        "$fwriteb" => (
+            DisplayTaskKind::Immediate {
+                newline: false,
+                file: true,
+            },
+            IrDisplayRadix::Binary,
+        ),
+        "$fwriteo" => (
+            DisplayTaskKind::Immediate {
+                newline: false,
+                file: true,
+            },
+            IrDisplayRadix::Octal,
+        ),
+        "$fwriteh" => (
+            DisplayTaskKind::Immediate {
+                newline: false,
+                file: true,
+            },
+            IrDisplayRadix::Hex,
+        ),
+        "$fstrobe" => (
+            DisplayTaskKind::Deferred {
+                strobe: true,
+                file: true,
+            },
+            IrDisplayRadix::Decimal,
+        ),
+        "$fstrobeb" => (
+            DisplayTaskKind::Deferred {
+                strobe: true,
+                file: true,
+            },
+            IrDisplayRadix::Binary,
+        ),
+        "$fstrobeo" => (
+            DisplayTaskKind::Deferred {
+                strobe: true,
+                file: true,
+            },
+            IrDisplayRadix::Octal,
+        ),
+        "$fstrobeh" => (
+            DisplayTaskKind::Deferred {
+                strobe: true,
+                file: true,
+            },
+            IrDisplayRadix::Hex,
+        ),
+        "$fmonitor" => (
+            DisplayTaskKind::Deferred {
+                strobe: false,
+                file: true,
+            },
+            IrDisplayRadix::Decimal,
+        ),
+        "$fmonitorb" => (
+            DisplayTaskKind::Deferred {
+                strobe: false,
+                file: true,
+            },
+            IrDisplayRadix::Binary,
+        ),
+        "$fmonitoro" => (
+            DisplayTaskKind::Deferred {
+                strobe: false,
+                file: true,
+            },
+            IrDisplayRadix::Octal,
+        ),
+        "$fmonitorh" => (
+            DisplayTaskKind::Deferred {
+                strobe: false,
+                file: true,
+            },
             IrDisplayRadix::Hex,
         ),
         _ => return None,
@@ -3416,18 +3576,34 @@ impl EmitCtx<'_, '_> {
         }
         if let Some((task_kind, default_radix)) = display_task_variant(name) {
             match task_kind {
-                DisplayTaskKind::Immediate { newline } => {
+                DisplayTaskKind::Immediate { newline, file } => {
+                    let (descriptor, display_args) = if file {
+                        let descriptor = args.first().ok_or_else(|| {
+                            format!("{name} requires a file descriptor in `{}`", self.path)
+                        })?;
+                        let descriptor = self.cg.lower_expr(&self.path, *descriptor)?;
+                        if descriptor.is_real() {
+                            return Err(format!(
+                                "{name} requires a packed file descriptor in `{}`",
+                                self.path
+                            ));
+                        }
+                        (Some(descriptor), &args[1..])
+                    } else {
+                        (None, args.as_slice())
+                    };
                     let (fmt, display_args) =
-                        self.parse_display_call(name, &args, default_radix)?;
+                        self.parse_display_call(name, display_args, default_radix)?;
                     return Ok(vec![IrStmt::DisplayTyped {
                         fmt,
                         args: display_args,
                         scope: self.path.clone(),
                         newline,
                         default_radix,
+                        descriptor,
                     }]);
                 }
-                DisplayTaskKind::Deferred { strobe } => {
+                DisplayTaskKind::Deferred { strobe, file } => {
                     if self.func.is_some() || self.inline.is_some() {
                         return Err(format!(
                             "{name} in `{}` cannot escape a function or task activation",
@@ -3460,10 +3636,25 @@ impl EmitCtx<'_, '_> {
                             self.path
                         ));
                     }
+                    let (descriptor, display_args_source) = if file {
+                        let descriptor = args.first().ok_or_else(|| {
+                            format!("{name} requires a file descriptor in `{}`", self.path)
+                        })?;
+                        let descriptor = self.cg.lower_expr(&self.path, *descriptor)?;
+                        if descriptor.is_real() {
+                            return Err(format!(
+                                "{name} requires a packed file descriptor in `{}`",
+                                self.path
+                            ));
+                        }
+                        (Some(descriptor), &args[1..])
+                    } else {
+                        (None, args.as_slice())
+                    };
                     let (fmt, display_args) =
-                        self.parse_display_call(name, &args, default_radix)?;
+                        self.parse_display_call(name, display_args_source, default_radix)?;
                     let reads = if !strobe {
-                        self.collect_monitor_reads(&args)?
+                        self.collect_monitor_reads(display_args_source)?
                     } else {
                         Vec::new()
                     };
@@ -3484,6 +3675,7 @@ impl EmitCtx<'_, '_> {
                         reads,
                         default_radix,
                         scope: self.path.clone(),
+                        descriptor,
                     }]);
                 }
             }
@@ -3508,6 +3700,33 @@ impl EmitCtx<'_, '_> {
             "$system" => Ok(vec![IrStmt::System(
                 self.cg.lower_system_command(&self.path, &args)?,
             )]),
+            "$fclose" | "$fflush" | "$rewind" => {
+                let (op, optional) = match name {
+                    "$fclose" => (crate::sim::ir::IrFileOp::Close, false),
+                    "$fflush" => (crate::sim::ir::IrFileOp::Flush, true),
+                    "$rewind" => (crate::sim::ir::IrFileOp::Rewind, false),
+                    _ => unreachable!(),
+                };
+                if (!optional && args.len() != 1) || (optional && args.len() > 1) {
+                    return Err(format!(
+                        "{name} requires {} file descriptor argument{} in `{}`",
+                        if optional { "zero or one" } else { "one" },
+                        if optional { "s" } else { "" },
+                        self.path
+                    ));
+                }
+                let descriptor = args
+                    .first()
+                    .map(|arg| self.cg.lower_expr(&self.path, *arg))
+                    .transpose()?;
+                if descriptor.as_ref().is_some_and(IrExpr::is_real) {
+                    return Err(format!(
+                        "{name} requires a packed file descriptor in `{}`",
+                        self.path
+                    ));
+                }
+                Ok(vec![IrStmt::FileControl { op, descriptor }])
+            }
             "$monitoron" => Ok(vec![IrStmt::MonitorEnable(true)]),
             "$monitoroff" => Ok(vec![IrStmt::MonitorEnable(false)]),
             "$dumpfile" => {

@@ -899,6 +899,27 @@ pub enum IrSysFunc {
         q_id: Box<IrExpr>,
         status: Box<IrLhs>,
     },
+    /// `$fopen(path[, mode])` returns an owned runtime descriptor mask.
+    FileOpen {
+        path: IrStringExpr,
+        mode: Option<IrStringExpr>,
+    },
+    /// `$ftell(fd)` returns the current byte offset.
+    FileTell(Box<IrExpr>),
+    /// `$fseek(fd, offset, operation)` changes the byte offset.
+    FileSeek {
+        descriptor: Box<IrExpr>,
+        offset: Box<IrExpr>,
+        operation: Box<IrExpr>,
+    },
+    /// `$ferror(fd[, message])` reports the descriptor's error state and can
+    /// replace a caller-owned string actual with a diagnostic.
+    FileError {
+        descriptor: Box<IrExpr>,
+        message: Option<String>,
+    },
+    /// `$feof(fd)` reports end-of-file for an ordinary descriptor.
+    FileEof(Box<IrExpr>),
 }
 
 /// A plusarg pattern or format string. String and integral expressions are
@@ -1667,6 +1688,14 @@ pub enum IrDisplayRadix {
     Hex,
 }
 
+/// File-control tasks that do not produce a packed value.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IrFileOp {
+    Close,
+    Flush,
+    Rewind,
+}
+
 impl IrDisplayRadix {
     /// Return the format conversion used by this radix.
     pub const fn specifier(self) -> char {
@@ -1989,6 +2018,8 @@ pub enum IrStmt {
         scope: String,
         newline: bool,
         default_radix: IrDisplayRadix,
+        /// `None` targets stdout; `Some` is a descriptor/MCD expression.
+        descriptor: Option<IrExpr>,
     },
     /// SystemVerilog runtime severity task (`$info`, `$warning`, `$error`, or
     /// `$fatal`). Arguments use the same typed formatter as display tasks and
@@ -2019,6 +2050,14 @@ pub enum IrStmt {
         default_radix: IrDisplayRadix,
         /// HDL hierarchy used by `%m`; never a generated C identifier.
         scope: String,
+        /// `None` targets stdout; `Some` is a descriptor/MCD expression.
+        descriptor: Option<IrExpr>,
+    },
+    /// `$fclose`, `$fflush`, and `$rewind`; an omitted descriptor is accepted
+    /// only by `$fflush` and means all open streams.
+    FileControl {
+        op: IrFileOp,
+        descriptor: Option<IrExpr>,
     },
     /// `$monitoron` (true) / `$monitoroff` (false).
     MonitorEnable(bool),

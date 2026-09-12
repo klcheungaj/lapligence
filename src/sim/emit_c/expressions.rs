@@ -978,6 +978,86 @@ pub(super) fn render_expr_impl(ctx: &RCtx<'_>, e: &IrExpr) -> Result<RenderedExp
                     fill: None,
                 }
             }
+            IrSysFunc::FileOpen { path, mode } => {
+                let path = super::objects::string(ctx, path)?;
+                let mode_code = mode
+                    .as_ref()
+                    .map(|mode| super::objects::string(ctx, mode))
+                    .transpose()?;
+                let mode_code = mode_code.unwrap_or_else(|| "llg_string_bytes(\"\", 0)".to_owned());
+                RenderedExpr {
+                    code: format!(
+                        "sv4_from_u64((uint64_t)llg_file_open({path}, {mode_code}, {}), 32, 1)",
+                        mode.is_some() as u8
+                    ),
+                    width: 32,
+                    signed: true,
+                    fill: None,
+                }
+            }
+            IrSysFunc::FileTell(descriptor) => {
+                let descriptor = w(descriptor)?;
+                RenderedExpr {
+                    code: format!(
+                        "sv4_from_u64((uint64_t)llg_file_tell(llg_file_descriptor({})), 64, 1)",
+                        descriptor.code
+                    ),
+                    width: 64,
+                    signed: true,
+                    fill: None,
+                }
+            }
+            IrSysFunc::FileSeek {
+                descriptor,
+                offset,
+                operation,
+            } => {
+                let descriptor = w(descriptor)?;
+                let offset = w(offset)?;
+                let operation = w(operation)?;
+                RenderedExpr {
+                    code: format!(
+                        "sv4_from_u64((uint64_t)llg_file_seek(llg_file_descriptor({}), {}, {}), 32, 1)",
+                        descriptor.code, offset.code, operation.code
+                    ),
+                    width: 32,
+                    signed: true,
+                    fill: None,
+                }
+            }
+            IrSysFunc::FileError {
+                descriptor,
+                message,
+            } => {
+                let descriptor = w(descriptor)?;
+                let target = message.as_deref().unwrap_or("NULL");
+                let message_arg = if message.is_some() {
+                    target.to_owned()
+                } else {
+                    "NULL".to_owned()
+                };
+                RenderedExpr {
+                    code: format!(
+                        "({{ int _llg_file_error = llg_file_error(llg_file_descriptor({}), {}); sv4_from_u64((uint64_t)_llg_file_error, 32, 1); }})",
+                        descriptor.code, message_arg
+                    ),
+                    width: 32,
+                    signed: true,
+                    fill: None,
+                }
+            }
+            IrSysFunc::FileEof(descriptor) => {
+                let descriptor = w(descriptor)?;
+                RenderedExpr {
+                    code: format!(
+                        "sv4_from_u64((uint64_t)llg_file_eof(llg_file_descriptor({})), 32, 1)",
+                        descriptor.code
+                    ),
+                    width: 32,
+                    signed: true,
+                    fill: None,
+                }
+            }
         },
     };
     Ok(out)

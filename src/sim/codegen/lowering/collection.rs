@@ -6285,6 +6285,10 @@ impl<'a> Codegen<'a> {
         path: &str,
         actual: NodeId,
     ) -> Result<String, String> {
+        let actual = match self.kind(actual) {
+            NodeKind::Expr(ExprKind::Cast { operand, ty, .. }) if ty.kind == "string" => *operand,
+            _ => actual,
+        };
         if matches!(
             self.kind(actual),
             NodeKind::Expr(ExprKind::BitSelect { .. })
@@ -6357,6 +6361,10 @@ impl<'a> Codegen<'a> {
         path: &str,
         actual: NodeId,
     ) -> Result<(), String> {
+        let actual = match self.kind(actual) {
+            NodeKind::Expr(ExprKind::Cast { operand, ty, .. }) if ty.kind == "string" => *operand,
+            _ => actual,
+        };
         if let Some(index) = self.object_of(path, actual) {
             let object = self
                 .model

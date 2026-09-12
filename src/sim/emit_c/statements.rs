@@ -10,7 +10,7 @@ use super::expressions::{
 use super::EmitError;
 use crate::sim::execution::ScheduleRegion;
 use crate::sim::ir::{
-    IrCallArg, IrDependency, IrDisplayArg, IrExpr, IrExprKind, IrLhs, IrSeverityLevel,
+    IrCallArg, IrDependency, IrDisplayArg, IrExpr, IrExprKind, IrFileOp, IrLhs, IrSeverityLevel,
     IrStochasticStmt, IrStreamDirection, IrType, IrUniquePriorityCheck, IrWaitSrc, StorageKind,
 };
 
@@ -807,8 +807,9 @@ fn render_stmt_scoped(
             args,
             scope,
             newline,
+            descriptor,
             ..
-        } => render_typed_display(ctx, fmt, args, scope, *newline)?,
+        } => render_typed_display(ctx, fmt, args, scope, *newline, descriptor.as_ref())?,
         IrStmt::Severity {
             level,
             fmt,
@@ -832,11 +833,22 @@ fn render_stmt_scoped(
             n_args,
             reads,
             scope,
+            descriptor,
             ..
         } => {
             let scope = c_string_literal(scope);
+            let descriptor = descriptor
+                .as_ref()
+                .map(|value| render_expr(ctx, value).map(|value| value.code))
+                .transpose()?;
             if *strobe {
-                format!("    llg_strobe_typed({fmt}, {n_args}, {eval}, {scope});\n")
+                if let Some(descriptor) = descriptor {
+                    format!(
+                        "    llg_file_strobe_typed(llg_file_descriptor({descriptor}), {fmt}, {n_args}, {eval}, {scope});\n"
+                    )
+                } else {
+                    format!("    llg_strobe_typed({fmt}, {n_args}, {eval}, {scope});\n")
+                }
             } else {
                 let read_ptrs = reads
                     .iter()
@@ -849,9 +861,36 @@ fn render_stmt_scoped(
                 } else {
                     format!("        llg_display_read_t monitor_reads[] = {{{read_ptrs}}};\n")
                 };
-                format!(
-                    "    {{\n{declaration}        llg_monitor_with_typed_reads({fmt}, {n_args}, {eval}, {scope}, monitor_reads, {read_count});\n    }}\n"
-                )
+                if let Some(descriptor) = descriptor {
+                    format!(
+                        "    {{\n{declaration}        uint32_t _llg_file_descriptor = llg_file_descriptor({descriptor});\n        llg_file_monitor_with_typed_reads(_llg_file_descriptor, {fmt}, {n_args}, {eval}, {scope}, monitor_reads, {read_count});\n    }}\n"
+                    )
+                } else {
+                    format!(
+                        "    {{\n{declaration}        llg_monitor_with_typed_reads({fmt}, {n_args}, {eval}, {scope}, monitor_reads, {read_count});\n    }}\n"
+                    )
+                }
+            }
+        }
+        IrStmt::FileControl { op, descriptor } => {
+            let descriptor = descriptor
+                .as_ref()
+                .map(|value| render_expr(ctx, value).map(|value| value.code))
+                .transpose()?;
+            match (op, descriptor) {
+                (IrFileOp::Close, Some(value)) => {
+                    format!("    llg_file_close(llg_file_descriptor({value}));\n")
+                }
+                (IrFileOp::Flush, Some(value)) => {
+                    format!("    llg_file_flush(llg_file_descriptor({value}), 0);\n")
+                }
+                (IrFileOp::Flush, None) => "    llg_file_flush(0, 1);\n".to_owned(),
+                (IrFileOp::Rewind, Some(value)) => {
+                    format!("    llg_file_rewind(llg_file_descriptor({value}));\n")
+                }
+                (IrFileOp::Close | IrFileOp::Rewind, None) => {
+                    return Err("file control task is missing its descriptor".to_owned());
+                }
             }
         }
         IrStmt::MonitorEnable(on) => {
@@ -1198,15 +1237,26 @@ fn render_typed_display(
     args: &[IrDisplayArg],
     scope: &str,
     newline: bool,
+    descriptor: Option<&IrExpr>,
 ) -> Result<String, String> {
-    let output_fn = if newline {
-        "llg_display_typed"
-    } else {
-        "llg_write_typed"
-    };
     let scope = c_string_literal(scope);
+    let descriptor = descriptor
+        .map(|value| render_expr(ctx, value).map(|value| value.code))
+        .transpose()?;
     if args.is_empty() {
-        return Ok(format!("    {output_fn}({fmt}, NULL, 0, {scope});\n"));
+        return Ok(if let Some(descriptor) = descriptor {
+            format!(
+                "    {{ uint32_t _llg_file_descriptor = llg_file_descriptor({descriptor}); llg_file_display_typed(_llg_file_descriptor, {fmt}, NULL, 0, {scope}, {}); }}\n",
+                newline as u8
+            )
+        } else {
+            let output_fn = if newline {
+                "llg_display_typed"
+            } else {
+                "llg_write_typed"
+            };
+            format!("    {output_fn}({fmt}, NULL, 0, {scope});\n")
+        });
     }
     // Do not put expression calls in a C aggregate initializer.  C does not
     // specify the order in which initializer expressions are evaluated, so a
@@ -1235,10 +1285,28 @@ fn render_typed_display(
         };
         assignments.push(assignment);
     }
-    assignments.push(format!(
-        "{output_fn}({fmt}, _display_args, {}, {scope});",
-        args.len()
-    ));
+    let call = if let Some(descriptor) = descriptor {
+        assignments.insert(
+            1,
+            format!("uint32_t _llg_file_descriptor = llg_file_descriptor({descriptor});"),
+        );
+        format!(
+            "llg_file_display_typed(_llg_file_descriptor, {fmt}, _display_args, {}, {scope}, {});",
+            args.len(),
+            newline as u8
+        )
+    } else {
+        let output_fn = if newline {
+            "llg_display_typed"
+        } else {
+            "llg_write_typed"
+        };
+        format!(
+            "{output_fn}({fmt}, _display_args, {}, {scope});",
+            args.len()
+        )
+    };
+    assignments.push(call);
     Ok(format!(
         "    {{\n        {}\n    }}\n",
         assignments.join("\n        ")

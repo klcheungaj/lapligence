@@ -147,7 +147,7 @@ fn pre_fn_frame_slots(pre_fn: &IrPreFn) -> Result<u64, String> {
             "event assignment frame slots",
         ),
         IrPreFn::DisplayEval { args, .. } => {
-            let mut slots = 0;
+            let mut slots: u64 = 0;
             for arg in args {
                 slots = checked_add(
                     slots,
@@ -414,7 +414,7 @@ fn stmt_temp_slots(stmt: &IrStmt) -> Result<u64, String> {
             "wait_order temporary slots",
         ),
         IrStmt::CapturedFork { branches, .. } => {
-            let mut slots = 0;
+            let mut slots: u64 = 0;
             for branch in branches {
                 for capture in branch.captures() {
                     slots = checked_add(
@@ -439,7 +439,9 @@ fn stmt_temp_slots(stmt: &IrStmt) -> Result<u64, String> {
             }
             Ok(slots)
         }
-        IrStmt::DisplayTyped { args, .. } => {
+        IrStmt::DisplayTyped {
+            args, descriptor, ..
+        } => {
             let mut slots = 0;
             for arg in args {
                 slots = checked_add(
@@ -447,6 +449,9 @@ fn stmt_temp_slots(stmt: &IrStmt) -> Result<u64, String> {
                     display_arg_slots(arg)?,
                     "typed display argument slots",
                 )?;
+            }
+            if let Some(descriptor) = descriptor {
+                slots = checked_add(slots, expr_slots(descriptor)?, "file descriptor slots")?;
             }
             Ok(slots)
         }
@@ -500,7 +505,9 @@ fn stmt_temp_slots(stmt: &IrStmt) -> Result<u64, String> {
         | IrStmt::DisableTarget { .. }
         | IrStmt::PcaDeassign { .. }
         | IrStmt::Release { .. }
-        | IrStmt::MonitorSet { .. }
+        | IrStmt::MonitorSet {
+            descriptor: None, ..
+        }
         | IrStmt::MonitorEnable(_)
         | IrStmt::WaveFile(_)
         | IrStmt::WaveDumpVars(_)
@@ -515,6 +522,17 @@ fn stmt_temp_slots(stmt: &IrStmt) -> Result<u64, String> {
         | IrStmt::Label(_)
         | IrStmt::Goto(_)
         | IrStmt::Nop => Ok(0),
+        IrStmt::MonitorSet {
+            descriptor: Some(descriptor),
+            ..
+        }
+        | IrStmt::FileControl {
+            descriptor: Some(descriptor),
+            ..
+        } => expr_slots(descriptor),
+        IrStmt::FileControl {
+            descriptor: None, ..
+        } => Ok(0),
     }?;
     let delay_slots = stmt
         .delay_expression()
@@ -781,6 +799,36 @@ fn system_expr_slots(system: &IrSysFunc) -> Result<u64, String> {
             lhs_slots(status)?,
             "stochastic queue full expression slots",
         ),
+        IrSysFunc::FileOpen { path, mode } => {
+            let mut slots = Ok(0);
+            path.expressions(&mut |expression| {
+                slots = slots.clone().and_then(|total| {
+                    checked_add(total, expr_slots(expression)?, "file path expression slots")
+                });
+            });
+            if let Some(mode) = mode {
+                mode.expressions(&mut |expression| {
+                    slots = slots.clone().and_then(|total| {
+                        checked_add(total, expr_slots(expression)?, "file mode expression slots")
+                    });
+                });
+            }
+            slots
+        }
+        IrSysFunc::FileTell(descriptor) | IrSysFunc::FileEof(descriptor) => expr_slots(descriptor),
+        IrSysFunc::FileSeek {
+            descriptor,
+            offset,
+            operation,
+        } => checked_sum(
+            [
+                expr_slots(descriptor)?,
+                expr_slots(offset)?,
+                expr_slots(operation)?,
+            ],
+            "file seek arguments",
+        ),
+        IrSysFunc::FileError { descriptor, .. } => expr_slots(descriptor),
     }
 }
 

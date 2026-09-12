@@ -542,6 +542,7 @@ fn collect_effects(
             | IrStmt::DisplayTyped { .. }
             | IrStmt::Severity { .. }
             | IrStmt::MonitorSet { .. }
+            | IrStmt::FileControl { .. }
             | IrStmt::MonitorEnable(_)
             | IrStmt::WaveFile(_)
             | IrStmt::WaveDumpVars(_)
@@ -763,7 +764,12 @@ fn collect_statement_expression_effects(
                 collect_expression_effects(ir, expression, effects, visited_calls);
             }
         }
-        IrStmt::DisplayTyped { args, .. } => {
+        IrStmt::DisplayTyped {
+            args, descriptor, ..
+        } => {
+            if let Some(descriptor) = descriptor {
+                collect_expression_effects(ir, descriptor, effects, visited_calls);
+            }
             for argument in args {
                 match argument {
                     IrDisplayArg::Packed(expression) | IrDisplayArg::Real(expression) => {
@@ -787,6 +793,14 @@ fn collect_statement_expression_effects(
                 }
             }
         }
+        IrStmt::MonitorSet {
+            descriptor: Some(descriptor),
+            ..
+        }
+        | IrStmt::FileControl {
+            descriptor: Some(descriptor),
+            ..
+        } => collect_expression_effects(ir, descriptor, effects, visited_calls),
         IrStmt::Call(call) => {
             for argument in call.args() {
                 match argument {
@@ -1088,6 +1102,37 @@ fn collect_expression_effects(
                 effects.push(ExecutionEffect::RuntimeService);
                 collect_expression_effects(ir, q_id, effects, visited_calls);
                 collect_lhs_expression_effects(ir, status, effects, visited_calls);
+            }
+            IrSysFunc::FileOpen { path, mode } => {
+                effects.push(ExecutionEffect::RuntimeService);
+                collect_string_effects(ir, path, effects, visited_calls);
+                if let Some(mode) = mode {
+                    collect_string_effects(ir, mode, effects, visited_calls);
+                }
+            }
+            IrSysFunc::FileTell(descriptor) | IrSysFunc::FileEof(descriptor) => {
+                effects.push(ExecutionEffect::RuntimeService);
+                collect_expression_effects(ir, descriptor, effects, visited_calls)
+            }
+            IrSysFunc::FileSeek {
+                descriptor,
+                offset,
+                operation,
+            } => {
+                effects.push(ExecutionEffect::RuntimeService);
+                collect_expression_effects(ir, descriptor, effects, visited_calls);
+                collect_expression_effects(ir, offset, effects, visited_calls);
+                collect_expression_effects(ir, operation, effects, visited_calls);
+            }
+            IrSysFunc::FileError {
+                descriptor,
+                message,
+            } => {
+                effects.push(ExecutionEffect::RuntimeService);
+                if message.is_some() {
+                    effects.push(ExecutionEffect::ImmediateStore);
+                }
+                collect_expression_effects(ir, descriptor, effects, visited_calls)
             }
         },
         IrExprKind::Const(_)

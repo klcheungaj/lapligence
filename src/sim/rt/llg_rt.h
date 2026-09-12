@@ -339,6 +339,24 @@ int llg_value_plusargs_string(const char* format, llg_string_t* out);
 // regardless of whether execution is permitted.
 sv4_t llg_system(llg_string_t command, int has_command);
 
+// ── File descriptors and output ─────────────────────────────────────────────
+// Descriptors are 32-bit masks: bit 0 is stdout, bit 1 is stderr, and each
+// ordinary opened file receives one higher bit.  The runtime owns ordinary
+// FILE objects and closes them during cleanup; standard streams are borrowed.
+uint32_t llg_file_descriptor(sv4_t value);
+// Consumes the owned path/mode strings; an omitted mode selects write mode.
+uint32_t llg_file_open(llg_string_t path, llg_string_t mode, int has_mode);
+void llg_file_close(uint32_t descriptor);
+int llg_file_flush(uint32_t descriptor, int all);
+void llg_file_rewind(uint32_t descriptor);
+int64_t llg_file_tell(uint32_t descriptor);
+int llg_file_seek(uint32_t descriptor, sv4_t offset, sv4_t operation);
+int llg_file_error(uint32_t descriptor, llg_string_t* message);
+int llg_file_eof(uint32_t descriptor);
+void llg_file_display_typed(uint32_t descriptor, const char* fmt,
+                            llg_fmt_arg_t* args, int n, const char* scope,
+                            int newline);
+
 // ── $monitor / $strobe ────────────────────────────────────────────────────────
 //
 // A monitor's or strobe's arguments are re-evaluated by generated code through
@@ -370,6 +388,11 @@ void llg_monitor_with_typed_reads(const char* fmt, int n,
                                   const llg_display_read_t* reads, int n_reads);
 void llg_strobe_typed(const char* fmt, int n, llg_display_eval_fn eval,
                       const char* scope);
+void llg_file_monitor_with_typed_reads(
+    uint32_t descriptor, const char* fmt, int n, llg_display_eval_fn eval,
+    const char* scope, const llg_display_read_t* reads, int n_reads);
+void llg_file_strobe_typed(uint32_t descriptor, const char* fmt, int n,
+                           llg_display_eval_fn eval, const char* scope);
 // $monitoron / $monitoroff: resume / suspend the active monitor.  While
 // suspended the last-printed snapshot is kept; enabling queues one report at
 // the next settled observation point even when values are unchanged.

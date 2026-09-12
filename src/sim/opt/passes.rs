@@ -450,6 +450,25 @@ fn walk_expr_mut(e: &mut IrExpr, f: &mut impl FnMut(&mut IrExpr)) {
                 walk_lhs_mut(status, f);
             }
             IrSysFunc::Time { .. } | IrSysFunc::Realtime { .. } => {}
+            IrSysFunc::FileOpen { path, mode } => {
+                path.expressions_mut(&mut |expression| walk_expr_mut(expression, f));
+                if let Some(mode) = mode {
+                    mode.expressions_mut(&mut |expression| walk_expr_mut(expression, f));
+                }
+            }
+            IrSysFunc::FileTell(descriptor) | IrSysFunc::FileEof(descriptor) => {
+                walk_expr_mut(descriptor, f)
+            }
+            IrSysFunc::FileSeek {
+                descriptor,
+                offset,
+                operation,
+            } => {
+                walk_expr_mut(descriptor, f);
+                walk_expr_mut(offset, f);
+                walk_expr_mut(operation, f);
+            }
+            IrSysFunc::FileError { descriptor, .. } => walk_expr_mut(descriptor, f),
         },
         _ => {}
     }
@@ -616,9 +635,14 @@ fn walk_stmt_mut(s: &mut IrStmt, f: &mut impl FnMut(&mut IrExpr)) {
                 walk_expr_mut(e, f);
             }
         }
-        IrStmt::DisplayTyped { args, .. } => {
+        IrStmt::DisplayTyped {
+            args, descriptor, ..
+        } => {
             for arg in args {
                 arg.expressions_mut(&mut |expression| walk_expr_mut(expression, f));
+            }
+            if let Some(descriptor) = descriptor {
+                walk_expr_mut(descriptor, f);
             }
         }
         IrStmt::Severity { args, .. } => {
@@ -626,6 +650,14 @@ fn walk_stmt_mut(s: &mut IrStmt, f: &mut impl FnMut(&mut IrExpr)) {
                 arg.expressions_mut(&mut |expression| walk_expr_mut(expression, f));
             }
         }
+        IrStmt::MonitorSet {
+            descriptor: Some(descriptor),
+            ..
+        }
+        | IrStmt::FileControl {
+            descriptor: Some(descriptor),
+            ..
+        } => walk_expr_mut(descriptor, f),
         IrStmt::WaveLimit(limit) => walk_expr_mut(limit, f),
         IrStmt::Call(call) => {
             walk_call_args_mut(&mut call.args, f);
@@ -1120,6 +1152,25 @@ fn ident_children(e: &mut IrExpr) {
                 ident_lhs(status);
             }
             IrSysFunc::Time { .. } | IrSysFunc::Realtime { .. } => {}
+            IrSysFunc::FileOpen { path, mode } => {
+                path.expressions_mut(&mut |expression| ident_expr(expression));
+                if let Some(mode) = mode {
+                    mode.expressions_mut(&mut |expression| ident_expr(expression));
+                }
+            }
+            IrSysFunc::FileTell(descriptor) | IrSysFunc::FileEof(descriptor) => {
+                ident_expr(descriptor)
+            }
+            IrSysFunc::FileSeek {
+                descriptor,
+                offset,
+                operation,
+            } => {
+                ident_expr(descriptor);
+                ident_expr(offset);
+                ident_expr(operation);
+            }
+            IrSysFunc::FileError { descriptor, .. } => ident_expr(descriptor),
         },
         _ => {}
     }
@@ -1990,9 +2041,14 @@ fn collect_stmt_rw(s: &IrStmt, model: &IrModel, rw: &mut Rw) {
                 collect_expr_reads(e, model, rw);
             }
         }
-        IrStmt::DisplayTyped { args, .. } => {
+        IrStmt::DisplayTyped {
+            args, descriptor, ..
+        } => {
             for arg in args {
                 arg.expressions(&mut |expression| collect_expr_reads(expression, model, rw));
+            }
+            if let Some(descriptor) = descriptor {
+                collect_expr_reads(descriptor, model, rw);
             }
         }
         IrStmt::Severity { args, .. } => {
@@ -2000,6 +2056,14 @@ fn collect_stmt_rw(s: &IrStmt, model: &IrModel, rw: &mut Rw) {
                 arg.expressions(&mut |expression| collect_expr_reads(expression, model, rw));
             }
         }
+        IrStmt::MonitorSet {
+            descriptor: Some(descriptor),
+            ..
+        }
+        | IrStmt::FileControl {
+            descriptor: Some(descriptor),
+            ..
+        } => collect_expr_reads(descriptor, model, rw),
         IrStmt::WaveLimit(limit) => collect_expr_reads(limit, model, rw),
         IrStmt::Call(call) => collect_call_rw(call, model, rw),
         IrStmt::Return { value: Some(value) } => collect_expr_reads(value, model, rw),
@@ -2271,6 +2335,25 @@ fn collect_children_reads(e: &IrExpr, model: &IrModel, rw: &mut Rw) {
                 collect_lhs_rw(status, model, rw);
             }
             IrSysFunc::Time { .. } | IrSysFunc::Realtime { .. } => {}
+            IrSysFunc::FileOpen { path, mode } => {
+                path.expressions(&mut |expression| collect_expr_reads(expression, model, rw));
+                if let Some(mode) = mode {
+                    mode.expressions(&mut |expression| collect_expr_reads(expression, model, rw));
+                }
+            }
+            IrSysFunc::FileTell(descriptor) | IrSysFunc::FileEof(descriptor) => {
+                collect_expr_reads(descriptor, model, rw)
+            }
+            IrSysFunc::FileSeek {
+                descriptor,
+                offset,
+                operation,
+            } => {
+                collect_expr_reads(descriptor, model, rw);
+                collect_expr_reads(offset, model, rw);
+                collect_expr_reads(operation, model, rw);
+            }
+            IrSysFunc::FileError { descriptor, .. } => collect_expr_reads(descriptor, model, rw),
         },
         _ => {}
     }

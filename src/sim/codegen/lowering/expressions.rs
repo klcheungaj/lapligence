@@ -2891,6 +2891,117 @@ impl<'a> Codegen<'a> {
                 true,
                 None,
             )),
+            "$fopen" => {
+                if args.is_empty() || args.len() > 2 {
+                    return Err(format!(
+                        "$fopen requires one or two string arguments in `{scope_path}`"
+                    ));
+                }
+                let path = self.lower_string(scope_path, args[0])?;
+                let mode = args
+                    .get(1)
+                    .map(|argument| self.lower_string(scope_path, *argument))
+                    .transpose()?;
+                Ok(IrExpr::new(
+                    IrExprKind::SysFunc(IrSysFunc::FileOpen { path, mode }),
+                    32,
+                    true,
+                    None,
+                ))
+            }
+            "$ftell" | "$feof" => {
+                let [argument] = args.as_slice() else {
+                    return Err(format!(
+                        "{name} requires exactly one file descriptor in `{scope_path}`"
+                    ));
+                };
+                let descriptor = self.lower_expr(scope_path, *argument)?;
+                if descriptor.is_real() {
+                    return Err(format!(
+                        "{name} requires a packed file descriptor in `{scope_path}`"
+                    ));
+                }
+                let function = if name == "$ftell" {
+                    IrSysFunc::FileTell(Box::new(descriptor))
+                } else {
+                    IrSysFunc::FileEof(Box::new(descriptor))
+                };
+                let (width, signed) = if name == "$ftell" {
+                    (64, true)
+                } else {
+                    (32, true)
+                };
+                Ok(IrExpr::new(
+                    IrExprKind::SysFunc(function),
+                    width,
+                    signed,
+                    None,
+                ))
+            }
+            "$fseek" => {
+                let [descriptor, offset, operation] = args.as_slice() else {
+                    return Err(format!(
+                        "$fseek requires descriptor, offset, and operation in `{scope_path}`"
+                    ));
+                };
+                let descriptor = self.lower_expr(scope_path, *descriptor)?;
+                let offset = self.lower_expr(scope_path, *offset)?;
+                let operation = self.lower_expr(scope_path, *operation)?;
+                if descriptor.is_real() || offset.is_real() || operation.is_real() {
+                    return Err(format!(
+                        "$fseek requires packed arguments in `{scope_path}`"
+                    ));
+                }
+                Ok(IrExpr::new(
+                    IrExprKind::SysFunc(IrSysFunc::FileSeek {
+                        descriptor: Box::new(descriptor),
+                        offset: Box::new(offset),
+                        operation: Box::new(operation),
+                    }),
+                    32,
+                    true,
+                    None,
+                ))
+            }
+            "$ferror" => {
+                if args.len() != 1 && args.len() != 2 {
+                    return Err(format!(
+                        "$ferror requires a descriptor and optional string output in `{scope_path}`"
+                    ));
+                }
+                let descriptor = self.lower_expr(scope_path, args[0])?;
+                if descriptor.is_real() {
+                    return Err(format!(
+                        "$ferror requires a packed file descriptor in `{scope_path}`"
+                    ));
+                }
+                let message = args
+                    .get(1)
+                    .map(|argument| {
+                        let argument = match self.kind(*argument) {
+                            NodeKind::Expr(ExprKind::Operation {
+                                op: Operation::Assignment,
+                                operands,
+                                ..
+                            }) => operands.first().copied().ok_or_else(|| {
+                                format!("$ferror output argument is malformed in `{scope_path}`")
+                            })?,
+                            _ => *argument,
+                        };
+                        self.ensure_string_actual_writable(scope_path, argument)?;
+                        self.lower_string_actual_address(scope_path, argument)
+                    })
+                    .transpose()?;
+                Ok(IrExpr::new(
+                    IrExprKind::SysFunc(IrSysFunc::FileError {
+                        descriptor: Box::new(descriptor),
+                        message,
+                    }),
+                    32,
+                    true,
+                    None,
+                ))
+            }
             "$dimensions" | "$unpacked_dimensions" => {
                 let [arg] = args.as_slice() else {
                     return Err(format!(

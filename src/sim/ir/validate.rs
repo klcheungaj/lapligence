@@ -1320,6 +1320,61 @@ impl Validator<'_> {
                     }
                     self.validate_stochastic_output(status, formals, &format!("{path}.status"))?;
                 }
+                IrSysFunc::FileOpen {
+                    path: file_path,
+                    mode,
+                } => {
+                    file_path.validate(self.model, self.string_return.get())?;
+                    if let Some(mode) = mode {
+                        mode.validate(self.model, self.string_return.get())?;
+                    }
+                    if expr.width != 32 || !expr.signed {
+                        return self.fail(path, "$fopen requires a signed 32-bit result");
+                    }
+                }
+                IrSysFunc::FileTell(descriptor) => {
+                    self.validate_expr(descriptor, formals, &format!("{path}.descriptor"))?;
+                    if descriptor.is_real() || expr.width != 64 || !expr.signed {
+                        return self.fail(path, "$ftell requires a signed 64-bit result");
+                    }
+                }
+                IrSysFunc::FileSeek {
+                    descriptor,
+                    offset,
+                    operation,
+                } => {
+                    for (name, value) in [
+                        ("descriptor", descriptor),
+                        ("offset", offset),
+                        ("operation", operation),
+                    ] {
+                        self.validate_expr(value, formals, &format!("{path}.{name}"))?;
+                        if value.is_real() {
+                            return self.fail(path, "$fseek requires packed arguments");
+                        }
+                    }
+                    if expr.width != 32 || !expr.signed {
+                        return self.fail(path, "$fseek requires a signed 32-bit result");
+                    }
+                }
+                IrSysFunc::FileError {
+                    descriptor,
+                    message,
+                } => {
+                    self.validate_expr(descriptor, formals, &format!("{path}.descriptor"))?;
+                    if descriptor.is_real() || expr.width != 32 || !expr.signed {
+                        return self.fail(path, "$ferror requires a signed 32-bit result");
+                    }
+                    if message.as_deref().is_some_and(str::is_empty) {
+                        return self.fail(path, "$ferror message address must not be empty");
+                    }
+                }
+                IrSysFunc::FileEof(descriptor) => {
+                    self.validate_expr(descriptor, formals, &format!("{path}.descriptor"))?;
+                    if descriptor.is_real() || expr.width != 32 || !expr.signed {
+                        return self.fail(path, "$feof requires a signed 32-bit result");
+                    }
+                }
             },
         }
         Ok(())
@@ -2500,9 +2555,20 @@ impl Validator<'_> {
                     self.validate_expr(expr, formals, &format!("{path}.args[{idx}]"))?;
                 }
             }
-            IrStmt::DisplayTyped { args, scope, .. } => {
+            IrStmt::DisplayTyped {
+                args,
+                scope,
+                descriptor,
+                ..
+            } => {
                 if scope.is_empty() {
                     return self.fail(path, "typed display scope must not be empty");
+                }
+                if let Some(descriptor) = descriptor {
+                    self.validate_expr(descriptor, formals, &format!("{path}.descriptor"))?;
+                    if descriptor.is_real() {
+                        return self.fail(path, "file display descriptor cannot be real");
+                    }
                 }
                 for (idx, arg) in args.iter().enumerate() {
                     arg.validate(
@@ -2556,6 +2622,25 @@ impl Validator<'_> {
                             .and_then(|_| self.validate_expr(expression, formals, path));
                     });
                     result?;
+                }
+            }
+            IrStmt::MonitorSet { descriptor, .. } => {
+                if let Some(descriptor) = descriptor {
+                    self.validate_expr(descriptor, formals, &format!("{path}.descriptor"))?;
+                    if descriptor.is_real() {
+                        return self.fail(path, "file monitor descriptor cannot be real");
+                    }
+                }
+            }
+            IrStmt::FileControl { descriptor, op } => {
+                if descriptor.is_none() && !matches!(op, crate::sim::ir::IrFileOp::Flush) {
+                    return self.fail(path, "only file flush accepts an omitted descriptor");
+                }
+                if let Some(descriptor) = descriptor {
+                    self.validate_expr(descriptor, formals, &format!("{path}.descriptor"))?;
+                    if descriptor.is_real() {
+                        return self.fail(path, "file control descriptor cannot be real");
+                    }
                 }
             }
             IrStmt::WaveLimit(expr) => {
@@ -2619,7 +2704,6 @@ impl Validator<'_> {
             | IrStmt::WaitFork
             | IrStmt::DisableFork
             | IrStmt::DisableTarget { .. }
-            | IrStmt::MonitorSet { .. }
             | IrStmt::MonitorEnable(_)
             | IrStmt::WaveFile(_)
             | IrStmt::WaveDumpVars(_)

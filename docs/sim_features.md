@@ -347,10 +347,10 @@ Verilog era — display family:
 
 File IO:
 
-- ❌ **Core file output** `$fopen/$fclose/$fdisplay/$fwrite/$fstrobe/$fmonitor` — §1364-2001 17.2.1–17.2.2 **[1995]** unsupported-task reject
+- ✅ **Core file output** `$fopen/$fclose/$fdisplay/$fwrite/$fstrobe/$fmonitor` — §1364-2001 17.2.1–17.2.2 / §1800-2009 21.3.1–21.3.2 **[1995/SV-2005]** portable owned descriptors, standard-stream masks, multichannel fan-out, typed radix formatting, and postponed file monitor/strobe output are covered in both optimizer modes; formatted reads remain separate
 - ❌ **$sformat/$swrite** — §1364-2001 17.2.3 **[2001]** unsupported-task reject
 - ❌ **Formatted reads** `$fscanf/$sscanf/$fread/$fgets/$fgetc/$ungetc` — §1364-2001 17.2.4 **[2001]** unsupported-task reject
-- ❌ **File positioning/status** `$ftell/$fseek/$rewind/$fflush/$ferror` — §1364-2001 17.2.5–17.2.7 **[2001]** unsupported-task reject
+- ✅ **File positioning/status** `$ftell/$fseek/$rewind/$fflush/$ferror/$feof` — §1364-2001 17.2.5–17.2.7 / §1800-2009 21.3.5–21.3.8 **[2001/SV-2005]** seek, rewind, flush, EOF/error reporting, output-string ownership, and invalid/closed descriptor status use checked portable host-I/O paths; formatted reads remain separate
 
 Memory load/store:
 
@@ -463,7 +463,7 @@ Tracked so nothing is lost; all de-prioritized behind RTL-simulation support.
 ## Remaining-work inventory
 
 The original audit IDs are stable. This inventory currently contains 66 remaining
-groups (29 missing, 37 partial); groups 9, 38, 57, 58, 59 and 60 are completed. Counts refer to grouped
+groups (28 missing, 38 partial); groups 9, 38, 57, 58, 59 and 60 are completed. Counts refer to grouped
 capabilities, not individual keywords, system functions or standard clauses.
 
 
@@ -516,8 +516,8 @@ capabilities, not individual keywords, system functions or standard clauses.
 | 45 | Partial | Parallel subroutine bodies | Detached `join_none` branches in packed subroutine bodies retain automatic formals/locals; resumable timed task activations, full ref/copy-out semantics and broader detached-function forms remain. Ordinary blocking timing in functions is illegal. |
 | 46 | Missing | Cross-instance subroutine calls | Hierarchical calls to tasks/functions outside the calling instance, including interface/package subroutine contexts. |
 | 47 | Partial | Subroutine copy-out and storage | General unpacked/aggregate storage plus string/event output/inout call paths and legal NBAs to persistent unpacked subroutine storage remain. Chandle output/inout/ref/const-ref aliases and bounded delayed-task lifetime are covered. Packed and scalar real/shortreal static function output/inout expression copy-out is covered; NBAs to automatic variables are language-illegal and excluded. |
-| 48 | Missing | File I/O | `$fopen/$fclose/$fdisplay/$fwrite/$fstrobe/$fmonitor`, `$fscanf/$sscanf/$fread/$fgets/$fgetc/$ungetc`, and `$ftell/$fseek/$rewind/$fflush/$ferror/$feof`. |
-| 49 | Partial | Display families and formatting | Typed display/write/strobe/monitor formatting preserves packed, real, and owned string values, supports the legal `%d/%h/%x/%b/%o/%c/%u/%z/%v/%t/%f/%e/%g/%s/%m/%l` conversions, width/precision directives, exact `%%` escaping, and HDL hierarchy names. Deferred string/real snapshots retain safe ownership, monitor object dependencies trigger settled reports, and strobes retain issue order; aggregate pattern values, file tasks, and `$sformat*` remain separate features. |
+| 48 | Partial | File I/O | Owned standard-stream/ordinary-file descriptors, multichannel output, `$fopen/$fclose/$fdisplay/$fwrite/$fstrobe/$fmonitor`, and `$ftell/$fseek/$rewind/$fflush/$ferror/$feof` are covered in both optimizer modes. `$fscanf/$sscanf/$fread/$fgets/$fgetc/$ungetc` remain missing. |
+| 49 | Partial | Display families and formatting | Typed console and file display/write/strobe/monitor formatting preserves packed, real, and owned string values, supports the legal `%d/%h/%x/%b/%o/%c/%u/%z/%v/%t/%f/%e/%g/%s/%m/%l` conversions, width/precision directives, exact `%%` escaping, and HDL hierarchy names. Deferred string/real snapshots retain safe ownership, monitor object dependencies trigger settled reports, and strobes retain issue order; aggregate pattern values and `$sformat*` remain separate features. |
 | 50 | Missing | String formatting tasks/functions | `$sformat`, `$swrite` and `$sformatf`, including their applicable base variants. |
 | 51 | Missing | Memory file loading and writing | `$readmemh/$readmemb/$writememh/$writememb`. |
 | 52 | Partial | Real-time reporting and time formatting | `$timeformat` remains missing. `$realtime` returns fractional time in the calling module's units; `$time` and `$stime` round to the nearest local unit (exact halves upward) before `$stime` applies its low-32-bit result width. |
