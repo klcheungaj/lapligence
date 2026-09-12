@@ -1,7 +1,73 @@
 //! Owned-database collection, storage allocation, wiring, and process setup.
 
 use super::*;
-use crate::sim::ir::{IrChandleExpr, IrObjectStmt, IrObjectType, IrStringExpr};
+use crate::sim::ir::{
+    IrChandleExpr, IrContainerElement, IrContainerMember, IrObjectStmt, IrObjectType,
+    IrStringExpr,
+};
+
+fn lower_container_element(descriptor: &TypeDescriptor) -> Result<IrContainerElement, String> {
+    let packed = || {
+        descriptor.info.width.filter(|width| *width != 0).map(|width| {
+            IrContainerElement::Packed {
+                width,
+                signed: descriptor.info.signed,
+                two_state: descriptor.info.kind == "bit"
+                    || matches!(
+                        descriptor.info.kind.as_str(),
+                        "int" | "integer" | "longint" | "byte" | "shortint" | "time"
+                    ),
+            }
+        })
+    };
+    match &descriptor.shape {
+        TypeShape::PackedAtom { .. } => packed().ok_or_else(|| {
+            format!("container element `{}` has no representable packed width", descriptor.name)
+        }),
+        TypeShape::Real { shortreal } => Ok(IrContainerElement::Real {
+            shortreal: *shortreal,
+        }),
+        TypeShape::String => Ok(IrContainerElement::String),
+        TypeShape::Aggregate(layout)
+            if matches!(
+                layout.kind,
+                AggregateKind::PackedStruct | AggregateKind::PackedUnion
+            ) && descriptor.info.width.is_some() => packed().ok_or_else(|| {
+                format!("container element `{}` has no representable packed width", descriptor.name)
+            }),
+        TypeShape::Aggregate(layout) => Ok(IrContainerElement::Aggregate {
+            type_id: descriptor.id.0,
+            members: layout
+                .members
+                .iter()
+                .map(|member| {
+                    Ok(IrContainerMember {
+                        name: member.name.clone(),
+                        element: Box::new(lower_container_element(&member.descriptor)?),
+                    })
+                })
+                .collect::<Result<Vec<_>, String>>()?,
+        }),
+        TypeShape::FixedArray {
+            dimensions,
+            element,
+        } => Ok(IrContainerElement::FixedArray {
+            dimensions: dimensions.clone(),
+            element: Box::new(lower_container_element(element)?),
+        }),
+        TypeShape::Container { kind, element } => Ok(IrContainerElement::Container {
+            type_id: element.id.0,
+            kind: kind.clone(),
+            element: Box::new(lower_container_element(element)?),
+        }),
+        TypeShape::Opaque { kind } if kind == "Chandle" => Ok(IrContainerElement::Chandle),
+        TypeShape::Opaque { kind } if kind == "Event" => Ok(IrContainerElement::Event),
+        TypeShape::Opaque { kind } => Ok(IrContainerElement::Opaque {
+            type_id: descriptor.id.0,
+            kind: kind.clone(),
+        }),
+    }
+}
 
 pub(super) fn aggregate_path_suffix(path: &[AggregatePathPart]) -> String {
     path.iter()
@@ -3487,19 +3553,21 @@ impl<'a> Codegen<'a> {
         path: &str,
         name: &str,
         node: NodeId,
-        ty: &crate::core::model::TypeInfo,
+        _ty: &crate::core::model::TypeInfo,
     ) -> Result<ContainerInfo, String> {
         let meta = self
             .db
             .array_meta(node)
             .ok_or_else(|| format!("container `{name}` in `{path}` has no captured metadata"))?;
         let has_initializer = meta.initializer().is_some();
-        let elem_width = match ty.kind.as_str() {
-            "int" | "integer" | "time" | "longint" | "byte" | "shortint" | "logic" | "reg"
-            | "bit" => ty.width.unwrap_or(1),
-            kind => {
+        let descriptor = self.db.type_descriptor(node).ok_or_else(|| {
+            format!("container `{name}` in `{path}` has no recursive type descriptor")
+        })?;
+        let element = match &descriptor.shape {
+            TypeShape::Container { element, .. } => lower_container_element(element)?,
+            _ => {
                 return Err(format!(
-                    "container `{name}` in `{path}` has unsupported element type `{kind}`"
+                    "container `{name}` in `{path}` has a non-container type descriptor"
                 ))
             }
         };
@@ -3530,14 +3598,15 @@ impl<'a> Codegen<'a> {
                 },
             },
         };
+        if !element.is_packed() && !matches!(kind, IrContainerKind::Dynamic) {
+            return Err(format!(
+                "container `{name}` in `{path}` supports non-packed elements only for dynamic arrays"
+            ));
+        }
         let ir = self.model.containers.len();
         self.model.containers.push(IrContainer {
             c_name: global_name(path, name),
-            element: IrType::Packed {
-                width: elem_width,
-                signed: ty.signed,
-                two_state: self.db.is_two_state_type(node) || is_two_state_kind(&ty.kind),
-            },
+            element,
             kind,
         });
         if has_initializer {

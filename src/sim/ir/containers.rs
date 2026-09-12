@@ -1,6 +1,143 @@
 //! Dynamically sized unpacked container storage and operations.
 
-use super::{IrExpr, IrObjectType, IrStringExpr, IrType, IrValidationError};
+use super::{IrChandleExpr, IrExpr, IrObjectType, IrStringExpr, IrValidationError};
+
+/// Owned value shape used by a resizable container.
+///
+/// Packed values intentionally remain a distinct, inline `sv4_t` fast path.
+/// Every other shape is described recursively so the C runtime can perform
+/// clone, default, move, equality, and drop without borrowing frontend data.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum IrContainerElement {
+    Packed {
+        width: u32,
+        signed: bool,
+        two_state: bool,
+    },
+    Real {
+        shortreal: bool,
+    },
+    String,
+    Chandle,
+    Event,
+    Aggregate {
+        type_id: u64,
+        members: Vec<IrContainerMember>,
+    },
+    FixedArray {
+        dimensions: Vec<(i32, i32)>,
+        element: Box<IrContainerElement>,
+    },
+    Container {
+        type_id: u64,
+        kind: String,
+        element: Box<IrContainerElement>,
+    },
+    Opaque {
+        type_id: u64,
+        kind: String,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct IrContainerMember {
+    pub name: String,
+    pub element: Box<IrContainerElement>,
+}
+
+impl IrContainerElement {
+    pub fn packed(&self) -> Option<(u32, bool, bool)> {
+        match self {
+            Self::Packed {
+                width,
+                signed,
+                two_state,
+            } => Some((*width, *signed, *two_state)),
+            _ => None,
+        }
+    }
+
+    pub fn width(&self) -> u32 {
+        self.packed().map(|(width, _, _)| width).unwrap_or(0)
+    }
+
+    pub fn signed(&self) -> bool {
+        self.packed().map(|(_, signed, _)| signed).unwrap_or(false)
+    }
+
+    pub fn two_state(&self) -> bool {
+        self.packed().map(|(_, _, two_state)| two_state).unwrap_or(false)
+    }
+
+    pub fn is_packed(&self) -> bool {
+        matches!(self, Self::Packed { .. })
+    }
+
+    pub fn is_real(&self) -> bool {
+        matches!(self, Self::Real { .. })
+    }
+
+    pub fn is_string(&self) -> bool {
+        matches!(self, Self::String)
+    }
+
+    pub fn is_chandle(&self) -> bool {
+        matches!(self, Self::Chandle)
+    }
+
+    /// Assignment compatibility for container element values. Integral
+    /// packed values use the normal assignment conversion at the runtime;
+    /// nominal recursive values retain their frontend type identity.
+    pub fn compatible_with(&self, source: &Self) -> bool {
+        match (self, source) {
+            (Self::Packed { .. }, Self::Packed { .. })
+            | (Self::Real { .. }, Self::Real { .. })
+            | (Self::String, Self::String)
+            | (Self::Chandle, Self::Chandle)
+            | (Self::Event, Self::Event) => true,
+            (
+                Self::Aggregate { type_id: dst, .. },
+                Self::Aggregate { type_id: src, .. },
+            ) => dst == src,
+            (
+                Self::FixedArray {
+                    dimensions: dst_dims,
+                    element: dst,
+                },
+                Self::FixedArray {
+                    dimensions: src_dims,
+                    element: src,
+                },
+            ) => dst_dims == src_dims && dst.compatible_with(src),
+            (
+                Self::Container {
+                    type_id: dst_id,
+                    kind: dst_kind,
+                    element: dst,
+                },
+                Self::Container {
+                    type_id: src_id,
+                    kind: src_kind,
+                    element: src,
+                },
+            ) => {
+                (dst_id == src_id || (dst_kind == src_kind && dst.compatible_with(src)))
+                    && dst.compatible_with(src)
+            }
+            (
+                Self::Opaque {
+                    type_id: dst_id,
+                    kind: dst_kind,
+                },
+                Self::Opaque {
+                    type_id: src_id,
+                    kind: src_kind,
+                },
+            ) => dst_id == src_id && dst_kind == src_kind,
+            _ => false,
+        }
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum IrAssocKey {
@@ -23,7 +160,7 @@ pub enum IrContainerKind {
 #[derive(Clone, Debug, PartialEq)]
 pub struct IrContainer {
     pub c_name: String,
-    pub element: IrType,
+    pub element: IrContainerElement,
     pub kind: IrContainerKind,
 }
 
@@ -38,6 +175,19 @@ pub enum IrContainerExpr {
     Get {
         container: usize,
         index: Box<IrExpr>,
+    },
+    /// Real-valued element read from a generic dynamic array.
+    GetReal {
+        container: usize,
+        index: Box<IrExpr>,
+    },
+    GetNested {
+        container: usize,
+        indices: Vec<IrExpr>,
+    },
+    GetNestedReal {
+        container: usize,
+        indices: Vec<IrExpr>,
     },
     GetString {
         container: usize,
@@ -104,11 +254,63 @@ pub enum IrContainerStmt {
         container: usize,
         values: Vec<IrExpr>,
     },
+    AssignRealValues {
+        container: usize,
+        values: Vec<IrExpr>,
+    },
+    AssignStringValues {
+        container: usize,
+        values: Vec<IrStringExpr>,
+    },
+    AssignChandleValues {
+        container: usize,
+        values: Vec<IrChandleExpr>,
+    },
     Delete(usize),
     Set {
         container: usize,
         index: IrExpr,
         value: IrExpr,
+    },
+    SetReal {
+        container: usize,
+        index: IrExpr,
+        value: IrExpr,
+    },
+    SetStringValue {
+        container: usize,
+        index: IrExpr,
+        value: IrStringExpr,
+    },
+    SetChandleValue {
+        container: usize,
+        index: IrExpr,
+        value: IrChandleExpr,
+    },
+    SetNested {
+        container: usize,
+        indices: Vec<IrExpr>,
+        value: IrExpr,
+    },
+    SetNestedReal {
+        container: usize,
+        indices: Vec<IrExpr>,
+        value: IrExpr,
+    },
+    SetNestedString {
+        container: usize,
+        indices: Vec<IrExpr>,
+        value: IrStringExpr,
+    },
+    SetNestedChandle {
+        container: usize,
+        indices: Vec<IrExpr>,
+        value: IrChandleExpr,
+    },
+    SetContainer {
+        container: usize,
+        indices: Vec<IrExpr>,
+        source: usize,
     },
     /// Set the value returned for a missing associative-array key without
     /// creating an entry.  The default is separate from the array's entries,
@@ -153,19 +355,23 @@ impl IrContainerExpr {
         model: &super::IrModel,
         string_return: Option<bool>,
     ) -> Result<(), IrValidationError> {
-        let mut has_real = false;
-        self.expressions(&mut |expr| has_real |= expr.is_real());
-        if has_real {
-            return Err(IrValidationError::new(
-                "container",
-                "container operation requires packed integral operands",
-            ));
-        }
         let (index, expected) = match self {
             Self::Size(index) => (*index, None),
             Self::Reduce { container, .. } => (*container, None),
-            Self::Get { container, .. } => {
+            Self::Get { container, index } => {
                 let container = container_kind(model, *container, None)?;
+                if index.is_real() {
+                    return Err(IrValidationError::new(
+                        "container",
+                        "container index must be integral",
+                    ));
+                }
+                if !container.element.is_packed() {
+                    return Err(IrValidationError::new(
+                        "container",
+                        "packed container read requires a packed element type",
+                    ));
+                }
                 if matches!(
                     container.kind,
                     IrContainerKind::Associative {
@@ -175,6 +381,48 @@ impl IrContainerExpr {
                     return Err(IrValidationError::new(
                         "container",
                         "string-keyed associative read requires a string expression",
+                    ));
+                }
+                return Ok(());
+            }
+            Self::GetReal { container, index } => {
+                let container = container_kind(model, *container, Some("dynamic"))?;
+                if index.is_real() || !container.element.is_real() {
+                    return Err(IrValidationError::new(
+                        "container",
+                        "real container read requires an integral index and real element type",
+                    ));
+                }
+                return Ok(());
+            }
+            Self::GetNested {
+                container,
+                indices,
+            } => {
+                let container = container_kind(model, *container, Some("dynamic"))?;
+                if indices.is_empty()
+                    || indices.iter().any(IrExpr::is_real)
+                    || !nested_packed_element(container, indices.len())
+                {
+                    return Err(IrValidationError::new(
+                        "container",
+                        "nested packed read has an invalid index path or element type",
+                    ));
+                }
+                return Ok(());
+            }
+            Self::GetNestedReal {
+                container,
+                indices,
+            } => {
+                let container = container_kind(model, *container, Some("dynamic"))?;
+                if indices.is_empty()
+                    || indices.iter().any(IrExpr::is_real)
+                    || !nested_real_element(container, indices.len())
+                {
+                    return Err(IrValidationError::new(
+                        "container",
+                        "nested real read has an invalid index path or element type",
                     ));
                 }
                 return Ok(());
@@ -291,7 +539,12 @@ impl IrContainerExpr {
 
     pub(in crate::sim) fn expressions(&self, visit: &mut impl FnMut(&IrExpr)) {
         match self {
-            Self::Get { index, .. } | Self::Exists { key: index, .. } => visit(index),
+            Self::Get { index, .. }
+            | Self::GetReal { index, .. }
+            | Self::Exists { key: index, .. } => visit(index),
+            Self::GetNested { indices, .. } | Self::GetNestedReal { indices, .. } => {
+                indices.iter().for_each(visit)
+            }
             Self::GetString { key, .. } | Self::ExistsString { key, .. } => key.expressions(visit),
             _ => {}
         }
@@ -299,7 +552,12 @@ impl IrContainerExpr {
 
     pub(in crate::sim) fn expressions_mut(&mut self, visit: &mut impl FnMut(&mut IrExpr)) {
         match self {
-            Self::Get { index, .. } | Self::Exists { key: index, .. } => visit(index),
+            Self::Get { index, .. }
+            | Self::GetReal { index, .. }
+            | Self::Exists { key: index, .. } => visit(index),
+            Self::GetNested { indices, .. } | Self::GetNestedReal { indices, .. } => {
+                indices.iter_mut().for_each(visit)
+            }
             Self::GetString { key, .. } | Self::ExistsString { key, .. } => {
                 key.expressions_mut(visit)
             }
@@ -321,24 +579,23 @@ impl IrContainerStmt {
         model: &super::IrModel,
         string_return: Option<bool>,
     ) -> Result<(), IrValidationError> {
-        let mut has_real = false;
-        self.expressions(&mut |expr| has_real |= expr.is_real());
-        if has_real {
-            return Err(IrValidationError::new(
-                "container",
-                "container operation requires packed integral operands",
-            ));
-        }
         match self {
             Self::DynamicNew {
                 container,
+                size,
                 initializer,
                 ..
             } => {
                 let target = container_kind(model, *container, Some("dynamic"))?;
+                if size.is_real() {
+                    return Err(IrValidationError::new(
+                        "container",
+                        "dynamic-array size must be integral",
+                    ));
+                }
                 if let Some(source) = initializer {
                     let source = container_kind(model, *source, Some("dynamic"))?;
-                    if target.element != source.element {
+                    if !target.element.compatible_with(&source.element) {
                         return Err(IrValidationError::new(
                             "container",
                             "dynamic-array initializer element type mismatch",
@@ -361,7 +618,7 @@ impl IrContainerStmt {
                         IrContainerKind::Associative { key: src }
                     ) if dst == src
                 );
-                if dst.element != src.element || !compatible_kind {
+                if !dst.element.compatible_with(&src.element) || !compatible_kind {
                     return Err(IrValidationError::new(
                         "container",
                         "container copy type mismatch",
@@ -379,9 +636,53 @@ impl IrContainerStmt {
                 }
                 Ok(())
             }
+            Self::AssignRealValues { container, values } => {
+                let container = container_kind(model, *container, Some("dynamic"))?;
+                if !container.element.is_real() {
+                    return Err(IrValidationError::new(
+                        "container",
+                        "real value assignment requires a real dynamic-array element type",
+                    ));
+                }
+                if values.iter().any(|value| value.is_real() == false && value.width() == 0) {
+                    return Err(IrValidationError::new(
+                        "container",
+                        "real value assignment has an invalid expression",
+                    ));
+                }
+                Ok(())
+            }
+            Self::AssignStringValues { container, values } => {
+                let container = container_kind(model, *container, Some("dynamic"))?;
+                if !container.element.is_string() {
+                    return Err(IrValidationError::new(
+                        "container",
+                        "string value assignment requires a string dynamic-array element type",
+                    ));
+                }
+                values
+                    .iter()
+                    .try_for_each(|value| value.validate(model, string_return))
+            }
+            Self::AssignChandleValues { container, .. } => {
+                let container = container_kind(model, *container, Some("dynamic"))?;
+                if !container.element.is_chandle() {
+                    return Err(IrValidationError::new(
+                        "container",
+                        "chandle value assignment requires a chandle dynamic-array element type",
+                    ));
+                }
+                Ok(())
+            }
             Self::Delete(index) => container_kind(model, *index, None).map(|_| ()),
-            Self::Set { container, .. } => {
+            Self::Set { container, index, .. } => {
                 let container = container_kind(model, *container, None)?;
+                if index.is_real() || !container.element.is_packed() {
+                    return Err(IrValidationError::new(
+                        "container",
+                        "packed container write requires an integral index and packed element type",
+                    ));
+                }
                 if matches!(
                     container.kind,
                     IrContainerKind::Associative {
@@ -391,6 +692,128 @@ impl IrContainerStmt {
                     return Err(IrValidationError::new(
                         "container",
                         "string-keyed associative write requires a string expression",
+                    ));
+                }
+                Ok(())
+            }
+            Self::SetReal { container, index, .. } => {
+                let container = container_kind(model, *container, Some("dynamic"))?;
+                if index.is_real() || !container.element.is_real() {
+                    return Err(IrValidationError::new(
+                        "container",
+                        "real container write requires an integral index and real element type",
+                    ));
+                }
+                Ok(())
+            }
+            Self::SetStringValue { container, index, value } => {
+                let container = container_kind(model, *container, Some("dynamic"))?;
+                if index.is_real() || !container.element.is_string() {
+                    return Err(IrValidationError::new(
+                        "container",
+                        "string container write requires an integral index and string element type",
+                    ));
+                }
+                value.validate(model, string_return)
+            }
+            Self::SetChandleValue { container, index, .. } => {
+                let container = container_kind(model, *container, Some("dynamic"))?;
+                if index.is_real() || !container.element.is_chandle() {
+                    return Err(IrValidationError::new(
+                        "container",
+                        "chandle container write requires an integral index and chandle element type",
+                    ));
+                }
+                Ok(())
+            }
+            Self::SetNested {
+                container,
+                indices,
+                ..
+            } => {
+                let container = container_kind(model, *container, Some("dynamic"))?;
+                if indices.is_empty()
+                    || indices.iter().any(IrExpr::is_real)
+                    || !nested_packed_element(container, indices.len())
+                {
+                    return Err(IrValidationError::new(
+                        "container",
+                        "nested packed write has an invalid index path or element type",
+                    ));
+                }
+                Ok(())
+            }
+            Self::SetNestedReal {
+                container,
+                indices,
+                ..
+            } => {
+                let container = container_kind(model, *container, Some("dynamic"))?;
+                if indices.is_empty()
+                    || indices.iter().any(IrExpr::is_real)
+                    || !nested_real_element(container, indices.len())
+                {
+                    return Err(IrValidationError::new(
+                        "container",
+                        "nested real write has an invalid index path or element type",
+                    ));
+                }
+                Ok(())
+            }
+            Self::SetNestedString {
+                container,
+                indices,
+                value,
+            } => {
+                let container = container_kind(model, *container, Some("dynamic"))?;
+                if indices.is_empty()
+                    || indices.iter().any(IrExpr::is_real)
+                    || !nested_string_element(container, indices.len())
+                {
+                    return Err(IrValidationError::new(
+                        "container",
+                        "nested string write has an invalid index path or element type",
+                    ));
+                }
+                value.validate(model, string_return)
+            }
+            Self::SetNestedChandle {
+                container,
+                indices,
+                ..
+            } => {
+                let container = container_kind(model, *container, Some("dynamic"))?;
+                if indices.is_empty()
+                    || indices.iter().any(IrExpr::is_real)
+                    || !nested_chandle_element(container, indices.len())
+                {
+                    return Err(IrValidationError::new(
+                        "container",
+                        "nested chandle write has an invalid index path or element type",
+                    ));
+                }
+                Ok(())
+            }
+            Self::SetContainer {
+                container,
+                indices,
+                source,
+            } => {
+                let target = container_kind(model, *container, Some("dynamic"))?;
+                let source = container_kind(model, *source, Some("dynamic"))?;
+                let target_element = nested_element(target, indices.len());
+                let compatible = matches!(
+                    target_element,
+                    Some(IrContainerElement::Container { element, .. })
+                        if element.compatible_with(&source.element)
+                );
+                if indices.is_empty()
+                    || indices.iter().any(IrExpr::is_real)
+                    || !compatible
+                {
+                    return Err(IrValidationError::new(
+                        "container",
+                        "nested container write has an incompatible source",
                     ));
                 }
                 Ok(())
@@ -448,10 +871,28 @@ impl IrContainerStmt {
     pub(in crate::sim) fn expressions(&self, visit: &mut impl FnMut(&IrExpr)) {
         match self {
             Self::DynamicNew { size, .. } => visit(size),
-            Self::Set { index, value, .. } | Self::QueueInsert { index, value, .. } => {
+            Self::Set { index, value, .. }
+            | Self::SetReal { index, value, .. }
+            | Self::QueueInsert { index, value, .. } => {
                 visit(index);
                 visit(value);
             }
+            Self::SetStringValue { index, value, .. } => {
+                visit(index);
+                value.expressions(visit);
+            }
+            Self::SetChandleValue { index, .. } => visit(index),
+            Self::SetNested { indices, value, .. }
+            | Self::SetNestedReal { indices, value, .. } => {
+                indices.iter().for_each(&mut *visit);
+                visit(value);
+            }
+            Self::SetNestedString { indices, value, .. } => {
+                indices.iter().for_each(&mut *visit);
+                value.expressions(visit);
+            }
+            Self::SetNestedChandle { indices, .. } => indices.iter().for_each(&mut *visit),
+            Self::SetContainer { indices, .. } => indices.iter().for_each(&mut *visit),
             Self::SetDefault { value, .. } => visit(value),
             Self::SetString { key, value, .. } => {
                 key.expressions(visit);
@@ -460,7 +901,15 @@ impl IrContainerStmt {
             Self::QueuePushFront { value, .. } | Self::QueuePushBack { value, .. } => visit(value),
             Self::DeleteIndex { index, .. } => visit(index),
             Self::DeleteString { key, .. } => key.expressions(visit),
-            Self::AssignValues { values, .. } => values.iter().for_each(visit),
+            Self::AssignValues { values, .. } | Self::AssignRealValues { values, .. } => {
+                values.iter().for_each(visit)
+            }
+            Self::AssignStringValues { values, .. } => {
+                values.iter().for_each(|value| value.expressions(visit))
+            }
+            Self::AssignChandleValues { values, .. } => {
+                values.iter().for_each(|value| value.expressions(visit))
+            }
             Self::Copy { .. } | Self::Delete(_) | Self::ResetDefault(_) => {}
         }
     }
@@ -468,10 +917,28 @@ impl IrContainerStmt {
     pub(in crate::sim) fn expressions_mut(&mut self, visit: &mut impl FnMut(&mut IrExpr)) {
         match self {
             Self::DynamicNew { size, .. } => visit(size),
-            Self::Set { index, value, .. } | Self::QueueInsert { index, value, .. } => {
+            Self::Set { index, value, .. }
+            | Self::SetReal { index, value, .. }
+            | Self::QueueInsert { index, value, .. } => {
                 visit(index);
                 visit(value);
             }
+            Self::SetStringValue { index, value, .. } => {
+                visit(index);
+                value.expressions_mut(visit);
+            }
+            Self::SetChandleValue { index, .. } => visit(index),
+            Self::SetNested { indices, value, .. }
+            | Self::SetNestedReal { indices, value, .. } => {
+                indices.iter_mut().for_each(&mut *visit);
+                visit(value);
+            }
+            Self::SetNestedString { indices, value, .. } => {
+                indices.iter_mut().for_each(&mut *visit);
+                value.expressions_mut(visit);
+            }
+            Self::SetNestedChandle { indices, .. } => indices.iter_mut().for_each(&mut *visit),
+            Self::SetContainer { indices, .. } => indices.iter_mut().for_each(&mut *visit),
             Self::SetDefault { value, .. } => visit(value),
             Self::SetString { key, value, .. } => {
                 key.expressions_mut(visit);
@@ -480,7 +947,15 @@ impl IrContainerStmt {
             Self::QueuePushFront { value, .. } | Self::QueuePushBack { value, .. } => visit(value),
             Self::DeleteIndex { index, .. } => visit(index),
             Self::DeleteString { key, .. } => key.expressions_mut(visit),
-            Self::AssignValues { values, .. } => values.iter_mut().for_each(visit),
+            Self::AssignValues { values, .. } | Self::AssignRealValues { values, .. } => {
+                values.iter_mut().for_each(visit)
+            }
+            Self::AssignStringValues { values, .. } => {
+                values.iter_mut().for_each(|value| value.expressions_mut(visit))
+            }
+            Self::AssignChandleValues { values, .. } => {
+                values.iter_mut().for_each(|value| value.expressions_mut(visit))
+            }
             Self::Copy { .. } | Self::Delete(_) | Self::ResetDefault(_) => {}
         }
     }
@@ -503,6 +978,36 @@ fn string_container(
         ));
     }
     Ok(container)
+}
+
+fn nested_element<'a>(
+    container: &'a IrContainer,
+    depth: usize,
+) -> Option<&'a IrContainerElement> {
+    let mut element = &container.element;
+    for _ in 1..depth {
+        let IrContainerElement::Container { element: next, .. } = element else {
+            return None;
+        };
+        element = next;
+    }
+    Some(element)
+}
+
+fn nested_packed_element(container: &IrContainer, depth: usize) -> bool {
+    nested_element(container, depth).is_some_and(IrContainerElement::is_packed)
+}
+
+fn nested_real_element(container: &IrContainer, depth: usize) -> bool {
+    nested_element(container, depth).is_some_and(IrContainerElement::is_real)
+}
+
+pub(super) fn nested_string_element(container: &IrContainer, depth: usize) -> bool {
+    nested_element(container, depth).is_some_and(IrContainerElement::is_string)
+}
+
+pub(super) fn nested_chandle_element(container: &IrContainer, depth: usize) -> bool {
+    nested_element(container, depth).is_some_and(IrContainerElement::is_chandle)
 }
 
 fn container_kind<'a>(

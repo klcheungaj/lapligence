@@ -2160,11 +2160,11 @@ impl<'a> Codegen<'a> {
                         )?));
                     }
                     if let Some(container) = self.container_of(a) {
-                        let element_width = match self.model.containers[container.ir].element {
-                            IrType::Packed { width, .. } => width,
-                            IrType::Real { .. } => {
+                        let element_width = match &self.model.containers[container.ir].element {
+                            crate::sim::ir::IrContainerElement::Packed { width, .. } => *width,
+                            _ => {
                                 return Err(format!(
-                                    "$bits on a real container is not supported in `{scope_path}`"
+                                    "$bits on a non-packed container is not supported in `{scope_path}`"
                                 ))
                             }
                         };

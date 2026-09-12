@@ -283,6 +283,9 @@ impl Codegen<'_> {
         {
             return true;
         }
+        if self.is_container_string_expr(node) {
+            return true;
+        }
         match self.kind(node) {
             NodeKind::SysCall { name } if name == "$typename" => true,
             NodeKind::Param { ty, .. } => ty.kind == "string",
@@ -341,6 +344,9 @@ impl Codegen<'_> {
             if self.model.objects[index].ty == IrObjectType::Chandle {
                 return true;
             }
+        }
+        if self.is_container_chandle_expr(node) {
+            return true;
         }
         if let NodeKind::FuncCall {
             is_task: false,
@@ -406,6 +412,9 @@ impl Codegen<'_> {
     }
 
     pub(super) fn lower_chandle(&mut self, path: &str, node: NodeId) -> Result<IrChandleExpr, String> {
+        if let Some(value) = self.lower_container_chandle_query(path, node)? {
+            return Ok(value);
+        }
         if let NodeKind::Expr(ExprKind::Cast { operand, ty, .. }) = self.kind(node) {
             if ty.kind == "chandle" {
                 return self.lower_chandle(path, *operand);
@@ -528,6 +537,9 @@ impl Codegen<'_> {
         path: &str,
         node: NodeId,
     ) -> Result<IrStringExpr, String> {
+        if let Some(value) = self.lower_container_string_query(path, node)? {
+            return Ok(value);
+        }
         let target = match self.kind(node) {
             NodeKind::Expr(ExprKind::Ref { target }) => *target,
             _ => Some(node),

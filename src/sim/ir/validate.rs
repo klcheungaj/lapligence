@@ -41,6 +41,63 @@ impl Error for IrValidationError {}
 
 type ValidationResult = Result<(), IrValidationError>;
 
+fn validate_container_element(
+    element: &IrContainerElement,
+    path: &str,
+) -> ValidationResult {
+    match element {
+        IrContainerElement::Packed { width, .. } if *width == 0 => {
+            Err(IrValidationError::new(path, "packed width must be nonzero"))
+        }
+        IrContainerElement::Packed { .. }
+        | IrContainerElement::Real { .. }
+        | IrContainerElement::String
+        | IrContainerElement::Chandle
+        | IrContainerElement::Event
+        | IrContainerElement::Opaque { .. } => Ok(()),
+        IrContainerElement::Aggregate { members, .. } => {
+            for (index, member) in members.iter().enumerate() {
+                if member.name.is_empty() {
+                    return Err(IrValidationError::new(
+                        format!("{path}.members[{index}]"),
+                        "aggregate member name must not be empty",
+                    ));
+                }
+                validate_container_element(&member.element, &format!("{path}.members[{index}]"))?;
+            }
+            Ok(())
+        }
+        IrContainerElement::FixedArray {
+            dimensions,
+            element,
+        } => {
+            if dimensions.is_empty() {
+                return Err(IrValidationError::new(
+                    path,
+                    "fixed-array element has no dimensions",
+                ));
+            }
+            let mut count = 1u128;
+            for (left, right) in dimensions {
+                let extent = (i64::from(*left) - i64::from(*right))
+                    .unsigned_abs()
+                    .checked_add(1)
+                    .ok_or_else(|| {
+                        IrValidationError::new(path, "fixed-array dimension extent overflows")
+                    })?;
+                count = count.checked_mul(u128::from(extent)).ok_or_else(|| {
+                    IrValidationError::new(path, "fixed-array element count overflows")
+                })?;
+            }
+            let _ = count;
+            validate_container_element(element, &format!("{path}.element"))
+        }
+        IrContainerElement::Container { element, .. } => {
+            validate_container_element(element, &format!("{path}.element"))
+        }
+    }
+}
+
 struct Validator<'model> {
     model: &'model IrModel,
     max_width: Cell<u128>,
@@ -248,16 +305,17 @@ impl Validator<'_> {
             if !storage_names.insert(container.c_name.as_str()) {
                 return self.fail("containers", "duplicate container storage name");
             }
-            match container.element {
-                IrType::Packed { width, .. } => {
-                    self.validate_width(width, &format!("containers[{idx}].element"))?;
-                }
-                IrType::Real { .. } => {
-                    return self.fail(
-                        format!("containers[{idx}].element"),
-                        "real container elements are not supported by this runtime",
-                    );
-                }
+            validate_container_element(
+                &container.element,
+                &format!("containers[{idx}].element"),
+            )?;
+            if !container.element.is_packed()
+                && !matches!(container.kind, IrContainerKind::Dynamic)
+            {
+                return self.fail(
+                    format!("containers[{idx}].element"),
+                    "non-packed elements are supported only by dynamic arrays",
+                );
             }
             if let IrContainerKind::Associative {
                 key: IrAssocKey::Integral { width, .. },
@@ -583,7 +641,9 @@ impl Validator<'_> {
         match &expr.kind {
             IrExprKind::Container(operation) => {
                 operation.validate(self.model, self.string_return.get())?;
-                if expr.width == 0 || expr.fill.is_some() {
+                if (expr.width == 0 && !matches!(operation.as_ref(), IrContainerExpr::GetReal { .. }))
+                    || expr.fill.is_some()
+                {
                     return self.fail(path, "container expression must produce a packed value");
                 }
                 let expected = match operation.as_ref() {
@@ -594,15 +654,18 @@ impl Validator<'_> {
                         (32, true)
                     }
                     IrContainerExpr::Get { container, .. }
+                    | IrContainerExpr::GetReal { container, .. }
                     | IrContainerExpr::GetString { container, .. }
                     | IrContainerExpr::Reduce { container, .. }
                     | IrContainerExpr::QueueFront(container)
                     | IrContainerExpr::QueueBack(container)
                     | IrContainerExpr::QueuePopFront(container)
                     | IrContainerExpr::QueuePopBack(container) => {
-                        let ty = self.model.containers[*container].element;
+                        let ty = &self.model.containers[*container].element;
                         (ty.width(), ty.signed())
                     }
+                    IrContainerExpr::GetNested { .. } => (expr.width, expr.signed),
+                    IrContainerExpr::GetNestedReal { .. } => (0, false),
                 };
                 if (expr.width, expr.signed) != expected {
                     return self.fail(path, "container result type disagrees with expression type");

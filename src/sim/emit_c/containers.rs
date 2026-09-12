@@ -4,8 +4,8 @@ use super::context::RCtx;
 use super::expressions::render_expr_impl;
 use super::objects::string as render_string;
 use crate::sim::ir::{
-    IrAssocKey, IrAssocTraversal, IrContainerExpr, IrContainerKind, IrContainerReduction,
-    IrContainerStmt, IrType,
+    IrAssocKey, IrAssocTraversal, IrContainerElement, IrContainerExpr, IrContainerKind,
+    IrContainerReduction, IrContainerStmt,
 };
 
 fn name<'a>(ctx: &'a RCtx<'_>, index: usize) -> &'a str {
@@ -16,7 +16,13 @@ pub(super) fn expression(ctx: &RCtx<'_>, operation: &IrContainerExpr) -> Result<
     Ok(match operation {
         IrContainerExpr::Size(index) => {
             let method = match ctx.model.containers[*index].kind {
-                IrContainerKind::Dynamic => "llg_dyn_size",
+                IrContainerKind::Dynamic => {
+                    if ctx.model.containers[*index].element.is_packed() {
+                        "llg_dyn_size"
+                    } else {
+                        "llg_dyn_value_size"
+                    }
+                }
                 IrContainerKind::Queue { .. } => "llg_queue_size",
                 IrContainerKind::Associative { .. } => "llg_assoc_count",
             };
@@ -57,6 +63,23 @@ pub(super) fn expression(ctx: &RCtx<'_>, operation: &IrContainerExpr) -> Result<
                 render_expr_impl(ctx, index)?.code
             )
         }
+        IrContainerExpr::GetReal { container, index } => format!(
+            "llg_dyn_value_get_real(&{}, {})",
+            name(ctx, *container),
+            render_expr_impl(ctx, index)?.code
+        ),
+        IrContainerExpr::GetNested { container, indices } => format!(
+            "llg_dyn_value_get_nested(&{}, {}, {})",
+            name(ctx, *container),
+            super::objects::render_indices(ctx, indices)?,
+            indices.len()
+        ),
+        IrContainerExpr::GetNestedReal { container, indices } => format!(
+            "llg_dyn_value_get_nested_real(&{}, {}, {})",
+            name(ctx, *container),
+            super::objects::render_indices(ctx, indices)?,
+            indices.len()
+        ),
         IrContainerExpr::GetString { container, key } => format!(
             "llg_model_assoc_get_string(&{}, {})",
             name(ctx, *container),
@@ -126,20 +149,35 @@ pub(super) fn statement(ctx: &RCtx<'_>, operation: &IrContainerStmt) -> Result<S
             container,
             size,
             initializer,
-        } => format!(
-            "    llg_dyn_new(&{}, {}, {});\n",
-            name(ctx, *container),
-            render_expr_impl(ctx, size)?.code,
-            initializer
-                .map(|index| format!("&{}", name(ctx, index)))
-                .unwrap_or_else(|| "NULL".to_owned())
-        ),
-        IrContainerStmt::Copy { dst, src } => format!(
-            "    {}_copy(&{}, &{});\n",
-            prefix(&ctx.model.containers[*dst].kind),
-            name(ctx, *dst),
-            name(ctx, *src)
-        ),
+        } => {
+            let generic = !ctx.model.containers[*container].element.is_packed();
+            let function = if generic {
+                "llg_dyn_value_new"
+            } else {
+                "llg_dyn_new"
+            };
+            format!(
+                "    {function}(&{}, {}, {});\n",
+                name(ctx, *container),
+                render_expr_impl(ctx, size)?.code,
+                initializer
+                    .map(|index| format!("&{}", name(ctx, index)))
+                    .unwrap_or_else(|| "NULL".to_owned())
+            )
+        }
+        IrContainerStmt::Copy { dst, src } => {
+            let generic = !ctx.model.containers[*dst].element.is_packed();
+            let function = if generic {
+                "llg_dyn_value_copy"
+            } else {
+                match ctx.model.containers[*dst].kind {
+                    IrContainerKind::Dynamic => "llg_dyn_copy",
+                    IrContainerKind::Queue { .. } => "llg_queue_copy",
+                    IrContainerKind::Associative { .. } => "llg_assoc_copy",
+                }
+            };
+            format!("    {function}(&{}, &{});\n", name(ctx, *dst), name(ctx, *src))
+        }
         IrContainerStmt::AssignValues { container, values } => {
             let data = if values.is_empty() {
                 "NULL".to_owned()
@@ -159,11 +197,80 @@ pub(super) fn statement(ctx: &RCtx<'_>, operation: &IrContainerStmt) -> Result<S
                 values.len()
             )
         }
-        IrContainerStmt::Delete(index) => format!(
-            "    {}_delete(&{});\n",
-            prefix(&ctx.model.containers[*index].kind),
-            name(ctx, *index)
-        ),
+        IrContainerStmt::AssignRealValues { container, values } => {
+            let data = if values.is_empty() {
+                "NULL".to_owned()
+            } else {
+                let values = values
+                    .iter()
+                    .map(|value| {
+                        let rendered = render_expr_impl(ctx, value)?;
+                        Ok(if rendered.width == 0 {
+                            rendered.code
+                        } else {
+                            format!("sv4_to_real({})", rendered.code)
+                        })
+                    })
+                    .collect::<Result<Vec<_>, String>>()?
+                    .join(", ");
+                format!("(const double[]){{ {values} }}")
+            };
+            format!(
+                "    llg_dyn_value_assign_reals(&{}, {}, {});\n",
+                name(ctx, *container),
+                data,
+                values.len()
+            )
+        }
+        IrContainerStmt::AssignStringValues { container, values } => {
+            let data = if values.is_empty() {
+                "NULL".to_owned()
+            } else {
+                let values = values
+                    .iter()
+                    .map(|value| super::objects::string(ctx, value))
+                    .collect::<Result<Vec<_>, String>>()?
+                    .join(", ");
+                format!("(llg_string_t[]){{ {values} }}")
+            };
+            format!(
+                "    llg_dyn_value_assign_strings(&{}, {}, {});\n",
+                name(ctx, *container),
+                data,
+                values.len()
+            )
+        }
+        IrContainerStmt::AssignChandleValues { container, values } => {
+            let data = if values.is_empty() {
+                "NULL".to_owned()
+            } else {
+                let values = values
+                    .iter()
+                    .map(|value| super::objects::chandle(ctx, value))
+                    .collect::<Result<Vec<_>, String>>()?
+                    .join(", ");
+                format!("(void *[]){{ {values} }}")
+            };
+            format!(
+                "    llg_dyn_value_assign_chandles(&{}, {}, {});\n",
+                name(ctx, *container),
+                data,
+                values.len()
+            )
+        }
+        IrContainerStmt::Delete(index) => {
+            if ctx.model.containers[*index].element.is_packed() {
+                format!(
+                    "    {}_delete(&{});\n",
+                    prefix(&ctx.model.containers[*index].kind),
+                    name(ctx, *index)
+                )
+            } else {
+                "    llg_dyn_value_delete(&".to_owned()
+                    + name(ctx, *index)
+                    + ");\n"
+            }
+        }
         IrContainerStmt::Set {
             container,
             index,
@@ -184,6 +291,114 @@ pub(super) fn statement(ctx: &RCtx<'_>, operation: &IrContainerStmt) -> Result<S
                 name(ctx, *container),
                 render_expr_impl(ctx, index)?.code,
                 render_expr_impl(ctx, value)?.code
+            )
+        }
+        IrContainerStmt::SetReal {
+            container,
+            index,
+            value,
+        } => {
+            let rendered = render_expr_impl(ctx, value)?;
+            let value = if rendered.width == 0 {
+                rendered.code
+            } else {
+                format!("sv4_to_real({})", rendered.code)
+            };
+            format!(
+                "    (void)llg_dyn_value_set_real(&{}, {}, {});\n",
+                name(ctx, *container),
+                render_expr_impl(ctx, index)?.code,
+                value
+            )
+        }
+        IrContainerStmt::SetStringValue {
+            container,
+            index,
+            value,
+        } => format!(
+            "    (void)llg_dyn_value_set_string(&{}, {}, {});\n",
+            name(ctx, *container),
+            render_expr_impl(ctx, index)?.code,
+            super::objects::string(ctx, value)?
+        ),
+        IrContainerStmt::SetChandleValue {
+            container,
+            index,
+            value,
+        } => format!(
+            "    (void)llg_dyn_value_set_chandle(&{}, {}, {});\n",
+            name(ctx, *container),
+            render_expr_impl(ctx, index)?.code,
+            super::objects::chandle(ctx, value)?
+        ),
+        IrContainerStmt::SetNested {
+            container,
+            indices,
+            value,
+        } => format!(
+            "    (void)llg_dyn_value_set_nested(&{}, {}, {}, {});\n",
+            name(ctx, *container),
+            super::objects::render_indices(ctx, indices)?,
+            indices.len(),
+            render_expr_impl(ctx, value)?.code
+        ),
+        IrContainerStmt::SetNestedReal {
+            container,
+            indices,
+            value,
+        } => {
+            let rendered = render_expr_impl(ctx, value)?;
+            let value = if rendered.width == 0 {
+                rendered.code
+            } else {
+                format!("sv4_to_real({})", rendered.code)
+            };
+            format!(
+                "    (void)llg_dyn_value_set_nested_real(&{}, {}, {}, {});\n",
+                name(ctx, *container),
+                super::objects::render_indices(ctx, indices)?,
+                indices.len(),
+                value
+            )
+        }
+        IrContainerStmt::SetNestedString {
+            container,
+            indices,
+            value,
+        } => format!(
+            "    (void)llg_dyn_value_set_nested_string(&{}, {}, {}, {});\n",
+            name(ctx, *container),
+            super::objects::render_indices(ctx, indices)?,
+            indices.len(),
+            super::objects::string(ctx, value)?
+        ),
+        IrContainerStmt::SetNestedChandle {
+            container,
+            indices,
+            value,
+        } => format!(
+            "    (void)llg_dyn_value_set_nested_chandle(&{}, {}, {}, {});\n",
+            name(ctx, *container),
+            super::objects::render_indices(ctx, indices)?,
+            indices.len(),
+            super::objects::chandle(ctx, value)?
+        ),
+        IrContainerStmt::SetContainer {
+            container,
+            indices,
+            source,
+        } => {
+            let function = if ctx.model.containers[*source].element.is_packed() {
+                "llg_dyn_value_set_nested_container_from_packed"
+            } else {
+                "llg_dyn_value_set_nested_container"
+            };
+            let source = format!("&{}", name(ctx, *source));
+            format!(
+                "    (void){function}(&{}, {}, {}, {source});\n",
+                name(ctx, *container),
+                super::objects::render_indices(ctx, indices)?,
+                indices.len(),
             )
         }
         IrContainerStmt::SetDefault { container, value } => format!(
@@ -288,17 +503,171 @@ pub(super) fn string_adapters() -> &'static str {
      }\n\n"
 }
 
+#[derive(Clone)]
+struct ValueDescriptorNode {
+    element: IrContainerElement,
+    child: Option<usize>,
+    members: Vec<usize>,
+}
+
+fn collect_value_descriptor(
+    element: &IrContainerElement,
+    nodes: &mut Vec<ValueDescriptorNode>,
+) -> usize {
+    let index = nodes.len();
+    nodes.push(ValueDescriptorNode {
+        element: element.clone(),
+        child: None,
+        members: Vec::new(),
+    });
+    match element {
+        IrContainerElement::FixedArray { element, .. }
+        | IrContainerElement::Container { element, .. } => {
+            nodes[index].child = Some(collect_value_descriptor(element, nodes));
+        }
+        IrContainerElement::Aggregate { members, .. } => {
+            let member_indices = members
+                .iter()
+                .map(|member| collect_value_descriptor(&member.element, nodes))
+                .collect();
+            nodes[index].members = member_indices;
+        }
+        _ => {}
+    }
+    index
+}
+
+fn value_descriptor(
+    container: &crate::sim::ir::IrContainer,
+) -> Result<(String, String), String> {
+    let mut nodes = Vec::new();
+    let root = collect_value_descriptor(&container.element, &mut nodes);
+    let prefix = format!("{}_llg_value", container.c_name);
+    let names = (0..nodes.len())
+        .map(|index| format!("{prefix}_desc_{index}"))
+        .collect::<Vec<_>>();
+    let member_names = (0..nodes.len())
+        .map(|index| format!("{prefix}_members_{index}"))
+        .collect::<Vec<_>>();
+    let mut out = String::new();
+    for name in &names {
+        out.push_str(&format!("static const llg_value_desc_t {name};\n"));
+    }
+    for (index, node) in nodes.iter().enumerate() {
+        if !node.members.is_empty() {
+            let entries = node.members
+                .iter()
+                .map(|member| format!("{{ &{} }}", names[*member]))
+                .collect::<Vec<_>>()
+                .join(", ");
+            out.push_str(&format!(
+                "static const llg_value_member_desc_t {}[] = {{ {} }};\n",
+                member_names[index], entries
+            ));
+        }
+    }
+    for (index, node) in nodes.iter().enumerate() {
+        let (kind, type_id, width, signed, two_state, count) = match &node.element {
+            IrContainerElement::Packed {
+                width,
+                signed,
+                two_state,
+            } => ("LLG_VALUE_PACKED", 0, *width, *signed as u8, *two_state as u8, 0),
+            IrContainerElement::Real { .. } => ("LLG_VALUE_REAL", 0, 0, 0, 0, 0),
+            IrContainerElement::String => ("LLG_VALUE_STRING", 0, 0, 0, 0, 0),
+            IrContainerElement::Chandle => ("LLG_VALUE_CHANDLE", 0, 0, 0, 0, 0),
+            IrContainerElement::Event => ("LLG_VALUE_EVENT", 0, 0, 0, 0, 0),
+            IrContainerElement::Aggregate { type_id, members } => (
+                "LLG_VALUE_AGGREGATE",
+                *type_id,
+                0,
+                0,
+                0,
+                members.len(),
+            ),
+            IrContainerElement::FixedArray { dimensions, .. } => {
+                let count = dimensions.iter().try_fold(1u128, |total, (left, right)| {
+                    let extent = (i64::from(*left) - i64::from(*right))
+                        .unsigned_abs()
+                        .checked_add(1)?;
+                    total.checked_mul(u128::from(extent))
+                })
+                .ok_or_else(|| {
+                    format!(
+                        "container {} fixed element count overflows C size_t",
+                        container.c_name
+                    )
+                })?;
+                let count = usize::try_from(count).map_err(|_| {
+                    format!(
+                        "container {} fixed element count is not host-representable",
+                        container.c_name
+                    )
+                })?;
+                ("LLG_VALUE_FIXED_ARRAY", 0, 0, 0, 0, count)
+            }
+            IrContainerElement::Container { type_id, .. } => {
+                ("LLG_VALUE_CONTAINER", *type_id, 0, 0, 0, 0)
+            }
+            IrContainerElement::Opaque { type_id, .. } => {
+                ("LLG_VALUE_OPAQUE", *type_id, 0, 0, 0, 0)
+            }
+        };
+        let child = node
+            .child
+            .map(|child| format!("&{}", names[child]))
+            .unwrap_or_else(|| "NULL".to_owned());
+        let members = if node.members.is_empty() {
+            "NULL".to_owned()
+        } else {
+            format!("&{}", member_names[index])
+        };
+        out.push_str(&format!(
+            "static const llg_value_desc_t {} = {{ {}, UINT64_C({}), {}, {}, {}, {}, {}, {}, {} }};\n",
+            names[index],
+            kind,
+            type_id,
+            width,
+            signed,
+            two_state,
+            count,
+            child,
+            members,
+            node.members.len()
+        ));
+    }
+    Ok((out, names[root].clone()))
+}
+
 pub(super) fn declaration_and_init(
     container: &crate::sim::ir::IrContainer,
 ) -> Result<(String, String), String> {
-    let IrType::Packed {
-        width,
-        signed,
-        two_state,
-    } = container.element
-    else {
-        return Err("container element must be packed".into());
-    };
+    if !container.element.is_packed() {
+        if !matches!(container.kind, IrContainerKind::Dynamic) {
+            return Err("non-packed queue or associative array element is unsupported".into());
+        }
+        let (descriptor, root) = value_descriptor(container)?;
+        let declaration = format!(
+            "{descriptor}static llg_dyn_value_array_t {};\n",
+            container.c_name
+        );
+        let init = format!(
+            "    llg_dyn_value_init(&{}, &{});\n",
+            container.c_name, root
+        );
+        let init = format!(
+            "{init}    {}.contents_dependency = &{}_llg_contents_dep;\n\
+             {}.shape_dependency = &{}_llg_shape_dep;\n\
+             {}.notify = llg_dependency_notify;\n",
+            container.c_name,
+            container.c_name,
+            container.c_name,
+            container.c_name,
+            container.c_name
+        );
+        return Ok((declaration, init));
+    }
+    let (width, signed, two_state) = container.element.packed().unwrap();
     let declaration = format!("static {} {};\n", c_type(&container.kind), container.c_name);
     let init = match &container.kind {
         IrContainerKind::Dynamic => format!(
@@ -347,6 +716,12 @@ pub(super) fn declaration_and_init(
 }
 
 pub(super) fn destroy(container: &crate::sim::ir::IrContainer) -> String {
+    if !container.element.is_packed() {
+        return format!(
+            "    llg_dyn_value_destroy(&{});\n",
+            container.c_name
+        );
+    }
     format!(
         "    {}_destroy(&{});\n",
         prefix(&container.kind),

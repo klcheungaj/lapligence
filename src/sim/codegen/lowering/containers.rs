@@ -1,7 +1,9 @@
 //! Lowering for resizable unpacked containers.
 
 use super::*;
-use crate::sim::ir::{IrContainerReduction, IrObjectType, IrStringExpr};
+use crate::sim::ir::{
+    IrChandleExpr, IrContainerElement, IrContainerReduction, IrObjectType, IrStringExpr,
+};
 
 /// A fixed-array view represented by complete coordinates in logical
 /// (declared left-to-right) order.
@@ -425,6 +427,70 @@ impl<'a> Codegen<'a> {
         container: usize,
         source_values: Vec<NodeId>,
     ) -> Result<IrStmt, String> {
+        match self.model.containers[container].element.clone() {
+            IrContainerElement::Packed { .. } => {
+                self.lower_container_source_packed_values(path, container, source_values)
+            }
+            IrContainerElement::Real { .. } => {
+                let mut captures = Vec::new();
+                let mut captured = HashMap::<NodeId, String>::new();
+                let mut rewritten = Vec::with_capacity(source_values.len());
+                for value in source_values {
+                    let expression = if let Some(name) = captured.get(&value) {
+                        IrExpr::new(IrExprKind::LocalRead(name.clone()), 0, false, None)
+                    } else {
+                        let expression = self.lower_expr(path, value)?;
+                        let name = format!("_container{}_{}", container, value.0);
+                        captures.push(IrStmt::DeclLocal {
+                            name: name.clone(),
+                            width: 0,
+                            signed: false,
+                            two_state: false,
+                            init: Some(Box::new(expression)),
+                        });
+                        captured.insert(value, name.clone());
+                        IrExpr::new(IrExprKind::LocalRead(name), 0, false, None)
+                    };
+                    rewritten.push(expression);
+                }
+                captures.push(IrStmt::Container(IrContainerStmt::AssignRealValues {
+                    container,
+                    values: rewritten,
+                }));
+                Ok(IrStmt::Block(captures))
+            }
+            IrContainerElement::String => {
+                let values = source_values
+                    .into_iter()
+                    .map(|value| self.lower_string(path, value))
+                    .collect::<Result<Vec<_>, _>>()?;
+                Ok(IrStmt::Container(IrContainerStmt::AssignStringValues {
+                    container,
+                    values,
+                }))
+            }
+            IrContainerElement::Chandle => {
+                let values = source_values
+                    .into_iter()
+                    .map(|value| self.lower_chandle(path, value))
+                    .collect::<Result<Vec<_>, _>>()?;
+                Ok(IrStmt::Container(IrContainerStmt::AssignChandleValues {
+                    container,
+                    values,
+                }))
+            }
+            _ => Err(format!(
+                "resizable container assignment pattern in `{path}` requires a directly represented scalar element"
+            )),
+        }
+    }
+
+    fn lower_container_source_packed_values(
+        &mut self,
+        path: &str,
+        container: usize,
+        source_values: Vec<NodeId>,
+    ) -> Result<IrStmt, String> {
         let mut captures = Vec::new();
         let mut captured = HashMap::<NodeId, (String, u32, bool)>::new();
         let mut rewritten = Vec::with_capacity(source_values.len());
@@ -475,13 +541,20 @@ impl<'a> Codegen<'a> {
         container: usize,
         node: NodeId,
     ) -> Result<IrExpr, String> {
-        let IrType::Packed {
-            width,
-            signed,
-            two_state,
-        } = self.model.containers[container].element
-        else {
-            return Err("container element type is not packed".into());
+        let element = self.model.containers[container].element.clone();
+        self.lower_container_value_for_element(path, &element, node)
+    }
+
+    fn lower_container_value_for_element(
+        &mut self,
+        path: &str,
+        element: &IrContainerElement,
+        node: NodeId,
+    ) -> Result<IrExpr, String> {
+        let Some((width, signed, two_state)) = element.packed() else {
+            return Err(format!(
+                "container element type is not packed in {path}"
+            ));
         };
         let value = self.lower_expr(path, node)?;
         let value = apply_assignment_expression_width(value, width);
@@ -615,16 +688,178 @@ impl<'a> Codegen<'a> {
         }
     }
 
+    fn container_element_path(&self, node: NodeId) -> Option<(usize, Vec<NodeId>)> {
+        let (base, indices) = match self.kind(node) {
+            NodeKind::Expr(ExprKind::BitSelect { base, index }) => (*base, vec![*index]),
+            NodeKind::Expr(ExprKind::ArraySelect { base, indices })
+                if !indices.is_empty() => (*base, indices.clone()),
+            _ => return None,
+        };
+        if let Some((container, mut prefix)) = self.container_element_path(base) {
+            prefix.extend(indices);
+            return Some((container, prefix));
+        }
+        let container = self.container_of(base)?;
+        matches!(
+            self.model.containers[container.ir].kind,
+            IrContainerKind::Dynamic
+        )
+        .then_some((container.ir, indices))
+    }
+
+    fn container_element_type(
+        &self,
+        container: usize,
+        depth: usize,
+    ) -> Option<IrContainerElement> {
+        let mut element = self.model.containers[container].element.clone();
+        for _ in 1..depth {
+            let IrContainerElement::Container { element: next, .. } = element else {
+                return None;
+            };
+            element = *next;
+        }
+        Some(element)
+    }
+
+    pub(super) fn is_container_string_expr(&self, node: NodeId) -> bool {
+        self.container_element_path(node)
+            .and_then(|(container, indices)| {
+                self.container_element_type(container, indices.len())
+            })
+            .is_some_and(|element| element.is_string())
+    }
+
+    pub(super) fn lower_container_string_query(
+        &mut self,
+        path: &str,
+        node: NodeId,
+    ) -> Result<Option<IrStringExpr>, String> {
+        let Some((container, indices)) = self.container_element_path(node) else {
+            return Ok(None);
+        };
+        if !self
+            .container_element_type(container, indices.len())
+            .is_some_and(|element| element.is_string())
+        {
+            return Ok(None);
+        }
+        let indices = indices
+            .into_iter()
+            .map(|index| self.lower_container_index(path, index))
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(Some(if indices.len() == 1 {
+            IrStringExpr::ContainerGet {
+                container,
+                index: Box::new(indices.into_iter().next().unwrap()),
+            }
+        } else {
+            IrStringExpr::ContainerGetNested { container, indices }
+        }))
+    }
+
+    pub(super) fn is_container_chandle_expr(&self, node: NodeId) -> bool {
+        self.container_element_path(node)
+            .and_then(|(container, indices)| {
+                self.container_element_type(container, indices.len())
+            })
+            .is_some_and(|element| element.is_chandle())
+    }
+
+    pub(super) fn lower_container_chandle_query(
+        &mut self,
+        path: &str,
+        node: NodeId,
+    ) -> Result<Option<IrChandleExpr>, String> {
+        let Some((container, indices)) = self.container_element_path(node) else {
+            return Ok(None);
+        };
+        if !self
+            .container_element_type(container, indices.len())
+            .is_some_and(|element| element.is_chandle())
+        {
+            return Ok(None);
+        }
+        let indices = indices
+            .into_iter()
+            .map(|index| self.lower_container_index(path, index))
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(Some(if indices.len() == 1 {
+            IrChandleExpr::ContainerGet {
+                container,
+                index: Box::new(indices.into_iter().next().unwrap()),
+            }
+        } else {
+            IrChandleExpr::ContainerGetNested { container, indices }
+        }))
+    }
+
     pub(super) fn lower_container_query(
         &mut self,
         path: &str,
         node: NodeId,
     ) -> Result<Option<IrExpr>, String> {
+        if let Some((container, indices)) = self.container_element_path(node) {
+            let element = self
+                .container_element_type(container, indices.len())
+                .ok_or_else(|| {
+                    format!(
+                        "nested container access in {path} crosses a non-container element"
+                    )
+                })?;
+            if element.is_string() || element.is_chandle() {
+                return Ok(None);
+            }
+            let indices = indices
+                .into_iter()
+                .map(|index| self.lower_container_index(path, index))
+                .collect::<Result<Vec<_>, _>>()?;
+            let operation = if indices.len() == 1 {
+                if element.is_real() {
+                    IrContainerExpr::GetReal {
+                        container,
+                        index: Box::new(indices.into_iter().next().unwrap()),
+                    }
+                } else if element.is_packed() {
+                    IrContainerExpr::Get {
+                        container,
+                        index: Box::new(indices.into_iter().next().unwrap()),
+                    }
+                } else {
+                    return Err(format!(
+                        "container element access in {path} requires a scalar value"
+                    ));
+                }
+            } else if element.is_real() {
+                IrContainerExpr::GetNestedReal { container, indices }
+            } else if element.is_packed() {
+                IrContainerExpr::GetNested { container, indices }
+            } else {
+                return Err(format!(
+                    "nested container access in {path} requires a scalar value"
+                ));
+            };
+            let (width, signed) = if element.is_real() {
+                (0, false)
+            } else {
+                (element.width(), element.signed())
+            };
+            return Ok(Some(IrExpr::new(
+                IrExprKind::Container(Box::new(operation)),
+                width,
+                signed,
+                None,
+            )));
+        }
         let operation = match self.kind(node) {
             NodeKind::Expr(ExprKind::BitSelect { base, index }) => {
                 let Some(container) = self.container_of(*base) else {
                     return Ok(None);
                 };
+                let element = self.model.containers[container.ir].element.clone();
+                if element.is_string() || element.is_chandle() {
+                    return Ok(None);
+                }
                 match self.model.containers[container.ir].kind {
                     IrContainerKind::Associative {
                         key: IrAssocKey::String,
@@ -632,10 +867,19 @@ impl<'a> Codegen<'a> {
                         container: container.ir,
                         key: self.lower_string(path, *index)?,
                     },
-                    _ => IrContainerExpr::Get {
+                    _ if element.is_real() => IrContainerExpr::GetReal {
                         container: container.ir,
                         index: Box::new(self.lower_container_index(path, *index)?),
                     },
+                    _ if element.is_packed() => IrContainerExpr::Get {
+                        container: container.ir,
+                        index: Box::new(self.lower_container_index(path, *index)?),
+                    },
+                    _ => {
+                        return Err(format!(
+                            "nested or aggregate container element access in `{path}` is not yet a scalar expression"
+                        ))
+                    }
                 }
             }
             NodeKind::Expr(ExprKind::ArraySelect { base, indices }) => {
@@ -647,6 +891,10 @@ impl<'a> Codegen<'a> {
                         "multidimensional resizable container access in `{path}` is not supported"
                     ));
                 }
+                let element = self.model.containers[container.ir].element.clone();
+                if element.is_string() || element.is_chandle() {
+                    return Ok(None);
+                }
                 match self.model.containers[container.ir].kind {
                     IrContainerKind::Associative {
                         key: IrAssocKey::String,
@@ -654,10 +902,19 @@ impl<'a> Codegen<'a> {
                         container: container.ir,
                         key: self.lower_string(path, indices[0])?,
                     },
-                    _ => IrContainerExpr::Get {
+                    _ if element.is_real() => IrContainerExpr::GetReal {
                         container: container.ir,
                         index: Box::new(self.lower_container_index(path, indices[0])?),
                     },
+                    _ if element.is_packed() => IrContainerExpr::Get {
+                        container: container.ir,
+                        index: Box::new(self.lower_container_index(path, indices[0])?),
+                    },
+                    _ => {
+                        return Err(format!(
+                            "nested or aggregate container element access in `{path}` is not yet a scalar expression"
+                        ))
+                    }
                 }
             }
             NodeKind::MethodCall {
@@ -772,6 +1029,7 @@ impl<'a> Codegen<'a> {
                 let container = &self.model.containers[*container];
                 (container.element.width(), container.element.signed())
             }
+            IrContainerExpr::GetReal { .. } => (0, false),
             _ => {
                 let index = match &operation {
                     IrContainerExpr::Get { container, .. }
@@ -1658,6 +1916,113 @@ impl<'a> Codegen<'a> {
         if self.p30_fixed_array_assignment_candidate(lhs) {
             return self.lower_p30_fixed_array_assignment(path, lhs, rhs, blocking, op);
         }
+        if let Some((container, source_indices)) = self.container_element_path(lhs) {
+            if source_indices.len() == 1
+                && self
+                    .container_element_type(container, 1)
+                    .is_some_and(|element| {
+                        matches!(element, IrContainerElement::Container { .. })
+                    })
+            {
+                if !blocking {
+                    return Err(format!(
+                        "nonblocking assignment to nested resizable container element in {path} is illegal"
+                    ));
+                }
+                if op != Operation::Assignment {
+                    return Err(format!(
+                        "compound assignment to nested resizable container element in {path} is not supported"
+                    ));
+                }
+                let indices = source_indices
+                    .into_iter()
+                    .map(|index| self.lower_container_index(path, index))
+                    .collect::<Result<Vec<_>, _>>()?;
+                let source = self.container_of(rhs).ok_or_else(|| {
+                    format!("nested container assignment in {path} requires a dynamic array")
+                })?;
+                if !matches!(
+                    self.model.containers[source.ir].kind,
+                    IrContainerKind::Dynamic
+                ) {
+                    return Err(format!(
+                        "nested container assignment in {path} requires a dynamic array"
+                    ));
+                }
+                return Ok(Some(IrStmt::Container(
+                    IrContainerStmt::SetContainer {
+                        container,
+                        indices,
+                        source: source.ir,
+                    },
+                )));
+            }
+            if source_indices.len() > 1 {
+                if !blocking {
+                    return Err(format!(
+                        "nonblocking assignment to nested resizable container element in {path} is illegal"
+                    ));
+                }
+                if op != Operation::Assignment {
+                    return Err(format!(
+                        "compound assignment to nested resizable container element in {path} is not supported"
+                    ));
+                }
+                let indices = source_indices
+                    .into_iter()
+                    .map(|index| self.lower_container_index(path, index))
+                    .collect::<Result<Vec<_>, _>>()?;
+                let element = self
+                    .container_element_type(container, indices.len())
+                    .ok_or_else(|| format!("invalid nested container write in {path}"))?;
+                let operation = match &element {
+                    IrContainerElement::Packed { .. } => IrContainerStmt::SetNested {
+                        container,
+                        indices,
+                        value: self.lower_container_value_for_element(path, &element, rhs)?,
+                    },
+                    IrContainerElement::Real { .. } => IrContainerStmt::SetNestedReal {
+                        container,
+                        indices,
+                        value: self.lower_expr(path, rhs)?,
+                    },
+                    IrContainerElement::String => IrContainerStmt::SetNestedString {
+                        container,
+                        indices,
+                        value: self.lower_string(path, rhs)?,
+                    },
+                    IrContainerElement::Chandle => IrContainerStmt::SetNestedChandle {
+                        container,
+                        indices,
+                        value: self.lower_chandle(path, rhs)?,
+                    },
+                    IrContainerElement::Container { .. } => {
+                        let source = self.container_of(rhs).ok_or_else(|| {
+                            format!("nested container assignment in {path} requires a dynamic array")
+                        })?;
+                        if !matches!(
+                            self.model.containers[source.ir].kind,
+                            IrContainerKind::Dynamic
+                        ) {
+                            return Err(format!(
+                                "nested container assignment in {path} requires a dynamic array"
+                            ));
+                        }
+                        IrContainerStmt::SetContainer {
+                            container,
+                            indices,
+                            source: source.ir,
+                        }
+                    }
+                    _ => {
+                        return Err(format!(
+                            "nested resizable container write in {path} has an unsupported element type"
+                        ))
+                    }
+                };
+                return Ok(Some(IrStmt::Container(operation)));
+            }
+        }
         let selected = match self.kind(lhs) {
             NodeKind::Expr(ExprKind::BitSelect { base, index }) => self
                 .container_of(*base)
@@ -1678,6 +2043,29 @@ impl<'a> Codegen<'a> {
                     "compound assignment to resizable container element in `{path}` is not supported"
                 ));
             }
+            if self
+                .container_element_type(container.ir, 1)
+                .is_some_and(|element| matches!(element, IrContainerElement::Container { .. }))
+            {
+                let source = self.container_of(rhs).ok_or_else(|| {
+                    format!("nested container assignment in {path} requires a dynamic array")
+                })?;
+                if !matches!(
+                    self.model.containers[source.ir].kind,
+                    IrContainerKind::Dynamic
+                ) {
+                    return Err(format!(
+                        "nested container assignment in {path} requires a dynamic array"
+                    ));
+                }
+                return Ok(Some(IrStmt::Container(
+                    IrContainerStmt::SetContainer {
+                        container: container.ir,
+                        indices: vec![self.lower_container_index(path, index)?],
+                        source: source.ir,
+                    },
+                )));
+            }
             let operation = match self.model.containers[container.ir].kind {
                 IrContainerKind::Associative {
                     key: IrAssocKey::String,
@@ -1686,11 +2074,57 @@ impl<'a> Codegen<'a> {
                     key: self.lower_string(path, index)?,
                     value: self.lower_container_value(path, container.ir, rhs)?,
                 },
-                _ => IrContainerStmt::Set {
-                    container: container.ir,
-                    index: self.lower_container_index(path, index)?,
-                    value: self.lower_container_value(path, container.ir, rhs)?,
-                },
+                _ => {
+                    let index = self.lower_container_index(path, index)?;
+                    match self.model.containers[container.ir].element.clone() {
+                        IrContainerElement::Packed { .. } => IrContainerStmt::Set {
+                            container: container.ir,
+                            index,
+                            value: self.lower_container_value(path, container.ir, rhs)?,
+                        },
+                        IrContainerElement::Real { .. } => IrContainerStmt::SetReal {
+                            container: container.ir,
+                            index,
+                            value: self.lower_expr(path, rhs)?,
+                        },
+                        IrContainerElement::String => IrContainerStmt::SetStringValue {
+                            container: container.ir,
+                            index,
+                            value: self.lower_string(path, rhs)?,
+                        },
+                        IrContainerElement::Chandle => IrContainerStmt::SetChandleValue {
+                            container: container.ir,
+                            index,
+                            value: self.lower_chandle(path, rhs)?,
+                        },
+                        IrContainerElement::Container { .. } => {
+                            let source = self.container_of(rhs).ok_or_else(|| {
+                                format!(
+                                    "nested container assignment in {path} requires a dynamic array"
+                                )
+                            })?;
+                            if !matches!(
+                                self.model.containers[source.ir].kind,
+                                IrContainerKind::Dynamic
+                            ) {
+                                return Err(format!(
+                                    "nested container assignment in {path} requires a dynamic array"
+                                ));
+                            }
+                            IrContainerStmt::SetContainer {
+                                container: container.ir,
+                                indices: vec![index],
+                                source: source.ir,
+                            }
+                        }
+                        _ => {
+                            return Err(format!(
+                                "resizable container element write in `{path}` requires a directly represented scalar element: {:?}",
+                                self.model.containers[container.ir].element
+                            ))
+                        }
+                    }
+                }
             };
             return Ok(Some(IrStmt::Container(operation)));
         }

@@ -3,6 +3,15 @@ use super::context::RCtx;
 use super::expressions::render_expr_impl;
 use crate::sim::ir::*;
 
+pub(super) fn render_indices(ctx: &RCtx<'_>, indices: &[IrExpr]) -> Result<String, String> {
+    let values = indices
+        .iter()
+        .map(|index| render_expr_impl(ctx, index).map(|value| value.code))
+        .collect::<Result<Vec<_>, _>>()?
+        .join(", ");
+    Ok(format!("(const sv4_t[]){{ {values} }}"))
+}
+
 pub(super) fn string(ctx: &RCtx<'_>, value: &IrStringExpr) -> Result<String, String> {
     Ok(match value {
         IrStringExpr::Literal(bytes) => {
@@ -25,6 +34,17 @@ pub(super) fn string(ctx: &RCtx<'_>, value: &IrStringExpr) -> Result<String, Str
                 format!("&a{index}")
             })
         }
+        IrStringExpr::ContainerGet { container, index } => format!(
+            "llg_dyn_value_get_string(&{}, {})",
+            ctx.model.containers[*container].c_name,
+            render_expr_impl(ctx, index)?.code
+        ),
+        IrStringExpr::ContainerGetNested { container, indices } => format!(
+            "llg_dyn_value_get_nested_string(&{}, {}, {})",
+            ctx.model.containers[*container].c_name,
+            render_indices(ctx, indices)?,
+            indices.len()
+        ),
         IrStringExpr::Call {
             function,
             args,
@@ -97,6 +117,17 @@ pub(super) fn chandle(ctx: &RCtx<'_>, value: &IrChandleExpr) -> Result<String, S
                 format!("a{index}")
             }
         }
+        IrChandleExpr::ContainerGet { container, index } => format!(
+            "llg_dyn_value_get_chandle(&{}, {})",
+            ctx.model.containers[*container].c_name,
+            render_expr_impl(ctx, index)?.code
+        ),
+        IrChandleExpr::ContainerGetNested { container, indices } => format!(
+            "llg_dyn_value_get_nested_chandle(&{}, {}, {})",
+            ctx.model.containers[*container].c_name,
+            render_indices(ctx, indices)?,
+            indices.len()
+        ),
         IrChandleExpr::Call {
             function,
             args,
@@ -211,7 +242,13 @@ fn dynamic_query_code(
             match &container_model.kind {
                 IrContainerKind::Dynamic | IrContainerKind::Queue { .. } => {
                     let size_fn = match &container_model.kind {
-                        IrContainerKind::Dynamic => "llg_dyn_size",
+                        IrContainerKind::Dynamic => {
+                            if container_model.element.is_packed() {
+                                "llg_dyn_size"
+                            } else {
+                                "llg_dyn_value_size"
+                            }
+                        }
                         IrContainerKind::Queue { .. } => "llg_queue_size",
                         IrContainerKind::Associative { .. } => unreachable!(),
                     };

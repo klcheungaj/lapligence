@@ -1111,6 +1111,14 @@ fn collect_string_effects(
             collect_expression_effects(ir, first, effects, visited_calls);
             collect_expression_effects(ir, last, effects, visited_calls);
         }
+        IrStringExpr::ContainerGet { index, .. } => {
+            collect_expression_effects(ir, index, effects, visited_calls)
+        }
+        IrStringExpr::ContainerGetNested { indices, .. } => {
+            for index in indices {
+                collect_expression_effects(ir, index, effects, visited_calls);
+            }
+        }
         IrStringExpr::Literal(_)
         | IrStringExpr::Read(_)
         | IrStringExpr::LocalRead(_)
@@ -1124,30 +1132,36 @@ fn collect_chandle_effects(
     effects: &mut Vec<ExecutionEffect>,
     visited_calls: &mut HashSet<usize>,
 ) {
-    if let IrChandleExpr::Call { function, args, .. } = value {
-        effects.push(ExecutionEffect::RuntimeService);
-        collect_callee_effects(ir, *function, effects, visited_calls);
-        for argument in args {
-            match argument {
-                IrCallArg::StringVal(value) => {
-                    collect_string_effects(ir, value, effects, visited_calls)
+    match value {
+        IrChandleExpr::ContainerGet { index, .. } => {
+            collect_expression_effects(ir, index, effects, visited_calls)
+        }
+        IrChandleExpr::Call { function, args, .. } => {
+            effects.push(ExecutionEffect::RuntimeService);
+            collect_callee_effects(ir, *function, effects, visited_calls);
+            for argument in args {
+                match argument {
+                    IrCallArg::StringVal(value) => {
+                        collect_string_effects(ir, value, effects, visited_calls)
+                    }
+                    IrCallArg::ChandleVal(value) => {
+                        collect_chandle_effects(ir, value, effects, visited_calls)
+                    }
+                    IrCallArg::Val(value) => {
+                        collect_expression_effects(ir, value, effects, visited_calls)
+                    }
+                    IrCallArg::ChandleAddr(_)
+                    | IrCallArg::ChandleRefAddr(_)
+                    | IrCallArg::StringOutAddr(_)
+                    | IrCallArg::StringRefAddr { .. }
+                    | IrCallArg::OutAddr(_)
+                    | IrCallArg::RefAddr { .. }
+                    | IrCallArg::OutTemp { .. }
+                    | IrCallArg::StringOutTemp { .. } => {}
                 }
-                IrCallArg::ChandleVal(value) => {
-                    collect_chandle_effects(ir, value, effects, visited_calls)
-                }
-                IrCallArg::Val(value) => {
-                    collect_expression_effects(ir, value, effects, visited_calls)
-                }
-                IrCallArg::ChandleAddr(_)
-                | IrCallArg::ChandleRefAddr(_)
-                | IrCallArg::StringOutAddr(_)
-                | IrCallArg::StringRefAddr { .. }
-                | IrCallArg::OutAddr(_)
-                | IrCallArg::RefAddr { .. }
-                | IrCallArg::OutTemp { .. }
-                | IrCallArg::StringOutTemp { .. } => {}
             }
         }
+        _ => {}
     }
 }
 

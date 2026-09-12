@@ -30,7 +30,10 @@
   initial frame references and releases them on wake, cancellation, or runtime
   teardown; callbacks cannot suspend or mutate scheduler-observed storage.
 - **Storage helpers:** `llg_string.h/.c` provides owned strings;
-  `llg_container.h/.c` provides dynamic arrays, queues, and associative arrays.
+  `llg_container.h/.c` provides packed fast-path containers plus descriptor-
+  driven dynamic arrays for represented real, string, chandle, and nested
+  values. Queues and associative arrays remain packed-only until their typed
+  container paths are implemented.
 - **Optional components:** `llg_wave.h/.c` provides waveform output with VCD/FST
   headers expressed in the exact femtosecond tick unit; `gtkwave/`
   contains the pinned FST sources; libaco sources provide model coroutines.

@@ -28,6 +28,15 @@ pub enum IrStringExpr {
     /// Read and clone a native string formal. The callee owns the returned
     /// value; the formal itself remains caller-owned for ref/output aliases.
     FormalRead(usize),
+    /// Read and clone a string element from a generic dynamic array.
+    ContainerGet {
+        container: usize,
+        index: Box<IrExpr>,
+    },
+    ContainerGetNested {
+        container: usize,
+        indices: Vec<IrExpr>,
+    },
     Call {
         function: usize,
         args: Vec<IrExpr>,
@@ -118,6 +127,15 @@ pub enum IrChandleExpr {
     Read(usize),
     LocalRead(String),
     FormalRead(usize),
+    /// Read a chandle element from a generic dynamic array.
+    ContainerGet {
+        container: usize,
+        index: Box<IrExpr>,
+    },
+    ContainerGetNested {
+        container: usize,
+        indices: Vec<IrExpr>,
+    },
     Call {
         function: usize,
         /// Arguments are stored in the generated C parameter order.  The
@@ -237,6 +255,42 @@ impl IrStringExpr {
                 Ok(())
             }
             Self::Read(index) => object_type(model, *index, IrObjectType::String),
+            Self::ContainerGet { container, index } => {
+                let Some(container) = model.containers.get(*container) else {
+                    return Err(super::IrValidationError::new(
+                        "string",
+                        "container index is out of bounds",
+                    ));
+                };
+                if !container.element.is_string() || index.is_real() {
+                    return Err(super::IrValidationError::new(
+                        "string",
+                        "string container read requires a string element and integral index",
+                    ));
+                }
+                Ok(())
+            }
+            Self::ContainerGetNested {
+                container,
+                indices,
+            } => {
+                let Some(container) = model.containers.get(*container) else {
+                    return Err(super::IrValidationError::new(
+                        "string",
+                        "container index is out of bounds",
+                    ));
+                };
+                if indices.is_empty()
+                    || indices.iter().any(IrExpr::is_real)
+                    || !super::containers::nested_string_element(container, indices.len())
+                {
+                    return Err(super::IrValidationError::new(
+                        "string",
+                        "nested string container read has an invalid index path",
+                    ));
+                }
+                Ok(())
+            }
             Self::Concat(parts) => parts
                 .iter()
                 .try_for_each(|part| part.validate(model, string_return)),
@@ -248,7 +302,12 @@ impl IrStringExpr {
     }
     pub(in crate::sim) fn expressions(&self, visit: &mut impl FnMut(&IrExpr)) {
         match self {
-            Self::Literal(_) | Self::Read(_) | Self::LocalRead(_) | Self::FormalRead(_) => {}
+            Self::Literal(_)
+            | Self::Read(_)
+            | Self::LocalRead(_)
+            | Self::FormalRead(_) => {}
+            Self::ContainerGet { index, .. } => visit(index),
+            Self::ContainerGetNested { indices, .. } => indices.iter().for_each(visit),
             Self::Call { args, .. } => args.iter().for_each(visit),
             Self::TypedCall { args, .. } => {
                 for arg in args {
@@ -281,7 +340,12 @@ impl IrStringExpr {
     }
     pub(in crate::sim) fn expressions_mut(&mut self, visit: &mut impl FnMut(&mut IrExpr)) {
         match self {
-            Self::Literal(_) | Self::Read(_) | Self::LocalRead(_) | Self::FormalRead(_) => {}
+            Self::Literal(_)
+            | Self::Read(_)
+            | Self::LocalRead(_)
+            | Self::FormalRead(_) => {}
+            Self::ContainerGet { index, .. } => visit(index),
+            Self::ContainerGetNested { indices, .. } => indices.iter_mut().for_each(visit),
             Self::Call { args, .. } => args.iter_mut().for_each(visit),
             Self::TypedCall { args, .. } => {
                 for arg in args {
@@ -683,6 +747,42 @@ impl IrChandleExpr {
                     ))
                 }
             }
+            Self::ContainerGet { container, index } => {
+                let Some(container) = model.containers.get(*container) else {
+                    return Err(super::IrValidationError::new(
+                        "chandle",
+                        "container index is out of bounds",
+                    ));
+                };
+                if !container.element.is_chandle() || index.is_real() {
+                    return Err(super::IrValidationError::new(
+                        "chandle",
+                        "chandle container read requires a chandle element and integral index",
+                    ));
+                }
+                Ok(())
+            }
+            Self::ContainerGetNested {
+                container,
+                indices,
+            } => {
+                let Some(container) = model.containers.get(*container) else {
+                    return Err(super::IrValidationError::new(
+                        "chandle",
+                        "container index is out of bounds",
+                    ));
+                };
+                if indices.is_empty()
+                    || indices.iter().any(IrExpr::is_real)
+                    || !super::containers::nested_chandle_element(container, indices.len())
+                {
+                    return Err(super::IrValidationError::new(
+                        "chandle",
+                        "nested chandle container read has an invalid index path",
+                    ));
+                }
+                Ok(())
+            }
             Self::Read(index) => object_type(model, *index, IrObjectType::Chandle),
             Self::Call {
                 function,
@@ -758,26 +858,32 @@ impl IrChandleExpr {
     }
 
     pub(in crate::sim) fn expressions(&self, visit: &mut impl FnMut(&IrExpr)) {
-        if let Self::Call { args, .. } = self {
-            for arg in args {
+        match self {
+            Self::ContainerGet { index, .. } => visit(index),
+            Self::ContainerGetNested { indices, .. } => indices.iter().for_each(visit),
+            Self::Call { args, .. } => for arg in args {
                 match arg {
                     IrCallArg::Val(value) => visit(value),
                     IrCallArg::ChandleVal(value) => value.expressions(visit),
                     _ => {}
                 }
-            }
+            },
+            _ => {}
         }
     }
 
     pub(in crate::sim) fn expressions_mut(&mut self, visit: &mut impl FnMut(&mut IrExpr)) {
-        if let Self::Call { args, .. } = self {
-            for arg in args {
+        match self {
+            Self::ContainerGet { index, .. } => visit(index),
+            Self::ContainerGetNested { indices, .. } => indices.iter_mut().for_each(visit),
+            Self::Call { args, .. } => for arg in args {
                 match arg {
                     IrCallArg::Val(value) => visit(value),
                     IrCallArg::ChandleVal(value) => value.expressions_mut(visit),
                     _ => {}
                 }
-            }
+            },
+            _ => {}
         }
     }
 }

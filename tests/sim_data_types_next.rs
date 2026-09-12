@@ -275,6 +275,65 @@ datatype_case!(
     "dynamic_array"
 );
 datatype_case!(
+    dynamic_value_array_copy_resize_and_delete,
+    "dynamic_value_arrays.sv",
+    "dynamic_value_arrays"
+);
+datatype_case!(
+    nested_dynamic_array_copy_resize_and_delete,
+    "nested_dynamic_arrays.sv",
+    "nested_dynamic_arrays"
+);
+
+#[test]
+fn dynamic_array_negative_runtime_size_is_rejected_in_both_optimizer_modes() {
+    if !sim::build::cmake_available() {
+        eprintln!("SKIP: cmake not available");
+        return;
+    }
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/sim/data_types_next")
+        .join("dynamic_array_invalid_size.sv");
+    sim_harness::with_frontend_temp_cwd("data-types-next-negative-size", |dir| {
+        let source = dir.join("dynamic_array_invalid_size.sv");
+        std::fs::copy(&fixture, &source).map_err(|error| format!("copy fixture: {error}"))?;
+        let compiled = compile::compile_checked(&compile::CompileOpts {
+            files: vec![source.to_string_lossy().into_owned()],
+            top: Some("tb".to_owned()),
+            ..Default::default()
+        })
+        .map_err(|error| format!("compile: {error}"))?;
+        let database = Db::from_slang(&compiled.snapshot)
+            .map_err(|error| format!("database: {error}"))?;
+        for (variant, options) in [
+            ("unoptimized", OptConfig::none()),
+            ("optimized", OptConfig::default()),
+        ] {
+            let model = sim::codegen::generate_from_db_with_opts(&database, &options)
+                .map_err(|error| format!("{variant}: lowering: {error}"))?;
+            let executable = sim::build::build_model_cmake(
+                &dir.join(variant),
+                &[("model.c", model.model_c.as_str())],
+            )
+            .map_err(|error| format!("{variant}: C model build: {error}"))?;
+            let output = std::process::Command::new(&executable)
+                .output()
+                .map_err(|error| format!("{variant}: execute: {error}"))?;
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            if output.status.success()
+                || !stderr.contains("dynamic-array size is unknown or negative")
+            {
+                return Err(format!(
+                    "{variant}: expected negative-size rejection, status {:?}, stderr {stderr:?}",
+                    output.status
+                ));
+            }
+        }
+        Ok(())
+    })
+    .expect("negative dynamic-array size must be rejected");
+}
+datatype_case!(
     associative_array_insert_traverse_and_delete,
     "associative_array.sv",
     "associative_array"
