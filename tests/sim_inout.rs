@@ -12,6 +12,8 @@ use std::sync::Mutex;
 use llg::core::compile;
 use llg::sim::{self, opt::OptConfig};
 
+#[path = "support/sim_cli.rs"]
+mod sim_cli;
 #[path = "support/sim.rs"]
 mod sim_harness;
 
@@ -188,34 +190,24 @@ endmodule
 /// its own Z-backed structural slot, so unrelated bits remain undriven.
 #[test]
 fn sim_inout_selected_member_write_resolves() {
-    if !llg::sim::build::cmake_available() {
-        eprintln!("SKIP: cmake not available");
-        return;
-    }
-    let _guard = CWD_LOCK.lock().unwrap();
-    let sv = r#"module child(input wire en, inout wire [7:0] bus);
-    assign bus[0] = en;
-endmodule
-module tb;
-    wire [7:0] bus;
-    reg en;
-    child u(.en(en), .bus(bus));
-    initial begin
-        en = 1;
-        #1 $display("bus=%h", bus);
-        en = 0;
-        #1 $display("bus=%h", bus);
-        $finish(0);
-    end
-endmodule
-"#;
-    for (variant, options) in [
-        ("selected_member_unoptimized", OptConfig::none()),
-        ("selected_member_optimized", OptConfig::default()),
-    ] {
-        let (stdout, warnings) =
-            run_design_with_opts(sv, variant, &options).expect("selected member should run");
-        assert_eq!(stdout, "bus=01\nbus=zz\n", "{variant}");
-        assert!(warnings.is_empty(), "{variant}: {warnings:?}");
-    }
+    sim_cli::run_case(
+        "net_resolution",
+        "selected_member_inout",
+        "bus=1/zzzzzzz\nbus=0/zzzzzzz\n",
+        "",
+        &[],
+    );
+}
+
+/// A delayed selected driver keeps its own Z-backed contribution while the
+/// collapsed inout net continues to resolve the child's input dependency.
+#[test]
+fn sim_inout_selected_member_delayed_driver_resolves() {
+    sim_cli::run_case(
+        "net_resolution",
+        "selected_member_delayed",
+        "PASS selected_member_delayed\n",
+        "",
+        &[],
+    );
 }

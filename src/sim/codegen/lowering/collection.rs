@@ -2080,9 +2080,9 @@ impl<'a> Codegen<'a> {
                     self.node(members[0]).col,
                 ));
             }
-            // 5. Only whole-signal drivers may touch a member: select LHS,
-            //    NBA writes and task `sv4_t*` actuals would bypass the
-            //    resolution cell.
+            // 5. Constant packed selects are admitted as masked contributions
+            //    to the member's dedicated slot. Dynamic selects, NBA writes
+            //    and task `sv4_t*` actuals would bypass the resolution cell.
             if let Some(reason) = self.unsupported_member_write(members) {
                 return Err(format!(
                     "{joined}: {reason} at {}:{}:{}",
@@ -2934,7 +2934,7 @@ impl<'a> Codegen<'a> {
     }
 
     /// The reason a candidate inout-net group cannot be supported, from a
-    /// design-wide scan of every write targeting its members: constant
+    /// design-wide scan of every write targeting its members. Constant packed
     /// selected continuous drivers are admitted; procedural and dynamic
     /// writes still fail closed.
     fn unsupported_member_write(&self, members: &[NodeId]) -> Option<String> {
@@ -3000,7 +3000,8 @@ impl<'a> Codegen<'a> {
     }
 
     /// How an assignment LHS touches a member set: not at all, as a whole
-    /// signal (supported), or through a select (unsupported).
+    /// signal, or through a packed select. Dynamic select validation is kept
+    /// separate so the same classifier can be used by all driver scans.
     fn member_write_kind(&self, lhs: NodeId, member_set: &HashSet<NodeId>) -> MemberWrite {
         match self.kind(lhs) {
             NodeKind::Net { .. } if member_set.contains(&lhs) => MemberWrite::Whole,
@@ -7541,7 +7542,7 @@ impl<'a> Codegen<'a> {
                     })
                     .map(|_| output_ordinal)
             });
-            let mut lhs = raw_lhs;
+            let mut lhs = raw_lhs.clone();
             if let Some(group) = group {
                 let terminal = terminal_key.unwrap_or(0);
                 if terminal == 0 {
@@ -7559,6 +7560,16 @@ impl<'a> Codegen<'a> {
                     self.add_structural_driver_for_terminal(group, g, driver_strengths, terminal)?;
                 }
                 lhs = self.remap_structural_lhs_for_terminal(lhs, g, terminal);
+                if let Some(unmapped) =
+                    self.unmapped_structural_group_for_terminal(&raw_lhs, g, terminal)
+                {
+                    return Err(format!(
+                        "gate `{shown}` has no structural driver mapping for resolved net group {unmapped} at {}:{}:{}",
+                        self.node(g).file.as_deref().unwrap_or("<unknown>"),
+                        self.node(g).line,
+                        self.node(g).col,
+                    ));
+                }
             }
 
             let mut input_values = Vec::with_capacity(in_positions.len());
@@ -8077,21 +8088,39 @@ impl<'a> Codegen<'a> {
     }
 
     fn unmapped_structural_group(&self, lhs: &IrLhs, source: NodeId) -> Option<usize> {
-        let signal_group = |index: usize| {
-            self.model
-                .signals
-                .get(index)
-                .and_then(|signal| signal.net_driver.map(|(group, _)| group))
-                .filter(|group| self.structural_driver_signal(source, *group).is_none())
-        };
+        let mut mapped = |group| self.structural_driver_signal(source, group);
+        self.unmapped_structural_group_for(lhs, &mut mapped)
+    }
+
+    fn unmapped_structural_group_for_terminal(
+        &self,
+        lhs: &IrLhs,
+        source: NodeId,
+        terminal: usize,
+    ) -> Option<usize> {
+        let mut mapped =
+            |group| self.structural_driver_signal_for_terminal(source, group, terminal);
+        self.unmapped_structural_group_for(lhs, &mut mapped)
+    }
+
+    fn unmapped_structural_group_for(
+        &self,
+        lhs: &IrLhs,
+        mapped: &mut dyn FnMut(usize) -> Option<usize>,
+    ) -> Option<usize> {
         match lhs {
             IrLhs::Whole(index)
             | IrLhs::Bit(index, ..)
             | IrLhs::Part(index, ..)
-            | IrLhs::IdxPart(index, ..) => signal_group(*index),
+            | IrLhs::IdxPart(index, ..) => self
+                .model
+                .signals
+                .get(*index)
+                .and_then(|signal| signal.net_driver.map(|(group, _)| group))
+                .filter(|group| mapped(*group).is_none()),
             IrLhs::Stream { parts, .. } => parts
                 .iter()
-                .find_map(|(part, _)| self.unmapped_structural_group(part, source)),
+                .find_map(|(part, _)| self.unmapped_structural_group_for(part, mapped)),
             IrLhs::WholeRef { .. } | IrLhs::Ref { .. } | IrLhs::ArrayElem { .. } => None,
         }
     }
@@ -8377,14 +8406,23 @@ impl<'a> Codegen<'a> {
         self.inst = self.owning_inst(child_inst).unwrap_or(child_inst);
         for c in &self.node(child_inst).children {
             let port = *c;
-            let (direction, high, low, high_expr) = match self.kind(port) {
+            let (direction, high, low, high_expr, high_present, high_open) = match self.kind(port) {
                 NodeKind::Port {
                     direction,
                     high,
                     low,
                     high_expr,
+                    high_present,
+                    high_open,
                     ..
-                } => (*direction, *high, *low, *high_expr),
+                } => (
+                    *direction,
+                    *high,
+                    *low,
+                    *high_expr,
+                    *high_present,
+                    *high_open,
+                ),
                 _ => continue,
             };
             if let Some(actual) =
@@ -8408,9 +8446,26 @@ impl<'a> Codegen<'a> {
                 continue;
             }
             let Some(actual) = high_expr.or(high) else {
+                if high_present && !high_open {
+                    return Err(format!(
+                        "port `{}` of `{child_path}` declares a connection but has no actual expression at {}:{}:{}",
+                        self.node(port).name,
+                        self.node(port).file.as_deref().unwrap_or("<unknown>"),
+                        self.node(port).line,
+                        self.node(port).col,
+                    ));
+                }
                 continue;
             };
-            let Some(internal) = low else { continue };
+            let Some(internal) = low else {
+                return Err(format!(
+                    "port `{}` of `{child_path}` has an actual connection but no child-side storage at {}:{}:{}",
+                    self.node(port).name,
+                    self.node(port).file.as_deref().unwrap_or("<unknown>"),
+                    self.node(port).line,
+                    self.node(port).col,
+                ));
+            };
             if self.emit_array_port_link(
                 parent_path,
                 &child_path,
