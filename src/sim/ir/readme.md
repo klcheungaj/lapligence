@@ -17,8 +17,9 @@ invariants.
 `IrModel` is the staging owner used while converting semantic database nodes.
 `ExecutionModel::lower` moves every process body out of that staging table and
 into executable basic blocks. The staging process entries retain names,
-helpers, spawn identity, process kind, and typed write dependencies because
-functions, storage, and call references share their checked index tables.
+helpers, spawn identity, process kind, program identity, and typed write
+dependencies because functions, storage, and call references share their
+checked index tables.
 
 Variable aliases identify canonical storage explicitly. Event-evaluation helpers,
 typed evaluator contexts, read dependencies, delayed NBA operations and real math

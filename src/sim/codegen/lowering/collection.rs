@@ -9832,6 +9832,43 @@ impl<'a> Codegen<'a> {
 
     // ── Processes ──────────────────────────────────────────────────────────
 
+    /// Enforce the structural restrictions that distinguish a program block
+    /// from a module before any of its members are lowered.  The owned DB
+    /// carries program identity from Slang, so this check never guesses from
+    /// source text or a definition name.  Generate scopes and nested module
+    /// instances are rejected as a whole; otherwise declaration bodies (for
+    /// example function assignments) remain legal program members.
+    pub(super) fn validate_program_constructs(&self) -> Result<(), String> {
+        for program in self
+            .design_nodes()
+            .into_iter()
+            .filter(|id| self.db.is_program_instance(*id))
+        {
+            let path = self.instance_path_of(program);
+            for child in &self.node(program).children {
+                let member = match self.kind(*child) {
+                    NodeKind::Process {
+                        kind: ProcessKind::Always { .. },
+                    } => Some("an always process"),
+                    NodeKind::ContAssign { .. } => Some("a continuous assignment"),
+                    NodeKind::Gate { .. } => Some("a primitive or gate instance"),
+                    NodeKind::ModuleInst { .. } | NodeKind::InstanceArray => {
+                        Some("a nested module/interface/program instance")
+                    }
+                    NodeKind::GenScope | NodeKind::GenScopeArray => Some("a generate scope"),
+                    _ => None,
+                };
+                if let Some(member) = member {
+                    return Err(format!(
+                        "program `{path}` cannot contain {member} at {}",
+                        self.source_location(*child)
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Validate process-family contracts before any process is lowered. These
     /// checks intentionally live in the simulator semantic boundary rather
     /// than in lint: disabling lint must not turn an invalid process into a
@@ -10258,18 +10295,18 @@ impl<'a> Codegen<'a> {
             self.process_kind_label(always_type)
         };
         let origin = self.origin(proc);
-        self.model
-            .processes
-            .push(IrProcess::new_with_kind_and_writes(
-                fn_name.clone(),
-                format!("{path}.{kind_label}"),
-                ir_kind,
-                shape,
-                writes,
-                pre_fns,
-                body_stmts,
-                origin,
-            ));
+        let mut process = IrProcess::new_with_kind_and_writes(
+            fn_name.clone(),
+            format!("{path}.{kind_label}"),
+            ir_kind,
+            shape,
+            writes,
+            pre_fns,
+            body_stmts,
+            origin,
+        );
+        process.set_program(self.db.is_program_instance(inst));
+        self.model.processes.push(process);
         if is_final {
             self.final_procs.push(fn_name);
         }

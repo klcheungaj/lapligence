@@ -443,7 +443,11 @@ fn build_processes(ir: &mut IrModel) -> Vec<ExecutionProcess> {
                 entry: 0,
                 blocks,
                 effects: Vec::new(),
-                region: ScheduleRegion::Active,
+                region: if process.is_program() {
+                    ScheduleRegion::Reactive
+                } else {
+                    ScheduleRegion::Active
+                },
             }
         })
         .collect::<Vec<_>>();
@@ -579,6 +583,7 @@ fn collect_effects(
             | IrStmt::WaveLimit(_)
             | IrStmt::Finish
             | IrStmt::FinishControl { .. }
+            | IrStmt::ProgramExit
             | IrStmt::PrintTimescale { .. } => effects.push(ExecutionEffect::RuntimeService),
             IrStmt::StopControl { .. } => {
                 effects.push(ExecutionEffect::RuntimeService);

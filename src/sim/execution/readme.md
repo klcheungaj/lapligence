@@ -13,9 +13,10 @@ distinct effects. Optimizers walk every execution-owned block in place, then
 recompute and validate effect summaries. Resume blocks may differ from entry
 blocks; no process body is reconstructed from the staging shape.
 
-The scheduling-region enum reserves the IEEE regions needed by later property
-and program support. The current backend emits active work and NBA updates;
-the presence of an enum variant does not claim runtime support.
+The scheduling-region enum covers the IEEE design and reactive sets. Ordinary
+processes emit active work and NBA updates, while owned program processes are
+launched in Reactive and route zero-delay/NBA work through Re-Inactive/Re-NBA;
+the runtime also accounts for their natural or `$exit` completion.
 
 | Executable item | Current meaning |
 | --- | --- |

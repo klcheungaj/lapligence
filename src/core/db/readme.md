@@ -11,6 +11,9 @@
 Native semantic kind/detail metadata is retained beside the frontend-neutral
 node kind so simulator coverage can reject an unknown reachable executable
 record with its source span instead of silently treating it as `Other`.
+Program definitions and elaborated instances retain their owned program
+identity as well, allowing simulator lowering to assign Reactive scheduling
+and program-completion accounting without consulting Slang or source text.
 Unsupported facts stay explicit. Simulator, model, lint, and language-server
 analysis share this database rather than querying Slang independently.
 Variable metadata keeps Slang's resolved static or automatic lifetime separate

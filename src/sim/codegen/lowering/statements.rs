@@ -3994,6 +3994,24 @@ impl EmitCtx<'_, '_> {
                     location: self.finish_location(h),
                 }])
             }
+            "$exit" => {
+                if !args.is_empty() {
+                    return Err(format!("$exit takes no arguments in `{}`", self.path));
+                }
+                if self.in_final {
+                    return Err(format!(
+                        "$exit inside a final block in `{}` is not supported",
+                        self.path
+                    ));
+                }
+                if !self.cg.db.is_program_instance(self.inst) {
+                    return Err(format!(
+                        "$exit is only valid in a program block in `{}`",
+                        self.path
+                    ));
+                }
+                Ok(vec![IrStmt::ProgramExit])
+            }
             "$stop" => {
                 if self.in_final {
                     return Err(format!(

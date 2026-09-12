@@ -216,7 +216,9 @@
 //!   Selected NBAs merge only their selected bits at commit time.
 //!   Continuous and gate drivers capture inertial updates independently of
 //!   their evaluation processes. See `docs/sim_features.md` for supported
-//!   timing forms and remaining boundaries.
+//!   timing forms and remaining boundaries. Program process identity is
+//!   retained in the IR so program initial processes launch in Reactive and
+//!   `$exit` remains a typed runtime operation.
 
 use std::collections::{HashMap, HashSet};
 
@@ -343,6 +345,7 @@ fn generate_from_db_with_opts_impl(
         return Err("simulation validation failed without an issue".to_owned());
     }
     let mut cg = Codegen::new(&semantic);
+    cg.validate_program_constructs()?;
     let tops = cg.collect_design()?;
     if tops.is_empty() {
         return Err("no top modules in the elaborated design".to_string());

@@ -392,6 +392,11 @@ pub struct Db {
     /// Native detail text retained alongside [`semantic_kinds`] for
     /// source-located diagnostics about otherwise unsupported nodes.
     semantic_details: Vec<String>,
+    /// Elaborated module-instance/definition IDs whose definition is a
+    /// SystemVerilog program.  Program identity is kept as owned semantic
+    /// metadata rather than inferred from names or source text so simulator
+    /// scheduling can distinguish it after the Slang snapshot is released.
+    program_instances: HashSet<NodeId>,
     tops: Vec<NodeId>,
     flat_modules: Vec<NodeId>,
     packages: Vec<NodeId>,
@@ -3253,6 +3258,7 @@ impl Db {
             overridden_parameters: HashSet::new(),
             semantic_kinds: Vec::new(),
             semantic_details: Vec::new(),
+            program_instances: HashSet::new(),
             tops: Vec::new(),
             flat_modules: Vec::new(),
             packages: Vec::new(),
@@ -3304,6 +3310,7 @@ impl Db {
             overridden_parameters: HashSet::new(),
             semantic_kinds: Vec::new(),
             semantic_details: Vec::new(),
+            program_instances: HashSet::new(),
             tops,
             flat_modules: Vec::new(),
             packages: Vec::new(),
@@ -3382,6 +3389,18 @@ impl Db {
             .semantic_nodes
             .iter()
             .map(|semantic| semantic.detail.clone())
+            .collect();
+        let program_instances = snapshot
+            .semantic_nodes
+            .iter()
+            .enumerate()
+            .filter(|(_, semantic)| {
+                matches!(
+                    semantic.kind,
+                    SemanticKind::Instance | SemanticKind::Definition
+                ) && semantic.definition_kind == Some(SemanticDefinitionKind::Program)
+            })
+            .map(|(index, _)| NodeId::from_index(index))
             .collect();
         let mut arrays = HashMap::new();
         let mut event_arrays = HashMap::new();
@@ -3983,6 +4002,7 @@ impl Db {
             overridden_parameters,
             semantic_kinds,
             semantic_details,
+            program_instances,
             tops,
             flat_modules,
             packages,
@@ -4054,6 +4074,13 @@ impl Db {
     /// Native detail retained for diagnostics about a captured node.
     pub fn semantic_detail(&self, id: NodeId) -> Option<&str> {
         self.semantic_details.get(id.index()).map(String::as_str)
+    }
+
+    /// Whether an elaborated instance or definition has program-block
+    /// semantics.  Synthetic test databases do not carry native definition
+    /// metadata and therefore report `false`.
+    pub fn is_program_instance(&self, id: NodeId) -> bool {
+        self.program_instances.contains(&id)
     }
 
     pub(crate) fn semantic_metadata_lengths(&self) -> (usize, usize) {

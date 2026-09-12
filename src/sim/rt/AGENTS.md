@@ -66,9 +66,12 @@ the generated `model.c` into a standalone executable and is deliberately
   double assignments, typed packed/real dependency notifications, nonblocking
   named-event NBA triggers, net resolution,
   force/release, region callbacks, sampled-value views, and
-  `$display`/`$monitor`/`$strobe`/`$finish`/`$time`. Generated loop back-edges
-  call a cooperative budget point so a coroutine that never yields cannot
-  monopolize the host; the diagnostic retains the process source location.
+  `$display`/`$monitor`/`$strobe`/`$finish`/`$exit`/`$time`. Program processes
+  are launched in Reactive and counted through natural completion or `$exit`
+  before the implicit finish; fork children inherit that program lifecycle.
+  Generated loop back-edges call a cooperative budget point so a coroutine
+  that never yields cannot monopolize the host; the diagnostic retains the
+  process source location.
   Completed fork parents remain alive until detached descendants finish;
   process-table slots are reused, and allocations are released on scheduler
   exit or reinitialization.

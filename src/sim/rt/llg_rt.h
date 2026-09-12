@@ -505,16 +505,25 @@ void llg_monitor_set(int on);
 
 // Spawn one process; `fn` must never return without calling `llg_proc_done`.
 llg_proc_t* llg_spawn(void (*fn)(llg_proc_t*), const char* name);
-// Spawn a process directly into an explicit execution region. This is the
-// runtime hook used by future assertion/program/VPI lowering; ordinary HDL
-// processes use llg_spawn (ACTIVE).
+// Spawn a non-program process directly into an explicit execution region.
+// This remains the runtime hook for assertion/VPI lowering; ordinary HDL
+// processes use llg_spawn (ACTIVE), while programs use the typed entry below.
 llg_proc_t* llg_spawn_in_region(void (*fn)(llg_proc_t*), const char* name,
                                 llg_region_t region);
+// Spawn a program process into a reactive region and account for its
+// completion.  `$exit` and natural termination use that accounting to stop
+// the simulation after all program processes (including fork children) end.
+llg_proc_t* llg_spawn_program_in_region(void (*fn)(llg_proc_t*),
+                                        const char* name,
+                                        llg_region_t region);
 // Return the activation frame retained by a process, or NULL for ordinary
 // static-storage processes. The returned pointer is borrowed from `self`.
 llg_frame_t* llg_proc_frame(llg_proc_t* self);
 // Terminate the current process (wraps aco_exit; never returns).
 _Noreturn void llg_proc_done(llg_proc_t* self);
+// Terminate all program processes and descendants, then perform the implicit
+// `$finish` transition.  Lowering only emits this call inside a program.
+_Noreturn void llg_program_exit(void);
 // Cooperative generated-loop interruption point.  It returns while the
 // current process remains within its zero-time budget; on exhaustion it emits
 // a source-bearing diagnostic and exits that coroutine without returning.

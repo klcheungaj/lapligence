@@ -929,13 +929,22 @@ fn render_main(execution: &ExecutionModel) -> Result<String, String> {
             .find(|p| p.c_name == fname)
             .map(process_runtime_name)
             .unwrap_or_else(|| label.to_owned());
-        let region = execution
+        let process = execution
             .processes()
             .iter()
-            .find(|process| model.processes[process.semantic_process].c_name == fname)
+            .find(|process| model.processes[process.semantic_process].c_name == fname);
+        let region = process
             .map(|process| process.region)
             .unwrap_or(ScheduleRegion::Active);
-        if region == ScheduleRegion::Active {
+        let is_program =
+            process.is_some_and(|process| model.processes[process.semantic_process].is_program());
+        if is_program {
+            out.push_str(&format!(
+                "    llg_spawn_program_in_region({fname}, {}, {});\n",
+                c_string_literal(&runtime_name),
+                region.runtime_symbol()
+            ));
+        } else if region == ScheduleRegion::Active {
             out.push_str(&format!(
                 "    llg_spawn({fname}, {});\n",
                 c_string_literal(&runtime_name)
@@ -1141,6 +1150,7 @@ mod tests {
             writes: Vec::new(),
             pre_fns: Vec::new(),
             body: controls,
+            program: false,
             origin: crate::sim::semantic::Origin::Synthetic {
                 reason: "emitter fixture".to_owned(),
             },

@@ -3273,6 +3273,7 @@ impl Validator<'_> {
             | IrStmt::WaveFlush
             | IrStmt::Finish
             | IrStmt::FinishControl { .. }
+            | IrStmt::ProgramExit
             | IrStmt::StopControl { .. }
             | IrStmt::Label(_)
             | IrStmt::Goto(_)
@@ -3635,6 +3636,7 @@ mod tests {
             body: vec![IrStmt::Release {
                 lhs: IrLhs::Whole(1),
             }],
+            program: false,
             origin: crate::sim::semantic::Origin::Synthetic {
                 reason: "validation fixture".to_owned(),
             },

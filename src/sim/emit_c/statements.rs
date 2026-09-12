@@ -1191,6 +1191,7 @@ fn render_stmt_scoped(
             verbosity,
             c_string_literal(location)
         ),
+        IrStmt::ProgramExit => "    llg_program_exit();\n".to_string(),
         IrStmt::StopControl {
             verbosity,
             location,

@@ -142,6 +142,9 @@ coverage for the same rule IDs.
   `llg` and `llg --no-opt`, asserting implicit sensitivity, time-zero
   execution, function dependencies, writer/timing contracts, and legal
   latch/flip-flop controls.
+- `sim_program.rs` runs checked-in program-block fixtures through both
+  optimizer modes, asserting Reactive/Re-Inactive/Re-NBA ordering, natural
+  completion, `$exit` child cleanup/finals, and prohibited members.
 - `emit_decoupling.rs` pins the pipeline shape with architectural greps:
   `sim::emit_c` consumes only the execution IR, while `sim::codegen` lowers
   the semantic model without emitting runtime C calls directly.

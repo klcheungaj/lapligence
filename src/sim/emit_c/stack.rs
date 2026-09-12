@@ -587,6 +587,7 @@ fn stmt_temp_slots(stmt: &IrStmt) -> Result<u64, String> {
         | IrStmt::WaveFlush
         | IrStmt::Finish
         | IrStmt::FinishControl { .. }
+        | IrStmt::ProgramExit
         | IrStmt::StopControl { .. }
         | IrStmt::PrintTimescale { .. }
         | IrStmt::Label(_)

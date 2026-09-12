@@ -31,6 +31,10 @@
   excluding written storage; plain `@*` keeps Verilog call-site behavior.
   Single-writer, timing, and flip-flop event or assignment violations fail
   before emission, independently of lint.
+- **Program blocks:** Slang-owned program identity is retained through the
+  database and process IR. Initial processes launch in Reactive, while
+  prohibited always/continuous/primitive/generate/nested-instance members
+  fail before lowering; `$exit` is admitted only from a program process.
 - **Evaluated events:** Explicit event expressions retain only their expression
   and qualifier dependencies. Read-only input/`const ref` function calls are
   checked transitively for disallowed effects, and automatic locals/formals are

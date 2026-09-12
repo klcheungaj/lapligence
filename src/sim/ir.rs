@@ -2518,6 +2518,9 @@ pub enum IrStmt {
         verbosity: u8,
         location: String,
     },
+    /// `$exit` terminates all program processes and requests the implicit
+    /// `$finish` transition.  Lowering admits it only in a program process.
+    ProgramExit,
     /// `$stop` with its validated diagnostic level and source call site.
     /// Unlike [`Self::FinishControl`], this yields the issuing coroutine and
     /// leaves the scheduler state and pending work intact until the runtime
@@ -2743,6 +2746,10 @@ pub struct IrProcess {
     pub(in crate::sim) writes: Vec<IrDependency>,
     pub(in crate::sim) pre_fns: Vec<IrPreFn>,
     pub(in crate::sim) body: Vec<IrStmt>,
+    /// `true` for a process declared in an elaborated SystemVerilog program
+    /// block.  Program processes are launched in Reactive and retain their
+    /// identity through optimization and C emission for lifecycle accounting.
+    pub(in crate::sim) program: bool,
     pub(in crate::sim) origin: crate::sim::semantic::Origin,
 }
 
@@ -2822,6 +2829,7 @@ impl IrProcess {
             writes,
             pre_fns,
             body,
+            program: false,
             origin,
         }
     }
@@ -2848,6 +2856,18 @@ impl IrProcess {
     }
     pub fn body(&self) -> &[IrStmt] {
         &self.body
+    }
+
+    /// Whether this process belongs to a SystemVerilog program block.
+    pub fn is_program(&self) -> bool {
+        self.program
+    }
+
+    /// Mark this process as owned by a program block.  The code generator is
+    /// the only production caller; synthetic IR remains module/Active by
+    /// default.
+    pub(in crate::sim) fn set_program(&mut self, program: bool) {
+        self.program = program;
     }
 
     pub fn origin(&self) -> &crate::sim::semantic::Origin {

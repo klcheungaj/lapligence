@@ -244,6 +244,8 @@ struct llg_proc {
     llg_frame_t* frame;            // retained activation storage, when captured
     llg_activation_t* activation_top; // innermost named block/task scope
     llg_rng_state_t rng;           // process-local random stream
+    int program;                   // process belongs to a program block
+    int program_live;              // still counted toward program completion
     uint64_t budget_steps;         // loop back-edges at `budget_time`
     uint64_t budget_time;          // time step for the process budget
 };
@@ -630,6 +632,8 @@ typedef struct {
     const char* last_process_name; // survives completed-process reclamation
     llg_proc_t* all_procs[LLG_MAX_PROCS];
     int n_procs;
+    int program_processes;          // live program processes, including forks
+    int program_completion_pending; // finish after current-slot work drains
     llg_proc_t* retired_procs; // cancelled coroutines awaiting a safe destroy point
     llg_fork_group_t* zombie_groups; // completed/killed groups awaiting teardown
     llg_activation_t* activations; // active named block/task invocations
@@ -948,6 +952,21 @@ static void unregister_proc(llg_proc_t* p) {
 static llg_proc_t* llg_current(void) {
     return aco_gtls_co && aco_gtls_co != g.main_co
                ? (llg_proc_t*)aco_get_arg() : NULL;
+}
+
+// A program process is counted until it naturally completes or is cancelled.
+// The transition to zero is the implicit `$finish` boundary required after
+// every program process (including inherited fork children) has terminated.
+static void release_program_process(llg_proc_t* process) {
+    if (!process || !process->program_live) return;
+    process->program_live = 0;
+    if (g.program_processes > 0) g.program_processes--;
+    if (g.program_processes == 0 && !g.finish && !g.config_error) {
+        // A just-completed process may still own a same-slot Re-NBA. Defer
+        // the implicit finish until the scheduler drains all current-slot
+        // design/reactive work and postponed output.
+        g.program_completion_pending = 1;
+    }
 }
 
 /* Calls made while a generated process is running use that process's stream.
@@ -1460,6 +1479,7 @@ static void llg_proc_entry(void);               // defined in the public API sec
 static void llg_kill_proc(llg_proc_t* p) {
     if (!p || p->killed) return;
     p->killed = 1;
+    release_program_process(p);
     llg_nba_t* n = p->nba_head;
     while (n) {
         llg_nba_t* nx = n->next;
@@ -1600,6 +1620,22 @@ static void llg_fork_group_child_done(llg_fork_group_t* grp) {
     }
 }
 
+// `$exit` may be issued by a program fork child.  Detach that active child
+// before cancelling its program parent; otherwise the ordinary tree-kill path
+// would recurse into the coroutine that is currently executing.
+static void detach_current_from_fork_group(llg_proc_t* process) {
+    if (!process || !process->grp) return;
+    llg_fork_group_t* grp = process->grp;
+    for (llg_fork_child_t* child = grp->children; child; child = child->next) {
+        if (child->proc != process) continue;
+        child->proc = NULL;
+        process->grp = NULL;
+        llg_fork_group_child_done(grp);
+        return;
+    }
+    process->grp = NULL;
+}
+
 static llg_fork_group_t* llg_fork_group_new_impl(int join_kind,
                                                   int has_target,
                                                   uint32_t declaration,
@@ -1662,6 +1698,9 @@ static llg_proc_t* llg_fork_impl(void (*fn)(llg_proc_t*), const char* name,
     p->frame = frame;
     llg_frame_retain(frame);
     llg_rng_state_child(&grp->parent->rng, &p->rng);
+    p->program = grp->parent->program;
+    p->program_live = p->program;
+    if (p->program) g.program_processes++;
     p->budget_time = g.now;
     // aco_create from inside a coroutine is safe (mallocs/zeroes an aco_t and
     // sets registers only; no global state).  Children yield to g.main_co, the
@@ -1735,6 +1774,36 @@ void llg_disable_fork(void) {
     if (!current) return;
     llg_kill_proc_groups(current);
     reap_retired_procs();
+}
+
+_Noreturn void llg_program_exit(void) {
+    llg_proc_t* current = llg_current();
+    if (!current || !current->program) {
+        fprintf(stderr, "llg: $exit is only valid in a program process\n");
+        llg_last_failure = 1;
+        g.finish = 1;
+        abort();
+    }
+
+    // `$exit` terminates every program initial thread and its descendants.
+    // Cancel current descendants first, then detach the active caller from an
+    // enclosing program fork group before walking all remaining program trees.
+    llg_kill_proc_groups(current);
+    detach_current_from_fork_group(current);
+    for (;;) {
+        llg_proc_t* victim = NULL;
+        for (int i = 0; i < g.n_procs; i++) {
+            llg_proc_t* process = g.all_procs[i];
+            if (process && process != current && process->program) {
+                victim = process;
+                break;
+            }
+        }
+        if (!victim) break;
+        llg_kill_proc_tree(victim);
+    }
+    g.finish = 1;
+    llg_proc_done(current);
 }
 
 static int activation_has_disabled_ancestor(llg_activation_t* activation) {
@@ -3639,14 +3708,17 @@ int llg_rt_process_count(void) {
     return count;
 }
 
-llg_proc_t* llg_spawn_in_region(void (*fn)(llg_proc_t*), const char* name,
-                                llg_region_t region) {
+static llg_proc_t* spawn_in_region(void (*fn)(llg_proc_t*), const char* name,
+                                   llg_region_t region, int program) {
     if (g.config_error || !fn || !region_valid(region)) return NULL;
     if (!callback_region_allowed(region, 0)) return NULL;
     llg_proc_t* p = (llg_proc_t*)llg_checked_calloc(
         1, sizeof(llg_proc_t), "process");
     p->name = name;
     p->fn = fn;
+    p->program = program;
+    p->program_live = program;
+    if (program) g.program_processes++;
     llg_rng_state_child(&g.rng_root, &p->rng);
     p->budget_time = g.now;
     p->region = region;
@@ -3654,6 +3726,24 @@ llg_proc_t* llg_spawn_in_region(void (*fn)(llg_proc_t*), const char* name,
     register_proc(p);
     enqueue_region(p, region);
     return p;
+}
+
+llg_proc_t* llg_spawn_in_region(void (*fn)(llg_proc_t*), const char* name,
+                                llg_region_t region) {
+    return spawn_in_region(fn, name, region, 0);
+}
+
+llg_proc_t* llg_spawn_program_in_region(void (*fn)(llg_proc_t*),
+                                         const char* name,
+                                         llg_region_t region) {
+    if (region != LLG_REGION_REACTIVE) {
+        fprintf(stderr,
+                "llg: program process must be spawned in a reactive region\n");
+        llg_last_failure = 1;
+        g.finish = 1;
+        return NULL;
+    }
+    return spawn_in_region(fn, name, region, 1);
 }
 
 llg_proc_t* llg_spawn(void (*fn)(llg_proc_t*), const char* name) {
@@ -3678,6 +3768,7 @@ _Noreturn void llg_proc_done(llg_proc_t* self) {
     llg_frame_release(self->frame);
     self->frame = NULL;
     if (self->grp) llg_fork_group_child_done(self->grp);
+    release_program_process(self);
     aco_exit(); // never returns
 }
 
@@ -7615,6 +7706,10 @@ void llg_rt_run(void) {
         if (g.finish) break;
         if (!run_postponed_set()) break;
         if (g.finish) break;
+        if (g.program_completion_pending && g.program_processes == 0) {
+            g.finish = 1;
+            break;
+        }
 
         int have_future_event = g.timed_head || g.delayed_nbas ||
                                 g.inertial_pending || g.callbacks;

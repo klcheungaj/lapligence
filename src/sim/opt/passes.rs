@@ -2917,6 +2917,7 @@ mod tests {
                 writes: Vec::new(),
                 pre_fns: Vec::new(),
                 body,
+                program: false,
                 origin: crate::sim::semantic::Origin::Synthetic {
                     reason: "optimizer fixture".to_owned(),
                 },
