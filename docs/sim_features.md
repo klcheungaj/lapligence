@@ -340,7 +340,7 @@ Verilog era — display family:
 
 - ✅ **$display** — §1364-2001 17.1.1 **[1995]**
 - ✅ **$write** — §1364-2001 17.1.1 **[1995]** same formatting as `$display`, without an appended newline (sim_monitor.rs)
-- ✅ **Typed format specs** `%d/%h/%x/%b/%o/%c/%u/%z/%v/%t`, `%f/%e/%g`, `%s`, `%m`, and `%l` with the width/precision grammar admitted by Slang; packed X/Z digits, strength text, real/string values, and exact `%%` are preserved across display/write/strobe/monitor — §1364-2001 17.1.1.2 / §1800-2009 21.2 **[1995/SV-2005]**. `%p` is limited to scalar packed/string values; aggregate pattern values and `$sformat*` remain unsupported
+- ✅ **Typed format specs** `%d/%h/%x/%b/%o/%c/%u/%z/%v/%t`, `%f/%e/%g`, `%s`, `%m`, and `%l` with the width/precision grammar admitted by Slang; packed X/Z digits, strength text, real/string values, and exact `%%` are preserved across display/write/strobe/monitor and string-producing formatters — §1364-2001 17.1.1.2 / §1800-2009 21.2 **[1995/SV-2005]**. `%p` is limited to scalar packed/string values; aggregate pattern values remain unsupported
 - ✅ **$strobe** observes settled values after active/inactive/NBA iteration, including zero-delay drivers triggered by NBAs — §1364-2001 17.1.2 **[1995]** (sim_monitor.rs, sim_partial_features.rs)
 - ✅ **$monitor/$monitoron/$monitoroff** one active monitor; registration and re-enabling queue one report at the settled observation point, same-slot changes coalesce, and packed, real, and native-string arguments trigger re-evaluation on change — §1364-2001 17.1.3 **[1995]** (sim_monitor.rs, sim_inout.rs). Aggregate/container values remain outside the bounded formatter
 - ✅ **b/o/h console task variants** `$displayb/o/h`, `$writeb/o/h`, `$strobeb/o/h`, `$monitorb/o/h` — §1364-2001 17.1.1–17.1.3 **[1995]** unformatted integral arguments use the variant radix, while explicit format directives retain their own conversion (sim_monitor.rs)
@@ -348,7 +348,7 @@ Verilog era — display family:
 File IO:
 
 - ✅ **Core file output** `$fopen/$fclose/$fdisplay/$fwrite/$fstrobe/$fmonitor` — §1364-2001 17.2.1–17.2.2 / §1800-2009 21.3.1–21.3.2 **[1995/SV-2005]** portable owned descriptors, standard-stream masks, multichannel fan-out, typed radix formatting, and postponed file monitor/strobe output are covered in both optimizer modes; formatted reads remain separate
-- ❌ **$sformat/$swrite** — §1364-2001 17.2.3 **[2001]** unsupported-task reject
+- ✅ **$sformat/$swrite** and radix variants — §1364-2001 17.2.3 **[2001]** use the shared typed formatter, preserve source-order argument evaluation, and write native string or packed string-like destinations with normal width truncation/padding
 - ❌ **Formatted reads** `$fscanf/$sscanf/$fread/$fgets/$fgetc/$ungetc` — §1364-2001 17.2.4 **[2001]** unsupported-task reject
 - ✅ **File positioning/status** `$ftell/$fseek/$rewind/$fflush/$ferror/$feof` — §1364-2001 17.2.5–17.2.7 / §1800-2009 21.3.5–21.3.8 **[2001/SV-2005]** seek, rewind, flush, EOF/error reporting, output-string ownership, and invalid/closed descriptor status use checked portable host-I/O paths; formatted reads remain separate
 
@@ -394,7 +394,7 @@ SystemVerilog era:
   the constant finish number 0/1/2; nonfatal levels continue execution.
   Severity counters are reported with level-2 finish statistics — §1800-2009
   20.9/20.10 **[SV-2005]** (sim_partial_features/severity.rs)
-- ❌ **$sformatf** — §1800-2009 21.3 **[SV-2005]** unsupported-function reject
+- ✅ **$sformatf** — §1800-2009 21.3.3 **[SV-2005]** returns an owned formatted string, supports dynamic and nested format expressions, and evaluates typed arguments once in source order
 - ✅ **Bit-vector helpers** `$onehot/$onehot0/$countones/$isunknown` — §1800-2009 20.6 **[SV-2005]** packed operands through the generated model width, X/Z-aware counting, parameters and constant declaration initializers, single argument evaluation, and combinational dependencies; real operands rejected (sim_bit_queries.rs, optimization on/off)
 - ❌ **Sampled-value functions** `$rose/$fell/$stable/$past/$sampled` — §1800-2009 16.9.3 **[SV-2005]** unsupported-function reject
 - ✅ **Shortreal conversion** `$bitstoshortreal/$shortrealtobits` — §1800-2009 20.5 **[SV-2005]** 32-bit IEEE-754 reinterpretation and shortreal rounding; `$bitstoshortreal` requires 32 bits and maps X/Z positions to zero (sim_real_conversions.rs, optimization on/off)
@@ -462,8 +462,8 @@ Tracked so nothing is lost; all de-prioritized behind RTL-simulation support.
 
 ## Remaining-work inventory
 
-The original audit IDs are stable. This inventory currently contains 66 remaining
-groups (26 missing, 40 partial); groups 9, 38, 57, 58, 59 and 60 are completed. Counts refer to grouped
+The original audit IDs are stable. This inventory currently contains 65 remaining
+groups (25 missing, 40 partial); groups 9, 38, 50, 57, 58, 59 and 60 are completed. Counts refer to grouped
 capabilities, not individual keywords, system functions or standard clauses.
 
 
@@ -517,8 +517,8 @@ capabilities, not individual keywords, system functions or standard clauses.
 | 46 | Missing | Cross-instance subroutine calls | Hierarchical calls to tasks/functions outside the calling instance, including interface/package subroutine contexts. |
 | 47 | Partial | Subroutine copy-out and storage | General unpacked/aggregate storage plus string/event output/inout call paths and legal NBAs to persistent unpacked subroutine storage remain. Chandle output/inout/ref/const-ref aliases and bounded delayed-task lifetime are covered. Packed and scalar real/shortreal static function output/inout expression copy-out is covered; NBAs to automatic variables are language-illegal and excluded. |
 | 48 | Partial | File I/O | Owned standard-stream/ordinary-file descriptors, multichannel output, `$fopen/$fclose/$fdisplay/$fwrite/$fstrobe/$fmonitor`, and `$ftell/$fseek/$rewind/$fflush/$ferror/$feof` are covered in both optimizer modes. `$fscanf/$sscanf/$fread/$fgets/$fgetc/$ungetc` remain missing. |
-| 49 | Partial | Display families and formatting | Typed console and file display/write/strobe/monitor formatting preserves packed, real, and owned string values, supports the legal `%d/%h/%x/%b/%o/%c/%u/%z/%v/%t/%f/%e/%g/%s/%m/%l` conversions, width/precision directives, exact `%%` escaping, and HDL hierarchy names. Deferred string/real snapshots retain safe ownership, monitor object dependencies trigger settled reports, and strobes retain issue order; aggregate pattern values and `$sformat*` remain separate features. |
-| 50 | Missing | String formatting tasks/functions | `$sformat`, `$swrite` and `$sformatf`, including their applicable base variants. |
+| 49 | Partial | Display families and formatting | Typed console, file and string formatting preserves packed, real, and owned string values, supports the legal `%d/%h/%x/%b/%o/%c/%u/%z/%v/%t/%f/%e/%g/%s/%m/%l` conversions, width/precision directives, exact `%%` escaping, and HDL hierarchy names. Deferred string/real snapshots retain safe ownership, monitor object dependencies trigger settled reports, and strobes retain issue order; aggregate pattern values remain outside the bounded formatter. |
+| 50 | Completed | String formatting tasks/functions | `$sformat`, `$swrite` and their radix variants, plus `$sformatf`, use typed owned arguments and the shared formatter. Native string and packed string-like destinations receive normal truncation/padding; dynamic/nested format expressions and source-order, exactly-once arguments are covered by `sim_h04_string_format.rs`. |
 | 51 | Missing | Memory file loading and writing | `$readmemh/$readmemb/$writememh/$writememb`. |
 | 52 | Partial | Real-time reporting and time formatting | `$timeformat` remains missing. `$realtime` returns fractional time in the calling module's units; `$time` and `$stime` round to the nearest local unit (exact halves upward) before `$stime` applies its low-32-bit result width. |
 | 53 | Partial | Simulation suspension | `$stop` supports resumable coroutine suspension and explicit CLI resume/exit policy; a full interactive debugger/control protocol is outside this boundary. |

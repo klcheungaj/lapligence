@@ -64,6 +64,14 @@ pub enum IrStringExpr {
         receiver: Box<IrExpr>,
         members: Vec<IrEnumMember>,
     },
+    /// Format an owned string with the shared typed display formatter.  The
+    /// format expression and every argument are evaluated in source order;
+    /// the returned string owns its storage independently of all inputs.
+    Format {
+        format: Box<IrStringExpr>,
+        args: Vec<IrDisplayArg>,
+        scope: String,
+    },
     Case(Box<IrStringExpr>, bool),
     Substr(Box<IrStringExpr>, Box<IrExpr>, Box<IrExpr>),
 }
@@ -207,6 +215,24 @@ impl IrStringExpr {
         model: &super::IrModel,
         string_return: Option<bool>,
     ) -> Result<(), super::IrValidationError> {
+        if let Self::Format {
+            format,
+            args,
+            scope,
+        } = self
+        {
+            if scope.is_empty() {
+                return Err(super::IrValidationError::new(
+                    "string format",
+                    "format scope must not be empty",
+                ));
+            }
+            format.validate(model, string_return)?;
+            for arg in args {
+                arg.validate(model, string_return, "string format argument")?;
+            }
+            return Ok(());
+        }
         let mut valid = true;
         self.expressions(&mut |expr| valid &= !expr.is_real());
         if !valid {
@@ -416,6 +442,12 @@ impl IrStringExpr {
                     visit(&member.value);
                 }
             }
+            Self::Format { format, args, .. } => {
+                format.expressions(visit);
+                for arg in args {
+                    arg.expressions(visit);
+                }
+            }
             Self::Case(value, _) => value.expressions(visit),
             Self::Substr(value, first, last) => {
                 value.expressions(visit);
@@ -456,6 +488,12 @@ impl IrStringExpr {
                 visit(receiver);
                 for member in members {
                     visit(&mut member.value);
+                }
+            }
+            Self::Format { format, args, .. } => {
+                format.expressions_mut(visit);
+                for arg in args {
+                    arg.expressions_mut(visit);
                 }
             }
             Self::Case(value, _) => value.expressions_mut(visit),

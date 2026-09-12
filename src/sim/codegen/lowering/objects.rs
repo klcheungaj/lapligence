@@ -1,8 +1,8 @@
 //! Lower non-integral values without encoding their storage as packed bits.
 use super::*;
 use crate::sim::ir::{
-    IrChandleExpr, IrEnumMember, IrEnumMethod, IrEnumQuery, IrObject, IrObjectQuery, IrObjectStmt,
-    IrObjectType, IrStringExpr,
+    IrChandleExpr, IrDisplayArg, IrEnumMember, IrEnumMethod, IrEnumQuery, IrObject, IrObjectQuery,
+    IrObjectStmt, IrObjectType, IrStringExpr,
 };
 
 impl Codegen<'_> {
@@ -177,7 +177,7 @@ impl Codegen<'_> {
             return true;
         }
         match self.kind(node) {
-            NodeKind::SysCall { name } if name == "$typename" => true,
+            NodeKind::SysCall { name } if name == "$typename" || name == "$sformatf" => true,
             NodeKind::Param { ty, .. } => ty.kind == "string",
             NodeKind::Expr(ExprKind::Ref {
                 target: Some(target),
@@ -800,6 +800,22 @@ impl Codegen<'_> {
             return Err("chandle cannot be converted to string".to_owned());
         }
         match self.kind(node) {
+            NodeKind::SysCall { name } if name == "$sformatf" => {
+                let args = self.node(node).children.clone();
+                let Some((format, values)) = args.split_first() else {
+                    return Err(format!("$sformatf requires a format argument in `{path}`"));
+                };
+                let format = self.lower_string(path, *format)?;
+                let args = values
+                    .iter()
+                    .map(|value| self.lower_format_arg(path, *value))
+                    .collect::<Result<Vec<_>, _>>()?;
+                Ok(IrStringExpr::Format {
+                    format: Box::new(format),
+                    args,
+                    scope: path.to_owned(),
+                })
+            }
             NodeKind::SysCall { name } if name == "$typename" => {
                 let [argument] = self.node(node).children.as_slice() else {
                     return Err(format!("$typename requires exactly one argument in `{path}`"));
@@ -864,6 +880,36 @@ impl Codegen<'_> {
             }
             _ => Err(format!("string assignment requires a string expression, literal, or explicit cast in `{path}`")),
         }
+    }
+
+    /// Lower one argument retained by the shared typed formatter.  Native
+    /// strings remain owned string expressions and reals never pass through a
+    /// packed conversion.
+    pub(super) fn lower_format_arg(
+        &mut self,
+        path: &str,
+        node: NodeId,
+    ) -> Result<IrDisplayArg, String> {
+        if self.is_string_expr(path, node)
+            || matches!(
+                self.kind(node),
+                NodeKind::Expr(ExprKind::Constant {
+                    const_type: ConstantType::String,
+                    ..
+                })
+            )
+            || self
+                .query_descriptor(node)
+                .is_some_and(|descriptor| descriptor.shape == TypeShape::String)
+        {
+            return Ok(IrDisplayArg::String(self.lower_string(path, node)?));
+        }
+        let value = self.lower_expr(path, node)?;
+        Ok(if value.is_real() {
+            IrDisplayArg::Real(value)
+        } else {
+            IrDisplayArg::Packed(value)
+        })
     }
 
     pub(super) fn lower_object_query(

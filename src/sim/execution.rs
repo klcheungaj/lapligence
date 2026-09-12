@@ -1327,6 +1327,20 @@ fn collect_string_effects(
                 collect_expression_effects(ir, &member.value, effects, visited_calls);
             }
         }
+        IrStringExpr::Format { format, args, .. } => {
+            collect_string_effects(ir, format, effects, visited_calls);
+            for arg in args {
+                match arg {
+                    crate::sim::ir::IrDisplayArg::Packed(value)
+                    | crate::sim::ir::IrDisplayArg::Real(value) => {
+                        collect_expression_effects(ir, value, effects, visited_calls)
+                    }
+                    crate::sim::ir::IrDisplayArg::String(value) => {
+                        collect_string_effects(ir, value, effects, visited_calls)
+                    }
+                }
+            }
+        }
         IrStringExpr::Literal(_)
         | IrStringExpr::Read(_)
         | IrStringExpr::LocalRead(_)

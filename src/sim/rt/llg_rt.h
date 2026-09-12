@@ -310,6 +310,10 @@ void llg_display_typed(const char* fmt, llg_fmt_arg_t* args, int n,
                        const char* scope);
 void llg_write_typed(const char* fmt, llg_fmt_arg_t* args, int n,
                      const char* scope);
+// Format into a newly-owned string. The format value and argument array are
+// consumed exactly once, including destruction of every owned string member.
+llg_string_t llg_string_format_typed(llg_string_t format, llg_fmt_arg_t* args,
+                                     int n, const char* scope);
 // Runtime severity tasks use the same typed formatter as display tasks and
 // write one source-context diagnostic to stderr. The argument array is
 // consumed exactly once, including destruction of owned strings.

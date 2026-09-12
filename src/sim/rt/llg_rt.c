@@ -5633,6 +5633,18 @@ static char* llg_typed_line_alloc(const char* fmt, llg_fmt_arg_t* args, int n,
     return out;
 }
 
+llg_string_t llg_string_format_typed(llg_string_t format, llg_fmt_arg_t* args,
+                                     int n, const char* scope) {
+    const char* text = format.data ? format.data : "";
+    size_t length = 0;
+    char* output = llg_typed_line_alloc(text, args, n, scope, &length);
+    llg_string_t result = llg_string_bytes(output, length);
+    free(output);
+    llg_string_destroy(&format);
+    llg_fmt_args_destroy(args, n);
+    return result;
+}
+
 static void llg_print_typed_to(uint32_t descriptor, const char* fmt,
                                llg_fmt_arg_t* args, int n, const char* scope,
                                int newline) {

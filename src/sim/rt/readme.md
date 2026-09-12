@@ -22,6 +22,8 @@
   must opt in with `LLG_ALLOW_SYSTEM`, and enabled calls return the host C
   `system()` status without normalizing shell or platform behavior. Its omitted
   form preserves `system(NULL)`, distinct from an explicit empty command.
+  `$swrite`/`$sformat`/`$sformatf` use the same typed formatter as display tasks;
+  formatted results own their bytes independently of source arguments.
   Hosted C targets are required; freestanding targets are unsupported.
   File output uses an owned 32-slot descriptor table: stdout/stderr masks,
   ordinary host files, multichannel fan-out, typed deferred output, and

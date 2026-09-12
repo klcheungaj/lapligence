@@ -1,4 +1,5 @@
 //! C rendering for non-integral objects. String expression results are owned.
+use super::constants::c_string_literal;
 use super::context::RCtx;
 use super::expressions::render_expr_impl;
 use crate::sim::ir::*;
@@ -137,6 +138,11 @@ pub(super) fn string(ctx: &RCtx<'_>, value: &IrStringExpr) -> Result<String, Str
             code.push_str("_llg_enum_name_result; })");
             code
         }
+        IrStringExpr::Format {
+            format,
+            args,
+            scope,
+        } => render_string_format(ctx, format, args, scope)?,
         IrStringExpr::Case(value, upper) => format!(
             "llg_string_case({}, {})",
             string(ctx, value)?,
@@ -149,6 +155,54 @@ pub(super) fn string(ctx: &RCtx<'_>, value: &IrStringExpr) -> Result<String, Str
             render_expr_impl(ctx, last)?.code
         ),
     })
+}
+
+fn render_string_format(
+    ctx: &RCtx<'_>,
+    format: &IrStringExpr,
+    args: &[IrDisplayArg],
+    scope: &str,
+) -> Result<String, String> {
+    let format = string(ctx, format)?;
+    let scope = c_string_literal(scope);
+    if args.is_empty() {
+        return Ok(format!(
+            "llg_string_format_typed({format}, NULL, 0, {scope})"
+        ));
+    }
+
+    // C does not specify the evaluation order of aggregate initializers.
+    // Assign each argument in its own statement so calls with side effects
+    // observe the same left-to-right order as the HDL source.
+    let mut statements = Vec::with_capacity(args.len() + 3);
+    statements.push(format!("llg_string_t _llg_format = {format};"));
+    statements.push(format!(
+        "llg_fmt_arg_t _llg_format_args[{}] = {{0}};",
+        args.len()
+    ));
+    for (index, arg) in args.iter().enumerate() {
+        let assignment = match arg {
+            IrDisplayArg::Packed(value) => format!(
+                "_llg_format_args[{index}].kind = LLG_FMT_PACKED;\n        _llg_format_args[{index}].value.packed = {};",
+                render_expr_impl(ctx, value)?.code
+            ),
+            IrDisplayArg::Real(value) => format!(
+                "_llg_format_args[{index}].kind = LLG_FMT_REAL;\n        _llg_format_args[{index}].value.real = {};",
+                render_expr_impl(ctx, value)?.code
+            ),
+            IrDisplayArg::String(value) => format!(
+                "_llg_format_args[{index}].kind = LLG_FMT_STRING;\n        _llg_format_args[{index}].value.string = {};",
+                string(ctx, value)?
+            ),
+        };
+        statements.push(assignment);
+    }
+    statements.push(format!(
+        "llg_string_t _llg_format_result = llg_string_format_typed(_llg_format, _llg_format_args, {}, {scope});",
+        args.len()
+    ));
+    statements.push("_llg_format_result;".to_owned());
+    Ok(format!("({{ {} }})", statements.join(" ")))
 }
 
 pub(super) fn chandle(ctx: &RCtx<'_>, value: &IrChandleExpr) -> Result<String, String> {

@@ -3734,6 +3734,32 @@ impl EmitCtx<'_, '_> {
             return Ok(vec![self.lower_stochastic_task(name, &args)?]);
         }
         match name {
+            "$swrite" | "$swriteb" | "$swriteo" | "$swriteh" => {
+                let Some((target, values)) = args.split_first() else {
+                    return Err(format!("{name} requires a destination in `{}`", self.path));
+                };
+                let value = self.lower_string_output_format(
+                    name,
+                    values,
+                    match name {
+                        "$swriteb" => IrDisplayRadix::Binary,
+                        "$swriteo" => IrDisplayRadix::Octal,
+                        "$swriteh" => IrDisplayRadix::Hex,
+                        _ => IrDisplayRadix::Decimal,
+                    },
+                )?;
+                Ok(vec![self.lower_string_format_target(*target, value)?])
+            }
+            "$sformat" => {
+                let [target, format, values @ ..] = args.as_slice() else {
+                    return Err(format!(
+                        "$sformat requires a destination and format in `{}`",
+                        self.path
+                    ));
+                };
+                let value = self.lower_explicit_string_format(name, *format, values)?;
+                Ok(vec![self.lower_string_format_target(*target, value)?])
+            }
             "$cast" => {
                 let status = self.cg.lower_dynamic_cast(&self.path, &args)?;
                 Ok(vec![IrStmt::DeclLocal {
@@ -4215,18 +4241,262 @@ impl EmitCtx<'_, '_> {
         Ok((c_fmt, display_args))
     }
 
-    fn lower_display_arg(&mut self, node: NodeId) -> Result<crate::sim::ir::IrDisplayArg, String> {
-        if self.cg.is_string_expr(&self.path, node) {
-            return Ok(crate::sim::ir::IrDisplayArg::String(
-                self.cg.lower_string(&self.path, node)?,
+    /// Lower a string-producing formatter used by `$swrite*`.  Its argument
+    /// list follows the display-task convention: literal strings are parsed
+    /// as format segments, while unformatted values use the task's radix
+    /// default.
+    fn lower_string_output_format(
+        &mut self,
+        name: &str,
+        args: &[NodeId],
+        default_radix: IrDisplayRadix,
+    ) -> Result<IrStringExpr, String> {
+        let lowered = args
+            .iter()
+            .map(|value| self.lower_display_arg(*value))
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut format = String::new();
+        let mut values = Vec::new();
+        let mut source_idx = 0usize;
+        while source_idx < args.len() {
+            if let Some(text) = self.literal_string(args[source_idx], name)? {
+                let remaining = &lowered[source_idx + 1..];
+                let (segment, consumed) =
+                    self.parse_format_text(name, &text, remaining, default_radix, false)?;
+                format.push_str(&segment);
+                values.extend(remaining.iter().take(consumed).cloned());
+                source_idx += consumed + 1;
+            } else {
+                let value = &lowered[source_idx];
+                format.push('%');
+                format.push(match value {
+                    crate::sim::ir::IrDisplayArg::Real(_) => 'f',
+                    crate::sim::ir::IrDisplayArg::String(_) => 's',
+                    crate::sim::ir::IrDisplayArg::Packed(_) => default_radix.specifier(),
+                });
+                values.push(value.clone());
+                source_idx += 1;
+            }
+        }
+        Ok(IrStringExpr::Format {
+            format: Box::new(IrStringExpr::Literal(format.into_bytes())),
+            args: values,
+            scope: self.path.clone(),
+        })
+    }
+
+    /// Lower `$sformat`'s explicit format argument.  Dynamic format strings
+    /// remain dynamic and are interpreted by the same runtime formatter as
+    /// `$sformatf`; literal formats are checked against their typed values at
+    /// lowering time and retain any extra display values in source order.
+    fn lower_explicit_string_format(
+        &mut self,
+        name: &str,
+        format_node: NodeId,
+        args: &[NodeId],
+    ) -> Result<IrStringExpr, String> {
+        let values = args
+            .iter()
+            .map(|value| self.lower_display_arg(*value))
+            .collect::<Result<Vec<_>, _>>()?;
+        let format = if let Some(text) = self.literal_string(format_node, name)? {
+            IrStringExpr::Literal(
+                self.parse_format_text(name, &text, &values, IrDisplayRadix::Decimal, true)?
+                    .0
+                    .into_bytes(),
+            )
+        } else {
+            self.cg.lower_string(&self.path, format_node)?
+        };
+        Ok(IrStringExpr::Format {
+            format: Box::new(format),
+            args: values,
+            scope: self.path.clone(),
+        })
+    }
+
+    /// Assign a formatted string to either native string storage or a packed
+    /// string-like lvalue.  Packed destinations use the existing object query
+    /// conversion, so truncation and zero padding follow normal assignment
+    /// width rules for every destination width.
+    fn lower_string_format_target(
+        &mut self,
+        target: NodeId,
+        value: IrStringExpr,
+    ) -> Result<IrStmt, String> {
+        let target = match self.cg.kind(target) {
+            NodeKind::Expr(ExprKind::Operation {
+                op: Operation::Assignment,
+                operands,
+                ..
+            }) if !operands.is_empty() => operands[0],
+            _ => target,
+        };
+        if self.cg.is_string_expr(&self.path, target) {
+            self.cg.ensure_string_actual_writable(&self.path, target)?;
+            let target = self
+                .cg
+                .lower_string_actual_address(&self.path, target)?
+                .trim_start_matches('&')
+                .to_owned();
+            return Ok(IrStmt::Object(IrObjectStmt::StringAssignLocal(
+                target, value,
+            )));
+        }
+        let lhs = self.cg.lower_lhs(&self.path, target).map_err(|error| {
+            format!(
+                "string formatting destination has unsupported LHS in `{}`: {error} (target kind: {:?})",
+                self.path,
+                // The frontend's string-like destination may be a packed
+                // expression wrapper; retain its owned node kind in the
+                // lowering diagnostic when that wrapper is unsupported.
+                self.cg.kind(target)
+            )
+        })?;
+        let (width, signed, _two_state, const_ref) =
+            self.cg.ref_lhs_type(&lhs).ok_or_else(|| {
+                format!(
+                    "string formatting destination is not packed storage in `{}`",
+                    self.path
+                )
+            })?;
+        if const_ref {
+            return Err(format!(
+                "string formatting destination cannot be a const ref in `{}`",
+                self.path
             ));
         }
-        let value = self.cg.lower_expr(&self.path, node)?;
-        Ok(if value.is_real() {
-            crate::sim::ir::IrDisplayArg::Real(value)
-        } else {
-            crate::sim::ir::IrDisplayArg::Packed(value)
+        let rhs = object_query(IrObjectQuery::StringPacked(value), width, signed);
+        Ok(IrStmt::Assign {
+            lhs: lhs.clone(),
+            rhs: apply_lhs_assignment_context(&self.cg.model, &lhs, rhs),
+            nba: false,
         })
+    }
+
+    /// Validate a literal format and return the normalized formatter text
+    /// consumed by both display-family tasks and string-producing calls.
+    fn parse_format_text(
+        &self,
+        name: &str,
+        fmt: &str,
+        display_args: &[crate::sim::ir::IrDisplayArg],
+        default_radix: IrDisplayRadix,
+        append_extras: bool,
+    ) -> Result<(String, usize), String> {
+        let mut normalized = String::new();
+        let mut arg_idx = 0usize;
+        let mut chars = fmt.chars().peekable();
+        while let Some(ch) = chars.next() {
+            if ch != '%' {
+                normalized.push(ch);
+                continue;
+            }
+            let mut spec = String::from("%");
+            while let Some(&next) = chars.peek() {
+                if matches!(next, '-' | '0' | '.') || next.is_ascii_digit() {
+                    if let Some(next) = chars.next() {
+                        spec.push(next);
+                    }
+                } else {
+                    break;
+                }
+            }
+            let Some(conversion) = chars.next() else {
+                return Err(format!(
+                    "incomplete {name} format at end of `{}`",
+                    self.path
+                ));
+            };
+            spec.push(conversion);
+            let lower = conversion.to_ascii_lowercase();
+            match lower {
+                'd' | 'h' | 'x' | 'b' | 'o' | 'c' => {
+                    self.require_format_arg(name, conversion, arg_idx, display_args, true)?;
+                }
+                'u' | 'z' | 'v' | 't' => {
+                    self.require_format_arg(name, conversion, arg_idx, display_args, false)?;
+                }
+                's' => {
+                    self.require_format_arg(name, conversion, arg_idx, display_args, true)?;
+                    if !matches!(
+                        display_args[arg_idx],
+                        crate::sim::ir::IrDisplayArg::String(_)
+                    ) {
+                        return Err(format!(
+                            "{name} format `%s` requires a string argument in `{}`",
+                            self.path
+                        ));
+                    }
+                }
+                'f' | 'e' | 'g' => {
+                    if !matches!(
+                        display_args.get(arg_idx),
+                        Some(crate::sim::ir::IrDisplayArg::Real(_))
+                    ) {
+                        return Err(format!(
+                            "{name} real format `%{conversion}` requires a real argument in `{}`",
+                            self.path
+                        ));
+                    }
+                }
+                'p' => {
+                    self.require_format_arg(name, conversion, arg_idx, display_args, true)?;
+                }
+                'm' | 'l' | '%' => {}
+                other => {
+                    return Err(format!(
+                        "unsupported {name} format specifier `%{other}` in `{}`",
+                        self.path
+                    ));
+                }
+            }
+            if !matches!(lower, 'm' | 'l' | '%') {
+                arg_idx += 1;
+            }
+            normalized.push_str(&spec);
+        }
+        if append_extras {
+            while arg_idx < display_args.len() {
+                normalized.push('%');
+                normalized.push(match &display_args[arg_idx] {
+                    crate::sim::ir::IrDisplayArg::Real(_) => 'f',
+                    crate::sim::ir::IrDisplayArg::String(_) => 's',
+                    crate::sim::ir::IrDisplayArg::Packed(_) => default_radix.specifier(),
+                });
+                arg_idx += 1;
+            }
+        }
+        Ok((normalized, arg_idx))
+    }
+
+    fn require_format_arg(
+        &self,
+        name: &str,
+        conversion: char,
+        arg_idx: usize,
+        display_args: &[crate::sim::ir::IrDisplayArg],
+        allow_string: bool,
+    ) -> Result<(), String> {
+        let Some(arg) = display_args.get(arg_idx) else {
+            return Err(format!(
+                "{name} format `%{conversion}` in `{}` has no argument",
+                self.path
+            ));
+        };
+        let valid = matches!(arg, crate::sim::ir::IrDisplayArg::Packed(_))
+            || (allow_string && matches!(arg, crate::sim::ir::IrDisplayArg::String(_)));
+        if !valid {
+            return Err(format!(
+                "{name} format `%{conversion}` has an incompatible argument in `{}`",
+                self.path
+            ));
+        }
+        Ok(())
+    }
+
+    fn lower_display_arg(&mut self, node: NodeId) -> Result<crate::sim::ir::IrDisplayArg, String> {
+        self.cg.lower_format_arg(&self.path, node)
     }
 
     /// Recover a source string literal through the implicit string cast that

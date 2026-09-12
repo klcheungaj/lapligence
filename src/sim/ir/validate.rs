@@ -798,7 +798,31 @@ impl Validator<'_> {
                 let mut result = Ok(());
                 query.expressions(&mut |child| {
                     result = result.clone().and_then(|_| {
-                        if child.is_real() {
+                        let format_value =
+                            |value: &IrStringExpr| matches!(value, IrStringExpr::Format { .. });
+                        let allows_real = match query.as_ref() {
+                            IrObjectQuery::StringLen(value)
+                            | IrObjectQuery::StringAtoi(value, _)
+                            | IrObjectQuery::StringAtoreal(value)
+                            | IrObjectQuery::StringPacked(value) => format_value(value),
+                            IrObjectQuery::StringGetc(value, index) => {
+                                format_value(value) && !std::ptr::eq(child, index.as_ref())
+                            }
+                            IrObjectQuery::StringCompare(a, b, _) => {
+                                format_value(a) || format_value(b)
+                            }
+                            IrObjectQuery::StringInside { value, items } => {
+                                format_value(value)
+                                    || items.iter().any(|item| match item {
+                                        IrStringInsideItem::Value(value) => format_value(value),
+                                        IrStringInsideItem::Range { low, high } => {
+                                            format_value(low) || format_value(high)
+                                        }
+                                    })
+                            }
+                            _ => false,
+                        };
+                        if child.is_real() && !allows_real {
                             self.fail(path, "object query requires packed operands")
                         } else {
                             self.validate_expr(child, formals, path)
@@ -2024,7 +2048,15 @@ impl Validator<'_> {
                 let mut result = Ok(());
                 operation.expressions(&mut |child| {
                     result = result.clone().and_then(|_| {
-                        if child.is_real() && !matches!(operation, IrObjectStmt::StringRealtoa(..))
+                        let string_value = matches!(
+                            operation,
+                            IrObjectStmt::StringPrint(..)
+                                | IrObjectStmt::StringAssign(..)
+                                | IrObjectStmt::StringAssignLocal(..)
+                        );
+                        if child.is_real()
+                            && !string_value
+                            && !matches!(operation, IrObjectStmt::StringRealtoa(..))
                         {
                             self.fail(path, "object statement requires packed operands")
                         } else {
