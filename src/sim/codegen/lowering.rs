@@ -238,8 +238,9 @@ use crate::sim::ir::{
     IrDisplayRadix, IrEdge, IrElemSel, IrEvent, IrEventCapture, IrEventContext, IrEventRef, IrExpr,
     IrExprKind, IrFormal, IrInitPhase, IrInitTarget, IrInitialization, IrJoinKind, IrLhs, IrModel,
     IrProcess, IrProcessKind, IrRealBinOp, IrRealUnOp, IrShape, IrSignal, IrStmt,
-    IrStreamDirection, IrSysFunc, IrTimeKind, IrTransitionDelay, IrType, IrUnOp, IrWaitSrc,
-    StorageKind, StorageLifetime, StorageOwnership, StorageRef, LLG_MAX_NET_DRIVERS,
+    IrStreamDirection, IrSysFunc, IrTimeKind, IrTransitionDelay, IrType, IrUnOp,
+    IrUniquePriorityCheck, IrWaitSrc, StorageKind, StorageLifetime, StorageOwnership, StorageRef,
+    LLG_MAX_NET_DRIVERS,
 };
 
 mod collection;

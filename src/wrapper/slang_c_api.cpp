@@ -1091,6 +1091,16 @@ uint32_t semanticStatementKind(StatementKind kind) {
   }
 }
 
+uint64_t semanticUniquePriorityCheck(UniquePriorityCheck check) {
+  switch (check) {
+    case UniquePriorityCheck::None: return LLG_SLANG_UNIQUE_PRIORITY_NONE;
+    case UniquePriorityCheck::Unique: return LLG_SLANG_UNIQUE_PRIORITY_UNIQUE;
+    case UniquePriorityCheck::Unique0: return LLG_SLANG_UNIQUE_PRIORITY_UNIQUE0;
+    case UniquePriorityCheck::Priority: return LLG_SLANG_UNIQUE_PRIORITY_PRIORITY;
+  }
+  return LLG_SLANG_UNIQUE_PRIORITY_NONE;
+}
+
 uint32_t semanticExpressionKind(ExpressionKind kind) {
   switch (kind) {
     case ExpressionKind::IntegerLiteral:
@@ -1994,6 +2004,7 @@ public:
     if (statement.bad())
       result.flags |= LLG_SLANG_SEMANTIC_BAD;
     if constexpr (std::same_as<T, CaseStatement>) {
+      result.auxiliary = semanticUniquePriorityCheck(statement.check);
       switch (statement.condition) {
         case CaseStatementCondition::WildcardXOrZ:
           result.flags |= LLG_SLANG_SEMANTIC_CASE_X_OR_Z;
@@ -2007,6 +2018,8 @@ public:
         default: break;
       }
     }
+    if constexpr (std::same_as<T, ConditionalStatement>)
+      result.auxiliary = semanticUniquePriorityCheck(statement.check);
     if constexpr (std::same_as<T, ProceduralAssignStatement>) {
       result.subkind = statement.isForce ? LLG_SLANG_STMT_FORCE
                                          : LLG_SLANG_STMT_PROCEDURAL_ASSIGN;

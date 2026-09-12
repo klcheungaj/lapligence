@@ -1605,6 +1605,7 @@ mod tests {
                 cond: false_condition,
                 then_: vec![IrStmt::Nop],
                 els: None,
+                check: crate::sim::ir::IrUniquePriorityCheck::None,
             }],
         );
         model.processes[0].blocks[0].terminator = ExecutionTerminator::Suspend {

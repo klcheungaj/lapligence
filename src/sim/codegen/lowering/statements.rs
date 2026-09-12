@@ -4,6 +4,19 @@ use super::objects::object_query;
 use super::*;
 use crate::sim::ir::{IrContainerElement, IrObjectQuery, IrObjectStmt, IrStringExpr};
 
+fn lower_unique_priority_check(
+    check: crate::core::db::UniquePriorityCheck,
+    origin: crate::sim::semantic::Origin,
+) -> IrUniquePriorityCheck {
+    match check {
+        crate::core::db::UniquePriorityCheck::None => IrUniquePriorityCheck::None,
+        crate::core::db::UniquePriorityCheck::Unique => IrUniquePriorityCheck::Unique(origin),
+        crate::core::db::UniquePriorityCheck::Unique0 => IrUniquePriorityCheck::Unique0(origin),
+        crate::core::db::UniquePriorityCheck::Priority => IrUniquePriorityCheck::Priority(origin),
+        crate::core::db::UniquePriorityCheck::Unsupported => IrUniquePriorityCheck::None,
+    }
+}
+
 #[derive(Clone, Copy)]
 enum DisplayTaskKind {
     Immediate { newline: bool },
@@ -225,6 +238,7 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
             cond,
             then_: Vec::new(),
             els: Some(vec![IrStmt::Goto(brk.clone())]),
+            check: IrUniquePriorityCheck::None,
         });
         Ok(vec![IrStmt::Forever { body }, IrStmt::Label(brk)])
     }
@@ -343,7 +357,7 @@ impl EmitCtx<'_, '_> {
                 };
                 Ok(vec![statement])
             }
-            NodeKind::Stmt(StmtKind::IfElse { cond }) => {
+            NodeKind::Stmt(StmtKind::IfElse { cond, check }) => {
                 let c = self.cg.lower_boolean_expr(&self.path, *cond)?;
                 let then_node = self
                     .cg
@@ -361,6 +375,7 @@ impl EmitCtx<'_, '_> {
                     cond: c,
                     then_,
                     els,
+                    check: lower_unique_priority_check(*check, self.cg.origin(h)),
                 }])
             }
             NodeKind::Stmt(StmtKind::Assign {
@@ -1752,10 +1767,15 @@ impl EmitCtx<'_, '_> {
     }
 
     fn lower_case(&mut self, h: NodeId) -> Result<Vec<IrStmt>, String> {
-        let (case_type, items) = match self.cg.kind(h) {
-            NodeKind::Stmt(StmtKind::Case { case_type, items }) => (*case_type, items),
+        let (case_type, check, items) = match self.cg.kind(h) {
+            NodeKind::Stmt(StmtKind::Case {
+                case_type,
+                check,
+                items,
+            }) => (*case_type, *check, items),
             _ => unreachable!("non-case passed to lower_case"),
         };
+        let qualifier = lower_unique_priority_check(check, self.cg.origin(h));
         let sel = self
             .cg
             .node(h)
@@ -1764,12 +1784,18 @@ impl EmitCtx<'_, '_> {
             .copied()
             .ok_or_else(|| "case without selector".to_string())?;
         if case_type == DbCaseKind::Inside && self.cg.is_string_expr(&self.path, sel) {
+            if !qualifier.is_none() {
+                return Err(format!(
+                    "qualified string case inside is unsupported in `{}`",
+                    self.path
+                ));
+            }
             let selector = self.cg.lower_string(&self.path, sel)?;
             return self.lower_case_inside_string(items, selector);
         }
         let mut sel_ir = self.cg.lower_expr(&self.path, sel)?;
         if case_type == DbCaseKind::Inside {
-            return self.lower_case_inside(items, sel_ir);
+            return self.lower_case_inside(items, sel_ir, qualifier);
         }
         // `casez` and `casex` keep wildcard matching per LRM 12.5.1 instead
         // of degrading to exact equality.
@@ -1826,6 +1852,17 @@ impl EmitCtx<'_, '_> {
                 sel_ir.signed,
                 None,
             );
+            if !qualifier.is_none() {
+                return Ok(vec![
+                    selector_init,
+                    IrStmt::Case {
+                        sel: sel_ir,
+                        kind: IrCaseKind::Real,
+                        items: ir_items,
+                        check: qualifier,
+                    },
+                ]);
+            }
             let mut default = None;
             let mut branches = Vec::new();
             for item in ir_items {
@@ -1855,6 +1892,7 @@ impl EmitCtx<'_, '_> {
                     cond: condition,
                     then_: body,
                     els: (!tail.is_empty()).then_some(tail),
+                    check: IrUniquePriorityCheck::None,
                 }];
             }
             tail.insert(0, selector_init);
@@ -1886,6 +1924,7 @@ impl EmitCtx<'_, '_> {
             sel: sel_ir,
             kind,
             items: ir_items,
+            check: qualifier,
         }])
     }
 
@@ -1893,6 +1932,7 @@ impl EmitCtx<'_, '_> {
         &mut self,
         items: &[crate::core::db::CaseItem],
         selector: IrExpr,
+        check: IrUniquePriorityCheck,
     ) -> Result<Vec<IrStmt>, String> {
         let selector_name = self.new_label("ci");
         let selector_width = selector.width;
@@ -1904,6 +1944,7 @@ impl EmitCtx<'_, '_> {
             None,
         );
         let mut branches = Vec::new();
+        let mut ir_items = Vec::new();
         let mut default = None;
         for item in items {
             let body = match item.body {
@@ -1911,6 +1952,13 @@ impl EmitCtx<'_, '_> {
                 None => Vec::new(),
             };
             if item.exprs.is_empty() {
+                if !check.is_none() {
+                    ir_items.push(IrCaseItem {
+                        exprs: Vec::new(),
+                        body,
+                    });
+                    continue;
+                }
                 if default.replace(body).is_some() {
                     return Err(format!(
                         "case inside has multiple default items in `{}`",
@@ -1930,7 +1978,32 @@ impl EmitCtx<'_, '_> {
                 false,
                 None,
             );
+            if !check.is_none() {
+                ir_items.push(IrCaseItem {
+                    exprs: vec![condition],
+                    body,
+                });
+                continue;
+            }
             branches.push((condition, body));
+        }
+
+        if !check.is_none() {
+            return Ok(vec![
+                IrStmt::DeclLocal {
+                    name: selector_name,
+                    width: selector_width,
+                    signed: selector_signed,
+                    two_state: false,
+                    init: Some(Box::new(selector)),
+                },
+                IrStmt::Case {
+                    sel: selector_read,
+                    kind: IrCaseKind::Inside,
+                    items: ir_items,
+                    check,
+                },
+            ]);
         }
 
         let mut tail = default;
@@ -1939,6 +2012,7 @@ impl EmitCtx<'_, '_> {
                 cond,
                 then_,
                 els: tail,
+                check: IrUniquePriorityCheck::None,
             }]);
         }
         let mut lowered = vec![IrStmt::DeclLocal {
@@ -1992,6 +2066,7 @@ impl EmitCtx<'_, '_> {
                 cond,
                 then_,
                 els: tail,
+                check: IrUniquePriorityCheck::None,
             }]);
         }
         let mut lowered = vec![IrStmt::DeclString {
@@ -2242,6 +2317,7 @@ impl EmitCtx<'_, '_> {
                     cond: at_endpoint,
                     then_: vec![IrStmt::Goto(done.clone())],
                     els: None,
+                    check: IrUniquePriorityCheck::None,
                 });
                 nested.push(incr);
                 nested = vec![
@@ -2472,6 +2548,7 @@ impl EmitCtx<'_, '_> {
             cond: condition,
             then_: Vec::new(),
             els: Some(vec![IrStmt::Goto(done.clone())]),
+            check: IrUniquePriorityCheck::None,
         };
         let select_next = stop_if_missing(traverse(IrAssocTraversal::Next));
         let select_first = stop_if_missing(traverse(IrAssocTraversal::First));
@@ -2479,6 +2556,7 @@ impl EmitCtx<'_, '_> {
             cond: first_read,
             then_: vec![clear_first, select_first],
             els: Some(vec![select_next]),
+            check: IrUniquePriorityCheck::None,
         };
         declarations.push(IrStmt::Forever {
             body: {
@@ -3183,6 +3261,7 @@ impl EmitCtx<'_, '_> {
                 cond: IrExpr::new(IrExprKind::SigRead(en_ir), 1, false, None),
                 then_: drives,
                 els: None,
+                check: IrUniquePriorityCheck::None,
             },
         ];
         let guard_name = self.cg.new_fn_name(&self.path, "pca");

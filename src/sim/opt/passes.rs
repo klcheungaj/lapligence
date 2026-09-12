@@ -479,7 +479,9 @@ fn walk_stmt_mut(s: &mut IrStmt, f: &mut impl FnMut(&mut IrExpr)) {
         IrStmt::PcaAssign { value, .. } | IrStmt::PcaDrive { value, .. } => {
             walk_expr_mut(value, f);
         }
-        IrStmt::If { cond, then_, els } => {
+        IrStmt::If {
+            cond, then_, els, ..
+        } => {
             walk_expr_mut(cond, f);
             walk_stmts_mut(then_, f);
             if let Some(els) = els {
@@ -1151,7 +1153,12 @@ fn prune_stmt_list(stmts: &mut Vec<IrStmt>) {
     let mut out = Vec::with_capacity(old.len());
     for s in old {
         match s {
-            IrStmt::If { cond, then_, els } => match truthy_const(&cond) {
+            IrStmt::If {
+                cond,
+                then_,
+                els,
+                check,
+            } if check.is_none() => match truthy_const(&cond) {
                 Some(true) => {
                     let mut taken = then_;
                     prune_stmt_list(&mut taken);
@@ -1170,7 +1177,12 @@ fn prune_stmt_list(stmts: &mut Vec<IrStmt>) {
                         prune_stmt_list(&mut e);
                         e
                     });
-                    out.push(IrStmt::If { cond, then_, els });
+                    out.push(IrStmt::If {
+                        cond,
+                        then_,
+                        els,
+                        check,
+                    });
                 }
             },
             other => {
@@ -1186,6 +1198,11 @@ fn prune_stmt_list(stmts: &mut Vec<IrStmt>) {
 fn prune_nested_in_place(s: &mut IrStmt) {
     match s {
         IrStmt::Block(b) | IrStmt::ActivationScope { body: b, .. } => prune_stmt_list(b),
+        // A qualified conditional may contain an else-if ladder. Keep its
+        // source-level shape intact: pruning a constant nested condition can
+        // turn an else-if into an apparent default and suppress a required
+        // no-match diagnostic.
+        IrStmt::If { check, .. } if !check.is_none() => {}
         IrStmt::If { then_, els, .. } => {
             prune_stmt_list(then_);
             if let Some(els) = els {
@@ -1226,12 +1243,22 @@ fn prune_nested_in_place(s: &mut IrStmt) {
             prune_stmt_list(incr);
             prune_stmt_list(body);
         }
-        IrStmt::Case { sel, kind, items } => {
+        IrStmt::Case {
+            sel,
+            kind,
+            items,
+            check,
+        } if check.is_none() => {
             if let Some(mut picked) = pick_case_branch(sel, *kind, items) {
                 prune_stmt_list(&mut picked);
                 *s = IrStmt::Block(picked);
                 return;
             }
+            for item in items {
+                prune_stmt_list(&mut item.body);
+            }
+        }
+        IrStmt::Case { items, .. } => {
             for item in items {
                 prune_stmt_list(&mut item.body);
             }
@@ -1379,6 +1406,7 @@ fn pick_case_branch(
                 IrCaseKind::Exact => elab::case_eq(&sel_v, &ev),
                 IrCaseKind::Casex => elab::casex_eq(&sel_v, &ev),
                 IrCaseKind::Casez => elab::casez_eq(&sel_v, &ev),
+                IrCaseKind::Real | IrCaseKind::Inside => return Verdict::Unknown,
             };
             if matched.to_u64() == Some(1) {
                 return Verdict::Matched;
@@ -1720,7 +1748,9 @@ fn collect_stmt_rw(s: &IrStmt, model: &IrModel, rw: &mut Rw) {
             collect_expr_reads(value, model, rw);
         }
         IrStmt::PcaDeassign { sig } => rw.write(*sig),
-        IrStmt::If { cond, then_, els } => {
+        IrStmt::If {
+            cond, then_, els, ..
+        } => {
             collect_expr_reads(cond, model, rw);
             collect_stmts_rw(then_, model, rw);
             if let Some(els) = els {
@@ -2138,7 +2168,7 @@ mod tests {
     use super::*;
     use crate::sim::ir::{
         IrCall, IrCallArg, IrCaseItem, IrDependency, IrDepth, IrEdge, IrEventRef, IrFunc, IrLocal,
-        IrProcess, IrShape, IrSignal, IrType,
+        IrProcess, IrShape, IrSignal, IrType, IrUniquePriorityCheck,
     };
 
     // ── builders ──────────────────────────────────────────────────────────
@@ -2727,7 +2757,12 @@ mod tests {
     // ── prune_branches ────────────────────────────────────────────────────
 
     fn if_stmt(cond: IrExpr, then_: Vec<IrStmt>, els: Option<Vec<IrStmt>>) -> IrStmt {
-        IrStmt::If { cond, then_, els }
+        IrStmt::If {
+            cond,
+            then_,
+            els,
+            check: IrUniquePriorityCheck::None,
+        }
     }
 
     fn marker(tag: u64) -> IrStmt {
@@ -2911,6 +2946,7 @@ mod tests {
             sel: konst(2, 4),
             kind: IrCaseKind::Exact,
             items,
+            check: IrUniquePriorityCheck::None,
         };
         let item = |vals: &[u64], tag: u64| IrCaseItem {
             exprs: vals.iter().map(|v| konst(*v, 4)).collect(),
@@ -2943,6 +2979,33 @@ mod tests {
             const_payload(first_assign_rhs_of(single_pruned_stmt(&m))),
             Some((30, 8))
         );
+    }
+
+    #[test]
+    fn prune_keeps_qualified_case_for_runtime_diagnostics() {
+        let item = |value: u64, tag: u64| IrCaseItem {
+            exprs: vec![konst(value, 4)],
+            body: vec![marker(tag)],
+        };
+        let mut m = model_with(
+            vec![IrStmt::Case {
+                sel: konst(2, 4),
+                kind: IrCaseKind::Exact,
+                items: vec![item(2, 10), item(2, 20)],
+                check: IrUniquePriorityCheck::Unique(crate::sim::semantic::Origin::Synthetic {
+                    reason: "qualified case test".to_owned(),
+                }),
+            }],
+            sigs(1),
+        );
+        run(&mut m, &prune_only());
+        assert!(matches!(
+            proc_body(&m)[0],
+            IrStmt::Case {
+                check: IrUniquePriorityCheck::Unique(_),
+                ..
+            }
+        ));
     }
 
     // ── orphaned-label strip (post-prune) ─────────────────────────────────
@@ -3098,6 +3161,7 @@ mod tests {
                     sens: vec![IrDependency::scalar("G_s2")],
                 }],
                 els: None,
+                check: IrUniquePriorityCheck::None,
             },
         ];
         let mut m = model_with(body, sigs(3));
@@ -3251,7 +3315,12 @@ mod tests {
     // ── case pruning provability ──────────────────────────────────────────
 
     fn case_stmt(sel: IrExpr, kind: IrCaseKind, items: Vec<IrCaseItem>) -> IrStmt {
-        IrStmt::Case { sel, kind, items }
+        IrStmt::Case {
+            sel,
+            kind,
+            items,
+            check: IrUniquePriorityCheck::None,
+        }
     }
 
     fn citem(vals: &[u64], tag: u64) -> IrCaseItem {

@@ -20,6 +20,6 @@ pub use database::{
 };
 pub use domain::{
     AlwaysKind, CapturedSemanticKind, CaseKind, ConstantType, Direction, JoinKind, NetType,
-    ObjectType, Operation, PrimitiveType, Strength,
+    ObjectType, Operation, PrimitiveType, Strength, UniquePriorityCheck,
 };
 pub use validate::DbValidationError;

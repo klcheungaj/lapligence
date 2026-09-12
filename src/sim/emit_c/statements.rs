@@ -9,7 +9,7 @@ use super::EmitError;
 use crate::sim::execution::ScheduleRegion;
 use crate::sim::ir::{
     IrCallArg, IrDependency, IrDisplayArg, IrExpr, IrExprKind, IrLhs, IrStreamDirection, IrType,
-    IrWaitSrc, StorageKind,
+    IrUniquePriorityCheck, IrWaitSrc, StorageKind,
 };
 
 // ── Statement rendering ───────────────────────────────────────────────────────
@@ -109,6 +109,32 @@ pub(super) fn render_stmt_impl(
     st: &crate::sim::ir::IrStmt,
 ) -> Result<String, String> {
     render_stmt_scoped(ctx, st, &[])
+}
+
+fn diagnostic_location(origin: &crate::sim::semantic::Origin) -> String {
+    match origin {
+        crate::sim::semantic::Origin::Source {
+            path, line, column, ..
+        } => format!("{path}:{line}:{column}"),
+        crate::sim::semantic::Origin::Synthetic { reason } => {
+            format!("<synthetic: {reason}>")
+        }
+    }
+}
+
+fn unique_priority_call(check: &IrUniquePriorityCheck, matched: &str, has_default: bool) -> String {
+    let Some(kind) = check.kind_code() else {
+        return String::new();
+    };
+    let location = check
+        .origin()
+        .map(diagnostic_location)
+        .unwrap_or_else(|| "<unknown>".to_owned());
+    format!(
+        "    llg_unique_priority_check({kind}, {matched}, {}, {});\n",
+        has_default as u8,
+        c_string_literal(&location)
+    )
 }
 
 fn render_stmt_scoped(
@@ -240,16 +266,97 @@ fn render_stmt_scoped(
                 IrType::Packed { .. } => format!("    llg_pca_deassign(&{});\n", target.c_name),
             }
         }
-        IrStmt::If { cond, then_, els } => {
+        IrStmt::If {
+            cond,
+            then_,
+            els,
+            check,
+        } => {
             let rc = render_expr(ctx, cond)?;
-            let mut out = format!("if ({}) {{\n", bool_code(&rc));
-            out.push_str(&block_stmts(ctx, then_, scopes)?);
-            out.push_str("}\n");
-            if let Some(els) = els {
-                out.push_str("else {\n");
-                out.push_str(&block_stmts(ctx, els, scopes)?);
+            if check.is_none() {
+                let mut out = format!("if ({}) {{\n", bool_code(&rc));
+                out.push_str(&block_stmts(ctx, then_, scopes)?);
+                out.push_str("}\n");
+                if let Some(els) = els {
+                    out.push_str("else {\n");
+                    out.push_str(&block_stmts(ctx, els, scopes)?);
+                    out.push_str("}\n");
+                }
+                return Ok(out);
+            }
+            // An `else if` is a nested ordinary If in the owned graph. Flatten
+            // that ladder only for a qualified outer statement so the check
+            // observes the complete ladder while each condition is still
+            // evaluated at most once. `priority` retains short-circuit
+            // evaluation; `unique` and `unique0` evaluate all conditions so
+            // they can report multiple matches.
+            let mut conditions = vec![(cond, then_)];
+            let mut fallback = els.as_deref();
+            while let Some(candidate) = fallback.filter(|body| body.len() == 1) {
+                let IrStmt::If {
+                    cond: next_cond,
+                    then_: next_then,
+                    els: next_els,
+                    check: next_check,
+                } = &candidate[0]
+                else {
+                    break;
+                };
+                if !next_check.is_none() {
+                    break;
+                }
+                conditions.push((next_cond, next_then));
+                fallback = next_els.as_deref();
+            }
+            let mut out = String::from("{\n    int _llg_if_selected = -1;\n");
+            let check_all_conditions = !check.is_priority();
+            if check_all_conditions {
+                out.push_str("    int _llg_if_matches = 0;\n");
+            }
+            for (index, (condition, _)) in conditions.iter().enumerate() {
+                let rc = render_expr(ctx, condition)?;
+                let condition_name = format!("_llg_if_condition_{index}");
+                let declaration = if rc.width == 0 {
+                    format!("double {condition_name} = {};", rc.code)
+                } else {
+                    format!("sv4_t {condition_name} = {};", rc.code)
+                };
+                let condition_bool = if rc.width == 0 {
+                    format!("llg_real_to_bool({condition_name})")
+                } else {
+                    format!("sv4_to_bool({condition_name})")
+                };
+                if check_all_conditions {
+                    out.push_str(&format!(
+                        "    {declaration}\n    if ({condition_bool}) {{\n        ++_llg_if_matches;\n        if (_llg_if_selected < 0) _llg_if_selected = {index};\n    }}\n"
+                    ));
+                } else {
+                    out.push_str(&format!(
+                        "    if (_llg_if_selected < 0) {{\n        {declaration}\n        if ({condition_bool}) _llg_if_selected = {index};\n    }}\n"
+                    ));
+                }
+            }
+            let matched = if check_all_conditions {
+                "_llg_if_matches"
+            } else {
+                "(_llg_if_selected >= 0)"
+            };
+            out.push_str(&unique_priority_call(check, matched, fallback.is_some()));
+            for (index, (_, body)) in conditions.iter().enumerate() {
+                if index == 0 {
+                    out.push_str(&format!("if (_llg_if_selected == {index}) {{\n"));
+                } else {
+                    out.push_str(&format!("else if (_llg_if_selected == {index}) {{\n"));
+                }
+                out.push_str(&block_stmts(ctx, body, scopes)?);
                 out.push_str("}\n");
             }
+            if let Some(fallback) = fallback {
+                out.push_str("else {\n");
+                out.push_str(&block_stmts(ctx, fallback, scopes)?);
+                out.push_str("}\n");
+            }
+            out.push_str("}\n");
             out
         }
         IrStmt::While { cond, body } => {
@@ -290,14 +397,110 @@ fn render_stmt_scoped(
                 block_stmts(ctx, body, scopes)?
             )
         }
-        IrStmt::Case { sel, kind, items } => {
+        IrStmt::Case {
+            sel,
+            kind,
+            items,
+            check,
+        } => {
             let rs = render_expr(ctx, sel)?;
             if rs.width == 0 {
-                // Lowering rejects real selectors before emission.
-                return Err("internal: real-valued case selector reached emission".to_string());
+                if *kind != crate::sim::ir::IrCaseKind::Real {
+                    return Err("internal: real-valued case selector reached emission".to_string());
+                }
+            } else if *kind == crate::sim::ir::IrCaseKind::Real {
+                return Err("internal: real case has a packed selector".to_string());
             }
+            let real_case = *kind == crate::sim::ir::IrCaseKind::Real;
+            let inside_case = *kind == crate::sim::ir::IrCaseKind::Inside;
             let cmp = kind.cmp_fn();
-            let mut out = format!("{{ sv4_t _llg_case_value = {};\n", rs.code);
+            let value_type = if real_case { "double" } else { "sv4_t" };
+            let mut out = format!("{{ {value_type} _llg_case_value = {};\n", rs.code);
+            if !check.is_none() {
+                if check.is_priority() {
+                    out.push_str("    int _llg_case_found = 0;\n");
+                }
+                let mut matches = Vec::new();
+                let mut default_item = None;
+                for (item_index, item) in items.iter().enumerate() {
+                    if item.exprs.is_empty() {
+                        if default_item.replace(item).is_some() {
+                            return Err("internal: case has multiple default items".to_string());
+                        }
+                        continue;
+                    }
+                    let match_name = format!("_llg_case_match_{item_index}");
+                    matches.push(match_name.clone());
+                    out.push_str(&format!("    int {match_name} = 0;\n"));
+                    if check.is_priority() {
+                        out.push_str("    if (!_llg_case_found) {\n");
+                    }
+                    for expression in &item.exprs {
+                        let re = render_expr(ctx, expression)?;
+                        let match_expr = if real_case {
+                            if re.width != 0 {
+                                return Err(
+                                    "internal: real case item is not real-valued".to_string()
+                                );
+                            }
+                            format!("(_llg_case_value == {})", re.code)
+                        } else if inside_case {
+                            bool_code(&re)
+                        } else {
+                            format!("{cmp}(_llg_case_value, {})", re.code)
+                        };
+                        let match_expr = if real_case || inside_case {
+                            match_expr
+                        } else {
+                            format!("sv4_to_bool({match_expr})")
+                        };
+                        out.push_str(&format!(
+                            "        if (!{match_name}) {match_name} = {match_expr};\n"
+                        ));
+                    }
+                    if check.is_priority() {
+                        out.push_str(&format!(
+                            "        if ({match_name}) _llg_case_found = 1;\n    }}\n"
+                        ));
+                    }
+                }
+                let matched = if matches.is_empty() {
+                    "0".to_owned()
+                } else {
+                    matches.join(" + ")
+                };
+                out.push_str(&unique_priority_call(
+                    check,
+                    &matched,
+                    default_item.is_some(),
+                ));
+                let mut first = true;
+                for (item_index, item) in items.iter().enumerate() {
+                    if item.exprs.is_empty() {
+                        continue;
+                    }
+                    let match_name = format!("_llg_case_match_{item_index}");
+                    if first {
+                        first = false;
+                        out.push_str(&format!("if ({match_name}) {{\n"));
+                    } else {
+                        out.push_str(&format!("else if ({match_name}) {{\n"));
+                    }
+                    out.push_str(&block_stmts(ctx, &item.body, scopes)?);
+                    out.push_str("}\n");
+                }
+                if let Some(item) = default_item {
+                    if first {
+                        out.push_str("if (1) {\n");
+                    } else {
+                        out.push_str("else {\n");
+                    }
+                    out.push_str(&block_stmts(ctx, &item.body, scopes)?);
+                    out.push_str("}\n");
+                }
+                out.push_str("}\n");
+                return Ok(out);
+            }
             let mut first = true;
             let mut default_item = None;
             for item in items {

@@ -11,7 +11,7 @@
 use super::slang_types::SlangTypeProjector;
 use super::{
     AlwaysKind, CapturedSemanticKind, CaseKind, ConstantType, DbValidationError, Direction,
-    JoinKind, NetType, ObjectType, Operation, PrimitiveType, Strength,
+    JoinKind, NetType, ObjectType, Operation, PrimitiveType, Strength, UniquePriorityCheck,
 };
 
 use crate::core::elab::Val;
@@ -734,6 +734,7 @@ pub enum StmtKind {
     Begin,
     IfElse {
         cond: NodeId,
+        check: UniquePriorityCheck,
     },
     Assign {
         blocking: bool,
@@ -745,6 +746,7 @@ pub enum StmtKind {
     },
     Case {
         case_type: CaseKind,
+        check: UniquePriorityCheck,
         items: Vec<CaseItem>,
     },
     For {
@@ -1953,6 +1955,7 @@ fn statement_from_slang(
         32 | 60 => StmtKind::Begin,
         33 => StmtKind::IfElse {
             cond: required(SemanticEdgeRole::Condition, "if condition")?,
+            check: unique_priority_check(node.auxiliary)?,
         },
         34 => {
             let mut items = Vec::new();
@@ -1993,6 +1996,7 @@ fn statement_from_slang(
                 } else {
                     CaseKind::Exact
                 },
+                check: unique_priority_check(node.auxiliary)?,
                 items,
             }
         }
@@ -2180,6 +2184,20 @@ fn statement_from_slang(
             object_type: ObjectType::UnsupportedStatement,
         },
     }))
+}
+
+fn unique_priority_check(value: u64) -> Result<UniquePriorityCheck, DbError> {
+    Ok(match value {
+        crate::ffi::slang::SEMANTIC_UNIQUE_PRIORITY_NONE => UniquePriorityCheck::None,
+        crate::ffi::slang::SEMANTIC_UNIQUE_PRIORITY_UNIQUE => UniquePriorityCheck::Unique,
+        crate::ffi::slang::SEMANTIC_UNIQUE_PRIORITY_UNIQUE0 => UniquePriorityCheck::Unique0,
+        crate::ffi::slang::SEMANTIC_UNIQUE_PRIORITY_PRIORITY => UniquePriorityCheck::Priority,
+        _ => {
+            return Err(DbError::InvalidSnapshot(
+                "statement has an unknown unique/priority qualifier".into(),
+            ))
+        }
+    })
 }
 
 fn block_statement_for_symbol(

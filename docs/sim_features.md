@@ -226,7 +226,7 @@ Verilog era:
 SystemVerilog era:
 
 - ✅ **return** in functions/tasks — §1800-2009 12.8/13.4.1 **[SV-2005]**
-- 🟨 **unique/priority/unique0 if & case** — §1800-2009 12.4.2/12.5.3 **[SV-2005]** lowered as plain case; no violation reports (probed)
+- ✅ **unique/priority/unique0 if & case** — §1800-2009 12.4.2/12.5.3 **[SV-2005]** runtime no-match and multiple-match diagnostics retain source identity, default/else suppression, and case/casez/casex four-state matching (sim_unique_priority.rs)
 - ✅ **case … inside** wildcard matching — §1800-2009 12.5.4 **[SV-2005]** scalar wildcard items, inclusive ranges, first-match/default behavior, and single selector evaluation (sim_wildcard_eq.rs, optimization on/off)
 - ✅ **do-while** — §1800-2009 12.7.5 **[SV-2005]** post-test execution plus break/continue semantics (sim_disable.rs)
 - 🟨 **foreach** — §1800-2009 12.7.3 **[SV-2005]** fixed unpacked arrays with declaration-order ranges and omitted dimensions, dynamic arrays/queues, integral and string-keyed associative arrays (including key deletion during traversal), break/continue, and automatic lexical iterators (sim_loops.rs); nested resizable-container elements, nonblocking writes to iterators, and fork captures of string iterators remain rejected
@@ -446,8 +446,8 @@ Tracked so nothing is lost; all de-prioritized behind RTL-simulation support.
 
 ## Remaining-work inventory
 
-The original audit IDs are stable. This inventory currently contains 71 remaining
-groups (38 missing, 33 partial); group 58 is completed. Counts refer to grouped
+The original audit IDs are stable. This inventory currently contains 70 remaining
+groups (37 missing, 33 partial); groups 38 and 58 are completed. Counts refer to grouped
 capabilities, not individual keywords, system functions or standard clauses.
 
 
@@ -490,7 +490,7 @@ capabilities, not individual keywords, system functions or standard clauses.
 | 35 | Partial | Procedural assign/deassign | Whole packed and real/shortreal variable targets plus ordinary packed concatenations have PCA priority, runtime site replacement, dependency-driven reevaluation and deassign retention, including the active-PCA/force layer. Selected/hierarchical/array/streaming and recursive aggregate targets remain unsupported. |
 | 36 | Partial | Named disable | Declaration/instance-resolved cross-process block/task disables, named-fork targets, simultaneous task activations, hierarchical instance selection, inactive-target no-ops, and retained nested-descendant cleanup are tested. Broader recursive and advanced subroutine-storage interactions remain outside this boundary. |
 | 37 | Partial | Loop forms and captures | Omitted fixed-array dimensions, dynamic arrays, queues, integral/string associative traversal, real for-loop locals, shadowing, break/continue, and packed/real captures are tested. Nested resizable-container elements, nonblocking loop-local writes, and string-loop captures remain. |
-| 38 | Missing | Uniqueness and priority checking | Runtime violation checks for `unique`, `unique0` and `priority`; ordinary branch execution alone is implemented. |
+| 38 | Completed | Uniqueness and priority checking | Runtime `unique`, `unique0` and `priority` violation checks retain source identity, ordinary first-match execution, default/else suppression, and exact/casez/casex matching. |
 | 39 | Missing | Pattern matching | General `case ... matches` and conditional pattern matching; the probed packed-struct case produced no required branch output. |
 | 40 | Partial | Side-effecting operators | Expression-valued `++/--` and compound assignments preserve one-time selected/array target evaluation, prefix/postfix results, packed state conversion and real updates; statement-position selected/array forms and broader aggregate targets remain. |
 | 41 | Partial | Set membership | General aggregate/contextual `inside` forms; tested scalar/range/wildcard forms work. |

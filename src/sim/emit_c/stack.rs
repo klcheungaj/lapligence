@@ -311,7 +311,9 @@ fn stmt_temp_slots(stmt: &IrStmt) -> Result<u64, String> {
         ),
         IrStmt::EventAssign { .. } | IrStmt::EventCapture { .. } => Ok(0),
         IrStmt::PcaAssign { value, .. } | IrStmt::PcaDrive { value, .. } => expr_slots(value),
-        IrStmt::If { cond, then_, els } => checked_sum(
+        IrStmt::If {
+            cond, then_, els, ..
+        } => checked_sum(
             [
                 expr_slots(cond)?,
                 stmt_temp_frame_slots(then_)?,

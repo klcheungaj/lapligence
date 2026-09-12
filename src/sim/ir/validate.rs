@@ -1830,7 +1830,9 @@ impl Validator<'_> {
                     return self.fail(path, format!("signal index {sig} is out of bounds"));
                 }
             }
-            IrStmt::If { cond, then_, els } => {
+            IrStmt::If {
+                cond, then_, els, ..
+            } => {
                 self.validate_expr(cond, formals, &format!("{path}.cond"))?;
                 self.validate_stmts(then_, formals, &format!("{path}.then"))?;
                 if let Some(els) = els {

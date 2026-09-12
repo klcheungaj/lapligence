@@ -373,6 +373,16 @@ enum {
   LLG_SLANG_ARGUMENT_REF_STATIC = 1ull << 1
 };
 
+/* Conditional/case qualifiers carried in LlgSlangSemanticNode::auxiliary.
+ * These values are owned by this ABI; they intentionally do not depend on
+ * Slang's enum representation. */
+enum {
+  LLG_SLANG_UNIQUE_PRIORITY_NONE = 0,
+  LLG_SLANG_UNIQUE_PRIORITY_UNIQUE = 1,
+  LLG_SLANG_UNIQUE_PRIORITY_UNIQUE0 = 2,
+  LLG_SLANG_UNIQUE_PRIORITY_PRIORITY = 3
+};
+
 enum {
   LLG_SLANG_SUBKIND_NONE = 0,
   LLG_SLANG_PROCESS_INITIAL = 1,
@@ -637,7 +647,8 @@ typedef struct {
   /* Kind-specific repository-owned scalar metadata. Streaming concatenations
    * store their exact Slang slice size here (zero denotes left streaming).
    * Variable and NamedEvent nodes store an
-   * LLG_SLANG_VARIABLE_LIFETIME_* value. */
+   * LLG_SLANG_VARIABLE_LIFETIME_* value. Conditional/case statements store
+   * an LLG_SLANG_UNIQUE_PRIORITY_* qualifier. */
   uint64_t auxiliary;
 } LlgSlangSemanticNode;
 

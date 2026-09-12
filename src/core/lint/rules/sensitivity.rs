@@ -283,7 +283,7 @@ fn analyze_sequence(
 fn analyze_stmt(db: &Db, root: NodeId, incoming: &HashSet<NodeId>) -> DefiniteAssignmentFlow {
     match db.node_kind(root) {
         NodeKind::Stmt(StmtKind::Begin) => analyze_sequence(db, &db.node(root).children, incoming),
-        NodeKind::Stmt(StmtKind::IfElse { cond }) => analyze_if(db, root, *cond, incoming),
+        NodeKind::Stmt(StmtKind::IfElse { cond, .. }) => analyze_if(db, root, *cond, incoming),
         NodeKind::Stmt(StmtKind::Assign {
             blocking, delay, ..
         }) => analyze_assignment(db, root, *blocking && delay.is_none(), incoming),

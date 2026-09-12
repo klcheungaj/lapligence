@@ -26,7 +26,10 @@ impl LintRule for DuplicateCaseItemRule {
         let mut diagnostics_seen = std::collections::HashSet::new();
 
         for case in all_nodes(db) {
-            let NodeKind::Stmt(StmtKind::Case { case_type, items }) = db.node_kind(case) else {
+            let NodeKind::Stmt(StmtKind::Case {
+                case_type, items, ..
+            }) = db.node_kind(case)
+            else {
                 continue;
             };
             if *case_type != CaseKind::Exact {

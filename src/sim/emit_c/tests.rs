@@ -147,6 +147,7 @@ fn runtime_width_limit_is_a_backend_policy_not_an_ir_invariant() {
             cond: expression.clone(),
             then_: Vec::new(),
             els: None,
+            check: crate::sim::ir::IrUniquePriorityCheck::None,
         };
         model.validate_stmt(&statement, None).unwrap();
         assert!(render_stmt(&ctx, &statement)
@@ -296,6 +297,7 @@ fn detached_fragments_reject_missing_storage_before_rendering() {
         cond: expression.clone(),
         then_: Vec::new(),
         els: None,
+        check: crate::sim::ir::IrUniquePriorityCheck::None,
     };
     assert!(matches!(
         render_stmt(&ctx, &statement),

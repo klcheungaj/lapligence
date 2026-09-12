@@ -38,7 +38,10 @@ impl LintRule for CaseDefaultMissingRule {
         let db = ctx.db;
         let mut out = Vec::new();
         for id in all_nodes(db) {
-            let NodeKind::Stmt(StmtKind::Case { case_type, items }) = db.node_kind(id) else {
+            let NodeKind::Stmt(StmtKind::Case {
+                case_type, items, ..
+            }) = db.node_kind(id)
+            else {
                 continue;
             };
             if items.iter().any(|it| it.exprs.is_empty()) {

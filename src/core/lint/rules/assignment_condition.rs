@@ -31,7 +31,7 @@ impl LintRule for AssignmentInConditionRule {
 
         for id in all_design_nodes(db) {
             match db.node_kind(id) {
-                NodeKind::Stmt(StmtKind::IfElse { cond })
+                NodeKind::Stmt(StmtKind::IfElse { cond, .. })
                 | NodeKind::Stmt(StmtKind::While { cond, .. })
                 | NodeKind::Stmt(StmtKind::DoWhile { cond, .. })
                 | NodeKind::Stmt(StmtKind::For { cond, .. })
@@ -177,7 +177,7 @@ mod tests {
         let cond = all_design_nodes(&db)
             .into_iter()
             .find_map(|id| match db.node_kind(id) {
-                NodeKind::Stmt(StmtKind::IfElse { cond }) => Some(*cond),
+                NodeKind::Stmt(StmtKind::IfElse { cond, .. }) => Some(*cond),
                 _ => None,
             })
             .expect("semantic capture must expose the if condition");

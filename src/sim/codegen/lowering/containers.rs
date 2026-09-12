@@ -2414,6 +2414,7 @@ impl<'a> Codegen<'a> {
                 init: Some(Box::new(mismatch)),
                 two_state: false,
             }]),
+            check: IrUniquePriorityCheck::None,
         });
         Ok(IrStmt::Block(captures))
     }

@@ -14,6 +14,7 @@ semantic_enum! { pub enum PrimitiveType { And, Nand, Nor, Or, Xor, Xnor, Buf, No
 semantic_enum! { pub enum Strength { Unspecified, Supply, Strong, Pull, Weak, Large, Medium, Small, HighZ } }
 semantic_enum! { pub enum AlwaysKind { Always, Comb, FlipFlop, Latch } }
 semantic_enum! { pub enum CaseKind { Exact, X, Z, Inside } }
+semantic_enum! { pub enum UniquePriorityCheck { None, Unique, Unique0, Priority } }
 semantic_enum! { pub enum JoinKind { All, None, Any } }
 semantic_enum! { pub enum ConstantType { Decimal, Real, Binary, Octal, Hex, String, Integer, Time, UnsignedInteger, Unbounded, Null } }
 

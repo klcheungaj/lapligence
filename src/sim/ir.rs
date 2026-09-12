@@ -1241,6 +1241,51 @@ pub enum IrCaseKind {
     Exact,
     Casex,
     Casez,
+    /// Real-valued ordinary `case`, used only for qualified cases after the
+    /// selector has been captured in a local double.
+    Real,
+    /// Packed `case inside` groups whose expressions are already lowered to
+    /// one membership predicate per group.
+    Inside,
+}
+
+/// Runtime diagnostic qualifier attached to an `if` or `case` statement.
+///
+/// The source origin is kept with the check so optimized IR cannot lose the
+/// source identity needed by a generated warning. `None` is the ordinary
+/// branch-selection path and emits no diagnostic call.
+#[derive(Clone, Debug, PartialEq)]
+pub enum IrUniquePriorityCheck {
+    None,
+    Unique(crate::sim::semantic::Origin),
+    Unique0(crate::sim::semantic::Origin),
+    Priority(crate::sim::semantic::Origin),
+}
+
+impl IrUniquePriorityCheck {
+    pub fn is_none(&self) -> bool {
+        matches!(self, Self::None)
+    }
+
+    pub fn is_priority(&self) -> bool {
+        matches!(self, Self::Priority(_))
+    }
+
+    pub fn kind_code(&self) -> Option<i32> {
+        match self {
+            Self::None => None,
+            Self::Unique(_) => Some(1),
+            Self::Unique0(_) => Some(2),
+            Self::Priority(_) => Some(3),
+        }
+    }
+
+    pub fn origin(&self) -> Option<&crate::sim::semantic::Origin> {
+        match self {
+            Self::None => None,
+            Self::Unique(origin) | Self::Unique0(origin) | Self::Priority(origin) => Some(origin),
+        }
+    }
 }
 
 impl IrCaseKind {
@@ -1250,6 +1295,8 @@ impl IrCaseKind {
             IrCaseKind::Exact => "sv4_case_eq",
             IrCaseKind::Casex => "sv4_casex_eq",
             IrCaseKind::Casez => "sv4_casez_eq",
+            IrCaseKind::Real => "sv4_case_eq",
+            IrCaseKind::Inside => "sv4_case_eq",
         }
     }
 }
@@ -1656,6 +1703,8 @@ pub enum IrStmt {
         /// `None` when there is no else arm; `Some(vec![])` keeps an explicit
         /// (empty) else block, matching the source-level shape.
         els: Option<Vec<IrStmt>>,
+        /// Optional SystemVerilog `unique` / `unique0` / `priority` check.
+        check: IrUniquePriorityCheck,
     },
     While {
         cond: IrExpr,
@@ -1679,6 +1728,8 @@ pub enum IrStmt {
         sel: IrExpr,
         kind: IrCaseKind,
         items: Vec<IrCaseItem>,
+        /// Optional SystemVerilog `unique` / `unique0` / `priority` check.
+        check: IrUniquePriorityCheck,
     },
     /// Suspend for a constant or runtime-valued delay.
     Delay {

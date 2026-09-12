@@ -543,6 +543,14 @@ pub enum SemanticKind {
 const ARGUMENT_CONST_REF: u64 = 1 << 0;
 const ARGUMENT_REF_STATIC: u64 = 1 << 1;
 
+/// Repository-owned qualifier tags stored in a statement's auxiliary field.
+/// Keep these values in lockstep with the C ABI, rather than exposing Slang's
+/// enum representation across the FFI boundary.
+pub const SEMANTIC_UNIQUE_PRIORITY_NONE: u64 = 0;
+pub const SEMANTIC_UNIQUE_PRIORITY_UNIQUE: u64 = 1;
+pub const SEMANTIC_UNIQUE_PRIORITY_UNIQUE0: u64 = 2;
+pub const SEMANTIC_UNIQUE_PRIORITY_PRIORITY: u64 = 3;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SemanticOperation {
     None,
@@ -722,7 +730,8 @@ pub struct SemanticNode {
     pub strength0: SemanticDriveStrength,
     pub strength1: SemanticDriveStrength,
     /// Kind-specific scalar metadata. Streaming expressions store their exact
-    /// Slang slice size; variables store their resolved lifetime tag.
+    /// Slang slice size; variables store their resolved lifetime tag;
+    /// conditional/case statements store a `SEMANTIC_UNIQUE_PRIORITY_*` tag.
     pub auxiliary: u64,
 }
 
@@ -2009,12 +2018,14 @@ fn validate_semantic_auxiliary(node: &RawSemanticNode) -> Result<(), SlangError>
         // Argument qualifiers carry const-ref and ref-static bits.
         (17, _, _) => node.auxiliary <= 3,
         // Statement subkind 42 covers both `wait` and `wait_order`; the
-        // auxiliary marker distinguishes the ordered form.
+        // auxiliary marker distinguishes the ordered form. Conditional and
+        // case statements use the same scalar for their qualifier.
         (18, 42, _) => node.auxiliary <= 1,
         // Foreach uses the auxiliary field for the number of source iterator
         // slots so omitted trailing dimensions survive the owned snapshot.
         // Keep the count bounded independently of the later DB allocation.
         (18, 59, _) => node.auxiliary <= 4096,
+        (18, 33 | 34, _) => node.auxiliary <= SEMANTIC_UNIQUE_PRIORITY_PRIORITY,
         (19, 69, 40) => node.auxiliary == 0 || node.flags & 1 != 0,
         (19, 69, 41) => node.auxiliary > 0 || node.flags & 1 != 0,
         _ => node.auxiliary == 0,
@@ -3063,6 +3074,18 @@ mod tests {
         let decoded = decode_semantic_nodes(&[method], &[], &[], &[], 0)
             .expect("method with-clause flag must decode on a method call");
         assert!(decoded[0].method_with_clause);
+
+        let mut qualified = raw_semantic_node(0);
+        qualified.kind = 18;
+        qualified.subkind = 33;
+        qualified.auxiliary = SEMANTIC_UNIQUE_PRIORITY_PRIORITY;
+        let decoded = decode_semantic_nodes(&[qualified], &[], &[], &[], 0)
+            .expect("all repository-owned conditional qualifier tags must decode");
+        assert_eq!(decoded[0].auxiliary, SEMANTIC_UNIQUE_PRIORITY_PRIORITY);
+        qualified.auxiliary = SEMANTIC_UNIQUE_PRIORITY_PRIORITY + 1;
+        let error = decode_semantic_nodes(&[qualified], &[], &[], &[], 0)
+            .expect_err("unknown conditional qualifier must fail");
+        assert_eq!(error.kind(), SlangErrorKind::InvalidNativeData);
 
         let mut variable = raw_semantic_node(0);
         variable.kind = 9;

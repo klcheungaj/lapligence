@@ -1345,7 +1345,10 @@ mod tests {
         let nodes = vec![
             top(vec![NodeId(1)]),
             node(
-                NodeKind::Stmt(StmtKind::IfElse { cond: NodeId(2) }),
+                NodeKind::Stmt(StmtKind::IfElse {
+                    cond: NodeId(2),
+                    check: crate::core::db::UniquePriorityCheck::None,
+                }),
                 Some(NodeId(0)),
                 vec![],
             ),

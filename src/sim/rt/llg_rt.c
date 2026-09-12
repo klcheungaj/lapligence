@@ -975,6 +975,23 @@ void llg_budget_point(const char* location) {
     }
 }
 
+void llg_unique_priority_check(int check, int matched, int has_default,
+                               const char* location) {
+    if (check < 1 || check > 3) return;
+    const char* where = location && location[0] != '\0' ? location : "<unknown>";
+    const char* qualifier = check == 1 ? "unique" : check == 2 ? "unique0" : "priority";
+    if (matched == 0 && !has_default && check != 2) {
+        fprintf(stderr,
+                "llg: warning: %s violation at %s: no matching item\n",
+                qualifier, where);
+    }
+    if (matched > 1 && check != 3) {
+        fprintf(stderr,
+                "llg: warning: %s violation at %s: multiple matching items\n",
+                qualifier, where);
+    }
+}
+
 static void enqueue_region(llg_proc_t* p, llg_region_t region) {
     if (!region_valid(region)) {
         fprintf(stderr, "llg: invalid execution region %d for process\n", (int)region);

@@ -283,6 +283,12 @@ _Noreturn void llg_proc_done(llg_proc_t* self);
 // current process remains within its zero-time budget; on exhaustion it emits
 // a source-bearing diagnostic and exits that coroutine without returning.
 void llg_budget_point(const char* location);
+// Report a SystemVerilog unique/unique0/priority branch check. `check` is
+// 1=unique, 2=unique0, 3=priority; `matched` counts matching case groups (or
+// is zero/one for a conditional); `has_default` suppresses no-match reports.
+// Diagnostics are warnings and do not stop simulation.
+void llg_unique_priority_check(int check, int matched, int has_default,
+                               const char* location);
 
 // ── final blocks ──────────────────────────────────────────────────────────────
 //
