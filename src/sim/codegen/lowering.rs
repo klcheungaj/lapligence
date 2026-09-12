@@ -124,9 +124,9 @@
 //! expression select indices/bounds, select LHS or
 //! nonblocking assignment on a collapsed inout-net member (the group scan
 //! rejects these before emission), unsupported aggregate/non-static declaration
-//! initializer forms, unsupported resolved-net classes, and unknown
-//! `$display`/`$monitor`/`$strobe` format specifiers (`%s` in
-//! monitors/strobes).  Structural primitives outside the supported builtin
+//! initializer forms, unsupported resolved-net classes, aggregate pattern
+//! display values, and unknown `$display`/`$monitor`/`$strobe` format
+//! specifiers.  Structural primitives outside the supported builtin
 //! set are rejected with explicit messages: switch/transistor primitives,
 //! UDP instances, charge-strength specifications, illegal vector
 //! continuous strengths, and unsupported delayed

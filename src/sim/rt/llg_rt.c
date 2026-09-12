@@ -587,6 +587,7 @@ typedef struct {
     llg_activation_t* activations; // active named block/task invocations
     llg_monitor_state_t mon;   // the active $monitor (at most one)
     llg_strobe_t* strobes;     // pending $strobe lines for this time step
+    llg_strobe_t* strobe_tail; // preserves source issue order
     // Active procedural forces. Entries own copied target/source descriptors;
     // no pre-force value is retained because release is object-specific.
     llg_force_entry_t force_table[LLG_MAX_FORCE];
@@ -2603,6 +2604,7 @@ void llg_rt_cleanup(void) {
         free(g.strobes);
         g.strobes = next;
     }
+    g.strobe_tail = NULL;
     free(g.mon.fmt);
     free(g.mon.last);
     free(g.mon.work);
@@ -3936,9 +3938,11 @@ static void commit_nbas(llg_region_t region) {
 
 // ── $monitor / $strobe ────────────────────────────────────────────────────────
 
-// Format `fmt` with `n` sv4_t arguments from `args`: %d/%h/%b/%o/%t consume
-// arguments in order, %% prints '%', and an unknown or missing specifier
-// prints verbatim without consuming an argument (mirrors `llg_display`).
+// Format `fmt` with `n` sv4_t arguments from `args`: the legacy packed path
+// handles the original %d/%h/%b/%o/%t family, while typed display calls below
+// additionally preserve real/string ownership and the SystemVerilog format
+// conversions. `%%` prints '%', and an unknown or missing specifier prints
+// verbatim without consuming an argument.
 static void llg_format_array(char* out, size_t cap, const char* fmt,
                               const sv4_t* args, int n) {
     size_t len = 0;
@@ -4020,6 +4024,7 @@ typedef struct {
     int alternate;
     int zero;
     int width;
+    int has_width;
     int precision;
     int has_precision;
 } llg_fmt_spec_t;
@@ -4037,6 +4042,7 @@ static const char* llg_parse_typed_spec(const char* start, const char* p,
         p++;
     }
     while (*p >= '0' && *p <= '9') {
+        spec->has_width = 1;
         if (spec->width <= (INT_MAX - (*p - '0')) / 10)
             spec->width = spec->width * 10 + (*p - '0');
         p++;
@@ -4054,6 +4060,138 @@ static const char* llg_parse_typed_spec(const char* start, const char* p,
     return p;
 }
 
+static size_t llg_format_raw2(sv4_t value, char* raw, size_t cap) {
+    size_t len = 0;
+    uint32_t words = (value.width + 63u) / 64u;
+    uint32_t last_bits = value.width % 64u;
+    if (last_bits == 0) last_bits = 64;
+    for (uint32_t i = 0; i < words; i++) {
+        // SFormat::formatRaw2 flattens X/Z to zero and emits the native
+        // little-endian limb bytes, including the complete last 32-bit half
+        // for values whose width is between 33 and 64 bits.
+        uint64_t bits = value.bits[i] & ~(value.x[i] | value.z[i]);
+        size_t bytes = (i == words - 1 && last_bits <= 32) ? sizeof(uint32_t)
+                                                            : sizeof(uint64_t);
+        for (size_t j = 0; j < bytes && len < cap; j++)
+            raw[len++] = (char)(bits >> (j * 8));
+    }
+    return len;
+}
+
+static size_t llg_format_raw4(sv4_t value, char* raw, size_t cap) {
+    size_t len = 0;
+    uint32_t words = (value.width + 63u) / 64u;
+    uint32_t last_bits = value.width % 64u;
+    if (last_bits == 0) last_bits = 64;
+    for (uint32_t i = 0; i < words; i++) {
+        uint64_t unknown = value.x[i] | value.z[i];
+        uint64_t bits = value.bits[i];
+        size_t halves = (i == words - 1 && last_bits <= 32) ? 1u : 2u;
+        for (size_t half = 0; half < halves; half++) {
+            // VPI's four-state encoding uses aval = known bits XOR unknown
+            // and bval = unknown, matching Slang's formatRaw4 helper.
+            uint32_t aval = (uint32_t)((bits ^ unknown) >> (half * 32));
+            uint32_t bval = (uint32_t)(unknown >> (half * 32));
+            if (len + sizeof(aval) + sizeof(bval) > cap) {
+                size_t remaining = cap - len;
+                if (remaining) {
+                    size_t aval_bytes = remaining < sizeof(aval) ? remaining : sizeof(aval);
+                    memcpy(raw + len, &aval, aval_bytes);
+                    len += aval_bytes;
+                    remaining -= aval_bytes;
+                    if (remaining) {
+                        size_t bval_bytes = remaining < sizeof(bval) ? remaining : sizeof(bval);
+                        memcpy(raw + len, &bval, bval_bytes);
+                        len += bval_bytes;
+                    }
+                }
+                return len;
+            }
+            memcpy(raw + len, &aval, sizeof(aval));
+            len += sizeof(aval);
+            memcpy(raw + len, &bval, sizeof(bval));
+            len += sizeof(bval);
+        }
+    }
+    return len;
+}
+
+static size_t llg_format_strength(sv4_t value, char* raw, size_t cap) {
+    size_t len = 0;
+    for (uint32_t bit = value.width; bit > 0; bit--) {
+        uint32_t index = bit - 1;
+        uint64_t mask = UINT64_C(1) << (index % 64u);
+        uint32_t limb = index / 64u;
+        const char* text;
+        if (value.x[limb] & mask)
+            text = "StX";
+        else if (value.z[limb] & mask)
+            text = "HiZ";
+        else
+            text = value.bits[limb] & mask ? "St1" : "St0";
+        llg_append_text(raw, cap, &len, text, strlen(text));
+        if (bit != 1) llg_append(raw, cap, &len, ' ');
+    }
+    return len;
+}
+
+static size_t llg_format_char(sv4_t value, char* raw, size_t cap) {
+    if (cap == 0 || value.width == 0) return 0;
+    uint64_t unknown = value.x[0] | value.z[0];
+    raw[0] = (char)(unknown & 0xffu ? 0xffu : value.bits[0] & 0xffu);
+    return 1;
+}
+
+static sv4_t llg_string_to_display_packed(const llg_string_t* value) {
+    size_t max_bytes = (size_t)LLG_MAX_WIDTH / 8u;
+    if (value->len > max_bytes || (value->len == 0 && LLG_MAX_WIDTH < 8u)) {
+        fprintf(stderr,
+                "llg runtime fatal: string display conversion exceeds packed width\n");
+        abort();
+    }
+    uint32_t width = value->len ? (uint32_t)(value->len * 8u) : 8u;
+    return llg_string_to_packed(llg_string_clone(value), width, 0);
+}
+
+static size_t llg_format_pattern_packed(sv4_t value, char* raw, size_t cap) {
+    char digits[LLG_MAX_WIDTH * 2u + 256u];
+    int has_unknown = sv4_is_unknown(value);
+    int all_x = has_unknown;
+    int all_z = has_unknown;
+    for (int i = 0; i < llg_sv4_nlimbs(value.width); i++) {
+        uint64_t mask = llg_sv4_limb_mask(value.width, i);
+        all_x &= (value.x[i] & mask) == mask;
+        all_z &= (value.z[i] & mask) == mask;
+    }
+    int base;
+    if ((value.width < 8u && !value.is_signed) ||
+        (has_unknown && value.width <= 64u && !all_x && !all_z)) {
+        base = 'b';
+    } else if (value.width <= 32u || value.is_signed || all_x || all_z) {
+        base = 'd';
+    } else {
+        base = 'h';
+    }
+    sv4_format((char)base, value, digits, sizeof(digits));
+    size_t digits_len = strlen(digits);
+    size_t len = 0;
+    const char* digit_text = digits;
+    int include_base = !(base == 'd' && value.width == 32u && value.is_signed && !has_unknown);
+    if (digits_len && digits[0] == '-') {
+        llg_append(raw, cap, &len, '-');
+        digit_text++;
+        digits_len--;
+    }
+    if (include_base) {
+        char prefix[64];
+        int written = snprintf(prefix, sizeof(prefix), "%u'%s%c", value.width,
+                               value.is_signed ? "s" : "", base);
+        if (written > 0) llg_append_text(raw, cap, &len, prefix, (size_t)written);
+    }
+    llg_append_text(raw, cap, &len, digit_text, digits_len);
+    return len;
+}
+
 static void llg_emit_field(char* out, size_t cap, size_t* len,
                             const char* value, size_t value_len,
                             llg_fmt_spec_t spec, char conversion) {
@@ -4064,7 +4202,7 @@ static void llg_emit_field(char* out, size_t cap, size_t* len,
     field[n] = 0;
     if (spec.has_precision && conversion == 's' && n > (size_t)spec.precision)
         n = (size_t)spec.precision;
-    if (spec.has_precision && strchr("dhbot", conversion)) {
+    if (spec.has_precision && strchr("dhbox", conversion)) {
         size_t sign = n && field[0] == '-' ? 1u : 0u;
         size_t digits = n - sign;
         while (digits < (size_t)spec.precision && n + 1 < sizeof(field)) {
@@ -4084,7 +4222,7 @@ static void llg_emit_field(char* out, size_t cap, size_t* len,
             n += prefix_len;
         }
     }
-    int numeric = strchr("dhbotfeg", conversion) != NULL;
+    int numeric = strchr("dhbotxfeg", conversion) != NULL;
     if (numeric && n > 0 && field[0] != '-' && spec.plus) {
         if (n + 1 < sizeof(field)) {
             memmove(field + 1, field, n + 1);
@@ -4100,7 +4238,16 @@ static void llg_emit_field(char* out, size_t cap, size_t* len,
     }
     size_t pad = spec.width > 0 && (size_t)spec.width > n
                    ? (size_t)spec.width - n : 0;
-    if (!spec.left && spec.zero && numeric) {
+    // Slang's integral formatter pads non-decimal bases with zeroes whenever
+    // a width is present; decimal and textual values use spaces.  `%0d`
+    // without a width still gets the natural decimal width and no padding.
+    char pad_char = ' ';
+    if (strchr("hbox", conversion) != NULL) pad_char = '0';
+    // The zero flag is meaningful for host floating-point formatting.  The
+    // SystemVerilog integer parser consumes it as syntax but formatInt still
+    // uses decimal spaces (and non-decimal bases already use zeroes by
+    // virtue of their width rule).
+    if (!spec.left && spec.zero && strchr("feg", conversion) != NULL) {
         size_t prefix = (n && (field[0] == '-' || field[0] == '+' || field[0] == ' ')) ? 1u : 0u;
         if (prefix && pad) {
             llg_append_text(out, cap, len, field, prefix);
@@ -4109,14 +4256,14 @@ static void llg_emit_field(char* out, size_t cap, size_t* len,
             return;
         }
     }
-    if (!spec.left) for (size_t i = 0; i < pad; i++) llg_append(out, cap, len, ' ');
+    if (!spec.left) for (size_t i = 0; i < pad; i++) llg_append(out, cap, len, pad_char);
     llg_append_text(out, cap, len, field, n);
-    if (spec.left) for (size_t i = 0; i < pad; i++) llg_append(out, cap, len, ' ');
+    if (spec.left) for (size_t i = 0; i < pad; i++) llg_append(out, cap, len, pad_char);
 }
 
-static void llg_format_typed(char* out, size_t cap, const char* fmt,
-                             const llg_fmt_arg_t* args, int n,
-                             const char* scope) {
+static size_t llg_format_typed(char* out, size_t cap, const char* fmt,
+                               const llg_fmt_arg_t* args, int n,
+                               const char* scope) {
     size_t len = 0;
     int argi = 0;
     const char* p = fmt;
@@ -4128,7 +4275,9 @@ static void llg_format_typed(char* out, size_t cap, const char* fmt,
         const char* start = p++;
         llg_fmt_spec_t spec;
         p = llg_parse_typed_spec(start, p, &spec);
-        char conversion = *p ? *p++ : 0;
+        char source_conversion = *p ? *p++ : 0;
+        char conversion = source_conversion;
+        if (conversion >= 'A' && conversion <= 'Z') conversion = (char)(conversion - 'A' + 'a');
         if (conversion == '%') {
             llg_append(out, cap, &len, '%');
             continue;
@@ -4138,19 +4287,57 @@ static void llg_format_typed(char* out, size_t cap, const char* fmt,
             llg_emit_field(out, cap, &len, text, strlen(text), spec, 's');
             continue;
         }
+        if (conversion == 'l') {
+            // `%l` has no width-bearing form in the Slang grammar, so append
+            // the library-qualified HDL scope directly and avoid allocating a
+            // model-width temporary on the coroutine stack.
+            llg_append_text(out, cap, &len, "work.", 5);
+            if (scope && scope[0])
+                llg_append_text(out, cap, &len, scope, strlen(scope));
+            else
+                llg_append_text(out, cap, &len, "$unit", 5);
+            continue;
+        }
         if (!conversion || argi >= n) {
-            llg_append(out, cap, &len, '%');
-            if (conversion) llg_append(out, cap, &len, conversion);
+            llg_append_text(out, cap, &len, start, (size_t)(p - start));
             continue;
         }
         const llg_fmt_arg_t* arg = &args[argi++];
         char raw[LLG_MAX_WIDTH * 2u + 256u];
-        raw[0] = 0;
         size_t raw_len = 0;
-        if (strchr("dhbot", conversion) && arg->kind == LLG_FMT_PACKED) {
-            sv4_format(conversion == 't' ? 'd' : conversion, arg->value.packed,
+        if (strchr("dhbox", conversion) && arg->kind == LLG_FMT_PACKED) {
+            sv4_format(conversion == 'x' ? 'h' : conversion, arg->value.packed,
                        raw, sizeof(raw));
             raw_len = strlen(raw);
+        } else if (strchr("dhbox", conversion) && arg->kind == LLG_FMT_STRING) {
+            sv4_t packed = llg_string_to_display_packed(&arg->value.string);
+            sv4_format(conversion == 'x' ? 'h' : conversion, packed, raw, sizeof(raw));
+            raw_len = strlen(raw);
+        } else if (conversion == 't' && arg->kind == LLG_FMT_PACKED) {
+            sv4_format('d', arg->value.packed, raw, sizeof(raw));
+            raw_len = strlen(raw);
+            if (!spec.has_width && !spec.zero) {
+                spec.width = 20;
+                spec.has_width = 1;
+            }
+        } else if (conversion == 'c' && arg->kind == LLG_FMT_PACKED) {
+            raw_len = llg_format_char(arg->value.packed, raw, sizeof(raw));
+        } else if (conversion == 'c' && arg->kind == LLG_FMT_STRING) {
+            sv4_t packed = llg_string_to_display_packed(&arg->value.string);
+            raw_len = llg_format_char(packed, raw, sizeof(raw));
+        } else if (conversion == 'u' && arg->kind == LLG_FMT_PACKED) {
+            raw_len = llg_format_raw2(arg->value.packed, raw, sizeof(raw));
+        } else if (conversion == 'z' && arg->kind == LLG_FMT_PACKED) {
+            raw_len = llg_format_raw4(arg->value.packed, raw, sizeof(raw));
+        } else if (conversion == 'v' && arg->kind == LLG_FMT_PACKED) {
+            raw_len = llg_format_strength(arg->value.packed, raw, sizeof(raw));
+        } else if (conversion == 'p' && arg->kind == LLG_FMT_PACKED) {
+            // Aggregate pattern formatting is rejected by lowering until the
+            // owned aggregate representation is available.  A packed scalar
+            // follows ConstantValue::toString's base-selection and literal
+            // prefix rules, which is the scalar case of Slang's pattern
+            // visitor.
+            raw_len = llg_format_pattern_packed(arg->value.packed, raw, sizeof(raw));
         } else if (strchr("feg", conversion) && arg->kind == LLG_FMT_REAL) {
             char real_fmt[128];
             size_t spec_len = (size_t)(p - start);
@@ -4158,13 +4345,37 @@ static void llg_format_typed(char* out, size_t cap, const char* fmt,
             memcpy(real_fmt, start, spec_len);
             real_fmt[spec_len] = 0;
             int written = snprintf(raw, sizeof(raw), real_fmt, arg->value.real);
-            raw_len = written > 0 && (size_t)written < sizeof(raw)
-                        ? (size_t)written : strlen(raw);
+            raw_len = written < 0 ? 0 : (size_t)written < sizeof(raw)
+                                           ? (size_t)written
+                                           : sizeof(raw) - 1;
+        } else if (conversion == 's' && arg->kind == LLG_FMT_PACKED) {
+            llg_string_t value = llg_string_from_packed(arg->value.packed);
+            raw_len = value.len;
+            if (raw_len > sizeof(raw)) raw_len = sizeof(raw);
+            if (raw_len) memcpy(raw, value.data, raw_len);
+            llg_string_destroy(&value);
         } else if (conversion == 's' && arg->kind == LLG_FMT_STRING) {
             raw_len = arg->value.string.len;
-            if (raw_len >= sizeof(raw)) raw_len = sizeof(raw) - 1;
+            if (raw_len > sizeof(raw)) raw_len = sizeof(raw);
             if (raw_len) memcpy(raw, arg->value.string.data, raw_len);
-            raw[raw_len] = 0;
+        } else if (conversion == 'p' && arg->kind == LLG_FMT_STRING) {
+            // Keep a string pattern visibly distinct from `%s`, matching the
+            // quote-delimited form produced by Slang's pattern formatter.
+            size_t value_len = arg->value.string.len;
+            if (value_len + 2u <= sizeof(raw)) {
+                raw[0] = '"';
+                if (value_len) memcpy(raw + 1, arg->value.string.data, value_len);
+                raw[value_len + 1] = '"';
+                raw_len = value_len + 2u;
+            } else {
+                raw[0] = '"';
+                raw_len = sizeof(raw);
+                if (raw_len > 1) {
+                    size_t copy = raw_len - 2u;
+                    memcpy(raw + 1, arg->value.string.data, copy);
+                    raw[raw_len - 1] = '"';
+                }
+            }
         } else {
             llg_append_text(out, cap, &len, start, (size_t)(p - start));
             continue;
@@ -4172,6 +4383,7 @@ static void llg_format_typed(char* out, size_t cap, const char* fmt,
         llg_emit_field(out, cap, &len, raw, raw_len, spec, conversion);
     }
     out[len] = 0;
+    return len;
 }
 
 static void llg_print_typed(const char* fmt, llg_fmt_arg_t* args, int n,
@@ -4179,14 +4391,18 @@ static void llg_print_typed(const char* fmt, llg_fmt_arg_t* args, int n,
     size_t cap = strlen(fmt) + (scope ? strlen(scope) : 0) + 64u;
     for (int i = 0; i < n; i++) {
         size_t extra = 64u;
-        if (args[i].kind == LLG_FMT_PACKED) extra += args[i].value.packed.width;
+        if (args[i].kind == LLG_FMT_PACKED) {
+            if (args[i].value.packed.width > (SIZE_MAX - extra) / 8u)
+                llg_fatal_allocation("typed formatted line", 1, SIZE_MAX);
+            extra += (size_t)args[i].value.packed.width * 8u;
+        }
         if (args[i].kind == LLG_FMT_STRING) extra += args[i].value.string.len;
         if (extra > SIZE_MAX - cap) llg_fatal_allocation("typed formatted line", cap, extra);
         cap += extra;
     }
     char* out = llg_checked_malloc(cap, 1, "typed formatted line");
-    llg_format_typed(out, cap, fmt, args, n, scope);
-    fputs(out, stdout);
+    size_t len = llg_format_typed(out, cap, fmt, args, n, scope);
+    fwrite(out, 1, len, stdout);
     if (newline) fputc('\n', stdout);
     fflush(stdout);
     free(out);
@@ -4264,8 +4480,13 @@ void llg_strobe(const char* fmt, int n, llg_mon_eval_fn eval) {
     int alloc = n > 0 ? n : 1;
     e->work = (sv4_t*)llg_checked_calloc(
         (size_t)alloc, sizeof(sv4_t), "strobe working values");
-    e->next = g.strobes;
-    g.strobes = e;
+    e->next = NULL;
+    if (g.strobe_tail) {
+        g.strobe_tail->next = e;
+    } else {
+        g.strobes = e;
+    }
+    g.strobe_tail = e;
 }
 
 void llg_monitor_with_typed_reads(const char* fmt, int n,
@@ -4319,8 +4540,13 @@ void llg_strobe_typed(const char* fmt, int n, llg_display_eval_fn eval,
     e->typed_work = (llg_fmt_arg_t*)llg_checked_calloc(
         (size_t)alloc, sizeof(llg_fmt_arg_t), "strobe working values");
     e->region = LLG_REGION_POSTPONED;
-    e->next = g.strobes;
-    g.strobes = e;
+    e->next = NULL;
+    if (g.strobe_tail) {
+        g.strobe_tail->next = e;
+    } else {
+        g.strobes = e;
+    }
+    g.strobe_tail = e;
 }
 
 // Re-print a dirty monitor line at the settled observation point. The
@@ -4374,6 +4600,7 @@ static void flush_strobes(void) {
     while (g.strobes && !g.finish) {
         llg_strobe_t* e = g.strobes;
         g.strobes = e->next;
+        if (!g.strobes) g.strobe_tail = NULL;
         if (e->typed) {
             e->typed_eval(e->typed_work, NULL);
             llg_print_typed(e->fmt, e->typed_work, e->n, e->scope, 1);

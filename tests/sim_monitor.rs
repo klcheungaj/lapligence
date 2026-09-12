@@ -18,7 +18,7 @@ fn sim_console_display_base_variants() {
     sim_cli::run_case(
         "monitor",
         "display_base_variants",
-        "00101010\n052\n2a\n001010100522a-3\n1x0z\nx\n3c\n074\n00111100\n00111100\n00010101\n025\n15\n",
+        "00101010\n052\n2a\n001010100522a-3\n1x0z\nx\n00111100\n074\n3c\n00111100\n00010101\n025\n15\n",
         "",
         &[],
     );

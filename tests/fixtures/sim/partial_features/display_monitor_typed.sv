@@ -8,6 +8,7 @@ module tb;
         text = "a";
         $monitor("monitor=%s %.1f %m", text, amount);
         #1 amount = 2.0;
-        #1 $finish;
+        #1 text = "b";
+        #1 $finish(0);
     end
 endmodule

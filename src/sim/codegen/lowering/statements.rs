@@ -3480,6 +3480,17 @@ impl EmitCtx<'_, '_> {
                 fmt_seen = true;
                 continue;
             }
+            // Native strings publish a stable dependency marker rather than
+            // an sv4 value.  Keep that marker in a monitor's trigger set so
+            // changing a string argument causes the deferred formatter to
+            // re-evaluate it, just like a packed or real argument.
+            if let Some(object) = self.cg.object_of(&self.path, *arg) {
+                let dependency = crate::sim::ir::IrDependency::Object(object);
+                if seen.insert(dependency.clone()) {
+                    reads.push(dependency);
+                }
+                continue;
+            }
             if self.cg.is_string_expr(&self.path, *arg) {
                 continue;
             }
@@ -3535,7 +3546,10 @@ impl EmitCtx<'_, '_> {
             }
             let mut spec = String::from("%");
             while let Some(&n) = chars.peek() {
-                if matches!(n, '-' | '+' | ' ' | '#' | '0' | '.') || n.is_ascii_digit() {
+                // Slang's SystemVerilog formatter grammar admits only the
+                // left-justify and zero-pad flags.  Other C printf flags are
+                // not display-task syntax and are rejected by the frontend.
+                if matches!(n, '-' | '0' | '.') || n.is_ascii_digit() {
                     spec.push(chars.next().unwrap());
                 } else {
                     break;
@@ -3548,8 +3562,34 @@ impl EmitCtx<'_, '_> {
                 ));
             };
             spec.push(conv);
-            match conv {
-                'd' | 'h' | 'b' | 'o' => {
+            let conversion = conv.to_ascii_lowercase();
+            match conversion {
+                'd' | 'h' | 'x' | 'b' | 'o' | 'c' => {
+                    if arg_idx >= display_args.len() {
+                        return Err(format!(
+                            "{name} format `%{conv}` in `{}` has no argument",
+                            self.path
+                        ));
+                    }
+                    if !matches!(
+                        &display_args[arg_idx],
+                        crate::sim::ir::IrDisplayArg::Packed(_)
+                            | crate::sim::ir::IrDisplayArg::String(_)
+                    ) {
+                        return Err(format!(
+                            "{name} integer format `%{conv}` requires a packed or string argument in `{}`",
+                            self.path
+                        ));
+                    }
+                    arg_idx += 1;
+                    // Keep all legal width/precision/flag text.  The old
+                    // lowering retained it only for strings/reals, which
+                    // silently changed integer formatting before the runtime
+                    // ever saw the directive.
+                    c_fmt.push_str(&spec[..spec.len() - conv.len_utf8()]);
+                    c_fmt.push(conversion);
+                }
+                'u' | 'z' | 'v' => {
                     if arg_idx >= display_args.len() {
                         return Err(format!(
                             "{name} format `%{conv}` in `{}` has no argument",
@@ -3561,13 +3601,13 @@ impl EmitCtx<'_, '_> {
                         crate::sim::ir::IrDisplayArg::Packed(_)
                     ) {
                         return Err(format!(
-                            "{name} integer format `%{conv}` requires a packed argument in `{}`",
+                            "{name} format `%{conv}` requires a packed argument in `{}`",
                             self.path
                         ));
                     }
                     arg_idx += 1;
-                    c_fmt.push('%');
-                    c_fmt.push(conv);
+                    c_fmt.push_str(&spec[..spec.len() - conv.len_utf8()]);
+                    c_fmt.push(conversion);
                 }
                 's' => {
                     if arg_idx >= display_args.len() {
@@ -3586,7 +3626,8 @@ impl EmitCtx<'_, '_> {
                         ));
                     }
                     arg_idx += 1;
-                    c_fmt.push_str(&spec);
+                    c_fmt.push_str(&spec[..spec.len() - conv.len_utf8()]);
+                    c_fmt.push(conversion);
                 }
                 'f' | 'e' | 'g' => {
                     if arg_idx >= display_args.len() {
@@ -3605,7 +3646,8 @@ impl EmitCtx<'_, '_> {
                         ));
                     }
                     arg_idx += 1;
-                    c_fmt.push_str(&spec);
+                    c_fmt.push_str(&spec[..spec.len() - conv.len_utf8()]);
+                    c_fmt.push(conversion);
                 }
                 't' => {
                     // %t consumes an argument (typically $time); the runtime
@@ -3627,11 +3669,39 @@ impl EmitCtx<'_, '_> {
                         ));
                     }
                     arg_idx += 1;
-                    c_fmt.push_str(&spec);
+                    c_fmt.push_str(&spec[..spec.len() - conv.len_utf8()]);
+                    c_fmt.push(conversion);
                 }
-                'm' => {
-                    // `%m` is a scope query and consumes no value argument.
-                    c_fmt.push_str(&spec);
+                'p' => {
+                    // Pattern formatting for unpacked aggregates is still
+                    // outside the owned IR, but scalar packed and native
+                    // string values can use the runtime's textual pattern
+                    // representation.
+                    if arg_idx >= display_args.len() {
+                        return Err(format!(
+                            "{name} format `%{conv}` in `{}` has no argument",
+                            self.path
+                        ));
+                    }
+                    if !matches!(
+                        &display_args[arg_idx],
+                        crate::sim::ir::IrDisplayArg::Packed(_)
+                            | crate::sim::ir::IrDisplayArg::String(_)
+                    ) {
+                        return Err(format!(
+                            "{name} pattern format `%{conv}` requires a packed or string argument in `{}`",
+                            self.path
+                        ));
+                    }
+                    arg_idx += 1;
+                    c_fmt.push_str(&spec[..spec.len() - conv.len_utf8()]);
+                    c_fmt.push(conversion);
+                }
+                'm' | 'l' => {
+                    // `%m` and `%l` are scope/library queries and consume no
+                    // value argument.
+                    c_fmt.push_str(&spec[..spec.len() - conv.len_utf8()]);
+                    c_fmt.push(conversion);
                 }
                 '%' => c_fmt.push_str(&spec),
                 other => {

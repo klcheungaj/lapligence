@@ -919,27 +919,40 @@ fn render_typed_display(
     if args.is_empty() {
         return Ok(format!("    {output_fn}({fmt}, NULL, 0, {scope});\n"));
     }
-    let values = args
-        .iter()
-        .map(|arg| match arg {
-            IrDisplayArg::Packed(value) => Ok(format!(
-                "{{ .kind = LLG_FMT_PACKED, .value.packed = {} }}",
-                render_expr(ctx, value)?.code
-            )),
-            IrDisplayArg::Real(value) => Ok(format!(
-                "{{ .kind = LLG_FMT_REAL, .value.real = {} }}",
-                render_expr(ctx, value)?.code
-            )),
-            IrDisplayArg::String(value) => Ok(format!(
-                "{{ .kind = LLG_FMT_STRING, .value.string = {} }}",
-                super::objects::string(ctx, value)?
-            )),
-        })
-        .collect::<Result<Vec<_>, String>>()?;
-    Ok(format!(
-        "    {{\n        llg_fmt_arg_t _display_args[] = {{{}}};\n        {output_fn}({fmt}, _display_args, {}, {scope});\n    }}\n",
-        values.join(", "),
+    // Do not put expression calls in a C aggregate initializer.  C does not
+    // specify the order in which initializer expressions are evaluated, so a
+    // display such as `$display("%d %d", f(), g())` could observe side effects
+    // in the opposite order.  Sequential field assignments preserve the HDL
+    // argument evaluation order and also make string ownership explicit.
+    let mut assignments = Vec::with_capacity(args.len() + 2);
+    assignments.push(format!(
+        "llg_fmt_arg_t _display_args[{}] = {{0}};",
         args.len()
+    ));
+    for (index, arg) in args.iter().enumerate() {
+        let assignment = match arg {
+            IrDisplayArg::Packed(value) => format!(
+                "_display_args[{index}].kind = LLG_FMT_PACKED;\n        _display_args[{index}].value.packed = {};",
+                render_expr(ctx, value)?.code
+            ),
+            IrDisplayArg::Real(value) => format!(
+                "_display_args[{index}].kind = LLG_FMT_REAL;\n        _display_args[{index}].value.real = {};",
+                render_expr(ctx, value)?.code
+            ),
+            IrDisplayArg::String(value) => format!(
+                "_display_args[{index}].kind = LLG_FMT_STRING;\n        _display_args[{index}].value.string = {};",
+                super::objects::string(ctx, value)?
+            ),
+        };
+        assignments.push(assignment);
+    }
+    assignments.push(format!(
+        "{output_fn}({fmt}, _display_args, {}, {scope});",
+        args.len()
+    ));
+    Ok(format!(
+        "    {{\n        {}\n    }}\n",
+        assignments.join("\n        ")
     ))
 }
 
