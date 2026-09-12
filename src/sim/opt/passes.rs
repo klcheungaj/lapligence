@@ -439,6 +439,17 @@ fn walk_expr_mut(e: &mut IrExpr, f: &mut impl FnMut(&mut IrExpr)) {
                     walk_expr_mut(arg, f);
                 }
             }
+            IrSysFunc::Urandom { seed } => {
+                if let Some(seed) = seed {
+                    walk_expr_mut(seed, f);
+                }
+            }
+            IrSysFunc::UrandomRange { max, min } => {
+                walk_expr_mut(max, f);
+                if let Some(min) = min {
+                    walk_expr_mut(min, f);
+                }
+            }
             IrSysFunc::Clog2(a)
             | IrSysFunc::Bits(a)
             | IrSysFunc::BitQuery { arg: a, .. }
@@ -499,6 +510,10 @@ fn walk_stmt_mut(s: &mut IrStmt, f: &mut impl FnMut(&mut IrExpr)) {
             operation.expressions_mut(&mut |child| walk_expr_mut(child, f))
         }
         IrStmt::PlusArg(expression) => walk_expr_mut(expression, f),
+        IrStmt::RandomSeed { seed } => walk_expr_mut(seed, f),
+        IrStmt::RandomStateSet { state } => {
+            state.expressions_mut(&mut |child| walk_expr_mut(child, f));
+        }
         IrStmt::Block(b)
         | IrStmt::Forever { body: b }
         | IrStmt::ActivationScope { body: b, .. } => walk_stmts_mut(b, f),
@@ -1161,6 +1176,17 @@ fn ident_children(e: &mut IrExpr) {
                 }
                 for arg in args {
                     ident_expr(arg);
+                }
+            }
+            IrSysFunc::Urandom { seed } => {
+                if let Some(seed) = seed {
+                    ident_expr(seed);
+                }
+            }
+            IrSysFunc::UrandomRange { max, min } => {
+                ident_expr(max);
+                if let Some(min) = min {
+                    ident_expr(min);
                 }
             }
             IrSysFunc::Clog2(a)
@@ -2444,6 +2470,17 @@ fn collect_children_reads(e: &IrExpr, model: &IrModel, rw: &mut Rw) {
                 }
                 for arg in args {
                     collect_expr_reads(arg, model, rw);
+                }
+            }
+            IrSysFunc::Urandom { seed } => {
+                if let Some(seed) = seed {
+                    collect_expr_reads(seed, model, rw);
+                }
+            }
+            IrSysFunc::UrandomRange { max, min } => {
+                collect_expr_reads(max, model, rw);
+                if let Some(min) = min {
+                    collect_expr_reads(min, model, rw);
                 }
             }
             IrSysFunc::Clog2(a)

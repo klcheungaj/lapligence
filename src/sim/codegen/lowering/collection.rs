@@ -9021,6 +9021,7 @@ impl<'a> Codegen<'a> {
         visited_functions: &mut HashSet<NodeId>,
     ) -> Result<(), String> {
         match self.kind(node) {
+            NodeKind::FuncCall { .. } if self.is_process_self_call(node) => return Ok(()),
             NodeKind::Stmt(StmtKind::EventControl { .. }) => scan.event_controls.push(node),
             NodeKind::Stmt(StmtKind::DelayControl { .. })
             | NodeKind::Stmt(StmtKind::Wait { .. })
@@ -9279,6 +9280,7 @@ impl<'a> Codegen<'a> {
         visited_functions: &mut HashSet<NodeId>,
     ) -> Result<(), String> {
         match self.kind(node) {
+            NodeKind::FuncCall { .. } if self.is_process_self_call(node) => return Ok(()),
             NodeKind::Stmt(StmtKind::Assign { .. })
             | NodeKind::Stmt(StmtKind::ProcContAssign { .. })
             | NodeKind::Stmt(StmtKind::Force { .. })
@@ -9532,6 +9534,9 @@ impl<'a> Codegen<'a> {
         out: &mut Vec<IrDependency>,
         include_function_bodies: bool,
     ) -> Result<(), String> {
+        if self.is_process_self_call(node) {
+            return Ok(());
+        }
         if self.object_of(scope_path, node).is_some() {
             return Err(format!("string/chandle changes cannot yet be used in sensitivity or wait expressions in `{scope_path}`"));
         }

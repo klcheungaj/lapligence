@@ -820,6 +820,31 @@ pub(super) fn render_expr_impl(ctx: &RCtx<'_>, e: &IrExpr) -> Result<RenderedExp
             IrSysFunc::LegacyRandom { kind, seed, args } => {
                 render_legacy_random(ctx, *kind, seed.as_deref(), args)?
             }
+            IrSysFunc::Urandom { seed } => {
+                let code = match seed {
+                    Some(seed) => format!("llg_urandom_seed({})", w(seed)?.code),
+                    None => "llg_urandom()".to_owned(),
+                };
+                RenderedExpr {
+                    code,
+                    width: 32,
+                    signed: false,
+                    fill: None,
+                }
+            }
+            IrSysFunc::UrandomRange { max, min } => {
+                let max = w(max)?.code;
+                let (min, has_min) = match min {
+                    Some(min) => (w(min)?.code, 1),
+                    None => ("sv4_from_u64(0, 32, 0)".to_owned(), 0),
+                };
+                RenderedExpr {
+                    code: format!("llg_urandom_range({max}, {min}, {has_min})"),
+                    width: 32,
+                    signed: false,
+                    fill: None,
+                }
+            }
             IrSysFunc::Math { kind, args } => {
                 use crate::sim::ir::IrMathFunc;
                 let name = match kind {

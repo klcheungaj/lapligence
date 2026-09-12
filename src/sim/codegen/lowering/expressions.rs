@@ -2884,6 +2884,65 @@ impl<'a> Codegen<'a> {
             ));
         }
         match name {
+            "$urandom" => {
+                if args.len() > 1 {
+                    return Err(format!(
+                        "$urandom accepts zero or one argument in `{scope_path}`"
+                    ));
+                }
+                let seed = args
+                    .first()
+                    .map(|arg| self.lower_expr(scope_path, *arg))
+                    .transpose()?;
+                let seed = seed
+                    .map(|value| {
+                        if value.is_real() {
+                            Err(format!("$urandom seed must be integral in `{scope_path}`"))
+                        } else {
+                            Ok(IrExpr::convert_to(value, 32, false))
+                        }
+                    })
+                    .transpose()?;
+                Ok(IrExpr::new(
+                    IrExprKind::SysFunc(IrSysFunc::Urandom {
+                        seed: seed.map(Box::new),
+                    }),
+                    32,
+                    false,
+                    None,
+                ))
+            }
+            "$urandom_range" => {
+                if !(1..=2).contains(&args.len()) {
+                    return Err(format!(
+                        "$urandom_range requires one or two arguments in `{scope_path}`"
+                    ));
+                }
+                let max = self.lower_expr(scope_path, args[0])?;
+                if max.is_real() {
+                    return Err(format!(
+                        "$urandom_range maximum must be integral in `{scope_path}`"
+                    ));
+                }
+                let min = args
+                    .get(1)
+                    .map(|arg| self.lower_expr(scope_path, *arg))
+                    .transpose()?;
+                if min.as_ref().is_some_and(IrExpr::is_real) {
+                    return Err(format!(
+                        "$urandom_range minimum must be integral in `{scope_path}`"
+                    ));
+                }
+                Ok(IrExpr::new(
+                    IrExprKind::SysFunc(IrSysFunc::UrandomRange {
+                        max: Box::new(IrExpr::convert_to(max, 32, false)),
+                        min: min.map(|value| Box::new(IrExpr::convert_to(value, 32, false))),
+                    }),
+                    32,
+                    false,
+                    None,
+                ))
+            }
             "$cast" => self.lower_dynamic_cast(scope_path, &args),
             "$test$plusargs" | "$value$plusargs" => self.lower_plusarg_expr(scope_path, name, call),
             "$system" => Ok(IrExpr::new(

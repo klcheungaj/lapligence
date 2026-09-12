@@ -243,6 +243,7 @@ struct llg_proc {
     llg_fork_group_t* grp;         // group this proc belongs to (NULL top-level)
     llg_frame_t* frame;            // retained activation storage, when captured
     llg_activation_t* activation_top; // innermost named block/task scope
+    llg_rng_state_t rng;           // process-local random stream
     uint64_t budget_steps;         // loop back-edges at `budget_time`
     uint64_t budget_time;          // time step for the process budget
 };
@@ -631,6 +632,7 @@ typedef struct {
     int pca_count;
     llg_pca_real_binding_t pca_real_table[LLG_MAX_PCA];
     int pca_real_count;
+    llg_rng_state_t rng_root;
     int argc;
     char** argv;
     llg_q_queue_t* q_queues;
@@ -931,6 +933,66 @@ static void unregister_proc(llg_proc_t* p) {
 static llg_proc_t* llg_current(void) {
     return aco_gtls_co && aco_gtls_co != g.main_co
                ? (llg_proc_t*)aco_get_arg() : NULL;
+}
+
+/* Calls made while a generated process is running use that process's stream.
+ * The root stream is the safe fallback for initialization callbacks and
+ * embedding code that invokes the service outside a coroutine. */
+static llg_rng_state_t* llg_process_rng(void) {
+    llg_proc_t* process = llg_current();
+    return process ? &process->rng : &g.rng_root;
+}
+
+static int llg_rng_argument(sv4_t value, uint32_t* result) {
+    if (sv4_is_unknown(value) || value.width == 0) return 0;
+    *result = (uint32_t)sv4_to_u64(value);
+    return 1;
+}
+
+sv4_t llg_urandom(void) {
+    return sv4_from_u64((uint64_t)llg_rng_state_next(llg_process_rng()), 32, 0);
+}
+
+sv4_t llg_urandom_seed(sv4_t seed) {
+    uint32_t value = 0;
+    if (!llg_rng_argument(seed, &value)) return sv4_x(32, 0);
+    llg_rng_state_seed(llg_process_rng(), value);
+    return llg_urandom();
+}
+
+sv4_t llg_urandom_range(sv4_t max, sv4_t min, int has_min) {
+    uint32_t high;
+    uint32_t low = 0;
+    if (!llg_rng_argument(max, &high) ||
+        (has_min && !llg_rng_argument(min, &low)))
+        return sv4_x(32, 0);
+    if (!has_min) low = 0;
+    return sv4_from_u64(
+        (uint64_t)llg_rng_state_uniform(llg_process_rng(), high, low), 32, 0);
+}
+
+void llg_process_srandom(sv4_t seed) {
+    uint32_t value = 0;
+    if (!llg_rng_argument(seed, &value)) {
+        fprintf(stderr, "llg: random runtime: srandom seed is unknown or real\n");
+        llg_last_failure = 1;
+        return;
+    }
+    llg_rng_state_seed(llg_process_rng(), value);
+}
+
+llg_string_t llg_process_get_randstate(void) {
+    return llg_rng_state_get(llg_process_rng());
+}
+
+int llg_process_set_randstate(llg_string_t state) {
+    int ok = llg_rng_state_set(llg_process_rng(), &state);
+    if (!ok) {
+        fprintf(stderr, "llg: random runtime: invalid randstate string\n");
+        llg_last_failure = 1;
+    }
+    llg_string_destroy(&state);
+    return ok;
 }
 
 static void activation_retain(llg_activation_t* activation) {
@@ -1584,6 +1646,7 @@ static llg_proc_t* llg_fork_impl(void (*fn)(llg_proc_t*), const char* name,
     p->grp = grp;
     p->frame = frame;
     llg_frame_retain(frame);
+    llg_rng_state_child(&grp->parent->rng, &p->rng);
     p->budget_time = g.now;
     // aco_create from inside a coroutine is safe (mallocs/zeroes an aco_t and
     // sets registers only; no global state).  Children yield to g.main_co, the
@@ -2781,6 +2844,7 @@ void llg_rt_init_with_args(int argc, char** argv) {
     llg_configured_process_step_limit = g.process_step_limit;
     llg_configured_stop_policy = g.stop_policy;
     g.current_region = LLG_REGION_PREPONED;
+    llg_rng_state_seed(&g.rng_root, LLG_RNG_DEFAULT_SEED);
     g.argc = argc > 0 ? argc : 0;
     g.argv = g.argc > 0 ? argv : NULL;
     aco_thread_init(llg_last_word);
@@ -3460,6 +3524,7 @@ llg_proc_t* llg_spawn_in_region(void (*fn)(llg_proc_t*), const char* name,
         1, sizeof(llg_proc_t), "process");
     p->name = name;
     p->fn = fn;
+    llg_rng_state_child(&g.rng_root, &p->rng);
     p->budget_time = g.now;
     p->region = region;
     p->co = aco_create(g.main_co, g.share_stack, 1u << 20, llg_proc_entry, p);

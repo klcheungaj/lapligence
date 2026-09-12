@@ -92,9 +92,18 @@ fn generated_sources_keep_value_runtime_as_a_separate_translation_unit() {
         std::fs::read_to_string(dir.path().join("llg_value.c")).unwrap(),
         source
     );
+    let (rng_header, rng_source) = sim::rt::rng_sources();
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("llg_rng.h")).unwrap(),
+        rng_header
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("llg_rng.c")).unwrap(),
+        rng_source
+    );
     assert!(!dir.path().join("stale.c").exists());
     let cmake = std::fs::read_to_string(dir.path().join("CMakeLists.txt")).unwrap();
-    assert!(cmake.contains("model.c llg_value.c llg_rt.c llg_random.c aco.c acosw.S"));
+    assert!(cmake.contains("model.c llg_value.c llg_rng.c llg_rt.c llg_random.c aco.c acosw.S"));
     let (runtime_header, runtime_source) = sim::rt::runtime_sources();
     assert!(runtime_header.contains("#include \"llg_value.h\""));
     assert!(!runtime_source.contains("#include \"llg_value.c\""));

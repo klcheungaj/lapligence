@@ -175,6 +175,8 @@ selected range contributes; lowering rejects dynamic net selectors.
 - All sources are embedded as strings via `include_str!` in `mod.rs`:
   - `value_sources()` → `(llg_value.h, llg_value.c)`;
   - `random_sources()` → `(llg_random.h, llg_random.c)`;
+  - `rng_sources()` → `(llg_rng.h, llg_rng.c)`, the scheduler-independent
+    process/object stream service used by generated random facilities;
   - `runtime_sources()` → `(llg_rt.h, llg_rt.c)`, requiring the value pair;
   - `string_sources()` → `(llg_string.h, llg_string.c)`, requiring the value pair;
   - `container_sources()` → `(llg_container.h, llg_container.c)`, requiring

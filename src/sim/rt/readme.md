@@ -37,6 +37,10 @@
   exit nonzero. Scheduler ticks are exact femtoseconds; the generated model
   supplies checked local-unit conversions for `$time`, `$stime`, and
   `$realtime`.
+- **Random streams:** `llg_rng.h/.c` provides deterministic PCG streams with
+  stable process/fork derivation, unbiased inclusive ranges, and versioned
+  state snapshots. The scheduler binds one stream to each generated process;
+  the standalone service is also suitable for future class-object streams.
 - **Real dependencies:** scalar `real`/`shortreal` storage uses typed double
   dependencies for `wait`, any-change `@` controls, combinational links, and
   scalar ports. Writes notify only when the IEEE representation changes:
@@ -56,8 +60,8 @@
   contains the pinned FST sources; libaco sources provide model coroutines.
 - **Embedding:** `mod.rs` exposes source pairs; `sim::build` writes them with
   generated model sources and builds them with CMake.
-- **Checks:** standalone value/runtime self-tests and Rust integration tests
-  cover the runtime boundary.
+- **Checks:** standalone value/random/container runtime probes and Rust
+  integration tests cover the runtime boundary.
 
 See [`docs/sim_data_semantics.md`](../../../docs/sim_data_semantics.md) for
 language-level value semantics.

@@ -37,6 +37,7 @@
 
 #include "llg_value.h"
 #include "llg_string.h"
+#include "llg_rng.h"
 
 #ifndef LLG_ZERO_LOOP_LIMIT
 #define LLG_ZERO_LOOP_LIMIT 10000000ULL
@@ -295,6 +296,20 @@ void llg_q_remove(sv4_t q_id, sv4_t* job_id, sv4_t* inform_id,
 sv4_t llg_q_full(sv4_t q_id, sv4_t* status);
 void llg_q_exam(sv4_t q_id, sv4_t stat_code, sv4_t* stat_value,
                 sv4_t* status);
+
+// ── Process/object random streams ───────────────────────────────────────────
+//
+// Every generated process owns one stream. Top-level processes derive from
+// the model root in creation order; forked children derive from their parent
+// in branch-creation order. A draw mutates only its owning stream. The
+// scheduler-independent llg_rng_state_t API is also used by future class
+// objects and constrained-random services.
+sv4_t llg_urandom(void);
+sv4_t llg_urandom_seed(sv4_t seed);
+sv4_t llg_urandom_range(sv4_t max, sv4_t min, int has_min);
+void llg_process_srandom(sv4_t seed);
+llg_string_t llg_process_get_randstate(void);
+int llg_process_set_randstate(llg_string_t state);
 
 // Stable dependency markers used by generated fixed-array and container
 // readers. A marker's address remains valid when a resizable container moves

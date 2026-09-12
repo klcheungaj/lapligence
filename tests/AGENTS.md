@@ -167,6 +167,9 @@ coverage for the same rule IDs.
 - `runtime_values.rs` compiles `llg_value.c` independently of the scheduler and
   libaco, checking packed value operations, real/shortreal conversions, and
   wire/wired-AND/wired-OR truth tables and wide-vector normalization.
+- `runtime_random.rs` compiles the scheduler-independent stream service and
+  checks hierarchy-stable child derivation, state replay, and inclusive range
+  endpoints.
   `sim_net_resolution.rs` covers per-site wired drivers, aliases, repeated
   updates, optimizer parity, driver limits and unsupported-context rejection.
   `sim_net_defaults.rs` covers implicit pull/supply ordering, initial defaults,
@@ -205,6 +208,9 @@ coverage for the same rule IDs.
   checked-in 2009 rounding and 2001 keyword/edition CLI probes.
   `sim_fill_literals.rs` checks context-determined fills through expressions
   and case operands, self-determined boundaries, and wide-operation rejection.
+  `sim_random_streams.rs` exercises `$urandom`, `$urandom_range`, process
+  seeding/state methods, and fork-child stream isolation in both optimizer
+  modes.
 
 ## Safeguard validation
 

@@ -6,6 +6,20 @@ use crate::sim::ir::{
 };
 
 impl Codegen<'_> {
+    pub(super) fn is_process_self_call(&self, node: NodeId) -> bool {
+        matches!(self.kind(node), NodeKind::FuncCall { name, .. } if name == "self")
+    }
+
+    fn is_process_rng_receiver(&self, node: NodeId) -> bool {
+        match self.kind(node) {
+            NodeKind::FuncCall { .. } if self.is_process_self_call(node) => true,
+            NodeKind::Expr(ExprKind::Ref {
+                target: Some(target),
+            }) => self.node(node).name == "self" || self.node(*target).name == "self",
+            _ => self.node(node).name == "self",
+        }
+    }
+
     fn object_int_argument(
         &mut self,
         path: &str,
@@ -189,6 +203,7 @@ impl Codegen<'_> {
             } => {
                 (matches!(name.as_str(), "toupper" | "tolower" | "substr")
                     && self.is_string_expr(path, *receiver))
+                    || (name == "get_randstate" && self.is_process_rng_receiver(*receiver))
                     || (name == "name"
                         && self
                             .enum_metadata_for_expr(*receiver)
@@ -632,6 +647,18 @@ impl Codegen<'_> {
         path: &str,
         node: NodeId,
     ) -> Result<IrStringExpr, String> {
+        if let NodeKind::MethodCall {
+            name,
+            receiver: Some(receiver),
+        } = self.kind(node)
+        {
+            if name == "get_randstate"
+                && self.is_process_rng_receiver(*receiver)
+                && self.node(node).children.len() == 1
+            {
+                return Ok(IrStringExpr::RandomState);
+            }
+        }
         if let Some(value) = self.lower_container_string_query(path, node)? {
             return Ok(value);
         }
@@ -1249,6 +1276,28 @@ impl Codegen<'_> {
             } => (name.clone(), *receiver),
             _ => return Err("object method has no receiver".to_owned()),
         };
+        if self.is_process_rng_receiver(receiver) {
+            let args = self.node(node).children.get(1..).unwrap_or_default();
+            return match (name.as_str(), args) {
+                ("srandom", [seed]) => {
+                    let seed = self.lower_expr(path, *seed)?;
+                    if seed.is_real() {
+                        return Err(format!("srandom seed must be integral in {path}"));
+                    }
+                    Ok(IrStmt::RandomSeed {
+                        seed: IrExpr::convert_to(seed, 32, false),
+                    })
+                }
+                ("set_randstate", [state]) => Ok(IrStmt::RandomStateSet {
+                    state: self.lower_string(path, *state)?,
+                }),
+                ("srandom", _) | ("set_randstate", _) => Err(format!(
+                    "{} requires exactly one argument in {}",
+                    name, path
+                )),
+                _ => Err(format!("unsupported process random method: {name}")),
+            };
+        }
         let index = self.object_of(path, receiver);
         let local = if index.is_none() {
             let target = match self.kind(receiver) {

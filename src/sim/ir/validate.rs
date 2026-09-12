@@ -1282,6 +1282,39 @@ impl Validator<'_> {
                         self.validate_expr(arg, formals, &format!("{path}.args[{index}]"))?;
                     }
                 }
+                IrSysFunc::Urandom { seed } => {
+                    if let Some(seed) = seed {
+                        self.validate_expr(seed, formals, &format!("{path}.seed"))?;
+                        if seed.is_real() || (seed.width, seed.signed) != (32, false) {
+                            return self
+                                .fail(path, "$urandom seed must be a 32-bit unsigned value");
+                        }
+                    }
+                    if (expr.width, expr.signed) != (32, false) {
+                        return self.fail(path, "$urandom requires a 32-bit unsigned result");
+                    }
+                }
+                IrSysFunc::UrandomRange { max, min } => {
+                    self.validate_expr(max, formals, &format!("{path}.max"))?;
+                    if (max.width, max.signed) != (32, false) {
+                        return self.fail(
+                            path,
+                            "$urandom_range maximum must be a 32-bit unsigned value",
+                        );
+                    }
+                    if let Some(min) = min {
+                        self.validate_expr(min, formals, &format!("{path}.min"))?;
+                        if (min.width, min.signed) != (32, false) {
+                            return self.fail(
+                                path,
+                                "$urandom_range minimum must be a 32-bit unsigned value",
+                            );
+                        }
+                    }
+                    if (expr.width, expr.signed) != (32, false) {
+                        return self.fail(path, "$urandom_range requires a 32-bit unsigned result");
+                    }
+                }
                 IrSysFunc::Math { kind, args } => {
                     if args.len() != kind.arity() || !expr.is_real() {
                         return self.fail(
@@ -2027,6 +2060,22 @@ impl Validator<'_> {
                     });
                     result?;
                 }
+            }
+            IrStmt::RandomSeed { seed } => {
+                self.validate_expr(seed, formals, &format!("{path}.seed"))?;
+                if seed.is_real() || (seed.width, seed.signed) != (32, false) {
+                    return self.fail(path, "random seed must be a 32-bit unsigned value");
+                }
+            }
+            IrStmt::RandomStateSet { state } => {
+                state.validate(self.model, self.string_return.get())?;
+                let mut result = Ok(());
+                state.expressions(&mut |child| {
+                    result = result
+                        .clone()
+                        .and_then(|_| self.validate_expr(child, formals, path));
+                });
+                result?;
             }
             IrStmt::Container(operation) => {
                 operation.validate(self.model, self.string_return.get())?;

@@ -270,6 +270,8 @@ fn stmt_temp_frame_slots(stmts: &[IrStmt]) -> Result<u64, String> {
 fn stmt_temp_slots(stmt: &IrStmt) -> Result<u64, String> {
     let slots = match stmt {
         IrStmt::System(command) => command.as_ref().map_or(Ok(0), string_expr_slots),
+        IrStmt::RandomSeed { seed } => expr_slots(seed),
+        IrStmt::RandomStateSet { state } => string_expr_slots(state),
         IrStmt::Container(operation) => {
             let mut slots = Ok(1);
             operation.expressions(&mut |child| {
@@ -822,6 +824,16 @@ fn system_expr_slots(system: &IrSysFunc) -> Result<u64, String> {
             })?;
             checked_add(seed_slots, arg_slots, "legacy random expression slots")
         }
+        IrSysFunc::Urandom { seed } => seed
+            .as_deref()
+            .map(expr_slots)
+            .transpose()
+            .map(Option::unwrap_or_default),
+        IrSysFunc::UrandomRange { max, min } => checked_add(
+            expr_slots(max)?,
+            min.as_deref().map(expr_slots).transpose()?.unwrap_or(0),
+            "random range arguments",
+        ),
         IrSysFunc::Clog2(arg)
         | IrSysFunc::Bits(arg)
         | IrSysFunc::BitQuery { arg, .. }

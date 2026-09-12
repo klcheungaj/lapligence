@@ -176,6 +176,16 @@ fn render_stmt_scoped(
             };
             format!("    (void)llg_system({command}, {has_command});\n")
         }
+        IrStmt::RandomSeed { seed } => {
+            format!(
+                "    llg_process_srandom({});\n",
+                render_expr(ctx, seed)?.code
+            )
+        }
+        IrStmt::RandomStateSet { state } => format!(
+            "    (void)llg_process_set_randstate({});\n",
+            super::objects::string(ctx, state)?
+        ),
         IrStmt::Container(operation) => super::containers::statement(ctx, operation)?,
         IrStmt::Object(operation) => super::objects::statement(ctx, operation)?,
         IrStmt::PlusArg(expression) => {

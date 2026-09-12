@@ -3,9 +3,11 @@
 //! [`value_sources`] returns the scheduler-independent value types, operations,
 //! and conversions (`llg_value.h` / `llg_value.c`), [`random_sources`] the
 //! scheduler-independent legacy probabilistic functions (`llg_random.h` /
-//! `llg_random.c`), [`container_sources`] and [`string_sources`] the dynamically
-//! sized value stores, [`runtime_sources`] the event
-//! scheduler (`llg_rt.h` / `llg_rt.c`), [`libaco_sources`] the vendored coroutine
+//! `llg_random.c`), [`rng_sources`] the
+//! scheduler-independent random-stream service (`llg_rng.h` / `llg_rng.c`),
+//! [`container_sources`] and [`string_sources`] the dynamically sized value
+//! stores, [`runtime_sources`] the event scheduler (`llg_rt.h` / `llg_rt.c`),
+//! [`libaco_sources`] the vendored coroutine
 //! library (`aco.h` / `aco.c` / `acosw.S`), [`waveform_sources`] the optional
 //! asynchronous VCD/FST writer and vendored libfst sources, and
 //! [`selftest_source`] the runtime's C self-test.  The driver and integration
@@ -15,6 +17,12 @@
 //!
 //! See `llg_value.h` for value semantics and `llg_rt.h` for the scheduler API;
 //! correctness of the 4-state math mirrors `core::elab`.
+
+/// Scheduler-independent deterministic random-stream service.  It owns the
+/// PCG stream, hierarchy derivation, unbiased ranges, and state serialization.
+pub fn rng_sources() -> (&'static str, &'static str) {
+    (include_str!("llg_rng.h"), include_str!("llg_rng.c"))
+}
 
 /// (header, implementation) of the event scheduler and runtime facade.
 /// Compile together with [`value_sources`] and [`libaco_sources`].

@@ -38,6 +38,7 @@ pub(crate) fn write_sim_sources(
     let (rt_h, rt_c) = rt::runtime_sources();
     let (value_h, value_c) = rt::value_sources();
     let (random_h, random_c) = rt::random_sources();
+    let (rng_h, rng_c) = rt::rng_sources();
     let (container_h, container_c) = rt::container_sources();
     let (string_h, string_c) = rt::string_sources();
     let (aco_h, aco_c, aco_s) = rt::libaco_sources();
@@ -48,6 +49,8 @@ pub(crate) fn write_sim_sources(
         ("llg_value.c", value_c),
         ("llg_random.h", random_h),
         ("llg_random.c", random_c),
+        ("llg_rng.h", rng_h),
+        ("llg_rng.c", rng_c),
         ("llg_container.h", container_h),
         ("llg_container.c", container_c),
         ("llg_string.h", string_h),

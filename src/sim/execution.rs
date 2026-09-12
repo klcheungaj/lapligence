@@ -548,6 +548,9 @@ fn collect_effects(
                 effects.push(ExecutionEffect::RuntimeService)
             }
             IrStmt::System(_) => effects.push(ExecutionEffect::RuntimeService),
+            IrStmt::RandomSeed { .. } | IrStmt::RandomStateSet { .. } => {
+                effects.push(ExecutionEffect::RuntimeService)
+            }
             IrStmt::Display { .. }
             | IrStmt::DisplayTyped { .. }
             | IrStmt::Severity { .. }
@@ -652,6 +655,12 @@ fn collect_statement_expression_effects(
     match statement {
         IrStmt::System(Some(command)) => {
             collect_string_effects(ir, command, effects, visited_calls);
+        }
+        IrStmt::RandomSeed { seed } => {
+            collect_expression_effects(ir, seed, effects, visited_calls);
+        }
+        IrStmt::RandomStateSet { state } => {
+            collect_string_effects(ir, state, effects, visited_calls);
         }
         IrStmt::Container(operation) => operation.expressions(&mut |expression| {
             collect_expression_effects(ir, expression, effects, visited_calls)
@@ -1114,6 +1123,19 @@ fn collect_expression_effects(
                     collect_expression_effects(ir, arg, effects, visited_calls);
                 }
             }
+            IrSysFunc::Urandom { seed } => {
+                effects.push(ExecutionEffect::RuntimeService);
+                if let Some(seed) = seed {
+                    collect_expression_effects(ir, seed, effects, visited_calls);
+                }
+            }
+            IrSysFunc::UrandomRange { max, min } => {
+                effects.push(ExecutionEffect::RuntimeService);
+                collect_expression_effects(ir, max, effects, visited_calls);
+                if let Some(min) = min {
+                    collect_expression_effects(ir, min, effects, visited_calls);
+                }
+            }
             IrSysFunc::Time { .. } | IrSysFunc::Realtime { .. } => {}
             IrSysFunc::Math { args, .. } => {
                 for arg in args {
@@ -1341,6 +1363,7 @@ fn collect_string_effects(
                 }
             }
         }
+        IrStringExpr::RandomState => effects.push(ExecutionEffect::RuntimeService),
         IrStringExpr::Literal(_)
         | IrStringExpr::Read(_)
         | IrStringExpr::LocalRead(_)

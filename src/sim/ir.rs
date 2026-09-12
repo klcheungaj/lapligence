@@ -874,6 +874,15 @@ pub enum IrSysFunc {
         seed: Option<Box<IrLhs>>,
         args: Vec<IrExpr>,
     },
+    /// `$urandom([seed])` uses the current process/object stream. A supplied
+    /// seed reinitializes that stream before producing the returned value.
+    Urandom { seed: Option<Box<IrExpr>> },
+    /// `$urandom_range(max[, min])`, with inclusive and order-independent
+    /// endpoints. The runtime uses rejection sampling to avoid modulo bias.
+    UrandomRange {
+        max: Box<IrExpr>,
+        min: Option<Box<IrExpr>>,
+    },
     /// Real math functions defined by IEEE 1800-2009 table 20-4.
     Math { kind: IrMathFunc, args: Vec<IrExpr> },
     /// Fractional time in the calling module's time unit.
@@ -1821,6 +1830,14 @@ pub enum IrStmt {
     /// once when the statement executes and its host status is discarded.
     /// `None` means the standard's omitted-argument `system(NULL)` query.
     System(Option<IrStringExpr>),
+    /// `process::self().srandom(seed)` (and equivalent object stream seed).
+    RandomSeed {
+        seed: IrExpr,
+    },
+    /// `process::self().set_randstate(state)` consumes an owned state string.
+    RandomStateSet {
+        state: IrStringExpr,
+    },
     Container(IrContainerStmt),
     Object(IrObjectStmt),
     /// A system plusarg query used in statement position. The expression is

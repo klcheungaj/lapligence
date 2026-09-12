@@ -23,6 +23,9 @@ pub struct IrObject {
 #[derive(Clone, Debug, PartialEq)]
 pub enum IrStringExpr {
     Literal(Vec<u8>),
+    /// Snapshot of the current process/object random stream. The returned
+    /// bytes are an owned, versioned state string consumed by set_randstate.
+    RandomState,
     Read(usize),
     LocalRead(String),
     /// Read and clone a native string formal. The callee owns the returned
@@ -410,7 +413,11 @@ impl IrStringExpr {
     }
     pub(in crate::sim) fn expressions(&self, visit: &mut impl FnMut(&IrExpr)) {
         match self {
-            Self::Literal(_) | Self::Read(_) | Self::LocalRead(_) | Self::FormalRead(_) => {}
+            Self::Literal(_)
+            | Self::RandomState
+            | Self::Read(_)
+            | Self::LocalRead(_)
+            | Self::FormalRead(_) => {}
             Self::ContainerGet { index, .. } => visit(index),
             Self::ContainerGetNested { indices, .. } => indices.iter().for_each(visit),
             Self::AssociativeGet { key, .. } => key.expressions(visit),
@@ -458,7 +465,11 @@ impl IrStringExpr {
     }
     pub(in crate::sim) fn expressions_mut(&mut self, visit: &mut impl FnMut(&mut IrExpr)) {
         match self {
-            Self::Literal(_) | Self::Read(_) | Self::LocalRead(_) | Self::FormalRead(_) => {}
+            Self::Literal(_)
+            | Self::RandomState
+            | Self::Read(_)
+            | Self::LocalRead(_)
+            | Self::FormalRead(_) => {}
             Self::ContainerGet { index, .. } => visit(index),
             Self::ContainerGetNested { indices, .. } => indices.iter_mut().for_each(visit),
             Self::AssociativeGet { key, .. } => key.expressions_mut(visit),

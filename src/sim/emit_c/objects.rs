@@ -22,6 +22,7 @@ pub(super) fn string(ctx: &RCtx<'_>, value: &IrStringExpr) -> Result<String, Str
                 .collect::<String>();
             format!("llg_string_bytes(\"{literal}\", {})", bytes.len())
         }
+        IrStringExpr::RandomState => "llg_process_get_randstate()".to_owned(),
         IrStringExpr::Read(index) => {
             format!("llg_string_clone(&{})", ctx.model.objects[*index].c_name)
         }

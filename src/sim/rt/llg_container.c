@@ -1,6 +1,7 @@
 // llg_container.c -- scheduler-independent dynamic array, queue, and
 // associative-array storage for generated C11 models.
 #include "llg_container.h"
+#include "llg_rng.h"
 
 #include <limits.h>
 #include <stdio.h>
@@ -2354,19 +2355,14 @@ void llg_assoc_method_assign(llg_queue_t* dst, const llg_assoc_t* src,
     free(values);
 }
 
-static uint64_t llg_container_rng_state = UINT64_C(0x9e3779b97f4a7c15);
+static llg_rng_state_t llg_container_rng_state = {
+    UINT64_C(0), UINT64_C(0), UINT64_C(0)
+};
+static int llg_container_rng_initialized;
 
 void llg_container_seed(uint64_t seed) {
-    llg_container_rng_state = seed ? seed : UINT64_C(0x9e3779b97f4a7c15);
-}
-
-static uint64_t llg_container_random(void) {
-    uint64_t value = llg_container_rng_state;
-    value ^= value << 7;
-    value ^= value >> 9;
-    value ^= value << 8;
-    llg_container_rng_state = value;
-    return value;
+    llg_rng_state_seed(&llg_container_rng_state, seed);
+    llg_container_rng_initialized = 1;
 }
 
 static int llg_method_reorder(sv4_t* data, uint64_t* element_ids,
@@ -2395,7 +2391,11 @@ static int llg_method_reorder(sv4_t* data, uint64_t* element_ids,
     if (method == LLG_CONTAINER_METHOD_SHUFFLE) {
         int changed = 0;
         for (size_t index = count; index > 1; --index) {
-            size_t other = (size_t)(llg_container_random() % index);
+            if (index > UINT32_MAX)
+                llg_container_fatal("shuffle size exceeds random range");
+            if (!llg_container_rng_initialized) llg_container_seed(0);
+            size_t other = (size_t)llg_rng_state_uniform(
+                &llg_container_rng_state, (uint32_t)(index - 1), 0);
             if (other == index - 1) continue;
             if (!sv4_same(data[other], data[index - 1]) ||
                 (element_ids && element_ids[other] != element_ids[index - 1]))

@@ -228,6 +228,25 @@ impl<'db> SemanticModel<'db> {
                 placeholders[id.index()] = true;
             }
         }
+        for owner in self.db.node_ids() {
+            let NodeKind::FuncCall {
+                name,
+                callee: Some(callee),
+                ..
+            } = self.db.node_kind(owner)
+            else {
+                continue;
+            };
+            if name == "self"
+                && matches!(self.db.node_kind(*callee), NodeKind::Other)
+                && self.db.semantic_kind(*callee) == Some(CapturedSemanticKind::Unsupported)
+            {
+                // Slang keeps the built-in process::self() callee as an
+                // unowned semantic placeholder. The method call consumes it
+                // while resolving the receiver.
+                placeholders[callee.index()] = true;
+            }
+        }
         // A captured ArbitrarySymbol is not generally executable. Admit only
         // typed interface actuals and $dumpvars scope/storage arguments, and
         // require every use of a shared expression node to be a metadata use.

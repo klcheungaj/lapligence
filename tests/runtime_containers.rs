@@ -343,11 +343,14 @@ fn container_runtime_compiles_and_runs_without_scheduler() {
 
     let dir = sim_harness::TempDir::new("runtime-containers").expect("create temp directory");
     let (value_header, value_implementation) = llg::sim::rt::value_sources();
+    let (rng_header, rng_implementation) = llg::sim::rt::rng_sources();
     let (string_header, string_implementation) = llg::sim::rt::string_sources();
     let (container_header, container_implementation) = llg::sim::rt::container_sources();
     for (name, contents) in [
         ("llg_value.h", value_header),
         ("llg_value.c", value_implementation),
+        ("llg_rng.h", rng_header),
+        ("llg_rng.c", rng_implementation),
         ("llg_string.h", string_header),
         ("llg_string.c", string_implementation),
         ("llg_container.h", container_header),
@@ -368,6 +371,7 @@ fn container_runtime_compiles_and_runs_without_scheduler() {
     command
         .args([
             "llg_value.c",
+            "llg_rng.c",
             "llg_string.c",
             "llg_container.c",
             "runtime_containers_probe.c",
