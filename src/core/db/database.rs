@@ -1569,7 +1569,7 @@ fn operation_from_slang(operation: SemanticOperation, unary: bool) -> Operation 
         SemanticOperation::LogicalAnd => Operation::LogicalAnd,
         SemanticOperation::LogicalOr => Operation::LogicalOr,
         SemanticOperation::LogicalImplication => Operation::Imply,
-        SemanticOperation::LogicalEquivalence => Operation::Unsupported,
+        SemanticOperation::LogicalEquivalence => Operation::LogicalEquivalence,
         SemanticOperation::Equal => Operation::Equal,
         SemanticOperation::NotEqual => Operation::NotEqual,
         SemanticOperation::CaseEqual => Operation::CaseEqual,

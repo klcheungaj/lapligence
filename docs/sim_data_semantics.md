@@ -285,7 +285,21 @@ bits, while reduction-XOR is unknown if any input bit is unknown.
 
 `!0=1`, `!1=0`, and `!x=!z=x`. `&&`/`||` short-circuit the second operand
 when the first operand is decisively false/true. `a -> b` is `!a || b`; `a <->
-b` is `(a -> b) && (b -> a)` (§11.4.7).
+b` is `(a -> b) && (b -> a)` (§11.4.7). The implication operator also
+short-circuits a known-false antecedent; equivalence always evaluates both
+operands, including their side effects.
+
+| `a,b` | `a -> b` | `a <-> b` |
+| --- | ---: | ---: |
+| `0,0` | 1 | 1 |
+| `0,1` | 1 | 0 |
+| `0,x/z` | 1 | x |
+| `1,0` | 0 | 0 |
+| `1,1` | 1 | 1 |
+| `1,x/z` | x | x |
+| `x/z,0` | x | x |
+| `x/z,1` | 1 | x |
+| `x/z,x/z` | x | x |
 
 **Conditional merge**
 
@@ -364,8 +378,8 @@ These rules are the expected baseline for mixed-type tests (1800-2009
    An assignment context can contribute the LHS width, so `sum = a + b` can
    evaluate differently from a self-determined use of `a+b`.
 3. Relational/equality results are one bit; their operands are mutually sized
-   to the maximum operand width. Logical, reduction, and implication results
-   are one bit.
+   to the maximum operand width. Logical, reduction, implication, and
+   equivalence results are one bit.
 4. Shifts use the left operand width; the right operand is self-determined.
    Concatenations and replication are self-determined and unsigned.
 5. Decimal numbers are signed. Based literals are unsigned unless the base

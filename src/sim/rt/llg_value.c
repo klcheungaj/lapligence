@@ -989,6 +989,19 @@ sv4_t sv4_logor(sv4_t a, sv4_t b) {
     return SV4_X(1);
 }
 
+sv4_t sv4_logimpl(sv4_t a, sv4_t b) {
+    int ta = sv4_logical_truth(a), tb = sv4_logical_truth(b);
+    if (ta == 0 || tb == 1) return SV4_C(1, 1);
+    if (ta == 1 && tb == 0) return SV4_C(0, 1);
+    return SV4_X(1);
+}
+
+sv4_t sv4_logequiv(sv4_t a, sv4_t b) {
+    int ta = sv4_logical_truth(a), tb = sv4_logical_truth(b);
+    if (ta == 2 || tb == 2) return SV4_X(1);
+    return SV4_C(ta == tb, 1);
+}
+
 // Per-bit AND/OR/XOR/XNOR with operands resized to the result width.
 static sv4_t sv4_bitwise(sv4_t a, sv4_t b, int op) {
     uint32_t w = sv4_maxw(a, b);

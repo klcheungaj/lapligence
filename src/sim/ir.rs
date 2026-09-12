@@ -715,6 +715,11 @@ pub enum IrBinOp {
     Shr,
     Ashl,
     Ashr,
+    /// Four-state logical implication (`->`).  The emitter keeps its
+    /// antecedent short-circuit behavior distinct from property implication.
+    LogImpl,
+    /// Four-state logical equivalence (`<->`).
+    LogEquiv,
 }
 
 /// One unary operation (reductions included; result widths were decided at

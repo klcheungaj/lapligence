@@ -35,6 +35,7 @@
 - `sim_reference_args`: typed `ref`/`const ref` aliasing, selected actuals, nested calls, recursion and suspension observation.
 - [Datatype basics](fixtures/sim/data_types/), [wide values](fixtures/sim/data_types_extended/) and [edge cases](fixtures/sim/data_type_edges/): operator/state combinations, limb boundaries and capacity rejection.
 - [Aggregates and containers](fixtures/sim/data_types_next/) and [completion cases](fixtures/sim/data_types_completion/): storage, methods and conversion boundaries.
+- [Logical expression regressions](fixtures/sim/logical_ops/): ordinary `->`/`<->` four-state truth tables, precedence, side-effect evaluation, real operands and optimizer parity.
 - [Executable-node coverage](fixtures/sim/u01_coverage/): source-located fail-closed unsupported nodes, compile-time declarations and elaborated-away branches.
 - `sim_edition`: checked-in 2009 time-literal rounding and 2001 edition/keyword CLI probes.
 - `sim_physical_time`: file-backed 1fs/10fs/100fs/1ps/1ns mixed scopes,

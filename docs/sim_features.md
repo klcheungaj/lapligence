@@ -254,7 +254,7 @@ Verilog era:
 - 🟨 **Arithmetic** `+ - * / %` — §1364-2001 4.1.5 **[1995]** add/subtract/multiply/division/modulo preserve model-sized limbs; the generated backend rejects widths at its exclusive `1 << 20` capacity, while runtime constructors remain defensive
 - 🟨 **Power** `**` — §1364-2001 4.1.5 **[2001]** model-sized operands are supported; backend capacity remains exclusive at `1 << 20`
 - ✅ **Bitwise** `& | ^ ~ ^~` — §1364-2001 4.1.10 **[1995]**
-- ✅ **Logical** `&& || !` — §1364-2001 4.1.9 **[1995]**
+- ✅ **Logical** `&& || ! -> <->` — §1364-2001 4.1.9 / §1800-2009 11.4.7 **[1995/SV-2009]** ordinary expression implication short-circuits a known-false antecedent; equivalence evaluates both operands and both preserve four-state X/Z truth (sim_logical_ops.rs). SVA property implication `|->`/`|=>` remains in the assertion boundary.
 - ✅ **Reductions** `& ~& | ~| ^ ~^` — §1364-2001 4.1.11 **[1995]**
 - ✅ **Shifts** `<< >>` — §1364-2001 4.1.12 **[1995]**
 - ✅ **Arithmetic shifts** `<<< >>>` sign-fill — §1364-2001 4.1.12 **[2001]**

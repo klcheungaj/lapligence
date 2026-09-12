@@ -180,6 +180,67 @@ pub(super) fn render_expr_impl(ctx: &RCtx<'_>, e: &IrExpr) -> Result<RenderedExp
                         )
                     }
                 }
+                IrBinOp::LogImpl => {
+                    if !real {
+                        // Implication is short-circuiting: a known-false
+                        // antecedent determines the result and must not
+                        // evaluate the consequent.  An X/Z antecedent still
+                        // evaluates it because `x -> 1` is known true.
+                        format!(
+                            "({{ sv4_t _llg_logic_left = {}; \
+                             (!sv4_to_bool(_llg_logic_left) && !sv4_is_unknown(_llg_logic_left)) \
+                             ? sv4_from_u64(1, 1, 0) : sv4_logimpl(_llg_logic_left, {}); }})",
+                            ra.code, rb.code
+                        )
+                    } else if ra.width == 0 && rb.width == 0 {
+                        format!(
+                            "sv4_from_u64((!{} || {}) ? 1ULL : 0ULL, 1, 0)",
+                            bool_code(&ra),
+                            bool_code(&rb)
+                        )
+                    } else if ra.width == 0 {
+                        format!(
+                            "({{ int _llg_logic_left = llg_real_to_bool({}); \
+                             _llg_logic_left ? sv4_logimpl(sv4_from_u64(1, 1, 0), {}) \
+                             : sv4_from_u64(1, 1, 0); }})",
+                            ra.code, rb.code
+                        )
+                    } else {
+                        format!(
+                            "({{ sv4_t _llg_logic_left = {}; \
+                             (!sv4_to_bool(_llg_logic_left) && !sv4_is_unknown(_llg_logic_left)) \
+                             ? sv4_from_u64(1, 1, 0) : sv4_logimpl(_llg_logic_left, \
+                             sv4_from_u64((uint64_t)llg_real_to_bool({}), 1, 0)); }})",
+                            ra.code, rb.code
+                        )
+                    }
+                }
+                IrBinOp::LogEquiv => {
+                    let left = if ra.width == 0 {
+                        format!(
+                            "sv4_from_u64((uint64_t)llg_real_to_bool({}), 1, 0)",
+                            ra.code
+                        )
+                    } else {
+                        ra.code.clone()
+                    };
+                    let right = if rb.width == 0 {
+                        format!(
+                            "sv4_from_u64((uint64_t)llg_real_to_bool({}), 1, 0)",
+                            rb.code
+                        )
+                    } else {
+                        rb.code.clone()
+                    };
+                    // Equivalence is not a short-circuit operator.  Locals
+                    // make both evaluation and the left-to-right order
+                    // explicit even when operands contain mutations/calls.
+                    format!(
+                        "({{ sv4_t _llg_logic_left = {}; sv4_t _llg_logic_right = {}; \
+                         sv4_logequiv(_llg_logic_left, _llg_logic_right); }})",
+                        left, right
+                    )
+                }
                 IrBinOp::Eq => cmp_expr(&ra, &rb, "=="),
                 IrBinOp::Neq => cmp_expr(&ra, &rb, "!="),
                 IrBinOp::Lt => cmp_expr(&ra, &rb, "<"),

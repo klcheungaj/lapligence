@@ -90,7 +90,7 @@ semantic_enum! {
         ReductionAnd, ReductionNand, ReductionOr, ReductionNor, ReductionXor, ReductionXnor,
         Subtract, Divide, Modulo, Equal, NotEqual, CaseEqual, CaseNotEqual,
         Greater, GreaterEqual, Less, LessEqual, ShiftLeft, ShiftRight, Add, Multiply,
-        LogicalAnd, LogicalOr, BitwiseAnd, BitwiseOr, BitwiseXor, BitwiseXnor,
+        LogicalAnd, LogicalOr, LogicalEquivalence, BitwiseAnd, BitwiseOr, BitwiseXor, BitwiseXnor,
         Conditional, Concat, MultiConcat, EventOr, Null, List, MinTypMax, Posedge, Negedge,
         ArithmeticShiftLeft, ArithmeticShiftRight, Power, Imply, NonOverlapImply, OverlapImply,
         UnaryCycleDelay, CycleDelay, Intersect, FirstMatch, Throughout, Within, Repeat,

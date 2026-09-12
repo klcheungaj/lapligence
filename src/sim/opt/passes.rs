@@ -802,6 +802,8 @@ fn bin_value(
         BitXNor => elab::bit_xnor(a, b),
         LogAnd => elab::log_and(a, b),
         LogOr => elab::log_or(a, b),
+        LogImpl => elab::log_imply(a, b),
+        LogEquiv => elab::log_equiv(a, b),
         Eq => elab::eq(a, b),
         Neq => elab::neq(a, b),
         CaseEq => elab::case_eq(a, b),

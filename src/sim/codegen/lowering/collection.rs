@@ -11212,21 +11212,46 @@ impl<'a> Codegen<'a> {
                     Val::Bits(value) => Ok(value.to_real()),
                     Val::Str(_) => Err("string operand in constant real expression".to_owned()),
                 };
+                let logical = |value: &Val| match value {
+                    Val::Real(value) => {
+                        Ok(elab::Value::from_u64(u64::from(*value != 0.0), 1, false))
+                    }
+                    Val::Bits(value) => Ok(value.clone()),
+                    Val::Str(_) => Err("string operand in constant logical expression".to_owned()),
+                };
                 let value = match *op {
-                    Operation::UnaryPlus => real(&values[0])?,
-                    Operation::UnaryMinus => -real(&values[0])?,
-                    Operation::Add => real(&values[0])? + real(&values[1])?,
-                    Operation::Subtract => real(&values[0])? - real(&values[1])?,
-                    Operation::Multiply => real(&values[0])? * real(&values[1])?,
-                    Operation::Divide => real(&values[0])? / real(&values[1])?,
-                    Operation::Modulo => real(&values[0])? % real(&values[1])?,
-                    Operation::Power => real(&values[0])?.powf(real(&values[1])?),
+                    Operation::UnaryPlus => Val::Real(real(&values[0])?),
+                    Operation::UnaryMinus => Val::Real(-real(&values[0])?),
+                    Operation::Add => Val::Real(real(&values[0])? + real(&values[1])?),
+                    Operation::Subtract => Val::Real(real(&values[0])? - real(&values[1])?),
+                    Operation::Multiply => Val::Real(real(&values[0])? * real(&values[1])?),
+                    Operation::Divide => Val::Real(real(&values[0])? / real(&values[1])?),
+                    Operation::Modulo => Val::Real(real(&values[0])? % real(&values[1])?),
+                    Operation::Power => Val::Real(real(&values[0])?.powf(real(&values[1])?)),
+                    Operation::LogicalAnd => {
+                        Val::Bits(elab::log_and(&logical(&values[0])?, &logical(&values[1])?))
+                    }
+                    Operation::LogicalOr => {
+                        Val::Bits(elab::log_or(&logical(&values[0])?, &logical(&values[1])?))
+                    }
+                    Operation::Imply => Val::Bits(elab::log_imply(
+                        &logical(&values[0])?,
+                        &logical(&values[1])?,
+                    )),
+                    Operation::LogicalEquivalence => Val::Bits(elab::log_equiv(
+                        &logical(&values[0])?,
+                        &logical(&values[1])?,
+                    )),
                     _ => return Err(format!("unsupported constant real operation {op:?}")),
                 };
-                value
-                    .is_finite()
-                    .then_some(Val::Real(value))
-                    .ok_or_else(|| "constant real expression is not finite".to_owned())
+                match value {
+                    Val::Bits(value) => Ok(Val::Bits(value)),
+                    Val::Real(value) => value
+                        .is_finite()
+                        .then_some(Val::Real(value))
+                        .ok_or_else(|| "constant real expression is not finite".to_owned()),
+                    Val::Str(_) => Err("constant logical expression produced a string".to_owned()),
+                }
             }
             NodeKind::Expr(ExprKind::Cast { operand, ty, .. }) if is_real_kind(&ty.kind) => {
                 let value = match self.eval_decl_value(*operand)? {
@@ -11386,6 +11411,19 @@ impl<'a> Codegen<'a> {
             Operation::Power => Ok(elab::power(&b!(0), &b!(1))),
             Operation::LogicalAnd => Ok(elab::log_and(&b!(0), &b!(1))),
             Operation::LogicalOr => Ok(elab::log_or(&b!(0), &b!(1))),
+            Operation::Imply => {
+                let left = b!(0);
+                // Match Slang's short-circuit constant evaluation: a known
+                // false antecedent determines the result without touching
+                // the consequent.
+                if left.to_u128() == Some(0) {
+                    Ok(elab::Value::from_u64(1, 1, false))
+                } else {
+                    let right = b!(1);
+                    Ok(elab::log_imply(&left, &right))
+                }
+            }
+            Operation::LogicalEquivalence => Ok(elab::log_equiv(&b!(0), &b!(1))),
             Operation::BitwiseAnd => Ok(elab::bit_and(&b!(0), &b!(1))),
             Operation::BitwiseOr => Ok(elab::bit_or(&b!(0), &b!(1))),
             Operation::BitwiseXor => Ok(elab::bit_xor(&b!(0), &b!(1))),

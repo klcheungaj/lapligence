@@ -246,6 +246,8 @@ sv4_t sv4_xor(sv4_t a, sv4_t b);     // ^
 sv4_t sv4_xnor(sv4_t a, sv4_t b);    // ~^
 sv4_t sv4_logand(sv4_t a, sv4_t b);  // &&
 sv4_t sv4_logor(sv4_t a, sv4_t b);   // ||
+sv4_t sv4_logimpl(sv4_t a, sv4_t b); // ->
+sv4_t sv4_logequiv(sv4_t a, sv4_t b); // <->
 sv4_t sv4_reduce_and(sv4_t a);       // &a
 sv4_t sv4_reduce_nand(sv4_t a);
 sv4_t sv4_reduce_or(sv4_t a);        // |a

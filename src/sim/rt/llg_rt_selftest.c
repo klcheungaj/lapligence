@@ -245,6 +245,16 @@ static void test_sv4_ops(void) {
     CHECK(u(sv4_logor(b4("1"), b4("z"))) == 1);
     CHECK(isx(sv4_logand(b4("0x"), b4("1"))));
     CHECK(isx(sv4_logor(b4("0x"), b4("0"))));
+    CHECK(sv4_same(sv4_logimpl(b4("0"), b4("x")), b4("1")));
+    CHECK(sv4_same(sv4_logimpl(b4("1"), b4("0")), b4("0")));
+    CHECK(sv4_same(sv4_logimpl(b4("x"), b4("1")), b4("1")));
+    CHECK(isx(sv4_logimpl(b4("x"), b4("0"))));
+    CHECK(isx(sv4_logimpl(b4("z"), b4("z"))));
+    CHECK(sv4_same(sv4_logequiv(b4("0"), b4("0")), b4("1")));
+    CHECK(sv4_same(sv4_logequiv(b4("0"), b4("1")), b4("0")));
+    CHECK(isx(sv4_logequiv(b4("0"), b4("x"))));
+    CHECK(isx(sv4_logequiv(b4("z"), b4("1"))));
+    CHECK(sv4_same(sv4_logequiv(b4("0x01"), b4("1")), b4("1")));
     // bitwise ops
     CHECK(sv4_same(sv4_and(b4("1100"), b4("1010")), b4("1000")));
     CHECK(sv4_same(sv4_or(b4("1100"), b4("1010")), b4("1110")));

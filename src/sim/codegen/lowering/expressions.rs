@@ -1645,6 +1645,19 @@ impl<'a> Codegen<'a> {
                 let b = op!(1);
                 Ok(cmp_expr_ir(IrBinOp::LogOr, a, b))
             }
+            // This is the ordinary Boolean `->` expression.  Property
+            // implication (`|->`/`|=>`) has separate operation tags and never
+            // reaches this expression lowering path.
+            Operation::Imply => {
+                let a = op!(0);
+                let b = op!(1);
+                Ok(cmp_expr_ir(IrBinOp::LogImpl, a, b))
+            }
+            Operation::LogicalEquivalence => {
+                let a = op!(0);
+                let b = op!(1);
+                Ok(cmp_expr_ir(IrBinOp::LogEquiv, a, b))
+            }
             Operation::Equal => {
                 if let Some(value) =
                     self.lower_unpacked_aggregate_comparison(scope_path, otype, operands)?

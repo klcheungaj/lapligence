@@ -874,6 +874,8 @@ pub(crate) fn operation_arity_requirement(
         | Operation::Multiply
         | Operation::LogicalAnd
         | Operation::LogicalOr
+        | Operation::Imply
+        | Operation::LogicalEquivalence
         | Operation::BitwiseAnd
         | Operation::BitwiseOr
         | Operation::BitwiseXor
@@ -930,6 +932,8 @@ fn is_synthesis_operation(op: Operation) -> bool {
             | Operation::Power
             | Operation::LogicalAnd
             | Operation::LogicalOr
+            | Operation::Imply
+            | Operation::LogicalEquivalence
             | Operation::BitwiseAnd
             | Operation::BitwiseOr
             | Operation::BitwiseXor

@@ -815,6 +815,28 @@ pub fn log_or(a: &Value, b: &Value) -> Value {
     }
 }
 
+/// Logical implication (`->`): equivalent to `!a || b`.  A decisively false
+/// antecedent makes the result true; an unknown antecedent still depends on
+/// the consequent (`x -> 1` is `1`, while `x -> 0` is `x`).
+pub fn log_imply(a: &Value, b: &Value) -> Value {
+    match (logical_bit(a), logical_bit(b)) {
+        (Bit::Zero, _) | (_, Bit::One) => Value::from_u64(1, 1, false),
+        (Bit::One, Bit::Zero) => Value::from_u64(0, 1, false),
+        _ => bit_x(),
+    }
+}
+
+/// Logical equivalence (`<->`): true when both logical operands are known and
+/// equal, false when they are known and different, and unknown otherwise.
+/// Unlike implication, equivalence evaluates both operands.
+pub fn log_equiv(a: &Value, b: &Value) -> Value {
+    match (logical_bit(a), logical_bit(b)) {
+        (Bit::Zero, Bit::Zero) | (Bit::One, Bit::One) => Value::from_u64(1, 1, false),
+        (Bit::Zero, Bit::One) | (Bit::One, Bit::Zero) => Value::from_u64(0, 1, false),
+        _ => bit_x(),
+    }
+}
+
 /// Unary reduction AND (`&`); a known zero dominates X/Z.
 pub fn unary_and(a: &Value) -> Value {
     if a.bits.contains(&Bit::Zero) {
@@ -1725,6 +1747,42 @@ mod tests {
         assert_eq!(log_and(&bits("1x"), &bits("1")), bits("1"));
         assert_eq!(log_or(&bits("1"), &bits("x")), bits("1"));
         assert_eq!(log_or(&bits("00"), &bits("0x")), bits("x"));
+    }
+
+    #[test]
+    fn implication_and_equivalence_cover_all_four_state_pairs() {
+        let states = [Bit::Zero, Bit::One, Bit::X, Bit::Z];
+        let implication = [
+            ["1", "1", "1", "1"],
+            ["0", "1", "x", "x"],
+            ["x", "1", "x", "x"],
+            ["x", "1", "x", "x"],
+        ];
+        let equivalence = [
+            ["1", "0", "x", "x"],
+            ["0", "1", "x", "x"],
+            ["x", "x", "x", "x"],
+            ["x", "x", "x", "x"],
+        ];
+        for (left_index, left) in states.iter().enumerate() {
+            for (right_index, right) in states.iter().enumerate() {
+                let left = Value::from_bits(vec![*left], false);
+                let right = Value::from_bits(vec![*right], false);
+                assert_eq!(
+                    log_imply(&left, &right),
+                    bits(implication[left_index][right_index])
+                );
+                assert_eq!(
+                    log_equiv(&left, &right),
+                    bits(equivalence[left_index][right_index])
+                );
+            }
+        }
+        // Logical reduction finds a known one even when other bits are
+        // unknown, while an all-zero/unknown vector remains ambiguous.
+        assert_eq!(log_imply(&bits("0x01"), &bits("0")), bits("0"));
+        assert_eq!(log_equiv(&bits("0x01"), &bits("1")), bits("1"));
+        assert_eq!(log_equiv(&bits("0x"), &bits("0")), bits("x"));
     }
 
     #[test]
