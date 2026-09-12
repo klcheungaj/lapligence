@@ -1208,6 +1208,21 @@ impl Validator<'_> {
                         }
                     }
                 }
+                IrSysFunc::System(command) => {
+                    if let Some(command) = command {
+                        command.validate(self.model, self.string_return.get())?;
+                        let mut result = Ok(());
+                        command.expressions(&mut |child| {
+                            result = result
+                                .clone()
+                                .and_then(|_| self.validate_expr(child, formals, path));
+                        });
+                        result?;
+                    }
+                    if expr.width != 32 || !expr.signed {
+                        return self.fail(path, "$system requires a signed int result");
+                    }
+                }
                 IrSysFunc::Math { kind, args } => {
                     if args.len() != kind.arity() || !expr.is_real() {
                         return self.fail(
@@ -1851,6 +1866,18 @@ impl Validator<'_> {
             }
         }
         match stmt {
+            IrStmt::System(command) => {
+                if let Some(command) = command {
+                    command.validate(self.model, self.string_return.get())?;
+                    let mut result = Ok(());
+                    command.expressions(&mut |child| {
+                        result = result
+                            .clone()
+                            .and_then(|_| self.validate_expr(child, formals, path));
+                    });
+                    result?;
+                }
+            }
             IrStmt::Container(operation) => {
                 operation.validate(self.model, self.string_return.get())?;
                 let mut result = Ok(());

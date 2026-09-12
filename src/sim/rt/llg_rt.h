@@ -246,6 +246,17 @@ int llg_value_plusargs_packed(const char* format, sv4_t* out, uint32_t width,
                               int is_signed, int two_state);
 int llg_value_plusargs_real(const char* format, double* out);
 int llg_value_plusargs_string(const char* format, llg_string_t* out);
+// Execute one `$system` command in the generated simulator process. This
+// host boundary is disabled unless LLG_ALLOW_SYSTEM is set to 1, true, yes,
+// or on. When disabled, the runtime diagnoses the attempted command, marks
+// the simulation failed, and returns an all-known -1 status without invoking
+// a shell. `has_command == 0` preserves the standard's omitted-argument
+// `system(NULL)` query; `has_command == 1` passes the owned command, including
+// an explicit empty string, to the host C `system()` function. The returned
+// 32-bit signed value is the host C `system()` status; its nonzero encoding is
+// platform-specific and is not normalized here. `command` is consumed
+// regardless of whether execution is permitted.
+sv4_t llg_system(llg_string_t command, int has_command);
 
 // ── $monitor / $strobe ────────────────────────────────────────────────────────
 //

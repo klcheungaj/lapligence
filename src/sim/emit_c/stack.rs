@@ -256,6 +256,7 @@ fn stmt_temp_frame_slots(stmts: &[IrStmt]) -> Result<u64, String> {
 
 fn stmt_temp_slots(stmt: &IrStmt) -> Result<u64, String> {
     let slots = match stmt {
+        IrStmt::System(command) => command.as_ref().map_or(Ok(0), string_expr_slots),
         IrStmt::Container(operation) => {
             let mut slots = Ok(1);
             operation.expressions(&mut |child| {
@@ -717,6 +718,7 @@ fn system_expr_slots(system: &IrSysFunc) -> Result<u64, String> {
                 "plusarg expression slots",
             )
         }
+        IrSysFunc::System(command) => command.as_ref().map_or(Ok(0), string_expr_slots),
         IrSysFunc::Clog2(arg)
         | IrSysFunc::Bits(arg)
         | IrSysFunc::BitQuery { arg, .. }
@@ -745,7 +747,7 @@ fn string_expr_slots(value: &IrStringExpr) -> Result<u64, String> {
     value.expressions(&mut |expression| {
         if let Ok(current) = result {
             result = expr_slots(expression)
-                .and_then(|slots| checked_add(current, slots, "plusarg string expression slots"));
+                .and_then(|slots| checked_add(current, slots, "string expression slots"));
         }
     });
     result

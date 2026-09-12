@@ -5519,3 +5519,61 @@ void llg_write_typed(const char* fmt, llg_fmt_arg_t* args, int n,
     llg_print_typed(fmt, args, n, scope, 0);
     llg_fmt_args_destroy(args, n);
 }
+
+static int llg_system_allowed(void) {
+    const char* value = getenv("LLG_ALLOW_SYSTEM");
+    return value && (!strcmp(value, "1") || !strcmp(value, "true") ||
+                     !strcmp(value, "yes") || !strcmp(value, "on"));
+}
+
+sv4_t llg_system(llg_string_t command, int has_command) {
+    if (has_command != 0 && has_command != 1) {
+        fprintf(stderr, "llg: invalid internal `$system` argument marker\n");
+        llg_last_failure = 1;
+        g.finish = 1;
+        llg_string_destroy(&command);
+        return sv4_from_u64(UINT32_MAX, 32, 1);
+    }
+    if (has_command && (!command.data && command.len != 0)) {
+        fprintf(stderr,
+                "llg: `$system` command has a nonzero length without storage\n");
+        llg_last_failure = 1;
+        g.finish = 1;
+        llg_string_destroy(&command);
+        return sv4_from_u64(UINT32_MAX, 32, 1);
+    }
+    if (has_command) {
+        for (size_t i = 0; i < command.len; ++i) {
+            if (command.data[i] == '\0') {
+                fprintf(stderr,
+                        "llg: `$system` command contains an embedded NUL and "
+                        "was not executed\n");
+                llg_last_failure = 1;
+                g.finish = 1;
+                llg_string_destroy(&command);
+                return sv4_from_u64(UINT32_MAX, 32, 1);
+            }
+        }
+    }
+    if (!llg_system_allowed()) {
+        fprintf(stderr,
+                "llg: $system is disabled; set LLG_ALLOW_SYSTEM=1 for the "
+                "generated simulator process\n");
+        llg_last_failure = 1;
+        g.finish = 1;
+        llg_string_destroy(&command);
+        return sv4_from_u64(UINT32_MAX, 32, 1);
+    }
+
+    // IEEE 1800-2009 §20.18 specifies the NULL argument for the omitted form.
+    // Keep it distinct from the explicit empty C command string.
+    int status;
+    if (!has_command) {
+        llg_string_destroy(&command);
+        status = system(NULL);
+    } else {
+        status = system(command.data ? command.data : "");
+        llg_string_destroy(&command);
+    }
+    return sv4_from_u64((uint32_t)status, 32, 1);
+}

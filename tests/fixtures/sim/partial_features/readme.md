@@ -1,8 +1,9 @@
 # Simulator partial-feature regressions
 
-These designs exercise corrected port, event, timing, packed-selection and
-math behavior through the simulator executable. Every positive case runs with
-optimization enabled and disabled; expected results and test names live in
+These designs exercise corrected port, event, timing, packed-selection, math,
+and gated host-command behavior through the simulator executable. Every
+positive case runs with optimization enabled and disabled; expected results and
+test names live in
 [the Rust suite](../../../sim_partial_features.rs). `event_effectful_*.sv` are
 intentional rejection cases.
 
@@ -39,6 +40,7 @@ for the boundaries these tests do not cover.
 | `*select_ranges.sv` | Ascending/nonzero ranges, array-element selection and invalid indices |
 | `array_indexed_*.sv` | Multidimensional element indexed selections, two-state/real conversion, limb boundaries and captured NBA masks |
 | `math_*.sv` | Runtime real math, numeric conversion, one-time argument evaluation and C domain results |
+| `system_*.sv` | `$system` task/function command ownership, exact-once argument evaluation, omitted versus explicit-empty commands, permission denial, and malformed argument diagnostics |
 | `real_sensitivity.sv` | Typed real/shortreal wait and event changes, combinational propagation through real ports, unchanged-write suppression, signed zero and NaN policy |
 | `realtime_*.sv`, `time_query_*.sv` | Fractional time, rounded integer queries, mixed scopes, half-unit boundaries and `$stime` wrap |
 | `time_literal_exact_2009.sv` | SystemVerilog 2009 local `timeunit`/`timeprecision`, signed/sub-femtosecond unit-suffixed literals, and exact femtosecond delay rounding |

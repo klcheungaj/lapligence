@@ -391,7 +391,16 @@ SystemVerilog era:
 - ✅ **Bit-vector helpers** `$onehot/$onehot0/$countones/$isunknown` — §1800-2009 20.6 **[SV-2005]** packed operands through the generated model width, X/Z-aware counting, parameters and constant declaration initializers, single argument evaluation, and combinational dependencies; real operands rejected (sim_bit_queries.rs, optimization on/off)
 - ❌ **Sampled-value functions** `$rose/$fell/$stable/$past/$sampled` — §1800-2009 16.9.3 **[SV-2005]** unsupported-function reject
 - ✅ **Shortreal conversion** `$bitstoshortreal/$shortrealtobits` — §1800-2009 20.5 **[SV-2005]** 32-bit IEEE-754 reinterpretation and shortreal rounding; `$bitstoshortreal` requires 32 bits and maps X/Z positions to zero (sim_real_conversions.rs, optimization on/off)
-- ❌ **$system** — §1800-2009 **[SV-2009]** unsupported-task reject
+- ✅ **$system** — §1800-2009 20.18 **[SV-2009]** task and function forms lower
+  one optional typed string command and evaluate it exactly once in the
+  generated simulator process. Execution is denied unless that child process
+  has `LLG_ALLOW_SYSTEM=1` (or `true`/`yes`/`on`); denial diagnoses the call,
+  returns a signed 32-bit `-1` status and fails the model without invoking a
+  shell. The omitted form calls `system(NULL)`, distinct from an explicit empty
+  string; enabled calls return the host C `system()` status unchanged, so shell
+  syntax, empty-command behavior, and nonzero-status encoding remain
+  platform-specific. Embedded-NUL command strings are rejected before host
+  dispatch (sim_partial_features/system.rs).
 
 ## 11. Compiler directives affecting simulation
 
@@ -446,8 +455,8 @@ Tracked so nothing is lost; all de-prioritized behind RTL-simulation support.
 
 ## Remaining-work inventory
 
-The original audit IDs are stable. This inventory currently contains 70 remaining
-groups (37 missing, 33 partial); groups 38 and 58 are completed. Counts refer to grouped
+The original audit IDs are stable. This inventory currently contains 67 remaining
+groups (32 missing, 35 partial); groups 9, 38, 57, 58 and 60 are completed. Counts refer to grouped
 capabilities, not individual keywords, system functions or standard clauses.
 
 
@@ -512,7 +521,7 @@ capabilities, not individual keywords, system functions or standard clauses.
 | 57 | Completed | Command-line plusargs | `$test$plusargs/$value$plusargs` receive arguments after the `llg` `--` delimiter; exact prefix matching, typed decimal/hex/binary/octal/real/string conversion, wide 4-state values, literal percent escapes, repeated-argument first match, and unchanged destinations on failed queries are covered by `sim_plusargs.rs`. |
 | 58 | Completed | Runtime mathematical functions | All 21 real functions from IEEE 1800-2009 table 20-4 now use typed IR and the specified C math functions, with numeric argument conversion. Procedural tests cover runtime arguments, one-time evaluation and C domain behavior. Existing real-context restrictions are counted in group 3. |
 | 59 | Missing | Runtime severity tasks | `$fatal/$error/$warning/$info`; elaboration-time frontend diagnostics are a separate capability. |
-| 60 | Missing | Host command execution | `$system`. |
+| 60 | Completed | Host command execution | `$system` task/function forms preserve omitted (`system(NULL)`) versus explicit-empty commands, use one optional owned string and explicit generated-process permission, and return raw host `system()` status; shell syntax and status encoding remain platform-specific. |
 | 61 | Partial | Waveform selection and extended VCD | `$dumpvars` depth/scope/variable filtering is implemented for ordinary VCD/FST catalogs; the `$dumpports` extended-VCD family remains unsupported. |
 | 62 | Missing | Classes | Class objects/handles, construction, properties, methods, inheritance, virtual dispatch and access/lifetime rules. |
 | 63 | Missing | Program blocks | Program execution semantics, reactive scheduling and `$exit`. |

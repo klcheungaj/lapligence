@@ -536,6 +536,7 @@ fn collect_effects(
             IrStmt::DisableFork | IrStmt::DisableTarget { .. } | IrStmt::ActivationScope { .. } => {
                 effects.push(ExecutionEffect::RuntimeService)
             }
+            IrStmt::System(_) => effects.push(ExecutionEffect::RuntimeService),
             IrStmt::Display { .. }
             | IrStmt::DisplayTyped { .. }
             | IrStmt::MonitorSet { .. }
@@ -621,6 +622,9 @@ fn collect_statement_expression_effects(
         collect_expression_effects(ir, value, effects, visited_calls);
     }
     match statement {
+        IrStmt::System(Some(command)) => {
+            collect_string_effects(ir, command, effects, visited_calls);
+        }
         IrStmt::Container(operation) => operation.expressions(&mut |expression| {
             collect_expression_effects(ir, expression, effects, visited_calls)
         }),
@@ -990,6 +994,12 @@ fn collect_expression_effects(
                         effects.push(ExecutionEffect::ImmediateStore);
                         effects.push(ExecutionEffect::RuntimeService);
                     }
+                }
+            }
+            IrSysFunc::System(command) => {
+                effects.push(ExecutionEffect::RuntimeService);
+                if let Some(command) = command {
+                    collect_string_effects(ir, command, effects, visited_calls);
                 }
             }
             IrSysFunc::Time { .. } | IrSysFunc::Realtime { .. } => {}

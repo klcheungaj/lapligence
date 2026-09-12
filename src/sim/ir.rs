@@ -860,6 +860,11 @@ pub enum IrSysFunc {
         format: IrPlusArgText,
         target: IrPlusArgTarget,
     },
+    /// `$system` executes an optional owned host command through the generated
+    /// model's explicitly permitted runtime and returns the host `system()`
+    /// status. `None` preserves the standard's omitted-argument
+    /// `system(NULL)` query, distinct from `Some(Literal(Vec::new()))`.
+    System(Option<IrStringExpr>),
     /// Real math functions defined by IEEE 1800-2009 table 20-4.
     Math { kind: IrMathFunc, args: Vec<IrExpr> },
     /// Fractional time in the calling module's time unit.
@@ -1701,6 +1706,10 @@ impl IrActivationTarget {
 /// (`sens`/`reads`); those lists are never recomputed afterwards.
 #[derive(Clone, Debug, PartialEq)]
 pub enum IrStmt {
+    /// Task-position `$system`; an optional owned command is evaluated exactly
+    /// once when the statement executes and its host status is discarded.
+    /// `None` means the standard's omitted-argument `system(NULL)` query.
+    System(Option<IrStringExpr>),
     Container(IrContainerStmt),
     Object(IrObjectStmt),
     /// A system plusarg query used in statement position. The expression is

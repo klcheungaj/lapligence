@@ -446,6 +446,21 @@ These categories must remain distinct in a semantic inventory:
   `$dimensions`, `$typename`, `$isunbounded`, and `$cast` are query/cast
   facilities rather than operators (§20.5–§20.7).
 
+`$system` (§20.18) is the one host-command exception in the simulator service
+boundary. Its task and function forms accept zero or one string argument; the
+lowered string expression is owned and evaluated once, and the function form
+returns the generated process's host C `system()` status as a signed 32-bit
+value. Omitting the argument calls `system(NULL)` as the standard specifies,
+while an explicit empty string calls `system("")`; those forms are therefore
+not interchangeable. The generated process must opt in with
+`LLG_ALLOW_SYSTEM=1` (the values `true`, `yes`, and `on` are also accepted).
+Without that opt-in, the runtime reports a diagnostic, returns `-1`, marks the
+simulation failed, and never invokes a shell. With opt-in, shell parsing,
+empty-command behavior, and the encoding of a nonzero status are host-platform
+behavior and are intentionally not normalized; malformed embedded-NUL strings
+are rejected before host dispatch. Freestanding targets without a hosted C
+`system()` facility are unsupported.
+
 ## Handles, events, strings, and classes
 
 `event` has no 0/1/x/z storage. `-> ev` triggers waiting processes;

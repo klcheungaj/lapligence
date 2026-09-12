@@ -8,6 +8,21 @@ use std::time::Duration;
 use super::sim_harness;
 
 fn invoke_with_args(suite: &str, fixture: &str, optimized: bool, args: &[&str]) -> Output {
+    invoke_with_env(suite, fixture, optimized, args, &[], &[])
+}
+
+/// Invoke one checked-in simulator fixture with explicit child-process
+/// environment controls. `remove_env` is applied after `envs`, so tests can
+/// guarantee that a host configuration variable is absent even when the test
+/// runner inherited it.
+pub(crate) fn invoke_with_env(
+    suite: &str,
+    fixture: &str,
+    optimized: bool,
+    args: &[&str],
+    envs: &[(&str, &str)],
+    remove_env: &[&str],
+) -> Output {
     let source = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/sim")
         .join(suite)
@@ -21,6 +36,10 @@ fn invoke_with_args(suite: &str, fixture: &str, optimized: bool, args: &[&str]) 
     }
     command.args(args);
     command.arg(source);
+    command.envs(envs.iter().copied());
+    for variable in remove_env {
+        command.env_remove(variable);
+    }
     sim_harness::run_command(&mut command, Duration::from_secs(180))
         .unwrap_or_else(|error| panic!("{suite}/{fixture}, optimized={optimized}: {error}"))
 }

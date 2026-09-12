@@ -805,6 +805,18 @@ pub(super) fn render_expr_impl(ctx: &RCtx<'_>, e: &IrExpr) -> Result<RenderedExp
             IrSysFunc::ValuePlusArgs { format, target } => {
                 render_value_plusargs(ctx, format, target, e.width, e.signed)?
             }
+            IrSysFunc::System(command) => {
+                let (command, has_command) = match command.as_ref() {
+                    Some(command) => (super::objects::string(ctx, command)?, 1),
+                    None => ("llg_string_bytes(\"\", 0)".to_owned(), 0),
+                };
+                RenderedExpr {
+                    code: format!("llg_system({command}, {has_command})"),
+                    width: 32,
+                    signed: true,
+                    fill: None,
+                }
+            }
             IrSysFunc::Math { kind, args } => {
                 use crate::sim::ir::IrMathFunc;
                 let name = match kind {

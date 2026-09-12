@@ -156,6 +156,13 @@ fn render_stmt_scoped(
         Ok(out)
     }
     let out = match st {
+        IrStmt::System(command) => {
+            let (command, has_command) = match command.as_ref() {
+                Some(command) => (super::objects::string(ctx, command)?, 1),
+                None => ("llg_string_bytes(\"\", 0)".to_owned(), 0),
+            };
+            format!("    (void)llg_system({command}, {has_command});\n")
+        }
         IrStmt::Container(operation) => super::containers::statement(ctx, operation)?,
         IrStmt::Object(operation) => super::objects::statement(ctx, operation)?,
         IrStmt::PlusArg(expression) => {

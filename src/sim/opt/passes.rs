@@ -427,6 +427,10 @@ fn walk_expr_mut(e: &mut IrExpr, f: &mut impl FnMut(&mut IrExpr)) {
                     crate::sim::ir::IrPlusArgTarget::String { .. } => {}
                 }
             }
+            IrSysFunc::System(Some(command)) => {
+                command.expressions_mut(&mut |child| walk_expr_mut(child, f));
+            }
+            IrSysFunc::System(None) => {}
             IrSysFunc::Clog2(a)
             | IrSysFunc::Bits(a)
             | IrSysFunc::BitQuery { arg: a, .. }
@@ -454,6 +458,9 @@ fn walk_stmt_mut(s: &mut IrStmt, f: &mut impl FnMut(&mut IrExpr)) {
         walk_expr_mut(value, f);
     }
     match s {
+        IrStmt::System(Some(command)) => {
+            command.expressions_mut(&mut |child| walk_expr_mut(child, f));
+        }
         IrStmt::Container(operation) => {
             operation.expressions_mut(&mut |child| walk_expr_mut(child, f))
         }
@@ -1035,6 +1042,10 @@ fn ident_children(e: &mut IrExpr) {
                     crate::sim::ir::IrPlusArgTarget::String { .. } => {}
                 }
             }
+            IrSysFunc::System(Some(command)) => {
+                command.expressions_mut(&mut |child| ident_expr(child));
+            }
+            IrSysFunc::System(None) => {}
             IrSysFunc::Clog2(a)
             | IrSysFunc::Bits(a)
             | IrSysFunc::BitQuery { arg: a, .. }
@@ -2127,6 +2138,10 @@ fn collect_children_reads(e: &IrExpr, model: &IrModel, rw: &mut Rw) {
                     crate::sim::ir::IrPlusArgTarget::String { .. } => {}
                 }
             }
+            IrSysFunc::System(Some(command)) => {
+                command.expressions(&mut |child| collect_expr_reads(child, model, rw));
+            }
+            IrSysFunc::System(None) => {}
             IrSysFunc::Clog2(a)
             | IrSysFunc::Bits(a)
             | IrSysFunc::BitQuery { arg: a, .. }

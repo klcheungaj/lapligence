@@ -2755,8 +2755,27 @@ impl<'a> Codegen<'a> {
         }
     }
 
-    /// Lower system-function expressions ($clog2/$time/$stime/$bits/$signed/
-    /// $unsigned); timescale scaling happens here.
+    /// Lower the optional command argument of `$system` into an owned string
+    /// expression. `None` preserves the standard's omitted-argument
+    /// `system(NULL)` query, while an explicit empty argument remains an owned
+    /// empty string. Slang has already checked the system-call arity; retaining
+    /// the check here keeps malformed owned IR from reaching the emitter.
+    pub(super) fn lower_system_command(
+        &mut self,
+        scope_path: &str,
+        args: &[NodeId],
+    ) -> Result<Option<IrStringExpr>, String> {
+        match args {
+            [] => Ok(None),
+            [arg] => self.lower_string(scope_path, *arg).map(Some),
+            _ => Err(format!(
+                "$system accepts at most one string argument in `{scope_path}`"
+            )),
+        }
+    }
+
+    /// Lower system-function expressions ($system/$clog2/$time/$stime/$bits/
+    /// $signed/$unsigned); timescale scaling happens here.
     fn lower_sys_func_expr(
         &mut self,
         scope_path: &str,
@@ -2841,6 +2860,14 @@ impl<'a> Codegen<'a> {
         match name {
             "$cast" => self.lower_dynamic_cast(scope_path, &args),
             "$test$plusargs" | "$value$plusargs" => self.lower_plusarg_expr(scope_path, name, call),
+            "$system" => Ok(IrExpr::new(
+                IrExprKind::SysFunc(IrSysFunc::System(
+                    self.lower_system_command(scope_path, &args)?,
+                )),
+                32,
+                true,
+                None,
+            )),
             "$dimensions" | "$unpacked_dimensions" => {
                 let [arg] = args.as_slice() else {
                     return Err(format!(

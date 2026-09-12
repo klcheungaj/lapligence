@@ -11,6 +11,11 @@
   scheduling, signal/driver updates, process services, simulator system tasks,
   region callback hooks, immutable sampled views, nonreturning `$finish`
   controls, the exactly-once final-block phase, and checked zero-time budgets.
+  `$system` is a separately gated generated-process host boundary: the child
+  must opt in with `LLG_ALLOW_SYSTEM`, and enabled calls return the host C
+  `system()` status without normalizing shell or platform behavior. Its omitted
+  form preserves `system(NULL)`, distinct from an explicit empty command.
+  Hosted C targets are required; freestanding targets are unsupported.
   `LLG_ZERO_LOOP_LIMIT` bounds scheduler passes (default 10,000,000), while
   `LLG_PROCESS_STEP_LIMIT` bounds generated loop back-edges inside a coroutine
   (`LLG_NONCONVERGENCE_LIMIT` is an accepted alias). Both accept positive
