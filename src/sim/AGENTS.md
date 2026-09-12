@@ -121,6 +121,10 @@ standard width/signedness and X/Z rules.
   current model, incompatible or partial CMake build trees are discarded, and
   a failed configure receives one clean retry. Generator selection is explicit
   option, then `$CMAKE_GENERATOR`, then CMake's host default.
+- The root `build.rs` applies repository-owned Slang and libaco patches from
+  `patches/` before native sources are consumed. The submodule gitlinks stay at
+  their documented upstream bases; the portable preparer accepts only a clean
+  or fully-applied state and rejects partial/mismatched edits.
 - Read [codegen/AGENTS.md](codegen/AGENTS.md) for initialization, sensitivity,
   ports/interfaces, inout nets, tasks/forks, force/release, real values,
   timescale, arrays, supported forms and explicit rejection boundaries.

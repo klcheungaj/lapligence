@@ -1,8 +1,8 @@
 //! Procedural statement lowering through the shared emission context.
 
 use super::*;
-use crate::sim::ir::IrStringExpr;
-use crate::sim::ir::IrObjectStmt;
+use super::objects::object_query;
+use crate::sim::ir::{IrObjectQuery, IrObjectStmt, IrStringExpr};
 
 #[derive(Clone, Copy)]
 enum DisplayTaskKind {
@@ -1764,6 +1764,10 @@ impl EmitCtx<'_, '_> {
             .first()
             .copied()
             .ok_or_else(|| "case without selector".to_string())?;
+        if case_type == DbCaseKind::Inside && self.cg.is_string_expr(&self.path, sel) {
+            let selector = self.cg.lower_string(&self.path, sel)?;
+            return self.lower_case_inside_string(items, selector);
+        }
         let mut sel_ir = self.cg.lower_expr(&self.path, sel)?;
         if case_type == DbCaseKind::Inside {
             return self.lower_case_inside(items, sel_ir);
@@ -1917,52 +1921,20 @@ impl EmitCtx<'_, '_> {
                 continue;
             }
 
-            let mut condition = None;
-            for operand in &item.exprs {
-                let members = match self.cg.kind(*operand) {
-                    NodeKind::Expr(ExprKind::Operation {
-                        op: Operation::List,
-                        operands,
-                        ..
-                    }) => operands.clone(),
-                    _ => vec![*operand],
-                };
-                let matched = match members.as_slice() {
-                    [value] => {
-                        let value = self.cg.lower_expr(&self.path, *value)?;
-                        if value.is_real() {
-                            return Err(format!(
-                                "real-valued case-inside items are not supported in `{}`",
-                                self.path
-                            ));
-                        }
-                        wildcard_case_match(&self.path, selector_read.clone(), value)?
-                    }
-                    [low, high] => {
-                        let low = self.cg.lower_expr(&self.path, *low)?;
-                        let high = self.cg.lower_expr(&self.path, *high)?;
-                        if low.is_real() || high.is_real() {
-                            return Err(format!(
-                                "real-valued case-inside ranges are not supported in `{}`",
-                                self.path
-                            ));
-                        }
-                        case_inside_range_match(&self.path, selector_read.clone(), low, high)?
-                    }
-                    _ => {
-                        return Err(format!(
-                            "case-inside range requires two endpoints in `{}`",
-                            self.path
-                        ));
-                    }
-                };
-                condition = Some(match condition {
-                    Some(previous) => cmp_expr_ir(IrBinOp::LogOr, previous, matched),
-                    None => matched,
-                });
-            }
+            let members = self
+                .cg
+                .lower_inside_items(&self.path, &item.exprs)?;
+            let condition = IrExpr::new(
+                IrExprKind::Inside {
+                    value: Box::new(selector_read.clone()),
+                    items: members,
+                },
+                1,
+                false,
+                None,
+            );
             branches.push((
-                condition.ok_or_else(|| "case-inside item has no expressions".to_string())?,
+                condition,
                 body,
             ));
         }
@@ -1981,6 +1953,58 @@ impl EmitCtx<'_, '_> {
             signed: selector_signed,
             two_state: false,
             init: Some(Box::new(selector)),
+        }];
+        lowered.extend(tail.unwrap_or_default());
+        Ok(lowered)
+    }
+
+    fn lower_case_inside_string(
+        &mut self,
+        items: &[crate::core::db::CaseItem],
+        selector: IrStringExpr,
+    ) -> Result<Vec<IrStmt>, String> {
+        let selector_name = self.new_label("cis");
+        let selector_read = IrStringExpr::LocalRead(selector_name.clone());
+        let mut branches = Vec::new();
+        let mut default = None;
+        for item in items {
+            let body = match item.body {
+                Some(stmt) => self.lower_stmt(stmt)?,
+                None => Vec::new(),
+            };
+            if item.exprs.is_empty() {
+                if default.replace(body).is_some() {
+                    return Err(format!(
+                        "case inside has multiple default items in `{}`",
+                        self.path
+                    ));
+                }
+                continue;
+            }
+            let members = self
+                .cg
+                .lower_inside_string_items(&self.path, &item.exprs)?;
+            let condition = object_query(
+                IrObjectQuery::StringInside {
+                    value: selector_read.clone(),
+                    items: members,
+                },
+                1,
+                false,
+            );
+            branches.push((condition, body));
+        }
+        let mut tail = default;
+        for (cond, then_) in branches.into_iter().rev() {
+            tail = Some(vec![IrStmt::If {
+                cond,
+                then_,
+                els: tail,
+            }]);
+        }
+        let mut lowered = vec![IrStmt::DeclString {
+            name: selector_name,
+            init: Some(selector),
         }];
         lowered.extend(tail.unwrap_or_default());
         Ok(lowered)
@@ -4624,41 +4648,4 @@ fn force_lhs_signed(model: &IrModel, lhs: &IrLhs) -> bool {
         IrLhs::Ref { signed, .. } => *signed,
         _ => false,
     }
-}
-
-/// Wildcard comparisons are context-determined: widening must reach into a
-/// nested arithmetic/bitwise operand before it is evaluated (for example, a
-/// four-bit addition compared with a five-bit pattern retains its carry).
-fn wildcard_case_match(
-    scope_path: &str,
-    selector: IrExpr,
-    value: IrExpr,
-) -> Result<IrExpr, String> {
-    let width = selector.width.max(value.width);
-    let signed = selector.signed && value.signed;
-    let selector = wildcard_operand_with_context(selector, width, signed, scope_path)?;
-    let value = wildcard_operand_with_context(value, width, signed, scope_path)?;
-    Ok(cmp_expr_ir(IrBinOp::WildEq, selector, value))
-}
-
-fn case_inside_range_match(
-    scope_path: &str,
-    selector: IrExpr,
-    low: IrExpr,
-    high: IrExpr,
-) -> Result<IrExpr, String> {
-    let low_width = selector.width.max(low.width);
-    let low_signed = selector.signed && low.signed;
-    let low_selector =
-        wildcard_operand_with_context(selector.clone(), low_width, low_signed, scope_path)?;
-    let low = wildcard_operand_with_context(low, low_width, low_signed, scope_path)?;
-    let ge = cmp_expr_ir(IrBinOp::Ge, low_selector, low);
-
-    let high_width = selector.width.max(high.width);
-    let high_signed = selector.signed && high.signed;
-    let high_selector =
-        wildcard_operand_with_context(selector, high_width, high_signed, scope_path)?;
-    let high = wildcard_operand_with_context(high, high_width, high_signed, scope_path)?;
-    let le = cmp_expr_ir(IrBinOp::Le, high_selector, high);
-    Ok(cmp_expr_ir(IrBinOp::LogAnd, ge, le))
 }

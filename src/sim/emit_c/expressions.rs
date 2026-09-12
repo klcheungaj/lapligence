@@ -5,7 +5,7 @@ use super::context::{RCtx, RenderedExpr};
 use super::EmitError;
 use crate::sim::ir::{
     IrBinOp, IrBitQuery, IrCallArg, IrElemSel, IrExpr, IrExprKind, IrInsideItem, IrLhs,
-    IrStringExpr,
+    IrContainerKind, IrStringExpr,
     IrRealBinOp, IrRealUnOp, IrStreamDirection, IrSysFunc, IrType, IrUnOp,
 };
 
@@ -307,31 +307,170 @@ pub(super) fn render_expr_impl(ctx: &RCtx<'_>, e: &IrExpr) -> Result<RenderedExp
         }
         IrExprKind::Inside { value, items } => {
             let value = w(value)?;
+            let value_local = RenderedExpr {
+                code: "_inside_value".to_owned(),
+                width: value.width,
+                signed: value.signed,
+                fill: None,
+            };
+            let value_type = if value.width == 0 { "double" } else { "sv4_t" };
             let mut code = format!(
-                "({{ sv4_t _inside_value = {}; sv4_t _inside_result = SV4_C(0, 1); ",
+                "({{ {value_type} _inside_value = {}; sv4_t _inside_result = SV4_C(0, 1); ",
                 value.code
             );
             for (index, item) in items.iter().enumerate() {
                 match item {
                     IrInsideItem::Value(item) => {
                         let item = w(item)?;
+                        let item_type = if item.width == 0 { "double" } else { "sv4_t" };
+                        let item_name = format!("_inside_item_{index}");
+                        let item_local = RenderedExpr {
+                            code: item_name.clone(),
+                            width: item.width,
+                            signed: item.signed,
+                            fill: None,
+                        };
+                        let comparison = if value.width == 0 || item.width == 0 {
+                            cmp_expr(&value_local, &item_local, "==")
+                        } else {
+                            format!(
+                                "sv4_wild_eq(_inside_value, {item_name})"
+                            )
+                        };
                         code.push_str(&format!(
-                            "sv4_t _inside_item_{index} = {}; \
-                             _inside_result = sv4_logor(_inside_result, \
-                             sv4_wild_eq(_inside_value, _inside_item_{index})); ",
+                            "{item_type} {item_name} = {}; \
+                             _inside_result = sv4_logor(_inside_result, {comparison}); ",
                             item.code
                         ));
                     }
                     IrInsideItem::Range { low, high } => {
                         let low = w(low)?;
                         let high = w(high)?;
+                        let low_type = if low.width == 0 { "double" } else { "sv4_t" };
+                        let high_type = if high.width == 0 { "double" } else { "sv4_t" };
+                        let low_local = RenderedExpr {
+                            code: format!("_inside_low_{index}"),
+                            width: low.width,
+                            signed: low.signed,
+                            fill: None,
+                        };
+                        let high_local = RenderedExpr {
+                            code: format!("_inside_high_{index}"),
+                            width: high.width,
+                            signed: high.signed,
+                            fill: None,
+                        };
+                        let comparison = if value.width == 0
+                            || low.width == 0
+                            || high.width == 0
+                        {
+                            format!(
+                                "sv4_logand({}, {})",
+                                cmp_expr(&value_local, &low_local, ">="),
+                                cmp_expr(&value_local, &high_local, "<=")
+                            )
+                        } else {
+                            format!(
+                                "sv4_inside_range(_inside_value, _inside_low_{index}, _inside_high_{index})"
+                            )
+                        };
                         code.push_str(&format!(
-                            "sv4_t _inside_low_{index} = {}; \
-                             sv4_t _inside_high_{index} = {}; \
-                             _inside_result = sv4_logor(_inside_result, \
-                             sv4_inside_range(_inside_value, _inside_low_{index}, \
-                             _inside_high_{index})); ",
+                            "{low_type} _inside_low_{index} = {}; \
+                             {high_type} _inside_high_{index} = {}; \
+                             _inside_result = sv4_logor(_inside_result, {comparison}); ",
                             low.code, high.code
+                        ));
+                    }
+                    IrInsideItem::OpenRange { low, high } => {
+                        let low = low.as_ref().map(w).transpose()?;
+                        let high = high.as_ref().map(w).transpose()?;
+                        let mut comparisons = Vec::new();
+                        if let Some(low) = &low {
+                            let low_type = if low.width == 0 { "double" } else { "sv4_t" };
+                            let low_local = RenderedExpr {
+                                code: format!("_inside_low_{index}"),
+                                width: low.width,
+                                signed: low.signed,
+                                fill: None,
+                            };
+                            comparisons.push(cmp_expr(&value_local, &low_local, ">="));
+                            code.push_str(&format!(
+                                "{low_type} _inside_low_{index} = {}; ",
+                                low.code
+                            ));
+                        }
+                        if let Some(high) = &high {
+                            let high_type = if high.width == 0 { "double" } else { "sv4_t" };
+                            let high_local = RenderedExpr {
+                                code: format!("_inside_high_{index}"),
+                                width: high.width,
+                                signed: high.signed,
+                                fill: None,
+                            };
+                            comparisons.push(cmp_expr(&value_local, &high_local, "<="));
+                            code.push_str(&format!(
+                                "{high_type} _inside_high_{index} = {}; ",
+                                high.code
+                            ));
+                        }
+                        let comparison = comparisons
+                            .into_iter()
+                            .reduce(|left, right| format!("sv4_logand({left}, {right})"))
+                            .ok_or_else(|| "inside open range has no endpoint".to_owned())?;
+                        code.push_str(&format!(
+                            "_inside_result = sv4_logor(_inside_result, {comparison}); "
+                        ));
+                    }
+                    IrInsideItem::Container { container } => {
+                        let container_model = ctx
+                            .model
+                            .containers
+                            .get(*container)
+                            .ok_or_else(|| "inside container index is out of bounds".to_owned())?;
+                        let IrType::Packed {
+                            width,
+                            signed,
+                            ..
+                        } = container_model.element
+                        else {
+                            return Err("inside container element must be packed".to_owned());
+                        };
+                        let name = &container_model.c_name;
+                        let loop_index = format!("_inside_index_{index}");
+                        let (size_fn, get_fn, index_arg) = match &container_model.kind {
+                            IrContainerKind::Dynamic => (
+                                "llg_dyn_size",
+                                "llg_dyn_get",
+                                format!("sv4_from_u64((uint64_t){loop_index}, 32, 1)"),
+                            ),
+                            IrContainerKind::Queue { .. } => (
+                                "llg_queue_size",
+                                "llg_queue_get",
+                                format!("sv4_from_u64((uint64_t){loop_index}, 32, 1)"),
+                            ),
+                            IrContainerKind::Associative { .. } => (
+                                "llg_assoc_count",
+                                "llg_assoc_value_at",
+                                format!("(size_t){loop_index}"),
+                            ),
+                        };
+                        let item_name = format!("_inside_container_item_{index}");
+                        let item = RenderedExpr {
+                            code: item_name.clone(),
+                            width,
+                            signed,
+                            fill: None,
+                        };
+                        let comparison = if value.width == 0 {
+                            cmp_expr(&value_local, &item, "==")
+                        } else {
+                            format!("sv4_wild_eq(_inside_value, {item_name})")
+                        };
+                        code.push_str(&format!(
+                            "for (size_t {loop_index} = 0; {loop_index} < (size_t){size_fn}(&{name}); ++{loop_index}) {{ \
+                             sv4_t {item_name} = {get_fn}(&{name}, \
+                             {index_arg}); \
+                             _inside_result = sv4_logor(_inside_result, {comparison}); }} ",
                         ));
                     }
                 }

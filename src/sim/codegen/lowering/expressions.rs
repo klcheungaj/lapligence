@@ -5,10 +5,301 @@ use super::collection::aggregate_path_suffix;
 use super::objects::object_query;
 use crate::sim::ir::{
     IrArrayDimension, IrArrayQuery, IrArrayQueryKind, IrArrayQueryTarget, IrBinOp, IrChandleExpr,
-    IrObjectQuery, IrObjectStmt, IrObjectType, IrStringExpr,
+    IrInsideItem, IrObjectQuery, IrObjectStmt, IrObjectType, IrStringExpr, IrStringInsideItem,
 };
 
+fn inside_array_index_vectors(dims: &[(i32, i32)]) -> Vec<Vec<i32>> {
+    fn visit(
+        dims: &[(i32, i32)],
+        dimension: usize,
+        current: &mut Vec<i32>,
+        values: &mut Vec<Vec<i32>>,
+    ) {
+        if dimension == dims.len() {
+            values.push(current.clone());
+            return;
+        }
+        let (left, right) = dims[dimension];
+        let step = if left <= right { 1 } else { -1 };
+        let mut index = left;
+        loop {
+            current.push(index);
+            visit(dims, dimension + 1, current, values);
+            current.pop();
+            if index == right {
+                break;
+            }
+            index = index.saturating_add(step);
+        }
+    }
+
+    let mut values = Vec::new();
+    visit(dims, 0, &mut Vec::new(), &mut values);
+    values
+}
+
 impl<'a> Codegen<'a> {
+    pub(super) fn lower_inside_items(
+        &mut self,
+        path: &str,
+        nodes: &[NodeId],
+    ) -> Result<Vec<IrInsideItem>, String> {
+        if nodes.is_empty() {
+            return Err(format!("inside set is empty in `{path}`"));
+        }
+        let mut items = Vec::new();
+        for node in nodes {
+            self.lower_inside_item(path, *node, &mut items)?;
+        }
+        if items.is_empty() {
+            return Err(format!("inside set is empty in `{path}`"));
+        }
+        Ok(items)
+    }
+
+    fn lower_inside_item(
+        &mut self,
+        path: &str,
+        node: NodeId,
+        out: &mut Vec<IrInsideItem>,
+    ) -> Result<(), String> {
+        if let NodeKind::Expr(ExprKind::Operation {
+            op: Operation::List,
+            operands,
+            ..
+        }) = self.kind(node)
+        {
+            let operands = operands.clone();
+            if operands.is_empty() {
+                return Err(format!("malformed inside set item in `{path}`"));
+            }
+            let is_nested = operands.iter().any(|operand| {
+                matches!(
+                    self.kind(*operand),
+                    NodeKind::Expr(ExprKind::Operation {
+                        op: Operation::List,
+                        ..
+                    })
+                )
+            });
+            if operands.len() == 2 && !is_nested {
+                let low = (!self.is_unbounded_inside_node(operands[0]))
+                    .then(|| self.lower_expr(path, operands[0]))
+                    .transpose()?;
+                let high = (!self.is_unbounded_inside_node(operands[1]))
+                    .then(|| self.lower_expr(path, operands[1]))
+                    .transpose()?;
+                if low.is_none() && high.is_none() {
+                    return Err(format!("inside range has no bounded endpoint in `{path}`"));
+                }
+                if low.is_some() && high.is_some() {
+                    out.push(IrInsideItem::Range {
+                        low: low.expect("inside range lower endpoint"),
+                        high: high.expect("inside range upper endpoint"),
+                    });
+                } else {
+                    out.push(IrInsideItem::OpenRange { low, high });
+                }
+            } else {
+                for operand in operands {
+                    self.lower_inside_item(path, operand, out)?;
+                }
+            }
+            return Ok(());
+        }
+
+        if let Some((_, aggregate)) = self.unpacked_aggregate_info(node) {
+            for leaf in aggregate.leaves {
+                let value = self.aggregate_leaf_read(&leaf).map_err(|error| {
+                    format!("inside set aggregate member is not a scalar value in `{path}`: {error}")
+                })?;
+                out.push(IrInsideItem::Value(value));
+            }
+            return Ok(());
+        }
+        if let Some((target, prefix)) = self.unpacked_path_for_expr(node) {
+            if let Some(aggregate) = self.unpacked_aggregates.get(&target) {
+                let leaves = aggregate
+                    .leaves
+                    .iter()
+                    .filter(|leaf| leaf.path.starts_with(&prefix))
+                    .cloned()
+                    .collect::<Vec<_>>();
+                if !leaves.is_empty() {
+                    for leaf in leaves {
+                        let value = self.aggregate_leaf_read(&leaf).map_err(|error| {
+                            format!(
+                                "inside set aggregate member is not a scalar value in `{path}`: {error}"
+                            )
+                        })?;
+                        out.push(IrInsideItem::Value(value));
+                    }
+                    return Ok(());
+                }
+            }
+        }
+        if let Some(array) = self.array_of(node).cloned() {
+            if array.dims.is_empty() {
+                return Err(format!("inside set array has no dimensions in `{path}`"));
+            }
+            for indices in inside_array_index_vectors(&array.dims) {
+                out.push(IrInsideItem::Value(IrExpr::new(
+                    IrExprKind::ArrayRead {
+                        arr: self.reference_array(array.ir),
+                        indices: indices
+                            .into_iter()
+                            .map(|index| lhs_integer_expr(i128::from(index)))
+                            .collect(),
+                        elem_sel: IrElemSel::Whole,
+                    },
+                    array.elem_width,
+                    array.signed,
+                    None,
+                )));
+            }
+            return Ok(());
+        }
+        if let Some(container) = self.container_of(node) {
+            out.push(IrInsideItem::Container {
+                container: container.ir,
+            });
+            return Ok(());
+        }
+        if self.is_string_expr(path, node) {
+            return Err(format!(
+                "string-valued inside set item is incompatible with a packed selector in `{path}`"
+            ));
+        }
+        if self.is_chandle_expr(path, node) {
+            return Err(format!(
+                "chandle-valued inside set item is not supported in `{path}`"
+            ));
+        }
+        let value = self.lower_expr(path, node)?;
+        out.push(IrInsideItem::Value(value));
+        Ok(())
+    }
+
+    pub(super) fn lower_inside_string_items(
+        &mut self,
+        path: &str,
+        nodes: &[NodeId],
+    ) -> Result<Vec<IrStringInsideItem>, String> {
+        if nodes.is_empty() {
+            return Err(format!("inside set is empty in `{path}`"));
+        }
+        let mut items = Vec::new();
+        for node in nodes {
+            self.lower_inside_string_item(path, *node, &mut items)?;
+        }
+        if items.is_empty() {
+            return Err(format!("inside set is empty in `{path}`"));
+        }
+        Ok(items)
+    }
+
+    fn lower_inside_string_item(
+        &mut self,
+        path: &str,
+        node: NodeId,
+        out: &mut Vec<IrStringInsideItem>,
+    ) -> Result<(), String> {
+        if let NodeKind::Expr(ExprKind::Operation {
+            op: Operation::List,
+            operands,
+            ..
+        }) = self.kind(node)
+        {
+            let operands = operands.clone();
+            if operands.is_empty() {
+                return Err(format!("malformed string inside set item in `{path}`"));
+            }
+            let is_nested = operands.iter().any(|operand| {
+                matches!(
+                    self.kind(*operand),
+                    NodeKind::Expr(ExprKind::Operation {
+                        op: Operation::List,
+                        ..
+                    })
+                )
+            });
+            if operands.len() == 2 && !is_nested {
+                if self.is_unbounded_inside_node(operands[0])
+                    || self.is_unbounded_inside_node(operands[1])
+                {
+                    return Err(format!(
+                        "unbounded string inside range is not legal in `{path}`"
+                    ));
+                }
+                out.push(IrStringInsideItem::Range {
+                    low: self.lower_string(path, operands[0])?,
+                    high: self.lower_string(path, operands[1])?,
+                });
+            } else {
+                for operand in operands {
+                    self.lower_inside_string_item(path, operand, out)?;
+                }
+            }
+            return Ok(());
+        }
+
+        if let Some((_, aggregate)) = self.unpacked_aggregate_info(node) {
+            for leaf in aggregate.leaves {
+                let object = leaf.object.ok_or_else(|| {
+                    format!(
+                        "non-string aggregate member `{}` in string inside set in `{path}`",
+                        aggregate_path_suffix(&leaf.path)
+                    )
+                })?;
+                out.push(IrStringInsideItem::Value(IrStringExpr::Read(
+                    self.reference_object(object),
+                )));
+            }
+            return Ok(());
+        }
+        if let Some((target, prefix)) = self.unpacked_path_for_expr(node) {
+            if let Some(aggregate) = self.unpacked_aggregates.get(&target) {
+                let leaves = aggregate
+                    .leaves
+                    .iter()
+                    .filter(|leaf| leaf.path.starts_with(&prefix))
+                    .cloned()
+                    .collect::<Vec<_>>();
+                if !leaves.is_empty() {
+                    for leaf in leaves {
+                        let object = leaf.object.ok_or_else(|| {
+                            format!(
+                                "non-string aggregate member `{}` in string inside set in `{path}`",
+                                aggregate_path_suffix(&leaf.path)
+                            )
+                        })?;
+                        out.push(IrStringInsideItem::Value(IrStringExpr::Read(
+                            self.reference_object(object),
+                        )));
+                    }
+                    return Ok(());
+                }
+            }
+        }
+        if self.array_of(node).is_some() || self.container_of(node).is_some() {
+            return Err(format!(
+                "string-valued inside set array/container has unsupported storage in `{path}`"
+            ));
+        }
+        out.push(IrStringInsideItem::Value(self.lower_string(path, node)?));
+        Ok(())
+    }
+
+    fn is_unbounded_inside_node(&self, node: NodeId) -> bool {
+        match self.kind(node) {
+            NodeKind::Expr(ExprKind::Unbounded) => true,
+            NodeKind::Expr(ExprKind::Cast { operand, .. }) => {
+                self.is_unbounded_inside_node(*operand)
+            }
+            _ => false,
+        }
+    }
+
     pub(super) fn query_descriptor(&self, node: NodeId) -> Option<&TypeDescriptor> {
         self.db.type_descriptor(node).or_else(|| match self.kind(node) {
             NodeKind::Expr(ExprKind::Ref {
@@ -1622,52 +1913,22 @@ impl<'a> Codegen<'a> {
                 if item_nodes.is_empty() {
                     return Err(format!("inside set is empty in `{scope_path}`"));
                 }
-                let value = self.lower_expr(scope_path, *value_node)?;
-                if value.is_real() {
+                if self.is_chandle_expr(scope_path, *value_node) {
                     return Err(format!(
-                        "real-valued inside selector is not supported in `{scope_path}`"
+                        "chandle-valued inside selector is not supported in `{scope_path}`"
                     ));
                 }
-                let shapes = item_nodes
-                    .iter()
-                    .map(|node| match self.kind(*node) {
-                        NodeKind::Expr(ExprKind::Operation {
-                            op: Operation::List,
-                            operands,
-                            ..
-                        }) if matches!(operands.len(), 1 | 2) => Ok(operands.clone()),
-                        NodeKind::Expr(ExprKind::Operation {
-                            op: Operation::List,
-                            ..
-                        }) => Err(format!("malformed inside set item in `{scope_path}`")),
-                        _ => Ok(vec![*node]),
-                    })
-                    .collect::<Result<Vec<_>, _>>()?;
-                let mut items = Vec::with_capacity(shapes.len());
-                for shape in shapes {
-                    match shape.as_slice() {
-                        [item] => {
-                            let item = self.lower_expr(scope_path, *item)?;
-                            if item.is_real() {
-                                return Err(format!(
-                                    "real-valued inside item is not supported in `{scope_path}`"
-                                ));
-                            }
-                            items.push(IrInsideItem::Value(item));
-                        }
-                        [low, high] => {
-                            let low = self.lower_expr(scope_path, *low)?;
-                            let high = self.lower_expr(scope_path, *high)?;
-                            if low.is_real() || high.is_real() {
-                                return Err(format!(
-                                    "real-valued inside range is not supported in `{scope_path}`"
-                                ));
-                            }
-                            items.push(IrInsideItem::Range { low, high });
-                        }
-                        _ => unreachable!("inside item shape validated above"),
-                    }
+                if self.is_string_expr(scope_path, *value_node) {
+                    let value = self.lower_string(scope_path, *value_node)?;
+                    let items = self.lower_inside_string_items(scope_path, item_nodes)?;
+                    return Ok(object_query(
+                        IrObjectQuery::StringInside { value, items },
+                        1,
+                        false,
+                    ));
                 }
+                let value = self.lower_expr(scope_path, *value_node)?;
+                let items = self.lower_inside_items(scope_path, item_nodes)?;
                 Ok(IrExpr::new(
                     IrExprKind::Inside {
                         value: Box::new(value),

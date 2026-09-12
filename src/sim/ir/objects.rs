@@ -57,6 +57,15 @@ pub enum IrStringExpr {
     Substr(Box<IrStringExpr>, Box<IrExpr>, Box<IrExpr>),
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub enum IrStringInsideItem {
+    Value(IrStringExpr),
+    Range {
+        low: IrStringExpr,
+        high: IrStringExpr,
+    },
+}
+
 /// One typed argument of a display-family task.
 ///
 /// Display values stay in their native representation until the runtime
@@ -152,6 +161,10 @@ pub enum IrObjectQuery {
     StringLen(IrStringExpr),
     StringGetc(IrStringExpr, Box<IrExpr>),
     StringCompare(IrStringExpr, IrStringExpr, bool),
+    StringInside {
+        value: IrStringExpr,
+        items: Vec<IrStringInsideItem>,
+    },
     StringAtoi(IrStringExpr, u32),
     StringAtoreal(IrStringExpr),
     StringPacked(IrStringExpr),
@@ -524,6 +537,25 @@ impl IrObjectQuery {
                 a.validate(model, string_return)?;
                 b.validate(model, string_return)
             }
+            Self::StringInside { value, items } => {
+                if items.is_empty() {
+                    return Err(super::IrValidationError::new(
+                        "string",
+                        "string inside set is empty",
+                    ));
+                }
+                value.validate(model, string_return)?;
+                for item in items {
+                    match item {
+                        IrStringInsideItem::Value(value) => value.validate(model, string_return)?,
+                        IrStringInsideItem::Range { low, high } => {
+                            low.validate(model, string_return)?;
+                            high.validate(model, string_return)?;
+                        }
+                    }
+                }
+                Ok(())
+            }
             Self::ChandleEq(a, b) => {
                 a.validate(model, formals, chandle_return)?;
                 b.validate(model, formals, chandle_return)
@@ -545,6 +577,18 @@ impl IrObjectQuery {
                 a.expressions(visit);
                 b.expressions(visit);
             }
+            Self::StringInside { value, items } => {
+                value.expressions(visit);
+                for item in items {
+                    match item {
+                        IrStringInsideItem::Value(value) => value.expressions(visit),
+                        IrStringInsideItem::Range { low, high } => {
+                            low.expressions(visit);
+                            high.expressions(visit);
+                        }
+                    }
+                }
+            }
             Self::ChandleEq(a, b) => {
                 a.expressions(visit);
                 b.expressions(visit);
@@ -565,6 +609,18 @@ impl IrObjectQuery {
             Self::StringCompare(a, b, _) => {
                 a.expressions_mut(visit);
                 b.expressions_mut(visit);
+            }
+            Self::StringInside { value, items } => {
+                value.expressions_mut(visit);
+                for item in items {
+                    match item {
+                        IrStringInsideItem::Value(value) => value.expressions_mut(visit),
+                        IrStringInsideItem::Range { low, high } => {
+                            low.expressions_mut(visit);
+                            high.expressions_mut(visit);
+                        }
+                    }
+                }
             }
             Self::ChandleEq(a, b) => {
                 a.expressions_mut(visit);

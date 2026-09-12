@@ -618,6 +618,14 @@ fn expr_slots(expr: &IrExpr) -> Result<u64, String> {
                         expr_slots(high)?,
                         "inside range expression slots",
                     )?,
+                    IrInsideItem::OpenRange { low, high } => checked_sum(
+                        [
+                            low.as_ref().map(expr_slots).transpose()?.unwrap_or(0),
+                            high.as_ref().map(expr_slots).transpose()?.unwrap_or(0),
+                        ],
+                        "inside open range expression slots",
+                    )?,
+                    IrInsideItem::Container { .. } => 0,
                 };
                 slots = checked_add(slots, item_slots, "inside expression slots")?;
             }

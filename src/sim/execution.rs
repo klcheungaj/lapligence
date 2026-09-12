@@ -10,7 +10,7 @@ use crate::sim::ir::{
     IrCallArg, IrChandleExpr, IrContainerExpr, IrDependency, IrElemSel, IrExpr, IrExprKind,
     IrArrayQueryTarget, IrDisplayArg, IrInsideItem, IrJoinKind, IrLhs, IrModel, IrObjectQuery,
     IrObjectStmt, IrShape, IrStmt,
-    IrStringExpr, IrSysFunc, IrValidationError,
+    IrStringExpr, IrStringInsideItem, IrSysFunc, IrValidationError,
 };
 use crate::sim::semantic::{ExtensionRef, Origin};
 
@@ -940,6 +940,15 @@ fn collect_expression_effects(
                         collect_expression_effects(ir, low, effects, visited_calls);
                         collect_expression_effects(ir, high, effects, visited_calls);
                     }
+                    IrInsideItem::OpenRange { low, high } => {
+                        if let Some(low) = low {
+                            collect_expression_effects(ir, low, effects, visited_calls);
+                        }
+                        if let Some(high) = high {
+                            collect_expression_effects(ir, high, effects, visited_calls);
+                        }
+                    }
+                    IrInsideItem::Container { .. } => {}
                 }
             }
         }
@@ -1042,6 +1051,20 @@ fn collect_object_query_effects(
         IrObjectQuery::StringCompare(a, b, _) => {
             collect_string_effects(ir, a, effects, visited_calls);
             collect_string_effects(ir, b, effects, visited_calls);
+        }
+        IrObjectQuery::StringInside { value, items } => {
+            collect_string_effects(ir, value, effects, visited_calls);
+            for item in items {
+                match item {
+                    IrStringInsideItem::Value(value) => {
+                        collect_string_effects(ir, value, effects, visited_calls)
+                    }
+                    IrStringInsideItem::Range { low, high } => {
+                        collect_string_effects(ir, low, effects, visited_calls);
+                        collect_string_effects(ir, high, effects, visited_calls);
+                    }
+                }
+            }
         }
         IrObjectQuery::ChandleEq(a, b) => {
             collect_chandle_effects(ir, a, effects, visited_calls);

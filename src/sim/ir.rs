@@ -32,6 +32,7 @@ pub use containers::{
 pub use objects::{
     IrArrayDimension, IrArrayQuery, IrArrayQueryKind, IrArrayQueryTarget, IrChandleExpr,
     IrDisplayArg, IrObject, IrObjectQuery, IrObjectStmt, IrObjectType, IrStringExpr,
+    IrStringInsideItem,
 };
 
 pub use validate::IrValidationError;
@@ -891,6 +892,14 @@ pub enum IrInsideItem {
     Value(IrExpr),
     /// An inclusive `[low:high]` range.
     Range { low: IrExpr, high: IrExpr },
+    /// An inclusive range with one unbounded endpoint.
+    OpenRange {
+        low: Option<IrExpr>,
+        high: Option<IrExpr>,
+    },
+    /// All values currently stored in a dynamic, queue, or associative
+    /// container. The container storage ABI remains unchanged.
+    Container { container: usize },
 }
 
 /// Structural call arguments shared by statement-position and

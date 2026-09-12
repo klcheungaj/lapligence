@@ -59,6 +59,13 @@ Silicon macOS, and audits their linkage contracts. Do not treat a configured
 matrix leg as validated support; keep run evidence and generated-simulator
 limitations in local `persistence/platforms.md`.
 
+The root build script applies the tracked patches under `patches/slang/` and
+`patches/libaco/` with its portable Rust patch preparer before native sources
+are consumed. Keep `vendor/slang` and `vendor/libaco` at their documented base
+gitlinks; project-specific commits in either submodule are forbidden. A clean
+checkout is patched, an already-applied checkout is accepted, and a partial or
+mismatched checkout fails with an actionable diagnostic.
+
 - Build with `cargo build --bin llg_ls`, `--bin llg`, or `--bin elab_check`;
   demo bins are also available.
 - `llg_ls` and `helloworld` select mimalloc as their Rust global allocator. On
@@ -66,8 +73,9 @@ limitations in local `persistence/platforms.md`.
   through `--wrap` for every binary.
 - Preserve the native `#[link]` attributes in `ffi/slang.rs`; they carry the
   wrapper, Slang, and fmt archives through the Rust library boundary.
-- Wrapper changes rebuild the shim; vendored Slang/CMake changes can rebuild
-  the frontend. Musl uses static target archives and the shared allocator shim.
+- Wrapper changes rebuild the shim; vendored Slang/CMake changes and tracked
+  vendor patches can rebuild the frontend. Musl uses static target archives and
+  the shared allocator shim.
 - `vendor/libaco` documents `aco_create`, `aco_resume`, `aco_yield`, `aco_exit`,
   shared stacks and per-coroutine save stacks.
   Verilog/SystemVerilog LRMs are PDFs in `docs/specification/`.

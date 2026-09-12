@@ -1237,6 +1237,11 @@ static void llg_assoc_reserve(llg_assoc_t* array, size_t needed) {
 
 size_t llg_assoc_count(const llg_assoc_t* array) { return array->size; }
 
+sv4_t llg_assoc_value_at(const llg_assoc_t* array, size_t index) {
+    if (!array || index >= array->size) return SV4_C(0, 1);
+    return array->entries[index].value;
+}
+
 sv4_t llg_assoc_reduce(const llg_assoc_t* array, int operation) {
     sv4_t result = llg_reduce_identity(array->element_width,
                                        array->element_signed, operation);

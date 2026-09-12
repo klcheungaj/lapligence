@@ -242,6 +242,7 @@ void llg_assoc_destroy(llg_assoc_t* array);
 void llg_assoc_delete(llg_assoc_t* array);
 void llg_assoc_copy(llg_assoc_t* dst, const llg_assoc_t* src);
 size_t llg_assoc_count(const llg_assoc_t* array);
+sv4_t llg_assoc_value_at(const llg_assoc_t* array, size_t index);
 sv4_t llg_assoc_reduce(const llg_assoc_t* array, int operation);
 
 sv4_t llg_assoc_get_integral(const llg_assoc_t* array, sv4_t key);

@@ -847,7 +847,9 @@ impl Codegen<'_> {
                     }
                 }
             }
-            NodeKind::Expr(ExprKind::Operation { op, operands, .. }) if operands.len() == 2 => {
+            NodeKind::Expr(ExprKind::Operation { op, operands, .. })
+                if operands.len() == 2 && *op != Operation::Inside =>
+            {
                 let op = *op;
                 let (a, b) = (operands[0], operands[1]);
                 let is_chandle = [a, b]

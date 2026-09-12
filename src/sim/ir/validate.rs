@@ -689,6 +689,7 @@ impl Validator<'_> {
                     IrObjectQuery::ChandleEq(..) => Some((1, false)),
                     IrObjectQuery::StringGetc(..) => Some((8, true)),
                     IrObjectQuery::StringAtoreal(..) => Some((0, true)),
+                    IrObjectQuery::StringInside { .. } => Some((1, false)),
                     IrObjectQuery::StringPacked(..) => None,
                     IrObjectQuery::ArrayQuery(query) => Some(query.result_type(self.model)),
                     _ => Some((32, true)),
@@ -848,37 +849,61 @@ impl Validator<'_> {
                 if items.is_empty() {
                     return self.fail(path, "inside expression requires at least one set item");
                 }
-                if value.is_real() || expr.width != 1 || expr.signed {
+                if expr.width != 1 || expr.signed {
                     return self.fail(
                         path,
-                        "inside expression requires a packed selector and 1-bit unsigned result",
+                        "inside expression requires a 1-bit unsigned result",
                     );
                 }
                 self.validate_expr(value, formals, &format!("{path}.value"))?;
                 for (idx, item) in items.iter().enumerate() {
                     match item {
                         IrInsideItem::Value(item) => {
-                            if item.is_real() {
-                                return self.fail(
-                                    format!("{path}.items[{idx}]"),
-                                    "inside set item must be packed",
-                                );
-                            }
                             self.validate_expr(item, formals, &format!("{path}.items[{idx}]"))?;
                         }
                         IrInsideItem::Range { low, high } => {
-                            if low.is_real() || high.is_real() {
-                                return self.fail(
-                                    format!("{path}.items[{idx}]"),
-                                    "inside range endpoints must be packed",
-                                );
-                            }
                             self.validate_expr(low, formals, &format!("{path}.items[{idx}].low"))?;
                             self.validate_expr(
                                 high,
                                 formals,
                                 &format!("{path}.items[{idx}].high"),
                             )?;
+                        }
+                        IrInsideItem::OpenRange { low, high } => {
+                            if low.is_none() && high.is_none() {
+                                return self.fail(
+                                    format!("{path}.items[{idx}]"),
+                                    "inside open range requires an endpoint",
+                                );
+                            }
+                            if let Some(low) = low {
+                                self.validate_expr(
+                                    low,
+                                    formals,
+                                    &format!("{path}.items[{idx}].low"),
+                                )?;
+                            }
+                            if let Some(high) = high {
+                                self.validate_expr(
+                                    high,
+                                    formals,
+                                    &format!("{path}.items[{idx}].high"),
+                                )?;
+                            }
+                        }
+                        IrInsideItem::Container { container } => {
+                            let Some(container_model) = self.model.containers.get(*container) else {
+                                return self.fail(
+                                    format!("{path}.items[{idx}]"),
+                                    "inside container index is out of bounds",
+                                );
+                            };
+                            if !matches!(container_model.element, IrType::Packed { .. }) {
+                                return self.fail(
+                                    format!("{path}.items[{idx}]"),
+                                    "inside container element must be packed",
+                                );
+                            }
                         }
                     }
                 }

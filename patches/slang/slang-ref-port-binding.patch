@@ -1,0 +1,20 @@
+diff --git a/source/ast/symbols/PortSymbols.cpp b/source/ast/symbols/PortSymbols.cpp
+index 1eb90a82e..65a641da1 100644
+--- a/source/ast/symbols/PortSymbols.cpp
++++ b/source/ast/symbols/PortSymbols.cpp
+@@ -1832,6 +1832,15 @@ const Expression* PortConnection::getExpression() const {
+         if (!connectedSymbol) {
+             if (port.kind == SymbolKind::MultiPort)
+                 expr = &Expression::bind(*exprSyntax, context);
++            else if (direction == ArgumentDirection::Ref) {
++                // Module ref ports admit the same packed lvalue selections as
++                // other variable reference connections.  Subroutine ref
++                // arguments retain their separate 2009 restriction because
++                // they continue through Expression::bindArgument.
++                expr = &Expression::bind(*exprSyntax, context);
++                expr = &Expression::bindRefArg(
++                    *type, {}, *expr, context, /* allowPackedSelects */ true);
++            }
+             else
+                 expr = &Expression::bindArgument(*type, direction, {}, *exprSyntax, context);
+             return expr;

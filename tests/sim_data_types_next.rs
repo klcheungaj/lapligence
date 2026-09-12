@@ -228,6 +228,51 @@ datatype_case!(
     "inside_membership"
 );
 datatype_case!(
+    inside_aggregate_container_real_and_string_contexts,
+    "inside_aggregate_contexts.sv",
+    "inside_aggregate_contexts"
+);
+
+#[test]
+fn inside_chandle_context_is_rejected_as_one_frontend_fault() {
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/sim/data_types_next")
+        .join("inside_chandle_rejected.sv");
+    sim_harness::with_frontend_temp_cwd("data-types-next-inside-rejection", |dir| {
+        let source = dir.join("inside_chandle_rejected.sv");
+        std::fs::copy(&fixture, &source).map_err(|error| format!("copy fixture: {error}"))?;
+        let compiled = compile::compile(&compile::CompileOpts {
+            files: vec![source.to_string_lossy().into_owned()],
+            top: Some("tb".to_owned()),
+            ..Default::default()
+        })
+        .map_err(|error| format!("compile: {error}"))?;
+        if !compiled.ok() {
+            let diagnostic = format!("{:?}", compiled.diagnostics).to_ascii_lowercase();
+            if diagnostic.contains("chandle") && diagnostic.contains("inside") {
+                return Ok(());
+            }
+            return Err(format!("unexpected inside diagnostic: {diagnostic}"));
+        }
+        let database = Db::from_slang(&compiled.snapshot)
+            .map_err(|error| format!("database: {error}"))?;
+        for (variant, options) in [
+            ("unoptimized", OptConfig::none()),
+            ("optimized", OptConfig::default()),
+        ] {
+            let error = sim::codegen::generate_from_db_with_opts(&database, &options)
+                .map(|_| "generated successfully".to_owned())
+                .unwrap_or_else(|error| error.to_string())
+                .to_ascii_lowercase();
+            if !error.contains("chandle") || !error.contains("inside") {
+                return Err(format!("{variant}: unexpected inside result: {error}"));
+            }
+        }
+        Ok(())
+    })
+    .expect("chandle inside operand must be rejected");
+}
+datatype_case!(
     static_function_and_task_locals_persist,
     "static_subprogram_storage.sv",
     "static_subprogram_storage"

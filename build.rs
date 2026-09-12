@@ -5,6 +5,9 @@
 
 use std::path::{Path, PathBuf};
 
+#[path = "build_support/vendor_patches.rs"]
+mod vendor_patches;
+
 fn emit_rerun_if_changed() {
     let target = std::env::var("TARGET").unwrap_or_default();
     let target_underscored = target.replace('-', "_");
@@ -25,6 +28,7 @@ fn emit_rerun_if_changed() {
     for path in [
         "Cargo.lock",
         "patches/slang",
+        "patches/libaco",
         "src/wrapper/mimalloc_shim.c",
         "src/wrapper/slang/CMakeLists.txt",
         "src/wrapper/slang_c_api.cpp",
@@ -35,6 +39,7 @@ fn emit_rerun_if_changed() {
         "vendor/slang/include",
         "vendor/slang/scripts",
         "vendor/slang/source",
+        "vendor/libaco",
     ] {
         println!("cargo:rerun-if-changed={path}");
     }
@@ -110,109 +115,6 @@ fn sync_cmake_source(build_dir: &Path, source_dir: &Path) {
     );
 }
 
-/// Apply repository-owned fixes to the pinned Slang checkout. A reverse check
-/// makes this idempotent. `patch` works with container bind mounts; Git is the
-/// fallback for Windows runners.
-fn apply_vendor_patches(repo: &Path, patches_dir: &Path) {
-    if !patches_dir.exists() {
-        return;
-    }
-    let mut patches: Vec<_> = std::fs::read_dir(patches_dir)
-        .unwrap_or_else(|error| panic!("failed to read {}: {error}", patches_dir.display()))
-        .filter_map(Result::ok)
-        .map(|entry| entry.path())
-        .filter(|path| path.extension().and_then(|value| value.to_str()) == Some("patch"))
-        .collect();
-    patches.sort();
-
-    for patch in patches {
-        println!("cargo:rerun-if-changed={}", patch.display());
-        let open_patch = || {
-            std::fs::File::open(&patch)
-                .unwrap_or_else(|error| panic!("failed to open {}: {error}", patch.display()))
-        };
-        let reverse = std::process::Command::new("patch")
-            .args(["-p1", "-R", "-s", "--dry-run"])
-            .stdin(std::process::Stdio::from(open_patch()))
-            .current_dir(repo)
-            .output();
-        if reverse.as_ref().is_ok_and(|output| output.status.success()) {
-            continue;
-        }
-
-        let forward = std::process::Command::new("patch")
-            .args(["-p1", "-s", "-N", "--dry-run"])
-            .stdin(std::process::Stdio::from(open_patch()))
-            .current_dir(repo)
-            .output();
-        if forward.as_ref().is_ok_and(|output| output.status.success()) {
-            let status = std::process::Command::new("patch")
-                .args(["-p1", "-s", "-N"])
-                .stdin(std::process::Stdio::from(open_patch()))
-                .current_dir(repo)
-                .status()
-                .unwrap_or_else(|error| {
-                    panic!("failed to execute patch for {}: {error}", patch.display())
-                });
-            if status.success() {
-                continue;
-            }
-            panic!("failed to apply {} with patch", patch.display());
-        }
-
-        let git_reverse = std::process::Command::new("git")
-            .arg("-C")
-            .arg(repo)
-            .args([
-                "apply",
-                "--ignore-space-change",
-                "--unidiff-zero",
-                "--reverse",
-                "--check",
-            ])
-            .arg(&patch)
-            .output();
-        if git_reverse
-            .as_ref()
-            .is_ok_and(|output| output.status.success())
-        {
-            continue;
-        }
-        let git_check = std::process::Command::new("git")
-            .arg("-C")
-            .arg(repo)
-            .args([
-                "apply",
-                "--ignore-space-change",
-                "--unidiff-zero",
-                "--check",
-            ])
-            .arg(&patch)
-            .output();
-        if git_check
-            .as_ref()
-            .is_ok_and(|output| output.status.success())
-        {
-            let status = std::process::Command::new("git")
-                .arg("-C")
-                .arg(repo)
-                .args(["apply", "--ignore-space-change", "--unidiff-zero"])
-                .arg(&patch)
-                .status()
-                .unwrap_or_else(|error| {
-                    panic!("failed to execute git for {}: {error}", patch.display())
-                });
-            if status.success() {
-                continue;
-            }
-        }
-        panic!(
-            "{} is neither cleanly applicable nor already applied",
-            patch.display()
-        );
-    }
-}
-
 fn emit_native_search(directory: &Path, is_msvc: bool) {
     println!("cargo:rustc-link-search=native={}", directory.display());
     if is_msvc {
@@ -267,7 +169,6 @@ fn build_slang(manifest_dir: &Path) {
 
     let project = manifest_dir.join("src/wrapper/slang");
     let repo = manifest_dir.join("vendor/slang");
-    apply_vendor_patches(&repo, &manifest_dir.join("patches/slang"));
     let build_dir = manifest_dir
         .join("target/slang")
         .join(&target)
@@ -499,9 +400,12 @@ fn find_libmimalloc_sys_src(manifest_dir: &Path) -> PathBuf {
 }
 
 fn main() {
-    emit_rerun_if_changed();
     let manifest_dir = PathBuf::from(
         std::env::var("CARGO_MANIFEST_DIR").expect("Cargo must set CARGO_MANIFEST_DIR"),
     );
+    emit_rerun_if_changed();
+    vendor_patches::emit_rerun_if_changed(&manifest_dir);
+    vendor_patches::apply_all(&manifest_dir)
+        .unwrap_or_else(|error| panic!("vendor patch preparation failed: {error}"));
     build_slang(&manifest_dir);
 }

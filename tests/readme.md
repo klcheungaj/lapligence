@@ -109,10 +109,12 @@ cargo test --locked --all-features -- --test-threads=1
 
 The exact Rust toolchain is pinned in [`rust-toolchain.toml`](../rust-toolchain.toml),
 and Cargo dependencies are resolved by [`Cargo.lock`](../Cargo.lock). The
-vendored Slang and libaco gitlinks must be checked out at the revisions recorded
-by the root commit; `scripts/run-regression.sh` verifies this before running the
-serialized gate and records provenance, command lines, phase status, timings,
-and complete logs in ignored `persistence/` output.
+vendored Slang and libaco gitlinks must be checked out at the upstream base
+revisions recorded by the root commit; `build.rs` applies the reviewable patches
+under `patches/` before native sources are consumed. No project-specific vendor
+commits are allowed. `scripts/run-regression.sh` verifies the gitlinks before
+running the serialized gate and records provenance, command lines, phase status,
+timings, and complete logs in ignored `persistence/` output.
 
 Run the gate in separate directories before and after a feature patch, then
 compare the stable phase summary:

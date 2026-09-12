@@ -364,6 +364,15 @@ fn walk_expr_mut(e: &mut IrExpr, f: &mut impl FnMut(&mut IrExpr)) {
                         walk_expr_mut(low, f);
                         walk_expr_mut(high, f);
                     }
+                    IrInsideItem::OpenRange { low, high } => {
+                        if let Some(low) = low {
+                            walk_expr_mut(low, f);
+                        }
+                        if let Some(high) = high {
+                            walk_expr_mut(high, f);
+                        }
+                    }
+                    IrInsideItem::Container { .. } => {}
                 }
             }
         }
@@ -889,6 +898,15 @@ fn ident_children(e: &mut IrExpr) {
                         ident_expr(low);
                         ident_expr(high);
                     }
+                    IrInsideItem::OpenRange { low, high } => {
+                        if let Some(low) = low {
+                            ident_expr(low);
+                        }
+                        if let Some(high) = high {
+                            ident_expr(high);
+                        }
+                    }
+                    IrInsideItem::Container { .. } => {}
                 }
             }
         }
@@ -1961,6 +1979,15 @@ fn collect_children_reads(e: &IrExpr, model: &IrModel, rw: &mut Rw) {
                         collect_expr_reads(low, model, rw);
                         collect_expr_reads(high, model, rw);
                     }
+                    IrInsideItem::OpenRange { low, high } => {
+                        if let Some(low) = low {
+                            collect_expr_reads(low, model, rw);
+                        }
+                        if let Some(high) = high {
+                            collect_expr_reads(high, model, rw);
+                        }
+                    }
+                    IrInsideItem::Container { .. } => {}
                 }
             }
         }

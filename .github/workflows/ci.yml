@@ -53,12 +53,12 @@ jobs:
           cache-targets: "false"
           cache-bin: "false"
 
-      # Slang's generated headers require Python. build.rs also needs patch(1),
-      # CMake, and a C++20 compiler.
+      # Slang's generated headers require Python. build.rs needs CMake and a
+      # C++20 compiler; vendor patches are applied by Rust.
       - name: Install native build prerequisites
         run: |
           sudo apt-get update
-          sudo apt-get install -y patch cmake g++ python3
+          sudo apt-get install -y cmake g++ python3
 
       # fmt first: it fails fast without paying for the native build.
       - name: cargo fmt --check
@@ -120,7 +120,7 @@ jobs:
       - name: Install native build prerequisites
         run: |
           sudo apt-get update
-          sudo apt-get install -y patch cmake g++ python3
+          sudo apt-get install -y cmake g++ python3
 
       - name: Run generated runtime and model probes under sanitizers
         run: >-
@@ -254,7 +254,7 @@ jobs:
             --env CMAKE_GENERATOR=Ninja \
             --env LLG_TARGET="${{ matrix.target }}" \
             rust:1.98.0-alpine sh -euxc '
-              apk add --no-cache build-base cmake git linux-headers ninja patch python3
+              apk add --no-cache build-base cmake git linux-headers ninja python3
               git config --global --add safe.directory /workspace
               git config --global --add safe.directory /workspace/vendor/slang
               rustup target add "$LLG_TARGET"

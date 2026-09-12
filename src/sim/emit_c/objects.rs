@@ -156,6 +156,52 @@ pub(super) fn chandle(ctx: &RCtx<'_>, value: &IrChandleExpr) -> Result<String, S
     })
 }
 
+fn string_inside(
+    ctx: &RCtx<'_>,
+    value: &IrStringExpr,
+    items: &[IrStringInsideItem],
+) -> Result<String, String> {
+    let selector = string(ctx, value)?;
+    let zero = "SV4_C(0, 32)";
+    let mut code = format!(
+        "({{ llg_string_t _inside_string_value = {selector}; \
+         sv4_t _inside_string_result = SV4_C(0, 1); "
+    );
+    for (index, item) in items.iter().enumerate() {
+        match item {
+            IrStringInsideItem::Value(item) => {
+                let item_code = string(ctx, item)?;
+                code.push_str(&format!(
+                    "llg_string_t _inside_string_item_{index} = {item_code}; \
+                     sv4_t _inside_string_cmp_{index} = llg_string_compare( \
+                     llg_string_clone(&_inside_string_value), _inside_string_item_{index}, 0); \
+                     _inside_string_result = sv4_logor(_inside_string_result, \
+                     sv4_eq(_inside_string_cmp_{index}, {zero})); "
+                ));
+            }
+            IrStringInsideItem::Range { low, high } => {
+                let low_code = string(ctx, low)?;
+                let high_code = string(ctx, high)?;
+                code.push_str(&format!(
+                    "llg_string_t _inside_string_low_{index} = {low_code}; \
+                     llg_string_t _inside_string_high_{index} = {high_code}; \
+                     sv4_t _inside_string_low_cmp_{index} = llg_string_compare( \
+                     llg_string_clone(&_inside_string_value), _inside_string_low_{index}, 0); \
+                     sv4_t _inside_string_high_cmp_{index} = llg_string_compare( \
+                     llg_string_clone(&_inside_string_value), _inside_string_high_{index}, 0); \
+                     _inside_string_result = sv4_logor(_inside_string_result, \
+                     sv4_logand(sv4_ge(_inside_string_low_cmp_{index}, {zero}), \
+                     sv4_le(_inside_string_high_cmp_{index}, {zero}))); "
+                ));
+            }
+        }
+    }
+    code.push_str(
+        "llg_string_destroy(&_inside_string_value); _inside_string_result; })",
+    );
+    Ok(code)
+}
+
 pub(super) fn query(
     ctx: &RCtx<'_>,
     query: &IrObjectQuery,
@@ -175,6 +221,7 @@ pub(super) fn query(
             string(ctx, b)?,
             u8::from(*ignore)
         ),
+        IrObjectQuery::StringInside { value, items } => string_inside(ctx, value, items)?,
         IrObjectQuery::StringAtoi(value, base) => {
             format!("llg_string_atoi({}, {base})", string(ctx, value)?)
         }

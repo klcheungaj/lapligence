@@ -161,6 +161,9 @@ coverage for the same rule IDs.
   actionable error); skips gracefully when cmake is absent.
   Its source-generation check also pins the separate value-runtime translation
   unit and retention of both value files during stale-source cleanup.
+- `vendor_patches.rs` exercises clean-checkout application, already-applied
+  acceptance, and mismatch rejection for the portable native-build patch
+  preparer.
 - `runtime_values.rs` compiles `llg_value.c` independently of the scheduler and
   libaco, checking packed value operations, real/shortreal conversions, and
   wire/wired-AND/wired-OR truth tables and wide-vector normalization.
