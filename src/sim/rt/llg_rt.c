@@ -659,6 +659,7 @@ static llg_rt_ctx_t g;
 #define LLG_FILE_SLOTS 32
 #define LLG_FILE_STDOUT 0u
 #define LLG_FILE_STDERR 1u
+#define LLG_FILE_PUSHBACK 256u
 
 typedef struct {
     FILE* stream;
@@ -667,6 +668,8 @@ typedef struct {
     int error;
     int eof;
     char message[160];
+    unsigned char pushback[LLG_FILE_PUSHBACK];
+    size_t pushback_len;
 } llg_file_slot_t;
 
 static llg_file_slot_t llg_file_slots[LLG_FILE_SLOTS];
@@ -5638,7 +5641,10 @@ uint32_t llg_file_open(llg_string_t path, llg_string_t mode, int has_mode) {
         return 0;
     }
 
-    static const char* const valid_modes[] = {"r", "w", "a", "r+", "w+", "a+"};
+    static const char* const valid_modes[] = {
+        "r", "w", "a", "r+", "w+", "a+",
+        "rb", "wb", "ab", "r+b", "w+b", "a+b",
+    };
     int mode_valid = 0;
     for (size_t i = 0; i < sizeof(valid_modes) / sizeof(valid_modes[0]); i++) {
         if (strcmp(mode_copy, valid_modes[i]) == 0) {
@@ -5668,6 +5674,7 @@ uint32_t llg_file_open(llg_string_t path, llg_string_t mode, int has_mode) {
     llg_file_slots[slot_index].owned = 1;
     llg_file_slots[slot_index].error = 0;
     llg_file_slots[slot_index].eof = 0;
+    llg_file_slots[slot_index].pushback_len = 0;
     llg_file_slots[slot_index].message[0] = 0;
     return 1u << slot_index;
 }
@@ -5682,6 +5689,7 @@ void llg_file_close(uint32_t descriptor) {
         slot->stream = NULL;
         slot->open = 0;
         slot->owned = 0;
+        slot->pushback_len = 0;
         if (result != 0) llg_file_slot_failure(slot, "file close failed");
     }
 }
@@ -5713,6 +5721,7 @@ void llg_file_rewind(uint32_t descriptor) {
     rewind(slot->stream);
     slot->error = 0;
     slot->eof = 0;
+    slot->pushback_len = 0;
     slot->message[0] = 0;
 }
 
@@ -5743,6 +5752,7 @@ int llg_file_seek(uint32_t descriptor, sv4_t offset, sv4_t operation) {
         return -1;
     }
     slot->eof = 0;
+    slot->pushback_len = 0;
     return 0;
 }
 
@@ -5774,10 +5784,589 @@ int llg_file_eof(uint32_t descriptor) {
     int result = 0;
     for (unsigned i = 0; i < LLG_FILE_SLOTS; i++) {
         uint32_t bit = 1u << i;
-        if ((descriptor & bit) && feof(llg_file_slots[i].stream)) {
-            llg_file_slots[i].eof = 1;
+        if ((descriptor & bit) && llg_file_slots[i].eof) {
             result = 1;
         }
+    }
+    return result;
+}
+
+// ── File input ──────────────────────────────────────────────────────────────
+
+static int llg_file_getc_slot(llg_file_slot_t* slot) {
+    if (!slot || !slot->open || !slot->stream) return EOF;
+    int value;
+    if (slot->pushback_len) {
+        value = slot->pushback[--slot->pushback_len];
+        slot->eof = 0;
+        return value;
+    }
+    value = fgetc(slot->stream);
+    if (value == EOF) {
+        if (feof(slot->stream)) slot->eof = 1;
+        if (ferror(slot->stream)) llg_file_slot_failure(slot, "file input failed");
+    } else {
+        slot->eof = 0;
+    }
+    return value;
+}
+
+static int llg_file_ungetc_slot(llg_file_slot_t* slot, int value) {
+    if (!slot || !slot->open || !slot->stream || value == EOF || value < 0 || value > UCHAR_MAX)
+        return EOF;
+    if (slot->pushback_len >= LLG_FILE_PUSHBACK) {
+        llg_file_slot_failure(slot, "file input pushback limit exceeded");
+        return EOF;
+    }
+    slot->pushback[slot->pushback_len++] = (unsigned char)value;
+    // A successful standard-library ungetc clears the stream EOF indicator;
+    // mirror that behavior even though the bounded stack keeps bytes outside
+    // the host FILE buffer.
+    clearerr(slot->stream);
+    slot->eof = 0;
+    return value;
+}
+
+int llg_file_getc(uint32_t descriptor) {
+    llg_file_slot_t* slot;
+    if (!llg_file_single_ordinary(descriptor, &slot)) return EOF;
+    return llg_file_getc_slot(slot);
+}
+
+int llg_file_ungetc(uint32_t descriptor, sv4_t character) {
+    llg_file_slot_t* slot;
+    int64_t value;
+    if (!llg_file_single_ordinary(descriptor, &slot) ||
+        !sv4_to_index_i64(character, &value) || value < 0 || value > UCHAR_MAX) {
+        llg_file_global_failure("invalid file ungetc arguments");
+        return EOF;
+    }
+    return llg_file_ungetc_slot(slot, (int)value);
+}
+
+int llg_file_gets(uint32_t descriptor, llg_string_t* target) {
+    llg_file_slot_t* slot;
+    if (!target || !llg_file_single_ordinary(descriptor, &slot)) return 0;
+    size_t capacity = 128u;
+    size_t length = 0;
+    unsigned char* bytes = (unsigned char*)llg_checked_malloc(capacity, 1, "file input line");
+    for (;;) {
+        int value = llg_file_getc_slot(slot);
+        if (value == EOF) break;
+        if (length == capacity) {
+            if (capacity > (SIZE_MAX / 2u)) {
+                free(bytes);
+                llg_fatal_allocation("file input line", capacity, 2u);
+            }
+            capacity *= 2u;
+            unsigned char* replacement = (unsigned char*)realloc(bytes, capacity);
+            if (!replacement) {
+                free(bytes);
+                llg_fatal_allocation("file input line", capacity, 1u);
+            }
+            bytes = replacement;
+        }
+        bytes[length++] = (unsigned char)value;
+        if (value == '\n') break;
+    }
+    if (length == 0) {
+        free(bytes);
+        return 0;
+    }
+    llg_string_move(target, llg_string_bytes((const char*)bytes, length));
+    free(bytes);
+    return length > (size_t)INT_MAX ? INT_MAX : (int)length;
+}
+
+int llg_file_gets_packed(uint32_t descriptor, llg_ref_t* target) {
+    if (!target || target->width == 0) return 0;
+    llg_string_t value = {0};
+    int result = llg_file_gets(descriptor, &value);
+    if (result) llg_ref_write(target, llg_string_to_packed(value, target->width,
+                                                            target->is_signed));
+    else llg_string_destroy(&value);
+    return result;
+}
+
+typedef struct {
+    llg_file_slot_t* file;
+    const unsigned char* bytes;
+    size_t length;
+    size_t position;
+    int input_failure;
+} llg_scan_input_t;
+
+static int llg_scan_get(llg_scan_input_t* input) {
+    int value;
+    if (input->file) {
+        value = llg_file_getc_slot(input->file);
+    } else if (input->position >= input->length) {
+        value = EOF;
+    } else {
+        value = input->bytes[input->position++];
+    }
+    return value;
+}
+
+static int llg_scan_unget(llg_scan_input_t* input, int value) {
+    if (value == EOF) return 0;
+    if (input->file) return llg_file_ungetc_slot(input->file, value) != EOF;
+    if (input->position == 0) return 0;
+    input->position--;
+    return 1;
+}
+
+static int llg_scan_skip_space(llg_scan_input_t* input) {
+    int value;
+    do {
+        value = llg_scan_get(input);
+    } while (value != EOF && isspace((unsigned char)value));
+    if (value != EOF) (void)llg_scan_unget(input, value);
+    else input->input_failure = 1;
+    return value != EOF;
+}
+
+static int llg_scan_token(llg_scan_input_t* input, size_t limit,
+                          unsigned char** result, size_t* length) {
+    size_t capacity = limit != SIZE_MAX && limit < 128u ? limit + 1u : 128u;
+    if (capacity == 0) capacity = 1;
+    unsigned char* bytes = (unsigned char*)llg_checked_malloc(capacity, 1, "file input token");
+    size_t used = 0;
+    for (;;) {
+        int value = llg_scan_get(input);
+        if (value == EOF || isspace((unsigned char)value)) {
+            if (value != EOF) (void)llg_scan_unget(input, value);
+            else if (used == 0) input->input_failure = 1;
+            break;
+        }
+        if (limit != SIZE_MAX && used >= limit) {
+            (void)llg_scan_unget(input, value);
+            break;
+        }
+        if (used == capacity) {
+            if (capacity > SIZE_MAX / 2u) {
+                free(bytes);
+                llg_fatal_allocation("file input token", capacity, 2u);
+            }
+            capacity *= 2u;
+            unsigned char* replacement = (unsigned char*)realloc(bytes, capacity);
+            if (!replacement) {
+                free(bytes);
+                llg_fatal_allocation("file input token", capacity, 1u);
+            }
+            bytes = replacement;
+        }
+        bytes[used++] = (unsigned char)value;
+    }
+    if (used == 0) {
+        free(bytes);
+        return 0;
+    }
+    *result = bytes;
+    *length = used;
+    return 1;
+}
+
+static int llg_scan_chars(llg_scan_input_t* input, size_t count,
+                          unsigned char** result, size_t* length) {
+    unsigned char* bytes = (unsigned char*)llg_checked_malloc(count ? count : 1u, 1,
+                                                               "file input characters");
+    size_t used = 0;
+    while (used < count) {
+        int value = llg_scan_get(input);
+        if (value == EOF) {
+            if (used == 0) input->input_failure = 1;
+            break;
+        }
+        bytes[used++] = (unsigned char)value;
+    }
+    if (used == 0) {
+        free(bytes);
+        return 0;
+    }
+    *result = bytes;
+    *length = used;
+    return 1;
+}
+
+static int llg_scan_digit(unsigned char value, unsigned base) {
+    if (value >= '0' && value <= '9') {
+        int digit = (int)(value - '0');
+        return digit < (int)base ? digit : -1;
+    }
+    if (value >= 'a' && value <= 'f') {
+        int digit = (int)(value - 'a') + 10;
+        return digit < (int)base ? digit : -1;
+    }
+    if (value >= 'A' && value <= 'F') {
+        int digit = (int)(value - 'A') + 10;
+        return digit < (int)base ? digit : -1;
+    }
+    return -1;
+}
+
+static void llg_scan_set_bit(sv4_t* value, uint32_t bit, int state) {
+    if (bit >= value->width) return;
+    uint32_t limb = bit / 64u;
+    uint64_t mask = 1ULL << (bit % 64u);
+    value->bits[limb] &= ~mask;
+    value->x[limb] &= ~mask;
+    value->z[limb] &= ~mask;
+    if (state == 1) value->bits[limb] |= mask;
+    else if (state == 2) value->x[limb] |= mask;
+    else if (state == 3) value->z[limb] |= mask;
+}
+
+static int llg_scan_unknown(unsigned char value) {
+    return value == 'x' || value == 'X' ? 2 :
+           value == 'z' || value == 'Z' || value == '?' ? 3 : 0;
+}
+
+static int llg_scan_integer(const unsigned char* bytes, size_t length,
+                            char conversion, uint32_t width, int is_signed,
+                            sv4_t* result) {
+    size_t begin = 0;
+    int negative = 0;
+    unsigned base = conversion == 'b' ? 2u : conversion == 'o' ? 8u :
+                    conversion == 'h' || conversion == 'x' ? 16u : 10u;
+    if (length && (bytes[0] == '+' || bytes[0] == '-')) {
+        negative = bytes[0] == '-';
+        begin = 1;
+    }
+    if (conversion == 'i' && begin + 2u <= length && bytes[begin] == '0') {
+        unsigned char prefix = bytes[begin + 1u];
+        if (prefix == 'x' || prefix == 'X') { base = 16u; begin += 2u; }
+        else if (prefix == 'b' || prefix == 'B') { base = 2u; begin += 2u; }
+        else if (prefix == 'o' || prefix == 'O') { base = 8u; begin += 2u; }
+        else base = 8u;
+    } else if ((base == 16u || base == 2u || base == 8u) &&
+               begin + 2u <= length && bytes[begin] == '0') {
+        unsigned char prefix = bytes[begin + 1u];
+        if ((base == 16u && (prefix == 'x' || prefix == 'X')) ||
+            (base == 8u && (prefix == 'o' || prefix == 'O')) ||
+            (base == 2u && (prefix == 'b' || prefix == 'B'))) begin += 2u;
+    }
+    size_t quote = begin;
+    while (quote < length && isdigit(bytes[quote])) quote++;
+    if (quote < length && bytes[quote] == '\'') {
+        size_t designator = quote + 1u;
+        if (designator < length && (bytes[designator] == 's' || bytes[designator] == 'S'))
+            designator++;
+        if (designator < length) {
+            unsigned char base_char = bytes[designator];
+            if (base_char == 'b' || base_char == 'B') {
+                base = 2u;
+                begin = designator + 1u;
+            } else if (base_char == 'o' || base_char == 'O') {
+                base = 8u;
+                begin = designator + 1u;
+            } else if (base_char == 'h' || base_char == 'H') {
+                base = 16u;
+                begin = designator + 1u;
+            } else if (base_char == 'd' || base_char == 'D') {
+                base = 10u;
+                begin = designator + 1u;
+            }
+        }
+    }
+    if (begin < length && (bytes[begin] == '+' || bytes[begin] == '-')) {
+        negative = bytes[begin] == '-';
+        begin++;
+    }
+    if (begin == length) return 0;
+    int unknown = 0;
+    for (size_t i = begin; i < length; i++) {
+        if (bytes[i] == '_') continue;
+        int state = llg_scan_unknown(bytes[i]);
+        if (state) {
+            unknown = unknown && unknown != state ? 2 : state;
+            continue;
+        }
+        if (llg_scan_digit(bytes[i], base) < 0) return 0;
+    }
+    if (unknown && base == 10u) {
+        *result = sv4_fill((uint8_t)(unknown == 3 ? 3 : 2), width, (int8_t)is_signed);
+        return 1;
+    }
+    *result = sv4_from_u64(0, width, (int8_t)is_signed);
+    if (base == 10u) {
+        for (size_t i = begin; i < length; i++) {
+            if (bytes[i] == '_') continue;
+            unsigned digit = (unsigned)llg_scan_digit(bytes[i], base);
+            uint64_t carry = digit;
+            uint32_t limbs = (width + 63u) / 64u;
+            for (uint32_t limb = 0; limb < limbs; limb++) {
+                __uint128_t product = (__uint128_t)result->bits[limb] * 10u + carry;
+                result->bits[limb] = (uint64_t)product;
+                carry = (uint64_t)(product >> 64);
+            }
+        }
+    } else {
+        uint32_t bits_per_digit = base == 16u ? 4u : base == 8u ? 3u : 1u;
+        uint32_t bit = 0;
+        for (size_t i = length; i > begin; i--) {
+            unsigned char digit_char = bytes[i - 1u];
+            if (digit_char == '_') continue;
+            int state = llg_scan_unknown(digit_char);
+            if (state) {
+                for (uint32_t part = 0; part < bits_per_digit; part++)
+                    llg_scan_set_bit(result, bit + part, state);
+            } else {
+                unsigned digit = (unsigned)llg_scan_digit(digit_char, base);
+                for (uint32_t part = 0; part < bits_per_digit; part++)
+                    llg_scan_set_bit(result, bit + part, (digit >> part) & 1u);
+            }
+            if (bit <= UINT32_MAX - bits_per_digit) bit += bits_per_digit;
+        }
+    }
+    if (negative) *result = sv4_neg(*result);
+    return 1;
+}
+
+static int llg_scan_bytes_to_packed(const unsigned char* bytes, size_t length,
+                                    uint32_t width, int is_signed, sv4_t* result) {
+    *result = sv4_from_u64(0, width, (int8_t)is_signed);
+    size_t capacity = ((size_t)width + 7u) / 8u;
+    size_t used = length < capacity ? length : capacity;
+    for (size_t i = 0; i < used; i++) {
+        unsigned char value = bytes[length - 1u - i];
+        for (unsigned bit = 0; bit < 8u; bit++)
+            llg_scan_set_bit(result, (uint32_t)(i * 8u + bit), (value >> bit) & 1u);
+    }
+    return 1;
+}
+
+static int llg_scan_assign(const unsigned char* bytes, size_t length, char conversion,
+                           const llg_file_input_target_t* target, uint32_t width,
+                           int is_signed) {
+    if (!target) return 0;
+    if (conversion == 's' || conversion == 'c') {
+        if (target->kind == LLG_FILE_INPUT_STRING && target->string) {
+            llg_string_move(target->string, llg_string_bytes((const char*)bytes, length));
+            return 1;
+        }
+        if (target->kind == LLG_FILE_INPUT_PACKED && target->packed) {
+            sv4_t value;
+            llg_scan_bytes_to_packed(bytes, length, width, is_signed, &value);
+            llg_ref_write(target->packed, value);
+            return 1;
+        }
+        return 0;
+    }
+    if (conversion == 'f' || conversion == 'e' || conversion == 'g') {
+        char* text = (char*)llg_checked_malloc(length + 1u, 1, "file input real token");
+        memcpy(text, bytes, length);
+        text[length] = 0;
+        char* end = NULL;
+        double value = strtod(text, &end);
+        int valid = end == text + length;
+        free(text);
+        if (!valid) return 0;
+        if (target->kind == LLG_FILE_INPUT_REAL && target->real) {
+            llg_ba_d(target->real, target->shortreal ? (double)(float)value : value);
+            return 1;
+        }
+        if (target->kind == LLG_FILE_INPUT_PACKED && target->packed) {
+            llg_ref_write(target->packed, sv4_from_real(value, width, (int8_t)is_signed));
+            return 1;
+        }
+        return 0;
+    }
+    if (target->kind != LLG_FILE_INPUT_PACKED || !target->packed) return 0;
+    sv4_t value;
+    if (!llg_scan_integer(bytes, length, conversion, width, is_signed, &value)) return 0;
+    llg_ref_write(target->packed, value);
+    return 1;
+}
+
+static int llg_scan_conversion(llg_scan_input_t* input, char conversion,
+                               size_t width, int suppressed,
+                               const llg_file_input_target_t* target) {
+    unsigned char* bytes = NULL;
+    size_t length = 0;
+    int ok;
+    if (conversion == 'c') {
+        ok = llg_scan_chars(input, width ? width : 1u, &bytes, &length);
+    } else {
+        if (!llg_scan_skip_space(input)) return 0;
+        ok = llg_scan_token(input, width ? width : SIZE_MAX, &bytes, &length);
+    }
+    if (!ok) return input->input_failure ? -1 : 0;
+    if (suppressed) {
+        free(bytes);
+        return 2;
+    }
+    if (!target) {
+        free(bytes);
+        return 0;
+    }
+    uint32_t target_width = target->packed ? target->packed->width : 32u;
+    int target_signed = target->packed ? target->packed->is_signed : 1;
+    ok = llg_scan_assign(bytes, length, conversion, target, target_width, target_signed);
+    free(bytes);
+    return ok ? 1 : 0;
+}
+
+static int llg_scan_format(llg_scan_input_t* input, const char* format,
+                           const llg_file_input_target_t* targets, int target_count) {
+    if (!format || target_count < 0) return 0;
+    int assigned = 0;
+    int matched = 0;
+    int target_index = 0;
+    size_t length = strlen(format);
+    for (size_t i = 0; i < length;) {
+        unsigned char format_char = (unsigned char)format[i++];
+        if (isspace(format_char)) {
+            while (i < length && isspace((unsigned char)format[i])) i++;
+            (void)llg_scan_skip_space(input);
+            continue;
+        }
+        if (format_char != '%') {
+            int value = llg_scan_get(input);
+            if (value != format_char) {
+                if (value == EOF) input->input_failure = 1;
+                (void)llg_scan_unget(input, value);
+                break;
+            }
+            continue;
+        }
+        if (i >= length) break;
+        if (format[i] == '%') {
+            i++;
+            int value = llg_scan_get(input);
+            if (value != '%') {
+                if (value == EOF) input->input_failure = 1;
+                (void)llg_scan_unget(input, value);
+                break;
+            }
+            continue;
+        }
+        int suppressed = 0;
+        if (format[i] == '*') { suppressed = 1; i++; }
+        size_t width = 0;
+        while (i < length && isdigit((unsigned char)format[i])) {
+            unsigned digit = (unsigned)(format[i++] - '0');
+            if (width > (SIZE_MAX - digit) / 10u) width = SIZE_MAX;
+            else width = width * 10u + digit;
+        }
+        while (i < length && (format[i] == 'l' || format[i] == 'L' ||
+                              format[i] == 'j' ||
+                              format[i] == 'z' || format[i] == 't')) i++;
+        if (i >= length) break;
+        char conversion = format[i++];
+        if (conversion >= 'A' && conversion <= 'Z') conversion = (char)(conversion - 'A' + 'a');
+        if (conversion != 'd' && conversion != 'i' && conversion != 'u' &&
+            conversion != 'o' && conversion != 'x' && conversion != 'h' &&
+            conversion != 'b' && conversion != 'c' && conversion != 's' &&
+            conversion != 'f' && conversion != 'e' && conversion != 'g') break;
+        const llg_file_input_target_t* target = NULL;
+        if (!suppressed) {
+            if (target_index >= target_count) break;
+            target = &targets[target_index++];
+        }
+        int converted = llg_scan_conversion(input, conversion, width, suppressed, target);
+        if (converted < 0) break;
+        if (converted == 0) break;
+        matched = 1;
+        if (converted == 1) assigned++;
+    }
+    return assigned || matched || !input->input_failure ? assigned : -1;
+}
+
+int llg_file_scanf(uint32_t descriptor, const char* format,
+                   const llg_file_input_target_t* targets, int target_count) {
+    llg_file_slot_t* slot;
+    if (!llg_file_single_ordinary(descriptor, &slot)) return 0;
+    llg_scan_input_t input = {slot, NULL, 0, 0, 0};
+    return llg_scan_format(&input, format, targets, target_count);
+}
+
+int llg_string_scanf(const char* source, size_t source_length,
+                     const char* format,
+                     const llg_file_input_target_t* targets, int target_count) {
+    llg_scan_input_t input = {NULL, (const unsigned char*)source, source_length, 0, 0};
+    return llg_scan_format(&input, format, targets, target_count);
+}
+
+static int llg_file_read_byte(llg_file_slot_t* slot, unsigned char* output) {
+    int value = llg_file_getc_slot(slot);
+    if (value == EOF) return 0;
+    *output = (unsigned char)value;
+    return 1;
+}
+
+int llg_file_read_packed(uint32_t descriptor, llg_ref_t* target) {
+    llg_file_slot_t* slot;
+    if (!target || !llg_file_single_ordinary(descriptor, &slot) || target->width == 0)
+        return 0;
+    sv4_t value = llg_ref_read(target);
+    size_t bytes = ((size_t)target->width + 7u) / 8u;
+    int read = 0;
+    for (size_t index = 0; index < bytes; index++) {
+        unsigned char byte;
+        if (!llg_file_read_byte(slot, &byte)) break;
+        size_t bit_base = (bytes - 1u - index) * 8u;
+        for (unsigned bit = 0; bit < 8u; bit++)
+            llg_scan_set_bit(&value, (uint32_t)(bit_base + bit), (byte >> bit) & 1u);
+        read++;
+    }
+    if (read) llg_ref_write(target, value);
+    return read;
+}
+
+int llg_file_read_array(uint32_t descriptor, sv4_t* values, uint32_t elem_width,
+                        int elem_signed, int elem_two_state, uint64_t total,
+                        const int32_t* dimensions, int dimension_count,
+                        int has_start, sv4_t start, int has_count, sv4_t count) {
+    llg_file_slot_t* slot;
+    if (!values || total == 0 || elem_width == 0 || !dimensions || dimension_count <= 0 ||
+        !llg_file_single_ordinary(descriptor, &slot)) return 0;
+    uint64_t offset = 0;
+    if (has_start) {
+        int64_t index;
+        int64_t low = dimensions[0] < dimensions[1] ? dimensions[0] : dimensions[1];
+        int64_t high = dimensions[0] > dimensions[1] ? dimensions[0] : dimensions[1];
+        if (!sv4_to_index_i64(start, &index) || index < low || index > high) {
+            llg_file_slot_failure(slot, "file read start index is out of bounds");
+            return 0;
+        }
+        offset = dimensions[0] >= dimensions[1]
+                     ? (uint64_t)((int64_t)dimensions[0] - index)
+                     : (uint64_t)(index - (int64_t)dimensions[0]);
+    }
+    if (offset >= total) {
+        llg_file_slot_failure(slot, "file read start index is out of bounds");
+        return 0;
+    }
+    uint64_t requested = total - offset;
+    if (has_count) {
+        int64_t value;
+        if (!sv4_to_index_i64(count, &value) || value < 0) {
+            llg_file_slot_failure(slot, "file read count is out of bounds");
+            return 0;
+        }
+        requested = (uint64_t)value;
+        if (requested > total - offset) requested = total - offset;
+    }
+    size_t bytes_per_element = ((size_t)elem_width + 7u) / 8u;
+    int result = 0;
+    for (uint64_t element = 0; element < requested; element++) {
+        sv4_t value = values[offset + element];
+        int read = 0;
+        for (size_t index = 0; index < bytes_per_element; index++) {
+            unsigned char byte;
+            if (!llg_file_read_byte(slot, &byte)) break;
+            size_t bit_base = (bytes_per_element - 1u - index) * 8u;
+            for (unsigned bit = 0; bit < 8u; bit++)
+                llg_scan_set_bit(&value, (uint32_t)(bit_base + bit), (byte >> bit) & 1u);
+            read++;
+        }
+        if (!read) break;
+        value.is_signed = (int8_t)elem_signed;
+        if (elem_two_state) value = sv4_to_two_state(value);
+        llg_ba(&values[offset + element], value);
+        result += read;
+        if ((size_t)read < bytes_per_element) break;
     }
     return result;
 }

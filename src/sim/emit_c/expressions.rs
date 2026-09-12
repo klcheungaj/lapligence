@@ -5,8 +5,9 @@ use super::context::{RCtx, RenderedExpr};
 use super::EmitError;
 use crate::sim::ir::{
     IrBinOp, IrBitQuery, IrCallArg, IrContainerElement, IrContainerKind, IrElemSel, IrEnumMethod,
-    IrEnumQuery, IrExpr, IrExprKind, IrInsideItem, IrLhs, IrPlusArgText, IrRandomFunc, IrRealBinOp,
-    IrRealUnOp, IrStreamDirection, IrStringExpr, IrSysFunc, IrType, IrUnOp,
+    IrEnumQuery, IrExpr, IrExprKind, IrFileInput, IrFileInputTarget, IrFileReadTarget,
+    IrInsideItem, IrLhs, IrPlusArgText, IrRandomFunc, IrRealBinOp, IrRealUnOp, IrStreamDirection,
+    IrStringExpr, IrSysFunc, IrType, IrUnOp,
 };
 
 /// The real-value code of a rendered operand: bare for real expressions,
@@ -1086,6 +1087,7 @@ pub(super) fn render_expr_impl(ctx: &RCtx<'_>, e: &IrExpr) -> Result<RenderedExp
                     fill: None,
                 }
             }
+            IrSysFunc::FileInput(input) => render_file_input(ctx, input)?,
         },
     };
     Ok(out)
@@ -1176,6 +1178,336 @@ fn render_plusarg_text(
             ))
         }
     }
+}
+
+fn render_file_lhs_ref(
+    ctx: &RCtx<'_>,
+    lhs: &IrLhs,
+    width: u32,
+    signed: bool,
+    two_state: bool,
+) -> Result<(String, String), String> {
+    render_file_lhs_ref_with_prefix(ctx, lhs, width, signed, two_state, "_llg_mut_idx")
+}
+
+fn render_file_lhs_ref_with_prefix(
+    ctx: &RCtx<'_>,
+    lhs: &IrLhs,
+    width: u32,
+    signed: bool,
+    two_state: bool,
+    index_prefix: &str,
+) -> Result<(String, String), String> {
+    let (declarations, lhs) = capture_lhs_indices_with_prefix(ctx, lhs, index_prefix)?;
+    let init = match lhs {
+        IrLhs::Whole(index) => {
+            let signal = ctx.model.signal(index);
+            if signal.net_driver.is_some() || !matches!(signal.ty, IrType::Packed { .. }) {
+                return Err("file input target must be packed variable storage".to_owned());
+            }
+            format!(
+                "&(llg_ref_t){{ .base = &{}, .width = {}, .is_signed = {}, .two_state = {}, .kind = LLG_REF_WHOLE }}",
+                signal.c_name, width, signed as u8, two_state as u8
+            )
+        }
+        IrLhs::WholeRef { addr, width: lhs_width, .. } if lhs_width != 0 => format!(
+            "&(llg_ref_t){{ .base = {}, .width = {}, .is_signed = {}, .two_state = {}, .kind = LLG_REF_WHOLE }}",
+            addr, width, signed as u8, two_state as u8
+        ),
+        IrLhs::Ref { addr, const_ref, .. } => {
+            if const_ref {
+                return Err("file input target cannot be a const ref".to_owned());
+            }
+            addr
+        }
+        IrLhs::Bit(index, select, _) => {
+            let signal = ctx.model.signal(index);
+            if signal.net_driver.is_some() || !matches!(signal.ty, IrType::Packed { .. }) {
+                return Err("file input target must be packed variable storage".to_owned());
+            }
+            let select = render_expr_impl(ctx, &select)?.code;
+            format!(
+                "&(llg_ref_t){{ .base = &{}, .width = 1, .is_signed = 0, .two_state = {}, .kind = LLG_REF_BIT, .index = sv4_to_index({select}) }}",
+                signal.c_name, two_state as u8
+            )
+        }
+        IrLhs::Part(index, left, right, _) => {
+            let signal = ctx.model.signal(index);
+            if signal.net_driver.is_some() || !matches!(signal.ty, IrType::Packed { .. }) {
+                return Err("file input target must be packed variable storage".to_owned());
+            }
+            format!(
+                "&(llg_ref_t){{ .base = &{}, .width = {}, .is_signed = 0, .two_state = {}, .kind = LLG_REF_PART, .left = {}, .right = {} }}",
+                signal.c_name, width, two_state as u8, left, right
+            )
+        }
+        IrLhs::IdxPart(index, base, _, selected_width, negative, _) => {
+            let signal = ctx.model.signal(index);
+            if signal.net_driver.is_some() || !matches!(signal.ty, IrType::Packed { .. }) {
+                return Err("file input target must be packed variable storage".to_owned());
+            }
+            let base = render_expr_impl(ctx, &base)?.code;
+            format!(
+                "&(llg_ref_t){{ .base = &{}, .width = {}, .is_signed = 0, .two_state = {}, .kind = LLG_REF_INDEXED, .index = sv4_to_index({base}), .indexed_width = {}, .indexed_negative = {} }}",
+                signal.c_name, selected_width, two_state as u8, selected_width, negative as u8
+            )
+        }
+        IrLhs::ArrayElem {
+            arr,
+            indices,
+            elem_sel: IrElemSel::Whole,
+        } => {
+            let array = ctx.model.array(arr);
+            if array.real {
+                return Err("file input target array element must be packed".to_owned());
+            }
+            let index_codes = indices
+                .iter()
+                .map(|index| render_expr_impl(ctx, index).map(|value| value.code))
+                .collect::<Result<Vec<_>, _>>()?;
+            let index = match array_guard(array, &index_codes) {
+                Some((decls, condition, linear)) => format!(
+                    "({{ {decls} ({condition}) ? (uint64_t)({linear}) : UINT64_MAX; }})"
+                ),
+                None => "0ULL".to_owned(),
+            };
+            format!(
+                "&(llg_ref_t){{ .base = {}, .width = {}, .is_signed = {}, .two_state = {}, .kind = LLG_REF_ARRAY, .index = {index}, .array_size = {}ULL }}",
+                array.c_name, width, signed as u8, two_state as u8, array.total
+            )
+        }
+        IrLhs::ArrayElem { .. } => {
+            return Err("file input target does not support an element select".to_owned());
+        }
+        IrLhs::WholeRef { .. } | IrLhs::Stream { .. } => {
+            return Err("file input target requires packed writable storage".to_owned());
+        }
+    };
+    Ok((declarations, init))
+}
+
+fn render_file_real_target(ctx: &RCtx<'_>, lhs: &IrLhs) -> Result<String, String> {
+    match lhs {
+        IrLhs::Whole(index) => {
+            let signal = ctx.model.signal(*index);
+            if matches!(signal.ty, IrType::Real { .. }) {
+                Ok(format!("&{}", signal.c_name))
+            } else {
+                Err("file input real target is not real storage".to_owned())
+            }
+        }
+        IrLhs::WholeRef { addr, width: 0, .. } => Ok(addr.clone()),
+        _ => Err("file input real target requires whole real storage".to_owned()),
+    }
+}
+
+fn render_file_input_target_with_prefix(
+    ctx: &RCtx<'_>,
+    target: &IrFileInputTarget,
+    index_prefix: &str,
+) -> Result<(String, String), String> {
+    match target {
+        IrFileInputTarget::Packed {
+            lhs,
+            width,
+            signed,
+            two_state,
+        } => {
+            let (declarations, descriptor) = render_file_lhs_ref_with_prefix(
+                ctx,
+                lhs,
+                *width,
+                *signed,
+                *two_state,
+                index_prefix,
+            )?;
+            Ok((
+                declarations,
+                format!("{{ .kind = LLG_FILE_INPUT_PACKED, .packed = {descriptor} }}"),
+            ))
+        }
+        IrFileInputTarget::Real { lhs, .. } => Ok((
+            String::new(),
+            format!(
+                "{{ .kind = LLG_FILE_INPUT_REAL, .real = {}, .shortreal = {} }}",
+                render_file_real_target(ctx, lhs)?,
+                matches!(
+                    target,
+                    IrFileInputTarget::Real {
+                        shortreal: true,
+                        ..
+                    }
+                ) as u8
+            ),
+        )),
+        IrFileInputTarget::String { address } => Ok((
+            String::new(),
+            format!("{{ .kind = LLG_FILE_INPUT_STRING, .string = {address} }}"),
+        )),
+    }
+}
+
+fn render_file_input_targets(
+    ctx: &RCtx<'_>,
+    targets: &[IrFileInputTarget],
+) -> Result<(String, String), String> {
+    let mut declarations = String::new();
+    let mut rendered = Vec::with_capacity(targets.len());
+    for (index, target) in targets.iter().enumerate() {
+        let index_prefix = format!("_llg_file_input_idx{index}_");
+        let (setup, target) = render_file_input_target_with_prefix(ctx, target, &index_prefix)?;
+        declarations.push_str(&setup);
+        rendered.push(target);
+    }
+    let array = if rendered.is_empty() {
+        "NULL".to_owned()
+    } else {
+        format!(
+            "(const llg_file_input_target_t[]){{ {} }}",
+            rendered.join(", ")
+        )
+    };
+    Ok((declarations, array))
+}
+
+fn render_file_input(ctx: &RCtx<'_>, input: &IrFileInput) -> Result<RenderedExpr, String> {
+    let result = |code: String| RenderedExpr {
+        code,
+        width: 32,
+        signed: true,
+        fill: None,
+    };
+    let code = match input {
+        IrFileInput::Getc { descriptor } => {
+            let descriptor = render_expr_impl(ctx, descriptor)?;
+            format!(
+                "sv4_from_i64((int64_t)llg_file_getc(llg_file_descriptor({})), 32)",
+                descriptor.code
+            )
+        }
+        IrFileInput::Ungetc {
+            character,
+            descriptor,
+        } => {
+            let character = render_expr_impl(ctx, character)?;
+            let descriptor = render_expr_impl(ctx, descriptor)?;
+            format!(
+                "sv4_from_i64((int64_t)llg_file_ungetc(llg_file_descriptor({}), {}), 32)",
+                descriptor.code, character.code
+            )
+        }
+        IrFileInput::Gets { descriptor, target } => {
+            let descriptor = render_expr_impl(ctx, descriptor)?;
+            match target {
+                IrFileInputTarget::String { address } => format!(
+                    "sv4_from_i64((int64_t)llg_file_gets(llg_file_descriptor({}), {address}), 32)",
+                    descriptor.code
+                ),
+                IrFileInputTarget::Packed {
+                    lhs,
+                    width,
+                    signed,
+                    two_state,
+                } => {
+                    let (setup, target) =
+                        render_file_lhs_ref(ctx, lhs, *width, *signed, *two_state)?;
+                    format!(
+                        "({{ {setup} sv4_from_i64((int64_t)llg_file_gets_packed(llg_file_descriptor({}), {target}), 32); }})",
+                        descriptor.code
+                    )
+                }
+                IrFileInputTarget::Real { .. } => {
+                    return Err("file line input target cannot be real storage".to_owned());
+                }
+            }
+        }
+        IrFileInput::ScanFile {
+            descriptor,
+            format,
+            targets,
+        } => {
+            let descriptor = render_expr_impl(ctx, descriptor)?;
+            let (format, setup, cleanup) =
+                render_plusarg_text(ctx, format, "_llg_file_input_format")?;
+            let (target_setup, target_array) = render_file_input_targets(ctx, targets)?;
+            format!(
+                "({{ {setup}{target_setup} int _llg_file_input_result = llg_file_scanf(llg_file_descriptor({}), {format}, {target_array}, {}); {cleanup} sv4_from_i64((int64_t)_llg_file_input_result, 32); }})",
+                descriptor.code,
+                targets.len()
+            )
+        }
+        IrFileInput::ScanString {
+            source,
+            format,
+            targets,
+        } => {
+            let source_code = super::objects::string(ctx, source)?;
+            let (format, setup, cleanup) =
+                render_plusarg_text(ctx, format, "_llg_string_input_format")?;
+            let (target_setup, target_array) = render_file_input_targets(ctx, targets)?;
+            format!(
+                "({{ llg_string_t _llg_string_input_source = {source_code}; {setup}{target_setup} int _llg_file_input_result = llg_string_scanf(_llg_string_input_source.data, _llg_string_input_source.len, {format}, {target_array}, {}); {cleanup} llg_string_destroy(&_llg_string_input_source); sv4_from_i64((int64_t)_llg_file_input_result, 32); }})",
+                targets.len()
+            )
+        }
+        IrFileInput::Read {
+            descriptor,
+            target,
+            start,
+            count,
+        } => {
+            let descriptor = render_expr_impl(ctx, descriptor)?;
+            let start_code = start
+                .as_ref()
+                .map(|value| render_expr_impl(ctx, value).map(|value| value.code))
+                .transpose()?;
+            let count_code = count
+                .as_ref()
+                .map(|value| render_expr_impl(ctx, value).map(|value| value.code))
+                .transpose()?;
+            let has_start = start_code.is_some();
+            let has_count = count_code.is_some();
+            let start = start_code.unwrap_or_else(|| "sv4_from_u64(0, 1, 0)".to_owned());
+            let count = count_code.unwrap_or_else(|| "sv4_from_u64(0, 1, 0)".to_owned());
+            match target {
+                IrFileReadTarget::Packed {
+                    lhs,
+                    width,
+                    signed,
+                    two_state,
+                } => {
+                    let (setup, descriptor_code) =
+                        render_file_lhs_ref(ctx, lhs, *width, *signed, *two_state)?;
+                    format!(
+                        "({{ {setup} int _llg_file_input_result = llg_file_read_packed(llg_file_descriptor({}), {descriptor_code}); (void)({start}); (void)({count}); sv4_from_i64((int64_t)_llg_file_input_result, 32); }})",
+                        descriptor.code
+                    )
+                }
+                IrFileReadTarget::Array { array } => {
+                    let array = ctx.model.array(*array);
+                    let dims = array
+                        .dims
+                        .iter()
+                        .map(|(left, right)| format!("{left}, {right}"))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    format!(
+                        "sv4_from_i64((int64_t)llg_file_read_array(llg_file_descriptor({}), {}, {}, {}, {}, {}ULL, (const int32_t[]){{ {dims} }}, {}, {}, {start}, {}, {count}), 32)",
+                        descriptor.code,
+                        array.c_name,
+                        array.elem_width,
+                        array.signed as u8,
+                        array.two_state as u8,
+                        array.total,
+                        array.dims.len(),
+                        has_start as u8,
+                        has_count as u8,
+                    )
+                }
+            }
+        }
+    };
+    Ok(result(code))
 }
 
 fn render_test_plusargs(ctx: &RCtx<'_>, pattern: &IrPlusArgText) -> Result<RenderedExpr, String> {
@@ -1627,14 +1959,23 @@ fn render_lhs_value(
 }
 
 fn capture_lhs_indices(ctx: &RCtx<'_>, lhs: &IrLhs) -> Result<(String, IrLhs), String> {
+    capture_lhs_indices_with_prefix(ctx, lhs, "_llg_mut_idx")
+}
+
+fn capture_lhs_indices_with_prefix(
+    ctx: &RCtx<'_>,
+    lhs: &IrLhs,
+    index_prefix: &str,
+) -> Result<(String, IrLhs), String> {
     fn capture(
         ctx: &RCtx<'_>,
         expression: &IrExpr,
         declarations: &mut String,
         next: &mut usize,
+        index_prefix: &str,
     ) -> Result<IrExpr, String> {
         let rendered = render_expr_impl(ctx, expression)?;
-        let name = format!("_llg_mut_idx{next}");
+        let name = format!("{index_prefix}{next}");
         *next += 1;
         let ty = if expression.width == 0 {
             "double"
@@ -1655,34 +1996,35 @@ fn capture_lhs_indices(ctx: &RCtx<'_>, lhs: &IrLhs) -> Result<(String, IrLhs), S
         lhs: &mut IrLhs,
         declarations: &mut String,
         next: &mut usize,
+        index_prefix: &str,
     ) -> Result<(), String> {
         match lhs {
             IrLhs::Bit(_, index, _) => {
-                *index = capture(ctx, index, declarations, next)?;
+                *index = capture(ctx, index, declarations, next, index_prefix)?;
             }
             IrLhs::IdxPart(_, base, width_expr, _, _, _) => {
-                *base = capture(ctx, base, declarations, next)?;
-                *width_expr = capture(ctx, width_expr, declarations, next)?;
+                *base = capture(ctx, base, declarations, next, index_prefix)?;
+                *width_expr = capture(ctx, width_expr, declarations, next, index_prefix)?;
             }
             IrLhs::ArrayElem {
                 indices, elem_sel, ..
             } => {
                 for index in indices {
-                    *index = capture(ctx, index, declarations, next)?;
+                    *index = capture(ctx, index, declarations, next, index_prefix)?;
                 }
                 match elem_sel {
                     IrElemSel::Bit(index) => {
-                        **index = capture(ctx, index, declarations, next)?;
+                        **index = capture(ctx, index, declarations, next, index_prefix)?;
                     }
                     IrElemSel::Indexed { base, .. } => {
-                        **base = capture(ctx, base, declarations, next)?;
+                        **base = capture(ctx, base, declarations, next, index_prefix)?;
                     }
                     IrElemSel::Whole | IrElemSel::Part(..) => {}
                 }
             }
             IrLhs::Stream { parts, .. } => {
                 for (part, _) in parts {
-                    visit(ctx, part, declarations, next)?;
+                    visit(ctx, part, declarations, next, index_prefix)?;
                 }
             }
             IrLhs::Whole(_) | IrLhs::WholeRef { .. } | IrLhs::Ref { .. } | IrLhs::Part(..) => {}
@@ -1693,7 +2035,13 @@ fn capture_lhs_indices(ctx: &RCtx<'_>, lhs: &IrLhs) -> Result<(String, IrLhs), S
     let mut captured = lhs.clone();
     let mut declarations = String::new();
     let mut next = 0;
-    visit(ctx, &mut captured, &mut declarations, &mut next)?;
+    visit(
+        ctx,
+        &mut captured,
+        &mut declarations,
+        &mut next,
+        index_prefix,
+    )?;
     Ok((declarations, captured))
 }
 

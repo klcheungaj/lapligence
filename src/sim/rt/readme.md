@@ -26,8 +26,11 @@
   formatted results own their bytes independently of source arguments.
   Hosted C targets are required; freestanding targets are unsupported.
   File output uses an owned 32-slot descriptor table: stdout/stderr masks,
-  ordinary host files, multichannel fan-out, typed deferred output, and
-  seek/rewind/flush/error/EOF controls are kept separate from scheduler state.
+  ordinary host files, multichannel fan-out, typed deferred output, checked
+  seek/rewind/flush/error/EOF controls, an HDL-aware formatted scanner, line
+  and character pushback, and declaration-order binary reads are kept separate
+  from scheduler state. File-input target descriptors are borrowed for one
+  call; packed X/Z state and native string ownership remain explicit.
   Memory-file tasks parse four-state binary/hex words, comments and address
   jumps into bounded fixed packed memories, and write the same consumable
   format in declaration/range order; resizable, multidimensional and real

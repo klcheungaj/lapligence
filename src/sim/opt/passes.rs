@@ -488,6 +488,9 @@ fn walk_expr_mut(e: &mut IrExpr, f: &mut impl FnMut(&mut IrExpr)) {
                 walk_expr_mut(operation, f);
             }
             IrSysFunc::FileError { descriptor, .. } => walk_expr_mut(descriptor, f),
+            IrSysFunc::FileInput(input) => {
+                input.expressions_mut(&mut |expression| walk_expr_mut(expression, f));
+            }
         },
         _ => {}
     }
@@ -1270,6 +1273,9 @@ fn ident_children(e: &mut IrExpr) {
                 ident_expr(operation);
             }
             IrSysFunc::FileError { descriptor, .. } => ident_expr(descriptor),
+            IrSysFunc::FileInput(input) => {
+                input.expressions_mut(&mut |expression| ident_expr(expression));
+            }
         },
         _ => {}
     }
@@ -2611,6 +2617,37 @@ fn collect_children_reads(e: &IrExpr, model: &IrModel, rw: &mut Rw) {
                 collect_expr_reads(operation, model, rw);
             }
             IrSysFunc::FileError { descriptor, .. } => collect_expr_reads(descriptor, model, rw),
+            IrSysFunc::FileInput(input) => {
+                input.expressions(&mut |expression| collect_expr_reads(expression, model, rw));
+                match input {
+                    crate::sim::ir::IrFileInput::ScanFile { targets, .. }
+                    | crate::sim::ir::IrFileInput::ScanString { targets, .. } => {
+                        for target in targets {
+                            match target {
+                                crate::sim::ir::IrFileInputTarget::Packed { lhs, .. }
+                                | crate::sim::ir::IrFileInputTarget::Real { lhs, .. } => {
+                                    collect_lhs_rw(lhs, model, rw)
+                                }
+                                crate::sim::ir::IrFileInputTarget::String { .. } => {}
+                            }
+                        }
+                    }
+                    crate::sim::ir::IrFileInput::Read { target, .. } => {
+                        if let crate::sim::ir::IrFileReadTarget::Packed { lhs, .. } = target {
+                            collect_lhs_rw(lhs, model, rw);
+                        }
+                    }
+                    crate::sim::ir::IrFileInput::Gets { target, .. } => match target {
+                        crate::sim::ir::IrFileInputTarget::Packed { lhs, .. }
+                        | crate::sim::ir::IrFileInputTarget::Real { lhs, .. } => {
+                            collect_lhs_rw(lhs, model, rw);
+                        }
+                        crate::sim::ir::IrFileInputTarget::String { .. } => {}
+                    },
+                    crate::sim::ir::IrFileInput::Getc { .. }
+                    | crate::sim::ir::IrFileInput::Ungetc { .. } => {}
+                }
+            }
         },
         _ => {}
     }

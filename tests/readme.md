@@ -33,7 +33,8 @@
   value types and dump lifecycle controls.
 - [File-I/O regressions](fixtures/sim/file_io/readme.md): owned descriptor
   masks, multichannel output, deferred file formatting, portable seek/rewind/
-  flush status, and descriptor-table boundaries.
+  flush status, descriptor-table boundaries, HDL-aware formatted/character/
+  line input, and packed/ascending/descending binary reads.
 - `sim_memory`: fixed packed-memory `$readmemh/$readmemb` parsing,
   `$writememh/$writememb` roundtrips, range/order/address handling, four-state
   conversion and file-size diagnostics in optimized and unoptimized models.

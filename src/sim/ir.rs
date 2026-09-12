@@ -938,6 +938,216 @@ pub enum IrSysFunc {
     },
     /// `$feof(fd)` reports end-of-file for an ordinary descriptor.
     FileEof(Box<IrExpr>),
+    /// File input functions and tasks.  Their destinations stay as owned
+    /// lvalues until C emission so selectors are evaluated at the call site
+    /// and the runtime can report the standard conversion/byte counts.
+    FileInput(IrFileInput),
+}
+
+/// A packed or native-string destination of `$fscanf`/`$sscanf`.
+#[derive(Clone, Debug, PartialEq)]
+pub enum IrFileInputTarget {
+    Packed {
+        lhs: Box<IrLhs>,
+        width: u32,
+        signed: bool,
+        two_state: bool,
+    },
+    Real {
+        lhs: Box<IrLhs>,
+        shortreal: bool,
+    },
+    String {
+        address: String,
+    },
+}
+
+/// Destination of `$fread`: one packed value or an unpacked array in HDL
+/// declaration order.
+#[derive(Clone, Debug, PartialEq)]
+pub enum IrFileReadTarget {
+    Packed {
+        lhs: Box<IrLhs>,
+        width: u32,
+        signed: bool,
+        two_state: bool,
+    },
+    Array {
+        array: usize,
+    },
+}
+
+/// Lowered forms of the character, line, formatted, and binary file input
+/// operations from IEEE 1800-2009 §21.3.4 and IEEE 1364-2001 §17.2.4.
+#[derive(Clone, Debug, PartialEq)]
+pub enum IrFileInput {
+    Getc {
+        descriptor: Box<IrExpr>,
+    },
+    Ungetc {
+        character: Box<IrExpr>,
+        descriptor: Box<IrExpr>,
+    },
+    Gets {
+        descriptor: Box<IrExpr>,
+        target: IrFileInputTarget,
+    },
+    ScanFile {
+        descriptor: Box<IrExpr>,
+        format: IrPlusArgText,
+        targets: Vec<IrFileInputTarget>,
+    },
+    ScanString {
+        source: IrStringExpr,
+        format: IrPlusArgText,
+        targets: Vec<IrFileInputTarget>,
+    },
+    Read {
+        descriptor: Box<IrExpr>,
+        target: IrFileReadTarget,
+        start: Option<Box<IrExpr>>,
+        count: Option<Box<IrExpr>>,
+    },
+}
+
+impl IrFileInputTarget {
+    pub(in crate::sim) fn expressions(&self, visit: &mut impl FnMut(&IrExpr)) {
+        match self {
+            Self::Packed { lhs, .. } | Self::Real { lhs, .. } => lhs.expressions(visit),
+            Self::String { .. } => {}
+        }
+    }
+
+    pub(in crate::sim) fn expressions_mut(&mut self, visit: &mut impl FnMut(&mut IrExpr)) {
+        match self {
+            Self::Packed { lhs, .. } | Self::Real { lhs, .. } => lhs.expressions_mut(visit),
+            Self::String { .. } => {}
+        }
+    }
+}
+
+impl IrFileReadTarget {
+    pub(in crate::sim) fn expressions(&self, visit: &mut impl FnMut(&IrExpr)) {
+        if let Self::Packed { lhs, .. } = self {
+            lhs.expressions(visit);
+        }
+    }
+
+    pub(in crate::sim) fn expressions_mut(&mut self, visit: &mut impl FnMut(&mut IrExpr)) {
+        if let Self::Packed { lhs, .. } = self {
+            lhs.expressions_mut(visit);
+        }
+    }
+}
+
+impl IrFileInput {
+    pub(in crate::sim) fn expressions(&self, visit: &mut impl FnMut(&IrExpr)) {
+        match self {
+            Self::Getc { descriptor } => visit(descriptor),
+            Self::Ungetc {
+                character,
+                descriptor,
+            } => {
+                visit(character);
+                visit(descriptor);
+            }
+            Self::Gets { descriptor, target } => {
+                visit(descriptor);
+                target.expressions(visit);
+            }
+            Self::ScanFile {
+                descriptor,
+                format,
+                targets,
+            } => {
+                visit(descriptor);
+                format.expressions(visit);
+                for target in targets {
+                    target.expressions(visit);
+                }
+            }
+            Self::ScanString {
+                source,
+                format,
+                targets,
+            } => {
+                source.expressions(visit);
+                format.expressions(visit);
+                for target in targets {
+                    target.expressions(visit);
+                }
+            }
+            Self::Read {
+                descriptor,
+                target,
+                start,
+                count,
+            } => {
+                visit(descriptor);
+                target.expressions(visit);
+                if let Some(start) = start {
+                    visit(start);
+                }
+                if let Some(count) = count {
+                    visit(count);
+                }
+            }
+        }
+    }
+
+    pub(in crate::sim) fn expressions_mut(&mut self, visit: &mut impl FnMut(&mut IrExpr)) {
+        match self {
+            Self::Getc { descriptor } => visit(descriptor),
+            Self::Ungetc {
+                character,
+                descriptor,
+            } => {
+                visit(character);
+                visit(descriptor);
+            }
+            Self::Gets { descriptor, target } => {
+                visit(descriptor);
+                target.expressions_mut(visit);
+            }
+            Self::ScanFile {
+                descriptor,
+                format,
+                targets,
+            } => {
+                visit(descriptor);
+                format.expressions_mut(visit);
+                for target in targets {
+                    target.expressions_mut(visit);
+                }
+            }
+            Self::ScanString {
+                source,
+                format,
+                targets,
+            } => {
+                source.expressions_mut(visit);
+                format.expressions_mut(visit);
+                for target in targets {
+                    target.expressions_mut(visit);
+                }
+            }
+            Self::Read {
+                descriptor,
+                target,
+                start,
+                count,
+            } => {
+                visit(descriptor);
+                target.expressions_mut(visit);
+                if let Some(start) = start {
+                    visit(start);
+                }
+                if let Some(count) = count {
+                    visit(count);
+                }
+            }
+        }
+    }
 }
 
 /// Legacy probabilistic functions defined by Verilog 1364-2001 §17.9 and
@@ -1440,6 +1650,64 @@ pub enum IrStreamTarget {
         container: usize,
         selector: Option<IrStreamSelector>,
     },
+}
+
+impl IrLhs {
+    pub(in crate::sim) fn expressions(&self, visit: &mut impl FnMut(&IrExpr)) {
+        match self {
+            Self::Bit(_, index, _) => visit(index),
+            Self::IdxPart(_, base, width, ..) => {
+                visit(base);
+                visit(width);
+            }
+            Self::ArrayElem {
+                indices, elem_sel, ..
+            } => {
+                for index in indices {
+                    visit(index);
+                }
+                match elem_sel {
+                    IrElemSel::Bit(index) => visit(index),
+                    IrElemSel::Indexed { base, .. } => visit(base),
+                    IrElemSel::Whole | IrElemSel::Part(..) => {}
+                }
+            }
+            Self::Stream { parts, .. } => {
+                for (part, _) in parts {
+                    part.expressions(visit);
+                }
+            }
+            Self::Whole(..) | Self::WholeRef { .. } | Self::Ref { .. } | Self::Part(..) => {}
+        }
+    }
+
+    pub(in crate::sim) fn expressions_mut(&mut self, visit: &mut impl FnMut(&mut IrExpr)) {
+        match self {
+            Self::Bit(_, index, _) => visit(index),
+            Self::IdxPart(_, base, width, ..) => {
+                visit(base);
+                visit(width);
+            }
+            Self::ArrayElem {
+                indices, elem_sel, ..
+            } => {
+                for index in indices {
+                    visit(index);
+                }
+                match elem_sel {
+                    IrElemSel::Bit(index) => visit(index),
+                    IrElemSel::Indexed { base, .. } => visit(base),
+                    IrElemSel::Whole | IrElemSel::Part(..) => {}
+                }
+            }
+            Self::Stream { parts, .. } => {
+                for (part, _) in parts {
+                    part.expressions_mut(visit);
+                }
+            }
+            Self::Whole(..) | Self::WholeRef { .. } | Self::Ref { .. } | Self::Part(..) => {}
+        }
+    }
 }
 
 /// Case statement matching behavior.

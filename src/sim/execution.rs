@@ -1249,6 +1249,90 @@ fn collect_expression_effects(
                 }
                 collect_expression_effects(ir, descriptor, effects, visited_calls)
             }
+            IrSysFunc::FileInput(input) => {
+                effects.push(ExecutionEffect::RuntimeService);
+                match input {
+                    crate::sim::ir::IrFileInput::Getc { descriptor } => {
+                        collect_expression_effects(ir, descriptor, effects, visited_calls);
+                    }
+                    crate::sim::ir::IrFileInput::Ungetc {
+                        character,
+                        descriptor,
+                    } => {
+                        collect_expression_effects(ir, character, effects, visited_calls);
+                        collect_expression_effects(ir, descriptor, effects, visited_calls);
+                    }
+                    crate::sim::ir::IrFileInput::Gets { descriptor, target } => {
+                        effects.push(ExecutionEffect::ImmediateStore);
+                        collect_expression_effects(ir, descriptor, effects, visited_calls);
+                        match target {
+                            crate::sim::ir::IrFileInputTarget::Packed { lhs, .. }
+                            | crate::sim::ir::IrFileInputTarget::Real { lhs, .. } => {
+                                collect_lhs_expression_effects(ir, lhs, effects, visited_calls);
+                            }
+                            crate::sim::ir::IrFileInputTarget::String { .. } => {}
+                        }
+                    }
+                    crate::sim::ir::IrFileInput::ScanFile {
+                        descriptor,
+                        format,
+                        targets,
+                    } => {
+                        collect_expression_effects(ir, descriptor, effects, visited_calls);
+                        if let crate::sim::ir::IrPlusArgText::Dynamic(format) = format {
+                            collect_string_effects(ir, format, effects, visited_calls);
+                        }
+                        for target in targets {
+                            effects.push(ExecutionEffect::ImmediateStore);
+                            match target {
+                                crate::sim::ir::IrFileInputTarget::Packed { lhs, .. }
+                                | crate::sim::ir::IrFileInputTarget::Real { lhs, .. } => {
+                                    collect_lhs_expression_effects(ir, lhs, effects, visited_calls);
+                                }
+                                crate::sim::ir::IrFileInputTarget::String { .. } => {}
+                            }
+                        }
+                    }
+                    crate::sim::ir::IrFileInput::ScanString {
+                        source,
+                        format,
+                        targets,
+                    } => {
+                        collect_string_effects(ir, source, effects, visited_calls);
+                        if let crate::sim::ir::IrPlusArgText::Dynamic(format) = format {
+                            collect_string_effects(ir, format, effects, visited_calls);
+                        }
+                        for target in targets {
+                            effects.push(ExecutionEffect::ImmediateStore);
+                            match target {
+                                crate::sim::ir::IrFileInputTarget::Packed { lhs, .. }
+                                | crate::sim::ir::IrFileInputTarget::Real { lhs, .. } => {
+                                    collect_lhs_expression_effects(ir, lhs, effects, visited_calls);
+                                }
+                                crate::sim::ir::IrFileInputTarget::String { .. } => {}
+                            }
+                        }
+                    }
+                    crate::sim::ir::IrFileInput::Read {
+                        descriptor,
+                        target,
+                        start,
+                        count,
+                    } => {
+                        effects.push(ExecutionEffect::ImmediateStore);
+                        collect_expression_effects(ir, descriptor, effects, visited_calls);
+                        if let Some(start) = start {
+                            collect_expression_effects(ir, start, effects, visited_calls);
+                        }
+                        if let Some(count) = count {
+                            collect_expression_effects(ir, count, effects, visited_calls);
+                        }
+                        if let crate::sim::ir::IrFileReadTarget::Packed { lhs, .. } = target {
+                            collect_lhs_expression_effects(ir, lhs, effects, visited_calls);
+                        }
+                    }
+                }
+            }
         },
         IrExprKind::Const(_)
         | IrExprKind::SigRead(_)

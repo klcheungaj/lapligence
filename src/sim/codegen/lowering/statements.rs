@@ -3874,6 +3874,16 @@ impl EmitCtx<'_, '_> {
             "$system" => Ok(vec![IrStmt::System(
                 self.cg.lower_system_command(&self.path, &args)?,
             )]),
+            "$fgetc" | "$ungetc" | "$fgets" | "$fscanf" | "$sscanf" | "$fread" => {
+                let value = self.cg.lower_sys_func_expr(&self.path, name, h)?;
+                Ok(vec![IrStmt::DeclLocal {
+                    name: format!("_llg_file_input_{}", h.0),
+                    width: value.width,
+                    signed: value.signed,
+                    init: Some(Box::new(value)),
+                    two_state: false,
+                }])
+            }
             "$fclose" | "$fflush" | "$rewind" => {
                 let (op, optional) = match name {
                     "$fclose" => (crate::sim::ir::IrFileOp::Close, false),

@@ -403,6 +403,40 @@ void llg_memory_write(llg_string_t path, sv4_t* memory, uint64_t total,
                       const int32_t* dims, int n_dims, sv4_t start, sv4_t finish,
                       int has_start, int has_finish, int radix);
 
+// ── File input ─────────────────────────────────────────────────────────────
+// Formatted input uses an HDL-aware scanner rather than the host scanf family:
+// packed destinations preserve X/Z and arbitrary model widths, while return
+// values count successful assignments only.  Target descriptors are borrowed
+// for the duration of one call and are never retained by the runtime.
+enum {
+    LLG_FILE_INPUT_PACKED = 0,
+    LLG_FILE_INPUT_REAL = 1,
+    LLG_FILE_INPUT_STRING = 2,
+};
+
+typedef struct {
+    int kind;
+    llg_ref_t* packed;
+    double* real;
+    llg_string_t* string;
+    int shortreal;
+} llg_file_input_target_t;
+
+int llg_file_getc(uint32_t descriptor);
+int llg_file_ungetc(uint32_t descriptor, sv4_t character);
+int llg_file_gets(uint32_t descriptor, llg_string_t* target);
+int llg_file_gets_packed(uint32_t descriptor, llg_ref_t* target);
+int llg_file_scanf(uint32_t descriptor, const char* format,
+                   const llg_file_input_target_t* targets, int target_count);
+int llg_string_scanf(const char* source, size_t source_length,
+                     const char* format,
+                     const llg_file_input_target_t* targets, int target_count);
+int llg_file_read_packed(uint32_t descriptor, llg_ref_t* target);
+int llg_file_read_array(uint32_t descriptor, sv4_t* values, uint32_t elem_width,
+                        int elem_signed, int elem_two_state, uint64_t total,
+                        const int32_t* dimensions, int dimension_count,
+                        int has_start, sv4_t start, int has_count, sv4_t count);
+
 // ── $monitor / $strobe ────────────────────────────────────────────────────────
 //
 // A monitor's or strobe's arguments are re-evaluated by generated code through

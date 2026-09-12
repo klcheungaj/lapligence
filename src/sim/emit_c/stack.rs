@@ -916,6 +916,19 @@ fn system_expr_slots(system: &IrSysFunc) -> Result<u64, String> {
             "file seek arguments",
         ),
         IrSysFunc::FileError { descriptor, .. } => expr_slots(descriptor),
+        IrSysFunc::FileInput(input) => {
+            let mut slots = Ok(0);
+            input.expressions(&mut |expression| {
+                slots = slots.clone().and_then(|total| {
+                    checked_add(
+                        total,
+                        expr_slots(expression)?,
+                        "file input expression slots",
+                    )
+                });
+            });
+            slots
+        }
     }
 }
 
