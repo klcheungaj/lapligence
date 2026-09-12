@@ -366,6 +366,9 @@ pub struct Db {
     /// avoids resolving equal display names at lowering time.
     array_select_paths: HashMap<NodeId, (NodeId, Vec<String>)>,
     vars_init: HashMap<NodeId, NodeId>,
+    /// Propagation delays declared on net symbols, kept separate from the
+    /// synthetic declaration-assignment driver delay.
+    net_delays: HashMap<NodeId, DriverDelay>,
     var_lifetimes: HashMap<NodeId, VariableLifetime>,
     var_lifetime_qualifiers: HashMap<NodeId, VariableLifetimeQualifier>,
     method_calls_with_clause: HashSet<NodeId>,
@@ -690,7 +693,8 @@ pub enum StmtKind {
     Assign {
         blocking: bool,
         op: Operation,
-        /// Intra-assignment control (`a = #5 b;`, `a <= #5 b;`) — see
+        /// Intra-assignment control (`a = #5 b;`, `a <= #5 b;`, and
+        /// event/repeat forms) — see
         /// [`IntraControl`].  `None` when the assignment has none.
         delay: Option<IntraControl>,
     },
@@ -823,9 +827,50 @@ pub enum DriverDelay {
 pub enum IntraControl {
     /// Delay expression evaluated in the assignment's owning scope.
     Delay(NodeId),
-    /// Event-controlled or repeat form (`@(...)`, `repeat (n) @(...)`) — no
-    /// `#` at the recorded position.  Rejected by the simulator.
-    EventOrRepeat,
+    /// One event control (`@(posedge a or ev)`) retained as owned event specs.
+    Event {
+        control: NodeId,
+        specs: Vec<EventSpec>,
+        implicit: bool,
+    },
+    /// A repeat event control (`repeat (n) @(...)`).  The nested control is
+    /// retained so lowering never has to recover syntax or source text.
+    Repeat {
+        control: NodeId,
+        count: NodeId,
+        event: Box<IntraControl>,
+    },
+    /// A timing form known to the frontend but not yet executable by the
+    /// simulator.  Keeping its identity gives consumers a source-located
+    /// diagnostic instead of silently treating it as an untimed assignment.
+    Unsupported { control: NodeId },
+}
+
+impl IntraControl {
+    pub(crate) fn referenced_nodes(&self, nodes: &mut Vec<NodeId>) {
+        match self {
+            Self::Delay(delay) => nodes.push(*delay),
+            Self::Event {
+                control,
+                specs,
+                ..
+            } => {
+                nodes.push(*control);
+                for spec in specs {
+                    spec.referenced_nodes(nodes);
+                }
+            }
+            Self::Repeat {
+                control,
+                count,
+                event,
+            } => {
+                nodes.extend([*control, *count]);
+                event.referenced_nodes(nodes);
+            }
+            Self::Unsupported { control } => nodes.push(*control),
+        }
+    }
 }
 
 /// Timing attached to a nonblocking named-event trigger (`->> timing ev`).
@@ -2096,22 +2141,48 @@ fn intra_control(
     let Some(timing_id) = edge_target(ids, edges, SemanticEdgeRole::Delay)? else {
         return Ok(None);
     };
+    Ok(Some(intra_control_timing(snapshot, timing_id, ids)?))
+}
+
+fn intra_control_timing(
+    snapshot: &SlangSnapshot,
+    timing_id: NodeId,
+    ids: &HashMap<u64, NodeId>,
+) -> Result<IntraControl, DbError> {
     let timing = snapshot
         .semantic_nodes
         .get(timing_id.index())
-        .ok_or_else(|| {
-            DbError::InvalidSnapshot("assignment timing control node is missing".into())
-        })?;
-    if timing.subkind != 112 {
-        return Ok(Some(IntraControl::EventOrRepeat));
+        .ok_or_else(|| DbError::InvalidSnapshot("assignment timing control node is missing".into()))?;
+    let edges = semantic_edges(snapshot, timing)?;
+    match timing.subkind {
+        112 => {
+            let delay = edge_target(ids, edges, SemanticEdgeRole::Delay)?
+                .ok_or_else(|| DbError::InvalidSnapshot("delay control has no expression".into()))?;
+            Ok(IntraControl::Delay(delay))
+        }
+        113 | 114 | 115 => {
+            let (specs, implicit) = event_specs(snapshot, timing, ids)?;
+            Ok(IntraControl::Event {
+                control: timing_id,
+                specs,
+                implicit,
+            })
+        }
+        116 => {
+            let count = edge_target(ids, edges, SemanticEdgeRole::Condition)?.ok_or_else(|| {
+                DbError::InvalidSnapshot("repeated assignment event has no count".into())
+            })?;
+            let event = edge_target(ids, edges, SemanticEdgeRole::Event)?.ok_or_else(|| {
+                DbError::InvalidSnapshot("repeated assignment event has no event control".into())
+            })?;
+            Ok(IntraControl::Repeat {
+                control: timing_id,
+                count,
+                event: Box::new(intra_control_timing(snapshot, event, ids)?),
+            })
+        }
+        _ => Ok(IntraControl::Unsupported { control: timing_id }),
     }
-    let delay = edge_target(
-        ids,
-        semantic_edges(snapshot, timing)?,
-        SemanticEdgeRole::Delay,
-    )?
-    .ok_or_else(|| DbError::InvalidSnapshot("delay control has no expression".into()))?;
-    Ok(Some(IntraControl::Delay(delay)))
 }
 
 fn timing_statement(
@@ -2619,6 +2690,7 @@ impl Db {
             event_arrays: HashMap::new(),
             array_select_paths: HashMap::new(),
             vars_init: HashMap::new(),
+            net_delays: HashMap::new(),
             var_lifetimes: HashMap::new(),
             var_lifetime_qualifiers: HashMap::new(),
             method_calls_with_clause: HashSet::new(),
@@ -2664,6 +2736,7 @@ impl Db {
             event_arrays: HashMap::new(),
             array_select_paths: HashMap::new(),
             vars_init: HashMap::new(),
+            net_delays: HashMap::new(),
             var_lifetimes: HashMap::new(),
             var_lifetime_qualifiers: HashMap::new(),
             method_calls_with_clause: HashSet::new(),
@@ -2732,6 +2805,7 @@ impl Db {
         let mut event_arrays = HashMap::new();
         let mut array_select_paths = HashMap::new();
         let mut vars_init = HashMap::new();
+        let mut net_delays = HashMap::new();
         let mut two_state_types = HashSet::new();
         let mut implicit_nets = HashSet::new();
         let mut implicit_conversions = HashSet::new();
@@ -2972,6 +3046,11 @@ impl Db {
             let (file, line, col, end_line, end_col) = source_position(snapshot, semantic)?;
             let mut kind =
                 node_kind_from_slang(snapshot, &type_projector, semantic, edges, &ids, type_info)?;
+            if semantic.kind == SemanticKind::Net {
+                if let Some(delay) = driver_delay(snapshot, &ids, edges)? {
+                    net_delays.insert(id, delay);
+                }
+            }
             if semantic.kind == SemanticKind::Expression && semantic.subkind == 73 {
                 if let Some(base) = edge_target(&ids, edges, SemanticEdgeRole::Base)? {
                     if let Some((parts, refs)) = member_path_from_slang(
@@ -3187,6 +3266,7 @@ impl Db {
             event_arrays,
             array_select_paths,
             vars_init,
+            net_delays,
             var_lifetimes,
             var_lifetime_qualifiers,
             method_calls_with_clause,
@@ -3302,6 +3382,15 @@ impl Db {
 
     pub fn var_initializer(&self, id: NodeId) -> Option<NodeId> {
         self.vars_init.get(&id).copied()
+    }
+
+    /// Return the propagation delay declared on a net symbol, if any.
+    pub fn net_delays(&self) -> &HashMap<NodeId, DriverDelay> {
+        &self.net_delays
+    }
+
+    pub fn net_delay(&self, id: NodeId) -> Option<DriverDelay> {
+        self.net_delays.get(&id).copied()
     }
 
     /// Exact executable body attached to a function or task declaration.

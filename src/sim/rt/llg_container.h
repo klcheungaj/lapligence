@@ -108,11 +108,17 @@ typedef struct {
     int8_t element_signed;
     uint8_t element_two_state;
     uint8_t key_kind;
-    // Zero denotes the wildcard integral index type. Wildcard traversal is
-    // deliberately rejected because IEEE 1800-2009 7.8.1 forbids it.
+    // Zero denotes the wildcard integral index type. Wildcard keys are
+    // canonicalized to the model width; traversal is rejected because IEEE
+    // 1800-2009 7.8.1 forbids it.
     uint32_t key_width;
     int8_t key_signed;
     uint8_t key_two_state;
+    // Missing associative entries read this value without allocating an
+    // entry.  `has_default_value` distinguishes an explicit assignment
+    // pattern default from the element-type default for copy semantics.
+    sv4_t default_value;
+    uint8_t has_default_value;
     sv4_t* contents_dependency;
     sv4_t* shape_dependency;
     llg_container_notify_fn notify;
@@ -134,6 +140,8 @@ sv4_t llg_assoc_get_integral(const llg_assoc_t* array, sv4_t key);
 int llg_assoc_set_integral(llg_assoc_t* array, sv4_t key, sv4_t value);
 int llg_assoc_exists_integral(const llg_assoc_t* array, sv4_t key);
 int llg_assoc_delete_integral(llg_assoc_t* array, sv4_t key);
+void llg_assoc_set_default(llg_assoc_t* array, sv4_t value);
+void llg_assoc_reset_default(llg_assoc_t* array);
 int llg_assoc_first_integral(const llg_assoc_t* array, sv4_t* key);
 int llg_assoc_last_integral(const llg_assoc_t* array, sv4_t* key);
 int llg_assoc_next_integral(const llg_assoc_t* array, sv4_t* key);

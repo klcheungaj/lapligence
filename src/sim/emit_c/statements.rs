@@ -347,6 +347,21 @@ fn render_stmt_scoped(
         IrStmt::NonblockingEventTriggerWhen { ev, specs, repeat } => {
             nonblocking_event_trigger_when_text(ctx, ev, specs, repeat.as_ref())?
         }
+        IrStmt::NonblockingEventAssignWhen {
+            specs,
+            repeat,
+            action,
+            frame,
+            captures,
+            ..
+        } => nonblocking_event_assignment_when_text(
+            ctx,
+            specs,
+            repeat.as_ref(),
+            action,
+            *frame,
+            captures,
+        )?,
         IrStmt::WaitAny { sens } => wait_any_text(ctx, sens),
         IrStmt::WaitCond { cond, sens, body } => {
             let rc = render_expr(ctx, cond)?;
@@ -1467,6 +1482,104 @@ fn nonblocking_event_trigger_when_text(
     ))
 }
 
+/// Render an issue-time nonblocking intra-assignment event control.  The
+/// callback owns a frame containing the RHS and dynamic destination captures;
+/// the issuer therefore never suspends and the eventual update observes the
+/// values captured at issue time.
+fn nonblocking_event_assignment_when_text(
+    ctx: &RCtx<'_>,
+    specs: &[(crate::sim::ir::IrWaitSrc, crate::sim::ir::IrEdge)],
+    repeat: Option<&IrExpr>,
+    action: &str,
+    frame: crate::sim::ir::FrameId,
+    captures: &[crate::sim::ir::IrCapture],
+) -> Result<String, String> {
+    use crate::sim::ir::IrEdge;
+    let count = match repeat {
+        Some(repeat) => {
+            let rendered = render_expr(ctx, repeat)?;
+            if rendered.width == 0 {
+                return Err("repeat nonblocking event assignment count cannot be real".into());
+            }
+            format!("llg_repeat_count({})", rendered.code)
+        }
+        None => "1ULL".to_owned(),
+    };
+    let frame_name = format!("_event_action_frame_{}", frame.index());
+    let mut frame_setup = format!(
+        "        llg_frame_t* {frame_name} = llg_frame_new({}u);\n",
+        captures.len()
+    );
+    for capture in captures {
+        let initial = render_expr(ctx, capture.initial())?.code;
+        frame_setup.push_str(
+            &format_frame_capture(&frame_name, capture.storage(), &initial)?
+                .replace("    ", "        "),
+        );
+    }
+    if specs.is_empty() {
+        return Ok(format!(
+            "    {{\n{frame_setup}        llg_nba_event_assign_when(NULL, 0, {count}, {action}, {frame_name});\n    }}\n"
+        ));
+    }
+    let edge_kind = |edge: &IrEdge| match edge {
+        IrEdge::Posedge => "LLG_EV_POSEDGE",
+        IrEdge::Negedge => "LLG_EV_NEGEDGE",
+        IrEdge::Any => "LLG_EV_ANY",
+    };
+    let complex = specs.iter().any(|(source, _)| {
+        matches!(
+            source,
+            IrWaitSrc::Evaluated { .. }
+                | IrWaitSrc::EvaluatedReal { .. }
+                | IrWaitSrc::FilteredEvent { .. }
+                | IrWaitSrc::Real(_)
+        )
+    });
+    if complex {
+        let mut text = wait_events_text(ctx, specs)?;
+        let needle = format!("llg_wait_expressions(_events, {});", specs.len());
+        let replacement = format!(
+            "llg_nba_event_assign_when(_events, {}, {count}, {action}, {frame_name});",
+            specs.len()
+        );
+        if !text.contains(&needle) {
+            return Err("internal: complex event assignment did not render descriptors".into());
+        }
+        text = text.replace(&needle, &replacement);
+        if !text.starts_with("    {\n") {
+            return Err("internal: complex event assignment lost descriptor block".into());
+        }
+        text.insert_str("    {\n".len(), &frame_setup);
+        return Ok(text);
+    }
+    let entries = specs
+        .iter()
+        .map(|(source, edge)| match source {
+            IrWaitSrc::Sig(name) => Ok(format!(
+                "{{ .sig = &{name}, .kind = {} }}",
+                edge_kind(edge)
+            )),
+            IrWaitSrc::Event(event) => Ok(format!(
+                "{{ .event = {}, .kind = {} }}",
+                event_ref_code(ctx, event)?,
+                edge_kind(edge)
+            )),
+            IrWaitSrc::Evaluated { .. }
+            | IrWaitSrc::EvaluatedReal { .. }
+            | IrWaitSrc::FilteredEvent { .. }
+            | IrWaitSrc::Real(_) => {
+                Err("internal: complex event source missed descriptor rendering".into())
+            }
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    Ok(format!(
+        "    {{\n{frame_setup}        llg_expr_event_spec_t _events[] = {{{}}};\n        llg_nba_event_assign_when(_events, {}, {count}, {action}, {frame_name});\n    }}\n",
+        entries.join(", "),
+        entries.len()
+    ))
+}
+
 /// Render a helper function attached to a process/function: fork-branch
 /// coroutines and monitor/strobe evaluators.
 pub fn render_pre_fn(ctx: &RCtx<'_>, pre: &crate::sim::ir::IrPreFn) -> Result<String, EmitError> {
@@ -1541,6 +1654,40 @@ pub(super) fn render_pre_fn_impl(
                     event_capture_code(&rendered, context.as_ref())
                 ));
             }
+            out.push_str("}\n");
+            Ok(out)
+        }
+        crate::sim::ir::IrPreFn::EventAssign {
+            c_name,
+            frame: _,
+            captures,
+            lhs,
+            rhs,
+        } => {
+            let mut out = format!("static void {c_name}(llg_frame_t* frame) {{\n");
+            for capture in captures {
+                let local = format!(
+                    "_fc{}_{}",
+                    capture.storage().frame().index(),
+                    capture.storage().slot()
+                );
+                match capture.storage().kind() {
+                    StorageKind::Real => out.push_str(&format!(
+                        "    double {local} = llg_frame_read_real(frame, {}u);\n",
+                        capture.storage().slot()
+                    )),
+                    StorageKind::Packed | StorageKind::Opaque => out.push_str(&format!(
+                        "    sv4_t {local} = llg_frame_read_value(frame, {}u);\n",
+                        capture.storage().slot()
+                    )),
+                }
+            }
+            if captures.is_empty() {
+                out.push_str("    (void)frame;\n");
+            }
+            out.push_str("    ");
+            out.push_str(&render_assign(ctx, lhs, rhs, true)?);
+            out.push('\n');
             out.push_str("}\n");
             Ok(out)
         }

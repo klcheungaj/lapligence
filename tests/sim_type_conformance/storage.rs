@@ -22,8 +22,7 @@ fn arrays_containers_and_aggregates_preserve_state_domains() {
     super::run_case_with_stderr(
         "state-storage",
         "PASS state storage\n",
-        "llg container warning: nonexistent associative-array entry read\n\
-         llg container warning: nonexistent associative-array entry read\n",
+        "",
     );
 }
 

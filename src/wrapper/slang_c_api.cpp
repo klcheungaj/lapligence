@@ -2311,6 +2311,8 @@ private:
             capture.semanticRole(assignId, delay, LLG_SLANG_EDGE_DELAY);
         }
       }
+      if (const TimingControl* delay = symbol.getDelay())
+        capture.semanticRole(id, delay, LLG_SLANG_EDGE_DELAY);
     }
     if constexpr (std::same_as<T, FormalArgumentSymbol>) {
       if (const Expression* value = symbol.getDefaultValue())

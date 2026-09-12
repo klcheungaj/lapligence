@@ -114,3 +114,39 @@ endmodule
         "unexpected net-class rejection: {net_class_error}"
     );
 }
+
+#[test]
+fn net_declaration_propagation_is_after_resolution_and_not_double_delayed() {
+    sim_cli::run_case(
+        "partial_features",
+        "net_declaration_propagation",
+        "t2 z z x z x\nt3 1 1 1 x x\n",
+        "",
+        &[],
+    );
+}
+
+#[test]
+fn net_declaration_delay_keeps_transition_tuple_and_real_edges() {
+    sim_cli::run_case(
+        "partial_features",
+        "net_declaration_transition",
+        "t1 z z\nt3 1 0\nt5 1 1\nt7 0 0\n",
+        "",
+        &[],
+    );
+}
+
+#[test]
+fn net_declaration_delay_rejects_negative_and_overflow_values() {
+    sim_cli::reject_case(
+        "partial_features",
+        "net_declaration_negative",
+        "net propagation delay",
+    );
+    sim_cli::reject_case(
+        "partial_features",
+        "net_declaration_overflow",
+        "net propagation delay",
+    );
+}

@@ -279,6 +279,53 @@ datatype_case!(
     "associative_array.sv",
     "associative_array"
 );
+datatype_case!(
+    associative_array_defaults_copy_and_wildcard_keys,
+    "associative_array_p33.sv",
+    "associative_array_p33"
+);
+datatype_case!(
+    associative_array_key_validation_contexts,
+    "container_assignment_contexts.sv",
+    "container_assignment_contexts"
+);
+
+#[test]
+fn wildcard_associative_traversal_is_rejected() {
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/sim/data_types_next")
+        .join("associative_array_wildcard_traversal.sv");
+    sim_harness::with_frontend_temp_cwd("data-types-next-wildcard-rejection", |dir| {
+        let source = dir.join("associative_array_wildcard_traversal.sv");
+        std::fs::copy(&fixture, &source).map_err(|error| format!("copy fixture: {error}"))?;
+        let partial = compile::compile(&compile::CompileOpts {
+            files: vec![source.to_string_lossy().into_owned()],
+            top: Some("tb".to_owned()),
+            ..Default::default()
+        })
+        .map_err(|error| format!("compile: {error}"))?;
+        if !partial.ok() {
+            let diagnostic = format!("{:?}", partial.diagnostics).to_ascii_lowercase();
+            if diagnostic.contains("wildcard") || diagnostic.contains("first") {
+                return Ok(());
+            }
+            return Err(format!("unexpected wildcard traversal diagnostic: {diagnostic}"));
+        }
+        let database = Db::from_slang(&partial.snapshot)
+            .map_err(|error| format!("database: {error}"))?;
+        for options in [OptConfig::none(), OptConfig::default()] {
+            let error = sim::codegen::generate_from_db_with_opts(&database, &options)
+                .map(|_| "generated successfully".to_owned())
+                .unwrap_or_else(|error| error.to_string())
+                .to_ascii_lowercase();
+            if !error.contains("wildcard") || !error.contains("traversal") {
+                return Err(format!("unexpected codegen result: {error}"));
+            }
+        }
+        Ok(())
+    })
+    .expect("wildcard associative traversal must be rejected");
+}
 datatype_case!(queue_order_and_methods, "queue.sv", "queue");
 datatype_case!(executed_data_and_array_queries, "query_functions.sv", "query_functions");
 datatype_case!(string_value_and_methods, "string.sv", "string");

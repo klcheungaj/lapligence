@@ -24,8 +24,11 @@ Inventory:
   storage, per-call execution, runtime declaration initialization, mixed
   static/automatic lifetimes, per-instance identity, cast materialization, and
   output copy-out across calls/NBAs.
-- `dynamic_array.sv`, `associative_array.sv`, and `queue.sv`: allocation,
-  copy/resize/delete, keyed traversal, and queue mutation.
+- `dynamic_array.sv`, `associative_array.sv`, `associative_array_p33.sv`, and
+  `queue.sv`: allocation, copy/resize/delete, keyed traversal, associative
+  defaults/wildcard canonicalization, and queue mutation. The companion
+  `associative_array_wildcard_traversal.sv` is a single-fault negative case for
+  the §7.8.1 traversal prohibition.
 - `container_assignment_contexts.sv`: packed queue/dynamic element contexts,
   method-argument conversions, and invalid associative keys.
 - `string.sv`, `string_conversions.sv`, `dynamic_string_formatting.sv`, and

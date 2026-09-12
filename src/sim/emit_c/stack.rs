@@ -136,6 +136,16 @@ fn pre_fn_frame_slots(pre_fn: &IrPreFn) -> Result<u64, String> {
                 .unwrap_or(0),
             "event evaluator frame slots",
         ),
+        IrPreFn::EventAssign {
+            captures, lhs, rhs, ..
+        } => checked_sum(
+            [
+                usize_slots(captures.len(), "event assignment capture slots")?,
+                lhs_slots(lhs)?,
+                expr_slots(rhs)?,
+            ],
+            "event assignment frame slots",
+        ),
         IrPreFn::DisplayEval { args, .. } => {
             let mut slots = 0;
             for arg in args {
@@ -398,6 +408,31 @@ fn stmt_temp_slots(stmt: &IrStmt) -> Result<u64, String> {
             repeat: Some(repeat), ..
         } => expr_slots(repeat),
         IrStmt::NonblockingEventTriggerWhen { repeat: None, .. } => Ok(0),
+        IrStmt::NonblockingEventAssignWhen {
+            lhs,
+            rhs,
+            repeat,
+            captures,
+            ..
+        } => {
+            let repeat_slots = repeat
+                .as_ref()
+                .map(expr_slots)
+                .transpose()?
+                .unwrap_or(0);
+            let mut slots = checked_sum(
+                [lhs_slots(lhs)?, expr_slots(rhs)?, repeat_slots],
+                "event assignment temporary slots",
+            )?;
+            for capture in captures {
+                slots = checked_add(
+                    slots,
+                    expr_slots(capture.initial())?,
+                    "event assignment capture initializer slots",
+                )?;
+            }
+            Ok(slots)
+        }
         IrStmt::Delay { .. }
         | IrStmt::WaitEvents { .. }
         | IrStmt::EventTrigger { .. }

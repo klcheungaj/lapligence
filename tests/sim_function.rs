@@ -911,6 +911,65 @@ endmodule
 }
 
 #[test]
+fn sim_package_runtime_state_initialization_and_imports() {
+    if !llg::sim::build::cmake_available() {
+        eprintln!("SKIP: cmake not available");
+        return;
+    }
+    let _guard = CWD_LOCK.lock().unwrap();
+    run_fixture_both_opts(
+        "package_runtime_state.sv",
+        "package-runtime-state",
+        "pkg=4,4,1;4,6,2;import=4;export=4;unit=7;mirror=6\nmirror-after=7\n",
+    )
+    .expect("package state, initialization, static task storage, and imports should agree");
+}
+
+#[test]
+fn sim_package_wildcard_import_ambiguity_remains_a_frontend_diagnostic() {
+    let _guard = CWD_LOCK.lock().unwrap();
+    let sv = r#"package left_pkg;
+    integer value;
+endpackage
+
+package right_pkg;
+    integer value;
+endpackage
+
+module tb;
+    import left_pkg::*;
+    import right_pkg::*;
+    integer observed;
+    initial observed = value;
+endmodule
+"#;
+    sim_harness::with_temp_cwd("package-wildcard-ambiguity", |dir| {
+        let source = dir.join("tb.sv");
+        std::fs::write(&source, sv).map_err(|error| format!("write source: {error}"))?;
+        let compiled = compile::compile(&compile::CompileOpts {
+            files: vec![source.to_string_lossy().into_owned()],
+            top: Some("tb".to_owned()),
+            ..Default::default()
+        })
+        .map_err(|error| format!("compile: {error}"))?;
+        if compiled.ok() {
+            return Err("ambiguous wildcard import unexpectedly compiled".to_owned());
+        }
+        let diagnostics = compiled
+            .diagnostics
+            .iter()
+            .map(|diagnostic| format!("{diagnostic:?}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        if !diagnostics.to_ascii_lowercase().contains("ambig") {
+            return Err(format!("wildcard import diagnostic was not ambiguity-specific: {diagnostics}"));
+        }
+        Ok(())
+    })
+    .expect("frontend should retain wildcard-import ambiguity diagnostics");
+}
+
+#[test]
 fn sim_interface_modport_subroutine_uses_parameterized_instance() {
     if !llg::sim::build::cmake_available() {
         eprintln!("SKIP: cmake not available");

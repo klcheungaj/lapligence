@@ -645,9 +645,13 @@ fn is_declaration_only_unknown(detail: Option<&str>) -> bool {
                 | "ClockingBlock"
                 | "ClockingBlockPort"
                 | "Constraint"
+                | "ExplicitImport"
+                | "Export"
+                | "Import"
                 | "LetDeclaration"
                 | "TypeAlias"
                 | "TransparentMember"
+                | "WildcardImport"
         )
     )
 }

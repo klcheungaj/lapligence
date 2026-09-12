@@ -1633,6 +1633,19 @@ pub enum IrStmt {
         specs: Vec<(IrWaitSrc, IrEdge)>,
         repeat: Option<IrExpr>,
     },
+    /// Capture an assignment's RHS and destination selectors at issue time,
+    /// then commit it as an independent NBA after an event/repeat control
+    /// matches. The callback frame is owned by the runtime until match or
+    /// scheduler teardown, so the issuing process may finish immediately.
+    NonblockingEventAssignWhen {
+        lhs: IrLhs,
+        rhs: IrExpr,
+        specs: Vec<(IrWaitSrc, IrEdge)>,
+        repeat: Option<IrExpr>,
+        action: String,
+        frame: FrameId,
+        captures: Vec<IrCapture>,
+    },
     /// Combinational-style suspension: ONE atomic `llg_wait_any` on the
     /// precomputed read set (an empty set waits indefinitely).
     WaitAny {
@@ -1863,6 +1876,16 @@ pub enum IrPreFn {
         c_name: String,
         args: Vec<IrExpr>,
         context: Option<IrEventContext>,
+    },
+    /// `static void c_name(llg_frame_t* frame) { ... }` for a deferred
+    /// nonblocking event assignment. Captured values and selectors are read
+    /// from the frame, then the callback submits a detached NBA.
+    EventAssign {
+        c_name: String,
+        frame: FrameId,
+        captures: Vec<IrCapture>,
+        lhs: IrLhs,
+        rhs: IrExpr,
     },
     /// Typed display-family re-evaluator. Values are owned by the runtime
     /// while a monitor or strobe is pending, so string temporaries cannot
@@ -2474,6 +2497,8 @@ pub struct IrNetGroup {
     /// scale (high impedance 0 through supply 7). Ordinary unspecified
     /// continuous assignments use strong/strong (6, 6).
     pub(in crate::sim) driver_strengths: Vec<(u8, u8)>,
+    /// Optional propagation delay applied after all driver slots resolve.
+    pub(in crate::sim) propagation_delay: Option<IrTransitionDelay>,
 }
 
 impl IrNetGroup {
@@ -2504,6 +2529,7 @@ impl IrNetGroup {
             kind,
             n_drivers,
             driver_strengths: vec![(6, 6); n_drivers],
+            propagation_delay: None,
         })
     }
 
@@ -2521,6 +2547,10 @@ impl IrNetGroup {
     }
     pub fn driver_count(&self) -> usize {
         self.n_drivers
+    }
+
+    pub fn propagation_delay(&self) -> Option<IrTransitionDelay> {
+        self.propagation_delay
     }
 }
 

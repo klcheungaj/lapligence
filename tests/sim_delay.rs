@@ -1,8 +1,7 @@
 //! End-to-end simulator tests for delayed assignments: intra-assignment
 //! delays (`a = #5 b;`, `a <= #5 b;` — LRM 1364-1995 §9.7.4) and
 //! continuous-assignment delays (`assign #2 y = a;` — §1364-1995 §6.1.3),
-//! procedural parameter/runtime-expression delays, plus clean codegen
-//! rejections for event/repeat forms. Slang compile → codegen →
+//! procedural parameter/runtime-expression delays. Slang compile → codegen →
 //! CMake build → run, asserting exact
 //! stdout against hand-simulated traces.
 //!
@@ -331,102 +330,6 @@ endmodule
     assert_eq!(
         stdout, "t=0 a=5a\nd1 c=x\nd2 c=x\nt=1 c=1\n",
         "stdout: {stdout}"
-    );
-}
-
-/// (g) Event-controlled intra-assignment (`a = @(posedge clk) b;`) is
-/// rejected at codegen with the documented error instead of being silently
-/// degraded.
-#[test]
-fn sim_intra_delay_event_form_rejected() {
-    if !llg::sim::build::cmake_available() {
-        eprintln!("SKIP: cmake not available");
-        return;
-    }
-    let sv = r#"module tb;
-    reg a, b, clk;
-
-    initial begin
-        clk = 1'b0;
-        a = @(posedge clk) b;
-    end
-endmodule
-"#;
-
-    let result = codegen_result(sv, "evt").expect("compile should succeed");
-    let err = match result {
-        Ok(_) => panic!("codegen should reject event-controlled intra-assignment"),
-        Err(e) => e,
-    };
-    assert!(
-        err.contains("intra-assignment event/repeat control"),
-        "unexpected codegen error: {err}"
-    );
-    assert!(
-        err.contains("is not supported"),
-        "unexpected codegen error: {err}"
-    );
-}
-
-/// A prior delay on the same source line must not make an event-controlled
-/// intra-assignment look like it carries that earlier `#` token.
-#[test]
-fn sim_intra_event_after_same_line_delay_rejected() {
-    if !llg::sim::build::cmake_available() {
-        eprintln!("SKIP: cmake not available");
-        return;
-    }
-    for (tag, statement) in [
-        ("prior", "#1; a = @(posedge clk) b;"),
-        ("following", "a = @(posedge clk) b; #1 $finish;"),
-        ("outer", "#1 a = @(posedge clk) b;"),
-    ] {
-        let sv = format!(
-            r#"module tb;
-    reg a, b, clk;
-    initial begin {statement} end
-endmodule
-"#
-        );
-        let result =
-            codegen_result(&sv, &format!("same_line_event_{tag}")).expect("compile should succeed");
-        let error = match result {
-            Ok(_) => panic!("event-controlled intra-assignment `{tag}` should be rejected"),
-            Err(error) => error,
-        };
-        assert!(
-            error.contains("intra-assignment event/repeat control"),
-            "unexpected codegen error for `{tag}`: {error}"
-        );
-    }
-}
-
-/// (g) Repeat-form intra-assignment (`a = repeat(2) @(posedge clk) b;`)
-/// produces the same clean rejection family as the event form.
-#[test]
-fn sim_intra_delay_repeat_form_rejected() {
-    if !llg::sim::build::cmake_available() {
-        eprintln!("SKIP: cmake not available");
-        return;
-    }
-    let sv = r#"module tb;
-    reg a, b, clk;
-
-    initial begin
-        clk = 1'b0;
-        a = repeat(2) @(posedge clk) b;
-    end
-endmodule
-"#;
-
-    let result = codegen_result(sv, "rep").expect("compile should succeed");
-    let err = match result {
-        Ok(_) => panic!("codegen should reject repeat-controlled intra-assignment"),
-        Err(e) => e,
-    };
-    assert!(
-        err.contains("intra-assignment event/repeat control"),
-        "unexpected codegen error: {err}"
     );
 }
 

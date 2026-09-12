@@ -14,6 +14,10 @@ mod evaluated_events;
 mod finish;
 #[path = "sim_partial_features/inertial.rs"]
 mod inertial;
+#[path = "sim_partial_features/intra_assignment_events.rs"]
+mod intra_assignment_events;
+#[path = "sim_partial_features/intra_assignment_event_sources.rs"]
+mod intra_assignment_event_sources;
 #[path = "sim_partial_features/nonblocking_events.rs"]
 mod nonblocking_events;
 #[path = "sim_partial_features/ports.rs"]

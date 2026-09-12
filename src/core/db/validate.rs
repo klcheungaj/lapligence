@@ -2,7 +2,7 @@ use std::collections::HashSet;
 use std::error::Error;
 use std::fmt;
 
-use super::{Db, DriverDelay, ExprKind, IntraControl, NodeId, NodeKind, StmtKind};
+use super::{Db, DriverDelay, ExprKind, NodeId, NodeKind, StmtKind};
 
 /// A structural invariant violation in an owned [`Db`].
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -123,6 +123,22 @@ impl Validator<'_> {
                     format!("event_arrays[{}].init", event.0),
                     "named-event arrays cannot have declaration initializers",
                 );
+            }
+        }
+
+        for (net, delay) in self.db.net_delays() {
+            let path = format!("net_delays[{}]", net.0);
+            let node = self.node(*net, &path)?;
+            if !matches!(node.kind, NodeKind::Net { .. }) {
+                return self.fail(path, "metadata key is not a net node");
+            }
+            let mut refs = Vec::new();
+            driver_delay_refs(Some(*delay), &mut refs);
+            for (index, reference) in refs.into_iter().enumerate() {
+                self.node(
+                    reference,
+                    &format!("net_delays[{}].expressions[{index}]", net.0),
+                )?;
             }
         }
 
@@ -381,8 +397,8 @@ fn statement_refs(statement: &StmtKind, refs: &mut Vec<NodeId>) {
             refs.extend(if_true.iter().chain(if_false.iter()).copied());
         }
         StmtKind::Assign { delay, .. } => {
-            if let Some(IntraControl::Delay(delay)) = delay {
-                refs.push(*delay);
+            if let Some(delay) = delay {
+                delay.referenced_nodes(refs);
             }
         }
         StmtKind::DelayControl { delay } => refs.push(*delay),

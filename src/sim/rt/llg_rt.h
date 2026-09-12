@@ -85,6 +85,8 @@ typedef struct {
 
 #define LLG_MAX_NET_DRIVERS 16
 
+typedef struct llg_inertial llg_inertial_t;
+
 typedef struct {
     sv4_t resolved;                       /* what readers/waiters see */
     uint32_t width;
@@ -94,6 +96,11 @@ typedef struct {
     sv4_t* drivers[LLG_MAX_NET_DRIVERS]; /* per-driver contribution cells */
     uint8_t strength0[LLG_MAX_NET_DRIVERS];
     uint8_t strength1[LLG_MAX_NET_DRIVERS];
+    int8_t propagation_enabled;
+    llg_inertial_t* propagation;
+    uint64_t propagation_rise;
+    uint64_t propagation_fall;
+    uint64_t propagation_turn_off;
 } llg_net_t;
 
 void llg_net_resolve(llg_net_t* net); /* strength-aware resolution, per limb */
@@ -102,7 +109,6 @@ void llg_net_write(llg_net_t* net, int idx, sv4_t value);
 // The runtime owns each inertial driver and its pending event. The caller's
 // initially NULL handle, target and net must persist until cleanup, which
 // resets the handle to NULL. Repeated evaluation never suspends the caller.
-typedef struct llg_inertial llg_inertial_t;
 void llg_inertial_assign(llg_inertial_t** handle, sv4_t* target,
                          sv4_t value, uint64_t rise, uint64_t fall,
                          uint64_t turn_off);
@@ -520,6 +526,15 @@ void llg_wait_expressions(const llg_expr_event_spec_t* specs, int n);
 // for a no-op request and otherwise the number of matches required.
 void llg_nba_event_when(const llg_expr_event_spec_t* specs, int n,
                         llg_event_t* target, uint64_t repeat);
+// Register a nonblocking assignment whose source control is evaluated at
+// issue time. The runtime owns `frame` until the source matches or teardown;
+// `action` submits the detached NBA using the captured frame values. A zero
+// repeat count invokes `action` immediately, without registering a waiter.
+typedef void (*llg_event_assignment_fn)(llg_frame_t* frame);
+void llg_nba_event_assign_when(const llg_expr_event_spec_t* specs, int n,
+                               uint64_t repeat,
+                               llg_event_assignment_fn action,
+                               llg_frame_t* frame);
 // Normalize a packed repeat count without truncating values wider than 64 bits.
 uint64_t llg_repeat_count(sv4_t value);
 

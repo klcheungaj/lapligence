@@ -336,15 +336,16 @@ fn generate_from_db_with_opts_impl(
     if tops.is_empty() {
         return Err("no top modules in the elaborated design".to_string());
     }
+    let compilation_units = cg.compilation_unit_scopes();
     // Collapse inout-port net groups (parent + child nets → one resolved
     // simulated net) before any signal/process lowering so member reads and
     // writes use the resolution cell.
     cg.bind_reference_ports()?;
-    cg.build_net_groups()?;
-    cg.validate_process_semantics()?;
     // Timescales must be fixed before any `#delay`/`$time` is lowered so the
     // design precision (scheduler tick unit) is consistent across the model.
     cg.collect_timescales();
+    cg.build_net_groups()?;
+    cg.validate_process_semantics()?;
     // Two-phase PCA site discovery, phase 1: allocate every procedural
     // continuous `assign <var> = …;` site BEFORE any body lowers (see
     // `prescan_pca_sites`), so `deassign` lowering never depends on process
@@ -362,11 +363,17 @@ fn generate_from_db_with_opts_impl(
     for package in db.packages() {
         cg.emit_func_prototypes(*package)?;
     }
+    for unit in &compilation_units {
+        cg.emit_func_prototypes(*unit)?;
+    }
     for top in &tops {
         cg.emit_func_bodies(*top)?;
     }
     for package in db.packages() {
         cg.emit_func_bodies(*package)?;
+    }
+    for unit in &compilation_units {
+        cg.emit_func_bodies(*unit)?;
     }
     // Three passes over the instance tree so every comb process, then every
     // link, then every always/initial process runs at t=0 in that order;
@@ -380,6 +387,7 @@ fn generate_from_db_with_opts_impl(
     for top in &tops {
         cg.emit_pass(*top, Pass::Procs)?;
     }
+    cg.emit_array_initializers()?;
     cg.emit_container_initializers()?;
     let mut model = std::mem::replace(
         &mut cg.model,
@@ -758,6 +766,10 @@ struct Codegen<'a> {
     /// functions and processes exist, so nonconstant elements use the same
     /// expression/capture machinery as procedural assignments.
     container_initializers: Vec<(NodeId, usize)>,
+    /// Fixed-array declaration assignments whose RHS is not a static constant
+    /// pattern. These become run-once initialization processes after every
+    /// array and container has been collected.
+    array_initializers: Vec<(NodeId, NodeId)>,
     /// All lowered named events, in collection order (deterministic emission).
     events: Vec<EventInfo>,
     /// NamedEvent arena node → lowered event info.
@@ -882,6 +894,7 @@ impl<'a> Codegen<'a> {
             array_globals: HashMap::new(),
             container_globals: HashMap::new(),
             container_initializers: Vec::new(),
+            array_initializers: Vec::new(),
             events: Vec::new(),
             event_globals: HashMap::new(),
             event_elements: HashMap::new(),
@@ -935,6 +948,9 @@ impl<'a> Codegen<'a> {
     fn instance_path_of(&self, id: NodeId) -> String {
         let path = self.db.instance_path(id);
         if path.is_empty() {
+            if self.is_runtime_environment(id) {
+                return self.namespace_path(id);
+            }
             strip_lib(&self.node(id).name)
         } else {
             path
@@ -1394,7 +1410,9 @@ impl<'a> Codegen<'a> {
     fn owner_instance(&self, node: NodeId) -> Option<NodeId> {
         let mut current = Some(node);
         while let Some(id) = current {
-            if matches!(self.kind(id), NodeKind::ModuleInst { .. } | NodeKind::Package) {
+            if matches!(self.kind(id), NodeKind::ModuleInst { .. })
+                || self.is_runtime_environment(id)
+            {
                 return Some(id);
             }
             current = self.node(id).parent;

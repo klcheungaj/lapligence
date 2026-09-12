@@ -382,11 +382,11 @@ impl EmitCtx<'_, '_> {
                     let scaled = self.cg.lower_procedural_delay(&self.path, h, *delay)?;
                     self.lower_delayed_assignment(h, *blocking, scaled)
                 }
-                Some(IntraControl::EventOrRepeat) => Err(format!(
-                    "intra-assignment event/repeat control (`@(…)` or \
-                     `repeat (n) @(…)`) in `{}` is not supported",
-                    self.path
-                )),
+                Some(
+                    timing @ (IntraControl::Event { .. }
+                    | IntraControl::Repeat { .. }
+                    | IntraControl::Unsupported { .. }),
+                ) => self.lower_event_assignment(h, *blocking, timing),
             },
             NodeKind::Stmt(StmtKind::DelayControl { delay }) => {
                 if self.in_final {
@@ -1159,6 +1159,280 @@ impl EmitCtx<'_, '_> {
                 nba: !blocking,
             },
         ])])
+    }
+
+    /// Lower event/repeat intra-assignment timing. A blocking assignment
+    /// evaluates its RHS before registering the wait and evaluates its LHS
+    /// when the wait completes. An NBA captures both RHS and destination
+    /// selectors at issue time and registers an independent runtime action.
+    fn lower_event_assignment(
+        &mut self,
+        h: NodeId,
+        blocking: bool,
+        timing: &IntraControl,
+    ) -> Result<Vec<IrStmt>, String> {
+        if self.in_final {
+            return Err(format!(
+                "intra-assignment event/repeat control inside a final block in `{}` is not allowed",
+                self.path
+            ));
+        }
+        if self.func.is_some() && self.inline.is_none() {
+            return Err(format!(
+                "event/repeat intra-assignment timing inside a function/task body in `{}` is not supported \
+                 (delay-bearing tasks are inlined at their call sites)",
+                self.path
+            ));
+        }
+        let (lhs, rhs, op) = match self.cg.kind(h) {
+            NodeKind::Stmt(StmtKind::Assign { op, .. }) => {
+                let lhs = self
+                    .cg
+                    .node(h)
+                    .children
+                    .first()
+                    .copied()
+                    .ok_or_else(|| "assignment without LHS".to_string())?;
+                let rhs = self
+                    .cg
+                    .node(h)
+                    .children
+                    .get(1)
+                    .copied()
+                    .ok_or_else(|| "assignment without RHS".to_string())?;
+                (lhs, rhs, *op)
+            }
+            _ => unreachable!("non-assignment passed to lower_event_assignment"),
+        };
+        if op != Operation::Assignment {
+            return Err(format!(
+                "compound event/repeat intra-assignment timing in `{}` is not supported",
+                self.path
+            ));
+        }
+        if self.cg.is_string_expr(&self.path, lhs) {
+            return Err(format!(
+                "event/repeat intra-assignment timing for string storage in `{}` is not supported",
+                self.path
+            ));
+        }
+        let (specs, repeat) = self.lower_intra_event_timing(timing)?;
+        let lh = self.cg.lower_lhs(&self.path, lhs)?;
+        let rhs_ir = self.lower_assignment_rhs(lhs, rhs, op, &lh)?;
+        let rhs_ir = apply_lhs_assignment_context(&self.cg.model, &lh, rhs_ir);
+
+        if blocking {
+            let tmp = format!("_event_rhs_{}", h.0);
+            let (w, s) = (rhs_ir.width, rhs_ir.signed);
+            let wait = IrStmt::WaitEvents { specs };
+            let wait = if let Some(count) = repeat {
+                IrStmt::Repeat {
+                    count,
+                    body: vec![wait],
+                }
+            } else {
+                wait
+            };
+            self.saw_wait = true;
+            return Ok(vec![IrStmt::Block(vec![
+                IrStmt::DeclLocal {
+                    name: tmp.clone(),
+                    width: w,
+                    signed: s,
+                    two_state: false,
+                    init: Some(Box::new(rhs_ir)),
+                },
+                wait,
+                IrStmt::Assign {
+                    lhs: lh,
+                    rhs: IrExpr::new(IrExprKind::LocalRead(tmp), w, s, None),
+                    nba: false,
+                },
+            ])]);
+        }
+
+        if self.cg.proc_local_target(lhs).is_some()
+            || self.cg.subroutine_auto_target(lhs)
+            || matches!(lh, IrLhs::WholeRef { .. } | IrLhs::Ref { .. })
+        {
+            return Err(
+                "nonblocking event/repeat intra-assignment timing requires persistent target storage"
+                    .to_owned(),
+            );
+        }
+        let frame = self.cg.new_frame_id()?;
+        let mut captures = Vec::new();
+        let rhs_capture = self.capture_event_assignment_expr(frame, &mut captures, rhs_ir);
+        let lhs_capture = self.capture_event_assignment_lhs(frame, &mut captures, lh)?;
+        let action = self.cg.new_fn_name(&self.path, "event_assign");
+        self.pre_fns.push(crate::sim::ir::IrPreFn::EventAssign {
+            c_name: action.clone(),
+            frame,
+            captures: captures.clone(),
+            lhs: lhs_capture.clone(),
+            rhs: rhs_capture.clone(),
+        });
+        Ok(vec![IrStmt::NonblockingEventAssignWhen {
+            lhs: lhs_capture,
+            rhs: rhs_capture,
+            specs,
+            repeat,
+            action,
+            frame,
+            captures,
+        }])
+    }
+
+    fn lower_intra_event_timing(
+        &mut self,
+        timing: &IntraControl,
+    ) -> Result<(Vec<(IrWaitSrc, IrEdge)>, Option<IrExpr>), String> {
+        match timing {
+            IntraControl::Event {
+                specs,
+                implicit,
+                ..
+            } => {
+                if *implicit || specs.is_empty() {
+                    return Err(format!(
+                        "intra-assignment event control in `{}` must contain an explicit event",
+                        self.path
+                    ));
+                }
+                Ok((self.lower_event_specs(specs)?, None))
+            }
+            IntraControl::Repeat { count, event, .. } => {
+                let count = self.cg.lower_expr(&self.path, *count)?;
+                if count.is_real() {
+                    return Err(format!(
+                        "real-valued repeat event count in `{}` is not supported",
+                        self.path
+                    ));
+                }
+                let (specs, nested) = self.lower_intra_event_timing(event)?;
+                if nested.is_some() {
+                    return Err(format!(
+                        "nested repeat event controls in `{}` are not supported",
+                        self.path
+                    ));
+                }
+                Ok((specs, Some(count)))
+            }
+            IntraControl::Delay(_) => Err(format!(
+                "delay timing reached event-assignment lowering in `{}`",
+                self.path
+            )),
+            IntraControl::Unsupported { control } => {
+                let node = self.cg.node(*control);
+                Err(format!(
+                    "unsupported intra-assignment timing at {}:{}:{} in `{}`",
+                    node.file.as_deref().unwrap_or("<unknown>"),
+                    node.line,
+                    node.col,
+                    self.path
+                ))
+            }
+        }
+    }
+
+    fn capture_event_assignment_expr(
+        &self,
+        frame: FrameId,
+        captures: &mut Vec<IrCapture>,
+        expression: IrExpr,
+    ) -> IrExpr {
+        let slot = captures.len() as u32;
+        let storage = StorageRef::new(
+            frame,
+            slot,
+            StorageLifetime::Automatic,
+            StorageOwnership::Owned,
+        )
+        .with_kind(if expression.is_real() {
+            StorageKind::Real
+        } else {
+            StorageKind::Packed
+        });
+        let local = format!("_fc{}_{}", frame.index(), slot);
+        captures.push(IrCapture::new(storage, expression.clone()));
+        IrExpr::new(
+            IrExprKind::LocalRead(local),
+            expression.width,
+            expression.signed,
+            None,
+        )
+    }
+
+    fn capture_event_assignment_lhs(
+        &self,
+        frame: FrameId,
+        captures: &mut Vec<IrCapture>,
+        lhs: IrLhs,
+    ) -> Result<IrLhs, String> {
+        Ok(match lhs {
+            IrLhs::Bit(index, select, two_state) => IrLhs::Bit(
+                index,
+                self.capture_event_assignment_expr(frame, captures, select),
+                two_state,
+            ),
+            IrLhs::IdxPart(index, base, width, selected_width, negative, two_state) => {
+                IrLhs::IdxPart(
+                    index,
+                    self.capture_event_assignment_expr(frame, captures, base),
+                    self.capture_event_assignment_expr(frame, captures, width),
+                    selected_width,
+                    negative,
+                    two_state,
+                )
+            }
+            IrLhs::ArrayElem {
+                arr,
+                indices,
+                elem_sel,
+            } => IrLhs::ArrayElem {
+                arr,
+                indices: indices
+                    .into_iter()
+                    .map(|index| self.capture_event_assignment_expr(frame, captures, index))
+                    .collect(),
+                elem_sel: match elem_sel {
+                    IrElemSel::Whole => IrElemSel::Whole,
+                    IrElemSel::Part(left, right) => IrElemSel::Part(left, right),
+                    IrElemSel::Bit(index) => IrElemSel::Bit(Box::new(
+                        self.capture_event_assignment_expr(frame, captures, *index),
+                    )),
+                    IrElemSel::Indexed {
+                        base,
+                        width,
+                        negative,
+                    } => IrElemSel::Indexed {
+                        base: Box::new(self.capture_event_assignment_expr(
+                            frame, captures, *base,
+                        )),
+                        width,
+                        negative,
+                    },
+                },
+            },
+            IrLhs::Stream {
+                parts,
+                width,
+                slice,
+                direction,
+            } => IrLhs::Stream {
+                parts: parts
+                    .into_iter()
+                    .map(|(part, width)| {
+                        self.capture_event_assignment_lhs(frame, captures, part)
+                            .map(|part| (part, width))
+                    })
+                    .collect::<Result<Vec<_>, _>>()?,
+                width,
+                slice,
+                direction,
+            },
+            other => other,
+        })
     }
 
     /// Lower `@(…)`: explicit edge/any specs become ONE atomic

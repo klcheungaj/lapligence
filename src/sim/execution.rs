@@ -508,7 +508,8 @@ fn collect_effects(
             }
             IrStmt::EventTrigger { .. }
             | IrStmt::NonblockingEventTrigger { .. }
-            | IrStmt::NonblockingEventTriggerWhen { .. } => {
+            | IrStmt::NonblockingEventTriggerWhen { .. }
+            | IrStmt::NonblockingEventAssignWhen { .. } => {
                 effects.push(ExecutionEffect::Trigger)
             }
             IrStmt::Fork {
@@ -636,6 +637,22 @@ fn collect_statement_expression_effects(
         | IrStmt::InertialAssign { lhs, rhs, .. } => {
             collect_expression_effects(ir, rhs, effects, visited_calls);
             collect_lhs_expression_effects(ir, lhs, effects, visited_calls);
+        }
+        IrStmt::NonblockingEventAssignWhen {
+            lhs,
+            rhs,
+            repeat,
+            captures,
+            ..
+        } => {
+            collect_expression_effects(ir, rhs, effects, visited_calls);
+            collect_lhs_expression_effects(ir, lhs, effects, visited_calls);
+            if let Some(repeat) = repeat {
+                collect_expression_effects(ir, repeat, effects, visited_calls);
+            }
+            for capture in captures {
+                collect_expression_effects(ir, capture.initial(), effects, visited_calls);
+            }
         }
         IrStmt::DelayedStringAssign { rhs, .. } => {
             rhs.expressions(&mut |expression| {

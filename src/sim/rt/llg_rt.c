@@ -544,6 +544,8 @@ typedef struct llg_sampled_value {
 typedef struct llg_deferred_trigger {
     struct llg_deferred_trigger* next;
     llg_event_object_t* target;
+    llg_event_assignment_fn action;
+    llg_frame_t* action_frame;
     llg_expr_event_spec_t* specs;
     sv4_t* last;
     double* real_last;
@@ -570,6 +572,7 @@ typedef struct {
     llg_sampled_value_t* sampled;
     llg_deferred_trigger_t* deferred_triggers;
     llg_deferred_trigger_t* deferred_trigger_tail;
+    int in_deferred_action;
     int running;
     int finish;
     int config_error;
@@ -1120,6 +1123,7 @@ static void free_deferred_trigger(llg_deferred_trigger_t* trigger) {
     free(trigger->specs);
     free(trigger->last);
     free(trigger->real_last);
+    if (trigger->action_frame) llg_frame_release(trigger->action_frame);
     free(trigger);
 }
 
@@ -1834,7 +1838,26 @@ static int deferred_expression_update(llg_deferred_trigger_t* trigger,
     return matched && expression_qualifies(spec);
 }
 
+static void invoke_deferred_action(llg_event_assignment_fn action,
+                                   llg_frame_t* frame) {
+    if (!action) {
+        if (frame) llg_frame_release(frame);
+        return;
+    }
+    int was_in_deferred_action = g.in_deferred_action;
+    g.in_deferred_action = 1;
+    action(frame);
+    g.in_deferred_action = was_in_deferred_action;
+    if (frame) llg_frame_release(frame);
+}
+
 static void deferred_trigger_fire(llg_deferred_trigger_t* trigger) {
+    if (trigger->action) {
+        llg_frame_t* frame = trigger->action_frame;
+        trigger->action_frame = NULL;
+        invoke_deferred_action(trigger->action, frame);
+        return;
+    }
     llg_nba_t* n = new_nba(0);
     if (!n) return;
     // The retained request is independent of both the issuer and the process
@@ -2027,6 +2050,7 @@ static void real_write(double* target, double value) {
 
 static sv4_t llg_net_compute(const llg_net_t* net);
 static void force_recompute_target(sv4_t* target, llg_net_t* net);
+static void inertial_unlink_pending(llg_inertial_t* driver);
 
 // Is `sig` currently covered by a packed force part? Procedural writes are
 // dropped while a signal is forced; net driver slots remain writable so their
@@ -2293,6 +2317,7 @@ static llg_net_t* force_net_for_target(sv4_t* target, llg_net_t* fallback) {
 
 static void force_recompute_target(sv4_t* target, llg_net_t* net) {
     net = force_net_for_target(target, net);
+    if (net && net->propagation) inertial_unlink_pending(net->propagation);
     sv4_t value;
     if (net) {
         value = llg_net_compute(net);
@@ -3281,18 +3306,30 @@ uint64_t llg_repeat_count(sv4_t value) {
     return sv4_to_u64(count);
 }
 
-void llg_nba_event_when(const llg_expr_event_spec_t* specs, int n,
-                        llg_event_t* target, uint64_t repeat) {
+static void register_deferred_trigger(const llg_expr_event_spec_t* specs,
+                                      int n, uint64_t repeat,
+                                      llg_event_object_t* target,
+                                      llg_event_assignment_fn action,
+                                      llg_frame_t* action_frame) {
     if (n < 0) abort();
-    if (!target || !target->object || !repeat || !region_can_mutate("nonblocking event registration")) {
+    if ((!target && !action) ||
+        !region_can_mutate("nonblocking event registration")) {
         release_expression_contexts(specs, n);
+        if (action_frame) llg_frame_release(action_frame);
         return;
     }
-    if (n == 0) return;
+    if (!repeat || n == 0) {
+        release_expression_contexts(specs, n);
+        if (action) invoke_deferred_action(action, action_frame);
+        else if (action_frame) llg_frame_release(action_frame);
+        return;
+    }
     if (!specs) abort();
     llg_deferred_trigger_t* trigger = (llg_deferred_trigger_t*)llg_checked_calloc(
         1, sizeof(*trigger), "deferred nonblocking event trigger");
-    trigger->target = target->object;
+    trigger->target = target;
+    trigger->action = action;
+    trigger->action_frame = action_frame;
     trigger->n = n;
     trigger->remaining = repeat;
     trigger->specs = (llg_expr_event_spec_t*)llg_checked_calloc(
@@ -3345,9 +3382,27 @@ void llg_nba_event_when(const llg_expr_event_spec_t* specs, int n,
     g.deferred_trigger_tail = trigger;
 }
 
+void llg_nba_event_when(const llg_expr_event_spec_t* specs, int n,
+                        llg_event_t* target, uint64_t repeat) {
+    register_deferred_trigger(specs, n, repeat,
+                              target ? target->object : NULL, NULL, NULL);
+}
+
+void llg_nba_event_assign_when(const llg_expr_event_spec_t* specs, int n,
+                               uint64_t repeat,
+                               llg_event_assignment_fn action,
+                               llg_frame_t* frame) {
+    if (!action) {
+        release_expression_contexts(specs, n);
+        if (frame) llg_frame_release(frame);
+        return;
+    }
+    register_deferred_trigger(specs, n, repeat, NULL, action, frame);
+}
+
 static llg_nba_t* new_nba(uint64_t ticks) {
     if (!region_can_mutate("nonblocking scheduling")) return NULL;
-    llg_proc_t* owner = llg_current();
+    llg_proc_t* owner = g.in_deferred_action ? NULL : llg_current();
     if (ticks > UINT64_MAX - g.now || g.nba_sequence == UINT64_MAX) {
         fprintf(stderr, "llg: fatal: nonblocking assignment time or sequence overflow\n");
         abort();
@@ -3500,10 +3555,20 @@ static sv4_t llg_net_compute(const llg_net_t* net) {
         net->n_drivers, net->width, net->is_signed, net->resolution);
 }
 
+static void llg_net_publish(llg_net_t* net, sv4_t resolved) {
+    if (net->propagation_enabled) {
+        llg_inertial_assign(&net->propagation, &net->resolved, resolved,
+                            net->propagation_rise, net->propagation_fall,
+                            net->propagation_turn_off);
+    } else {
+        sig_write(&net->resolved, resolved);
+    }
+}
+
 void llg_net_resolve(llg_net_t* net) {
     if (!region_can_mutate("net resolution")) return;
     if (llg_is_forced(&net->resolved)) force_recompute_target(&net->resolved, net);
-    else net->resolved = llg_net_compute(net);
+    else llg_net_publish(net, llg_net_compute(net));
 }
 
 void llg_net_write(llg_net_t* net, int idx, sv4_t value) {
@@ -3519,7 +3584,7 @@ void llg_net_write(llg_net_t* net, int idx, sv4_t value) {
     // contributions.
     sv4_t resolved = llg_net_compute(net);
     if (llg_is_forced(&net->resolved)) force_recompute_target(&net->resolved, net);
-    else sig_write(&net->resolved, resolved);
+    else llg_net_publish(net, resolved);
 }
 
 static int inertial_bit(const sv4_t* value, uint32_t bit) {

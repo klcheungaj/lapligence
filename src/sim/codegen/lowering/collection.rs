@@ -466,14 +466,49 @@ impl<'a> Codegen<'a> {
         // Packages have one shared static environment. Collect them
         // separately so package state is not duplicated per module user.
         for package in self.db.packages() {
-            let path = strip_lib(&self.node(*package).name);
+            let path = self.instance_path_of(*package);
             if path.is_empty() {
                 return Err("package has no name".to_string());
             }
             self.collect_instance(*package, &path)?;
             self.collect_funcs(*package, &path)?;
         }
+        // Compilation-unit declarations form one shared `$unit` namespace per
+        // admitted compilation unit. They are not design roots, so collect
+        // them explicitly after package storage is allocated; references keep
+        // their owned declaration identity across every importing module.
+        for unit in self.compilation_unit_scopes() {
+            let path = self.instance_path_of(unit);
+            self.collect_instance(unit, &path)?;
+            self.collect_funcs(unit, &path)?;
+        }
         Ok(tops)
+    }
+
+    pub(super) fn compilation_unit_scopes(&self) -> Vec<NodeId> {
+        self.db
+            .node_ids()
+            .filter(|id| self.is_compilation_unit(*id))
+            .collect()
+    }
+
+    fn is_compilation_unit(&self, id: NodeId) -> bool {
+        matches!(self.kind(id), NodeKind::Stmt(StmtKind::Begin))
+            && self.db.semantic_detail(id) == Some("CompilationUnit")
+    }
+
+    pub(super) fn is_runtime_environment(&self, id: NodeId) -> bool {
+        matches!(self.kind(id), NodeKind::Package) || self.is_compilation_unit(id)
+    }
+
+    pub(super) fn namespace_path(&self, id: NodeId) -> String {
+        if matches!(self.kind(id), NodeKind::Package) {
+            return strip_lib(&self.node(id).name);
+        }
+        if self.is_compilation_unit(id) {
+            return format!("$unit_{}", id.index());
+        }
+        strip_lib(&self.node(id).name)
     }
 
     fn collect_aggregate(&mut self, path: &str, node: NodeId) -> Result<bool, String> {
@@ -1769,6 +1804,46 @@ impl<'a> Codegen<'a> {
     /// Groups with anything the runtime cannot resolve (non-net members,
     /// mixed widths, unsupported net types, dynamic/NBA/task-actual writes)
     /// reject code generation rather than disconnecting the net group.
+    fn net_propagation_delay_for_members(
+        &mut self,
+        members: &[NodeId],
+        shown: &str,
+    ) -> Result<Option<crate::sim::ir::IrTransitionDelay>, String> {
+        let mut selected = None;
+        for &member in members {
+            let Some(delay) = self.db.net_delay(member) else {
+                continue;
+            };
+            let previous_inst = self.inst;
+            if let Some(instance) = self.owning_inst(member) {
+                self.inst = instance;
+            }
+            let result = self.driver_delay_ticks(member, delay);
+            self.inst = previous_inst;
+            let converted = result.map_err(|error| {
+                format!(
+                    "net propagation delay for `{shown}` at {}:{}:{}: {error}",
+                    self.node(member).file.as_deref().unwrap_or("<unknown>"),
+                    self.node(member).line,
+                    self.node(member).col,
+                )
+            })?;
+            if let Some(existing) = selected {
+                if existing != converted {
+                    return Err(format!(
+                        "net propagation delay for `{shown}` has conflicting member delays at {}:{}:{}",
+                        self.node(member).file.as_deref().unwrap_or("<unknown>"),
+                        self.node(member).line,
+                        self.node(member).col,
+                    ));
+                }
+            } else {
+                selected = Some(converted);
+            }
+        }
+        Ok(selected)
+    }
+
     pub(super) fn build_net_groups(&mut self) -> Result<(), String> {
         let nodes = self.design_nodes();
         // Union-find over the parent/child nets of every inout port.
@@ -1952,6 +2027,8 @@ impl<'a> Codegen<'a> {
                     self.node(members[0]).col,
                 ));
             }
+            let propagation_delay =
+                self.net_propagation_delay_for_members(members, &joined)?;
 
             // Group is valid: assign one driver slot per member (NodeId
             // order) and redirect every member's storage to the resolved cell.
@@ -2003,6 +2080,7 @@ impl<'a> Codegen<'a> {
                 kind,
                 n_drivers: members.len(),
                 driver_strengths: vec![(6, 6); members.len()],
+                propagation_delay,
             });
             for member in members {
                 let Some(signal) = self.sig_globals.get(member).map(|info| info.ir) else {
@@ -2589,6 +2667,8 @@ impl<'a> Codegen<'a> {
             if info.real {
                 return Err(format!("real-valued wired net `{shown}` is not supported"));
             }
+            let propagation_delay = self
+                .net_propagation_delay_for_members(std::slice::from_ref(&net), &shown)?;
             let name = format!("g_net_{}", self.model.net_groups.len());
             let group = self.model.net_groups.len();
             let initial_drivers = usize::from(sites.is_empty());
@@ -2599,6 +2679,7 @@ impl<'a> Codegen<'a> {
                 kind,
                 n_drivers: initial_drivers,
                 driver_strengths: vec![(6, 6); initial_drivers],
+                propagation_delay,
             });
 
             let old_global = info.global;
@@ -2693,6 +2774,14 @@ impl<'a> Codegen<'a> {
         let node = self.node(id);
         match node.parent {
             Some(p) => {
+                if self.is_runtime_environment(p) {
+                    let namespace = if self.is_compilation_unit(p) {
+                        "$unit".to_string()
+                    } else {
+                        strip_lib(&self.node(p).name)
+                    };
+                    return format!("{namespace}::{}", node.name);
+                }
                 let scope = self.db.instance_path(p);
                 if scope.is_empty() {
                     strip_lib(&node.name)
@@ -2733,6 +2822,15 @@ impl<'a> Codegen<'a> {
                 };
                 if !name.is_empty() {
                     parts.push(name);
+                }
+            } else if self.is_runtime_environment(scope_id) {
+                let name = if self.is_compilation_unit(scope_id) {
+                    "$unit"
+                } else {
+                    scope.name.as_str()
+                };
+                if !name.is_empty() {
+                    parts.push(name.to_owned());
                 }
             }
             current = scope.parent;
@@ -3009,7 +3107,7 @@ impl<'a> Codegen<'a> {
     }
 
     /// The module instance that owns `node` (walking up the parent chain).
-    fn owning_inst(&self, node: NodeId) -> Option<NodeId> {
+    pub(super) fn owning_inst(&self, node: NodeId) -> Option<NodeId> {
         let mut cur = self.node(node).parent;
         while let Some(p) = cur {
             if matches!(self.kind(p), NodeKind::ModuleInst { .. }) {
@@ -3153,7 +3251,10 @@ impl<'a> Codegen<'a> {
             .get(1)
             .copied()
             .ok_or_else(|| format!("array initializer for `{name}` in `{path}` without RHS"))?;
-        let vals = self.array_init_consts(path, &name, rhs)?;
+        let vals = match self.array_init_consts(path, &name, rhs) {
+            Ok(values) => values,
+            Err(_) => return Ok(None),
+        };
         Ok(Some((target, vals)))
     }
 
@@ -3343,7 +3444,13 @@ impl<'a> Codegen<'a> {
             }
         }
         let init = match meta.init {
-            Some(eid) => Some(self.array_init_consts(path, name, eid)?),
+            Some(eid) => match self.array_init_consts(path, name, eid) {
+                Ok(values) => Some(values),
+                Err(_) => {
+                    self.array_initializers.push((node, eid));
+                    None
+                }
+            },
             None => None,
         };
         let ir = self.model.arrays.len();
@@ -4752,7 +4859,9 @@ impl<'a> Codegen<'a> {
     fn callable_environment(&self, ft: NodeId) -> Option<NodeId> {
         let mut current = self.node(ft).parent;
         while let Some(id) = current {
-            if matches!(self.kind(id), NodeKind::ModuleInst { .. } | NodeKind::Package) {
+            if matches!(self.kind(id), NodeKind::ModuleInst { .. })
+                || self.is_runtime_environment(id)
+            {
                 return Some(id);
             }
             current = self.node(id).parent;
@@ -6842,6 +6951,9 @@ impl<'a> Codegen<'a> {
         // Driver evaluation must keep watching its inputs while a captured
         // propagation event is pending (IEEE 1364-2001 6.1.3).
         let scaled_delay = match self.kind(ca) {
+            NodeKind::ContAssign {
+                net_decl: true, ..
+            } => None,
             NodeKind::ContAssign {
                 delay: Some(de), ..
             } => Some(self.driver_delay_ticks(ca, *de)?),

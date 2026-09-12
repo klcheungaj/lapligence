@@ -110,6 +110,15 @@ pub enum IrContainerStmt {
         index: IrExpr,
         value: IrExpr,
     },
+    /// Set the value returned for a missing associative-array key without
+    /// creating an entry.  The default is separate from the array's entries,
+    /// so `exists`/`num` remain unchanged.
+    SetDefault {
+        container: usize,
+        value: IrExpr,
+    },
+    /// Restore the element-type default used for missing associative keys.
+    ResetDefault(usize),
     SetString {
         container: usize,
         key: IrStringExpr,
@@ -386,6 +395,19 @@ impl IrContainerStmt {
                 }
                 Ok(())
             }
+            Self::SetDefault { container, .. } => {
+                let container = container_kind(model, *container, Some("associative"))?;
+                if !matches!(container.kind, IrContainerKind::Associative { .. }) {
+                    return Err(IrValidationError::new(
+                        "container",
+                        "associative default requires an associative array",
+                    ));
+                }
+                Ok(())
+            }
+            Self::ResetDefault(container) => {
+                container_kind(model, *container, Some("associative")).map(|_| ())
+            }
             Self::SetString { container, key, .. } => {
                 string_container(model, *container)?;
                 key.validate(model, string_return)
@@ -430,6 +452,7 @@ impl IrContainerStmt {
                 visit(index);
                 visit(value);
             }
+            Self::SetDefault { value, .. } => visit(value),
             Self::SetString { key, value, .. } => {
                 key.expressions(visit);
                 visit(value);
@@ -438,7 +461,7 @@ impl IrContainerStmt {
             Self::DeleteIndex { index, .. } => visit(index),
             Self::DeleteString { key, .. } => key.expressions(visit),
             Self::AssignValues { values, .. } => values.iter().for_each(visit),
-            Self::Copy { .. } | Self::Delete(_) => {}
+            Self::Copy { .. } | Self::Delete(_) | Self::ResetDefault(_) => {}
         }
     }
 
@@ -449,6 +472,7 @@ impl IrContainerStmt {
                 visit(index);
                 visit(value);
             }
+            Self::SetDefault { value, .. } => visit(value),
             Self::SetString { key, value, .. } => {
                 key.expressions_mut(visit);
                 visit(value);
@@ -457,7 +481,7 @@ impl IrContainerStmt {
             Self::DeleteIndex { index, .. } => visit(index),
             Self::DeleteString { key, .. } => key.expressions_mut(visit),
             Self::AssignValues { values, .. } => values.iter_mut().for_each(visit),
-            Self::Copy { .. } | Self::Delete(_) => {}
+            Self::Copy { .. } | Self::Delete(_) | Self::ResetDefault(_) => {}
         }
     }
 }

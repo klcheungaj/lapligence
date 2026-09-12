@@ -447,6 +447,22 @@ fn walk_stmt_mut(s: &mut IrStmt, f: &mut impl FnMut(&mut IrExpr)) {
             walk_lhs_mut(lhs, f);
             walk_expr_mut(rhs, f);
         }
+        IrStmt::NonblockingEventAssignWhen {
+            lhs,
+            rhs,
+            repeat,
+            captures,
+            ..
+        } => {
+            walk_lhs_mut(lhs, f);
+            walk_expr_mut(rhs, f);
+            if let Some(repeat) = repeat {
+                walk_expr_mut(repeat, f);
+            }
+            for capture in captures {
+                walk_expr_mut(capture.initial_mut(), f);
+            }
+        }
         IrStmt::DelayedStringAssign { rhs, .. } => {
             rhs.expressions_mut(&mut |expr| walk_expr_mut(expr, f));
         }
@@ -557,6 +573,15 @@ fn walk_pre_fn_mut(pre: &mut IrPreFn, f: &mut impl FnMut(&mut IrExpr)) {
                     walk_expr_mut(capture.initial_mut(), f);
                 }
             }
+        }
+        IrPreFn::EventAssign {
+            captures, lhs, rhs, ..
+        } => {
+            for capture in captures {
+                walk_expr_mut(capture.initial_mut(), f);
+            }
+            walk_lhs_mut(lhs, f);
+            walk_expr_mut(rhs, f);
         }
         IrPreFn::DisplayEval { args, .. } => {
             for arg in args {
@@ -1512,6 +1537,15 @@ fn collect_pre_fns_rw(pre_fns: &[IrPreFn], model: &IrModel, rw: &mut Rw) {
                     }
                 }
             }
+            IrPreFn::EventAssign {
+                captures, lhs, rhs, ..
+            } => {
+                for capture in captures {
+                    collect_expr_reads(capture.initial(), model, rw);
+                }
+                collect_lhs_rw(lhs, model, rw);
+                collect_expr_reads(rhs, model, rw);
+            }
             IrPreFn::DisplayEval { args, .. } => {
                 for arg in args {
                     arg.expressions(&mut |expression| collect_expr_reads(expression, model, rw));
@@ -1629,6 +1663,22 @@ fn collect_stmt_rw(s: &IrStmt, model: &IrModel, rw: &mut Rw) {
         | IrStmt::InertialAssign { lhs, rhs, .. } => {
             collect_lhs_rw(lhs, model, rw);
             collect_expr_reads(rhs, model, rw);
+        }
+        IrStmt::NonblockingEventAssignWhen {
+            lhs,
+            rhs,
+            repeat,
+            captures,
+            ..
+        } => {
+            collect_lhs_rw(lhs, model, rw);
+            collect_expr_reads(rhs, model, rw);
+            if let Some(repeat) = repeat {
+                collect_expr_reads(repeat, model, rw);
+            }
+            for capture in captures {
+                collect_expr_reads(capture.initial(), model, rw);
+            }
         }
         IrStmt::DelayedStringAssign { rhs, .. } => {
             rhs.expressions(&mut |expr| collect_expr_reads(expr, model, rw));

@@ -186,6 +186,15 @@ pub(super) fn statement(ctx: &RCtx<'_>, operation: &IrContainerStmt) -> Result<S
                 render_expr_impl(ctx, value)?.code
             )
         }
+        IrContainerStmt::SetDefault { container, value } => format!(
+            "    llg_assoc_set_default(&{}, {});\n",
+            name(ctx, *container),
+            render_expr_impl(ctx, value)?.code
+        ),
+        IrContainerStmt::ResetDefault(container) => format!(
+            "    llg_assoc_reset_default(&{});\n",
+            name(ctx, *container)
+        ),
         IrContainerStmt::SetString {
             container,
             key,

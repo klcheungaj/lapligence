@@ -56,7 +56,7 @@ fn render_model(execution: &ExecutionModel, capacity: u32) -> Result<String, Str
         out.push_str("#include \"llg_wave.h\"\n");
     }
     out.push_str(
-        "\n#include <stdio.h>\n#include <math.h>\n\n\
+        "\n#include <stdio.h>\n#include <stdlib.h>\n#include <math.h>\n\n\
          /* signals start all-X; driven by processes and link processes */\n",
     );
     if model.containers.iter().any(|container| {
@@ -226,14 +226,23 @@ fn render_signal_decls(model: &IrModel, out: &mut String) {
             .map(|(_, one)| one.to_string())
             .collect::<Vec<_>>()
             .join(", ");
+        let (propagation_enabled, propagation_rise, propagation_fall, propagation_turn_off) =
+            match g.propagation_delay {
+                Some(delay) => (1, delay.rise, delay.fall, delay.turn_off),
+                None => (0, 0, 0, 0),
+            };
         out.push_str(&format!(
-            "static llg_net_t {} = {{ {resolved_init}, {}, {}, {}, {}, {{ {} }}, {{ {strength0} }}, {{ {strength1} }} }};\n",
+            "static llg_net_t {} = {{ {resolved_init}, {}, {}, {}, {}, {{ {} }}, {{ {strength0} }}, {{ {strength1} }}, {}, NULL, {}, {}, {} }};\n",
             g.c_name,
             g.width,
             g.signed as u8,
             g.kind.c_value(),
             g.n_drivers,
-            driver_ptrs.join(", ")
+            driver_ptrs.join(", "),
+            propagation_enabled,
+            propagation_rise,
+            propagation_fall,
+            propagation_turn_off,
         ));
     }
     // Named events use a stable waiter-table object plus an assignable handle.
@@ -1002,6 +1011,7 @@ mod tests {
             kind: crate::sim::ir::IrNetKind::Wire,
             n_drivers: 1,
             driver_strengths: vec![(6, 6)],
+            propagation_delay: None,
         }];
         model.arrays = vec![IrArray {
             c_name: "G_top_mem".to_string(),

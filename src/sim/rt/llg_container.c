@@ -585,6 +585,9 @@ void llg_assoc_init_integral(llg_assoc_t* array, uint32_t element_width,
     array->key_width = key_width;
     array->key_signed = key_width ? !!key_signed : 0;
     array->key_two_state = key_width ? !!key_two_state : 0;
+    array->default_value = llg_element_default(element_width,
+                                                array->element_signed,
+                                                array->element_two_state);
 }
 
 void llg_assoc_init_string(llg_assoc_t* array, uint32_t element_width,
@@ -595,6 +598,9 @@ void llg_assoc_init_string(llg_assoc_t* array, uint32_t element_width,
     array->element_signed = !!element_signed;
     array->element_two_state = !!element_two_state;
     array->key_kind = LLG_ASSOC_STRING;
+    array->default_value = llg_element_default(element_width,
+                                                array->element_signed,
+                                                array->element_two_state);
 }
 
 void llg_assoc_delete(llg_assoc_t* array) {
@@ -654,13 +660,11 @@ static int llg_assoc_normalize_key(const llg_assoc_t* array, sv4_t input,
         *output = sv4_cast(input, array->key_width, array->key_signed);
         if (array->key_two_state) *output = sv4_to_two_state(*output);
     } else {
-        uint32_t width = input.width;
-        while (width > 1) {
-            uint32_t bit = width - 1;
-            if ((input.bits[bit / 64] >> (bit % 64)) & 1u) break;
-            --width;
-        }
-        *output = sv4_resize(input, width ? width : 1, 0);
+        // A wildcard index has no declared width.  Normalize to the model
+        // width after applying the index expression's signed extension so
+        // equal integral values from different operand widths share one key.
+        // Keeping the model-sized value avoids host-integer narrowing.
+        *output = sv4_cast(input, LLG_MAX_WIDTH, input.is_signed);
         output->is_signed = 0;
     }
     return !sv4_is_unknown(*output);
@@ -713,10 +717,8 @@ sv4_t llg_assoc_get_integral(const llg_assoc_t* array, sv4_t key) {
     } else {
         size_t position = llg_assoc_integral_position(array, normalized, &found);
         if (found) return array->entries[position].value;
-        llg_container_warning("nonexistent associative-array entry read");
     }
-    return llg_element_default(array->element_width, array->element_signed,
-                               array->element_two_state);
+    return array->default_value;
 }
 
 int llg_assoc_set_integral(llg_assoc_t* array, sv4_t key, sv4_t value) {
@@ -775,6 +777,31 @@ int llg_assoc_delete_integral(llg_assoc_t* array, sv4_t key) {
                array->shape_dependency,
                LLG_CONTAINER_CHANGED_CONTENTS | LLG_CONTAINER_CHANGED_SHAPE);
     return 1;
+}
+
+void llg_assoc_set_default(llg_assoc_t* array, sv4_t value) {
+    sv4_t assigned = llg_element_assign(
+        value, array->element_width, array->element_signed,
+        array->element_two_state);
+    int changed = !array->has_default_value ||
+                  !sv4_same(array->default_value, assigned);
+    array->default_value = assigned;
+    array->has_default_value = 1;
+    llg_notify(array->notify, array->contents_dependency,
+               array->shape_dependency,
+               changed ? LLG_CONTAINER_CHANGED_CONTENTS : 0);
+}
+
+void llg_assoc_reset_default(llg_assoc_t* array) {
+    sv4_t default_value = llg_element_default(
+        array->element_width, array->element_signed, array->element_two_state);
+    int changed = array->has_default_value ||
+                  !sv4_same(array->default_value, default_value);
+    array->default_value = default_value;
+    array->has_default_value = 0;
+    llg_notify(array->notify, array->contents_dependency,
+               array->shape_dependency,
+               changed ? LLG_CONTAINER_CHANGED_CONTENTS : 0);
 }
 
 static int llg_assoc_integral_traversal(const llg_assoc_t* array, sv4_t* key,
@@ -857,9 +884,7 @@ sv4_t llg_assoc_get_string(const llg_assoc_t* array, const void* key,
     int found;
     size_t position = llg_assoc_string_position(array, key, key_length, &found);
     if (found) return array->entries[position].value;
-    llg_container_warning("nonexistent associative-array entry read");
-    return llg_element_default(array->element_width, array->element_signed,
-                               array->element_two_state);
+    return array->default_value;
 }
 
 int llg_assoc_set_string(llg_assoc_t* array, const void* key, size_t key_length,
@@ -981,6 +1006,9 @@ void llg_assoc_copy(llg_assoc_t* dst, const llg_assoc_t* src) {
 
     int shape_changed = dst->size != src->size;
     int contents_changed = shape_changed;
+    if (!sv4_same(dst->default_value, src->default_value) ||
+        dst->has_default_value != src->has_default_value)
+        contents_changed = 1;
     if (!contents_changed) {
         for (size_t i = 0; i < src->size; ++i) {
             int key_changed;
@@ -1030,6 +1058,8 @@ void llg_assoc_copy(llg_assoc_t* dst, const llg_assoc_t* src) {
     dst->entries = entries;
     dst->size = src->size;
     dst->capacity = src->size;
+    dst->default_value = src->default_value;
+    dst->has_default_value = src->has_default_value;
     llg_notify(notify, contents_dependency, shape_dependency,
                (contents_changed ? LLG_CONTAINER_CHANGED_CONTENTS : 0) |
                    (shape_changed ? LLG_CONTAINER_CHANGED_SHAPE : 0));
