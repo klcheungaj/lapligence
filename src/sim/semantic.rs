@@ -424,6 +424,7 @@ impl<'db> SemanticModel<'db> {
                     Some(SynthesisIssueKind::DriveStrength)
                 }
                 NodeKind::Stmt(statement) => classify_statement(self.db, id, statement),
+                NodeKind::AssertionExpr(_) => None,
                 NodeKind::Expr(expression) => classify_expression(expression),
                 NodeKind::SysCall { name } if is_synthesis_system_call(name) => None,
                 NodeKind::SysCall { .. } | NodeKind::MethodCall { .. } => {
@@ -617,6 +618,7 @@ fn classify_simulation_node(
         | NodeKind::ContAssign { .. }
         | NodeKind::Gate { .. }
         | NodeKind::Stmt(_)
+        | NodeKind::AssertionExpr(_)
         | NodeKind::Expr(_)
         | NodeKind::SysCall { .. }
         | NodeKind::MethodCall { .. }
@@ -673,6 +675,8 @@ fn is_declaration_only_unknown(detail: Option<&str>) -> bool {
                 | "CovergroupType"
                 | "Property"
                 | "Sequence"
+                | "AssertionPort"
+                | "LocalAssertionVar"
                 | "ClockingBlock"
                 | "ClockingBlockPort"
                 | "Constraint"

@@ -995,6 +995,7 @@ fn render_stmt_scoped(
             let child = RCtx {
                 model: ctx.model,
                 func: ctx.func,
+                sampled: ctx.sampled,
                 activation_label: Some(exit.clone()),
             };
             let mut labels = HashSet::new();

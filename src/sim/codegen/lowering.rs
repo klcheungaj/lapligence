@@ -253,6 +253,7 @@ use crate::sim::ir::{
     StorageOwnership, StorageRef, LLG_MAX_NET_DRIVERS,
 };
 
+mod assertions;
 mod collection;
 mod containers;
 mod expressions;
@@ -418,11 +419,13 @@ fn generate_from_db_with_opts_impl(
     // post-simulation phase: they run after `llg_rt_run` returns, not at
     // t=0.
     let final_names = std::mem::take(&mut cg.final_procs);
+    let assertion_action_procs = std::mem::take(&mut cg.assertion_action_procs);
     model.spawns = model
         .processes
         .iter()
         .map(|p| p.c_name.clone())
         .filter(|n| !final_names.contains(n))
+        .filter(|n| !assertion_action_procs.contains(n))
         .collect();
     model.final_spawns = final_names;
     model.validate().map_err(|error| error.to_string())?;
@@ -891,6 +894,9 @@ struct Codegen<'a> {
     /// emission order — spawned into [`IrModel::final_spawns`] instead of
     /// the t=0 spawn list.
     final_procs: Vec<String>,
+    /// Assertion action helpers are registered by the runtime and must not
+    /// also be spawned as ordinary design processes at time zero.
+    assertion_action_procs: HashSet<String>,
 }
 
 /// Runtime-visible bindings for one array-method `with` expression. A zero
@@ -979,6 +985,7 @@ impl<'a> Codegen<'a> {
             structural_drivers: Vec::new(),
             structural_driver_terminal_sites: HashMap::new(),
             final_procs: Vec::new(),
+            assertion_action_procs: HashSet::new(),
         }
     }
 

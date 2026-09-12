@@ -112,6 +112,7 @@ fn runtime_width_limit_is_a_backend_policy_not_an_ir_invariant() {
     let ctx = RCtx {
         model: &model,
         func: None,
+        sampled: false,
         activation_label: None,
     };
     for width in [LLG_WIDTH_LIMIT, LLG_WIDTH_LIMIT + 1, u32::MAX] {
@@ -229,6 +230,7 @@ fn indexed_read_uses_its_elaborated_extent() {
         &RCtx {
             model: &model,
             func: None,
+            sampled: false,
             activation_label: None,
         },
         &expression,
@@ -268,6 +270,7 @@ fn selected_net_driver_preserves_member_state_conversion() {
         &RCtx {
             model: &model,
             func: None,
+            sampled: false,
             activation_label: None,
         },
         &statement,
@@ -283,6 +286,7 @@ fn detached_fragments_reject_missing_storage_before_rendering() {
     let ctx = RCtx {
         model: &model,
         func: None,
+        sampled: false,
         activation_label: None,
     };
     let expression = IrExpr::try_new(IrExprKind::SigRead(7), 1, false, None).unwrap();
@@ -388,6 +392,7 @@ fn output_temporary_uses_its_declared_formal_after_c_argument_reordering() {
         &RCtx {
             model: &model,
             func: None,
+            sampled: false,
             activation_label: None,
         },
         &expression,

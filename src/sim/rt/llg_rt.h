@@ -371,6 +371,20 @@ void llg_assertion_failure(int kind, uint64_t identity, const char* label,
                            const char* location);
 void llg_assertion_cover(uint64_t identity, const char* label, const char* location);
 uint64_t llg_assertion_count(int kind);
+uint64_t llg_assertion_vacuous_count(void);
+
+// Concurrent assertion callbacks are generated as side-effect-free sampled
+// predicates and Reactive-region action processes. The runtime owns the
+// attempt queues and never evaluates a property against live NBA state.
+typedef int (*llg_concurrent_assertion_predicate_fn)(void* data);
+typedef void (*llg_concurrent_assertion_action_fn)(llg_proc_t* self);
+int llg_assertion_register(
+    sv4_t* clock, int edge, sv4_t* disable,
+    llg_concurrent_assertion_predicate_fn antecedent,
+    llg_concurrent_assertion_predicate_fn consequent,
+    llg_concurrent_assertion_action_fn pass_action,
+    llg_concurrent_assertion_action_fn fail_action, void* data, int kind,
+    int overlapped, uint64_t identity, const char* label, const char* location);
 
 // ── Command-line plusargs ───────────────────────────────────────────────────
 //

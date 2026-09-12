@@ -443,6 +443,7 @@ fn semantic_kind(kind: SemanticKind) -> &'static str {
         SemanticKind::Process => "process",
         SemanticKind::ContinuousAssign => "continuous assignment",
         SemanticKind::TimingControl => "timing control",
+        SemanticKind::AssertionExpr => "assertion expression",
         SemanticKind::Primitive => "primitive",
         SemanticKind::Subroutine => "subroutine",
         SemanticKind::Argument => "argument",

@@ -2103,6 +2103,117 @@ pub enum IrImmediateAssertionKind {
     Cover,
 }
 
+/// Concurrent assertion flavor retained through sampling and action dispatch.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum IrConcurrentAssertionKind {
+    Assert,
+    Assume,
+    Cover,
+}
+
+/// One lowered concurrent assertion instance.
+///
+/// The property itself is intentionally not represented as an ordinary
+/// statement. Its sampled expression callbacks run in Observed, while its
+/// optional action processes are dispatched in Reactive by the runtime. The
+/// identity is the owned semantic assertion node, not a generated C name.
+#[derive(Clone, Debug, PartialEq)]
+pub struct IrAssertion {
+    pub(in crate::sim) identity: u64,
+    pub(in crate::sim) label: String,
+    pub(in crate::sim) location: String,
+    pub(in crate::sim) kind: IrConcurrentAssertionKind,
+    pub(in crate::sim) clock_signal: usize,
+    pub(in crate::sim) posedge: bool,
+    pub(in crate::sim) disable_signal: Option<usize>,
+    pub(in crate::sim) antecedent: Option<IrExpr>,
+    pub(in crate::sim) consequent: IrExpr,
+    pub(in crate::sim) overlapped: bool,
+    pub(in crate::sim) pass_action: Option<String>,
+    pub(in crate::sim) fail_action: Option<String>,
+}
+
+impl IrAssertion {
+    #[allow(clippy::too_many_arguments)]
+    pub(in crate::sim) fn new(
+        identity: u64,
+        label: String,
+        location: String,
+        kind: IrConcurrentAssertionKind,
+        clock_signal: usize,
+        posedge: bool,
+        disable_signal: Option<usize>,
+        antecedent: Option<IrExpr>,
+        consequent: IrExpr,
+        overlapped: bool,
+        pass_action: Option<String>,
+        fail_action: Option<String>,
+    ) -> Self {
+        Self {
+            identity,
+            label,
+            location,
+            kind,
+            clock_signal,
+            posedge,
+            disable_signal,
+            antecedent,
+            consequent,
+            overlapped,
+            pass_action,
+            fail_action,
+        }
+    }
+
+    pub fn identity(&self) -> u64 {
+        self.identity
+    }
+
+    pub fn label(&self) -> &str {
+        &self.label
+    }
+
+    pub fn location(&self) -> &str {
+        &self.location
+    }
+
+    pub fn kind(&self) -> IrConcurrentAssertionKind {
+        self.kind
+    }
+
+    pub fn clock_signal(&self) -> usize {
+        self.clock_signal
+    }
+
+    pub fn posedge(&self) -> bool {
+        self.posedge
+    }
+
+    pub fn disable_signal(&self) -> Option<usize> {
+        self.disable_signal
+    }
+
+    pub fn antecedent(&self) -> Option<&IrExpr> {
+        self.antecedent.as_ref()
+    }
+
+    pub fn consequent(&self) -> &IrExpr {
+        &self.consequent
+    }
+
+    pub fn overlapped(&self) -> bool {
+        self.overlapped
+    }
+
+    pub fn pass_action(&self) -> Option<&str> {
+        self.pass_action.as_deref()
+    }
+
+    pub fn fail_action(&self) -> Option<&str> {
+        self.fail_action.as_deref()
+    }
+}
+
 /// Resolved identity of a named procedural activation. Declaration and
 /// elaborated-instance identities are kept separate so equal source names in
 /// different instances cannot alias at runtime.
@@ -3569,6 +3680,8 @@ pub struct IrModel {
     pub(in crate::sim) classes: Vec<IrClass>,
     pub(in crate::sim) events: Vec<IrEvent>,
     pub(in crate::sim) funcs: Vec<IrFunc>,
+    /// Concurrent assertion instances, kept outside ordinary process IR.
+    pub(in crate::sim) assertions: Vec<IrAssertion>,
     /// Comb drivers, then links, then always/initial processes — push order
     /// equals spawn order.
     pub(in crate::sim) processes: Vec<IrProcess>,
@@ -3601,6 +3714,7 @@ pub struct IrModelParts {
     pub classes: Vec<IrClass>,
     pub events: Vec<IrEvent>,
     pub funcs: Vec<IrFunc>,
+    pub assertions: Vec<IrAssertion>,
     pub processes: Vec<IrProcess>,
     pub init_steps: Vec<IrInitStep>,
     pub spawns: Vec<String>,
@@ -3637,6 +3751,7 @@ impl IrModel {
             classes: parts.classes,
             events: parts.events,
             funcs: parts.funcs,
+            assertions: parts.assertions,
             processes: parts.processes,
             init_steps: parts.init_steps,
             spawns: parts.spawns,
@@ -3672,6 +3787,9 @@ impl IrModel {
     }
     pub fn funcs(&self) -> &[IrFunc] {
         &self.funcs
+    }
+    pub fn assertions(&self) -> &[IrAssertion] {
+        &self.assertions
     }
     pub fn processes(&self) -> &[IrProcess] {
         &self.processes

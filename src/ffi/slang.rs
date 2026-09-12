@@ -538,6 +538,7 @@ pub enum SemanticKind {
     Scope,
     TimingControl,
     NetAlias,
+    AssertionExpr,
     Unsupported,
 }
 
@@ -557,6 +558,30 @@ pub const SEMANTIC_UNIQUE_PRIORITY_PRIORITY: u64 = 3;
 pub const SEMANTIC_STMT_IMMEDIATE_ASSERT: u32 = 61;
 pub const SEMANTIC_STMT_IMMEDIATE_ASSUME: u32 = 62;
 pub const SEMANTIC_STMT_IMMEDIATE_COVER: u32 = 63;
+pub const SEMANTIC_STMT_CONCURRENT_ASSERT: u32 = 64;
+pub const SEMANTIC_STMT_CONCURRENT_ASSUME: u32 = 65;
+pub const SEMANTIC_STMT_CONCURRENT_COVER: u32 = 66;
+
+pub const SEMANTIC_ASSERTION_EXPR_INVALID: u32 = 1;
+pub const SEMANTIC_ASSERTION_EXPR_SIMPLE: u32 = 2;
+pub const SEMANTIC_ASSERTION_EXPR_SEQUENCE_CONCAT: u32 = 3;
+pub const SEMANTIC_ASSERTION_EXPR_SEQUENCE_WITH_MATCH: u32 = 4;
+pub const SEMANTIC_ASSERTION_EXPR_UNARY: u32 = 5;
+pub const SEMANTIC_ASSERTION_EXPR_BINARY: u32 = 6;
+pub const SEMANTIC_ASSERTION_EXPR_FIRST_MATCH: u32 = 7;
+pub const SEMANTIC_ASSERTION_EXPR_CLOCKING: u32 = 8;
+pub const SEMANTIC_ASSERTION_EXPR_STRONG_WEAK: u32 = 9;
+pub const SEMANTIC_ASSERTION_EXPR_ABORT: u32 = 10;
+pub const SEMANTIC_ASSERTION_EXPR_CONDITIONAL: u32 = 11;
+pub const SEMANTIC_ASSERTION_EXPR_CASE: u32 = 12;
+pub const SEMANTIC_ASSERTION_EXPR_DISABLE_IFF: u32 = 13;
+
+pub const SEMANTIC_ASSERTION_REPETITION: u64 = 1 << 0;
+pub const SEMANTIC_ASSERTION_RANGE: u64 = 1 << 1;
+pub const SEMANTIC_ASSERTION_STRONG: u64 = 1 << 2;
+pub const SEMANTIC_ASSERTION_ABORT_REJECT: u64 = 1 << 3;
+pub const SEMANTIC_ASSERTION_ABORT_SYNC: u64 = 1 << 4;
+pub const SEMANTIC_EXPR_ASSERTION_INSTANCE: u32 = 90;
 
 /// Immediate assertion metadata carried in [`SemanticNode::auxiliary`].
 pub const SEMANTIC_ASSERTION_DEFERRED: u64 = 1 << 0;
@@ -623,6 +648,28 @@ pub enum SemanticOperation {
     MinTypMax,
     MultiAssignmentPattern,
     List,
+    AssertionAnd,
+    AssertionOr,
+    AssertionIntersect,
+    AssertionThroughout,
+    AssertionWithin,
+    AssertionIff,
+    AssertionUntil,
+    AssertionSUntil,
+    AssertionUntilWith,
+    AssertionSUntilWith,
+    AssertionImplies,
+    AssertionOverlappedImplies,
+    AssertionNonOverlappedImplies,
+    AssertionOverlappedFollowedBy,
+    AssertionNonOverlappedFollowedBy,
+    AssertionNot,
+    AssertionNextTime,
+    AssertionSNextTime,
+    AssertionAlways,
+    AssertionSAlways,
+    AssertionEventually,
+    AssertionSEventually,
 }
 
 /// Exact source time scale attached by Slang to a definition or instance.
@@ -686,6 +733,10 @@ pub enum SemanticEdgeRole {
     SourceIdentity,
     ReturnOwner,
     AliasNet,
+    PropertySpec,
+    Clocking,
+    AssertionFormal,
+    AssertionActual,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1777,6 +1828,10 @@ fn decode_semantic_edges(
                 30 => SemanticEdgeRole::SourceIdentity,
                 31 => SemanticEdgeRole::ReturnOwner,
                 32 => SemanticEdgeRole::AliasNet,
+                33 => SemanticEdgeRole::PropertySpec,
+                34 => SemanticEdgeRole::Clocking,
+                35 => SemanticEdgeRole::AssertionFormal,
+                36 => SemanticEdgeRole::AssertionActual,
                 _ => return Err(invalid_native("semantic edge has an unknown role")),
             };
             Ok(SemanticEdge {
@@ -2003,6 +2058,7 @@ fn decode_semantic_kind(raw: u32) -> Result<SemanticKind, SlangError> {
         25 => SemanticKind::Scope,
         26 => SemanticKind::TimingControl,
         27 => SemanticKind::NetAlias,
+        28 => SemanticKind::AssertionExpr,
         255 => SemanticKind::Unsupported,
         _ => return Err(invalid_native("semantic node has an unknown kind")),
     })
@@ -2016,10 +2072,11 @@ fn validate_semantic_subkind(kind: u32, subkind: u32) -> Result<(), SlangError> 
         13 => matches!(subkind, 0..=6),
         14 => matches!(subkind, 0 | 228),
         15 => matches!(subkind, 0 | 160..=164 | 200..=227),
-        18 => matches!(subkind, 0 | 32..=63),
-        19 => matches!(subkind, 0 | 64..=78 | 80..=89),
+        18 => matches!(subkind, 0 | 32..=66),
+        19 => matches!(subkind, 0 | 64..=78 | 80..=90),
         25 => matches!(subkind, 0 | 194 | SEMANTIC_SCOPE_CLOCKING_BLOCK),
         26 => matches!(subkind, 0 | 112..=118),
+        28 => matches!(subkind, 0..=13),
         20..=22 => matches!(subkind, 0 | 76),
         9 => matches!(subkind, 0 | 229 | SEMANTIC_VARIABLE_CLOCKING),
         2 | 3 | 5..=7 | 10..=12 | 16 | 17 | 23 | 24 | 27 | 255 => subkind == 0,
@@ -2061,6 +2118,17 @@ fn validate_semantic_auxiliary(node: &RawSemanticNode) -> Result<(), SlangError>
         // Immediate assertions reserve two bits to preserve deferred/final
         // syntax until the simulator can either execute or reject it.
         (18, 61..=63, _) => node.auxiliary <= 3,
+        // Concurrent assertion expressions use a small set of owned flags;
+        // unknown flags would make the property shape ambiguous downstream.
+        (28, 1..=13, _) => {
+            node.auxiliary
+                & !(SEMANTIC_ASSERTION_REPETITION
+                    | SEMANTIC_ASSERTION_RANGE
+                    | SEMANTIC_ASSERTION_STRONG
+                    | SEMANTIC_ASSERTION_ABORT_REJECT
+                    | SEMANTIC_ASSERTION_ABORT_SYNC)
+                == 0
+        }
         // Foreach uses the auxiliary field for the number of source iterator
         // slots so omitted trailing dimensions survive the owned snapshot.
         // Keep the count bounded independently of the later DB allocation.
@@ -2128,6 +2196,28 @@ fn decode_semantic_operation(raw: u32) -> Result<SemanticOperation, SlangError> 
         45 => SemanticOperation::MinTypMax,
         46 => SemanticOperation::MultiAssignmentPattern,
         47 => SemanticOperation::List,
+        48 => SemanticOperation::AssertionAnd,
+        49 => SemanticOperation::AssertionOr,
+        50 => SemanticOperation::AssertionIntersect,
+        51 => SemanticOperation::AssertionThroughout,
+        52 => SemanticOperation::AssertionWithin,
+        53 => SemanticOperation::AssertionIff,
+        54 => SemanticOperation::AssertionUntil,
+        55 => SemanticOperation::AssertionSUntil,
+        56 => SemanticOperation::AssertionUntilWith,
+        57 => SemanticOperation::AssertionSUntilWith,
+        58 => SemanticOperation::AssertionImplies,
+        59 => SemanticOperation::AssertionOverlappedImplies,
+        60 => SemanticOperation::AssertionNonOverlappedImplies,
+        61 => SemanticOperation::AssertionOverlappedFollowedBy,
+        62 => SemanticOperation::AssertionNonOverlappedFollowedBy,
+        63 => SemanticOperation::AssertionNot,
+        64 => SemanticOperation::AssertionNextTime,
+        65 => SemanticOperation::AssertionSNextTime,
+        66 => SemanticOperation::AssertionAlways,
+        67 => SemanticOperation::AssertionSAlways,
+        68 => SemanticOperation::AssertionEventually,
+        69 => SemanticOperation::AssertionSEventually,
         _ => return Err(invalid_native("semantic node has an unknown operation")),
     })
 }
@@ -3100,15 +3190,21 @@ mod tests {
         assert!(validate_semantic_subkind(18, SEMANTIC_STMT_IMMEDIATE_ASSERT).is_ok());
         assert!(validate_semantic_subkind(18, SEMANTIC_STMT_IMMEDIATE_ASSUME).is_ok());
         assert!(validate_semantic_subkind(18, SEMANTIC_STMT_IMMEDIATE_COVER).is_ok());
+        assert!(validate_semantic_subkind(18, SEMANTIC_STMT_CONCURRENT_ASSERT).is_ok());
+        assert!(validate_semantic_subkind(18, SEMANTIC_STMT_CONCURRENT_ASSUME).is_ok());
+        assert!(validate_semantic_subkind(18, SEMANTIC_STMT_CONCURRENT_COVER).is_ok());
         assert!(validate_semantic_subkind(19, 86).is_ok());
         assert!(validate_semantic_subkind(19, 89).is_ok());
+        assert!(validate_semantic_subkind(19, SEMANTIC_EXPR_ASSERTION_INSTANCE).is_ok());
         assert!(validate_semantic_subkind(9, 229).is_ok());
-        assert!(validate_semantic_subkind(18, 64).is_err());
         assert!(validate_semantic_subkind(25, SEMANTIC_SCOPE_CLOCKING_BLOCK).is_ok());
         assert!(validate_semantic_subkind(9, SEMANTIC_VARIABLE_CLOCKING).is_ok());
         assert!(validate_semantic_subkind(26, SEMANTIC_TIMING_ONE_STEP_DELAY).is_ok());
-        assert!(validate_semantic_subkind(18, 64).is_err());
+        assert!(validate_semantic_subkind(18, 67).is_err());
         assert!(validate_semantic_subkind(19, 79).is_err());
+        assert!(validate_semantic_subkind(28, SEMANTIC_ASSERTION_EXPR_SIMPLE).is_ok());
+        assert!(validate_semantic_subkind(28, SEMANTIC_ASSERTION_EXPR_DISABLE_IFF).is_ok());
+        assert!(validate_semantic_subkind(28, 14).is_err());
         assert_eq!(
             decode_semantic_operation(47).expect("list operation must decode"),
             SemanticOperation::List

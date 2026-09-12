@@ -124,10 +124,20 @@ pub(super) fn render_expr_impl(ctx: &RCtx<'_>, e: &IrExpr) -> Result<RenderedExp
         },
         IrExprKind::SigRead(idx) => {
             let s = ctx.model.signal(*idx);
-            let code = if s.net_alias.is_empty() {
+            let base = if s.net_alias.is_empty() {
                 s.c_name.clone()
             } else {
                 format!("llg_net_alias_read(&llg_net_alias_{idx})")
+            };
+            let code = if ctx.sampled {
+                let pointer = if s.net_alias.is_empty() {
+                    format!("&{}", s.c_name)
+                } else {
+                    format!("&llg_net_alias_{idx}.visible")
+                };
+                format!("(*llg_sampled_value({pointer}))")
+            } else {
+                base
             };
             RenderedExpr {
                 code,

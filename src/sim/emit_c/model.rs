@@ -11,7 +11,7 @@ use super::statements::{
 };
 use super::EmitError;
 use crate::sim::execution::{ExecutionModel, ExecutionTerminator, ScheduleRegion, TriggerPlan};
-use crate::sim::ir::{IrFunc, IrModel, IrNetKind, IrType};
+use crate::sim::ir::{IrConcurrentAssertionKind, IrFunc, IrModel, IrNetKind, IrType};
 
 // ── Model rendering ───────────────────────────────────────────────────────────
 
@@ -132,12 +132,14 @@ fn render_model(execution: &ExecutionModel, capacity: u32) -> Result<String, Str
     let ctx = RCtx {
         model,
         func: None,
+        sampled: false,
         activation_label: None,
     };
     for f in &model.funcs {
         let fctx = RCtx {
             model,
             func: Some(f),
+            sampled: false,
             activation_label: None,
         };
         for pre in &f.pre_fns {
@@ -155,6 +157,7 @@ fn render_model(execution: &ExecutionModel, capacity: u32) -> Result<String, Str
         }
         out.push_str(&render_process_fn(&ctx, p, executable)?);
     }
+    out.push_str(&render_assertion_callbacks(model)?);
     out.push_str(&render_main(execution)?);
     Ok(out)
 }
@@ -189,6 +192,57 @@ fn render_class_decls(model: &IrModel, out: &mut String) {
         );
         out.push('\n');
     }
+}
+
+fn assertion_predicate_name(index: usize, role: &str) -> String {
+    format!("llg_assertion_{index}_{role}")
+}
+
+fn render_assertion_predicate(
+    model: &IrModel,
+    index: usize,
+    role: &str,
+    expression: &crate::sim::ir::IrExpr,
+) -> Result<String, String> {
+    let ctx = RCtx {
+        model,
+        func: None,
+        sampled: true,
+        activation_label: None,
+    };
+    let rendered = super::expressions::render_expr_impl(&ctx, expression)?;
+    if rendered.width == 0 {
+        return Err(format!(
+            "concurrent assertion predicate {role} must be packed"
+        ));
+    }
+    let value = format!("sv4_to_bool({})", rendered.code);
+    Ok(format!(
+        "static int {}(void* data) {{\n    (void)data;\n    return {};\n}}\n\n",
+        assertion_predicate_name(index, role),
+        value
+    ))
+}
+
+fn render_assertion_callbacks(model: &IrModel) -> Result<String, String> {
+    let mut out = String::new();
+    for (index, assertion) in model.assertions().iter().enumerate() {
+        if let Some(antecedent) = assertion.antecedent() {
+            out.push_str(&render_assertion_predicate(
+                model,
+                index,
+                "antecedent",
+                antecedent,
+            )?);
+        }
+        out.push_str(&render_assertion_predicate(
+            model,
+            index,
+            "consequent",
+            assertion.consequent(),
+        )?);
+    }
+    Ok(out)
 }
 
 /// Signal globals plus collapsed inout-net group storage.
@@ -693,6 +747,7 @@ fn render_main(execution: &ExecutionModel) -> Result<String, String> {
     let ctx = RCtx {
         model,
         func: None,
+        sampled: false,
         activation_label: None,
     };
     let mut out = String::from(
@@ -921,6 +976,54 @@ fn render_main(execution: &ExecutionModel) -> Result<String, String> {
                 out.push_str(&format!("    if ({registration} != 0) return 1;\n"));
             }
         }
+    }
+    // Concurrent assertion predicates resolve every packed signal through the
+    // runtime's immutable Preponed snapshot. Registering all active packed
+    // storage keeps the callback contract simple and also covers nested
+    // expression reads without a second dependency collector in the emitter.
+    for signal in &model.signals {
+        if !signal.omit && matches!(signal.ty, IrType::Packed { .. }) {
+            out.push_str(&format!("    llg_sampled_register(&{});\n", signal.c_name));
+        }
+    }
+    for (index, assertion) in model.assertions().iter().enumerate() {
+        let clock = model.signal(assertion.clock_signal()).c_name();
+        let disable = assertion
+            .disable_signal()
+            .map(|signal| format!("&{}", model.signal(signal).c_name()))
+            .unwrap_or_else(|| "NULL".to_owned());
+        let antecedent = assertion
+            .antecedent()
+            .map(|_| assertion_predicate_name(index, "antecedent"))
+            .unwrap_or_else(|| "NULL".to_owned());
+        let consequent = assertion_predicate_name(index, "consequent");
+        let pass_action = assertion.pass_action().unwrap_or("NULL");
+        let fail_action = assertion.fail_action().unwrap_or("NULL");
+        let kind = match assertion.kind() {
+            IrConcurrentAssertionKind::Assert => "LLG_ASSERTION_ASSERT",
+            IrConcurrentAssertionKind::Assume => "LLG_ASSERTION_ASSUME",
+            IrConcurrentAssertionKind::Cover => "LLG_ASSERTION_COVER",
+        };
+        let edge = if assertion.posedge() {
+            "LLG_EV_POSEDGE"
+        } else {
+            "LLG_EV_NEGEDGE"
+        };
+        out.push_str(&format!(
+            "    if (!llg_assertion_register(&{}, {}, {}, {}, {}, {}, {}, NULL, {}, {}, {}ULL, {}, {})) return 1;\n",
+            clock,
+            edge,
+            disable,
+            antecedent,
+            consequent,
+            pass_action,
+            fail_action,
+            kind,
+            assertion.overlapped() as u8,
+            assertion.identity(),
+            c_string_literal(assertion.label()),
+            c_string_literal(assertion.location()),
+        ));
     }
     for (fname, label) in model.spawn_list() {
         let runtime_name = model

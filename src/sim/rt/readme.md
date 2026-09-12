@@ -52,6 +52,11 @@
   stable process/fork derivation, unbiased inclusive ranges, and versioned
   state snapshots. The scheduler binds one stream to each generated process;
   the standalone service is also suitable for future class-object streams.
+- **Concurrent assertions:** Registrations retain per-instance FIFO attempts;
+  predicates read immutable Preponed packed snapshots in Observed, asynchronous
+  `disable iff` clears pending attempts at writes, and pass/fail actions queue
+  in Reactive. Vacuous implication successes are counted separately, while
+  pending attempts are discarded at end of simulation.
 - **Real dependencies:** scalar `real`/`shortreal` storage uses typed double
   dependencies for `wait`, any-change `@` controls, combinational links, and
   scalar ports. Writes notify only when the IEEE representation changes:

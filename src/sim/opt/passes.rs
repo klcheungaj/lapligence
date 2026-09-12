@@ -834,6 +834,12 @@ fn walk_model_exprs_mut(model: &mut IrModel, f: &mut impl FnMut(&mut IrExpr)) {
             walk_expr_mut(&mut initialization.value, f);
         }
     }
+    for assertion in &mut model.assertions {
+        if let Some(antecedent) = &mut assertion.antecedent {
+            walk_expr_mut(antecedent, f);
+        }
+        walk_expr_mut(&mut assertion.consequent, f);
+    }
 }
 
 fn walk_execution_exprs_mut(processes: &mut [ExecutionProcess], f: &mut impl FnMut(&mut IrExpr)) {
@@ -1844,6 +1850,16 @@ fn mark_unused_storage(model: &mut IrModel, execution: Option<&[ExecutionProcess
             }
         }
     }
+    for assertion in &model.assertions {
+        rw.read(assertion.clock_signal);
+        if let Some(disable) = assertion.disable_signal {
+            rw.read(disable);
+        }
+        if let Some(antecedent) = &assertion.antecedent {
+            collect_expr_reads(antecedent, model, &mut rw);
+        }
+        collect_expr_reads(&assertion.consequent, model, &mut rw);
+    }
     for dependency in &sens {
         mark_dependency_read(dependency, model, &mut rw);
     }
@@ -2753,8 +2769,9 @@ fn call_formal(model: &IrModel, function: usize, index: usize) -> Option<&IrForm
 mod tests {
     use super::*;
     use crate::sim::ir::{
-        IrCall, IrCallArg, IrCaseItem, IrDependency, IrDepth, IrEdge, IrEventRef, IrFunc, IrLocal,
-        IrProcess, IrShape, IrSignal, IrType, IrUniquePriorityCheck,
+        IrAssertion, IrCall, IrCallArg, IrCaseItem, IrConcurrentAssertionKind, IrDependency,
+        IrDepth, IrEdge, IrEventRef, IrFunc, IrLocal, IrProcess, IrShape, IrSignal, IrType,
+        IrUniquePriorityCheck,
     };
 
     // ── builders ──────────────────────────────────────────────────────────
@@ -2909,6 +2926,7 @@ mod tests {
             containers: Vec::new(),
             events: Vec::new(),
             funcs: Vec::new(),
+            assertions: Vec::new(),
             processes: vec![IrProcess {
                 c_name: "p_t_proc_0".to_string(),
                 label: "t.always".to_string(),
@@ -3731,6 +3749,31 @@ mod tests {
             m.signals[1].omit,
             "unreferenced synthesized signal is omitted"
         );
+    }
+
+    #[test]
+    fn unused_storage_keeps_concurrent_assertion_sources() {
+        let mut m = model_with(Vec::new(), sigs(3));
+        m.assertions.push(IrAssertion::new(
+            7,
+            "a".to_string(),
+            "tb:1".to_string(),
+            IrConcurrentAssertionKind::Assert,
+            0,
+            true,
+            Some(1),
+            Some(IrExpr::new(IrExprKind::SigRead(1), 8, false, None)),
+            IrExpr::new(IrExprKind::SigRead(2), 8, false, None),
+            false,
+            None,
+            None,
+        ));
+
+        run(&mut m, &storage_only());
+
+        assert!(!m.signals[0].omit, "assertion clock stays");
+        assert!(!m.signals[1].omit, "assertion disable signal stays");
+        assert!(!m.signals[2].omit, "assertion predicate signal stays");
     }
 
     #[test]

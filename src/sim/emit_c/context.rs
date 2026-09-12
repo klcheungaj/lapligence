@@ -19,6 +19,10 @@ pub struct RenderedExpr {
 pub struct RCtx<'m> {
     pub model: &'m IrModel,
     pub func: Option<&'m IrFunc>,
+    /// Resolve signal reads through the runtime's Preponed snapshot. This is
+    /// used only by concurrent assertion predicates; ordinary design code
+    /// continues to read live storage.
+    pub sampled: bool,
     /// C label used to leave the innermost active named scope when the
     /// runtime cancels its activation. Nested scopes replace this value while
     /// rendering their body; the enclosing renderer checks again afterwards.

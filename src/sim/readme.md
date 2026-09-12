@@ -7,6 +7,9 @@
   - `emit_c.rs` renders validated IR as C11.
   - `build.rs` builds the generated model with CMake, the embedded runtime, and
     libaco sources from `rt/`.
+- Concurrent assertions are lowered into dedicated assertion instances rather
+  than ordinary process statements; their packed predicates sample in
+  Preponed, attempts resolve in Observed, and action processes run in Reactive.
 - **Runtime:** `rt/` supplies value operations, scheduling, strings, containers,
   optional waveforms, and coroutine support. It is compiled with each model and
   is not linked into the Rust binaries.

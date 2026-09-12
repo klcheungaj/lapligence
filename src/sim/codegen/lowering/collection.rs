@@ -7943,6 +7943,14 @@ impl<'a> Codegen<'a> {
             }
             Pass::Procs => {
                 for c in &self.node(inst).children {
+                    if matches!(
+                        self.kind(*c),
+                        NodeKind::Stmt(StmtKind::ConcurrentAssertion { .. })
+                    ) {
+                        self.emit_concurrent_assertion(inst, path, *c)?;
+                    }
+                }
+                for c in &self.node(inst).children {
                     if matches!(self.kind(*c), NodeKind::Process { .. }) {
                         self.emit_process(inst, path, *c)?;
                     }
@@ -7999,6 +8007,9 @@ impl<'a> Codegen<'a> {
                 }
                 NodeKind::Process { .. } if pass == Pass::Procs => {
                     self.emit_process(inst, &gs_path, child)?
+                }
+                NodeKind::Stmt(StmtKind::ConcurrentAssertion { .. }) if pass == Pass::Procs => {
+                    self.emit_concurrent_assertion(inst, &gs_path, child)?
                 }
                 NodeKind::GenScope => self.emit_gen_scope(inst, child, &gs_path, pass)?,
                 NodeKind::GenScopeArray => {
@@ -10044,7 +10055,7 @@ impl<'a> Codegen<'a> {
         }
     }
 
-    fn dependency_label(&self, dependency: &IrDependency) -> String {
+    pub(super) fn dependency_label(&self, dependency: &IrDependency) -> String {
         match dependency {
             IrDependency::Scalar(name) | IrDependency::Real(name) => name.clone(),
             IrDependency::ArrayElement { array, index } => {
@@ -10134,7 +10145,7 @@ impl<'a> Codegen<'a> {
         Ok(())
     }
 
-    fn source_location(&self, node: NodeId) -> String {
+    pub(super) fn source_location(&self, node: NodeId) -> String {
         let node = self.node(node);
         format!(
             "{}:{}:{}",
@@ -10225,6 +10236,49 @@ impl<'a> Codegen<'a> {
             ProcessKind::Always { always_type } => Some(*always_type),
             ProcessKind::Initial | ProcessKind::Final => None,
         };
+        // Slang projects a module-level concurrent assertion onto a synthetic
+        // always process whose block carries the assertion statement. It is
+        // an owned assertion instance, not an ordinary procedural body; emit
+        // it through the sampled assertion path and do not manufacture a
+        // process that would try to execute the assertion as a statement.
+        let (concurrent_assertions, assertion_only_body) = match self.kind(stmt) {
+            NodeKind::Stmt(StmtKind::Begin) => {
+                let children = &self.node(stmt).children;
+                let assertions = children
+                    .iter()
+                    .filter(|child| {
+                        matches!(
+                            self.kind(**child),
+                            NodeKind::Stmt(StmtKind::ConcurrentAssertion { .. })
+                        )
+                    })
+                    .copied()
+                    .collect::<Vec<_>>();
+                let assertion_only = !assertions.is_empty()
+                    && children.iter().all(|child| match self.kind(*child) {
+                        NodeKind::Stmt(StmtKind::ConcurrentAssertion { .. })
+                        | NodeKind::Stmt(StmtKind::Empty)
+                        | NodeKind::Var { .. }
+                        | NodeKind::FuncArg { .. } => true,
+                        // Slang keeps a named assertion declaration scope as
+                        // an otherwise-empty begin child of its synthetic
+                        // process. It carries no executable statements.
+                        NodeKind::Stmt(StmtKind::Begin) => {
+                            self.db.semantic_detail(*child) == Some("StatementBlock")
+                                && self.node(*child).children.is_empty()
+                        }
+                        _ => false,
+                    });
+                (assertions, assertion_only)
+            }
+            _ => (Vec::new(), false),
+        };
+        if assertion_only_body {
+            for assertion in concurrent_assertions {
+                self.emit_concurrent_assertion(inst, path, assertion)?;
+            }
+            return Ok(());
+        }
         let ir_kind = match kind {
             ProcessKind::Initial => IrProcessKind::Initial,
             ProcessKind::Final => IrProcessKind::Final,
@@ -10396,7 +10450,10 @@ impl<'a> Codegen<'a> {
         }
     }
 
-    fn collect_process_writes(&self, root: NodeId) -> Result<HashSet<IrDependency>, String> {
+    pub(super) fn collect_process_writes(
+        &self,
+        root: NodeId,
+    ) -> Result<HashSet<IrDependency>, String> {
         let mut writes = HashSet::new();
         let mut visited = HashSet::new();
         self.walk_process_writes(root, &mut writes, &mut visited)?;

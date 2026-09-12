@@ -1051,6 +1051,7 @@ uint32_t semanticSymbolKind(SymbolKind kind) {
     case SymbolKind::Subroutine:
     case SymbolKind::MethodPrototype: return LLG_SLANG_SEMANTIC_SUBROUTINE;
     case SymbolKind::FormalArgument: return LLG_SLANG_SEMANTIC_ARGUMENT;
+    case SymbolKind::AssertionPort: return LLG_SLANG_SEMANTIC_ARGUMENT;
     case SymbolKind::EnumValue: return LLG_SLANG_SEMANTIC_ENUM_CONSTANT;
     case SymbolKind::Root:
     case SymbolKind::CompilationUnit:
@@ -1098,12 +1099,76 @@ uint32_t semanticStatementKind(StatementKind kind) {
     case StatementKind::WaitFork: return LLG_SLANG_STMT_WAIT_FORK;
     case StatementKind::EventTrigger: return LLG_SLANG_STMT_EVENT_TRIGGER;
     case StatementKind::ImmediateAssertion: return LLG_SLANG_STMT_IMMEDIATE_ASSERT;
+    case StatementKind::ConcurrentAssertion: return LLG_SLANG_STMT_CONCURRENT_ASSERT;
     case StatementKind::ProceduralAssign:
       return LLG_SLANG_STMT_PROCEDURAL_ASSIGN;
     case StatementKind::ProceduralDeassign:
       return LLG_SLANG_STMT_PROCEDURAL_DEASSIGN;
     default: return LLG_SLANG_SUBKIND_NONE;
   }
+}
+
+uint32_t semanticAssertionExprKind(AssertionExprKind kind) {
+  switch (kind) {
+    case AssertionExprKind::Invalid: return LLG_SLANG_ASSERTION_EXPR_INVALID;
+    case AssertionExprKind::Simple: return LLG_SLANG_ASSERTION_EXPR_SIMPLE;
+    case AssertionExprKind::SequenceConcat:
+      return LLG_SLANG_ASSERTION_EXPR_SEQUENCE_CONCAT;
+    case AssertionExprKind::SequenceWithMatch:
+      return LLG_SLANG_ASSERTION_EXPR_SEQUENCE_WITH_MATCH;
+    case AssertionExprKind::Unary: return LLG_SLANG_ASSERTION_EXPR_UNARY;
+    case AssertionExprKind::Binary: return LLG_SLANG_ASSERTION_EXPR_BINARY;
+    case AssertionExprKind::FirstMatch: return LLG_SLANG_ASSERTION_EXPR_FIRST_MATCH;
+    case AssertionExprKind::Clocking: return LLG_SLANG_ASSERTION_EXPR_CLOCKING;
+    case AssertionExprKind::StrongWeak: return LLG_SLANG_ASSERTION_EXPR_STRONG_WEAK;
+    case AssertionExprKind::Abort: return LLG_SLANG_ASSERTION_EXPR_ABORT;
+    case AssertionExprKind::Conditional: return LLG_SLANG_ASSERTION_EXPR_CONDITIONAL;
+    case AssertionExprKind::Case: return LLG_SLANG_ASSERTION_EXPR_CASE;
+    case AssertionExprKind::DisableIff: return LLG_SLANG_ASSERTION_EXPR_DISABLE_IFF;
+  }
+  return LLG_SLANG_ASSERTION_EXPR_INVALID;
+}
+
+uint32_t semanticUnaryAssertionOperation(UnaryAssertionOperator op) {
+  switch (op) {
+    case UnaryAssertionOperator::Not: return LLG_SLANG_OP_ASSERTION_NOT;
+    case UnaryAssertionOperator::NextTime: return LLG_SLANG_OP_ASSERTION_NEXT_TIME;
+    case UnaryAssertionOperator::SNextTime: return LLG_SLANG_OP_ASSERTION_SNEXT_TIME;
+    case UnaryAssertionOperator::Always: return LLG_SLANG_OP_ASSERTION_ALWAYS;
+    case UnaryAssertionOperator::SAlways: return LLG_SLANG_OP_ASSERTION_SALWAYS;
+    case UnaryAssertionOperator::Eventually: return LLG_SLANG_OP_ASSERTION_EVENTUALLY;
+    case UnaryAssertionOperator::SEventually: return LLG_SLANG_OP_ASSERTION_SEVENTUALLY;
+  }
+  return LLG_SLANG_OP_NONE;
+}
+
+uint32_t semanticBinaryAssertionOperation(BinaryAssertionOperator op) {
+  switch (op) {
+    case BinaryAssertionOperator::And: return LLG_SLANG_OP_ASSERTION_AND;
+    case BinaryAssertionOperator::Or: return LLG_SLANG_OP_ASSERTION_OR;
+    case BinaryAssertionOperator::Intersect:
+      return LLG_SLANG_OP_ASSERTION_INTERSECT;
+    case BinaryAssertionOperator::Throughout:
+      return LLG_SLANG_OP_ASSERTION_THROUGHOUT;
+    case BinaryAssertionOperator::Within: return LLG_SLANG_OP_ASSERTION_WITHIN;
+    case BinaryAssertionOperator::Iff: return LLG_SLANG_OP_ASSERTION_IFF;
+    case BinaryAssertionOperator::Until: return LLG_SLANG_OP_ASSERTION_UNTIL;
+    case BinaryAssertionOperator::SUntil: return LLG_SLANG_OP_ASSERTION_SUNTIL;
+    case BinaryAssertionOperator::UntilWith:
+      return LLG_SLANG_OP_ASSERTION_UNTIL_WITH;
+    case BinaryAssertionOperator::SUntilWith:
+      return LLG_SLANG_OP_ASSERTION_SUNTIL_WITH;
+    case BinaryAssertionOperator::Implies: return LLG_SLANG_OP_ASSERTION_IMPLIES;
+    case BinaryAssertionOperator::OverlappedImplication:
+      return LLG_SLANG_OP_ASSERTION_OVERLAPPED_IMPLIES;
+    case BinaryAssertionOperator::NonOverlappedImplication:
+      return LLG_SLANG_OP_ASSERTION_NONOVERLAPPED_IMPLIES;
+    case BinaryAssertionOperator::OverlappedFollowedBy:
+      return LLG_SLANG_OP_ASSERTION_OVERLAPPED_FOLLOWED_BY;
+    case BinaryAssertionOperator::NonOverlappedFollowedBy:
+      return LLG_SLANG_OP_ASSERTION_NONOVERLAPPED_FOLLOWED_BY;
+  }
+  return LLG_SLANG_OP_NONE;
 }
 
 uint64_t semanticUniquePriorityCheck(UniquePriorityCheck check) {
@@ -1149,6 +1214,7 @@ uint32_t semanticExpressionKind(ExpressionKind kind) {
     case ExpressionKind::NewCovergroup: return LLG_SLANG_EXPR_NEW_COVERGROUP;
     case ExpressionKind::MinTypMax: return LLG_SLANG_EXPR_MIN_TYP_MAX;
     case ExpressionKind::ValueRange: return LLG_SLANG_EXPR_VALUE_RANGE;
+    case ExpressionKind::AssertionInstance: return LLG_SLANG_EXPR_ASSERTION_INSTANCE;
     default: return LLG_SLANG_SUBKIND_NONE;
   }
 }
@@ -1623,6 +1689,12 @@ public:
       if (symbol.flags.has(VariableFlags::RefStatic))
         result.auxiliary |= LLG_SLANG_ARGUMENT_REF_STATIC;
     }
+    if constexpr (std::same_as<T, AssertionPortSymbol>) {
+      if (const auto* declared = symbol.getDeclaredType())
+        result.type_id = capture.type(declared->getType());
+      if (symbol.direction)
+        addDirection(result, *symbol.direction);
+    }
     if constexpr (std::same_as<T, ProceduralBlockSymbol>)
       result.subkind = processKind(symbol.procedureKind);
     if constexpr (std::same_as<T, ContinuousAssignSymbol>)
@@ -1955,6 +2027,12 @@ public:
           result.flags |= LLG_SLANG_SEMANTIC_TASK;
       }
     }
+    if constexpr (std::same_as<T, AssertionInstanceExpression>) {
+      result.name = storeString(capture.output, expression.symbol.name);
+      const uint64_t target = capture.ensureSemantic(&expression.symbol);
+      result.target_id = target;
+      capture.semanticEdge(id, LLG_SLANG_EDGE_CALLEE, target);
+    }
     if (const Symbol* target = expression.getSymbolReference()) {
       const uint64_t targetId = capture.ensureSemantic(target);
       auto& targetNode =
@@ -2003,6 +2081,19 @@ public:
       }
       else {
         visitDefault(expression);
+      }
+    }
+    else if constexpr (std::same_as<T, AssertionInstanceExpression>) {
+      // Assertion-instance arguments are not traversed by AssertionExpr's
+      // ordinary expression visitor. Visit each actual explicitly so the
+      // owned semantic graph retains its value/sequence/event binding.
+      expression.body.visit(*this);
+      for (const auto& [formal, actual] : expression.arguments) {
+        (void)formal;
+        std::visit([this](auto* value) {
+          if (value)
+            value->visit(*this);
+        }, actual);
       }
     }
     else if constexpr (std::same_as<T, BinaryExpression>) {
@@ -2091,6 +2182,26 @@ public:
       if (statement.isFinal)
         result.auxiliary |= LLG_SLANG_ASSERTION_FINAL;
     }
+    if constexpr (std::same_as<T, ConcurrentAssertionStatement>) {
+      switch (statement.assertionKind) {
+        case AssertionKind::Assert:
+          result.subkind = LLG_SLANG_STMT_CONCURRENT_ASSERT;
+          break;
+        case AssertionKind::Assume:
+          result.subkind = LLG_SLANG_STMT_CONCURRENT_ASSUME;
+          break;
+        case AssertionKind::CoverProperty:
+        case AssertionKind::CoverSequence:
+          result.subkind = LLG_SLANG_STMT_CONCURRENT_COVER;
+          break;
+        default:
+          result.subkind = LLG_SLANG_SUBKIND_NONE;
+          result.flags |= LLG_SLANG_SEMANTIC_BAD;
+          break;
+      }
+      if (statement.syntax && statement.syntax->label)
+        result.name = storeString(capture.output, statement.syntax->label->name.valueText());
+    }
     if constexpr (std::same_as<T, ProceduralAssignStatement>) {
       result.subkind = statement.isForce ? LLG_SLANG_STMT_FORCE
                                          : LLG_SLANG_STMT_PROCEDURAL_ASSIGN;
@@ -2161,6 +2272,32 @@ public:
             break;
           default: break;
         }
+      }
+    }
+    else if constexpr (std::derived_from<T, AssertionExpr>) {
+      result.kind = LLG_SLANG_SEMANTIC_ASSERTION_EXPR;
+      result.subkind = semanticAssertionExprKind(node.kind);
+      if constexpr (std::same_as<T, SimpleAssertionExpr>) {
+        if (node.repetition)
+          result.auxiliary |= LLG_SLANG_ASSERTION_REPETITION;
+      }
+      else if constexpr (std::same_as<T, UnaryAssertionExpr>) {
+        result.operation = semanticUnaryAssertionOperation(node.op);
+        if (node.range)
+          result.auxiliary |= LLG_SLANG_ASSERTION_RANGE;
+      }
+      else if constexpr (std::same_as<T, BinaryAssertionExpr>) {
+        result.operation = semanticBinaryAssertionOperation(node.op);
+      }
+      else if constexpr (std::same_as<T, StrongWeakAssertionExpr>) {
+        if (node.strength == StrongWeakAssertionExpr::Strong)
+          result.auxiliary |= LLG_SLANG_ASSERTION_STRONG;
+      }
+      else if constexpr (std::same_as<T, AbortAssertionExpr>) {
+        if (node.action == AbortAssertionExpr::Reject)
+          result.auxiliary |= LLG_SLANG_ASSERTION_ABORT_REJECT;
+        if (node.isSync)
+          result.auxiliary |= LLG_SLANG_ASSERTION_ABORT_SYNC;
       }
     }
     else {
@@ -2774,6 +2911,20 @@ private:
         }
       }
     }
+    else if constexpr (std::same_as<T, AssertionInstanceExpression>) {
+      capture.semanticRole(id, &expression.body, LLG_SLANG_EDGE_BODY);
+      uint32_t index = 0;
+      for (const auto& [formal, actual] : expression.arguments) {
+        capture.semanticEdge(id, LLG_SLANG_EDGE_ASSERTION_FORMAL,
+                             capture.ensureSemantic(formal), index);
+        std::visit([&](auto* value) {
+          if (value)
+            capture.semanticRole(id, value, LLG_SLANG_EDGE_ASSERTION_ACTUAL,
+                                 index);
+        }, actual);
+        index++;
+      }
+    }
   }
 
   void initializePatternKey(uint64_t keyId, uint64_t patternId,
@@ -2850,6 +3001,14 @@ private:
     }
     else if constexpr (std::same_as<T, ImmediateAssertionStatement>) {
       capture.semanticRole(id, &statement.cond, LLG_SLANG_EDGE_CONDITION);
+      if (statement.ifTrue)
+        capture.semanticRole(id, statement.ifTrue, LLG_SLANG_EDGE_THEN);
+      if (statement.ifFalse)
+        capture.semanticRole(id, statement.ifFalse, LLG_SLANG_EDGE_ELSE);
+    }
+    else if constexpr (std::same_as<T, ConcurrentAssertionStatement>) {
+      capture.semanticRole(id, &statement.propertySpec,
+                           LLG_SLANG_EDGE_PROPERTY_SPEC);
       if (statement.ifTrue)
         capture.semanticRole(id, statement.ifTrue, LLG_SLANG_EDGE_THEN);
       if (statement.ifFalse)
@@ -3003,6 +3162,74 @@ private:
     }
     else if constexpr (std::same_as<T, CycleDelayControl>) {
       capture.semanticRole(id, &node.expr, LLG_SLANG_EDGE_DELAY);
+    }
+    else if constexpr (std::same_as<T, SimpleAssertionExpr>) {
+      capture.semanticRole(id, &node.expr, LLG_SLANG_EDGE_OPERAND);
+    }
+    else if constexpr (std::same_as<T, InvalidAssertionExpr>) {
+      if (node.child)
+        capture.semanticRole(id, node.child, LLG_SLANG_EDGE_BODY);
+    }
+    else if constexpr (std::same_as<T, SequenceConcatExpr>) {
+      uint32_t index = 0;
+      for (const auto& element : node.elements)
+        capture.semanticRole(id, element.sequence, LLG_SLANG_EDGE_OPERAND, index++);
+    }
+    else if constexpr (std::same_as<T, SequenceWithMatchExpr>) {
+      capture.semanticRole(id, &node.expr, LLG_SLANG_EDGE_BODY);
+      uint32_t index = 0;
+      for (const Expression* item : node.matchItems)
+        capture.semanticRole(id, item, LLG_SLANG_EDGE_OPERAND, index++);
+    }
+    else if constexpr (std::same_as<T, UnaryAssertionExpr>) {
+      capture.semanticRole(id, &node.expr, LLG_SLANG_EDGE_BODY);
+    }
+    else if constexpr (std::same_as<T, BinaryAssertionExpr>) {
+      capture.semanticRole(id, &node.left, LLG_SLANG_EDGE_LEFT);
+      capture.semanticRole(id, &node.right, LLG_SLANG_EDGE_RIGHT);
+    }
+    else if constexpr (std::same_as<T, FirstMatchAssertionExpr>) {
+      capture.semanticRole(id, &node.seq, LLG_SLANG_EDGE_BODY);
+      uint32_t index = 0;
+      for (const Expression* item : node.matchItems)
+        capture.semanticRole(id, item, LLG_SLANG_EDGE_OPERAND, index++);
+    }
+    else if constexpr (std::same_as<T, ClockingAssertionExpr>) {
+      capture.semanticRole(id, &node.clocking, LLG_SLANG_EDGE_CLOCKING);
+      capture.semanticRole(id, &node.expr, LLG_SLANG_EDGE_BODY);
+    }
+    else if constexpr (std::same_as<T, StrongWeakAssertionExpr>) {
+      capture.semanticRole(id, &node.expr, LLG_SLANG_EDGE_BODY);
+    }
+    else if constexpr (std::same_as<T, AbortAssertionExpr>) {
+      capture.semanticRole(id, &node.condition, LLG_SLANG_EDGE_CONDITION);
+      capture.semanticRole(id, &node.expr, LLG_SLANG_EDGE_BODY);
+    }
+    else if constexpr (std::same_as<T, ConditionalAssertionExpr>) {
+      capture.semanticRole(id, &node.condition, LLG_SLANG_EDGE_CONDITION);
+      capture.semanticRole(id, &node.ifExpr, LLG_SLANG_EDGE_THEN);
+      if (node.elseExpr)
+        capture.semanticRole(id, node.elseExpr, LLG_SLANG_EDGE_ELSE);
+    }
+    else if constexpr (std::same_as<T, CaseAssertionExpr>) {
+      capture.semanticRole(id, &node.expr, LLG_SLANG_EDGE_CASE_EXPRESSION);
+      uint32_t itemIndex = 0;
+      for (const auto& item : node.items) {
+        uint32_t expressionIndex = 0;
+        for (const Expression* expression : item.expressions) {
+          const uint32_t combined = (itemIndex << 16) |
+                                    std::min<uint32_t>(expressionIndex, UINT16_MAX);
+          capture.semanticRole(id, expression, LLG_SLANG_EDGE_CASE_ITEM, combined);
+          expressionIndex++;
+        }
+        capture.semanticRole(id, item.body, LLG_SLANG_EDGE_BRANCH, itemIndex++);
+      }
+      if (node.defaultCase)
+        capture.semanticRole(id, node.defaultCase, LLG_SLANG_EDGE_ELSE);
+    }
+    else if constexpr (std::same_as<T, DisableIffAssertionExpr>) {
+      capture.semanticRole(id, &node.condition, LLG_SLANG_EDGE_CONDITION);
+      capture.semanticRole(id, &node.expr, LLG_SLANG_EDGE_BODY);
     }
   }
 };

@@ -22,10 +22,13 @@ use crate::ffi::slang::{
     SemanticDriveStrength, SemanticEdgeRole, SemanticKind, SemanticNode, SemanticOperation,
     SemanticTimeScale, SemanticTimeUnit, Snapshot as SlangSnapshot, CLOCKING_BLOCK_DEFAULT,
     CLOCKING_BLOCK_GLOBAL, CLOCKING_EDGE_MASK, CLOCKING_INPUT_EDGE_SHIFT,
-    CLOCKING_OUTPUT_EDGE_SHIFT, CLOCKING_VAR_OUTPUT_EDGE_SHIFT, SEMANTIC_ASSERTION_DEFERRED,
-    SEMANTIC_ASSERTION_FINAL, SEMANTIC_SCOPE_CLOCKING_BLOCK, SEMANTIC_STMT_IMMEDIATE_ASSERT,
-    SEMANTIC_STMT_IMMEDIATE_ASSUME, SEMANTIC_STMT_IMMEDIATE_COVER, SEMANTIC_TIMING_ONE_STEP_DELAY,
-    SEMANTIC_VARIABLE_CLOCKING,
+    CLOCKING_OUTPUT_EDGE_SHIFT, CLOCKING_VAR_OUTPUT_EDGE_SHIFT, SEMANTIC_ASSERTION_ABORT_REJECT,
+    SEMANTIC_ASSERTION_ABORT_SYNC, SEMANTIC_ASSERTION_DEFERRED, SEMANTIC_ASSERTION_FINAL,
+    SEMANTIC_ASSERTION_RANGE, SEMANTIC_ASSERTION_REPETITION, SEMANTIC_ASSERTION_STRONG,
+    SEMANTIC_SCOPE_CLOCKING_BLOCK, SEMANTIC_STMT_CONCURRENT_ASSERT,
+    SEMANTIC_STMT_CONCURRENT_ASSUME, SEMANTIC_STMT_CONCURRENT_COVER,
+    SEMANTIC_STMT_IMMEDIATE_ASSERT, SEMANTIC_STMT_IMMEDIATE_ASSUME, SEMANTIC_STMT_IMMEDIATE_COVER,
+    SEMANTIC_TIMING_ONE_STEP_DELAY, SEMANTIC_VARIABLE_CLOCKING,
 };
 use std::collections::{HashMap, HashSet};
 use std::error::Error;
@@ -663,6 +666,7 @@ pub enum NodeKind {
         terms: Vec<GateTerm>,
     },
     Stmt(StmtKind),
+    AssertionExpr(AssertionExprKind),
     Expr(ExprKind),
     SysCall {
         name: String,
@@ -774,6 +778,182 @@ pub enum ImmediateAssertionKind {
     Cover,
 }
 
+/// Kind of a concurrent assertion declaration.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ConcurrentAssertionKind {
+    Assert,
+    Assume,
+    Cover,
+}
+
+/// Operators in the owned assertion-expression graph.  Keeping these
+/// separate from ordinary expression operators prevents a property operator
+/// from being mistaken for a four-state value operation during lowering.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AssertionUnaryOp {
+    Not,
+    NextTime,
+    SNextTime,
+    Always,
+    SAlways,
+    Eventually,
+    SEventually,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AssertionBinaryOp {
+    And,
+    Or,
+    Intersect,
+    Throughout,
+    Within,
+    Iff,
+    Until,
+    SUntil,
+    UntilWith,
+    SUntilWith,
+    Implies,
+    OverlappedImplication,
+    NonOverlappedImplication,
+    OverlappedFollowedBy,
+    NonOverlappedFollowedBy,
+}
+
+#[derive(Clone, Debug)]
+pub struct AssertionCaseItem {
+    pub expressions: Vec<NodeId>,
+    pub body: NodeId,
+}
+
+/// One formal-to-actual mapping retained for a named sequence/property
+/// instance. The assertion body is still owned separately, so lowering can
+/// reject unsupported instances without discarding the binding identity.
+#[derive(Clone, Debug)]
+pub struct AssertionBinding {
+    pub formal: NodeId,
+    pub actual: NodeId,
+}
+
+/// Owned property/sequence node.  Unsupported forms remain represented with
+/// all child identities intact and are rejected by simulator lowering.
+#[derive(Debug)]
+pub enum AssertionExprKind {
+    Invalid {
+        child: Option<NodeId>,
+    },
+    Simple {
+        expr: NodeId,
+        repeated: bool,
+    },
+    SequenceConcat {
+        elements: Vec<NodeId>,
+    },
+    SequenceWithMatch {
+        expr: NodeId,
+        match_items: Vec<NodeId>,
+        repeated: bool,
+    },
+    Unary {
+        op: AssertionUnaryOp,
+        expr: NodeId,
+        ranged: bool,
+    },
+    Binary {
+        op: AssertionBinaryOp,
+        left: NodeId,
+        right: NodeId,
+    },
+    FirstMatch {
+        sequence: NodeId,
+        match_items: Vec<NodeId>,
+    },
+    Clocking {
+        control: NodeId,
+        signal: NodeId,
+        posedge: bool,
+        expr: NodeId,
+    },
+    StrongWeak {
+        expr: NodeId,
+        strong: bool,
+    },
+    Abort {
+        condition: NodeId,
+        expr: NodeId,
+        reject: bool,
+        sync: bool,
+    },
+    Conditional {
+        condition: NodeId,
+        if_expr: NodeId,
+        else_expr: Option<NodeId>,
+    },
+    Case {
+        expr: NodeId,
+        items: Vec<AssertionCaseItem>,
+        default_case: Option<NodeId>,
+    },
+    DisableIff {
+        condition: NodeId,
+        expr: NodeId,
+    },
+}
+
+impl AssertionExprKind {
+    pub(crate) fn referenced_nodes(&self, nodes: &mut Vec<NodeId>) {
+        match self {
+            Self::Invalid { child } => child.iter().for_each(|id| nodes.push(*id)),
+            Self::Simple { expr, .. } => nodes.push(*expr),
+            Self::SequenceConcat { elements } => nodes.extend(elements),
+            Self::SequenceWithMatch {
+                expr, match_items, ..
+            } => {
+                nodes.push(*expr);
+                nodes.extend(match_items);
+            }
+            Self::Unary { expr, .. } | Self::StrongWeak { expr, .. } => nodes.push(*expr),
+            Self::Binary { left, right, .. } => nodes.extend([*left, *right]),
+            Self::FirstMatch {
+                sequence,
+                match_items,
+            } => {
+                nodes.push(*sequence);
+                nodes.extend(match_items);
+            }
+            Self::Clocking {
+                control,
+                signal,
+                expr,
+                ..
+            } => nodes.extend([*control, *signal, *expr]),
+            Self::Abort {
+                condition, expr, ..
+            } => nodes.extend([*condition, *expr]),
+            Self::Conditional {
+                condition,
+                if_expr,
+                else_expr,
+            } => {
+                nodes.extend([*condition, *if_expr]);
+                else_expr.iter().for_each(|id| nodes.push(*id));
+            }
+            Self::Case {
+                expr,
+                items,
+                default_case,
+            } => {
+                nodes.push(*expr);
+                for item in items {
+                    nodes.extend(&item.expressions);
+                    nodes.push(item.body);
+                }
+                default_case.iter().for_each(|id| nodes.push(*id));
+            }
+            Self::DisableIff { condition, expr } => nodes.extend([*condition, *expr]),
+        }
+    }
+}
+
 #[derive(Debug)]
 pub enum StmtKind {
     Begin,
@@ -788,6 +968,16 @@ pub enum StmtKind {
         label: String,
         deferred: bool,
         is_final: bool,
+    },
+    /// A concurrent property assertion. The property graph is separate from
+    /// ordinary statement/expression IR so sampled evaluation retains its
+    /// clock, disable, attempt, and declaration identity.
+    ConcurrentAssertion {
+        kind: ConcurrentAssertionKind,
+        property: NodeId,
+        if_true: Option<NodeId>,
+        if_false: Option<NodeId>,
+        label: String,
     },
     IfElse {
         cond: NodeId,
@@ -1201,6 +1391,11 @@ pub enum ExprKind {
     NewClass {
         class_name: Option<String>,
         constructor: Option<NodeId>,
+    },
+    AssertionInstance {
+        target: NodeId,
+        body: NodeId,
+        bindings: Vec<AssertionBinding>,
     },
     Other,
 }
@@ -2039,6 +2234,28 @@ fn operation_from_slang(operation: SemanticOperation, unary: bool) -> Operation 
         SemanticOperation::MinTypMax => Operation::MinTypMax,
         SemanticOperation::MultiAssignmentPattern => Operation::MultiAssignmentPattern,
         SemanticOperation::List => Operation::List,
+        SemanticOperation::AssertionAnd
+        | SemanticOperation::AssertionOr
+        | SemanticOperation::AssertionIntersect
+        | SemanticOperation::AssertionThroughout
+        | SemanticOperation::AssertionWithin
+        | SemanticOperation::AssertionIff
+        | SemanticOperation::AssertionUntil
+        | SemanticOperation::AssertionSUntil
+        | SemanticOperation::AssertionUntilWith
+        | SemanticOperation::AssertionSUntilWith
+        | SemanticOperation::AssertionImplies
+        | SemanticOperation::AssertionOverlappedImplies
+        | SemanticOperation::AssertionNonOverlappedImplies
+        | SemanticOperation::AssertionOverlappedFollowedBy
+        | SemanticOperation::AssertionNonOverlappedFollowedBy
+        | SemanticOperation::AssertionNot
+        | SemanticOperation::AssertionNextTime
+        | SemanticOperation::AssertionSNextTime
+        | SemanticOperation::AssertionAlways
+        | SemanticOperation::AssertionSAlways
+        | SemanticOperation::AssertionEventually
+        | SemanticOperation::AssertionSEventually => Operation::Null,
     }
 }
 
@@ -2148,6 +2365,172 @@ fn strength_from_slang(strength: SemanticDriveStrength) -> Strength {
         SemanticDriveStrength::Weak => Strength::Weak,
         SemanticDriveStrength::HighZ => Strength::HighZ,
     }
+}
+
+fn assertion_unary_from_slang(operation: SemanticOperation) -> Result<AssertionUnaryOp, DbError> {
+    Ok(match operation {
+        SemanticOperation::AssertionNot => AssertionUnaryOp::Not,
+        SemanticOperation::AssertionNextTime => AssertionUnaryOp::NextTime,
+        SemanticOperation::AssertionSNextTime => AssertionUnaryOp::SNextTime,
+        SemanticOperation::AssertionAlways => AssertionUnaryOp::Always,
+        SemanticOperation::AssertionSAlways => AssertionUnaryOp::SAlways,
+        SemanticOperation::AssertionEventually => AssertionUnaryOp::Eventually,
+        SemanticOperation::AssertionSEventually => AssertionUnaryOp::SEventually,
+        _ => {
+            return Err(DbError::InvalidSnapshot(
+                "assertion unary node has a non-unary operation".into(),
+            ))
+        }
+    })
+}
+
+fn assertion_binary_from_slang(operation: SemanticOperation) -> Result<AssertionBinaryOp, DbError> {
+    Ok(match operation {
+        SemanticOperation::AssertionAnd => AssertionBinaryOp::And,
+        SemanticOperation::AssertionOr => AssertionBinaryOp::Or,
+        SemanticOperation::AssertionIntersect => AssertionBinaryOp::Intersect,
+        SemanticOperation::AssertionThroughout => AssertionBinaryOp::Throughout,
+        SemanticOperation::AssertionWithin => AssertionBinaryOp::Within,
+        SemanticOperation::AssertionIff => AssertionBinaryOp::Iff,
+        SemanticOperation::AssertionUntil => AssertionBinaryOp::Until,
+        SemanticOperation::AssertionSUntil => AssertionBinaryOp::SUntil,
+        SemanticOperation::AssertionUntilWith => AssertionBinaryOp::UntilWith,
+        SemanticOperation::AssertionSUntilWith => AssertionBinaryOp::SUntilWith,
+        SemanticOperation::AssertionImplies => AssertionBinaryOp::Implies,
+        SemanticOperation::AssertionOverlappedImplies => AssertionBinaryOp::OverlappedImplication,
+        SemanticOperation::AssertionNonOverlappedImplies => {
+            AssertionBinaryOp::NonOverlappedImplication
+        }
+        SemanticOperation::AssertionOverlappedFollowedBy => AssertionBinaryOp::OverlappedFollowedBy,
+        SemanticOperation::AssertionNonOverlappedFollowedBy => {
+            AssertionBinaryOp::NonOverlappedFollowedBy
+        }
+        _ => {
+            return Err(DbError::InvalidSnapshot(
+                "assertion binary node has a non-binary operation".into(),
+            ))
+        }
+    })
+}
+
+fn assertion_expr_from_slang(
+    snapshot: &SlangSnapshot,
+    node: &SemanticNode,
+    edges: &[crate::ffi::slang::SemanticEdge],
+    ids: &HashMap<u64, NodeId>,
+) -> Result<NodeKind, DbError> {
+    let first = |role| edge_target(ids, edges, role);
+    let required = |role, name| {
+        first(role)?.ok_or_else(|| DbError::InvalidSnapshot(format!("{name} is missing")))
+    };
+    let kind = match node.subkind {
+        1 => AssertionExprKind::Invalid {
+            child: first(SemanticEdgeRole::Body)?,
+        },
+        2 => AssertionExprKind::Simple {
+            expr: required(SemanticEdgeRole::Operand, "simple assertion operand")?,
+            repeated: node.auxiliary & SEMANTIC_ASSERTION_REPETITION != 0,
+        },
+        3 => AssertionExprKind::SequenceConcat {
+            elements: edge_targets(ids, edges, SemanticEdgeRole::Operand)?,
+        },
+        4 => AssertionExprKind::SequenceWithMatch {
+            expr: required(SemanticEdgeRole::Body, "sequence match body")?,
+            match_items: edge_targets(ids, edges, SemanticEdgeRole::Operand)?,
+            repeated: node.auxiliary & SEMANTIC_ASSERTION_REPETITION != 0,
+        },
+        5 => AssertionExprKind::Unary {
+            op: assertion_unary_from_slang(node.operation)?,
+            expr: required(SemanticEdgeRole::Body, "unary assertion body")?,
+            ranged: node.auxiliary & SEMANTIC_ASSERTION_RANGE != 0,
+        },
+        6 => AssertionExprKind::Binary {
+            op: assertion_binary_from_slang(node.operation)?,
+            left: required(SemanticEdgeRole::Left, "assertion binary left")?,
+            right: required(SemanticEdgeRole::Right, "assertion binary right")?,
+        },
+        7 => AssertionExprKind::FirstMatch {
+            sequence: required(SemanticEdgeRole::Body, "first_match sequence")?,
+            match_items: edge_targets(ids, edges, SemanticEdgeRole::Operand)?,
+        },
+        8 => {
+            let control = required(SemanticEdgeRole::Clocking, "assertion clocking")?;
+            let timing = snapshot
+                .semantic_nodes
+                .get(control.index())
+                .ok_or_else(|| DbError::InvalidSnapshot("assertion clocking is missing".into()))?;
+            let timing_edges = semantic_edges(snapshot, timing)?;
+            let signal = edge_target(ids, timing_edges, SemanticEdgeRole::Event)?
+                .ok_or_else(|| DbError::InvalidSnapshot("assertion clock has no signal".into()))?;
+            AssertionExprKind::Clocking {
+                control,
+                signal,
+                posedge: timing.is_posedge,
+                expr: required(SemanticEdgeRole::Body, "clocked assertion body")?,
+            }
+        }
+        9 => AssertionExprKind::StrongWeak {
+            expr: required(SemanticEdgeRole::Body, "strong/weak assertion body")?,
+            strong: node.auxiliary & SEMANTIC_ASSERTION_STRONG != 0,
+        },
+        10 => AssertionExprKind::Abort {
+            condition: required(SemanticEdgeRole::Condition, "abort condition")?,
+            expr: required(SemanticEdgeRole::Body, "abort assertion body")?,
+            reject: node.auxiliary & SEMANTIC_ASSERTION_ABORT_REJECT != 0,
+            sync: node.auxiliary & SEMANTIC_ASSERTION_ABORT_SYNC != 0,
+        },
+        11 => AssertionExprKind::Conditional {
+            condition: required(SemanticEdgeRole::Condition, "assertion conditional")?,
+            if_expr: required(SemanticEdgeRole::Then, "assertion conditional then")?,
+            else_expr: first(SemanticEdgeRole::Else)?,
+        },
+        12 => {
+            let expr = required(
+                SemanticEdgeRole::CaseExpression,
+                "assertion case expression",
+            )?;
+            let branch_count = edges
+                .iter()
+                .filter(|edge| edge.role == SemanticEdgeRole::Branch)
+                .map(|edge| edge.index)
+                .max()
+                .map_or(0, |index| index.saturating_add(1));
+            let mut items = Vec::with_capacity(branch_count as usize);
+            for item_index in 0..branch_count {
+                let expressions = edges
+                    .iter()
+                    .filter(|edge| {
+                        edge.role == SemanticEdgeRole::CaseItem && edge.index >> 16 == item_index
+                    })
+                    .map(|edge| semantic_id(ids, edge.target_id))
+                    .collect::<Result<Vec<_>, _>>()?;
+                let body = edges
+                    .iter()
+                    .find(|edge| edge.role == SemanticEdgeRole::Branch && edge.index == item_index)
+                    .map(|edge| semantic_id(ids, edge.target_id))
+                    .transpose()?
+                    .ok_or_else(|| {
+                        DbError::InvalidSnapshot("assertion case body is missing".into())
+                    })?;
+                items.push(AssertionCaseItem { expressions, body });
+            }
+            AssertionExprKind::Case {
+                expr,
+                items,
+                default_case: first(SemanticEdgeRole::Else)?,
+            }
+        }
+        13 => AssertionExprKind::DisableIff {
+            condition: required(SemanticEdgeRole::Condition, "disable iff condition")?,
+            expr: required(SemanticEdgeRole::Body, "disable iff assertion body")?,
+        },
+        _ => {
+            return Err(DbError::InvalidSnapshot(
+                "assertion expression has an unknown subkind".into(),
+            ))
+        }
+    };
+    Ok(NodeKind::AssertionExpr(kind))
 }
 
 fn node_kind_from_slang(
@@ -2341,6 +2724,7 @@ fn node_kind_from_slang(
         SemanticKind::Expression => {
             expression_from_slang(snapshot, type_projector, node, edges, ids, ty)?
         }
+        SemanticKind::AssertionExpr => assertion_expr_from_slang(snapshot, node, edges, ids)?,
         SemanticKind::SystemCall => NodeKind::SysCall {
             name: node.name.clone(),
         },
@@ -2401,6 +2785,20 @@ fn statement_from_slang(
                 is_final: node.auxiliary & SEMANTIC_ASSERTION_FINAL != 0,
             }
         }
+        SEMANTIC_STMT_CONCURRENT_ASSERT
+        | SEMANTIC_STMT_CONCURRENT_ASSUME
+        | SEMANTIC_STMT_CONCURRENT_COVER => StmtKind::ConcurrentAssertion {
+            kind: match node.subkind {
+                SEMANTIC_STMT_CONCURRENT_ASSERT => ConcurrentAssertionKind::Assert,
+                SEMANTIC_STMT_CONCURRENT_ASSUME => ConcurrentAssertionKind::Assume,
+                SEMANTIC_STMT_CONCURRENT_COVER => ConcurrentAssertionKind::Cover,
+                _ => unreachable!("concurrent assertion subkind was prevalidated"),
+            },
+            property: required(SemanticEdgeRole::PropertySpec, "assertion property")?,
+            if_true: first(SemanticEdgeRole::Then)?,
+            if_false: first(SemanticEdgeRole::Else)?,
+            label: node.name.clone(),
+        },
         33 => StmtKind::IfElse {
             cond: required(SemanticEdgeRole::Condition, "if condition")?,
             check: unique_priority_check(node.auxiliary)?,
@@ -3069,6 +3467,51 @@ fn expression_from_slang(
             class_name: ty.type_name.clone(),
             constructor: first(SemanticEdgeRole::Initializer)?,
         },
+        90 => {
+            let target = node
+                .target_id
+                .map(|id| semantic_id(ids, id))
+                .transpose()?
+                .ok_or_else(|| {
+                    DbError::InvalidSnapshot("assertion instance has no target".into())
+                })?;
+            let body = required(SemanticEdgeRole::Body, "assertion instance body")?;
+            let mut formals = edges
+                .iter()
+                .filter(|edge| edge.role == SemanticEdgeRole::AssertionFormal)
+                .collect::<Vec<_>>();
+            let mut actuals = edges
+                .iter()
+                .filter(|edge| edge.role == SemanticEdgeRole::AssertionActual)
+                .collect::<Vec<_>>();
+            formals.sort_by_key(|edge| edge.index);
+            actuals.sort_by_key(|edge| edge.index);
+            if formals.len() != actuals.len()
+                || formals
+                    .iter()
+                    .zip(&actuals)
+                    .any(|(formal, actual)| formal.index != actual.index)
+            {
+                return Err(DbError::InvalidSnapshot(
+                    "assertion instance formal/actual bindings are not paired".into(),
+                ));
+            }
+            let bindings = formals
+                .into_iter()
+                .zip(actuals)
+                .map(|(formal, actual)| {
+                    Ok(AssertionBinding {
+                        formal: semantic_id(ids, formal.target_id)?,
+                        actual: semantic_id(ids, actual.target_id)?,
+                    })
+                })
+                .collect::<Result<Vec<_>, DbError>>()?;
+            ExprKind::AssertionInstance {
+                target,
+                body,
+                bindings,
+            }
+        }
         81..=84 => {
             let key_type = if node.subkind == 82 {
                 let type_id = node.type_id.ok_or_else(|| {

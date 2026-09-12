@@ -20,6 +20,10 @@ into executable basic blocks. The staging process entries retain names,
 helpers, spawn identity, process kind, program identity, and typed write
 dependencies because functions, storage, and call references share their
 checked index tables.
+Concurrent assertion instances stay in a separate `IrModel::assertions` table;
+their clock/disable sources, sampled predicate expressions, overlap mode,
+labels, and Reactive action identities are validated without becoming ordinary
+procedural blocks.
 
 Variable aliases identify canonical storage explicitly. Event-evaluation helpers,
 typed evaluator contexts, read dependencies, delayed NBA operations and real math

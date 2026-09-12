@@ -587,6 +587,52 @@ impl Validator<'_> {
             }
         }
 
+        for (idx, assertion) in self.model.assertions.iter().enumerate() {
+            let path = format!("assertions[{idx}]");
+            let Some(clock) = self.model.signals.get(assertion.clock_signal) else {
+                return self.fail(
+                    format!("{path}.clock_signal"),
+                    "assertion clock signal index is out of bounds",
+                );
+            };
+            if clock.omit || clock.ty.width() == 0 {
+                return self.fail(
+                    format!("{path}.clock_signal"),
+                    "assertion clock must be an active packed signal",
+                );
+            }
+            if let Some(disable) = assertion.disable_signal {
+                let Some(signal) = self.model.signals.get(disable) else {
+                    return self.fail(
+                        format!("{path}.disable_signal"),
+                        "assertion disable signal index is out of bounds",
+                    );
+                };
+                if signal.omit || signal.ty.width() == 0 {
+                    return self.fail(
+                        format!("{path}.disable_signal"),
+                        "assertion disable must be an active packed signal",
+                    );
+                }
+            }
+            if let Some(antecedent) = &assertion.antecedent {
+                self.validate_expr(antecedent, &[], &format!("{path}.antecedent"))?;
+                if antecedent.is_real() {
+                    return self.fail(
+                        format!("{path}.antecedent"),
+                        "assertion antecedent must be packed",
+                    );
+                }
+            }
+            self.validate_expr(&assertion.consequent, &[], &format!("{path}.consequent"))?;
+            if assertion.consequent.is_real() {
+                return self.fail(
+                    format!("{path}.consequent"),
+                    "assertion consequent must be packed",
+                );
+            }
+        }
+
         for (idx, array) in self.model.arrays.iter().enumerate() {
             let path = format!("arrays[{idx}]");
             if array.real {

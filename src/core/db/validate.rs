@@ -377,6 +377,7 @@ impl NodeKind {
             NodeKind::FuncTask { body, .. } => refs.extend(*body),
             NodeKind::FuncArg { default, .. } => refs.extend(*default),
             NodeKind::Stmt(stmt) => statement_refs(stmt, refs),
+            NodeKind::AssertionExpr(assertion) => assertion.referenced_nodes(refs),
             NodeKind::Expr(expr) => expression_refs(expr, refs),
             NodeKind::ModuleInst { .. }
             | NodeKind::InstanceArray
@@ -420,6 +421,15 @@ fn statement_refs(statement: &StmtKind, refs: &mut Vec<NodeId>) {
             ..
         } => {
             refs.push(*cond);
+            refs.extend(if_true.iter().chain(if_false.iter()).copied());
+        }
+        StmtKind::ConcurrentAssertion {
+            property,
+            if_true,
+            if_false,
+            ..
+        } => {
+            refs.push(*property);
             refs.extend(if_true.iter().chain(if_false.iter()).copied());
         }
         StmtKind::IfElse { cond, .. } | StmtKind::Wait { cond } => refs.push(*cond),
@@ -505,6 +515,18 @@ fn expression_refs(expression: &ExprKind, refs: &mut Vec<NodeId>) {
             refs.extend(*initializer);
         }
         ExprKind::NewClass { constructor, .. } => refs.extend(*constructor),
+        ExprKind::AssertionInstance {
+            target,
+            body,
+            bindings,
+        } => {
+            refs.extend([*target, *body]);
+            refs.extend(
+                bindings
+                    .iter()
+                    .flat_map(|binding| [binding.formal, binding.actual]),
+            );
+        }
         ExprKind::Streaming { streams, .. } => {
             for stream in streams {
                 refs.push(stream.value);

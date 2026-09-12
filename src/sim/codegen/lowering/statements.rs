@@ -577,6 +577,11 @@ impl EmitCtx<'_, '_> {
             NodeKind::Stmt(assertion @ StmtKind::ImmediateAssertion { .. }) => {
                 self.lower_immediate_assertion(h, assertion)
             }
+            NodeKind::Stmt(StmtKind::ConcurrentAssertion { .. }) => {
+                let path = self.path.clone();
+                self.cg.emit_concurrent_assertion(self.inst, &path, h)?;
+                Ok(Vec::new())
+            }
             NodeKind::Stmt(StmtKind::IfElse { cond, check }) => {
                 let c = self.cg.lower_boolean_expr(&self.path, *cond)?;
                 let then_node = self

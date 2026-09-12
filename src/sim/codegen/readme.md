@@ -35,6 +35,11 @@
   database and process IR. Initial processes launch in Reactive, while
   prohibited always/continuous/primitive/generate/nested-instance members
   fail before lowering; `$exit` is admitted only from a program process.
+- **Concurrent assertions:** Bounded single-clock packed `|->`/`|=>`
+  properties become dedicated IR assertion instances with explicit sampled
+  predicates, asynchronous `disable iff`, overlap mode, labels, and action
+  callbacks. General sequence/property expansion and formal-bound instances
+  remain source-located fail-closed boundaries.
 - **Evaluated events:** Explicit event expressions retain only their expression
   and qualifier dependencies. Read-only input/`const ref` function calls are
   checked transitively for disallowed effects, and automatic locals/formals are

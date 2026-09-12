@@ -257,6 +257,9 @@ static void deferred_trigger_source_change(sv4_t* sig, double* real);
 static void deferred_trigger_event(llg_event_object_t* ev);
 static void start_pending_fork_children(llg_proc_t* parent);
 static void event_triggered_unlink(llg_wait_t* w);
+static void assertion_disable_signal_changed(sv4_t* signal);
+static void assertion_clock_signal_changed(sv4_t* signal, sv4_t old,
+                                           sv4_t value);
 
 static llg_frame_slot_t* frame_slot(llg_frame_t* frame, size_t slot) {
     if (!frame || slot >= frame->nslots) {
@@ -555,6 +558,32 @@ typedef struct llg_sampled_history {
 static llg_sampled_value_t* find_sampled_value(const sv4_t* signal);
 static void sampled_record_write(sv4_t* signal);
 
+typedef struct llg_assertion_attempt {
+    struct llg_assertion_attempt* next;
+    /* 1 means the consequent is due on the next matching clock edge. */
+    uint64_t due;
+} llg_assertion_attempt_t;
+
+typedef struct llg_concurrent_assertion {
+    struct llg_concurrent_assertion* next;
+    sv4_t* clock;
+    int edge;
+    sv4_t* disable;
+    llg_concurrent_assertion_predicate_fn antecedent;
+    llg_concurrent_assertion_predicate_fn consequent;
+    llg_concurrent_assertion_action_fn pass_action;
+    llg_concurrent_assertion_action_fn fail_action;
+    void* data;
+    int kind;
+    int overlapped;
+    uint64_t identity;
+    const char* label;
+    const char* location;
+    int edge_pending;
+    llg_assertion_attempt_t* attempts;
+    llg_assertion_attempt_t* attempts_tail;
+} llg_concurrent_assertion_t;
+
 // An event-controlled `->>` is not a suspended process.  Its source
 // descriptors and snapshots live here until one source matches, then the
 // target is submitted to the ordinary NBA queue.
@@ -616,6 +645,8 @@ typedef struct {
     llg_sampled_value_t* sampled;
     uint64_t sampled_time;
     int sampled_time_valid;
+    llg_concurrent_assertion_t* assertions;
+    llg_concurrent_assertion_t* assertion_tail;
     llg_deferred_trigger_t* deferred_triggers;
     llg_deferred_trigger_t* deferred_trigger_tail;
     int in_deferred_action;
@@ -702,6 +733,7 @@ static int llg_last_config_error;
 static uint64_t llg_severity_counts[4];
 static uint64_t llg_assertion_failure_counts[2];
 static uint64_t llg_assertion_cover_count;
+static uint64_t llg_assertion_vacuous_total;
 // Event objects are generated as file-scope storage and therefore survive
 // `llg_rt_cleanup`. Bump this generation at each teardown so their persistent
 // same-slot state cannot leak into a later runtime initialization without
@@ -2204,8 +2236,14 @@ static void sig_write(sv4_t* target, sv4_t value) {
         value.z[i] &= m;
     }
     if (target->width == value.width && sv4_same(*target, value)) return;
+    sv4_t old = *target;
     *target = value;
     sampled_record_write(target);
+    assertion_clock_signal_changed(target, old, value);
+    // `disable iff` is an asynchronous, unsampled control. Abort pending
+    // attempts at the write boundary, before any waiter or later region can
+    // observe the changed value.
+    assertion_disable_signal_changed(target);
     if (g.mon.active) {
         for (int i = 0; i < g.mon.n_reads; i++) {
             if (g.mon.reads[i] == target) {
@@ -2825,6 +2863,25 @@ static void free_sampled_values(void) {
     }
 }
 
+static void free_assertion_attempts(llg_concurrent_assertion_t* assertion) {
+    while (assertion->attempts) {
+        llg_assertion_attempt_t* next = assertion->attempts->next;
+        free(assertion->attempts);
+        assertion->attempts = next;
+    }
+    assertion->attempts_tail = NULL;
+}
+
+static void free_assertions(void) {
+    while (g.assertions) {
+        llg_concurrent_assertion_t* next = g.assertions->next;
+        free_assertion_attempts(g.assertions);
+        free(g.assertions);
+        g.assertions = next;
+    }
+    g.assertion_tail = NULL;
+}
+
 static void free_q_queues(void) {
     while (g.q_queues) {
         llg_q_queue_t* queue = g.q_queues;
@@ -2892,6 +2949,7 @@ void llg_rt_cleanup(void) {
     free(g.mon.scope);
     free_region_callbacks();
     free_sampled_values();
+    free_assertions();
     free_q_queues();
 
     for (int i = 0; i < g.n_procs; i++) {
@@ -2925,6 +2983,7 @@ void llg_rt_init_with_args(int argc, char** argv) {
     memset(llg_severity_counts, 0, sizeof(llg_severity_counts));
     memset(llg_assertion_failure_counts, 0, sizeof(llg_assertion_failure_counts));
     llg_assertion_cover_count = 0;
+    llg_assertion_vacuous_total = 0;
     llg_n_finals = 0; // a fresh run never inherits final registrations
     if (!configure_limits() || !configure_stop_policy()) {
         llg_last_failure = 1;
@@ -3382,6 +3441,9 @@ static void report_finish(int verbosity, const char* location) {
                     (unsigned long long)llg_assertion_failure_counts[LLG_ASSERTION_ASSUME],
                     (unsigned long long)llg_assertion_cover_count);
         }
+        if (llg_assertion_vacuous_total != 0)
+            fprintf(stderr, "llg: assertion vacuous=%llu\n",
+                    (unsigned long long)llg_assertion_vacuous_total);
     }
 }
 
@@ -3595,6 +3657,9 @@ int llg_sampled_copy(const sv4_t* signal, sv4_t* out) {
 }
 
 static void sample_preponed_values(void) {
+    for (llg_concurrent_assertion_t* assertion = g.assertions; assertion;
+         assertion = assertion->next)
+        assertion->edge_pending = 0;
     // The scheduler revisits PREPONED for zero-delay deltas in the same time
     // slot. #1step samples are fixed at the slot boundary and must not observe
     // values written by later active/NBA iterations.
@@ -7118,6 +7183,172 @@ uint64_t llg_assertion_count(int kind) {
     return 0;
 }
 
+uint64_t llg_assertion_vacuous_count(void) {
+    return llg_assertion_vacuous_total;
+}
+
+static void assertion_attempt_enqueue(llg_concurrent_assertion_t* assertion) {
+    llg_assertion_attempt_t* attempt = (llg_assertion_attempt_t*)llg_checked_calloc(
+        1, sizeof(*attempt), "concurrent assertion attempt");
+    attempt->due = 1;
+    if (assertion->attempts_tail) {
+        assertion->attempts_tail->next = attempt;
+    } else {
+        assertion->attempts = attempt;
+    }
+    assertion->attempts_tail = attempt;
+}
+
+static void assertion_action(llg_concurrent_assertion_t* assertion,
+                             llg_concurrent_assertion_action_fn action) {
+    if (!action || g.finish) return;
+    const char* name = assertion->label && assertion->label[0]
+                           ? assertion->label
+                           : "concurrent assertion action";
+    (void)llg_spawn_in_region(action, name, LLG_REGION_REACTIVE);
+}
+
+static void assertion_vacuous(void) {
+    if (llg_assertion_vacuous_total == UINT64_MAX) {
+        fprintf(stderr, "llg runtime fatal: assertion vacuity counter overflow\n");
+        abort();
+    }
+    llg_assertion_vacuous_total++;
+}
+
+static void assertion_result(llg_concurrent_assertion_t* assertion, int success,
+                             int vacuous) {
+    if (vacuous) assertion_vacuous();
+    if (success) {
+        // Cover counts and pass actions represent a non-vacuous match. An
+        // implication with a false antecedent is accounted separately but is
+        // not a coverage hit. Assert/assume pass actions still run for their
+        // vacuous success, as required by assertion action semantics.
+        if (assertion->kind == LLG_ASSERTION_COVER && !vacuous)
+            llg_assertion_cover(assertion->identity, assertion->label,
+                                assertion->location);
+        if (assertion->kind != LLG_ASSERTION_COVER || !vacuous)
+            assertion_action(assertion, assertion->pass_action);
+    } else {
+        if (assertion->kind == LLG_ASSERTION_COVER) {
+            assertion_action(assertion, assertion->fail_action);
+        } else {
+            llg_assertion_failure(assertion->kind, assertion->identity,
+                                  assertion->label, assertion->location);
+            assertion_action(assertion, assertion->fail_action);
+        }
+    }
+}
+
+static void assertion_disable_signal_changed(sv4_t* signal) {
+    if (!signal) return;
+    for (llg_concurrent_assertion_t* assertion = g.assertions; assertion;
+         assertion = assertion->next) {
+        if (assertion->disable == signal && sv4_to_bool(*signal))
+            free_assertion_attempts(assertion);
+    }
+}
+
+static void assertion_clock_signal_changed(sv4_t* signal, sv4_t old,
+                                           sv4_t value) {
+    if (!signal) return;
+    for (llg_concurrent_assertion_t* assertion = g.assertions; assertion;
+         assertion = assertion->next) {
+        if (assertion->clock == signal &&
+            ev_matches(old, value, assertion->edge))
+            assertion->edge_pending = 1;
+    }
+}
+
+static void run_concurrent_assertion(llg_concurrent_assertion_t* assertion) {
+    // A clock transition is observed after Active/NBA writes, while every
+    // predicate reads the immutable Preponed snapshot from this time slot.
+    int edge = assertion->edge_pending;
+    assertion->edge_pending = 0;
+    if (assertion->disable && sv4_to_bool(*assertion->disable)) {
+        free_assertion_attempts(assertion);
+        return;
+    }
+    if (!edge) return;
+
+    while (assertion->attempts) {
+        llg_assertion_attempt_t* attempt = assertion->attempts;
+        assertion->attempts = attempt->next;
+        if (!assertion->attempts) assertion->attempts_tail = NULL;
+        int success = assertion->consequent(assertion->data) != 0;
+        assertion_result(assertion, success, 0);
+        free(attempt);
+        if (g.finish) return;
+    }
+
+    int antecedent = assertion->antecedent == NULL ||
+                     assertion->antecedent(assertion->data) != 0;
+    if (!antecedent) {
+        assertion_result(assertion, 1, 1);
+    } else if (assertion->overlapped) {
+        assertion_result(assertion, assertion->consequent(assertion->data) != 0,
+                         0);
+    } else {
+        assertion_attempt_enqueue(assertion);
+    }
+}
+
+static int run_concurrent_assertions(void) {
+    for (llg_concurrent_assertion_t* assertion = g.assertions; assertion;
+         assertion = assertion->next) {
+        run_concurrent_assertion(assertion);
+        if (g.finish) return 0;
+    }
+    return 1;
+}
+
+static void flush_assertion_attempts(void) {
+    for (llg_concurrent_assertion_t* assertion = g.assertions; assertion;
+         assertion = assertion->next)
+        free_assertion_attempts(assertion);
+}
+
+int llg_assertion_register(
+    sv4_t* clock, int edge, sv4_t* disable,
+    llg_concurrent_assertion_predicate_fn antecedent,
+    llg_concurrent_assertion_predicate_fn consequent,
+    llg_concurrent_assertion_action_fn pass_action,
+    llg_concurrent_assertion_action_fn fail_action, void* data, int kind,
+    int overlapped, uint64_t identity, const char* label, const char* location) {
+    if (!g.main_co || g.running || g.config_error || !clock || !consequent ||
+        (edge != LLG_EV_POSEDGE && edge != LLG_EV_NEGEDGE) ||
+        kind < LLG_ASSERTION_ASSERT || kind > LLG_ASSERTION_COVER ||
+        (overlapped != 0 && overlapped != 1)) {
+        fprintf(stderr, "llg: invalid concurrent assertion registration\n");
+        llg_last_failure = 1;
+        g.finish = 1;
+        return 0;
+    }
+    llg_concurrent_assertion_t* assertion =
+        (llg_concurrent_assertion_t*)llg_checked_calloc(
+            1, sizeof(*assertion), "concurrent assertion");
+    assertion->clock = clock;
+    assertion->edge = edge;
+    assertion->disable = disable;
+    assertion->antecedent = antecedent;
+    assertion->consequent = consequent;
+    assertion->pass_action = pass_action;
+    assertion->fail_action = fail_action;
+    assertion->data = data;
+    assertion->kind = kind;
+    assertion->overlapped = overlapped;
+    assertion->identity = identity;
+    assertion->label = label;
+    assertion->location = location;
+    if (g.assertion_tail) {
+        g.assertion_tail->next = assertion;
+    } else {
+        g.assertions = assertion;
+    }
+    g.assertion_tail = assertion;
+    return 1;
+}
+
 static int llg_fmt_arg_same(const llg_fmt_arg_t* a, const llg_fmt_arg_t* b) {
     if (a->kind != b->kind) return 0;
     if (a->kind == LLG_FMT_PACKED) return sv4_same(a->value.packed, b->value.packed);
@@ -7527,6 +7758,7 @@ static int run_observed_set(void) {
     if (!run_region_queue(LLG_REGION_PRE_OBSERVED_PLI)) return 0;
     if (!run_region_queue(LLG_REGION_PRE_OBSERVED)) return 0;
     if (!run_region_queue(LLG_REGION_OBSERVED)) return 0;
+    if (!run_concurrent_assertions()) return 0;
     if (!run_region_queue(LLG_REGION_POST_OBSERVED)) return 0;
     return run_region_queue(LLG_REGION_POST_OBSERVED_PLI);
 }
@@ -7753,6 +7985,7 @@ void llg_rt_run(void) {
         g.running = 0;
         return;
     }
+    flush_assertion_attempts();
     // Finals ($time inside them) report when the scheduler loop ended.
     llg_final_time = g.now;
     // No pending update or deferred evaluator executes between $finish and

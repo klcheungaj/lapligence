@@ -907,6 +907,7 @@ impl<'a> Codegen<'a> {
         RCtx {
             model: &self.model,
             func: self.cur_fn_ir.map(|i| &self.model.funcs[i]),
+            sampled: false,
             activation_label: None,
         }
     }
