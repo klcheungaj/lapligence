@@ -28,6 +28,8 @@ mod real_sensitivity;
 mod regions;
 #[path = "sim_partial_features/select_ranges.rs"]
 mod select_ranges;
+#[path = "sim_partial_features/severity.rs"]
+mod severity;
 #[path = "support/sim.rs"]
 mod sim_harness;
 #[path = "sim_partial_features/system.rs"]

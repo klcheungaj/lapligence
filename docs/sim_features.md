@@ -386,7 +386,13 @@ SystemVerilog era:
 - ❌ **$writememh/$writememb** — §1800-2009 21.4 **[SV-2005]** unsupported-task reject
 - ✅ **$clog2/$bits** — §1800-2009 20.8/20.6 **[SV-2005]** (`$clog2` first in [1364-2005])
 - ✅ **Math functions** `$ln $log10 $exp $sqrt $pow $floor $ceil $sin …` — §1800-2009 20.8 **[SV-2005]** all 21 real functions map to table 20-4 C math functions, with runtime arguments, numeric coercion and C domain behavior (sim_partial_features.rs, both optimizer modes)
-- ❌ **Severity tasks** `$fatal/$error/$warning/$info` — §1800-2009 20.9 **[SV-2005]** unsupported-task reject
+- ✅ **Severity tasks** `$fatal/$error/$warning/$info` use the typed display
+  formatter, preserve HDL source context and `%m` scope, evaluate each
+  message argument once in source order, and write level-specific diagnostics
+  to stderr. `$fatal` is an immediate nonreturning termination with
+  the constant finish number 0/1/2; nonfatal levels continue execution.
+  Severity counters are reported with level-2 finish statistics — §1800-2009
+  20.9/20.10 **[SV-2005]** (sim_partial_features/severity.rs)
 - ❌ **$sformatf** — §1800-2009 21.3 **[SV-2005]** unsupported-function reject
 - ✅ **Bit-vector helpers** `$onehot/$onehot0/$countones/$isunknown` — §1800-2009 20.6 **[SV-2005]** packed operands through the generated model width, X/Z-aware counting, parameters and constant declaration initializers, single argument evaluation, and combinational dependencies; real operands rejected (sim_bit_queries.rs, optimization on/off)
 - ❌ **Sampled-value functions** `$rose/$fell/$stable/$past/$sampled` — §1800-2009 16.9.3 **[SV-2005]** unsupported-function reject
@@ -455,8 +461,8 @@ Tracked so nothing is lost; all de-prioritized behind RTL-simulation support.
 
 ## Remaining-work inventory
 
-The original audit IDs are stable. This inventory currently contains 67 remaining
-groups (32 missing, 35 partial); groups 9, 38, 57, 58 and 60 are completed. Counts refer to grouped
+The original audit IDs are stable. This inventory currently contains 66 remaining
+groups (31 missing, 35 partial); groups 9, 38, 57, 58, 59 and 60 are completed. Counts refer to grouped
 capabilities, not individual keywords, system functions or standard clauses.
 
 
@@ -520,7 +526,7 @@ capabilities, not individual keywords, system functions or standard clauses.
 | 56 | Missing | Random-number facilities | `$random`, `$urandom`, `$urandom_range`, random-state/seeding methods, and `$dist_uniform/$dist_normal/$dist_exponential/$dist_poisson/$dist_chi_square/$dist_t/$dist_erlang`. |
 | 57 | Completed | Command-line plusargs | `$test$plusargs/$value$plusargs` receive arguments after the `llg` `--` delimiter; exact prefix matching, typed decimal/hex/binary/octal/real/string conversion, wide 4-state values, literal percent escapes, repeated-argument first match, and unchanged destinations on failed queries are covered by `sim_plusargs.rs`. |
 | 58 | Completed | Runtime mathematical functions | All 21 real functions from IEEE 1800-2009 table 20-4 now use typed IR and the specified C math functions, with numeric argument conversion. Procedural tests cover runtime arguments, one-time evaluation and C domain behavior. Existing real-context restrictions are counted in group 3. |
-| 59 | Missing | Runtime severity tasks | `$fatal/$error/$warning/$info`; elaboration-time frontend diagnostics are a separate capability. |
+| 59 | Completed | Runtime severity tasks | `$fatal/$error/$warning/$info` use typed, exactly-once message evaluation with source-context prefixes; `$fatal` validates constant finish number 0/1/2, runs the existing termination/final handoff, and level-2 finish statistics include stable severity counters. Elaboration-time frontend diagnostics remain a separate capability. |
 | 60 | Completed | Host command execution | `$system` task/function forms preserve omitted (`system(NULL)`) versus explicit-empty commands, use one optional owned string and explicit generated-process permission, and return raw host `system()` status; shell syntax and status encoding remain platform-specific. |
 | 61 | Partial | Waveform selection and extended VCD | `$dumpvars` depth/scope/variable filtering is implemented for ordinary VCD/FST catalogs; the `$dumpports` extended-VCD family remains unsupported. |
 | 62 | Missing | Classes | Class objects/handles, construction, properties, methods, inheritance, virtual dispatch and access/lifetime rules. |

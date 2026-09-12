@@ -8,8 +8,8 @@ use super::expressions::{arg_resize, bool_code, render_assign, render_expr_impl 
 use super::EmitError;
 use crate::sim::execution::ScheduleRegion;
 use crate::sim::ir::{
-    IrCallArg, IrDependency, IrDisplayArg, IrExpr, IrExprKind, IrLhs, IrStreamDirection, IrType,
-    IrUniquePriorityCheck, IrWaitSrc, StorageKind,
+    IrCallArg, IrDependency, IrDisplayArg, IrExpr, IrExprKind, IrLhs, IrSeverityLevel,
+    IrStreamDirection, IrType, IrUniquePriorityCheck, IrWaitSrc, StorageKind,
 };
 
 // ── Statement rendering ───────────────────────────────────────────────────────
@@ -757,6 +757,22 @@ fn render_stmt_scoped(
             newline,
             ..
         } => render_typed_display(ctx, fmt, args, scope, *newline)?,
+        IrStmt::Severity {
+            level,
+            fmt,
+            args,
+            scope,
+            location,
+            fatal_finish_number,
+        } => render_severity(
+            ctx,
+            *level,
+            fmt,
+            args,
+            scope,
+            location,
+            *fatal_finish_number,
+        )?,
         IrStmt::MonitorSet {
             strobe,
             fmt,
@@ -1167,6 +1183,97 @@ fn render_typed_display(
         "    {{\n        {}\n    }}\n",
         assignments.join("\n        ")
     ))
+}
+
+fn render_severity(
+    ctx: &RCtx<'_>,
+    level: IrSeverityLevel,
+    fmt: &str,
+    args: &[IrDisplayArg],
+    scope: &str,
+    location: &str,
+    fatal_finish_number: Option<u8>,
+) -> Result<String, String> {
+    let scope = c_string_literal(scope);
+    let location = c_string_literal(location);
+    if args.is_empty() {
+        return Ok(format!(
+            "    {}\n",
+            render_severity_call(
+                level,
+                fmt,
+                "NULL",
+                0,
+                &scope,
+                &location,
+                fatal_finish_number,
+            )?
+        ));
+    }
+    // Keep argument evaluation in source order. This is shared with typed
+    // display emission so side effects in a severity message occur once.
+    let mut assignments = Vec::with_capacity(args.len() + 2);
+    assignments.push(format!(
+        "llg_fmt_arg_t _severity_args[{}] = {{0}};",
+        args.len()
+    ));
+    for (index, arg) in args.iter().enumerate() {
+        let assignment = match arg {
+            IrDisplayArg::Packed(value) => format!(
+                "_severity_args[{index}].kind = LLG_FMT_PACKED;\n        _severity_args[{index}].value.packed = {};",
+                render_expr(ctx, value)?.code
+            ),
+            IrDisplayArg::Real(value) => format!(
+                "_severity_args[{index}].kind = LLG_FMT_REAL;\n        _severity_args[{index}].value.real = {};",
+                render_expr(ctx, value)?.code
+            ),
+            IrDisplayArg::String(value) => format!(
+                "_severity_args[{index}].kind = LLG_FMT_STRING;\n        _severity_args[{index}].value.string = {};",
+                super::objects::string(ctx, value)?
+            ),
+        };
+        assignments.push(assignment);
+    }
+    assignments.push(render_severity_call(
+        level,
+        fmt,
+        "_severity_args",
+        args.len(),
+        &scope,
+        &location,
+        fatal_finish_number,
+    )?);
+    Ok(format!(
+        "    {{\n        {}\n    }}\n",
+        assignments.join("\n        ")
+    ))
+}
+
+fn render_severity_call(
+    level: IrSeverityLevel,
+    fmt: &str,
+    args: &str,
+    n: usize,
+    scope: &str,
+    location: &str,
+    fatal_finish_number: Option<u8>,
+) -> Result<String, String> {
+    Ok(match level {
+        IrSeverityLevel::Fatal => {
+            let finish_number = fatal_finish_number
+                .ok_or_else(|| "fatal severity is missing its finish number".to_string())?;
+            format!("llg_rt_fatal_typed({finish_number}, {fmt}, {args}, {n}, {scope}, {location});")
+        }
+        IrSeverityLevel::Info => format!(
+            "llg_rt_severity_typed(LLG_SEVERITY_INFO, {fmt}, {args}, {n}, {scope}, {location});"
+        ),
+        IrSeverityLevel::Warning => format!(
+            "llg_rt_severity_typed(LLG_SEVERITY_WARNING, {fmt}, {args}, {n}, {scope}, {location});"
+        ),
+        IrSeverityLevel::Error => format!(
+            "llg_rt_severity_typed(LLG_SEVERITY_ERROR, {fmt}, {args}, {n}, {scope}, {location});"
+        ),
+    })
 }
 
 fn dependency_entry(ctx: &RCtx<'_>, dependency: &IrDependency) -> String {

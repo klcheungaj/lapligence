@@ -616,6 +616,7 @@ static llg_dependency_binding_t* llg_dependency_bindings;
 // to inspect whether that run stopped with a controlled runtime failure.
 static int llg_last_failure;
 static int llg_last_config_error;
+static uint64_t llg_severity_counts[4];
 // Event objects are generated as file-scope storage and therefore survive
 // `llg_rt_cleanup`. Bump this generation at each teardown so their persistent
 // same-slot state cannot leak into a later runtime initialization without
@@ -2665,6 +2666,7 @@ void llg_rt_init_with_args(int argc, char** argv) {
     llg_rt_cleanup();
     llg_last_failure = 0;
     llg_last_config_error = 0;
+    memset(llg_severity_counts, 0, sizeof(llg_severity_counts));
     llg_n_finals = 0; // a fresh run never inherits final registrations
     if (!configure_limits()) {
         llg_last_failure = 1;
@@ -3100,6 +3102,17 @@ static void report_finish(int verbosity, const char* location) {
     }
     if (verbosity >= 2) {
         fprintf(stderr, "llg: simulation statistics: processes=%d\n", g.n_procs);
+        if (llg_severity_counts[LLG_SEVERITY_INFO] != 0 ||
+            llg_severity_counts[LLG_SEVERITY_WARNING] != 0 ||
+            llg_severity_counts[LLG_SEVERITY_ERROR] != 0 ||
+            llg_severity_counts[LLG_SEVERITY_FATAL] != 0) {
+            fprintf(stderr,
+                    "llg: severity counts: info=%llu warning=%llu error=%llu fatal=%llu\n",
+                    (unsigned long long)llg_severity_counts[LLG_SEVERITY_INFO],
+                    (unsigned long long)llg_severity_counts[LLG_SEVERITY_WARNING],
+                    (unsigned long long)llg_severity_counts[LLG_SEVERITY_ERROR],
+                    (unsigned long long)llg_severity_counts[LLG_SEVERITY_FATAL]);
+        }
     }
 }
 
@@ -4817,8 +4830,8 @@ static size_t llg_format_typed(char* out, size_t cap, const char* fmt,
     return len;
 }
 
-static void llg_print_typed(const char* fmt, llg_fmt_arg_t* args, int n,
-                            const char* scope, int newline) {
+static char* llg_typed_line_alloc(const char* fmt, llg_fmt_arg_t* args, int n,
+                                  const char* scope, size_t* length) {
     size_t cap = strlen(fmt) + (scope ? strlen(scope) : 0) + 64u;
     for (int i = 0; i < n; i++) {
         size_t extra = 64u;
@@ -4832,11 +4845,86 @@ static void llg_print_typed(const char* fmt, llg_fmt_arg_t* args, int n,
         cap += extra;
     }
     char* out = llg_checked_malloc(cap, 1, "typed formatted line");
-    size_t len = llg_format_typed(out, cap, fmt, args, n, scope);
-    fwrite(out, 1, len, stdout);
-    if (newline) fputc('\n', stdout);
-    fflush(stdout);
+    *length = llg_format_typed(out, cap, fmt, args, n, scope);
+    return out;
+}
+
+static void llg_print_typed_to(FILE* stream, const char* fmt,
+                               llg_fmt_arg_t* args, int n, const char* scope,
+                               int newline) {
+    size_t len = 0;
+    char* out = llg_typed_line_alloc(fmt, args, n, scope, &len);
+    fwrite(out, 1, len, stream);
+    if (newline) fputc('\n', stream);
+    fflush(stream);
     free(out);
+}
+
+static void llg_print_typed(const char* fmt, llg_fmt_arg_t* args, int n,
+                            const char* scope, int newline) {
+    llg_print_typed_to(stdout, fmt, args, n, scope, newline);
+}
+
+static const char* llg_severity_name(int severity) {
+    switch (severity) {
+        case LLG_SEVERITY_INFO: return "info";
+        case LLG_SEVERITY_WARNING: return "warning";
+        case LLG_SEVERITY_ERROR: return "error";
+        case LLG_SEVERITY_FATAL: return "fatal";
+        default: return "invalid";
+    }
+}
+
+static void llg_report_severity_typed(int severity, const char* fmt,
+                                      llg_fmt_arg_t* args, int n,
+                                      const char* scope, const char* location) {
+    if (severity < LLG_SEVERITY_INFO || severity > LLG_SEVERITY_FATAL) {
+        fprintf(stderr, "llg runtime fatal: invalid severity level %d\n", severity);
+        abort();
+    }
+    if (n < 0) {
+        fprintf(stderr, "llg runtime fatal: negative severity argument count\n");
+        abort();
+    }
+    if (llg_severity_counts[severity] == UINT64_MAX) {
+        fprintf(stderr, "llg runtime fatal: severity counter overflow\n");
+        abort();
+    }
+    size_t len = 0;
+    char* out = llg_typed_line_alloc(fmt, args, n, scope, &len);
+    llg_severity_counts[severity]++;
+    fprintf(stderr, "llg: severity %s: %s: ",
+            llg_severity_name(severity),
+            location && location[0] ? location : "<unknown>");
+    fwrite(out, 1, len, stderr);
+    fputc('\n', stderr);
+    fflush(stderr);
+    free(out);
+}
+
+void llg_rt_severity_typed(int severity, const char* fmt, llg_fmt_arg_t* args,
+                           int n, const char* scope, const char* location) {
+    llg_report_severity_typed(severity, fmt, args, n, scope, location);
+    llg_fmt_args_destroy(args, n);
+}
+
+_Noreturn void llg_rt_fatal_typed(int finish_number, const char* fmt,
+                                  llg_fmt_arg_t* args, int n,
+                                  const char* scope, const char* location) {
+    if (finish_number < 0 || finish_number > 2) {
+        fprintf(stderr, "llg runtime fatal: invalid $fatal finish number %d\n",
+                finish_number);
+        llg_fmt_args_destroy(args, n);
+        abort();
+    }
+    llg_report_severity_typed(LLG_SEVERITY_FATAL, fmt, args, n, scope, location);
+    llg_fmt_args_destroy(args, n);
+    llg_rt_finish_with_level(finish_number, location);
+}
+
+uint64_t llg_rt_severity_count(int severity) {
+    if (severity < LLG_SEVERITY_INFO || severity > LLG_SEVERITY_FATAL) return 0;
+    return llg_severity_counts[severity];
 }
 
 static int llg_fmt_arg_same(const llg_fmt_arg_t* a, const llg_fmt_arg_t* b) {

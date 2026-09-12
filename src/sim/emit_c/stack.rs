@@ -414,6 +414,13 @@ fn stmt_temp_slots(stmt: &IrStmt) -> Result<u64, String> {
             }
             Ok(slots)
         }
+        IrStmt::Severity { args, .. } => {
+            let mut slots = 0;
+            for arg in args {
+                slots = checked_add(slots, display_arg_slots(arg)?, "severity argument slots")?;
+            }
+            Ok(slots)
+        }
         IrStmt::Call(call) => call_slots(call),
         IrStmt::Return { value } => value
             .as_deref()

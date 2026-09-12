@@ -55,6 +55,13 @@ enum {
     LLG_FMT_STRING = 2,
 };
 
+enum {
+    LLG_SEVERITY_INFO = 0,
+    LLG_SEVERITY_WARNING = 1,
+    LLG_SEVERITY_ERROR = 2,
+    LLG_SEVERITY_FATAL = 3,
+};
+
 typedef struct {
     int kind;
     union {
@@ -234,6 +241,17 @@ void llg_display_typed(const char* fmt, llg_fmt_arg_t* args, int n,
                        const char* scope);
 void llg_write_typed(const char* fmt, llg_fmt_arg_t* args, int n,
                      const char* scope);
+// Runtime severity tasks use the same typed formatter as display tasks and
+// write one source-context diagnostic to stderr. The argument array is
+// consumed exactly once, including destruction of owned strings.
+void llg_rt_severity_typed(int severity, const char* fmt, llg_fmt_arg_t* args,
+                           int n, const char* scope, const char* location);
+_Noreturn void llg_rt_fatal_typed(int finish_number, const char* fmt,
+                                  llg_fmt_arg_t* args, int n,
+                                  const char* scope, const char* location);
+// Counts reset at llg_rt_init and remain available through final-block
+// execution. Invalid levels return zero.
+uint64_t llg_rt_severity_count(int severity);
 
 // ── Command-line plusargs ───────────────────────────────────────────────────
 //

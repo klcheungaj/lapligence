@@ -10,7 +10,9 @@
 - **Simulation layer:** `llg_rt.h/.c` implements typed IEEE event-region
   scheduling, signal/driver updates, process services, simulator system tasks,
   region callback hooks, immutable sampled views, nonreturning `$finish`
-  controls, the exactly-once final-block phase, and checked zero-time budgets.
+  controls, typed runtime severity diagnostics (`$info`, `$warning`, `$error`,
+  `$fatal`) with stable counters, the exactly-once final-block phase, and
+  checked zero-time budgets.
   `$system` is a separately gated generated-process host boundary: the child
   must opt in with `LLG_ALLOW_SYSTEM`, and enabled calls return the host C
   `system()` status without normalizing shell or platform behavior. Its omitted

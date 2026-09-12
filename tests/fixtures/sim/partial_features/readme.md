@@ -45,3 +45,4 @@ for the boundaries these tests do not cover.
 | `realtime_*.sv`, `time_query_*.sv` | Fractional time, rounded integer queries, mixed scopes, half-unit boundaries and `$stime` wrap |
 | `time_literal_exact_2009.sv` | SystemVerilog 2009 local `timeunit`/`timeprecision`, signed/sub-femtosecond unit-suffixed literals, and exact femtosecond delay rounding |
 | `finish_*.sv` | Nonreturning termination, pending-work discard, final-block boundary, forked-coroutine exit, diagnostic levels, and source-bearing argument rejection |
+| `severity_*.sv` | Typed `$info/$warning/$error` diagnostics, `$fatal` continuation/termination/final behavior, stable counts, and finish-number validation |

@@ -2417,6 +2417,45 @@ impl Validator<'_> {
                     result?;
                 }
             }
+            IrStmt::Severity {
+                level,
+                args,
+                scope,
+                location,
+                fatal_finish_number,
+                ..
+            } => {
+                if scope.is_empty() {
+                    return self.fail(path, "severity scope must not be empty");
+                }
+                if location.is_empty() {
+                    return self.fail(path, "severity source location must not be empty");
+                }
+                if level.is_fatal() {
+                    let Some(finish_number) = fatal_finish_number else {
+                        return self.fail(path, "fatal severity must carry a finish number");
+                    };
+                    if *finish_number > 2 {
+                        return self.fail(path, "fatal severity finish number must be 0, 1, or 2");
+                    }
+                } else if fatal_finish_number.is_some() {
+                    return self.fail(path, "non-fatal severity must not carry a finish number");
+                }
+                for (idx, arg) in args.iter().enumerate() {
+                    arg.validate(
+                        self.model,
+                        self.string_return.get(),
+                        &format!("{path}.args[{idx}]"),
+                    )?;
+                    let mut result = Ok(());
+                    arg.expressions(&mut |expression| {
+                        result = result
+                            .clone()
+                            .and_then(|_| self.validate_expr(expression, formals, path));
+                    });
+                    result?;
+                }
+            }
             IrStmt::WaveLimit(expr) => {
                 self.validate_expr(expr, formals, &format!("{path}.limit"))?;
             }

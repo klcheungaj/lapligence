@@ -1673,6 +1673,26 @@ impl IrDisplayRadix {
     }
 }
 
+/// Severity level carried by a SystemVerilog runtime severity task.
+///
+/// The level stays in the owned IR so code generation cannot confuse an
+/// executable `$error`/`$warning` with an elaboration diagnostic. `$fatal`
+/// additionally carries its validated finish number on [`IrStmt::Severity`].
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum IrSeverityLevel {
+    Info,
+    Warning,
+    Error,
+    Fatal,
+}
+
+impl IrSeverityLevel {
+    /// Whether this level terminates the current simulation.
+    pub const fn is_fatal(self) -> bool {
+        matches!(self, Self::Fatal)
+    }
+}
+
 /// Resolved identity of a named procedural activation. Declaration and
 /// elaborated-instance identities are kept separate so equal source names in
 /// different instances cannot alias at runtime.
@@ -1960,6 +1980,20 @@ pub enum IrStmt {
         scope: String,
         newline: bool,
         default_radix: IrDisplayRadix,
+    },
+    /// SystemVerilog runtime severity task (`$info`, `$warning`, `$error`, or
+    /// `$fatal`). Arguments use the same typed formatter as display tasks and
+    /// are evaluated once, in source order. `fatal_finish_number` is present
+    /// only for `$fatal` and is validated to 0, 1, or 2 during lowering.
+    Severity {
+        level: IrSeverityLevel,
+        fmt: String,
+        args: Vec<IrDisplayArg>,
+        /// HDL hierarchy used by `%m` in the message.
+        scope: String,
+        /// Source context shown in the runtime diagnostic prefix.
+        location: String,
+        fatal_finish_number: Option<u8>,
     },
     /// `$monitor`/`$strobe` — `eval` is the C name of the re-evaluation
     /// function attached to the owning process/function's `pre_fns`, and

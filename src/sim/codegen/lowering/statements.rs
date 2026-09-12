@@ -94,6 +94,16 @@ fn display_task_variant(name: &str) -> Option<(DisplayTaskKind, IrDisplayRadix)>
     Some(variant)
 }
 
+fn severity_task_variant(name: &str) -> Option<IrSeverityLevel> {
+    match name {
+        "$info" => Some(IrSeverityLevel::Info),
+        "$warning" => Some(IrSeverityLevel::Warning),
+        "$error" => Some(IrSeverityLevel::Error),
+        "$fatal" => Some(IrSeverityLevel::Fatal),
+        _ => None,
+    }
+}
+
 fn loop_index_expr(value: i32) -> IrExpr {
     IrExpr::new(
         IrExprKind::Const(IrConst {
@@ -3336,6 +3346,74 @@ impl EmitCtx<'_, '_> {
 
     fn lower_sys_call(&mut self, h: NodeId, name: &str) -> Result<Vec<IrStmt>, String> {
         let args: Vec<NodeId> = self.cg.node(h).children.clone();
+        if let Some(level) = severity_task_variant(name) {
+            let first_is_string = match args.first().copied() {
+                Some(first) => {
+                    self.literal_string(first, name)?.is_some()
+                        || self.cg.is_string_expr(&self.path, first)
+                }
+                None => false,
+            };
+            let (message_args, fatal_finish_number) = if level.is_fatal() {
+                match args.first().copied() {
+                    None => (&args[..], Some(1)),
+                    Some(first)
+                        if first_is_string
+                            || self.cg.query_descriptor(first).is_some_and(|descriptor| {
+                                matches!(descriptor.shape, TypeShape::Real { .. })
+                            }) =>
+                    {
+                        // A string/real first argument starts the message
+                        // list, rather than supplying the optional finish
+                        // number; the fatal task still uses its default level
+                        // 1.
+                        (&args[..], Some(1))
+                    }
+                    Some(first) => {
+                        let value = self.cg.eval_bits(first).map_err(|error| {
+                            format!(
+                                "$fatal finish number at {} must be an integral constant 0, 1, or 2: {error}",
+                                self.finish_location(h)
+                            )
+                        })?;
+                        if value.is_unknown() {
+                            return Err(format!(
+                                "$fatal finish number at {} must be a known integral constant 0, 1, or 2",
+                                self.finish_location(h)
+                            ));
+                        }
+                        let value = value.to_u128().ok_or_else(|| {
+                            format!(
+                                "$fatal finish number at {} must be an integral constant 0, 1, or 2",
+                                self.finish_location(h)
+                            )
+                        })?;
+                        let finish_number = u8::try_from(value)
+                            .ok()
+                            .filter(|value| *value <= 2)
+                            .ok_or_else(|| {
+                                format!(
+                                    "$fatal finish number at {} must be 0, 1, or 2 (got {value})",
+                                    self.finish_location(h)
+                                )
+                            })?;
+                        (&args[1..], Some(finish_number))
+                    }
+                }
+            } else {
+                (&args[..], None)
+            };
+            let (fmt, severity_args) =
+                self.parse_display_call(name, message_args, IrDisplayRadix::Decimal)?;
+            return Ok(vec![IrStmt::Severity {
+                level,
+                fmt,
+                args: severity_args,
+                scope: self.path.clone(),
+                location: self.finish_location(h),
+                fatal_finish_number,
+            }]);
+        }
         if let Some((task_kind, default_radix)) = display_task_variant(name) {
             match task_kind {
                 DisplayTaskKind::Immediate { newline } => {

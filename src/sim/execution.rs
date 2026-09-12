@@ -539,6 +539,7 @@ fn collect_effects(
             IrStmt::System(_) => effects.push(ExecutionEffect::RuntimeService),
             IrStmt::Display { .. }
             | IrStmt::DisplayTyped { .. }
+            | IrStmt::Severity { .. }
             | IrStmt::MonitorSet { .. }
             | IrStmt::MonitorEnable(_)
             | IrStmt::WaveFile(_)
@@ -712,6 +713,18 @@ fn collect_statement_expression_effects(
             }
         }
         IrStmt::DisplayTyped { args, .. } => {
+            for argument in args {
+                match argument {
+                    IrDisplayArg::Packed(expression) | IrDisplayArg::Real(expression) => {
+                        collect_expression_effects(ir, expression, effects, visited_calls)
+                    }
+                    IrDisplayArg::String(value) => {
+                        collect_string_effects(ir, value, effects, visited_calls)
+                    }
+                }
+            }
+        }
+        IrStmt::Severity { args, .. } => {
             for argument in args {
                 match argument {
                     IrDisplayArg::Packed(expression) | IrDisplayArg::Real(expression) => {

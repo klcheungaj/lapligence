@@ -84,7 +84,8 @@
 //! earlier formals — are supported), `fork … join`/`join_any`/`join_none` (named
 //! forks included), `wait fork;`, `disable fork;`, `$display`/`$write` and
 //! their b/o/h variants, `$monitor`/`$monitoron`/`$monitoroff`/`$strobe` and
-//! their b/o/h variants, `$finish`.  Supported
+//! their b/o/h variants, `$finish`, and the typed severity tasks
+//! `$info`/`$warning`/`$error`/`$fatal`.  Supported
 //! processes include `final begin … end` blocks (SV 1800-2005 §10.7): lowered
 //! like `initial` but executed once AFTER the scheduler exits ($finish,
 //! deadlock or no future events); timing controls inside a final are
@@ -238,7 +239,7 @@ use crate::sim::ir::{
     IrContainerExpr, IrContainerKind, IrContainerStmt, IrDelay, IrDependency, IrDepth,
     IrDisplayRadix, IrEdge, IrElemSel, IrEvent, IrEventCapture, IrEventContext, IrEventRef, IrExpr,
     IrExprKind, IrFormal, IrInitPhase, IrInitTarget, IrInitialization, IrJoinKind, IrLhs, IrModel,
-    IrProcess, IrProcessKind, IrRealBinOp, IrRealUnOp, IrShape, IrSignal, IrStmt,
+    IrProcess, IrProcessKind, IrRealBinOp, IrRealUnOp, IrSeverityLevel, IrShape, IrSignal, IrStmt,
     IrStreamDirection, IrSysFunc, IrTimeKind, IrTransitionDelay, IrType, IrUnOp,
     IrUniquePriorityCheck, IrWaitSrc, StorageKind, StorageLifetime, StorageOwnership, StorageRef,
     LLG_MAX_NET_DRIVERS,

@@ -571,6 +571,11 @@ fn walk_stmt_mut(s: &mut IrStmt, f: &mut impl FnMut(&mut IrExpr)) {
                 arg.expressions_mut(&mut |expression| walk_expr_mut(expression, f));
             }
         }
+        IrStmt::Severity { args, .. } => {
+            for arg in args {
+                arg.expressions_mut(&mut |expression| walk_expr_mut(expression, f));
+            }
+        }
         IrStmt::WaveLimit(limit) => walk_expr_mut(limit, f),
         IrStmt::Call(call) => {
             walk_call_args_mut(&mut call.args, f);
@@ -1886,6 +1891,11 @@ fn collect_stmt_rw(s: &IrStmt, model: &IrModel, rw: &mut Rw) {
             }
         }
         IrStmt::DisplayTyped { args, .. } => {
+            for arg in args {
+                arg.expressions(&mut |expression| collect_expr_reads(expression, model, rw));
+            }
+        }
+        IrStmt::Severity { args, .. } => {
             for arg in args {
                 arg.expressions(&mut |expression| collect_expr_reads(expression, model, rw));
             }
