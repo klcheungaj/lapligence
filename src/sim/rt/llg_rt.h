@@ -24,7 +24,10 @@
 // read per the calling module's `timescale` unit before calling
 // `llg_wait_time` / `llg_time`. `$finish` reports its validated level through
 // `llg_rt_finish_with_level`, sets a flag, and exits the current coroutine;
-// no coroutine is resumed after a finish.
+// no coroutine is resumed after a finish. `$stop` reports through
+// `llg_rt_stop_with_level`, yields the current coroutine, and preserves every
+// queue, activation frame, output stream, and simulation tick until the stop
+// policy resumes it.
 
 #ifndef LLG_RT_H
 #define LLG_RT_H
@@ -199,7 +202,12 @@ void llg_rt_init_with_args(int argc, char** argv);
 // strobe allocations. Call only when no runtime coroutine is executing; init
 // and run invoke it automatically. Repeated calls are safe.
 void llg_rt_cleanup(void);
-// Run until $finish, a deadlock, or all processes ending.
+// Run until $finish, a deadlock, all processes ending, or a `$stop` whose
+// policy is `exit`. The default stop policy is `resume`, which automatically
+// resumes the stopped process at the same simulation time so noninteractive
+// command-line runs cannot hang waiting for input. An embedding may select
+// `exit`, inspect `llg_rt_is_suspended`, call `llg_rt_resume`, and invoke
+// `llg_rt_run` again.
 void llg_rt_run(void);
 // True when the runtime stopped because of a configuration, nonconvergence,
 // or other controlled simulation failure.  The result survives cleanup.
@@ -218,6 +226,31 @@ void llg_rt_request_finish(void);
 // quiet level-0 finish without source metadata.
 _Noreturn void llg_rt_finish(void);
 _Noreturn void llg_rt_finish_with_level(int verbosity, const char* location);
+// `$stop` diagnostics use the same validated 0/1/2 verbosity levels as
+// `$finish`, but suspension is resumable and does not enter the final phase.
+// The call returns after the issuing coroutine is resumed. The legacy entry
+// point is a quiet level-0 stop without source metadata.
+void llg_rt_stop(void);
+void llg_rt_stop_with_level(int verbosity, const char* location);
+
+enum {
+    LLG_STOP_POLICY_RESUME = 0,
+    LLG_STOP_POLICY_EXIT = 1,
+};
+
+// Select how `$stop` behaves when the scheduler reaches the stop point. This
+// may be called before `llg_rt_init` or while the runtime is suspended. It
+// returns zero for an invalid policy or a running scheduler and one on
+// success. `LLG_STOP_POLICY_RESUME` is the default.
+int llg_rt_set_stop_policy(int policy);
+int llg_rt_stop_policy(void);
+// True after a stop with the EXIT policy yielded a process. The scheduler
+// context remains live until `llg_rt_resume` or `llg_rt_cleanup` is called.
+int llg_rt_is_suspended(void);
+// Resume the process suspended by `$stop`, queueing its continuation at the
+// same simulation time. Returns one when a suspension was resumed and zero
+// when no resumable stop is pending.
+int llg_rt_resume(void);
 uint64_t llg_time(void);              // current tick count
 // Current time rounded to the nearest local unit; exact half units round up.
 // The caller applies any result-width conversion (for example, $stime's

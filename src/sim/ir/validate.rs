@@ -2527,6 +2527,7 @@ impl Validator<'_> {
             | IrStmt::WaveFlush
             | IrStmt::Finish
             | IrStmt::FinishControl { .. }
+            | IrStmt::StopControl { .. }
             | IrStmt::Label(_)
             | IrStmt::Goto(_)
             | IrStmt::Nop => {}

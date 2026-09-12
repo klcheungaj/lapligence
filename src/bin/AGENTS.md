@@ -29,6 +29,11 @@ LSP-only tower-lsp/tokio/dashmap code stays in `llg_ls`.
 - `--lint-json [<path>]` is report-only: one JSON object to stdout or file,
   exiting without codegen/simulation. It wins over `--lint`; see
   [../core/lint/AGENTS.md](../core/lint/AGENTS.md) for schema and exit behavior.
+- `--stop-policy <resume|exit>` controls noninteractive `$stop` handling in the
+  generated simulator. `resume` (the default) continues the stopped coroutine
+  at the same simulation time; `exit` returns from the child without draining
+  pending work or running final blocks. The runtime C API additionally exposes
+  an explicit resume hook for embedders.
 - Simulation builds one owned DB using the compilation's physical source-file
   inventory for bounded time-literal recovery and reuses it after lint.
   Report-only lint retains ordinary DB capture without new constant-source reads.

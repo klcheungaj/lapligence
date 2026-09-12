@@ -890,9 +890,11 @@ fn render_main(execution: &ExecutionModel) -> Result<String, String> {
         ));
     }
     out.push_str("    llg_rt_run();\n");
+    out.push_str("    if (!llg_rt_is_suspended()) {\n");
     if !model.final_spawns.is_empty() || model.waveform {
-        out.push_str("    llg_rt_run_finals();\n");
+        out.push_str("        llg_rt_run_finals();\n");
     }
+    out.push_str("    }\n");
     for object in &model.objects {
         if object.ty == crate::sim::ir::IrObjectType::String {
             out.push_str(&format!("    llg_string_destroy(&{});\n", object.c_name));
@@ -900,6 +902,22 @@ fn render_main(execution: &ExecutionModel) -> Result<String, String> {
     }
     for container in &model.containers {
         out.push_str(&super::containers::destroy(container));
+    }
+    if model.waveform {
+        out.push_str(
+            "    if (llg_rt_is_suspended()) {\n\
+                     int llg_stop_wave_error = llg_wave_close(llg_time());\n\
+                     llg_rt_cleanup();\n\
+                     return llg_stop_wave_error == 0 ? 0 : 1;\n\
+                 }\n",
+        );
+    } else {
+        out.push_str(
+            "    if (llg_rt_is_suspended()) {\n\
+                     llg_rt_cleanup();\n\
+                     return 0;\n\
+                 }\n",
+        );
     }
     if model.waveform {
         out.push_str("    if (llg_rt_failed()) return 1;\n");

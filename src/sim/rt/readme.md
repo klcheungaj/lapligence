@@ -11,8 +11,9 @@
   scheduling, signal/driver updates, process services, simulator system tasks,
   region callback hooks, immutable sampled views, nonreturning `$finish`
   controls, typed runtime severity diagnostics (`$info`, `$warning`, `$error`,
-  `$fatal`) with stable counters, the exactly-once final-block phase, and
-  checked zero-time budgets.
+  `$fatal`) with stable counters, resumable `$stop` suspension with explicit
+  resume/exit policy, the exactly-once final-block phase, and checked zero-time
+  budgets.
   `$system` is a separately gated generated-process host boundary: the child
   must opt in with `LLG_ALLOW_SYSTEM`, and enabled calls return the host C
   `system()` status without normalizing shell or platform behavior. Its omitted

@@ -576,6 +576,10 @@ typedef struct {
     int in_deferred_action;
     int running;
     int finish;
+    int suspended;
+    int stop_policy;
+    llg_proc_t* stop_proc;
+    llg_region_t stop_region;
     int config_error;
     uint64_t zero_loop_limit;
     uint64_t process_step_limit;
@@ -624,6 +628,8 @@ static uint64_t llg_severity_counts[4];
 static uint64_t llg_event_generation;
 static uint64_t llg_configured_zero_loop_limit;
 static uint64_t llg_configured_process_step_limit;
+static int llg_configured_stop_policy = LLG_STOP_POLICY_RESUME;
+static int llg_stop_policy_override;
 
 static const char* const llg_region_names[LLG_REGION_COUNT] = {
     "Preponed",
@@ -797,6 +803,26 @@ static int configure_limits(void) {
         }
     }
     return 1;
+}
+
+static int configure_stop_policy(void) {
+    if (llg_stop_policy_override) {
+        g.stop_policy = llg_configured_stop_policy;
+        return 1;
+    }
+    const char* text = getenv("LLG_STOP_POLICY");
+    if (!text || strcmp(text, "resume") == 0) {
+        g.stop_policy = LLG_STOP_POLICY_RESUME;
+        return 1;
+    }
+    if (strcmp(text, "exit") == 0) {
+        g.stop_policy = LLG_STOP_POLICY_EXIT;
+        return 1;
+    }
+    fprintf(stderr,
+            "llg: invalid LLG_STOP_POLICY `%s` (expected resume or exit)\n",
+            text);
+    return 0;
 }
 
 static int consume_limit(uint64_t* counter, uint64_t limit) {
@@ -2668,7 +2694,7 @@ void llg_rt_init_with_args(int argc, char** argv) {
     llg_last_config_error = 0;
     memset(llg_severity_counts, 0, sizeof(llg_severity_counts));
     llg_n_finals = 0; // a fresh run never inherits final registrations
-    if (!configure_limits()) {
+    if (!configure_limits() || !configure_stop_policy()) {
         llg_last_failure = 1;
         llg_last_config_error = 1;
         g.config_error = 1;
@@ -2676,6 +2702,7 @@ void llg_rt_init_with_args(int argc, char** argv) {
     }
     llg_configured_zero_loop_limit = g.zero_loop_limit;
     llg_configured_process_step_limit = g.process_step_limit;
+    llg_configured_stop_policy = g.stop_policy;
     g.current_region = LLG_REGION_PREPONED;
     g.argc = argc > 0 ? argc : 0;
     g.argv = g.argc > 0 ? argv : NULL;
@@ -3132,6 +3159,82 @@ _Noreturn void llg_rt_finish(void) {
 
 void llg_rt_request_finish(void) {
     g.finish = 1;
+}
+
+static void report_stop(int verbosity, const char* location) {
+    if (verbosity >= 1) {
+        fprintf(stderr, "llg: $stop at time %llu",
+                (unsigned long long)g.now);
+        if (location && location[0] != '\0') fprintf(stderr, " at %s", location);
+        fputc('\n', stderr);
+    }
+    if (verbosity >= 2) {
+        fprintf(stderr, "llg: simulation statistics: processes=%d\n", g.n_procs);
+    }
+}
+
+static int resume_stopped_process(void) {
+    if (!g.suspended || !g.stop_proc) return 0;
+    llg_proc_t* process = g.stop_proc;
+    if (process->killed || process->completed) {
+        fprintf(stderr, "llg runtime fatal: stopped process is no longer resumable\n");
+        llg_last_failure = 1;
+        g.finish = 1;
+        g.suspended = 0;
+        g.stop_proc = NULL;
+        return 0;
+    }
+    g.stop_proc = NULL;
+    g.suspended = 0;
+    g.current_region = g.stop_region;
+    enqueue_region(process, g.stop_region);
+    return 1;
+}
+
+void llg_rt_stop_with_level(int verbosity, const char* location) {
+    if (verbosity < 0 || verbosity > 2) {
+        fprintf(stderr, "llg runtime fatal: invalid $stop verbosity %d\n", verbosity);
+        abort();
+    }
+    llg_proc_t* process = llg_current();
+    if (!g.running || !process || g.suspended || g.stop_proc) {
+        fprintf(stderr, "llg runtime fatal: $stop requires a running simulation process\n");
+        llg_last_failure = 1;
+        g.finish = 1;
+        return;
+    }
+    report_stop(verbosity, location);
+    g.stop_proc = process;
+    g.stop_region = process->region;
+    g.suspended = 1;
+    // The process remains live and its stack/frame/queued NBA state remains
+    // owned by the scheduler. Returning from this yield resumes immediately
+    // at the statement following `$stop`.
+    aco_yield();
+}
+
+void llg_rt_stop(void) {
+    llg_rt_stop_with_level(0, NULL);
+}
+
+int llg_rt_set_stop_policy(int policy) {
+    if (policy != LLG_STOP_POLICY_RESUME && policy != LLG_STOP_POLICY_EXIT) return 0;
+    if (g.running) return 0;
+    llg_stop_policy_override = 1;
+    llg_configured_stop_policy = policy;
+    g.stop_policy = policy;
+    return 1;
+}
+
+int llg_rt_stop_policy(void) {
+    return g.main_co ? g.stop_policy : llg_configured_stop_policy;
+}
+
+int llg_rt_is_suspended(void) { return g.suspended != 0; }
+
+int llg_rt_resume(void) {
+    if (g.running) return 0;
+    return resume_stopped_process();
 }
 
 uint64_t llg_time(void) { return g.now; }
@@ -5207,8 +5310,18 @@ static int run_region_queue(llg_region_t region) {
             aco_resume(process->co);
             reap_retired_procs();
         }
+        if (g.suspended) {
+            if (g.stop_policy == LLG_STOP_POLICY_RESUME) {
+                // The llg CLI is noninteractive. Its default policy resumes
+                // the exact coroutine continuation in the same time slot,
+                // while retaining all other queued work and state.
+                if (!resume_stopped_process()) break;
+            } else {
+                break;
+            }
+        }
     }
-    return !g.finish;
+    return !g.finish && !g.suspended;
 }
 
 static void wake_zero_waits(llg_region_t region) {
@@ -5410,6 +5523,10 @@ void llg_spawn_final(void (*fn)(llg_proc_t*), const char* name) {
 
 void llg_rt_run_finals(void) {
     if (llg_n_finals == 0) return;
+    // `$stop` is a resumable scheduler suspension, not a simulation exit.
+    // Do not run final procedures while an embedding has intentionally
+    // returned control to its caller under the EXIT policy.
+    if (g.suspended) return;
     if (llg_last_config_error) {
         llg_n_finals = 0;
         return;
@@ -5428,6 +5545,7 @@ void llg_rt_run_finals(void) {
     g.now = llg_final_time;
     g.zero_loop_limit = llg_configured_zero_loop_limit;
     g.process_step_limit = llg_configured_process_step_limit;
+    g.stop_policy = llg_configured_stop_policy;
     llg_in_finals = 1;
     for (int i = 0; i < llg_n_finals; i++) {
         llg_proc_t* p = (llg_proc_t*)llg_checked_calloc(
@@ -5462,6 +5580,10 @@ void llg_rt_run(void) {
         llg_rt_cleanup();
         return;
     }
+    // A caller must explicitly acknowledge an EXIT-policy stop before the
+    // scheduler can advance. This keeps future queues and the suspended
+    // coroutine untouched when an embedding probes the runtime again.
+    if (g.suspended) return;
     g.running = 1;
     g.current_region = LLG_REGION_PREPONED;
     for (;;) {
@@ -5517,6 +5639,13 @@ void llg_rt_run(void) {
             wait = next;
         }
         g.current_region = LLG_REGION_PREPONED;
+    }
+    if (g.suspended) {
+        // EXIT-policy suspension is deliberately resumable. Keep all
+        // scheduler queues, coroutine stacks, activations and output state in
+        // place; an embedding can call llg_rt_resume() and llg_rt_run().
+        g.running = 0;
+        return;
     }
     // Finals ($time inside them) report when the scheduler loop ended.
     llg_final_time = g.now;

@@ -134,7 +134,17 @@ Zero-delay driver updates drain in the active region. Strobe and monitor checks
 run only after active/inactive/NBA work has reached quiescence; monitor
 registration and enabling force one queued report, while only registered
 signal dependencies mark later checks dirty.
-The scheduler stops on `$finish` or deadlock.
+The scheduler stops on `$finish` or deadlock. `$stop` is a separate
+resumable state: the issuing coroutine yields without being completed, all
+same-time/future queues and activation frames remain owned by the runtime, and
+`llg_rt_resume` requeues its continuation at the same simulation time. The
+default `LLG_STOP_POLICY=resume` (also exposed by `llg --stop-policy resume`)
+automatically applies that hook so batch runs cannot wait for stdin;
+`LLG_STOP_POLICY=exit` / `--stop-policy exit` returns from `llg_rt_run` with a
+live suspended context for an embedding to inspect or resume. Final blocks
+are never run while the context is suspended, and generated CLI models clean
+up after an explicit exit policy. Stop verbosity uses validated levels 0/1/2
+and is diagnostic-only.
 Per-waiter snapshots detect posedge 0→1, 0→X/Z, X/Z→1 (negedge mirrored), using
 only the LSB for packed vector edges. Real any-change snapshots compare the
 IEEE-754 representation bit-for-bit: signed-zero transitions wake, identical

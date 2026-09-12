@@ -4,7 +4,7 @@
 //!
 //! ```text
 //! llg [generate options] [build options] <file.sv>... [-- <plusargs>...]
-//! generate: --top <module>  --edition <2001|2009>  --compilation-units <separate|merged>  --include-dir <path>  --define <NAME[=VALUE]>  --lint  --lint-json [<path>]  --lint-config <file>  --gen-only  --no-opt
+//! generate: --top <module>  --edition <2001|2009>  --compilation-units <separate|merged>  --include-dir <path>  --define <NAME[=VALUE]>  --lint  --lint-json [<path>]  --lint-config <file>  --gen-only  --no-opt  --stop-policy <resume|exit>
 //! build:    --generator <backend>        # cmake -G backend (Ninja, "Unix Makefiles", ...)
 //! ```
 //!
@@ -68,6 +68,30 @@ struct DriverOptions {
     generator: Option<String>,
     gen_only: bool,
     no_opt: bool,
+    stop_policy: StopPolicy,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum StopPolicy {
+    Resume,
+    Exit,
+}
+
+impl StopPolicy {
+    fn parse(value: &str) -> Result<Self, &'static str> {
+        match value {
+            "resume" => Ok(Self::Resume),
+            "exit" => Ok(Self::Exit),
+            _ => Err("expected resume or exit"),
+        }
+    }
+
+    const fn env_value(self) -> &'static str {
+        match self {
+            Self::Resume => "resume",
+            Self::Exit => "exit",
+        }
+    }
 }
 
 fn main() -> std::process::ExitCode {
@@ -87,7 +111,8 @@ fn parse_args(args: Vec<String>) -> Result<DriverOptions, i32> {
         eprintln!(
             "usage: llg [generate options] [build options] <file.sv>... [-- <plusargs>...]\n\
              generate: --top <module>  --edition <2001|2009>  --compilation-units <separate|merged>  --include-dir <path>  --define <NAME[=VALUE]>  --lint  --lint-json [<path>]  --lint-config <file>  --gen-only  --no-opt\n\
-             build:    --generator <backend>        # cmake -G backend (Ninja, \"Unix Makefiles\", ...)"
+             build:    --generator <backend>        # cmake -G backend (Ninja, \"Unix Makefiles\", ...)
+             stop:     --stop-policy <resume|exit>  # `$stop` handling (default: resume)"
         );
         return Err(2);
     }
@@ -106,6 +131,7 @@ fn parse_args(args: Vec<String>) -> Result<DriverOptions, i32> {
     let mut generator: Option<String> = None;
     let mut gen_only = false;
     let mut no_opt = false;
+    let mut stop_policy = StopPolicy::Resume;
     let mut it = args.into_iter().peekable();
     while let Some(a) = it.next() {
         if a == "--" {
@@ -133,6 +159,8 @@ Options:
       --lint-config <file>   Load lint configuration
       --gen-only             Emit C model sources without building
       --no-opt               Disable simulator optimization passes
+      --stop-policy <resume|exit>
+                              Handle `$stop` by resuming (default) or exiting
       --                    Pass remaining arguments to the generated simulator
       --generator <backend>  Select the CMake generator"
                 );
@@ -192,6 +220,19 @@ Options:
             },
             "--gen-only" | "-gen-only" => gen_only = true,
             "--no-opt" => no_opt = true,
+            "--stop-policy" => match it.next() {
+                Some(value) => match StopPolicy::parse(&value) {
+                    Ok(policy) => stop_policy = policy,
+                    Err(error) => {
+                        eprintln!("llg: --stop-policy {error}");
+                        return Err(2);
+                    }
+                },
+                None => {
+                    eprintln!("llg: --stop-policy requires resume or exit");
+                    return Err(2);
+                }
+            },
             "--lint" | "-lint" => lint_mode = true,
             "--lint-json" | "-lint-json" => {
                 lint_mode = true;
@@ -234,6 +275,7 @@ Options:
         generator,
         gen_only,
         no_opt,
+        stop_policy,
     })
 }
 
@@ -253,6 +295,7 @@ fn run(options: DriverOptions) -> i32 {
         generator,
         gen_only,
         no_opt,
+        stop_policy,
     } = options;
     // 0. Optional lint config: read + parse before compiling so a missing or
     //    malformed file aborts fast and with a clear message.
@@ -435,8 +478,14 @@ fn run(options: DriverOptions) -> i32 {
         }
     };
 
-    // 6. Run the simulator; propagate its exit code.
-    let status = match Command::new(&exe).args(&runtime_args).status() {
+    // 6. Run the simulator; propagate its exit code. The generated model
+    // reads this explicit policy without inheriting an ambient setting from
+    // the driver's parent process.
+    let status = match Command::new(&exe)
+        .args(&runtime_args)
+        .env("LLG_STOP_POLICY", stop_policy.env_value())
+        .status()
+    {
         Ok(s) => s,
         Err(e) => {
             eprintln!("llg: failed to run {}: {e}", exe.display());

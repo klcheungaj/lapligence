@@ -137,3 +137,37 @@ fn process_budget_probes_cover_exact_limit_and_invalid_configuration() {
         invalid
     );
 }
+
+#[test]
+fn stop_resume_hook_preserves_the_live_scheduler_until_explicit_resume() {
+    if !sim::build::cmake_available() {
+        eprintln!("SKIP: cmake not available");
+        return;
+    }
+    let dir =
+        sim_harness::TempDir::new("runtime-stop-resume").expect("create stop-resume directory");
+    let executable = sim::build::build_model_cmake(
+        dir.path(),
+        &[("llg_rt_selftest.c", sim::rt::selftest_source())],
+    )
+    .expect("stop-resume probe should compile");
+
+    let output = sim_harness::run_command(
+        Command::new(&executable).arg("--stop-resume-probe"),
+        Duration::from_secs(10),
+    )
+    .expect("stop-resume probe should start");
+
+    assert!(
+        output.status.success(),
+        "stop-resume probe failed: {output:?}"
+    );
+    assert!(
+        output.stdout.is_empty(),
+        "unexpected probe output: {output:?}"
+    );
+    assert!(
+        output.stderr.is_empty(),
+        "unexpected probe diagnostics: {output:?}"
+    );
+}

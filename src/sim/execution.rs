@@ -552,6 +552,10 @@ fn collect_effects(
             | IrStmt::Finish
             | IrStmt::FinishControl { .. }
             | IrStmt::PrintTimescale { .. } => effects.push(ExecutionEffect::RuntimeService),
+            IrStmt::StopControl { .. } => {
+                effects.push(ExecutionEffect::RuntimeService);
+                effects.push(ExecutionEffect::Suspend);
+            }
             IrStmt::Call(call) => {
                 effects.push(ExecutionEffect::RuntimeService);
                 if call

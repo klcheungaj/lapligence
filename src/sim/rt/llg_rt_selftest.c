@@ -1629,6 +1629,50 @@ static int run_budget_infinite_probe(void) {
     return llg_rt_failed() ? 0 : 1;
 }
 
+static int stop_resume_stage;
+static int stop_resume_future_seen;
+
+static void stop_resume_future(void* data) {
+    (void)data;
+    stop_resume_future_seen = 1;
+}
+
+static void stop_resume_proc(llg_proc_t* self) {
+    stop_resume_stage = 1;
+    llg_rt_stop_with_level(0, NULL);
+    stop_resume_stage = 2;
+    llg_wait_time(3);
+    CHECK(stop_resume_future_seen);
+    stop_resume_stage = 3;
+    llg_rt_request_finish();
+    llg_proc_done(self);
+}
+
+static int run_stop_resume_probe(void) {
+    CHECK(llg_rt_set_stop_policy(LLG_STOP_POLICY_EXIT) == 1);
+    llg_rt_init();
+    stop_resume_stage = 0;
+    stop_resume_future_seen = 0;
+    CHECK(llg_schedule_region_callback_after(
+              LLG_REGION_ACTIVE, stop_resume_future, NULL, 2) == 1);
+    llg_spawn(stop_resume_proc, "stop-resume");
+    llg_rt_run();
+    CHECK(llg_rt_is_suspended());
+    CHECK(stop_resume_stage == 1);
+    CHECK(llg_time() == 0);
+    llg_rt_run();
+    CHECK(llg_rt_is_suspended());
+    CHECK(stop_resume_stage == 1);
+    CHECK(llg_time() == 0);
+    CHECK(llg_rt_stop_policy() == LLG_STOP_POLICY_EXIT);
+    CHECK(llg_rt_resume() == 1);
+    CHECK(!llg_rt_is_suspended());
+    llg_rt_run();
+    CHECK(stop_resume_stage == 3);
+    CHECK(!llg_rt_failed());
+    return failures == 0 ? 0 : 1;
+}
+
 static void time_scaled_rounding_proc(llg_proc_t* self) {
     CHECK(llg_time_scaled(1, 10) == 0);
     llg_wait_time(14);
@@ -1892,6 +1936,8 @@ int main(int argc, char** argv) {
         return run_budget_finite_probe();
     if (argc == 2 && strcmp(argv[1], "--budget-infinite-probe") == 0)
         return run_budget_infinite_probe();
+    if (argc == 2 && strcmp(argv[1], "--stop-resume-probe") == 0)
+        return run_stop_resume_probe();
     if (argc == 2 && strcmp(argv[1], "--region-probe") == 0)
         return run_region_probe();
     test_sv4_ops();

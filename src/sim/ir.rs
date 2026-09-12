@@ -2036,6 +2036,14 @@ pub enum IrStmt {
         verbosity: u8,
         location: String,
     },
+    /// `$stop` with its validated diagnostic level and source call site.
+    /// Unlike [`Self::FinishControl`], this yields the issuing coroutine and
+    /// leaves the scheduler state and pending work intact until the runtime
+    /// stop policy resumes it.
+    StopControl {
+        verbosity: u8,
+        location: String,
+    },
     /// `$printtimescale` for a module whose unit/precision and instance path
     /// label were captured at lowering.
     PrintTimescale {

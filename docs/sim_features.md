@@ -366,7 +366,7 @@ Time:
 Control / misc:
 
 - ✅ **$finish** is a nonreturning termination control with default level 1 and explicit level 0/1/2 diagnostics plus exactly-once final-block handoff; the optional target-edition `finish_number` is a constant integral 0, 1, or 2, so runtime, real, unknown, and out-of-range arguments reject before model emission; its argument never becomes the generated model's OS exit status — §1364-2001 17.4.1 / §1800-2009 20.2 **[1995]**
-- ❌ **$stop** — §1364-2001 17.4.2 **[1995]** unsupported-task reject (probed)
+- ✅ **$stop** yields the issuing coroutine and preserves pending queues, activation frames, output state and simulation time until it resumes; default noninteractive CLI runs use `--stop-policy resume`, while `--stop-policy exit` returns control to the caller without running finals or draining future work. Stop numbers use the same constant integral 0/1/2 diagnostic levels as `$finish` and never become process exit codes — §1364-2001 17.4.2 **[1995]** (sim_partial_features.rs)
 - ❌ **PLA modeling tasks** `$async$and$array …` — §1364-2001 17.5 **[1995]**
 - ❌ **Stochastic tasks** `$q_initialize $q_add …` — §1364-2001 17.6 **[1995]**
 - ❌ **$random** — §1364-2001 17.9.1 **[1995]** unsupported-function reject
@@ -462,7 +462,7 @@ Tracked so nothing is lost; all de-prioritized behind RTL-simulation support.
 ## Remaining-work inventory
 
 The original audit IDs are stable. This inventory currently contains 66 remaining
-groups (31 missing, 35 partial); groups 9, 38, 57, 58, 59 and 60 are completed. Counts refer to grouped
+groups (30 missing, 36 partial); groups 9, 38, 57, 58, 59 and 60 are completed. Counts refer to grouped
 capabilities, not individual keywords, system functions or standard clauses.
 
 
@@ -520,7 +520,7 @@ capabilities, not individual keywords, system functions or standard clauses.
 | 50 | Missing | String formatting tasks/functions | `$sformat`, `$swrite` and `$sformatf`, including their applicable base variants. |
 | 51 | Missing | Memory file loading and writing | `$readmemh/$readmemb/$writememh/$writememb`. |
 | 52 | Partial | Real-time reporting and time formatting | `$timeformat` remains missing. `$realtime` returns fractional time in the calling module's units; `$time` and `$stime` round to the nearest local unit (exact halves upward) before `$stime` applies its low-32-bit result width. |
-| 53 | Missing | Simulation suspension | `$stop`. |
+| 53 | Partial | Simulation suspension | `$stop` supports resumable coroutine suspension and explicit CLI resume/exit policy; a full interactive debugger/control protocol is outside this boundary. |
 | 54 | Missing | PLA modeling | Synchronous/asynchronous AND/NAND/OR/NOR array/plane system tasks. |
 | 55 | Missing | Stochastic queues | `$q_initialize/$q_add/$q_remove/$q_full/$q_exam`. |
 | 56 | Missing | Random-number facilities | `$random`, `$urandom`, `$urandom_range`, random-state/seeding methods, and `$dist_uniform/$dist_normal/$dist_exponential/$dist_poisson/$dist_chi_square/$dist_t/$dist_erlang`. |

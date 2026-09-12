@@ -848,6 +848,14 @@ fn render_stmt_scoped(
             verbosity,
             c_string_literal(location)
         ),
+        IrStmt::StopControl {
+            verbosity,
+            location,
+        } => format!(
+            "    llg_rt_stop_with_level({}, {});\n",
+            verbosity,
+            c_string_literal(location)
+        ),
         IrStmt::PrintTimescale {
             unit_fs,
             precision_fs,

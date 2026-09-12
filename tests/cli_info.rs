@@ -60,6 +60,7 @@ fn simulator_information_exits_without_compiling_or_installing_memory_limits() {
     );
     assert!(String::from_utf8_lossy(&output.stdout).contains("--include-dir <path>"));
     assert!(String::from_utf8_lossy(&output.stdout).contains("--define <NAME[=VALUE]>"));
+    assert!(String::from_utf8_lossy(&output.stdout).contains("--stop-policy <resume|exit>"));
 }
 
 #[cfg(feature = "lsp")]
@@ -81,6 +82,25 @@ fn simulator_edition_option_rejects_missing_and_unknown_values() {
     for (args, expected) in [
         (&["--edition"][..], "requires 2001 or 2009"),
         (&["--edition", "2017"][..], "expected 2001 or 2009"),
+    ] {
+        let output = invoke(env!("CARGO_BIN_EXE_llg"), args);
+        assert_eq!(output.status.code(), Some(2), "{output:?}");
+        assert!(output.stdout.is_empty(), "{output:?}");
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains(expected),
+            "{output:?}"
+        );
+    }
+}
+
+#[test]
+fn simulator_stop_policy_rejects_missing_and_unknown_values() {
+    for (args, expected) in [
+        (&["--stop-policy"][..], "requires resume or exit"),
+        (
+            &["--stop-policy", "interactive"][..],
+            "expected resume or exit",
+        ),
     ] {
         let output = invoke(env!("CARGO_BIN_EXE_llg"), args);
         assert_eq!(output.status.code(), Some(2), "{output:?}");

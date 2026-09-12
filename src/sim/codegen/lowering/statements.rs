@@ -3567,49 +3567,21 @@ impl EmitCtx<'_, '_> {
                 Ok(vec![IrStmt::WaveLimit(limit)])
             }
             "$finish" => {
-                // Slang's FinishControlTask enforces the target-edition
-                // finish_number contract with constant evaluation. Keep the
-                // validated level concrete in the IR; runtime expressions
-                // are not legal finish arguments in either selected edition.
-                let verbosity = match args.as_slice() {
-                    [] => 1,
-                    [argument] => {
-                        let value = self.cg.eval_bits(*argument).map_err(|error| {
-                            format!(
-                                "$finish argument at {} must be an integral constant 0, 1, or 2: {error}",
-                                self.finish_location(h)
-                            )
-                        })?;
-                        if value.is_unknown() {
-                            return Err(format!(
-                                "$finish argument at {} must be a known integral constant 0, 1, or 2",
-                                self.finish_location(h)
-                            ));
-                        }
-                        let value = value.to_u128().ok_or_else(|| {
-                            format!(
-                                "$finish argument at {} must be an integral constant 0, 1, or 2",
-                                self.finish_location(h)
-                            )
-                        })?;
-                        u8::try_from(value)
-                            .ok()
-                            .filter(|value| *value <= 2)
-                            .ok_or_else(|| {
-                                format!(
-                                    "$finish argument at {} must be 0, 1, or 2 (got {value})",
-                                    self.finish_location(h)
-                                )
-                            })?
-                    }
-                    _ => {
-                        return Err(format!(
-                            "$finish accepts at most one argument at {}",
-                            self.finish_location(h)
-                        ));
-                    }
-                };
+                let verbosity = self.lower_control_verbosity(h, "$finish", &args)?;
                 Ok(vec![IrStmt::FinishControl {
+                    verbosity,
+                    location: self.finish_location(h),
+                }])
+            }
+            "$stop" => {
+                if self.in_final {
+                    return Err(format!(
+                        "$stop inside a final block in `{}` is not supported: final procedures cannot suspend",
+                        self.path
+                    ));
+                }
+                let verbosity = self.lower_control_verbosity(h, "$stop", &args)?;
+                Ok(vec![IrStmt::StopControl {
                     verbosity,
                     location: self.finish_location(h),
                 }])
@@ -3935,6 +3907,54 @@ impl EmitCtx<'_, '_> {
             return self.path.clone();
         }
         format!("{}:{}:{}", self.path, source.line, source.col)
+    }
+
+    /// Lower the optional diagnostic level shared by `$finish` and `$stop`.
+    /// Slang's control-task rules require a constant integral 0/1/2 value in
+    /// the selected language editions, so the validated level is stored in
+    /// the IR rather than evaluated by the generated runtime.
+    fn lower_control_verbosity(
+        &mut self,
+        node: NodeId,
+        task: &str,
+        args: &[NodeId],
+    ) -> Result<u8, String> {
+        match args {
+            [] => Ok(1),
+            [argument] => {
+                let value = self.cg.eval_bits(*argument).map_err(|error| {
+                    format!(
+                        "{task} argument at {} must be an integral constant 0, 1, or 2: {error}",
+                        self.finish_location(node)
+                    )
+                })?;
+                if value.is_unknown() {
+                    return Err(format!(
+                        "{task} argument at {} must be a known integral constant 0, 1, or 2",
+                        self.finish_location(node)
+                    ));
+                }
+                let value = value.to_u128().ok_or_else(|| {
+                    format!(
+                        "{task} argument at {} must be an integral constant 0, 1, or 2",
+                        self.finish_location(node)
+                    )
+                })?;
+                u8::try_from(value)
+                    .ok()
+                    .filter(|value| *value <= 2)
+                    .ok_or_else(|| {
+                        format!(
+                            "{task} argument at {} must be 0, 1, or 2 (got {value})",
+                            self.finish_location(node)
+                        )
+                    })
+            }
+            _ => Err(format!(
+                "{task} accepts at most one argument at {}",
+                self.finish_location(node)
+            )),
+        }
     }
 
     /// Lower a `task_call` statement (or a function call used as a statement).

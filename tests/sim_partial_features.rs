@@ -32,6 +32,8 @@ mod select_ranges;
 mod severity;
 #[path = "support/sim.rs"]
 mod sim_harness;
+#[path = "sim_partial_features/stop.rs"]
+mod stop;
 #[path = "sim_partial_features/system.rs"]
 mod system;
 #[path = "sim_partial_features/system_functions.rs"]
