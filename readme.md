@@ -184,7 +184,7 @@ For Windows arm64, install the MSVC arm64 tools and replace the target with
 ## Using `llg`
 
 ```text
-llg [options] <file.sv>...
+llg [options] <file.sv>... [-- <plusargs>...]
 ```
 
 Common options:
@@ -200,6 +200,8 @@ Common options:
 - `--lint-config <file>`: load rule settings from a TOML file.
 - `--gen-only`: generate C11 sources and `CMakeLists.txt` without building.
 - `--generator <name>`: choose a CMake generator, such as `Ninja`.
+- `--`: pass the remaining arguments to the generated simulator for
+  `$test$plusargs`/`$value$plusargs` (for example, `llg tb.sv -- +mode=fast`).
 
 Exit status is `0` on success, `1` on compile/lint/build errors, and `2` for
 invalid command-line usage. A completed simulator's exit status is propagated.

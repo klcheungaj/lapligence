@@ -629,7 +629,7 @@ fn render_main(execution: &ExecutionModel) -> Result<String, String> {
         activation_label: None,
     };
     let mut out = String::from(
-        "int main(void) {\n    llg_rt_init();\n    if (llg_rt_failed()) {\n        llg_rt_cleanup();\n        return 1;\n    }\n",
+        "int main(int argc, char** argv) {\n    llg_rt_init_with_args(argc, argv);\n    if (llg_rt_failed()) {\n        llg_rt_cleanup();\n        return 1;\n    }\n",
     );
     for array in &model.arrays {
         let bind_element = if array.real {

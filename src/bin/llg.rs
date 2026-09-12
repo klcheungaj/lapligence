@@ -3,7 +3,7 @@
 //! Usage:
 //!
 //! ```text
-//! llg [generate options] [build options] <file.sv>...
+//! llg [generate options] [build options] <file.sv>... [-- <plusargs>...]
 //! generate: --top <module>  --edition <2001|2009>  --compilation-units <separate|merged>  --include-dir <path>  --define <NAME[=VALUE]>  --lint  --lint-json [<path>]  --lint-config <file>  --gen-only  --no-opt
 //! build:    --generator <backend>        # cmake -G backend (Ninja, "Unix Makefiles", ...)
 //! ```
@@ -60,6 +60,7 @@ struct DriverOptions {
     include_dirs: Vec<String>,
     defines: Vec<String>,
     files: Vec<String>,
+    runtime_args: Vec<String>,
     lint_mode: bool,
     lint_json_mode: bool,
     lint_json_path: Option<PathBuf>,
@@ -84,7 +85,7 @@ fn main() -> std::process::ExitCode {
 fn parse_args(args: Vec<String>) -> Result<DriverOptions, i32> {
     if args.is_empty() {
         eprintln!(
-            "usage: llg [generate options] [build options] <file.sv>...\n\
+            "usage: llg [generate options] [build options] <file.sv>... [-- <plusargs>...]\n\
              generate: --top <module>  --edition <2001|2009>  --compilation-units <separate|merged>  --include-dir <path>  --define <NAME[=VALUE]>  --lint  --lint-json [<path>]  --lint-config <file>  --gen-only  --no-opt\n\
              build:    --generator <backend>        # cmake -G backend (Ninja, \"Unix Makefiles\", ...)"
         );
@@ -97,6 +98,7 @@ fn parse_args(args: Vec<String>) -> Result<DriverOptions, i32> {
     let mut include_dirs: Vec<String> = Vec::new();
     let mut defines: Vec<String> = Vec::new();
     let mut files: Vec<String> = Vec::new();
+    let mut runtime_args: Vec<String> = Vec::new();
     let mut lint_mode = false;
     let mut lint_json_mode = false;
     let mut lint_json_path: Option<PathBuf> = None;
@@ -106,12 +108,16 @@ fn parse_args(args: Vec<String>) -> Result<DriverOptions, i32> {
     let mut no_opt = false;
     let mut it = args.into_iter().peekable();
     while let Some(a) = it.next() {
+        if a == "--" {
+            runtime_args.extend(it);
+            break;
+        }
         match a.as_str() {
             "--help" | "-h" => {
                 println!(
                     "Lapligence Verilog/SystemVerilog simulator
 
-Usage: llg [OPTIONS] <file.sv>...
+Usage: llg [OPTIONS] <file.sv>... [-- <plusargs>...]
 
 Options:
   -h, --help                 Print help and exit
@@ -127,6 +133,7 @@ Options:
       --lint-config <file>   Load lint configuration
       --gen-only             Emit C model sources without building
       --no-opt               Disable simulator optimization passes
+      --                    Pass remaining arguments to the generated simulator
       --generator <backend>  Select the CMake generator"
                 );
                 return Err(0);
@@ -219,6 +226,7 @@ Options:
         include_dirs,
         defines,
         files,
+        runtime_args,
         lint_mode,
         lint_json_mode,
         lint_json_path,
@@ -237,6 +245,7 @@ fn run(options: DriverOptions) -> i32 {
         include_dirs,
         defines,
         files,
+        runtime_args,
         lint_mode,
         lint_json_mode,
         lint_json_path,
@@ -427,7 +436,7 @@ fn run(options: DriverOptions) -> i32 {
     };
 
     // 6. Run the simulator; propagate its exit code.
-    let status = match Command::new(&exe).status() {
+    let status = match Command::new(&exe).args(&runtime_args).status() {
         Ok(s) => s,
         Err(e) => {
             eprintln!("llg: failed to run {}: {e}", exe.display());

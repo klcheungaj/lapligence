@@ -483,6 +483,10 @@ fn collect_effects(
             | IrStmt::Force { .. }
             | IrStmt::Release { .. }
             | IrStmt::Container(_) => effects.push(ExecutionEffect::ImmediateStore),
+            IrStmt::PlusArg(_) => {
+                effects.push(ExecutionEffect::ImmediateStore);
+                effects.push(ExecutionEffect::RuntimeService);
+            }
             // Object statements can mutate storage, print, or evaluate a
             // string call. Keep the summary conservative across those forms.
             IrStmt::Object(_) => {
@@ -620,6 +624,9 @@ fn collect_statement_expression_effects(
         IrStmt::Container(operation) => operation.expressions(&mut |expression| {
             collect_expression_effects(ir, expression, effects, visited_calls)
         }),
+        IrStmt::PlusArg(expression) => {
+            collect_expression_effects(ir, expression, effects, visited_calls)
+        }
         IrStmt::Object(operation) => {
             operation.expressions(&mut |expression| {
                 collect_expression_effects(ir, expression, effects, visited_calls)
@@ -963,6 +970,28 @@ fn collect_expression_effects(
             }
         }
         IrExprKind::SysFunc(system) => match system {
+            IrSysFunc::TestPlusArgs { pattern } => {
+                pattern.expressions(&mut |expression| {
+                    collect_expression_effects(ir, expression, effects, visited_calls)
+                });
+            }
+            IrSysFunc::ValuePlusArgs { format, target } => {
+                format.expressions(&mut |expression| {
+                    collect_expression_effects(ir, expression, effects, visited_calls)
+                });
+                match target {
+                    crate::sim::ir::IrPlusArgTarget::Packed { lhs, .. }
+                    | crate::sim::ir::IrPlusArgTarget::Real { lhs, .. } => {
+                        effects.push(ExecutionEffect::ImmediateStore);
+                        effects.push(ExecutionEffect::RuntimeService);
+                        collect_lhs_expression_effects(ir, lhs, effects, visited_calls)
+                    }
+                    crate::sim::ir::IrPlusArgTarget::String { .. } => {
+                        effects.push(ExecutionEffect::ImmediateStore);
+                        effects.push(ExecutionEffect::RuntimeService);
+                    }
+                }
+            }
             IrSysFunc::Time { .. } | IrSysFunc::Realtime { .. } => {}
             IrSysFunc::Math { args, .. } => {
                 for arg in args {

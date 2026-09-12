@@ -189,6 +189,9 @@ coverage for the same rule IDs.
   and supported resizable containers.
   `sim_delay.rs` covers typed constant/runtime delay expressions, negative packed
   time conversion, overflow and unsupported-control boundaries.
+- `sim_plusargs.rs` runs checked-in plusarg fixtures through `llg` with
+  arguments after `--`, comparing optimized/unoptimized conversion, prefix,
+  retention, malformed-value, and CLI-delimiter behavior.
   `sim_time_literals.rs` checks typed unit-suffixed, scientific and real
   parameter delays, lexical shadowing, and rounding of completed delays to the
   local precision before global scheduling, with optimizer parity.

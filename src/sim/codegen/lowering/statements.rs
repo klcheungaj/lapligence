@@ -3421,6 +3421,9 @@ impl EmitCtx<'_, '_> {
                     two_state: false,
                 }])
             }
+            "$test$plusargs" | "$value$plusargs" => Ok(vec![IrStmt::PlusArg(
+                self.cg.lower_plusarg_expr(&self.path, name, h)?,
+            )]),
             "$monitoron" => Ok(vec![IrStmt::MonitorEnable(true)]),
             "$monitoroff" => Ok(vec![IrStmt::MonitorEnable(false)]),
             "$dumpfile" => {

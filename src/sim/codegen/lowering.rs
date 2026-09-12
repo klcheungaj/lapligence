@@ -93,7 +93,8 @@
 //! (`'(type)(expr)`), operations (arithmetic, bitwise, logical, reductions,
 //! shifts, comparisons, mux, concat/replicate), refs, bit/part/indexed-part
 //! selects, array-element selects (`mem[i]`, `a[i][j]`, `mem[i][3:0]`),
-//! `$clog2`, `$bits`, `$signed`/`$unsigned`, `$time`, and hierarchical
+//! `$clog2`, `$bits`, `$signed`/`$unsigned`, `$time`, `$test$plusargs`,
+//! `$value$plusargs`, and hierarchical
 //! references (`top.u0.sig` — N-part paths whose final element resolves to a
 //! signal) on both the READ and WRITE sides of an assignment; hierarchical
 //! write targets may carry a trailing select (`top.u0.sig[3:0]`,

@@ -158,6 +158,9 @@ fn render_stmt_scoped(
     let out = match st {
         IrStmt::Container(operation) => super::containers::statement(ctx, operation)?,
         IrStmt::Object(operation) => super::objects::statement(ctx, operation)?,
+        IrStmt::PlusArg(expression) => {
+            format!("    (void){};\n", render_expr(ctx, expression)?.code)
+        }
         IrStmt::Block(stmts) => {
             format!("{{\n{}}}\n", block_stmts(ctx, stmts, scopes)?)
         }

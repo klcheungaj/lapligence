@@ -4,8 +4,8 @@ use crate::sim::execution::ExecutionModel;
 #[cfg(test)]
 use crate::sim::ir::IrModel;
 use crate::sim::ir::{
-    IrCall, IrCallArg, IrElemSel, IrExpr, IrExprKind, IrFunc, IrInsideItem, IrLhs, IrPreFn, IrStmt,
-    IrSysFunc, IrType,
+    IrCall, IrCallArg, IrElemSel, IrExpr, IrExprKind, IrFunc, IrInsideItem, IrLhs, IrPlusArgText,
+    IrPreFn, IrStmt, IrStringExpr, IrSysFunc, IrType,
 };
 
 /// Keep aligned with the emitted function recursion guard in `model.rs`.
@@ -265,6 +265,7 @@ fn stmt_temp_slots(stmt: &IrStmt) -> Result<u64, String> {
             });
             slots
         }
+        IrStmt::PlusArg(expression) => expr_slots(expression),
         IrStmt::Object(operation) => {
             let mut slots = Ok(1);
             operation.expressions(&mut |child| {
@@ -703,6 +704,19 @@ fn expr_slots(expr: &IrExpr) -> Result<u64, String> {
 
 fn system_expr_slots(system: &IrSysFunc) -> Result<u64, String> {
     match system {
+        IrSysFunc::TestPlusArgs { pattern } => plusarg_text_slots(pattern),
+        IrSysFunc::ValuePlusArgs { format, target } => {
+            let target_slots = match target {
+                crate::sim::ir::IrPlusArgTarget::Packed { lhs, .. }
+                | crate::sim::ir::IrPlusArgTarget::Real { lhs, .. } => lhs_slots(lhs)?,
+                crate::sim::ir::IrPlusArgTarget::String { .. } => 0,
+            };
+            checked_add(
+                plusarg_text_slots(format)?,
+                target_slots,
+                "plusarg expression slots",
+            )
+        }
         IrSysFunc::Clog2(arg)
         | IrSysFunc::Bits(arg)
         | IrSysFunc::BitQuery { arg, .. }
@@ -717,6 +731,24 @@ fn system_expr_slots(system: &IrSysFunc) -> Result<u64, String> {
             checked_add(total, expr_slots(arg)?, "math function arguments")
         }),
     }
+}
+
+fn plusarg_text_slots(text: &IrPlusArgText) -> Result<u64, String> {
+    match text {
+        IrPlusArgText::Literal(_) => Ok(0),
+        IrPlusArgText::Dynamic(value) => string_expr_slots(value),
+    }
+}
+
+fn string_expr_slots(value: &IrStringExpr) -> Result<u64, String> {
+    let mut result = Ok(0);
+    value.expressions(&mut |expression| {
+        if let Ok(current) = result {
+            result = expr_slots(expression)
+                .and_then(|slots| checked_add(current, slots, "plusarg string expression slots"));
+        }
+    });
+    result
 }
 
 fn lhs_slots(lhs: &IrLhs) -> Result<u64, String> {

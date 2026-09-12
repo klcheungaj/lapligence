@@ -373,7 +373,7 @@ Control / misc:
 - ❌ **$dist_uniform/$dist_normal/…** — §1364-2001 17.9.2 **[1995]** unsupported-function reject
 - ✅ **Conversion** `$rtoi/$itor` — §1364-2001 17.8 **[1995]** truncation toward zero and signed/unsigned integral-to-real conversion, including implicit numeric argument coercion, typed parameters, and constant declaration initializers (sim_real_conversions.rs, optimization on/off)
 - ✅ **Conversion** `$realtobits/$bitstoreal` — §1364-2001 17.8 **[2001]** IEEE-754 bit reinterpretation; `$bitstoreal` requires 64 bits and maps X/Z positions to zero (sim_real_conversions.rs, optimization on/off)
-- ❌ **Plusargs** `$test$plusargs/$value$plusargs` — §1364-2001 17.10 **[1995]** unsupported-task reject
+- ✅ **Plusargs** `$test$plusargs/$value$plusargs` — §1364-2001 17.10 / §1800-2009 21.6 **[1995]/[SV-2005]**. `llg` passes arguments after `--` to the generated model; test queries use exact leading-`+` prefix matching, and value queries support `%d/%h/%x/%o/%b/%f/%e/%g/%s`, literal `%%`, repeated-argument first-match behavior, wide 4-state destinations, and failure retention (sim_plusargs.rs)
 
 Waveforms:
 
@@ -509,7 +509,7 @@ capabilities, not individual keywords, system functions or standard clauses.
 | 54 | Missing | PLA modeling | Synchronous/asynchronous AND/NAND/OR/NOR array/plane system tasks. |
 | 55 | Missing | Stochastic queues | `$q_initialize/$q_add/$q_remove/$q_full/$q_exam`. |
 | 56 | Missing | Random-number facilities | `$random`, `$urandom`, `$urandom_range`, random-state/seeding methods, and `$dist_uniform/$dist_normal/$dist_exponential/$dist_poisson/$dist_chi_square/$dist_t/$dist_erlang`. |
-| 57 | Missing | Command-line plusargs | `$test$plusargs/$value$plusargs`. |
+| 57 | Completed | Command-line plusargs | `$test$plusargs/$value$plusargs` receive arguments after the `llg` `--` delimiter; exact prefix matching, typed decimal/hex/binary/octal/real/string conversion, wide 4-state values, literal percent escapes, repeated-argument first match, and unchanged destinations on failed queries are covered by `sim_plusargs.rs`. |
 | 58 | Completed | Runtime mathematical functions | All 21 real functions from IEEE 1800-2009 table 20-4 now use typed IR and the specified C math functions, with numeric argument conversion. Procedural tests cover runtime arguments, one-time evaluation and C domain behavior. Existing real-context restrictions are counted in group 3. |
 | 59 | Missing | Runtime severity tasks | `$fatal/$error/$warning/$info`; elaboration-time frontend diagnostics are a separate capability. |
 | 60 | Missing | Host command execution | `$system`. |

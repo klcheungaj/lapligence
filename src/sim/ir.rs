@@ -850,6 +850,16 @@ pub enum IrRealUnOp {
 /// $time) or carry a folded width ($bits).
 #[derive(Clone, Debug, PartialEq)]
 pub enum IrSysFunc {
+    /// `$test$plusargs(pattern)`; the query uses prefix matching against the
+    /// command-line arguments supplied to the generated model.
+    TestPlusArgs { pattern: IrPlusArgText },
+    /// `$value$plusargs(format, variable)`; the format and typed destination
+    /// are lowered before emission so an unmatched query cannot mutate the
+    /// destination, while matched illegal packed conversions can produce X.
+    ValuePlusArgs {
+        format: IrPlusArgText,
+        target: IrPlusArgTarget,
+    },
     /// Real math functions defined by IEEE 1800-2009 table 20-4.
     Math { kind: IrMathFunc, args: Vec<IrExpr> },
     /// Fractional time in the calling module's time unit.
@@ -878,6 +888,51 @@ pub enum IrSysFunc {
     ShortRealToBits(Box<IrExpr>),
     /// `$bitstoshortreal(bits)` reinterprets exactly 32 packed bits as a float.
     BitsToShortReal(Box<IrExpr>),
+}
+
+/// A plusarg pattern or format string. String and integral expressions are
+/// converted to owned text at the call site, preserving runtime evaluation
+/// without carrying frontend nodes or borrowed storage across the IR boundary.
+#[derive(Clone, Debug, PartialEq)]
+pub enum IrPlusArgText {
+    Literal(String),
+    Dynamic(IrStringExpr),
+}
+
+impl IrPlusArgText {
+    pub(in crate::sim) fn expressions(&self, visit: &mut impl FnMut(&IrExpr)) {
+        if let Self::Dynamic(value) = self {
+            value.expressions(visit);
+        }
+    }
+
+    pub(in crate::sim) fn expressions_mut(&mut self, visit: &mut impl FnMut(&mut IrExpr)) {
+        if let Self::Dynamic(value) = self {
+            value.expressions_mut(visit);
+        }
+    }
+}
+
+/// Typed destination of `$value$plusargs`.
+///
+/// The target remains an owned IR lvalue (or a complete string address) until
+/// C emission. No frontend pointer or borrowed string storage crosses this
+/// boundary.
+#[derive(Clone, Debug, PartialEq)]
+pub enum IrPlusArgTarget {
+    Packed {
+        lhs: Box<IrLhs>,
+        width: u32,
+        signed: bool,
+        two_state: bool,
+    },
+    Real {
+        lhs: Box<IrLhs>,
+        shortreal: bool,
+    },
+    String {
+        address: String,
+    },
 }
 
 /// The standard real-valued mathematical system functions.
@@ -1648,6 +1703,9 @@ impl IrActivationTarget {
 pub enum IrStmt {
     Container(IrContainerStmt),
     Object(IrObjectStmt),
+    /// A system plusarg query used in statement position. The expression is
+    /// retained so `$value$plusargs` still performs its destination write.
+    PlusArg(IrExpr),
     /// `{ stmts }` — a begin block.
     Block(Vec<IrStmt>),
     /// `sv4_t name = sv4_x(w, s);` (no init) or `sv4_t name = <init>;`

@@ -184,6 +184,10 @@ enum {
 };
 
 void llg_rt_init(void);
+// Initialize the runtime and retain the generated model's argv view for
+// `$test$plusargs`/`$value$plusargs`. The runtime never takes ownership of
+// `argv`; callers keep it valid for the duration of the simulation.
+void llg_rt_init_with_args(int argc, char** argv);
 // Release all runtime-owned scheduler, coroutine, fork-group, monitor and
 // strobe allocations. Call only when no runtime coroutine is executing; init
 // and run invoke it automatically. Repeated calls are safe.
@@ -230,6 +234,18 @@ void llg_display_typed(const char* fmt, llg_fmt_arg_t* args, int n,
                        const char* scope);
 void llg_write_typed(const char* fmt, llg_fmt_arg_t* args, int n,
                      const char* scope);
+
+// ── Command-line plusargs ───────────────────────────────────────────────────
+//
+// Plusargs are the argv entries beginning with '+'. Test queries use literal
+// prefix matching after the leading '+'. Value queries accept the standard
+// %d/%o/%h/%x/%b/%e/%f/%g/%s conversions (including uppercase and leading-0
+// forms); an unmatched query returns zero and leaves its destination unchanged.
+int llg_test_plusargs(const char* pattern);
+int llg_value_plusargs_packed(const char* format, sv4_t* out, uint32_t width,
+                              int is_signed, int two_state);
+int llg_value_plusargs_real(const char* format, double* out);
+int llg_value_plusargs_string(const char* format, llg_string_t* out);
 
 // ── $monitor / $strobe ────────────────────────────────────────────────────────
 //

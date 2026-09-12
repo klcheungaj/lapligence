@@ -41,6 +41,60 @@ impl Error for IrValidationError {}
 
 type ValidationResult = Result<(), IrValidationError>;
 
+fn lhs_is_real(model: &IrModel, lhs: &IrLhs) -> bool {
+    match lhs {
+        IrLhs::Whole(index) => model
+            .signals
+            .get(*index)
+            .is_some_and(|signal| matches!(signal.ty, IrType::Real { .. })),
+        IrLhs::WholeRef { width, .. } => *width == 0,
+        IrLhs::ArrayElem {
+            arr,
+            elem_sel: IrElemSel::Whole,
+            ..
+        } => model.arrays.get(*arr).is_some_and(|array| array.real),
+        _ => false,
+    }
+}
+
+fn lhs_signed(model: &IrModel, lhs: &IrLhs) -> Option<bool> {
+    match lhs {
+        IrLhs::Whole(index) => model.signals.get(*index).map(|signal| signal.ty.signed()),
+        IrLhs::WholeRef { width, signed, .. } | IrLhs::Ref { width, signed, .. } => {
+            (*width != 0).then_some(*signed)
+        }
+        IrLhs::Bit(..) | IrLhs::Part(..) | IrLhs::IdxPart(..) | IrLhs::Stream { .. } => Some(false),
+        IrLhs::ArrayElem { arr, elem_sel, .. } => {
+            let array = model.arrays.get(*arr)?;
+            match elem_sel {
+                IrElemSel::Whole => (!array.real).then_some(array.signed),
+                IrElemSel::Part(..) | IrElemSel::Bit(..) | IrElemSel::Indexed { .. } => Some(false),
+            }
+        }
+    }
+}
+
+fn lhs_two_state(model: &IrModel, lhs: &IrLhs) -> Option<bool> {
+    match lhs {
+        IrLhs::Whole(index) => model
+            .signals
+            .get(*index)
+            .map(|signal| signal.ty.two_state()),
+        IrLhs::WholeRef {
+            width, two_state, ..
+        }
+        | IrLhs::Ref {
+            width, two_state, ..
+        } => (*width != 0).then_some(*two_state),
+        IrLhs::Bit(index, ..) | IrLhs::Part(index, ..) | IrLhs::IdxPart(index, ..) => model
+            .signals
+            .get(*index)
+            .map(|signal| signal.ty.two_state()),
+        IrLhs::ArrayElem { arr, .. } => model.arrays.get(*arr).map(|array| array.two_state),
+        IrLhs::Stream { .. } => Some(false),
+    }
+}
+
 fn validate_container_element(element: &IrContainerElement, path: &str) -> ValidationResult {
     match element {
         IrContainerElement::Packed { width, .. } if *width == 0 => {
@@ -291,6 +345,34 @@ impl Validator<'_> {
                 Ok(())
             }
         }
+    }
+
+    fn validate_plusarg_text(
+        &self,
+        text: &IrPlusArgText,
+        formals: &[IrFormal],
+        path: &str,
+    ) -> ValidationResult {
+        match text {
+            IrPlusArgText::Literal(text) => {
+                if text.contains('\0') {
+                    return self.fail(path, "plusarg text contains NUL");
+                }
+            }
+            IrPlusArgText::Dynamic(value) => {
+                value
+                    .validate(self.model, self.string_return.get())
+                    .map_err(|error| IrValidationError::new(path, error.to_string()))?;
+                let mut result = Ok(());
+                value.expressions(&mut |expression| {
+                    if result.is_ok() {
+                        result = self.validate_expr(expression, formals, path);
+                    }
+                });
+                result?;
+            }
+        }
+        Ok(())
     }
 
     fn validate(&self) -> ValidationResult {
@@ -1077,6 +1159,55 @@ impl Validator<'_> {
                 }
             }
             IrExprKind::SysFunc(sys) => match sys {
+                IrSysFunc::TestPlusArgs { pattern } => {
+                    self.validate_plusarg_text(pattern, formals, &format!("{path}.pattern"))?;
+                    if (expr.width, expr.signed) != (32, true) {
+                        return self.fail(path, "invalid $test$plusargs expression");
+                    }
+                }
+                IrSysFunc::ValuePlusArgs { format, target } => {
+                    self.validate_plusarg_text(format, formals, &format!("{path}.format"))?;
+                    if (expr.width, expr.signed) != (32, true) {
+                        return self.fail(path, "invalid $value$plusargs expression");
+                    }
+                    match target {
+                        IrPlusArgTarget::Packed {
+                            lhs,
+                            width,
+                            signed,
+                            two_state,
+                        } => {
+                            self.validate_lhs(lhs, formals, &format!("{path}.target"))?;
+                            if *width == 0
+                                || self.lhs_packed_width(lhs) != Some(*width)
+                                || lhs_signed(self.model, lhs) != Some(*signed)
+                                || lhs_two_state(self.model, lhs) != Some(*two_state)
+                            {
+                                return self.fail(
+                                    format!("{path}.target"),
+                                    "plusarg packed target type disagrees with its lvalue",
+                                );
+                            }
+                        }
+                        IrPlusArgTarget::Real { lhs, .. } => {
+                            self.validate_lhs(lhs, formals, &format!("{path}.target"))?;
+                            if !lhs_is_real(self.model, lhs) {
+                                return self.fail(
+                                    format!("{path}.target"),
+                                    "plusarg real target is not real storage",
+                                );
+                            }
+                        }
+                        IrPlusArgTarget::String { address } => {
+                            if address.is_empty() {
+                                return self.fail(
+                                    format!("{path}.target"),
+                                    "plusarg string target address must not be empty",
+                                );
+                            }
+                        }
+                    }
+                }
                 IrSysFunc::Math { kind, args } => {
                     if args.len() != kind.arity() || !expr.is_real() {
                         return self.fail(
@@ -1749,6 +1880,9 @@ impl Validator<'_> {
                     });
                 });
                 result?;
+            }
+            IrStmt::PlusArg(expression) => {
+                self.validate_expr(expression, formals, &format!("{path}.expression"))?;
             }
             IrStmt::Block(body) | IrStmt::Forever { body } => {
                 self.validate_stmts(body, formals, &format!("{path}.body"))?;

@@ -416,6 +416,17 @@ fn walk_expr_mut(e: &mut IrExpr, f: &mut impl FnMut(&mut IrExpr)) {
             }
         }
         IrExprKind::SysFunc(sf) => match sf {
+            IrSysFunc::TestPlusArgs { pattern } => {
+                pattern.expressions_mut(&mut |expression| walk_expr_mut(expression, f))
+            }
+            IrSysFunc::ValuePlusArgs { format, target } => {
+                format.expressions_mut(&mut |expression| walk_expr_mut(expression, f));
+                match target {
+                    crate::sim::ir::IrPlusArgTarget::Packed { lhs, .. }
+                    | crate::sim::ir::IrPlusArgTarget::Real { lhs, .. } => walk_lhs_mut(lhs, f),
+                    crate::sim::ir::IrPlusArgTarget::String { .. } => {}
+                }
+            }
             IrSysFunc::Clog2(a)
             | IrSysFunc::Bits(a)
             | IrSysFunc::BitQuery { arg: a, .. }
@@ -449,6 +460,7 @@ fn walk_stmt_mut(s: &mut IrStmt, f: &mut impl FnMut(&mut IrExpr)) {
         IrStmt::Object(operation) => {
             operation.expressions_mut(&mut |child| walk_expr_mut(child, f))
         }
+        IrStmt::PlusArg(expression) => walk_expr_mut(expression, f),
         IrStmt::Block(b)
         | IrStmt::Forever { body: b }
         | IrStmt::ActivationScope { body: b, .. } => walk_stmts_mut(b, f),
@@ -1012,6 +1024,17 @@ fn ident_children(e: &mut IrExpr) {
             }
         }
         IrExprKind::SysFunc(sf) => match sf {
+            IrSysFunc::TestPlusArgs { pattern } => {
+                pattern.expressions_mut(&mut |expression| ident_expr(expression))
+            }
+            IrSysFunc::ValuePlusArgs { format, target } => {
+                format.expressions_mut(&mut |expression| ident_expr(expression));
+                match target {
+                    crate::sim::ir::IrPlusArgTarget::Packed { lhs, .. }
+                    | crate::sim::ir::IrPlusArgTarget::Real { lhs, .. } => ident_lhs(lhs),
+                    crate::sim::ir::IrPlusArgTarget::String { .. } => {}
+                }
+            }
             IrSysFunc::Clog2(a)
             | IrSysFunc::Bits(a)
             | IrSysFunc::BitQuery { arg: a, .. }
@@ -1722,6 +1745,7 @@ fn collect_stmt_rw(s: &IrStmt, model: &IrModel, rw: &mut Rw) {
         IrStmt::Object(operation) => {
             operation.expressions(&mut |child| collect_expr_reads(child, model, rw))
         }
+        IrStmt::PlusArg(expression) => collect_expr_reads(expression, model, rw),
         IrStmt::Block(b) | IrStmt::ActivationScope { body: b, .. } => {
             collect_stmts_rw(b, model, rw)
         }
@@ -2090,6 +2114,19 @@ fn collect_children_reads(e: &IrExpr, model: &IrModel, rw: &mut Rw) {
             collect_call_rw_readonly(call.function_index(), &call.args, model, rw)
         }
         IrExprKind::SysFunc(sf) => match sf {
+            IrSysFunc::TestPlusArgs { pattern } => {
+                pattern.expressions(&mut |expression| collect_expr_reads(expression, model, rw))
+            }
+            IrSysFunc::ValuePlusArgs { format, target } => {
+                format.expressions(&mut |expression| collect_expr_reads(expression, model, rw));
+                match target {
+                    crate::sim::ir::IrPlusArgTarget::Packed { lhs, .. }
+                    | crate::sim::ir::IrPlusArgTarget::Real { lhs, .. } => {
+                        collect_lhs_rw(lhs, model, rw)
+                    }
+                    crate::sim::ir::IrPlusArgTarget::String { .. } => {}
+                }
+            }
             IrSysFunc::Clog2(a)
             | IrSysFunc::Bits(a)
             | IrSysFunc::BitQuery { arg: a, .. }

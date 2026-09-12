@@ -1,11 +1,11 @@
 //! Expression, assignment-target, array-access, and call rendering.
 
-use super::constants::{emit_const, round_shortreal};
+use super::constants::{c_string_literal, emit_const, round_shortreal};
 use super::context::{RCtx, RenderedExpr};
 use super::EmitError;
 use crate::sim::ir::{
     IrBinOp, IrBitQuery, IrCallArg, IrContainerElement, IrContainerKind, IrElemSel, IrEnumMethod,
-    IrEnumQuery, IrExpr, IrExprKind, IrInsideItem, IrLhs, IrRealBinOp, IrRealUnOp,
+    IrEnumQuery, IrExpr, IrExprKind, IrInsideItem, IrLhs, IrPlusArgText, IrRealBinOp, IrRealUnOp,
     IrStreamDirection, IrStringExpr, IrSysFunc, IrType, IrUnOp,
 };
 
@@ -801,6 +801,10 @@ pub(super) fn render_expr_impl(ctx: &RCtx<'_>, e: &IrExpr) -> Result<RenderedExp
             }
         }
         IrExprKind::SysFunc(f) => match f {
+            IrSysFunc::TestPlusArgs { pattern } => render_test_plusargs(ctx, pattern)?,
+            IrSysFunc::ValuePlusArgs { format, target } => {
+                render_value_plusargs(ctx, format, target, e.width, e.signed)?
+            }
             IrSysFunc::Math { kind, args } => {
                 use crate::sim::ir::IrMathFunc;
                 let name = match kind {
@@ -955,6 +959,113 @@ pub(super) fn render_expr_impl(ctx: &RCtx<'_>, e: &IrExpr) -> Result<RenderedExp
         },
     };
     Ok(out)
+}
+
+fn render_plusarg_text(
+    ctx: &RCtx<'_>,
+    text: &IrPlusArgText,
+    name: &str,
+) -> Result<(String, String, String), String> {
+    match text {
+        IrPlusArgText::Literal(text) => Ok((c_string_literal(text), String::new(), String::new())),
+        IrPlusArgText::Dynamic(value) => {
+            let value = super::objects::string(ctx, value)?;
+            Ok((
+                format!("({name}.data ? {name}.data : \"\")"),
+                format!("llg_string_t {name} = {value}; "),
+                format!("llg_string_destroy(&{name}); "),
+            ))
+        }
+    }
+}
+
+fn render_test_plusargs(ctx: &RCtx<'_>, pattern: &IrPlusArgText) -> Result<RenderedExpr, String> {
+    let (pattern, setup, cleanup) = render_plusarg_text(ctx, pattern, "_llg_plusarg_pattern")?;
+    let code = if setup.is_empty() {
+        format!("sv4_from_u64((uint64_t)llg_test_plusargs({pattern}), 32, 1)")
+    } else {
+        format!(
+            "({{ {setup} int _llg_plusarg_result = llg_test_plusargs({pattern}); {cleanup} sv4_from_u64((uint64_t)_llg_plusarg_result, 32, 1); }})"
+        )
+    };
+    Ok(RenderedExpr {
+        code,
+        width: 32,
+        signed: true,
+        fill: None,
+    })
+}
+
+fn render_value_plusargs(
+    ctx: &RCtx<'_>,
+    format: &IrPlusArgText,
+    target: &crate::sim::ir::IrPlusArgTarget,
+    result_width: u32,
+    result_signed: bool,
+) -> Result<RenderedExpr, String> {
+    let (format, setup, cleanup) = render_plusarg_text(ctx, format, "_llg_plusarg_format")?;
+    let mut code = String::from("({ int _llg_plusarg_ok = 0; ");
+    code.push_str(&setup);
+    match target {
+        crate::sim::ir::IrPlusArgTarget::Packed {
+            lhs,
+            width,
+            signed,
+            two_state,
+        } => {
+            code.push_str(&format!(
+                "sv4_t _llg_plusarg_value = sv4_x({width}, {}); ",
+                *signed as u8
+            ));
+            code.push_str(&format!(
+                "if (llg_value_plusargs_packed({format}, &_llg_plusarg_value, {width}, {}, {})) {{ ",
+                *signed as u8,
+                *two_state as u8
+            ));
+            let value = IrExpr::new(
+                IrExprKind::LocalRead("_llg_plusarg_value".to_owned()),
+                *width,
+                *signed,
+                None,
+            );
+            code.push_str(&render_assign(ctx, lhs, &value, false)?);
+            code.push_str(" _llg_plusarg_ok = 1; }");
+        }
+        crate::sim::ir::IrPlusArgTarget::Real { lhs, shortreal } => {
+            code.push_str("double _llg_plusarg_value = 0.0; ");
+            code.push_str(&format!(
+                "if (llg_value_plusargs_real({format}, &_llg_plusarg_value)) {{ "
+            ));
+            let value = IrExpr::new(
+                IrExprKind::LocalRead("_llg_plusarg_value".to_owned()),
+                0,
+                true,
+                None,
+            );
+            // Keep the target's shortreal rounding in the ordinary assignment
+            // path rather than duplicating it in the plusarg runtime API.
+            let _ = shortreal;
+            code.push_str(&render_assign(ctx, lhs, &value, false)?);
+            code.push_str(" _llg_plusarg_ok = 1; }");
+        }
+        crate::sim::ir::IrPlusArgTarget::String { address } => {
+            code.push_str("llg_string_t _llg_plusarg_value = (llg_string_t){0}; ");
+            code.push_str(&format!(
+                "if (llg_value_plusargs_string({format}, &_llg_plusarg_value)) {{ llg_string_move({address}, _llg_plusarg_value); _llg_plusarg_ok = 1; }} else {{ llg_string_destroy(&_llg_plusarg_value); }}"
+            ));
+        }
+    }
+    code.push_str(&cleanup);
+    code.push_str(&format!(
+        " sv4_from_u64((uint64_t)_llg_plusarg_ok, {result_width}, {}) ; }})",
+        result_signed as u8
+    ));
+    Ok(RenderedExpr {
+        code,
+        width: result_width,
+        signed: result_signed,
+        fill: None,
+    })
 }
 
 /// Comparison/equality over two operands: real operands compare through their
