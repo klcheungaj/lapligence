@@ -1378,6 +1378,13 @@ private:
   uint64_t definitionId;
 };
 
+bool isSyntheticLValue(const Expression& expression) {
+  const Expression* current = &expression;
+  while (current->kind == ExpressionKind::Conversion)
+    current = &current->as<ConversionExpression>().operand();
+  return current->kind == ExpressionKind::LValueReference;
+}
+
 class SemanticCapture final
     : public ASTVisitor<SemanticCapture, VisitFlags::AllGood | VisitFlags::Bad> {
 public:
@@ -1738,6 +1745,15 @@ public:
 
   template<std::derived_from<Expression> T>
   void handle(const T& expression) {
+    // Compound assignments use an internal LValueReferenceExpression as the
+    // left operand of Slang's expanded binary RHS. It is an evaluator
+    // placeholder, not an executable source expression; retaining it as an
+    // owned `Other` node would make an otherwise supported assignment fail
+    // semantic reachability validation.
+    if constexpr (std::same_as<T, LValueReferenceExpression>) {
+      return;
+    }
+
     if (capture.declarationOnly) {
       if constexpr (std::same_as<T, NamedValueExpression> ||
                     std::same_as<T, HierarchicalValueExpression> ||
@@ -1910,7 +1926,36 @@ public:
       }
     }
     parents.push_back(id);
-    visitDefault(expression);
+    if constexpr (std::same_as<T, AssignmentExpression>) {
+      // A compound assignment's right expression is Slang's expanded binary
+      // operation. Visit its real RHS directly so the evaluator-only lvalue
+      // placeholder in the expansion never enters the owned graph.
+      if (expression.op) {
+        if (expression.timingControl)
+          expression.timingControl->visit(*this);
+        expression.left().visit(*this);
+        if (const Expression* rhs = compoundAssignmentSourceRhs(expression))
+          rhs->visit(*this);
+        else
+          visitDefault(expression);
+      }
+      else {
+        visitDefault(expression);
+      }
+    }
+    else if constexpr (std::same_as<T, BinaryExpression>) {
+      // Slang expands a compound assignment into a binary RHS whose left
+      // operand is an evaluator-only lvalue placeholder. Do not capture that
+      // synthetic subtree as an executable child; the assignment node owns
+      // the real target and the binary node only supplies the computed value.
+      if (isSyntheticLValue(expression.left()))
+        expression.right().visit(*this);
+      else
+        visitDefault(expression);
+    }
+    else {
+      visitDefault(expression);
+    }
     parents.pop_back();
     addExpressionRoles(expression, id);
     capture.replaceChildRoles(id, LLG_SLANG_EDGE_OPERAND);
@@ -2502,7 +2547,11 @@ private:
       capture.semanticRole(id, &expression.operand(), LLG_SLANG_EDGE_OPERAND);
     }
     else if constexpr (std::same_as<T, BinaryExpression>) {
-      capture.semanticRole(id, &expression.left(), LLG_SLANG_EDGE_LEFT);
+      // Compound-assignment RHS expressions contain Slang's synthetic
+      // LValueReferenceExpression placeholder. It is not an executable
+      // operand and is intentionally omitted from the owned graph.
+      if (!isSyntheticLValue(expression.left()))
+        capture.semanticRole(id, &expression.left(), LLG_SLANG_EDGE_LEFT);
       capture.semanticRole(id, &expression.right(), LLG_SLANG_EDGE_RIGHT);
     }
     else if constexpr (std::same_as<T, AssignmentExpression>) {

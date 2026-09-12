@@ -1002,6 +1002,27 @@ fn retag_lhs_value(value: RenderedExpr, width: u32, signed: bool) -> RenderedExp
     }
 }
 
+fn lhs_two_state(ctx: &RCtx<'_>, lhs: &IrLhs) -> bool {
+    match lhs {
+        IrLhs::Whole(index) => ctx.model.signal(*index).ty.two_state(),
+        IrLhs::WholeRef { two_state, .. } | IrLhs::Ref { two_state, .. } => *two_state,
+        IrLhs::Bit(index, _, selected_two_state)
+        | IrLhs::Part(index, .., selected_two_state)
+        | IrLhs::IdxPart(index, .., selected_two_state) => {
+            ctx.model.signal(*index).ty.two_state() || *selected_two_state
+        }
+        IrLhs::ArrayElem { arr, .. } => ctx.model.array(*arr).two_state,
+        IrLhs::Stream { .. } => false,
+    }
+}
+
+fn coerce_lhs_read(ctx: &RCtx<'_>, lhs: &IrLhs, mut value: RenderedExpr) -> RenderedExpr {
+    if value.width != 0 && lhs_two_state(ctx, lhs) {
+        value.code = coerce_two_state(value.code, true);
+    }
+    value
+}
+
 /// Read an assignment target through the same descriptor shapes used by
 /// ordinary expressions. Dynamic indices have already been replaced by local
 /// captures before this helper is called.
@@ -1027,12 +1048,16 @@ fn render_lhs_value(
             signed,
             ..
         } => {
-            return Ok(RenderedExpr {
-                code: format!("*({addr})"),
-                width: *width,
-                signed: *signed,
-                fill: None,
-            });
+            return Ok(coerce_lhs_read(
+                ctx,
+                lhs,
+                RenderedExpr {
+                    code: format!("*({addr})"),
+                    width: *width,
+                    signed: *signed,
+                    fill: None,
+                },
+            ));
         }
         IrLhs::Ref {
             addr,
@@ -1040,12 +1065,16 @@ fn render_lhs_value(
             signed,
             ..
         } => {
-            return Ok(RenderedExpr {
-                code: format!("llg_ref_read({addr})"),
-                width: *width,
-                signed: *signed,
-                fill: None,
-            });
+            return Ok(coerce_lhs_read(
+                ctx,
+                lhs,
+                RenderedExpr {
+                    code: format!("llg_ref_read({addr})"),
+                    width: *width,
+                    signed: *signed,
+                    fill: None,
+                },
+            ));
         }
         IrLhs::Bit(index, select, _) => {
             let signal = ctx.model.signal(*index);
@@ -1124,10 +1153,10 @@ fn render_lhs_value(
             )
         }
     };
-    Ok(retag_lhs_value(
-        render_expr_impl(ctx, &value)?,
-        width,
-        signed,
+    Ok(coerce_lhs_read(
+        ctx,
+        lhs,
+        retag_lhs_value(render_expr_impl(ctx, &value)?, width, signed),
     ))
 }
 
