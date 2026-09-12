@@ -140,6 +140,18 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
         format!("_{tag}{}", self.label_seq)
     }
 
+    /// Ordinary functions cannot suspend, but a task body emitted as a typed
+    /// C call runs inside the caller's libaco coroutine and may yield. Inline
+    /// task expansion is still allowed for the event/cancellation paths that
+    /// need caller-owned activation rebinding.
+    fn timing_forbidden(&self) -> bool {
+        self.inline.is_none()
+            && self
+                .func
+                .as_ref()
+                .is_some_and(|function| !function.is_task)
+    }
+
     /// Lower a loop body under a break/continue scope.  The continue label
     /// is appended to the body's END — for every loop shape that lands on
     /// the next-iteration point (for: the increment step; while/repeat/
@@ -384,11 +396,10 @@ impl EmitCtx<'_, '_> {
                         self.path
                     ));
                 }
-                if self.func.is_some() && self.inline.is_none() {
+                if self.timing_forbidden() {
                     return Err(format!(
-                        "delay inside a function/task body in `{}` is not \
-                         supported (delay-bearing tasks are inlined at their call \
-                         sites)",
+                        "delay inside a function body in `{}` is not supported \
+                         (ordinary functions cannot suspend)",
                         self.path
                     ));
                 }
@@ -412,11 +423,10 @@ impl EmitCtx<'_, '_> {
                         self.path
                     ));
                 }
-                if self.func.is_some() && self.inline.is_none() {
+                if self.timing_forbidden() {
                     return Err(format!(
-                        "event control inside a function/task body in `{}` is not \
-                         supported (delay-bearing tasks are inlined at their call \
-                         sites)",
+                        "event control inside a function body in `{}` is not \
+                         supported (ordinary functions cannot suspend)",
                         self.path
                     ));
                 }
@@ -501,10 +511,10 @@ impl EmitCtx<'_, '_> {
                         self.path
                     ));
                 }
-                if self.func.is_some() && self.inline.is_none() {
+                if self.timing_forbidden() {
                     return Err(format!(
-                        "wait inside a function/task body in `{}` is not supported \
-                         (wait-bearing tasks are inlined at their call sites)",
+                        "wait inside a function body in `{}` is not supported \
+                         (ordinary functions cannot suspend)",
                         self.path
                     ));
                 }
@@ -543,10 +553,10 @@ impl EmitCtx<'_, '_> {
                         self.path
                     ));
                 }
-                if self.func.is_some() && self.inline.is_none() {
+                if self.timing_forbidden() {
                     return Err(format!(
-                        "wait_order inside a function/task body in `{}` is not supported \
-                         (wait-bearing tasks are inlined at their call sites)",
+                        "wait_order inside a function body in `{}` is not supported \
+                         (ordinary functions cannot suspend)",
                         self.path
                     ));
                 }
@@ -1044,10 +1054,10 @@ impl EmitCtx<'_, '_> {
         blocking: bool,
         scaled_ticks: IrDelay,
     ) -> Result<Vec<IrStmt>, String> {
-        if self.func.is_some() && self.inline.is_none() {
+        if self.timing_forbidden() {
             return Err(format!(
-                "delay inside a function/task body in `{}` is not supported \
-                 (delay-bearing tasks are inlined at their call sites)",
+                "delay inside a function body in `{}` is not supported \
+                 (ordinary functions cannot suspend)",
                 self.path
             ));
         }
@@ -3164,9 +3174,14 @@ impl EmitCtx<'_, '_> {
             return self.lower_task_inline(ft, callee_inst, h, &formals, &bound);
         }
         if is_task
-            && (self.cg.task_has_wait(ft, callee_inst)
-                || self.cg.task_has_disable(ft, callee_inst))
+            && (self.cg.task_has_disable(ft, callee_inst)
+                || self.cg.task_is_disable_target(ft))
         {
+            // Named disable must unwind the callee's activation before any
+            // caller-side copy-out. Keep that path inline until task returns
+            // carry an explicit cancellation result in the C ABI. The
+            // declaration-level target check covers callers that disable a
+            // task externally rather than from inside the task body.
             self.lower_task_inline(ft, callee_inst, h, &formals, &bound)
         } else {
             let fidx = self
@@ -3417,11 +3432,12 @@ impl EmitCtx<'_, '_> {
         }
     }
 
-    /// Lower a delay-bearing task body inlined at its call site: the task's
+    /// Lower a cancellation/event-bearing task body inlined at its call site: the task's
     /// io_decls are bound to the caller's argument expressions (writes go
     /// straight to the bound actuals through the func-context remap), locals
-    /// get fresh names, and the body lowers under the inline context.  A call
-    /// to a task already being inlined (recursion) is rejected.
+    /// get fresh names, and the body lowers under the inline context. This
+    /// path deliberately remains bounded to cases that need activation
+    /// rebinding; resumable timed calls use the typed `IrFunc` path above.
     fn lower_task_inline(
         &mut self,
         ft: NodeId,

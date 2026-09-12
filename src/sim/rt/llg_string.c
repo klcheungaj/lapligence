@@ -12,13 +12,22 @@ static void string_fail(const char *message) {
 
 static llg_string_t string_alloc(size_t length) {
     if (length == SIZE_MAX) string_fail("allocation size overflow");
-    llg_string_t value = {NULL, length};
+    llg_string_t value = {NULL, length, NULL, NULL};
     if (length) {
         value.data = malloc(length + 1);
         if (!value.data) string_fail("out of memory");
         value.data[length] = 0;
     }
     return value;
+}
+
+static int string_same(const llg_string_t *a, const llg_string_t *b) {
+    return a->len == b->len &&
+           (!a->len || memcmp(a->data, b->data, a->len) == 0);
+}
+
+static void string_notify(llg_string_t *value) {
+    if (value->notify && value->dependency) value->notify(value->dependency);
 }
 
 llg_string_t llg_string_bytes(const char *bytes, size_t length) {
@@ -38,8 +47,14 @@ void llg_string_destroy(llg_string_t *value) {
 }
 
 void llg_string_move(llg_string_t *target, llg_string_t value) {
+    int changed = !string_same(target, &value);
+    llg_string_notify_fn notify = target->notify;
+    sv4_t *dependency = target->dependency;
     llg_string_destroy(target);
     *target = value;
+    target->notify = notify;
+    target->dependency = dependency;
+    if (changed) string_notify(target);
 }
 
 llg_string_t llg_string_concat(llg_string_t a, llg_string_t b) {
@@ -72,8 +87,13 @@ static unsigned char ascii_case(unsigned char c, int upper) {
 }
 
 llg_string_t llg_string_case(llg_string_t value, int upper) {
-    for (size_t i = 0; i < value.len; ++i)
-        value.data[i] = (char)ascii_case((unsigned char)value.data[i], upper);
+    int changed = 0;
+    for (size_t i = 0; i < value.len; ++i) {
+        char replacement = (char)ascii_case((unsigned char)value.data[i], upper);
+        changed |= value.data[i] != replacement;
+        value.data[i] = replacement;
+    }
+    if (changed) string_notify(&value);
     return value;
 }
 
@@ -134,8 +154,11 @@ sv4_t llg_string_getc(llg_string_t value, sv4_t index) {
 void llg_string_putc(llg_string_t *value, sv4_t index, sv4_t character) {
     int64_t i;
     unsigned char c = (unsigned char)sv4_to_two_state(character).bits[0];
-    if (sv4_to_index_i64(index, &i) && i >= 0 && (uint64_t)i < value->len)
+    if (sv4_to_index_i64(index, &i) && i >= 0 && (uint64_t)i < value->len) {
+        int changed = (unsigned char)value->data[(size_t)i] != c;
         value->data[(size_t)i] = (char)c;
+        if (changed) string_notify(value);
+    }
 }
 
 sv4_t llg_string_compare(llg_string_t a, llg_string_t b, int ignore_case) {

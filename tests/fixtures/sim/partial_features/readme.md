@@ -22,7 +22,7 @@ for the boundaries these tests do not cover.
 
 | Files | Behavior checked |
 |---|---|
-| `port_*.sv` | Constants, omitted/default inputs, expression dependencies, conversion and selected outputs |
+| `port_*.sv` | Constants, omitted/default inputs, expression dependencies, conversion, selected outputs, and live string value links |
 | `reference_*.sv` | Nested packed aliases, selected lvalues, recursive aggregate/object identity, initialization and edge visibility |
 | `reference_resizable_rejected.sv` | Explicit rejection of detached/resizable reference storage |
 | `event_*.sv`, `mixed_iff_events.sv`, `nonblocking_event_triggers.sv`, `nonblocking_event_repeat_dynamic.sv` | Trigger-time qualification, expression changes, LSB/four-state edges, waiter cleanup, deferred named-event triggers and source-located detached-count rejection |

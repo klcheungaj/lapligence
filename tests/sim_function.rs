@@ -396,6 +396,66 @@ fn sim_disabled_delayed_task_skips_output_copyout() {
 }
 
 #[test]
+fn sim_recursive_timed_task_uses_independent_activations() {
+    if !llg::sim::build::cmake_available() {
+        eprintln!("SKIP: cmake not available");
+        return;
+    }
+    let _guard = CWD_LOCK.lock().unwrap();
+    run_fixture_both_opts(
+        "recursive_timed_task.sv",
+        "recursive_timed_task",
+        "recursive result=3 t=3\n",
+    )
+    .expect("recursive timed task must preserve each activation and copy-out");
+}
+
+#[test]
+fn sim_mutual_recursive_timed_tasks_suspend_and_return() {
+    if !llg::sim::build::cmake_available() {
+        eprintln!("SKIP: cmake not available");
+        return;
+    }
+    let _guard = CWD_LOCK.lock().unwrap();
+    run_fixture_both_opts(
+        "mutual_recursive_timed_tasks.sv",
+        "mutual_recursive_timed_tasks",
+        "mutual result=1 t=4\n",
+    )
+    .expect("mutually recursive timed tasks must share the typed call ABI");
+}
+
+#[test]
+fn sim_timed_task_nested_fork_join_variants() {
+    if !llg::sim::build::cmake_available() {
+        eprintln!("SKIP: cmake not available");
+        return;
+    }
+    let _guard = CWD_LOCK.lock().unwrap();
+    run_fixture_both_opts(
+        "timed_task_fork_joins.sv",
+        "timed_task_fork_joins",
+        "fork result=11 t=2\n",
+    )
+    .expect("timed task fork/join variants must retain caller state");
+}
+
+#[test]
+fn sim_timed_task_ref_alias_survives_suspension() {
+    if !llg::sim::build::cmake_available() {
+        eprintln!("SKIP: cmake not available");
+        return;
+    }
+    let _guard = CWD_LOCK.lock().unwrap();
+    run_fixture_both_opts(
+        "timed_task_ref_alias.sv",
+        "timed_task_ref_alias",
+        "ref value=42 t=1\n",
+    )
+    .expect("ref actuals must remain aliases while a task is suspended");
+}
+
+#[test]
 fn sim_task_nba_rejects_automatic_input_and_local_targets() {
     let _guard = CWD_LOCK.lock().unwrap();
     for (file, tag) in [

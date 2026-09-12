@@ -42,6 +42,36 @@ fn leaf_member(base: &AggregateMember, descriptor: &TypeDescriptor) -> Aggregate
     }
 }
 
+fn port_array_index_vectors(dims: &[(i32, i32)]) -> Vec<Vec<i32>> {
+    fn visit(
+        dims: &[(i32, i32)],
+        dimension: usize,
+        current: &mut Vec<i32>,
+        values: &mut Vec<Vec<i32>>,
+    ) {
+        if dimension == dims.len() {
+            values.push(current.clone());
+            return;
+        }
+        let (left, right) = dims[dimension];
+        let step = if left <= right { 1 } else { -1 };
+        let mut index = left;
+        loop {
+            current.push(index);
+            visit(dims, dimension + 1, current, values);
+            current.pop();
+            if index == right {
+                break;
+            }
+            index = index.saturating_add(step);
+        }
+    }
+
+    let mut values = Vec::new();
+    visit(dims, 0, &mut Vec::new(), &mut values);
+    values
+}
+
 #[derive(Default)]
 struct ProcessContractScan {
     event_controls: Vec<NodeId>,
@@ -506,7 +536,6 @@ impl<'a> Codegen<'a> {
                 self.kind(node),
                 NodeKind::Net { .. }
                     | NodeKind::Array { .. }
-                    | NodeKind::Port { .. }
                     | NodeKind::FuncArg { .. }
                     | NodeKind::IoDecl { .. }
             ) {
@@ -519,19 +548,6 @@ impl<'a> Codegen<'a> {
             // as the variables that use them. Type-only nodes allocate no
             // runtime storage; the corresponding Var is collected separately.
             return Ok(false);
-        }
-        if self.db.nodes().iter().any(|candidate| {
-            matches!(
-                &candidate.kind,
-                NodeKind::Port { direction, high, low, .. }
-                    if *direction != DbDirection::Ref
-                        && (*high == Some(node) || *low == Some(node))
-            )
-        }) {
-            return Err(format!(
-                "unpacked aggregate port `{}` in `{path}` is not supported",
-                self.node(node).name
-            ));
         }
         let is_union = layout.kind == AggregateKind::UnpackedUnion;
         // An untagged union has one storage extent, not one storage slot per
@@ -3427,8 +3443,9 @@ impl<'a> Codegen<'a> {
 
     /// Emit a `static` prototype for every function/task in the instance
     /// tree, so bodies may call each other regardless of declaration order.
-    /// Delay-bearing tasks are never emitted as C functions (they are inlined
-    /// at their call sites), so they get no prototype.
+    /// Timing-capable tasks use the same typed C-call ABI as delay-free tasks.
+    /// Their `llg_wait_*` operations suspend the caller's libaco coroutine, so
+    /// each recursive C activation remains resumable without source unrolling.
     pub(super) fn emit_func_prototypes(&mut self, inst: NodeId) -> Result<(), String> {
         for c in &self.node(inst).children {
             if let NodeKind::FuncTask {
@@ -3669,9 +3686,6 @@ impl<'a> Codegen<'a> {
                         self.static_task_locals.insert((inst, local), info);
                     }
                 }
-                if has_wait {
-                    continue;
-                }
                 let c_name =
                     self.func_names.get(c).cloned().ok_or_else(|| {
                         format!("function `{}` has no C name", self.node(*c).name)
@@ -3727,14 +3741,11 @@ impl<'a> Codegen<'a> {
     }
 
     /// Emit the C function body for every function/task in the instance tree.
-    /// Delay-bearing tasks are inlined at their call sites and never get a C
-    /// function body.
+    /// Emit every function/task body. Timing-capable tasks are ordinary C
+    /// calls whose waits suspend the current libaco coroutine.
     pub(super) fn emit_func_bodies(&mut self, inst: NodeId) -> Result<(), String> {
         for c in &self.node(inst).children {
-            if let NodeKind::FuncTask { is_task, .. } = self.kind(*c) {
-                if *is_task && self.task_has_wait(*c, inst) {
-                    continue;
-                }
+            if matches!(self.kind(*c), NodeKind::FuncTask { .. }) {
                 let path = self.instance_path_of(inst);
                 self.emit_func_task(&path, inst, *c)?;
             }
@@ -4778,6 +4789,24 @@ impl<'a> Codegen<'a> {
     pub(super) fn task_has_disable(&self, ft: NodeId, inst: NodeId) -> bool {
         let mut seen: HashSet<NodeId> = HashSet::new();
         self.task_has_disable_inner(ft, inst, &mut seen)
+    }
+
+    /// Whether a task declaration is the target of an explicit `disable`.
+    ///
+    /// A direct C-call has no cancellation result in its typed ABI. If an
+    /// external disable can name the task, keep the call-site expansion so
+    /// cancellation unwinds before output/inout copy-out. This is deliberately
+    /// a declaration-level check: every invocation shares the same runtime
+    /// activation identity and therefore needs the same lowering boundary.
+    pub(super) fn task_is_disable_target(&self, ft: NodeId) -> bool {
+        self.db.node_ids().any(|node| {
+            matches!(
+                self.kind(node),
+                NodeKind::Stmt(StmtKind::Disable {
+                    target: Some(target)
+                }) if *target == ft
+            )
+        })
     }
 
     /// Whether an NBA in `node` targets subroutine storage which does not
@@ -7930,6 +7959,292 @@ impl<'a> Codegen<'a> {
         }
     }
 
+    fn emit_link_process(
+        &mut self,
+        parent_path: &str,
+        child_path: &str,
+        port: NodeId,
+        reads: Vec<IrDependency>,
+        body: IrStmt,
+    ) {
+        let shape = if reads.is_empty() {
+            IrShape::RunOnce
+        } else {
+            IrShape::SensLoop { reads }
+        };
+        let fn_name = self.new_fn_name(parent_path, "link");
+        let origin = self.origin(port);
+        self.model.processes.push(IrProcess::new_with_origin(
+            fn_name,
+            format!("{child_path}.link"),
+            shape,
+            Vec::new(),
+            vec![body],
+            origin,
+        ));
+    }
+
+    fn emit_array_port_link(
+        &mut self,
+        parent_path: &str,
+        child_path: &str,
+        port: NodeId,
+        direction: DbDirection,
+        actual: NodeId,
+        internal: NodeId,
+    ) -> Result<bool, String> {
+        let child_array = self.array_of(internal).cloned();
+        let actual_array = self.array_of(actual).cloned();
+        let (child_array, actual_array) = match (child_array, actual_array) {
+            (None, None) => return Ok(false),
+            (Some(_), None) | (None, Some(_)) => {
+                return Err(format!(
+                    "port `{}` connects a fixed array to a non-array actual in `{child_path}`",
+                    self.display_name(port)
+                ));
+            }
+            (Some(child), Some(actual)) => (child, actual),
+        };
+        if child_array.dims.len() != actual_array.dims.len()
+            || child_array
+                .dims
+                .iter()
+                .zip(&actual_array.dims)
+                .any(|((child_left, child_right), (actual_left, actual_right))| {
+                    (i64::from(*child_left) - i64::from(*child_right)).unsigned_abs()
+                        != (i64::from(*actual_left) - i64::from(*actual_right)).unsigned_abs()
+                })
+        {
+            return Err(format!(
+                "fixed array port `{}` has incompatible rank or dimensions in `{child_path}`",
+                self.display_name(port)
+            ));
+        }
+
+        let (target, source) = if direction == DbDirection::Input {
+            (&child_array, &actual_array)
+        } else {
+            (&actual_array, &child_array)
+        };
+        let target_array = self.reference_array(target.ir);
+        let source_array = self.reference_array(source.ir);
+        let target_indices = port_array_index_vectors(&target.dims);
+        let source_indices = port_array_index_vectors(&source.dims);
+        if target_indices.len() != source_indices.len() {
+            return Err(format!(
+                "fixed array port `{}` has incompatible element count in `{child_path}`",
+                self.display_name(port)
+            ));
+        }
+        let mut assignments = Vec::with_capacity(target_indices.len());
+        for (target_indices, source_indices) in target_indices.iter().zip(source_indices) {
+            let target_indices = target_indices
+                .iter()
+                .map(|index| lhs_integer_expr(i128::from(*index)))
+                .collect();
+            let source_indices = source_indices
+                .iter()
+                .map(|index| lhs_integer_expr(i128::from(*index)))
+                .collect();
+            let lhs = IrLhs::ArrayElem {
+                arr: target_array,
+                indices: target_indices,
+                elem_sel: IrElemSel::Whole,
+            };
+            let rhs = IrExpr::new(
+                IrExprKind::ArrayRead {
+                    arr: source_array,
+                    indices: source_indices,
+                    elem_sel: IrElemSel::Whole,
+                },
+                if source.real { 0 } else { source.elem_width },
+                source.signed,
+                None,
+            );
+            assignments.push(IrStmt::Assign {
+                lhs: lhs.clone(),
+                rhs: apply_lhs_assignment_context(&self.model, &lhs, rhs),
+                nba: false,
+            });
+        }
+        self.emit_link_process(
+            parent_path,
+            child_path,
+            port,
+            vec![IrDependency::ArrayContents(source_array)],
+            IrStmt::Block(assignments),
+        );
+        Ok(true)
+    }
+
+    fn aggregate_link_dependencies(
+        &self,
+        aggregate: &UnpackedAggregateInfo,
+    ) -> Vec<IrDependency> {
+        let mut reads = Vec::new();
+        for leaf in &aggregate.leaves {
+            if let Some(object) = leaf.object {
+                let dependency = IrDependency::Object(self.reference_object(object));
+                if !reads.contains(&dependency) {
+                    reads.push(dependency);
+                }
+                continue;
+            }
+            let Some(signal) = &leaf.signal else {
+                continue;
+            };
+            let dependency = self.signal_dependency(signal);
+            if !reads.contains(&dependency) {
+                reads.push(dependency);
+            }
+        }
+        reads
+    }
+
+    fn emit_aggregate_port_link(
+        &mut self,
+        parent_path: &str,
+        child_path: &str,
+        port: NodeId,
+        direction: DbDirection,
+        actual: NodeId,
+        internal: NodeId,
+    ) -> Result<bool, String> {
+        let child_aggregate = self.unpacked_aggregate_info(internal);
+        let actual_aggregate = self.unpacked_aggregate_info(actual);
+        let (child_aggregate, actual_aggregate) = match (child_aggregate, actual_aggregate) {
+            (None, None) => return Ok(false),
+            (Some(_), None) | (None, Some(_)) => {
+                return Err(format!(
+                    "aggregate port `{}` connects to a non-aggregate actual in `{child_path}`",
+                    self.display_name(port)
+                ));
+            }
+            (Some(child), Some(actual)) => (child, actual),
+        };
+        let source = if direction == DbDirection::Input {
+            actual_aggregate.1.clone()
+        } else {
+            child_aggregate.1.clone()
+        };
+        let (target_node, source_node, path) = if direction == DbDirection::Input {
+            (
+                internal,
+                actual,
+                child_path,
+            )
+        } else {
+            (
+                actual,
+                internal,
+                parent_path,
+            )
+        };
+        let reads = self.aggregate_link_dependencies(&source);
+        let statement = self
+            .lower_unpacked_aggregate_assignment(
+                path,
+                target_node,
+                source_node,
+                false,
+                Operation::Assignment,
+            )?
+            .ok_or_else(|| {
+                format!(
+                    "aggregate port `{}` did not lower as a complete aggregate assignment",
+                    self.display_name(port)
+                )
+            })?;
+        self.emit_link_process(parent_path, child_path, port, reads, statement);
+        Ok(true)
+    }
+
+    fn emit_container_port_link(
+        &mut self,
+        parent_path: &str,
+        child_path: &str,
+        port: NodeId,
+        direction: DbDirection,
+        actual: NodeId,
+        internal: NodeId,
+    ) -> Result<bool, String> {
+        let child_container = self.container_of(internal);
+        let actual_container = self.container_of(actual);
+        let (child_container, actual_container) = match (child_container, actual_container) {
+            (None, None) => return Ok(false),
+            (Some(_), None) | (None, Some(_)) => {
+                return Err(format!(
+                    "resizable port `{}` connects to a non-container actual in `{child_path}`",
+                    self.display_name(port)
+                ));
+            }
+            (Some(child), Some(actual)) => (child, actual),
+        };
+        let (target, source) = if direction == DbDirection::Input {
+            (child_container.ir, actual_container.ir)
+        } else {
+            (actual_container.ir, child_container.ir)
+        };
+        self.emit_link_process(
+            parent_path,
+            child_path,
+            port,
+            vec![
+                IrDependency::ContainerContents(source),
+                IrDependency::ContainerShape(source),
+            ],
+            IrStmt::Container(IrContainerStmt::Copy { dst: target, src: source }),
+        );
+        Ok(true)
+    }
+
+    fn emit_object_port_link(
+        &mut self,
+        parent_path: &str,
+        child_path: &str,
+        port: NodeId,
+        direction: DbDirection,
+        actual: NodeId,
+        internal: NodeId,
+    ) -> Result<bool, String> {
+        let child_object = self.object_of(child_path, internal);
+        let actual_object = self.object_of(parent_path, actual);
+        let (child_object, actual_object) = match (child_object, actual_object) {
+            (None, None) => return Ok(false),
+            (Some(_), None) | (None, Some(_)) => {
+                return Err(format!(
+                    "object port `{}` connects to a non-object actual in `{child_path}`",
+                    self.display_name(port)
+                ));
+            }
+            (Some(child), Some(actual)) => (child, actual),
+        };
+        let (target, source) = if direction == DbDirection::Input {
+            (child_object, actual_object)
+        } else {
+            (actual_object, child_object)
+        };
+        if self.model.objects[target].ty != IrObjectType::String
+            || self.model.objects[source].ty != IrObjectType::String
+        {
+            return Err(format!(
+                "chandle port `{}` is not supported by value links in `{child_path}`",
+                self.display_name(port)
+            ));
+        }
+        self.emit_link_process(
+            parent_path,
+            child_path,
+            port,
+            vec![IrDependency::Object(source)],
+            IrStmt::Object(IrObjectStmt::StringAssign(
+                self.reference_object(target),
+                IrStringExpr::Read(self.reference_object(source)),
+            )),
+        );
+        Ok(true)
+    }
+
     fn emit_links(&mut self, parent_path: &str, child_inst: NodeId) -> Result<(), String> {
         let child_path = self.instance_path_of(child_inst);
         self.inst = self.owning_inst(child_inst).unwrap_or(child_inst);
@@ -7969,6 +8284,46 @@ impl<'a> Codegen<'a> {
                 continue;
             };
             let Some(internal) = low else { continue };
+            if self.emit_array_port_link(
+                parent_path,
+                &child_path,
+                port,
+                direction,
+                actual,
+                internal,
+            )? {
+                continue;
+            }
+            if self.emit_aggregate_port_link(
+                parent_path,
+                &child_path,
+                port,
+                direction,
+                actual,
+                internal,
+            )? {
+                continue;
+            }
+            if self.emit_container_port_link(
+                parent_path,
+                &child_path,
+                port,
+                direction,
+                actual,
+                internal,
+            )? {
+                continue;
+            }
+            if self.emit_object_port_link(
+                parent_path,
+                &child_path,
+                port,
+                direction,
+                actual,
+                internal,
+            )? {
+                continue;
+            }
             let (_, child_info) = self.resolve_signal_id(&child_path, internal)?;
             let (lhs, rhs, reads) = if direction == DbDirection::Input {
                 let rhs = self.lower_expr(parent_path, actual)?;
@@ -8002,7 +8357,17 @@ impl<'a> Codegen<'a> {
                     ));
                 }
                 let lhs = self.remap_structural_lhs(lhs, port);
-                (lhs, sig_read_expr_full(&child_info), vec![self.signal_dependency(&child_info)])
+                let child_dependency = self.signal_dependency(&child_info);
+                let mut reads = vec![child_dependency.clone()];
+                let mut seen = HashSet::from([child_dependency]);
+                self.walk_lhs_select_reads(
+                    parent_path,
+                    actual,
+                    &mut seen,
+                    &mut HashSet::new(),
+                    &mut reads,
+                )?;
+                (lhs, sig_read_expr_full(&child_info), reads)
             };
             let rhs = apply_lhs_assignment_context(&self.model, &lhs, rhs);
             let shape = if reads.is_empty() {
@@ -8216,6 +8581,7 @@ impl<'a> Codegen<'a> {
                 format!("container[{container}] contents")
             }
             IrDependency::ContainerShape(container) => format!("container[{container}] shape"),
+            IrDependency::Object(object) => format!("object[{object}] contents"),
         }
     }
 
@@ -8549,6 +8915,7 @@ impl<'a> Codegen<'a> {
                 | IrDependency::ContainerShape(container),
                 IrDependency::ContainerContents(write) | IrDependency::ContainerShape(write),
             ) => container == write,
+            (IrDependency::Object(read), IrDependency::Object(write)) => read == write,
             _ => false,
         }
     }
@@ -8754,7 +9121,8 @@ impl<'a> Codegen<'a> {
                 IrDependency::ArrayElement { .. }
                 | IrDependency::ArrayContents(_)
                 | IrDependency::ContainerContents(_)
-                | IrDependency::ContainerShape(_) => Err(format!(
+                | IrDependency::ContainerShape(_)
+                | IrDependency::Object(_) => Err(format!(
                     "array/container dependencies cannot yet drive force evaluators in `{scope_path}`"
                 )),
             })

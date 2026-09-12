@@ -65,12 +65,15 @@ the generated `model.c` into a standalone executable and is deliberately
   Completed fork parents remain alive until detached descendants finish;
   process-table slots are reused, and allocations are released on scheduler
   exit or reinitialization.
-- `llg_string.h` / `llg_string.c` — scheduler-independent, owned byte strings.
+- `llg_string.h` / `llg_string.c` — owned byte strings.
   Reads clone storage; expression operations consume their arguments; mutations
-  replace or update the target allocation. Strings exclude NUL bytes and use
-  ASCII case conversion. `atoreal` parses a decimal prefix without admitting C
-  hexadecimal/NaN/infinity spellings; `realtoa` emits enough decimal digits for
-  finite-double round trips. Both preserve the existing clone/consume contract.
+  replace or update the target allocation. Persistent generated strings retain
+  an optional typed change callback and stable dependency marker; unchanged
+  writes do not invoke it, and owned expression clones carry no callback.
+  Strings exclude NUL bytes and use ASCII case conversion. `atoreal` parses a
+  decimal prefix without admitting C hexadecimal/NaN/infinity spellings;
+  `realtoa` emits enough decimal digits for finite-double round trips. Both
+  preserve the existing clone/consume contract.
 - `llg_container.h` / `llg_container.c` — scheduler-independent storage for
   dynamic arrays, queues, and associative arrays whose packed elements are
   full-width `sv4_t` values. Dynamic resize preserves the common prefix and

@@ -219,6 +219,9 @@ pub enum IrDependency {
     ContainerContents(usize),
     /// Container membership/size/shape (including insertion/deletion).
     ContainerShape(usize),
+    /// A persistent native string object. The generated model gives each
+    /// string object a stable packed change marker used by link processes.
+    Object(usize),
 }
 
 impl IrDependency {
@@ -228,6 +231,10 @@ impl IrDependency {
 
     pub fn real(name: impl Into<String>) -> Self {
         Self::Real(name.into())
+    }
+
+    pub fn object(index: usize) -> Self {
+        Self::Object(index)
     }
 
     pub fn scalar_name(&self) -> Option<&str> {

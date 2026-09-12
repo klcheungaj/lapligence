@@ -387,6 +387,10 @@ fn is_emitted_trigger_storage(ir: &IrModel, dependency: &IrDependency) -> bool {
         IrDependency::ContainerContents(container) | IrDependency::ContainerShape(container) => {
             *container < ir.containers.len()
         }
+        IrDependency::Object(object) => ir
+            .objects
+            .get(*object)
+            .is_some_and(|object| object.ty == crate::sim::ir::IrObjectType::String),
     }
 }
 

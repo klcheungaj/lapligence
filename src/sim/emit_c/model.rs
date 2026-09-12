@@ -75,6 +75,12 @@ fn render_model(execution: &ExecutionModel, capacity: u32) -> Result<String, Str
         out.push_str(&super::containers::declaration_and_init(container)?.0);
     }
     for object in &model.objects {
+        if object.ty == crate::sim::ir::IrObjectType::String {
+            out.push_str(&format!(
+                "static sv4_t {}_llg_dep = SV4_C(0, 1);\n",
+                object.c_name
+            ));
+        }
         let ty = match object.ty {
             crate::sim::ir::IrObjectType::String => "llg_string_t",
             crate::sim::ir::IrObjectType::Chandle => "void *",
@@ -642,6 +648,14 @@ fn render_main(execution: &ExecutionModel) -> Result<String, String> {
                  }}\n",
             array.total, array.c_name
         ));
+    }
+    for object in &model.objects {
+        if object.ty == crate::sim::ir::IrObjectType::String {
+            out.push_str(&format!(
+                "    {}.notify = llg_dependency_changed;\n    {}.dependency = &{}_llg_dep;\n",
+                object.c_name, object.c_name, object.c_name
+            ));
+        }
     }
     for container in &model.containers {
         out.push_str(&super::containers::declaration_and_init(container)?.1);

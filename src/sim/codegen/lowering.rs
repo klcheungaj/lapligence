@@ -1456,6 +1456,12 @@ impl<'a> Codegen<'a> {
             NodeKind::Expr(ExprKind::Ref { target }) => {
                 target.and_then(|t| self.array_globals.get(&t))
             }
+            NodeKind::Expr(ExprKind::HierPath { refs, .. }) => refs
+                .first()
+                .copied()
+                .flatten()
+                .or_else(|| refs.last().copied().flatten())
+                .and_then(|target| self.array_globals.get(&target)),
             _ => None,
         }
     }

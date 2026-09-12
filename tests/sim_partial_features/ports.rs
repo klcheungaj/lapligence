@@ -65,3 +65,38 @@ fn input_port_assignment_width_signedness_and_state_conversion() {
 fn output_port_selected_targets_preserve_other_bits() {
     run_case("port_output_selects", "az5\n3zc\n");
 }
+
+#[test]
+fn fixed_array_ports_preserve_rank_and_declared_direction() {
+    run_case("port_fixed_arrays", "11 22 33 44\na1 b2 c3 d4\n");
+}
+
+#[test]
+fn unpacked_aggregate_ports_copy_packed_and_real_members() {
+    run_case("port_aggregate_values", "11 1.75\na1 3.50\n");
+}
+
+#[test]
+fn resizable_value_ports_copy_contents_and_shape() {
+    run_case("port_resizable_values", "10 20 30\n10 77 30\n");
+}
+
+#[test]
+fn runtime_selected_input_actual_rebinds_port_link() {
+    run_case("port_runtime_selected", "11\n22\n33\n");
+}
+
+#[test]
+fn chandle_value_ports_are_rejected_explicitly() {
+    super::reject_case("port_chandle_rejected", "not a valid type for a port");
+}
+
+#[test]
+fn string_input_ports_copy_owned_values_before_child_initials() {
+    run_case("port_string_input", "hello\n");
+}
+
+#[test]
+fn string_output_links_wake_on_changes_but_not_unchanged_assignments() {
+    run_case("port_string_output", "alpha\nbeta\nbeta\n");
+}

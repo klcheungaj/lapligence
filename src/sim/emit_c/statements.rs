@@ -879,6 +879,9 @@ fn dependency_pointer(ctx: &RCtx<'_>, dependency: &IrDependency) -> String {
         IrDependency::ContainerShape(container) => {
             format!("&{}_llg_shape_dep", ctx.model.containers[*container].c_name)
         }
+        IrDependency::Object(object) => {
+            format!("&{}_llg_dep", ctx.model.objects[*object].c_name)
+        }
     }
 }
 
@@ -960,6 +963,10 @@ fn dependency_entry(ctx: &RCtx<'_>, dependency: &IrDependency) -> String {
         IrDependency::ContainerShape(container) => format!(
             "{{ &{}_llg_shape_dep, 0 }}",
             ctx.model.containers[*container].c_name
+        ),
+        IrDependency::Object(object) => format!(
+            "{{ &{}_llg_dep, 0 }}",
+            ctx.model.objects[*object].c_name
         ),
     }
 }

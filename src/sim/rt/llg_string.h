@@ -5,8 +5,16 @@
 #include <stddef.h>
 
 /* A string owns its allocation. Expression operations consume their arguments;
- * clone storage before passing it. Zero initialization is the empty string. */
-typedef struct { char *data; size_t len; } llg_string_t;
+ * clone storage before passing it. Zero initialization is the empty string.
+ * Persistent model strings optionally retain a typed change callback and
+ * dependency marker; owned expression clones leave both fields empty. */
+typedef void (*llg_string_notify_fn)(sv4_t *dependency);
+typedef struct {
+    char *data;
+    size_t len;
+    llg_string_notify_fn notify;
+    sv4_t *dependency;
+} llg_string_t;
 llg_string_t llg_string_bytes(const char *bytes, size_t len);
 llg_string_t llg_string_clone(const llg_string_t *value);
 void llg_string_destroy(llg_string_t *value);
