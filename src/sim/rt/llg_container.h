@@ -142,6 +142,20 @@ enum {
     LLG_CONTAINER_CHANGED_SHAPE = 2,
 };
 
+/* Runtime selectors used by streaming concatenations.  NONE streams the
+ * whole container; INDEX, RANGE, and INDEXED_PLUS/MINUS use the first and
+ * second packed arguments as their source-language bounds. */
+enum {
+    LLG_STREAM_SELECTOR_NONE = 0,
+    LLG_STREAM_SELECTOR_INDEX = 1,
+    LLG_STREAM_SELECTOR_RANGE = 2,
+    LLG_STREAM_SELECTOR_INDEXED_PLUS = 3,
+    LLG_STREAM_SELECTOR_INDEXED_MINUS = 4,
+};
+
+uint32_t llg_stream_selector_width(int selector_kind, sv4_t first,
+                                   sv4_t second, uint32_t element_width);
+
 enum {
     LLG_CONTAINER_METHOD_FIND = 0,
     LLG_CONTAINER_METHOD_FIND_INDEX = 1,
@@ -291,6 +305,12 @@ void llg_dyn_assign_values(llg_dyn_array_t* dst, const sv4_t* values,
                            size_t count);
 void llg_dyn_new(llg_dyn_array_t* dst, sv4_t size,
                  const llg_dyn_array_t* initializer);
+sv4_t llg_dyn_stream(const llg_dyn_array_t* array, uint32_t slice,
+                     int right_to_left, int selector_kind, sv4_t first,
+                     sv4_t second);
+void llg_dyn_unstream_assign(llg_dyn_array_t* dst, sv4_t source,
+                             uint32_t slice, int right_to_left,
+                             int selector_kind, sv4_t first, sv4_t second);
 void llg_dyn_resize(llg_dyn_array_t* array, sv4_t size);
 size_t llg_dyn_size(const llg_dyn_array_t* array);
 sv4_t llg_dyn_get(const llg_dyn_array_t* array, sv4_t index);
@@ -341,6 +361,12 @@ void llg_queue_delete(llg_queue_t* queue);
 void llg_queue_copy(llg_queue_t* dst, const llg_queue_t* src);
 void llg_queue_assign_values(llg_queue_t* dst, const sv4_t* values,
                              size_t count);
+sv4_t llg_queue_stream(const llg_queue_t* queue, uint32_t slice,
+                       int right_to_left, int selector_kind, sv4_t first,
+                       sv4_t second);
+void llg_queue_unstream_assign(llg_queue_t* dst, sv4_t source,
+                               uint32_t slice, int right_to_left,
+                               int selector_kind, sv4_t first, sv4_t second);
 void llg_queue_assign_sources(llg_queue_t* dst,
                               const llg_queue_source_t* sources,
                               size_t source_count);

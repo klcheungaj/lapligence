@@ -9,8 +9,8 @@ use std::collections::HashSet;
 use crate::sim::ir::{
     IrArrayQueryTarget, IrCallArg, IrChandleExpr, IrContainerExpr, IrDependency, IrDisplayArg,
     IrElemSel, IrExpr, IrExprKind, IrInsideItem, IrJoinKind, IrLhs, IrModel, IrObjectQuery,
-    IrObjectStmt, IrShape, IrStmt, IrStochasticStmt, IrStringExpr, IrStringInsideItem, IrSysFunc,
-    IrValidationError,
+    IrObjectStmt, IrShape, IrStmt, IrStochasticStmt, IrStreamSelector, IrStreamTarget,
+    IrStringExpr, IrStringInsideItem, IrSysFunc, IrValidationError,
 };
 use crate::sim::semantic::{ExtensionRef, Origin};
 
@@ -493,7 +493,8 @@ fn collect_effects(
             | IrStmt::DeclLocal { .. }
             | IrStmt::Force { .. }
             | IrStmt::Release { .. }
-            | IrStmt::Container(_) => effects.push(ExecutionEffect::ImmediateStore),
+            | IrStmt::Container(_)
+            | IrStmt::StreamAssign { .. } => effects.push(ExecutionEffect::ImmediateStore),
             IrStmt::PlusArg(_) | IrStmt::Stochastic(_) => {
                 effects.push(ExecutionEffect::ImmediateStore);
                 effects.push(ExecutionEffect::RuntimeService);
@@ -667,6 +668,23 @@ fn collect_statement_expression_effects(
         }),
         IrStmt::PlusArg(expression) => {
             collect_expression_effects(ir, expression, effects, visited_calls)
+        }
+        IrStmt::StreamAssign {
+            source, targets, ..
+        } => {
+            collect_expression_effects(ir, source, effects, visited_calls);
+            for target in targets {
+                match target {
+                    IrStreamTarget::Packed { lhs, .. } => {
+                        collect_lhs_expression_effects(ir, lhs, effects, visited_calls)
+                    }
+                    IrStreamTarget::Container { selector, .. } => {
+                        if let Some(selector) = selector {
+                            collect_stream_selector_effects(ir, selector, effects, visited_calls);
+                        }
+                    }
+                }
+            }
         }
         IrStmt::Object(operation) => {
             operation.expressions(&mut |expression| {
@@ -901,6 +919,27 @@ fn collect_statement_expression_effects(
             collect_expression_effects(ir, value, effects, visited_calls)
         }
         _ => {}
+    }
+}
+
+fn collect_stream_selector_effects(
+    ir: &IrModel,
+    selector: &IrStreamSelector,
+    effects: &mut Vec<ExecutionEffect>,
+    visited_calls: &mut HashSet<usize>,
+) {
+    match selector {
+        IrStreamSelector::Index(index) => {
+            collect_expression_effects(ir, index, effects, visited_calls)
+        }
+        IrStreamSelector::Range { left, right } => {
+            collect_expression_effects(ir, left, effects, visited_calls);
+            collect_expression_effects(ir, right, effects, visited_calls);
+        }
+        IrStreamSelector::Indexed { base, width, .. } => {
+            collect_expression_effects(ir, base, effects, visited_calls);
+            collect_expression_effects(ir, width, effects, visited_calls);
+        }
     }
 }
 

@@ -10533,6 +10533,69 @@ impl<'a> Codegen<'a> {
         }
     }
 
+    pub(super) fn fixed_stream_lhs_parts(
+        &mut self,
+        path: &str,
+        value: NodeId,
+        with_node: Option<NodeId>,
+    ) -> Result<Option<Vec<Lhs>>, String> {
+        let Some(array) = self.array_of(value).cloned() else {
+            return Ok(None);
+        };
+        if array.real {
+            return Err(format!(
+                "real array streaming assignment target is not supported in `{path}`"
+            ));
+        }
+        let selected = match with_node {
+            Some(with_node) => self
+                .static_stream_selector_indices(path, with_node)?
+                .ok_or_else(|| {
+                    format!(
+                        "runtime `with` selector on a fixed streaming target is not supported in `{path}`"
+                    )
+                })?,
+            None => {
+                let (left, right) = array.dims.first().copied().ok_or_else(|| {
+                    format!("fixed streaming target has no dimensions in `{path}`")
+                })?;
+                let step = if left <= right { 1 } else { -1 };
+                let mut values = Vec::new();
+                let mut index = i128::from(left);
+                loop {
+                    values.push(index);
+                    if index == i128::from(right) {
+                        break;
+                    }
+                    index += i128::from(step);
+                }
+                values
+            }
+        };
+        let rest = port_array_index_vectors(&array.dims[1..]);
+        let mut parts = Vec::new();
+        for index in selected {
+            for suffix in &rest {
+                let mut indices = Vec::with_capacity(1 + suffix.len());
+                indices.push(lhs_integer_expr(index));
+                indices.extend(
+                    suffix
+                        .iter()
+                        .map(|value| lhs_integer_expr(i128::from(*value))),
+                );
+                parts.push(Lhs::ArrayElem(ArrayElemLhs {
+                    arr: array.clone(),
+                    indices,
+                    elem_sel: ElemSel::Whole,
+                }));
+            }
+        }
+        if parts.is_empty() {
+            return Err(format!("empty fixed streaming target in `{path}`"));
+        }
+        Ok(Some(parts))
+    }
+
     pub(super) fn analyze_lhs(&mut self, path: &str, lhs: NodeId) -> Result<Lhs, String> {
         match self.kind(lhs) {
             NodeKind::Expr(ExprKind::Streaming {
@@ -10543,13 +10606,15 @@ impl<'a> Codegen<'a> {
                 if streams.is_empty() {
                     return Err(format!("empty streaming assignment target in `{path}`"));
                 }
-                if streams.iter().any(|stream| stream.with_expr.is_some()) {
-                    return Err(format!(
-                        "streaming assignment target with a `with` selector in `{path}` is not supported"
-                    ));
-                }
-                let mut targets = Vec::new();
+                let streams = streams.clone();
+                let mut parts = Vec::new();
                 for stream in streams {
+                    if let Some(fixed_parts) =
+                        self.fixed_stream_lhs_parts(path, stream.value, stream.with_expr)?
+                    {
+                        parts.extend(fixed_parts);
+                        continue;
+                    }
                     match self.kind(stream.value) {
                         NodeKind::Expr(ExprKind::Operation {
                             op: Operation::Concat,
@@ -10561,14 +10626,12 @@ impl<'a> Codegen<'a> {
                             if *reordered {
                                 operands.reverse();
                             }
-                            targets.extend(operands);
+                            for operand in operands {
+                                parts.push(self.analyze_lhs(path, operand)?);
+                            }
                         }
-                        _ => targets.push(stream.value),
+                        _ => parts.push(self.analyze_lhs(path, stream.value)?),
                     }
-                }
-                let mut parts = Vec::with_capacity(targets.len());
-                for target in targets {
-                    parts.push(self.analyze_lhs(path, target)?);
                 }
                 Ok(Lhs::Stream {
                     parts,

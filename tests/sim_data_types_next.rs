@@ -585,6 +585,11 @@ datatype_case!(
     "streaming_lhs.sv",
     "streaming_lhs"
 );
+datatype_case!(
+    streaming_general_arrays_containers_and_selectors,
+    "streaming_general.sv",
+    "streaming_general"
+);
 
 #[test]
 fn string_argument_cast_copy_and_display_conversions() {

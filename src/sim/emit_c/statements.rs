@@ -11,8 +11,8 @@ use super::EmitError;
 use crate::sim::execution::ScheduleRegion;
 use crate::sim::ir::{
     IrCallArg, IrDependency, IrDisplayArg, IrExpr, IrExprKind, IrFileOp, IrImmediateAssertionKind,
-    IrLhs, IrSeverityLevel, IrStochasticStmt, IrStreamDirection, IrType, IrUniquePriorityCheck,
-    IrWaitSrc, StorageKind,
+    IrLhs, IrSeverityLevel, IrStochasticStmt, IrStreamDirection, IrStreamSelector, IrStreamTarget,
+    IrType, IrUniquePriorityCheck, IrWaitSrc, StorageKind,
 };
 
 // ── Statement rendering ───────────────────────────────────────────────────────
@@ -40,6 +40,116 @@ fn render_pca_real_value(
         format!("sv4_to_real({})", rendered.code)
     };
     Ok(round_shortreal(code, shortreal))
+}
+
+fn render_stream_assignment(
+    ctx: &RCtx<'_>,
+    source: &IrExpr,
+    slice: u32,
+    direction: IrStreamDirection,
+    targets: &[IrStreamTarget],
+) -> Result<String, String> {
+    let source = render_expr(ctx, source)?;
+    let mut code = format!(
+        "{{ sv4_t _stream_value = sv4_unstream({}, {slice}, {}); \
+         int64_t _stream_cursor = (int64_t)_stream_value.width; ",
+        source.code,
+        matches!(direction, IrStreamDirection::RightToLeft) as u8
+    );
+    let mut seen_container = false;
+    for (index, target) in targets.iter().enumerate() {
+        match target {
+            IrStreamTarget::Packed { lhs, width } => {
+                let left = "(int64_t)_stream_cursor - 1";
+                let right = format!("_stream_cursor - {width}");
+                let value = IrExpr::new(
+                    IrExprKind::Verbatim {
+                        code: format!("sv4_part_select(_stream_value, {left}, {right})"),
+                        width: *width,
+                        signed: false,
+                    },
+                    *width,
+                    false,
+                    None,
+                );
+                code.push_str(&render_assign(ctx, lhs, &value, false)?);
+                code.push_str(&format!(" _stream_cursor -= {width};"));
+            }
+            IrStreamTarget::Container {
+                container,
+                selector,
+            } => {
+                if seen_container {
+                    return Err(
+                        "streaming assignment supports at most one resizable target".to_owned()
+                    );
+                }
+                seen_container = true;
+                let model = ctx
+                    .model
+                    .containers
+                    .get(*container)
+                    .ok_or_else(|| "streaming target container is out of bounds".to_owned())?;
+                let (element_width, _, _) = model
+                    .element
+                    .packed()
+                    .ok_or_else(|| "streaming target requires a packed element".to_owned())?;
+                let trailing_width =
+                    targets[index + 1..]
+                        .iter()
+                        .try_fold(0u32, |total, target| match target {
+                            IrStreamTarget::Packed { width, .. } => total
+                                .checked_add(*width)
+                                .ok_or_else(|| "streaming target width overflows".to_owned()),
+                            IrStreamTarget::Container { .. } => {
+                                Err("streaming assignment supports at most one resizable target"
+                                    .to_owned())
+                            }
+                        })?;
+                let (selector_kind, first, second) =
+                    super::containers::stream_selector_code(ctx, selector.as_ref())?;
+                let (first, second, segment_width) = match selector {
+                    Some(IrStreamSelector::Index(_))
+                    | Some(IrStreamSelector::Range { .. })
+                    | Some(IrStreamSelector::Indexed { .. }) => {
+                        let first_name = format!("_stream_selector_{index}_first");
+                        let second_name = format!("_stream_selector_{index}_second");
+                        code.push_str(&format!(
+                            "sv4_t {first_name} = {first}; sv4_t {second_name} = {second}; "
+                        ));
+                        let segment_width = format!(
+                            "llg_stream_selector_width({selector_kind}, {first_name}, {second_name}, {element_width})"
+                        );
+                        (first_name, second_name, segment_width)
+                    }
+                    None => (
+                        first,
+                        second,
+                        format!(
+                            "(_stream_cursor > {trailing_width} ? (uint32_t)(_stream_cursor - {trailing_width}) : 0)"
+                        ),
+                    ),
+                };
+                code.push_str(&format!(
+                    "uint32_t _stream_segment_width_{index} = {segment_width}; "
+                ));
+                let segment_name = format!("_stream_segment_{index}");
+                let function = match model.kind {
+                    crate::sim::ir::IrContainerKind::Dynamic => "llg_dyn_unstream_assign",
+                    crate::sim::ir::IrContainerKind::Queue { .. } => "llg_queue_unstream_assign",
+                    crate::sim::ir::IrContainerKind::Associative { .. } => {
+                        return Err("associative arrays are not legal streaming targets".to_owned())
+                    }
+                };
+                code.push_str(&format!(
+                    "if (_stream_segment_width_{index} != 0) {{ sv4_t {segment_name} = sv4_part_select(_stream_value, _stream_cursor - 1, _stream_cursor - _stream_segment_width_{index}); {function}(&{}, {segment_name}, 1, 0, {selector_kind}, {first}, {second}); }} _stream_cursor -= _stream_segment_width_{index};",
+                    model.c_name
+                ));
+            }
+        }
+    }
+    code.push_str(" }\n");
+    Ok(code)
 }
 
 /// Labels enclosed by one runtime activation. Jump lowering can cross several
@@ -187,6 +297,12 @@ fn render_stmt_scoped(
             super::objects::string(ctx, state)?
         ),
         IrStmt::Container(operation) => super::containers::statement(ctx, operation)?,
+        IrStmt::StreamAssign {
+            source,
+            slice,
+            direction,
+            targets,
+        } => render_stream_assignment(ctx, source, *slice, *direction, targets)?,
         IrStmt::Object(operation) => super::objects::statement(ctx, operation)?,
         IrStmt::PlusArg(expression) => {
             format!("    (void){};\n", render_expr(ctx, expression)?.code)

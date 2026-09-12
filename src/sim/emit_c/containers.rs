@@ -6,14 +6,67 @@ use super::objects::string as render_string;
 use crate::sim::ir::{
     IrAssocKey, IrAssocTraversal, IrContainerElement, IrContainerExpr, IrContainerKind,
     IrContainerMethod, IrContainerReduction, IrContainerStmt, IrQueueBound, IrQueueSource,
+    IrStreamDirection, IrStreamSelector,
 };
 
 fn name<'a>(ctx: &'a RCtx<'_>, index: usize) -> &'a str {
     &ctx.model.containers[index].c_name
 }
 
+pub(super) fn stream_selector_code(
+    ctx: &RCtx<'_>,
+    selector: Option<&IrStreamSelector>,
+) -> Result<(i32, String, String), String> {
+    match selector {
+        None => Ok((
+            0,
+            "sv4_from_u64(0, 32, 1)".to_owned(),
+            "sv4_from_u64(0, 32, 1)".to_owned(),
+        )),
+        Some(IrStreamSelector::Index(index)) => Ok((
+            1,
+            render_expr_impl(ctx, index)?.code,
+            "sv4_from_u64(0, 32, 1)".to_owned(),
+        )),
+        Some(IrStreamSelector::Range { left, right }) => Ok((
+            2,
+            render_expr_impl(ctx, left)?.code,
+            render_expr_impl(ctx, right)?.code,
+        )),
+        Some(IrStreamSelector::Indexed {
+            base,
+            width,
+            negative,
+        }) => Ok((
+            if *negative { 4 } else { 3 },
+            render_expr_impl(ctx, base)?.code,
+            render_expr_impl(ctx, width)?.code,
+        )),
+    }
+}
+
 pub(super) fn expression(ctx: &RCtx<'_>, operation: &IrContainerExpr) -> Result<String, String> {
     Ok(match operation {
+        IrContainerExpr::Stream {
+            container,
+            slice,
+            direction,
+            selector,
+        } => {
+            let (selector_kind, first, second) = stream_selector_code(ctx, selector.as_ref())?;
+            let function = match ctx.model.containers[*container].kind {
+                IrContainerKind::Dynamic => "llg_dyn_stream",
+                IrContainerKind::Queue { .. } => "llg_queue_stream",
+                IrContainerKind::Associative { .. } => {
+                    return Err("associative arrays are not legal streaming operands".into())
+                }
+            };
+            format!(
+                "{function}(&{}, {slice}, {}, {selector_kind}, {first}, {second})",
+                name(ctx, *container),
+                matches!(direction, IrStreamDirection::RightToLeft) as u8
+            )
+        }
         IrContainerExpr::Size(index) => {
             let method = match ctx.model.containers[*index].kind {
                 IrContainerKind::Dynamic => {
@@ -255,6 +308,29 @@ pub(super) fn expression(ctx: &RCtx<'_>, operation: &IrContainerExpr) -> Result<
 
 pub(super) fn statement(ctx: &RCtx<'_>, operation: &IrContainerStmt) -> Result<String, String> {
     Ok(match operation {
+        IrContainerStmt::StreamAssign {
+            container,
+            source,
+            slice,
+            direction,
+            selector,
+        } => {
+            let source = render_expr_impl(ctx, source)?;
+            let (selector_kind, first, second) = stream_selector_code(ctx, selector.as_ref())?;
+            let function = match ctx.model.containers[*container].kind {
+                IrContainerKind::Dynamic => "llg_dyn_unstream_assign",
+                IrContainerKind::Queue { .. } => "llg_queue_unstream_assign",
+                IrContainerKind::Associative { .. } => {
+                    return Err("associative arrays are not legal streaming targets".into())
+                }
+            };
+            format!(
+                "    {function}(&{}, {}, {slice}, {}, {selector_kind}, {first}, {second});\n",
+                name(ctx, *container),
+                source.code,
+                matches!(direction, IrStreamDirection::RightToLeft) as u8
+            )
+        }
         IrContainerStmt::DynamicNew {
             container,
             size,

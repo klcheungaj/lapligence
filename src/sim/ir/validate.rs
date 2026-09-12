@@ -3,7 +3,9 @@ use std::collections::HashSet;
 use std::error::Error;
 use std::fmt;
 
+use super::containers::{container_kind, validate_stream_selector};
 use super::*;
+use crate::sim::emit_c::LLG_MAX_WIDTH;
 
 /// A structural IR invariant violation detected between simulator phases.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -733,6 +735,7 @@ impl Validator<'_> {
                     return self.fail(path, "container expression must produce a packed value");
                 }
                 let expected = match operation.as_ref() {
+                    IrContainerExpr::Stream { .. } => (expr.width, expr.signed),
                     IrContainerExpr::Size(_)
                     | IrContainerExpr::AssocTraverse { .. }
                     | IrContainerExpr::AssocTraverseString { .. }
@@ -1047,12 +1050,24 @@ impl Validator<'_> {
                     return self.fail(path, "concatenation requires at least one operand");
                 }
                 let sum: u128 = parts.iter().map(|part| u128::from(part.width)).sum();
-                let expected = match &expr.kind {
-                    IrExprKind::Replicate { count, .. } => sum * u128::from(*count),
-                    _ => sum,
-                };
-                if expected != u128::from(expr.width) {
-                    return self.fail(path, format!("concatenation/replication width {} disagrees with derived width {expected}", expr.width));
+                let runtime_sized = parts.iter().any(|part| part.width == LLG_MAX_WIDTH);
+                if runtime_sized {
+                    if !matches!(expr.kind, IrExprKind::Concat { .. })
+                        || expr.width != LLG_MAX_WIDTH
+                    {
+                        return self.fail(
+                            path,
+                            "runtime-sized concatenation must retain model capacity width",
+                        );
+                    }
+                } else {
+                    let expected = match &expr.kind {
+                        IrExprKind::Replicate { count, .. } => sum * u128::from(*count),
+                        _ => sum,
+                    };
+                    if expected != u128::from(expr.width) {
+                        return self.fail(path, format!("concatenation/replication width {} disagrees with derived width {expected}", expr.width));
+                    }
                 }
                 for (idx, part) in parts.iter().enumerate() {
                     self.validate_expr(part, formals, &format!("{path}.parts[{idx}]"))?;
@@ -2086,6 +2101,104 @@ impl Validator<'_> {
                         .and_then(|_| self.validate_expr(child, formals, path));
                 });
                 result?;
+            }
+            IrStmt::StreamAssign {
+                source,
+                slice,
+                targets,
+                ..
+            } => {
+                if *slice == 0 {
+                    return self.fail(path, "streaming assignment slice size must be positive");
+                }
+                if source.is_real() {
+                    return self.fail(path, "streaming assignment source must be packed");
+                }
+                if targets.is_empty() {
+                    return self.fail(path, "streaming assignment requires a target");
+                }
+                self.validate_expr(source, formals, &format!("{path}.source"))?;
+                let mut dynamic_targets = 0usize;
+                for (index, target) in targets.iter().enumerate() {
+                    match target {
+                        IrStreamTarget::Packed { lhs, width } => {
+                            self.validate_width(*width, &format!("{path}.targets[{index}].width"))?;
+                            self.validate_lhs(
+                                lhs,
+                                formals,
+                                &format!("{path}.targets[{index}].lhs"),
+                            )?;
+                            if self.lhs_packed_width(lhs) != Some(*width) {
+                                return self.fail(
+                                    format!("{path}.targets[{index}].width"),
+                                    "streaming target width disagrees with its lvalue",
+                                );
+                            }
+                        }
+                        IrStreamTarget::Container {
+                            container,
+                            selector,
+                        } => {
+                            dynamic_targets += 1;
+                            if dynamic_targets > 1 {
+                                return self.fail(
+                                    format!("{path}.targets[{index}]"),
+                                    "streaming assignment supports at most one resizable target",
+                                );
+                            }
+                            let container = container_kind(self.model, *container, None)?;
+                            if !matches!(
+                                container.kind,
+                                IrContainerKind::Dynamic | IrContainerKind::Queue { .. }
+                            ) || !container.element.is_packed()
+                            {
+                                return self.fail(
+                                    format!("{path}.targets[{index}]"),
+                                    "streaming target requires a packed dynamic array or queue",
+                                );
+                            }
+                            if let Some(selector) = selector {
+                                validate_stream_selector(selector).map_err(|error| {
+                                    IrValidationError::new(
+                                        format!("{path}.targets[{index}].selector"),
+                                        error.detail(),
+                                    )
+                                })?;
+                                match selector {
+                                    IrStreamSelector::Index(bound) => self.validate_expr(
+                                        bound,
+                                        formals,
+                                        &format!("{path}.targets[{index}].selector.index"),
+                                    )?,
+                                    IrStreamSelector::Range { left, right } => {
+                                        self.validate_expr(
+                                            left,
+                                            formals,
+                                            &format!("{path}.targets[{index}].selector.left"),
+                                        )?;
+                                        self.validate_expr(
+                                            right,
+                                            formals,
+                                            &format!("{path}.targets[{index}].selector.right"),
+                                        )?;
+                                    }
+                                    IrStreamSelector::Indexed { base, width, .. } => {
+                                        self.validate_expr(
+                                            base,
+                                            formals,
+                                            &format!("{path}.targets[{index}].selector.base"),
+                                        )?;
+                                        self.validate_expr(
+                                            width,
+                                            formals,
+                                            &format!("{path}.targets[{index}].selector.width"),
+                                        )?;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             }
             IrStmt::Object(operation) => {
                 operation.validate(

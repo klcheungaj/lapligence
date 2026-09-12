@@ -5,7 +5,8 @@ use crate::sim::execution::ExecutionModel;
 use crate::sim::ir::IrModel;
 use crate::sim::ir::{
     IrCall, IrCallArg, IrElemSel, IrExpr, IrExprKind, IrFunc, IrInsideItem, IrLhs, IrPlusArgText,
-    IrPreFn, IrStmt, IrStochasticStmt, IrStringExpr, IrSysFunc, IrType,
+    IrPreFn, IrStmt, IrStochasticStmt, IrStreamSelector, IrStreamTarget, IrStringExpr, IrSysFunc,
+    IrType,
 };
 
 /// Keep aligned with the emitted function recursion guard in `model.rs`.
@@ -282,6 +283,23 @@ fn stmt_temp_slots(stmt: &IrStmt) -> Result<u64, String> {
             slots
         }
         IrStmt::PlusArg(expression) => expr_slots(expression),
+        IrStmt::StreamAssign {
+            source, targets, ..
+        } => {
+            let mut slots = checked_add(1, expr_slots(source)?, "streaming statement slots")?;
+            for target in targets {
+                let target_slots = match target {
+                    IrStreamTarget::Packed { lhs, .. } => lhs_slots(lhs)?,
+                    IrStreamTarget::Container { selector, .. } => selector
+                        .as_ref()
+                        .map(stream_selector_slots)
+                        .transpose()?
+                        .unwrap_or_default(),
+                };
+                slots = checked_add(slots, target_slots, "streaming statement slots")?;
+            }
+            Ok(slots)
+        }
         IrStmt::Object(operation) => {
             let mut slots = Ok(1);
             operation.expressions(&mut |child| {
@@ -926,6 +944,22 @@ fn lhs_slots(lhs: &IrLhs) -> Result<u64, String> {
             Ok(slots)
         }
         IrLhs::Whole(_) | IrLhs::WholeRef { .. } | IrLhs::Ref { .. } | IrLhs::Part(..) => Ok(0),
+    }
+}
+
+fn stream_selector_slots(selector: &IrStreamSelector) -> Result<u64, String> {
+    match selector {
+        IrStreamSelector::Index(index) => expr_slots(index),
+        IrStreamSelector::Range { left, right } => checked_add(
+            expr_slots(left)?,
+            expr_slots(right)?,
+            "stream selector slots",
+        ),
+        IrStreamSelector::Indexed { base, width, .. } => checked_add(
+            expr_slots(base)?,
+            expr_slots(width)?,
+            "stream selector slots",
+        ),
     }
 }
 

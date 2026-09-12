@@ -32,7 +32,7 @@ use crate::sim::execution::{ExecutionModel, ExecutionProcess, TriggerPlan};
 use crate::sim::ir::{
     IrBinOp, IrCallArg, IrCaseKind, IrConst, IrDependency, IrElemSel, IrExpr, IrExprKind, IrFormal,
     IrInsideItem, IrLhs, IrModel, IrPreFn, IrRealBinOp, IrRealUnOp, IrStmt, IrStochasticStmt,
-    IrSysFunc, IrUnOp, IrWaitSrc,
+    IrStreamSelector, IrStreamTarget, IrSysFunc, IrUnOp, IrWaitSrc,
 };
 
 /// Run the enabled passes over `model` in a fixed order.
@@ -506,6 +506,21 @@ fn walk_stmt_mut(s: &mut IrStmt, f: &mut impl FnMut(&mut IrExpr)) {
         IrStmt::Container(operation) => {
             operation.expressions_mut(&mut |child| walk_expr_mut(child, f))
         }
+        IrStmt::StreamAssign {
+            source, targets, ..
+        } => {
+            walk_expr_mut(source, f);
+            for target in targets {
+                match target {
+                    IrStreamTarget::Packed { lhs, .. } => walk_lhs_mut(lhs, f),
+                    IrStreamTarget::Container { selector, .. } => {
+                        if let Some(selector) = selector {
+                            walk_stream_selector_mut(selector, f);
+                        }
+                    }
+                }
+            }
+        }
         IrStmt::Object(operation) => {
             operation.expressions_mut(&mut |child| walk_expr_mut(child, f))
         }
@@ -711,6 +726,20 @@ fn walk_stmt_mut(s: &mut IrStmt, f: &mut impl FnMut(&mut IrExpr)) {
         }
         IrStmt::Return { value: Some(value) } => walk_expr_mut(value, f),
         _ => {}
+    }
+}
+
+fn walk_stream_selector_mut(selector: &mut IrStreamSelector, f: &mut impl FnMut(&mut IrExpr)) {
+    match selector {
+        IrStreamSelector::Index(index) => walk_expr_mut(index, f),
+        IrStreamSelector::Range { left, right } => {
+            walk_expr_mut(left, f);
+            walk_expr_mut(right, f);
+        }
+        IrStreamSelector::Indexed { base, width, .. } => {
+            walk_expr_mut(base, f);
+            walk_expr_mut(width, f);
+        }
     }
 }
 
@@ -1963,6 +1992,21 @@ fn collect_stmt_rw(s: &IrStmt, model: &IrModel, rw: &mut Rw) {
         IrStmt::Container(operation) => {
             operation.expressions(&mut |child| collect_expr_reads(child, model, rw))
         }
+        IrStmt::StreamAssign {
+            source, targets, ..
+        } => {
+            collect_expr_reads(source, model, rw);
+            for target in targets {
+                match target {
+                    IrStreamTarget::Packed { lhs, .. } => collect_lhs_rw(lhs, model, rw),
+                    IrStreamTarget::Container { selector, .. } => {
+                        if let Some(selector) = selector {
+                            collect_stream_selector_reads(selector, model, rw);
+                        }
+                    }
+                }
+            }
+        }
         IrStmt::Object(operation) => {
             operation.expressions(&mut |child| collect_expr_reads(child, model, rw))
         }
@@ -2182,6 +2226,20 @@ fn collect_stmt_rw(s: &IrStmt, model: &IrModel, rw: &mut Rw) {
         IrStmt::Call(call) => collect_call_rw(call, model, rw),
         IrStmt::Return { value: Some(value) } => collect_expr_reads(value, model, rw),
         _ => {}
+    }
+}
+
+fn collect_stream_selector_reads(selector: &IrStreamSelector, model: &IrModel, rw: &mut Rw) {
+    match selector {
+        IrStreamSelector::Index(index) => collect_expr_reads(index, model, rw),
+        IrStreamSelector::Range { left, right } => {
+            collect_expr_reads(left, model, rw);
+            collect_expr_reads(right, model, rw);
+        }
+        IrStreamSelector::Indexed { base, width, .. } => {
+            collect_expr_reads(base, model, rw);
+            collect_expr_reads(width, model, rw);
+        }
     }
 }
 

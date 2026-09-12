@@ -28,7 +28,7 @@ mod validate;
 pub use containers::{
     IrAssocKey, IrAssocTraversal, IrContainer, IrContainerElement, IrContainerExpr,
     IrContainerKind, IrContainerMember, IrContainerMethod, IrContainerReduction, IrContainerStmt,
-    IrQueueBound, IrQueueSource,
+    IrQueueBound, IrQueueSource, IrStreamSelector,
 };
 pub use objects::{
     IrArrayDimension, IrArrayQuery, IrArrayQueryKind, IrArrayQueryTarget, IrChandleExpr,
@@ -1407,6 +1407,22 @@ pub enum IrLhs {
     },
 }
 
+/// One component of a streaming assignment target. Packed lvalues have a
+/// statically known width; resizable packed-element containers retain their
+/// selector so the emitter can derive their width from the captured source
+/// expression at runtime.
+#[derive(Clone, Debug, PartialEq)]
+pub enum IrStreamTarget {
+    Packed {
+        lhs: IrLhs,
+        width: u32,
+    },
+    Container {
+        container: usize,
+        selector: Option<IrStreamSelector>,
+    },
+}
+
 /// Case statement matching behavior.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum IrCaseKind {
@@ -1839,6 +1855,15 @@ pub enum IrStmt {
         state: IrStringExpr,
     },
     Container(IrContainerStmt),
+    /// A streaming assignment with one or more packed lvalues and at most one
+    /// resizable packed-element target. The source is materialized before any
+    /// destination writes, preserving overlap semantics.
+    StreamAssign {
+        source: IrExpr,
+        slice: u32,
+        direction: IrStreamDirection,
+        targets: Vec<IrStreamTarget>,
+    },
     Object(IrObjectStmt),
     /// A system plusarg query used in statement position. The expression is
     /// retained so `$value$plusargs` still performs its destination write.

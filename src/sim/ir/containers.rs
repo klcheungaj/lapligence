@@ -187,9 +187,36 @@ pub enum IrQueueSource {
     },
 }
 
+/// A runtime selector attached to a streaming concatenation operand.  The
+/// selector expressions are evaluated by the generated expression/call site
+/// exactly once; the runtime then derives the requested logical index range.
+#[derive(Clone, Debug, PartialEq)]
+pub enum IrStreamSelector {
+    /// A single unpacked-array element (`with [index]`).
+    Index(IrExpr),
+    /// An explicit unpacked-array range (`with [left:right]`).
+    Range { left: IrExpr, right: IrExpr },
+    /// An indexed range (`with [base +: width]` / `with [base -: width]`).
+    Indexed {
+        base: IrExpr,
+        width: IrExpr,
+        negative: bool,
+    },
+}
+
 /// Container expressions return packed element values or packed method status.
 #[derive(Clone, Debug, PartialEq)]
 pub enum IrContainerExpr {
+    /// Stream packed elements from a dynamic array or queue in logical index
+    /// order.  A runtime selector is optional; the resulting packed width is
+    /// dynamic and is represented by the enclosing expression's capacity
+    /// width.
+    Stream {
+        container: usize,
+        slice: u32,
+        direction: super::IrStreamDirection,
+        selector: Option<IrStreamSelector>,
+    },
     Size(usize),
     Reduce {
         container: usize,
@@ -308,6 +335,16 @@ pub enum IrContainerMethod {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum IrContainerStmt {
+    /// Unstream a packed value into a packed-element dynamic array or queue.
+    /// Selector expressions are retained so the runtime can resize the target
+    /// and update the requested logical elements after evaluating them once.
+    StreamAssign {
+        container: usize,
+        source: IrExpr,
+        slice: u32,
+        direction: super::IrStreamDirection,
+        selector: Option<IrStreamSelector>,
+    },
     DynamicNew {
         container: usize,
         size: IrExpr,
@@ -497,6 +534,69 @@ pub enum IrContainerStmt {
     },
 }
 
+pub(super) fn validate_stream_selector(
+    selector: &IrStreamSelector,
+) -> Result<(), IrValidationError> {
+    match selector {
+        IrStreamSelector::Index(index) => {
+            if index.is_real() {
+                return Err(IrValidationError::new(
+                    "container.selector",
+                    "streaming selector index must be integral",
+                ));
+            }
+        }
+        IrStreamSelector::Range { left, right } => {
+            if left.is_real() || right.is_real() {
+                return Err(IrValidationError::new(
+                    "container.selector",
+                    "streaming selector bounds must be integral",
+                ));
+            }
+        }
+        IrStreamSelector::Indexed { base, width, .. } => {
+            if base.is_real() || width.is_real() {
+                return Err(IrValidationError::new(
+                    "container.selector",
+                    "indexed streaming selector bounds must be integral",
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn stream_selector_expressions(selector: &IrStreamSelector, visit: &mut impl FnMut(&IrExpr)) {
+    match selector {
+        IrStreamSelector::Index(index) => visit(index),
+        IrStreamSelector::Range { left, right } => {
+            visit(left);
+            visit(right);
+        }
+        IrStreamSelector::Indexed { base, width, .. } => {
+            visit(base);
+            visit(width);
+        }
+    }
+}
+
+fn stream_selector_expressions_mut(
+    selector: &mut IrStreamSelector,
+    visit: &mut impl FnMut(&mut IrExpr),
+) {
+    match selector {
+        IrStreamSelector::Index(index) => visit(index),
+        IrStreamSelector::Range { left, right } => {
+            visit(left);
+            visit(right);
+        }
+        IrStreamSelector::Indexed { base, width, .. } => {
+            visit(base);
+            visit(width);
+        }
+    }
+}
+
 impl IrContainerExpr {
     pub(in crate::sim) fn validate(
         &self,
@@ -504,6 +604,34 @@ impl IrContainerExpr {
         string_return: Option<bool>,
     ) -> Result<(), IrValidationError> {
         let (index, expected) = match self {
+            Self::Stream {
+                container,
+                slice,
+                selector,
+                ..
+            } => {
+                let container = container_kind(model, *container, None)?;
+                if !matches!(
+                    container.kind,
+                    IrContainerKind::Dynamic | IrContainerKind::Queue { .. }
+                ) || !container.element.is_packed()
+                {
+                    return Err(IrValidationError::new(
+                        "container",
+                        "streaming expression requires a packed dynamic array or queue",
+                    ));
+                }
+                if *slice == 0 {
+                    return Err(IrValidationError::new(
+                        "container",
+                        "streaming expression slice size must be positive",
+                    ));
+                }
+                if let Some(selector) = selector {
+                    validate_stream_selector(selector)?;
+                }
+                return Ok(());
+            }
             Self::Size(index) => (*index, None),
             Self::Reduce { container, .. } => (*container, None),
             Self::ReduceWith {
@@ -760,6 +888,11 @@ impl IrContainerExpr {
 
     pub(in crate::sim) fn expressions(&self, visit: &mut impl FnMut(&IrExpr)) {
         match self {
+            Self::Stream {
+                selector: Some(selector),
+                ..
+            } => stream_selector_expressions(selector, visit),
+            Self::Stream { selector: None, .. } => {}
             Self::Get { index, .. }
             | Self::GetReal { index, .. }
             | Self::Exists { key: index, .. } => visit(index),
@@ -775,6 +908,11 @@ impl IrContainerExpr {
 
     pub(in crate::sim) fn expressions_mut(&mut self, visit: &mut impl FnMut(&mut IrExpr)) {
         match self {
+            Self::Stream {
+                selector: Some(selector),
+                ..
+            } => stream_selector_expressions_mut(selector, visit),
+            Self::Stream { selector: None, .. } => {}
             Self::Get { index, .. }
             | Self::GetReal { index, .. }
             | Self::Exists { key: index, .. } => visit(index),
@@ -803,6 +941,35 @@ impl IrContainerStmt {
         string_return: Option<bool>,
     ) -> Result<(), IrValidationError> {
         match self {
+            Self::StreamAssign {
+                container,
+                source,
+                slice,
+                selector,
+                ..
+            } => {
+                let container = container_kind(model, *container, None)?;
+                if !matches!(
+                    container.kind,
+                    IrContainerKind::Dynamic | IrContainerKind::Queue { .. }
+                ) || !container.element.is_packed()
+                {
+                    return Err(IrValidationError::new(
+                        "container",
+                        "streaming assignment requires a packed dynamic array or queue",
+                    ));
+                }
+                if *slice == 0 || source.is_real() {
+                    return Err(IrValidationError::new(
+                        "container",
+                        "streaming assignment requires a packed source and positive slice",
+                    ));
+                }
+                if let Some(selector) = selector {
+                    validate_stream_selector(selector)?;
+                }
+                Ok(())
+            }
             Self::DynamicNew {
                 container,
                 size,
@@ -1529,6 +1696,14 @@ impl IrContainerStmt {
 
     pub(in crate::sim) fn expressions(&self, visit: &mut impl FnMut(&IrExpr)) {
         match self {
+            Self::StreamAssign {
+                source, selector, ..
+            } => {
+                visit(source);
+                if let Some(selector) = selector {
+                    stream_selector_expressions(selector, visit);
+                }
+            }
             Self::DynamicNew { size, .. } => visit(size),
             Self::Set { index, value, .. }
             | Self::SetReal { index, value, .. }
@@ -1607,6 +1782,14 @@ impl IrContainerStmt {
 
     pub(in crate::sim) fn expressions_mut(&mut self, visit: &mut impl FnMut(&mut IrExpr)) {
         match self {
+            Self::StreamAssign {
+                source, selector, ..
+            } => {
+                visit(source);
+                if let Some(selector) = selector {
+                    stream_selector_expressions_mut(selector, visit);
+                }
+            }
             Self::DynamicNew { size, .. } => visit(size),
             Self::Set { index, value, .. }
             | Self::SetReal { index, value, .. }
@@ -1730,7 +1913,7 @@ pub(super) fn nested_chandle_element(container: &IrContainer, depth: usize) -> b
     nested_element(container, depth).is_some_and(IrContainerElement::is_chandle)
 }
 
-fn container_kind<'a>(
+pub(super) fn container_kind<'a>(
     model: &'a super::IrModel,
     index: usize,
     expected: Option<&str>,

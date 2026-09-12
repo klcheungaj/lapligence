@@ -10,8 +10,10 @@ Inventory:
 - `packed_union.sv`, `packed_aggregate_selections.sv`, `unpacked_struct.sv`,
   `unpacked_union.sv`: member layout/aliasing, packed dimensions, defaults,
   writes, and aggregate copy.
-- `packed_streaming.sv`, `inside_membership.sv`: packed stream order and
-  scalar/range/wildcard set membership.
+- `packed_streaming.sv`, `streaming_general.sv`, `inside_membership.sv`: packed
+  and fixed/resizable-array stream order, non-divisible slices, static
+  fixed-array and runtime resizable-array `with` selectors, X/Z preservation,
+  and scalar/range/wildcard set membership.
 - `streaming_lhs.sv`: non-divisible streaming slices, wide unpacking,
   in-place aliasing, and one-time lvalue selection.
 - `continuous_assignment_strengths.sv`,
