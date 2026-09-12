@@ -13,6 +13,10 @@
 
 static int failures = 0;
 
+static llg_event_object_t lifecycle_event_object;
+static llg_event_t lifecycle_event = { &lifecycle_event_object };
+static int lifecycle_triggered_inside_run;
+
 #define CHECK(cond)                                                        \
     do {                                                                   \
         if (!(cond)) {                                                     \
@@ -954,6 +958,31 @@ static void proc_nba_read(llg_proc_t* self) {
     llg_proc_done(self);
 }
 
+static void lifecycle_trigger_proc(llg_proc_t* self) {
+    llg_event_trigger(&lifecycle_event);
+    lifecycle_triggered_inside_run = llg_event_triggered(&lifecycle_event);
+    llg_rt_finish();
+    llg_proc_done(self);
+}
+
+static void test_event_triggered_lifecycle(void) {
+    // Event objects are generated as static storage. A completed run must
+    // invalidate their persistent state before a later run starts, including
+    // when the trigger happened at time zero.
+    llg_rt_init();
+    memset(&lifecycle_event_object, 0, sizeof(lifecycle_event_object));
+    lifecycle_event.object = &lifecycle_event_object;
+    lifecycle_triggered_inside_run = 0;
+    llg_spawn(lifecycle_trigger_proc, "event-lifecycle");
+    llg_rt_run();
+    CHECK(lifecycle_triggered_inside_run);
+    CHECK(!llg_event_triggered(&lifecycle_event));
+
+    llg_rt_init();
+    CHECK(!llg_event_triggered(&lifecycle_event));
+    llg_rt_cleanup();
+}
+
 static void test_scheduler(void) {
     // ping-pong
     llg_rt_init();
@@ -1861,6 +1890,7 @@ int main(int argc, char** argv) {
     test_real_dependencies();
     test_llg_net();
     test_scheduler();
+    test_event_triggered_lifecycle();
     test_fork_join();
     test_force_release();
     test_force_live_expression();

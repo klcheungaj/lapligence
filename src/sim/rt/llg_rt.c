@@ -612,6 +612,11 @@ static llg_dependency_binding_t* llg_dependency_bindings;
 // to inspect whether that run stopped with a controlled runtime failure.
 static int llg_last_failure;
 static int llg_last_config_error;
+// Event objects are generated as file-scope storage and therefore survive
+// `llg_rt_cleanup`. Bump this generation at each teardown so their persistent
+// same-slot state cannot leak into a later runtime initialization without
+// dereferencing an object whose owner may be outside the scheduler.
+static uint64_t llg_event_generation;
 static uint64_t llg_configured_zero_loop_limit;
 static uint64_t llg_configured_process_step_limit;
 
@@ -2618,6 +2623,14 @@ void llg_rt_cleanup(void) {
     if (g.share_stack) aco_share_stack_destroy(g.share_stack);
     if (g.main_co) aco_destroy(g.main_co);
     aco_gtls_co = NULL;
+    if (llg_event_generation == UINT64_MAX) {
+        // A process cannot execute enough complete runtime lifetimes to wrap
+        // this counter in practice. Keep the fallback deterministic if a
+        // hostile embedding nevertheless reaches the boundary.
+        llg_event_generation = 1;
+    } else {
+        llg_event_generation++;
+    }
     memset(&g, 0, sizeof(g));
     while (llg_dependency_bindings) {
         llg_dependency_binding_t* next = llg_dependency_bindings->next;
@@ -3009,11 +3022,13 @@ static void event_trigger_object(llg_event_object_t* ev) {
     if (!region_can_mutate("event scheduling")) return;
     if (!ev) return;
 
-    // The state is tied to the current simulation time. It is intentionally
-    // lazy-reset: comparing triggered_time with g.now avoids a global object
-    // registry and naturally clears the state at the first later time slot.
+    // The state is tied to both the current simulation time and this runtime
+    // generation. Comparing the generation avoids stale `.triggered` state
+    // when a generated model is initialized again after cleanup; comparing
+    // the time preserves all zero-delay deltas in the current slot.
     ev->triggered = 1;
     ev->triggered_time = g.now;
+    ev->triggered_generation = llg_event_generation;
 
     int n_triggered = ev->n_triggered_waiters;
     llg_proc_t* triggered[LLG_MAX_EVENT_WAITERS];
@@ -3062,7 +3077,9 @@ void llg_event_trigger(llg_event_t* ev) {
 }
 
 int llg_event_triggered(const llg_event_t* ev) {
-    if (!ev || !ev->object || !ev->object->triggered) return 0;
+    if (!ev || !ev->object || !ev->object->triggered ||
+        ev->object->triggered_generation != llg_event_generation)
+        return 0;
     if (ev->object->triggered_time != g.now) {
         ev->object->triggered = 0;
         return 0;

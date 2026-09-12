@@ -47,3 +47,11 @@ fn mixed_qualified_events_remain_one_atomic_wait() {
         "filtered 0\nclock 1\nevent 2\nfiltered 2\n",
     );
 }
+
+#[test]
+fn event_handles_triggered_state_and_wait_order_follow_identity() {
+    run_case(
+        "event_h15",
+        "aliases=1/1 null=0 stale=1/1 queued=1 order=1/1 triggered=1/1/1 ordinary=0\n",
+    );
+}

@@ -425,7 +425,9 @@ void llg_wait_level(sv4_t* sig, sv4_t value);
 //
 // The struct is a valid zero initializer: generated models define one global
 // per declared event. Ordinary waiters and persistent-trigger waiters are
-// separate so a trigger never latches an ordinary `@(event)` control.
+// separate so a trigger never latches an ordinary `@(event)` control. The
+// generation distinguishes a completed runtime from its next initialization,
+// so a static generated event cannot retain `.triggered` across runs.
 
 #define LLG_MAX_EVENT_WAITERS 64
 
@@ -435,6 +437,7 @@ typedef struct {
     llg_proc_t* triggered_waiters[LLG_MAX_EVENT_WAITERS];
     int n_triggered_waiters;
     uint64_t triggered_time;
+    uint64_t triggered_generation;
     int triggered;
 } llg_event_object_t;
 

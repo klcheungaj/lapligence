@@ -865,13 +865,7 @@ impl EmitCtx<'_, '_> {
             let target = self.cg.event_ref_of(&target, &self.path)?;
             let source = if let Some(source) = self.cg.event_target_of(rhs) {
                 Some(self.cg.event_ref_of(&source, &self.path)?)
-            } else if matches!(
-                self.cg.kind(rhs),
-                NodeKind::Expr(ExprKind::Constant {
-                    const_type: ConstantType::Null,
-                    ..
-                })
-            ) {
+            } else if self.cg.is_null_event_expression(rhs) {
                 None
             } else {
                 return Err(format!(
@@ -3815,10 +3809,16 @@ impl EmitCtx<'_, '_> {
                             ..
                         }
                     );
-                let actual = (!output_only && !self.cg.is_null_event_expression(b.expr))
+                // Output event formals have no input value, but their actual
+                // still supplies the destination that receives the handle on
+                // return. Resolve it independently from the input capture so
+                // `task(..., output event e)` can rebind a caller handle.
+                let actual = (!self.cg.is_null_event_expression(b.expr))
                     .then(|| self.cg.event_target_of(b.expr))
                     .flatten();
-                let event = if let Some(target) = actual.as_ref() {
+                let event = if output_only {
+                    IrEventRef::Null
+                } else if let Some(target) = actual.as_ref() {
                     self.cg.event_ref_of(target, &self.path)?
                 } else {
                     IrEventRef::Null

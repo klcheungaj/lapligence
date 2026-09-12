@@ -251,7 +251,7 @@ fn render_signal_decls(model: &IrModel, out: &mut String) {
             continue;
         }
         out.push_str(&format!(
-            "static llg_event_object_t {}__object = {{{{ 0 }}, 0, {{ 0 }}, 0, 0, 0 }};\n\
+            "static llg_event_object_t {}__object = {{{{ 0 }}, 0, {{ 0 }}, 0, 0, 0, 0 }};\n\
              static llg_event_t {} = {{ &{}__object }};\n",
             ev.c_name, ev.c_name, ev.c_name,
         ));
