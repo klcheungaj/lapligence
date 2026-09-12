@@ -1142,6 +1142,9 @@ fn collect_string_effects(
                 collect_expression_effects(ir, index, effects, visited_calls);
             }
         }
+        IrStringExpr::AssociativeGet { key, .. } => {
+            collect_string_effects(ir, key, effects, visited_calls)
+        }
         IrStringExpr::Literal(_)
         | IrStringExpr::Read(_)
         | IrStringExpr::LocalRead(_)
@@ -1158,6 +1161,9 @@ fn collect_chandle_effects(
     match value {
         IrChandleExpr::ContainerGet { index, .. } => {
             collect_expression_effects(ir, index, effects, visited_calls)
+        }
+        IrChandleExpr::AssociativeGet { key, .. } => {
+            collect_string_effects(ir, key, effects, visited_calls)
         }
         IrChandleExpr::Call { function, args, .. } => {
             effects.push(ExecutionEffect::RuntimeService);

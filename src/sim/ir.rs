@@ -27,7 +27,8 @@ mod objects;
 mod validate;
 pub use containers::{
     IrAssocKey, IrAssocTraversal, IrContainer, IrContainerElement, IrContainerExpr,
-    IrContainerKind, IrContainerMember, IrContainerReduction, IrContainerStmt,
+    IrContainerKind, IrContainerMember, IrContainerReduction, IrContainerStmt, IrQueueBound,
+    IrQueueSource,
 };
 pub use objects::{
     IrArrayDimension, IrArrayQuery, IrArrayQueryKind, IrArrayQueryTarget, IrChandleExpr,

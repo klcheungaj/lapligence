@@ -35,15 +35,34 @@ pub(super) fn string(ctx: &RCtx<'_>, value: &IrStringExpr) -> Result<String, Str
             })
         }
         IrStringExpr::ContainerGet { container, index } => format!(
-            "llg_dyn_value_get_string(&{}, {})",
+            "{}(&{}, {})",
+            match ctx.model.containers[*container].kind {
+                crate::sim::ir::IrContainerKind::Dynamic => "llg_dyn_value_get_string",
+                crate::sim::ir::IrContainerKind::Queue { .. } => "llg_queue_value_get_string",
+                crate::sim::ir::IrContainerKind::Associative { .. } => {
+                    return Err("string associative read requires a key-aware path".into())
+                }
+            },
             ctx.model.containers[*container].c_name,
             render_expr_impl(ctx, index)?.code
         ),
         IrStringExpr::ContainerGetNested { container, indices } => format!(
-            "llg_dyn_value_get_nested_string(&{}, {}, {})",
+            "{}(&{}, {}, {})",
+            match ctx.model.containers[*container].kind {
+                crate::sim::ir::IrContainerKind::Dynamic => "llg_dyn_value_get_nested_string",
+                crate::sim::ir::IrContainerKind::Queue { .. } => "llg_queue_value_get_nested_string",
+                crate::sim::ir::IrContainerKind::Associative { .. } => {
+                    return Err("nested associative string read requires a key-aware path".into())
+                }
+            },
             ctx.model.containers[*container].c_name,
             render_indices(ctx, indices)?,
             indices.len()
+        ),
+        IrStringExpr::AssociativeGet { container, key } => format!(
+            "llg_model_assoc_value_get_string(&{}, {})",
+            ctx.model.containers[*container].c_name,
+            string(ctx, key)?
         ),
         IrStringExpr::Call {
             function,
@@ -118,15 +137,34 @@ pub(super) fn chandle(ctx: &RCtx<'_>, value: &IrChandleExpr) -> Result<String, S
             }
         }
         IrChandleExpr::ContainerGet { container, index } => format!(
-            "llg_dyn_value_get_chandle(&{}, {})",
+            "{}(&{}, {})",
+            match ctx.model.containers[*container].kind {
+                crate::sim::ir::IrContainerKind::Dynamic => "llg_dyn_value_get_chandle",
+                crate::sim::ir::IrContainerKind::Queue { .. } => "llg_queue_value_get_chandle",
+                crate::sim::ir::IrContainerKind::Associative { .. } => {
+                    return Err("chandle associative read requires a key-aware path".into())
+                }
+            },
             ctx.model.containers[*container].c_name,
             render_expr_impl(ctx, index)?.code
         ),
         IrChandleExpr::ContainerGetNested { container, indices } => format!(
-            "llg_dyn_value_get_nested_chandle(&{}, {}, {})",
+            "{}(&{}, {}, {})",
+            match ctx.model.containers[*container].kind {
+                crate::sim::ir::IrContainerKind::Dynamic => "llg_dyn_value_get_nested_chandle",
+                crate::sim::ir::IrContainerKind::Queue { .. } => "llg_queue_value_get_nested_chandle",
+                crate::sim::ir::IrContainerKind::Associative { .. } => {
+                    return Err("nested associative chandle read requires a key-aware path".into())
+                }
+            },
             ctx.model.containers[*container].c_name,
             render_indices(ctx, indices)?,
             indices.len()
+        ),
+        IrChandleExpr::AssociativeGet { container, key } => format!(
+            "llg_model_assoc_value_get_chandle(&{}, {})",
+            ctx.model.containers[*container].c_name,
+            string(ctx, key)?
         ),
         IrChandleExpr::Call {
             function,

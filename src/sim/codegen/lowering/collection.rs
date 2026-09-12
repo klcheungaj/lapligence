@@ -15,7 +15,7 @@ fn lower_container_element(descriptor: &TypeDescriptor) -> Result<IrContainerEle
                 two_state: descriptor.info.kind == "bit"
                     || matches!(
                         descriptor.info.kind.as_str(),
-                        "int" | "integer" | "longint" | "byte" | "shortint" | "time"
+                        "int" | "longint" | "byte" | "shortint"
                     ),
             }
         })
@@ -3598,11 +3598,6 @@ impl<'a> Codegen<'a> {
                 },
             },
         };
-        if !element.is_packed() && !matches!(kind, IrContainerKind::Dynamic) {
-            return Err(format!(
-                "container `{name}` in `{path}` supports non-packed elements only for dynamic arrays"
-            ));
-        }
         let ir = self.model.containers.len();
         self.model.containers.push(IrContainer {
             c_name: global_name(path, name),
@@ -5527,7 +5522,7 @@ impl<'a> Codegen<'a> {
                     | ExprKind::ArraySelect { base, .. },
                 ) => match self.kind(*base) {
                     NodeKind::Expr(ExprKind::Ref { target }) => *target,
-                    NodeKind::Var { .. } => Some(*base),
+                    NodeKind::Var { .. } | NodeKind::Array { .. } => Some(*base),
                     _ => None,
                 },
                 _ => None,
@@ -5547,6 +5542,89 @@ impl<'a> Codegen<'a> {
                 }
             }
         }
+
+        // Queue elements cannot be represented by a stable `sv4_t *`: any
+        // structural queue edit can reallocate or shift the backing storage.
+        // Keep the evaluated index and queue epoch in the ref descriptor so
+        // the runtime can reject stale reads/writes deterministically.
+        let queue_actual = match self.kind(bound.expr) {
+            NodeKind::Expr(ExprKind::BitSelect { base, index }) => self
+                .container_of(*base)
+                .filter(|container| {
+                    matches!(
+                        self.model.containers[container.ir].kind,
+                        IrContainerKind::Queue { .. }
+                    )
+                })
+                .map(|container| (container.ir, *index)),
+            NodeKind::Expr(ExprKind::ArraySelect { base, indices })
+                if indices.len() == 1 => self
+                .container_of(*base)
+                .filter(|container| {
+                    matches!(
+                        self.model.containers[container.ir].kind,
+                        IrContainerKind::Queue { .. }
+                    )
+                })
+                .map(|container| (container.ir, indices[0])),
+            _ => None,
+        };
+        if let Some((container, index_node)) = queue_actual {
+            let (width, signed, two_state) = match self.model.containers[container].element {
+                IrContainerElement::Packed {
+                    width,
+                    signed,
+                    two_state,
+                } => (width, signed, two_state),
+                _ => {
+                    return Err(format!(
+                        "ref actual queue element in `{scope_path}` must have a packed integral type"
+                    ));
+                }
+            };
+            if width == 0 {
+                return Err(format!(
+                    "ref actual queue element in `{scope_path}` has zero width"
+                ));
+            }
+            if (width, signed, two_state) != (bound.width, bound.signed, bound.two_state) {
+                return Err(format!(
+                    "ref actual type does not exactly match formal in `{scope_path}`"
+                ));
+            }
+            let index = self.lower_queue_index(scope_path, container, index_node)?;
+            let index_code = self.render_ir_code(&index)?;
+            let queue = &self.model.containers[container];
+            let lhs = IrLhs::WholeRef {
+                // This typed placeholder is used for dependency/type analysis;
+                // the emitted descriptor deliberately uses `.queue` instead
+                // of this address because the data pointer is relocatable.
+                addr: format!("&{}.data[sv4_to_index({index_code})]", queue.c_name),
+                width,
+                signed,
+                two_state,
+                shortreal: false,
+            };
+            let descriptor = format!(
+                "&(llg_ref_t){{ .queue = &{}, .queue_epoch = {}.mutation_epoch, \
+                 .width = {width}, .is_signed = {}, .two_state = {}, \
+                 .kind = LLG_REF_QUEUE, .index = sv4_to_index({index_code}) }}",
+                queue.c_name,
+                queue.c_name,
+                signed as u8,
+                two_state as u8
+            );
+            return Ok(IrCallArg::RefAddr {
+                addr: descriptor,
+                width,
+                signed,
+                two_state,
+                const_ref: false,
+                lhs: Box::new(lhs),
+                read: Box::new(self.lower_expr(scope_path, bound.expr)?),
+            });
+        }
+
         let lhs = self.lower_ref_actual_lhs(scope_path, bound.expr)?;
         let read = self.lower_expr(scope_path, bound.expr)?;
         let (base, width, signed, two_state, actual_const, kind, fields) = match &lhs {

@@ -389,6 +389,16 @@ datatype_case!(
     "associative_array_p33"
 );
 datatype_case!(
+    generic_queue_and_associative_values,
+    "generic_containers_p32_p33.sv",
+    "generic_containers_p32_p33"
+);
+datatype_case!(
+    nested_container_values,
+    "nested_container_values_p32_p33.sv",
+    "nested_container_values_p32_p33"
+);
+datatype_case!(
     associative_array_key_validation_contexts,
     "container_assignment_contexts.sv",
     "container_assignment_contexts"
@@ -431,7 +441,53 @@ fn wildcard_associative_traversal_is_rejected() {
     .expect("wildcard associative traversal must be rejected");
 }
 datatype_case!(queue_order_and_methods, "queue.sv", "queue");
+datatype_case!(queue_slices_and_bounded_overflow, "queue_p32.sv", "queue_p32");
 datatype_case!(executed_data_and_array_queries, "query_functions.sv", "query_functions");
+
+#[test]
+fn queue_slice_real_bound_is_rejected() {
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/sim/data_types_next")
+        .join("queue_p32_invalid.sv");
+    sim_harness::with_frontend_temp_cwd("data-types-next-queue-rejection", |dir| {
+        let source = dir.join("queue_p32_invalid.sv");
+        std::fs::copy(&fixture, &source).map_err(|error| format!("copy fixture: {error}"))?;
+        let options = compile::CompileOpts {
+            files: vec![source.to_string_lossy().into_owned()],
+            top: Some("tb".to_owned()),
+            ..Default::default()
+        };
+        let partial = compile::compile(&options).map_err(|error| format!("compile: {error}"))?;
+        if !partial.ok() {
+            let diagnostic = format!("{:?}", partial.diagnostics).to_ascii_lowercase();
+            return if diagnostic.contains("integral") || diagnostic.contains("real") {
+                Ok(())
+            } else {
+                Err(format!("unexpected queue slice diagnostic: {diagnostic}"))
+            };
+        }
+        let compiled = compile::compile_checked(&options)
+            .map_err(|error| format!("compile: {error}"))?;
+        for (variant, options) in [
+            ("unoptimized", OptConfig::none()),
+            ("optimized", OptConfig::default()),
+        ] {
+            let error = sim::codegen::generate_from_db_with_opts(
+                &Db::from_slang(&compiled.snapshot).map_err(|error| error.to_string())?,
+                &options,
+            )
+            .map(|_| "generated successfully".to_owned())
+            .unwrap_or_else(|error| error.to_string());
+            if !error.to_ascii_lowercase().contains("integral") {
+                return Err(format!(
+                    "{variant}: non-integral queue slice bound was not rejected: {error}"
+                ));
+            }
+        }
+        Ok(())
+    })
+    .expect("queue slice bound rejection");
+}
 datatype_case!(string_value_and_methods, "string.sv", "string");
 datatype_case!(string_subroutine_forms, "string_subroutine_forms.sv", "string_subroutine_forms");
 datatype_case!(string_delayed_nba, "string_delayed_nba.sv", "string_delayed_nba");

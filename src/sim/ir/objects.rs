@@ -37,6 +37,10 @@ pub enum IrStringExpr {
         container: usize,
         indices: Vec<IrExpr>,
     },
+    AssociativeGet {
+        container: usize,
+        key: Box<IrStringExpr>,
+    },
     Call {
         function: usize,
         args: Vec<IrExpr>,
@@ -144,6 +148,10 @@ pub enum IrChandleExpr {
     ContainerGetNested {
         container: usize,
         indices: Vec<IrExpr>,
+    },
+    AssociativeGet {
+        container: usize,
+        key: Box<IrStringExpr>,
     },
     Call {
         function: usize,
@@ -281,6 +289,16 @@ impl IrStringExpr {
                         "string container read requires a string element and integral index",
                     ));
                 }
+                if !matches!(
+                    container.kind,
+                    super::containers::IrContainerKind::Dynamic
+                        | super::containers::IrContainerKind::Queue { .. }
+                ) {
+                    return Err(super::IrValidationError::new(
+                        "string",
+                        "string container read requires a dynamic array or queue",
+                    ));
+                }
                 Ok(())
             }
             Self::ContainerGetNested {
@@ -302,7 +320,38 @@ impl IrStringExpr {
                         "nested string container read has an invalid index path",
                     ));
                 }
+                if !matches!(
+                    container.kind,
+                    super::containers::IrContainerKind::Dynamic
+                        | super::containers::IrContainerKind::Queue { .. }
+                ) {
+                    return Err(super::IrValidationError::new(
+                        "string",
+                        "nested string container read requires a dynamic array or queue",
+                    ));
+                }
                 Ok(())
+            }
+            Self::AssociativeGet { container, key } => {
+                let Some(container) = model.containers.get(*container) else {
+                    return Err(super::IrValidationError::new(
+                        "string",
+                        "container index is out of bounds",
+                    ));
+                };
+                if !matches!(
+                    container.kind,
+                    super::containers::IrContainerKind::Associative {
+                        key: super::containers::IrAssocKey::String
+                    }
+                ) || !container.element.is_string()
+                {
+                    return Err(super::IrValidationError::new(
+                        "string",
+                        "associative string read requires a string-keyed string array",
+                    ));
+                }
+                key.validate(model, string_return)
             }
             Self::Concat(parts) => parts
                 .iter()
@@ -321,6 +370,7 @@ impl IrStringExpr {
             | Self::FormalRead(_) => {}
             Self::ContainerGet { index, .. } => visit(index),
             Self::ContainerGetNested { indices, .. } => indices.iter().for_each(visit),
+            Self::AssociativeGet { key, .. } => key.expressions(visit),
             Self::Call { args, .. } => args.iter().for_each(visit),
             Self::TypedCall { args, .. } => {
                 for arg in args {
@@ -359,6 +409,7 @@ impl IrStringExpr {
             | Self::FormalRead(_) => {}
             Self::ContainerGet { index, .. } => visit(index),
             Self::ContainerGetNested { indices, .. } => indices.iter_mut().for_each(visit),
+            Self::AssociativeGet { key, .. } => key.expressions_mut(visit),
             Self::Call { args, .. } => args.iter_mut().for_each(visit),
             Self::TypedCall { args, .. } => {
                 for arg in args {
@@ -816,6 +867,16 @@ impl IrChandleExpr {
                         "chandle container read requires a chandle element and integral index",
                     ));
                 }
+                if !matches!(
+                    container.kind,
+                    super::containers::IrContainerKind::Dynamic
+                        | super::containers::IrContainerKind::Queue { .. }
+                ) {
+                    return Err(super::IrValidationError::new(
+                        "chandle",
+                        "chandle container read requires a dynamic array or queue",
+                    ));
+                }
                 Ok(())
             }
             Self::ContainerGetNested {
@@ -837,7 +898,38 @@ impl IrChandleExpr {
                         "nested chandle container read has an invalid index path",
                     ));
                 }
+                if !matches!(
+                    container.kind,
+                    super::containers::IrContainerKind::Dynamic
+                        | super::containers::IrContainerKind::Queue { .. }
+                ) {
+                    return Err(super::IrValidationError::new(
+                        "chandle",
+                        "nested chandle container read requires a dynamic array or queue",
+                    ));
+                }
                 Ok(())
+            }
+            Self::AssociativeGet { container, key } => {
+                let Some(container) = model.containers.get(*container) else {
+                    return Err(super::IrValidationError::new(
+                        "chandle",
+                        "container index is out of bounds",
+                    ));
+                };
+                if !matches!(
+                    container.kind,
+                    super::containers::IrContainerKind::Associative {
+                        key: super::containers::IrAssocKey::String
+                    }
+                ) || !container.element.is_chandle()
+                {
+                    return Err(super::IrValidationError::new(
+                        "chandle",
+                        "associative chandle read requires a string-keyed chandle array",
+                    ));
+                }
+                key.validate(model, None)
             }
             Self::Read(index) => object_type(model, *index, IrObjectType::Chandle),
             Self::Call {

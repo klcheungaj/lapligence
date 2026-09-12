@@ -129,6 +129,12 @@ static void llg_notify(llg_container_notify_fn notify, sv4_t* contents,
     if (notify && change) notify(contents, shape, change);
 }
 
+static void llg_queue_invalidate_refs(llg_queue_t* queue) {
+    if (queue->mutation_epoch == UINT64_MAX)
+        llg_container_fatal("queue reference epoch overflow");
+    ++queue->mutation_epoch;
+}
+
 void llg_dyn_init(llg_dyn_array_t* array, uint32_t element_width,
                   int8_t element_signed, int element_two_state) {
     llg_check_element_type(element_width);
@@ -369,7 +375,16 @@ static int llg_value_equal(const llg_value_t* a, const llg_value_t* b) {
             }
             return 1;
         case LLG_VALUE_CONTAINER:
-            return a->value.container == b->value.container;
+            if (a->value.container == b->value.container) return 1;
+            if (!a->value.container || !b->value.container ||
+                a->value.container->size != b->value.container->size)
+                return 0;
+            for (size_t i = 0; i < a->value.container->size; ++i) {
+                if (!llg_value_equal(&a->value.container->data[i],
+                                     &b->value.container->data[i]))
+                    return 0;
+            }
+            return 1;
         default:
             return 0;
     }
@@ -763,6 +778,773 @@ int llg_dyn_value_set_nested_container_from_packed(
     return 1;
 }
 
+/* Recursive queue storage ------------------------------------------------ */
+
+static void llg_queue_value_invalidate_refs(llg_queue_value_array_t* queue) {
+    if (queue->mutation_epoch == UINT64_MAX)
+        llg_container_fatal("queue reference epoch overflow");
+    ++queue->mutation_epoch;
+}
+
+static void llg_queue_value_reserve(llg_queue_value_array_t* queue,
+                                    size_t needed) {
+    if (needed <= queue->capacity) return;
+    size_t capacity = queue->capacity ? queue->capacity : 4;
+    while (capacity < needed) {
+        if (capacity > SIZE_MAX / 2) {
+            capacity = needed;
+            break;
+        }
+        capacity *= 2;
+    }
+    if (capacity > queue->limit) capacity = queue->limit;
+    if (capacity < needed)
+        llg_container_fatal("queue capacity exceeds declared bound");
+    queue->data = llg_realloc_items(queue->data, capacity, sizeof(*queue->data));
+    queue->capacity = capacity;
+}
+
+static void llg_queue_value_commit(llg_queue_value_array_t* queue,
+                                   llg_value_t* data, size_t size) {
+    int shape_changed = queue->size != size;
+    int contents_changed = shape_changed;
+    if (!contents_changed) {
+        for (size_t i = 0; i < size; ++i) {
+            if (!llg_value_equal(&queue->data[i], &data[i])) {
+                contents_changed = 1;
+                break;
+            }
+        }
+    }
+    llg_container_notify_fn notify = queue->notify;
+    sv4_t* contents_dependency = queue->contents_dependency;
+    sv4_t* shape_dependency = queue->shape_dependency;
+    for (size_t i = 0; i < queue->size; ++i)
+        llg_value_drop(&queue->data[i]);
+    free(queue->data);
+    queue->data = data;
+    queue->size = size;
+    queue->capacity = size;
+    llg_queue_value_invalidate_refs(queue);
+    llg_notify(notify, contents_dependency, shape_dependency,
+               (contents_changed ? LLG_CONTAINER_CHANGED_CONTENTS : 0) |
+                   (shape_changed ? LLG_CONTAINER_CHANGED_SHAPE : 0));
+}
+
+static llg_value_t* llg_queue_value_at(const llg_queue_value_array_t* queue,
+                                       sv4_t index) {
+    size_t native;
+    if (!queue || !llg_index(index, queue->size, 0, &native)) return NULL;
+    return &queue->data[native];
+}
+
+static llg_value_t* llg_queue_value_nested_at(
+    const llg_queue_value_array_t* queue, const sv4_t* indices, size_t count) {
+    if (!indices || count == 0) return NULL;
+    llg_value_t* value = llg_queue_value_at(queue, indices[0]);
+    for (size_t i = 1; value && i < count; ++i) {
+        if (value->desc->kind != LLG_VALUE_CONTAINER ||
+            !value->value.container)
+            return NULL;
+        value = llg_dyn_value_at(value->value.container, indices[i]);
+    }
+    return value;
+}
+
+static llg_value_t llg_value_from_packed(const llg_value_desc_t* desc,
+                                         sv4_t value) {
+    llg_value_t result = {0};
+    llg_value_default(&result, desc);
+    if (desc->kind != LLG_VALUE_PACKED)
+        llg_container_fatal("packed value used with a non-packed queue element");
+    value = sv4_cast(value, desc->packed_width, desc->packed_signed);
+    result.value.packed = desc->packed_two_state ? sv4_to_two_state(value) : value;
+    return result;
+}
+
+static llg_value_t llg_value_from_real(const llg_value_desc_t* desc,
+                                       double value) {
+    llg_value_t result = {0};
+    llg_value_default(&result, desc);
+    if (desc->kind != LLG_VALUE_REAL)
+        llg_container_fatal("real value used with an incompatible queue element");
+    result.value.real = value;
+    return result;
+}
+
+static llg_value_t llg_value_from_string(const llg_value_desc_t* desc,
+                                         llg_string_t value) {
+    llg_value_t result = {0};
+    llg_value_default(&result, desc);
+    if (desc->kind != LLG_VALUE_STRING) {
+        llg_string_destroy(&value);
+        llg_container_fatal("string value used with an incompatible queue element");
+    }
+    result.value.string = value;
+    return result;
+}
+
+static llg_value_t llg_value_from_chandle(const llg_value_desc_t* desc,
+                                          void* value) {
+    llg_value_t result = {0};
+    llg_value_default(&result, desc);
+    if (desc->kind != LLG_VALUE_CHANDLE && desc->kind != LLG_VALUE_EVENT)
+        llg_container_fatal("handle value used with an incompatible queue element");
+    result.value.handle = value;
+    return result;
+}
+
+static llg_value_t llg_value_from_container(
+    const llg_value_desc_t* desc, const llg_dyn_value_array_t* source) {
+    llg_value_t result = {0};
+    llg_value_default(&result, desc);
+    if (desc->kind != LLG_VALUE_CONTAINER || !source ||
+        !llg_value_desc_compatible(desc->element, source->element))
+        llg_container_fatal("container value used with an incompatible element");
+    result.value.container = llg_alloc_items(1, sizeof(*result.value.container));
+    memset(result.value.container, 0, sizeof(*result.value.container));
+    llg_dyn_value_init(result.value.container, desc->element);
+    llg_dyn_value_copy(result.value.container, source);
+    return result;
+}
+
+static llg_value_t llg_value_from_packed_container(
+    const llg_value_desc_t* desc, const llg_dyn_array_t* source) {
+    llg_value_t result = {0};
+    llg_value_default(&result, desc);
+    if (desc->kind != LLG_VALUE_CONTAINER || !source || !desc->element ||
+        (desc->element->kind != LLG_VALUE_PACKED &&
+         desc->element->kind != LLG_VALUE_REAL))
+        llg_container_fatal("packed container used with an incompatible element");
+    result.value.container = llg_alloc_items(1, sizeof(*result.value.container));
+    memset(result.value.container, 0, sizeof(*result.value.container));
+    llg_dyn_value_init(result.value.container, desc->element);
+    llg_dyn_value_replace_from_packed(result.value.container, source);
+    return result;
+}
+
+static void llg_queue_value_set_value(llg_queue_value_array_t* queue,
+                                      size_t index, const llg_value_t* source) {
+    llg_value_copy(&queue->data[index], queue->element, source);
+    llg_notify(queue->notify, queue->contents_dependency,
+               queue->shape_dependency, LLG_CONTAINER_CHANGED_CONTENTS);
+}
+
+void llg_queue_value_init(llg_queue_value_array_t* queue,
+                          const llg_value_desc_t* element,
+                          uint64_t maximum_elements) {
+    if (!element) llg_container_fatal("missing recursive queue value descriptor");
+    memset(queue, 0, sizeof(*queue));
+    queue->element = element;
+    queue->limit = maximum_elements == UINT64_MAX
+        ? SIZE_MAX
+        : llg_checked_count(maximum_elements, 1);
+}
+
+void llg_queue_value_destroy(llg_queue_value_array_t* queue) {
+    for (size_t i = 0; i < queue->size; ++i)
+        llg_value_drop(&queue->data[i]);
+    free(queue->data);
+    memset(queue, 0, sizeof(*queue));
+}
+
+void llg_queue_value_delete(llg_queue_value_array_t* queue) {
+    int changed = queue->size != 0;
+    for (size_t i = 0; i < queue->size; ++i)
+        llg_value_drop(&queue->data[i]);
+    free(queue->data);
+    queue->data = NULL;
+    queue->size = 0;
+    queue->capacity = 0;
+    if (changed) llg_queue_value_invalidate_refs(queue);
+    llg_notify(queue->notify, queue->contents_dependency,
+               queue->shape_dependency,
+               changed ? LLG_CONTAINER_CHANGED_CONTENTS |
+                            LLG_CONTAINER_CHANGED_SHAPE
+                       : 0);
+}
+
+void llg_queue_value_copy(llg_queue_value_array_t* dst,
+                          const llg_queue_value_array_t* src) {
+    if (dst == src) return;
+    if (!src || !llg_value_desc_compatible(dst->element, src->element))
+        llg_container_fatal("incompatible recursive queue element types");
+    size_t count = src->size < dst->limit ? src->size : dst->limit;
+    llg_value_t* data = llg_alloc_items(count, sizeof(*data));
+    if (count) memset(data, 0, count * sizeof(*data));
+    for (size_t i = 0; i < count; ++i)
+        llg_value_copy(&data[i], dst->element, &src->data[i]);
+    llg_queue_value_commit(dst, data, count);
+    if (count != src->size)
+        llg_container_warning("bounded queue assignment discarded tail elements");
+}
+
+void llg_queue_value_assign_reals(llg_queue_value_array_t* dst,
+                                  const double* values, size_t count) {
+    size_t retained = count < dst->limit ? count : dst->limit;
+    llg_value_t* data = llg_alloc_items(retained, sizeof(*data));
+    if (retained) memset(data, 0, retained * sizeof(*data));
+    for (size_t i = 0; i < retained; ++i)
+        data[i] = llg_value_from_real(dst->element, values[i]);
+    llg_queue_value_commit(dst, data, retained);
+    if (retained != count)
+        llg_container_warning("bounded queue assignment discarded tail elements");
+}
+
+void llg_queue_value_assign_strings(llg_queue_value_array_t* dst,
+                                    llg_string_t* values, size_t count) {
+    size_t retained = count < dst->limit ? count : dst->limit;
+    llg_value_t* data = llg_alloc_items(retained, sizeof(*data));
+    if (retained) memset(data, 0, retained * sizeof(*data));
+    for (size_t i = 0; i < retained; ++i) {
+        data[i] = llg_value_from_string(dst->element, values[i]);
+        values[i] = (llg_string_t){0};
+    }
+    for (size_t i = retained; i < count; ++i)
+        llg_string_destroy(&values[i]);
+    llg_queue_value_commit(dst, data, retained);
+    if (retained != count)
+        llg_container_warning("bounded queue assignment discarded tail elements");
+}
+
+void llg_queue_value_assign_chandles(llg_queue_value_array_t* dst,
+                                     void* const* values, size_t count) {
+    size_t retained = count < dst->limit ? count : dst->limit;
+    llg_value_t* data = llg_alloc_items(retained, sizeof(*data));
+    if (retained) memset(data, 0, retained * sizeof(*data));
+    for (size_t i = 0; i < retained; ++i)
+        data[i] = llg_value_from_chandle(dst->element, values[i]);
+    llg_queue_value_commit(dst, data, retained);
+    if (retained != count)
+        llg_container_warning("bounded queue assignment discarded tail elements");
+}
+
+static int llg_queue_value_source_range(const llg_queue_source_t* source,
+                                        const llg_queue_value_array_t** queue,
+                                        size_t* first, size_t* count) {
+    *queue = source->value_queue;
+    if (!*queue || !first || !count)
+        llg_container_fatal("malformed recursive queue assignment source");
+    if (!(*queue)->size) {
+        *first = 0;
+        *count = 0;
+        return 1;
+    }
+    size_t left;
+    size_t right;
+    if (source->left_unbounded) {
+        left = (*queue)->size - 1;
+    } else if (!llg_index(source->left, (*queue)->size, 0, &left)) {
+        *first = 0;
+        *count = 0;
+        return 1;
+    }
+    if (source->right_unbounded) {
+        right = (*queue)->size - 1;
+    } else if (!llg_index(source->right, (*queue)->size, 0, &right)) {
+        *first = 0;
+        *count = 0;
+        return 1;
+    }
+    if (left > right) {
+        *first = 0;
+        *count = 0;
+        return 1;
+    }
+    *first = left;
+    *count = right - left + 1;
+    return 1;
+}
+
+void llg_queue_value_assign_sources(llg_queue_value_array_t* dst,
+                                    const llg_queue_source_t* sources,
+                                    size_t source_count) {
+    if (!dst || (!sources && source_count))
+        llg_container_fatal("malformed recursive queue assignment");
+    size_t total = 0;
+    for (size_t i = 0; i < source_count; ++i) {
+        const llg_queue_value_array_t* source;
+        size_t first, count;
+        if (!sources[i].value_kind) {
+            llg_container_fatal("packed source used with recursive queue assignment");
+        }
+        llg_queue_value_source_range(&sources[i], &source, &first, &count);
+        if (!llg_value_desc_compatible(dst->element, source->element))
+            llg_container_fatal("incompatible recursive queue assignment source");
+        if (count > SIZE_MAX - total)
+            llg_container_fatal("queue assignment source size overflow");
+        total += count;
+    }
+    size_t retained = total < dst->limit ? total : dst->limit;
+    llg_value_t* data = llg_alloc_items(retained, sizeof(*data));
+    if (retained) memset(data, 0, retained * sizeof(*data));
+    size_t copied = 0;
+    for (size_t i = 0; i < source_count && copied < retained; ++i) {
+        const llg_queue_value_array_t* source;
+        size_t first, count;
+        llg_queue_value_source_range(&sources[i], &source, &first, &count);
+        if (count > retained - copied) count = retained - copied;
+        for (size_t j = 0; j < count; ++j)
+            llg_value_copy(&data[copied++], dst->element,
+                           &source->data[first + j]);
+    }
+    llg_queue_value_commit(dst, data, retained);
+    if (retained != total)
+        llg_container_warning("bounded queue assignment discarded tail elements");
+}
+
+size_t llg_queue_value_size(const llg_queue_value_array_t* queue) {
+    return queue->size;
+}
+
+static sv4_t llg_queue_value_default_packed(
+    const llg_queue_value_array_t* queue) {
+    llg_value_t value = {0};
+    llg_value_default(&value, queue->element);
+    sv4_t result = value.desc->kind == LLG_VALUE_PACKED
+        ? value.value.packed
+        : sv4_from_u64(0, 1, 0);
+    llg_value_drop(&value);
+    return result;
+}
+
+sv4_t llg_queue_value_get(const llg_queue_value_array_t* queue, sv4_t index) {
+    llg_value_t* value = llg_queue_value_at(queue, index);
+    return value && value->desc->kind == LLG_VALUE_PACKED
+        ? value->value.packed
+        : llg_queue_value_default_packed(queue);
+}
+
+double llg_queue_value_get_real(const llg_queue_value_array_t* queue,
+                                sv4_t index) {
+    llg_value_t* value = llg_queue_value_at(queue, index);
+    return value && value->desc->kind == LLG_VALUE_REAL ? value->value.real : 0.0;
+}
+
+llg_string_t llg_queue_value_get_string(const llg_queue_value_array_t* queue,
+                                        sv4_t index) {
+    llg_value_t* value = llg_queue_value_at(queue, index);
+    return value && value->desc->kind == LLG_VALUE_STRING
+        ? llg_string_clone(&value->value.string)
+        : (llg_string_t){0};
+}
+
+void* llg_queue_value_get_chandle(const llg_queue_value_array_t* queue,
+                                  sv4_t index) {
+    llg_value_t* value = llg_queue_value_at(queue, index);
+    return value && (value->desc->kind == LLG_VALUE_CHANDLE ||
+                     value->desc->kind == LLG_VALUE_EVENT)
+        ? value->value.handle
+        : NULL;
+}
+
+static int llg_queue_value_changed(llg_value_t* target,
+                                   const llg_value_t* source) {
+    if (llg_value_equal(target, source)) return 1;
+    return 0;
+}
+
+int llg_queue_value_set(llg_queue_value_array_t* queue, sv4_t index,
+                        sv4_t value) {
+    size_t native;
+    if (!llg_index(index, queue->size, 0, &native) ||
+        queue->element->kind != LLG_VALUE_PACKED)
+        return 0;
+    llg_value_t source = llg_value_from_packed(queue->element, value);
+    int same = llg_queue_value_changed(&queue->data[native], &source);
+    if (!same) llg_queue_value_set_value(queue, native, &source);
+    llg_value_drop(&source);
+    return 1;
+}
+
+int llg_queue_value_set_real(llg_queue_value_array_t* queue, sv4_t index,
+                             double value) {
+    size_t native;
+    if (!llg_index(index, queue->size, 0, &native)) return 0;
+    llg_value_t source = llg_value_from_real(queue->element, value);
+    int same = llg_queue_value_changed(&queue->data[native], &source);
+    if (!same) llg_queue_value_set_value(queue, native, &source);
+    llg_value_drop(&source);
+    return 1;
+}
+
+int llg_queue_value_set_string(llg_queue_value_array_t* queue, sv4_t index,
+                               llg_string_t value) {
+    size_t native;
+    if (!llg_index(index, queue->size, 0, &native)) {
+        llg_string_destroy(&value);
+        return 0;
+    }
+    llg_value_t source = llg_value_from_string(queue->element, value);
+    int same = llg_queue_value_changed(&queue->data[native], &source);
+    if (!same) llg_queue_value_set_value(queue, native, &source);
+    llg_value_drop(&source);
+    return 1;
+}
+
+int llg_queue_value_set_chandle(llg_queue_value_array_t* queue, sv4_t index,
+                                void* value) {
+    size_t native;
+    if (!llg_index(index, queue->size, 0, &native)) return 0;
+    llg_value_t source = llg_value_from_chandle(queue->element, value);
+    int same = llg_queue_value_changed(&queue->data[native], &source);
+    if (!same) llg_queue_value_set_value(queue, native, &source);
+    llg_value_drop(&source);
+    return 1;
+}
+
+sv4_t llg_queue_value_get_nested(const llg_queue_value_array_t* queue,
+                                 const sv4_t* indices, size_t count) {
+    llg_value_t* value = llg_queue_value_nested_at(queue, indices, count);
+    return value && value->desc->kind == LLG_VALUE_PACKED
+        ? value->value.packed
+        : sv4_from_u64(0, 1, 0);
+}
+
+double llg_queue_value_get_nested_real(const llg_queue_value_array_t* queue,
+                                       const sv4_t* indices, size_t count) {
+    llg_value_t* value = llg_queue_value_nested_at(queue, indices, count);
+    return value && value->desc->kind == LLG_VALUE_REAL ? value->value.real : 0.0;
+}
+
+llg_string_t llg_queue_value_get_nested_string(
+    const llg_queue_value_array_t* queue, const sv4_t* indices, size_t count) {
+    llg_value_t* value = llg_queue_value_nested_at(queue, indices, count);
+    return value && value->desc->kind == LLG_VALUE_STRING
+        ? llg_string_clone(&value->value.string)
+        : (llg_string_t){0};
+}
+
+void* llg_queue_value_get_nested_chandle(
+    const llg_queue_value_array_t* queue, const sv4_t* indices, size_t count) {
+    llg_value_t* value = llg_queue_value_nested_at(queue, indices, count);
+    return value && (value->desc->kind == LLG_VALUE_CHANDLE ||
+                     value->desc->kind == LLG_VALUE_EVENT)
+        ? value->value.handle
+        : NULL;
+}
+
+static int llg_queue_value_set_nested_source(
+    llg_queue_value_array_t* queue, const sv4_t* indices, size_t count,
+    const llg_value_t* source) {
+    llg_value_t* target = llg_queue_value_nested_at(queue, indices, count);
+    if (!target || !source || !llg_value_desc_compatible(target->desc,
+                                                         source->desc))
+        return 0;
+    if (llg_value_equal(target, source)) return 1;
+    llg_value_copy(target, target->desc, source);
+    llg_notify(queue->notify, queue->contents_dependency,
+               queue->shape_dependency, LLG_CONTAINER_CHANGED_CONTENTS);
+    return 1;
+}
+
+int llg_queue_value_set_nested(llg_queue_value_array_t* queue,
+                               const sv4_t* indices, size_t count, sv4_t value) {
+    llg_value_t* target = llg_queue_value_nested_at(queue, indices, count);
+    if (!target || target->desc->kind != LLG_VALUE_PACKED) return 0;
+    llg_value_t source = llg_value_from_packed(target->desc, value);
+    int result = llg_queue_value_set_nested_source(queue, indices, count, &source);
+    llg_value_drop(&source);
+    return result;
+}
+
+int llg_queue_value_set_nested_real(llg_queue_value_array_t* queue,
+                                    const sv4_t* indices, size_t count,
+                                    double value) {
+    llg_value_t* target = llg_queue_value_nested_at(queue, indices, count);
+    if (!target || target->desc->kind != LLG_VALUE_REAL) return 0;
+    llg_value_t source = llg_value_from_real(target->desc, value);
+    int result = llg_queue_value_set_nested_source(queue, indices, count, &source);
+    llg_value_drop(&source);
+    return result;
+}
+
+int llg_queue_value_set_nested_string(
+    llg_queue_value_array_t* queue, const sv4_t* indices, size_t count,
+    llg_string_t value) {
+    llg_value_t* target = llg_queue_value_nested_at(queue, indices, count);
+    if (!target || target->desc->kind != LLG_VALUE_STRING) {
+        llg_string_destroy(&value);
+        return 0;
+    }
+    llg_value_t source = llg_value_from_string(target->desc, value);
+    int result = llg_queue_value_set_nested_source(queue, indices, count, &source);
+    llg_value_drop(&source);
+    return result;
+}
+
+int llg_queue_value_set_nested_chandle(
+    llg_queue_value_array_t* queue, const sv4_t* indices, size_t count,
+    void* value) {
+    llg_value_t* target = llg_queue_value_nested_at(queue, indices, count);
+    if (!target || (target->desc->kind != LLG_VALUE_CHANDLE &&
+                    target->desc->kind != LLG_VALUE_EVENT))
+        return 0;
+    llg_value_t source = llg_value_from_chandle(target->desc, value);
+    int result = llg_queue_value_set_nested_source(queue, indices, count, &source);
+    llg_value_drop(&source);
+    return result;
+}
+
+int llg_queue_value_set_nested_container(
+    llg_queue_value_array_t* queue, const sv4_t* indices, size_t count,
+    const llg_dyn_value_array_t* source) {
+    llg_value_t* target = llg_queue_value_nested_at(queue, indices, count);
+    if (!target || target->desc->kind != LLG_VALUE_CONTAINER || !source ||
+        !llg_value_desc_compatible(target->desc->element, source->element))
+        return 0;
+    llg_value_t source_value = {0};
+    source_value.desc = target->desc;
+    source_value.value.container = (llg_dyn_value_array_t*)source;
+    int result = llg_queue_value_set_nested_source(queue, indices, count,
+                                                   &source_value);
+    return result;
+}
+
+int llg_queue_value_set_nested_container_from_packed(
+    llg_queue_value_array_t* queue, const sv4_t* indices, size_t count,
+    const llg_dyn_array_t* source) {
+    llg_value_t* target = llg_queue_value_nested_at(queue, indices, count);
+    if (!target || target->desc->kind != LLG_VALUE_CONTAINER || !source ||
+        !target->desc->element ||
+        (target->desc->element->kind != LLG_VALUE_PACKED &&
+         target->desc->element->kind != LLG_VALUE_REAL))
+        return 0;
+    llg_dyn_value_array_t converted = {0};
+    llg_dyn_value_init(&converted, target->desc->element);
+    llg_dyn_value_replace_from_packed(&converted, source);
+    llg_value_t source_value = {0};
+    source_value.desc = target->desc;
+    source_value.value.container = &converted;
+    int result = llg_queue_value_set_nested_source(queue, indices, count,
+                                                   &source_value);
+    llg_dyn_value_destroy(&converted);
+    return result;
+}
+
+static void llg_queue_value_append(llg_queue_value_array_t* queue,
+                                   const llg_value_t* source) {
+    if (queue->size == queue->limit) {
+        llg_container_warning("bounded queue push_back discarded new element");
+        return;
+    }
+    if (queue->size == SIZE_MAX) llg_container_fatal("queue size overflow");
+    llg_queue_value_reserve(queue, queue->size + 1);
+    memset(&queue->data[queue->size], 0, sizeof(*queue->data));
+    llg_value_copy(&queue->data[queue->size], queue->element, source);
+    ++queue->size;
+    llg_queue_value_invalidate_refs(queue);
+    llg_notify(queue->notify, queue->contents_dependency,
+               queue->shape_dependency,
+               LLG_CONTAINER_CHANGED_CONTENTS | LLG_CONTAINER_CHANGED_SHAPE);
+}
+
+static void llg_queue_value_prepend(llg_queue_value_array_t* queue,
+                                    const llg_value_t* source) {
+    if (queue->limit == 0) {
+        llg_container_warning("bounded queue push_front discarded new element");
+        return;
+    }
+    size_t old_size = queue->size;
+    size_t new_size = old_size < queue->limit ? old_size + 1 : old_size;
+    llg_value_t incoming = {0};
+    llg_value_copy(&incoming, queue->element, source);
+    llg_queue_value_reserve(queue, new_size);
+    if (old_size == queue->limit && old_size)
+        llg_value_drop(&queue->data[old_size - 1]);
+    if (new_size > 1)
+        memmove(queue->data + 1, queue->data,
+                (new_size - 1) * sizeof(*queue->data));
+    queue->data[0] = incoming;
+    queue->size = new_size;
+    llg_queue_value_invalidate_refs(queue);
+    if (old_size == queue->limit)
+        llg_container_warning("bounded queue push_front discarded tail element");
+    llg_notify(queue->notify, queue->contents_dependency,
+               queue->shape_dependency,
+               LLG_CONTAINER_CHANGED_CONTENTS |
+                   (old_size != new_size ? LLG_CONTAINER_CHANGED_SHAPE : 0));
+}
+
+void llg_queue_value_push_front(llg_queue_value_array_t* queue, sv4_t value) {
+    llg_value_t source = llg_value_from_packed(queue->element, value);
+    llg_queue_value_prepend(queue, &source);
+    llg_value_drop(&source);
+}
+
+void llg_queue_value_push_back(llg_queue_value_array_t* queue, sv4_t value) {
+    llg_value_t source = llg_value_from_packed(queue->element, value);
+    llg_queue_value_append(queue, &source);
+    llg_value_drop(&source);
+}
+
+void llg_queue_value_push_front_real(llg_queue_value_array_t* queue, double value) {
+    llg_value_t source = llg_value_from_real(queue->element, value);
+    llg_queue_value_prepend(queue, &source);
+    llg_value_drop(&source);
+}
+
+void llg_queue_value_push_back_real(llg_queue_value_array_t* queue, double value) {
+    llg_value_t source = llg_value_from_real(queue->element, value);
+    llg_queue_value_append(queue, &source);
+    llg_value_drop(&source);
+}
+
+void llg_queue_value_push_front_string(llg_queue_value_array_t* queue,
+                                       llg_string_t value) {
+    llg_value_t source = llg_value_from_string(queue->element, value);
+    llg_queue_value_prepend(queue, &source);
+    llg_value_drop(&source);
+}
+
+void llg_queue_value_push_back_string(llg_queue_value_array_t* queue,
+                                      llg_string_t value) {
+    llg_value_t source = llg_value_from_string(queue->element, value);
+    llg_queue_value_append(queue, &source);
+    llg_value_drop(&source);
+}
+
+void llg_queue_value_push_front_chandle(llg_queue_value_array_t* queue,
+                                        void* value) {
+    llg_value_t source = llg_value_from_chandle(queue->element, value);
+    llg_queue_value_prepend(queue, &source);
+    llg_value_drop(&source);
+}
+
+void llg_queue_value_push_back_chandle(llg_queue_value_array_t* queue,
+                                       void* value) {
+    llg_value_t source = llg_value_from_chandle(queue->element, value);
+    llg_queue_value_append(queue, &source);
+    llg_value_drop(&source);
+}
+
+void llg_queue_value_push_front_container(
+    llg_queue_value_array_t* queue, const llg_dyn_value_array_t* source) {
+    llg_value_t value = llg_value_from_container(queue->element, source);
+    llg_queue_value_prepend(queue, &value);
+    llg_value_drop(&value);
+}
+
+void llg_queue_value_push_back_container(
+    llg_queue_value_array_t* queue, const llg_dyn_value_array_t* source) {
+    llg_value_t value = llg_value_from_container(queue->element, source);
+    llg_queue_value_append(queue, &value);
+    llg_value_drop(&value);
+}
+
+void llg_queue_value_push_front_container_from_packed(
+    llg_queue_value_array_t* queue, const llg_dyn_array_t* source) {
+    llg_value_t value = llg_value_from_packed_container(queue->element, source);
+    llg_queue_value_prepend(queue, &value);
+    llg_value_drop(&value);
+}
+
+void llg_queue_value_push_back_container_from_packed(
+    llg_queue_value_array_t* queue, const llg_dyn_array_t* source) {
+    llg_value_t value = llg_value_from_packed_container(queue->element, source);
+    llg_queue_value_append(queue, &value);
+    llg_value_drop(&value);
+}
+
+static int llg_queue_value_insert_source(llg_queue_value_array_t* queue,
+                                         sv4_t index,
+                                         const llg_value_t* source) {
+    size_t native;
+    if (!llg_index(index, queue->size, 1, &native)) {
+        llg_container_warning("invalid recursive queue insert index");
+        return 0;
+    }
+    if (queue->limit == 0 ||
+        (queue->size == queue->limit && native == queue->size)) {
+        llg_container_warning("bounded queue insert discarded new element");
+        return 0;
+    }
+    size_t old_size = queue->size;
+    size_t new_size = old_size < queue->limit ? old_size + 1 : old_size;
+    llg_value_t incoming = {0};
+    llg_value_copy(&incoming, queue->element, source);
+    llg_queue_value_reserve(queue, new_size);
+    if (old_size == queue->limit && old_size)
+        llg_value_drop(&queue->data[old_size - 1]);
+    if (native < new_size - 1)
+        memmove(queue->data + native + 1, queue->data + native,
+                (new_size - native - 1) * sizeof(*queue->data));
+    queue->data[native] = incoming;
+    queue->size = new_size;
+    llg_queue_value_invalidate_refs(queue);
+    if (old_size == queue->limit)
+        llg_container_warning("bounded queue insert discarded tail element");
+    llg_notify(queue->notify, queue->contents_dependency,
+               queue->shape_dependency,
+               LLG_CONTAINER_CHANGED_CONTENTS |
+                   (old_size != new_size ? LLG_CONTAINER_CHANGED_SHAPE : 0));
+    return 1;
+}
+
+int llg_queue_value_insert(llg_queue_value_array_t* queue, sv4_t index,
+                           sv4_t value) {
+    llg_value_t source = llg_value_from_packed(queue->element, value);
+    int result = llg_queue_value_insert_source(queue, index, &source);
+    llg_value_drop(&source);
+    return result;
+}
+
+int llg_queue_value_insert_real(llg_queue_value_array_t* queue, sv4_t index,
+                                double value) {
+    llg_value_t source = llg_value_from_real(queue->element, value);
+    int result = llg_queue_value_insert_source(queue, index, &source);
+    llg_value_drop(&source);
+    return result;
+}
+
+int llg_queue_value_insert_string(llg_queue_value_array_t* queue, sv4_t index,
+                                  llg_string_t value) {
+    llg_value_t source = llg_value_from_string(queue->element, value);
+    int result = llg_queue_value_insert_source(queue, index, &source);
+    llg_value_drop(&source);
+    return result;
+}
+
+int llg_queue_value_insert_chandle(llg_queue_value_array_t* queue,
+                                   sv4_t index, void* value) {
+    llg_value_t source = llg_value_from_chandle(queue->element, value);
+    int result = llg_queue_value_insert_source(queue, index, &source);
+    llg_value_drop(&source);
+    return result;
+}
+
+int llg_queue_value_insert_container(llg_queue_value_array_t* queue,
+                                     sv4_t index,
+                                     const llg_dyn_value_array_t* source) {
+    llg_value_t value = llg_value_from_container(queue->element, source);
+    int result = llg_queue_value_insert_source(queue, index, &value);
+    llg_value_drop(&value);
+    return result;
+}
+
+int llg_queue_value_insert_container_from_packed(
+    llg_queue_value_array_t* queue, sv4_t index, const llg_dyn_array_t* source) {
+    llg_value_t value = llg_value_from_packed_container(queue->element, source);
+    int result = llg_queue_value_insert_source(queue, index, &value);
+    llg_value_drop(&value);
+    return result;
+}
+
+int llg_queue_value_delete_index(llg_queue_value_array_t* queue, sv4_t index) {
+    size_t native;
+    if (!llg_index(index, queue->size, 0, &native)) return 0;
+    llg_value_drop(&queue->data[native]);
+    if (native + 1 < queue->size)
+        memmove(queue->data + native, queue->data + native + 1,
+                (queue->size - native - 1) * sizeof(*queue->data));
+    --queue->size;
+    llg_queue_value_invalidate_refs(queue);
+    llg_notify(queue->notify, queue->contents_dependency,
+               queue->shape_dependency,
+               LLG_CONTAINER_CHANGED_CONTENTS | LLG_CONTAINER_CHANGED_SHAPE);
+    return 1;
+}
+
 void llg_dyn_new(llg_dyn_array_t* dst, sv4_t requested_size,
                  const llg_dyn_array_t* initializer) {
     size_t size = llg_checked_count(llg_dynamic_size(requested_size), sizeof(sv4_t));
@@ -905,6 +1687,7 @@ void llg_queue_destroy(llg_queue_t* queue) {
 
 void llg_queue_delete(llg_queue_t* queue) {
     int changed = queue->size != 0;
+    if (changed) llg_queue_invalidate_refs(queue);
     queue->size = 0;
     llg_notify(queue->notify, queue->contents_dependency,
                queue->shape_dependency,
@@ -935,6 +1718,7 @@ void llg_queue_copy(llg_queue_t* dst, const llg_queue_t* src) {
     llg_queue_reserve(dst, count);
     if (count) memcpy(dst->data, src->data, count * sizeof(*dst->data));
     dst->size = count;
+    llg_queue_invalidate_refs(dst);
     if (count != src->size)
         llg_container_warning("bounded queue assignment discarded tail elements");
     llg_notify(notify, contents_dependency, shape_dependency,
@@ -967,9 +1751,106 @@ void llg_queue_assign_values(llg_queue_t* dst, const sv4_t* values,
     dst->data = data;
     dst->size = retained;
     dst->capacity = retained;
+    llg_queue_invalidate_refs(dst);
     if (retained != count)
         llg_container_warning(
             "bounded queue assignment pattern discarded tail elements");
+    llg_notify(notify, contents_dependency, shape_dependency,
+               (contents_changed ? LLG_CONTAINER_CHANGED_CONTENTS : 0) |
+                   (shape_changed ? LLG_CONTAINER_CHANGED_SHAPE : 0));
+}
+
+static int llg_queue_source_range(const llg_queue_source_t* source,
+                                  size_t* first, size_t* count) {
+    const llg_queue_t* queue = source->queue;
+    if (!queue || !first || !count)
+        llg_container_fatal("malformed queue assignment source");
+    if (!queue->size) {
+        *first = 0;
+        *count = 0;
+        return 1;
+    }
+    size_t left;
+    size_t right;
+    if (source->left_unbounded) {
+        left = queue->size - 1;
+    } else if (!llg_index(source->left, queue->size, 0, &left)) {
+        *first = 0;
+        *count = 0;
+        return 1;
+    }
+    if (source->right_unbounded) {
+        right = queue->size - 1;
+    } else if (!llg_index(source->right, queue->size, 0, &right)) {
+        *first = 0;
+        *count = 0;
+        return 1;
+    }
+    if (left > right) {
+        *first = 0;
+        *count = 0;
+        return 1;
+    }
+    *first = left;
+    *count = right - left + 1;
+    return 1;
+}
+
+void llg_queue_assign_sources(llg_queue_t* dst,
+                              const llg_queue_source_t* sources,
+                              size_t source_count) {
+    if (!dst || (!sources && source_count))
+        llg_container_fatal("malformed queue assignment");
+    size_t total = 0;
+    for (size_t source_index = 0; source_index < source_count; ++source_index) {
+        const llg_queue_source_t* source = &sources[source_index];
+        llg_check_same_element_type(
+            dst->element_width, dst->element_signed, dst->element_two_state,
+            source->queue->element_width, source->queue->element_signed,
+            source->queue->element_two_state);
+        size_t first;
+        size_t count;
+        llg_queue_source_range(source, &first, &count);
+        if (count > SIZE_MAX - total)
+            llg_container_fatal("queue assignment source size overflow");
+        total += count;
+    }
+    size_t retained = total < dst->limit ? total : dst->limit;
+    sv4_t* data = llg_alloc_items(retained, sizeof(*data));
+    size_t copied = 0;
+    for (size_t source_index = 0; source_index < source_count && copied < retained;
+         ++source_index) {
+        const llg_queue_source_t* source = &sources[source_index];
+        size_t first;
+        size_t count;
+        llg_queue_source_range(source, &first, &count);
+        if (count > retained - copied) count = retained - copied;
+        if (count) {
+            memcpy(data + copied, source->queue->data + first,
+                   count * sizeof(*data));
+            copied += count;
+        }
+    }
+    int shape_changed = dst->size != retained;
+    int contents_changed = shape_changed;
+    if (!contents_changed) {
+        for (size_t i = 0; i < retained; ++i) {
+            if (!sv4_same(dst->data[i], data[i])) {
+                contents_changed = 1;
+                break;
+            }
+        }
+    }
+    llg_container_notify_fn notify = dst->notify;
+    sv4_t* contents_dependency = dst->contents_dependency;
+    sv4_t* shape_dependency = dst->shape_dependency;
+    free(dst->data);
+    dst->data = data;
+    dst->size = retained;
+    dst->capacity = retained;
+    llg_queue_invalidate_refs(dst);
+    if (retained != total)
+        llg_container_warning("bounded queue assignment discarded tail elements");
     llg_notify(notify, contents_dependency, shape_dependency,
                (contents_changed ? LLG_CONTAINER_CHANGED_CONTENTS : 0) |
                    (shape_changed ? LLG_CONTAINER_CHANGED_SHAPE : 0));
@@ -995,6 +1876,7 @@ void llg_queue_push_back(llg_queue_t* queue, sv4_t value) {
     queue->data[queue->size++] = llg_element_assign(
         value, queue->element_width, queue->element_signed,
         queue->element_two_state);
+    llg_queue_invalidate_refs(queue);
     llg_notify(queue->notify, queue->contents_dependency,
                queue->shape_dependency,
                LLG_CONTAINER_CHANGED_CONTENTS | LLG_CONTAINER_CHANGED_SHAPE);
@@ -1030,6 +1912,7 @@ void llg_queue_push_front(llg_queue_t* queue, sv4_t value) {
         memmove(queue->data + 1, queue->data,
                 (queue->size - 1) * sizeof(*queue->data));
     queue->data[0] = assigned;
+    llg_queue_invalidate_refs(queue);
     llg_notify(queue->notify, queue->contents_dependency,
                queue->shape_dependency,
                (contents_changed ? LLG_CONTAINER_CHANGED_CONTENTS : 0) |
@@ -1095,6 +1978,7 @@ int llg_queue_insert(llg_queue_t* queue, sv4_t index, sv4_t value) {
         memmove(queue->data + native + 1, queue->data + native,
                 (queue->size - native - 1) * sizeof(*queue->data));
     queue->data[native] = assigned;
+    llg_queue_invalidate_refs(queue);
     llg_notify(queue->notify, queue->contents_dependency,
                queue->shape_dependency,
                (contents_changed ? LLG_CONTAINER_CHANGED_CONTENTS : 0) |
@@ -1109,6 +1993,7 @@ int llg_queue_delete_index(llg_queue_t* queue, sv4_t index) {
         memmove(queue->data + native, queue->data + native + 1,
                 (queue->size - native - 1) * sizeof(*queue->data));
     --queue->size;
+    llg_queue_invalidate_refs(queue);
     llg_notify(queue->notify, queue->contents_dependency,
                queue->shape_dependency,
                LLG_CONTAINER_CHANGED_CONTENTS | LLG_CONTAINER_CHANGED_SHAPE);
@@ -1122,6 +2007,7 @@ sv4_t llg_queue_pop_front(llg_queue_t* queue) {
             memmove(queue->data, queue->data + 1,
                     (queue->size - 1) * sizeof(*queue->data));
         --queue->size;
+        llg_queue_invalidate_refs(queue);
         llg_notify(queue->notify, queue->contents_dependency,
                    queue->shape_dependency,
                    LLG_CONTAINER_CHANGED_CONTENTS |
@@ -1134,6 +2020,7 @@ sv4_t llg_queue_pop_back(llg_queue_t* queue) {
     sv4_t result = llg_queue_back(queue);
     if (queue->size) {
         --queue->size;
+        llg_queue_invalidate_refs(queue);
         llg_notify(queue->notify, queue->contents_dependency,
                    queue->shape_dependency,
                    LLG_CONTAINER_CHANGED_CONTENTS |
@@ -1159,6 +2046,29 @@ sv4_t llg_queue_back(const llg_queue_t* queue) {
 sv4_t llg_queue_reduce(const llg_queue_t* queue, int operation) {
     return llg_reduce_values(queue->data, queue->size, queue->element_width,
                              queue->element_signed, operation);
+}
+
+sv4_t llg_queue_ref_read(const llg_queue_t* queue, uint64_t index,
+                         uint64_t epoch) {
+    if (!queue || queue->mutation_epoch != epoch || index >= queue->size)
+        return llg_element_default(queue ? queue->element_width : 1,
+                                   queue ? queue->element_signed : 0,
+                                   queue ? queue->element_two_state : 0);
+    return queue->data[index];
+}
+
+int llg_queue_ref_write(llg_queue_t* queue, uint64_t index, uint64_t epoch,
+                        sv4_t value) {
+    if (!queue || queue->mutation_epoch != epoch || index >= queue->size)
+        return 0;
+    sv4_t assigned = llg_element_assign(value, queue->element_width,
+                                        queue->element_signed,
+                                        queue->element_two_state);
+    if (sv4_same(queue->data[index], assigned)) return 1;
+    queue->data[index] = assigned;
+    llg_notify(queue->notify, queue->contents_dependency,
+               queue->shape_dependency, LLG_CONTAINER_CHANGED_CONTENTS);
+    return 1;
 }
 
 static void llg_assoc_check_kind(const llg_assoc_t* array, uint8_t kind) {
@@ -1661,6 +2571,856 @@ void llg_assoc_copy(llg_assoc_t* dst, const llg_assoc_t* src) {
     dst->capacity = src->size;
     dst->default_value = src->default_value;
     dst->has_default_value = src->has_default_value;
+    llg_notify(notify, contents_dependency, shape_dependency,
+               (contents_changed ? LLG_CONTAINER_CHANGED_CONTENTS : 0) |
+                   (shape_changed ? LLG_CONTAINER_CHANGED_SHAPE : 0));
+}
+
+/* Recursive associative storage ----------------------------------------- */
+
+static void llg_assoc_value_check_kind(const llg_assoc_value_t* array,
+                                       uint8_t kind) {
+    if (array->key_kind != kind)
+        llg_container_fatal("recursive associative-array key kind mismatch");
+}
+
+static void llg_assoc_value_invalidate_refs(llg_assoc_value_t* array) {
+    if (array->mutation_epoch == UINT64_MAX)
+        llg_container_fatal("associative-array reference epoch overflow");
+    ++array->mutation_epoch;
+}
+
+void llg_assoc_value_init_integral(llg_assoc_value_t* array,
+                                   const llg_value_desc_t* element,
+                                   uint32_t key_width, int8_t key_signed,
+                                   int key_two_state) {
+    if (!element) llg_container_fatal("missing recursive associative value descriptor");
+    if (key_width > LLG_MAX_WIDTH)
+        llg_container_fatal("invalid recursive associative key width");
+    memset(array, 0, sizeof(*array));
+    array->element = element;
+    array->key_kind = LLG_ASSOC_INTEGRAL;
+    array->key_width = key_width;
+    array->key_signed = key_width ? !!key_signed : 0;
+    array->key_two_state = key_width ? !!key_two_state : 0;
+    llg_value_default(&array->default_value, element);
+}
+
+void llg_assoc_value_init_string(llg_assoc_value_t* array,
+                                 const llg_value_desc_t* element) {
+    if (!element) llg_container_fatal("missing recursive associative value descriptor");
+    memset(array, 0, sizeof(*array));
+    array->element = element;
+    array->key_kind = LLG_ASSOC_STRING;
+    llg_value_default(&array->default_value, element);
+}
+
+void llg_assoc_value_delete(llg_assoc_value_t* array) {
+    int changed = array->size != 0;
+    for (size_t i = 0; i < array->size; ++i) {
+        free(array->entries[i].string_key);
+        llg_value_drop(&array->entries[i].value);
+    }
+    array->size = 0;
+    if (changed) llg_assoc_value_invalidate_refs(array);
+    llg_notify(array->notify, array->contents_dependency,
+               array->shape_dependency,
+               changed ? LLG_CONTAINER_CHANGED_CONTENTS |
+                            LLG_CONTAINER_CHANGED_SHAPE
+                       : 0);
+}
+
+void llg_assoc_value_destroy(llg_assoc_value_t* array) {
+    llg_container_notify_fn notify = array->notify;
+    array->notify = NULL;
+    llg_assoc_value_delete(array);
+    array->notify = notify;
+    llg_value_drop(&array->default_value);
+    free(array->entries);
+    memset(array, 0, sizeof(*array));
+}
+
+static void llg_assoc_value_reserve(llg_assoc_value_t* array, size_t needed) {
+    if (needed <= array->capacity) return;
+    size_t capacity = array->capacity ? array->capacity : 4;
+    while (capacity < needed) {
+        if (capacity > SIZE_MAX / 2) {
+            capacity = needed;
+            break;
+        }
+        capacity *= 2;
+    }
+    array->entries = llg_realloc_items(array->entries, capacity,
+                                       sizeof(*array->entries));
+    array->capacity = capacity;
+}
+
+size_t llg_assoc_value_count(const llg_assoc_value_t* array) {
+    return array->size;
+}
+
+static int llg_assoc_value_normalize_key(const llg_assoc_value_t* array,
+                                         sv4_t input, sv4_t* output) {
+    llg_assoc_value_check_kind(array, LLG_ASSOC_INTEGRAL);
+    if (sv4_is_unknown(input)) return 0;
+    if (array->key_width) {
+        *output = sv4_cast(input, array->key_width, array->key_signed);
+        if (array->key_two_state) *output = sv4_to_two_state(*output);
+    } else {
+        *output = sv4_cast(input, LLG_MAX_WIDTH, input.is_signed);
+        output->is_signed = 0;
+    }
+    return !sv4_is_unknown(*output);
+}
+
+static size_t llg_assoc_value_integral_position(
+    const llg_assoc_value_t* array, sv4_t key, int* found) {
+    size_t low = 0, high = array->size;
+    while (low < high) {
+        size_t mid = low + (high - low) / 2;
+        int cmp = llg_integral_compare(array->entries[mid].integral_key, key);
+        if (cmp < 0)
+            low = mid + 1;
+        else
+            high = mid;
+    }
+    *found = low < array->size &&
+             llg_integral_compare(array->entries[low].integral_key, key) == 0;
+    return low;
+}
+
+static int llg_assoc_value_set_source(llg_assoc_value_t* array,
+                                      sv4_t* integral_key,
+                                      const void* string_key,
+                                      size_t string_length,
+                                      const llg_value_t* source) {
+    int found;
+    size_t position;
+    if (array->key_kind == LLG_ASSOC_INTEGRAL) {
+        position = llg_assoc_value_integral_position(array, *integral_key,
+                                                      &found);
+    } else {
+        position = 0;
+        while (position < array->size) {
+            int cmp = llg_assoc_string_compare(
+                array->entries[position].string_key,
+                array->entries[position].string_length,
+                string_key, string_length);
+            if (cmp >= 0) break;
+            ++position;
+        }
+        found = position < array->size &&
+                llg_assoc_string_compare(array->entries[position].string_key,
+                                         array->entries[position].string_length,
+                                         string_key, string_length) == 0;
+    }
+    int shape_changed = !found;
+    int contents_changed = !found ||
+                           !llg_value_equal(&array->entries[position].value,
+                                            source);
+    if (!found) {
+        if (array->size == SIZE_MAX)
+            llg_container_fatal("recursive associative-array size overflow");
+        unsigned char* key_copy = NULL;
+        if (array->key_kind == LLG_ASSOC_STRING && string_length) {
+            key_copy = llg_alloc_items(string_length, 1);
+            memcpy(key_copy, string_key, string_length);
+        }
+        llg_assoc_value_reserve(array, array->size + 1);
+        if (position < array->size)
+            memmove(array->entries + position + 1, array->entries + position,
+                    (array->size - position) * sizeof(*array->entries));
+        memset(&array->entries[position], 0, sizeof(*array->entries));
+        array->entries[position].integral_key = integral_key
+            ? *integral_key : (sv4_t){0};
+        array->entries[position].string_key = key_copy;
+        array->entries[position].string_length = string_length;
+        ++array->size;
+        llg_value_copy(&array->entries[position].value, array->element, source);
+    } else if (contents_changed) {
+        llg_value_copy(&array->entries[position].value, array->element, source);
+    }
+    if (shape_changed) llg_assoc_value_invalidate_refs(array);
+    llg_notify(array->notify, array->contents_dependency,
+               array->shape_dependency,
+               (contents_changed ? LLG_CONTAINER_CHANGED_CONTENTS : 0) |
+                   (shape_changed ? LLG_CONTAINER_CHANGED_SHAPE : 0));
+    return 1;
+}
+
+static llg_value_t llg_assoc_value_packed_source(
+    const llg_assoc_value_t* array, sv4_t value) {
+    return llg_value_from_packed(array->element, value);
+}
+
+sv4_t llg_assoc_value_get_integral(const llg_assoc_value_t* array, sv4_t key) {
+    sv4_t normalized;
+    int found = 0;
+    if (llg_assoc_value_normalize_key(array, key, &normalized)) {
+        size_t position = llg_assoc_value_integral_position(array, normalized,
+                                                             &found);
+        if (found && array->entries[position].value.desc->kind == LLG_VALUE_PACKED)
+            return array->entries[position].value.value.packed;
+    }
+    return array->default_value.desc &&
+                   array->default_value.desc->kind == LLG_VALUE_PACKED
+        ? array->default_value.value.packed
+        : sv4_from_u64(0, 1, 0);
+}
+
+double llg_assoc_value_get_integral_real(const llg_assoc_value_t* array,
+                                         sv4_t key) {
+    sv4_t normalized;
+    int found = 0;
+    if (llg_assoc_value_normalize_key(array, key, &normalized)) {
+        size_t position = llg_assoc_value_integral_position(array, normalized,
+                                                             &found);
+        if (found && array->entries[position].value.desc->kind == LLG_VALUE_REAL)
+            return array->entries[position].value.value.real;
+    }
+    return array->default_value.desc &&
+                   array->default_value.desc->kind == LLG_VALUE_REAL
+        ? array->default_value.value.real
+        : 0.0;
+}
+
+llg_string_t llg_assoc_value_get_integral_string(
+    const llg_assoc_value_t* array, sv4_t key) {
+    sv4_t normalized;
+    int found = 0;
+    if (llg_assoc_value_normalize_key(array, key, &normalized)) {
+        size_t position = llg_assoc_value_integral_position(array, normalized,
+                                                             &found);
+        if (found && array->entries[position].value.desc->kind == LLG_VALUE_STRING)
+            return llg_string_clone(&array->entries[position].value.value.string);
+    }
+    return array->default_value.desc &&
+                   array->default_value.desc->kind == LLG_VALUE_STRING
+        ? llg_string_clone(&array->default_value.value.string)
+        : (llg_string_t){0};
+}
+
+void* llg_assoc_value_get_integral_chandle(
+    const llg_assoc_value_t* array, sv4_t key) {
+    sv4_t normalized;
+    int found = 0;
+    if (llg_assoc_value_normalize_key(array, key, &normalized)) {
+        size_t position = llg_assoc_value_integral_position(array, normalized,
+                                                             &found);
+        if (found && (array->entries[position].value.desc->kind == LLG_VALUE_CHANDLE ||
+                      array->entries[position].value.desc->kind == LLG_VALUE_EVENT))
+            return array->entries[position].value.value.handle;
+    }
+    return array->default_value.desc &&
+                   (array->default_value.desc->kind == LLG_VALUE_CHANDLE ||
+                    array->default_value.desc->kind == LLG_VALUE_EVENT)
+        ? array->default_value.value.handle
+        : NULL;
+}
+
+static llg_value_t* llg_assoc_value_nested_at_integral(
+    const llg_assoc_value_t* array, const sv4_t* indices, size_t count) {
+    if (!indices || count < 2 || array->key_kind != LLG_ASSOC_INTEGRAL)
+        return NULL;
+    sv4_t normalized;
+    int found = 0;
+    if (!llg_assoc_value_normalize_key(array, indices[0], &normalized))
+        return NULL;
+    size_t position = llg_assoc_value_integral_position(array, normalized,
+                                                         &found);
+    if (!found) return NULL;
+    llg_value_t* value = &array->entries[position].value;
+    for (size_t index = 1; value && index < count; ++index) {
+        if (!value->desc || value->desc->kind != LLG_VALUE_CONTAINER ||
+            !value->value.container)
+            return NULL;
+        value = llg_dyn_value_at(value->value.container, indices[index]);
+    }
+    return value;
+}
+
+sv4_t llg_assoc_value_get_nested_integral(
+    const llg_assoc_value_t* array, const sv4_t* indices, size_t count) {
+    llg_value_t* value = llg_assoc_value_nested_at_integral(array, indices, count);
+    return value && value->desc->kind == LLG_VALUE_PACKED
+        ? value->value.packed
+        : sv4_from_u64(0, 1, 0);
+}
+
+double llg_assoc_value_get_nested_integral_real(
+    const llg_assoc_value_t* array, const sv4_t* indices, size_t count) {
+    llg_value_t* value = llg_assoc_value_nested_at_integral(array, indices, count);
+    return value && value->desc->kind == LLG_VALUE_REAL ? value->value.real : 0.0;
+}
+
+llg_string_t llg_assoc_value_get_nested_integral_string(
+    const llg_assoc_value_t* array, const sv4_t* indices, size_t count) {
+    llg_value_t* value = llg_assoc_value_nested_at_integral(array, indices, count);
+    return value && value->desc->kind == LLG_VALUE_STRING
+        ? llg_string_clone(&value->value.string)
+        : (llg_string_t){0};
+}
+
+void* llg_assoc_value_get_nested_integral_chandle(
+    const llg_assoc_value_t* array, const sv4_t* indices, size_t count) {
+    llg_value_t* value = llg_assoc_value_nested_at_integral(array, indices, count);
+    return value && (value->desc->kind == LLG_VALUE_CHANDLE ||
+                     value->desc->kind == LLG_VALUE_EVENT)
+        ? value->value.handle
+        : NULL;
+}
+
+int llg_assoc_value_set_integral(llg_assoc_value_t* array, sv4_t key,
+                                 sv4_t value) {
+    sv4_t normalized;
+    if (!llg_assoc_value_normalize_key(array, key, &normalized)) return 0;
+    llg_value_t source = llg_assoc_value_packed_source(array, value);
+    int result = llg_assoc_value_set_source(array, &normalized, NULL, 0, &source);
+    llg_value_drop(&source);
+    return result;
+}
+
+int llg_assoc_value_set_integral_real(llg_assoc_value_t* array, sv4_t key,
+                                      double value) {
+    sv4_t normalized;
+    if (!llg_assoc_value_normalize_key(array, key, &normalized)) return 0;
+    llg_value_t source = llg_value_from_real(array->element, value);
+    int result = llg_assoc_value_set_source(array, &normalized, NULL, 0, &source);
+    llg_value_drop(&source);
+    return result;
+}
+
+int llg_assoc_value_set_integral_string(llg_assoc_value_t* array, sv4_t key,
+                                        llg_string_t value) {
+    sv4_t normalized;
+    if (!llg_assoc_value_normalize_key(array, key, &normalized)) {
+        llg_string_destroy(&value);
+        return 0;
+    }
+    llg_value_t source = llg_value_from_string(array->element, value);
+    int result = llg_assoc_value_set_source(array, &normalized, NULL, 0, &source);
+    llg_value_drop(&source);
+    return result;
+}
+
+int llg_assoc_value_set_integral_chandle(llg_assoc_value_t* array, sv4_t key,
+                                         void* value) {
+    sv4_t normalized;
+    if (!llg_assoc_value_normalize_key(array, key, &normalized)) return 0;
+    llg_value_t source = llg_value_from_chandle(array->element, value);
+    return llg_assoc_value_set_source(array, &normalized, NULL, 0, &source);
+}
+
+int llg_assoc_value_set_nested_integral_container(
+    llg_assoc_value_t* array, const sv4_t* indices, size_t count,
+    const llg_dyn_value_array_t* source) {
+    sv4_t normalized;
+    if (!indices || count == 0 ||
+        !llg_assoc_value_normalize_key(array, indices[0], &normalized))
+        return 0;
+    llg_value_t* target = count == 1
+        ? NULL
+        : llg_assoc_value_nested_at_integral(array, indices, count);
+    const llg_value_desc_t* target_desc = count == 1
+        ? array->element
+        : target && target->desc->kind == LLG_VALUE_CONTAINER
+            ? target->desc
+            : NULL;
+    if (!target_desc || target_desc->kind != LLG_VALUE_CONTAINER || !source ||
+        !llg_value_desc_compatible(target_desc->element, source->element))
+        return 0;
+    llg_value_t value = llg_value_from_container(target_desc, source);
+    int result;
+    if (count == 1) {
+        result = llg_assoc_value_set_source(array, &normalized, NULL, 0, &value);
+    } else {
+        result = 0;
+        if (target && target->desc->kind == LLG_VALUE_CONTAINER) {
+            result = 1;
+            if (!llg_value_equal(target, &value)) {
+                llg_value_copy(target, target->desc, &value);
+                llg_notify(array->notify, array->contents_dependency,
+                           array->shape_dependency,
+                           LLG_CONTAINER_CHANGED_CONTENTS);
+            }
+        }
+    }
+    llg_value_drop(&value);
+    return result;
+}
+
+int llg_assoc_value_set_nested_integral_container_from_packed(
+    llg_assoc_value_t* array, const sv4_t* indices, size_t count,
+    const llg_dyn_array_t* source) {
+    if (!indices || count == 0 || !source) return 0;
+    sv4_t normalized;
+    if (!llg_assoc_value_normalize_key(array, indices[0], &normalized)) return 0;
+
+    const llg_value_desc_t* target_desc = NULL;
+    if (count == 1) {
+        target_desc = array->element;
+    } else {
+        llg_value_t* target = llg_assoc_value_nested_at_integral(array, indices,
+                                                                  count);
+        if (!target || target->desc->kind != LLG_VALUE_CONTAINER)
+            return 0;
+        target_desc = target->desc;
+    }
+    if (!target_desc || target_desc->kind != LLG_VALUE_CONTAINER ||
+        !target_desc->element ||
+        (target_desc->element->kind != LLG_VALUE_PACKED &&
+         target_desc->element->kind != LLG_VALUE_REAL))
+        return 0;
+
+    llg_value_t value = llg_value_from_packed_container(target_desc, source);
+    int result;
+    if (count == 1) {
+        result = llg_assoc_value_set_source(array, &normalized, NULL, 0, &value);
+    } else {
+        result = 0;
+        llg_value_t* target = llg_assoc_value_nested_at_integral(array, indices,
+                                                                  count);
+        if (target && target->desc->kind == LLG_VALUE_CONTAINER) {
+            result = 1;
+            if (!llg_value_equal(target, &value)) {
+                llg_value_copy(target, target->desc, &value);
+                llg_notify(array->notify, array->contents_dependency,
+                           array->shape_dependency,
+                           LLG_CONTAINER_CHANGED_CONTENTS);
+            }
+        }
+    }
+    llg_value_drop(&value);
+    return result;
+}
+
+int llg_assoc_value_set_nested_integral(
+    llg_assoc_value_t* array, const sv4_t* indices, size_t count,
+    sv4_t value) {
+    llg_value_t* target = llg_assoc_value_nested_at_integral(array, indices, count);
+    if (!target || target->desc->kind != LLG_VALUE_PACKED) return 0;
+    sv4_t assigned = sv4_cast(value, target->desc->packed_width,
+                              target->desc->packed_signed);
+    if (target->desc->packed_two_state) assigned = sv4_to_two_state(assigned);
+    if (sv4_same(target->value.packed, assigned)) return 1;
+    target->value.packed = assigned;
+    llg_notify(array->notify, array->contents_dependency,
+               array->shape_dependency, LLG_CONTAINER_CHANGED_CONTENTS);
+    return 1;
+}
+
+int llg_assoc_value_set_nested_integral_real(
+    llg_assoc_value_t* array, const sv4_t* indices, size_t count,
+    double value) {
+    llg_value_t* target = llg_assoc_value_nested_at_integral(array, indices, count);
+    if (!target || target->desc->kind != LLG_VALUE_REAL) return 0;
+    if (target->value.real == value) return 1;
+    target->value.real = value;
+    llg_notify(array->notify, array->contents_dependency,
+               array->shape_dependency, LLG_CONTAINER_CHANGED_CONTENTS);
+    return 1;
+}
+
+int llg_assoc_value_set_nested_integral_string(
+    llg_assoc_value_t* array, const sv4_t* indices, size_t count,
+    llg_string_t value) {
+    llg_value_t* target = llg_assoc_value_nested_at_integral(array, indices, count);
+    if (!target || target->desc->kind != LLG_VALUE_STRING) {
+        llg_string_destroy(&value);
+        return 0;
+    }
+    int changed = target->value.string.len != value.len ||
+                  (value.len && memcmp(target->value.string.data, value.data,
+                                       value.len) != 0);
+    if (changed) {
+        llg_string_destroy(&target->value.string);
+        target->value.string = value;
+        llg_notify(array->notify, array->contents_dependency,
+                   array->shape_dependency, LLG_CONTAINER_CHANGED_CONTENTS);
+    } else {
+        llg_string_destroy(&value);
+    }
+    return 1;
+}
+
+int llg_assoc_value_set_nested_integral_chandle(
+    llg_assoc_value_t* array, const sv4_t* indices, size_t count,
+    void* value) {
+    llg_value_t* target = llg_assoc_value_nested_at_integral(array, indices, count);
+    if (!target || (target->desc->kind != LLG_VALUE_CHANDLE &&
+                    target->desc->kind != LLG_VALUE_EVENT))
+        return 0;
+    if (target->value.handle == value) return 1;
+    target->value.handle = value;
+    llg_notify(array->notify, array->contents_dependency,
+               array->shape_dependency, LLG_CONTAINER_CHANGED_CONTENTS);
+    return 1;
+}
+
+int llg_assoc_value_exists_integral(const llg_assoc_value_t* array, sv4_t key) {
+    sv4_t normalized;
+    int found = 0;
+    if (!llg_assoc_value_normalize_key(array, key, &normalized)) return 0;
+    (void)llg_assoc_value_integral_position(array, normalized, &found);
+    return found;
+}
+
+int llg_assoc_value_delete_integral(llg_assoc_value_t* array, sv4_t key) {
+    sv4_t normalized;
+    int found = 0;
+    if (!llg_assoc_value_normalize_key(array, key, &normalized)) return 0;
+    size_t position = llg_assoc_value_integral_position(array, normalized, &found);
+    if (!found) return 0;
+    llg_value_drop(&array->entries[position].value);
+    if (position + 1 < array->size)
+        memmove(array->entries + position, array->entries + position + 1,
+                (array->size - position - 1) * sizeof(*array->entries));
+    --array->size;
+    llg_assoc_value_invalidate_refs(array);
+    llg_notify(array->notify, array->contents_dependency,
+               array->shape_dependency,
+               LLG_CONTAINER_CHANGED_CONTENTS | LLG_CONTAINER_CHANGED_SHAPE);
+    return 1;
+}
+
+static void llg_assoc_value_set_default_source(llg_assoc_value_t* array,
+                                               const llg_value_t* source) {
+    int changed = !array->has_default_value ||
+                  !llg_value_equal(&array->default_value, source);
+    if (changed)
+        llg_value_copy(&array->default_value, array->element, source);
+    array->has_default_value = 1;
+    llg_notify(array->notify, array->contents_dependency,
+               array->shape_dependency,
+               changed ? LLG_CONTAINER_CHANGED_CONTENTS : 0);
+}
+
+void llg_assoc_value_set_default(llg_assoc_value_t* array, sv4_t value) {
+    llg_value_t source = llg_assoc_value_packed_source(array, value);
+    llg_assoc_value_set_default_source(array, &source);
+    llg_value_drop(&source);
+}
+
+void llg_assoc_value_set_default_real(llg_assoc_value_t* array, double value) {
+    llg_value_t source = llg_value_from_real(array->element, value);
+    llg_assoc_value_set_default_source(array, &source);
+    llg_value_drop(&source);
+}
+
+void llg_assoc_value_set_default_string(llg_assoc_value_t* array,
+                                        llg_string_t value) {
+    llg_value_t source = llg_value_from_string(array->element, value);
+    llg_assoc_value_set_default_source(array, &source);
+    llg_value_drop(&source);
+}
+
+void llg_assoc_value_set_default_chandle(llg_assoc_value_t* array, void* value) {
+    llg_value_t source = llg_value_from_chandle(array->element, value);
+    llg_assoc_value_set_default_source(array, &source);
+}
+
+void llg_assoc_value_reset_default(llg_assoc_value_t* array) {
+    llg_value_t source = {0};
+    llg_value_default(&source, array->element);
+    int changed = array->has_default_value ||
+                  !llg_value_equal(&array->default_value, &source);
+    if (changed) llg_value_copy(&array->default_value, array->element, &source);
+    array->has_default_value = 0;
+    llg_value_drop(&source);
+    llg_notify(array->notify, array->contents_dependency,
+               array->shape_dependency,
+               changed ? LLG_CONTAINER_CHANGED_CONTENTS : 0);
+}
+
+static int llg_assoc_value_integral_traversal(
+    const llg_assoc_value_t* array, sv4_t* key, int direction, int endpoint) {
+    llg_assoc_value_check_kind(array, LLG_ASSOC_INTEGRAL);
+    if (!array->key_width)
+        llg_container_fatal("wildcard associative-array traversal is illegal");
+    if (!array->size) return 0;
+    if (endpoint) {
+        *key = array->entries[direction > 0 ? 0 : array->size - 1].integral_key;
+        return 1;
+    }
+    sv4_t normalized;
+    if (!llg_assoc_value_normalize_key(array, *key, &normalized)) return 0;
+    int found;
+    size_t position = llg_assoc_value_integral_position(array, normalized, &found);
+    if (direction > 0) {
+        if (found) ++position;
+        if (position >= array->size) return 0;
+    } else {
+        if (position == 0) return 0;
+        --position;
+    }
+    *key = array->entries[position].integral_key;
+    return 1;
+}
+
+int llg_assoc_value_first_integral(const llg_assoc_value_t* a, sv4_t* key) {
+    return llg_assoc_value_integral_traversal(a, key, 1, 1);
+}
+int llg_assoc_value_last_integral(const llg_assoc_value_t* a, sv4_t* key) {
+    return llg_assoc_value_integral_traversal(a, key, -1, 1);
+}
+int llg_assoc_value_next_integral(const llg_assoc_value_t* a, sv4_t* key) {
+    return llg_assoc_value_integral_traversal(a, key, 1, 0);
+}
+int llg_assoc_value_prev_integral(const llg_assoc_value_t* a, sv4_t* key) {
+    return llg_assoc_value_integral_traversal(a, key, -1, 0);
+}
+
+static size_t llg_assoc_value_string_position(const llg_assoc_value_t* array,
+                                              const void* key,
+                                              size_t key_length, int* found) {
+    size_t low = 0, high = array->size;
+    while (low < high) {
+        size_t mid = low + (high - low) / 2;
+        int cmp = llg_assoc_string_compare(array->entries[mid].string_key,
+                                           array->entries[mid].string_length,
+                                           key, key_length);
+        if (cmp < 0)
+            low = mid + 1;
+        else
+            high = mid;
+    }
+    *found = low < array->size &&
+             llg_assoc_string_compare(array->entries[low].string_key,
+                                      array->entries[low].string_length,
+                                      key, key_length) == 0;
+    return low;
+}
+
+static void llg_assoc_value_check_string_key(const llg_assoc_value_t* array,
+                                             const void* key,
+                                             size_t key_length) {
+    llg_assoc_value_check_kind(array, LLG_ASSOC_STRING);
+    if (!key && key_length)
+        llg_container_fatal("null recursive associative-array string key");
+}
+
+llg_string_t llg_assoc_value_get_string(const llg_assoc_value_t* array,
+                                        const void* key, size_t key_length) {
+    llg_assoc_value_check_string_key(array, key, key_length);
+    int found;
+    size_t position = llg_assoc_value_string_position(array, key, key_length,
+                                                      &found);
+    if (found && array->entries[position].value.desc->kind == LLG_VALUE_STRING)
+        return llg_string_clone(&array->entries[position].value.value.string);
+    return array->default_value.desc &&
+                   array->default_value.desc->kind == LLG_VALUE_STRING
+        ? llg_string_clone(&array->default_value.value.string)
+        : (llg_string_t){0};
+}
+
+double llg_assoc_value_get_string_real(const llg_assoc_value_t* array,
+                                       const void* key, size_t key_length) {
+    llg_assoc_value_check_string_key(array, key, key_length);
+    int found;
+    size_t position = llg_assoc_value_string_position(array, key, key_length,
+                                                      &found);
+    if (found && array->entries[position].value.desc->kind == LLG_VALUE_REAL)
+        return array->entries[position].value.value.real;
+    return array->default_value.desc &&
+                   array->default_value.desc->kind == LLG_VALUE_REAL
+        ? array->default_value.value.real
+        : 0.0;
+}
+
+llg_string_t llg_assoc_value_get_string_string(const llg_assoc_value_t* array,
+                                               const void* key,
+                                               size_t key_length) {
+    return llg_assoc_value_get_string(array, key, key_length);
+}
+
+void* llg_assoc_value_get_string_chandle(const llg_assoc_value_t* array,
+                                         const void* key, size_t key_length) {
+    llg_assoc_value_check_string_key(array, key, key_length);
+    int found;
+    size_t position = llg_assoc_value_string_position(array, key, key_length,
+                                                      &found);
+    if (found && (array->entries[position].value.desc->kind == LLG_VALUE_CHANDLE ||
+                  array->entries[position].value.desc->kind == LLG_VALUE_EVENT))
+        return array->entries[position].value.value.handle;
+    return array->default_value.desc &&
+                   (array->default_value.desc->kind == LLG_VALUE_CHANDLE ||
+                    array->default_value.desc->kind == LLG_VALUE_EVENT)
+        ? array->default_value.value.handle
+        : NULL;
+}
+
+int llg_assoc_value_set_string(llg_assoc_value_t* array, const void* key,
+                               size_t key_length, sv4_t value) {
+    llg_assoc_value_check_string_key(array, key, key_length);
+    llg_value_t source = llg_assoc_value_packed_source(array, value);
+    int result = llg_assoc_value_set_source(array, NULL, key, key_length, &source);
+    llg_value_drop(&source);
+    return result;
+}
+
+int llg_assoc_value_set_string_real(llg_assoc_value_t* array, const void* key,
+                                    size_t key_length, double value) {
+    llg_assoc_value_check_string_key(array, key, key_length);
+    llg_value_t source = llg_value_from_real(array->element, value);
+    int result = llg_assoc_value_set_source(array, NULL, key, key_length, &source);
+    llg_value_drop(&source);
+    return result;
+}
+
+int llg_assoc_value_set_string_string(llg_assoc_value_t* array, const void* key,
+                                      size_t key_length, llg_string_t value) {
+    llg_assoc_value_check_string_key(array, key, key_length);
+    llg_value_t source = llg_value_from_string(array->element, value);
+    int result = llg_assoc_value_set_source(array, NULL, key, key_length, &source);
+    llg_value_drop(&source);
+    return result;
+}
+
+int llg_assoc_value_set_string_chandle(llg_assoc_value_t* array, const void* key,
+                                       size_t key_length, void* value) {
+    llg_assoc_value_check_string_key(array, key, key_length);
+    llg_value_t source = llg_value_from_chandle(array->element, value);
+    return llg_assoc_value_set_source(array, NULL, key, key_length, &source);
+}
+
+int llg_assoc_value_exists_string(const llg_assoc_value_t* array,
+                                  const void* key, size_t key_length) {
+    llg_assoc_value_check_string_key(array, key, key_length);
+    int found;
+    (void)llg_assoc_value_string_position(array, key, key_length, &found);
+    return found;
+}
+
+int llg_assoc_value_delete_string(llg_assoc_value_t* array, const void* key,
+                                  size_t key_length) {
+    llg_assoc_value_check_string_key(array, key, key_length);
+    int found;
+    size_t position = llg_assoc_value_string_position(array, key, key_length,
+                                                      &found);
+    if (!found) return 0;
+    free(array->entries[position].string_key);
+    llg_value_drop(&array->entries[position].value);
+    if (position + 1 < array->size)
+        memmove(array->entries + position, array->entries + position + 1,
+                (array->size - position - 1) * sizeof(*array->entries));
+    --array->size;
+    llg_assoc_value_invalidate_refs(array);
+    llg_notify(array->notify, array->contents_dependency,
+               array->shape_dependency,
+               LLG_CONTAINER_CHANGED_CONTENTS | LLG_CONTAINER_CHANGED_SHAPE);
+    return 1;
+}
+
+static int llg_assoc_value_string_endpoint(const llg_assoc_value_t* array,
+                                           int last,
+                                           const unsigned char** key,
+                                           size_t* key_length) {
+    llg_assoc_value_check_kind(array, LLG_ASSOC_STRING);
+    if (!array->size) return 0;
+    size_t position = last ? array->size - 1 : 0;
+    *key = array->entries[position].string_key;
+    *key_length = array->entries[position].string_length;
+    return 1;
+}
+
+int llg_assoc_value_first_string(const llg_assoc_value_t* array,
+                                 const unsigned char** key, size_t* key_length) {
+    return llg_assoc_value_string_endpoint(array, 0, key, key_length);
+}
+int llg_assoc_value_last_string(const llg_assoc_value_t* array,
+                                const unsigned char** key, size_t* key_length) {
+    return llg_assoc_value_string_endpoint(array, 1, key, key_length);
+}
+int llg_assoc_value_next_string(const llg_assoc_value_t* array,
+                                const void* current, size_t current_length,
+                                const unsigned char** key, size_t* key_length) {
+    llg_assoc_value_check_string_key(array, current, current_length);
+    int found;
+    size_t position = llg_assoc_value_string_position(array, current,
+                                                      current_length, &found);
+    if (found) ++position;
+    if (position >= array->size) return 0;
+    *key = array->entries[position].string_key;
+    *key_length = array->entries[position].string_length;
+    return 1;
+}
+int llg_assoc_value_prev_string(const llg_assoc_value_t* array,
+                                const void* current, size_t current_length,
+                                const unsigned char** key, size_t* key_length) {
+    llg_assoc_value_check_string_key(array, current, current_length);
+    int found;
+    size_t position = llg_assoc_value_string_position(array, current,
+                                                      current_length, &found);
+    if (position == 0) return 0;
+    --position;
+    *key = array->entries[position].string_key;
+    *key_length = array->entries[position].string_length;
+    return 1;
+}
+
+void llg_assoc_value_copy(llg_assoc_value_t* dst,
+                          const llg_assoc_value_t* src) {
+    if (dst == src) return;
+    if (!src || !llg_value_desc_compatible(dst->element, src->element) ||
+        dst->key_kind != src->key_kind || dst->key_width != src->key_width ||
+        dst->key_signed != src->key_signed ||
+        dst->key_two_state != src->key_two_state)
+        llg_container_fatal("incompatible recursive associative-array types");
+    int shape_changed = dst->size != src->size;
+    int contents_changed = shape_changed ||
+        dst->has_default_value != src->has_default_value ||
+        !llg_value_equal(&dst->default_value, &src->default_value);
+    if (!contents_changed) {
+        for (size_t i = 0; i < src->size; ++i) {
+            int key_changed;
+            if (src->key_kind == LLG_ASSOC_INTEGRAL) {
+                key_changed = !sv4_same(dst->entries[i].integral_key,
+                                        src->entries[i].integral_key);
+            } else {
+                key_changed = dst->entries[i].string_length !=
+                                  src->entries[i].string_length ||
+                    (src->entries[i].string_length &&
+                     memcmp(dst->entries[i].string_key, src->entries[i].string_key,
+                            src->entries[i].string_length) != 0);
+            }
+            if (key_changed || !llg_value_equal(&dst->entries[i].value,
+                                                &src->entries[i].value)) {
+                contents_changed = 1;
+                if (key_changed) shape_changed = 1;
+                break;
+            }
+        }
+    }
+    llg_assoc_value_entry_t* entries = llg_alloc_items(src->size,
+                                                        sizeof(*entries));
+    if (src->size) memset(entries, 0, src->size * sizeof(*entries));
+    for (size_t i = 0; i < src->size; ++i) {
+        entries[i].integral_key = src->entries[i].integral_key;
+        entries[i].string_length = src->entries[i].string_length;
+        if (src->entries[i].string_length) {
+            entries[i].string_key = llg_alloc_items(
+                src->entries[i].string_length, 1);
+            memcpy(entries[i].string_key, src->entries[i].string_key,
+                   src->entries[i].string_length);
+        }
+        llg_value_copy(&entries[i].value, dst->element, &src->entries[i].value);
+    }
+    llg_value_t default_value = {0};
+    llg_value_copy(&default_value, dst->element, &src->default_value);
+    llg_container_notify_fn notify = dst->notify;
+    sv4_t* contents_dependency = dst->contents_dependency;
+    sv4_t* shape_dependency = dst->shape_dependency;
+    dst->notify = NULL;
+    llg_assoc_value_delete(dst);
+    dst->notify = notify;
+    llg_value_drop(&dst->default_value);
+    free(dst->entries);
+    dst->entries = entries;
+    dst->size = src->size;
+    dst->capacity = src->size;
+    dst->default_value = default_value;
+    dst->has_default_value = src->has_default_value;
+    llg_assoc_value_invalidate_refs(dst);
     llg_notify(notify, contents_dependency, shape_dependency,
                (contents_changed ? LLG_CONTAINER_CHANGED_CONTENTS : 0) |
                    (shape_changed ? LLG_CONTAINER_CHANGED_SHAPE : 0));

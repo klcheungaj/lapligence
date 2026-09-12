@@ -2,7 +2,8 @@
 
 use super::*;
 use crate::sim::ir::{
-    IrChandleExpr, IrContainerElement, IrContainerReduction, IrObjectType, IrStringExpr,
+    IrChandleExpr, IrContainerElement, IrContainerReduction, IrObjectType, IrQueueBound,
+    IrQueueSource, IrStringExpr,
 };
 
 /// A fixed-array view represented by complete coordinates in logical
@@ -283,6 +284,10 @@ impl<'a> Codegen<'a> {
             ));
         }
         let kind = self.model.containers[container].kind.clone();
+        let element = self.model.containers[container].element.clone();
+        if matches!(&element, IrContainerElement::String | IrContainerElement::Chandle) {
+            return self.lower_associative_object_pattern(path, container, operands, element);
+        }
         let mut seen_integral = Vec::<i128>::new();
         let mut seen_string = Vec::<Vec<u8>>::new();
         let mut captures = Vec::new();
@@ -370,10 +375,17 @@ impl<'a> Codegen<'a> {
                         ));
                     }
                     seen_string.push(bytes.clone());
-                    writes.push(IrStmt::Container(IrContainerStmt::SetString {
-                        container,
-                        key: IrStringExpr::Literal(bytes),
-                        value: lowered,
+                    writes.push(IrStmt::Container(match &element {
+                        IrContainerElement::Real { .. } => IrContainerStmt::SetStringReal {
+                            container,
+                            key: IrStringExpr::Literal(bytes),
+                            value: lowered,
+                        },
+                        _ => IrContainerStmt::SetString {
+                            container,
+                            key: IrStringExpr::Literal(bytes),
+                            value: lowered,
+                        },
                     }));
                 }
                 IrContainerKind::Associative { key: assoc_key, .. } => {
@@ -397,10 +409,17 @@ impl<'a> Codegen<'a> {
                         IrAssocKey::Wildcard => (32, true, false),
                         IrAssocKey::String => unreachable!(),
                     };
-                    writes.push(IrStmt::Container(IrContainerStmt::Set {
-                        container,
-                        index: pattern_key_expr(index, width, signed, two_state),
-                        value: lowered,
+                    writes.push(IrStmt::Container(match &element {
+                        IrContainerElement::Real { .. } => IrContainerStmt::SetReal {
+                            container,
+                            index: pattern_key_expr(index, width, signed, two_state),
+                            value: lowered,
+                        },
+                        _ => IrContainerStmt::Set {
+                            container,
+                            index: pattern_key_expr(index, width, signed, two_state),
+                            value: lowered,
+                        },
                     }));
                 }
                 _ => unreachable!(),
@@ -415,6 +434,117 @@ impl<'a> Codegen<'a> {
             captures.push(IrStmt::Container(IrContainerStmt::SetDefault {
                 container,
                 value,
+            }));
+        }
+        captures.extend(writes);
+        Ok(IrStmt::Block(captures))
+    }
+
+    fn lower_associative_object_pattern(
+        &mut self,
+        path: &str,
+        container: usize,
+        operands: Vec<NodeId>,
+        element: IrContainerElement,
+    ) -> Result<IrStmt, String> {
+        let kind = self.model.containers[container].kind.clone();
+        let mut seen_integral = Vec::<i128>::new();
+        let mut seen_string = Vec::<Vec<u8>>::new();
+        let mut writes = Vec::new();
+        let mut default = None;
+        for operand in operands {
+            let NodeKind::Expr(ExprKind::TaggedPattern { key, key_type, value }) = self.kind(operand)
+            else { continue };
+            if key_type.is_some() {
+                return Err(format!(
+                    "type key for associative array assignment pattern is not supported in `{path}`"
+                ));
+            }
+            let key = key.as_deref().ok_or_else(|| {
+                format!("associative assignment pattern key is unavailable in `{path}`")
+            })?;
+            let value = value.ok_or_else(|| {
+                format!("associative assignment pattern key `{key}` has no value in `{path}`")
+            })?;
+            if key == "default" {
+                if default.is_some() {
+                    return Err(format!(
+                        "duplicate default key for associative array assignment pattern in `{path}`"
+                    ));
+                }
+                default = Some(value);
+                continue;
+            }
+            let operation = match &kind {
+                IrContainerKind::Associative { key: IrAssocKey::String } => {
+                    let bytes = parse_pattern_string_key(key).ok_or_else(|| {
+                        format!("string associative assignment pattern key `{key}` is not a literal in `{path}`")
+                    })?;
+                    if seen_string.iter().any(|previous| previous == &bytes) {
+                        return Err(format!("duplicate associative assignment pattern key `{key}` in `{path}`"));
+                    }
+                    seen_string.push(bytes.clone());
+                    match &element {
+                        IrContainerElement::String => IrContainerStmt::SetStringString {
+                            container,
+                            key: IrStringExpr::Literal(bytes),
+                            value: self.lower_string(path, value)?,
+                        },
+                        IrContainerElement::Chandle => IrContainerStmt::SetStringChandle {
+                            container,
+                            key: IrStringExpr::Literal(bytes),
+                            value: self.lower_chandle(path, value)?,
+                        },
+                        _ => unreachable!(),
+                    }
+                }
+                IrContainerKind::Associative { key: assoc_key, .. } => {
+                    let index = parse_pattern_i128(key).ok_or_else(|| {
+                        format!("integral associative assignment pattern key `{key}` is not a constant in `{path}`")
+                    })?;
+                    if seen_integral.contains(&index) {
+                        return Err(format!("duplicate associative assignment pattern key `{key}` in `{path}`"));
+                    }
+                    seen_integral.push(index);
+                    let (width, signed, two_state) = match assoc_key {
+                        IrAssocKey::Integral { width, signed, two_state } => (*width, *signed, *two_state),
+                        IrAssocKey::Wildcard => (32, true, false),
+                        IrAssocKey::String => unreachable!(),
+                    };
+                    let index = pattern_key_expr(index, width, signed, two_state);
+                    match &element {
+                        IrContainerElement::String => IrContainerStmt::SetStringValue {
+                            container,
+                            index,
+                            value: self.lower_string(path, value)?,
+                        },
+                        IrContainerElement::Chandle => IrContainerStmt::SetChandleValue {
+                            container,
+                            index,
+                            value: self.lower_chandle(path, value)?,
+                        },
+                        _ => unreachable!(),
+                    }
+                }
+                _ => unreachable!(),
+            };
+            writes.push(IrStmt::Container(operation));
+        }
+        let mut captures = vec![
+            IrStmt::Container(IrContainerStmt::Delete(container)),
+            IrStmt::Container(IrContainerStmt::ResetDefault(container)),
+        ];
+        if let Some(value) = default {
+            captures.push(IrStmt::Container(match &element {
+                IrContainerElement::String => IrContainerStmt::SetDefaultString {
+                    container,
+                    value: self.lower_string(path, value)?,
+                },
+                IrContainerElement::Chandle => IrContainerStmt::SetDefaultChandle {
+                    container,
+                    value: self.lower_chandle(path, value)?,
+                },
+                _ => unreachable!(),
             }));
         }
         captures.extend(writes);
@@ -551,6 +681,22 @@ impl<'a> Codegen<'a> {
         element: &IrContainerElement,
         node: NodeId,
     ) -> Result<IrExpr, String> {
+        if element.is_real() {
+            let value = self.lower_expr(path, node)?;
+            return if value.is_real() {
+                Ok(value)
+            } else {
+                Ok(IrExpr::new(
+                    IrExprKind::CastToReal {
+                        a: Box::new(value),
+                        shortreal: matches!(element, IrContainerElement::Real { shortreal: true }),
+                    },
+                    0,
+                    true,
+                    None,
+                ))
+            };
+        }
         let Some((width, signed, two_state)) = element.packed() else {
             return Err(format!(
                 "container element type is not packed in {path}"
@@ -564,6 +710,112 @@ impl<'a> Codegen<'a> {
     fn lower_queue_method_index(&mut self, path: &str, node: NodeId) -> Result<IrExpr, String> {
         let value = self.lower_expr(path, node)?;
         ir_to_storage(value, 32, true, true)
+    }
+
+    fn is_unbounded_node(&self, node: NodeId) -> bool {
+        match self.kind(node) {
+            NodeKind::Expr(ExprKind::Unbounded) => true,
+            NodeKind::Expr(ExprKind::Ref { target: Some(target) }) => {
+                self.is_unbounded_node(*target)
+            }
+            _ => false,
+        }
+    }
+
+    fn lower_queue_method_index_with_end(
+        &mut self,
+        path: &str,
+        container: usize,
+        node: NodeId,
+        allow_end: bool,
+    ) -> Result<IrExpr, String> {
+        if self.is_unbounded_node(node) {
+            let size = IrExpr::new(
+                IrExprKind::Container(Box::new(IrContainerExpr::Size(container))),
+                32,
+                true,
+                None,
+            );
+            if allow_end {
+                return Ok(size);
+            }
+            let one = pattern_key_expr(1, 32, true, false);
+            return Ok(IrExpr::new(
+                IrExprKind::Bin {
+                    op: IrBinOp::Sub,
+                    a: Box::new(size),
+                    b: Box::new(one),
+                },
+                32,
+                true,
+                None,
+            ));
+        }
+        self.lower_queue_method_index(path, node)
+    }
+
+    pub(super) fn lower_queue_index(
+        &mut self,
+        path: &str,
+        container: usize,
+        node: NodeId,
+    ) -> Result<IrExpr, String> {
+        self.lower_queue_method_index_with_end(path, container, node, false)
+    }
+
+    fn lower_queue_bound(&mut self, path: &str, node: NodeId) -> Result<IrQueueBound, String> {
+        if self.is_unbounded_node(node) {
+            return Ok(IrQueueBound::Unbounded);
+        }
+        Ok(IrQueueBound::Value(self.lower_container_index(path, node)?))
+    }
+
+    fn lower_queue_sources(
+        &mut self,
+        path: &str,
+        node: NodeId,
+    ) -> Result<Option<Vec<IrQueueSource>>, String> {
+        let node = self.p30_unwrap_cast(node);
+        match self.kind(node) {
+            NodeKind::Expr(ExprKind::Operation {
+                op: Operation::Concat,
+                operands,
+                reordered,
+                ..
+            }) => {
+                let mut sources = Vec::new();
+                for operand in operands {
+                    let Some(mut nested) = self.lower_queue_sources(path, *operand)? else {
+                        return Ok(None);
+                    };
+                    sources.append(&mut nested);
+                }
+                if *reordered {
+                    sources.reverse();
+                }
+                Ok(Some(sources))
+            }
+            NodeKind::Expr(ExprKind::PartSelect { base, left, right }) => {
+                let Some(source) = self.container_of(*base) else {
+                    return Ok(None);
+                };
+                if !matches!(self.model.containers[source.ir].kind, IrContainerKind::Queue { .. })
+                {
+                    return Ok(None);
+                }
+                Ok(Some(vec![IrQueueSource::Slice {
+                    container: source.ir,
+                    left: self.lower_queue_bound(path, *left)?,
+                    right: self.lower_queue_bound(path, *right)?,
+                }]))
+            }
+            _ => Ok(self
+                .container_of(node)
+                .filter(|source| {
+                    matches!(self.model.containers[source.ir].kind, IrContainerKind::Queue { .. })
+                })
+                .map(|source| vec![IrQueueSource::Whole(source.ir)])),
+        }
     }
 
     fn lower_container_index(&mut self, path: &str, node: NodeId) -> Result<IrExpr, String> {
@@ -699,12 +951,57 @@ impl<'a> Codegen<'a> {
             prefix.extend(indices);
             return Some((container, prefix));
         }
+        if let Some((container, key)) = self.associative_integral_element(base) {
+            let mut prefix = vec![key];
+            prefix.extend(indices);
+            return Some((container, prefix));
+        }
+        let container = self.container_of(base)?;
+        match self.model.containers[container.ir].kind {
+            IrContainerKind::Dynamic | IrContainerKind::Queue { .. } => {
+                Some((container.ir, indices))
+            }
+            IrContainerKind::Associative {
+                key: IrAssocKey::Integral { .. } | IrAssocKey::Wildcard,
+            } => Some((container.ir, indices)),
+            IrContainerKind::Associative {
+                key: IrAssocKey::String,
+            } => None,
+        }
+    }
+
+    fn associative_integral_element(&self, node: NodeId) -> Option<(usize, NodeId)> {
+        let (base, key) = match self.kind(node) {
+            NodeKind::Expr(ExprKind::BitSelect { base, index }) => (*base, *index),
+            NodeKind::Expr(ExprKind::ArraySelect { base, indices })
+                if indices.len() == 1 => (*base, indices[0]),
+            _ => return None,
+        };
         let container = self.container_of(base)?;
         matches!(
             self.model.containers[container.ir].kind,
-            IrContainerKind::Dynamic
+            IrContainerKind::Associative {
+                key: IrAssocKey::Integral { .. } | IrAssocKey::Wildcard
+            }
         )
-        .then_some((container.ir, indices))
+        .then_some((container.ir, key))
+    }
+
+    fn associative_string_element(&self, node: NodeId) -> Option<(usize, NodeId)> {
+        let (base, key) = match self.kind(node) {
+            NodeKind::Expr(ExprKind::BitSelect { base, index }) => (*base, *index),
+            NodeKind::Expr(ExprKind::ArraySelect { base, indices })
+                if indices.len() == 1 => (*base, indices[0]),
+            _ => return None,
+        };
+        let container = self.container_of(base)?;
+        matches!(
+            self.model.containers[container.ir].kind,
+            IrContainerKind::Associative {
+                key: IrAssocKey::String
+            }
+        )
+        .then_some((container.ir, key))
     }
 
     fn container_element_type(
@@ -722,7 +1019,34 @@ impl<'a> Codegen<'a> {
         Some(element)
     }
 
+    fn lower_container_path_indices(
+        &mut self,
+        path: &str,
+        container: usize,
+        indices: Vec<NodeId>,
+    ) -> Result<Vec<IrExpr>, String> {
+        indices
+            .into_iter()
+            .enumerate()
+            .map(|(depth, index)| {
+                if depth == 0
+                    && matches!(
+                        self.model.containers[container].kind,
+                        IrContainerKind::Queue { .. }
+                    )
+                {
+                    self.lower_queue_index(path, container, index)
+                } else {
+                    self.lower_container_index(path, index)
+                }
+            })
+            .collect()
+    }
+
     pub(super) fn is_container_string_expr(&self, node: NodeId) -> bool {
+        if let Some((container, _)) = self.associative_string_element(node) {
+            return self.model.containers[container].element.is_string();
+        }
         self.container_element_path(node)
             .and_then(|(container, indices)| {
                 self.container_element_type(container, indices.len())
@@ -735,6 +1059,14 @@ impl<'a> Codegen<'a> {
         path: &str,
         node: NodeId,
     ) -> Result<Option<IrStringExpr>, String> {
+        if let Some((container, key)) = self.associative_string_element(node) {
+            if self.model.containers[container].element.is_string() {
+                return Ok(Some(IrStringExpr::AssociativeGet {
+                    container,
+                    key: Box::new(self.lower_string(path, key)?),
+                }));
+            }
+        }
         let Some((container, indices)) = self.container_element_path(node) else {
             return Ok(None);
         };
@@ -744,10 +1076,7 @@ impl<'a> Codegen<'a> {
         {
             return Ok(None);
         }
-        let indices = indices
-            .into_iter()
-            .map(|index| self.lower_container_index(path, index))
-            .collect::<Result<Vec<_>, _>>()?;
+        let indices = self.lower_container_path_indices(path, container, indices)?;
         Ok(Some(if indices.len() == 1 {
             IrStringExpr::ContainerGet {
                 container,
@@ -759,6 +1088,9 @@ impl<'a> Codegen<'a> {
     }
 
     pub(super) fn is_container_chandle_expr(&self, node: NodeId) -> bool {
+        if let Some((container, _)) = self.associative_string_element(node) {
+            return self.model.containers[container].element.is_chandle();
+        }
         self.container_element_path(node)
             .and_then(|(container, indices)| {
                 self.container_element_type(container, indices.len())
@@ -771,6 +1103,14 @@ impl<'a> Codegen<'a> {
         path: &str,
         node: NodeId,
     ) -> Result<Option<IrChandleExpr>, String> {
+        if let Some((container, key)) = self.associative_string_element(node) {
+            if self.model.containers[container].element.is_chandle() {
+                return Ok(Some(IrChandleExpr::AssociativeGet {
+                    container,
+                    key: Box::new(self.lower_string(path, key)?),
+                }));
+            }
+        }
         let Some((container, indices)) = self.container_element_path(node) else {
             return Ok(None);
         };
@@ -780,10 +1120,7 @@ impl<'a> Codegen<'a> {
         {
             return Ok(None);
         }
-        let indices = indices
-            .into_iter()
-            .map(|index| self.lower_container_index(path, index))
-            .collect::<Result<Vec<_>, _>>()?;
+        let indices = self.lower_container_path_indices(path, container, indices)?;
         Ok(Some(if indices.len() == 1 {
             IrChandleExpr::ContainerGet {
                 container,
@@ -810,10 +1147,7 @@ impl<'a> Codegen<'a> {
             if element.is_string() || element.is_chandle() {
                 return Ok(None);
             }
-            let indices = indices
-                .into_iter()
-                .map(|index| self.lower_container_index(path, index))
-                .collect::<Result<Vec<_>, _>>()?;
+            let indices = self.lower_container_path_indices(path, container, indices)?;
             let operation = if indices.len() == 1 {
                 if element.is_real() {
                     IrContainerExpr::GetReal {
@@ -863,6 +1197,12 @@ impl<'a> Codegen<'a> {
                 match self.model.containers[container.ir].kind {
                     IrContainerKind::Associative {
                         key: IrAssocKey::String,
+                    } if element.is_real() => IrContainerExpr::GetStringReal {
+                        container: container.ir,
+                        key: self.lower_string(path, *index)?,
+                    },
+                    IrContainerKind::Associative {
+                        key: IrAssocKey::String,
                     } => IrContainerExpr::GetString {
                         container: container.ir,
                         key: self.lower_string(path, *index)?,
@@ -873,7 +1213,14 @@ impl<'a> Codegen<'a> {
                     },
                     _ if element.is_packed() => IrContainerExpr::Get {
                         container: container.ir,
-                        index: Box::new(self.lower_container_index(path, *index)?),
+                        index: Box::new(if matches!(
+                            self.model.containers[container.ir].kind,
+                            IrContainerKind::Queue { .. }
+                        ) {
+                            self.lower_queue_index(path, container.ir, *index)?
+                        } else {
+                            self.lower_container_index(path, *index)?
+                        }),
                     },
                     _ => {
                         return Err(format!(
@@ -898,6 +1245,12 @@ impl<'a> Codegen<'a> {
                 match self.model.containers[container.ir].kind {
                     IrContainerKind::Associative {
                         key: IrAssocKey::String,
+                    } if element.is_real() => IrContainerExpr::GetStringReal {
+                        container: container.ir,
+                        key: self.lower_string(path, indices[0])?,
+                    },
+                    IrContainerKind::Associative {
+                        key: IrAssocKey::String,
                     } => IrContainerExpr::GetString {
                         container: container.ir,
                         key: self.lower_string(path, indices[0])?,
@@ -908,7 +1261,14 @@ impl<'a> Codegen<'a> {
                     },
                     _ if element.is_packed() => IrContainerExpr::Get {
                         container: container.ir,
-                        index: Box::new(self.lower_container_index(path, indices[0])?),
+                        index: Box::new(if matches!(
+                            self.model.containers[container.ir].kind,
+                            IrContainerKind::Queue { .. }
+                        ) {
+                            self.lower_queue_index(path, container.ir, indices[0])?
+                        } else {
+                            self.lower_container_index(path, indices[0])?
+                        }),
                     },
                     _ => {
                         return Err(format!(
@@ -1030,10 +1390,12 @@ impl<'a> Codegen<'a> {
                 (container.element.width(), container.element.signed())
             }
             IrContainerExpr::GetReal { .. } => (0, false),
+            IrContainerExpr::GetStringReal { .. } => (0, false),
             _ => {
                 let index = match &operation {
                     IrContainerExpr::Get { container, .. }
-                    | IrContainerExpr::GetString { container, .. } => *container,
+                    | IrContainerExpr::GetString { container, .. }
+                    | IrContainerExpr::GetStringReal { container, .. } => *container,
                     IrContainerExpr::QueueFront(index)
                     | IrContainerExpr::QueueBack(index)
                     | IrContainerExpr::QueuePopFront(index)
@@ -2069,13 +2431,45 @@ impl<'a> Codegen<'a> {
             let operation = match self.model.containers[container.ir].kind {
                 IrContainerKind::Associative {
                     key: IrAssocKey::String,
-                } => IrContainerStmt::SetString {
-                    container: container.ir,
-                    key: self.lower_string(path, index)?,
-                    value: self.lower_container_value(path, container.ir, rhs)?,
+                } => {
+                    let key = self.lower_string(path, index)?;
+                    match self.model.containers[container.ir].element.clone() {
+                        IrContainerElement::Packed { .. } => IrContainerStmt::SetString {
+                            container: container.ir,
+                            key,
+                            value: self.lower_container_value(path, container.ir, rhs)?,
+                        },
+                        IrContainerElement::Real { .. } => IrContainerStmt::SetStringReal {
+                            container: container.ir,
+                            key,
+                            value: self.lower_expr(path, rhs)?,
+                        },
+                        IrContainerElement::String => IrContainerStmt::SetStringString {
+                            container: container.ir,
+                            key,
+                            value: self.lower_string(path, rhs)?,
+                        },
+                        IrContainerElement::Chandle => IrContainerStmt::SetStringChandle {
+                            container: container.ir,
+                            key,
+                            value: self.lower_chandle(path, rhs)?,
+                        },
+                        _ => {
+                            return Err(format!(
+                                "string-keyed associative element write in `{path}` requires a scalar value"
+                            ))
+                        }
+                    }
                 },
                 _ => {
-                    let index = self.lower_container_index(path, index)?;
+                    let index = if matches!(
+                        self.model.containers[container.ir].kind,
+                        IrContainerKind::Queue { .. }
+                    ) {
+                        self.lower_queue_index(path, container.ir, index)?
+                    } else {
+                        self.lower_container_index(path, index)?
+                    };
                     match self.model.containers[container.ir].element.clone() {
                         IrContainerElement::Packed { .. } => IrContainerStmt::Set {
                             container: container.ir,
@@ -2185,6 +2579,14 @@ impl<'a> Codegen<'a> {
                 initializer,
             })));
         }
+        if matches!(self.model.containers[dst.ir].kind, IrContainerKind::Queue { .. }) {
+            if let Some(sources) = self.lower_queue_sources(path, rhs)? {
+                return Ok(Some(IrStmt::Container(IrContainerStmt::QueueAssign {
+                    container: dst.ir,
+                    sources,
+                })));
+            }
+        }
         let src = self.container_of(rhs).ok_or_else(|| {
             format!(
                 "resizable container assignment in `{path}` requires a compatible array (got {:?})",
@@ -2223,7 +2625,12 @@ impl<'a> Codegen<'a> {
             ("delete", [index]) => match self.model.containers[container.ir].kind {
                 IrContainerKind::Queue { .. } => IrContainerStmt::DeleteIndex {
                     container: container.ir,
-                    index: self.lower_queue_method_index(path, *index)?,
+                    index: self.lower_queue_method_index_with_end(
+                        path,
+                        container.ir,
+                        *index,
+                        false,
+                    )?,
                 },
                 IrContainerKind::Associative {
                     key: IrAssocKey::String,
@@ -2236,19 +2643,111 @@ impl<'a> Codegen<'a> {
                     index: self.lower_container_index(path, *index)?,
                 },
             },
-            ("push_front", [value]) => IrContainerStmt::QueuePushFront {
-                container: container.ir,
-                value: self.lower_container_value(path, container.ir, *value)?,
+            ("push_front", [value]) => match self.model.containers[container.ir].element.clone() {
+                IrContainerElement::String => IrContainerStmt::QueuePushFrontString {
+                    container: container.ir,
+                    value: self.lower_string(path, *value)?,
+                },
+                IrContainerElement::Chandle => IrContainerStmt::QueuePushFrontChandle {
+                    container: container.ir,
+                    value: self.lower_chandle(path, *value)?,
+                },
+                IrContainerElement::Container { .. } => {
+                    let source = self.container_of(*value).ok_or_else(|| {
+                        format!(
+                            "recursive queue push_front in {path} requires a dynamic array source"
+                        )
+                    })?;
+                    if !matches!(self.model.containers[source.ir].kind, IrContainerKind::Dynamic) {
+                        return Err(format!(
+                            "recursive queue push_front in {path} requires a dynamic array source"
+                        ));
+                    }
+                    IrContainerStmt::QueuePushFrontContainer {
+                        container: container.ir,
+                        source: source.ir,
+                    }
+                }
+                _ => IrContainerStmt::QueuePushFront {
+                    container: container.ir,
+                    value: self.lower_container_value(path, container.ir, *value)?,
+                },
             },
-            ("push_back", [value]) => IrContainerStmt::QueuePushBack {
-                container: container.ir,
-                value: self.lower_container_value(path, container.ir, *value)?,
+            ("push_back", [value]) => match self.model.containers[container.ir].element.clone() {
+                IrContainerElement::String => IrContainerStmt::QueuePushBackString {
+                    container: container.ir,
+                    value: self.lower_string(path, *value)?,
+                },
+                IrContainerElement::Chandle => IrContainerStmt::QueuePushBackChandle {
+                    container: container.ir,
+                    value: self.lower_chandle(path, *value)?,
+                },
+                IrContainerElement::Container { .. } => {
+                    let source = self.container_of(*value).ok_or_else(|| {
+                        format!(
+                            "recursive queue push_back in {path} requires a dynamic array source"
+                        )
+                    })?;
+                    if !matches!(self.model.containers[source.ir].kind, IrContainerKind::Dynamic) {
+                        return Err(format!(
+                            "recursive queue push_back in {path} requires a dynamic array source"
+                        ));
+                    }
+                    IrContainerStmt::QueuePushBackContainer {
+                        container: container.ir,
+                        source: source.ir,
+                    }
+                }
+                _ => IrContainerStmt::QueuePushBack {
+                    container: container.ir,
+                    value: self.lower_container_value(path, container.ir, *value)?,
+                },
             },
-            ("insert", [index, value]) => IrContainerStmt::QueueInsert {
-                container: container.ir,
-                index: self.lower_queue_method_index(path, *index)?,
-                value: self.lower_container_value(path, container.ir, *value)?,
-            },
+            ("insert", [index, value]) => {
+                let index = self.lower_queue_method_index_with_end(
+                    path,
+                    container.ir,
+                    *index,
+                    true,
+                )?;
+                match self.model.containers[container.ir].element.clone() {
+                    IrContainerElement::String => IrContainerStmt::QueueInsertString {
+                        container: container.ir,
+                        index,
+                        value: self.lower_string(path, *value)?,
+                    },
+                    IrContainerElement::Chandle => IrContainerStmt::QueueInsertChandle {
+                        container: container.ir,
+                        index,
+                        value: self.lower_chandle(path, *value)?,
+                    },
+                    IrContainerElement::Container { .. } => {
+                        let source = self.container_of(*value).ok_or_else(|| {
+                            format!(
+                                "recursive queue insert in {path} requires a dynamic array source"
+                            )
+                        })?;
+                        if !matches!(
+                            self.model.containers[source.ir].kind,
+                            IrContainerKind::Dynamic
+                        ) {
+                            return Err(format!(
+                                "recursive queue insert in {path} requires a dynamic array source"
+                            ));
+                        }
+                        IrContainerStmt::QueueInsertContainer {
+                            container: container.ir,
+                            index,
+                            source: source.ir,
+                        }
+                    }
+                    _ => IrContainerStmt::QueueInsert {
+                        container: container.ir,
+                        index,
+                        value: self.lower_container_value(path, container.ir, *value)?,
+                    },
+                }
+            }
             _ => return Ok(None),
         };
         Ok(Some(IrStmt::Container(operation)))

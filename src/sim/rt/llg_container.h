@@ -38,7 +38,10 @@ enum {
 typedef struct llg_value_desc_t llg_value_desc_t;
 typedef struct llg_value_member_desc_t llg_value_member_desc_t;
 typedef struct llg_dyn_value_array_t llg_dyn_value_array_t;
+typedef struct llg_queue_value_array_t llg_queue_value_array_t;
+typedef struct llg_assoc_value_t llg_assoc_value_t;
 typedef struct llg_value_t llg_value_t;
+struct llg_queue_source_t;
 
 struct llg_value_member_desc_t {
     const llg_value_desc_t* value;
@@ -146,6 +149,114 @@ int llg_dyn_value_set_nested_container_from_packed(
     llg_dyn_value_array_t* array, const sv4_t* indices, size_t count,
     const llg_dyn_array_t* source);
 
+/* Queue storage for recursive/non-packed elements.  Packed queues use the
+ * inline llg_queue_t representation below. */
+struct llg_queue_value_array_t {
+    llg_value_t* data;
+    size_t size;
+    size_t capacity;
+    size_t limit;
+    const llg_value_desc_t* element;
+    sv4_t* contents_dependency;
+    sv4_t* shape_dependency;
+    llg_container_notify_fn notify;
+    uint64_t mutation_epoch;
+};
+
+void llg_queue_value_init(llg_queue_value_array_t* queue,
+                          const llg_value_desc_t* element,
+                          uint64_t maximum_elements);
+void llg_queue_value_destroy(llg_queue_value_array_t* queue);
+void llg_queue_value_delete(llg_queue_value_array_t* queue);
+void llg_queue_value_copy(llg_queue_value_array_t* dst,
+                          const llg_queue_value_array_t* src);
+void llg_queue_value_assign_reals(llg_queue_value_array_t* dst,
+                                  const double* values, size_t count);
+void llg_queue_value_assign_strings(llg_queue_value_array_t* dst,
+                                    llg_string_t* values, size_t count);
+void llg_queue_value_assign_chandles(llg_queue_value_array_t* dst,
+                                     void* const* values, size_t count);
+void llg_queue_value_assign_sources(llg_queue_value_array_t* dst,
+                                    const struct llg_queue_source_t* sources,
+                                    size_t source_count);
+size_t llg_queue_value_size(const llg_queue_value_array_t* queue);
+sv4_t llg_queue_value_get(const llg_queue_value_array_t* queue, sv4_t index);
+double llg_queue_value_get_real(const llg_queue_value_array_t* queue,
+                                sv4_t index);
+llg_string_t llg_queue_value_get_string(const llg_queue_value_array_t* queue,
+                                        sv4_t index);
+void* llg_queue_value_get_chandle(const llg_queue_value_array_t* queue,
+                                  sv4_t index);
+sv4_t llg_queue_value_get_nested(const llg_queue_value_array_t* queue,
+                                 const sv4_t* indices, size_t count);
+double llg_queue_value_get_nested_real(const llg_queue_value_array_t* queue,
+                                       const sv4_t* indices, size_t count);
+llg_string_t llg_queue_value_get_nested_string(
+    const llg_queue_value_array_t* queue, const sv4_t* indices, size_t count);
+void* llg_queue_value_get_nested_chandle(
+    const llg_queue_value_array_t* queue, const sv4_t* indices, size_t count);
+int llg_queue_value_set(llg_queue_value_array_t* queue, sv4_t index,
+                        sv4_t value);
+int llg_queue_value_set_real(llg_queue_value_array_t* queue, sv4_t index,
+                             double value);
+int llg_queue_value_set_string(llg_queue_value_array_t* queue, sv4_t index,
+                               llg_string_t value);
+int llg_queue_value_set_chandle(llg_queue_value_array_t* queue, sv4_t index,
+                                void* value);
+int llg_queue_value_set_nested(llg_queue_value_array_t* queue,
+                               const sv4_t* indices, size_t count, sv4_t value);
+int llg_queue_value_set_nested_real(llg_queue_value_array_t* queue,
+                                    const sv4_t* indices, size_t count,
+                                    double value);
+int llg_queue_value_set_nested_string(
+    llg_queue_value_array_t* queue, const sv4_t* indices, size_t count,
+    llg_string_t value);
+int llg_queue_value_set_nested_chandle(
+    llg_queue_value_array_t* queue, const sv4_t* indices, size_t count,
+    void* value);
+int llg_queue_value_set_nested_container(
+    llg_queue_value_array_t* queue, const sv4_t* indices, size_t count,
+    const llg_dyn_value_array_t* source);
+int llg_queue_value_set_nested_container_from_packed(
+    llg_queue_value_array_t* queue, const sv4_t* indices, size_t count,
+    const llg_dyn_array_t* source);
+void llg_queue_value_push_front(llg_queue_value_array_t* queue, sv4_t value);
+void llg_queue_value_push_back(llg_queue_value_array_t* queue, sv4_t value);
+void llg_queue_value_push_front_real(llg_queue_value_array_t* queue,
+                                     double value);
+void llg_queue_value_push_back_real(llg_queue_value_array_t* queue,
+                                    double value);
+void llg_queue_value_push_front_string(llg_queue_value_array_t* queue,
+                                       llg_string_t value);
+void llg_queue_value_push_back_string(llg_queue_value_array_t* queue,
+                                      llg_string_t value);
+void llg_queue_value_push_front_chandle(llg_queue_value_array_t* queue,
+                                        void* value);
+void llg_queue_value_push_back_chandle(llg_queue_value_array_t* queue,
+                                       void* value);
+void llg_queue_value_push_front_container(
+    llg_queue_value_array_t* queue, const llg_dyn_value_array_t* source);
+void llg_queue_value_push_back_container(
+    llg_queue_value_array_t* queue, const llg_dyn_value_array_t* source);
+void llg_queue_value_push_front_container_from_packed(
+    llg_queue_value_array_t* queue, const llg_dyn_array_t* source);
+void llg_queue_value_push_back_container_from_packed(
+    llg_queue_value_array_t* queue, const llg_dyn_array_t* source);
+int llg_queue_value_insert(llg_queue_value_array_t* queue, sv4_t index,
+                           sv4_t value);
+int llg_queue_value_insert_real(llg_queue_value_array_t* queue, sv4_t index,
+                                double value);
+int llg_queue_value_insert_string(llg_queue_value_array_t* queue, sv4_t index,
+                                  llg_string_t value);
+int llg_queue_value_insert_chandle(llg_queue_value_array_t* queue,
+                                   sv4_t index, void* value);
+int llg_queue_value_insert_container(llg_queue_value_array_t* queue,
+                                     sv4_t index,
+                                     const llg_dyn_value_array_t* source);
+int llg_queue_value_insert_container_from_packed(
+    llg_queue_value_array_t* queue, sv4_t index, const llg_dyn_array_t* source);
+int llg_queue_value_delete_index(llg_queue_value_array_t* queue, sv4_t index);
+
 void llg_dyn_init(llg_dyn_array_t* array, uint32_t element_width,
                   int8_t element_signed, int element_two_state);
 void llg_dyn_destroy(llg_dyn_array_t* array);
@@ -161,7 +272,7 @@ sv4_t llg_dyn_get(const llg_dyn_array_t* array, sv4_t index);
 int llg_dyn_set(llg_dyn_array_t* array, sv4_t index, sv4_t value);
 sv4_t llg_dyn_reduce(const llg_dyn_array_t* array, int operation);
 
-typedef struct {
+struct llg_queue_t {
     sv4_t* data;
     size_t size;
     size_t capacity;
@@ -173,7 +284,18 @@ typedef struct {
     sv4_t* contents_dependency;
     sv4_t* shape_dependency;
     llg_container_notify_fn notify;
-} llg_queue_t;
+    uint64_t mutation_epoch;
+};
+
+typedef struct llg_queue_source_t {
+    const llg_queue_t* queue;
+    sv4_t left;
+    sv4_t right;
+    uint8_t left_unbounded;
+    uint8_t right_unbounded;
+    const llg_queue_value_array_t* value_queue;
+    uint8_t value_kind;
+} llg_queue_source_t;
 
 void llg_queue_init(llg_queue_t* queue, uint32_t element_width,
                     int8_t element_signed, int element_two_state,
@@ -183,6 +305,9 @@ void llg_queue_delete(llg_queue_t* queue);
 void llg_queue_copy(llg_queue_t* dst, const llg_queue_t* src);
 void llg_queue_assign_values(llg_queue_t* dst, const sv4_t* values,
                              size_t count);
+void llg_queue_assign_sources(llg_queue_t* dst,
+                              const llg_queue_source_t* sources,
+                              size_t source_count);
 size_t llg_queue_size(const llg_queue_t* queue);
 sv4_t llg_queue_get(const llg_queue_t* queue, sv4_t index);
 int llg_queue_set(llg_queue_t* queue, sv4_t index, sv4_t value);
@@ -195,6 +320,129 @@ sv4_t llg_queue_pop_back(llg_queue_t* queue);
 sv4_t llg_queue_front(const llg_queue_t* queue);
 sv4_t llg_queue_back(const llg_queue_t* queue);
 sv4_t llg_queue_reduce(const llg_queue_t* queue, int operation);
+
+/* Associative storage for recursive/non-packed elements. */
+typedef struct {
+    sv4_t integral_key;
+    unsigned char* string_key;
+    size_t string_length;
+    llg_value_t value;
+} llg_assoc_value_entry_t;
+
+struct llg_assoc_value_t {
+    llg_assoc_value_entry_t* entries;
+    size_t size;
+    size_t capacity;
+    const llg_value_desc_t* element;
+    uint8_t key_kind;
+    uint32_t key_width;
+    int8_t key_signed;
+    uint8_t key_two_state;
+    llg_value_t default_value;
+    uint8_t has_default_value;
+    sv4_t* contents_dependency;
+    sv4_t* shape_dependency;
+    llg_container_notify_fn notify;
+    uint64_t mutation_epoch;
+};
+
+void llg_assoc_value_init_integral(llg_assoc_value_t* array,
+                                   const llg_value_desc_t* element,
+                                   uint32_t key_width, int8_t key_signed,
+                                   int key_two_state);
+void llg_assoc_value_init_string(llg_assoc_value_t* array,
+                                 const llg_value_desc_t* element);
+void llg_assoc_value_destroy(llg_assoc_value_t* array);
+void llg_assoc_value_delete(llg_assoc_value_t* array);
+void llg_assoc_value_copy(llg_assoc_value_t* dst,
+                          const llg_assoc_value_t* src);
+size_t llg_assoc_value_count(const llg_assoc_value_t* array);
+sv4_t llg_assoc_value_get_integral(const llg_assoc_value_t* array, sv4_t key);
+double llg_assoc_value_get_integral_real(const llg_assoc_value_t* array,
+                                         sv4_t key);
+llg_string_t llg_assoc_value_get_integral_string(
+    const llg_assoc_value_t* array, sv4_t key);
+void* llg_assoc_value_get_integral_chandle(
+    const llg_assoc_value_t* array, sv4_t key);
+sv4_t llg_assoc_value_get_nested_integral(
+    const llg_assoc_value_t* array, const sv4_t* indices, size_t count);
+double llg_assoc_value_get_nested_integral_real(
+    const llg_assoc_value_t* array, const sv4_t* indices, size_t count);
+llg_string_t llg_assoc_value_get_nested_integral_string(
+    const llg_assoc_value_t* array, const sv4_t* indices, size_t count);
+void* llg_assoc_value_get_nested_integral_chandle(
+    const llg_assoc_value_t* array, const sv4_t* indices, size_t count);
+int llg_assoc_value_set_integral(llg_assoc_value_t* array, sv4_t key,
+                                 sv4_t value);
+int llg_assoc_value_set_integral_real(llg_assoc_value_t* array, sv4_t key,
+                                      double value);
+int llg_assoc_value_set_integral_string(llg_assoc_value_t* array, sv4_t key,
+                                        llg_string_t value);
+int llg_assoc_value_set_integral_chandle(llg_assoc_value_t* array, sv4_t key,
+                                         void* value);
+int llg_assoc_value_set_nested_integral_container(
+    llg_assoc_value_t* array, const sv4_t* indices, size_t count,
+    const llg_dyn_value_array_t* source);
+int llg_assoc_value_set_nested_integral_container_from_packed(
+    llg_assoc_value_t* array, const sv4_t* indices, size_t count,
+    const llg_dyn_array_t* source);
+int llg_assoc_value_set_nested_integral(
+    llg_assoc_value_t* array, const sv4_t* indices, size_t count,
+    sv4_t value);
+int llg_assoc_value_set_nested_integral_real(
+    llg_assoc_value_t* array, const sv4_t* indices, size_t count,
+    double value);
+int llg_assoc_value_set_nested_integral_string(
+    llg_assoc_value_t* array, const sv4_t* indices, size_t count,
+    llg_string_t value);
+int llg_assoc_value_set_nested_integral_chandle(
+    llg_assoc_value_t* array, const sv4_t* indices, size_t count,
+    void* value);
+int llg_assoc_value_exists_integral(const llg_assoc_value_t* array, sv4_t key);
+int llg_assoc_value_delete_integral(llg_assoc_value_t* array, sv4_t key);
+void llg_assoc_value_set_default(llg_assoc_value_t* array, sv4_t value);
+void llg_assoc_value_set_default_real(llg_assoc_value_t* array, double value);
+void llg_assoc_value_set_default_string(llg_assoc_value_t* array,
+                                        llg_string_t value);
+void llg_assoc_value_set_default_chandle(llg_assoc_value_t* array, void* value);
+void llg_assoc_value_reset_default(llg_assoc_value_t* array);
+int llg_assoc_value_first_integral(const llg_assoc_value_t* array, sv4_t* key);
+int llg_assoc_value_last_integral(const llg_assoc_value_t* array, sv4_t* key);
+int llg_assoc_value_next_integral(const llg_assoc_value_t* array, sv4_t* key);
+int llg_assoc_value_prev_integral(const llg_assoc_value_t* array, sv4_t* key);
+llg_string_t llg_assoc_value_get_string(const llg_assoc_value_t* array,
+                                        const void* key, size_t key_length);
+double llg_assoc_value_get_string_real(const llg_assoc_value_t* array,
+                                       const void* key, size_t key_length);
+llg_string_t llg_assoc_value_get_string_string(const llg_assoc_value_t* array,
+                                               const void* key,
+                                               size_t key_length);
+void* llg_assoc_value_get_string_chandle(const llg_assoc_value_t* array,
+                                         const void* key, size_t key_length);
+int llg_assoc_value_set_string(llg_assoc_value_t* array, const void* key,
+                               size_t key_length, sv4_t value);
+int llg_assoc_value_set_string_real(llg_assoc_value_t* array, const void* key,
+                                    size_t key_length, double value);
+int llg_assoc_value_set_string_string(llg_assoc_value_t* array,
+                                      const void* key, size_t key_length,
+                                      llg_string_t value);
+int llg_assoc_value_set_string_chandle(llg_assoc_value_t* array,
+                                       const void* key, size_t key_length,
+                                       void* value);
+int llg_assoc_value_exists_string(const llg_assoc_value_t* array,
+                                  const void* key, size_t key_length);
+int llg_assoc_value_delete_string(llg_assoc_value_t* array, const void* key,
+                                  size_t key_length);
+int llg_assoc_value_first_string(const llg_assoc_value_t* array,
+                                 const unsigned char** key, size_t* key_length);
+int llg_assoc_value_last_string(const llg_assoc_value_t* array,
+                                const unsigned char** key, size_t* key_length);
+int llg_assoc_value_next_string(const llg_assoc_value_t* array,
+                                const void* current, size_t current_length,
+                                const unsigned char** key, size_t* key_length);
+int llg_assoc_value_prev_string(const llg_assoc_value_t* array,
+                                const void* current, size_t current_length,
+                                const unsigned char** key, size_t* key_length);
 
 enum {
     LLG_ASSOC_INTEGRAL = 0,

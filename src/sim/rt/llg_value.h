@@ -47,6 +47,8 @@ typedef struct {
     int8_t is_signed;          // signedness for resize/compare
 } sv4_t;
 
+typedef struct llg_queue_t llg_queue_t;
+
 // Canonical lvalue descriptor used by subroutine `ref` arguments.  The
 // descriptor always names the original packed storage (`base`); selected
 // aliases retain their source bounds so reads and writes remain immediate and
@@ -57,10 +59,12 @@ typedef enum {
     LLG_REF_PART = 2,
     LLG_REF_INDEXED = 3,
     LLG_REF_ARRAY = 4,
+    LLG_REF_QUEUE = 5,
 } llg_ref_kind_t;
 
 typedef struct {
     sv4_t* base;
+    llg_queue_t* queue;
     uint32_t width;
     int8_t is_signed;
     uint8_t two_state;
@@ -71,9 +75,14 @@ typedef struct {
     uint32_t indexed_width;
     uint8_t indexed_negative;
     uint64_t array_size;
+    uint64_t queue_epoch;
 } llg_ref_t;
 
 sv4_t llg_ref_read(const llg_ref_t* ref);
+sv4_t llg_queue_ref_read(const llg_queue_t* queue, uint64_t index,
+                         uint64_t epoch);
+int llg_queue_ref_write(llg_queue_t* queue, uint64_t index, uint64_t epoch,
+                        sv4_t value);
 
 // Net resolution modes.  The pure resolver has no scheduler
 // dependency; llg_rt.c is responsible for publishing changes to waiters.

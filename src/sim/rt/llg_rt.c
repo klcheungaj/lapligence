@@ -3508,9 +3508,15 @@ void llg_ba(sv4_t* target, sv4_t value) {
 }
 
 void llg_ref_write(llg_ref_t* ref, sv4_t value) {
-    if (!ref || !ref->base) return;
+    if (!ref) return;
     sv4_t converted = sv4_cast(value, ref->width, ref->is_signed);
     if (ref->two_state) converted = sv4_to_two_state(converted);
+    if ((llg_ref_kind_t)ref->kind == LLG_REF_QUEUE) {
+        (void)llg_queue_ref_write(ref->queue, ref->index, ref->queue_epoch,
+                                  converted);
+        return;
+    }
+    if (!ref->base) return;
     if ((llg_ref_kind_t)ref->kind == LLG_REF_WHOLE) {
         llg_ba(ref->base, converted);
         return;

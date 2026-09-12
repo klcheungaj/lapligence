@@ -26,7 +26,9 @@ Inventory:
   output copy-out across calls/NBAs.
 - `dynamic_array.sv`, `associative_array.sv`, `associative_array_p33.sv`, and
   `queue.sv`: allocation, copy/resize/delete, keyed traversal, associative
-  defaults/wildcard canonicalization, and queue mutation. The companion
+  defaults/wildcard canonicalization, and queue mutation. `queue_p32.sv`
+  covers queue slices, concatenation, bounded retention, and `$` indices; the
+  companion
   `associative_array_wildcard_traversal.sv` is a single-fault negative case for
   the §7.8.1 traversal prohibition.
 - `container_assignment_contexts.sv`: packed queue/dynamic element contexts,

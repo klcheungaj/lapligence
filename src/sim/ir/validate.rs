@@ -310,11 +310,16 @@ impl Validator<'_> {
                 &format!("containers[{idx}].element"),
             )?;
             if !container.element.is_packed()
-                && !matches!(container.kind, IrContainerKind::Dynamic)
+                && !matches!(
+                    container.kind,
+                    IrContainerKind::Dynamic
+                        | IrContainerKind::Queue { .. }
+                        | IrContainerKind::Associative { .. }
+                )
             {
                 return self.fail(
                     format!("containers[{idx}].element"),
-                    "non-packed elements are supported only by dynamic arrays",
+                    "non-packed elements require a descriptor-backed container",
                 );
             }
             if let IrContainerKind::Associative {
@@ -641,7 +646,12 @@ impl Validator<'_> {
         match &expr.kind {
             IrExprKind::Container(operation) => {
                 operation.validate(self.model, self.string_return.get())?;
-                if (expr.width == 0 && !matches!(operation.as_ref(), IrContainerExpr::GetReal { .. }))
+                if (expr.width == 0
+                    && !matches!(
+                        operation.as_ref(),
+                        IrContainerExpr::GetReal { .. }
+                            | IrContainerExpr::GetStringReal { .. }
+                    ))
                     || expr.fill.is_some()
                 {
                     return self.fail(path, "container expression must produce a packed value");
@@ -656,6 +666,7 @@ impl Validator<'_> {
                     IrContainerExpr::Get { container, .. }
                     | IrContainerExpr::GetReal { container, .. }
                     | IrContainerExpr::GetString { container, .. }
+                    | IrContainerExpr::GetStringReal { container, .. }
                     | IrContainerExpr::Reduce { container, .. }
                     | IrContainerExpr::QueueFront(container)
                     | IrContainerExpr::QueueBack(container)
