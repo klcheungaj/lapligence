@@ -149,7 +149,11 @@ fn pre_fn_frame_slots(pre_fn: &IrPreFn) -> Result<u64, String> {
         IrPreFn::DisplayEval { args, .. } => {
             let mut slots = 0;
             for arg in args {
-                slots = checked_add(slots, display_arg_slots(arg)?, "display evaluator frame slots")?;
+                slots = checked_add(
+                    slots,
+                    display_arg_slots(arg)?,
+                    "display evaluator frame slots",
+                )?;
             }
             Ok(slots)
         }
@@ -171,7 +175,11 @@ fn display_arg_slots(arg: &crate::sim::ir::IrDisplayArg) -> Result<u64, String> 
     arg.expressions(&mut |expression| expressions.push(expression.clone()));
     let mut slots = 0;
     for expression in expressions {
-        slots = checked_add(slots, expr_slots(&expression)?, "display argument frame slots")?;
+        slots = checked_add(
+            slots,
+            expr_slots(&expression)?,
+            "display argument frame slots",
+        )?;
     }
     Ok(slots)
 }
@@ -266,9 +274,9 @@ fn stmt_temp_slots(stmt: &IrStmt) -> Result<u64, String> {
             });
             slots
         }
-        IrStmt::Block(body)
-        | IrStmt::Forever { body }
-        | IrStmt::ActivationScope { body, .. } => stmt_temp_frame_slots(body),
+        IrStmt::Block(body) | IrStmt::Forever { body } | IrStmt::ActivationScope { body, .. } => {
+            stmt_temp_frame_slots(body)
+        }
         IrStmt::DeclLocal { init, .. } => init
             .as_deref()
             .map(expr_slots)
@@ -278,9 +286,9 @@ fn stmt_temp_slots(stmt: &IrStmt) -> Result<u64, String> {
             let mut slots = Ok(1);
             if let Some(init) = init {
                 init.expressions(&mut |expr| {
-                    slots = slots
-                        .clone()
-                        .and_then(|n| checked_add(n, expr_slots(expr)?, "string initializer slots"));
+                    slots = slots.clone().and_then(|n| {
+                        checked_add(n, expr_slots(expr)?, "string initializer slots")
+                    });
                 });
             }
             slots
@@ -394,7 +402,11 @@ fn stmt_temp_slots(stmt: &IrStmt) -> Result<u64, String> {
         IrStmt::DisplayTyped { args, .. } => {
             let mut slots = 0;
             for arg in args {
-                slots = checked_add(slots, display_arg_slots(arg)?, "typed display argument slots")?;
+                slots = checked_add(
+                    slots,
+                    display_arg_slots(arg)?,
+                    "typed display argument slots",
+                )?;
             }
             Ok(slots)
         }
@@ -405,7 +417,8 @@ fn stmt_temp_slots(stmt: &IrStmt) -> Result<u64, String> {
             .transpose()
             .map(Option::unwrap_or_default),
         IrStmt::NonblockingEventTriggerWhen {
-            repeat: Some(repeat), ..
+            repeat: Some(repeat),
+            ..
         } => expr_slots(repeat),
         IrStmt::NonblockingEventTriggerWhen { repeat: None, .. } => Ok(0),
         IrStmt::NonblockingEventAssignWhen {
@@ -415,11 +428,7 @@ fn stmt_temp_slots(stmt: &IrStmt) -> Result<u64, String> {
             captures,
             ..
         } => {
-            let repeat_slots = repeat
-                .as_ref()
-                .map(expr_slots)
-                .transpose()?
-                .unwrap_or(0);
+            let repeat_slots = repeat.as_ref().map(expr_slots).transpose()?.unwrap_or(0);
             let mut slots = checked_sum(
                 [lhs_slots(lhs)?, expr_slots(rhs)?, repeat_slots],
                 "event assignment temporary slots",
@@ -505,9 +514,7 @@ fn call_arg_slots(args: &[IrCallArg]) -> Result<u64, String> {
             | IrCallArg::RefAddr { .. } => 0,
             IrCallArg::StringOutAddr(_) | IrCallArg::StringRefAddr { .. } => 0,
             IrCallArg::StringOutTemp {
-                init,
-                storage_read,
-                ..
+                init, storage_read, ..
             } => {
                 let mut slots: u64 = 1;
                 if let Some(init) = init {
@@ -544,9 +551,11 @@ fn call_arg_slots(args: &[IrCallArg]) -> Result<u64, String> {
                         .map(expr_slots)
                         .transpose()?
                         .unwrap_or(0),
-                    selector_inits.iter().try_fold(0, |slots, (_, _, _, _, init)| {
-                        checked_add(slots, expr_slots(init)?, "selector initializer slots")
-                    })?,
+                    selector_inits
+                        .iter()
+                        .try_fold(0, |slots, (_, _, _, _, init)| {
+                            checked_add(slots, expr_slots(init)?, "selector initializer slots")
+                        })?,
                 ],
                 "output argument temporary slots",
             )?,

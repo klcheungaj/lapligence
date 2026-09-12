@@ -66,7 +66,9 @@ impl IrContainerElement {
     }
 
     pub fn two_state(&self) -> bool {
-        self.packed().map(|(_, _, two_state)| two_state).unwrap_or(false)
+        self.packed()
+            .map(|(_, _, two_state)| two_state)
+            .unwrap_or(false)
     }
 
     pub fn is_packed(&self) -> bool {
@@ -95,10 +97,9 @@ impl IrContainerElement {
             | (Self::String, Self::String)
             | (Self::Chandle, Self::Chandle)
             | (Self::Event, Self::Event) => true,
-            (
-                Self::Aggregate { type_id: dst, .. },
-                Self::Aggregate { type_id: src, .. },
-            ) => dst == src,
+            (Self::Aggregate { type_id: dst, .. }, Self::Aggregate { type_id: src, .. }) => {
+                dst == src
+            }
             (
                 Self::FixedArray {
                     dimensions: dst_dims,
@@ -176,6 +177,7 @@ pub enum IrQueueBound {
 /// until emission so overlapping slices are materialized by the runtime before
 /// replacing the destination.
 #[derive(Clone, Debug, PartialEq)]
+#[allow(clippy::large_enum_variant)]
 pub enum IrQueueSource {
     Whole(usize),
     Slice {
@@ -484,9 +486,12 @@ impl IrContainerExpr {
                         "real container read requires an integral index and real element type",
                     ));
                 }
-                if matches!(container.kind, IrContainerKind::Associative {
-                    key: IrAssocKey::String
-                }) {
+                if matches!(
+                    container.kind,
+                    IrContainerKind::Associative {
+                        key: IrAssocKey::String
+                    }
+                ) {
                     return Err(IrValidationError::new(
                         "container",
                         "real string-keyed associative read requires a string key expression",
@@ -494,10 +499,7 @@ impl IrContainerExpr {
                 }
                 return Ok(());
             }
-            Self::GetNested {
-                container,
-                indices,
-            } => {
+            Self::GetNested { container, indices } => {
                 let container = container_kind(model, *container, None)?;
                 if matches!(
                     container.kind,
@@ -521,10 +523,7 @@ impl IrContainerExpr {
                 }
                 return Ok(());
             }
-            Self::GetNestedReal {
-                container,
-                indices,
-            } => {
+            Self::GetNestedReal { container, indices } => {
                 let container = container_kind(model, *container, None)?;
                 if matches!(
                     container.kind,
@@ -700,9 +699,7 @@ impl IrContainerExpr {
             }
             Self::GetString { key, .. }
             | Self::GetStringReal { key, .. }
-            | Self::ExistsString { key, .. } => {
-                key.expressions_mut(visit)
-            }
+            | Self::ExistsString { key, .. } => key.expressions_mut(visit),
             _ => {}
         }
     }
@@ -831,7 +828,10 @@ impl IrContainerStmt {
                         "real value assignment requires a real container element type",
                     ));
                 }
-                if values.iter().any(|value| value.is_real() == false && value.width() == 0) {
+                if values
+                    .iter()
+                    .any(|value| !value.is_real() && value.width() == 0)
+                {
                     return Err(IrValidationError::new(
                         "container",
                         "real value assignment has an invalid expression",
@@ -874,7 +874,9 @@ impl IrContainerStmt {
                 Ok(())
             }
             Self::Delete(index) => container_kind(model, *index, None).map(|_| ()),
-            Self::Set { container, index, .. } => {
+            Self::Set {
+                container, index, ..
+            } => {
                 let container = container_kind(model, *container, None)?;
                 if index.is_real() || !container.element.is_packed() {
                     return Err(IrValidationError::new(
@@ -895,7 +897,9 @@ impl IrContainerStmt {
                 }
                 Ok(())
             }
-            Self::SetReal { container, index, .. } => {
+            Self::SetReal {
+                container, index, ..
+            } => {
                 let container = container_kind(model, *container, None)?;
                 if index.is_real() || !container.element.is_real() {
                     return Err(IrValidationError::new(
@@ -903,9 +907,12 @@ impl IrContainerStmt {
                         "real container write requires an integral index and real element type",
                     ));
                 }
-                if matches!(container.kind, IrContainerKind::Associative {
-                    key: IrAssocKey::String
-                }) {
+                if matches!(
+                    container.kind,
+                    IrContainerKind::Associative {
+                        key: IrAssocKey::String
+                    }
+                ) {
                     return Err(IrValidationError::new(
                         "container",
                         "real string-keyed associative write requires a string key expression",
@@ -913,7 +920,11 @@ impl IrContainerStmt {
                 }
                 Ok(())
             }
-            Self::SetStringValue { container, index, value } => {
+            Self::SetStringValue {
+                container,
+                index,
+                value,
+            } => {
                 let container = container_kind(model, *container, None)?;
                 if index.is_real() || !container.element.is_string() {
                     return Err(IrValidationError::new(
@@ -921,9 +932,12 @@ impl IrContainerStmt {
                         "string container write requires an integral index and string element type",
                     ));
                 }
-                if matches!(container.kind, IrContainerKind::Associative {
-                    key: IrAssocKey::String
-                }) {
+                if matches!(
+                    container.kind,
+                    IrContainerKind::Associative {
+                        key: IrAssocKey::String
+                    }
+                ) {
                     return Err(IrValidationError::new(
                         "container",
                         "string string-keyed associative write requires a string key expression",
@@ -931,7 +945,9 @@ impl IrContainerStmt {
                 }
                 value.validate(model, string_return)
             }
-            Self::SetChandleValue { container, index, .. } => {
+            Self::SetChandleValue {
+                container, index, ..
+            } => {
                 let container = container_kind(model, *container, None)?;
                 if index.is_real() || !container.element.is_chandle() {
                     return Err(IrValidationError::new(
@@ -939,9 +955,12 @@ impl IrContainerStmt {
                         "chandle container write requires an integral index and chandle element type",
                     ));
                 }
-                if matches!(container.kind, IrContainerKind::Associative {
-                    key: IrAssocKey::String
-                }) {
+                if matches!(
+                    container.kind,
+                    IrContainerKind::Associative {
+                        key: IrAssocKey::String
+                    }
+                ) {
                     return Err(IrValidationError::new(
                         "container",
                         "chandle string-keyed associative write requires a string key expression",
@@ -950,9 +969,7 @@ impl IrContainerStmt {
                 Ok(())
             }
             Self::SetNested {
-                container,
-                indices,
-                ..
+                container, indices, ..
             } => {
                 let container = container_kind(model, *container, None)?;
                 if matches!(
@@ -978,9 +995,7 @@ impl IrContainerStmt {
                 Ok(())
             }
             Self::SetNestedReal {
-                container,
-                indices,
-                ..
+                container, indices, ..
             } => {
                 let container = container_kind(model, *container, None)?;
                 if matches!(
@@ -1034,9 +1049,7 @@ impl IrContainerStmt {
                 value.validate(model, string_return)
             }
             Self::SetNestedChandle {
-                container,
-                indices,
-                ..
+                container, indices, ..
             } => {
                 let container = container_kind(model, *container, None)?;
                 if matches!(
@@ -1085,10 +1098,7 @@ impl IrContainerStmt {
                     Some(IrContainerElement::Container { element, .. })
                         if element.compatible_with(&source.element)
                 );
-                if indices.is_empty()
-                    || indices.iter().any(IrExpr::is_real)
-                    || !compatible
-                {
+                if indices.is_empty() || indices.iter().any(IrExpr::is_real) || !compatible {
                     return Err(IrValidationError::new(
                         "container",
                         "nested container write has an incompatible source",
@@ -1169,11 +1179,7 @@ impl IrContainerStmt {
                 key.validate(model, string_return)?;
                 value.validate(model, string_return)
             }
-            Self::SetStringChandle {
-                container,
-                key,
-                ..
-            } => {
+            Self::SetStringChandle { container, key, .. } => {
                 let container = string_container(model, *container)?;
                 if !container.element.is_chandle() {
                     return Err(IrValidationError::new(
@@ -1272,7 +1278,9 @@ impl IrContainerStmt {
                 }
                 value.validate(model, string_return)
             }
-            Self::QueueInsertChandle { container, index, .. } => {
+            Self::QueueInsertChandle {
+                container, index, ..
+            } => {
                 let container = container_kind(model, *container, Some("queue"))?;
                 if !container.element.is_chandle() || index.is_real() {
                     return Err(IrValidationError::new(
@@ -1320,8 +1328,7 @@ impl IrContainerStmt {
                 value.expressions(visit);
             }
             Self::SetChandleValue { index, .. } => visit(index),
-            Self::SetNested { indices, value, .. }
-            | Self::SetNestedReal { indices, value, .. } => {
+            Self::SetNested { indices, value, .. } | Self::SetNestedReal { indices, value, .. } => {
                 indices.iter().for_each(&mut *visit);
                 visit(value);
             }
@@ -1334,8 +1341,7 @@ impl IrContainerStmt {
             Self::SetDefault { value, .. } => visit(value),
             Self::SetDefaultString { value, .. } => value.expressions(visit),
             Self::SetDefaultChandle { .. } => {}
-            Self::SetString { key, value, .. }
-            | Self::SetStringReal { key, value, .. } => {
+            Self::SetString { key, value, .. } | Self::SetStringReal { key, value, .. } => {
                 key.expressions(visit);
                 visit(value);
             }
@@ -1345,8 +1351,9 @@ impl IrContainerStmt {
             }
             Self::SetStringChandle { key, .. } => key.expressions(visit),
             Self::QueuePushFront { value, .. } | Self::QueuePushBack { value, .. } => visit(value),
-            Self::QueuePushFrontString { value, .. }
-            | Self::QueuePushBackString { value, .. } => value.expressions(visit),
+            Self::QueuePushFrontString { value, .. } | Self::QueuePushBackString { value, .. } => {
+                value.expressions(visit)
+            }
             Self::QueuePushFrontChandle { .. } | Self::QueuePushBackChandle { .. } => {}
             Self::QueuePushFrontContainer { .. } | Self::QueuePushBackContainer { .. } => {}
             Self::QueueInsertString { index, value, .. } => {
@@ -1395,8 +1402,7 @@ impl IrContainerStmt {
                 value.expressions_mut(visit);
             }
             Self::SetChandleValue { index, .. } => visit(index),
-            Self::SetNested { indices, value, .. }
-            | Self::SetNestedReal { indices, value, .. } => {
+            Self::SetNested { indices, value, .. } | Self::SetNestedReal { indices, value, .. } => {
                 indices.iter_mut().for_each(&mut *visit);
                 visit(value);
             }
@@ -1409,8 +1415,7 @@ impl IrContainerStmt {
             Self::SetDefault { value, .. } => visit(value),
             Self::SetDefaultString { value, .. } => value.expressions_mut(visit),
             Self::SetDefaultChandle { .. } => {}
-            Self::SetString { key, value, .. }
-            | Self::SetStringReal { key, value, .. } => {
+            Self::SetString { key, value, .. } | Self::SetStringReal { key, value, .. } => {
                 key.expressions_mut(visit);
                 visit(value);
             }
@@ -1420,8 +1425,9 @@ impl IrContainerStmt {
             }
             Self::SetStringChandle { key, .. } => key.expressions_mut(visit),
             Self::QueuePushFront { value, .. } | Self::QueuePushBack { value, .. } => visit(value),
-            Self::QueuePushFrontString { value, .. }
-            | Self::QueuePushBackString { value, .. } => value.expressions_mut(visit),
+            Self::QueuePushFrontString { value, .. } | Self::QueuePushBackString { value, .. } => {
+                value.expressions_mut(visit)
+            }
             Self::QueuePushFrontChandle { .. } | Self::QueuePushBackChandle { .. } => {}
             Self::QueuePushFrontContainer { .. } | Self::QueuePushBackContainer { .. } => {}
             Self::QueueInsertString { index, value, .. } => {
@@ -1446,12 +1452,12 @@ impl IrContainerStmt {
                     }
                 }
             }
-            Self::AssignStringValues { values, .. } => {
-                values.iter_mut().for_each(|value| value.expressions_mut(visit))
-            }
-            Self::AssignChandleValues { values, .. } => {
-                values.iter_mut().for_each(|value| value.expressions_mut(visit))
-            }
+            Self::AssignStringValues { values, .. } => values
+                .iter_mut()
+                .for_each(|value| value.expressions_mut(visit)),
+            Self::AssignChandleValues { values, .. } => values
+                .iter_mut()
+                .for_each(|value| value.expressions_mut(visit)),
             Self::Copy { .. } | Self::Delete(_) | Self::ResetDefault(_) => {}
         }
     }
@@ -1476,10 +1482,7 @@ fn string_container(
     Ok(container)
 }
 
-fn nested_element<'a>(
-    container: &'a IrContainer,
-    depth: usize,
-) -> Option<&'a IrContainerElement> {
+fn nested_element(container: &IrContainer, depth: usize) -> Option<&IrContainerElement> {
     let mut element = &container.element;
     for _ in 1..depth {
         let IrContainerElement::Container { element: next, .. } = element else {

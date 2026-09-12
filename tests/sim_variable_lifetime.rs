@@ -3,7 +3,10 @@
 #[path = "support/sim.rs"]
 mod sim_harness;
 
-use llg::core::{compile::{self, LanguageEdition}, db::Db};
+use llg::core::{
+    compile::{self, LanguageEdition},
+    db::Db,
+};
 use llg::sim::{self, opt::OptConfig};
 
 fn run_variants(source: &str) -> Result<Vec<(String, String)>, String> {
@@ -158,7 +161,10 @@ endmodule
 "#;
     let variants = run_variants(source).expect("mixed subroutine lifetime model should execute");
     for (name, output) in variants {
-        assert_eq!(output, "first=201 second=301\n", "{name} mixed lifetime output");
+        assert_eq!(
+            output, "first=201 second=301\n",
+            "{name} mixed lifetime output"
+        );
     }
 }
 
@@ -192,8 +198,7 @@ endmodule
     let variants = run_variants(source).expect("mixed delay-task lifetime model should execute");
     for (name, output) in variants {
         assert_eq!(
-            output,
-            "shared=1 fresh=1\nshared=2 fresh=1\n",
+            output, "shared=1 fresh=1\nshared=2 fresh=1\n",
             "{name} delay-task lifetime output"
         );
     }
@@ -227,8 +232,7 @@ endmodule
     let variants = run_variants(source).expect("per-instance block lifetime model should execute");
     for (name, output) in variants {
         assert_eq!(
-            output,
-            "child=0 count=1\nchild=1 count=1\n",
+            output, "child=0 count=1\nchild=1 count=1\n",
             "{name} per-instance static output"
         );
     }
@@ -256,8 +260,7 @@ endmodule
     let variants = run_variants(source).expect("initializer ordering model should execute");
     for (name, output) in variants {
         assert_eq!(
-            output,
-            "seed=3 first=4 second=5\n",
+            output, "seed=3 first=4 second=5\n",
             "{name} initializer ordering output"
         );
     }

@@ -53,6 +53,7 @@ struct llg_value_desc_t {
     uint32_t packed_width;
     int8_t packed_signed;
     uint8_t packed_two_state;
+    uint8_t real_short;
     size_t item_count;
     const llg_value_desc_t* element;
     const llg_value_member_desc_t* members;
@@ -274,6 +275,7 @@ sv4_t llg_dyn_reduce(const llg_dyn_array_t* array, int operation);
 
 struct llg_queue_t {
     sv4_t* data;
+    uint64_t* element_ids;
     size_t size;
     size_t capacity;
     // Maximum element count; SIZE_MAX denotes an unbounded queue.
@@ -284,7 +286,7 @@ struct llg_queue_t {
     sv4_t* contents_dependency;
     sv4_t* shape_dependency;
     llg_container_notify_fn notify;
-    uint64_t mutation_epoch;
+    uint64_t next_element_id;
 };
 
 typedef struct llg_queue_source_t {
@@ -320,6 +322,9 @@ sv4_t llg_queue_pop_back(llg_queue_t* queue);
 sv4_t llg_queue_front(const llg_queue_t* queue);
 sv4_t llg_queue_back(const llg_queue_t* queue);
 sv4_t llg_queue_reduce(const llg_queue_t* queue, int operation);
+uint64_t llg_queue_ref_identity(const llg_queue_t* queue, uint64_t index);
+sv4_t llg_queue_ref_read(const llg_queue_t* queue, uint64_t identity);
+int llg_queue_ref_write(llg_queue_t* queue, uint64_t identity, sv4_t value);
 
 /* Associative storage for recursive/non-packed elements. */
 typedef struct {

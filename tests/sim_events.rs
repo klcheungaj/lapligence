@@ -440,7 +440,6 @@ endmodule
         err.contains("unsupported storage kind"),
         "expected an explicit dynamic event-array lowering reject, got: {err}"
     );
-
 }
 
 #[test]
@@ -544,8 +543,8 @@ fn sim_events_task_argument_captures_identity_before_delay() {
     end
 endmodule
 "#;
-    let (stdout, _warnings, _model) = run_sim(sv, "tb", "event-arg-delay")
-        .expect("delayed event argument simulation should run");
+    let (stdout, _warnings, _model) =
+        run_sim(sv, "tb", "event-arg-delay").expect("delayed event argument simulation should run");
     assert_eq!(stdout, "captured object at 2\n");
 }
 
@@ -574,8 +573,8 @@ fn sim_events_function_argument_alias_trigger() {
     end
 endmodule
 "#;
-    let (stdout, _warnings, _model) =
-        run_sim(sv, "tb", "event-function-arg").expect("event function argument simulation should run");
+    let (stdout, _warnings, _model) = run_sim(sv, "tb", "event-function-arg")
+        .expect("event function argument simulation should run");
     assert_eq!(stdout, "function alias wake at 2\n");
 }
 
@@ -637,8 +636,8 @@ fn sim_events_reassignment_keeps_existing_waiter_object() {
     end
 endmodule
 "#;
-    let (stdout, _warnings, _model) = run_sim(sv, "tb", "event-reassign")
-        .expect("event reassignment simulation should run");
+    let (stdout, _warnings, _model) =
+        run_sim(sv, "tb", "event-reassign").expect("event reassignment simulation should run");
     assert_eq!(stdout, "new object at 2\nold object at 3\n");
 }
 

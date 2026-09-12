@@ -238,7 +238,8 @@ impl<'db> SemanticModel<'db> {
             let mut references = node.children().to_vec();
             node.kind().append_references(&mut references);
             for reference in references {
-                let NodeKind::Expr(ExprKind::ScopeRef { target }) = self.db.node_kind(reference) else {
+                let NodeKind::Expr(ExprKind::ScopeRef { target }) = self.db.node_kind(reference)
+                else {
                     continue;
                 };
                 if scope_reference_is_metadata(self.db, owner, reference, *target) {
@@ -494,20 +495,20 @@ fn scope_reference_is_metadata(db: &Db, owner: NodeId, reference: NodeId, target
         NodeKind::Port {
             high_expr: Some(actual_expr),
             ..
-        } if *actual_expr == reference => {
-            owner_node.children().iter().any(|child| {
-                let NodeKind::IfaceConn { actual, .. } = db.node_kind(*child) else {
-                    return false;
-                };
-                matches!(
-                    db.node_kind(*actual),
-                    NodeKind::ModuleInst { is_interface: true, .. }
-                )
-                    && (target == *actual
-                        || (matches!(db.node_kind(target), NodeKind::ModPort)
-                            && db.node(target).parent() == Some(*actual)))
-            })
-        }
+        } if *actual_expr == reference => owner_node.children().iter().any(|child| {
+            let NodeKind::IfaceConn { actual, .. } = db.node_kind(*child) else {
+                return false;
+            };
+            matches!(
+                db.node_kind(*actual),
+                NodeKind::ModuleInst {
+                    is_interface: true,
+                    ..
+                }
+            ) && (target == *actual
+                || (matches!(db.node_kind(target), NodeKind::ModPort)
+                    && db.node(target).parent() == Some(*actual)))
+        }),
         _ => false,
     }
 }
@@ -1571,7 +1572,9 @@ mod tests {
         ];
         if extra_use {
             nodes.push(node(
-                NodeKind::SysCall { name: "$display".into() },
+                NodeKind::SysCall {
+                    name: "$display".into(),
+                },
                 Some(NodeId(0)),
                 vec![NodeId(3)],
             ));
@@ -1663,7 +1666,10 @@ mod tests {
                 node(NodeKind::ModPort, Some(NodeId(2)), vec![]),
                 interface(vec![]),
                 node(
-                    NodeKind::IfaceConn { actual, modport: String::new() },
+                    NodeKind::IfaceConn {
+                        actual,
+                        modport: String::new(),
+                    },
                     Some(NodeId(1)),
                     vec![],
                 ),
@@ -1687,7 +1693,13 @@ mod tests {
         let db = Db::from_test_nodes("top", nodes, vec![NodeId(0)], HashMap::new()).unwrap();
         let coverage = SemanticModel::from_db(&db).simulation_coverage();
         assert_eq!(coverage[3].class, SimulationNodeClass::ElaborationConsumed);
-        assert_eq!(coverage[4].class, SimulationNodeClass::IntentionallyUnreachable);
-        assert_eq!(coverage[5].class, SimulationNodeClass::IntentionallyUnreachable);
+        assert_eq!(
+            coverage[4].class,
+            SimulationNodeClass::IntentionallyUnreachable
+        );
+        assert_eq!(
+            coverage[5].class,
+            SimulationNodeClass::IntentionallyUnreachable
+        );
     }
 }

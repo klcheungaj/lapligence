@@ -4,10 +4,10 @@
 use llg::core::compile;
 use llg::sim;
 
-#[path = "support/sim.rs"]
-mod sim_harness;
 #[path = "support/sim_cli.rs"]
 mod sim_cli;
+#[path = "support/sim.rs"]
+mod sim_harness;
 
 fn compile_and_generate(
     dir: &std::path::Path,

@@ -26,13 +26,24 @@ pub(super) fn string(ctx: &RCtx<'_>, value: &IrStringExpr) -> Result<String, Str
         }
         IrStringExpr::LocalRead(name) => format!("llg_string_clone(&{name})"),
         IrStringExpr::FormalRead(index) => {
-            format!("llg_string_clone({})", if ctx.func.map(|f| f.formals[*index].is_ref()).unwrap_or(false) {
-                format!("r{index}")
-            } else if ctx.func.map(|f| f.formals[*index].is_out()).unwrap_or(false) {
-                format!("o{index}")
-            } else {
-                format!("&a{index}")
-            })
+            format!(
+                "llg_string_clone({})",
+                if ctx
+                    .func
+                    .map(|f| f.formals[*index].is_ref())
+                    .unwrap_or(false)
+                {
+                    format!("r{index}")
+                } else if ctx
+                    .func
+                    .map(|f| f.formals[*index].is_out())
+                    .unwrap_or(false)
+                {
+                    format!("o{index}")
+                } else {
+                    format!("&a{index}")
+                }
+            )
         }
         IrStringExpr::ContainerGet { container, index } => format!(
             "{}(&{}, {})",
@@ -40,7 +51,7 @@ pub(super) fn string(ctx: &RCtx<'_>, value: &IrStringExpr) -> Result<String, Str
                 crate::sim::ir::IrContainerKind::Dynamic => "llg_dyn_value_get_string",
                 crate::sim::ir::IrContainerKind::Queue { .. } => "llg_queue_value_get_string",
                 crate::sim::ir::IrContainerKind::Associative { .. } => {
-                    return Err("string associative read requires a key-aware path".into())
+                    return Err("string associative read requires a key-aware path".into());
                 }
             },
             ctx.model.containers[*container].c_name,
@@ -50,9 +61,10 @@ pub(super) fn string(ctx: &RCtx<'_>, value: &IrStringExpr) -> Result<String, Str
             "{}(&{}, {}, {})",
             match ctx.model.containers[*container].kind {
                 crate::sim::ir::IrContainerKind::Dynamic => "llg_dyn_value_get_nested_string",
-                crate::sim::ir::IrContainerKind::Queue { .. } => "llg_queue_value_get_nested_string",
+                crate::sim::ir::IrContainerKind::Queue { .. } =>
+                    "llg_queue_value_get_nested_string",
                 crate::sim::ir::IrContainerKind::Associative { .. } => {
-                    return Err("nested associative string read requires a key-aware path".into())
+                    return Err("nested associative string read requires a key-aware path".into());
                 }
             },
             ctx.model.containers[*container].c_name,
@@ -142,7 +154,7 @@ pub(super) fn chandle(ctx: &RCtx<'_>, value: &IrChandleExpr) -> Result<String, S
                 crate::sim::ir::IrContainerKind::Dynamic => "llg_dyn_value_get_chandle",
                 crate::sim::ir::IrContainerKind::Queue { .. } => "llg_queue_value_get_chandle",
                 crate::sim::ir::IrContainerKind::Associative { .. } => {
-                    return Err("chandle associative read requires a key-aware path".into())
+                    return Err("chandle associative read requires a key-aware path".into());
                 }
             },
             ctx.model.containers[*container].c_name,
@@ -152,9 +164,10 @@ pub(super) fn chandle(ctx: &RCtx<'_>, value: &IrChandleExpr) -> Result<String, S
             "{}(&{}, {}, {})",
             match ctx.model.containers[*container].kind {
                 crate::sim::ir::IrContainerKind::Dynamic => "llg_dyn_value_get_nested_chandle",
-                crate::sim::ir::IrContainerKind::Queue { .. } => "llg_queue_value_get_nested_chandle",
+                crate::sim::ir::IrContainerKind::Queue { .. } =>
+                    "llg_queue_value_get_nested_chandle",
                 crate::sim::ir::IrContainerKind::Associative { .. } => {
-                    return Err("nested associative chandle read requires a key-aware path".into())
+                    return Err("nested associative chandle read requires a key-aware path".into());
                 }
             },
             ctx.model.containers[*container].c_name,
@@ -234,9 +247,7 @@ fn string_inside(
             }
         }
     }
-    code.push_str(
-        "llg_string_destroy(&_inside_string_value); _inside_string_result; })",
-    );
+    code.push_str("llg_string_destroy(&_inside_string_value); _inside_string_result; })");
     Ok(code)
 }
 
@@ -337,16 +348,14 @@ fn dynamic_query_code(
                         IrContainerKind::Queue { .. } => "llg_queue_size",
                         IrContainerKind::Associative { .. } => unreachable!(),
                     };
-                    let size = format!(
-                        "sv4_from_u64((uint64_t){size_fn}(&{name}), 32, 1)"
-                    );
+                    let size = format!("sv4_from_u64((uint64_t){size_fn}(&{name}), 32, 1)");
                     match kind {
                         IrArrayQueryKind::Left | IrArrayQueryKind::Low => {
                             "sv4_from_u64(0, 32, 1)".to_owned()
                         }
-                        IrArrayQueryKind::Right | IrArrayQueryKind::High => format!(
-                            "sv4_sub({size}, sv4_from_u64(1, 32, 1))"
-                        ),
+                        IrArrayQueryKind::Right | IrArrayQueryKind::High => {
+                            format!("sv4_sub({size}, sv4_from_u64(1, 32, 1))")
+                        }
                         IrArrayQueryKind::Size => size,
                         IrArrayQueryKind::Increment => {
                             "sv4_from_u64((uint64_t)-1, 32, 1)".to_owned()
@@ -361,10 +370,7 @@ fn dynamic_query_code(
                             ..
                         },
                 } => {
-                    let zero = format!(
-                        "sv4_from_u64(0, {key_width}, {})",
-                        u8::from(*key_signed)
-                    );
+                    let zero = format!("sv4_from_u64(0, {key_width}, {})", u8::from(*key_signed));
                     match kind {
                         IrArrayQueryKind::Left => zero,
                         IrArrayQueryKind::Right => {
@@ -392,12 +398,10 @@ fn dynamic_query_code(
                 }
                 IrContainerKind::Associative {
                     key: IrAssocKey::String | IrAssocKey::Wildcard,
-                } => {
-                    return Err(
-                        "array query on a string-keyed or wildcard associative array is unsupported"
-                            .to_owned(),
-                    )
-                }
+                } => return Err(
+                    "array query on a string-keyed or wildcard associative array is unsupported"
+                        .to_owned(),
+                ),
             }
         }
         IrArrayQueryTarget::String { value, .. } => {
@@ -406,13 +410,11 @@ fn dynamic_query_code(
                 IrArrayQueryKind::Left | IrArrayQueryKind::Low => {
                     "sv4_from_u64(0, 32, 1)".to_owned()
                 }
-                IrArrayQueryKind::Right | IrArrayQueryKind::High => format!(
-                    "sv4_sub({len}, sv4_from_u64(1, 32, 1))"
-                ),
-                IrArrayQueryKind::Size => len,
-                IrArrayQueryKind::Increment => {
-                    "sv4_from_u64((uint64_t)-1, 32, 1)".to_owned()
+                IrArrayQueryKind::Right | IrArrayQueryKind::High => {
+                    format!("sv4_sub({len}, sv4_from_u64(1, 32, 1))")
                 }
+                IrArrayQueryKind::Size => len,
+                IrArrayQueryKind::Increment => "sv4_from_u64((uint64_t)-1, 32, 1)".to_owned(),
             }
         }
         IrArrayQueryTarget::Static { .. } => {
@@ -444,9 +446,8 @@ fn array_query(
         let unknown = format!("sv4_fill(2, {width}, {})", u8::from(signed));
         let mut choices = unknown.clone();
         for index in (0..dimensions.len()).rev() {
-            let value = selected(index).ok_or_else(|| {
-                "array query dimension has no representable result".to_owned()
-            })?;
+            let value = selected(index)
+                .ok_or_else(|| "array query dimension has no representable result".to_owned())?;
             choices = format!("(_llg_qindex == {} ? {value} : {choices})", index + 1);
         }
         return Ok(format!(
@@ -532,10 +533,15 @@ fn render_typed_call(
         .iter()
         .enumerate()
         .filter(|(_, formal)| formal.is_address())
-        .chain(f.formals.iter().enumerate().filter(|(_, formal)| !formal.is_address()));
+        .chain(
+            f.formals
+                .iter()
+                .enumerate()
+                .filter(|(_, formal)| !formal.is_address()),
+        );
     let mut rendered = Vec::new();
     let mut temps = Vec::new();
-    for ((idx, formal), arg) in order.zip(args) {
+    for ((idx, _formal), arg) in order.zip(args) {
         let value = match arg {
             IrCallArg::StringVal(value) => string(ctx, value)?,
             IrCallArg::Val(value) => render_expr_impl(ctx, value)?.code,
@@ -557,9 +563,9 @@ fn render_typed_call(
                 ));
                 storage_addr.clone().unwrap_or_else(|| format!("&{name}"))
             }
-            IrCallArg::OutTemp { name, storage_addr, .. } => {
-                storage_addr.clone().unwrap_or_else(|| format!("&{name}"))
-            }
+            IrCallArg::OutTemp {
+                name, storage_addr, ..
+            } => storage_addr.clone().unwrap_or_else(|| format!("&{name}")),
             IrCallArg::ChandleVal(value) => super::objects::chandle(ctx, value)?,
             IrCallArg::ChandleAddr(addr) | IrCallArg::ChandleRefAddr(addr) => addr.clone(),
         };

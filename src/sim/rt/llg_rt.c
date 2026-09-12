@@ -3320,8 +3320,19 @@ static void register_deferred_trigger(const llg_expr_event_spec_t* specs,
     }
     if (!repeat || n == 0) {
         release_expression_contexts(specs, n);
-        if (action) invoke_deferred_action(action, action_frame);
-        else if (action_frame) llg_frame_release(action_frame);
+        if (action) {
+            invoke_deferred_action(action, action_frame);
+        } else if (target) {
+            llg_nba_t* nba = new_nba(0);
+            if (nba) {
+                nba->event_target = target;
+                nba->is_event = 1;
+                enqueue_nba(nba);
+            }
+            if (action_frame) llg_frame_release(action_frame);
+        } else if (action_frame) {
+            llg_frame_release(action_frame);
+        }
         return;
     }
     if (!specs) abort();
@@ -3512,8 +3523,8 @@ void llg_ref_write(llg_ref_t* ref, sv4_t value) {
     sv4_t converted = sv4_cast(value, ref->width, ref->is_signed);
     if (ref->two_state) converted = sv4_to_two_state(converted);
     if ((llg_ref_kind_t)ref->kind == LLG_REF_QUEUE) {
-        (void)llg_queue_ref_write(ref->queue, ref->index, ref->queue_epoch,
-                                  converted);
+        if (ref->queue_write)
+            (void)ref->queue_write(ref->queue, ref->queue_identity, converted);
         return;
     }
     if (!ref->base) return;
@@ -3652,9 +3663,9 @@ static int inertial_transition(int old_state, int new_state) {
                    ? INERTIAL_FALL
                    : INERTIAL_NO_TRANSITION;
     }
-    // A transition to X is ambiguous: the standard selects the shorter of
-    // the rise and fall delays.  The known endpoint remains directional when
-    // the transition is X -> 0/1, while Z -> X is likewise ambiguous.
+    // A transition to X is ambiguous: its delay is selected from every
+    // possible stable destination (0, 1, or Z). The known endpoint remains
+    // directional when the transition is X -> 0/1.
     if (old_state == 0 || old_state == 1 || old_state == 3)
         return INERTIAL_RISE_OR_FALL;
     return INERTIAL_NO_TRANSITION;
@@ -3677,7 +3688,10 @@ static uint64_t inertial_transition_ticks(const sv4_t* old_value,
         case INERTIAL_RISE: ticks = rise; break;
         case INERTIAL_FALL: ticks = fall; break;
         case INERTIAL_TURN_OFF: ticks = turn_off; break;
-        case INERTIAL_RISE_OR_FALL: ticks = rise < fall ? rise : fall; break;
+        case INERTIAL_RISE_OR_FALL:
+            ticks = rise < fall ? rise : fall;
+            if (turn_off < ticks) ticks = turn_off;
+            break;
         default: continue;
         }
         if (ticks < selected) selected = ticks;

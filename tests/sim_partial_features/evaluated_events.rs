@@ -7,10 +7,7 @@ fn automatic_event_evaluators_keep_nested_task_activations_separate() {
 
 #[test]
 fn pure_input_and_const_ref_functions_use_event_expression_dependencies() {
-    run_case(
-        "event_pure_functions",
-        "changes=3 rises=1 const=2\n",
-    );
+    run_case("event_pure_functions", "changes=3 rises=1 const=2\n");
 }
 
 #[test]

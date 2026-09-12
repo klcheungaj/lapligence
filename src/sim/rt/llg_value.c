@@ -1534,7 +1534,11 @@ void sv4_idx_part_select_set_value(sv4_t* tgt, sv4_t base, uint32_t width,
 sv4_t llg_ref_read(const llg_ref_t* ref) {
     if (!ref) return sv4_x(1, 0);
     if ((llg_ref_kind_t)ref->kind == LLG_REF_QUEUE) {
-        sv4_t value = llg_queue_ref_read(ref->queue, ref->index, ref->queue_epoch);
+        if (!ref->queue_read)
+            return ref->two_state
+                       ? sv4_from_u64(0, ref->width, ref->is_signed)
+                       : sv4_x(ref->width ? ref->width : 1, ref->is_signed);
+        sv4_t value = ref->queue_read(ref->queue, ref->queue_identity);
         value = sv4_cast(value, ref->width, ref->is_signed);
         return ref->two_state ? sv4_to_two_state(value) : value;
     }

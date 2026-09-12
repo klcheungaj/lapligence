@@ -4,9 +4,9 @@ use super::constants::{emit_const, round_shortreal};
 use super::context::{RCtx, RenderedExpr};
 use super::EmitError;
 use crate::sim::ir::{
-    IrBinOp, IrBitQuery, IrCallArg, IrElemSel, IrExpr, IrExprKind, IrInsideItem, IrLhs,
-    IrContainerKind, IrStringExpr,
-    IrRealBinOp, IrRealUnOp, IrStreamDirection, IrSysFunc, IrType, IrUnOp,
+    IrBinOp, IrBitQuery, IrCallArg, IrContainerElement, IrContainerKind, IrElemSel, IrExpr,
+    IrExprKind, IrInsideItem, IrLhs, IrRealBinOp, IrRealUnOp, IrStreamDirection, IrStringExpr,
+    IrSysFunc, IrType, IrUnOp,
 };
 
 /// The real-value code of a rendered operand: bare for real expressions,
@@ -120,9 +120,7 @@ pub(super) fn render_expr_impl(ctx: &RCtx<'_>, e: &IrExpr) -> Result<RenderedExp
         IrExprKind::EventTriggered(event) => {
             let event = super::statements::event_ref_code(ctx, event)?;
             RenderedExpr {
-                code: format!(
-                    "sv4_from_u64(llg_event_triggered({event}) ? 1ULL : 0ULL, 1, 0)"
-                ),
+                code: format!("sv4_from_u64(llg_event_triggered({event}) ? 1ULL : 0ULL, 1, 0)"),
                 width: 1,
                 signed: false,
                 fill: None,
@@ -333,9 +331,7 @@ pub(super) fn render_expr_impl(ctx: &RCtx<'_>, e: &IrExpr) -> Result<RenderedExp
                         let comparison = if value.width == 0 || item.width == 0 {
                             cmp_expr(&value_local, &item_local, "==")
                         } else {
-                            format!(
-                                "sv4_wild_eq(_inside_value, {item_name})"
-                            )
+                            format!("sv4_wild_eq(_inside_value, {item_name})")
                         };
                         code.push_str(&format!(
                             "{item_type} {item_name} = {}; \
@@ -360,10 +356,7 @@ pub(super) fn render_expr_impl(ctx: &RCtx<'_>, e: &IrExpr) -> Result<RenderedExp
                             signed: high.signed,
                             fill: None,
                         };
-                        let comparison = if value.width == 0
-                            || low.width == 0
-                            || high.width == 0
-                        {
+                        let comparison = if value.width == 0 || low.width == 0 || high.width == 0 {
                             format!(
                                 "sv4_logand({}, {})",
                                 cmp_expr(&value_local, &low_local, ">="),
@@ -422,16 +415,12 @@ pub(super) fn render_expr_impl(ctx: &RCtx<'_>, e: &IrExpr) -> Result<RenderedExp
                         ));
                     }
                     IrInsideItem::Container { container } => {
-                        let container_model = ctx
-                            .model
-                            .containers
-                            .get(*container)
-                            .ok_or_else(|| "inside container index is out of bounds".to_owned())?;
-                        let IrType::Packed {
-                            width,
-                            signed,
-                            ..
-                        } = container_model.element
+                        let container_model =
+                            ctx.model.containers.get(*container).ok_or_else(|| {
+                                "inside container index is out of bounds".to_owned()
+                            })?;
+                        let IrContainerElement::Packed { width, signed, .. } =
+                            &container_model.element
                         else {
                             return Err("inside container element must be packed".to_owned());
                         };
@@ -457,8 +446,8 @@ pub(super) fn render_expr_impl(ctx: &RCtx<'_>, e: &IrExpr) -> Result<RenderedExp
                         let item_name = format!("_inside_container_item_{index}");
                         let item = RenderedExpr {
                             code: item_name.clone(),
-                            width,
-                            signed,
+                            width: *width,
+                            signed: *signed,
                             fill: None,
                         };
                         let comparison = if value.width == 0 {
@@ -920,10 +909,9 @@ fn guarded_array_read(ai: &crate::sim::ir::IrArray, index_codes: &[String]) -> S
 
 fn guarded_real_array_read(ai: &crate::sim::ir::IrArray, index_codes: &[String]) -> String {
     match array_guard(ai, index_codes) {
-        Some((decls, cond, lin)) => format!(
-            "({{ {decls}({cond}) ? {}[({lin})] : 0.0; }})",
-            ai.c_name
-        ),
+        Some((decls, cond, lin)) => {
+            format!("({{ {decls}({cond}) ? {}[({lin})] : 0.0; }})", ai.c_name)
+        }
         None => format!("{}[0]", ai.c_name),
     }
 }
@@ -1033,7 +1021,12 @@ fn render_lhs_value(
                 None,
             )
         }
-        IrLhs::WholeRef { addr, width, signed, .. } => {
+        IrLhs::WholeRef {
+            addr,
+            width,
+            signed,
+            ..
+        } => {
             return Ok(RenderedExpr {
                 code: format!("*({addr})"),
                 width: *width,
@@ -1041,7 +1034,12 @@ fn render_lhs_value(
                 fill: None,
             });
         }
-        IrLhs::Ref { addr, width, signed, .. } => {
+        IrLhs::Ref {
+            addr,
+            width,
+            signed,
+            ..
+        } => {
             return Ok(RenderedExpr {
                 code: format!("llg_ref_read({addr})"),
                 width: *width,
@@ -1121,10 +1119,16 @@ fn render_lhs_value(
             )
         }
         IrLhs::Stream { .. } => {
-            return Err("streaming assignment target cannot be read as a mutation expression".into())
+            return Err(
+                "streaming assignment target cannot be read as a mutation expression".into(),
+            )
         }
     };
-    Ok(retag_lhs_value(render_expr_impl(ctx, &value)?, width, signed))
+    Ok(retag_lhs_value(
+        render_expr_impl(ctx, &value)?,
+        width,
+        signed,
+    ))
 }
 
 fn capture_lhs_indices(ctx: &RCtx<'_>, lhs: &IrLhs) -> Result<(String, IrLhs), String> {
@@ -1137,7 +1141,11 @@ fn capture_lhs_indices(ctx: &RCtx<'_>, lhs: &IrLhs) -> Result<(String, IrLhs), S
         let rendered = render_expr_impl(ctx, expression)?;
         let name = format!("_llg_mut_idx{next}");
         *next += 1;
-        let ty = if expression.width == 0 { "double" } else { "sv4_t" };
+        let ty = if expression.width == 0 {
+            "double"
+        } else {
+            "sv4_t"
+        };
         declarations.push_str(&format!("{ty} {name} = {}; ", rendered.code));
         Ok(IrExpr::new(
             IrExprKind::LocalRead(name),
@@ -1169,10 +1177,10 @@ fn capture_lhs_indices(ctx: &RCtx<'_>, lhs: &IrLhs) -> Result<(String, IrLhs), S
                 }
                 match elem_sel {
                     IrElemSel::Bit(index) => {
-                        *index = Box::new(capture(ctx, index, declarations, next)?);
+                        **index = capture(ctx, index, declarations, next)?;
                     }
                     IrElemSel::Indexed { base, .. } => {
-                        *base = Box::new(capture(ctx, base, declarations, next)?);
+                        **base = capture(ctx, base, declarations, next)?;
                     }
                     IrElemSel::Whole | IrElemSel::Part(..) => {}
                 }
@@ -1212,25 +1220,23 @@ fn render_mutation_expr(
         None
     };
     if let Some(current) = &current {
-        let ty = if mutation.current_width == 0 { "double" } else { "sv4_t" };
+        let ty = if mutation.current_width == 0 {
+            "double"
+        } else {
+            "sv4_t"
+        };
         if mutation.post {
             declarations.push_str(&format!(
                 "{ty} _llg_mut_old = {}; {ty} _llg_mut_current = _llg_mut_old; ",
                 current.code
             ));
         } else {
-            declarations.push_str(&format!(
-                "{ty} _llg_mut_current = {}; ",
-                current.code
-            ));
+            declarations.push_str(&format!("{ty} _llg_mut_current = {}; ", current.code));
         }
     }
     let value = render_expr_impl(ctx, &mutation.value)?;
     let value_ty = if value.width == 0 { "double" } else { "sv4_t" };
-    declarations.push_str(&format!(
-        "{value_ty} _llg_mut_new = {}; ",
-        value.code
-    ));
+    declarations.push_str(&format!("{value_ty} _llg_mut_new = {}; ", value.code));
     let new_expr = IrExpr::new(
         IrExprKind::LocalRead("_llg_mut_new".to_owned()),
         value.width,
@@ -1241,13 +1247,7 @@ fn render_mutation_expr(
     let result = if mutation.post {
         "_llg_mut_old".to_owned()
     } else {
-        render_lhs_value(
-            ctx,
-            &lhs,
-            expression.width,
-            expression.signed,
-        )?
-        .code
+        render_lhs_value(ctx, &lhs, expression.width, expression.signed)?.code
     };
     Ok(RenderedExpr {
         code: format!("({{ {declarations} {write} {result}; }})"),
@@ -1359,9 +1359,7 @@ pub(super) fn render_assign(
         let value = if rendered.width == 0 {
             format!(
                 "sv4_from_real({}, {}, {})",
-                rendered.code,
-                width,
-                *signed as u8
+                rendered.code, width, *signed as u8
             )
         } else if let Some(fill) = rendered.fill {
             format!("sv4_fill({fill}, {width}, {})", *signed as u8)
@@ -1718,7 +1716,6 @@ fn render_call_expr(
     }
     let mut temps: Vec<TempInfo<'_>> = Vec::new();
     struct StringTempInfo<'a> {
-        idx: usize,
         name: &'a str,
         init: Option<&'a IrStringExpr>,
         writeback: &'a str,
@@ -1771,7 +1768,6 @@ fn render_call_expr(
                 storage_read,
             } => {
                 string_temps.push(StringTempInfo {
-                    idx,
                     name,
                     init: init.as_deref(),
                     writeback,
@@ -1924,16 +1920,26 @@ fn render_call_expr(
         if t.storage_addr.is_some() {
             parts.push(format!("llg_string_move(&{}, {source})", t.name));
         }
-        parts.push(format!("llg_string_move({}, {})", t.writeback, if t.storage_addr.is_some() { format!("llg_string_clone(&{})", t.name) } else { t.name.to_owned() }));
+        parts.push(format!(
+            "llg_string_move({}, {})",
+            t.writeback,
+            if t.storage_addr.is_some() {
+                format!("llg_string_clone(&{})", t.name)
+            } else {
+                t.name.to_owned()
+            }
+        ));
     }
     if has_ret {
         parts.push("_r".to_string());
     } else {
-            parts.push(if matches!(f.ret, Some(crate::sim::ir::IrType::Real { .. })) {
+        parts.push(
+            if matches!(f.ret, Some(crate::sim::ir::IrType::Real { .. })) {
                 "0.0".to_string()
             } else {
                 format!("sv4_x({ret_w}, {})", ret_s as u8)
-            });
+            },
+        );
     }
     Ok(RenderedExpr {
         code: format!("({{ {}; }})", parts.join("; ")),

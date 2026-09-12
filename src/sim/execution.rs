@@ -7,10 +7,9 @@
 use std::collections::HashSet;
 
 use crate::sim::ir::{
-    IrCallArg, IrChandleExpr, IrContainerExpr, IrDependency, IrElemSel, IrExpr, IrExprKind,
-    IrArrayQueryTarget, IrDisplayArg, IrInsideItem, IrJoinKind, IrLhs, IrModel, IrObjectQuery,
-    IrObjectStmt, IrShape, IrStmt,
-    IrStringExpr, IrStringInsideItem, IrSysFunc, IrValidationError,
+    IrArrayQueryTarget, IrCallArg, IrChandleExpr, IrContainerExpr, IrDependency, IrDisplayArg,
+    IrElemSel, IrExpr, IrExprKind, IrInsideItem, IrJoinKind, IrLhs, IrModel, IrObjectQuery,
+    IrObjectStmt, IrShape, IrStmt, IrStringExpr, IrStringInsideItem, IrSysFunc, IrValidationError,
 };
 use crate::sim::semantic::{ExtensionRef, Origin};
 
@@ -471,9 +470,9 @@ fn collect_effects(
             }
             IrStmt::Assign { nba: true, .. }
             | IrStmt::DelayedAssign { .. }
-            | IrStmt::DelayedStringAssign { .. } => effects.push(
-                ExecutionEffect::EnqueueUpdate(ScheduleRegion::NonblockingAssign),
-            ),
+            | IrStmt::DelayedStringAssign { .. } => effects.push(ExecutionEffect::EnqueueUpdate(
+                ScheduleRegion::NonblockingAssign,
+            )),
             IrStmt::Assign { nba: false, .. }
             | IrStmt::EventAssign { .. }
             | IrStmt::EventCapture { .. }
@@ -509,9 +508,7 @@ fn collect_effects(
             IrStmt::EventTrigger { .. }
             | IrStmt::NonblockingEventTrigger { .. }
             | IrStmt::NonblockingEventTriggerWhen { .. }
-            | IrStmt::NonblockingEventAssignWhen { .. } => {
-                effects.push(ExecutionEffect::Trigger)
-            }
+            | IrStmt::NonblockingEventAssignWhen { .. } => effects.push(ExecutionEffect::Trigger),
             IrStmt::Fork {
                 join_kind,
                 branches,
@@ -532,9 +529,9 @@ fn collect_effects(
                     effects.push(ExecutionEffect::Suspend);
                 }
             }
-            IrStmt::DisableFork
-            | IrStmt::DisableTarget { .. }
-            | IrStmt::ActivationScope { .. } => effects.push(ExecutionEffect::RuntimeService),
+            IrStmt::DisableFork | IrStmt::DisableTarget { .. } | IrStmt::ActivationScope { .. } => {
+                effects.push(ExecutionEffect::RuntimeService)
+            }
             IrStmt::Display { .. }
             | IrStmt::DisplayTyped { .. }
             | IrStmt::MonitorSet { .. }
@@ -740,20 +737,10 @@ fn collect_statement_expression_effects(
                         }
                         collect_lhs_expression_effects(ir, writeback, effects, visited_calls);
                         if let Some(storage_lhs) = storage_lhs {
-                            collect_lhs_expression_effects(
-                                ir,
-                                storage_lhs,
-                                effects,
-                                visited_calls,
-                            );
+                            collect_lhs_expression_effects(ir, storage_lhs, effects, visited_calls);
                         }
                         if let Some(storage_read) = storage_read {
-                            collect_expression_effects(
-                                ir,
-                                storage_read,
-                                effects,
-                                visited_calls,
-                            );
+                            collect_expression_effects(ir, storage_read, effects, visited_calls);
                         }
                         for (_, _, _, _, init) in selector_inits {
                             collect_expression_effects(ir, init, effects, visited_calls);
@@ -768,9 +755,7 @@ fn collect_statement_expression_effects(
                         collect_expression_effects(ir, read, effects, visited_calls)
                     }
                     IrCallArg::StringOutTemp {
-                        init,
-                        storage_read,
-                        ..
+                        init, storage_read, ..
                     } => {
                         if let Some(init) = init {
                             collect_string_effects(ir, init, effects, visited_calls);
@@ -811,13 +796,12 @@ fn collect_expression_effects(
         }
         IrExprKind::CallFn(call) => {
             effects.push(ExecutionEffect::RuntimeService);
-            if call
-                .args()
-                .iter()
-                .any(|arg| {
-                    matches!(arg, IrCallArg::OutTemp { .. } | IrCallArg::StringOutTemp { .. })
-                })
-            {
+            if call.args().iter().any(|arg| {
+                matches!(
+                    arg,
+                    IrCallArg::OutTemp { .. } | IrCallArg::StringOutTemp { .. }
+                )
+            }) {
                 effects.push(ExecutionEffect::ImmediateStore);
             }
             collect_callee_effects(ir, call.function_index(), effects, visited_calls);
@@ -845,20 +829,10 @@ fn collect_expression_effects(
                         }
                         collect_lhs_expression_effects(ir, writeback, effects, visited_calls);
                         if let Some(storage_lhs) = storage_lhs {
-                            collect_lhs_expression_effects(
-                                ir,
-                                storage_lhs,
-                                effects,
-                                visited_calls,
-                            );
+                            collect_lhs_expression_effects(ir, storage_lhs, effects, visited_calls);
                         }
                         if let Some(storage_read) = storage_read {
-                            collect_expression_effects(
-                                ir,
-                                storage_read,
-                                effects,
-                                visited_calls,
-                            );
+                            collect_expression_effects(ir, storage_read, effects, visited_calls);
                         }
                         for (_, _, _, _, init) in selector_inits {
                             collect_expression_effects(ir, init, effects, visited_calls);
@@ -873,9 +847,7 @@ fn collect_expression_effects(
                         collect_expression_effects(ir, read, effects, visited_calls)
                     }
                     IrCallArg::StringOutTemp {
-                        init,
-                        storage_read,
-                        ..
+                        init, storage_read, ..
                     } => {
                         if let Some(init) = init {
                             collect_string_effects(ir, init, effects, visited_calls);
@@ -1104,7 +1076,9 @@ fn collect_string_effects(
                     IrCallArg::Val(value) => {
                         collect_expression_effects(ir, value, effects, visited_calls)
                     }
-                    IrCallArg::StringOutTemp { init, storage_read, .. } => {
+                    IrCallArg::StringOutTemp {
+                        init, storage_read, ..
+                    } => {
                         if let Some(init) = init {
                             collect_string_effects(ir, init, effects, visited_calls);
                         }

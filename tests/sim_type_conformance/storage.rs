@@ -19,11 +19,7 @@ fn net_and_two_state_conversion_at_maximum_width() {
 
 #[test]
 fn arrays_containers_and_aggregates_preserve_state_domains() {
-    super::run_case_with_stderr(
-        "state-storage",
-        "PASS state storage\n",
-        "",
-    );
+    super::run_case_with_stderr("state-storage", "PASS state storage\n", "");
 }
 
 #[test]

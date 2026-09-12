@@ -10,6 +10,8 @@ use crate::ffi::slang::{
 };
 use std::collections::{HashMap, HashSet};
 
+const MAX_RECURSIVE_TYPE_DEPTH: usize = 64;
+
 /// Array metadata that does not depend on an arena node or initializer edge.
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct ArrayTypeProjection {
@@ -289,6 +291,12 @@ impl<'a> SlangTypeProjector<'a> {
             TypeKind::UnpackedUnion => AggregateKind::UnpackedUnion,
             _ => return Ok(None),
         };
+        if visiting.len() >= MAX_RECURSIVE_TYPE_DEPTH {
+            return Err(format!(
+                "Slang aggregate type {} exceeds the recursive type depth limit",
+                ty.id
+            ));
+        }
         if !visiting.insert(ty.id) {
             return Err(format!("cycle in Slang aggregate type {}", ty.id));
         }
@@ -303,10 +311,10 @@ impl<'a> SlangTypeProjector<'a> {
                     ty: self.type_info(member_ty)?,
                     two_state: !member_ty.is_four_state,
                     packed_ranges: self.member_packed_ranges(member_ty)?,
-                    aggregate: match &descriptor.shape {
-                        TypeShape::Aggregate(layout) => Some(Box::new(layout.clone())),
-                        _ => None,
-                    },
+                    // The descriptor is the canonical recursive representation.
+                    // Keep the legacy projection empty to avoid duplicating every
+                    // nested subtree at each aggregate member.
+                    aggregate: None,
                     descriptor,
                 })
             })
@@ -328,16 +336,20 @@ impl<'a> SlangTypeProjector<'a> {
         ty: &SlangType,
         visiting: &mut HashSet<u64>,
     ) -> Result<TypeDescriptor, String> {
+        if visiting.len() >= MAX_RECURSIVE_TYPE_DEPTH {
+            return Err(format!(
+                "Slang value type {} exceeds the recursive type depth limit",
+                ty.id
+            ));
+        }
         if !visiting.insert(ty.id) {
             return Err(format!("cycle in Slang value type {}", ty.id));
         }
         let info = self.type_info(ty)?;
         let shape = match ty.kind {
-            TypeKind::Integral | TypeKind::Enum | TypeKind::PackedArray => {
-                TypeShape::PackedAtom {
-                    ranges: self.packed_dimensions(ty)?,
-                }
-            }
+            TypeKind::Integral | TypeKind::Enum | TypeKind::PackedArray => TypeShape::PackedAtom {
+                ranges: self.packed_dimensions(ty)?,
+            },
             TypeKind::Floating => TypeShape::Real {
                 shortreal: ty.bit_width == 32,
             },
@@ -383,10 +395,9 @@ impl<'a> SlangTypeProjector<'a> {
             TypeKind::DynamicArray | TypeKind::AssociativeArray | TypeKind::Queue => {
                 TypeShape::Container {
                     kind: format!("{:?}", ty.kind),
-                    element: Box::new(self.descriptor(
-                        self.element_type(ty, "container")?,
-                        visiting,
-                    )?),
+                    element: Box::new(
+                        self.descriptor(self.element_type(ty, "container")?, visiting)?,
+                    ),
                 }
             }
             TypeKind::Chandle
@@ -522,8 +533,7 @@ fn nominal_identity(display_name: &str) -> Option<String> {
 mod tests {
     use super::*;
     use crate::core::db::{
-        ValueCopySemantics, ValueDefaultSemantics, ValueDestroySemantics,
-        ValueEqualitySemantics,
+        ValueCopySemantics, ValueDefaultSemantics, ValueDestroySemantics, ValueEqualitySemantics,
     };
 
     fn ty(id: u64, kind: TypeKind, bit_width: u64) -> SlangType {
@@ -656,6 +666,124 @@ mod tests {
         assert_eq!(layout.type_identity.as_deref(), Some("type#2"));
         assert_eq!(layout.members[0].ty.kind, "logic");
         assert_eq!(layout.members[0].ty.width, Some(8));
+    }
+
+    #[test]
+    fn nested_aggregate_uses_one_canonical_recursive_layout() {
+        let leaf = ty(0, TypeKind::Integral, 8);
+        let mut inner = ty(1, TypeKind::UnpackedStruct, 0);
+        inner.member_count = 1;
+        let mut outer = ty(2, TypeKind::UnpackedStruct, 0);
+        outer.member_start = 1;
+        outer.member_count = 1;
+        let types = [leaf, inner, outer];
+        let members = [
+            TypeMember {
+                name: "leaf".to_owned(),
+                type_id: 0,
+                bit_offset: 0,
+                bit_width: 8,
+            },
+            TypeMember {
+                name: "inner".to_owned(),
+                type_id: 1,
+                bit_offset: 0,
+                bit_width: 0,
+            },
+        ];
+        let projector = SlangTypeProjector {
+            types: types.iter().map(|ty| (ty.id, ty)).collect(),
+            ranges: &[],
+            members: &members,
+        };
+
+        let projection = projector.project(2).expect("project nested aggregate");
+        let TypeShape::Aggregate(layout) = &projection.descriptor.shape else {
+            panic!("expected aggregate descriptor");
+        };
+        let nested = &layout.members[0];
+        assert!(nested.aggregate.is_none());
+        assert_eq!(
+            nested
+                .aggregate_layout()
+                .expect("descriptor-backed nested layout")
+                .type_id,
+            Some(TypeId(1))
+        );
+    }
+
+    #[test]
+    fn recursive_type_projection_is_depth_bounded() {
+        let aggregate_count = MAX_RECURSIVE_TYPE_DEPTH + 1;
+        let mut types = Vec::with_capacity(aggregate_count + 1);
+        let mut members = Vec::with_capacity(aggregate_count);
+        types.push(ty(0, TypeKind::Integral, 1));
+        for index in 0..aggregate_count {
+            let id = u64::try_from(index + 1).expect("test type id");
+            let mut aggregate = ty(id, TypeKind::UnpackedStruct, 0);
+            aggregate.member_start = index as u64;
+            aggregate.member_count = 1;
+            types.push(aggregate);
+            members.push(TypeMember {
+                name: format!("level_{index}"),
+                type_id: if index == 0 { 0 } else { id - 1 },
+                bit_offset: 0,
+                bit_width: 0,
+            });
+        }
+        let projector = SlangTypeProjector {
+            types: types.iter().map(|ty| (ty.id, ty)).collect(),
+            ranges: &[],
+            members: &members,
+        };
+
+        let error = projector
+            .project(aggregate_count as u64)
+            .expect_err("deep recursive descriptors must be rejected");
+        assert!(error.contains("recursive type depth limit"));
+    }
+
+    #[test]
+    fn packed_union_and_fixed_array_bit_sizes_use_overlaid_width() {
+        let byte = ty(0, TypeKind::Integral, 8);
+        let word = ty(1, TypeKind::Integral, 16);
+        let mut union = ty(2, TypeKind::PackedUnion, 16);
+        union.member_count = 2;
+        let types = [byte, word, union];
+        let members = [
+            TypeMember {
+                name: "byte".to_owned(),
+                type_id: 0,
+                bit_offset: 0,
+                bit_width: 8,
+            },
+            TypeMember {
+                name: "word".to_owned(),
+                type_id: 1,
+                bit_offset: 0,
+                bit_width: 16,
+            },
+        ];
+        let projector = SlangTypeProjector {
+            types: types.iter().map(|ty| (ty.id, ty)).collect(),
+            ranges: &[],
+            members: &members,
+        };
+        let union = projector
+            .project(2)
+            .expect("project packed union")
+            .descriptor;
+        assert_eq!(union.fixed_size_bits(), Some(16));
+        let fixed = TypeDescriptor {
+            id: TypeId(3),
+            name: "union_array".to_owned(),
+            info: union.info.clone(),
+            shape: TypeShape::FixedArray {
+                dimensions: vec![(0, 2)],
+                element: Box::new(union),
+            },
+        };
+        assert_eq!(fixed.fixed_size_bits(), Some(48));
     }
 
     #[test]

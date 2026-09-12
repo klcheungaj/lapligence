@@ -189,13 +189,27 @@ endmodule
         let (dir, stderr, warnings) =
             run_waveform_with_opts(sv, tag, &opts).expect("selected VCD simulation should run");
         assert!(stderr.is_empty(), "unexpected simulator stderr: {stderr}");
-        assert!(warnings.is_empty(), "unexpected lowering warnings: {warnings:?}");
-        let vcd = std::fs::read_to_string(dir.path().join("trace.vcd"))
-            .expect("read selected VCD");
-        assert!(vcd.contains(" selected $end"), "selected signal missing: {vcd}");
-        assert!(vcd.contains(" omitted $end"), "direct signal missing: {vcd}");
-        assert!(vcd.contains("memory$5B3$5D $end"), "declared index 3 missing: {vcd}");
-        assert!(vcd.contains("memory$5B2$5D $end"), "declared index 2 missing: {vcd}");
+        assert!(
+            warnings.is_empty(),
+            "unexpected lowering warnings: {warnings:?}"
+        );
+        let vcd = std::fs::read_to_string(dir.path().join("trace.vcd")).expect("read selected VCD");
+        assert!(
+            vcd.contains(" selected $end"),
+            "selected signal missing: {vcd}"
+        );
+        assert!(
+            vcd.contains(" omitted $end"),
+            "direct signal missing: {vcd}"
+        );
+        assert!(
+            vcd.contains("memory$5B3$5D $end"),
+            "declared index 3 missing: {vcd}"
+        );
+        assert!(
+            vcd.contains("memory$5B2$5D $end"),
+            "declared index 2 missing: {vcd}"
+        );
         assert!(
             !vcd.contains("$scope module u $end") && !vcd.contains(" child_value $end"),
             "finite depth must exclude the child hierarchy: {vcd}"
@@ -238,11 +252,19 @@ endmodule
         let (dir, stderr, warnings) =
             run_waveform_with_opts(sv, tag, &opts).expect("named VCD simulation should run");
         assert!(stderr.is_empty(), "unexpected simulator stderr: {stderr}");
-        assert!(warnings.is_empty(), "unexpected lowering warnings: {warnings:?}");
-        let vcd = std::fs::read_to_string(dir.path().join("trace.vcd"))
-            .expect("read named VCD");
-        assert!(vcd.contains(" selected $end"), "named signal missing: {vcd}");
-        assert!(!vcd.contains(" omitted $end"), "unselected signal was dumped: {vcd}");
+        assert!(
+            warnings.is_empty(),
+            "unexpected lowering warnings: {warnings:?}"
+        );
+        let vcd = std::fs::read_to_string(dir.path().join("trace.vcd")).expect("read named VCD");
+        assert!(
+            vcd.contains(" selected $end"),
+            "named signal missing: {vcd}"
+        );
+        assert!(
+            !vcd.contains(" omitted $end"),
+            "unselected signal was dumped: {vcd}"
+        );
     }
 }
 
@@ -275,15 +297,15 @@ endmodule
         (false, sim::opt::OptConfig::none()),
     ] {
         let tag = if optimized { "fst_opt" } else { "fst_no_opt" };
-        let (dir, stderr, warnings) = run_waveform_with_opts(sv, tag, &opts)
-            .expect("FST simulation should run");
+        let (dir, stderr, warnings) =
+            run_waveform_with_opts(sv, tag, &opts).expect("FST simulation should run");
         assert!(stderr.is_empty(), "unexpected simulator stderr: {stderr}");
         assert!(
             warnings.is_empty(),
             "unexpected codegen warnings: {warnings:?}"
         );
-        let metadata = std::fs::metadata(dir.path().join("trace.fst"))
-            .expect("generated FST metadata");
+        let metadata =
+            std::fs::metadata(dir.path().join("trace.fst")).expect("generated FST metadata");
         assert!(
             metadata.len() > 64,
             "generated FST should contain hierarchy and values"

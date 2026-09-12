@@ -154,7 +154,8 @@ sv4_t llg_string_getc(llg_string_t value, sv4_t index) {
 void llg_string_putc(llg_string_t *value, sv4_t index, sv4_t character) {
     int64_t i;
     unsigned char c = (unsigned char)sv4_to_two_state(character).bits[0];
-    if (sv4_to_index_i64(index, &i) && i >= 0 && (uint64_t)i < value->len) {
+    if (c != 0 && sv4_to_index_i64(index, &i) && i >= 0 &&
+        (uint64_t)i < value->len) {
         int changed = (unsigned char)value->data[(size_t)i] != c;
         value->data[(size_t)i] = (char)c;
         if (changed) string_notify(value);

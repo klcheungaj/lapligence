@@ -11,7 +11,7 @@ use super::statements::{
 };
 use super::EmitError;
 use crate::sim::execution::{ExecutionModel, ExecutionTerminator, ScheduleRegion, TriggerPlan};
-use crate::sim::ir::{IrFunc, IrModel, IrNetKind, IrProcessKind, IrType};
+use crate::sim::ir::{IrFunc, IrModel, IrNetKind, IrType};
 
 // ── Model rendering ───────────────────────────────────────────────────────────
 
@@ -253,9 +253,7 @@ fn render_signal_decls(model: &IrModel, out: &mut String) {
         out.push_str(&format!(
             "static llg_event_object_t {}__object = {{{{ 0 }}, 0, {{ 0 }}, 0, 0, 0 }};\n\
              static llg_event_t {} = {{ &{}__object }};\n",
-            ev.c_name,
-            ev.c_name,
-            ev.c_name,
+            ev.c_name, ev.c_name, ev.c_name,
         ));
     }
     for ev in &model.events {
@@ -282,7 +280,12 @@ fn render_signal_decls(model: &IrModel, out: &mut String) {
             "static const int32_t {}__left[] = {{ {} }};\n\
              static const int32_t {}__right[] = {{ {} }};\n\
              static llg_event_t* const {}__elements[] = {{ {} }};\n",
-            ev.c_name(), left, ev.c_name(), right, ev.c_name(), elements
+            ev.c_name(),
+            left,
+            ev.c_name(),
+            right,
+            ev.c_name(),
+            elements
         ));
     }
 }
@@ -515,7 +518,9 @@ fn block_stmts_of(ctx: &RCtx<'_>, stmts: &[crate::sim::ir::IrStmt]) -> Result<St
     for s in stmts {
         out.push_str(&render_stmt(ctx, s)?);
         if let Some(label) = ctx.activation_label.as_deref() {
-            out.push_str(&format!("    if (llg_activation_cancelled()) goto {label};\n"));
+            out.push_str(&format!(
+                "    if (llg_activation_cancelled()) goto {label};\n"
+            ));
         }
     }
     Ok(out)
@@ -566,7 +571,7 @@ fn render_process_fn(
         } if executable.blocks.len() == 1 && *resume == executable.entry => {
             out.push_str(&format!("for (;;) {{\n    llg_budget_point({location});\n"));
             out.push_str(&block_stmts_of(ctx, &entry.operations)?);
-            out.push_str(&wait_any_text_in_region(&ctx, reads, *region));
+            out.push_str(&wait_any_text_in_region(ctx, reads, *region));
             out.push_str("    }\n");
         }
         _ => {
@@ -594,7 +599,7 @@ fn render_process_fn(
                         resume,
                         region,
                     } => {
-                        out.push_str(&wait_any_text_in_region(&ctx, reads, *region));
+                        out.push_str(&wait_any_text_in_region(ctx, reads, *region));
                         out.push_str(&format!("    goto {};\n", label(*resume)));
                     }
                     ExecutionTerminator::Suspend {
@@ -1027,7 +1032,7 @@ mod tests {
         model.processes = vec![IrProcess {
             c_name: "p_top_initial_0".to_string(),
             label: "top.initial".to_string(),
-            kind: IrProcessKind::Synthetic,
+            kind: crate::sim::ir::IrProcessKind::Synthetic,
             shape: IrShape::RunOnce,
             writes: Vec::new(),
             pre_fns: Vec::new(),

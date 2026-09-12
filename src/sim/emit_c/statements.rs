@@ -25,7 +25,11 @@ pub fn render_stmt(ctx: &RCtx<'_>, st: &crate::sim::ir::IrStmt) -> Result<String
     render_stmt_impl(ctx, st).map_err(EmitError::new)
 }
 
-fn render_pca_real_value(ctx: &RCtx<'_>, value: &IrExpr, shortreal: bool) -> Result<String, String> {
+fn render_pca_real_value(
+    ctx: &RCtx<'_>,
+    value: &IrExpr,
+    shortreal: bool,
+) -> Result<String, String> {
     let rendered = render_expr(ctx, value)?;
     let code = if rendered.width == 0 {
         rendered.code
@@ -62,7 +66,9 @@ fn enclosed_labels(stmts: &[crate::sim::ir::IrStmt], labels: &mut HashSet<String
                     enclosed_labels(els, labels);
                 }
             }
-            IrStmt::For { init, incr, body, .. } => {
+            IrStmt::For {
+                init, incr, body, ..
+            } => {
                 enclosed_labels(init, labels);
                 enclosed_labels(body, labels);
                 enclosed_labels(incr, labels);
@@ -90,7 +96,10 @@ fn activation_cleanup(scopes: &[&ActivationRenderScope], target: Option<&str>) -
         if target.is_some_and(|label| scope.labels.contains(label) || scope.exit == label) {
             break;
         }
-        code.push_str(&format!("    llg_activation_exit(_llg_act_{});\n", scope.exit));
+        code.push_str(&format!(
+            "    llg_activation_exit(_llg_act_{});\n",
+            scope.exit
+        ));
     }
     code
 }
@@ -197,9 +206,7 @@ fn render_stmt_scoped(
             match ctx.model.signal(*sig).ty {
                 IrType::Real { shortreal } => {
                     let value = render_pca_real_value(ctx, value, shortreal)?;
-                    format!(
-                        "    llg_pca_assign_d(&{target}, &{enable}, {site}ULL, {value});\n"
-                    )
+                    format!("    llg_pca_assign_d(&{target}, &{enable}, {site}ULL, {value});\n")
                 }
                 IrType::Packed { .. } => {
                     let value = render_expr(ctx, value)?.code;
@@ -218,9 +225,7 @@ fn render_stmt_scoped(
             match ctx.model.signal(*sig).ty {
                 IrType::Real { shortreal } => {
                     let value = render_pca_real_value(ctx, value, shortreal)?;
-                    format!(
-                        "    llg_pca_drive_d(&{target}, &{enable}, {site}ULL, {value});\n"
-                    )
+                    format!("    llg_pca_drive_d(&{target}, &{enable}, {site}ULL, {value});\n")
                 }
                 IrType::Packed { .. } => {
                     let value = render_expr(ctx, value)?.code;
@@ -395,7 +400,7 @@ fn render_stmt_scoped(
             }
             let entries = events
                 .iter()
-                .map(|event| event_ref_code(ctx, event).map(|code| format!("{code}")))
+                .map(|event| event_ref_code(ctx, event).map(|code| code.to_string()))
                 .collect::<Result<Vec<_>, _>>()?;
             let mut out = String::from("    {\n");
             out.push_str(&format!(
@@ -475,11 +480,7 @@ fn render_stmt_scoped(
                 ));
                 for capture in branch.captures() {
                     let initial = render_expr(ctx, capture.initial())?.code;
-                    out.push_str(&format_frame_capture(
-                        &frame,
-                        capture.storage(),
-                        &initial,
-                    )?);
+                    out.push_str(&format_frame_capture(&frame, capture.storage(), &initial)?);
                 }
                 out.push_str(&format!(
                     "    llg_fork_with_frame({}, {}, grp, {frame});\n",
@@ -690,18 +691,13 @@ fn render_stmt_scoped(
                     }
                     IrCallArg::OutAddr(addr) => call_args.push(addr.clone()),
                     IrCallArg::RefAddr { addr, .. } => call_args.push(addr.clone()),
-                    IrCallArg::StringOutAddr(addr)
-                    | IrCallArg::StringRefAddr { addr, .. } => call_args.push(addr.clone()),
+                    IrCallArg::StringOutAddr(addr) | IrCallArg::StringRefAddr { addr, .. } => {
+                        call_args.push(addr.clone())
+                    }
                     IrCallArg::OutTemp { name, .. } => call_args.push(format!("&{name}")),
                     IrCallArg::StringOutTemp {
-                        name,
-                        storage_addr,
-                        ..
-                    } => call_args.push(
-                        storage_addr
-                            .clone()
-                            .unwrap_or_else(|| format!("&{name}")),
-                    ),
+                        name, storage_addr, ..
+                    } => call_args.push(storage_addr.clone().unwrap_or_else(|| format!("&{name}"))),
                 }
             }
             call_args.push(call.depth.code());
@@ -828,14 +824,11 @@ pub(super) fn wait_any_text(ctx: &RCtx<'_>, sens: &[IrDependency]) -> String {
     if sens.is_empty() {
         return "    llg_wait_any(NULL, 0);\n".to_string();
     }
-    if sens
-        .iter()
-        .any(|dependency| match dependency {
-            IrDependency::Real(_) => true,
-            IrDependency::ArrayElement { array, .. } => ctx.model.array(*array).real,
-            _ => false,
-        })
-    {
+    if sens.iter().any(|dependency| match dependency {
+        IrDependency::Real(_) => true,
+        IrDependency::ArrayElement { array, .. } => ctx.model.array(*array).real,
+        _ => false,
+    }) {
         let entries = sens
             .iter()
             .map(|dependency| dependency_entry(ctx, dependency))
@@ -924,9 +917,7 @@ fn render_typed_display(
     };
     let scope = c_string_literal(scope);
     if args.is_empty() {
-        return Ok(format!(
-            "    {output_fn}({fmt}, NULL, 0, {scope});\n"
-        ));
+        return Ok(format!("    {output_fn}({fmt}, NULL, 0, {scope});\n"));
     }
     let values = args
         .iter()
@@ -961,10 +952,7 @@ fn dependency_entry(ctx: &RCtx<'_>, dependency: &IrDependency) -> String {
             if array.real {
                 format!("{{ 0, &{}[{}] }}", array.c_name(), index)
             } else {
-                format!(
-                    "{{ &{}_llg_element_deps[{}], 0 }}",
-                    array.c_name(), index
-                )
+                format!("{{ &{}_llg_element_deps[{}], 0 }}", array.c_name(), index)
             }
         }
         IrDependency::ArrayContents(array) => format!(
@@ -979,21 +967,25 @@ fn dependency_entry(ctx: &RCtx<'_>, dependency: &IrDependency) -> String {
             "{{ &{}_llg_shape_dep, 0 }}",
             ctx.model.containers[*container].c_name
         ),
-        IrDependency::Object(object) => format!(
-            "{{ &{}_llg_dep, 0 }}",
-            ctx.model.objects[*object].c_name
-        ),
+        IrDependency::Object(object) => {
+            format!("{{ &{}_llg_dep, 0 }}", ctx.model.objects[*object].c_name)
+        }
     }
 }
 
-fn event_context_for<'a>(ctx: &'a RCtx<'_>, helper: &str) -> Option<&'a crate::sim::ir::IrEventContext> {
+fn event_context_for<'a>(
+    ctx: &'a RCtx<'_>,
+    helper: &str,
+) -> Option<&'a crate::sim::ir::IrEventContext> {
     for process in &ctx.model.processes {
         for pre in &process.pre_fns {
             match pre {
-                crate::sim::ir::IrPreFn::MonEval { c_name, context, .. }
-                | crate::sim::ir::IrPreFn::RealEval { c_name, context, .. }
-                    if c_name == helper =>
-                {
+                crate::sim::ir::IrPreFn::MonEval {
+                    c_name, context, ..
+                }
+                | crate::sim::ir::IrPreFn::RealEval {
+                    c_name, context, ..
+                } if c_name == helper => {
                     return context.as_ref();
                 }
                 _ => {}
@@ -1003,10 +995,12 @@ fn event_context_for<'a>(ctx: &'a RCtx<'_>, helper: &str) -> Option<&'a crate::s
     for function in &ctx.model.funcs {
         for pre in &function.pre_fns {
             match pre {
-                crate::sim::ir::IrPreFn::MonEval { c_name, context, .. }
-                | crate::sim::ir::IrPreFn::RealEval { c_name, context, .. }
-                    if c_name == helper =>
-                {
+                crate::sim::ir::IrPreFn::MonEval {
+                    c_name, context, ..
+                }
+                | crate::sim::ir::IrPreFn::RealEval {
+                    c_name, context, ..
+                } if c_name == helper => {
                     return context.as_ref();
                 }
                 _ => {}
@@ -1039,11 +1033,10 @@ pub(super) fn event_ref_code(
             Ok(format!("&{}", event.c_name()))
         }
         crate::sim::ir::IrEventRef::Array { array, indices } => {
-            let descriptor = ctx
-                .model
-                .events()
-                .get(*array)
-                .ok_or_else(|| "event array index is out of bounds during emission".to_string())?;
+            let descriptor =
+                ctx.model.events().get(*array).ok_or_else(|| {
+                    "event array index is out of bounds during emission".to_string()
+                })?;
             let dims = descriptor
                 .array_dims()
                 .ok_or_else(|| "event handle references a non-array descriptor".to_string())?;
@@ -1199,11 +1192,10 @@ fn wait_events_text(
             ));
             for capture in context.captures() {
                 let initial = render_expr(ctx, capture.initial())?.code;
-                text.push_str(&format_frame_capture(
-                    &frame,
-                    capture.storage(),
-                    &initial,
-                )?.replace("    ", "        "));
+                text.push_str(
+                    &format_frame_capture(&frame, capture.storage(), &initial)?
+                        .replace("    ", "        "),
+                );
             }
         }
         let mut entries = Vec::new();
@@ -1211,14 +1203,10 @@ fn wait_events_text(
             let kind = edge_kind(edge);
             let entry = match source {
                 IrWaitSrc::Sig(name) => {
-                    format!(
-                        "{{ .sig = &{name}, .kind = {kind} }}"
-                    )
+                    format!("{{ .sig = &{name}, .kind = {kind} }}")
                 }
                 IrWaitSrc::Real(name) => {
-                    format!(
-                        "{{ .kind = {kind}, .real_sig = &{name}, .real = 1 }}"
-                    )
+                    format!("{{ .kind = {kind}, .real_sig = &{name}, .real = 1 }}")
                 }
                 IrWaitSrc::Event(event) => format!(
                     "{{ .event = {}, .kind = {kind} }}",
@@ -1457,10 +1445,9 @@ fn nonblocking_event_trigger_when_text(
     let entries = specs
         .iter()
         .map(|(source, edge)| match source {
-            IrWaitSrc::Sig(name) => Ok(format!(
-                "{{ .sig = &{name}, .kind = {} }}",
-                edge_kind(edge)
-            )),
+            IrWaitSrc::Sig(name) => {
+                Ok(format!("{{ .sig = &{name}, .kind = {} }}", edge_kind(edge)))
+            }
             IrWaitSrc::Event(event) => Ok(format!(
                 "{{ .event = {}, .kind = {} }}",
                 event_ref_code(ctx, event)?,
@@ -1556,10 +1543,9 @@ fn nonblocking_event_assignment_when_text(
     let entries = specs
         .iter()
         .map(|(source, edge)| match source {
-            IrWaitSrc::Sig(name) => Ok(format!(
-                "{{ .sig = &{name}, .kind = {} }}",
-                edge_kind(edge)
-            )),
+            IrWaitSrc::Sig(name) => {
+                Ok(format!("{{ .sig = &{name}, .kind = {} }}", edge_kind(edge)))
+            }
             IrWaitSrc::Event(event) => Ok(format!(
                 "{{ .event = {}, .kind = {} }}",
                 event_ref_code(ctx, event)?,
@@ -1630,7 +1616,7 @@ pub(super) fn render_pre_fn_impl(
                 }
             }
             if captures.is_empty() {
-                out.push_str(&format!("    (void)llg_proc_frame(self);\n"));
+                out.push_str("    (void)llg_proc_frame(self);\n");
             }
             for s in body {
                 out.push_str(&render_stmt_impl(ctx, s)?);

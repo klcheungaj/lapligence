@@ -46,12 +46,7 @@ fn run_sim(sv: &str, top: &str, tag: &str) -> Result<(String, Vec<String>), Stri
     })
 }
 
-fn run_source_both_opts(
-    sv: &str,
-    top: &str,
-    tag: &str,
-    expected: &str,
-) -> Result<(), String> {
+fn run_source_both_opts(sv: &str, top: &str, tag: &str, expected: &str) -> Result<(), String> {
     sim_harness::with_temp_cwd(tag, |dir| {
         let source = dir.join("tb.sv");
         std::fs::write(&source, sv).map_err(|error| format!("write source: {error}"))?;
@@ -79,9 +74,7 @@ fn run_source_both_opts(
             .map_err(|error| format!("{variant} cmake: {error}"))?;
             let actual = sim_harness::run_executable(&executable)?;
             if actual != expected {
-                return Err(format!(
-                    "{variant}: expected {expected:?}, got {actual:?}"
-                ));
+                return Err(format!("{variant}: expected {expected:?}, got {actual:?}"));
             }
         }
         Ok(())
@@ -962,7 +955,9 @@ endmodule
             .collect::<Vec<_>>()
             .join("\n");
         if !diagnostics.to_ascii_lowercase().contains("ambig") {
-            return Err(format!("wildcard import diagnostic was not ambiguity-specific: {diagnostics}"));
+            return Err(format!(
+                "wildcard import diagnostic was not ambiguity-specific: {diagnostics}"
+            ));
         }
         Ok(())
     })

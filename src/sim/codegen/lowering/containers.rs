@@ -71,7 +71,7 @@ impl<'a> Codegen<'a> {
             let descriptor = self.db.type_descriptor(owner).cloned();
             let path = self.node(owner).full_name();
             let body =
-                self.lower_container_pattern(&path, container, initializer, descriptor.as_ref())?;
+                self.lower_container_pattern(path, container, initializer, descriptor.as_ref())?;
             let name = format!(
                 "p_{}_container_init_{index}",
                 ident(&self.model.design_name)
@@ -218,7 +218,7 @@ impl<'a> Codegen<'a> {
                 ));
             };
             if !super::collection::pattern_key_matches_type_descriptor(
-                &key_type,
+                key_type,
                 element_descriptor,
                 element_two_state,
             ) {
@@ -226,9 +226,10 @@ impl<'a> Codegen<'a> {
                     "resizable container assignment pattern key `{key}` has no matching index or type in `{path}`"
                 ));
             }
-            if type_values.iter().any(|(previous, _)| {
-                super::collection::pattern_key_types_equal(previous, &key_type)
-            }) {
+            if type_values
+                .iter()
+                .any(|(previous, _)| super::collection::pattern_key_types_equal(previous, key_type))
+            {
                 return Err(format!(
                     "duplicate resizable container assignment pattern type key `{key}` in `{path}`"
                 ));
@@ -285,7 +286,10 @@ impl<'a> Codegen<'a> {
         }
         let kind = self.model.containers[container].kind.clone();
         let element = self.model.containers[container].element.clone();
-        if matches!(&element, IrContainerElement::String | IrContainerElement::Chandle) {
+        if matches!(
+            &element,
+            IrContainerElement::String | IrContainerElement::Chandle
+        ) {
             return self.lower_associative_object_pattern(path, container, operands, element);
         }
         let mut seen_integral = Vec::<i128>::new();
@@ -453,8 +457,14 @@ impl<'a> Codegen<'a> {
         let mut writes = Vec::new();
         let mut default = None;
         for operand in operands {
-            let NodeKind::Expr(ExprKind::TaggedPattern { key, key_type, value }) = self.kind(operand)
-            else { continue };
+            let NodeKind::Expr(ExprKind::TaggedPattern {
+                key,
+                key_type,
+                value,
+            }) = self.kind(operand)
+            else {
+                continue;
+            };
             if key_type.is_some() {
                 return Err(format!(
                     "type key for associative array assignment pattern is not supported in `{path}`"
@@ -476,12 +486,16 @@ impl<'a> Codegen<'a> {
                 continue;
             }
             let operation = match &kind {
-                IrContainerKind::Associative { key: IrAssocKey::String } => {
+                IrContainerKind::Associative {
+                    key: IrAssocKey::String,
+                } => {
                     let bytes = parse_pattern_string_key(key).ok_or_else(|| {
                         format!("string associative assignment pattern key `{key}` is not a literal in `{path}`")
                     })?;
                     if seen_string.iter().any(|previous| previous == &bytes) {
-                        return Err(format!("duplicate associative assignment pattern key `{key}` in `{path}`"));
+                        return Err(format!(
+                            "duplicate associative assignment pattern key `{key}` in `{path}`"
+                        ));
                     }
                     seen_string.push(bytes.clone());
                     match &element {
@@ -503,11 +517,17 @@ impl<'a> Codegen<'a> {
                         format!("integral associative assignment pattern key `{key}` is not a constant in `{path}`")
                     })?;
                     if seen_integral.contains(&index) {
-                        return Err(format!("duplicate associative assignment pattern key `{key}` in `{path}`"));
+                        return Err(format!(
+                            "duplicate associative assignment pattern key `{key}` in `{path}`"
+                        ));
                     }
                     seen_integral.push(index);
                     let (width, signed, two_state) = match assoc_key {
-                        IrAssocKey::Integral { width, signed, two_state } => (*width, *signed, *two_state),
+                        IrAssocKey::Integral {
+                            width,
+                            signed,
+                            two_state,
+                        } => (*width, *signed, *two_state),
                         IrAssocKey::Wildcard => (32, true, false),
                         IrAssocKey::String => unreachable!(),
                     };
@@ -698,9 +718,7 @@ impl<'a> Codegen<'a> {
             };
         }
         let Some((width, signed, two_state)) = element.packed() else {
-            return Err(format!(
-                "container element type is not packed in {path}"
-            ));
+            return Err(format!("container element type is not packed in {path}"));
         };
         let value = self.lower_expr(path, node)?;
         let value = apply_assignment_expression_width(value, width);
@@ -715,9 +733,9 @@ impl<'a> Codegen<'a> {
     fn is_unbounded_node(&self, node: NodeId) -> bool {
         match self.kind(node) {
             NodeKind::Expr(ExprKind::Unbounded) => true,
-            NodeKind::Expr(ExprKind::Ref { target: Some(target) }) => {
-                self.is_unbounded_node(*target)
-            }
+            NodeKind::Expr(ExprKind::Ref {
+                target: Some(target),
+            }) => self.is_unbounded_node(*target),
             _ => false,
         }
     }
@@ -799,8 +817,10 @@ impl<'a> Codegen<'a> {
                 let Some(source) = self.container_of(*base) else {
                     return Ok(None);
                 };
-                if !matches!(self.model.containers[source.ir].kind, IrContainerKind::Queue { .. })
-                {
+                if !matches!(
+                    self.model.containers[source.ir].kind,
+                    IrContainerKind::Queue { .. }
+                ) {
                     return Ok(None);
                 }
                 Ok(Some(vec![IrQueueSource::Slice {
@@ -812,7 +832,10 @@ impl<'a> Codegen<'a> {
             _ => Ok(self
                 .container_of(node)
                 .filter(|source| {
-                    matches!(self.model.containers[source.ir].kind, IrContainerKind::Queue { .. })
+                    matches!(
+                        self.model.containers[source.ir].kind,
+                        IrContainerKind::Queue { .. }
+                    )
                 })
                 .map(|source| vec![IrQueueSource::Whole(source.ir)])),
         }
@@ -862,7 +885,9 @@ impl<'a> Codegen<'a> {
                 ));
             }
             if let Some(function) = &self.func {
-                if let Some((name, width, signed, two_state, _shortreal)) = function.locals.get(&target) {
+                if let Some((name, width, signed, two_state, _shortreal)) =
+                    function.locals.get(&target)
+                {
                     return Ok((format!("&{name}"), None, *width, *signed, *two_state));
                 }
             }
@@ -943,8 +968,9 @@ impl<'a> Codegen<'a> {
     fn container_element_path(&self, node: NodeId) -> Option<(usize, Vec<NodeId>)> {
         let (base, indices) = match self.kind(node) {
             NodeKind::Expr(ExprKind::BitSelect { base, index }) => (*base, vec![*index]),
-            NodeKind::Expr(ExprKind::ArraySelect { base, indices })
-                if !indices.is_empty() => (*base, indices.clone()),
+            NodeKind::Expr(ExprKind::ArraySelect { base, indices }) if !indices.is_empty() => {
+                (*base, indices.clone())
+            }
             _ => return None,
         };
         if let Some((container, mut prefix)) = self.container_element_path(base) {
@@ -973,8 +999,9 @@ impl<'a> Codegen<'a> {
     fn associative_integral_element(&self, node: NodeId) -> Option<(usize, NodeId)> {
         let (base, key) = match self.kind(node) {
             NodeKind::Expr(ExprKind::BitSelect { base, index }) => (*base, *index),
-            NodeKind::Expr(ExprKind::ArraySelect { base, indices })
-                if indices.len() == 1 => (*base, indices[0]),
+            NodeKind::Expr(ExprKind::ArraySelect { base, indices }) if indices.len() == 1 => {
+                (*base, indices[0])
+            }
             _ => return None,
         };
         let container = self.container_of(base)?;
@@ -990,8 +1017,9 @@ impl<'a> Codegen<'a> {
     fn associative_string_element(&self, node: NodeId) -> Option<(usize, NodeId)> {
         let (base, key) = match self.kind(node) {
             NodeKind::Expr(ExprKind::BitSelect { base, index }) => (*base, *index),
-            NodeKind::Expr(ExprKind::ArraySelect { base, indices })
-                if indices.len() == 1 => (*base, indices[0]),
+            NodeKind::Expr(ExprKind::ArraySelect { base, indices }) if indices.len() == 1 => {
+                (*base, indices[0])
+            }
             _ => return None,
         };
         let container = self.container_of(base)?;
@@ -1004,11 +1032,7 @@ impl<'a> Codegen<'a> {
         .then_some((container.ir, key))
     }
 
-    fn container_element_type(
-        &self,
-        container: usize,
-        depth: usize,
-    ) -> Option<IrContainerElement> {
+    fn container_element_type(&self, container: usize, depth: usize) -> Option<IrContainerElement> {
         let mut element = self.model.containers[container].element.clone();
         for _ in 1..depth {
             let IrContainerElement::Container { element: next, .. } = element else {
@@ -1048,9 +1072,7 @@ impl<'a> Codegen<'a> {
             return self.model.containers[container].element.is_string();
         }
         self.container_element_path(node)
-            .and_then(|(container, indices)| {
-                self.container_element_type(container, indices.len())
-            })
+            .and_then(|(container, indices)| self.container_element_type(container, indices.len()))
             .is_some_and(|element| element.is_string())
     }
 
@@ -1092,9 +1114,7 @@ impl<'a> Codegen<'a> {
             return self.model.containers[container].element.is_chandle();
         }
         self.container_element_path(node)
-            .and_then(|(container, indices)| {
-                self.container_element_type(container, indices.len())
-            })
+            .and_then(|(container, indices)| self.container_element_type(container, indices.len()))
             .is_some_and(|element| element.is_chandle())
     }
 
@@ -1140,9 +1160,7 @@ impl<'a> Codegen<'a> {
             let element = self
                 .container_element_type(container, indices.len())
                 .ok_or_else(|| {
-                    format!(
-                        "nested container access in {path} crosses a non-container element"
-                    )
+                    format!("nested container access in {path} crosses a non-container element")
                 })?;
             if element.is_string() || element.is_chandle() {
                 return Ok(None);
@@ -1425,12 +1443,12 @@ impl<'a> Codegen<'a> {
             NodeKind::Array { .. } | NodeKind::Expr(ExprKind::Ref { .. }) => {
                 self.array_of(node).is_some()
             }
-            NodeKind::Expr(ExprKind::PartSelect { base, .. }) => self
-                .p30_array_prefix_base(*base)
-                .is_some(),
-            NodeKind::Expr(ExprKind::BitSelect { base, .. }) => self
-                .p30_array_prefix_base(*base)
-                .is_some(),
+            NodeKind::Expr(ExprKind::PartSelect { base, .. }) => {
+                self.p30_array_prefix_base(*base).is_some()
+            }
+            NodeKind::Expr(ExprKind::BitSelect { base, .. }) => {
+                self.p30_array_prefix_base(*base).is_some()
+            }
             NodeKind::Expr(ExprKind::ArraySelect { base, indices }) => self
                 .p30_array_prefix_base(*base)
                 .is_some_and(|(array, consumed)| {
@@ -1463,9 +1481,7 @@ impl<'a> Codegen<'a> {
             return Some((array, 0));
         }
         match self.kind(node) {
-            NodeKind::Expr(ExprKind::Cast { operand, .. }) => {
-                self.p30_array_prefix_base(*operand)
-            }
+            NodeKind::Expr(ExprKind::Cast { operand, .. }) => self.p30_array_prefix_base(*operand),
             NodeKind::Expr(ExprKind::ArraySelect { base, indices }) => {
                 let (array, consumed) = self.p30_array_prefix_base(*base)?;
                 let consumed = consumed.checked_add(indices.len())?;
@@ -1551,19 +1567,13 @@ impl<'a> Codegen<'a> {
         Ok(())
     }
 
-    fn p30_view_from_prefix(
-        array: ArrayInfo,
-        prefix: &[IrExpr],
-    ) -> Result<P30ArrayView, String> {
+    fn p30_view_from_prefix(array: ArrayInfo, prefix: &[IrExpr]) -> Result<P30ArrayView, String> {
         if prefix.len() > array.dims.len() {
             return Err("fixed unpacked-array index rank exceeds the declared rank".to_string());
         }
         let mut coordinates = Vec::new();
         Self::p30_append_coordinates(&array.dims[prefix.len()..], prefix, &mut coordinates)?;
-        Ok(P30ArrayView {
-            array,
-            coordinates,
-        })
+        Ok(P30ArrayView { array, coordinates })
     }
 
     fn p30_slice_view_with_prefix(
@@ -1575,14 +1585,10 @@ impl<'a> Codegen<'a> {
         right_node: NodeId,
     ) -> Result<P30ArrayView, String> {
         let left = self.eval_bound_i128(left_node).map_err(|_| {
-            format!(
-                "fixed unpacked-array slice bounds in `{path}` must be constant integers"
-            )
+            format!("fixed unpacked-array slice bounds in `{path}` must be constant integers")
         })?;
         let right = self.eval_bound_i128(right_node).map_err(|_| {
-            format!(
-                "fixed unpacked-array slice bounds in `{path}` must be constant integers"
-            )
+            format!("fixed unpacked-array slice bounds in `{path}` must be constant integers")
         })?;
         let left = i32::try_from(left).map_err(|_| {
             format!("fixed unpacked-array slice left bound is out of range in `{path}`")
@@ -1591,7 +1597,9 @@ impl<'a> Codegen<'a> {
             format!("fixed unpacked-array slice right bound is out of range in `{path}`")
         })?;
         let Some((decl_left, decl_right)) = array.dims.get(prefix.len()).copied() else {
-            return Err(format!("fixed unpacked-array slice has no dimension in `{path}`"));
+            return Err(format!(
+                "fixed unpacked-array slice has no dimension in `{path}`"
+            ));
         };
         if left < decl_left.min(decl_right)
             || left > decl_left.max(decl_right)
@@ -1630,10 +1638,7 @@ impl<'a> Codegen<'a> {
             &coordinate_prefix,
             &mut coordinates,
         )?;
-        Ok(P30ArrayView {
-            array,
-            coordinates,
-        })
+        Ok(P30ArrayView { array, coordinates })
     }
 
     fn p30_array_prefix(
@@ -1660,12 +1665,7 @@ impl<'a> Codegen<'a> {
                     return Ok(None);
                 }
                 for index in indices {
-                    prefix.push(self.p30_index_expr(
-                        path,
-                        *index,
-                        captures,
-                        captured_indices,
-                    )?);
+                    prefix.push(self.p30_index_expr(path, *index, captures, captured_indices)?);
                 }
                 Ok(Some((array, prefix)))
             }
@@ -1678,12 +1678,7 @@ impl<'a> Codegen<'a> {
                 if prefix.len().saturating_add(1) >= array.dims.len() {
                     return Ok(None);
                 }
-                prefix.push(self.p30_index_expr(
-                    path,
-                    *index,
-                    captures,
-                    captured_indices,
-                )?);
+                prefix.push(self.p30_index_expr(path, *index, captures, captured_indices)?);
                 Ok(Some((array, prefix)))
             }
             _ => Ok(None),
@@ -1726,12 +1721,10 @@ impl<'a> Codegen<'a> {
                 left: *left,
                 right: *right,
             }),
-            NodeKind::Expr(ExprKind::ArraySelect { base, indices }) => {
-                Some(Select::Partial {
-                    base: *base,
-                    indices: indices.clone(),
-                })
-            }
+            NodeKind::Expr(ExprKind::ArraySelect { base, indices }) => Some(Select::Partial {
+                base: *base,
+                indices: indices.clone(),
+            }),
             NodeKind::Expr(ExprKind::BitSelect { base, index }) => Some(Select::Partial {
                 base: *base,
                 indices: vec![*index],
@@ -1759,12 +1752,7 @@ impl<'a> Codegen<'a> {
                     return Ok(None);
                 }
                 for index in indices {
-                    prefix.push(self.p30_index_expr(
-                        path,
-                        index,
-                        captures,
-                        captured_indices,
-                    )?);
+                    prefix.push(self.p30_index_expr(path, index, captures, captured_indices)?);
                 }
                 Ok(Some(Self::p30_view_from_prefix(array, &prefix)?))
             }
@@ -1794,16 +1782,17 @@ impl<'a> Codegen<'a> {
                 "fixed unpacked-array assignment pattern in `{path}` is not an assignment pattern"
             ));
         }
-        let count = usize::try_from(
-            (i64::from(bounds.0) - i64::from(bounds.1)).unsigned_abs() + 1,
-        )
-        .map_err(|_| format!("fixed unpacked-array pattern is too large in `{path}`"))?;
+        let count = usize::try_from((i64::from(bounds.0) - i64::from(bounds.1)).unsigned_abs() + 1)
+            .map_err(|_| format!("fixed unpacked-array pattern is too large in `{path}`"))?;
         let mut operands = operands.clone();
         if *reordered {
             operands.reverse();
         }
         let tagged = operands.iter().any(|operand| {
-            matches!(self.kind(*operand), NodeKind::Expr(ExprKind::TaggedPattern { .. }))
+            matches!(
+                self.kind(*operand),
+                NodeKind::Expr(ExprKind::TaggedPattern { .. })
+            )
         });
         if !tagged {
             if operands.len() != count {
@@ -1815,7 +1804,10 @@ impl<'a> Codegen<'a> {
             return Ok(operands);
         }
         if operands.iter().any(|operand| {
-            !matches!(self.kind(*operand), NodeKind::Expr(ExprKind::TaggedPattern { .. }))
+            !matches!(
+                self.kind(*operand),
+                NodeKind::Expr(ExprKind::TaggedPattern { .. })
+            )
         }) {
             return Err(format!(
                 "mixed positional and keyed fixed unpacked-array assignment pattern in `{path}` is not supported"
@@ -1856,8 +1848,7 @@ impl<'a> Codegen<'a> {
             } else {
                 index.checked_sub(left)
             })
-            .filter(|offset| *offset >= 0)
-            else {
+            .filter(|offset| *offset >= 0) else {
                 return Err(format!(
                     "fixed unpacked-array pattern index `{key}` is outside [{left}:{right}] in `{path}`"
                 ));
@@ -1873,15 +1864,11 @@ impl<'a> Codegen<'a> {
         }
         (0..count)
             .map(|offset| {
-                explicit
-                    .get(&offset)
-                    .copied()
-                    .or(default)
-                    .ok_or_else(|| {
-                        format!(
-                            "fixed unpacked-array pattern does not cover offset {offset} in `{path}`"
-                        )
-                    })
+                explicit.get(&offset).copied().or(default).ok_or_else(|| {
+                    format!(
+                        "fixed unpacked-array pattern does not cover offset {offset} in `{path}`"
+                    )
+                })
             })
             .collect()
     }
@@ -1897,31 +1884,33 @@ impl<'a> Codegen<'a> {
         };
         let values = match self.kind(node) {
             NodeKind::Expr(ExprKind::Operation { op, .. })
-                if *op == Operation::AssignmentPattern => self.p30_pattern_level(path, node, *bounds)?,
+                if *op == Operation::AssignmentPattern =>
+            {
+                self.p30_pattern_level(path, node, *bounds)?
+            }
             _ => {
                 let count = dims[1..]
                     .iter()
-                    .map(|(left, right)| {
-                        (i64::from(*left) - i64::from(*right)).unsigned_abs() + 1
-                    })
+                    .map(|(left, right)| (i64::from(*left) - i64::from(*right)).unsigned_abs() + 1)
                     .try_fold(1u64, |total, extent| total.checked_mul(extent))
-                    .ok_or_else(|| format!("fixed unpacked-array pattern is too large in `{path}`"))?;
-                let count = usize::try_from(count)
-                    .map_err(|_| format!("fixed unpacked-array pattern is too large in `{path}`"))?;
+                    .ok_or_else(|| {
+                        format!("fixed unpacked-array pattern is too large in `{path}`")
+                    })?;
+                let count = usize::try_from(count).map_err(|_| {
+                    format!("fixed unpacked-array pattern is too large in `{path}`")
+                })?;
                 let total = count
                     .checked_mul(
-                        usize::try_from(
-                            (i64::from(bounds.0) - i64::from(bounds.1)).unsigned_abs(),
-                        )
-                        .map_err(|_| {
-                            format!("fixed unpacked-array pattern is too large in `{path}`")
-                        })?
-                        .saturating_add(1),
+                        usize::try_from((i64::from(bounds.0) - i64::from(bounds.1)).unsigned_abs())
+                            .map_err(|_| {
+                                format!("fixed unpacked-array pattern is too large in `{path}`")
+                            })?
+                            .saturating_add(1),
                     )
                     .ok_or_else(|| {
                         format!("fixed unpacked-array pattern is too large in `{path}`")
                     })?;
-                return Ok(std::iter::repeat(node).take(total).collect());
+                return Ok(std::iter::repeat_n(node, total).collect());
             }
         };
         if rest.is_empty() {
@@ -2056,7 +2045,10 @@ impl<'a> Codegen<'a> {
                 dims
             }
             NodeKind::Expr(ExprKind::ArraySelect { indices, .. })
-                if indices.len() < array.dims.len() => array.dims[indices.len()..].to_vec(),
+                if indices.len() < array.dims.len() =>
+            {
+                array.dims[indices.len()..].to_vec()
+            }
             NodeKind::Expr(ExprKind::BitSelect { .. }) if array.dims.len() > 1 => {
                 array.dims[1..].to_vec()
             }
@@ -2064,6 +2056,7 @@ impl<'a> Codegen<'a> {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn lower_p30_container_to_fixed(
         &mut self,
         path: &str,
@@ -2075,7 +2068,10 @@ impl<'a> Codegen<'a> {
         mut captures: Vec<IrStmt>,
     ) -> Result<IrStmt, String> {
         let kind = self.model.containers[source.ir].kind.clone();
-        if !matches!(kind, IrContainerKind::Dynamic | IrContainerKind::Queue { .. }) {
+        if !matches!(
+            kind,
+            IrContainerKind::Dynamic | IrContainerKind::Queue { .. }
+        ) {
             return Err(format!(
                 "associative array to fixed unpacked-array assignment in `{path}` is not supported"
             ));
@@ -2087,9 +2083,8 @@ impl<'a> Codegen<'a> {
                 "real dynamic or queue array to fixed unpacked-array assignment in `{path}` is not supported"
             ));
         }
-        let destination_count = u32::try_from(target.coordinates.len()).map_err(|_| {
-            format!("fixed unpacked-array assignment is too large in `{path}`")
-        })?;
+        let destination_count = u32::try_from(target.coordinates.len())
+            .map_err(|_| format!("fixed unpacked-array assignment is too large in `{path}`"))?;
         let size = IrExpr::new(
             IrExprKind::Container(Box::new(IrContainerExpr::Size(source.ir))),
             32,
@@ -2112,7 +2107,12 @@ impl<'a> Codegen<'a> {
         let target_coordinates = target.coordinates;
         let mut then_body = Vec::with_capacity(target_coordinates.len() * 2);
         for (ordinal, coordinates) in target_coordinates.into_iter().enumerate() {
-            let index = pattern_key_expr(i128::try_from(ordinal).unwrap_or(i128::MAX), 32, true, false);
+            let index = pattern_key_expr(
+                i128::try_from(ordinal).unwrap_or(i128::MAX),
+                32,
+                true,
+                false,
+            );
             let value = IrExpr::new(
                 IrExprKind::Container(Box::new(IrContainerExpr::Get {
                     container: source.ir,
@@ -2282,9 +2282,7 @@ impl<'a> Codegen<'a> {
             if source_indices.len() == 1
                 && self
                     .container_element_type(container, 1)
-                    .is_some_and(|element| {
-                        matches!(element, IrContainerElement::Container { .. })
-                    })
+                    .is_some_and(|element| matches!(element, IrContainerElement::Container { .. }))
             {
                 if !blocking {
                     return Err(format!(
@@ -2311,13 +2309,11 @@ impl<'a> Codegen<'a> {
                         "nested container assignment in {path} requires a dynamic array"
                     ));
                 }
-                return Ok(Some(IrStmt::Container(
-                    IrContainerStmt::SetContainer {
-                        container,
-                        indices,
-                        source: source.ir,
-                    },
-                )));
+                return Ok(Some(IrStmt::Container(IrContainerStmt::SetContainer {
+                    container,
+                    indices,
+                    source: source.ir,
+                })));
             }
             if source_indices.len() > 1 {
                 if !blocking {
@@ -2420,13 +2416,11 @@ impl<'a> Codegen<'a> {
                         "nested container assignment in {path} requires a dynamic array"
                     ));
                 }
-                return Ok(Some(IrStmt::Container(
-                    IrContainerStmt::SetContainer {
-                        container: container.ir,
-                        indices: vec![self.lower_container_index(path, index)?],
-                        source: source.ir,
-                    },
-                )));
+                return Ok(Some(IrStmt::Container(IrContainerStmt::SetContainer {
+                    container: container.ir,
+                    indices: vec![self.lower_container_index(path, index)?],
+                    source: source.ir,
+                })));
             }
             let operation = match self.model.containers[container.ir].kind {
                 IrContainerKind::Associative {
@@ -2460,7 +2454,7 @@ impl<'a> Codegen<'a> {
                             ))
                         }
                     }
-                },
+                }
                 _ => {
                     let index = if matches!(
                         self.model.containers[container.ir].kind,
@@ -2579,7 +2573,10 @@ impl<'a> Codegen<'a> {
                 initializer,
             })));
         }
-        if matches!(self.model.containers[dst.ir].kind, IrContainerKind::Queue { .. }) {
+        if matches!(
+            self.model.containers[dst.ir].kind,
+            IrContainerKind::Queue { .. }
+        ) {
             if let Some(sources) = self.lower_queue_sources(path, rhs)? {
                 return Ok(Some(IrStmt::Container(IrContainerStmt::QueueAssign {
                     container: dst.ir,
@@ -2658,7 +2655,10 @@ impl<'a> Codegen<'a> {
                             "recursive queue push_front in {path} requires a dynamic array source"
                         )
                     })?;
-                    if !matches!(self.model.containers[source.ir].kind, IrContainerKind::Dynamic) {
+                    if !matches!(
+                        self.model.containers[source.ir].kind,
+                        IrContainerKind::Dynamic
+                    ) {
                         return Err(format!(
                             "recursive queue push_front in {path} requires a dynamic array source"
                         ));
@@ -2688,7 +2688,10 @@ impl<'a> Codegen<'a> {
                             "recursive queue push_back in {path} requires a dynamic array source"
                         )
                     })?;
-                    if !matches!(self.model.containers[source.ir].kind, IrContainerKind::Dynamic) {
+                    if !matches!(
+                        self.model.containers[source.ir].kind,
+                        IrContainerKind::Dynamic
+                    ) {
                         return Err(format!(
                             "recursive queue push_back in {path} requires a dynamic array source"
                         ));
@@ -2704,12 +2707,8 @@ impl<'a> Codegen<'a> {
                 },
             },
             ("insert", [index, value]) => {
-                let index = self.lower_queue_method_index_with_end(
-                    path,
-                    container.ir,
-                    *index,
-                    true,
-                )?;
+                let index =
+                    self.lower_queue_method_index_with_end(path, container.ir, *index, true)?;
                 match self.model.containers[container.ir].element.clone() {
                     IrContainerElement::String => IrContainerStmt::QueueInsertString {
                         container: container.ir,
@@ -2796,7 +2795,7 @@ fn pattern_key_expr(index: i128, width: u32, signed: bool, _two_state: bool) -> 
     if let Some(high) = bits.get_mut(1) {
         *high = (raw >> 64) as u64;
     }
-    if width % 64 != 0 {
+    if !width.is_multiple_of(64) {
         if let Some(high) = bits.last_mut() {
             *high &= (1u64 << (width % 64)) - 1;
         }

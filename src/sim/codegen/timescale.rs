@@ -120,9 +120,8 @@ pub(super) fn time_literal_delay_ticks(
     if ticks < 0 {
         return Err("time literal delay must be finite and nonnegative".to_owned());
     }
-    u64::try_from(ticks).map_err(|_| {
-        "rounded time literal delay exceeds the 64-bit tick range".to_owned()
-    })
+    u64::try_from(ticks)
+        .map_err(|_| "rounded time literal delay exceeds the 64-bit tick range".to_owned())
 }
 
 fn time_literal_rational(

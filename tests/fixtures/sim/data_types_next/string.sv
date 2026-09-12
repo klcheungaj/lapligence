@@ -22,10 +22,11 @@ module tb;
 
         value.putc(1, 8'h5a);
         value[2] = 8'h59;
+        value.putc(0, 8'h00);
         value[3] = 8'h00;
         if (value.len() !== 4 || value[0] !== 8'h61 ||
             value[1] !== 8'h5a || value[2] !== 8'h59 ||
-            value.getc(3) !== 8'h00) begin
+            value.getc(3) !== 8'h64) begin
             $display("FAIL string character_write");
             $finish;
         end

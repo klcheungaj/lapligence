@@ -47,9 +47,9 @@ fn run_fixture(file: &str, expected: &str) {
             })();
             match actual {
                 Ok(actual) if actual == expected => {}
-                Ok(actual) => failures.push(format!(
-                    "{variant}: expected {expected:?}, got {actual:?}"
-                )),
+                Ok(actual) => {
+                    failures.push(format!("{variant}: expected {expected:?}, got {actual:?}"))
+                }
                 Err(error) => failures.push(format!("{variant}: {error}")),
             }
         }
@@ -112,10 +112,7 @@ fn reject_fixture(file: &str, diagnostic: &str) {
 
 #[test]
 fn fixed_array_assignment_and_views() {
-    run_fixture(
-        "fixed_array_assignment.sv",
-        "PASS fixed_array_assignment\n",
-    );
+    run_fixture("fixed_array_assignment.sv", "PASS fixed_array_assignment\n");
 }
 
 #[test]

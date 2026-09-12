@@ -25,6 +25,14 @@ fn nonblocking_event_repeat_registers_dynamic_count() {
 }
 
 #[test]
+fn zero_repeat_nonblocking_event_still_schedules_the_target() {
+    run_case(
+        "nonblocking_event_repeat_zero",
+        "CHECK: zero repeat time=0\nCHECK: negative repeat time=0\nCHECK: unknown repeat time=0\n",
+    );
+}
+
+#[test]
 fn nonblocking_event_triggers_preserve_nba_order_and_same_slot_wakes() {
     run_case(
         "nonblocking_event_order",

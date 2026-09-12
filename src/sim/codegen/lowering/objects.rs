@@ -1,124 +1,10 @@
 //! Lower non-integral values without encoding their storage as packed bits.
 use super::*;
 use crate::sim::ir::{
-    IrChandleExpr, IrDisplayRadix, IrObject, IrObjectQuery, IrObjectStmt, IrObjectType,
-    IrStringExpr,
+    IrChandleExpr, IrObject, IrObjectQuery, IrObjectStmt, IrObjectType, IrStringExpr,
 };
 
 impl Codegen<'_> {
-    pub(super) fn lower_object_display(
-        &mut self,
-        path: &str,
-        args: &[NodeId],
-        newline: bool,
-        default_radix: IrDisplayRadix,
-    ) -> Result<Option<Vec<IrStmt>>, String> {
-        if !args.iter().any(|arg| self.is_string_expr(path, *arg)) {
-            return Ok(None);
-        }
-        let Some((first, rest)) = args.split_first() else {
-            return Ok(None);
-        };
-        let (fmt, values) = match self.kind(*first) {
-            NodeKind::Expr(ExprKind::Constant {
-                const_type: ConstantType::String,
-                value,
-                ..
-            }) => (decoded_string_bytes(value)?, rest),
-            _ => (Vec::new(), args),
-        };
-        let fmt = String::from_utf8(fmt)
-            .map_err(|_| "string display format must contain valid UTF-8".to_owned())?;
-        let mut result = Vec::new();
-        let mut text = String::new();
-        let mut arg = 0usize;
-        let mut chars = fmt.chars().peekable();
-        while let Some(ch) = chars.next() {
-            if ch != '%' {
-                text.push(ch);
-                continue;
-            }
-            if chars.peek() == Some(&'%') {
-                text.push('%');
-                chars.next();
-                continue;
-            }
-            if !text.is_empty() {
-                result.push(display_text(&text, default_radix));
-                text.clear();
-            }
-            let mut spec = String::from("%");
-            while chars
-                .peek()
-                .is_some_and(|ch| ch.is_ascii_digit() || matches!(ch, '-' | '+' | '.'))
-            {
-                spec.push(chars.next().unwrap());
-            }
-            let conversion = chars.next().ok_or("incomplete string display format")?;
-            spec.push(conversion);
-            let node = *values.get(arg).ok_or("missing string display argument")?;
-            arg += 1;
-            if self.is_string_expr(path, node) {
-                if conversion != 's' || !matches!(spec.as_str(), "%s" | "%0s") {
-                    return Err("string display currently supports only %s and %0s".to_owned());
-                }
-                result.push(IrStmt::Object(IrObjectStmt::StringPrint(
-                    self.lower_string(path, node)?,
-                )));
-            } else {
-                let value = self.lower_expr(path, node)?;
-                if !matches!(
-                    conversion,
-                    's' | 'h' | 'b' | 'o' | 'd' | 't' | 'f' | 'e' | 'g'
-                ) {
-                    return Err("unsupported display conversion".to_owned());
-                }
-                if value.is_real() != matches!(conversion, 'f' | 'e' | 'g') {
-                    return Err("display conversion has incompatible argument type".to_owned());
-                }
-                result.push(IrStmt::Display {
-                    fmt: c_quoted(&spec),
-                    args: vec![(value.clone(), value.is_real())],
-                    newline: false,
-                    default_radix,
-                });
-            }
-        }
-        while arg < values.len() {
-            let node = values[arg];
-            arg += 1;
-            if self.is_string_expr(path, node) {
-                result.push(IrStmt::Object(IrObjectStmt::StringPrint(
-                    self.lower_string(path, node)?,
-                )));
-            } else {
-                let value = self.lower_expr(path, node)?;
-                let spec = if value.is_real() {
-                    "%f".to_owned()
-                } else {
-                    format!("%{}", default_radix.specifier())
-                };
-                result.push(IrStmt::Display {
-                    fmt: c_quoted(&spec),
-                    args: vec![(value.clone(), value.is_real())],
-                    newline: false,
-                    default_radix,
-                });
-            }
-        }
-        if !text.is_empty() {
-            result.push(display_text(&text, default_radix));
-        }
-        if newline {
-            result.push(IrStmt::Display {
-                fmt: "\"\"".to_owned(),
-                args: vec![],
-                newline: true,
-                default_radix,
-            });
-        }
-        Ok(Some(result))
-    }
     fn object_int_argument(
         &mut self,
         path: &str,
@@ -331,11 +217,13 @@ impl Codegen<'_> {
             if target.is_some_and(|target| function.chandle_read.contains_key(&target)) {
                 return true;
             }
-            if matches!(self.kind(node), NodeKind::Expr(ExprKind::Ref { target: None }))
-                && function
-                    .chandle_read
-                    .keys()
-                    .any(|target| self.node(*target).name == self.node(node).name)
+            if matches!(
+                self.kind(node),
+                NodeKind::Expr(ExprKind::Ref { target: None })
+            ) && function
+                .chandle_read
+                .keys()
+                .any(|target| self.node(*target).name == self.node(node).name)
             {
                 return true;
             }
@@ -379,17 +267,18 @@ impl Codegen<'_> {
             target
                 .and_then(|target| function.chandle_write.get(&target).cloned())
                 .or_else(|| {
-                    matches!(self.kind(node), NodeKind::Expr(ExprKind::Ref { target: None }))
-                        .then(|| {
-                            function
-                                .chandle_write
-                                .iter()
-                                .find(|(target, _)| {
-                                    self.node(**target).name == self.node(node).name
-                                })
-                                .map(|(_, target)| target.clone())
-                        })
-                        .flatten()
+                    matches!(
+                        self.kind(node),
+                        NodeKind::Expr(ExprKind::Ref { target: None })
+                    )
+                    .then(|| {
+                        function
+                            .chandle_write
+                            .iter()
+                            .find(|(target, _)| self.node(**target).name == self.node(node).name)
+                            .map(|(_, target)| target.clone())
+                    })
+                    .flatten()
                 })
         });
         if let Some(target) = mapped {
@@ -411,7 +300,11 @@ impl Codegen<'_> {
         }
     }
 
-    pub(super) fn lower_chandle(&mut self, path: &str, node: NodeId) -> Result<IrChandleExpr, String> {
+    pub(super) fn lower_chandle(
+        &mut self,
+        path: &str,
+        node: NodeId,
+    ) -> Result<IrChandleExpr, String> {
         if let Some(value) = self.lower_container_chandle_query(path, node)? {
             return Ok(value);
         }
@@ -590,7 +483,10 @@ impl Codegen<'_> {
             for (idx, (io, is_out)) in formals.iter().enumerate() {
                 let is_ref = matches!(
                     self.kind(*io),
-                    NodeKind::FuncArg { direction: DbDirection::Ref, .. }
+                    NodeKind::FuncArg {
+                        direction: DbDirection::Ref,
+                        ..
+                    }
                 );
                 if is_ref {
                     if !bound[idx].string {
@@ -601,7 +497,10 @@ impl Codegen<'_> {
                     }
                     let const_ref = matches!(
                         self.kind(*io),
-                        NodeKind::FuncArg { const_ref: true, .. }
+                        NodeKind::FuncArg {
+                            const_ref: true,
+                            ..
+                        }
                     );
                     if !const_ref {
                         self.ensure_string_actual_writable(path, bound[idx].expr)?;
@@ -619,7 +518,10 @@ impl Codegen<'_> {
                     let writeback = self.lower_string_actual_address(path, bound[idx].expr)?;
                     let init = matches!(
                         self.kind(*io),
-                        NodeKind::FuncArg { direction: DbDirection::Inout, .. }
+                        NodeKind::FuncArg {
+                            direction: DbDirection::Inout,
+                            ..
+                        }
                     )
                     .then(|| self.lower_string(path, bound[idx].expr))
                     .transpose()?;
@@ -641,7 +543,9 @@ impl Codegen<'_> {
                         storage_read,
                     });
                 } else if bound[idx].string {
-                    in_args.push(IrCallArg::StringVal(self.lower_string(path, bound[idx].expr)?));
+                    in_args.push(IrCallArg::StringVal(
+                        self.lower_string(path, bound[idx].expr)?,
+                    ));
                 } else {
                     let (_, arg) = self.lower_bound_arg_code(
                         path,
@@ -852,9 +756,7 @@ impl Codegen<'_> {
             {
                 let op = *op;
                 let (a, b) = (operands[0], operands[1]);
-                let is_chandle = [a, b]
-                    .iter()
-                    .any(|node| self.is_chandle_expr(path, *node));
+                let is_chandle = [a, b].iter().any(|node| self.is_chandle_expr(path, *node));
                 if is_chandle {
                     if matches!(op, Operation::LogicalAnd | Operation::LogicalOr) {
                         let a = self.lower_boolean_expr(path, a)?;
@@ -1090,7 +992,9 @@ impl Codegen<'_> {
         let index = self.object_of(path, receiver);
         let local = if index.is_none() {
             let target = match self.kind(receiver) {
-                NodeKind::Expr(ExprKind::Ref { target: Some(target) }) => Some(*target),
+                NodeKind::Expr(ExprKind::Ref {
+                    target: Some(target),
+                }) => Some(*target),
                 _ => Some(receiver),
             };
             self.func.as_ref().and_then(|function| {
@@ -1100,7 +1004,9 @@ impl Codegen<'_> {
                         function
                             .string_write
                             .iter()
-                            .find(|(target, _)| self.node(**target).name == self.node(receiver).name)
+                            .find(|(target, _)| {
+                                self.node(**target).name == self.node(receiver).name
+                            })
                             .map(|(_, value)| value.clone())
                     })
             })
@@ -1110,7 +1016,9 @@ impl Codegen<'_> {
         if index.is_none() && local.is_none() {
             let const_ref = self.func.as_ref().is_some_and(|function| {
                 let target = match self.kind(receiver) {
-                    NodeKind::Expr(ExprKind::Ref { target: Some(target) }) => Some(*target),
+                    NodeKind::Expr(ExprKind::Ref {
+                        target: Some(target),
+                    }) => Some(*target),
                     _ => Some(receiver),
                 };
                 target.is_some_and(|target| {
@@ -1192,22 +1100,4 @@ pub(super) fn object_query(query: IrObjectQuery, width: u32, signed: bool) -> Ir
         signed,
         None,
     )
-}
-
-fn c_quoted(value: &str) -> String {
-    format!(
-        "\"{}\"",
-        value
-            .chars()
-            .map(|byte| format!("\\{:03o}", u32::from(byte)))
-            .collect::<String>()
-    )
-}
-fn display_text(value: &str, default_radix: IrDisplayRadix) -> IrStmt {
-    IrStmt::Display {
-        fmt: c_quoted(&value.replace('%', "%%")),
-        args: vec![],
-        newline: false,
-        default_radix,
-    }
 }

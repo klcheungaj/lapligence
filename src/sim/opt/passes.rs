@@ -30,10 +30,9 @@ use std::collections::HashSet;
 use crate::core::elab::{self, Bit, Value};
 use crate::sim::execution::{ExecutionModel, ExecutionProcess, TriggerPlan};
 use crate::sim::ir::{
-    IrBinOp, IrCallArg, IrCaseKind, IrConst, IrDependency, IrElemSel, IrExpr, IrExprKind,
-    IrFormal, IrInsideItem, IrLhs, IrModel, IrPreFn, IrProcessKind, IrRealBinOp, IrRealUnOp,
-    IrStmt,
-    IrSysFunc, IrUnOp, IrWaitSrc,
+    IrBinOp, IrCallArg, IrCaseKind, IrConst, IrDependency, IrElemSel, IrExpr, IrExprKind, IrFormal,
+    IrInsideItem, IrLhs, IrModel, IrPreFn, IrRealBinOp, IrRealUnOp, IrStmt, IrSysFunc, IrUnOp,
+    IrWaitSrc,
 };
 
 /// Run the enabled passes over `model` in a fixed order.
@@ -309,9 +308,7 @@ fn walk_call_args_mut(args: &mut [IrCallArg], f: &mut impl FnMut(&mut IrExpr)) {
                 walk_lhs_mut(lhs, f);
             }
             IrCallArg::StringOutTemp {
-                init,
-                storage_read,
-                ..
+                init, storage_read, ..
             } => {
                 if let Some(init) = init {
                     init.expressions_mut(&mut |child| walk_expr_mut(child, f));
@@ -320,7 +317,8 @@ fn walk_call_args_mut(args: &mut [IrCallArg], f: &mut impl FnMut(&mut IrExpr)) {
                     read.expressions_mut(&mut |child| walk_expr_mut(child, f));
                 }
             }
-            IrCallArg::ChandleVal(_) | IrCallArg::ChandleAddr(_) | IrCallArg::ChandleRefAddr(_) => {}
+            IrCallArg::ChandleVal(_) | IrCallArg::ChandleAddr(_) | IrCallArg::ChandleRefAddr(_) => {
+            }
         }
     }
 }
@@ -494,7 +492,9 @@ fn walk_stmt_mut(s: &mut IrStmt, f: &mut impl FnMut(&mut IrExpr)) {
             walk_stmts_mut(body, f);
         }
         IrStmt::WaitEventTriggered { body, .. } => walk_stmts_mut(body, f),
-        IrStmt::WaitOrder { success, failure, .. } => {
+        IrStmt::WaitOrder {
+            success, failure, ..
+        } => {
             walk_stmts_mut(success, f);
             walk_stmts_mut(failure, f);
         }
@@ -597,9 +597,7 @@ fn walk_pre_fn_mut(pre: &mut IrPreFn, f: &mut impl FnMut(&mut IrExpr)) {
                 arg.expressions_mut(&mut |expression| walk_expr_mut(expression, f));
             }
         }
-        IrPreFn::RealEval {
-            value, context, ..
-        } => {
+        IrPreFn::RealEval { value, context, .. } => {
             walk_expr_mut(value, f);
             if let Some(context) = context {
                 for capture in context.captures_mut() {
@@ -964,20 +962,18 @@ fn ident_children(e: &mut IrExpr) {
                             ident_expr(init);
                         }
                     }
-            IrCallArg::OutAddr(_)
-            | IrCallArg::StringOutAddr(_)
-            | IrCallArg::StringRefAddr { .. }
-            | IrCallArg::ChandleVal(_)
-            | IrCallArg::ChandleAddr(_)
-            | IrCallArg::ChandleRefAddr(_) => {}
-            IrCallArg::RefAddr { read, lhs, .. } => {
-                ident_expr(read);
-                ident_lhs(lhs);
-            }
+                    IrCallArg::OutAddr(_)
+                    | IrCallArg::StringOutAddr(_)
+                    | IrCallArg::StringRefAddr { .. }
+                    | IrCallArg::ChandleVal(_)
+                    | IrCallArg::ChandleAddr(_)
+                    | IrCallArg::ChandleRefAddr(_) => {}
+                    IrCallArg::RefAddr { read, lhs, .. } => {
+                        ident_expr(read);
+                        ident_lhs(lhs);
+                    }
                     IrCallArg::StringOutTemp {
-                        init,
-                        storage_read,
-                        ..
+                        init, storage_read, ..
                     } => {
                         if let Some(init) = init {
                             init.expressions_mut(&mut |child| ident_expr(child));
@@ -1208,7 +1204,9 @@ fn prune_nested_in_place(s: &mut IrStmt) {
             _ => prune_stmt_list(body),
         },
         IrStmt::WaitEventTriggered { body, .. } => prune_stmt_list(body),
-        IrStmt::WaitOrder { success, failure, .. } => {
+        IrStmt::WaitOrder {
+            success, failure, ..
+        } => {
             prune_stmt_list(success);
             prune_stmt_list(failure);
         }
@@ -1242,9 +1240,9 @@ fn collect_goto_names(stmts: &[IrStmt], out: &mut HashSet<String>) {
             IrStmt::Goto(l) => {
                 out.insert(l.clone());
             }
-        IrStmt::Block(b)
-        | IrStmt::Forever { body: b }
-        | IrStmt::ActivationScope { body: b, .. } => collect_goto_names(b, out),
+            IrStmt::Block(b)
+            | IrStmt::Forever { body: b }
+            | IrStmt::ActivationScope { body: b, .. } => collect_goto_names(b, out),
             IrStmt::If { then_, els, .. } => {
                 collect_goto_names(then_, out);
                 if let Some(els) = els {
@@ -1266,12 +1264,14 @@ fn collect_goto_names(stmts: &[IrStmt], out: &mut HashSet<String>) {
                     collect_goto_names(&item.body, out);
                 }
             }
-        IrStmt::WaitCond { body: b, .. } => collect_goto_names(b, out),
-        IrStmt::WaitEventTriggered { body: b, .. } => collect_goto_names(b, out),
-        IrStmt::WaitOrder { success, failure, .. } => {
-            collect_goto_names(success, out);
-            collect_goto_names(failure, out);
-        }
+            IrStmt::WaitCond { body: b, .. } => collect_goto_names(b, out),
+            IrStmt::WaitEventTriggered { body: b, .. } => collect_goto_names(b, out),
+            IrStmt::WaitOrder {
+                success, failure, ..
+            } => {
+                collect_goto_names(success, out);
+                collect_goto_names(failure, out);
+            }
             _ => {}
         }
     }
@@ -1318,7 +1318,9 @@ fn strip_labels_in(stmts: &mut Vec<IrStmt>, referenced: &HashSet<String>) {
             }
             IrStmt::WaitCond { body: b, .. } => strip_labels_in(b, referenced),
             IrStmt::WaitEventTriggered { body: b, .. } => strip_labels_in(b, referenced),
-            IrStmt::WaitOrder { success, failure, .. } => {
+            IrStmt::WaitOrder {
+                success, failure, ..
+            } => {
                 strip_labels_in(success, referenced);
                 strip_labels_in(failure, referenced);
             }
@@ -1569,9 +1571,7 @@ fn collect_pre_fns_rw(pre_fns: &[IrPreFn], model: &IrModel, rw: &mut Rw) {
                     arg.expressions(&mut |expression| collect_expr_reads(expression, model, rw));
                 }
             }
-            IrPreFn::RealEval {
-                value, context, ..
-            } => {
+            IrPreFn::RealEval { value, context, .. } => {
                 collect_expr_reads(value, model, rw);
                 if let Some(context) = context {
                     for capture in context.captures() {
@@ -1752,7 +1752,9 @@ fn collect_stmt_rw(s: &IrStmt, model: &IrModel, rw: &mut Rw) {
             collect_stmts_rw(body, model, rw);
         }
         IrStmt::WaitEventTriggered { body, .. } => collect_stmts_rw(body, model, rw),
-        IrStmt::WaitOrder { success, failure, .. } => {
+        IrStmt::WaitOrder {
+            success, failure, ..
+        } => {
             collect_stmts_rw(success, model, rw);
             collect_stmts_rw(failure, model, rw);
         }
@@ -1864,9 +1866,7 @@ fn collect_call_rw(call: &crate::sim::ir::IrCall, model: &IrModel, rw: &mut Rw) 
                 }
             }
             IrCallArg::StringOutTemp {
-                init,
-                storage_read,
-                ..
+                init, storage_read, ..
             } => {
                 if let Some(init) = init {
                     init.expressions(&mut |expression| collect_expr_reads(expression, model, rw));
@@ -1875,7 +1875,8 @@ fn collect_call_rw(call: &crate::sim::ir::IrCall, model: &IrModel, rw: &mut Rw) 
                     read.expressions(&mut |expression| collect_expr_reads(expression, model, rw));
                 }
             }
-            IrCallArg::ChandleVal(_) | IrCallArg::ChandleAddr(_) | IrCallArg::ChandleRefAddr(_) => {}
+            IrCallArg::ChandleVal(_) | IrCallArg::ChandleAddr(_) | IrCallArg::ChandleRefAddr(_) => {
+            }
         }
     }
     // Caller-side output/inout temps live here, not in `args`: their
@@ -2047,12 +2048,7 @@ fn collect_children_reads(e: &IrExpr, model: &IrModel, rw: &mut Rw) {
     }
 }
 
-fn collect_call_rw_readonly(
-    function: usize,
-    args: &[IrCallArg],
-    model: &IrModel,
-    rw: &mut Rw,
-) {
+fn collect_call_rw_readonly(function: usize, args: &[IrCallArg], model: &IrModel, rw: &mut Rw) {
     for (index, arg) in args.iter().enumerate() {
         match arg {
             IrCallArg::Val(e) => collect_expr_reads(e, model, rw),
@@ -2067,9 +2063,7 @@ fn collect_call_rw_readonly(
             }
             IrCallArg::RefAddr { lhs, read, .. } => {
                 collect_expr_reads(read, model, rw);
-                if call_formal(model, function, index)
-                    .is_none_or(|formal| !formal.is_const_ref())
-                {
+                if call_formal(model, function, index).is_none_or(|formal| !formal.is_const_ref()) {
                     collect_lhs_rw(lhs, model, rw);
                 }
             }
@@ -2104,9 +2098,7 @@ fn collect_call_rw_readonly(
                 }
             }
             IrCallArg::StringOutTemp {
-                init,
-                storage_read,
-                ..
+                init, storage_read, ..
             } => {
                 if let Some(init) = init {
                     init.expressions(&mut |expression| collect_expr_reads(expression, model, rw));
@@ -2115,7 +2107,8 @@ fn collect_call_rw_readonly(
                     read.expressions(&mut |expression| collect_expr_reads(expression, model, rw));
                 }
             }
-            IrCallArg::ChandleVal(_) | IrCallArg::ChandleAddr(_) | IrCallArg::ChandleRefAddr(_) => {}
+            IrCallArg::ChandleVal(_) | IrCallArg::ChandleAddr(_) | IrCallArg::ChandleRefAddr(_) => {
+            }
         }
     }
 }
@@ -2136,8 +2129,8 @@ fn call_formal(model: &IrModel, function: usize, index: usize) -> Option<&IrForm
 mod tests {
     use super::*;
     use crate::sim::ir::{
-        IrCall, IrCallArg, IrCaseItem, IrDependency, IrDepth, IrEdge, IrEventRef, IrFunc, IrLocal, IrProcess,
-        IrShape, IrSignal, IrType,
+        IrCall, IrCallArg, IrCaseItem, IrDependency, IrDepth, IrEdge, IrEventRef, IrFunc, IrLocal,
+        IrProcess, IrShape, IrSignal, IrType,
     };
 
     // ── builders ──────────────────────────────────────────────────────────
@@ -2293,7 +2286,7 @@ mod tests {
             processes: vec![IrProcess {
                 c_name: "p_t_proc_0".to_string(),
                 label: "t.always".to_string(),
-                kind: IrProcessKind::Synthetic,
+                kind: crate::sim::ir::IrProcessKind::Synthetic,
                 shape: IrShape::RunOnce,
                 writes: Vec::new(),
                 pre_fns: Vec::new(),

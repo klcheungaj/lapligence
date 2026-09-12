@@ -36,29 +36,6 @@ fn run_sim(sv: &str, top: &str, tag: &str) -> Result<(String, Vec<String>), Stri
     Ok((run.stdout, run.warnings))
 }
 
-/// Compile + codegen only, returning the raw codegen error (for rejects).
-fn codegen_error(sv: &str, top: &str, tag: &str) -> Result<String, String> {
-    sim_harness::with_temp_cwd(tag, |dir| {
-        let src = dir.join("tb.sv");
-        std::fs::write(&src, sv).map_err(|error| format!("write source: {error}"))?;
-        let out = compile::compile(&compile::CompileOpts {
-            files: vec![src.to_string_lossy().into_owned()],
-            top: Some(top.to_string()),
-            ..Default::default()
-        })
-        .map_err(|e| format!("compile: {e}"))?;
-        if !out.ok() {
-            return Err(format!("compile diagnostics: {:?}", out.diagnostics));
-        }
-        let db =
-            llg::core::db::Db::from_slang(&out.snapshot).map_err(|error| format!("db: {error}"))?;
-        match sim::codegen::generate(&db) {
-            Ok(_) => Err("codegen unexpectedly succeeded".to_string()),
-            Err(e) => Ok(e.to_string()),
-        }
-    })
-}
-
 /// Build + run one model under a specific optimizer configuration; returns
 /// its exact stdout (used by the opt-parity case).
 fn run_variant(dir: &std::path::Path, name: &str, model_c: &str) -> Result<String, String> {

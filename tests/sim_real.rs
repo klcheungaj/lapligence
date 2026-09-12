@@ -509,7 +509,8 @@ fn sim_real_arrays_function_and_continuous_assignment_match_optimizer_modes() {
             ..Default::default()
         })
         .map_err(|error| format!("compile: {error}"))?;
-        let db = Db::from_slang(&compiled.snapshot).map_err(|error| format!("database: {error}"))?;
+        let db =
+            Db::from_slang(&compiled.snapshot).map_err(|error| format!("database: {error}"))?;
         let expected = "v0=1.250000 v1=2.500000 result=3.000000 rounded=2.500000\n";
         for (variant, options) in [
             ("optimized", OptConfig::default()),

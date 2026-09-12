@@ -489,10 +489,7 @@ fn expression_refs(expression: &ExprKind, refs: &mut Vec<NodeId>) {
             refs.extend(indices.iter().copied());
         }
         ExprKind::HierPath { refs: parts, .. } => refs.extend(parts.iter().flatten().copied()),
-        ExprKind::Constant { .. }
-        | ExprKind::DataType
-        | ExprKind::Unbounded
-        | ExprKind::Other => {}
+        ExprKind::Constant { .. } | ExprKind::DataType | ExprKind::Unbounded | ExprKind::Other => {}
     }
 }
 
@@ -567,7 +564,7 @@ mod tests {
             StmtKind::Assign {
                 blocking: false,
                 op: super::super::Operation::Assignment,
-                delay: Some(IntraControl::Delay(NodeId(1))),
+                delay: Some(super::super::IntraControl::Delay(NodeId(1))),
             },
         ] {
             let error = from_nodes(vec![node(NodeKind::Stmt(statement))])

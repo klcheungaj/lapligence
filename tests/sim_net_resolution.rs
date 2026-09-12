@@ -1,9 +1,9 @@
 //! Strength-aware standalone wired-net resolution and explicit subset bounds.
 
-#[path = "support/sim.rs"]
-mod sim_harness;
 #[path = "support/sim_cli.rs"]
 mod sim_cli;
+#[path = "support/sim.rs"]
+mod sim_harness;
 
 use llg::core::{compile, db::Db};
 use llg::ffi::slang::DiagnosticSeverity;
@@ -443,7 +443,11 @@ endmodule
                 &[("model.c", model.model_c.as_str())],
             )
             .map_err(|error| format!("{variant} C model build: {error}"))?;
-            assert_eq!(sim_harness::run_executable(&executable)?, expected, "{variant}");
+            assert_eq!(
+                sim_harness::run_executable(&executable)?,
+                expected,
+                "{variant}"
+            );
         }
         Ok(())
     })

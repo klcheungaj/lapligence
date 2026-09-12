@@ -2,14 +2,16 @@
 
 use super::*;
 use crate::sim::ir::{
-    IrChandleExpr, IrContainerElement, IrContainerMember, IrObjectStmt, IrObjectType,
-    IrStringExpr,
+    IrChandleExpr, IrContainerElement, IrContainerMember, IrObjectStmt, IrObjectType, IrStringExpr,
 };
 
 fn lower_container_element(descriptor: &TypeDescriptor) -> Result<IrContainerElement, String> {
     let packed = || {
-        descriptor.info.width.filter(|width| *width != 0).map(|width| {
-            IrContainerElement::Packed {
+        descriptor
+            .info
+            .width
+            .filter(|width| *width != 0)
+            .map(|width| IrContainerElement::Packed {
                 width,
                 signed: descriptor.info.signed,
                 two_state: descriptor.info.kind == "bit"
@@ -17,12 +19,14 @@ fn lower_container_element(descriptor: &TypeDescriptor) -> Result<IrContainerEle
                         descriptor.info.kind.as_str(),
                         "int" | "longint" | "byte" | "shortint"
                     ),
-            }
-        })
+            })
     };
     match &descriptor.shape {
         TypeShape::PackedAtom { .. } => packed().ok_or_else(|| {
-            format!("container element `{}` has no representable packed width", descriptor.name)
+            format!(
+                "container element `{}` has no representable packed width",
+                descriptor.name
+            )
         }),
         TypeShape::Real { shortreal } => Ok(IrContainerElement::Real {
             shortreal: *shortreal,
@@ -32,9 +36,15 @@ fn lower_container_element(descriptor: &TypeDescriptor) -> Result<IrContainerEle
             if matches!(
                 layout.kind,
                 AggregateKind::PackedStruct | AggregateKind::PackedUnion
-            ) && descriptor.info.width.is_some() => packed().ok_or_else(|| {
-                format!("container element `{}` has no representable packed width", descriptor.name)
-            }),
+            ) && descriptor.info.width.is_some() =>
+        {
+            packed().ok_or_else(|| {
+                format!(
+                    "container element `{}` has no representable packed width",
+                    descriptor.name
+                )
+            })
+        }
         TypeShape::Aggregate(layout) => Ok(IrContainerElement::Aggregate {
             type_id: descriptor.id.0,
             members: layout
@@ -94,16 +104,12 @@ fn leaf_member(base: &AggregateMember, descriptor: &TypeDescriptor) -> Aggregate
         TypeShape::PackedAtom { ranges } => ranges.clone(),
         _ => base.packed_ranges.clone(),
     };
-    let aggregate = match &descriptor.shape {
-        TypeShape::Aggregate(layout) => Some(Box::new(layout.clone())),
-        _ => None,
-    };
     AggregateMember {
         name: base.name.clone(),
         ty: descriptor.info.clone(),
         two_state: base.two_state,
         packed_ranges,
-        aggregate,
+        aggregate: None,
         descriptor: descriptor.clone(),
     }
 }
@@ -734,6 +740,7 @@ impl<'a> Codegen<'a> {
     /// Recursively lower a fixed non-class descriptor to owned leaf storage.
     /// This is an emission detail only; compatibility and copy policy remain
     /// governed by the recursive descriptor captured in `core::db`.
+    #[allow(clippy::too_many_arguments)]
     fn collect_aggregate_descriptor_leaves(
         &mut self,
         path: &str,
@@ -1257,7 +1264,8 @@ impl<'a> Codegen<'a> {
             if let Some(index) = member.object {
                 match self.model.objects[index].ty {
                     crate::sim::ir::IrObjectType::String => {
-                        self.model.objects[index].initial = Some(self.lower_string(path, value_node)?);
+                        self.model.objects[index].initial =
+                            Some(self.lower_string(path, value_node)?);
                     }
                     crate::sim::ir::IrObjectType::Chandle => {
                         if self.lower_chandle(path, value_node)? != IrChandleExpr::Null {
@@ -1296,10 +1304,11 @@ impl<'a> Codegen<'a> {
                 };
                 let value = match value {
                     Val::Real(value) => Val::Real(value),
-                    Val::Bits(value) => Val::Real(
-                        elab::ieee_bits_to_real(&value)
-                            .ok_or_else(|| "real aggregate initializer is not an IEEE value".to_owned())?,
-                    ),
+                    Val::Bits(value) => {
+                        Val::Real(elab::ieee_bits_to_real(&value).ok_or_else(|| {
+                            "real aggregate initializer is not an IEEE value".to_owned()
+                        })?)
+                    }
                     Val::Str(_) => {
                         return Err(format!(
                             "string value cannot initialize real aggregate member `{}` in `{path}`",
@@ -1307,7 +1316,8 @@ impl<'a> Codegen<'a> {
                         ))
                     }
                 };
-                self.var_inits.push((signal.clone(), decl_value_to_const(value)?));
+                self.var_inits
+                    .push((signal.clone(), decl_value_to_const(value)?));
                 continue;
             }
             let width = member.member.ty.width.ok_or_else(|| {
@@ -1347,7 +1357,7 @@ impl<'a> Codegen<'a> {
         member: &AggregateMember,
         width: u32,
     ) -> Result<elab::Value, String> {
-        if let Some(layout) = member.aggregate.as_deref() {
+        if let Some(layout) = member.aggregate_layout() {
             if matches!(
                 self.kind(value_node),
                 NodeKind::Expr(ExprKind::Operation { op, .. })
@@ -1556,7 +1566,7 @@ impl<'a> Codegen<'a> {
             if !layout
                 .members
                 .iter()
-                .any(|member| aggregate_member_matches_type_key(member, key, Some(&key_type)))
+                .any(|member| aggregate_member_matches_type_key(member, key, Some(key_type)))
             {
                 return Err(format!(
                     "aggregate assignment pattern key `{key}` has no matching member or type in `{path}`"
@@ -1566,9 +1576,7 @@ impl<'a> Codegen<'a> {
                 .iter()
                 .any(|(_, previous, _)| pattern_key_types_equal(previous, key_type))
             {
-                return Err(format!(
-                    "duplicate aggregate type key `{key}` in `{path}`"
-                ));
+                return Err(format!("duplicate aggregate type key `{key}` in `{path}`"));
             }
             type_values.push((key.to_owned(), key_type.clone(), value));
         }
@@ -1642,18 +1650,6 @@ impl<'a> Codegen<'a> {
             }
         }
         Ok(())
-    }
-
-    /// Width of a Net/Var from its captured `TypeInfo`; rejects unsupported
-    /// kinds and widths above `LLG_MAX_WIDTH` bits.
-    fn signal_node_is_real(&self, node: NodeId) -> bool {
-        match self.kind(node) {
-            NodeKind::Net { ty, .. } | NodeKind::Var { ty } | NodeKind::Array { ty } => {
-                is_real_kind(&ty.kind)
-                    || matches!(ty.kind.as_str(), "real_array" | "shortreal_array")
-            }
-            _ => false,
-        }
     }
 
     fn signal_width(
@@ -2058,12 +2054,14 @@ impl<'a> Codegen<'a> {
                     self.display_name(members[0])
                 ));
             };
-            if let Some(bad) = members.iter().skip(1).find(|member| {
-                match self.kind(**member) {
+            if let Some(bad) = members
+                .iter()
+                .skip(1)
+                .find(|member| match self.kind(**member) {
                     NodeKind::Net { net_type, .. } => Self::ir_net_kind(*net_type) != Some(kind),
                     _ => true,
-                }
-            }) {
+                })
+            {
                 return Err(format!(
                     "{joined}: member `{}` has an incompatible net type at {}:{}:{}",
                     self.display_name(*bad),
@@ -2093,8 +2091,7 @@ impl<'a> Codegen<'a> {
                     self.node(members[0]).col,
                 ));
             }
-            let propagation_delay =
-                self.net_propagation_delay_for_members(members, &joined)?;
+            let propagation_delay = self.net_propagation_delay_for_members(members, &joined)?;
 
             // Group is valid: assign one driver slot per member (NodeId
             // order) and redirect every member's storage to the resolved cell.
@@ -2152,16 +2149,7 @@ impl<'a> Codegen<'a> {
                 let Some(signal) = self.sig_globals.get(member).map(|info| info.ir) else {
                     continue;
                 };
-                let id = self.record_structural_driver(
-                    gidx,
-                    *member,
-                    signal,
-                    StructuralDriverKind::Declaration,
-                    Some(*member),
-                    (6, 6),
-                    None,
-                    0,
-                )?;
+                let id = self.record_structural_driver(signal)?;
                 self.structural_driver_sites.insert((*member, gidx), id);
             }
             let sources = self.structural_site_sources(members)?;
@@ -2221,12 +2209,7 @@ impl<'a> Codegen<'a> {
                 .structural_drivers
                 .get(signal.0 as usize)
                 .map(|record| record.signal)
-                .ok_or_else(|| {
-                    format!(
-                        "structural driver {} has no recorded signal",
-                        signal.0
-                    )
-                });
+                .ok_or_else(|| format!("structural driver {} has no recorded signal", signal.0));
         }
         let net = self
             .model
@@ -2258,29 +2241,7 @@ impl<'a> Codegen<'a> {
             alias: None,
             omit: false,
         });
-        let (kind, declaration) = match self.kind(source) {
-            NodeKind::ContAssign { net_decl, .. } => (
-                if *net_decl {
-                    StructuralDriverKind::Declaration
-                } else {
-                    StructuralDriverKind::Continuous
-                },
-                (*net_decl).then_some(source),
-            ),
-            NodeKind::Gate { .. } => (StructuralDriverKind::Primitive, None),
-            NodeKind::Port { .. } => (StructuralDriverKind::Port, None),
-            _ => (StructuralDriverKind::Continuous, None),
-        };
-        let id = self.record_structural_driver(
-            group,
-            source,
-            signal,
-            kind,
-            declaration,
-            strengths,
-            None,
-            terminal,
-        )?;
+        let id = self.record_structural_driver(signal)?;
         if terminal == 0 {
             self.structural_driver_sites.insert((source, group), id);
         } else {
@@ -2290,40 +2251,13 @@ impl<'a> Codegen<'a> {
         Ok(signal)
     }
 
-    fn record_structural_driver(
-        &mut self,
-        group: usize,
-        source: NodeId,
-        signal: usize,
-        kind: StructuralDriverKind,
-        declaration: Option<NodeId>,
-        strengths: (u8, u8),
-        selected_mask: Option<Vec<u64>>,
-        terminal: usize,
-    ) -> Result<DriverId, String> {
-        let net_kind = self
-            .model
-            .net_groups
-            .get(group)
-            .ok_or_else(|| format!("structural driver references missing net group {group}"))?
-            .kind;
+    fn record_structural_driver(&mut self, signal: usize) -> Result<DriverId, String> {
         let id = DriverId(
             u32::try_from(self.structural_drivers.len())
                 .map_err(|_| "structural driver id space exhausted".to_string())?,
         );
-        self.structural_drivers.push(StructuralDriverRecord {
-            id,
-            source,
-            declaration,
-            hierarchy: self.display_name(source),
-            group,
-            signal,
-            kind,
-            net_kind,
-            strengths,
-            selected_mask,
-            terminal,
-        });
+        self.structural_drivers
+            .push(StructuralDriverRecord { signal });
         Ok(id)
     }
 
@@ -2355,6 +2289,7 @@ impl<'a> Codegen<'a> {
             .any(|(candidate, _)| *candidate == source)
     }
 
+    #[allow(clippy::type_complexity)]
     fn structural_site_sources(
         &self,
         members: &[NodeId],
@@ -2570,18 +2505,17 @@ impl<'a> Codegen<'a> {
                         }
                         match self.member_write_kind(lhs, &member_set) {
                             MemberWrite::None => {
-                                if matches!(self.kind(lhs), NodeKind::Expr(ExprKind::HierPath { .. }))
-                                {
+                                if matches!(
+                                    self.kind(lhs),
+                                    NodeKind::Expr(ExprKind::HierPath { .. })
+                                ) {
                                     let width = self
                                         .sig_globals
                                         .get(&net)
                                         .map(|info| info.width)
                                         .unwrap_or(1);
                                     let strengths = continuous_assignment_strengths_for_width(
-                                        *strength0,
-                                        *strength1,
-                                        &shown,
-                                        width,
+                                        *strength0, *strength1, &shown, width,
                                     )?;
                                     sites.insert(*id, strengths);
                                 } else if self.nested_member_target(lhs, &member_set).is_some() {
@@ -2596,10 +2530,7 @@ impl<'a> Codegen<'a> {
                                         .map(|info| info.width)
                                         .unwrap_or(1);
                                     let strengths = continuous_assignment_strengths_for_width(
-                                        *strength0,
-                                        *strength1,
-                                        &shown,
-                                        width,
+                                        *strength0, *strength1, &shown, width,
                                     )?;
                                     sites.insert(*id, strengths);
                                 }
@@ -2613,10 +2544,7 @@ impl<'a> Codegen<'a> {
                                 sites.insert(
                                     *id,
                                     continuous_assignment_strengths_for_width(
-                                        *strength0,
-                                        *strength1,
-                                        &shown,
-                                        width,
+                                        *strength0, *strength1, &shown, width,
                                     )?,
                                 );
                             }
@@ -2627,10 +2555,7 @@ impl<'a> Codegen<'a> {
                                     .map(|info| info.width)
                                     .unwrap_or(1);
                                 let strengths = continuous_assignment_strengths_for_width(
-                                    *strength0,
-                                    *strength1,
-                                    &shown,
-                                    width,
+                                    *strength0, *strength1, &shown, width,
                                 )?;
                                 sites.insert(*id, strengths);
                             }
@@ -2668,26 +2593,26 @@ impl<'a> Codegen<'a> {
                     }
                     NodeKind::Stmt(StmtKind::Force { .. })
                     | NodeKind::Stmt(StmtKind::Release { .. }) => {}
-                NodeKind::Gate {
-                    prim_type,
-                    strength0,
-                    strength1,
-                    terms,
-                    ..
-                } => {
-                    if terms.iter().any(|term| {
-                        matches!(term.direction, DbDirection::Output | DbDirection::Inout)
-                            && self.nested_member_target(term.expr, &member_set).is_some()
-                    }) {
-                        let strengths = gate_driver_strengths(
-                            *prim_type,
-                            *strength0,
-                            *strength1,
-                            &self.display_name(*id),
-                        )?;
-                        sites.insert(*id, strengths);
+                    NodeKind::Gate {
+                        prim_type,
+                        strength0,
+                        strength1,
+                        terms,
+                        ..
+                    } => {
+                        if terms.iter().any(|term| {
+                            matches!(term.direction, DbDirection::Output | DbDirection::Inout)
+                                && self.nested_member_target(term.expr, &member_set).is_some()
+                        }) {
+                            let strengths = gate_driver_strengths(
+                                *prim_type,
+                                *strength0,
+                                *strength1,
+                                &self.display_name(*id),
+                            )?;
+                            sites.insert(*id, strengths);
+                        }
                     }
-                }
                     NodeKind::Port {
                         direction,
                         high,
@@ -2733,8 +2658,8 @@ impl<'a> Codegen<'a> {
             if info.real {
                 return Err(format!("real-valued wired net `{shown}` is not supported"));
             }
-            let propagation_delay = self
-                .net_propagation_delay_for_members(std::slice::from_ref(&net), &shown)?;
+            let propagation_delay =
+                self.net_propagation_delay_for_members(std::slice::from_ref(&net), &shown)?;
             let name = format!("g_net_{}", self.model.net_groups.len());
             let group = self.model.net_groups.len();
             let initial_drivers = usize::from(sites.is_empty());
@@ -2774,16 +2699,7 @@ impl<'a> Codegen<'a> {
             }
 
             if sites.is_empty() {
-                let id = self.record_structural_driver(
-                    group,
-                    net,
-                    info.ir,
-                    StructuralDriverKind::Declaration,
-                    Some(net),
-                    (6, 6),
-                    None,
-                    0,
-                )?;
+                let id = self.record_structural_driver(info.ir)?;
                 self.structural_driver_sites.insert((net, group), id);
             }
 
@@ -2910,9 +2826,7 @@ impl<'a> Codegen<'a> {
     /// than reconstructing a path from a generated C name.
     pub(super) fn waveform_selection_name(&self, node: NodeId) -> Result<String, String> {
         match self.kind(node) {
-            NodeKind::Expr(ExprKind::ScopeRef { target }) => {
-                self.waveform_selection_name(*target)
-            }
+            NodeKind::Expr(ExprKind::ScopeRef { target }) => self.waveform_selection_name(*target),
             NodeKind::Expr(ExprKind::Ref { target }) => target
                 .map(|target| self.waveform_selection_name(target))
                 .unwrap_or_else(|| {
@@ -2988,8 +2902,9 @@ impl<'a> Codegen<'a> {
     fn waveform_array_target(&self, node: NodeId) -> Option<NodeId> {
         match self.kind(node) {
             NodeKind::Array { .. } => Some(node),
-            NodeKind::Expr(ExprKind::Ref { target }) => target
-                .and_then(|target| self.waveform_array_target(target)),
+            NodeKind::Expr(ExprKind::Ref { target }) => {
+                target.and_then(|target| self.waveform_array_target(target))
+            }
             NodeKind::Expr(ExprKind::HierPath { refs, .. }) => refs
                 .iter()
                 .rev()
@@ -3150,9 +3065,7 @@ impl<'a> Codegen<'a> {
             _ => return None,
         };
         let inst = self.owning_inst(call)?;
-        let (ft, callee_inst) = self
-            .resolve_callee_env(inst, &name, is_task, callee)
-            .ok()?;
+        let (ft, callee_inst) = self.resolve_callee_env(inst, &name, is_task, callee).ok()?;
         let (_, _, formals) = self.func_info(ft, callee_inst).ok()?;
         let args: Vec<NodeId> = self.node(call).children.clone();
         for (idx, (io, is_out)) in formals.iter().enumerate() {
@@ -3630,48 +3543,50 @@ impl<'a> Codegen<'a> {
                     .iter()
                     .map(|(io, is_out)| -> Result<IrFormal, String> {
                         match self.kind(*io) {
-                        NodeKind::FuncArg {
-                            direction,
-                            const_ref,
-                            ref_static,
-                            ty,
-                            ..
-                        } => {
-                            let mode = match direction {
-                                DbDirection::Input => crate::sim::ir::IrFormalMode::Input,
-                                DbDirection::Output => crate::sim::ir::IrFormalMode::Output,
-                                DbDirection::Inout => crate::sim::ir::IrFormalMode::Inout,
-                                DbDirection::Ref => crate::sim::ir::IrFormalMode::Ref,
-                                _ => {
-                                    return Err(format!(
-                                        "unsupported formal direction for `{}`",
-                                        self.node(*io).name
-                                    ));
-                                }
-                            };
-                            Ok(IrFormal {
-                                is_out: *is_out,
-                                mode,
-                                const_ref: *const_ref,
-                                ref_static: *ref_static,
-                                width: if ty.kind == "chandle" || is_real_kind(&ty.kind) {
-                                    0
-                                } else {
-                                    ty.width
-                                        .map(|width| self.effective_decl_width(*io, inst, width))
-                                        .unwrap_or(0)
-                                },
-                                signed: ty.signed,
-                                two_state: self.db.is_two_state_type(*io)
-                                    || is_two_state_kind(&ty.kind),
-                                real: is_real_kind(&ty.kind),
-                                shortreal: ty.kind == "shortreal",
-                                chandle: ty.kind == "chandle",
-                                event: ty.kind == "event",
-                                string: ty.kind == "string",
-                            })
-                        }
-                        _ => unreachable!("formal kind"),
+                            NodeKind::FuncArg {
+                                direction,
+                                const_ref,
+                                ref_static,
+                                ty,
+                                ..
+                            } => {
+                                let mode = match direction {
+                                    DbDirection::Input => crate::sim::ir::IrFormalMode::Input,
+                                    DbDirection::Output => crate::sim::ir::IrFormalMode::Output,
+                                    DbDirection::Inout => crate::sim::ir::IrFormalMode::Inout,
+                                    DbDirection::Ref => crate::sim::ir::IrFormalMode::Ref,
+                                    _ => {
+                                        return Err(format!(
+                                            "unsupported formal direction for `{}`",
+                                            self.node(*io).name
+                                        ));
+                                    }
+                                };
+                                Ok(IrFormal {
+                                    is_out: *is_out,
+                                    mode,
+                                    const_ref: *const_ref,
+                                    ref_static: *ref_static,
+                                    width: if ty.kind == "chandle" || is_real_kind(&ty.kind) {
+                                        0
+                                    } else {
+                                        ty.width
+                                            .map(|width| {
+                                                self.effective_decl_width(*io, inst, width)
+                                            })
+                                            .unwrap_or(0)
+                                    },
+                                    signed: ty.signed,
+                                    two_state: self.db.is_two_state_type(*io)
+                                        || is_two_state_kind(&ty.kind),
+                                    real: is_real_kind(&ty.kind),
+                                    shortreal: ty.kind == "shortreal",
+                                    chandle: ty.kind == "chandle",
+                                    event: ty.kind == "event",
+                                    string: ty.kind == "string",
+                                })
+                            }
+                            _ => unreachable!("formal kind"),
                         }
                     })
                     .collect::<Result<Vec<_>, String>>()?;
@@ -3768,7 +3683,8 @@ impl<'a> Codegen<'a> {
                             ty: crate::sim::ir::IrObjectType::Chandle,
                             initial: None,
                         });
-                        self.static_task_chandle_locals.insert((inst, local), object);
+                        self.static_task_chandle_locals
+                            .insert((inst, local), object);
                     }
                     for (local, (_, width, signed, two_state, shortreal)) in locals {
                         match self.db.variable_lifetime(local) {
@@ -3785,15 +3701,17 @@ impl<'a> Codegen<'a> {
                             let initializer = self.db.var_initializer(local);
                             let initial = initializer
                                 .map(|initializer| {
-                                    self.lower_string(
-                                        &self.instance_path_of(inst),
-                                        initializer,
-                                    )
+                                    self.lower_string(&self.instance_path_of(inst), initializer)
                                 })
                                 .transpose()?;
                             let object = self.model.objects.len();
                             self.model.objects.push(crate::sim::ir::IrObject {
-                                c_name: format!("O_f{}_{}_l{}", inst.index(), c.index(), local.index()),
+                                c_name: format!(
+                                    "O_f{}_{}_l{}",
+                                    inst.index(),
+                                    c.index(),
+                                    local.index()
+                                ),
                                 ty: crate::sim::ir::IrObjectType::String,
                                 initial,
                             });
@@ -3966,7 +3884,10 @@ impl<'a> Codegen<'a> {
             if matches!(direction, DbDirection::Ref) {
                 let const_ref = matches!(
                     self.kind(formals[idx].0),
-                    NodeKind::FuncArg { const_ref: true, .. }
+                    NodeKind::FuncArg {
+                        const_ref: true,
+                        ..
+                    }
                 );
                 let is_string = matches!(
                     self.kind(formals[idx].0),
@@ -3982,15 +3903,9 @@ impl<'a> Codegen<'a> {
                         if const_ref { "const " } else { "" }
                     )
                 } else if is_chandle {
-                    format!(
-                        "void *{}* r{idx}",
-                        if const_ref { "const " } else { "" }
-                    )
+                    format!("void *{}* r{idx}", if const_ref { "const " } else { "" })
                 } else {
-                    format!(
-                        "{}llg_ref_t* r{idx}",
-                        if const_ref { "const " } else { "" }
-                    )
+                    format!("{}llg_ref_t* r{idx}", if const_ref { "const " } else { "" })
                 });
             } else if *is_out {
                 let ty = match self.kind(formals[idx].0) {
@@ -4073,25 +3988,30 @@ impl<'a> Codegen<'a> {
                 if is_real_kind(&ty.kind) {
                     Some((0, false, false, ty.kind == "shortreal"))
                 } else {
-                match ty.width {
-                    Some(w) => {
-                        let w = self.effective_decl_width(ft, inst, w);
-                        if w > LLG_MAX_WIDTH {
-                            return Err(format!(
-                                "return type of `{}` is {w} bits wide; the runtime \
+                    match ty.width {
+                        Some(w) => {
+                            let w = self.effective_decl_width(ft, inst, w);
+                            if w > LLG_MAX_WIDTH {
+                                return Err(format!(
+                                    "return type of `{}` is {w} bits wide; the runtime \
                              maximum supported width is {LLG_MAX_WIDTH}",
-                                self.node(ft).name
-                            ));
+                                    self.node(ft).name
+                                ));
+                            }
+                            Some((
+                                w,
+                                ty.signed,
+                                ret_two_state || is_two_state_kind(&ty.kind),
+                                false,
+                            ))
                         }
-                        Some((w, ty.signed, ret_two_state || is_two_state_kind(&ty.kind), false))
+                        None => {
+                            return Err(format!(
+                                "return type of `{}` has no width",
+                                self.node(ft).name
+                            ))
+                        }
                     }
-                    None => {
-                        return Err(format!(
-                            "return type of `{}` has no width",
-                            self.node(ft).name
-                        ))
-                    }
-                }
                 }
             }
             None => None,
@@ -4099,7 +4019,7 @@ impl<'a> Codegen<'a> {
         let mut formals = Vec::new();
         for c in &self.node(ft).children {
             match self.kind(*c) {
-                NodeKind::FuncArg { direction, ty, .. } => {
+                NodeKind::FuncArg { direction, .. } => {
                     let is_out = matches!(direction, DbDirection::Output | DbDirection::Inout);
                     formals.push((*c, is_out));
                 }
@@ -4216,8 +4136,10 @@ impl<'a> Codegen<'a> {
         let mut static_input_copies = Vec::new();
         for (local, name) in &chandle_locals {
             if self.db.variable_lifetime(*local) == VariableLifetime::Static {
-                let object = if let Some(object) =
-                    self.static_task_chandle_locals.get(&(inst, *local)).copied()
+                let object = if let Some(object) = self
+                    .static_task_chandle_locals
+                    .get(&(inst, *local))
+                    .copied()
                 {
                     object
                 } else {
@@ -4274,15 +4196,15 @@ impl<'a> Codegen<'a> {
                         .then(|| self.static_chandle_formals.get(&(inst, *io)).copied())
                         .flatten()
                     {
-                    chandle_read.insert(*io, IrChandleExpr::Read(object));
-                    chandle_write.insert(*io, ChandleTarget::Object(object));
-                    static_input_copies.push(IrStmt::Object(
-                        crate::sim::ir::IrObjectStmt::ChandleAssign(
-                            object,
-                            IrChandleExpr::FormalRead(idx),
-                        ),
-                    ));
-                    continue;
+                        chandle_read.insert(*io, IrChandleExpr::Read(object));
+                        chandle_write.insert(*io, ChandleTarget::Object(object));
+                        static_input_copies.push(IrStmt::Object(
+                            crate::sim::ir::IrObjectStmt::ChandleAssign(
+                                object,
+                                IrChandleExpr::FormalRead(idx),
+                            ),
+                        ));
+                        continue;
                     }
                 }
                 {
@@ -4303,11 +4225,17 @@ impl<'a> Codegen<'a> {
             if matches!(self.kind(*io), NodeKind::FuncArg { ty, .. } if ty.kind == "string") {
                 let is_ref = matches!(
                     self.kind(*io),
-                    NodeKind::FuncArg { direction: DbDirection::Ref, .. }
+                    NodeKind::FuncArg {
+                        direction: DbDirection::Ref,
+                        ..
+                    }
                 );
                 let const_ref = matches!(
                     self.kind(*io),
-                    NodeKind::FuncArg { const_ref: true, .. }
+                    NodeKind::FuncArg {
+                        const_ref: true,
+                        ..
+                    }
                 );
                 if is_ref {
                     string_read.insert(*io, IrStringExpr::FormalRead(idx));
@@ -4324,9 +4252,10 @@ impl<'a> Codegen<'a> {
                     string_write.insert(*io, name.clone());
                     string_addr.insert(*io, name);
                     if !*is_out {
-                        static_input_copies.push(IrStmt::Object(
-                            IrObjectStmt::StringAssign(object, IrStringExpr::FormalRead(idx)),
-                        ));
+                        static_input_copies.push(IrStmt::Object(IrObjectStmt::StringAssign(
+                            object,
+                            IrStringExpr::FormalRead(idx),
+                        )));
                     }
                 } else {
                     string_read.insert(*io, IrStringExpr::FormalRead(idx));
@@ -4349,32 +4278,33 @@ impl<'a> Codegen<'a> {
                 }
                 continue;
             }
-            let (w, s, two_state, real, shortreal) = match self.kind(*io) {
+            let (w, s, two_state, _real, _shortreal) = match self.kind(*io) {
                 NodeKind::FuncArg { ty, .. } => {
                     if is_real_kind(&ty.kind) {
                         (0, false, false, true, ty.kind == "shortreal")
-                    } else { match ty.width {
-                        Some(w) if w <= LLG_MAX_WIDTH => (
-                            self.effective_decl_width(*io, inst, w),
-                            ty.signed,
-                            self.db.is_two_state_type(*io) || is_two_state_kind(&ty.kind),
-                            false,
-                            false,
-                        ),
-                        Some(w) => {
-                            return Err(format!(
-                                "formal `{}` of `{c_name}` is {w} bits wide; the runtime \
+                    } else {
+                        match ty.width {
+                            Some(w) if w <= LLG_MAX_WIDTH => (
+                                self.effective_decl_width(*io, inst, w),
+                                ty.signed,
+                                self.db.is_two_state_type(*io) || is_two_state_kind(&ty.kind),
+                                false,
+                                false,
+                            ),
+                            Some(w) => {
+                                return Err(format!(
+                                    "formal `{}` of `{c_name}` is {w} bits wide; the runtime \
                              maximum supported width is {LLG_MAX_WIDTH}",
-                                self.node(*io).name
-                            ))
+                                    self.node(*io).name
+                                ))
+                            }
+                            None => {
+                                return Err(format!(
+                                    "formal `{}` of `{c_name}` has no width",
+                                    self.node(*io).name
+                                ))
+                            }
                         }
-                        None => {
-                            return Err(format!(
-                                "formal `{}` of `{c_name}` has no width",
-                                self.node(*io).name
-                            ))
-                        }
-                    }
                     }
                 }
                 _ => unreachable!("formal kind"),
@@ -4642,11 +4572,11 @@ impl<'a> Codegen<'a> {
         if let NodeKind::Var { ty } = self.kind(node) {
             self.explicit_local_lifetime(node)?;
             if ty.kind == "chandle" {
-                if !chandle_locals.contains_key(&node) {
+                chandle_locals.entry(node).or_insert_with(|| {
                     let cname = format!("{prefix}_l{seq}");
                     *seq += 1;
-                    chandle_locals.insert(node, cname);
-                }
+                    cname
+                });
                 return Ok(());
             }
             if locals.contains_key(&node) {
@@ -4657,17 +4587,22 @@ impl<'a> Codegen<'a> {
             } else if is_real_kind(&ty.kind) {
                 (0, ty.kind == "shortreal")
             } else {
-                (match ty.width {
-                    Some(w) if w <= LLG_MAX_WIDTH => self.effective_decl_width(node, inst, w),
-                Some(w) => {
-                    return Err(format!(
-                        "local `{}` is {w} bits wide; the runtime supports at most \
+                (
+                    match ty.width {
+                        Some(w) if w <= LLG_MAX_WIDTH => self.effective_decl_width(node, inst, w),
+                        Some(w) => {
+                            return Err(format!(
+                                "local `{}` is {w} bits wide; the runtime supports at most \
                          {LLG_MAX_WIDTH}",
-                        self.node(node).name
-                    ))
-                }
-                    None => return Err(format!("local `{}` has no width", self.node(node).name)),
-                }, false)
+                                self.node(node).name
+                            ))
+                        }
+                        None => {
+                            return Err(format!("local `{}` has no width", self.node(node).name))
+                        }
+                    },
+                    false,
+                )
             };
             let cname = format!("{prefix}_l{seq}");
             *seq += 1;
@@ -4677,7 +4612,11 @@ impl<'a> Codegen<'a> {
                     cname,
                     w,
                     if w == 0 { false } else { ty.signed },
-                    if w == 0 { false } else { is_two_state_kind(&ty.kind) },
+                    if w == 0 {
+                        false
+                    } else {
+                        is_two_state_kind(&ty.kind)
+                    },
                     shortreal,
                 ),
             );
@@ -4704,17 +4643,6 @@ impl<'a> Codegen<'a> {
                 self.node(node).name
             )),
         }
-    }
-
-    fn enclosing_subroutine_is_automatic(&self, node: NodeId) -> bool {
-        let mut parent = self.node(node).parent;
-        while let Some(scope) = parent {
-            if let NodeKind::FuncTask { automatic, .. } = self.kind(scope) {
-                return *automatic;
-            }
-            parent = self.node(scope).parent;
-        }
-        false
     }
 
     pub(super) fn check_event_expression_effects(
@@ -4812,16 +4740,16 @@ impl<'a> Codegen<'a> {
                     return rejected("function body writes external or persistent storage");
                 }
             }
-            NodeKind::Expr(ExprKind::Operation { op, operands, .. })
-                if matches!(
-                    op,
+            NodeKind::Expr(ExprKind::Operation {
+                op:
                     Operation::PostIncrement
-                        | Operation::PreIncrement
-                        | Operation::PostDecrement
-                        | Operation::PreDecrement
-                        | Operation::Assignment
-                ) =>
-            {
+                    | Operation::PreIncrement
+                    | Operation::PostDecrement
+                    | Operation::PreDecrement
+                    | Operation::Assignment,
+                operands,
+                ..
+            }) => {
                 let lhs = operands.first().copied().ok_or_else(|| {
                     format!(
                         "function calls in evaluated event controls are not supported in `{scope_path}`: malformed assignment expression"
@@ -4872,9 +4800,7 @@ impl<'a> Codegen<'a> {
                 direction: DbDirection::Input,
                 ..
             }
-            | NodeKind::Var { .. } => {
-                self.db.variable_lifetime(target) != VariableLifetime::Static
-            }
+            | NodeKind::Var { .. } => self.db.variable_lifetime(target) != VariableLifetime::Static,
             _ => false,
         }
     }
@@ -4931,20 +4857,6 @@ impl<'a> Codegen<'a> {
             current = self.node(id).parent;
         }
         None
-    }
-
-    /// Resolve a call site's callee to its FuncTask arena node. This wrapper
-    /// is retained for analyses that only need declaration identity; callers
-    /// that consume signatures or storage use [`resolve_callee_env`].
-    pub(super) fn resolve_callee(
-        &self,
-        inst: NodeId,
-        name: &str,
-        is_task: bool,
-        callee: Option<NodeId>,
-    ) -> Result<NodeId, String> {
-        self.resolve_callee_env(inst, name, is_task, callee)
-            .map(|(ft, _)| ft)
     }
 
     /// Whether a task's execution can suspend: its body (transitively over
@@ -5121,12 +5033,9 @@ impl<'a> Codegen<'a> {
                 callee,
                 ..
             } => {
-                if let Ok((ft, callee_inst)) = self.resolve_callee_env(
-                    inst,
-                    &self.node(node).name,
-                    true,
-                    *callee,
-                ) {
+                if let Ok((ft, callee_inst)) =
+                    self.resolve_callee_env(inst, &self.node(node).name, true, *callee)
+                {
                     if self.task_has_disable_inner(ft, callee_inst, seen) {
                         return true;
                     }
@@ -5157,12 +5066,9 @@ impl<'a> Codegen<'a> {
                 callee,
                 ..
             } => {
-                if let Ok((ft, callee_inst)) = self.resolve_callee_env(
-                    inst,
-                    &self.node(node).name,
-                    true,
-                    *callee,
-                ) {
+                if let Ok((ft, callee_inst)) =
+                    self.resolve_callee_env(inst, &self.node(node).name, true, *callee)
+                {
                     if self.task_has_wait_inner(ft, callee_inst, seen) {
                         return true;
                     }
@@ -5219,30 +5125,31 @@ impl<'a> Codegen<'a> {
                     } else {
                         if is_real_kind(&ty.kind) {
                             (0, false, false, true, ty.kind == "shortreal", false, false)
-                        } else { match ty.width {
-                            Some(w) if w <= LLG_MAX_WIDTH => (
-                            self.effective_decl_width(*io, inst, w),
-                            ty.signed,
-                            self.db.is_two_state_type(*io) || is_two_state_kind(&ty.kind),
-                            false,
-                            false,
-                            false,
-                            false,
-                            ),
-                            Some(w) => {
-                                return Err(format!(
-                                    "formal `{}` is {w} bits wide; the runtime supports \
+                        } else {
+                            match ty.width {
+                                Some(w) if w <= LLG_MAX_WIDTH => (
+                                    self.effective_decl_width(*io, inst, w),
+                                    ty.signed,
+                                    self.db.is_two_state_type(*io) || is_two_state_kind(&ty.kind),
+                                    false,
+                                    false,
+                                    false,
+                                    false,
+                                ),
+                                Some(w) => {
+                                    return Err(format!(
+                                        "formal `{}` is {w} bits wide; the runtime supports \
                              at most {LLG_MAX_WIDTH}",
-                                    self.node(*io).name
-                                ))
+                                        self.node(*io).name
+                                    ))
+                                }
+                                None => {
+                                    return Err(format!(
+                                        "formal `{}` has no width",
+                                        self.node(*io).name
+                                    ))
+                                }
                             }
-                            None => {
-                                return Err(format!(
-                                    "formal `{}` has no width",
-                                    self.node(*io).name
-                                ))
-                            }
-                        }
                         }
                     }
                 }
@@ -5447,11 +5354,7 @@ impl<'a> Codegen<'a> {
     /// Lower a `ref` actual to a checked canonical descriptor.  Unlike an
     /// output/inout binding this never creates a temporary or a writeback:
     /// the descriptor names the caller's original storage directly.
-    fn lower_ref_actual_lhs(
-        &mut self,
-        scope_path: &str,
-        node: NodeId,
-    ) -> Result<IrLhs, String> {
+    fn lower_ref_actual_lhs(&mut self, scope_path: &str, node: NodeId) -> Result<IrLhs, String> {
         let Some(function) = self.func.as_ref() else {
             return self.lower_lhs(scope_path, node);
         };
@@ -5557,8 +5460,7 @@ impl<'a> Codegen<'a> {
                     )
                 })
                 .map(|container| (container.ir, *index)),
-            NodeKind::Expr(ExprKind::ArraySelect { base, indices })
-                if indices.len() == 1 => self
+            NodeKind::Expr(ExprKind::ArraySelect { base, indices }) if indices.len() == 1 => self
                 .container_of(*base)
                 .filter(|container| {
                     matches!(
@@ -5606,13 +5508,12 @@ impl<'a> Codegen<'a> {
                 shortreal: false,
             };
             let descriptor = format!(
-                "&(llg_ref_t){{ .queue = &{}, .queue_epoch = {}.mutation_epoch, \
+                "&(llg_ref_t){{ .queue = &{}, \
+                 .queue_identity = llg_queue_ref_identity(&{}, sv4_to_index({index_code})), \
+                 .queue_read = llg_queue_ref_read, .queue_write = llg_queue_ref_write, \
                  .width = {width}, .is_signed = {}, .two_state = {}, \
-                 .kind = LLG_REF_QUEUE, .index = sv4_to_index({index_code}) }}",
-                queue.c_name,
-                queue.c_name,
-                signed as u8,
-                two_state as u8
+                 .kind = LLG_REF_QUEUE }}",
+                queue.c_name, queue.c_name, signed as u8, two_state as u8
             );
             return Ok(IrCallArg::RefAddr {
                 addr: descriptor,
@@ -5773,8 +5674,7 @@ impl<'a> Codegen<'a> {
                     init: None,
                     ir: *arr,
                 };
-                let constant_linear =
-                    Self::array_constant_linear_index(&array_info, indices);
+                let constant_linear = Self::array_constant_linear_index(&array_info, indices);
                 if matches!(elem_sel, IrElemSel::Whole) && constant_linear.is_none() {
                     if indices
                         .iter()
@@ -5788,11 +5688,10 @@ impl<'a> Codegen<'a> {
                         .iter()
                         .map(|index| self.render_ir_code(index))
                         .collect::<Result<Vec<_>, _>>()?;
-                    let (decls, condition, linear) = array_guard(array, &index_codes).ok_or_else(|| {
-                        format!(
-                            "ref actual array index in `{scope_path}` has no dimensions"
-                        )
-                    })?;
+                    let (decls, condition, linear) =
+                        array_guard(array, &index_codes).ok_or_else(|| {
+                            format!("ref actual array index in `{scope_path}` has no dimensions")
+                        })?;
                     let index = format!(
                         "({{ {decls} ({condition}) ? (uint64_t)({linear}) : UINT64_MAX; }})"
                     );
@@ -5803,74 +5702,68 @@ impl<'a> Codegen<'a> {
                         array.two_state,
                         false,
                         "LLG_REF_ARRAY",
-                        format!(
-                            ".array_size = {}ULL, .index = {index}",
-                            array.total
-                        ),
+                        format!(".array_size = {}ULL, .index = {index}", array.total),
                     )
                 } else {
-                let linear = Self::array_constant_linear_index(
-                    &array_info,
-                    indices,
-                )
-                .ok_or_else(|| {
-                    format!(
+                    let linear = Self::array_constant_linear_index(&array_info, indices)
+                        .ok_or_else(|| {
+                            format!(
                         "ref actual array index in `{scope_path}` must be a constant in range"
                     )
-                })?;
-                let base = format!("&{}[{}]", array.c_name, linear);
-                match elem_sel {
-                    IrElemSel::Whole => (
-                        base,
-                        array.elem_width,
-                        array.signed,
-                        array.two_state,
-                        false,
-                        "LLG_REF_WHOLE",
-                        String::new(),
-                    ),
-                    IrElemSel::Part(left, right) => (
-                        base,
-                        left.abs_diff(*right) as u32 + 1,
-                        false,
-                        array.two_state,
-                        false,
-                        "LLG_REF_PART",
-                        format!(".left = {left}, .right = {right}"),
-                    ),
-                    IrElemSel::Bit(index) => {
-                        let index = self.render_ir_code(index)?;
-                        (
+                        })?;
+                    let base = format!("&{}[{}]", array.c_name, linear);
+                    match elem_sel {
+                        IrElemSel::Whole => (
                             base,
-                            1,
+                            array.elem_width,
+                            array.signed,
+                            array.two_state,
+                            false,
+                            "LLG_REF_WHOLE",
+                            String::new(),
+                        ),
+                        IrElemSel::Part(left, right) => (
+                            base,
+                            left.abs_diff(*right) as u32 + 1,
                             false,
                             array.two_state,
                             false,
-                            "LLG_REF_BIT",
-                            format!(".index = sv4_to_index({index})"),
-                        )
-                    }
-                    IrElemSel::Indexed {
-                        base: index,
-                        width,
-                        negative,
-                    } => {
-                        let index = self.render_ir_code(index)?;
-                        (
-                            base,
-                            *width,
-                            false,
-                            array.two_state,
-                            false,
-                            "LLG_REF_INDEXED",
-                            format!(
-                                ".index = sv4_to_index({index}), .indexed_width = {width}, \
+                            "LLG_REF_PART",
+                            format!(".left = {left}, .right = {right}"),
+                        ),
+                        IrElemSel::Bit(index) => {
+                            let index = self.render_ir_code(index)?;
+                            (
+                                base,
+                                1,
+                                false,
+                                array.two_state,
+                                false,
+                                "LLG_REF_BIT",
+                                format!(".index = sv4_to_index({index})"),
+                            )
+                        }
+                        IrElemSel::Indexed {
+                            base: index,
+                            width,
+                            negative,
+                        } => {
+                            let index = self.render_ir_code(index)?;
+                            (
+                                base,
+                                *width,
+                                false,
+                                array.two_state,
+                                false,
+                                "LLG_REF_INDEXED",
+                                format!(
+                                    ".index = sv4_to_index({index}), .indexed_width = {width}, \
                                  .indexed_negative = {}",
-                                *negative as u8
-                            ),
-                        )
+                                    *negative as u8
+                                ),
+                            )
+                        }
                     }
-                }
                 }
             }
             IrLhs::Stream { .. } => {
@@ -5895,8 +5788,7 @@ impl<'a> Codegen<'a> {
             format!(
                 "&(llg_ref_t){{ .base = {base}, .width = {width}, .is_signed = {}, \
                  .two_state = {}, .kind = {kind}, {fields} }}",
-                signed as u8,
-                two_state as u8
+                signed as u8, two_state as u8
             )
         };
         Ok(IrCallArg::RefAddr {
@@ -5910,10 +5802,7 @@ impl<'a> Codegen<'a> {
         })
     }
 
-    pub(super) fn ref_lhs_type(
-        &self,
-        lhs: &IrLhs,
-    ) -> Option<(u32, bool, bool, bool)> {
+    pub(super) fn ref_lhs_type(&self, lhs: &IrLhs) -> Option<(u32, bool, bool, bool)> {
         match lhs {
             IrLhs::Whole(index) => match self.model.signal(*index).ty {
                 IrType::Packed {
@@ -5943,17 +5832,11 @@ impl<'a> Codegen<'a> {
             IrLhs::IdxPart(_, _, _, width, _, two_state) => {
                 Some((*width, false, *two_state, false))
             }
-            IrLhs::ArrayElem {
-                arr,
-                elem_sel,
-                ..
-            } => {
+            IrLhs::ArrayElem { arr, elem_sel, .. } => {
                 let array = self.model.arrays.get(*arr)?;
                 let (width, signed) = match elem_sel {
                     IrElemSel::Whole => (array.elem_width, array.signed),
-                    IrElemSel::Part(left, right) => {
-                        (left.abs_diff(*right) as u32 + 1, false)
-                    }
+                    IrElemSel::Part(left, right) => (left.abs_diff(*right) as u32 + 1, false),
                     IrElemSel::Bit(_) => (1, false),
                     IrElemSel::Indexed { width, .. } => (*width, false),
                 };
@@ -5974,8 +5857,7 @@ impl<'a> Codegen<'a> {
         name: &str,
         callee: Option<NodeId>,
     ) -> Result<IrExpr, String> {
-        let (ft, callee_inst) =
-            self.resolve_callee_env(self.inst, name, false, callee)?;
+        let (ft, callee_inst) = self.resolve_callee_env(self.inst, name, false, callee)?;
         let meta = self
             .func_meta
             .get(&ft)
@@ -5989,7 +5871,7 @@ impl<'a> Codegen<'a> {
         let formals = meta.formals.clone();
         let args: Vec<NodeId> = self.node(h).children.clone();
         let bound = self.bind_call_args(self.inst, &formals, &args)?;
-        for (idx, (io, is_out)) in formals.iter().enumerate() {
+        for (idx, (io, _is_out)) in formals.iter().enumerate() {
             if bound[idx].is_event {
                 return Err(format!(
                     "event formal `{}` in function expression `{name}` has no typed value call path",
@@ -6074,10 +5956,14 @@ impl<'a> Codegen<'a> {
                 if bound[idx].string {
                     self.ensure_string_actual_writable(scope_path, bound[idx].expr)?;
                     let tname = format!("_st{}_{}", h.0, idx);
-                    let writeback = self.lower_string_actual_address(scope_path, bound[idx].expr)?;
+                    let writeback =
+                        self.lower_string_actual_address(scope_path, bound[idx].expr)?;
                     let init = matches!(
                         self.kind(*io),
-                        NodeKind::FuncArg { direction: DbDirection::Inout, .. }
+                        NodeKind::FuncArg {
+                            direction: DbDirection::Inout,
+                            ..
+                        }
                     )
                     .then(|| self.lower_string(scope_path, bound[idx].expr))
                     .transpose()?;
@@ -6103,11 +5989,8 @@ impl<'a> Codegen<'a> {
                 let tname = format!("_t{}_{}", h.0, idx);
                 let (wb, actual_read, selector_inits) =
                     self.lower_call_actual(scope_path, bound[idx].expr, &format!("{}_{idx}", h.0))?;
-                let (_init_code, init_ir) = self.lower_call_temp_init_from_expr(
-                    *io,
-                    &bound[idx],
-                    actual_read,
-                )?;
+                let (_init_code, init_ir) =
+                    self.lower_call_temp_init_from_expr(*io, &bound[idx], actual_read)?;
                 let storage = self.static_formals.get(&(callee_inst, *io)).cloned();
                 let (storage_addr, storage_lhs, storage_read) = if let Some(storage) = storage {
                     let lhs = IrLhs::Whole(storage.ir);
@@ -6193,29 +6076,6 @@ impl<'a> Codegen<'a> {
         ))
     }
 
-    /// Lower the initializer of the caller-side temp for an output/inout
-    /// formal: all-X (`None`) for outputs, the actual's current value
-    /// (converted to the formal's vector shape) for inouts.  Also returns the
-    /// rendered initializer for the legacy string paths.
-    pub(super) fn lower_call_temp_init(
-        &mut self,
-        scope_path: &str,
-        io: NodeId,
-        b: &BoundArg,
-    ) -> Result<(String, Option<IrExpr>), String> {
-        match self.kind(io) {
-            NodeKind::FuncArg {
-                direction: DbDirection::Inout,
-                ..
-            } => {
-                let e = self.lower_expr(scope_path, b.expr)?;
-                self.lower_call_temp_init_from_expr(io, b, e)
-            }
-            _ if b.real => Ok(("0.0".to_string(), None)),
-            _ => Ok((format!("sv4_x({}, {})", b.width, b.signed as u8), None)),
-        }
-    }
-
     /// Lower a caller-side output/inout temp initializer from an already
     /// evaluated actual read.  Callers use this after freezing selected-LHS
     /// indices so copy-in and copy-out share one actual identity.
@@ -6258,7 +6118,10 @@ impl<'a> Codegen<'a> {
         path: &str,
         actual: NodeId,
     ) -> Result<String, String> {
-        if matches!(self.kind(actual), NodeKind::Expr(ExprKind::BitSelect { .. })) {
+        if matches!(
+            self.kind(actual),
+            NodeKind::Expr(ExprKind::BitSelect { .. })
+        ) {
             return Err(format!(
                 "string output/ref actual in `{path}` must be a whole string lvalue"
             ));
@@ -6288,24 +6151,27 @@ impl<'a> Codegen<'a> {
                         .or_else(|| function.string_addr.get(&target).cloned())
                 })
                 .or_else(|| {
-                    matches!(self.kind(actual), NodeKind::Expr(ExprKind::Ref { target: None }))
-                        .then(|| {
-                            function
-                                .string_write
-                                .iter()
-                                .find(|(target, _)| self.node(**target).name == self.node(actual).name)
-                                .map(|(_, value)| value.clone())
-                                .or_else(|| {
-                                    function
-                                        .string_addr
-                                        .iter()
-                                        .find(|(target, _)| {
-                                            self.node(**target).name == self.node(actual).name
-                                        })
-                                        .map(|(_, value)| value.clone())
-                                })
-                        })
-                        .flatten()
+                    matches!(
+                        self.kind(actual),
+                        NodeKind::Expr(ExprKind::Ref { target: None })
+                    )
+                    .then(|| {
+                        function
+                            .string_write
+                            .iter()
+                            .find(|(target, _)| self.node(**target).name == self.node(actual).name)
+                            .map(|(_, value)| value.clone())
+                            .or_else(|| {
+                                function
+                                    .string_addr
+                                    .iter()
+                                    .find(|(target, _)| {
+                                        self.node(**target).name == self.node(actual).name
+                                    })
+                                    .map(|(_, value)| value.clone())
+                            })
+                    })
+                    .flatten()
                 })
         });
         target
@@ -6362,6 +6228,7 @@ impl<'a> Codegen<'a> {
     /// captured in caller-side locals before the callee starts; the returned
     /// read and writeback LHS then use those locals rather than re-evaluating
     /// an index after the call.
+    #[allow(clippy::type_complexity)]
     pub(super) fn lower_call_actual(
         &mut self,
         path: &str,
@@ -6471,12 +6338,14 @@ impl<'a> Codegen<'a> {
                 indices,
                 elem_sel,
             } => {
-                let array = self.model.arrays.get(arr).ok_or_else(|| {
-                    format!("subroutine actual array {arr} is out of bounds")
-                })?;
+                let array = self
+                    .model
+                    .arrays
+                    .get(arr)
+                    .ok_or_else(|| format!("subroutine actual array {arr} is out of bounds"))?;
                 if array.real {
                     return Err(
-                        "real unpacked-array output/inout actuals are not supported".to_string(),
+                        "real unpacked-array output/inout actuals are not supported".to_string()
                     );
                 }
                 let indices = indices
@@ -6656,9 +6525,7 @@ impl<'a> Codegen<'a> {
     /// activation that issued them, so stack-backed formals and locals may
     /// not be captured; persistent static subroutine storage remains valid.
     pub(super) fn subroutine_auto_ref(&self, node: NodeId) -> Option<NodeId> {
-        let Some(function) = self.func.as_ref() else {
-            return None;
-        };
+        let function = self.func.as_ref()?;
         if !self.function_is_automatic(function) {
             return None;
         }
@@ -6684,7 +6551,7 @@ impl<'a> Codegen<'a> {
             || function.arg_read.contains_key(&target)
             || function.arg_write.contains_key(&target)
             || function.ret_node == Some(target))
-            .then_some(target)
+        .then_some(target)
     }
 
     /// Normalize a Slang instantiated subroutine declaration identity to the
@@ -7098,9 +6965,7 @@ impl<'a> Codegen<'a> {
         // Driver evaluation must keep watching its inputs while a captured
         // propagation event is pending (IEEE 1364-2001 6.1.3).
         let scaled_delay = match self.kind(ca) {
-            NodeKind::ContAssign {
-                net_decl: true, ..
-            } => None,
+            NodeKind::ContAssign { net_decl: true, .. } => None,
             NodeKind::ContAssign {
                 delay: Some(de), ..
             } => Some(self.driver_delay_ticks(ca, *de)?),
@@ -7266,10 +7131,11 @@ impl<'a> Codegen<'a> {
                     static_signal: None,
                 },
                 initial: IrExpr::new(IrExprKind::LocalRead(c_name.clone()), *width, *signed, None),
-                lifetime: self
-                    .function_is_automatic(function)
-                    .then_some(StorageLifetime::Automatic)
-                    .unwrap_or(StorageLifetime::Static),
+                lifetime: if self.function_is_automatic(function) {
+                    StorageLifetime::Automatic
+                } else {
+                    StorageLifetime::Static
+                },
             });
         }
         if let Some(storage) = function.persistent.get(&target) {
@@ -7324,10 +7190,11 @@ impl<'a> Codegen<'a> {
                     ret.signed,
                     None,
                 ),
-                lifetime: self
-                    .function_is_automatic(function)
-                    .then_some(StorageLifetime::Automatic)
-                    .unwrap_or(StorageLifetime::Static),
+                lifetime: if self.function_is_automatic(function) {
+                    StorageLifetime::Automatic
+                } else {
+                    StorageLifetime::Static
+                },
             });
         }
         None
@@ -7398,10 +7265,8 @@ impl<'a> Codegen<'a> {
                 _ => cg.lexical_proc_local(node).map(|(target, _)| target),
             };
             if let Some(target) = target {
-                if !cg.node_is_within(target, branch) {
-                    if cg.capture_source(target).is_some() {
-                        out.insert(target);
-                    }
+                if !cg.node_is_within(target, branch) && cg.capture_source(target).is_some() {
+                    out.insert(target);
                 }
             }
             for child in &cg.node(node).children {
@@ -7472,12 +7337,8 @@ impl<'a> Codegen<'a> {
             }
             PrimClass::Array => {}
         }
-        let driver_strengths = gate_driver_strengths(
-            prim_type,
-            strength0,
-            strength1,
-            &format!("{path}.{shown}"),
-        )?;
+        let driver_strengths =
+            gate_driver_strengths(prim_type, strength0, strength1, &format!("{path}.{shown}"))?;
         // Which builtin gate this is; everything outside the supported set
         // (switch/transistor prim types, sequential/combinational UDP types)
         // is rejected.  UDP instances never reach this point (their class was
@@ -7546,7 +7407,7 @@ impl<'a> Codegen<'a> {
             GateOp::Reduce(..) => {
                 terms.len() >= 2
                     && out_positions.len() == 1
-                    && in_positions.len() >= 1
+                    && !in_positions.is_empty()
                     && out_positions.len() + in_positions.len() == terms.len()
             }
         };
@@ -7724,38 +7585,38 @@ impl<'a> Codegen<'a> {
                         1,
                         false,
                     );
-                // LRM 1364-1995 §7.4 Table 7-5: an ENABLED enable gate acts
-                // like `buf`/`not` (Tables 7-3/7-4), so a data Z must reach
-                // the output as X while known bits pass unchanged.  The mux
-                // is an identity/copy context that returns its chosen arm
-                // verbatim (`sv4_mux` with a known select), so the Z→X
-                // normalization is done explicitly with `data|data`.
-                // Correctness proof from llg_value.c `sv4_bitwise` (op = OR),
-                // both operands identical so every bit takes one rule:
-                // known 0 → `!ax && !ab && !bx && !bb` → 0; known 1 →
-                // `!ax && ab` → 1; a Z bit reads as `sv4_lsb_bit() == 3`,
-                // i.e. unknown, and falls to the `else o_x = 1` arm → X
-                // (Z behaves as X in expression ops, LRM 11.4.5); X likewise
-                // stays X.  Same operand ⇒ same width/signedness, resize is
-                // a no-op; opt's identity pass has no `a|a → a` rule, so the
-                // normalization survives optimization.
-                let data = bin_expr(IrBinOp::BitOr, data.clone(), data);
-                let data = if invert_out {
-                    bitneg_full_width(data)
-                } else {
-                    data
-                };
+                    // LRM 1364-1995 §7.4 Table 7-5: an ENABLED enable gate acts
+                    // like `buf`/`not` (Tables 7-3/7-4), so a data Z must reach
+                    // the output as X while known bits pass unchanged.  The mux
+                    // is an identity/copy context that returns its chosen arm
+                    // verbatim (`sv4_mux` with a known select), so the Z→X
+                    // normalization is done explicitly with `data|data`.
+                    // Correctness proof from llg_value.c `sv4_bitwise` (op = OR),
+                    // both operands identical so every bit takes one rule:
+                    // known 0 → `!ax && !ab && !bx && !bb` → 0; known 1 →
+                    // `!ax && ab` → 1; a Z bit reads as `sv4_lsb_bit() == 3`,
+                    // i.e. unknown, and falls to the `else o_x = 1` arm → X
+                    // (Z behaves as X in expression ops, LRM 11.4.5); X likewise
+                    // stays X.  Same operand ⇒ same width/signedness, resize is
+                    // a no-op; opt's identity pass has no `a|a → a` rule, so the
+                    // normalization survives optimization.
+                    let data = bin_expr(IrBinOp::BitOr, data.clone(), data);
+                    let data = if invert_out {
+                        bitneg_full_width(data)
+                    } else {
+                        data
+                    };
                     let z = const_z_expr(output_width);
-                let (a, b) = if active_high { (data, z) } else { (z, data) };
-                IrExpr::new(
-                    IrExprKind::Mux {
-                        sel: Box::new(en),
-                        a: Box::new(a),
-                        b: Box::new(b),
-                    },
-                    output_width,
-                    false,
-                    None,
+                    let (a, b) = if active_high { (data, z) } else { (z, data) };
+                    IrExpr::new(
+                        IrExprKind::Mux {
+                            sel: Box::new(en),
+                            a: Box::new(a),
+                            b: Box::new(b),
+                        },
+                        output_width,
+                        false,
+                        None,
                     )
                 }
             };
@@ -7926,11 +7787,7 @@ impl<'a> Codegen<'a> {
             ));
         }
 
-        let signal_bindings = self
-            .reference_signals
-            .keys()
-            .copied()
-            .collect::<Vec<_>>();
+        let signal_bindings = self.reference_signals.keys().copied().collect::<Vec<_>>();
         for child in signal_bindings {
             let target = self.reference_lhs(IrLhs::Whole(child))?;
             self.reference_signals.insert(child, target.clone());
@@ -7940,20 +7797,12 @@ impl<'a> Codegen<'a> {
                 self.model.signals[child].c_name = canonical.c_name;
             }
         }
-        let array_bindings = self
-            .reference_arrays
-            .keys()
-            .copied()
-            .collect::<Vec<_>>();
+        let array_bindings = self.reference_arrays.keys().copied().collect::<Vec<_>>();
         for child in array_bindings {
             let target = self.reference_array(child);
             self.reference_arrays.insert(child, target);
         }
-        let object_bindings = self
-            .reference_objects
-            .keys()
-            .copied()
-            .collect::<Vec<_>>();
+        let object_bindings = self.reference_objects.keys().copied().collect::<Vec<_>>();
         for child in object_bindings {
             let target = self.reference_object(child);
             self.reference_objects.insert(child, target);
@@ -7983,7 +7832,7 @@ impl<'a> Codegen<'a> {
     fn bind_reference_aggregate(
         &mut self,
         port: NodeId,
-        path: &str,
+        _path: &str,
         actual: NodeId,
         child: UnpackedAggregateInfo,
     ) -> Result<(), String> {
@@ -7997,12 +7846,16 @@ impl<'a> Codegen<'a> {
                     self.display_name(port)
                 )
             })?;
-        let parent = self.unpacked_aggregates.get(&actual_target).cloned().ok_or_else(|| {
-            format!(
-                "reference port `{}` actual aggregate has no captured storage",
-                self.display_name(port)
-            )
-        })?;
+        let parent = self
+            .unpacked_aggregates
+            .get(&actual_target)
+            .cloned()
+            .ok_or_else(|| {
+                format!(
+                    "reference port `{}` actual aggregate has no captured storage",
+                    self.display_name(port)
+                )
+            })?;
         if !self.reference_actual_is_variable(actual) {
             return Err(format!(
                 "reference port `{}` requires a variable aggregate actual",
@@ -8024,14 +7877,23 @@ impl<'a> Codegen<'a> {
         for child_leaf in &child.leaves {
             let mut parent_path = prefix.clone();
             parent_path.extend(child_leaf.path.iter().cloned());
-            let parent_leaf = parent.leaves.iter().find(|leaf| leaf.path == parent_path).ok_or_else(|| {
-                format!(
-                    "reference port `{}` aggregate member `{}` has no matching actual storage",
-                    self.display_name(port),
-                    aggregate_path_suffix(&child_leaf.path)
-                )
-            })?;
-            match (&child_leaf.signal, &parent_leaf.signal, child_leaf.object, parent_leaf.object) {
+            let parent_leaf = parent
+                .leaves
+                .iter()
+                .find(|leaf| leaf.path == parent_path)
+                .ok_or_else(|| {
+                    format!(
+                        "reference port `{}` aggregate member `{}` has no matching actual storage",
+                        self.display_name(port),
+                        aggregate_path_suffix(&child_leaf.path)
+                    )
+                })?;
+            match (
+                &child_leaf.signal,
+                &parent_leaf.signal,
+                child_leaf.object,
+                parent_leaf.object,
+            ) {
                 (Some(child_signal), Some(parent_signal), _, _) => {
                     let target = self.reference_lhs(IrLhs::Whole(parent_signal.ir))?;
                     let Some(target_ty) = self.reference_lhs_type(&target) else {
@@ -8212,9 +8074,7 @@ impl<'a> Codegen<'a> {
             IrLhs::Stream { parts, .. } => parts
                 .iter()
                 .find_map(|(part, _)| self.unmapped_structural_group(part, source)),
-            IrLhs::WholeRef { .. }
-            | IrLhs::Ref { .. }
-            | IrLhs::ArrayElem { .. } => None,
+            IrLhs::WholeRef { .. } | IrLhs::Ref { .. } | IrLhs::ArrayElem { .. } => None,
         }
     }
 
@@ -8265,14 +8125,12 @@ impl<'a> Codegen<'a> {
             (Some(child), Some(actual)) => (child, actual),
         };
         if child_array.dims.len() != actual_array.dims.len()
-            || child_array
-                .dims
-                .iter()
-                .zip(&actual_array.dims)
-                .any(|((child_left, child_right), (actual_left, actual_right))| {
+            || child_array.dims.iter().zip(&actual_array.dims).any(
+                |((child_left, child_right), (actual_left, actual_right))| {
                     (i64::from(*child_left) - i64::from(*child_right)).unsigned_abs()
                         != (i64::from(*actual_left) - i64::from(*actual_right)).unsigned_abs()
-                })
+                },
+            )
         {
             return Err(format!(
                 "fixed array port `{}` has incompatible rank or dimensions in `{child_path}`",
@@ -8336,10 +8194,7 @@ impl<'a> Codegen<'a> {
         Ok(true)
     }
 
-    fn aggregate_link_dependencies(
-        &self,
-        aggregate: &UnpackedAggregateInfo,
-    ) -> Vec<IrDependency> {
+    fn aggregate_link_dependencies(&self, aggregate: &UnpackedAggregateInfo) -> Vec<IrDependency> {
         let mut reads = Vec::new();
         for leaf in &aggregate.leaves {
             if let Some(object) = leaf.object {
@@ -8387,17 +8242,9 @@ impl<'a> Codegen<'a> {
             child_aggregate.1.clone()
         };
         let (target_node, source_node, path) = if direction == DbDirection::Input {
-            (
-                internal,
-                actual,
-                child_path,
-            )
+            (internal, actual, child_path)
         } else {
-            (
-                actual,
-                internal,
-                parent_path,
-            )
+            (actual, internal, parent_path)
         };
         let reads = self.aggregate_link_dependencies(&source);
         let statement = self
@@ -8452,7 +8299,10 @@ impl<'a> Codegen<'a> {
                 IrDependency::ContainerContents(source),
                 IrDependency::ContainerShape(source),
             ],
-            IrStmt::Container(IrContainerStmt::Copy { dst: target, src: source }),
+            IrStmt::Container(IrContainerStmt::Copy {
+                dst: target,
+                src: source,
+            }),
         );
         Ok(true)
     }
@@ -8598,11 +8448,7 @@ impl<'a> Codegen<'a> {
                         self.node(port).col,
                     ));
                 }
-                (
-                    lhs,
-                    rhs,
-                    reads,
-                )
+                (lhs, rhs, reads)
             } else {
                 let lhs = self.lower_lhs(parent_path, actual)?;
                 if let Some(group) = self.unmapped_structural_group(&lhs, port) {
@@ -8972,8 +8818,7 @@ impl<'a> Codegen<'a> {
                 is_task,
                 callee,
             } => {
-                let (function, _) =
-                    self.resolve_callee_env(self.inst, name, *is_task, *callee)?;
+                let (function, _) = self.resolve_callee_env(self.inst, name, *is_task, *callee)?;
                 if visited_functions.insert(function) {
                     if let Some(body) = self.func_body(function) {
                         self.scan_process_contract(body, scan, visited_functions)?;
@@ -9029,10 +8874,8 @@ impl<'a> Codegen<'a> {
                 always_type: AlwaysKind::Unsupported,
             } => IrProcessKind::Always,
         };
-        let mut writes: Vec<IrDependency> = self
-            .collect_process_writes(stmt)?
-            .into_iter()
-            .collect();
+        let mut writes: Vec<IrDependency> =
+            self.collect_process_writes(stmt)?.into_iter().collect();
         writes.sort_by_key(|dependency| self.dependency_label(dependency));
         let fn_name = self.new_fn_name(path, "proc");
         let (body_stmts, pre_fns, shape) = {
@@ -9081,16 +8924,18 @@ impl<'a> Codegen<'a> {
             self.process_kind_label(always_type)
         };
         let origin = self.origin(proc);
-        self.model.processes.push(IrProcess::new_with_kind_and_writes(
-            fn_name.clone(),
-            format!("{path}.{kind_label}"),
-            ir_kind,
-            shape,
-            writes,
-            pre_fns,
-            body_stmts,
-            origin,
-        ));
+        self.model
+            .processes
+            .push(IrProcess::new_with_kind_and_writes(
+                fn_name.clone(),
+                format!("{path}.{kind_label}"),
+                ir_kind,
+                shape,
+                writes,
+                pre_fns,
+                body_stmts,
+                origin,
+            ));
         if is_final {
             self.final_procs.push(fn_name);
         }
@@ -9166,9 +9011,10 @@ impl<'a> Codegen<'a> {
             ) => read_array == write_array && read_index == write_index,
             (IrDependency::ArrayElement { array, .. }, IrDependency::ArrayContents(write))
             | (IrDependency::ArrayContents(array), IrDependency::ArrayContents(write))
-            | (IrDependency::ArrayContents(array), IrDependency::ArrayElement { array: write, .. }) => {
-                array == write
-            }
+            | (
+                IrDependency::ArrayContents(array),
+                IrDependency::ArrayElement { array: write, .. },
+            ) => array == write,
             (
                 IrDependency::ContainerContents(container)
                 | IrDependency::ContainerShape(container),
@@ -9215,16 +9061,16 @@ impl<'a> Codegen<'a> {
                 }
                 return Ok(());
             }
-            NodeKind::Expr(ExprKind::Operation { op, operands, .. })
-                if matches!(
-                    op,
+            NodeKind::Expr(ExprKind::Operation {
+                op:
                     Operation::PostIncrement
-                        | Operation::PreIncrement
-                        | Operation::PostDecrement
-                        | Operation::PreDecrement
-                        | Operation::Assignment
-                ) =>
-            {
+                    | Operation::PreIncrement
+                    | Operation::PostDecrement
+                    | Operation::PreDecrement
+                    | Operation::Assignment,
+                operands,
+                ..
+            }) => {
                 if let Some(lhs) = operands.first() {
                     self.add_process_lhs_write(*lhs, writes);
                 }
@@ -9575,16 +9421,16 @@ impl<'a> Codegen<'a> {
                 }
                 return Ok(());
             }
-            NodeKind::Expr(ExprKind::Operation { op, operands, .. })
-                if matches!(
-                    op,
+            NodeKind::Expr(ExprKind::Operation {
+                op:
                     Operation::Assignment
-                        | Operation::PostIncrement
-                        | Operation::PreIncrement
-                        | Operation::PostDecrement
-                        | Operation::PreDecrement
-                ) =>
-            {
+                    | Operation::PostIncrement
+                    | Operation::PreIncrement
+                    | Operation::PostDecrement
+                    | Operation::PreDecrement,
+                operands,
+                ..
+            }) => {
                 if let Some(rhs) = operands.get(1) {
                     self.walk_read_signals_mode(
                         scope_path,
@@ -9693,18 +9539,16 @@ impl<'a> Codegen<'a> {
             } => {
                 let (ft, callee_inst) =
                     self.resolve_callee_env(self.inst, name, *is_task, *callee)?;
-                if include_function_bodies {
-                    if visited.insert(ft) {
-                        if let Some(body) = self.func_body(ft) {
-                            self.walk_read_signals_mode(
-                                scope_path,
-                                body,
-                                seen,
-                                visited,
-                                out,
-                                include_function_bodies,
-                            )?;
-                        }
+                if include_function_bodies && visited.insert(ft) {
+                    if let Some(body) = self.func_body(ft) {
+                        self.walk_read_signals_mode(
+                            scope_path,
+                            body,
+                            seen,
+                            visited,
+                            out,
+                            include_function_bodies,
+                        )?;
                     }
                 }
                 let (_, _, formals) = self.func_info(ft, callee_inst)?;
@@ -10039,9 +9883,9 @@ impl<'a> Codegen<'a> {
                 ));
             };
             let extent = (i64::from(*left) - i64::from(*right)).unsigned_abs() + 1;
-            total = total.checked_mul(extent).ok_or_else(|| {
-                format!("named event array `{name}` in `{path}` is too large")
-            })?;
+            total = total
+                .checked_mul(extent)
+                .ok_or_else(|| format!("named event array `{name}` in `{path}` is too large"))?;
             dims.push((*left, *right));
         }
         if dims.is_empty() {
@@ -10050,10 +9894,7 @@ impl<'a> Codegen<'a> {
             ));
         }
         for linear in 0..total {
-            let info = self.new_event_info(event_global_name(
-                path,
-                &format!("{name}_{linear}"),
-            ));
+            let info = self.new_event_info(event_global_name(path, &format!("{name}_{linear}")));
             self.event_elements.insert((declaration, linear), info);
         }
         let elements = (0..total)
@@ -10062,9 +9903,7 @@ impl<'a> Codegen<'a> {
                     .get(&(declaration, linear))
                     .map(|info| info.ir)
                     .ok_or_else(|| {
-                        format!(
-                            "named event array `{name}` in `{path}` lost element {linear}"
-                        )
+                        format!("named event array `{name}` in `{path}` lost element {linear}")
                     })
             })
             .collect::<Result<Vec<_>, _>>()?;
@@ -10110,13 +9949,14 @@ impl<'a> Codegen<'a> {
                 declaration: node,
                 indices: Vec::new(),
             }),
-            NodeKind::Expr(ExprKind::Ref { target: Some(target) })
-                if (matches!(self.kind(*target), NodeKind::NamedEvent)
-                    || matches!(self.kind(*target), NodeKind::Var { .. })
+            NodeKind::Expr(ExprKind::Ref {
+                target: Some(target),
+            }) if (matches!(self.kind(*target), NodeKind::NamedEvent)
+                || matches!(self.kind(*target), NodeKind::Var { .. })
                     && (self.event_globals.contains_key(target)
                         || self.event_arrays.contains_key(target)
                         || self.db.event_array_meta(*target).is_some()))
-                    || matches!(self.kind(*target), NodeKind::FuncArg { ty, .. } if ty.kind == "event") =>
+                || matches!(self.kind(*target), NodeKind::FuncArg { ty, .. } if ty.kind == "event") =>
             {
                 Some(EventTarget {
                     declaration: *target,
@@ -10240,7 +10080,7 @@ impl<'a> Codegen<'a> {
                     "cannot resolve named event reference `{}` in `{scope_path}`",
                     self.node(target.declaration).name
                 )
-        })
+            })
     }
 
     /// Lower an event target without losing a runtime array index. Constant
@@ -10573,7 +10413,9 @@ impl<'a> Codegen<'a> {
                         return Ok(lh);
                     }
                     if self.is_const_ref_target(NodeId(0), &name) {
-                        return Err(format!("cannot write through const ref `{name}` in `{path}`"));
+                        return Err(format!(
+                            "cannot write through const ref `{name}` in `{path}`"
+                        ));
                     }
                 }
                 let (name, info) = self.resolve_lhs_target(lhs, *target)?;
@@ -10668,12 +10510,7 @@ impl<'a> Codegen<'a> {
                     let width = member.ty.width.ok_or_else(|| {
                         format!("unpacked member `{}` has unresolved width", member.name)
                     })?;
-                    return Ok(Lhs::Part(
-                        info,
-                        i128::from(width - 1),
-                        0,
-                        member.two_state,
-                    ));
+                    return Ok(Lhs::Part(info, i128::from(width - 1), 0, member.two_state));
                 }
                 if let Some((info, member, lsb, width)) =
                     self.packed_member_select_info(*base, indices)?
@@ -10864,7 +10701,10 @@ impl<'a> Codegen<'a> {
                         format!("unpacked member `{}` has unresolved width", member.name)
                     })?;
                     let info = member_info.signal.ok_or_else(|| {
-                        format!("aggregate member `{}` is not a packed assignment target", member.name)
+                        format!(
+                            "aggregate member `{}` is not a packed assignment target",
+                            member.name
+                        )
                     })?;
                     let two_state = member.two_state;
                     return Ok(if info.real {
@@ -11591,17 +11431,16 @@ fn gate_driver_strengths(
     strength1: Strength,
     net_name: &str,
 ) -> Result<(u8, u8), String> {
-    let (strength0, strength1) = if strength0 == Strength::Unspecified
-        && strength1 == Strength::Unspecified
-    {
-        match prim_type {
-            PrimitiveType::Pullup => (Strength::HighZ, Strength::Pull),
-            PrimitiveType::Pulldown => (Strength::Pull, Strength::HighZ),
-            _ => (Strength::Strong, Strength::Strong),
-        }
-    } else {
-        (strength0, strength1)
-    };
+    let (strength0, strength1) =
+        if strength0 == Strength::Unspecified && strength1 == Strength::Unspecified {
+            match prim_type {
+                PrimitiveType::Pullup => (Strength::HighZ, Strength::Pull),
+                PrimitiveType::Pulldown => (Strength::Pull, Strength::HighZ),
+                _ => (Strength::Strong, Strength::Strong),
+            }
+        } else {
+            (strength0, strength1)
+        };
     continuous_assignment_strengths(strength0, strength1, net_name)
 }
 

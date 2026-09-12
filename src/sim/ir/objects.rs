@@ -127,10 +127,6 @@ impl IrDisplayArg {
             Self::String(value) => value.expressions_mut(visit),
         }
     }
-
-    pub(in crate::sim) fn is_packed(&self) -> bool {
-        matches!(self, Self::Packed(_))
-    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -301,10 +297,7 @@ impl IrStringExpr {
                 }
                 Ok(())
             }
-            Self::ContainerGetNested {
-                container,
-                indices,
-            } => {
+            Self::ContainerGetNested { container, indices } => {
                 let Some(container) = model.containers.get(*container) else {
                     return Err(super::IrValidationError::new(
                         "string",
@@ -364,10 +357,7 @@ impl IrStringExpr {
     }
     pub(in crate::sim) fn expressions(&self, visit: &mut impl FnMut(&IrExpr)) {
         match self {
-            Self::Literal(_)
-            | Self::Read(_)
-            | Self::LocalRead(_)
-            | Self::FormalRead(_) => {}
+            Self::Literal(_) | Self::Read(_) | Self::LocalRead(_) | Self::FormalRead(_) => {}
             Self::ContainerGet { index, .. } => visit(index),
             Self::ContainerGetNested { indices, .. } => indices.iter().for_each(visit),
             Self::AssociativeGet { key, .. } => key.expressions(visit),
@@ -376,9 +366,9 @@ impl IrStringExpr {
                 for arg in args {
                     match arg {
                         super::IrCallArg::StringVal(value) => value.expressions(visit),
-                        super::IrCallArg::StringOutTemp { init: Some(value), .. } => {
-                            value.expressions(visit)
-                        }
+                        super::IrCallArg::StringOutTemp {
+                            init: Some(value), ..
+                        } => value.expressions(visit),
                         _ => {}
                     }
                 }
@@ -403,10 +393,7 @@ impl IrStringExpr {
     }
     pub(in crate::sim) fn expressions_mut(&mut self, visit: &mut impl FnMut(&mut IrExpr)) {
         match self {
-            Self::Literal(_)
-            | Self::Read(_)
-            | Self::LocalRead(_)
-            | Self::FormalRead(_) => {}
+            Self::Literal(_) | Self::Read(_) | Self::LocalRead(_) | Self::FormalRead(_) => {}
             Self::ContainerGet { index, .. } => visit(index),
             Self::ContainerGetNested { indices, .. } => indices.iter_mut().for_each(visit),
             Self::AssociativeGet { key, .. } => key.expressions_mut(visit),
@@ -415,9 +402,9 @@ impl IrStringExpr {
                 for arg in args {
                     match arg {
                         super::IrCallArg::StringVal(value) => value.expressions_mut(visit),
-                        super::IrCallArg::StringOutTemp { init: Some(value), .. } => {
-                            value.expressions_mut(visit)
-                        }
+                        super::IrCallArg::StringOutTemp {
+                            init: Some(value), ..
+                        } => value.expressions_mut(visit),
                         _ => {}
                     }
                 }
@@ -492,9 +479,7 @@ impl IrArrayQuery {
         if let IrArrayQueryTarget::Container { container, .. } = &self.target {
             if let Some(container) = model.containers.get(*container) {
                 if let super::IrContainerKind::Associative {
-                    key: super::IrAssocKey::Integral {
-                        width, signed, ..
-                    },
+                    key: super::IrAssocKey::Integral { width, signed, .. },
                 } = &container.kind
                 {
                     return (*width, *signed);
@@ -792,9 +777,7 @@ impl IrObjectStmt {
                 visit(index);
                 visit(value);
             }
-            Self::StringItoaLocal(_, value, _) | Self::StringRealtoaLocal(_, value) => {
-                visit(value)
-            }
+            Self::StringItoaLocal(_, value, _) | Self::StringRealtoaLocal(_, value) => visit(value),
             Self::ChandleDeclareLocal(_, Some(value)) => value.expressions(visit),
             Self::ChandleDeclareLocal(_, None)
             | Self::ChandleAssign(..)
@@ -815,9 +798,7 @@ impl IrObjectStmt {
                 visit(index);
                 visit(value);
             }
-            Self::StringItoaLocal(_, value, _) | Self::StringRealtoaLocal(_, value) => {
-                visit(value)
-            }
+            Self::StringItoaLocal(_, value, _) | Self::StringRealtoaLocal(_, value) => visit(value),
             Self::ChandleDeclareLocal(_, Some(value)) => value.expressions_mut(visit),
             Self::ChandleDeclareLocal(_, None)
             | Self::ChandleAssign(..)
@@ -842,10 +823,7 @@ impl IrChandleExpr {
                 "local name must not be empty",
             )),
             Self::FormalRead(index) => {
-                if formals
-                    .get(*index)
-                    .is_some_and(|formal| formal.chandle)
-                {
+                if formals.get(*index).is_some_and(|formal| formal.chandle) {
                     Ok(())
                 } else {
                     Err(super::IrValidationError::new(
@@ -879,10 +857,7 @@ impl IrChandleExpr {
                 }
                 Ok(())
             }
-            Self::ContainerGetNested {
-                container,
-                indices,
-            } => {
+            Self::ContainerGetNested { container, indices } => {
                 let Some(container) = model.containers.get(*container) else {
                     return Err(super::IrValidationError::new(
                         "chandle",
@@ -960,10 +935,13 @@ impl IrChandleExpr {
                 for (arg, formal) in args.iter().zip(parameter_order) {
                     match (arg, formal) {
                         (IrCallArg::ChandleVal(value), formal)
-                            if formal.chandle && !formal.is_address() => {
+                            if formal.chandle && !formal.is_address() =>
+                        {
                             value.validate(model, formals, chandle_return)?;
                         }
-                        (IrCallArg::Val(value), formal) if !formal.chandle && !formal.is_address() => {
+                        (IrCallArg::Val(value), formal)
+                            if !formal.chandle && !formal.is_address() =>
+                        {
                             if value.is_real() != formal.real
                                 || value.width != formal.width
                                 || value.signed != formal.signed
@@ -975,7 +953,8 @@ impl IrChandleExpr {
                             }
                         }
                         (IrCallArg::ChandleAddr(addr), formal)
-                            if formal.chandle && formal.is_out && !formal.is_ref() => {
+                            if formal.chandle && formal.is_out && !formal.is_ref() =>
+                        {
                             if addr.is_empty() {
                                 return Err(super::IrValidationError::new(
                                     "chandle call",
@@ -984,7 +963,8 @@ impl IrChandleExpr {
                             }
                         }
                         (IrCallArg::ChandleRefAddr(addr), formal)
-                            if formal.chandle && formal.is_ref() => {
+                            if formal.chandle && formal.is_ref() =>
+                        {
                             if addr.is_empty() {
                                 return Err(super::IrValidationError::new(
                                     "chandle call",
@@ -1009,13 +989,15 @@ impl IrChandleExpr {
         match self {
             Self::ContainerGet { index, .. } => visit(index),
             Self::ContainerGetNested { indices, .. } => indices.iter().for_each(visit),
-            Self::Call { args, .. } => for arg in args {
-                match arg {
-                    IrCallArg::Val(value) => visit(value),
-                    IrCallArg::ChandleVal(value) => value.expressions(visit),
-                    _ => {}
+            Self::Call { args, .. } => {
+                for arg in args {
+                    match arg {
+                        IrCallArg::Val(value) => visit(value),
+                        IrCallArg::ChandleVal(value) => value.expressions(visit),
+                        _ => {}
+                    }
                 }
-            },
+            }
             _ => {}
         }
     }
@@ -1024,13 +1006,15 @@ impl IrChandleExpr {
         match self {
             Self::ContainerGet { index, .. } => visit(index),
             Self::ContainerGetNested { indices, .. } => indices.iter_mut().for_each(visit),
-            Self::Call { args, .. } => for arg in args {
-                match arg {
-                    IrCallArg::Val(value) => visit(value),
-                    IrCallArg::ChandleVal(value) => value.expressions_mut(visit),
-                    _ => {}
+            Self::Call { args, .. } => {
+                for arg in args {
+                    match arg {
+                        IrCallArg::Val(value) => visit(value),
+                        IrCallArg::ChandleVal(value) => value.expressions_mut(visit),
+                        _ => {}
+                    }
                 }
-            },
+            }
             _ => {}
         }
     }

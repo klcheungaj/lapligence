@@ -1,8 +1,8 @@
 //! Expression and assignment-target lowering into typed simulator IR.
 
-use super::*;
 use super::collection::aggregate_path_suffix;
 use super::objects::object_query;
+use super::*;
 use crate::sim::ir::{
     IrArrayDimension, IrArrayQuery, IrArrayQueryKind, IrArrayQueryTarget, IrBinOp, IrChandleExpr,
     IrInsideItem, IrObjectQuery, IrObjectStmt, IrObjectType, IrStringExpr, IrStringInsideItem,
@@ -92,13 +92,9 @@ impl<'a> Codegen<'a> {
                 if low.is_none() && high.is_none() {
                     return Err(format!("inside range has no bounded endpoint in `{path}`"));
                 }
-                if low.is_some() && high.is_some() {
-                    out.push(IrInsideItem::Range {
-                        low: low.expect("inside range lower endpoint"),
-                        high: high.expect("inside range upper endpoint"),
-                    });
-                } else {
-                    out.push(IrInsideItem::OpenRange { low, high });
+                match (low, high) {
+                    (Some(low), Some(high)) => out.push(IrInsideItem::Range { low, high }),
+                    (low, high) => out.push(IrInsideItem::OpenRange { low, high }),
                 }
             } else {
                 for operand in operands {
@@ -111,7 +107,9 @@ impl<'a> Codegen<'a> {
         if let Some((_, aggregate)) = self.unpacked_aggregate_info(node) {
             for leaf in aggregate.leaves {
                 let value = self.aggregate_leaf_read(&leaf).map_err(|error| {
-                    format!("inside set aggregate member is not a scalar value in `{path}`: {error}")
+                    format!(
+                        "inside set aggregate member is not a scalar value in `{path}`: {error}"
+                    )
                 })?;
                 out.push(IrInsideItem::Value(value));
             }
@@ -301,17 +299,19 @@ impl<'a> Codegen<'a> {
     }
 
     pub(super) fn query_descriptor(&self, node: NodeId) -> Option<&TypeDescriptor> {
-        self.db.type_descriptor(node).or_else(|| match self.kind(node) {
-            NodeKind::Expr(ExprKind::Ref {
-                target: Some(target),
-            }) => self.db.type_descriptor(*target),
-            NodeKind::Expr(ExprKind::HierPath { refs, .. }) => refs
-                .iter()
-                .rev()
-                .flatten()
-                .find_map(|target| self.db.type_descriptor(*target)),
-            _ => None,
-        })
+        self.db
+            .type_descriptor(node)
+            .or_else(|| match self.kind(node) {
+                NodeKind::Expr(ExprKind::Ref {
+                    target: Some(target),
+                }) => self.db.type_descriptor(*target),
+                NodeKind::Expr(ExprKind::HierPath { refs, .. }) => refs
+                    .iter()
+                    .rev()
+                    .flatten()
+                    .find_map(|target| self.db.type_descriptor(*target)),
+                _ => None,
+            })
     }
 
     fn query_dimensions_for(descriptor: &TypeDescriptor) -> Vec<IrArrayDimension> {
@@ -387,7 +387,8 @@ impl<'a> Codegen<'a> {
             TypeShape::FixedArray {
                 dimensions,
                 element,
-            } => u32::try_from(dimensions.len()).unwrap_or(u32::MAX)
+            } => u32::try_from(dimensions.len())
+                .unwrap_or(u32::MAX)
                 .saturating_add(Self::query_unpacked_dimensions_for(element)),
             TypeShape::Container { element, .. } => {
                 1_u32.saturating_add(Self::query_unpacked_dimensions_for(element))
@@ -401,10 +402,9 @@ impl<'a> Codegen<'a> {
         path: &str,
         node: NodeId,
     ) -> Result<(IrArrayQueryTarget, Vec<IrArrayDimension>), String> {
-        let descriptor = self
-            .query_descriptor(node)
-            .cloned()
-            .ok_or_else(|| format!("array query argument has no owned type metadata in `{path}`"))?;
+        let descriptor = self.query_descriptor(node).cloned().ok_or_else(|| {
+            format!("array query argument has no owned type metadata in `{path}`")
+        })?;
         let dimensions = Self::query_dimensions_for(&descriptor);
         if dimensions.is_empty() {
             return Err(format!(
@@ -468,9 +468,7 @@ impl<'a> Codegen<'a> {
         args: &[NodeId],
     ) -> Result<IrExpr, String> {
         let [first, rest @ ..] = args else {
-            return Err(format!(
-                "{name} requires one or two arguments in `{path}`"
-            ));
+            return Err(format!("{name} requires one or two arguments in `{path}`"));
         };
         if rest.len() > 1 {
             return Err(format!("{name} requires one or two arguments in `{path}`"));
@@ -479,7 +477,10 @@ impl<'a> Codegen<'a> {
         let dimension_node = rest.first().copied();
         let known_dimension = dimension_node.and_then(|node| self.eval_bound_i128(node).ok());
         if let Some(index) = known_dimension {
-            if index < 1 || usize::try_from(index).ok().is_none_or(|index| index > dimensions.len())
+            if index < 1
+                || usize::try_from(index)
+                    .ok()
+                    .is_none_or(|index| index > dimensions.len())
             {
                 return Err(format!(
                     "{name} dimension {index} is outside the queryable range in `{path}`"
@@ -961,13 +962,7 @@ impl<'a> Codegen<'a> {
                 reordered,
                 assignment,
                 operands,
-            }) => self.lower_operation(
-                scope_path,
-                *op,
-                *reordered,
-                *assignment,
-                operands,
-            ),
+            }) => self.lower_operation(scope_path, *op, *reordered, *assignment, operands),
             NodeKind::Expr(ExprKind::Cast {
                 operand,
                 ty,
@@ -1045,9 +1040,7 @@ impl<'a> Codegen<'a> {
                 receiver: Some(receiver),
             } if name == "triggered" => {
                 let target = self.event_target_of(*receiver).ok_or_else(|| {
-                    format!(
-                        "event triggered property has an unresolved receiver in `{scope_path}`"
-                    )
+                    format!("event triggered property has an unresolved receiver in `{scope_path}`")
                 })?;
                 let event = self.event_ref_of(&target, scope_path)?;
                 Ok(IrExpr::new(
@@ -2203,9 +2196,7 @@ impl<'a> Codegen<'a> {
                     ));
                 };
                 let descriptor = self.query_descriptor(*arg).ok_or_else(|| {
-                    format!(
-                        "{name} argument has no owned type metadata in `{scope_path}`"
-                    )
+                    format!("{name} argument has no owned type metadata in `{scope_path}`")
                 })?;
                 let count = if name == "$dimensions" {
                     Self::query_dimensions_for(descriptor).len()
@@ -2213,9 +2204,9 @@ impl<'a> Codegen<'a> {
                     usize::try_from(Self::query_unpacked_dimensions_for(descriptor))
                         .unwrap_or(usize::MAX)
                 };
-                Ok(Self::query_integer(i128::try_from(count).map_err(|_| {
-                    format!("{name} dimension count is too large in `{scope_path}`")
-                })?))
+                Ok(Self::query_integer(i128::try_from(count).map_err(
+                    |_| format!("{name} dimension count is too large in `{scope_path}`"),
+                )?))
             }
             "$isunbounded" => {
                 let [arg] = args.as_slice() else {
@@ -2416,9 +2407,7 @@ impl<'a> Codegen<'a> {
                     .ok_or_else(|| format!("$bits without argument in `{scope_path}`"))?;
                 if let Some(descriptor) = self.query_descriptor(a).cloned() {
                     if let Some(width) = descriptor.fixed_size_bits() {
-                        return Ok(Self::query_integer(i128::try_from(width).map_err(
-                            |_| format!("$bits result is too wide in `{scope_path}"),
-                        )?));
+                        return Ok(Self::query_integer(i128::from(width)));
                     }
                     if let Some(container) = self.container_of(a) {
                         let element_width = match &self.model.containers[container.ir].element {
@@ -2447,9 +2436,9 @@ impl<'a> Codegen<'a> {
                         ));
                     }
                     if descriptor.shape == TypeShape::String
-                        && self
-                            .object_of(scope_path, a)
-                            .is_some_and(|index| self.model.objects[index].ty == IrObjectType::String)
+                        && self.object_of(scope_path, a).is_some_and(|index| {
+                            self.model.objects[index].ty == IrObjectType::String
+                        })
                     {
                         let len = IrExpr::new(
                             IrExprKind::ObjectQuery(Box::new(IrObjectQuery::StringLen(
@@ -2583,7 +2572,7 @@ impl<'a> Codegen<'a> {
                     member.name
                 )
             })?;
-            let value = if let Some(nested) = member.aggregate.as_deref() {
+            let value = if let Some(nested) = member.aggregate_layout() {
                 if matches!(
                     self.kind(value_node),
                     NodeKind::Expr(ExprKind::Operation { op, .. })
@@ -2677,7 +2666,7 @@ impl<'a> Codegen<'a> {
                             "aggregate pattern path `{}` has no destination in `{path}`",
                             aggregate_path_suffix(&member_path)
                         )
-                })?;
+                    })?;
                 if let Some(index) = left.object {
                     if nba {
                         return Err(format!(
@@ -2689,21 +2678,17 @@ impl<'a> Codegen<'a> {
                         IrObjectType::String => {
                             IrObjectStmt::StringAssign(index, self.lower_string(path, value_node)?)
                         }
-                        IrObjectType::Chandle => {
-                            IrObjectStmt::ChandleAssign(index, self.lower_chandle(path, value_node)?)
-                        }
+                        IrObjectType::Chandle => IrObjectStmt::ChandleAssign(
+                            index,
+                            self.lower_chandle(path, value_node)?,
+                        ),
                     };
                     assignments.push(IrStmt::Object(operation));
                     continue;
                 }
                 let lhs = self.aggregate_leaf_lhs(left)?;
                 let value = if let Some((name, width, signed)) = captured.get(&value_node) {
-                    IrExpr::new(
-                        IrExprKind::LocalRead(name.clone()),
-                        *width,
-                        *signed,
-                        None,
-                    )
+                    IrExpr::new(IrExprKind::LocalRead(name.clone()), *width, *signed, None)
                 } else {
                     let source = self.lower_expr(path, value_node)?;
                     let name = format!("_agg{}_{}", lhs_target.0, value_node.0);
@@ -2719,7 +2704,11 @@ impl<'a> Codegen<'a> {
                     IrExpr::new(IrExprKind::LocalRead(name), width, signed, None)
                 };
                 let value = apply_lhs_assignment_context(&self.model, &lhs, value);
-                assignments.push(IrStmt::Assign { lhs, rhs: value, nba });
+                assignments.push(IrStmt::Assign {
+                    lhs,
+                    rhs: value,
+                    nba,
+                });
             }
             captures.extend(assignments);
             return Ok(Some(IrStmt::Block(captures)));
@@ -2860,14 +2849,12 @@ impl<'a> Codegen<'a> {
                 let lhs_object = self.reference_object(lhs_object);
                 let rhs_object = self.reference_object(rhs_object);
                 let operation = match self.model.objects[lhs_object].ty {
-                    IrObjectType::String => IrObjectStmt::StringAssign(
-                        lhs_object,
-                        IrStringExpr::Read(rhs_object),
-                    ),
-                    IrObjectType::Chandle => IrObjectStmt::ChandleAssign(
-                        lhs_object,
-                        IrChandleExpr::Read(rhs_object),
-                    ),
+                    IrObjectType::String => {
+                        IrObjectStmt::StringAssign(lhs_object, IrStringExpr::Read(rhs_object))
+                    }
+                    IrObjectType::Chandle => {
+                        IrObjectStmt::ChandleAssign(lhs_object, IrChandleExpr::Read(rhs_object))
+                    }
                 };
                 assignments.push(IrStmt::Object(operation));
                 continue;
@@ -2878,7 +2865,11 @@ impl<'a> Codegen<'a> {
                 value = IrExpr::to_two_state(value);
             }
             let value = apply_lhs_assignment_context(&self.model, &lhs, value);
-            assignments.push(IrStmt::Assign { lhs, rhs: value, nba });
+            assignments.push(IrStmt::Assign {
+                lhs,
+                rhs: value,
+                nba,
+            });
         }
         Ok(Some(IrStmt::Block(assignments)))
     }
@@ -2898,10 +2889,7 @@ impl<'a> Codegen<'a> {
     ) -> Result<Option<IrExpr>, String> {
         if !matches!(
             op,
-            Operation::Equal
-                | Operation::NotEqual
-                | Operation::CaseEqual
-                | Operation::CaseNotEqual
+            Operation::Equal | Operation::NotEqual | Operation::CaseEqual | Operation::CaseNotEqual
         ) {
             return Ok(None);
         }
@@ -2913,12 +2901,10 @@ impl<'a> Codegen<'a> {
         if left.is_none() && right.is_none() {
             return Ok(None);
         }
-        let (left_target, left_aggregate) = left.ok_or_else(|| {
-            format!("aggregate equality has a non-aggregate operand in `{path}`")
-        })?;
-        let (right_target, right_aggregate) = right.ok_or_else(|| {
-            format!("aggregate equality has a non-aggregate operand in `{path}`")
-        })?;
+        let (left_target, left_aggregate) = left
+            .ok_or_else(|| format!("aggregate equality has a non-aggregate operand in `{path}`"))?;
+        let (right_target, right_aggregate) = right
+            .ok_or_else(|| format!("aggregate equality has a non-aggregate operand in `{path}`"))?;
         let compatible = match (
             left_aggregate.type_identity.as_deref(),
             right_aggregate.type_identity.as_deref(),
@@ -2958,16 +2944,28 @@ impl<'a> Codegen<'a> {
         };
         let equality = if left_aggregate.kind == AggregateKind::UnpackedUnion {
             let left = left_aggregate.leaves.first().ok_or_else(|| {
-                format!("unpacked union `{}` has no members", self.node(left_target).name)
+                format!(
+                    "unpacked union `{}` has no members",
+                    self.node(left_target).name
+                )
             })?;
             let right = right_aggregate.leaves.first().ok_or_else(|| {
-                format!("unpacked union `{}` has no members", self.node(right_target).name)
+                format!(
+                    "unpacked union `{}` has no members",
+                    self.node(right_target).name
+                )
             })?;
             let left = left.signal.as_ref().ok_or_else(|| {
-                format!("unpacked union `{}` has no packed storage", self.node(left_target).name)
+                format!(
+                    "unpacked union `{}` has no packed storage",
+                    self.node(left_target).name
+                )
             })?;
             let right = right.signal.as_ref().ok_or_else(|| {
-                format!("unpacked union `{}` has no packed storage", self.node(right_target).name)
+                format!(
+                    "unpacked union `{}` has no packed storage",
+                    self.node(right_target).name
+                )
             })?;
             compare(
                 if matches!(op, Operation::CaseEqual | Operation::CaseNotEqual) {
@@ -3010,26 +3008,26 @@ impl<'a> Codegen<'a> {
                                 false,
                             )
                         } else {
-                        let compare = IrExpr::new(
-                            IrExprKind::ObjectQuery(Box::new(IrObjectQuery::StringCompare(
-                                IrStringExpr::Read(left_index),
-                                IrStringExpr::Read(right_index),
-                                false,
-                            ))),
-                            32,
-                            true,
-                            None,
-                        );
-                        let zero = IrExpr::new(
-                            IrExprKind::Const(
-                                IrConst::packed(vec![0], vec![], vec![], 32, true, None)
-                                    .map_err(|error| error.to_string())?,
-                            ),
-                            32,
-                            true,
-                            None,
-                        );
-                        cmp_expr_ir(IrBinOp::Eq, compare, zero)
+                            let compare = IrExpr::new(
+                                IrExprKind::ObjectQuery(Box::new(IrObjectQuery::StringCompare(
+                                    IrStringExpr::Read(left_index),
+                                    IrStringExpr::Read(right_index),
+                                    false,
+                                ))),
+                                32,
+                                true,
+                                None,
+                            );
+                            let zero = IrExpr::new(
+                                IrExprKind::Const(
+                                    IrConst::packed(vec![0], vec![], vec![], 32, true, None)
+                                        .map_err(|error| error.to_string())?,
+                                ),
+                                32,
+                                true,
+                                None,
+                            );
+                            cmp_expr_ir(IrBinOp::Eq, compare, zero)
                         }
                     }
                     (None, None) => compare(
@@ -3049,29 +3047,27 @@ impl<'a> Codegen<'a> {
                     }
                 };
                 equality = Some(match equality {
-                    Some(previous) => cmp_expr_ir(
-                        IrBinOp::LogAnd,
-                        previous,
-                        member_equal,
-                    ),
+                    Some(previous) => cmp_expr_ir(IrBinOp::LogAnd, previous, member_equal),
                     None => member_equal,
                 });
             }
             equality.ok_or_else(|| format!("aggregate equality has no value leaves in `{path}"))?
         };
-        Ok(Some(if matches!(op, Operation::NotEqual | Operation::CaseNotEqual) {
-            IrExpr::new(
-                IrExprKind::Un {
-                    op: IrUnOp::LogNot,
-                    a: Box::new(equality),
-                },
-                1,
-                false,
-                None,
-            )
-        } else {
-            equality
-        }))
+        Ok(Some(
+            if matches!(op, Operation::NotEqual | Operation::CaseNotEqual) {
+                IrExpr::new(
+                    IrExprKind::Un {
+                        op: IrUnOp::LogNot,
+                        a: Box::new(equality),
+                    },
+                    1,
+                    false,
+                    None,
+                )
+            } else {
+                equality
+            },
+        ))
     }
 
     fn aggregate_leaf_lhs(&self, leaf: &AggregateMemberInfo) -> Result<IrLhs, String> {
@@ -3194,9 +3190,8 @@ impl<'a> Codegen<'a> {
                     NodeKind::Expr(ExprKind::Operation { op, .. })
                         if *op == Operation::AssignmentPattern
                 ) {
-                    return self.aggregate_descriptor_default_values(
-                        path, node, &next, prefix, out,
-                    );
+                    return self
+                        .aggregate_descriptor_default_values(path, node, &next, prefix, out);
                 }
                 let values = self.fixed_pattern_operands(path, node, (left, right), &next)?;
                 for (offset, value) in values.into_iter().enumerate() {
@@ -3329,17 +3324,24 @@ impl<'a> Codegen<'a> {
             ..
         }) = self.kind(node)
         else {
-            return Err(format!("array initializer in `{path}` is not an assignment pattern"));
+            return Err(format!(
+                "array initializer in `{path}` is not an assignment pattern"
+            ));
         };
         if *op != Operation::AssignmentPattern {
-            return Err(format!("array initializer in `{path}` is not an assignment pattern"));
+            return Err(format!(
+                "array initializer in `{path}` is not an assignment pattern"
+            ));
         }
         let mut values = operands.clone();
         if *reordered {
             values.reverse();
         }
         let tagged = values.iter().any(|value| {
-            matches!(self.kind(*value), NodeKind::Expr(ExprKind::TaggedPattern { .. }))
+            matches!(
+                self.kind(*value),
+                NodeKind::Expr(ExprKind::TaggedPattern { .. })
+            )
         });
         if !tagged {
             if values.len() != count {
@@ -3351,7 +3353,10 @@ impl<'a> Codegen<'a> {
             return Ok(values);
         }
         if values.iter().any(|value| {
-            !matches!(self.kind(*value), NodeKind::Expr(ExprKind::TaggedPattern { .. }))
+            !matches!(
+                self.kind(*value),
+                NodeKind::Expr(ExprKind::TaggedPattern { .. })
+            )
         }) {
             return Err(format!(
                 "mixed positional and keyed array assignment pattern in `{path}` is not supported"
@@ -3390,7 +3395,9 @@ impl<'a> Codegen<'a> {
                 } else {
                     i64::from(index) - i64::from(left)
                 };
-                let Some(offset) = usize::try_from(offset).ok().filter(|offset| *offset < count)
+                let Some(offset) = usize::try_from(offset)
+                    .ok()
+                    .filter(|offset| *offset < count)
                 else {
                     return Err(format!(
                         "array assignment pattern index `{key}` is out of bounds in `{path}`"
@@ -3409,7 +3416,7 @@ impl<'a> Codegen<'a> {
                 ));
             };
             if !super::collection::pattern_key_matches_descriptor(
-                &key_type,
+                key_type,
                 element,
                 Self::descriptor_two_state(element),
                 None,
@@ -3420,9 +3427,7 @@ impl<'a> Codegen<'a> {
             }
             if type_values
                 .iter()
-                .any(|(previous, _)| {
-                    super::collection::pattern_key_types_equal(previous, &key_type)
-                })
+                .any(|(previous, _)| super::collection::pattern_key_types_equal(previous, key_type))
             {
                 return Err(format!(
                     "duplicate array assignment pattern type key `{key}` in `{path}`"
@@ -3432,8 +3437,8 @@ impl<'a> Codegen<'a> {
         }
 
         let mut resolved = Vec::with_capacity(count);
-        for offset in 0..count {
-            let value = explicit[offset]
+        for (offset, explicit_value) in explicit.iter().copied().enumerate().take(count) {
+            let value = explicit_value
                 .or_else(|| {
                     type_values.iter().rev().find_map(|(key_type, value)| {
                         super::collection::pattern_key_matches_descriptor(
@@ -3519,16 +3524,9 @@ impl<'a> Codegen<'a> {
                     checked_select_bounds(left, right, "assignment part select")?;
                 self.reference_lhs(IrLhs::Part(info.ir, left, right, two_state))?
             }
-            Lhs::IdxPart(info, base, width_expr, width, neg, two_state) => {
-                self.reference_lhs(IrLhs::IdxPart(
-                    info.ir,
-                    base,
-                    width_expr,
-                    width,
-                    neg,
-                    two_state,
-                ))?
-            }
+            Lhs::IdxPart(info, base, width_expr, width, neg, two_state) => self.reference_lhs(
+                IrLhs::IdxPart(info.ir, base, width_expr, width, neg, two_state),
+            )?,
             Lhs::ArrayElem(ae) => self.reference_lhs(IrLhs::ArrayElem {
                 arr: self.reference_array(ae.arr.ir),
                 indices: ae.indices,

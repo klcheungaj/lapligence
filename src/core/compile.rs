@@ -5,6 +5,7 @@
 
 use crate::core::tokens::FileTokens;
 use crate::ffi::slang::{self, CompileOptions, CompileRequest, Define, Limits, ParameterOverride};
+use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -260,6 +261,7 @@ pub fn compile(opts: &CompileOpts) -> Result<CompileOut, StartupError> {
     }
     let root_count = owned.len();
     let mut macros = macro_environment_from_defines(&opts.defines);
+    let expansion_budget = MacroExpansionBudget::new(opts.limits.max_source_bytes);
     for root_index in 0..root_count {
         if matches!(opts.compilation_unit_mode, CompilationUnitMode::Separate) {
             macros = macro_environment_from_defines(&opts.defines);
@@ -275,6 +277,7 @@ pub fn compile(opts: &CompileOpts) -> Result<CompileOut, StartupError> {
             &mut owned,
             &mut remaining,
             &mut include_stack,
+            &expansion_budget,
             0,
         )?;
     }
@@ -469,7 +472,7 @@ fn resolve_include(including: &Path, target: &str, include_dirs: &[String]) -> O
     if let Some(parent) = including.parent() {
         roots.push(parent.to_path_buf());
     }
-    roots.extend(include_dirs.iter().map(|dir| PathBuf::from(dir)));
+    roots.extend(include_dirs.iter().map(PathBuf::from));
     let roots: Vec<_> = roots
         .into_iter()
         .filter_map(|root| root.canonicalize().ok())
@@ -502,6 +505,53 @@ fn resolve_include(including: &Path, target: &str, include_dirs: &[String]) -> O
 const MAX_INCLUDE_DISCOVERY_DEPTH: usize = 256;
 const MAX_MACRO_EXPANSION_DEPTH: usize = 64;
 
+struct MacroExpansionBudget {
+    bytes: Cell<u64>,
+    work: Cell<u64>,
+}
+
+impl MacroExpansionBudget {
+    fn new(limit: u64) -> Self {
+        Self {
+            bytes: Cell::new(limit),
+            work: Cell::new(limit),
+        }
+    }
+
+    fn charge(cell: &Cell<u64>, amount: usize) -> Result<(), StartupError> {
+        let amount = u64::try_from(amount).map_err(|_| {
+            StartupError::new(
+                StartupErrorKind::LimitExceeded,
+                "macro include expansion exceeds the configured Slang byte limit",
+            )
+        })?;
+        let remaining = cell.get().checked_sub(amount).ok_or_else(|| {
+            StartupError::new(
+                StartupErrorKind::LimitExceeded,
+                "macro include expansion exceeds the configured Slang byte limit",
+            )
+        })?;
+        cell.set(remaining);
+        Ok(())
+    }
+
+    fn push(&self, output: &mut String, character: char) -> Result<(), StartupError> {
+        Self::charge(&self.bytes, character.len_utf8())?;
+        output.push(character);
+        Ok(())
+    }
+
+    fn push_str(&self, output: &mut String, value: &str) -> Result<(), StartupError> {
+        Self::charge(&self.bytes, value.len())?;
+        output.push_str(value);
+        Ok(())
+    }
+
+    fn step(&self) -> Result<(), StartupError> {
+        Self::charge(&self.work, 1)
+    }
+}
+
 #[derive(Clone, Debug)]
 struct MacroDefinition {
     parameters: Option<Vec<String>>,
@@ -533,6 +583,7 @@ fn macro_environment_from_defines(defines: &[String]) -> MacroEnvironment {
         .collect()
 }
 
+#[allow(clippy::too_many_arguments)]
 fn admit_macro_includes(
     name: &str,
     text: &str,
@@ -542,6 +593,7 @@ fn admit_macro_includes(
     owned: &mut Vec<OwnedSource>,
     remaining: &mut u64,
     include_stack: &mut Vec<PathBuf>,
+    expansion_budget: &MacroExpansionBudget,
     depth: usize,
 ) -> Result<(), StartupError> {
     if depth > MAX_INCLUDE_DISCOVERY_DEPTH {
@@ -603,30 +655,34 @@ fn admit_macro_includes(
             owned,
             remaining,
             include_stack,
+            expansion_budget,
             depth + 1,
         )?;
         include_stack.pop();
         Ok(())
     };
-    scan_preprocessor_includes(text, macros, &mut admit)
+    scan_preprocessor_includes(text, macros, expansion_budget, &mut admit)
 }
 
 /// Extract literal and macro-expanded includes without treating comments or
 /// ordinary strings as directives. Macro expansion is only used to discover
 /// bounded, authorized files; Slang remains the source of preprocessing
 /// diagnostics and semantic macro identity.
+#[cfg(test)]
 fn literal_includes(source: &str) -> Vec<String> {
     let mut macros = MacroEnvironment::new();
     preprocessor_includes(source, &mut macros)
 }
 
+#[cfg(test)]
 fn preprocessor_includes(source: &str, macros: &mut MacroEnvironment) -> Vec<String> {
     let mut includes = Vec::new();
+    let expansion_budget = MacroExpansionBudget::new(u64::MAX);
     let mut collect = |target: String, _macros: &mut MacroEnvironment| {
         includes.push(target);
         Ok(())
     };
-    scan_preprocessor_includes(source, macros, &mut collect)
+    scan_preprocessor_includes(source, macros, &expansion_budget, &mut collect)
         .expect("include collection cannot fail");
     includes
 }
@@ -634,6 +690,7 @@ fn preprocessor_includes(source: &str, macros: &mut MacroEnvironment) -> Vec<Str
 fn scan_preprocessor_includes<F>(
     source: &str,
     macros: &mut MacroEnvironment,
+    expansion_budget: &MacroExpansionBudget,
     on_include: &mut F,
 ) -> Result<(), StartupError>
 where
@@ -650,7 +707,7 @@ where
             "ifdef" | "ifndef" => {
                 let parent_active = conditions
                     .last()
-                    .map_or(true, |frame: &ConditionalFrame| frame.active);
+                    .is_none_or(|frame: &ConditionalFrame| frame.active);
                 let name = first_macro_identifier(arguments);
                 let defined = name.is_some_and(|name| macros.contains_key(name));
                 let condition = if directive == "ifdef" {
@@ -685,7 +742,7 @@ where
             "endif" => {
                 conditions.pop();
             }
-            _ if !conditions.last().map_or(true, |frame| frame.active) => {}
+            _ if !conditions.last().is_none_or(|frame| frame.active) => {}
             "define" => define_macro(arguments, macros),
             "undef" => {
                 if let Some(name) = first_macro_identifier(arguments) {
@@ -694,7 +751,7 @@ where
             }
             "undefineall" => macros.clear(),
             "include" => {
-                if let Some(target) = include_target(arguments, macros) {
+                if let Some(target) = include_target(arguments, macros, expansion_budget)? {
                     on_include(target, macros)?;
                 }
             }
@@ -711,9 +768,9 @@ where
                 | "undef"
                 | "undefineall"
                 | "include"
-        ) && conditions.last().map_or(true, |frame| frame.active)
+        ) && conditions.last().is_none_or(|frame| frame.active)
         {
-            if let Some(target) = expanded_include_target(&line, macros) {
+            if let Some(target) = expanded_include_target(&line, macros, expansion_budget)? {
                 on_include(target, macros)?;
             }
         }
@@ -729,8 +786,8 @@ fn logical_preprocessor_lines(source: &str) -> Vec<String> {
         if line.ends_with('\r') {
             line = &line[..line.len() - 1];
         }
-        if line.ends_with('\\') {
-            current.push_str(&line[..line.len() - 1]);
+        if let Some(stripped) = line.strip_suffix('\\') {
+            current.push_str(stripped);
         } else {
             current.push_str(line);
             lines.push(std::mem::take(&mut current));
@@ -889,8 +946,16 @@ fn macro_parameters(text: &str, open: usize) -> Option<(Vec<String>, usize)> {
     }
 }
 
-fn include_target(arguments: &str, macros: &MacroEnvironment) -> Option<String> {
-    let expanded = expand_macros(arguments, macros);
+fn include_target(
+    arguments: &str,
+    macros: &MacroEnvironment,
+    budget: &MacroExpansionBudget,
+) -> Result<Option<String>, StartupError> {
+    let expanded = expand_macros(arguments, macros, budget)?;
+    Ok(parsed_include_target(&expanded))
+}
+
+fn parsed_include_target(expanded: &str) -> Option<String> {
     let trimmed = expanded.trim_start();
     let (closing, start) = match trimmed.as_bytes().first().copied()? {
         b'"' => (b'"', 1),
@@ -919,10 +984,18 @@ fn include_target(arguments: &str, macros: &MacroEnvironment) -> Option<String> 
     None
 }
 
-fn expanded_include_target(line: &str, macros: &MacroEnvironment) -> Option<String> {
-    let expanded = expand_macros(line, macros);
-    let (directive, arguments) = preprocessor_directive(&expanded)?;
-    (directive == "include").then(|| include_target(arguments, macros))?
+fn expanded_include_target(
+    line: &str,
+    macros: &MacroEnvironment,
+    budget: &MacroExpansionBudget,
+) -> Result<Option<String>, StartupError> {
+    let expanded = expand_macros(line, macros, budget)?;
+    let Some((directive, arguments)) = preprocessor_directive(&expanded) else {
+        return Ok(None);
+    };
+    Ok((directive == "include")
+        .then(|| parsed_include_target(arguments))
+        .flatten())
 }
 
 fn unescape_include_name(value: &str) -> String {
@@ -944,31 +1017,51 @@ fn unescape_include_name(value: &str) -> String {
     output
 }
 
-fn expand_macros(text: &str, macros: &MacroEnvironment) -> String {
+fn expand_macros(
+    text: &str,
+    macros: &MacroEnvironment,
+    budget: &MacroExpansionBudget,
+) -> Result<String, StartupError> {
     let mut stack = Vec::new();
-    expand_macro_text(text, macros, &mut stack, 0)
+    expand_macro_text(text, macros, &mut stack, budget, 0)
 }
 
 fn expand_macro_text(
     text: &str,
     macros: &MacroEnvironment,
     stack: &mut Vec<String>,
+    budget: &MacroExpansionBudget,
     depth: usize,
-) -> String {
+) -> Result<String, StartupError> {
+    budget.step()?;
     if depth > MAX_MACRO_EXPANSION_DEPTH {
-        return text.to_owned();
+        let mut output = String::with_capacity(text.len());
+        budget.push_str(&mut output, text)?;
+        return Ok(output);
     }
     let bytes = text.as_bytes();
     let mut output = String::with_capacity(text.len());
     let mut index = 0;
     while index < bytes.len() {
+        budget.step()?;
         if bytes[index] == b'`' && index + 1 < bytes.len() && bytes[index + 1] == b'"' {
-            output.push('"');
+            budget.push(&mut output, '"')?;
             index += 2;
             continue;
         }
         if bytes[index] == b'`' && index + 1 < bytes.len() && bytes[index + 1] == b'`' {
             index += 2;
+            continue;
+        }
+        if !bytes[index].is_ascii() {
+            let character = text[index..].chars().next().ok_or_else(|| {
+                StartupError::new(
+                    StartupErrorKind::Internal,
+                    "invalid UTF-8 expansion boundary",
+                )
+            })?;
+            budget.push(&mut output, character)?;
+            index += character.len_utf8();
             continue;
         }
         let invoked = if bytes[index] == b'`'
@@ -982,7 +1075,7 @@ fn expand_macro_text(
         };
         let character = bytes[index] as char;
         if !is_macro_identifier_start(character) {
-            output.push(character);
+            budget.push(&mut output, character)?;
             index += 1;
             continue;
         }
@@ -993,57 +1086,54 @@ fn expand_macro_text(
         }
         let name = &text[start..index];
         if !invoked {
-            output.push_str(name);
+            budget.push_str(&mut output, name)?;
             continue;
         }
         let Some(definition) = macros.get(name) else {
-            output.push('`');
-            output.push_str(name);
+            budget.push(&mut output, '`')?;
+            budget.push_str(&mut output, name)?;
             continue;
         };
         if stack.iter().any(|active| active == name) {
-            output.push('`');
-            output.push_str(name);
+            budget.push(&mut output, '`')?;
+            budget.push_str(&mut output, name)?;
             continue;
         }
         let Some(parameters) = definition.parameters.as_ref() else {
             stack.push(name.to_owned());
-            output.push_str(&expand_macro_text(
-                &definition.body,
-                macros,
-                stack,
-                depth + 1,
-            ));
+            let expanded = expand_macro_text(&definition.body, macros, stack, budget, depth + 1);
             stack.pop();
+            budget.push_str(&mut output, &expanded?)?;
             continue;
         };
         if index >= bytes.len() || bytes[index] != b'(' {
-            output.push('`');
-            output.push_str(name);
+            budget.push(&mut output, '`')?;
+            budget.push_str(&mut output, name)?;
             continue;
         }
         let Some((arguments, end)) = macro_call_arguments(text, index) else {
-            output.push('`');
-            output.push_str(name);
+            budget.push(&mut output, '`')?;
+            budget.push_str(&mut output, name)?;
             continue;
         };
         if arguments.len() != parameters.len() {
-            output.push('`');
-            output.push_str(name);
+            budget.push(&mut output, '`')?;
+            budget.push_str(&mut output, name)?;
             continue;
         }
         let expanded_arguments: Vec<_> = arguments
             .iter()
-            .map(|argument| expand_macro_text(argument, macros, stack, depth + 1))
-            .collect();
+            .map(|argument| expand_macro_text(argument, macros, stack, budget, depth + 1))
+            .collect::<Result<_, _>>()?;
         let substituted =
-            substitute_macro_arguments(&definition.body, parameters, &expanded_arguments);
+            substitute_macro_arguments(&definition.body, parameters, &expanded_arguments, budget)?;
         stack.push(name.to_owned());
-        output.push_str(&expand_macro_text(&substituted, macros, stack, depth + 1));
+        let expanded = expand_macro_text(&substituted, macros, stack, budget, depth + 1);
         stack.pop();
+        budget.push_str(&mut output, &expanded?)?;
         index = end;
     }
-    output
+    Ok(output)
 }
 
 fn macro_call_arguments(text: &str, open: usize) -> Option<(Vec<String>, usize)> {
@@ -1080,14 +1170,31 @@ fn macro_call_arguments(text: &str, open: usize) -> Option<(Vec<String>, usize)>
     None
 }
 
-fn substitute_macro_arguments(text: &str, parameters: &[String], arguments: &[String]) -> String {
+fn substitute_macro_arguments(
+    text: &str,
+    parameters: &[String],
+    arguments: &[String],
+    budget: &MacroExpansionBudget,
+) -> Result<String, StartupError> {
     let bytes = text.as_bytes();
     let mut output = String::with_capacity(text.len());
     let mut index = 0;
     while index < bytes.len() {
+        budget.step()?;
+        if !bytes[index].is_ascii() {
+            let character = text[index..].chars().next().ok_or_else(|| {
+                StartupError::new(
+                    StartupErrorKind::Internal,
+                    "invalid UTF-8 substitution boundary",
+                )
+            })?;
+            budget.push(&mut output, character)?;
+            index += character.len_utf8();
+            continue;
+        }
         let character = bytes[index] as char;
         if !is_macro_identifier_start(character) {
-            output.push(character);
+            budget.push(&mut output, character)?;
             index += 1;
             continue;
         }
@@ -1098,12 +1205,12 @@ fn substitute_macro_arguments(text: &str, parameters: &[String], arguments: &[St
         }
         let name = &text[start..index];
         if let Some(parameter) = parameters.iter().position(|parameter| parameter == name) {
-            output.push_str(&arguments[parameter]);
+            budget.push_str(&mut output, &arguments[parameter])?;
         } else {
-            output.push_str(name);
+            budget.push_str(&mut output, name)?;
         }
     }
-    output
+    Ok(output)
 }
 
 pub fn compile_checked(opts: &CompileOpts) -> Result<CompileOut, CompileError> {
@@ -1375,6 +1482,34 @@ mod tests {
             preprocessor_includes(source, &mut macros),
             vec!["second.svh".to_owned()]
         );
+    }
+
+    #[test]
+    fn macro_include_scan_preserves_utf8_paths() {
+        let source = r#"
+            `include "直接/头文件.svh"
+            `define HEADER "目录/头文件.svh"
+            `include `HEADER
+        "#;
+        assert_eq!(
+            literal_includes(source),
+            vec!["直接/头文件.svh".to_owned(), "目录/头文件.svh".to_owned()]
+        );
+    }
+
+    #[test]
+    fn macro_expansion_budget_stops_amplification() {
+        let mut macros = MacroEnvironment::new();
+        define_macro("DOUBLE(value) value value", &mut macros);
+        let budget = MacroExpansionBudget::new(64);
+        let error = expand_macros(
+            "`DOUBLE(`DOUBLE(`DOUBLE(`DOUBLE(`DOUBLE(x)))))",
+            &macros,
+            &budget,
+        )
+        .expect_err("nested macro expansion must exhaust its bounded work budget");
+        assert_eq!(error.kind(), StartupErrorKind::LimitExceeded);
+        assert!(error.contains("macro include expansion"));
     }
 
     #[test]

@@ -477,13 +477,8 @@ fn evaluated_event_emits_owned_context_and_contextual_callback() {
         StorageLifetime::Automatic,
         StorageOwnership::Owned,
     );
-    let callback_value = IrExpr::try_new(
-        IrExprKind::LocalRead("_local".into()),
-        1,
-        false,
-        None,
-    )
-    .unwrap();
+    let callback_value =
+        IrExpr::try_new(IrExprKind::LocalRead("_local".into()), 1, false, None).unwrap();
     let initial = IrExpr::try_new(IrExprKind::Fill(0), 1, false, None).unwrap();
     let context = IrEventContext::new(
         frame,
@@ -499,16 +494,14 @@ fn evaluated_event_emits_owned_context_and_contextual_callback() {
             context: Some(context),
         }],
         vec![IrStmt::WaitEvents {
-            specs: vec![
-                (
-                    crate::sim::ir::IrWaitSrc::Evaluated {
-                        eval: "p_eval".into(),
-                        condition: None,
-                        reads: vec![IrDependency::Scalar("signal".into())],
-                    },
-                    crate::sim::ir::IrEdge::Any,
-                ),
-            ],
+            specs: vec![(
+                crate::sim::ir::IrWaitSrc::Evaluated {
+                    eval: "p_eval".into(),
+                    condition: None,
+                    reads: vec![IrDependency::Scalar("signal".into())],
+                },
+                crate::sim::ir::IrEdge::Any,
+            )],
         }],
     );
     let model = IrModel::from_parts(
@@ -531,9 +524,7 @@ fn evaluated_event_emits_owned_context_and_contextual_callback() {
 
     let rendered = render(&model).unwrap();
     assert!(rendered.contains("static void p_eval(sv4_t* out, void* context)"));
-    assert!(rendered.contains(
-        "out[0] = llg_frame_read_value((const llg_frame_t*)context, 0u);"
-    ));
+    assert!(rendered.contains("out[0] = llg_frame_read_value((const llg_frame_t*)context, 0u);"));
     assert!(rendered.contains("llg_frame_t* _event_frame_4 = llg_frame_new(1u);"));
     assert!(rendered.contains(".eval_context = _event_frame_4"));
     assert!(rendered.contains("llg_wait_expressions(_events, 1);"));

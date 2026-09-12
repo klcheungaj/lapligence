@@ -10,11 +10,22 @@ module tb;
         byte_pair_t pair;
         logic signed [15:0] signed_word;
     } packed_union_t;
+    typedef struct packed {
+        packed_union_t payload;
+        logic [3:0] tag;
+    } wrapper_t;
 
     packed_union_t value;
+    wrapper_t wrapper;
     logic signed [31:0] signed_observer;
 
     initial begin
+        if ($bits(packed_union_t) !== 16 || $bits(value) !== 16 ||
+            $bits(wrapper_t) !== 20 || $bits(wrapper) !== 20) begin
+            $display("FAIL packed_union bits");
+            $finish;
+        end
+
         value.word = 16'ha5c3;
         if (value.pair.high !== 8'ha5 || value.pair.low !== 8'hc3) begin
             $display("FAIL packed_union member_alias");

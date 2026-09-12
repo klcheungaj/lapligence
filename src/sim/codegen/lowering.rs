@@ -214,9 +214,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use super::timescale::{
-    real_delay_ticks, round_time_literal, time_literal_delay_ticks, Timescale,
-};
+use super::timescale::{real_delay_ticks, round_time_literal, time_literal_delay_ticks, Timescale};
 use super::CodegenError;
 use crate::core::db::{
     AggregateKind, AggregateMember, AlwaysKind, ArrayKind, AssignmentPatternKeyType,
@@ -237,14 +235,11 @@ use crate::sim::ir::{
     FrameId, IrAssocKey, IrAssocTraversal, IrBinOp, IrBitQuery, IrCall, IrCallArg, IrCallExpr,
     IrCapture, IrCapturedBranch, IrCaseItem, IrCaseKind, IrChandleExpr, IrConst, IrContainer,
     IrContainerExpr, IrContainerKind, IrContainerStmt, IrDelay, IrDependency, IrDepth,
-    IrDisplayRadix, IrEdge, IrElemSel, IrEvent, IrEventCapture, IrEventContext, IrEventRef,
-    IrExpr,
-    IrExprKind, IrFormal, IrInitPhase,
-    IrInitTarget, IrInitialization, IrInsideItem, IrJoinKind, IrLhs, IrModel, IrProcess,
-    IrProcessKind, IrRealBinOp, IrRealUnOp, IrShape, IrSignal, IrStmt, IrStreamDirection,
-    IrSysFunc, IrTimeKind, IrTransitionDelay, IrType, IrUnOp, IrWaitSrc, StorageKind,
-    StorageLifetime,
-    StorageOwnership, StorageRef, LLG_MAX_NET_DRIVERS,
+    IrDisplayRadix, IrEdge, IrElemSel, IrEvent, IrEventCapture, IrEventContext, IrEventRef, IrExpr,
+    IrExprKind, IrFormal, IrInitPhase, IrInitTarget, IrInitialization, IrJoinKind, IrLhs, IrModel,
+    IrProcess, IrProcessKind, IrRealBinOp, IrRealUnOp, IrShape, IrSignal, IrStmt,
+    IrStreamDirection, IrSysFunc, IrTimeKind, IrTransitionDelay, IrType, IrUnOp, IrWaitSrc,
+    StorageKind, StorageLifetime, StorageOwnership, StorageRef, LLG_MAX_NET_DRIVERS,
 };
 
 mod collection;
@@ -440,27 +435,9 @@ struct SignalInfo {
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 struct DriverId(u32);
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum StructuralDriverKind {
-    Continuous,
-    Declaration,
-    Primitive,
-    Port,
-}
-
 #[derive(Clone, Debug)]
 struct StructuralDriverRecord {
-    id: DriverId,
-    source: NodeId,
-    declaration: Option<NodeId>,
-    hierarchy: String,
-    group: usize,
     signal: usize,
-    kind: StructuralDriverKind,
-    net_kind: crate::sim::ir::IrNetKind,
-    strengths: (u8, u8),
-    selected_mask: Option<Vec<u64>>,
-    terminal: usize,
 }
 
 #[derive(Clone)]
@@ -1028,8 +1005,10 @@ impl<'a> Codegen<'a> {
                                 two_state,
                             ))
                         }
-                        _ => Err("nested indexed selection through a reference port is not supported"
-                            .to_owned()),
+                        _ => Err(
+                            "nested indexed selection through a reference port is not supported"
+                                .to_owned(),
+                        ),
                     }
                 }
                 IrLhs::ArrayElem {
@@ -1049,9 +1028,7 @@ impl<'a> Codegen<'a> {
                 } => Ok(IrLhs::Stream {
                     parts: parts
                         .into_iter()
-                        .map(|(part, part_width)| {
-                            Ok((resolve(cg, part, seen)?, part_width))
-                        })
+                        .map(|(part, part_width)| Ok((resolve(cg, part, seen)?, part_width)))
                         .collect::<Result<Vec<_>, String>>()?,
                     width,
                     slice,
@@ -1085,8 +1062,10 @@ impl<'a> Codegen<'a> {
                     indices,
                     elem_sel: IrElemSel::Bit(Box::new(expression)),
                 }),
-                _ => Err("nested bit selection through a selected reference port is not supported"
-                    .to_owned()),
+                _ => Err(
+                    "nested bit selection through a selected reference port is not supported"
+                        .to_owned(),
+                ),
             }
         }
 
@@ -1121,8 +1100,10 @@ impl<'a> Codegen<'a> {
                     indices,
                     elem_sel: IrElemSel::Part(left, right),
                 }),
-                _ => Err("nested part selection through a selected reference port is not supported"
-                    .to_owned()),
+                _ => Err(
+                    "nested part selection through a selected reference port is not supported"
+                        .to_owned(),
+                ),
             }
         }
 
@@ -1132,28 +1113,32 @@ impl<'a> Codegen<'a> {
     pub(super) fn reference_lhs_type(&self, lhs: &IrLhs) -> Option<IrType> {
         match lhs {
             IrLhs::Whole(index) => self.model.signals.get(*index).map(|signal| signal.ty),
-            IrLhs::Bit(index, ..) => self.model.signals.get(*index).map(|signal| {
-                IrType::Packed {
-                    width: 1,
-                    signed: false,
-                    two_state: signal.ty.two_state(),
-                }
+            IrLhs::Bit(index, ..) => self.model.signals.get(*index).map(|signal| IrType::Packed {
+                width: 1,
+                signed: false,
+                two_state: signal.ty.two_state(),
             }),
-            IrLhs::Part(index, left, right, two_state) => Some(IrType::Packed {
-                width: left.abs_diff(*right) as u32 + 1,
-                signed: false,
-                two_state: *two_state,
-            })
-            .filter(|_| self.model.signals.get(*index).is_some()),
-            IrLhs::IdxPart(index, _, _, width, _, two_state) => Some(IrType::Packed {
-                width: *width,
-                signed: false,
-                two_state: *two_state,
-            })
-            .filter(|_| self.model.signals.get(*index).is_some()),
-            IrLhs::ArrayElem {
-                arr, elem_sel, ..
-            } => {
+            IrLhs::Part(index, left, right, two_state) => self
+                .model
+                .signals
+                .get(*index)
+                .is_some()
+                .then_some(IrType::Packed {
+                    width: left.abs_diff(*right) as u32 + 1,
+                    signed: false,
+                    two_state: *two_state,
+                }),
+            IrLhs::IdxPart(index, _, _, width, _, two_state) => self
+                .model
+                .signals
+                .get(*index)
+                .is_some()
+                .then_some(IrType::Packed {
+                    width: *width,
+                    signed: false,
+                    two_state: *two_state,
+                }),
+            IrLhs::ArrayElem { arr, elem_sel, .. } => {
                 let array = self.model.arrays.get(self.reference_array(*arr))?;
                 match elem_sel {
                     IrElemSel::Whole => Some(if array.real {
@@ -1286,9 +1271,7 @@ impl<'a> Codegen<'a> {
             let signal = self.model.signal(index);
             let (width, signed) = match signal.ty {
                 IrType::Real { .. } => (0, false),
-                IrType::Packed {
-                    width, signed, ..
-                } => (width, signed),
+                IrType::Packed { width, signed, .. } => (width, signed),
             };
             IrExpr::new(IrExprKind::SigRead(index), width, signed, None)
         };
@@ -1364,9 +1347,7 @@ impl<'a> Codegen<'a> {
                     IrDependency::scalar(self.model.signal(index).c_name.clone())
                 }
             },
-            IrLhs::Bit(index, ..)
-            | IrLhs::Part(index, ..)
-            | IrLhs::IdxPart(index, ..) => {
+            IrLhs::Bit(index, ..) | IrLhs::Part(index, ..) | IrLhs::IdxPart(index, ..) => {
                 IrDependency::scalar(self.model.signal(index).c_name.clone())
             }
             IrLhs::ArrayElem { arr, indices, .. } => {
@@ -1438,6 +1419,7 @@ impl<'a> Codegen<'a> {
         ))
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn lower_declaration_initializer(
         &mut self,
         path: &str,
@@ -1741,7 +1723,7 @@ impl<'a> Codegen<'a> {
             };
             absolute_lsb = absolute_lsb.checked_add(relative_lsb)?;
             selected = Some(member);
-            match member.aggregate.as_deref() {
+            match member.aggregate_layout() {
                 Some(nested)
                     if matches!(
                         nested.kind,
@@ -1812,23 +1794,22 @@ impl<'a> Codegen<'a> {
     fn unpacked_path_for_expr(&self, node: NodeId) -> Option<(NodeId, Vec<AggregatePathPart>)> {
         match self.kind(node) {
             NodeKind::Expr(ExprKind::ArraySelect { base, indices }) => {
-                let (target, mut path) = if let Some((target, members)) =
-                    self.db.array_select_path(node)
-                {
-                    (
-                        target,
-                        members
-                            .iter()
-                            .cloned()
-                            .map(AggregatePathPart::Member)
-                            .collect(),
-                    )
-                } else {
-                    match self.kind(*base) {
-                        NodeKind::Array { .. } => self.unpacked_array_base_path(*base)?,
-                        _ => self.unpacked_path_for_expr(*base)?,
-                    }
-                };
+                let (target, mut path) =
+                    if let Some((target, members)) = self.db.array_select_path(node) {
+                        (
+                            target,
+                            members
+                                .iter()
+                                .cloned()
+                                .map(AggregatePathPart::Member)
+                                .collect(),
+                        )
+                    } else {
+                        match self.kind(*base) {
+                            NodeKind::Array { .. } => self.unpacked_array_base_path(*base)?,
+                            _ => self.unpacked_path_for_expr(*base)?,
+                        }
+                    };
                 for index in indices {
                     let value = self.eval_bound_i128(*index).ok()?;
                     let value = i32::try_from(value).ok()?;
@@ -1838,15 +1819,12 @@ impl<'a> Codegen<'a> {
             }
             NodeKind::Array { .. } => self.unpacked_array_base_path(node),
             NodeKind::Expr(ExprKind::HierPath { parts, refs }) => {
-                let (target, base_index) = if let Some((index, target)) = refs
-                    .iter()
-                    .enumerate()
-                    .find_map(|(index, target)| {
+                let (target, base_index) = if let Some((index, target)) =
+                    refs.iter().enumerate().find_map(|(index, target)| {
                         target
                             .filter(|target| self.unpacked_aggregates.contains_key(target))
                             .map(|target| (index, target))
-                    })
-                {
+                    }) {
                     (target, index)
                 } else {
                     let mut found = None;
@@ -1879,10 +1857,7 @@ impl<'a> Codegen<'a> {
         }
     }
 
-    fn unpacked_array_base_path(
-        &self,
-        array: NodeId,
-    ) -> Option<(NodeId, Vec<AggregatePathPart>)> {
+    fn unpacked_array_base_path(&self, array: NodeId) -> Option<(NodeId, Vec<AggregatePathPart>)> {
         let name = self.node(array).name.as_str();
         let mut found = None;
         for target in self.unpacked_aggregates.keys().copied() {
@@ -2000,9 +1975,10 @@ impl<'a> Codegen<'a> {
         let left_slot = self.packed_range_slot(*range, left, &member.name)?;
         let right_slot = self.packed_range_slot(*range, right, &member.name)?;
         let first_slot = left_slot.min(right_slot);
-        let extent = left_slot.abs_diff(right_slot).checked_add(1).ok_or_else(|| {
-            format!("packed-member `{}` select width overflows", member.name)
-        })?;
+        let extent = left_slot
+            .abs_diff(right_slot)
+            .checked_add(1)
+            .ok_or_else(|| format!("packed-member `{}` select width overflows", member.name))?;
         let relative_lsb = first_slot
             .checked_mul(inner_width)
             .ok_or_else(|| format!("packed-member `{}` offset overflows", member.name))?;
@@ -2052,14 +2028,16 @@ impl<'a> Codegen<'a> {
         indices: &[NodeId],
         label: &str,
     ) -> Result<(u32, u32), String> {
-        let mut remaining = dimensions.iter().try_fold(1u128, |width, range| {
-            range
-                .left
-                .abs_diff(range.right)
-                .checked_add(1)
-                .and_then(|extent| width.checked_mul(extent))
-        })
-        .ok_or_else(|| format!("packed select width overflows for `{label}`"))?;
+        let mut remaining = dimensions
+            .iter()
+            .try_fold(1u128, |width, range| {
+                range
+                    .left
+                    .abs_diff(range.right)
+                    .checked_add(1)
+                    .and_then(|extent| width.checked_mul(extent))
+            })
+            .ok_or_else(|| format!("packed select width overflows for `{label}`"))?;
         let mut lsb = 0u128;
         for (range, index_node) in dimensions.iter().zip(indices) {
             let extent = range
@@ -3093,32 +3071,6 @@ fn enum_value_expr(value: Option<&Val>, name: &str) -> Result<IrExpr, String> {
 }
 
 // ── Lowering helpers ──────────────────────────────────────────────────────────
-
-/// Whether any lowered statement in the tree drives a real companion signal
-/// (`llg_ba_d`/`llg_nba_d` in the emitted model).
-fn assigns_to_real(stmts: &[IrStmt], model: &IrModel) -> bool {
-    stmts.iter().any(|st| match st {
-        IrStmt::Assign { lhs, .. } => matches!(
-            lhs,
-            IrLhs::Whole(idx) if matches!(model.signal(*idx).ty, IrType::Real { .. })
-        ),
-        other => assigns_to_real(nested_stmts(other), model),
-    })
-}
-
-/// The directly nested statement lists of a compound statement (for
-/// structural walks over lowered bodies).
-pub(crate) fn nested_stmts(st: &IrStmt) -> &[IrStmt] {
-    match st {
-        IrStmt::Block(b)
-        | IrStmt::If { then_: b, .. }
-        | IrStmt::While { body: b, .. }
-        | IrStmt::Repeat { body: b, .. }
-        | IrStmt::Forever { body: b }
-        | IrStmt::WaitCond { body: b, .. } => b,
-        _ => &[],
-    }
-}
 
 /// A real literal used as an expression (width 0, signed).
 fn real_literal_expr(value: f64) -> IrExpr {

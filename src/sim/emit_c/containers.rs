@@ -61,11 +61,17 @@ pub(super) fn expression(ctx: &RCtx<'_>, operation: &IrContainerExpr) -> Result<
         IrContainerExpr::Get { container, index } => {
             let method = match ctx.model.containers[*container].kind {
                 IrContainerKind::Dynamic => "llg_dyn_get",
-                IrContainerKind::Queue { .. } if ctx.model.containers[*container].element.is_packed() => "llg_queue_get",
+                IrContainerKind::Queue { .. }
+                    if ctx.model.containers[*container].element.is_packed() =>
+                {
+                    "llg_queue_get"
+                }
                 IrContainerKind::Queue { .. } => "llg_queue_value_get",
                 IrContainerKind::Associative {
                     key: IrAssocKey::Integral { .. } | IrAssocKey::Wildcard,
-                } if ctx.model.containers[*container].element.is_packed() => "llg_assoc_get_integral",
+                } if ctx.model.containers[*container].element.is_packed() => {
+                    "llg_assoc_get_integral"
+                }
                 IrContainerKind::Associative {
                     key: IrAssocKey::Integral { .. } | IrAssocKey::Wildcard,
                 } => "llg_assoc_value_get_integral",
@@ -241,7 +247,11 @@ pub(super) fn statement(ctx: &RCtx<'_>, operation: &IrContainerStmt) -> Result<S
                     IrContainerKind::Associative { .. } => "llg_assoc_copy",
                 }
             };
-            format!("    {function}(&{}, &{});\n", name(ctx, *dst), name(ctx, *src))
+            format!(
+                "    {function}(&{}, &{});\n",
+                name(ctx, *dst),
+                name(ctx, *src)
+            )
         }
         IrContainerStmt::AssignValues { container, values } => {
             let data = if values.is_empty() {
@@ -322,7 +332,9 @@ pub(super) fn statement(ctx: &RCtx<'_>, operation: &IrContainerStmt) -> Result<S
             };
             format!(
                 "    {function}(&{}, {}, {});\n",
-                name(ctx, *container), data, source_count
+                name(ctx, *container),
+                data,
+                source_count
             )
         }
         IrContainerStmt::AssignRealValues { container, values } => {
@@ -429,17 +441,29 @@ pub(super) fn statement(ctx: &RCtx<'_>, operation: &IrContainerStmt) -> Result<S
             value,
         } => {
             let method = match ctx.model.containers[*container].kind {
-                IrContainerKind::Dynamic if ctx.model.containers[*container].element.is_packed() => "llg_dyn_set",
-                IrContainerKind::Queue { .. } if ctx.model.containers[*container].element.is_packed() => "llg_queue_set",
+                IrContainerKind::Dynamic
+                    if ctx.model.containers[*container].element.is_packed() =>
+                {
+                    "llg_dyn_set"
+                }
+                IrContainerKind::Queue { .. }
+                    if ctx.model.containers[*container].element.is_packed() =>
+                {
+                    "llg_queue_set"
+                }
                 IrContainerKind::Associative {
                     key: IrAssocKey::Integral { .. } | IrAssocKey::Wildcard,
-                } if ctx.model.containers[*container].element.is_packed() => "llg_assoc_set_integral",
+                } if ctx.model.containers[*container].element.is_packed() => {
+                    "llg_assoc_set_integral"
+                }
                 IrContainerKind::Queue { .. } => "llg_queue_value_set",
                 IrContainerKind::Associative {
                     key: IrAssocKey::Integral { .. } | IrAssocKey::Wildcard,
                 } => "llg_assoc_value_set_integral",
                 IrContainerKind::Dynamic => {
-                    return Err("packed container write used with a non-packed dynamic element".into())
+                    return Err(
+                        "packed container write used with a non-packed dynamic element".into(),
+                    )
                 }
                 IrContainerKind::Associative {
                     key: IrAssocKey::String,
@@ -486,10 +510,10 @@ pub(super) fn statement(ctx: &RCtx<'_>, operation: &IrContainerStmt) -> Result<S
                 IrContainerKind::Associative { .. } => "llg_assoc_value_set_integral_string",
             };
             format!(
-            "    (void){function}(&{}, {}, {});\n",
-            name(ctx, *container),
-            render_expr_impl(ctx, index)?.code,
-            super::objects::string(ctx, value)?
+                "    (void){function}(&{}, {}, {});\n",
+                name(ctx, *container),
+                render_expr_impl(ctx, index)?.code,
+                super::objects::string(ctx, value)?
             )
         }
         IrContainerStmt::SetChandleValue {
@@ -503,10 +527,10 @@ pub(super) fn statement(ctx: &RCtx<'_>, operation: &IrContainerStmt) -> Result<S
                 IrContainerKind::Associative { .. } => "llg_assoc_value_set_integral_chandle",
             };
             format!(
-            "    (void){function}(&{}, {}, {});\n",
-            name(ctx, *container),
-            render_expr_impl(ctx, index)?.code,
-            super::objects::chandle(ctx, value)?
+                "    (void){function}(&{}, {}, {});\n",
+                name(ctx, *container),
+                render_expr_impl(ctx, index)?.code,
+                super::objects::chandle(ctx, value)?
             )
         }
         IrContainerStmt::SetNested {
@@ -541,7 +565,8 @@ pub(super) fn statement(ctx: &RCtx<'_>, operation: &IrContainerStmt) -> Result<S
                 match ctx.model.containers[*container].kind {
                     IrContainerKind::Dynamic => "llg_dyn_value_set_nested_real",
                     IrContainerKind::Queue { .. } => "llg_queue_value_set_nested_real",
-                    IrContainerKind::Associative { .. } => "llg_assoc_value_set_nested_integral_real",
+                    IrContainerKind::Associative { .. } =>
+                        "llg_assoc_value_set_nested_integral_real",
                 },
                 name(ctx, *container),
                 super::objects::render_indices(ctx, indices)?,
@@ -574,7 +599,8 @@ pub(super) fn statement(ctx: &RCtx<'_>, operation: &IrContainerStmt) -> Result<S
             match ctx.model.containers[*container].kind {
                 IrContainerKind::Dynamic => "llg_dyn_value_set_nested_chandle",
                 IrContainerKind::Queue { .. } => "llg_queue_value_set_nested_chandle",
-                IrContainerKind::Associative { .. } => "llg_assoc_value_set_nested_integral_chandle",
+                IrContainerKind::Associative { .. } =>
+                    "llg_assoc_value_set_nested_integral_chandle",
             },
             name(ctx, *container),
             super::objects::render_indices(ctx, indices)?,
@@ -627,13 +653,12 @@ pub(super) fn statement(ctx: &RCtx<'_>, operation: &IrContainerStmt) -> Result<S
                 return Err("packed expression cannot initialize this associative default".into());
             };
             let rendered = render_expr_impl(ctx, value)?;
-            let value = if ctx.model.containers[*container].element.is_packed() {
-                rendered.code
-            } else if rendered.width == 0 {
-                rendered.code
-            } else {
-                format!("sv4_to_real({})", rendered.code)
-            };
+            let value =
+                if ctx.model.containers[*container].element.is_packed() || rendered.width == 0 {
+                    rendered.code
+                } else {
+                    format!("sv4_to_real({})", rendered.code)
+                };
             format!("    {function}(&{}, {});\n", name(ctx, *container), value)
         }
         IrContainerStmt::SetDefaultString { container, value } => format!(
@@ -802,13 +827,21 @@ pub(super) fn statement(ctx: &RCtx<'_>, operation: &IrContainerStmt) -> Result<S
                 }
             }
         ),
-        IrContainerStmt::QueueInsertString { container, index, value } => format!(
+        IrContainerStmt::QueueInsertString {
+            container,
+            index,
+            value,
+        } => format!(
             "    (void)llg_queue_value_insert_string(&{}, {}, {});\n",
             name(ctx, *container),
             render_expr_impl(ctx, index)?.code,
             super::objects::string(ctx, value)?
         ),
-        IrContainerStmt::QueueInsertChandle { container, index, value } => format!(
+        IrContainerStmt::QueueInsertChandle {
+            container,
+            index,
+            value,
+        } => format!(
             "    (void)llg_queue_value_insert_chandle(&{}, {}, {});\n",
             name(ctx, *container),
             render_expr_impl(ctx, index)?.code,
@@ -833,9 +866,17 @@ pub(super) fn statement(ctx: &RCtx<'_>, operation: &IrContainerStmt) -> Result<S
         }
         IrContainerStmt::DeleteIndex { container, index } => {
             let method = match ctx.model.containers[*container].kind {
-                IrContainerKind::Queue { .. } if ctx.model.containers[*container].element.is_packed() => "llg_queue_delete_index",
+                IrContainerKind::Queue { .. }
+                    if ctx.model.containers[*container].element.is_packed() =>
+                {
+                    "llg_queue_delete_index"
+                }
                 IrContainerKind::Queue { .. } => "llg_queue_value_delete_index",
-                IrContainerKind::Associative { .. } if ctx.model.containers[*container].element.is_packed() => "llg_assoc_delete_integral",
+                IrContainerKind::Associative { .. }
+                    if ctx.model.containers[*container].element.is_packed() =>
+                {
+                    "llg_assoc_delete_integral"
+                }
                 IrContainerKind::Associative { .. } => "llg_assoc_value_delete_integral",
                 IrContainerKind::Dynamic => {
                     return Err("dynamic-array delete method does not take an index".into())
@@ -991,9 +1032,7 @@ fn collect_value_descriptor(
     index
 }
 
-fn value_descriptor(
-    container: &crate::sim::ir::IrContainer,
-) -> Result<(String, String), String> {
+fn value_descriptor(container: &crate::sim::ir::IrContainer) -> Result<(String, String), String> {
     let mut nodes = Vec::new();
     let root = collect_value_descriptor(&container.element, &mut nodes);
     let prefix = format!("{}_llg_value", container.c_name);
@@ -1009,7 +1048,8 @@ fn value_descriptor(
     }
     for (index, node) in nodes.iter().enumerate() {
         if !node.members.is_empty() {
-            let entries = node.members
+            let entries = node
+                .members
                 .iter()
                 .map(|member| format!("{{ &{} }}", names[*member]))
                 .collect::<Vec<_>>()
@@ -1021,50 +1061,57 @@ fn value_descriptor(
         }
     }
     for (index, node) in nodes.iter().enumerate() {
-        let (kind, type_id, width, signed, two_state, count) = match &node.element {
+        let (kind, type_id, width, signed, two_state, real_short, count) = match &node.element {
             IrContainerElement::Packed {
                 width,
                 signed,
                 two_state,
-            } => ("LLG_VALUE_PACKED", 0, *width, *signed as u8, *two_state as u8, 0),
-            IrContainerElement::Real { .. } => ("LLG_VALUE_REAL", 0, 0, 0, 0, 0),
-            IrContainerElement::String => ("LLG_VALUE_STRING", 0, 0, 0, 0, 0),
-            IrContainerElement::Chandle => ("LLG_VALUE_CHANDLE", 0, 0, 0, 0, 0),
-            IrContainerElement::Event => ("LLG_VALUE_EVENT", 0, 0, 0, 0, 0),
-            IrContainerElement::Aggregate { type_id, members } => (
-                "LLG_VALUE_AGGREGATE",
-                *type_id,
+            } => (
+                "LLG_VALUE_PACKED",
+                0,
+                *width,
+                *signed as u8,
+                *two_state as u8,
                 0,
                 0,
-                0,
-                members.len(),
             ),
+            IrContainerElement::Real { shortreal } => {
+                ("LLG_VALUE_REAL", 0, 0, 0, 0, *shortreal as u8, 0)
+            }
+            IrContainerElement::String => ("LLG_VALUE_STRING", 0, 0, 0, 0, 0, 0),
+            IrContainerElement::Chandle => ("LLG_VALUE_CHANDLE", 0, 0, 0, 0, 0, 0),
+            IrContainerElement::Event => ("LLG_VALUE_EVENT", 0, 0, 0, 0, 0, 0),
+            IrContainerElement::Aggregate { type_id, members } => {
+                ("LLG_VALUE_AGGREGATE", *type_id, 0, 0, 0, 0, members.len())
+            }
             IrContainerElement::FixedArray { dimensions, .. } => {
-                let count = dimensions.iter().try_fold(1u128, |total, (left, right)| {
-                    let extent = (i64::from(*left) - i64::from(*right))
-                        .unsigned_abs()
-                        .checked_add(1)?;
-                    total.checked_mul(u128::from(extent))
-                })
-                .ok_or_else(|| {
-                    format!(
-                        "container {} fixed element count overflows C size_t",
-                        container.c_name
-                    )
-                })?;
+                let count = dimensions
+                    .iter()
+                    .try_fold(1u128, |total, (left, right)| {
+                        let extent = (i64::from(*left) - i64::from(*right))
+                            .unsigned_abs()
+                            .checked_add(1)?;
+                        total.checked_mul(u128::from(extent))
+                    })
+                    .ok_or_else(|| {
+                        format!(
+                            "container {} fixed element count overflows C size_t",
+                            container.c_name
+                        )
+                    })?;
                 let count = usize::try_from(count).map_err(|_| {
                     format!(
                         "container {} fixed element count is not host-representable",
                         container.c_name
                     )
                 })?;
-                ("LLG_VALUE_FIXED_ARRAY", 0, 0, 0, 0, count)
+                ("LLG_VALUE_FIXED_ARRAY", 0, 0, 0, 0, 0, count)
             }
             IrContainerElement::Container { type_id, .. } => {
-                ("LLG_VALUE_CONTAINER", *type_id, 0, 0, 0, 0)
+                ("LLG_VALUE_CONTAINER", *type_id, 0, 0, 0, 0, 0)
             }
             IrContainerElement::Opaque { type_id, .. } => {
-                ("LLG_VALUE_OPAQUE", *type_id, 0, 0, 0, 0)
+                ("LLG_VALUE_OPAQUE", *type_id, 0, 0, 0, 0, 0)
             }
         };
         let child = node
@@ -1077,13 +1124,14 @@ fn value_descriptor(
             format!("&{}", member_names[index])
         };
         out.push_str(&format!(
-            "static const llg_value_desc_t {} = {{ {}, UINT64_C({}), {}, {}, {}, {}, {}, {}, {} }};\n",
+            "static const llg_value_desc_t {} = {{ {}, UINT64_C({}), {}, {}, {}, {}, {}, {}, {}, {} }};\n",
             names[index],
             kind,
             type_id,
             width,
             signed,
             two_state,
+            real_short,
             count,
             child,
             members,
@@ -1104,7 +1152,10 @@ pub(super) fn declaration_and_init(
                     "{descriptor}static llg_dyn_value_array_t {};\n",
                     container.c_name
                 ),
-                format!("    llg_dyn_value_init(&{}, &{});\n", container.c_name, root),
+                format!(
+                    "    llg_dyn_value_init(&{}, &{});\n",
+                    container.c_name, root
+                ),
             ),
             IrContainerKind::Queue { maximum_elements } => (
                 format!(
@@ -1132,11 +1183,7 @@ pub(super) fn declaration_and_init(
                         two_state,
                     } => format!(
                         "    llg_assoc_value_init_integral(&{}, &{}, {}, {}, {});\n",
-                        container.c_name,
-                        root,
-                        width,
-                        *signed as u8,
-                        *two_state as u8
+                        container.c_name, root, width, *signed as u8, *two_state as u8
                     ),
                     IrAssocKey::String => format!(
                         "    llg_assoc_value_init_string(&{}, &{});\n",
@@ -1219,9 +1266,7 @@ pub(super) fn destroy(container: &crate::sim::ir::IrContainer) -> String {
             IrContainerKind::Queue { .. } => "llg_queue_value_destroy",
             IrContainerKind::Associative { .. } => "llg_assoc_value_destroy",
         };
-        return format!(
-            "    {function}(&{});\n", container.c_name
-        );
+        return format!("    {function}(&{});\n", container.c_name);
     }
     format!(
         "    {}_destroy(&{});\n",

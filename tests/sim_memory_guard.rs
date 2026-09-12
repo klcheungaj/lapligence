@@ -31,13 +31,21 @@ fn llg_installs_the_memory_policy_before_source_admission() {
     .expect("run llg source-admission path");
 
     assert_eq!(output.status.code(), Some(1));
-    assert!(output.stdout.is_empty(), "a failed admission emits no model");
+    assert!(
+        output.stdout.is_empty(),
+        "a failed admission emits no model"
+    );
     let stderr = String::from_utf8_lossy(&output.stderr);
-    let guard = stderr.find("memory safeguard: LLG_MEMORY_LIMIT_MB")
+    let guard = stderr
+        .find("memory safeguard: LLG_MEMORY_LIMIT_MB")
         .unwrap_or_else(|| panic!("missing safeguard diagnostic: {stderr}"));
-    let source = stderr.find("missing.sv")
+    let source = stderr
+        .find("missing.sv")
         .unwrap_or_else(|| panic!("missing source-admission diagnostic: {stderr}"));
-    assert!(guard < source, "install policy before reading input: {stderr}");
+    assert!(
+        guard < source,
+        "install policy before reading input: {stderr}"
+    );
     assert!(!stderr.contains("usage: llg"), "valid CLI syntax: {stderr}");
 }
 
@@ -49,5 +57,8 @@ fn llg_usage_handling_does_not_install_the_memory_policy() {
     assert!(output.stdout.is_empty(), "usage output must stay on stderr");
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("usage: llg"));
-    assert!(!stderr.contains("memory safeguard"), "usage must be side-effect free: {stderr}");
+    assert!(
+        !stderr.contains("memory safeguard"),
+        "usage must be side-effect free: {stderr}"
+    );
 }

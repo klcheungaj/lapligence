@@ -9,7 +9,8 @@ module tb;
     assign #(2, 4, 6) vector = {4{source}};
     assign #(2, 4, 6) selected[1:0] = {2{source}};
     buf #(2, 4) multi_output(multi0, multi1, source);
-    bufif1 #(2, 4, 6) gate_driver[1:0](gate_out[1:0], source, enable);
+    bufif1 #(2, 4, 6) gate_driver0(gate_out[0], source, enable);
+    bufif1 #(2, 4, 6) gate_driver1(gate_out[1], source, enable);
     initial begin
         source = 0;
         enable = 1;

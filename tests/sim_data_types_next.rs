@@ -254,8 +254,8 @@ fn inside_chandle_context_is_rejected_as_one_frontend_fault() {
             }
             return Err(format!("unexpected inside diagnostic: {diagnostic}"));
         }
-        let database = Db::from_slang(&compiled.snapshot)
-            .map_err(|error| format!("database: {error}"))?;
+        let database =
+            Db::from_slang(&compiled.snapshot).map_err(|error| format!("database: {error}"))?;
         for (variant, options) in [
             ("unoptimized", OptConfig::none()),
             ("optimized", OptConfig::default()),
@@ -348,8 +348,8 @@ fn dynamic_array_negative_runtime_size_is_rejected_in_both_optimizer_modes() {
             ..Default::default()
         })
         .map_err(|error| format!("compile: {error}"))?;
-        let database = Db::from_slang(&compiled.snapshot)
-            .map_err(|error| format!("database: {error}"))?;
+        let database =
+            Db::from_slang(&compiled.snapshot).map_err(|error| format!("database: {error}"))?;
         for (variant, options) in [
             ("unoptimized", OptConfig::none()),
             ("optimized", OptConfig::default()),
@@ -394,6 +394,11 @@ datatype_case!(
     "generic_containers_p32_p33"
 );
 datatype_case!(
+    shortreal_container_elements_apply_destination_rounding,
+    "container_copy_conversion.sv",
+    "container_copy_conversion"
+);
+datatype_case!(
     nested_container_values,
     "nested_container_values_p32_p33.sv",
     "nested_container_values_p32_p33"
@@ -423,10 +428,12 @@ fn wildcard_associative_traversal_is_rejected() {
             if diagnostic.contains("wildcard") || diagnostic.contains("first") {
                 return Ok(());
             }
-            return Err(format!("unexpected wildcard traversal diagnostic: {diagnostic}"));
+            return Err(format!(
+                "unexpected wildcard traversal diagnostic: {diagnostic}"
+            ));
         }
-        let database = Db::from_slang(&partial.snapshot)
-            .map_err(|error| format!("database: {error}"))?;
+        let database =
+            Db::from_slang(&partial.snapshot).map_err(|error| format!("database: {error}"))?;
         for options in [OptConfig::none(), OptConfig::default()] {
             let error = sim::codegen::generate_from_db_with_opts(&database, &options)
                 .map(|_| "generated successfully".to_owned())
@@ -441,8 +448,16 @@ fn wildcard_associative_traversal_is_rejected() {
     .expect("wildcard associative traversal must be rejected");
 }
 datatype_case!(queue_order_and_methods, "queue.sv", "queue");
-datatype_case!(queue_slices_and_bounded_overflow, "queue_p32.sv", "queue_p32");
-datatype_case!(executed_data_and_array_queries, "query_functions.sv", "query_functions");
+datatype_case!(
+    queue_slices_and_bounded_overflow,
+    "queue_p32.sv",
+    "queue_p32"
+);
+datatype_case!(
+    executed_data_and_array_queries,
+    "query_functions.sv",
+    "query_functions"
+);
 
 #[test]
 fn queue_slice_real_bound_is_rejected() {
@@ -466,8 +481,8 @@ fn queue_slice_real_bound_is_rejected() {
                 Err(format!("unexpected queue slice diagnostic: {diagnostic}"))
             };
         }
-        let compiled = compile::compile_checked(&options)
-            .map_err(|error| format!("compile: {error}"))?;
+        let compiled =
+            compile::compile_checked(&options).map_err(|error| format!("compile: {error}"))?;
         for (variant, options) in [
             ("unoptimized", OptConfig::none()),
             ("optimized", OptConfig::default()),
@@ -489,8 +504,16 @@ fn queue_slice_real_bound_is_rejected() {
     .expect("queue slice bound rejection");
 }
 datatype_case!(string_value_and_methods, "string.sv", "string");
-datatype_case!(string_subroutine_forms, "string_subroutine_forms.sv", "string_subroutine_forms");
-datatype_case!(string_delayed_nba, "string_delayed_nba.sv", "string_delayed_nba");
+datatype_case!(
+    string_subroutine_forms,
+    "string_subroutine_forms.sv",
+    "string_subroutine_forms"
+);
+datatype_case!(
+    string_delayed_nba,
+    "string_delayed_nba.sv",
+    "string_delayed_nba"
+);
 datatype_case!(
     string_function_early_return_and_self_copy,
     "string_return_packed_input.sv",

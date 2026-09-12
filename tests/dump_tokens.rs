@@ -505,7 +505,12 @@ fn module_inst_json_golden_matches_fixture() {
                 "wrong target at {line}:{col}: {token}"
             );
             let (label, connection, kind, sym) = match want_via {
-                "label" => (true, false, "port-connection-label", "function/connectionLabel"),
+                "label" => (
+                    true,
+                    false,
+                    "port-connection-label",
+                    "function/connectionLabel",
+                ),
                 "connection" => (false, true, "port", "parameter/readonly"),
                 _ => panic!("unknown via {want_via}"),
             };

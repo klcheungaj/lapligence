@@ -11,6 +11,19 @@ module tb;
         value = 123;
     endtask
 
+    task automatic queue_ref_shift(ref integer surviving, ref integer removed);
+        q.push_front(0);
+        q.delete(3);
+        surviving = 222;
+        removed = 999;
+    endtask
+
+    task automatic bounded_ref_shift(ref integer surviving, ref integer tail);
+        bounded.push_front(0);
+        surviving = 88;
+        tail = 999;
+    endtask
+
     initial begin
         q = '{1, 2, 3, 4};
         if (q[$] !== 4 || q[q.size() - 1] !== 4) begin
@@ -65,8 +78,23 @@ module tb;
 
         q = '{10, 20};
         queue_ref_edit(q[0]);
-        if (q.size() !== 3 || q[0] !== 11 || q[1] !== 20 || q[2] !== 99) begin
-            $display("FAIL queue_p32 ref_invalidation");
+        if (q.size() !== 3 || q[0] !== 123 || q[1] !== 20 || q[2] !== 99) begin
+            $display("FAIL queue_p32 surviving_ref");
+            $finish;
+        end
+
+        q = '{1, 2, 3};
+        queue_ref_shift(q[1], q[2]);
+        if (q.size() !== 3 || q[0] !== 0 || q[1] !== 1 || q[2] !== 222) begin
+            $display("FAIL queue_p32 shifted_and_removed_refs");
+            $finish;
+        end
+
+        bounded = '{1, 2, 3};
+        bounded_ref_shift(bounded[1], bounded[2]);
+        if (bounded.size() !== 3 || bounded[0] !== 0 ||
+            bounded[1] !== 1 || bounded[2] !== 88) begin
+            $display("FAIL queue_p32 bounded_tail_ref");
             $finish;
         end
 

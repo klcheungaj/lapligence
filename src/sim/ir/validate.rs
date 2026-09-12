@@ -41,10 +41,7 @@ impl Error for IrValidationError {}
 
 type ValidationResult = Result<(), IrValidationError>;
 
-fn validate_container_element(
-    element: &IrContainerElement,
-    path: &str,
-) -> ValidationResult {
+fn validate_container_element(element: &IrContainerElement, path: &str) -> ValidationResult {
     match element {
         IrContainerElement::Packed { width, .. } if *width == 0 => {
             Err(IrValidationError::new(path, "packed width must be nonzero"))
@@ -278,7 +275,8 @@ impl Validator<'_> {
                         return self.fail(path, "event array element index is out of bounds");
                     };
                     if handle.is_array() {
-                        return self.fail(path, "event array element cannot be an array descriptor");
+                        return self
+                            .fail(path, "event array element cannot be an array descriptor");
                     }
                 }
                 for (index, expression) in indices.iter().enumerate() {
@@ -305,10 +303,7 @@ impl Validator<'_> {
             if !storage_names.insert(container.c_name.as_str()) {
                 return self.fail("containers", "duplicate container storage name");
             }
-            validate_container_element(
-                &container.element,
-                &format!("containers[{idx}].element"),
-            )?;
+            validate_container_element(&container.element, &format!("containers[{idx}].element"))?;
             if !container.element.is_packed()
                 && !matches!(
                     container.kind,
@@ -649,8 +644,7 @@ impl Validator<'_> {
                 if (expr.width == 0
                     && !matches!(
                         operation.as_ref(),
-                        IrContainerExpr::GetReal { .. }
-                            | IrContainerExpr::GetStringReal { .. }
+                        IrContainerExpr::GetReal { .. } | IrContainerExpr::GetStringReal { .. }
                     ))
                     || expr.fill.is_some()
                 {
@@ -800,7 +794,10 @@ impl Validator<'_> {
             IrExprKind::EventTriggered(event) => {
                 self.validate_event_ref(event, formals, path)?;
                 if expr.width != 1 || expr.signed || expr.fill.is_some() {
-                    return self.fail(path, "event triggered property must be a 1-bit unsigned value");
+                    return self.fail(
+                        path,
+                        "event triggered property must be a 1-bit unsigned value",
+                    );
                 }
             }
             IrExprKind::Mutation(mutation) => {
@@ -861,10 +858,7 @@ impl Validator<'_> {
                     return self.fail(path, "inside expression requires at least one set item");
                 }
                 if expr.width != 1 || expr.signed {
-                    return self.fail(
-                        path,
-                        "inside expression requires a 1-bit unsigned result",
-                    );
+                    return self.fail(path, "inside expression requires a 1-bit unsigned result");
                 }
                 self.validate_expr(value, formals, &format!("{path}.value"))?;
                 for (idx, item) in items.iter().enumerate() {
@@ -903,13 +897,14 @@ impl Validator<'_> {
                             }
                         }
                         IrInsideItem::Container { container } => {
-                            let Some(container_model) = self.model.containers.get(*container) else {
+                            let Some(container_model) = self.model.containers.get(*container)
+                            else {
                                 return self.fail(
                                     format!("{path}.items[{idx}]"),
                                     "inside container index is out of bounds",
                                 );
                             };
-                            if !matches!(container_model.element, IrType::Packed { .. }) {
+                            if !container_model.element.is_packed() {
                                 return self.fail(
                                     format!("{path}.items[{idx}]"),
                                     "inside container element must be packed",
@@ -1105,9 +1100,7 @@ impl Validator<'_> {
                 {
                     if *width == 0 {
                         return self.fail(
-                            format!(
-                                "{path}.args[{idx}].selector_inits[{selector_idx}]"
-                            ),
+                            format!("{path}.args[{idx}].selector_inits[{selector_idx}]"),
                             "selector initializer must be packed",
                         );
                     }
@@ -1117,17 +1110,13 @@ impl Validator<'_> {
                     )?;
                     if *two_state && init.is_real() {
                         return self.fail(
-                            format!(
-                                "{path}.args[{idx}].selector_inits[{selector_idx}]"
-                            ),
+                            format!("{path}.args[{idx}].selector_inits[{selector_idx}]"),
                             "two-state selector initializer cannot be real",
                         );
                     }
                     if init.width != *width || init.signed != *signed {
                         return self.fail(
-                            format!(
-                                "{path}.args[{idx}].selector_inits[{selector_idx}]"
-                            ),
+                            format!("{path}.args[{idx}].selector_inits[{selector_idx}]"),
                             "selector initializer type disagrees with its capture",
                         );
                     }
@@ -1181,7 +1170,8 @@ impl Validator<'_> {
                 }
                 IrCallArg::Val(expr) => {
                     if formal.chandle {
-                        return self.fail(arg_path, "chandle formal requires a typed pointer value");
+                        return self
+                            .fail(arg_path, "chandle formal requires a typed pointer value");
                     }
                     self.validate_expr(expr, formals, &arg_path)?;
                     if formal.real != expr.is_real()
@@ -1209,7 +1199,8 @@ impl Validator<'_> {
                 }
                 IrCallArg::StringRefAddr { addr, const_ref } => {
                     if !formal.string || !formal.is_ref() {
-                        return self.fail(arg_path, "string reference requires a string ref formal");
+                        return self
+                            .fail(arg_path, "string reference requires a string ref formal");
                     }
                     if addr.is_empty() || (*const_ref && !formal.const_ref) {
                         return self.fail(arg_path, "invalid string reference descriptor");
@@ -1250,7 +1241,8 @@ impl Validator<'_> {
                     read,
                 } => {
                     if !formal.is_ref() {
-                        return self.fail(arg_path, "output/inout formal requires an output address");
+                        return self
+                            .fail(arg_path, "output/inout formal requires an output address");
                     }
                     if addr.is_empty() {
                         return self.fail(arg_path, "reference address must not be empty");
@@ -1270,11 +1262,7 @@ impl Validator<'_> {
                             "const reference cannot bind to a writable ref formal",
                         );
                     }
-                    self.validate_ref_actual_lhs(
-                        lhs,
-                        formals,
-                        &format!("{arg_path}.lhs"),
-                    )?;
+                    self.validate_ref_actual_lhs(lhs, formals, &format!("{arg_path}.lhs"))?;
                     self.validate_expr(read, formals, &format!("{arg_path}.read"))?;
                     if read.width != *width || read.signed != *signed {
                         return self.fail(
@@ -1293,7 +1281,10 @@ impl Validator<'_> {
                     storage_addr: Some(addr),
                     ..
                 } if addr.is_empty() => {
-                    return self.fail(arg_path, "persistent output storage address must not be empty");
+                    return self.fail(
+                        arg_path,
+                        "persistent output storage address must not be empty",
+                    );
                 }
                 IrCallArg::OutTemp {
                     init: Some(init), ..
@@ -1326,7 +1317,8 @@ impl Validator<'_> {
                     }
                     if let Some(addr) = storage_addr {
                         if addr.is_empty() {
-                            return self.fail(arg_path, "string persistent storage address is empty");
+                            return self
+                                .fail(arg_path, "string persistent storage address is empty");
                         }
                     }
                     if let Some(read) = storage_read {
@@ -1346,11 +1338,7 @@ impl Validator<'_> {
         path: &str,
     ) -> ValidationResult {
         match lhs {
-            IrLhs::Ref {
-                addr,
-                width,
-                ..
-            } => {
+            IrLhs::Ref { addr, width, .. } => {
                 if addr.is_empty() {
                     return self.fail(path, "reference descriptor address must not be empty");
                 }
@@ -1520,9 +1508,7 @@ impl Validator<'_> {
         path: &str,
     ) -> ValidationResult {
         for (idx, (source, edge)) in specs.iter().enumerate() {
-            if let IrWaitSrc::Event(event)
-            | IrWaitSrc::FilteredEvent { event, .. } = source
-            {
+            if let IrWaitSrc::Event(event) | IrWaitSrc::FilteredEvent { event, .. } = source {
                 self.validate_event_ref(event, formals, &format!("{path}[{idx}].event"))?;
             }
             let helpers: Vec<(&str, bool)> = match source {
@@ -1553,7 +1539,12 @@ impl Validator<'_> {
                     .processes
                     .iter()
                     .flat_map(|process| &process.pre_fns)
-                    .chain(self.model.funcs.iter().flat_map(|function| &function.pre_fns))
+                    .chain(
+                        self.model
+                            .funcs
+                            .iter()
+                            .flat_map(|function| &function.pre_fns),
+                    )
                     .any(|pre| {
                         if real {
                             matches!(
@@ -1584,8 +1575,8 @@ impl Validator<'_> {
                     );
                 }
             }
-            if let IrWaitSrc::Evaluated { reads, .. }
-            | IrWaitSrc::EvaluatedReal { reads, .. } = source
+            if let IrWaitSrc::Evaluated { reads, .. } | IrWaitSrc::EvaluatedReal { reads, .. } =
+                source
             {
                 for read in reads {
                     if !self.valid_dependency(read) {
@@ -1664,11 +1655,7 @@ impl Validator<'_> {
                 ..
             } => {
                 if *width == 0 {
-                    if *two_state
-                        || init
-                            .as_ref()
-                            .is_some_and(|value| !value.is_real())
-                    {
+                    if *two_state || init.as_ref().is_some_and(|value| !value.is_real()) {
                         return self.fail(path, "real local capture requires a real initializer");
                     }
                 } else {
@@ -1705,11 +1692,9 @@ impl Validator<'_> {
                             .signals
                             .get(*index)
                             .is_some_and(|signal| matches!(signal.ty, IrType::Packed { .. })),
-                        IrLhs::ArrayElem { arr, .. } => self
-                            .model
-                            .arrays
-                            .get(*arr)
-                            .is_some_and(|array| !array.real),
+                        IrLhs::ArrayElem { arr, .. } => {
+                            self.model.arrays.get(*arr).is_some_and(|array| !array.real)
+                        }
                         _ => false,
                     };
                     if !packed_driver || rhs.is_real() {
@@ -1764,7 +1749,9 @@ impl Validator<'_> {
                     return self.fail(path, "procedural continuous enable must be one packed bit");
                 }
                 match target.ty {
-                    IrType::Packed { .. } if value.is_real() || value.width != target.ty.width() => {
+                    IrType::Packed { .. }
+                        if value.is_real() || value.width != target.ty.width() =>
+                    {
                         return self.fail(
                             path,
                             "procedural continuous value must match its packed target width",
@@ -1840,8 +1827,7 @@ impl Validator<'_> {
             }
             IrStmt::WaitEvents { specs } => {
                 for (idx, (source, edge)) in specs.iter().enumerate() {
-                    if let IrWaitSrc::Event(event)
-                    | IrWaitSrc::FilteredEvent { event, .. } = source
+                    if let IrWaitSrc::Event(event) | IrWaitSrc::FilteredEvent { event, .. } = source
                     {
                         self.validate_event_ref(
                             event,
@@ -1926,8 +1912,7 @@ impl Validator<'_> {
                     }
                 }
                 for (idx, (source, edge)) in specs.iter().enumerate() {
-                    if let IrWaitSrc::Event(event)
-                    | IrWaitSrc::FilteredEvent { event, .. } = source
+                    if let IrWaitSrc::Event(event) | IrWaitSrc::FilteredEvent { event, .. } = source
                     {
                         self.validate_event_ref(
                             event,
@@ -2017,7 +2002,12 @@ impl Validator<'_> {
                     .processes
                     .iter()
                     .flat_map(|process| &process.pre_fns)
-                    .chain(self.model.funcs.iter().flat_map(|function| &function.pre_fns))
+                    .chain(
+                        self.model
+                            .funcs
+                            .iter()
+                            .flat_map(|function| &function.pre_fns),
+                    )
                     .any(|pre| {
                         matches!(
                             pre,
@@ -2303,9 +2293,7 @@ impl Validator<'_> {
                         self.validate_expr(
                             capture.initial(),
                             formals,
-                            &format!(
-                                "{path}.pre_fns[{idx}].captures[{capture_idx}].initial"
-                            ),
+                            &format!("{path}.pre_fns[{idx}].captures[{capture_idx}].initial"),
                         )?;
                     }
                     self.validate_lhs(lhs, branch_formals, &format!("{path}.pre_fns[{idx}].lhs"))?;
@@ -2331,9 +2319,7 @@ impl Validator<'_> {
                         result?;
                     }
                 }
-                IrPreFn::RealEval {
-                    value, context, ..
-                } => {
+                IrPreFn::RealEval { value, context, .. } => {
                     if !value.is_real() {
                         return self.fail(
                             format!("{path}.pre_fns[{idx}].value"),

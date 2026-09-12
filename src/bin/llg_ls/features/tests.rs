@@ -207,8 +207,10 @@ fn export_limit_recovers_declaration_level_workspace_features() {
     }
     top.push_str("end endmodule\n");
 
-    let mut limits = llg::ffi::slang::Limits::default();
-    limits.max_output_bytes = 256 * 1024;
+    let limits = llg::ffi::slang::Limits {
+        max_output_bytes: 256 * 1024,
+        ..llg::ffi::slang::Limits::default()
+    };
     let analysis = analyze(&CompileOpts {
         sources: vec![
             llg::core::compile::OwnedSource::compilation_unit(

@@ -18,10 +18,7 @@ fn monitor_re_evaluates_real_and_string_arguments() {
 
 #[test]
 fn display_rejects_real_for_integral_conversion() {
-    reject_case(
-        "display_formatting_invalid",
-        "requires a packed argument",
-    );
+    reject_case("display_formatting_invalid", "requires a packed argument");
 }
 
 #[test]

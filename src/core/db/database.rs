@@ -148,7 +148,10 @@ impl TypeDescriptor {
         match self.shape {
             TypeShape::PackedAtom { .. } => {
                 if self.info.kind == "bit"
-                    || matches!(self.info.kind.as_str(), "int" | "integer" | "longint" | "byte" | "shortint" | "time")
+                    || matches!(
+                        self.info.kind.as_str(),
+                        "int" | "integer" | "longint" | "byte" | "shortint" | "time"
+                    )
                 {
                     ValueDefaultSemantics::TwoStateZero
                 } else {
@@ -171,9 +174,7 @@ impl TypeDescriptor {
             TypeShape::Aggregate(_) | TypeShape::FixedArray { .. } => {
                 ValueDestroySemantics::Recursive
             }
-            TypeShape::Container { .. } | TypeShape::Opaque { .. } => {
-                ValueDestroySemantics::Handle
-            }
+            TypeShape::Container { .. } | TypeShape::Opaque { .. } => ValueDestroySemantics::Handle,
             _ => ValueDestroySemantics::Trivial,
         }
     }
@@ -195,16 +196,23 @@ impl TypeDescriptor {
     pub fn fixed_size_bits(&self) -> Option<u64> {
         match &self.shape {
             TypeShape::PackedAtom { .. } => self.info.width.map(u64::from),
-            TypeShape::Aggregate(layout) => {
-                if matches!(layout.kind, AggregateKind::PackedStruct | AggregateKind::PackedUnion) {
+            TypeShape::Aggregate(layout) => match layout.kind {
+                AggregateKind::PackedStruct => {
                     layout.members.iter().try_fold(0u64, |total, member| {
                         total.checked_add(member.descriptor.fixed_size_bits()?)
                     })
-                } else {
-                    None
                 }
-            }
-            TypeShape::FixedArray { dimensions, element } => {
+                AggregateKind::PackedUnion => layout
+                    .members
+                    .iter()
+                    .map(|member| member.descriptor.fixed_size_bits())
+                    .try_fold(0u64, |largest, width| Some(largest.max(width?))),
+                _ => None,
+            },
+            TypeShape::FixedArray {
+                dimensions,
+                element,
+            } => {
                 let count = dimensions.iter().try_fold(1u64, |total, (left, right)| {
                     let extent = (i64::from(*left) - i64::from(*right)).unsigned_abs();
                     total.checked_mul(extent.checked_add(1)?)
@@ -264,6 +272,17 @@ pub struct AggregateMember {
     /// Complete recursive member type, including fixed unpacked arrays and
     /// non-integral leaves which do not have a packed width.
     pub descriptor: TypeDescriptor,
+}
+
+impl AggregateMember {
+    /// Return the canonical nested aggregate description, when this member is
+    /// itself a structure or union.
+    pub fn aggregate_layout(&self) -> Option<&AggregateLayout> {
+        self.aggregate.as_deref().or(match &self.descriptor.shape {
+            TypeShape::Aggregate(layout) => Some(layout),
+            _ => None,
+        })
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -850,11 +869,7 @@ impl IntraControl {
     pub(crate) fn referenced_nodes(&self, nodes: &mut Vec<NodeId>) {
         match self {
             Self::Delay(delay) => nodes.push(*delay),
-            Self::Event {
-                control,
-                specs,
-                ..
-            } => {
+            Self::Event { control, specs, .. } => {
                 nodes.push(*control);
                 for spec in specs {
                     spec.referenced_nodes(nodes);
@@ -964,7 +979,9 @@ impl EventSpec {
 pub enum ExprKind {
     /// A non-value symbol used as scope/interface metadata, never a signal read.
     /// Consumers must validate the use site before treating it as elaboration-only.
-    ScopeRef { target: NodeId },
+    ScopeRef {
+        target: NodeId,
+    },
     Constant {
         value: ValueData,
         size: i32,
@@ -1461,11 +1478,9 @@ fn driver_delay(
                     file.map(|file| format!(" at {file}:{line}:{col}"))
                 })
                 .unwrap_or_default();
-            return Err(DbError::InvalidSnapshot(
-                format!(
-                    "driver timing control{location} requires one to three delay expressions"
-                ),
-            ));
+            return Err(DbError::InvalidSnapshot(format!(
+                "driver timing control{location} requires one to three delay expressions"
+            )));
         }
     }))
 }
@@ -2152,15 +2167,18 @@ fn intra_control_timing(
     let timing = snapshot
         .semantic_nodes
         .get(timing_id.index())
-        .ok_or_else(|| DbError::InvalidSnapshot("assignment timing control node is missing".into()))?;
+        .ok_or_else(|| {
+            DbError::InvalidSnapshot("assignment timing control node is missing".into())
+        })?;
     let edges = semantic_edges(snapshot, timing)?;
     match timing.subkind {
         112 => {
-            let delay = edge_target(ids, edges, SemanticEdgeRole::Delay)?
-                .ok_or_else(|| DbError::InvalidSnapshot("delay control has no expression".into()))?;
+            let delay = edge_target(ids, edges, SemanticEdgeRole::Delay)?.ok_or_else(|| {
+                DbError::InvalidSnapshot("delay control has no expression".into())
+            })?;
             Ok(IntraControl::Delay(delay))
         }
-        113 | 114 | 115 => {
+        113..=115 => {
             let (specs, implicit) = event_specs(snapshot, timing, ids)?;
             Ok(IntraControl::Event {
                 control: timing_id,
@@ -2240,7 +2258,7 @@ fn event_trigger_timing(
                 _ => Ok(EventTriggerTiming::Unsupported { control: timing_id }),
             }
         }
-        113 | 114 | 115 => {
+        113..=115 => {
             let (specs, implicit) = event_specs(snapshot, timing, ids)?;
             Ok(EventTriggerTiming::Event {
                 control: timing_id,
@@ -2358,10 +2376,9 @@ fn is_named_event_expression(
             }),
         73 => {
             let edges = semantic_edges(snapshot, node)?;
-            edge_target(ids, edges, SemanticEdgeRole::Base)?
-                .map_or(Ok(false), |base| {
-                    is_named_event_expression(snapshot, ids, base)
-                })
+            edge_target(ids, edges, SemanticEdgeRole::Base)?.map_or(Ok(false), |base| {
+                is_named_event_expression(snapshot, ids, base)
+            })
         }
         75 => node
             .target_id
@@ -2382,7 +2399,10 @@ fn source_spelling(snapshot: &SlangSnapshot, node: &SemanticNode) -> Option<Stri
         return Some(node.name.clone());
     }
     let range = node.range?;
-    let file = snapshot.files.iter().find(|file| file.id == range.file_id)?;
+    let file = snapshot
+        .files
+        .iter()
+        .find(|file| file.id == range.file_id)?;
     let start = usize::try_from(range.start).ok()?;
     let end = usize::try_from(range.end).ok()?;
     let spelling = file.text.get(start..end)?;
@@ -3061,10 +3081,8 @@ impl Db {
                     )? {
                         if parts.len() > 1 {
                             if let Some(owner) = refs.into_iter().flatten().next() {
-                                array_select_paths.insert(
-                                    id,
-                                    (owner, parts.into_iter().skip(1).collect()),
-                                );
+                                array_select_paths
+                                    .insert(id, (owner, parts.into_iter().skip(1).collect()));
                             }
                         }
                     }

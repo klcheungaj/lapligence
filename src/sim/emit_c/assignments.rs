@@ -49,9 +49,7 @@ pub(super) fn render_inertial(
             );
             let call = if let Some((group, slot)) = signal.net_driver {
                 let net = &ctx.model.net_group(group).c_name;
-                format!(
-                    "llg_inertial_net(&_driver, &{net}, {slot}, {value}, {delays})"
-                )
+                format!("llg_inertial_net(&_driver, &{net}, {slot}, {value}, {delays})")
             } else {
                 format!(
                     "llg_inertial_assign(&_driver, &{}, {value}, {delays})",
@@ -129,9 +127,7 @@ fn render_selected_signal(
         let net = &ctx.model.net_group(group).c_name;
         (
             format!("*{net}.drivers[{slot}]"),
-            format!(
-                "llg_inertial_selected_net(&_driver, &{net}, {slot}, _value, _mask, {delays})"
-            ),
+            format!("llg_inertial_selected_net(&_driver, &{net}, {slot}, _value, _mask, {delays})"),
         )
     } else {
         (
@@ -171,8 +167,8 @@ fn render_selected_array(
     for index in indices {
         index_codes.push(render_expr_impl(ctx, index)?.code);
     }
-    let (decls, condition, linear) = array_guard(array, &index_codes)
-        .unwrap_or_else(|| (String::new(), "1".into(), "0".into()));
+    let (decls, condition, linear) =
+        array_guard(array, &index_codes).unwrap_or_else(|| (String::new(), "1".into(), "0".into()));
     let (selected_width, mut selector_decls, mut update) = match elem_sel {
         IrElemSel::Whole => (
             array.elem_width,
@@ -230,11 +226,10 @@ fn render_selected_array(
         array.two_state,
     );
     let target = format!("{}[({linear})]", array.c_name);
-    let call = format!(
-        "llg_inertial_selected_assign(&_driver, &{target}, _value, _mask, {delays})"
-    );
+    let call =
+        format!("llg_inertial_selected_assign(&_driver, &{target}, _value, _mask, {delays})");
     if matches!(elem_sel, IrElemSel::Whole) {
-        selector_decls.push_str(" ");
+        selector_decls.push(' ');
     }
     update = format!("sv4_t _rhs = {value}; {update}");
     Ok(format!(

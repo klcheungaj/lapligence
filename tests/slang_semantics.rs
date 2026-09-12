@@ -491,24 +491,54 @@ endmodule
 "#;
     let cases = [
         (
-            ".clk(clk)", ".clk(", "input clk", "input ", "clk",
-            LexicalKind::Port, SemanticKind::Port, SemanticKind::Net,
+            ".clk(clk)",
+            ".clk(",
+            "input clk",
+            "input ",
+            "clk",
+            LexicalKind::Port,
+            SemanticKind::Port,
+            SemanticKind::Net,
         ),
         (
-            ".din(din)", ".din(", "input din", "input ", "din",
-            LexicalKind::Port, SemanticKind::Port, SemanticKind::Net,
+            ".din(din)",
+            ".din(",
+            "input din",
+            "input ",
+            "din",
+            LexicalKind::Port,
+            SemanticKind::Port,
+            SemanticKind::Net,
         ),
         (
-            ".dout(dout)", ".dout(", "output dout", "output ", "dout",
-            LexicalKind::Port, SemanticKind::Port, SemanticKind::Net,
+            ".dout(dout)",
+            ".dout(",
+            "output dout",
+            "output ",
+            "dout",
+            LexicalKind::Port,
+            SemanticKind::Port,
+            SemanticKind::Net,
         ),
         (
-            ".clk(local_net)", ".clk(", "wire local_net", "wire ", "local_net",
-            LexicalKind::Net, SemanticKind::Net, SemanticKind::Net,
+            ".clk(local_net)",
+            ".clk(",
+            "wire local_net",
+            "wire ",
+            "local_net",
+            LexicalKind::Net,
+            SemanticKind::Net,
+            SemanticKind::Net,
         ),
         (
-            ".din(local_var)", ".din(", "reg local_var", "reg ", "local_var",
-            LexicalKind::Variable, SemanticKind::Variable, SemanticKind::Variable,
+            ".din(local_var)",
+            ".din(",
+            "reg local_var",
+            "reg ",
+            "local_var",
+            LexicalKind::Variable,
+            SemanticKind::Variable,
+            SemanticKind::Variable,
         ),
     ];
 
@@ -545,13 +575,19 @@ endmodule
                     && !token.is_skipped
             });
             let token = tokens.next().expect("one lexical actual token");
-            assert!(tokens.next().is_none(), "duplicate actual token: {connection}");
+            assert!(
+                tokens.next().is_none(),
+                "duplicate actual token: {connection}"
+            );
             assert_eq!(token.text, name);
             assert_eq!(token.role, LexicalRole::ConnectionActual);
             assert_eq!(token.kind, kind, "wrong lexical kind: {connection}");
             let target = node_by_id(&snapshot, token.semantic_id.expect("bound actual"));
             assert_eq!(target.name, name);
-            assert_eq!(target.kind, target_kind, "wrong source identity: {connection}");
+            assert_eq!(
+                target.kind, target_kind,
+                "wrong source identity: {connection}"
+            );
             assert_eq!(
                 target.range.expect("declaration range").start,
                 declaration_start,

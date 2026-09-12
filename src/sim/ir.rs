@@ -1868,6 +1868,7 @@ impl IrStmt {
 /// process or function: fork-branch coroutines and monitor/strobe
 /// re-evaluators, in encounter order.
 #[derive(Clone, Debug, PartialEq)]
+#[allow(clippy::large_enum_variant)]
 pub enum IrPreFn {
     /// `static void c_name(llg_proc_t* self) { body; llg_proc_done; return; }`
     Branch { c_name: String, body: Vec<IrStmt> },
@@ -2031,6 +2032,7 @@ impl IrProcess {
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(in crate::sim) fn new_with_kind_and_writes(
         c_name: String,
         label: String,

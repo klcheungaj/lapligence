@@ -7,6 +7,7 @@ module tb;
     real bounded_real_queue[$:2];
     string string_queue[$];
     string string_queue_copy[$];
+    chandle handle_queue[$];
     real real_values[int];
     real real_values_copy[int];
     string string_values[string];
@@ -14,8 +15,42 @@ module tb;
     int int_key;
     string string_key;
     integer status;
+    integer real_changes = 0;
+    real nan_value;
+
+    always @(real_queue[0]) real_changes = real_changes + 1;
 
     initial begin
+        real_queue[real_queue.size()] = -0.0;
+        string_queue[string_queue.size()] = "append";
+        handle_queue[handle_queue.size()] = null;
+        if (real_queue.size() !== 1 || string_queue.size() !== 1 ||
+            handle_queue.size() !== 1 ||
+            $realtobits(real_queue[0]) !== 64'h8000000000000000 ||
+            string_queue[0] != "append" || handle_queue[0] != null) begin
+            $display("FAIL generic_containers end_index_append");
+            $finish;
+        end
+
+        real_queue = '{0.0};
+        #1 real_changes = 0;
+        real_queue[0] = -0.0;
+        #1;
+        if ($realtobits(real_queue[0]) !== 64'h8000000000000000 ||
+            real_changes !== 1) begin
+            $display("FAIL generic_containers signed_zero_change");
+            $finish;
+        end
+        nan_value = $bitstoreal(64'h7ff8000000000001);
+        real_queue[0] = nan_value;
+        #1 real_changes = 0;
+        real_queue[0] = nan_value;
+        #1;
+        if (real_changes !== 0) begin
+            $display("FAIL generic_containers repeated_nan_change");
+            $finish;
+        end
+
         real_queue = '{1.5, 2.5};
         real_queue.push_back(3.5);
         real_queue.push_front(-1.0);
