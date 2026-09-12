@@ -35,7 +35,7 @@ for the boundaries these tests do not cover.
 | `delayed_nba*.sv`, `nba_*.sv` | Value/index capture, future commit, issue ordering, disjoint selections and state conversion |
 | `activation_frames.sv` | Reentrant automatic subroutines, per-iteration loop captures, shadowed declarations and retained fork activations |
 | `real_activation_capture.sv` | Typed retained-frame capture of automatic real locals after the declaring block continues |
-| `inertial_*.sv` | Pulse cancellation, captured driver values, unchanged deadlines, net strengths, region settling, module precision, lifetime, overflow and explicit multiple-delay rejection |
+| `inertial_*.sv` | Pulse cancellation, captured driver values, unchanged deadlines, scalar/net strengths, region settling, module precision, lifetime, overflow, vector transition selection and per-element array cancellation |
 | `dynamic_delay_*.sv`, `blocking_real_delay.sv`, `unknown_delay_zero.sv`, `negative_*delay*.sv` | Runtime delay capture, module precision, real blocking captures, X/Z and negative packed delays, overflow diagnostics |
 | `*select_ranges.sv` | Ascending/nonzero ranges, array-element selection and invalid indices |
 | `array_indexed_*.sv` | Multidimensional element indexed selections, two-state/real conversion, limb boundaries and captured NBA masks |

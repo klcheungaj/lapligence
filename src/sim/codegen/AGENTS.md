@@ -45,9 +45,11 @@ contracts. `lower_expr`/`lower_stmt`/`lower_lhs` produce typed IR only.
   continuous-assignment and primitive delays retain the ordered `DriverDelay`
   form. Evaluate these identities through owned constants or typed runtime IR,
   and round a complete real-valued delay once at the owning module precision.
-  Reject separate transition delays explicitly until their scheduling is
-  implemented; never use only the first expression. Unsupported forms must fail
-  without recovering or guessing source text.
+  Single, rise/fall, and rise/fall/turn-off forms must all reach the runtime;
+  never use only the first expression. The runtime selects the applicable delay
+  for each changed packed bit (and the minimum when an X transition is
+  ambiguous). Unsupported forms must fail without recovering or guessing source
+  text.
 - Immediate named-event triggers (`->`) stay active-region calls. Nonblocking
   triggers (`->>`) lower to an NBA event queue entry; delay timing is captured
   at issue, while event/repeat timing uses an independent `join_none` waiter
@@ -115,11 +117,13 @@ driver wins only when it strictly dominates every possible opposite endpoint.
 Highz endpoints contribute no drive. Dynamic net
 selectors are rejected because net lvalues require constant selects; variable
 lvalues remain a separate lowering path. Delayed whole-net drivers
-contribute X until their first scheduled update; a truly driverless wire uses
-the synthetic Z placeholder. Delayed selected drivers remain explicitly
-unsupported. Port/interface nets retain the link/collapsed-inout path. A gate
-output, including mixed gate/continuous and multiple-gate nets, uses an
-independent canonical contribution slot. Ordinary standalone resolved-net forces use
+  contribute X until their first scheduled update; a truly driverless wire uses
+  the synthetic Z placeholder. Delayed packed selections use a masked
+  per-site contribution, and fixed-unpacked array selections use one inertial
+  handle per element so changing an index cancels only that element's event.
+  Port/interface nets retain the link/collapsed-inout path. A gate output,
+  including mixed gate/continuous and multiple-gate nets, uses an independent
+  canonical contribution slot. Ordinary standalone resolved-net forces use
 the per-site contribution slots, including selected and multidriver targets, so
 release can resolve the current drivers. Force overlays the resolved cell and
 release recomputes from the live strength-bearing slots. Slang rejects
@@ -375,12 +379,16 @@ and rejection messages.
 
 ## Timescale
 
-- Continuous/gate delay lowering uses `IrStmt::InertialAssign` for whole packed
-  driver storage. Its evaluation never suspends: the runtime captures the
-  converted value and maintains one cancelable active-region propagation event
-  per site. Delayed driver initialization is emitted after ordinary storage
-  defaults, including output ports and collapsed net slots. Keep driver values
-  separate from the net's resolved value when comparing pending updates.
+- Continuous/gate delay lowering uses `IrStmt::InertialAssign` for whole packed,
+  packed-selected, and fixed-unpacked-array driver storage. Its evaluation never
+  suspends: the runtime captures the converted value and maintains one
+  cancelable active-region propagation event per driver identity (per array
+  element for array targets). Delayed driver initialization is emitted after
+  ordinary storage defaults, including output ports and collapsed net slots.
+  Keep driver values separate from the net's resolved value when comparing
+  pending updates. Single, rise/fall, and rise/fall/turn-off delays select their
+  transition-specific ticks at scheduling time; an ambiguous X transition uses
+  the minimum applicable endpoint delay.
 
 - Delays are timescale-aware: codegen reads the resolved time unit and
   precision from the nearest owning Slang module instance and scales every

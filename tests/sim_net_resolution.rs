@@ -284,6 +284,17 @@ fn mixed_structural_drivers_and_selected_cross_hierarchy_resolve_with_optimizer_
 }
 
 #[test]
+fn output_port_net_strength_survives_parent_net_resolution() {
+    sim_cli::run_case(
+        "net_resolution",
+        "port_strength_inout",
+        "low=1\nhigh=1\nreleased=x\n",
+        "",
+        &[],
+    );
+}
+
+#[test]
 fn mixed_structural_drivers_cover_biased_nets_with_optimizer_parity() {
     sim_cli::run_case(
         "net_resolution",

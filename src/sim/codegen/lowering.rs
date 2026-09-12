@@ -44,10 +44,12 @@
 //!   (per-bit z→x, LRM 1364-1995 §7.4 Table 7-5: an enabled gate acts like
 //!   buf/not) and lower to `sv4_mux(en, data|data, Z)` /
 //!   `sv4_mux(en, Z, ~(data|data))`; pullup/pulldown are constant RunOnce
-//!   drivers; gate delays `#D` prepend a scaled wait to the process body with
-//!   no pulse filtering (warned).  Switch/transistor primitives, UDP
-//!   instances, primitive arrays, charge-strength forms, select terminals and
-//!   width mismatches are rejected at lowering time;
+//!   drivers; gate delays `#D` capture transition-specific values in the
+//!   active-region inertial scheduler without suspending the comb evaluator.
+//!   Switch/transistor primitives, UDP instances, primitive arrays and
+//!   charge-strength forms are rejected at lowering time; illegal vector
+//!   strengths, unsupported dynamic resolved-net targets, and unequal-width
+//!   gate terminals remain explicit boundaries;
 //! - every child-instance port pair gets a link process copying the parent
 //!   side to the child side (inputs) or the child side to the parent side
 //!   (outputs) whenever the source changes;
@@ -130,11 +132,13 @@
 //! display values, and unknown `$display`/`$monitor`/`$strobe` format
 //! specifiers.  Structural primitives outside the supported builtin
 //! set are rejected with explicit messages: switch/transistor primitives,
-//! UDP instances, charge-strength specifications, illegal vector
-//! continuous strengths, and unsupported delayed
-//! selected targets. Array, selected, expression, hierarchical, unequal-width,
-//! multi-output `buf`/`not`, and large-terminal gate forms use the typed
-//! lowering path. Array constructs rejected with a clear message include
+//! UDP instances, primitive arrays, charge-strength specifications, illegal
+//! vector continuous strengths, and unsupported dynamic resolved-net targets.
+//! Fixed-array elements and packed selected targets use the typed inertial
+//! lowering path, as do supported whole, selected, and multi-output
+//! `buf`/`not` gate forms. Expression, hierarchical, unequal-width, and
+//! large-terminal gate forms remain explicit boundaries. Array constructs
+//! rejected with a clear message include
 //! dimension bounds that are not plain constants (an implicit `[N]` size —
 //! declare `[0:N-1]` explicitly), array slices (partial indexing of a
 //! multi-dimensional array), indexed part-selects on an array element, and

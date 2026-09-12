@@ -335,7 +335,7 @@ impl<'db> SemanticModel<'db> {
                     Some(_) => Some(SynthesisIssueKind::DynamicContainer),
                     None => Some(SynthesisIssueKind::UnknownType),
                 },
-                NodeKind::Net { ty, net_type } => classify_type(ty).or_else(|| {
+                NodeKind::Net { ty, net_type, .. } => classify_type(ty).or_else(|| {
                     (!matches!(
                         net_type,
                         NetType::Wire | NetType::Uwire | NetType::Logic | NetType::Reg
@@ -1282,6 +1282,8 @@ mod tests {
                             signed: false,
                             type_name: None,
                         },
+                        strength0: Strength::Unspecified,
+                        strength1: Strength::Unspecified,
                         high: None,
                         low: None,
                         high_expr: None,
@@ -1655,6 +1657,8 @@ mod tests {
                             signed: false,
                             type_name: None,
                         },
+                        strength0: Strength::Unspecified,
+                        strength1: Strength::Unspecified,
                         high: None,
                         low: None,
                         high_expr: Some(NodeId(3)),

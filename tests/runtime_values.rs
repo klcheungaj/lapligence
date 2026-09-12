@@ -250,65 +250,84 @@ static int check_net_resolution(void) {
 }
 
 static int check_strength_resolution(void) {
-    sv4_t zero = sv4_fill(0, 1, 0);
-    sv4_t one = sv4_fill(1, 1, 0);
-    sv4_t unknown = sv4_fill(2, 1, 0);
-    const sv4_t* drivers[2] = {&zero, &one};
+    struct strength_case {
+        int mode;
+        int left_state;
+        uint8_t left0;
+        uint8_t left1;
+        int right_state;
+        uint8_t right0;
+        uint8_t right1;
+        int expected;
+    };
+    static const struct strength_case cases[] = {
+        /* Wire: known endpoints, equal-strength conflicts, and Z neutrality. */
+        {LLG_RESOLVE_WIRE, 0, LLG_STRENGTH_STRONG, LLG_STRENGTH_STRONG,
+         1, LLG_STRENGTH_PULL, LLG_STRENGTH_PULL, 0},
+        {LLG_RESOLVE_WIRE, 0, LLG_STRENGTH_PULL, LLG_STRENGTH_PULL,
+         1, LLG_STRENGTH_STRONG, LLG_STRENGTH_STRONG, 1},
+        {LLG_RESOLVE_WIRE, 0, LLG_STRENGTH_STRONG, LLG_STRENGTH_STRONG,
+         1, LLG_STRENGTH_STRONG, LLG_STRENGTH_STRONG, 2},
+        {LLG_RESOLVE_WIRE, 0, LLG_STRENGTH_HIGHZ, LLG_STRENGTH_HIGHZ,
+         3, LLG_STRENGTH_STRONG, LLG_STRENGTH_STRONG, 3},
+        {LLG_RESOLVE_WIRE, 2, LLG_STRENGTH_STRONG, LLG_STRENGTH_WEAK,
+         0, LLG_STRENGTH_STRONG, LLG_STRENGTH_STRONG, 0},
+        {LLG_RESOLVE_WIRE, 2, LLG_STRENGTH_WEAK, LLG_STRENGTH_STRONG,
+         0, LLG_STRENGTH_STRONG, LLG_STRENGTH_STRONG, 2},
+        {LLG_RESOLVE_WIRE, 2, LLG_STRENGTH_WEAK, LLG_STRENGTH_STRONG,
+         1, LLG_STRENGTH_STRONG, LLG_STRENGTH_STRONG, 1},
+        {LLG_RESOLVE_WIRE, 2, LLG_STRENGTH_STRONG, LLG_STRENGTH_WEAK,
+         1, LLG_STRENGTH_STRONG, LLG_STRENGTH_STRONG, 2},
+        {LLG_RESOLVE_WIRE, 2, LLG_STRENGTH_STRONG, LLG_STRENGTH_WEAK,
+         3, LLG_STRENGTH_STRONG, LLG_STRENGTH_STRONG, 2},
+        /* Wired rules retain the same strength ordering but break ties. */
+        {LLG_RESOLVE_WAND, 0, LLG_STRENGTH_STRONG, LLG_STRENGTH_STRONG,
+         1, LLG_STRENGTH_STRONG, LLG_STRENGTH_STRONG, 0},
+        {LLG_RESOLVE_WOR, 0, LLG_STRENGTH_STRONG, LLG_STRENGTH_STRONG,
+         1, LLG_STRENGTH_STRONG, LLG_STRENGTH_STRONG, 1},
+        {LLG_RESOLVE_WAND, 2, LLG_STRENGTH_WEAK, LLG_STRENGTH_STRONG,
+         0, LLG_STRENGTH_STRONG, LLG_STRENGTH_STRONG, 0},
+        {LLG_RESOLVE_WAND, 2, LLG_STRENGTH_STRONG, LLG_STRENGTH_WEAK,
+         0, LLG_STRENGTH_STRONG, LLG_STRENGTH_STRONG, 0},
+        {LLG_RESOLVE_WOR, 2, LLG_STRENGTH_STRONG, LLG_STRENGTH_WEAK,
+         1, LLG_STRENGTH_STRONG, LLG_STRENGTH_STRONG, 1},
+        {LLG_RESOLVE_WOR, 2, LLG_STRENGTH_WEAK, LLG_STRENGTH_STRONG,
+         1, LLG_STRENGTH_STRONG, LLG_STRENGTH_STRONG, 1},
+        /* Implicit pull/supply defaults are strength-bearing sources. */
+        {LLG_RESOLVE_TRI0, 3, LLG_STRENGTH_STRONG, LLG_STRENGTH_STRONG,
+         3, LLG_STRENGTH_STRONG, LLG_STRENGTH_STRONG, 0},
+        {LLG_RESOLVE_TRI0, 1, LLG_STRENGTH_PULL, LLG_STRENGTH_PULL,
+         3, LLG_STRENGTH_STRONG, LLG_STRENGTH_STRONG, 2},
+        {LLG_RESOLVE_TRI0, 1, LLG_STRENGTH_STRONG, LLG_STRENGTH_STRONG,
+         3, LLG_STRENGTH_PULL, LLG_STRENGTH_PULL, 1},
+        {LLG_RESOLVE_SUPPLY0, 1, LLG_STRENGTH_SUPPLY, LLG_STRENGTH_SUPPLY,
+         3, LLG_STRENGTH_STRONG, LLG_STRENGTH_STRONG, 2},
+        {LLG_RESOLVE_SUPPLY0, 1, LLG_STRENGTH_STRONG, LLG_STRENGTH_STRONG,
+         3, LLG_STRENGTH_SUPPLY, LLG_STRENGTH_SUPPLY, 0},
+    };
 
-    /* Unequal strengths choose the stronger known endpoint, while equal
-     * endpoints retain the ordinary wire conflict. */
-    uint8_t strength0[2] = {LLG_STRENGTH_STRONG, LLG_STRENGTH_PULL};
-    uint8_t strength1[2] = {LLG_STRENGTH_PULL, LLG_STRENGTH_PULL};
+    for (unsigned i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+        const struct strength_case* test = &cases[i];
+        sv4_t left = sv4_fill((uint8_t)test->left_state, 1, 0);
+        sv4_t right = sv4_fill((uint8_t)test->right_state, 1, 0);
+        const sv4_t* drivers[2] = {&left, &right};
+        uint8_t strength0[2] = {test->left0, test->right0};
+        uint8_t strength1[2] = {test->left1, test->right1};
+        sv4_t result = sv4_resolve_strengths(
+            drivers, strength0, strength1, 2, 1, 0, test->mode);
+        CHECK(state_at(result, 0) == test->expected);
+        CHECK(check_normalized(result) == 0);
+    }
+
+    /* A single driver is also checked at wide boundaries so strength-aware
+     * resolution cannot regress into scalar-only limb handling. */
+    sv4_t wide_one = sv4_fill(1, 130, 0);
+    const sv4_t* wide_drivers[1] = {&wide_one};
+    uint8_t strong[1] = {LLG_STRENGTH_STRONG};
     sv4_t result = sv4_resolve_strengths(
-        drivers, strength0, strength1, 2, 1, 0, LLG_RESOLVE_WIRE);
-    CHECK(state_at(result, 0) == 0);
-    strength0[0] = LLG_STRENGTH_PULL;
-    strength1[1] = LLG_STRENGTH_PULL;
-    result = sv4_resolve_strengths(
-        drivers, strength0, strength1, 2, 1, 0, LLG_RESOLVE_WIRE);
-    CHECK(state_at(result, 0) == 2);
-
-    /* Wired ties use the net-specific dominant value at equal strength. */
-    strength0[0] = strength1[0] = LLG_STRENGTH_STRONG;
-    strength0[1] = strength1[1] = LLG_STRENGTH_STRONG;
-    result = sv4_resolve_strengths(
-        drivers, strength0, strength1, 2, 1, 0, LLG_RESOLVE_WAND);
-    CHECK(state_at(result, 0) == 0);
-    result = sv4_resolve_strengths(
-        drivers, strength0, strength1, 2, 1, 0, LLG_RESOLVE_WOR);
-    CHECK(state_at(result, 0) == 1);
-
-    /* X retains a weaker opposite possibility, but a stronger known value
-     * can dominate it. */
-    const sv4_t* x_driver[2] = {&unknown, &zero};
-    strength0[0] = LLG_STRENGTH_STRONG;
-    strength1[0] = LLG_STRENGTH_WEAK;
-    strength0[1] = strength1[1] = LLG_STRENGTH_STRONG;
-    result = sv4_resolve_strengths(
-        x_driver, strength0, strength1, 2, 1, 0, LLG_RESOLVE_WIRE);
-    CHECK(state_at(result, 0) == 0);
-    strength1[0] = LLG_STRENGTH_STRONG;
-    result = sv4_resolve_strengths(
-        x_driver, strength0, strength1, 2, 1, 0, LLG_RESOLVE_WIRE);
-    CHECK(state_at(result, 0) == 2);
-
-    /* Pull and supply net defaults are implicit strength-bearing sources. */
-    uint8_t default_strength[1] = {LLG_STRENGTH_STRONG};
-    result = sv4_resolve_strengths(
-        NULL, default_strength, default_strength, 0, 1, 0, LLG_RESOLVE_TRI0);
-    CHECK(state_at(result, 0) == 0);
-    result = sv4_resolve_strengths(
-        NULL, default_strength, default_strength, 0, 1, 0, LLG_RESOLVE_TRI1);
-    CHECK(state_at(result, 0) == 1);
-    const sv4_t* one_driver[1] = {&one};
-    uint8_t pull[1] = {LLG_STRENGTH_PULL};
-    result = sv4_resolve_strengths(
-        one_driver, pull, pull, 1, 1, 0, LLG_RESOLVE_TRI0);
-    CHECK(state_at(result, 0) == 2);
-    result = sv4_resolve_strengths(
-        one_driver, default_strength, default_strength, 1, 1, 0,
-        LLG_RESOLVE_SUPPLY0);
-    CHECK(state_at(result, 0) == 0);
+        wide_drivers, strong, strong, 1, 130, 0, LLG_RESOLVE_WIRE);
+    for (unsigned bit = 0; bit < 130; bit++) CHECK(state_at(result, bit) == 1);
+    CHECK(check_normalized(result) == 0);
     return 0;
 }
 

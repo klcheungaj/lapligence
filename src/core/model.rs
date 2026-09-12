@@ -379,7 +379,7 @@ fn instance_from_db(db: &db::Db, id: NodeId) -> InstanceModel {
         .iter()
         .filter_map(|c| {
             let (kind, ty) = match db.node_kind(*c) {
-                db::NodeKind::Net { ty, net_type } => (net_kind(*net_type), ty),
+                db::NodeKind::Net { ty, net_type, .. } => (net_kind(*net_type), ty),
                 db::NodeKind::Var { ty } => ("var", ty),
                 db::NodeKind::Array { ty } => ("array", ty),
                 _ => return None,

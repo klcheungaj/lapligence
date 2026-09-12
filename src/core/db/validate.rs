@@ -731,6 +731,8 @@ mod tests {
                     signed: false,
                     type_name: None,
                 },
+                strength0: super::super::Strength::Unspecified,
+                strength1: super::super::Strength::Unspecified,
                 high,
                 low: None,
                 high_expr: expression,

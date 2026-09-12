@@ -1580,6 +1580,7 @@ public:
       result.subkind = semanticNetKind(symbol.netType.netKind);
       if (symbol.isImplicit)
         result.flags |= LLG_SLANG_SEMANTIC_IMPLICIT;
+      addDriveStrength(result, symbol.getDriveStrength());
     }
     if constexpr (std::same_as<T, PrimitiveSymbol>) {
       result.subkind = semanticPrimitiveType(symbol);

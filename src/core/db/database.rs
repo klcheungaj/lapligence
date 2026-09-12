@@ -565,6 +565,11 @@ pub enum NodeKind {
     Port {
         direction: Direction,
         ty: TypeInfo,
+        /// Strength endpoints declared on an output/inout port.  Keep these
+        /// on the owned node so collapsed net groups do not lose the port's
+        /// contribution when the frontend binding is projected away.
+        strength0: Strength,
+        strength1: Strength,
         high: Option<NodeId>,
         low: Option<NodeId>,
         high_expr: Option<NodeId>,
@@ -585,6 +590,10 @@ pub enum NodeKind {
     Net {
         ty: TypeInfo,
         net_type: NetType,
+        /// Drive-strength endpoints declared on the net, used when the net
+        /// is exposed through an output port or collapsed structural path.
+        strength0: Strength,
+        strength1: Strength,
     },
     Var {
         ty: TypeInfo,
@@ -1772,6 +1781,8 @@ fn node_kind_from_slang(
             NodeKind::Port {
                 direction,
                 ty,
+                strength0: strength_from_slang(node.strength0),
+                strength1: strength_from_slang(node.strength1),
                 high,
                 low: resolved_edge_target(snapshot, ids, edges, SemanticEdgeRole::LowConnection)?,
                 high_expr,
@@ -1793,6 +1804,8 @@ fn node_kind_from_slang(
         SemanticKind::Net => NodeKind::Net {
             ty,
             net_type: net_type_from_subkind(node.subkind),
+            strength0: strength_from_slang(node.strength0),
+            strength1: strength_from_slang(node.strength1),
         },
         SemanticKind::Variable if node.subkind == 229 => NodeKind::Genvar { ty },
         SemanticKind::Variable => NodeKind::Var { ty },

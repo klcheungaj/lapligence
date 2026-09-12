@@ -94,4 +94,9 @@ fn separate_transition_delays_select_rise_fall_and_turn_off() {
         run_case(fixture, "");
     }
     run_case("inertial_x_turnoff_min", "x_min x x x\n");
+    run_case(
+        "inertial_vector_transitions",
+        "rise5=xx\nrise6=11\nfall6=11\nfall7=00\noff10=00\noff11=zz\nx4=zz\nx5=xx\n",
+    );
+    run_case("inertial_array_identity", "t6=zz11\nt7=1111\nt13=1111\n");
 }

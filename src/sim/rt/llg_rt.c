@@ -4242,6 +4242,7 @@ static uint64_t inertial_transition_ticks(const sv4_t* old_value,
                                            const sv4_t* mask, uint64_t rise,
                                            uint64_t fall, uint64_t turn_off) {
     uint64_t selected = UINT64_MAX;
+    int has_transition = 0;
     uint32_t width = old_value->width < new_value->width
                          ? old_value->width
                          : new_value->width;
@@ -4260,9 +4261,13 @@ static uint64_t inertial_transition_ticks(const sv4_t* old_value,
             break;
         default: continue;
         }
-        if (ticks < selected) selected = ticks;
+        // UINT64_MAX is a valid delay. Track whether a transition was found
+        // separately so the maximum delay is not mistaken for "no transition"
+        // and silently converted to zero.
+        if (!has_transition || ticks < selected) selected = ticks;
+        has_transition = 1;
     }
-    return selected == UINT64_MAX ? 0 : selected;
+    return has_transition ? selected : 0;
 }
 
 static void inertial_unlink_pending(llg_inertial_t* driver) {

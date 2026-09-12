@@ -173,7 +173,10 @@ fn render_selected_array(
         IrElemSel::Whole => (
             array.elem_width,
             String::new(),
-            format!("sv4_t _mask = sv4_fill(1, {}, 0);", array.elem_width),
+            format!(
+                "sv4_t _mask = sv4_fill(1, {}, 0); _value = _rhs;",
+                array.elem_width
+            ),
         ),
         IrElemSel::Part(left, right) => {
             let width = left.abs_diff(*right) as u32 + 1;
@@ -226,15 +229,21 @@ fn render_selected_array(
         array.two_state,
     );
     let target = format!("{}[({linear})]", array.c_name);
-    let call =
-        format!("llg_inertial_selected_assign(&_driver, &{target}, _value, _mask, {delays})");
+    // A dynamic array selector changes the target address between evaluations.
+    // Keep one inertial handle per flattened element so a new update to `a[i]`
+    // cancels only that element's pending event; switching to `a[j]` must not
+    // discard an independently pending update for `a[i]`.
+    let call = format!(
+        "llg_inertial_selected_assign(&_drivers[({linear})], &{target}, _value, _mask, {delays})"
+    );
     if matches!(elem_sel, IrElemSel::Whole) {
         selector_decls.push(' ');
     }
     update = format!("sv4_t _rhs = {value}; {update}");
     Ok(format!(
-        "{{ {decls} if ({condition}) {{ static llg_inertial_t* _driver; \
-         {selector_decls} sv4_t _value = {target}; {update} {call}; }} }}\n"
+        "{{ {decls} if ({condition}) {{ static llg_inertial_t* _drivers[{}]; \
+         {selector_decls} sv4_t _value = {target}; {update} {call}; }} }}\n",
+        array.total
     ))
 }
 

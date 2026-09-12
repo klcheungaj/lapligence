@@ -2385,6 +2385,36 @@ impl<'a> Codegen<'a> {
             .any(|(candidate, _)| *candidate == source)
     }
 
+    /// Resolve the strength of an output-port link from the port metadata and
+    /// its child-side net declaration.  Slang attaches a net declaration's
+    /// drive strength to that child net (the port symbol itself has no
+    /// independent drive-strength syntax), while a port can still carry
+    /// explicit metadata in a future frontend snapshot.  Keep the fallback
+    /// strong/strong so variable outputs and ordinary implicit nets retain
+    /// the default structural-driver strength.
+    fn effective_port_driver_strengths(
+        &self,
+        port: NodeId,
+        explicit0: Strength,
+        explicit1: Strength,
+        low: Option<NodeId>,
+    ) -> Result<(u8, u8), String> {
+        let (strength0, strength1) =
+            if explicit0 == Strength::Unspecified && explicit1 == Strength::Unspecified {
+                match low.map(|id| self.kind(id)) {
+                    Some(NodeKind::Net {
+                        strength0,
+                        strength1,
+                        ..
+                    }) => (*strength0, *strength1),
+                    _ => (explicit0, explicit1),
+                }
+            } else {
+                (explicit0, explicit1)
+            };
+        port_driver_strengths(strength0, strength1, &self.display_name(port))
+    }
+
     #[allow(clippy::type_complexity)]
     fn structural_site_sources(
         &self,
@@ -2442,6 +2472,8 @@ impl<'a> Codegen<'a> {
                     high,
                     low,
                     high_expr,
+                    strength0,
+                    strength1,
                     ..
                 } => {
                     let target = match direction {
@@ -2452,7 +2484,9 @@ impl<'a> Codegen<'a> {
                     if target.is_some_and(|target| {
                         self.nested_member_target(target, &member_set).is_some()
                     }) {
-                        sources.entry(id).or_insert((6, 6));
+                        let strengths =
+                            self.effective_port_driver_strengths(id, *strength0, *strength1, *low)?;
+                        sources.entry(id).or_insert(strengths);
                     }
                 }
                 _ => {}
@@ -2714,6 +2748,8 @@ impl<'a> Codegen<'a> {
                         high,
                         low,
                         high_expr,
+                        strength0,
+                        strength1,
                         ..
                     } => {
                         let target = match direction {
@@ -2724,7 +2760,12 @@ impl<'a> Codegen<'a> {
                         if target.is_some_and(|target| {
                             self.nested_member_target(target, &member_set).is_some()
                         }) {
-                            sites.insert(*id, (6, 6));
+                            sites.insert(
+                                *id,
+                                self.effective_port_driver_strengths(
+                                    *id, *strength0, *strength1, *low,
+                                )?,
+                            );
                         }
                     }
                     NodeKind::FuncCall { .. }
@@ -7647,20 +7688,21 @@ impl<'a> Codegen<'a> {
             let output_width = widths[*out_pos];
 
             let group = self.structural_group_for_lhs(&raw_lhs);
-            let terminal_key = group.and_then(|group| {
-                out_positions[..output_ordinal]
+            let mut lhs = raw_lhs.clone();
+            if let Some(group) = group {
+                // Primitive output terminals are numbered within each
+                // resolved group. A gate may write one group before another
+                // and then return to the first; using the global output
+                // ordinal would give that later terminal a stale slot key.
+                let terminal = out_positions[..output_ordinal]
                     .iter()
-                    .find(|previous| {
+                    .filter(|previous| {
                         terminal_lhs[**previous]
                             .as_ref()
                             .and_then(|lhs| self.structural_group_for_lhs(lhs))
                             == Some(group)
                     })
-                    .map(|_| output_ordinal)
-            });
-            let mut lhs = raw_lhs.clone();
-            if let Some(group) = group {
-                let terminal = terminal_key.unwrap_or(0);
+                    .count();
                 if terminal == 0 {
                     if self.structural_driver_signal(g, group).is_none() {
                         return Err(format!(
@@ -11685,6 +11727,19 @@ fn gate_driver_strengths(
         } else {
             (strength0, strength1)
         };
+    continuous_assignment_strengths(strength0, strength1, net_name)
+}
+
+/// Return the effective drive pair for an output port. Port strengths use the
+/// same endpoint legality as continuous drivers; an omitted declaration is
+/// the ordinary strong/strong source. Keeping this conversion beside the
+/// gate/continuous helpers gives collapsed groups one resolver contract for
+/// every structural source.
+fn port_driver_strengths(
+    strength0: Strength,
+    strength1: Strength,
+    net_name: &str,
+) -> Result<(u8, u8), String> {
     continuous_assignment_strengths(strength0, strength1, net_name)
 }
 
