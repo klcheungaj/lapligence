@@ -58,6 +58,8 @@ fn simulator_information_exits_without_compiling_or_installing_memory_limits() {
     assert!(
         String::from_utf8_lossy(&output.stdout).contains("--compilation-units <separate|merged>")
     );
+    assert!(String::from_utf8_lossy(&output.stdout).contains("--include-dir <path>"));
+    assert!(String::from_utf8_lossy(&output.stdout).contains("--define <NAME[=VALUE]>"));
 }
 
 #[cfg(feature = "lsp")]
@@ -100,6 +102,24 @@ fn simulator_compilation_unit_mode_rejects_missing_and_unknown_values() {
         ),
     ] {
         let output = invoke(env!("CARGO_BIN_EXE_llg"), args);
+        assert_eq!(output.status.code(), Some(2), "{output:?}");
+        assert!(output.stdout.is_empty(), "{output:?}");
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains(expected),
+            "{output:?}"
+        );
+    }
+}
+
+#[test]
+fn simulator_include_and_define_options_require_values() {
+    for (flag, expected) in [
+        ("--include-dir", "--include-dir requires a path"),
+        ("-I", "--include-dir requires a path"),
+        ("--define", "--define requires NAME or NAME=VALUE"),
+        ("-D", "--define requires NAME or NAME=VALUE"),
+    ] {
+        let output = invoke(env!("CARGO_BIN_EXE_llg"), &[flag]);
         assert_eq!(output.status.code(), Some(2), "{output:?}");
         assert!(output.stdout.is_empty(), "{output:?}");
         assert!(

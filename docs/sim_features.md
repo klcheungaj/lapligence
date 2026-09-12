@@ -81,6 +81,11 @@ syntax tree; source buffers remain distinct for diagnostics and owned source
 identity. Include-only buffers are never promoted to compilation units and
 remain owned by the source that includes them. The choice is recorded in the
 owned snapshot, so cached results cannot be mistaken across modes.
+The driver also accepts repeated `--include-dir <path>`/`-I <path>` and
+`--define <NAME[=VALUE]>`/`-D <NAME[=VALUE]>` options. The compile boundary
+resolves literal and bounded macro-expanded include names only below the
+including source or an explicitly supplied include root, and supplies the
+admitted bytes to Slang's cache-only source manager.
 
 ---
 

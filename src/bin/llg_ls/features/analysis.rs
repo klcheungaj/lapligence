@@ -1092,6 +1092,7 @@ fn analyze_library_units_after_limit(
         defines: opts.defines.clone(),
         include_dirs: opts.include_dirs.clone(),
         library_units: true,
+        compilation_unit_mode: opts.compilation_unit_mode,
         limits: opts.limits,
         ..CompileOpts::default()
     };

@@ -18,6 +18,12 @@ LSP-only tower-lsp/tokio/dashmap code stays in `llg_ls`.
   [../sim/AGENTS.md](../sim/AGENTS.md) for compiler/flags/environment selection.
 - `--no-opt` disables simulator IR optimization passes; the default enables
   them. File-based conformance tests exercise both CLI modes.
+- `--include-dir <path>`/`-I <path>` adds an include-search directory. The
+  compile facade admits only bounded, canonical files under the source or
+  explicitly configured include roots; the native frontend remains cache-only.
+- `--define <NAME[=VALUE]>`/`-D <NAME[=VALUE]>` seeds preprocessing before
+  source admission, so macro-expanded include names work from the CLI as well
+  as through the library API.
 - `--lint` runs the shared linter before codegen and exits 1 on lint errors.
   `--lint-config <path>` loads `llg-lint.toml` rule enable/severity settings.
 - `--lint-json [<path>]` is report-only: one JSON object to stdout or file,

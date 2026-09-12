@@ -4,7 +4,7 @@
 //!
 //! ```text
 //! llg [generate options] [build options] <file.sv>...
-//! generate: --top <module>  --edition <2001|2009>  --compilation-units <separate|merged>  --lint  --lint-json [<path>]  --lint-config <file>  --gen-only  --no-opt
+//! generate: --top <module>  --edition <2001|2009>  --compilation-units <separate|merged>  --include-dir <path>  --define <NAME[=VALUE]>  --lint  --lint-json [<path>]  --lint-config <file>  --gen-only  --no-opt
 //! build:    --generator <backend>        # cmake -G backend (Ninja, "Unix Makefiles", ...)
 //! ```
 //!
@@ -57,6 +57,8 @@ struct DriverOptions {
     top: Option<String>,
     edition: compile::LanguageEdition,
     compilation_unit_mode: compile::CompilationUnitMode,
+    include_dirs: Vec<String>,
+    defines: Vec<String>,
     files: Vec<String>,
     lint_mode: bool,
     lint_json_mode: bool,
@@ -83,7 +85,7 @@ fn parse_args(args: Vec<String>) -> Result<DriverOptions, i32> {
     if args.is_empty() {
         eprintln!(
             "usage: llg [generate options] [build options] <file.sv>...\n\
-             generate: --top <module>  --edition <2001|2009>  --compilation-units <separate|merged>  --lint  --lint-json [<path>]  --lint-config <file>  --gen-only  --no-opt\n\
+             generate: --top <module>  --edition <2001|2009>  --compilation-units <separate|merged>  --include-dir <path>  --define <NAME[=VALUE]>  --lint  --lint-json [<path>]  --lint-config <file>  --gen-only  --no-opt\n\
              build:    --generator <backend>        # cmake -G backend (Ninja, \"Unix Makefiles\", ...)"
         );
         return Err(2);
@@ -92,6 +94,8 @@ fn parse_args(args: Vec<String>) -> Result<DriverOptions, i32> {
     let mut top: Option<String> = None;
     let mut edition = compile::LanguageEdition::default();
     let mut compilation_unit_mode = compile::CompilationUnitMode::default();
+    let mut include_dirs: Vec<String> = Vec::new();
+    let mut defines: Vec<String> = Vec::new();
     let mut files: Vec<String> = Vec::new();
     let mut lint_mode = false;
     let mut lint_json_mode = false;
@@ -116,6 +120,8 @@ Options:
       --edition <2001|2009> Select the language edition (default: 2009)
       --compilation-units <separate|merged>
                               Select compilation-unit grouping (default: separate)
+  -I, --include-dir <path>   Add an include-search directory
+  -D, --define <NAME[=VALUE]> Define a preprocessor macro
       --lint                 Run lint before simulation
       --lint-json [<path>]   Report lint as JSON and exit
       --lint-config <file>   Load lint configuration
@@ -153,6 +159,20 @@ Options:
                 },
                 None => {
                     eprintln!("llg: --compilation-units requires separate or merged");
+                    return Err(2);
+                }
+            },
+            "--include-dir" | "-I" => match it.next() {
+                Some(path) if !path.is_empty() => include_dirs.push(path),
+                _ => {
+                    eprintln!("llg: --include-dir requires a path");
+                    return Err(2);
+                }
+            },
+            "--define" | "-D" => match it.next() {
+                Some(define) if !define.is_empty() => defines.push(define),
+                _ => {
+                    eprintln!("llg: --define requires NAME or NAME=VALUE");
                     return Err(2);
                 }
             },
@@ -196,6 +216,8 @@ Options:
         top,
         edition,
         compilation_unit_mode,
+        include_dirs,
+        defines,
         files,
         lint_mode,
         lint_json_mode,
@@ -212,6 +234,8 @@ fn run(options: DriverOptions) -> i32 {
         top,
         edition,
         compilation_unit_mode,
+        include_dirs,
+        defines,
         files,
         lint_mode,
         lint_json_mode,
@@ -247,6 +271,8 @@ fn run(options: DriverOptions) -> i32 {
         top,
         edition,
         compilation_unit_mode,
+        include_dirs,
+        defines,
         ..Default::default()
     }) {
         Ok(out) => out,

@@ -44,6 +44,12 @@ The simulator driver selects compilation-unit grouping independently with
 `--compilation-units separate|merged`. The default is `separate`, matching the
 language-server admission model; `merged` is explicit and preserves each
 source buffer's identity while sharing preprocessing and `$unit` scope.
+The same driver accepts repeated `--include-dir <path>`/`-I <path>` and
+`--define <NAME[=VALUE]>`/`-D <NAME[=VALUE]>` options. Include roots are
+canonicalized and bounded before Slang sees them; a macro-expanded include
+that resolves outside the source file's parent or these explicit roots is
+left to the cache-only frontend and therefore produces a source diagnostic
+without reading the host path.
 
 ## `[lint]` — linter configuration
 

@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use llg::core::compile::{self, CompilationUnitMode, CompileOpts, OwnedSource};
-use llg::ffi::slang::LanguageEdition;
+use llg::ffi::slang::{LanguageEdition, Limits};
 
 static TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
@@ -445,4 +445,114 @@ module conditional #(parameter int VALUE = `SELECTED_VALUE); endmodule
         .iter()
         .any(|file| file.name == "/etc/passwd"));
     fs::remove_dir_all(root).expect("remove P52 conditional fixture");
+}
+
+#[test]
+fn command_line_define_admits_a_macro_include_from_an_explicit_root() {
+    let root = p52_temp_dir();
+    fs::create_dir_all(root.join("include")).expect("create P52 command-line include root");
+    fs::write(
+        root.join("include/selected.svh"),
+        "`define SELECTED_WIDTH 9\n",
+    )
+    .expect("write command-line selected header");
+    fs::write(
+        root.join("top.sv"),
+        "`include `SELECTED_HEADER\nmodule top; wire [`SELECTED_WIDTH-1:0] data; endmodule\n",
+    )
+    .expect("write command-line source");
+
+    for mode in [CompilationUnitMode::Separate, CompilationUnitMode::Merged] {
+        let out = compile_p52_files(
+            &root,
+            &["top.sv"],
+            LanguageEdition::SystemVerilog2009,
+            mode,
+            &[r#"SELECTED_HEADER="selected.svh""#],
+        )
+        .expect("command-line macro include admission");
+        assert!(
+            out.ok(),
+            "command-line macro include {mode:?} diagnostics: {:?}",
+            out.diagnostics
+        );
+        assert!(out
+            .snapshot
+            .files
+            .iter()
+            .any(|file| file.name.ends_with("include/selected.svh")));
+    }
+    fs::remove_dir_all(root).expect("remove P52 command-line fixture");
+}
+
+#[test]
+fn include_cycles_are_admitted_once_and_left_to_frontend_diagnostics() {
+    let root = p52_temp_dir();
+    fs::create_dir_all(root.join("include")).expect("create P52 cycle include root");
+    fs::write(root.join("include/a.svh"), "`include \"b.svh\"\n")
+        .expect("write first cycle header");
+    fs::write(root.join("include/b.svh"), "`include \"a.svh\"\n")
+        .expect("write second cycle header");
+    fs::write(
+        root.join("top.sv"),
+        "`include \"a.svh\"\nmodule top; endmodule\n",
+    )
+    .expect("write cycle source");
+
+    let out = compile_p52_files(
+        &root,
+        &["top.sv"],
+        LanguageEdition::SystemVerilog2009,
+        CompilationUnitMode::Separate,
+        &[],
+    )
+    .expect("include cycle should reach Slang for diagnostics");
+    assert!(!out.ok(), "include cycle unexpectedly compiled cleanly");
+    assert_eq!(out.snapshot.files.len(), 3);
+    assert!(out
+        .snapshot
+        .files
+        .iter()
+        .any(|file| file.name.ends_with("include/a.svh")));
+    assert!(out
+        .snapshot
+        .files
+        .iter()
+        .any(|file| file.name.ends_with("include/b.svh")));
+    fs::remove_dir_all(root).expect("remove P52 cycle fixture");
+}
+
+#[test]
+fn include_admission_enforces_the_shared_source_byte_budget() {
+    let root = p52_temp_dir();
+    fs::create_dir_all(root.join("include")).expect("create P52 limit include root");
+    fs::write(root.join("include/header.svh"), "`define WIDTH 8\n").expect("write limited header");
+    fs::write(
+        root.join("top.sv"),
+        "`include \"header.svh\"\nmodule top; wire [`WIDTH-1:0] data; endmodule\n",
+    )
+    .expect("write limited source");
+    let source = fs::canonicalize(root.join("top.sv")).expect("canonical source path");
+    let header = fs::canonicalize(root.join("include/header.svh")).expect("canonical header path");
+    let required = source.to_string_lossy().len() as u64
+        + fs::read_to_string(&source)
+            .expect("read limited source")
+            .len() as u64
+        + header.to_string_lossy().len() as u64
+        + fs::read_to_string(&header)
+            .expect("read limited header")
+            .len() as u64;
+    let out = compile::compile(&CompileOpts {
+        files: vec![source.to_string_lossy().into_owned()],
+        include_dirs: vec![root.join("include").to_string_lossy().into_owned()],
+        limits: Limits {
+            max_source_bytes: required - 1,
+            ..Limits::default()
+        },
+        ..CompileOpts::default()
+    });
+    let error = out.expect_err("include admission must enforce source bytes");
+    assert_eq!(error.kind(), compile::StartupErrorKind::LimitExceeded);
+    assert!(error.message().contains("source") || error.message().contains("include"));
+    fs::remove_dir_all(root).expect("remove P52 limit fixture");
 }

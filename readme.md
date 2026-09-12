@@ -191,6 +191,10 @@ Common options:
 
 - `--top <module>`: select the top-level module.
 - `--edition <2001|2009>`: select the compilation language edition (default `2009`).
+- `--compilation-units <separate|merged>`: select per-file or shared
+  preprocessing and `$unit` scope (default `separate`).
+- `--include-dir <path>` / `-I <path>`: add a bounded, canonical include root.
+- `--define <NAME[=VALUE]>` / `-D <NAME[=VALUE]>`: seed preprocessing macros.
 - `--lint`: lint before simulation; lint errors stop the build.
 - `--lint-json [<path>]`: write a JSON lint report and exit.
 - `--lint-config <file>`: load rule settings from a TOML file.
