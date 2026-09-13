@@ -166,6 +166,7 @@ Verilog era:
 SystemVerilog era:
 
 - ✅ **Interfaces + modports** actuals and member references bind directly to concrete interface storage; interface-body processes emit on the actual instance — §1800-2009 25.3/25.5 **[SV-2005]** (sim_interface.rs, sim_interface_body.rs)
+- 🟨 **Virtual-interface handles and dispatch** typed handles retain a runtime interface instance and optional modport view across rebinding, class/formal/fixed-array storage, packed member reads/writes, delay-free interface methods, and clocking input samples — §§1800-2009 25.5, 25.7, 25.9, 25.10 **[SV-2009]** (sim_virtual_interfaces.rs). Timing-bearing interface tasks, output/inout clocking drives, associative/nested virtual-interface arrays, and broader class polymorphism remain outside this bounded subset
 - 🟨 **Packages** params/types via frontend folding — §1800-2009 26 **[SV-2005]** package subprograms not lowered ("return type has no width", probed)
 - ✅ **`.name` / `.*` connection shorthands** — §1800-2009 23.3.2.3–4 **[SV-2005]** expanded by the frontend and preserved through port-link lowering (sim_hier.rs)
 - 🟨 **ref ports / default port values** — §1800-2009 23.2.2.2/23.2.2.4 **[SV-2005]** matching packed-variable references, legal packed selections, fixed arrays, recursive aggregate leaves and string/chandle objects share storage through nested instances; constants, expressions and omitted defaults remain value-port behavior. Resizable containers and ordinary aggregate copy ports remain unsupported (sim_partial_features.rs, both optimizer modes)
@@ -435,7 +436,7 @@ Tracked so nothing is lost; all de-prioritized behind RTL-simulation support.
 
 | Area | Constructs | Reference | Tag |
 |---|---|---|---|
-| Advanced classes | string/chandle/class properties, timing-bearing class tasks, constrained randomization, and virtual-interface handles | §1800-2009 ch8, 25.9 | [SV-2005] |
+| Advanced classes | string/chandle/class properties, timing-bearing class tasks, and constrained randomization | §1800-2009 ch8 | [SV-2005] |
 | Clocking output/cycle controls | output skews, synchronous drives, inout driving, `##` delays | §1800-2009 14.11, 14.16.2 | [SV-2005] |
 | Interprocess sync | semaphores, mailboxes, process suspend/resume/kill | §1800-2009 ch15 | [SV-2005] |
 | Assertions | deferred `#0` and bounded concurrent assert/assume/cover instances with one explicit signal clock, simple packed implications, asynchronous single-signal `disable iff`, sampled attempts, vacuity accounting and Reactive actions; general sequences/properties and assertion control tasks remain outside the subset | §1800-2009 16.3–16.4, ch16, 20.11 | [SV-2005] |
@@ -448,7 +449,6 @@ Tracked so nothing is lost; all de-prioritized behind RTL-simulation support.
 | Timing checks | `$setup/$hold/$width/…`, notifiers, `&&&` conditions | §1800-2009 ch31 | [1995]/[SV-2009 restored] |
 | SDF backannotation | `$sdf_annotate`, delay/check mapping | §1800-2009 ch32 | [1995]/[SV-2009 restored] |
 | bind | elaboration-time injection of modules/interfaces | §1800-2009 23.11 | [SV-2005] |
-| Virtual interfaces | `virtual ifc` handles in classes | §1800-2009 25.9 | [SV-2005] |
 
 ## How to update this document
 
@@ -463,7 +463,7 @@ Tracked so nothing is lost; all de-prioritized behind RTL-simulation support.
 ## Remaining-work inventory
 
 The original audit IDs are stable. This inventory currently contains 62 remaining
-groups (19 missing, 43 partial); groups 9, 27, 38, 50, 51, 57, 58, 59, 60 and 63 are completed. Counts refer to grouped
+groups (18 missing, 44 partial); groups 9, 27, 38, 50, 51, 57, 58, 59, 60 and 63 are completed. Counts refer to grouped
 capabilities, not individual keywords, system functions or standard clauses.
 
 
@@ -540,4 +540,4 @@ capabilities, not individual keywords, system functions or standard clauses.
 | 69 | Missing | Constrained and structured randomization | `rand/randc`, constraints, object and `std::randomize`, `randcase` and `randsequence`. |
 | 70 | Partial | DPI | Bounded DPI-C imports of scalar `bit`/`logic`/`reg`, two-state integral atoms, `real`/`shortreal`, `chandle`, and `string` preserve C aliases and pure/context metadata, support input/output/inout roundtrips, and link only explicitly supplied libraries (`sim_dpi.rs`). Exports, packed vectors/open arrays, reference formals, and context callbacks remain unsupported. |
 | 71 | Missing | PLI/VPI | Standard `tf_`, `acc_`, `vpi_` interfaces, callbacks and PLI application integration. |
-| 72 | Missing | Virtual interfaces | Virtual-interface handles, assignment and member access through those handles. |
+| 72 | Partial | Virtual interfaces | Typed virtual-interface handles retain runtime instance identity, optional modport views and null state across rebinding; packed member reads/writes, delay-free interface methods, clocking input samples through class-held handles, permissible bare/modport assignments, fixed virtual-interface arrays, null access diagnostics and nominal parameter mismatch rejection are covered by `sim_virtual_interfaces.rs` in both optimizer modes. Timing-bearing interface tasks, output/inout clocking drives, associative/nested virtual-interface arrays and broader class polymorphism remain unsupported. |

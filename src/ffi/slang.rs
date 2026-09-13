@@ -427,6 +427,7 @@ pub enum TypeKind {
     Chandle,
     Event,
     Void,
+    VirtualInterface,
     Other,
 }
 
@@ -2644,6 +2645,7 @@ fn decode_types(
                     16 => TypeKind::Chandle,
                     17 => TypeKind::Event,
                     18 => TypeKind::Void,
+                    19 => TypeKind::VirtualInterface,
                     255 => TypeKind::Other,
                     _ => return Err(invalid_native("type has an unknown kind")),
                 },

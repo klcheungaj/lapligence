@@ -178,6 +178,10 @@ coverage for the same rule IDs.
   parameterized layouts, pure virtual methods, out-of-block definitions,
   forward class typedefs, const properties, and the null-handle runtime failure
   contract.
+- `sim_virtual_interfaces.rs` runs checked-in virtual-interface fixtures
+  through `llg` and `llg --no-opt`, covering rebinding, class-held methods and
+  clocking samples, modport views, fixed/dynamic/queue handle arrays, null
+  access, and nominal parameter mismatch diagnostics.
 - `sim_cmake.rs` covers the build path (5 cases: library-level
   end-to-end CMake build, explicit `CmakeBuildOpts` generator backend,
   invalid-generator configure error, driver default, missing-cmake

@@ -5,6 +5,8 @@ use crate::sim::ir::{
     IrObjectQuery, IrObjectStmt, IrObjectType, IrProcessControl, IrProcessExpr, IrStringExpr,
 };
 
+type VirtualInterfaceAccess = (IrChandleExpr, usize, usize, u32, bool, bool);
+
 impl Codegen<'_> {
     pub(super) fn is_process_self_call(&self, node: NodeId) -> bool {
         matches!(self.kind(node), NodeKind::FuncCall { name, .. } if name == "self")
@@ -208,6 +210,233 @@ impl Codegen<'_> {
         }
     }
 
+    fn virtual_interface_handle_code(&self, handle: &IrChandleExpr) -> Result<String, String> {
+        match handle {
+            IrChandleExpr::Null => Ok("NULL".to_owned()),
+            IrChandleExpr::Verbatim(code) | IrChandleExpr::LocalRead(code) => Ok(code.clone()),
+            IrChandleExpr::Read(index) => Ok(self.model.objects[*index].c_name.clone()),
+            IrChandleExpr::FormalRead(index) => Ok(
+                if self
+                    .cur_fn_ir
+                    .and_then(|function| self.model.funcs.get(function))
+                    .and_then(|function| function.formals.get(*index))
+                    .is_some_and(IrFormal::is_ref)
+                {
+                    format!("*r{index}")
+                } else if self
+                    .cur_fn_ir
+                    .and_then(|function| self.model.funcs.get(function))
+                    .and_then(|function| function.formals.get(*index))
+                    .is_some_and(|formal| formal.is_out)
+                {
+                    format!("*o{index}")
+                } else {
+                    format!("a{index}")
+                },
+            ),
+            IrChandleExpr::ContainerGet { container, index } => {
+                let getter = match self.model.containers[*container].kind {
+                    crate::sim::ir::IrContainerKind::Dynamic => "llg_dyn_value_get_chandle",
+                    crate::sim::ir::IrContainerKind::Queue { .. } => "llg_queue_value_get_chandle",
+                    crate::sim::ir::IrContainerKind::Associative { .. } => {
+                        return Err(
+                            "virtual interface associative element receivers are unsupported"
+                                .to_owned(),
+                        )
+                    }
+                };
+                Ok(format!(
+                    "{}(&{}, {})",
+                    getter,
+                    self.model.containers[*container].c_name,
+                    self.render_ir_code(index)?
+                ))
+            }
+            IrChandleExpr::ContainerGetNested { container, indices } => {
+                let getter = match self.model.containers[*container].kind {
+                    crate::sim::ir::IrContainerKind::Dynamic => "llg_dyn_value_get_nested_chandle",
+                    crate::sim::ir::IrContainerKind::Queue { .. } => {
+                        "llg_queue_value_get_nested_chandle"
+                    }
+                    crate::sim::ir::IrContainerKind::Associative { .. } => {
+                        return Err(
+                            "virtual interface associative element receivers are unsupported"
+                                .to_owned(),
+                        )
+                    }
+                };
+                let count = indices.len();
+                let indices = indices
+                    .iter()
+                    .map(|index| self.render_ir_code(index))
+                    .collect::<Result<Vec<_>, _>>()?
+                    .join(", ");
+                Ok(format!(
+                    "{}(&{}, (const sv4_t[]){{ {} }}, {})",
+                    getter, self.model.containers[*container].c_name, indices, count
+                ))
+            }
+            IrChandleExpr::AssociativeGet { .. } | IrChandleExpr::Call { .. } => Err(
+                "virtual interface member receiver must be a named handle or array element"
+                    .to_owned(),
+            ),
+        }
+    }
+
+    fn virtual_interface_access(
+        &mut self,
+        path: &str,
+        node: NodeId,
+        write: bool,
+    ) -> Result<Option<VirtualInterfaceAccess>, String> {
+        let NodeKind::Expr(ExprKind::HierPath { parts, refs }) = self.kind(node) else {
+            return Ok(None);
+        };
+        let Some((position, handle)) = refs.iter().enumerate().find_map(|(position, target)| {
+            let target = (*target)?;
+            self.virtual_interface_spelling(target)
+                .map(|_| (position, target))
+        }) else {
+            return Ok(None);
+        };
+        let mut member = parts
+            .iter()
+            .skip(position + 1)
+            .filter(|part| !part.is_empty())
+            .cloned()
+            .collect::<Vec<_>>()
+            .join(".");
+        if let Some(clock_target) = self.db.resolve_clocking_member(node) {
+            if let Some(clock_var) = self.db.clocking_var(clock_target) {
+                member = format!(
+                    "{}.{}",
+                    self.node(clock_var.block).name,
+                    self.node(clock_target).name
+                );
+            }
+        }
+        // Slang omits the clocking-block segment from a virtual-interface
+        // member path (`vif.cb.data`) and binds the final reference directly
+        // to the clocking variable. Recover the declaration-owned block name
+        // so the runtime handle selects sampled storage, not the raw signal.
+        if let Some(clock_var) = refs
+            .iter()
+            .rev()
+            .skip_while(|target| target.is_none_or(|target| !self.db.is_clocking_var(target)))
+            .flatten()
+            .next()
+        {
+            if let Some(block) = self.db.clocking_var(*clock_var).map(|info| info.block) {
+                member = format!("{}.{}", self.node(block).name, self.node(*clock_var).name);
+            }
+        }
+        if member.is_empty() {
+            return Ok(None);
+        }
+        let spelling = self
+            .virtual_interface_spelling(handle)
+            .ok_or_else(|| format!("virtual interface handle has no type in `{path}`"))?;
+        let identity = Codegen::normalize_virtual_interface_identity(
+            &Codegen::virtual_interface_identity_from_spelling(&spelling),
+        );
+        let descriptor = self
+            .virtual_interface_types
+            .get(&identity)
+            .copied()
+            .ok_or_else(|| format!("virtual interface type `{identity}` has no descriptor"))?;
+        if let Some(view) = Codegen::virtual_interface_view_from_spelling(&spelling) {
+            let direction = self
+                .virtual_interface_views
+                .get(&(descriptor, view.clone()))
+                .and_then(|members| members.get(&member))
+                .copied();
+            let Some(direction) = direction else {
+                return Err(format!(
+                    "member `{member}` is not available through virtual interface view `{view}` in `{path}`"
+                ));
+            };
+            if write && direction == DbDirection::Input {
+                return Err(format!(
+                    "input modport member `{member}` cannot be written through view `{view}` in `{path}`"
+                ));
+            }
+        }
+        let slot = self
+            .virtual_interface_members
+            .get(&(descriptor, member.clone()))
+            .copied()
+            .ok_or_else(|| {
+                format!(
+                    "member `{member}` is not available through virtual interface view `{spelling}` in `{path}`"
+                )
+            })?;
+        let metadata = self
+            .model
+            .virtual_interfaces
+            .get(descriptor)
+            .and_then(|interface| interface.members.get(slot))
+            .ok_or_else(|| format!("virtual interface member `{member}` has no metadata"))?;
+        let width = metadata.width;
+        let signed = metadata.signed;
+        let two_state = metadata.two_state;
+        let handle = self.lower_chandle(path, handle)?;
+        Ok(Some((handle, descriptor, slot, width, signed, two_state)))
+    }
+
+    /// Lower a member path rooted at a virtual-interface handle. The runtime
+    /// receives the handle on every access, so assigning a new handle changes
+    /// the target of all subsequent reads and writes.
+    pub(super) fn virtual_interface_member_expr(
+        &mut self,
+        path: &str,
+        node: NodeId,
+    ) -> Result<Option<IrExpr>, String> {
+        let Some((handle, descriptor, slot, width, signed, _two_state)) =
+            self.virtual_interface_access(path, node, false)?
+        else {
+            return Ok(None);
+        };
+        let handle = self.virtual_interface_handle_code(&handle)?;
+        Ok(Some(IrExpr::new(
+            IrExprKind::Verbatim {
+                code: format!(
+                    "llg_vif_read((void *){handle}, {descriptor}, {slot}, {}, {}, \"{}\")",
+                    width,
+                    signed as u8,
+                    self.node(node).full_name.replace('"', "'"),
+                ),
+                width,
+                signed,
+            },
+            width,
+            signed,
+            None,
+        )))
+    }
+
+    pub(super) fn virtual_interface_member_lhs(
+        &mut self,
+        path: &str,
+        node: NodeId,
+    ) -> Result<Option<IrLhs>, String> {
+        let Some((handle, descriptor, slot, width, signed, two_state)) =
+            self.virtual_interface_access(path, node, true)?
+        else {
+            return Ok(None);
+        };
+        let handle = self.virtual_interface_handle_code(&handle)?;
+        Ok(Some(IrLhs::WholeRef {
+            addr: format!(
+                "llg_vif_member((void *){handle}, {descriptor}, {slot}, \"{}\")",
+                self.node(node).full_name.replace('"', "'"),
+            ),
+            width,
+            signed,
+            two_state,
+            shortreal: false,
+        }))
+    }
+
     fn class_receiver_for(
         &mut self,
         path: &str,
@@ -315,6 +544,9 @@ impl Codegen<'_> {
                 self.node(field).name
             ));
         }
+        if matches!(self.kind(field), NodeKind::Var { ty } if is_handle_kind(&ty.kind)) {
+            return Ok(None);
+        }
         let Some((class, _index, class_field)) = self.class_field_layout(field) else {
             return Ok(None);
         };
@@ -353,6 +585,9 @@ impl Codegen<'_> {
         if self.class_static_objects.contains_key(&field) {
             return Ok(None);
         }
+        if matches!(self.kind(field), NodeKind::Var { ty } if is_handle_kind(&ty.kind)) {
+            return Ok(None);
+        }
         let Some((class, _index, class_field)) = self.class_field_layout(field) else {
             return Ok(None);
         };
@@ -376,6 +611,30 @@ impl Codegen<'_> {
             two_state,
             shortreal,
         }))
+    }
+
+    fn class_field_chandle_lvalue(
+        &mut self,
+        path: &str,
+        node: NodeId,
+    ) -> Result<Option<String>, String> {
+        let Some(field) = self.class_field_target(node) else {
+            return Ok(None);
+        };
+        if !matches!(self.kind(field), NodeKind::Var { ty } if is_handle_kind(&ty.kind)) {
+            return Ok(None);
+        }
+        let Some((class, _index, class_field)) = self.class_field_layout(field) else {
+            return Ok(None);
+        };
+        let field_name = class_field.c_name.clone();
+        let field_full_name = self.node(field).full_name.clone();
+        let receiver = self.class_receiver_for(path, node, field)?;
+        let receiver = self.class_receiver_code(&receiver);
+        Ok(Some(format!(
+            "((llg_class_{class}_t*)llg_class_require({receiver}, \"{}\"))->{}",
+            field_full_name, field_name
+        )))
     }
 
     fn lower_new_class(
@@ -622,6 +881,7 @@ impl Codegen<'_> {
                 "chandle" => IrObjectType::Chandle,
                 "class" if ty.type_name.as_deref() == Some("process") => IrObjectType::Process,
                 "class" => IrObjectType::Chandle,
+                "virtual_interface" => IrObjectType::Chandle,
                 _ => return Ok(false),
             },
             _ => return Ok(false),
@@ -652,6 +912,23 @@ impl Codegen<'_> {
                     if is_class {
                         self.class_object_initializers
                             .push((node, index, init, path.to_owned()));
+                    } else if matches!(self.kind(node), NodeKind::Var { ty } if ty.kind == "virtual_interface")
+                    {
+                        if !matches!(
+                            self.kind(init),
+                            NodeKind::Expr(ExprKind::Constant {
+                                const_type: ConstantType::Null,
+                                ..
+                            })
+                        ) {
+                            self.validate_virtual_interface_assignment(node, init, path)?;
+                            self.class_object_initializers.push((
+                                node,
+                                index,
+                                init,
+                                path.to_owned(),
+                            ));
+                        }
                     } else if self.lower_chandle(path, init)? != IrChandleExpr::Null {
                         return Err("chandle declaration initializer must be null".to_owned());
                     }
@@ -1244,6 +1521,9 @@ impl Codegen<'_> {
         node: NodeId,
     ) -> Result<(ChandleTarget, IrChandleExpr), String> {
         let read = self.lower_chandle(path, node)?;
+        if let Some(address) = self.class_field_chandle_lvalue(path, node)? {
+            return Ok((ChandleTarget::Local(format!("*({address})")), read));
+        }
         let target = match self.kind(node) {
             NodeKind::Expr(ExprKind::Ref { target }) => *target,
             _ => Some(node),
@@ -1322,6 +1602,37 @@ impl Codegen<'_> {
             })
         ) {
             return Ok(IrChandleExpr::Null);
+        }
+        if let NodeKind::Expr(ExprKind::ScopeRef { target }) = self.kind(node) {
+            if let Some((descriptor, instance)) = self.virtual_interface_instances.get(target) {
+                let env = self
+                    .model
+                    .virtual_interfaces
+                    .get(*descriptor)
+                    .and_then(|interface| interface.instances.get(*instance))
+                    .ok_or_else(|| {
+                        format!(
+                            "virtual interface target `{}` has no runtime environment in `{path}`",
+                            self.node(*target).full_name
+                        )
+                    })?;
+                return Ok(IrChandleExpr::Verbatim(format!("(void *)&{}", env.c_name)));
+            }
+            if matches!(
+                self.kind(*target),
+                NodeKind::ModuleInst {
+                    is_interface: true,
+                    ..
+                }
+            ) {
+                return Err(format!(
+                    "virtual interface target `{}` has no compatible runtime descriptor in `{path}`",
+                    self.node(*target).full_name
+                ));
+            }
+        }
+        if let Some(address) = self.class_field_chandle_lvalue(path, node)? {
+            return Ok(IrChandleExpr::Verbatim(address));
         }
         let target = match self.kind(node) {
             NodeKind::Expr(ExprKind::Ref { target }) => *target,
@@ -1998,6 +2309,32 @@ impl Codegen<'_> {
             _ => None,
         };
         let object_node = indexed.map_or(lhs, |(base, _)| base);
+        if let Some(field) = self.class_field_target(object_node) {
+            if matches!(self.kind(field), NodeKind::Var { ty } if is_handle_kind(&ty.kind)) {
+                if indexed.is_some() {
+                    return Err("virtual interface handle cannot be indexed".to_owned());
+                }
+                if !blocking {
+                    return Err(
+                        "nonblocking assignment to virtual interface handle is not supported"
+                            .to_owned(),
+                    );
+                }
+                if op != Operation::Assignment {
+                    return Err(
+                        "compound assignment to virtual interface handle is unsupported".to_owned(),
+                    );
+                }
+                self.validate_virtual_interface_assignment(object_node, rhs, path)?;
+                let address = self
+                    .class_field_chandle_lvalue(path, object_node)?
+                    .ok_or_else(|| "class virtual interface field has no storage".to_owned())?;
+                return Ok(Some(IrStmt::Object(IrObjectStmt::ChandleAssignLocal(
+                    address,
+                    self.lower_chandle(path, rhs)?,
+                ))));
+            }
+        }
         let target_node = match self.kind(object_node) {
             NodeKind::Expr(ExprKind::Ref { target }) => *target,
             _ => Some(object_node),
@@ -2091,6 +2428,7 @@ impl Codegen<'_> {
             if indexed.is_some() {
                 return Err("chandle cannot be indexed".to_owned());
             }
+            self.validate_virtual_interface_assignment(object_node, rhs, path)?;
             let value = self.lower_chandle(path, rhs)?;
             return Ok(Some(IrStmt::Object(match target {
                 ChandleTarget::Object(index) => IrObjectStmt::ChandleAssign(index, value),
@@ -2124,6 +2462,7 @@ impl Codegen<'_> {
                 if indexed.is_some() {
                     return Err("chandle cannot be indexed".to_owned());
                 }
+                self.validate_virtual_interface_assignment(object_node, rhs, path)?;
                 IrObjectStmt::ChandleAssign(index, self.lower_chandle(path, rhs)?)
             }
             IrObjectType::Process => {

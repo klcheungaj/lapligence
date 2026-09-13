@@ -1326,12 +1326,24 @@ fn render_stmt_scoped(
                     } => call_args.push(storage_addr.clone().unwrap_or_else(|| format!("&{name}"))),
                 }
             }
-            if let Some(receiver) = &call.receiver {
-                call_args.insert(0, super::objects::chandle(ctx, receiver)?);
-            }
+            let call_name = if let Some(virtual_call) = &call.virtual_call {
+                call_args.insert(0, super::objects::chandle(ctx, &virtual_call.receiver)?);
+                format!(
+                    "llg_vif_call_{}_{}",
+                    virtual_call.interface, virtual_call.method
+                )
+            } else {
+                if let Some(receiver) = &call.receiver {
+                    call_args.insert(0, super::objects::chandle(ctx, receiver)?);
+                }
+                super::function_call_name(f, call.virtual_dispatch)
+            };
             call_args.push(call.depth.code());
-            let callee = super::function_call_name(f, call.virtual_dispatch);
-            out.push_str(&format!("        {callee}({});\n", call_args.join(", ")));
+            out.push_str(&format!(
+                "        {}({});\n",
+                call_name,
+                call_args.join(", ")
+            ));
             for (lh, tname, w, s) in &call.copyouts {
                 let rhs = IrExpr::new(IrExprKind::LocalRead(tname.clone()), *w, *s, None);
                 out.push_str(&format!(

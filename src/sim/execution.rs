@@ -618,6 +618,9 @@ fn collect_effects(
                 {
                     effects.push(ExecutionEffect::ImmediateStore);
                 }
+                if let Some(virtual_call) = &call.virtual_call {
+                    collect_chandle_effects(ir, &virtual_call.receiver, effects, visited_calls);
+                }
                 collect_callee_effects(ir, call.function_index(), effects, visited_calls);
             }
             _ => {}
@@ -1053,6 +1056,9 @@ fn collect_expression_effects(
                 effects.push(ExecutionEffect::ImmediateStore);
             }
             collect_callee_effects(ir, call.function_index(), effects, visited_calls);
+            if let Some(virtual_call) = &call.virtual_call {
+                collect_chandle_effects(ir, &virtual_call.receiver, effects, visited_calls);
+            }
             for argument in call.args() {
                 match argument {
                     IrCallArg::Val(value) => {
@@ -1591,6 +1597,11 @@ fn collect_chandle_effects(
     match value {
         IrChandleExpr::ContainerGet { index, .. } => {
             collect_expression_effects(ir, index, effects, visited_calls)
+        }
+        IrChandleExpr::ContainerGetNested { indices, .. } => {
+            for index in indices {
+                collect_expression_effects(ir, index, effects, visited_calls);
+            }
         }
         IrChandleExpr::AssociativeGet { key, .. } => {
             collect_string_effects(ir, key, effects, visited_calls)

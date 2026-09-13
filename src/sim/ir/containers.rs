@@ -163,6 +163,11 @@ pub struct IrContainer {
     pub c_name: String,
     pub element: IrContainerElement,
     pub kind: IrContainerKind,
+    /// Fixed-size views (currently virtual-interface arrays) use the generic
+    /// container runtime so their handle elements can be selected uniformly.
+    /// The main initializer allocates this many null/default elements before
+    /// any process can assign or read one.
+    pub initial_size: Option<u64>,
 }
 
 /// One bound of a queue slice. `$` is kept distinct from an ordinary
@@ -206,6 +211,7 @@ pub enum IrStreamSelector {
 
 /// Container expressions return packed element values or packed method status.
 #[derive(Clone, Debug, PartialEq)]
+#[allow(clippy::large_enum_variant)]
 pub enum IrContainerExpr {
     /// Stream packed elements from a dynamic array or queue in logical index
     /// order.  A runtime selector is optional; the resulting packed width is

@@ -31,6 +31,47 @@ pub struct IrClassField {
     pub(in crate::sim) ty: IrClassFieldType,
 }
 
+/// One packed member exposed by a virtual-interface view. The member index is
+/// shared by every elaborated interface instance of the same specialization;
+/// each instance supplies the concrete signal address at that slot.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct IrVirtualInterfaceMember {
+    pub(in crate::sim) name: String,
+    pub(in crate::sim) width: u32,
+    pub(in crate::sim) signed: bool,
+    pub(in crate::sim) two_state: bool,
+}
+
+/// One concrete interface instance reachable through a virtual-interface
+/// handle. `members` and `methods` are indexed by their parent descriptor.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct IrVirtualInterfaceInstance {
+    pub(in crate::sim) c_name: String,
+    pub(in crate::sim) members: Vec<Option<usize>>,
+    pub(in crate::sim) methods: Vec<Option<usize>>,
+}
+
+/// One interface method dispatch entry. The first function is the signature
+/// representative used by call lowering; each instance entry identifies the
+/// concrete implementation invoked by the generated dispatcher.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct IrVirtualInterfaceMethod {
+    pub(in crate::sim) name: String,
+    pub(in crate::sim) function: usize,
+    pub(in crate::sim) instances: Vec<Option<usize>>,
+}
+
+/// Owned runtime metadata for virtual-interface member and method dispatch.
+/// Handles use the existing opaque-pointer ABI; this descriptor keeps the
+/// target table in the execution IR so optimizer variants share it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct IrVirtualInterface {
+    pub(in crate::sim) identity: String,
+    pub(in crate::sim) members: Vec<IrVirtualInterfaceMember>,
+    pub(in crate::sim) instances: Vec<IrVirtualInterfaceInstance>,
+    pub(in crate::sim) methods: Vec<IrVirtualInterfaceMethod>,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum IrClassFieldType {
     Packed {

@@ -252,11 +252,17 @@ impl<'db> SemanticModel<'db> {
                 name,
                 receiver: Some(receiver),
                 callee: Some(callee),
+                ..
             } = self.db.node_kind(owner)
             else {
                 continue;
             };
-            if matches!(
+            if !matches!(self.db.node_kind(*callee), NodeKind::Other)
+                || self.db.semantic_kind(*callee) != Some(CapturedSemanticKind::Unsupported)
+            {
+                continue;
+            }
+            let is_process_method = matches!(
                 name.as_str(),
                 "status"
                     | "kill"
@@ -266,13 +272,23 @@ impl<'db> SemanticModel<'db> {
                     | "srandom"
                     | "get_randstate"
                     | "set_randstate"
-            ) && process_reference(self.db, *receiver)
-                && matches!(self.db.node_kind(*callee), NodeKind::Other)
-                && self.db.semantic_kind(*callee) == Some(CapturedSemanticKind::Unsupported)
-            {
+            ) && process_reference(self.db, *receiver);
+            let is_virtual_interface = match self.db.node_kind(*receiver) {
+                NodeKind::Expr(ExprKind::Ref {
+                    target: Some(target),
+                }) => matches!(
+                    self.db.node_kind(*target),
+                    NodeKind::Var { ty } | NodeKind::Array { ty }
+                        if ty.kind == "virtual_interface"
+                ),
+                _ => false,
+            };
+            if is_process_method || is_virtual_interface {
                 // Slang represents built-in process method callees with the
                 // same unowned placeholder used by process::self(). The typed
-                // receiver and method name fully consume that metadata.
+                // receiver and method name fully consume that metadata. A
+                // virtual-interface method is resolved through its owned
+                // descriptor and runtime environment instead.
                 placeholders[callee.index()] = true;
             }
         }
@@ -625,6 +641,37 @@ fn classify_simulation_node(
         NodeKind::Var { .. } if db.is_clocking_var(id) => SimulationNodeClass::ElaborationConsumed,
         NodeKind::Expr(ExprKind::ScopeRef { .. }) if db.is_virtual_interface_initializer(id) => {
             SimulationNodeClass::ElaborationConsumed
+        }
+        NodeKind::Expr(ExprKind::ScopeRef { target })
+            if !db.node(id).parent().is_some_and(|parent| {
+                // Interface port actuals are metadata references. Their
+                // target/actual identity is checked by the dedicated
+                // placeholder path above; a mismatched target must remain an
+                // unsupported binding rather than becoming an executable
+                // value merely because it names an interface.
+                matches!(db.node_kind(parent), NodeKind::Port { .. })
+            }) && (matches!(
+                db.node_kind(*target),
+                NodeKind::ModuleInst {
+                    is_interface: true,
+                    ..
+                }
+            ) || (matches!(db.node_kind(*target), NodeKind::ModPort)
+                && db.node(*target).parent().is_some_and(|parent| {
+                    matches!(
+                        db.node_kind(parent),
+                        NodeKind::ModuleInst {
+                            is_interface: true,
+                            ..
+                        }
+                    )
+                }))) =>
+        {
+            // Interface instance references are executable values when they
+            // bind or rebind a virtual interface handle. Their target is a
+            // declaration, but lowering consumes the reference to obtain the
+            // runtime environment address.
+            SimulationNodeClass::Executable
         }
         NodeKind::Expr(ExprKind::ScopeRef { target })
             if db.is_clocking_block(*target) || db.is_clocking_var(*target) =>

@@ -538,6 +538,9 @@ struct Capture {
       case SymbolKind::CHandleType: kind = LLG_SLANG_TYPE_CHANDLE; break;
       case SymbolKind::EventType: kind = LLG_SLANG_TYPE_EVENT; break;
       case SymbolKind::VoidType: kind = LLG_SLANG_TYPE_VOID; break;
+      case SymbolKind::VirtualInterfaceType:
+        kind = LLG_SLANG_TYPE_VIRTUAL_INTERFACE;
+        break;
       default:
         if (canonical.isIntegral())
           kind = LLG_SLANG_TYPE_INTEGRAL;
@@ -1697,6 +1700,8 @@ public:
     if constexpr (std::same_as<T, PortSymbol>)
       addDirection(result, symbol.direction);
     if constexpr (std::same_as<T, MultiPortSymbol>)
+      addDirection(result, symbol.direction);
+    if constexpr (std::same_as<T, ModportPortSymbol>)
       addDirection(result, symbol.direction);
     if constexpr (std::same_as<T, FormalArgumentSymbol>) {
       addDirection(result, symbol.direction);

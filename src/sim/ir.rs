@@ -34,6 +34,8 @@ pub use objects::{
     IrArrayDimension, IrArrayQuery, IrArrayQueryKind, IrArrayQueryTarget, IrChandleExpr, IrClass,
     IrClassField, IrClassFieldType, IrDisplayArg, IrObject, IrObjectQuery, IrObjectStmt,
     IrObjectType, IrProcessControl, IrProcessExpr, IrStringExpr, IrStringInsideItem,
+    IrVirtualInterface, IrVirtualInterfaceInstance, IrVirtualInterfaceMember,
+    IrVirtualInterfaceMethod,
 };
 
 pub use validate::IrValidationError;
@@ -1507,6 +1509,10 @@ pub struct IrCallExpr {
     pub(in crate::sim) receiver: Option<IrChandleExpr>,
     /// Dispatch through the callee's virtual slot using the runtime class id.
     pub(in crate::sim) virtual_dispatch: bool,
+    /// Optional virtual-interface dispatch metadata. The receiver is kept
+    /// separate from class receivers because the generated dispatcher owns
+    /// the rebinding lookup rather than a concrete function body.
+    pub(in crate::sim) virtual_call: Option<IrVirtualCall>,
     /// Void callee used as a value: yield all-X (warning issued at lowering).
     pub(in crate::sim) void_x: bool,
 }
@@ -1521,6 +1527,7 @@ impl IrCallExpr {
             depth,
             receiver: None,
             virtual_dispatch: false,
+            virtual_call: None,
             void_x,
         }
     }
@@ -1529,6 +1536,11 @@ impl IrCallExpr {
     /// typed formal ABI for the remaining arguments.
     pub fn with_receiver(mut self, receiver: IrChandleExpr) -> Self {
         self.receiver = Some(receiver);
+        self
+    }
+
+    pub fn with_virtual_call(mut self, virtual_call: IrVirtualCall) -> Self {
+        self.virtual_call = Some(virtual_call);
         self
     }
 
@@ -1559,6 +1571,8 @@ pub struct IrCall {
     pub(in crate::sim) receiver: Option<IrChandleExpr>,
     /// Dispatch through the callee's virtual slot using the runtime class id.
     pub(in crate::sim) virtual_dispatch: bool,
+    /// Optional virtual-interface dispatch metadata.
+    pub(in crate::sim) virtual_call: Option<IrVirtualCall>,
     /// `(temp name, formal index, init)` triples declared right before the
     /// call; `init` is `None` for outputs (all-X temp sized by the formal)
     /// and the actual's current value for inouts.
@@ -1582,6 +1596,7 @@ impl IrCall {
             depth,
             receiver: None,
             virtual_dispatch: false,
+            virtual_call: None,
             temps,
             copyouts,
         }
@@ -1590,6 +1605,11 @@ impl IrCall {
     /// Bind a class/object receiver to this statement call.
     pub fn with_receiver(mut self, receiver: IrChandleExpr) -> Self {
         self.receiver = Some(receiver);
+        self
+    }
+
+    pub fn with_virtual_call(mut self, virtual_call: IrVirtualCall) -> Self {
+        self.virtual_call = Some(virtual_call);
         self
     }
 
@@ -1608,6 +1628,16 @@ impl IrCall {
     pub fn copyouts(&self) -> &[(IrLhs, String, u32, bool)] {
         &self.copyouts
     }
+}
+
+/// Dynamic dispatch metadata for a call through a virtual-interface handle.
+/// `function` on the descriptor is still used for the checked formal ABI;
+/// emission selects the concrete implementation from the receiver environment.
+#[derive(Clone, Debug, PartialEq)]
+pub struct IrVirtualCall {
+    pub(in crate::sim) interface: usize,
+    pub(in crate::sim) method: usize,
+    pub(in crate::sim) receiver: IrChandleExpr,
 }
 
 /// Recursion depth argument of a call site: `"0"` in process contexts,
@@ -3868,6 +3898,8 @@ pub struct IrModel {
     pub(in crate::sim) objects: Vec<IrObject>,
     /// Nominal class layouts used by class handles and method receivers.
     pub(in crate::sim) classes: Vec<IrClass>,
+    /// Virtual-interface descriptors and their concrete instance bindings.
+    pub(in crate::sim) virtual_interfaces: Vec<IrVirtualInterface>,
     pub(in crate::sim) events: Vec<IrEvent>,
     pub(in crate::sim) funcs: Vec<IrFunc>,
     /// Concurrent assertion instances, kept outside ordinary process IR.
@@ -3904,6 +3936,7 @@ pub struct IrModelParts {
     pub containers: Vec<IrContainer>,
     pub objects: Vec<IrObject>,
     pub classes: Vec<IrClass>,
+    pub virtual_interfaces: Vec<IrVirtualInterface>,
     pub events: Vec<IrEvent>,
     pub funcs: Vec<IrFunc>,
     pub assertions: Vec<IrAssertion>,
@@ -3942,6 +3975,7 @@ impl IrModel {
             containers: parts.containers,
             objects: parts.objects,
             classes: parts.classes,
+            virtual_interfaces: parts.virtual_interfaces,
             events: parts.events,
             funcs: parts.funcs,
             assertions: parts.assertions,
@@ -3978,6 +4012,10 @@ impl IrModel {
     }
     pub fn events(&self) -> &[IrEvent] {
         &self.events
+    }
+
+    pub fn virtual_interfaces(&self) -> &[IrVirtualInterface] {
+        &self.virtual_interfaces
     }
     pub fn funcs(&self) -> &[IrFunc] {
         &self.funcs

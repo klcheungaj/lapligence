@@ -461,6 +461,9 @@ pub struct Db {
     clocking_blocks: HashMap<NodeId, ClockingBlockInfo>,
     /// Clocking block variables and the source signal each samples.
     clocking_vars: HashMap<NodeId, ClockingVarInfo>,
+    /// Direction of each captured modport port. This is kept separately from
+    /// `NodeKind::ModPort` so the frontend-neutral node shape remains stable.
+    modport_directions: HashMap<NodeId, Direction>,
     /// Statically initialized virtual-interface variables and their concrete
     /// interface instances. Runtime reassignment remains outside this map.
     virtual_interface_targets: HashMap<NodeId, NodeId>,
@@ -1705,6 +1708,7 @@ type SemanticMemberPath = (Vec<String>, Vec<Option<NodeId>>);
 
 fn member_path_from_slang(
     snapshot: &SlangSnapshot,
+    type_projector: &SlangTypeProjector<'_>,
     ids: &HashMap<u64, NodeId>,
     node: &SemanticNode,
     depth: usize,
@@ -1719,22 +1723,43 @@ fn member_path_from_slang(
         return Ok(None);
     };
     let base_semantic = &snapshot.semantic_nodes[base.index()];
-    let (mut parts, mut refs) = if base_semantic.kind == SemanticKind::Expression
-        && base_semantic.subkind == 75
-    {
-        let Some(path) = member_path_from_slang(snapshot, ids, base_semantic, depth + 1)? else {
+    let (mut parts, mut refs) =
+        if base_semantic.kind == SemanticKind::Expression && base_semantic.subkind == 75 {
+            let Some(path) =
+                member_path_from_slang(snapshot, type_projector, ids, base_semantic, depth + 1)?
+            else {
+                return Ok(None);
+            };
+            path
+        } else if base_semantic.kind == SemanticKind::Expression && base_semantic.subkind == 65 {
+            let Some(target) = expression_reference_target(snapshot, ids, base_semantic)? else {
+                return Ok(None);
+            };
+            let target_semantic = &snapshot.semantic_nodes[target.index()];
+            (vec![target_semantic.name.clone()], vec![Some(target)])
+        } else if base_semantic.kind == SemanticKind::Expression && base_semantic.subkind == 73 {
+            // A member access on an unpacked virtual-interface array is captured
+            // as `ArraySelect` followed by `MemberAccess`. Keep the element-select
+            // node as the base reference so lowering can retrieve the runtime
+            // handle from the container instead of collapsing it to the array
+            // declaration.
+            let Some((array, _indices)) =
+                array_select_from_slang(snapshot, type_projector, ids, base_semantic, depth + 1)?
+            else {
+                return Ok(None);
+            };
+            let Some(name) = snapshot
+                .semantic_nodes
+                .get(array.index())
+                .map(|array| array.name.clone())
+                .filter(|name| !name.is_empty())
+            else {
+                return Ok(None);
+            };
+            (vec![name], vec![Some(semantic_id(ids, base_semantic.id)?)])
+        } else {
             return Ok(None);
         };
-        path
-    } else if base_semantic.kind == SemanticKind::Expression && base_semantic.subkind == 65 {
-        let Some(target) = expression_reference_target(snapshot, ids, base_semantic)? else {
-            return Ok(None);
-        };
-        let target_semantic = &snapshot.semantic_nodes[target.index()];
-        (vec![target_semantic.name.clone()], vec![Some(target)])
-    } else {
-        return Ok(None);
-    };
     let member = node
         .target_id
         .map(|id| canonical_reference_target(snapshot, ids, id))
@@ -3514,7 +3539,7 @@ fn expression_from_slang(
             left: required(SemanticEdgeRole::Left, "range select left bound")?,
             right: required(SemanticEdgeRole::Right, "range select right bound")?,
         },
-        75 => match member_path_from_slang(snapshot, ids, node, 0)? {
+        75 => match member_path_from_slang(snapshot, type_projector, ids, node, 0)? {
             Some((parts, refs)) => ExprKind::HierPath { parts, refs },
             None => ExprKind::Other,
         },
@@ -3817,6 +3842,7 @@ impl Db {
             two_state_types: HashSet::new(),
             clocking_blocks: HashMap::new(),
             clocking_vars: HashMap::new(),
+            modport_directions: HashMap::new(),
             virtual_interface_targets: HashMap::new(),
             dpi_imports: HashMap::new(),
             implicit_nets: HashSet::new(),
@@ -3871,6 +3897,7 @@ impl Db {
             two_state_types: HashSet::new(),
             clocking_blocks: HashMap::new(),
             clocking_vars: HashMap::new(),
+            modport_directions: HashMap::new(),
             virtual_interface_targets: HashMap::new(),
             dpi_imports: HashMap::new(),
             implicit_nets: HashSet::new(),
@@ -4354,6 +4381,7 @@ impl Db {
                 if let Some(base) = edge_target(&ids, edges, SemanticEdgeRole::Base)? {
                     if let Some((parts, refs)) = member_path_from_slang(
                         snapshot,
+                        &type_projector,
                         &ids,
                         &snapshot.semantic_nodes[base.index()],
                         0,
@@ -4474,10 +4502,54 @@ impl Db {
             });
         }
 
+        // Member-access expressions through a virtual interface can bind the
+        // final clocking variable to a detached semantic node. Slang retains
+        // the declaration's `ClockVar` detail and source range on that node,
+        // but not the declaration subkind used above. Reuse the declaration
+        // metadata by range/name so lowering can select sampled storage for
+        // both static and dynamically-held virtual interfaces.
+        let clocking_declarations = clocking_vars
+            .iter()
+            .filter_map(|(id, info)| {
+                let semantic = snapshot.semantic_nodes.get(id.index())?;
+                Some((*id, semantic.range?, semantic.name.clone(), info.clone()))
+            })
+            .collect::<Vec<_>>();
+        for semantic in &snapshot.semantic_nodes {
+            if semantic.detail != "ClockVar" {
+                continue;
+            }
+            let id = ids[&semantic.id];
+            if clocking_vars.contains_key(&id) {
+                continue;
+            }
+            let Some(range) = semantic.range else {
+                continue;
+            };
+            if let Some((_, _, _, info)) =
+                clocking_declarations
+                    .iter()
+                    .find(|(_, declaration_range, name, _)| {
+                        *declaration_range == range && name == &semantic.name
+                    })
+            {
+                clocking_vars.insert(id, info.clone());
+            }
+        }
+
         // A virtual interface handle is an elaboration-time alias to a
         // concrete interface instance.  Capture that static binding while
         // the frontend identities are still available; lowering can then
         // resolve clocking members without retaining native Slang objects.
+        let modport_directions = snapshot
+            .semantic_nodes
+            .iter()
+            .enumerate()
+            .filter(|(_, semantic)| {
+                semantic.kind == SemanticKind::Modport && semantic.detail == "ModportPort"
+            })
+            .map(|(index, semantic)| (NodeId::from_index(index), direction_from_slang(semantic)))
+            .collect();
         let mut virtual_interface_targets = HashMap::new();
         for &variable in vars_init.keys() {
             if let Some(instance) = virtual_interface_instance_from_slang(snapshot, &ids, variable)?
@@ -4613,6 +4685,7 @@ impl Db {
             two_state_types,
             clocking_blocks,
             clocking_vars,
+            modport_directions,
             virtual_interface_targets,
             dpi_imports,
             implicit_nets,
@@ -4769,6 +4842,12 @@ impl Db {
 
     pub fn is_clocking_var(&self, id: NodeId) -> bool {
         self.clocking_vars.contains_key(&id)
+    }
+
+    /// Return the direction of one captured modport port, if the node is a
+    /// modport-port declaration rather than the enclosing view.
+    pub fn modport_port_direction(&self, id: NodeId) -> Option<Direction> {
+        self.modport_directions.get(&id).copied()
     }
 
     /// Return the concrete interface instance statically bound to a virtual

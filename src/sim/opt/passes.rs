@@ -415,7 +415,14 @@ fn walk_expr_mut(e: &mut IrExpr, f: &mut impl FnMut(&mut IrExpr)) {
                 walk_expr_mut(idx, f);
             }
         }
-        IrExprKind::CallFn(call) => walk_call_args_mut(&mut call.args, f),
+        IrExprKind::CallFn(call) => {
+            walk_call_args_mut(&mut call.args, f);
+            if let Some(virtual_call) = &mut call.virtual_call {
+                virtual_call
+                    .receiver
+                    .expressions_mut(&mut |child| walk_expr_mut(child, f));
+            }
+        }
         IrExprKind::Mutation(mutation) => {
             walk_lhs_mut(&mut mutation.lhs, f);
             walk_expr_mut(&mut mutation.value, f);
@@ -770,6 +777,11 @@ fn walk_stmt_mut(s: &mut IrStmt, f: &mut impl FnMut(&mut IrExpr)) {
         IrStmt::WaveLimit(limit) => walk_expr_mut(limit, f),
         IrStmt::Call(call) => {
             walk_call_args_mut(&mut call.args, f);
+            if let Some(virtual_call) = &mut call.virtual_call {
+                virtual_call
+                    .receiver
+                    .expressions_mut(&mut |child| walk_expr_mut(child, f));
+            }
             // Temp initializers and copy-out select indices are expression
             // slots of the call node.
             for (_, _, init) in &mut call.temps {
@@ -1929,6 +1941,16 @@ fn mark_unused_storage(model: &mut IrModel, execution: Option<&[ExecutionProcess
     for dependency in &sens {
         mark_dependency_read(dependency, model, &mut rw);
     }
+    // A virtual-interface member is addressed through a runtime environment,
+    // so its generated access has no textual signal dependency for this pass
+    // to discover. Keep every descriptor member's concrete storage alive.
+    for interface in &model.virtual_interfaces {
+        for instance in &interface.instances {
+            for signal in instance.members.iter().flatten() {
+                rw.read(*signal);
+            }
+        }
+    }
     // Declaration initializers count as writes and their RHSs count as reads.
     for step in &model.init_steps {
         match step {
@@ -2414,6 +2436,11 @@ fn collect_stream_selector_reads(selector: &IrStreamSelector, model: &IrModel, r
 }
 
 fn collect_call_rw(call: &crate::sim::ir::IrCall, model: &IrModel, rw: &mut Rw) {
+    if let Some(virtual_call) = &call.virtual_call {
+        virtual_call
+            .receiver
+            .expressions(&mut |child| collect_expr_reads(child, model, rw));
+    }
     for (index, arg) in call.args.iter().enumerate() {
         match arg {
             IrCallArg::Val(e) => collect_expr_reads(e, model, rw),
@@ -2674,7 +2701,12 @@ fn collect_children_reads(e: &IrExpr, model: &IrModel, rw: &mut Rw) {
             }
         }
         IrExprKind::CallFn(call) => {
-            collect_call_rw_readonly(call.function_index(), &call.args, model, rw)
+            collect_call_rw_readonly(call.function_index(), &call.args, model, rw);
+            if let Some(virtual_call) = &call.virtual_call {
+                virtual_call
+                    .receiver
+                    .expressions(&mut |child| collect_expr_reads(child, model, rw));
+            }
         }
         IrExprKind::SysFunc(sf) => match sf {
             IrSysFunc::TestPlusArgs { pattern } => {
@@ -3029,6 +3061,7 @@ mod tests {
             funcs: Vec::new(),
             assertions: Vec::new(),
             sampled_domains: Vec::new(),
+            virtual_interfaces: Vec::new(),
             processes: vec![IrProcess {
                 c_name: "p_t_proc_0".to_string(),
                 label: "t.always".to_string(),
@@ -3988,6 +4021,7 @@ mod tests {
             depth: IrDepth::PROC,
             receiver: None,
             virtual_dispatch: false,
+            virtual_call: None,
             temps: vec![(
                 "_a0".to_string(),
                 0,

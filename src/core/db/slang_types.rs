@@ -160,6 +160,7 @@ impl<'a> SlangTypeProjector<'a> {
             TypeKind::Chandle => "chandle".to_owned(),
             TypeKind::Event => "event".to_owned(),
             TypeKind::Void => "void".to_owned(),
+            TypeKind::VirtualInterface => "virtual_interface".to_owned(),
             TypeKind::Other => "other".to_owned(),
         };
         let width = if ty.is_fixed_size {
@@ -174,7 +175,9 @@ impl<'a> SlangTypeProjector<'a> {
             kind,
             width,
             signed: ty.is_signed,
-            type_name: if builtin_integral.is_some() {
+            type_name: if matches!(ty.kind, TypeKind::VirtualInterface) {
+                Some(ty.display_name.clone())
+            } else if builtin_integral.is_some() {
                 None
             } else {
                 nominal_identity(&ty.display_name)
@@ -410,6 +413,7 @@ impl<'a> SlangTypeProjector<'a> {
             | TypeKind::Class
             | TypeKind::Event
             | TypeKind::Void
+            | TypeKind::VirtualInterface
             | TypeKind::Aggregate
             | TypeKind::Other => TypeShape::Opaque {
                 kind: format!("{:?}", ty.kind),

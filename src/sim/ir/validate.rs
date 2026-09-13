@@ -418,6 +418,20 @@ impl Validator<'_> {
             {
                 self.validate_width(width, &format!("containers[{idx}].key"))?;
             }
+            if let Some(size) = container.initial_size {
+                if size == 0 {
+                    return self.fail(
+                        format!("containers[{idx}].initial_size"),
+                        "initial container size must be non-zero",
+                    );
+                }
+                if !matches!(container.kind, IrContainerKind::Dynamic) {
+                    return self.fail(
+                        format!("containers[{idx}].initial_size"),
+                        "only dynamic containers may have an initial size",
+                    );
+                }
+            }
         }
         for object in &self.model.objects {
             if !storage_names.insert(object.c_name.as_str()) {
@@ -1880,7 +1894,12 @@ impl Validator<'_> {
     ) -> ValidationResult {
         self.validate_call_target(call.f, &call.args, formals, path, false)?;
         let callee = &self.model.funcs[call.f];
-        if callee.receiver_class.is_some() {
+        if let Some(virtual_call) = &call.virtual_call {
+            self.validate_virtual_call(call.f, virtual_call, formals, path)?;
+            if call.receiver.is_some() {
+                return self.fail(path, "virtual-interface call cannot carry a class receiver");
+            }
+        } else if callee.receiver_class.is_some() {
             let receiver = call
                 .receiver
                 .as_ref()
@@ -1951,6 +1970,42 @@ impl Validator<'_> {
             }
         }
         Ok(())
+    }
+
+    fn validate_virtual_call(
+        &self,
+        function: usize,
+        call: &crate::sim::ir::IrVirtualCall,
+        formals: &[IrFormal],
+        path: &str,
+    ) -> ValidationResult {
+        let interface = self
+            .model
+            .virtual_interfaces
+            .get(call.interface)
+            .ok_or_else(|| {
+                IrValidationError::new(
+                    path,
+                    format!(
+                        "virtual-interface descriptor {} is out of bounds",
+                        call.interface
+                    ),
+                )
+            })?;
+        let method = interface.methods.get(call.method).ok_or_else(|| {
+            IrValidationError::new(
+                path,
+                format!("virtual-interface method {} is out of bounds", call.method),
+            )
+        })?;
+        if method.function != function {
+            return self.fail(
+                path,
+                "virtual-interface method function disagrees with call target",
+            );
+        }
+        call.receiver
+            .validate(self.model, formals, self.chandle_return.get())
     }
 
     fn validate_call_target(
@@ -3435,7 +3490,13 @@ impl Validator<'_> {
             IrStmt::Call(call) => {
                 self.validate_call_target(call.f, &call.args, formals, path, true)?;
                 let callee = &self.model.funcs[call.f];
-                if callee.receiver_class.is_some() {
+                if let Some(virtual_call) = &call.virtual_call {
+                    self.validate_virtual_call(call.f, virtual_call, formals, path)?;
+                    if call.receiver.is_some() {
+                        return self
+                            .fail(path, "virtual-interface call cannot carry a class receiver");
+                    }
+                } else if callee.receiver_class.is_some() {
                     let receiver = call.receiver.as_ref().ok_or_else(|| {
                         IrValidationError::new(path, "class method call has no receiver")
                     })?;

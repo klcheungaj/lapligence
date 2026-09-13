@@ -34,6 +34,11 @@ enum DisplayTaskKind {
     Deferred { strobe: bool, file: bool },
 }
 
+struct LoweredCallReceiver {
+    class: Option<IrChandleExpr>,
+    virtual_interface: Option<crate::sim::ir::IrVirtualCall>,
+}
+
 fn display_task_variant(name: &str) -> Option<(DisplayTaskKind, IrDisplayRadix)> {
     let variant = match name {
         "$display" => (
@@ -1315,6 +1320,18 @@ impl EmitCtx<'_, '_> {
                 }
                 if let Some(statement) = self.cg.lower_container_method(&self.path, h)? {
                     Ok(vec![statement])
+                } else if let Some((_, _, ft, _, _)) = self.cg.virtual_interface_method_info(h)? {
+                    let is_task =
+                        matches!(self.cg.kind(ft), NodeKind::FuncTask { is_task: true, .. });
+                    if self.in_final && is_task {
+                        return Err(format!(
+                            "task call `{name}` inside a final block in `{}` is not allowed \
+                             (final permits function statements only)",
+                            self.path
+                        ));
+                    }
+                    let _ = (receiver, callee);
+                    Ok(vec![self.lower_task_call(h, name, is_task, None)?])
                 } else if self.cg.is_class_method_call(h) {
                     let is_task = matches!(
                         callee.map(|callee| self.cg.kind(callee)),
@@ -5292,9 +5309,19 @@ impl EmitCtx<'_, '_> {
                 ));
             }
         }
-        let (ft, callee_inst) = self
-            .cg
-            .resolve_callee_env(self.inst, name, is_task, callee)?;
+        let virtual_call_info = self.cg.virtual_interface_method_info(h)?;
+        let (ft, callee_inst) = if let Some((_, _, ft, callee_inst, _)) = virtual_call_info {
+            if is_task && self.cg.task_has_wait(ft, callee_inst) {
+                return Err(format!(
+                    "timing-bearing virtual-interface task `{name}` is not supported in `{}`",
+                    self.path
+                ));
+            }
+            (ft, callee_inst)
+        } else {
+            self.cg
+                .resolve_callee_env(self.inst, name, is_task, callee)?
+        };
         let automatic = matches!(
             self.cg.kind(ft),
             NodeKind::FuncTask {
@@ -5321,7 +5348,24 @@ impl EmitCtx<'_, '_> {
         let (_, _, formals) = self.cg.func_info(ft, callee_inst)?;
         let args = self.cg.call_argument_nodes(h);
         let bound = self.cg.bind_call_args(self.inst, &formals, &args)?;
-        let receiver = self.cg.class_method_receiver(h)?;
+        let receiver = if virtual_call_info.is_some() {
+            None
+        } else {
+            self.cg.class_method_receiver(h)?
+        };
+        let virtual_call = if let Some((descriptor, method, _, _, receiver)) = virtual_call_info {
+            Some(crate::sim::ir::IrVirtualCall {
+                interface: descriptor,
+                method,
+                receiver: self.cg.lower_chandle(&self.path, receiver)?,
+            })
+        } else {
+            None
+        };
+        let call_receiver = LoweredCallReceiver {
+            class: receiver,
+            virtual_interface: virtual_call,
+        };
         let has_event_formal = bound.iter().any(|argument| argument.is_event);
         if is_task && self.cg.is_class_method_call(h) && self.cg.task_has_wait(ft, callee_inst) {
             return Err(format!(
@@ -5330,7 +5374,14 @@ impl EmitCtx<'_, '_> {
             ));
         }
         if has_event_formal {
-            return self.lower_task_inline(ft, callee_inst, h, &formals, &bound, receiver);
+            return self.lower_task_inline(
+                ft,
+                callee_inst,
+                h,
+                &formals,
+                &bound,
+                call_receiver.class,
+            );
         }
         if is_task
             && (self.cg.task_has_disable(ft, callee_inst) || self.cg.task_is_disable_target(ft))
@@ -5340,7 +5391,7 @@ impl EmitCtx<'_, '_> {
             // carry an explicit cancellation result in the C ABI. The
             // declaration-level target check covers callers that disable a
             // task externally rather than from inside the task body.
-            self.lower_task_inline(ft, callee_inst, h, &formals, &bound, receiver)
+            self.lower_task_inline(ft, callee_inst, h, &formals, &bound, call_receiver.class)
         } else {
             let fidx = self
                 .cg
@@ -5348,7 +5399,7 @@ impl EmitCtx<'_, '_> {
                 .get(&ft)
                 .map(|m| m.ir)
                 .ok_or_else(|| format!("task `{name}` has no C name"))?;
-            self.lower_call_stmts(fidx, callee_inst, h, &formals, &bound, receiver)
+            self.lower_call_stmts(fidx, callee_inst, h, &formals, &bound, call_receiver)
         }
     }
 
@@ -5361,7 +5412,7 @@ impl EmitCtx<'_, '_> {
         h: NodeId,
         formals: &[(NodeId, bool)],
         bound: &[BoundArg],
-        receiver: Option<IrChandleExpr>,
+        call_receiver: LoweredCallReceiver,
     ) -> Result<IrStmt, String> {
         let mut temps: Vec<(String, usize, Option<IrExpr>)> = Vec::new();
         let mut copyouts: Vec<(IrLhs, String, u32, bool)> = Vec::new();
@@ -5580,8 +5631,9 @@ impl EmitCtx<'_, '_> {
             f: fidx,
             args: out_args,
             depth,
-            receiver,
+            receiver: call_receiver.class,
             virtual_dispatch: self.cg.class_method_virtual_dispatch(h),
+            virtual_call: call_receiver.virtual_interface,
             temps,
             copyouts,
         });

@@ -927,11 +927,19 @@ impl<'a> Codegen<'a> {
         if let Some(value) = self.lower_object_query(scope_path, h)? {
             return Ok(value);
         }
+        if let Some(value) = self.virtual_interface_member_expr(scope_path, h)? {
+            return Ok(value);
+        }
         if let Some(value) = self.class_field_expr(scope_path, h)? {
             return Ok(value);
         }
         if let Some(value) = self.lower_enum_method(scope_path, h)? {
             return Ok(value);
+        }
+        if let NodeKind::MethodCall { name, .. } = self.kind(h) {
+            if self.virtual_interface_method_info(h)?.is_some() {
+                return self.lower_func_call_expr(scope_path, h, name, None);
+            }
         }
         if matches!(self.kind(h), NodeKind::MethodCall { .. }) && self.is_class_method_call(h) {
             let (name, callee) = match self.kind(h) {
@@ -4472,6 +4480,9 @@ impl<'a> Codegen<'a> {
                 two_state: binding.local.two_state,
                 shortreal: false,
             });
+        }
+        if let Some(lhs) = self.virtual_interface_member_lhs(path, lhs)? {
+            return Ok(lhs);
         }
         if let Some(lhs) = self.class_field_lhs(path, lhs)? {
             return Ok(lhs);

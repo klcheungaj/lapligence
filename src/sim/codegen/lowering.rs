@@ -299,7 +299,7 @@ const LLG_MAX_FUNC_DEPTH: u32 = 256;
 /// existing object ABI with `chandle`; their nominal layout and method
 /// receiver are carried separately by the class tables below.
 pub(super) fn is_handle_kind(kind: &str) -> bool {
-    matches!(kind, "chandle" | "class")
+    matches!(kind, "chandle" | "class" | "virtual_interface")
 }
 
 /// The generated C model plus non-fatal warnings collected while lowering.
@@ -388,6 +388,10 @@ fn generate_from_db_with_opts_impl(
     for unit in &compilation_units {
         cg.emit_func_prototypes(*unit)?;
     }
+    // Virtual-interface descriptors need both concrete member storage and
+    // subroutine prototypes. Build them before any body is lowered so all
+    // call sites share one rebinding table.
+    cg.collect_virtual_interfaces()?;
     cg.emit_class_func_bodies()?;
     for top in &tops {
         cg.emit_func_bodies(*top)?;
@@ -927,6 +931,19 @@ struct Codegen<'a> {
     assertion_action_procs: HashSet<String>,
     /// Clock inferred while lowering a property or its Reactive action.
     sampled_clock: Option<SampledClock>,
+    /// Canonical virtual-interface type identity → execution descriptor.
+    virtual_interface_types: HashMap<String, usize>,
+    /// Concrete interface instance → `(descriptor, instance)` binding.
+    virtual_interface_instances: HashMap<NodeId, (usize, usize)>,
+    /// `(descriptor, member path)` → member slot.
+    virtual_interface_members: HashMap<(usize, String), usize>,
+    /// `(descriptor, method name)` → method slot.
+    virtual_interface_methods: HashMap<(usize, String), usize>,
+    /// Modport view restrictions keyed by descriptor and view name. Each
+    /// member entry retains its captured direction for assignment checks.
+    virtual_interface_views: HashMap<(usize, String), HashMap<String, DbDirection>>,
+    /// Methods explicitly imported/exported by each modport view.
+    virtual_interface_view_methods: HashMap<(usize, String), HashSet<String>>,
 }
 
 /// Runtime-visible bindings for one array-method `with` expression. A zero
@@ -1021,6 +1038,12 @@ impl<'a> Codegen<'a> {
             final_procs: Vec::new(),
             assertion_action_procs: HashSet::new(),
             sampled_clock: None,
+            virtual_interface_types: HashMap::new(),
+            virtual_interface_instances: HashMap::new(),
+            virtual_interface_members: HashMap::new(),
+            virtual_interface_methods: HashMap::new(),
+            virtual_interface_views: HashMap::new(),
+            virtual_interface_view_methods: HashMap::new(),
         }
     }
 
