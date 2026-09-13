@@ -1,15 +1,19 @@
 //! Concurrent assertion lowering.
 //!
-//! H20 intentionally starts with the small, deterministic subset that has a
-//! single sampled clock and simple packed expressions on either side of an
-//! implication.  The owned assertion graph still retains every Slang
-//! property/sequence node; forms outside this subset fail closed here rather
-//! than becoming an untimed immediate assertion.
+//! The H22 sequence lowerer uses one shared sampled-clock automaton for
+//! concatenation, repetition, and the admitted sequence combinators. The
+//! owned assertion graph still retains every Slang property/sequence node;
+//! forms outside the executable subset fail closed here rather than becoming
+//! an untimed immediate assertion.
 
 use super::*;
-use crate::core::db::{AssertionBinaryOp, AssertionExprKind, ConcurrentAssertionKind, EventSpec};
+use crate::core::db::{
+    AssertionBinaryOp, AssertionExprKind, AssertionRange, AssertionRepetition,
+    AssertionRepetitionKind, ConcurrentAssertionKind, EventSpec,
+};
 use crate::sim::ir::{
-    IrAssertion, IrConcurrentAssertionKind, IrExprKind, IrProcess, IrSampledDomain, IrShape,
+    IrAssertion, IrBinOp, IrConcurrentAssertionKind, IrExpr, IrExprKind, IrProcess,
+    IrSampledDomain, IrSequence, IrSequenceRange, IrSequenceTransition, IrShape,
 };
 
 struct PropertyParts {
@@ -17,8 +21,132 @@ struct PropertyParts {
     posedge: bool,
     disable_signal: Option<usize>,
     antecedent: Option<IrExpr>,
-    consequent: IrExpr,
+    consequent: Option<IrExpr>,
+    antecedent_sequence: Option<IrSequence>,
+    consequent_sequence: Option<IrSequence>,
     overlapped: bool,
+}
+
+struct SequenceBuilder {
+    next_state: u32,
+    transitions: Vec<IrSequenceTransition>,
+    atoms: Vec<IrExpr>,
+    first_match: bool,
+    first_match_states: Vec<u32>,
+}
+
+struct SequenceFragment {
+    start: u32,
+    accept: u32,
+}
+
+impl SequenceBuilder {
+    fn new() -> Self {
+        Self {
+            next_state: 0,
+            transitions: Vec::new(),
+            atoms: Vec::new(),
+            first_match: false,
+            first_match_states: Vec::new(),
+        }
+    }
+
+    fn state(&mut self) -> Result<u32, String> {
+        let state = self.next_state;
+        self.next_state = self
+            .next_state
+            .checked_add(1)
+            .ok_or_else(|| "sequence automaton has too many states".to_owned())?;
+        Ok(state)
+    }
+
+    fn edge(
+        &mut self,
+        from: u32,
+        to: u32,
+        delay: AssertionRange,
+        atom: Option<IrExpr>,
+    ) -> Result<(), String> {
+        let atom = atom
+            .map(|expr| {
+                let index = self.atoms.len();
+                self.atoms.push(expr);
+                u32::try_from(index)
+                    .map_err(|_| "sequence has too many atom expressions".to_owned())
+            })
+            .transpose()?;
+        self.transitions.push(IrSequenceTransition {
+            from,
+            to,
+            delay: IrSequenceRange {
+                min: delay.min,
+                max: delay.max,
+            },
+            atom,
+        });
+        Ok(())
+    }
+
+    fn epsilon(&mut self, from: u32, to: u32, delay: AssertionRange) -> Result<(), String> {
+        self.edge(from, to, delay, None)
+    }
+
+    fn finish(self, fragment: SequenceFragment) -> Result<IrSequence, String> {
+        IrSequence::new(
+            self.next_state,
+            fragment.start,
+            fragment.accept,
+            self.transitions,
+            self.atoms,
+            self.first_match,
+            self.first_match_states,
+        )
+        .map_err(|error| error.to_string())
+    }
+
+    fn mark_first_match(&mut self, state: u32) {
+        if !self.first_match_states.contains(&state) {
+            self.first_match_states.push(state);
+        }
+    }
+}
+
+fn zero_range() -> AssertionRange {
+    AssertionRange {
+        min: 0,
+        max: Some(0),
+    }
+}
+
+fn one_or_more_range(kind: AssertionRepetitionKind) -> AssertionRange {
+    match kind {
+        AssertionRepetitionKind::Consecutive => AssertionRange {
+            min: 1,
+            max: Some(1),
+        },
+        AssertionRepetitionKind::Nonconsecutive | AssertionRepetitionKind::GoTo => {
+            AssertionRange { min: 1, max: None }
+        }
+    }
+}
+
+fn repetition_first_range(kind: AssertionRepetitionKind) -> AssertionRange {
+    match kind {
+        AssertionRepetitionKind::Consecutive => zero_range(),
+        AssertionRepetitionKind::Nonconsecutive | AssertionRepetitionKind::GoTo => {
+            AssertionRange { min: 0, max: None }
+        }
+    }
+}
+
+fn repetition_endpoint_range(kind: AssertionRepetitionKind) -> AssertionRange {
+    match kind {
+        AssertionRepetitionKind::Consecutive | AssertionRepetitionKind::GoTo => zero_range(),
+        // Nonconsecutive repetition may complete at or after its final
+        // occurrence; retaining this endpoint range lets a following
+        // concatenation choose any later sampled tick.
+        AssertionRepetitionKind::Nonconsecutive => AssertionRange { min: 0, max: None },
+    }
 }
 
 impl Codegen<'_> {
@@ -60,20 +188,41 @@ impl Codegen<'_> {
             ConcurrentAssertionKind::Assume => IrConcurrentAssertionKind::Assume,
             ConcurrentAssertionKind::Cover => IrConcurrentAssertionKind::Cover,
         };
-        self.model.assertions.push(IrAssertion::new(
-            assertion.index() as u64,
-            label,
-            location,
-            kind,
-            parts.clock_signal,
-            parts.posedge,
-            parts.disable_signal,
-            parts.antecedent,
-            parts.consequent,
-            parts.overlapped,
-            pass_action,
-            fail_action,
-        ));
+        if let Some(consequent) = parts.consequent {
+            self.model.assertions.push(IrAssertion::new(
+                assertion.index() as u64,
+                label,
+                location,
+                kind,
+                parts.clock_signal,
+                parts.posedge,
+                parts.disable_signal,
+                parts.antecedent,
+                consequent,
+                parts.overlapped,
+                pass_action,
+                fail_action,
+            ));
+        } else if let Some(consequent) = parts.consequent_sequence {
+            self.model.assertions.push(IrAssertion::new_sequence(
+                assertion.index() as u64,
+                label,
+                location,
+                kind,
+                parts.clock_signal,
+                parts.posedge,
+                parts.disable_signal,
+                parts.antecedent_sequence,
+                consequent,
+                parts.overlapped,
+                pass_action,
+                fail_action,
+            ));
+        } else {
+            return Err(format!(
+                "concurrent assertion has no lowered consequent at {path}"
+            ));
+        }
         Ok(())
     }
 
@@ -138,10 +287,10 @@ impl Codegen<'_> {
                 left,
                 right,
             }) => (Some(*left), *right, false),
-            NodeKind::AssertionExpr(AssertionExprKind::Simple { .. }) => (None, current, true),
+            NodeKind::AssertionExpr(_) => (None, current, true),
             _ => {
                 return Err(format!(
-                    "unsupported concurrent assertion property at {} (only simple |->/|=> forms are supported)",
+                    "unsupported concurrent assertion property at {}",
                     self.source_location(current)
                 ))
             }
@@ -152,34 +301,34 @@ impl Codegen<'_> {
             posedge,
             gate: None,
         });
+        let use_engine = antecedent_node.is_some_and(|node| self.sequence_requires_engine(node))
+            || self.sequence_requires_engine(consequent_node);
         let expressions = (|| {
-            let antecedent = antecedent_node
-                .map(|node| self.lower_simple_assertion_expr(path, node, "antecedent"))
-                .transpose()?;
-            let consequent =
-                self.lower_simple_assertion_expr(path, consequent_node, "consequent")?;
-            Ok::<_, String>((antecedent, consequent))
+            if use_engine {
+                let antecedent = antecedent_node
+                    .map(|node| self.lower_sequence(path, node, "antecedent"))
+                    .transpose()?;
+                let consequent = self.lower_sequence(path, consequent_node, "consequent")?;
+                Ok::<_, String>((None, None, antecedent, Some(consequent)))
+            } else {
+                let antecedent = antecedent_node
+                    .map(|node| self.lower_simple_assertion_expr(path, node, "antecedent"))
+                    .transpose()?;
+                let consequent =
+                    self.lower_simple_assertion_expr(path, consequent_node, "consequent")?;
+                Ok::<_, String>((antecedent, Some(consequent), None, None))
+            }
         })();
         self.sampled_clock = previous_clock;
-        let (antecedent, consequent) = expressions?;
-        for (name, expression) in [
-            ("antecedent", antecedent.as_ref()),
-            ("consequent", Some(&consequent)),
-        ] {
-            if let Some(expression) = expression {
-                if expression.is_real() || !sampled_compatible(expression) {
-                    return Err(format!(
-                        "unsupported sampled {name} expression in concurrent assertion at {path}"
-                    ));
-                }
-            }
-        }
+        let (antecedent, consequent, antecedent_sequence, consequent_sequence) = expressions?;
         Ok(PropertyParts {
             clock_signal,
             posedge,
             disable_signal,
             antecedent,
             consequent,
+            antecedent_sequence,
+            consequent_sequence,
             overlapped,
         })
     }
@@ -363,18 +512,340 @@ impl Codegen<'_> {
         node: NodeId,
         role: &str,
     ) -> Result<IrExpr, String> {
-        let NodeKind::AssertionExpr(AssertionExprKind::Simple { expr, repeated }) = self.kind(node)
+        let NodeKind::AssertionExpr(AssertionExprKind::Simple {
+            expr,
+            repeated,
+            repetition,
+        }) = self.kind(node)
         else {
             return Err(format!(
                 "concurrent assertion {role} must be a simple sequence at {path}"
             ));
         };
-        if *repeated {
+        if *repeated || repetition.is_some() {
             return Err(format!(
-                "sequence repetition is not supported in concurrent assertion {role} at {path}"
+                "sequence repetition requires automaton lowering in concurrent assertion {role} at {path}"
             ));
         }
-        self.lower_boolean_expr(path, *expr)
+        let expression = self.lower_boolean_expr(path, *expr)?;
+        if expression.is_real() || !sampled_compatible(&expression) {
+            return Err(format!(
+                "unsupported sampled {role} expression in concurrent assertion at {path}"
+            ));
+        }
+        Ok(expression)
+    }
+
+    fn sequence_requires_engine(&self, node: NodeId) -> bool {
+        match self.kind(node) {
+            NodeKind::AssertionExpr(AssertionExprKind::Simple { repetition, .. }) => {
+                repetition.is_some()
+            }
+            NodeKind::AssertionExpr(AssertionExprKind::SequenceConcat { .. })
+            | NodeKind::AssertionExpr(AssertionExprKind::SequenceWithMatch { .. })
+            | NodeKind::AssertionExpr(AssertionExprKind::Unary { .. })
+            | NodeKind::AssertionExpr(AssertionExprKind::Binary { .. })
+            | NodeKind::AssertionExpr(AssertionExprKind::FirstMatch { .. }) => true,
+            NodeKind::AssertionExpr(AssertionExprKind::Clocking { expr, .. })
+            | NodeKind::AssertionExpr(AssertionExprKind::DisableIff { expr, .. }) => {
+                self.sequence_requires_engine(*expr)
+            }
+            _ => true,
+        }
+    }
+
+    fn lower_sequence(
+        &mut self,
+        path: &str,
+        node: NodeId,
+        role: &str,
+    ) -> Result<IrSequence, String> {
+        let mut builder = SequenceBuilder::new();
+        let fragment = self.lower_sequence_fragment(path, node, &mut builder, role)?;
+        builder.finish(fragment)
+    }
+
+    fn lower_sequence_fragment(
+        &mut self,
+        path: &str,
+        node: NodeId,
+        builder: &mut SequenceBuilder,
+        role: &str,
+    ) -> Result<SequenceFragment, String> {
+        match self.kind(node) {
+            NodeKind::AssertionExpr(AssertionExprKind::Simple {
+                expr,
+                repeated,
+                repetition,
+            }) => {
+                let atom = self.lower_sequence_atom(path, *expr, role)?;
+                if let Some(repetition) = repetition {
+                    if !*repeated {
+                        return Err(format!(
+                            "invalid sequence repetition metadata in concurrent assertion {role} at {path}"
+                        ));
+                    }
+                    self.lower_repetition(builder, atom, repetition)
+                } else {
+                    let start = builder.state()?;
+                    let accept = builder.state()?;
+                    builder.edge(start, accept, zero_range(), Some(atom))?;
+                    Ok(SequenceFragment { start, accept })
+                }
+            }
+            NodeKind::AssertionExpr(AssertionExprKind::SequenceConcat { elements, delays }) => {
+                if elements.is_empty() {
+                    let start = builder.state()?;
+                    let accept = builder.state()?;
+                    builder.epsilon(start, accept, zero_range())?;
+                    return Ok(SequenceFragment { start, accept });
+                }
+                let start = builder.state()?;
+                let accept = builder.state()?;
+                let mut cursor = start;
+                for (index, element) in elements.iter().enumerate() {
+                    let fragment = self.lower_sequence_fragment(path, *element, builder, role)?;
+                    let delay = delays.get(index).cloned().unwrap_or_else(zero_range);
+                    builder.epsilon(cursor, fragment.start, delay)?;
+                    cursor = fragment.accept;
+                }
+                builder.epsilon(cursor, accept, zero_range())?;
+                Ok(SequenceFragment { start, accept })
+            }
+            NodeKind::AssertionExpr(AssertionExprKind::SequenceWithMatch {
+                expr,
+                match_items,
+                repetition,
+                ..
+            }) => {
+                if !match_items.is_empty() {
+                    return Err(format!(
+                        "sequence match items are not supported in concurrent assertion {role} at {path}"
+                    ));
+                }
+                let fragment = if matches!(self.kind(*expr), NodeKind::AssertionExpr(_)) {
+                    self.lower_sequence_fragment(path, *expr, builder, role)?
+                } else {
+                    let atom = self.lower_sequence_atom(path, *expr, role)?;
+                    let start = builder.state()?;
+                    let accept = builder.state()?;
+                    builder.edge(start, accept, zero_range(), Some(atom))?;
+                    SequenceFragment { start, accept }
+                };
+                if let Some(repetition) = repetition {
+                    // A sequence-with-match repetition is represented by a
+                    // direct repeated body in Slang's owned graph. Match
+                    // items are rejected above because their per-thread
+                    // mutable state belongs to H23.
+                    let atom = self.sequence_fragment_atom(builder, fragment)?;
+                    self.lower_repetition(builder, atom, repetition)
+                } else {
+                    Ok(fragment)
+                }
+            }
+            NodeKind::AssertionExpr(AssertionExprKind::FirstMatch {
+                sequence,
+                match_items,
+            }) => {
+                if !match_items.is_empty() {
+                    return Err(format!(
+                        "first_match match items are not supported in concurrent assertion {role} at {path}"
+                    ));
+                }
+                let fragment = self.lower_sequence_fragment(path, *sequence, builder, role)?;
+                builder.first_match = true;
+                builder.mark_first_match(fragment.accept);
+                Ok(fragment)
+            }
+            NodeKind::AssertionExpr(AssertionExprKind::Binary { op, left, right }) => {
+                match op {
+                    AssertionBinaryOp::Or => {
+                        let start = builder.state()?;
+                        let accept = builder.state()?;
+                        let left = self.lower_sequence_fragment(path, *left, builder, role)?;
+                        let right = self.lower_sequence_fragment(path, *right, builder, role)?;
+                        builder.epsilon(start, left.start, zero_range())?;
+                        builder.epsilon(start, right.start, zero_range())?;
+                        builder.epsilon(left.accept, accept, zero_range())?;
+                        builder.epsilon(right.accept, accept, zero_range())?;
+                        Ok(SequenceFragment { start, accept })
+                    }
+                    AssertionBinaryOp::And
+                    | AssertionBinaryOp::Intersect
+                    | AssertionBinaryOp::Throughout
+                    | AssertionBinaryOp::Within => {
+                        let left = self.lower_sequence_atom_node(path, *left, role)?;
+                        let right = self.lower_sequence_atom_node(path, *right, role)?;
+                        let atom = IrExpr::new(
+                            IrExprKind::Bin {
+                                op: IrBinOp::LogAnd,
+                                a: Box::new(left),
+                                b: Box::new(right),
+                            },
+                            1,
+                            false,
+                            None,
+                        );
+                        let start = builder.state()?;
+                        let accept = builder.state()?;
+                        builder.edge(start, accept, zero_range(), Some(atom))?;
+                        Ok(SequenceFragment { start, accept })
+                    }
+                    unsupported => Err(format!(
+                        "assertion binary operator {unsupported:?} is not supported in concurrent assertion {role} at {path}"
+                    )),
+                }
+            }
+            NodeKind::AssertionExpr(AssertionExprKind::Clocking { expr, .. })
+            | NodeKind::AssertionExpr(AssertionExprKind::DisableIff { expr, .. }) => {
+                self.lower_sequence_fragment(path, *expr, builder, role)
+            }
+            NodeKind::AssertionExpr(kind) => Err(format!(
+                "assertion sequence form {kind:?} is not supported in concurrent assertion {role} at {path}"
+            )),
+            _ => Err(format!(
+                "concurrent assertion {role} is not a sequence expression at {path}"
+            )),
+        }
+    }
+
+    fn lower_sequence_atom(
+        &mut self,
+        path: &str,
+        node: NodeId,
+        role: &str,
+    ) -> Result<IrExpr, String> {
+        let expression = self.lower_boolean_expr(path, node)?;
+        if expression.is_real() || !sampled_compatible(&expression) {
+            return Err(format!(
+                "unsupported sampled {role} expression in concurrent assertion at {path}"
+            ));
+        }
+        Ok(expression)
+    }
+
+    fn lower_sequence_atom_node(
+        &mut self,
+        path: &str,
+        node: NodeId,
+        role: &str,
+    ) -> Result<IrExpr, String> {
+        match self.kind(node) {
+            NodeKind::AssertionExpr(AssertionExprKind::Simple {
+                expr,
+                repetition: None,
+                repeated: false,
+            }) => self.lower_sequence_atom(path, *expr, role),
+            _ => self.lower_sequence_atom(path, node, role),
+        }
+    }
+
+    fn sequence_fragment_atom(
+        &self,
+        builder: &SequenceBuilder,
+        fragment: SequenceFragment,
+    ) -> Result<IrExpr, String> {
+        let mut candidate = None;
+        for transition in &builder.transitions {
+            if transition.from == fragment.start
+                && transition.to == fragment.accept
+                && transition.delay
+                    == (IrSequenceRange {
+                        min: 0,
+                        max: Some(0),
+                    })
+            {
+                if let Some(atom) = transition.atom {
+                    candidate = builder.atoms.get(atom as usize).cloned();
+                }
+            }
+        }
+        candidate
+            .ok_or_else(|| "sequence repetition requires a single sampled sequence atom".to_owned())
+    }
+
+    fn lower_repetition(
+        &mut self,
+        builder: &mut SequenceBuilder,
+        atom: IrExpr,
+        repetition: &AssertionRepetition,
+    ) -> Result<SequenceFragment, String> {
+        let min = repetition.range.min;
+        if repetition.range.max.is_some_and(|max| max < min) {
+            return Err("sequence repetition range is inverted".to_owned());
+        }
+        let start = builder.state()?;
+        let accept = builder.state()?;
+        if repetition.kind == AssertionRepetitionKind::GoTo {
+            // Goto repetition ends at the first endpoint that satisfies its
+            // occurrence count; retaining the waiting source would create
+            // later endpoints that the LRM's goto form does not admit.
+            builder.mark_first_match(accept);
+        }
+        if min == 0 {
+            builder.epsilon(start, accept, repetition_endpoint_range(repetition.kind))?;
+        }
+        let mut cursor = start;
+        for count in 0..min {
+            let next = builder.state()?;
+            builder.edge(
+                cursor,
+                next,
+                if count == 0 {
+                    repetition_first_range(repetition.kind)
+                } else {
+                    one_or_more_range(repetition.kind)
+                },
+                Some(atom.clone()),
+            )?;
+            cursor = next;
+        }
+        match repetition.range.max {
+            Some(max) => {
+                for count in min..max {
+                    builder.epsilon(cursor, accept, repetition_endpoint_range(repetition.kind))?;
+                    let next = builder.state()?;
+                    builder.edge(
+                        cursor,
+                        next,
+                        if count == 0 {
+                            repetition_first_range(repetition.kind)
+                        } else {
+                            one_or_more_range(repetition.kind)
+                        },
+                        Some(atom.clone()),
+                    )?;
+                    cursor = next;
+                }
+                builder.epsilon(cursor, accept, repetition_endpoint_range(repetition.kind))?;
+            }
+            None => {
+                builder.epsilon(cursor, accept, repetition_endpoint_range(repetition.kind))?;
+                let loop_state = builder.state()?;
+                builder.edge(
+                    cursor,
+                    loop_state,
+                    if min == 0 {
+                        repetition_first_range(repetition.kind)
+                    } else {
+                        one_or_more_range(repetition.kind)
+                    },
+                    Some(atom.clone()),
+                )?;
+                builder.edge(
+                    loop_state,
+                    loop_state,
+                    one_or_more_range(repetition.kind),
+                    Some(atom),
+                )?;
+                builder.epsilon(
+                    loop_state,
+                    accept,
+                    repetition_endpoint_range(repetition.kind),
+                )?;
+            }
+        }
+        Ok(SequenceFragment { start, accept })
     }
 
     fn lower_assertion_action(

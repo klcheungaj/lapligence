@@ -32,7 +32,7 @@ must use the safe APIs from this directory and must not call the C ABI.
   and message where available; malformed native output is a separate
   `InvalidNativeData` failure.
 
-## Slang ABI v2 contract
+## Slang ABI v3 contract
 
 - `CompileRequest` borrows admitted source buffers and typed options for one
   blocking `llg_slang_compile` call. Input arrays and strings remain alive
@@ -57,6 +57,11 @@ must use the safe APIs from this directory and must not call the C ABI.
   validates every table and copies all records before the RAII owner calls
   `llg_slang_snapshot_destroy`. Error views follow the same copy-before-drop
   rule.
+- Assertion sequence records carry checked repetition/range metadata and
+  `SequenceConcat` edges carry checked cycle-delay ranges. Unbounded maxima use
+  the ABI-owned `UINT32_MAX` sentinel and are converted to `Option<u32>` before
+  leaving this FFI module; invalid ranges, flags, and repetition kinds are
+  rejected as `InvalidNativeData`.
 - Preserve the unconditional static link attributes for
   `llg_slang_wrapper`, `svlang`, and `fmt`; they carry the native archives
   through the Rust library target.

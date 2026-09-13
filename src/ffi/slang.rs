@@ -600,6 +600,10 @@ pub const SEMANTIC_ASSERTION_RANGE: u64 = 1 << 1;
 pub const SEMANTIC_ASSERTION_STRONG: u64 = 1 << 2;
 pub const SEMANTIC_ASSERTION_ABORT_REJECT: u64 = 1 << 3;
 pub const SEMANTIC_ASSERTION_ABORT_SYNC: u64 = 1 << 4;
+pub const SEMANTIC_ASSERTION_RANGE_UNBOUNDED: u32 = u32::MAX;
+pub const SEMANTIC_ASSERTION_REPEAT_CONSECUTIVE: u32 = 1;
+pub const SEMANTIC_ASSERTION_REPEAT_NONCONSECUTIVE: u32 = 2;
+pub const SEMANTIC_ASSERTION_REPEAT_GOTO: u32 = 3;
 pub const SEMANTIC_EXPR_ASSERTION_INSTANCE: u32 = 90;
 /// Expression tag for a sampled-value `@(event)` argument.
 pub const SEMANTIC_EXPR_CLOCKING_EVENT: u32 = 91;
@@ -767,6 +771,16 @@ pub struct SemanticEdge {
     pub role: SemanticEdgeRole,
     pub index: u32,
     pub target_id: u64,
+    /// SequenceConcat delay metadata, when this edge is a sequence element.
+    pub sequence_delay: Option<SemanticSequenceRange>,
+}
+
+/// A checked inclusive sequence cycle range. `None` for `max` means the
+/// frontend supplied an unbounded upper endpoint.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SemanticSequenceRange {
+    pub min: u32,
+    pub max: Option<u32>,
 }
 
 /// One node in the bounded, owned elaborated semantic graph.
@@ -830,6 +844,10 @@ pub struct SemanticNode {
     /// Slang slice size; variables store their resolved lifetime tag;
     /// conditional/case statements store a `SEMANTIC_UNIQUE_PRIORITY_*` tag.
     pub auxiliary: u64,
+    /// Assertion sequence repetition/range metadata copied from Slang.
+    pub assertion_range_min: u32,
+    pub assertion_range_max: Option<u32>,
+    pub assertion_repetition_kind: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1130,6 +1148,9 @@ struct RawSemanticNode {
     strength0: u32,
     strength1: u32,
     auxiliary: u64,
+    assertion_range_min: u32,
+    assertion_range_max: u32,
+    assertion_repetition_kind: u32,
 }
 
 #[repr(C)]
@@ -1138,6 +1159,9 @@ struct RawSemanticEdge {
     role: u32,
     index: u32,
     target_id: u64,
+    sequence_delay_valid: u32,
+    sequence_delay_min: u32,
+    sequence_delay_max: u32,
 }
 
 #[repr(C)]
@@ -1841,6 +1865,15 @@ fn decode_semantic_edges(
             if !node_ids.contains(&edge.target_id) {
                 return Err(invalid_native("semantic edge target does not exist"));
             }
+            if edge.sequence_delay_valid > 1
+                || (edge.sequence_delay_valid != 0
+                    && edge.sequence_delay_max != SEMANTIC_ASSERTION_RANGE_UNBOUNDED
+                    && edge.sequence_delay_max < edge.sequence_delay_min)
+            {
+                return Err(invalid_native(
+                    "semantic edge has an invalid sequence delay range",
+                ));
+            }
             let role = match edge.role {
                 1 => SemanticEdgeRole::Child,
                 2 => SemanticEdgeRole::HighConnection,
@@ -1885,6 +1918,10 @@ fn decode_semantic_edges(
                 role,
                 index: edge.index,
                 target_id: edge.target_id,
+                sequence_delay: (edge.sequence_delay_valid != 0).then(|| SemanticSequenceRange {
+                    min: edge.sequence_delay_min,
+                    max: (edge.sequence_delay_max != u32::MAX).then_some(edge.sequence_delay_max),
+                }),
             })
         })
         .collect()
@@ -2071,6 +2108,10 @@ fn decode_semantic_nodes(
                 strength0: decode_drive_strength(node.strength0)?,
                 strength1: decode_drive_strength(node.strength1)?,
                 auxiliary: node.auxiliary,
+                assertion_range_min: node.assertion_range_min,
+                assertion_range_max: (node.kind == 28 && node.assertion_range_max != u32::MAX)
+                    .then_some(node.assertion_range_max),
+                assertion_repetition_kind: node.assertion_repetition_kind,
             })
         })
         .collect()
@@ -2181,13 +2222,19 @@ fn validate_semantic_auxiliary(node: &RawSemanticNode) -> Result<(), SlangError>
         // Concurrent assertion expressions use a small set of owned flags;
         // unknown flags would make the property shape ambiguous downstream.
         (28, 1..=13, _) => {
-            node.auxiliary
+            let flags_valid = node.auxiliary
                 & !(SEMANTIC_ASSERTION_REPETITION
                     | SEMANTIC_ASSERTION_RANGE
                     | SEMANTIC_ASSERTION_STRONG
                     | SEMANTIC_ASSERTION_ABORT_REJECT
                     | SEMANTIC_ASSERTION_ABORT_SYNC)
-                == 0
+                == 0;
+            let kind_valid = matches!(node.assertion_repetition_kind, 0..=3)
+                && (node.assertion_range_max == SEMANTIC_ASSERTION_RANGE_UNBOUNDED
+                    || node.assertion_range_max >= node.assertion_range_min)
+                && ((node.auxiliary & SEMANTIC_ASSERTION_REPETITION != 0)
+                    == (node.assertion_repetition_kind != 0));
+            flags_valid && kind_valid
         }
         // Foreach uses the auxiliary field for the number of source iterator
         // slots so omitted trailing dimensions survive the owned snapshot.
@@ -3103,6 +3150,9 @@ mod tests {
             strength0: 0,
             strength1: 0,
             auxiliary: 0,
+            assertion_range_min: 0,
+            assertion_range_max: 0,
+            assertion_repetition_kind: 0,
         }
     }
 
@@ -3193,11 +3243,17 @@ mod tests {
                 role: 1,
                 index: 0,
                 target_id: 0,
+                sequence_delay_valid: 0,
+                sequence_delay_min: 0,
+                sequence_delay_max: 0,
             },
             RawSemanticEdge {
                 role: 1,
                 index: 0,
                 target_id: 0,
+                sequence_delay_valid: 0,
+                sequence_delay_min: 0,
+                sequence_delay_max: 0,
             },
         ];
         let edges = decode_semantic_edges(&raw_edges, std::slice::from_ref(&node))
@@ -3341,11 +3397,17 @@ mod tests {
                     role: 30,
                     index: 0,
                     target_id: 0,
+                    sequence_delay_valid: 0,
+                    sequence_delay_min: 0,
+                    sequence_delay_max: 0,
                 },
                 RawSemanticEdge {
                     role: 31,
                     index: 0,
                     target_id: 0,
+                    sequence_delay_valid: 0,
+                    sequence_delay_min: 0,
+                    sequence_delay_max: 0,
                 },
             ],
             std::slice::from_ref(&owner),

@@ -722,12 +722,96 @@ impl Validator<'_> {
                     );
                 }
             }
-            self.validate_expr(&assertion.consequent, &[], &format!("{path}.consequent"))?;
-            if assertion.consequent.is_real() {
+            if let Some(consequent) = &assertion.consequent {
+                self.validate_expr(consequent, &[], &format!("{path}.consequent"))?;
+                if consequent.is_real() {
+                    return self.fail(
+                        format!("{path}.consequent"),
+                        "assertion consequent must be packed",
+                    );
+                }
+            }
+            let has_sequence =
+                assertion.antecedent_sequence.is_some() || assertion.consequent_sequence.is_some();
+            if has_sequence && assertion.consequent_sequence.is_none() {
+                return self.fail(&path, "sequence assertion must have a consequent automaton");
+            }
+            if has_sequence && (assertion.antecedent.is_some() || assertion.consequent.is_some()) {
                 return self.fail(
-                    format!("{path}.consequent"),
-                    "assertion consequent must be packed",
+                    &path,
+                    "sequence assertion cannot mix direct and automaton expressions",
                 );
+            }
+            if !has_sequence && assertion.consequent.is_none() {
+                return self.fail(&path, "direct assertion must have a consequent expression");
+            }
+            for (name, sequence) in [
+                (
+                    "antecedent_sequence",
+                    assertion.antecedent_sequence.as_ref(),
+                ),
+                (
+                    "consequent_sequence",
+                    assertion.consequent_sequence.as_ref(),
+                ),
+            ] {
+                let Some(sequence) = sequence else { continue };
+                if sequence.states == 0
+                    || sequence.start >= sequence.states
+                    || sequence.accept >= sequence.states
+                    || sequence.transitions.is_empty()
+                {
+                    return self.fail(
+                        format!("{path}.{name}"),
+                        "sequence automaton has invalid state or transition storage",
+                    );
+                }
+                if sequence
+                    .first_match_states
+                    .iter()
+                    .any(|state| *state >= sequence.states)
+                {
+                    return self.fail(
+                        format!("{path}.{name}.first_match_states"),
+                        "first_match endpoint state is out of bounds",
+                    );
+                }
+                for (transition_index, transition) in sequence.transitions.iter().enumerate() {
+                    if transition.from >= sequence.states || transition.to >= sequence.states {
+                        return self.fail(
+                            format!("{path}.{name}.transitions[{transition_index}]"),
+                            "sequence transition state is out of bounds",
+                        );
+                    }
+                    if transition
+                        .delay
+                        .max
+                        .is_some_and(|max| max < transition.delay.min)
+                    {
+                        return self.fail(
+                            format!("{path}.{name}.transitions[{transition_index}].delay"),
+                            "sequence transition delay range is inverted",
+                        );
+                    }
+                    if transition
+                        .atom
+                        .is_some_and(|atom| atom as usize >= sequence.atoms.len())
+                    {
+                        return self.fail(
+                            format!("{path}.{name}.transitions[{transition_index}].atom"),
+                            "sequence transition atom is out of bounds",
+                        );
+                    }
+                }
+                for (atom_index, atom) in sequence.atoms.iter().enumerate() {
+                    self.validate_expr(atom, &[], &format!("{path}.{name}.atoms[{atom_index}]"))?;
+                    if atom.is_real() {
+                        return self.fail(
+                            format!("{path}.{name}.atoms[{atom_index}]"),
+                            "sequence atom must be packed",
+                        );
+                    }
+                }
             }
         }
 

@@ -2264,6 +2264,126 @@ pub enum IrConcurrentAssertionKind {
     Cover,
 }
 
+/// A cycle range used by one sequence transition. `None` for `max` is an
+/// unbounded endpoint; no finite cutoff is introduced by the IR.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct IrSequenceRange {
+    pub min: u32,
+    pub max: Option<u32>,
+}
+
+/// One labelled or epsilon edge in a lowered sequence automaton.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct IrSequenceTransition {
+    pub from: u32,
+    pub to: u32,
+    pub delay: IrSequenceRange,
+    /// Index into [`IrSequence::atoms`]. `None` is an epsilon edge.
+    pub atom: Option<u32>,
+}
+
+/// Thompson-style sequence automaton consumed by the sampled assertion
+/// runtime. Atom expressions are evaluated against the immutable sampled
+/// view; transitions retain every endpoint and support unbounded ranges.
+#[derive(Clone, Debug, PartialEq)]
+pub struct IrSequence {
+    pub(in crate::sim) states: u32,
+    pub(in crate::sim) start: u32,
+    pub(in crate::sim) accept: u32,
+    pub(in crate::sim) transitions: Vec<IrSequenceTransition>,
+    pub(in crate::sim) atoms: Vec<IrExpr>,
+    pub(in crate::sim) first_match: bool,
+    pub(in crate::sim) first_match_states: Vec<u32>,
+}
+
+impl IrSequence {
+    pub(in crate::sim) fn new(
+        states: u32,
+        start: u32,
+        accept: u32,
+        transitions: Vec<IrSequenceTransition>,
+        atoms: Vec<IrExpr>,
+        first_match: bool,
+        first_match_states: Vec<u32>,
+    ) -> Result<Self, IrValidationError> {
+        if states == 0 || start >= states || accept >= states {
+            return Err(IrValidationError::new(
+                "sequence.states",
+                "sequence automaton has an invalid state endpoint",
+            ));
+        }
+        for (index, transition) in transitions.iter().enumerate() {
+            if transition.from >= states || transition.to >= states {
+                return Err(IrValidationError::new(
+                    format!("sequence.transitions[{index}]"),
+                    "sequence transition state is out of bounds",
+                ));
+            }
+            if let Some(atom) = transition.atom {
+                if atom as usize >= atoms.len() {
+                    return Err(IrValidationError::new(
+                        format!("sequence.transitions[{index}].atom"),
+                        "sequence atom index is out of bounds",
+                    ));
+                }
+            }
+            if transition
+                .delay
+                .max
+                .is_some_and(|max| max < transition.delay.min)
+            {
+                return Err(IrValidationError::new(
+                    format!("sequence.transitions[{index}].delay"),
+                    "sequence delay range is inverted",
+                ));
+            }
+        }
+        if first_match_states.iter().any(|state| *state >= states) {
+            return Err(IrValidationError::new(
+                "sequence.first_match_states",
+                "first_match endpoint state is out of bounds",
+            ));
+        }
+        Ok(Self {
+            states,
+            start,
+            accept,
+            transitions,
+            atoms,
+            first_match,
+            first_match_states,
+        })
+    }
+
+    pub fn states(&self) -> u32 {
+        self.states
+    }
+
+    pub fn start(&self) -> u32 {
+        self.start
+    }
+
+    pub fn accept(&self) -> u32 {
+        self.accept
+    }
+
+    pub fn transitions(&self) -> &[IrSequenceTransition] {
+        &self.transitions
+    }
+
+    pub fn atoms(&self) -> &[IrExpr] {
+        &self.atoms
+    }
+
+    pub fn first_match(&self) -> bool {
+        self.first_match
+    }
+
+    pub fn first_match_states(&self) -> &[u32] {
+        &self.first_match_states
+    }
+}
+
 /// One lowered concurrent assertion instance.
 ///
 /// The property itself is intentionally not represented as an ordinary
@@ -2280,7 +2400,9 @@ pub struct IrAssertion {
     pub(in crate::sim) posedge: bool,
     pub(in crate::sim) disable_signal: Option<usize>,
     pub(in crate::sim) antecedent: Option<IrExpr>,
-    pub(in crate::sim) consequent: IrExpr,
+    pub(in crate::sim) consequent: Option<IrExpr>,
+    pub(in crate::sim) antecedent_sequence: Option<IrSequence>,
+    pub(in crate::sim) consequent_sequence: Option<IrSequence>,
     pub(in crate::sim) overlapped: bool,
     pub(in crate::sim) pass_action: Option<String>,
     pub(in crate::sim) fail_action: Option<String>,
@@ -2311,7 +2433,42 @@ impl IrAssertion {
             posedge,
             disable_signal,
             antecedent,
-            consequent,
+            consequent: Some(consequent),
+            antecedent_sequence: None,
+            consequent_sequence: None,
+            overlapped,
+            pass_action,
+            fail_action,
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(in crate::sim) fn new_sequence(
+        identity: u64,
+        label: String,
+        location: String,
+        kind: IrConcurrentAssertionKind,
+        clock_signal: usize,
+        posedge: bool,
+        disable_signal: Option<usize>,
+        antecedent: Option<IrSequence>,
+        consequent: IrSequence,
+        overlapped: bool,
+        pass_action: Option<String>,
+        fail_action: Option<String>,
+    ) -> Self {
+        Self {
+            identity,
+            label,
+            location,
+            kind,
+            clock_signal,
+            posedge,
+            disable_signal,
+            antecedent: None,
+            consequent: None,
+            antecedent_sequence: antecedent,
+            consequent_sequence: Some(consequent),
             overlapped,
             pass_action,
             fail_action,
@@ -2350,8 +2507,16 @@ impl IrAssertion {
         self.antecedent.as_ref()
     }
 
-    pub fn consequent(&self) -> &IrExpr {
-        &self.consequent
+    pub fn consequent(&self) -> Option<&IrExpr> {
+        self.consequent.as_ref()
+    }
+
+    pub fn antecedent_sequence(&self) -> Option<&IrSequence> {
+        self.antecedent_sequence.as_ref()
+    }
+
+    pub fn consequent_sequence(&self) -> Option<&IrSequence> {
+        self.consequent_sequence.as_ref()
     }
 
     pub fn overlapped(&self) -> bool {

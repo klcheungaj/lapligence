@@ -410,6 +410,33 @@ uint64_t llg_assertion_vacuous_count(void);
 // attempt queues and never evaluates a property against live NBA state.
 typedef int (*llg_concurrent_assertion_predicate_fn)(void* data);
 typedef void (*llg_concurrent_assertion_action_fn)(llg_proc_t* self);
+
+// A sequence graph is an owned, finite NFA whose transition delays are
+// measured in sampled clock edges.  The graph itself is emitted as static C
+// data; the runtime owns only the active token sets.  UINT64_MAX denotes an
+// unbounded upper endpoint and UINT32_MAX denotes an epsilon transition.
+#define LLG_SEQUENCE_UNBOUNDED UINT64_MAX
+#define LLG_SEQUENCE_EPSILON UINT32_MAX
+typedef int (*llg_sequence_atom_fn)(uint32_t atom, void* data);
+typedef struct {
+    uint32_t from;
+    uint32_t to;
+    uint64_t min_delay;
+    uint64_t max_delay;
+    uint32_t atom;
+} llg_sequence_transition_t;
+typedef struct {
+    uint32_t states;
+    uint32_t start;
+    uint32_t accept;
+    uint32_t transition_count;
+    const llg_sequence_transition_t* transitions;
+    uint32_t first_match_state_count;
+    const uint32_t* first_match_states;
+    llg_sequence_atom_fn atom;
+    void* data;
+    int first_match;
+} llg_sequence_graph_t;
 int llg_assertion_register(
     sv4_t* clock, int edge, sv4_t* disable,
     llg_concurrent_assertion_predicate_fn antecedent,
@@ -425,6 +452,13 @@ void llg_deferred_assertion(int kind, int passed, uint64_t identity,
                             const char* label, const char* location,
                             llg_deferred_assertion_fn action,
                             llg_frame_t* frame);
+int llg_assertion_register_sequence(
+    sv4_t* clock, int edge, sv4_t* disable,
+    const llg_sequence_graph_t* antecedent,
+    const llg_sequence_graph_t* consequent,
+    llg_concurrent_assertion_action_fn pass_action,
+    llg_concurrent_assertion_action_fn fail_action, void* data, int kind,
+    int overlapped, uint64_t identity, const char* label, const char* location);
 
 // ── Command-line plusargs ───────────────────────────────────────────────────
 //

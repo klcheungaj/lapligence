@@ -826,7 +826,7 @@ struct Capture {
         LLG_SLANG_SUBKIND_NONE, LLG_SLANG_OP_NONE, 0, {}, {}, {},
         {LLG_SLANG_INVALID_ID, 0, 0}, LLG_SLANG_INVALID_ID,
         LLG_SLANG_INVALID_ID, LLG_SLANG_INVALID_ID, 0, 0, 0, 0, 0, 0, 0, 0,
-        0});
+        0, 0, LLG_SLANG_ASSERTION_RANGE_UNBOUNDED, 0});
     return id;
   }
 
@@ -842,7 +842,7 @@ struct Capture {
         LLG_SLANG_SUBKIND_NONE, LLG_SLANG_OP_NONE, 0, {}, {}, {},
         {LLG_SLANG_INVALID_ID, 0, 0}, LLG_SLANG_INVALID_ID,
         LLG_SLANG_INVALID_ID, LLG_SLANG_INVALID_ID, 0, 0, 0, 0, 0, 0, 0, 0,
-        0});
+        0, 0, LLG_SLANG_ASSERTION_RANGE_UNBOUNDED, 0});
     return id;
   }
 
@@ -904,6 +904,25 @@ struct Capture {
       }
     }
     semanticEdge(source, role, target, index);
+  }
+
+  // Attach a checked SequenceRange to a SequenceConcat operand. The edge
+  // remains an ordinary owned identity edge; scalar metadata is copied
+  // alongside it and never exposes a native Slang object to Rust.
+  void semanticSequenceRole(uint64_t source, const void* targetIdentity,
+                            uint32_t role, uint32_t index,
+                            const SequenceRange& range) {
+    semanticRole(source, targetIdentity, role, index);
+    auto& edges = pendingEdges[static_cast<size_t>(source)];
+    auto it = std::find_if(edges.begin(), edges.end(), [=](const auto& edge) {
+      return edge.role == role && edge.index == index;
+    });
+    if (it == edges.end())
+      throw BridgeFailure(LLG_SLANG_STATUS_INTERNAL_ERROR,
+                          "sequence edge metadata has no edge");
+    it->sequence_delay_min = range.min;
+    it->sequence_delay_max = range.max.value_or(LLG_SLANG_ASSERTION_RANGE_UNBOUNDED);
+    it->sequence_delay_valid = 1;
   }
 
   void replaceChildRoles(uint64_t source, uint32_t role) {
@@ -2361,14 +2380,39 @@ public:
     else if constexpr (std::derived_from<T, AssertionExpr>) {
       result.kind = LLG_SLANG_SEMANTIC_ASSERTION_EXPR;
       result.subkind = semanticAssertionExprKind(node.kind);
+      auto setRange = [&](const SequenceRange& range, uint32_t repetitionKind) {
+        result.assertion_range_min = range.min;
+        result.assertion_range_max = range.max.value_or(LLG_SLANG_ASSERTION_RANGE_UNBOUNDED);
+        result.assertion_repetition_kind = repetitionKind;
+      };
       if constexpr (std::same_as<T, SimpleAssertionExpr>) {
-        if (node.repetition)
+        if (node.repetition) {
           result.auxiliary |= LLG_SLANG_ASSERTION_REPETITION;
+          uint32_t kind = LLG_SLANG_ASSERTION_REPEAT_CONSECUTIVE;
+          if (node.repetition->kind == SequenceRepetition::Nonconsecutive)
+            kind = LLG_SLANG_ASSERTION_REPEAT_NONCONSECUTIVE;
+          else if (node.repetition->kind == SequenceRepetition::GoTo)
+            kind = LLG_SLANG_ASSERTION_REPEAT_GOTO;
+          setRange(node.repetition->range, kind);
+        }
+      }
+      else if constexpr (std::same_as<T, SequenceWithMatchExpr>) {
+        if (node.repetition) {
+          result.auxiliary |= LLG_SLANG_ASSERTION_REPETITION;
+          uint32_t kind = LLG_SLANG_ASSERTION_REPEAT_CONSECUTIVE;
+          if (node.repetition->kind == SequenceRepetition::Nonconsecutive)
+            kind = LLG_SLANG_ASSERTION_REPEAT_NONCONSECUTIVE;
+          else if (node.repetition->kind == SequenceRepetition::GoTo)
+            kind = LLG_SLANG_ASSERTION_REPEAT_GOTO;
+          setRange(node.repetition->range, kind);
+        }
       }
       else if constexpr (std::same_as<T, UnaryAssertionExpr>) {
         result.operation = semanticUnaryAssertionOperation(node.op);
-        if (node.range)
+        if (node.range) {
           result.auxiliary |= LLG_SLANG_ASSERTION_RANGE;
+          setRange(*node.range, 0);
+        }
       }
       else if constexpr (std::same_as<T, BinaryAssertionExpr>) {
         result.operation = semanticBinaryAssertionOperation(node.op);
@@ -3263,7 +3307,8 @@ private:
     else if constexpr (std::same_as<T, SequenceConcatExpr>) {
       uint32_t index = 0;
       for (const auto& element : node.elements)
-        capture.semanticRole(id, element.sequence, LLG_SLANG_EDGE_OPERAND, index++);
+        capture.semanticSequenceRole(id, element.sequence, LLG_SLANG_EDGE_OPERAND,
+                                     index++, element.delay);
     }
     else if constexpr (std::same_as<T, SequenceWithMatchExpr>) {
       capture.semanticRole(id, &node.expr, LLG_SLANG_EDGE_BODY);

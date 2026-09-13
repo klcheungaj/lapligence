@@ -35,10 +35,14 @@
   database and process IR. Initial processes launch in Reactive, while
   prohibited always/continuous/primitive/generate/nested-instance members
   fail before lowering; `$exit` is admitted only from a program process.
-- **Concurrent assertions:** Bounded single-clock packed `|->`/`|=>`
-  properties become dedicated IR assertion instances with explicit sampled
-  predicates, asynchronous `disable iff`, overlap mode, labels, and action
-  callbacks. General sequence/property expansion and formal-bound instances
+- **Concurrent assertions:** Single-clock packed `|->`/`|=>` properties and
+  sequence assertions lower to dedicated IR assertion instances. A shared NFA
+  retains `##` fixed/ranged delays, consecutive/nonconsecutive/goto repetition
+  (including unbounded endpoints), `or`, direct one-cycle `and`/`intersect`,
+  `throughout`/`within`, and `first_match` endpoint selection. Predicates use
+  immutable sampled values; asynchronous `disable iff`, overlap mode, labels,
+  and action callbacks remain explicit. Match-item side effects, formal-bound
+  instances, and temporal property operators outside this sequence subset
   remain source-located fail-closed boundaries.
 - **Evaluated events:** Explicit event expressions retain only their expression
   and qualifier dependencies. Read-only input/`const ref` function calls are

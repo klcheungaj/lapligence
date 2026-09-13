@@ -604,6 +604,16 @@ enum {
   LLG_SLANG_ASSERTION_ABORT_SYNC = 1ull << 4
 };
 
+/* Sequence ranges are copied from Slang's checked SequenceRange. The
+ * unbounded sentinel is owned by this ABI instead of leaking std::optional
+ * across the C boundary. */
+#define LLG_SLANG_ASSERTION_RANGE_UNBOUNDED UINT32_MAX
+enum {
+  LLG_SLANG_ASSERTION_REPEAT_CONSECUTIVE = 1,
+  LLG_SLANG_ASSERTION_REPEAT_NONCONSECUTIVE = 2,
+  LLG_SLANG_ASSERTION_REPEAT_GOTO = 3
+};
+
 enum {
   LLG_SLANG_OP_NONE = 0,
   LLG_SLANG_OP_PLUS = 1,
@@ -779,12 +789,21 @@ typedef struct {
    * LLG_SLANG_VARIABLE_LIFETIME_* value. Conditional/case statements store
    * an LLG_SLANG_UNIQUE_PRIORITY_* qualifier. */
   uint64_t auxiliary;
+  /* Assertion sequence metadata. A zero repetition kind means that the
+   * range fields are unused; max UINT32_MAX denotes an unbounded range. */
+  uint32_t assertion_range_min;
+  uint32_t assertion_range_max;
+  uint32_t assertion_repetition_kind;
 } LlgSlangSemanticNode;
 
 typedef struct {
   uint32_t role;
   uint32_t index;
   uint64_t target_id;
+  /* Delay range for a SequenceConcat operand. Zero/zero is a legal ##0. */
+  uint32_t sequence_delay_valid;
+  uint32_t sequence_delay_min;
+  uint32_t sequence_delay_max;
 } LlgSlangSemanticEdge;
 
 enum {

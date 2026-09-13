@@ -12,7 +12,7 @@ use super::statements::{
 use super::EmitError;
 use crate::sim::execution::{ExecutionModel, ExecutionTerminator, ScheduleRegion, TriggerPlan};
 use crate::sim::ir::{
-    IrConcurrentAssertionKind, IrFunc, IrModel, IrNetKind, IrType, IrVpiObjectKind,
+    IrConcurrentAssertionKind, IrFunc, IrModel, IrNetKind, IrSequence, IrType, IrVpiObjectKind,
 };
 
 // ── Model rendering ───────────────────────────────────────────────────────────
@@ -466,6 +466,99 @@ fn render_assertion_predicate(
     ))
 }
 
+fn assertion_sequence_name(index: usize, role: &str) -> String {
+    format!("llg_assertion_sequence_{index}_{role}")
+}
+
+fn assertion_sequence_atom_name(index: usize, role: &str) -> String {
+    format!("llg_assertion_sequence_{index}_{role}_atom")
+}
+
+fn render_assertion_sequence(
+    model: &IrModel,
+    index: usize,
+    role: &str,
+    sequence: &IrSequence,
+) -> Result<String, String> {
+    let ctx = RCtx {
+        model,
+        func: None,
+        sampled: true,
+        activation_label: None,
+    };
+    let atom_name = assertion_sequence_atom_name(index, role);
+    let mut out = String::new();
+    out.push_str(&format!(
+        "static int {atom_name}(uint32_t atom, void* data) {{\n"
+    ));
+    out.push_str("    (void)data;\n    switch (atom) {\n");
+    for (atom_index, atom) in sequence.atoms().iter().enumerate() {
+        let rendered = super::expressions::render_expr_impl(&ctx, atom)?;
+        if rendered.width == 0 {
+            return Err(format!(
+                "concurrent assertion sequence {role} atom {atom_index} must be packed"
+            ));
+        }
+        out.push_str(&format!(
+            "    case {atom_index}u: return sv4_to_bool({});\n",
+            rendered.code
+        ));
+    }
+    out.push_str("    default: return 0;\n    }\n}\n\n");
+    let transition_name = format!(
+        "{name}_transitions",
+        name = assertion_sequence_name(index, role)
+    );
+    out.push_str(&format!(
+        "static const llg_sequence_transition_t {transition_name}[{}] = {{\n",
+        sequence.transitions().len()
+    ));
+    for transition in sequence.transitions() {
+        let max = transition
+            .delay
+            .max
+            .map(|value| format!("{value}ULL"))
+            .unwrap_or_else(|| "LLG_SEQUENCE_UNBOUNDED".to_owned());
+        let atom = transition
+            .atom
+            .map(|value| format!("{value}u"))
+            .unwrap_or_else(|| "LLG_SEQUENCE_EPSILON".to_owned());
+        out.push_str(&format!(
+            "    {{{}u, {}u, {}ULL, {max}, {atom}}},\n",
+            transition.from, transition.to, transition.delay.min
+        ));
+    }
+    out.push_str("};\n");
+    let sequence_name = assertion_sequence_name(index, role);
+    let first_match_states_name = format!("{sequence_name}_first_match_states");
+    let first_match_states = sequence.first_match_states();
+    if !first_match_states.is_empty() {
+        out.push_str(&format!(
+            "static const uint32_t {first_match_states_name}[{}] = {{",
+            first_match_states.len()
+        ));
+        for state in first_match_states {
+            out.push_str(&format!(" {state}u,"));
+        }
+        out.push_str(" };\n");
+    }
+    let first_match_states_ptr = if first_match_states.is_empty() {
+        "NULL".to_owned()
+    } else {
+        first_match_states_name.clone()
+    };
+    out.push_str(&format!(
+        "static const llg_sequence_graph_t {sequence_name} = {{ {}u, {}u, {}u, {}u, {transition_name}, {}u, {first_match_states_ptr}, {atom_name}, NULL, {} }};\n\n",
+        sequence.states(),
+        sequence.start(),
+        sequence.accept(),
+        sequence.transitions().len(),
+        first_match_states.len(),
+        sequence.first_match() as u8,
+    ));
+    Ok(out)
+}
+
 fn sampled_domain_callback_name(index: usize, role: &str) -> String {
     format!("llg_sampled_domain_{index}_{role}")
 }
@@ -516,12 +609,30 @@ fn render_assertion_callbacks(model: &IrModel) -> Result<String, String> {
                 antecedent,
             )?);
         }
-        out.push_str(&render_assertion_predicate(
-            model,
-            index,
-            "consequent",
-            assertion.consequent(),
-        )?);
+        if let Some(consequent) = assertion.consequent() {
+            out.push_str(&render_assertion_predicate(
+                model,
+                index,
+                "consequent",
+                consequent,
+            )?);
+        }
+        if let Some(sequence) = assertion.antecedent_sequence() {
+            out.push_str(&render_assertion_sequence(
+                model,
+                index,
+                "antecedent",
+                sequence,
+            )?);
+        }
+        if let Some(sequence) = assertion.consequent_sequence() {
+            out.push_str(&render_assertion_sequence(
+                model,
+                index,
+                "consequent",
+                sequence,
+            )?);
+        }
     }
     Ok(out)
 }
@@ -2204,7 +2315,6 @@ fn render_main(execution: &ExecutionModel) -> Result<String, String> {
             .antecedent()
             .map(|_| assertion_predicate_name(index, "antecedent"))
             .unwrap_or_else(|| "NULL".to_owned());
-        let consequent = assertion_predicate_name(index, "consequent");
         let pass_action = assertion.pass_action().unwrap_or("NULL");
         let fail_action = assertion.fail_action().unwrap_or("NULL");
         let kind = match assertion.kind() {
@@ -2217,21 +2327,48 @@ fn render_main(execution: &ExecutionModel) -> Result<String, String> {
         } else {
             "LLG_EV_NEGEDGE"
         };
-        out.push_str(&format!(
-            "    if (!llg_assertion_register(&{}, {}, {}, {}, {}, {}, {}, NULL, {}, {}, {}ULL, {}, {})) return 1;\n",
-            clock,
-            edge,
-            disable,
-            antecedent,
-            consequent,
-            pass_action,
-            fail_action,
-            kind,
-            assertion.overlapped() as u8,
-            assertion.identity(),
-            c_string_literal(assertion.label()),
-            c_string_literal(assertion.location()),
-        ));
+        if assertion.consequent_sequence().is_some() {
+            let antecedent = assertion
+                .antecedent_sequence()
+                .map(|_| format!("&{}", assertion_sequence_name(index, "antecedent")))
+                .unwrap_or_else(|| "NULL".to_owned());
+            let consequent = format!("&{}", assertion_sequence_name(index, "consequent"));
+            out.push_str(&format!(
+                "    if (!llg_assertion_register_sequence(&{}, {}, {}, {}, {}, {}, {}, NULL, {}, {}, {}ULL, {}, {})) return 1;\n",
+                clock,
+                edge,
+                disable,
+                antecedent,
+                consequent,
+                pass_action,
+                fail_action,
+                kind,
+                assertion.overlapped() as u8,
+                assertion.identity(),
+                c_string_literal(assertion.label()),
+                c_string_literal(assertion.location()),
+            ));
+        } else {
+            if assertion.consequent().is_none() {
+                return Err(format!("assertion {index} has no consequent"));
+            }
+            let consequent = assertion_predicate_name(index, "consequent");
+            out.push_str(&format!(
+                "    if (!llg_assertion_register(&{}, {}, {}, {}, {}, {}, {}, NULL, {}, {}, {}ULL, {}, {})) return 1;\n",
+                clock,
+                edge,
+                disable,
+                antecedent,
+                consequent,
+                pass_action,
+                fail_action,
+                kind,
+                assertion.overlapped() as u8,
+                assertion.identity(),
+                c_string_literal(assertion.label()),
+                c_string_literal(assertion.location()),
+            ));
+        }
     }
     out.push_str(&format!(
         "    if (!llg_vpi_model_init({}, llg_vpi_objects, llg_vpi_object_count) || !llg_vpi_startup()) {{\n\

@@ -107,10 +107,12 @@ coverage for the same rule IDs.
   passes each file to `llg` in both optimizer modes, isolates child working
   directories, compares specification-derived output and asserts diagnostics.
   Both suites require CMake and run in the sanitizer job.
-- `sim_concurrent_assertions.rs` covers the H20 bounded concurrent-assertion
+- `sim_concurrent_assertions.rs` covers the H20/H22 concurrent-assertion
   subset: Preponed sampling across NBA updates, asynchronous `disable iff`
   cancellation and restart, FIFO overlapping attempts, vacuity accounting,
-  and end-of-simulation pending-attempt disposal. HDL lives in
+  end-of-simulation pending-attempt disposal, sequence concatenation and
+  ranges, consecutive/nonconsecutive/goto repetition (including unbounded
+  endpoints), sequence composition and `first_match`. HDL lives in
   `fixtures/sim/concurrent_assertions/`; the shared CLI harness runs every
   fixture through `llg` and `llg --no-opt` with exact stdout and diagnostics.
 - `sim_sampled_values.rs` covers H21 sampled-value domains: preponed

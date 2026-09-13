@@ -2,7 +2,7 @@ use std::collections::HashSet;
 use std::error::Error;
 use std::fmt;
 
-use super::{Db, DriverDelay, ExprKind, NodeId, NodeKind, StmtKind};
+use super::{AssertionExprKind, Db, DriverDelay, ExprKind, NodeId, NodeKind, StmtKind};
 
 /// A structural invariant violation in an owned [`Db`].
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -334,6 +334,33 @@ impl Validator<'_> {
                 return self.fail(
                     format!("{path}.streams"),
                     "streaming expression has no operands",
+                );
+            }
+            NodeKind::AssertionExpr(AssertionExprKind::SequenceConcat { elements, delays })
+                if elements.len() != delays.len() =>
+            {
+                return self.fail(
+                    format!("{path}.delays"),
+                    "sequence concatenation delays must match its elements",
+                );
+            }
+            NodeKind::AssertionExpr(
+                AssertionExprKind::Simple {
+                    repetition: Some(repetition),
+                    ..
+                }
+                | AssertionExprKind::SequenceWithMatch {
+                    repetition: Some(repetition),
+                    ..
+                },
+            ) if repetition
+                .range
+                .max
+                .is_some_and(|max| max < repetition.range.min) =>
+            {
+                return self.fail(
+                    format!("{path}.repetition"),
+                    "sequence repetition range is inverted",
                 );
             }
             NodeKind::FuncTask {

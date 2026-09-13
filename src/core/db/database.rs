@@ -863,6 +863,27 @@ pub enum AssertionBinaryOp {
     NonOverlappedFollowedBy,
 }
 
+/// An inclusive cycle range attached to a sequence delay or repetition.
+/// `None` for `max` represents the LRM's unbounded endpoint.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AssertionRange {
+    pub min: u32,
+    pub max: Option<u32>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AssertionRepetitionKind {
+    Consecutive,
+    Nonconsecutive,
+    GoTo,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AssertionRepetition {
+    pub kind: AssertionRepetitionKind,
+    pub range: AssertionRange,
+}
+
 #[derive(Clone, Debug)]
 pub struct AssertionCaseItem {
     pub expressions: Vec<NodeId>,
@@ -888,19 +909,23 @@ pub enum AssertionExprKind {
     Simple {
         expr: NodeId,
         repeated: bool,
+        repetition: Option<AssertionRepetition>,
     },
     SequenceConcat {
         elements: Vec<NodeId>,
+        delays: Vec<AssertionRange>,
     },
     SequenceWithMatch {
         expr: NodeId,
         match_items: Vec<NodeId>,
         repeated: bool,
+        repetition: Option<AssertionRepetition>,
     },
     Unary {
         op: AssertionUnaryOp,
         expr: NodeId,
         ranged: bool,
+        range: Option<AssertionRange>,
     },
     Binary {
         op: AssertionBinaryOp,
@@ -948,7 +973,7 @@ impl AssertionExprKind {
         match self {
             Self::Invalid { child } => child.iter().for_each(|id| nodes.push(*id)),
             Self::Simple { expr, .. } => nodes.push(*expr),
-            Self::SequenceConcat { elements } => nodes.extend(elements),
+            Self::SequenceConcat { elements, .. } => nodes.extend(elements),
             Self::SequenceWithMatch {
                 expr, match_items, ..
             } => {
@@ -2500,6 +2525,33 @@ fn assertion_binary_from_slang(operation: SemanticOperation) -> Result<Assertion
     })
 }
 
+fn assertion_repetition(node: &SemanticNode) -> Result<Option<AssertionRepetition>, DbError> {
+    if node.auxiliary & SEMANTIC_ASSERTION_REPETITION == 0 {
+        return Ok(None);
+    }
+    let kind = match node.assertion_repetition_kind {
+        crate::ffi::slang::SEMANTIC_ASSERTION_REPEAT_CONSECUTIVE => {
+            AssertionRepetitionKind::Consecutive
+        }
+        crate::ffi::slang::SEMANTIC_ASSERTION_REPEAT_NONCONSECUTIVE => {
+            AssertionRepetitionKind::Nonconsecutive
+        }
+        crate::ffi::slang::SEMANTIC_ASSERTION_REPEAT_GOTO => AssertionRepetitionKind::GoTo,
+        _ => {
+            return Err(DbError::InvalidSnapshot(
+                "assertion repetition kind is missing or invalid".into(),
+            ))
+        }
+    };
+    Ok(Some(AssertionRepetition {
+        kind,
+        range: AssertionRange {
+            min: node.assertion_range_min,
+            max: node.assertion_range_max,
+        },
+    }))
+}
+
 fn assertion_expr_from_slang(
     snapshot: &SlangSnapshot,
     node: &SemanticNode,
@@ -2517,19 +2569,49 @@ fn assertion_expr_from_slang(
         2 => AssertionExprKind::Simple {
             expr: required(SemanticEdgeRole::Operand, "simple assertion operand")?,
             repeated: node.auxiliary & SEMANTIC_ASSERTION_REPETITION != 0,
+            repetition: assertion_repetition(node)?,
         },
-        3 => AssertionExprKind::SequenceConcat {
-            elements: edge_targets(ids, edges, SemanticEdgeRole::Operand)?,
-        },
+        3 => {
+            let mut operand_edges = edges
+                .iter()
+                .filter(|edge| edge.role == SemanticEdgeRole::Operand)
+                .collect::<Vec<_>>();
+            operand_edges.sort_by_key(|edge| edge.index);
+            let elements = operand_edges
+                .iter()
+                .map(|edge| semantic_id(ids, edge.target_id))
+                .collect::<Result<Vec<_>, _>>()?;
+            let delays = operand_edges
+                .iter()
+                .map(|edge| {
+                    edge.sequence_delay
+                        .clone()
+                        .map(|range| AssertionRange {
+                            min: range.min,
+                            max: range.max,
+                        })
+                        .unwrap_or(AssertionRange {
+                            min: 0,
+                            max: Some(0),
+                        })
+                })
+                .collect();
+            AssertionExprKind::SequenceConcat { elements, delays }
+        }
         4 => AssertionExprKind::SequenceWithMatch {
             expr: required(SemanticEdgeRole::Body, "sequence match body")?,
             match_items: edge_targets(ids, edges, SemanticEdgeRole::Operand)?,
             repeated: node.auxiliary & SEMANTIC_ASSERTION_REPETITION != 0,
+            repetition: assertion_repetition(node)?,
         },
         5 => AssertionExprKind::Unary {
             op: assertion_unary_from_slang(node.operation)?,
             expr: required(SemanticEdgeRole::Body, "unary assertion body")?,
             ranged: node.auxiliary & SEMANTIC_ASSERTION_RANGE != 0,
+            range: (node.auxiliary & SEMANTIC_ASSERTION_RANGE != 0).then(|| AssertionRange {
+                min: node.assertion_range_min,
+                max: node.assertion_range_max,
+            }),
         },
         6 => AssertionExprKind::Binary {
             op: assertion_binary_from_slang(node.operation)?,

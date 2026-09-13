@@ -908,7 +908,19 @@ fn walk_model_exprs_mut(model: &mut IrModel, f: &mut impl FnMut(&mut IrExpr)) {
         if let Some(antecedent) = &mut assertion.antecedent {
             walk_expr_mut(antecedent, f);
         }
-        walk_expr_mut(&mut assertion.consequent, f);
+        if let Some(consequent) = &mut assertion.consequent {
+            walk_expr_mut(consequent, f);
+        }
+        if let Some(sequence) = &mut assertion.antecedent_sequence {
+            for atom in &mut sequence.atoms {
+                walk_expr_mut(atom, f);
+            }
+        }
+        if let Some(sequence) = &mut assertion.consequent_sequence {
+            for atom in &mut sequence.atoms {
+                walk_expr_mut(atom, f);
+            }
+        }
     }
     for domain in &mut model.sampled_domains {
         walk_expr_mut(&mut domain.sample, f);
@@ -1946,7 +1958,20 @@ fn mark_unused_storage(model: &mut IrModel, execution: Option<&[ExecutionProcess
         if let Some(antecedent) = &assertion.antecedent {
             collect_expr_reads(antecedent, model, &mut rw);
         }
-        collect_expr_reads(&assertion.consequent, model, &mut rw);
+        if let Some(consequent) = &assertion.consequent {
+            collect_expr_reads(consequent, model, &mut rw);
+        }
+        for sequence in [
+            assertion.antecedent_sequence.as_ref(),
+            assertion.consequent_sequence.as_ref(),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            for atom in &sequence.atoms {
+                collect_expr_reads(atom, model, &mut rw);
+            }
+        }
     }
     for domain in &model.sampled_domains {
         rw.read(domain.clock_signal);

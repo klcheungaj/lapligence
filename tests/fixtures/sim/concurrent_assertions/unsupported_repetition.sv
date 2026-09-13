@@ -1,16 +1,26 @@
 // llg-test-fixture: tests/fixtures/sim/concurrent_assertions/unsupported_repetition.sv
-// IEEE 1800-2009 16.6: repetition is retained in the owned assertion graph,
-// then rejected by the bounded single-cycle lowerer rather than treated as a
-// one-cycle immediate assertion.
+// IEEE 1800-2009 16.7/16.8: consecutive repetition consumes two adjacent
+// sampled clock ticks and preserves the endpoint for an overlapped implication.
 module tb;
     logic clk;
     logic signal_a;
+    logic signal_b;
 
-    bad: assert property (@(posedge clk) signal_a[*2]);
+    repeated: assert property (@(posedge clk) signal_a[*2] |-> signal_b)
+        $display("REPETITION_PASS");
 
     initial begin
         clk = 1'b0;
         signal_a = 1'b0;
-        $finish(0);
+        signal_b = 1'b0;
+        #1 begin
+            signal_a = 1'b1;
+            signal_b = 1'b1;
+        end
+        #1 clk = 1'b1;
+        #1 clk = 1'b0;
+        #1 clk = 1'b1;
+        #1 clk = 1'b0;
+        #1 $finish(0);
     end
 endmodule

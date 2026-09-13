@@ -714,6 +714,22 @@ typedef struct llg_assertion_attempt {
     uint64_t due;
 } llg_assertion_attempt_t;
 
+typedef struct llg_sequence_token {
+    struct llg_sequence_token* next;
+    uint32_t state;
+    uint64_t entered_cycle;
+} llg_sequence_token_t;
+
+typedef struct llg_sequence_attempt {
+    struct llg_sequence_attempt* next;
+    const llg_sequence_graph_t* graph;
+    llg_sequence_token_t* tokens;
+    /* Sequence attempts created by a non-overlapped implication are not
+     * eligible until this sampled-clock ordinal. */
+    uint64_t due_cycle;
+    int matched;
+} llg_sequence_attempt_t;
+
 typedef struct llg_concurrent_assertion {
     struct llg_concurrent_assertion* next;
     sv4_t* clock;
@@ -732,6 +748,13 @@ typedef struct llg_concurrent_assertion {
     int edge_pending;
     llg_assertion_attempt_t* attempts;
     llg_assertion_attempt_t* attempts_tail;
+    const llg_sequence_graph_t* antecedent_sequence;
+    const llg_sequence_graph_t* consequent_sequence;
+    llg_sequence_attempt_t* sequence_antecedents;
+    llg_sequence_attempt_t* sequence_antecedents_tail;
+    llg_sequence_attempt_t* sequence_consequents;
+    llg_sequence_attempt_t* sequence_consequents_tail;
+    uint64_t sequence_cycle;
 } llg_concurrent_assertion_t;
 
 typedef struct {
@@ -3821,6 +3844,28 @@ static void free_assertion_attempts(llg_concurrent_assertion_t* assertion) {
         assertion->attempts = next;
     }
     assertion->attempts_tail = NULL;
+    llg_sequence_attempt_t** lists[] = {
+        &assertion->sequence_antecedents,
+        &assertion->sequence_consequents,
+    };
+    llg_sequence_attempt_t** tails[] = {
+        &assertion->sequence_antecedents_tail,
+        &assertion->sequence_consequents_tail,
+    };
+    for (size_t list_index = 0; list_index < sizeof(lists) / sizeof(lists[0]);
+         list_index++) {
+        while (*lists[list_index]) {
+            llg_sequence_attempt_t* attempt = *lists[list_index];
+            *lists[list_index] = attempt->next;
+            while (attempt->tokens) {
+                llg_sequence_token_t* token = attempt->tokens;
+                attempt->tokens = token->next;
+                free(token);
+            }
+            free(attempt);
+        }
+        *tails[list_index] = NULL;
+    }
 }
 
 static void free_assertions(void) {
@@ -8681,6 +8726,216 @@ static void assertion_attempt_enqueue(llg_concurrent_assertion_t* assertion) {
     assertion->attempts_tail = attempt;
 }
 
+static int sequence_token_present(const llg_sequence_token_t* list,
+                                  uint32_t state, uint64_t entered_cycle) {
+    for (const llg_sequence_token_t* token = list; token; token = token->next)
+        if (token->state == state && token->entered_cycle == entered_cycle)
+            return 1;
+    return 0;
+}
+
+static int sequence_token_add(llg_sequence_token_t** list, uint32_t state,
+                              uint64_t entered_cycle) {
+    if (sequence_token_present(*list, state, entered_cycle)) return 0;
+    llg_sequence_token_t* token = (llg_sequence_token_t*)llg_checked_calloc(
+        1, sizeof(*token), "concurrent assertion sequence token");
+    token->state = state;
+    token->entered_cycle = entered_cycle;
+    token->next = *list;
+    *list = token;
+    return 1;
+}
+
+static void sequence_tokens_free(llg_sequence_token_t* tokens) {
+    while (tokens) {
+        llg_sequence_token_t* next = tokens->next;
+        free(tokens);
+        tokens = next;
+    }
+}
+
+static int sequence_is_first_match_state(const llg_sequence_graph_t* graph,
+                                         uint32_t state) {
+    for (uint32_t index = 0; index < graph->first_match_state_count; index++)
+        if (graph->first_match_states[index] == state) return 1;
+    return 0;
+}
+
+/* Advance one sequence NFA by one sampled clock edge.  Epsilon edges with a
+ * zero delay are closed in the same worklist as atom edges, so ##0 and empty
+ * repetitions do not accidentally consume an extra edge.  Every state and
+ * entry-cycle pair is processed once per edge; this is the termination guard
+ * for zero-delay cycles, while unbounded ranges remain genuinely unbounded. */
+static int sequence_attempt_step(llg_sequence_attempt_t* attempt,
+                                uint64_t cycle, int* accepted) {
+    const llg_sequence_graph_t* graph = attempt->graph;
+    llg_sequence_token_t* work = NULL;
+    llg_sequence_token_t* processed = NULL;
+    llg_sequence_token_t* next = NULL;
+    int first_match_boundary = 0;
+    *accepted = 0;
+    for (llg_sequence_token_t* token = attempt->tokens; token;
+         token = token->next) {
+        if (token->state == graph->accept) *accepted = 1;
+        sequence_token_add(&work, token->state, token->entered_cycle);
+    }
+    if (*accepted) attempt->matched = 1;
+    if (*accepted && graph->first_match) {
+        sequence_tokens_free(work);
+        return 0;
+    }
+    while (work) {
+        llg_sequence_token_t* token = work;
+        work = token->next;
+        if (sequence_token_present(processed, token->state,
+                                   token->entered_cycle)) {
+            free(token);
+            continue;
+        }
+        token->next = processed;
+        processed = token;
+        int token_is_first_match = sequence_is_first_match_state(graph, token->state);
+        if (token_is_first_match && !first_match_boundary) {
+            sequence_tokens_free(work);
+            sequence_tokens_free(next);
+            work = NULL;
+            next = NULL;
+            first_match_boundary = 1;
+        }
+        for (uint32_t index = 0; index < graph->transition_count; index++) {
+            const llg_sequence_transition_t* transition = &graph->transitions[index];
+            if (transition->from != token->state) continue;
+            if (cycle < token->entered_cycle) {
+                fprintf(stderr,
+                        "llg: concurrent assertion sequence cycle overflow\n");
+                llg_last_failure = 1;
+                g.finish = 1;
+                sequence_tokens_free(work);
+                sequence_tokens_free(processed);
+                sequence_tokens_free(next);
+                return 0;
+            }
+            uint64_t elapsed = cycle - token->entered_cycle;
+            if (transition->max_delay != LLG_SEQUENCE_UNBOUNDED &&
+                elapsed > transition->max_delay)
+                continue;
+            if (elapsed < transition->min_delay) {
+                sequence_token_add(&next, token->state, token->entered_cycle);
+                continue;
+            }
+            if (transition->atom != LLG_SEQUENCE_EPSILON) {
+                if (!graph->atom ||
+                    !graph->atom(transition->atom, graph->data)) {
+                    if (transition->max_delay == LLG_SEQUENCE_UNBOUNDED ||
+                        elapsed < transition->max_delay)
+                        sequence_token_add(&next, token->state,
+                                           token->entered_cycle);
+                    continue;
+                }
+            }
+            int destination_is_first_match =
+                sequence_is_first_match_state(graph, transition->to);
+            if (destination_is_first_match && !first_match_boundary) {
+                sequence_tokens_free(work);
+                sequence_tokens_free(next);
+                work = NULL;
+                next = NULL;
+                first_match_boundary = 1;
+            }
+            if (transition->to == graph->accept) {
+                *accepted = 1;
+                attempt->matched = 1;
+                if (graph->first_match) {
+                    sequence_tokens_free(work);
+                    sequence_tokens_free(processed);
+                    sequence_tokens_free(next);
+                    return 0;
+                }
+            } else if (sequence_token_add(&next, transition->to, cycle)) {
+                llg_sequence_token_t* advanced = (llg_sequence_token_t*)llg_checked_calloc(
+                    1, sizeof(*advanced), "concurrent assertion sequence work token");
+                advanced->state = transition->to;
+                advanced->entered_cycle = cycle;
+                advanced->next = work;
+                work = advanced;
+            }
+            if (!token_is_first_match && !destination_is_first_match &&
+                (transition->max_delay == LLG_SEQUENCE_UNBOUNDED ||
+                 elapsed < transition->max_delay))
+                sequence_token_add(&next, token->state, token->entered_cycle);
+            if (destination_is_first_match) break;
+        }
+    }
+    sequence_tokens_free(processed);
+    sequence_tokens_free(attempt->tokens);
+    attempt->tokens = next;
+    if (*accepted) attempt->matched = 1;
+    return attempt->tokens != NULL;
+}
+
+static llg_sequence_attempt_t* sequence_attempt_new(
+    const llg_sequence_graph_t* graph, uint64_t due_cycle) {
+    llg_sequence_attempt_t* attempt = (llg_sequence_attempt_t*)llg_checked_calloc(
+        1, sizeof(*attempt), "concurrent assertion sequence attempt");
+    attempt->graph = graph;
+    attempt->due_cycle = due_cycle;
+    sequence_token_add(&attempt->tokens, graph->start, due_cycle);
+    return attempt;
+}
+
+static void sequence_attempt_append(llg_sequence_attempt_t** head,
+                                    llg_sequence_attempt_t** tail,
+                                    llg_sequence_attempt_t* attempt) {
+    if (*tail)
+        (*tail)->next = attempt;
+    else
+        *head = attempt;
+    *tail = attempt;
+}
+
+static void sequence_attempt_discard(llg_sequence_attempt_t* attempt) {
+    if (!attempt) return;
+    sequence_tokens_free(attempt->tokens);
+    free(attempt);
+}
+
+static int sequence_cycle_next(llg_concurrent_assertion_t* assertion,
+                               uint64_t* cycle) {
+    if (assertion->sequence_cycle == UINT64_MAX) {
+        fprintf(stderr,
+                "llg: concurrent assertion sequence clock-cycle counter overflow\n");
+        llg_last_failure = 1;
+        g.finish = 1;
+        return 0;
+    }
+    *cycle = assertion->sequence_cycle++;
+    return 1;
+}
+
+static int sequence_attempt_due(uint64_t due_cycle, uint64_t cycle) {
+    return due_cycle <= cycle;
+}
+
+static int sequence_spawn_consequent(llg_concurrent_assertion_t* assertion,
+                                     uint64_t cycle) {
+    uint64_t due = cycle;
+    if (!assertion->overlapped) {
+        if (cycle == UINT64_MAX) {
+            fprintf(stderr,
+                    "llg: non-overlapped sequence endpoint cycle overflow\n");
+            llg_last_failure = 1;
+            g.finish = 1;
+            return 0;
+        }
+        due++;
+    }
+    llg_sequence_attempt_t* attempt = sequence_attempt_new(
+        assertion->consequent_sequence, due);
+    sequence_attempt_append(&assertion->sequence_consequents,
+                            &assertion->sequence_consequents_tail, attempt);
+    return 1;
+}
+
 static void assertion_action(llg_concurrent_assertion_t* assertion,
                              llg_concurrent_assertion_action_fn action) {
     if (!action || g.finish) return;
@@ -8742,6 +8997,82 @@ static void assertion_clock_signal_changed(sv4_t* signal, sv4_t old,
     }
 }
 
+static int run_sequence_concurrent_assertion(llg_concurrent_assertion_t* assertion,
+                                             uint64_t cycle) {
+    llg_sequence_attempt_t** antecedent_link = &assertion->sequence_antecedents;
+    while (*antecedent_link) {
+        llg_sequence_attempt_t* attempt = *antecedent_link;
+        int accepted = 0;
+        int alive = sequence_attempt_step(attempt, cycle, &accepted);
+        if (accepted && !sequence_spawn_consequent(assertion, cycle)) return 0;
+        if (!alive) {
+            *antecedent_link = attempt->next;
+            if (assertion->sequence_antecedents_tail == attempt)
+                assertion->sequence_antecedents_tail = NULL;
+            if (!attempt->matched) assertion_result(assertion, 1, 1);
+            sequence_attempt_discard(attempt);
+        } else {
+            antecedent_link = &attempt->next;
+        }
+        if (g.finish) return 0;
+    }
+    if (assertion->sequence_antecedents_tail == NULL) {
+        for (llg_sequence_attempt_t* item = assertion->sequence_antecedents;
+             item; item = item->next)
+            assertion->sequence_antecedents_tail = item;
+    }
+
+    if (assertion->antecedent_sequence) {
+        llg_sequence_attempt_t* attempt = sequence_attempt_new(
+            assertion->antecedent_sequence, cycle);
+        int accepted = 0;
+        int alive = sequence_attempt_step(attempt, cycle, &accepted);
+        if (accepted && !sequence_spawn_consequent(assertion, cycle)) {
+            sequence_attempt_discard(attempt);
+            return 0;
+        }
+        if (alive) {
+            sequence_attempt_append(&assertion->sequence_antecedents,
+                                    &assertion->sequence_antecedents_tail, attempt);
+        } else {
+            if (!attempt->matched) assertion_result(assertion, 1, 1);
+            sequence_attempt_discard(attempt);
+        }
+    } else {
+        llg_sequence_attempt_t* attempt = sequence_attempt_new(
+            assertion->consequent_sequence, cycle);
+        sequence_attempt_append(&assertion->sequence_consequents,
+                                &assertion->sequence_consequents_tail, attempt);
+    }
+
+    llg_sequence_attempt_t** consequent_link = &assertion->sequence_consequents;
+    while (*consequent_link) {
+        llg_sequence_attempt_t* attempt = *consequent_link;
+        if (!sequence_attempt_due(attempt->due_cycle, cycle)) {
+            consequent_link = &attempt->next;
+            continue;
+        }
+        int accepted = 0;
+        int alive = sequence_attempt_step(attempt, cycle, &accepted);
+        if (accepted || !alive) {
+            *consequent_link = attempt->next;
+            if (assertion->sequence_consequents_tail == attempt)
+                assertion->sequence_consequents_tail = NULL;
+            sequence_attempt_discard(attempt);
+            assertion_result(assertion, accepted, 0);
+            if (g.finish) return 0;
+        } else {
+            consequent_link = &attempt->next;
+        }
+    }
+    if (assertion->sequence_consequents_tail == NULL) {
+        for (llg_sequence_attempt_t* item = assertion->sequence_consequents;
+             item; item = item->next)
+            assertion->sequence_consequents_tail = item;
+    }
+    return 1;
+}
+
 static void run_concurrent_assertion(llg_concurrent_assertion_t* assertion) {
     // A clock transition is observed after Active/NBA writes, while every
     // predicate reads the immutable Preponed snapshot from this time slot.
@@ -8752,6 +9083,13 @@ static void run_concurrent_assertion(llg_concurrent_assertion_t* assertion) {
         return;
     }
     if (!edge) return;
+
+    if (assertion->consequent_sequence) {
+        uint64_t cycle = 0;
+        if (!sequence_cycle_next(assertion, &cycle)) return;
+        (void)run_sequence_concurrent_assertion(assertion, cycle);
+        return;
+    }
 
     while (assertion->attempts) {
         llg_assertion_attempt_t* attempt = assertion->attempts;
@@ -8883,6 +9221,66 @@ void llg_deferred_assertion(int kind, int passed, uint64_t identity,
         g.deferred_assertions = report;
     }
     g.deferred_assertion_tail = report;
+}
+
+static int valid_sequence_graph(const llg_sequence_graph_t* graph) {
+    if (!graph || graph->states == 0 || graph->start >= graph->states ||
+        graph->accept >= graph->states ||
+        (graph->transition_count != 0 && !graph->transitions) ||
+        (graph->first_match_state_count != 0 && !graph->first_match_states))
+        return 0;
+    for (uint32_t index = 0; index < graph->first_match_state_count; index++)
+        if (graph->first_match_states[index] >= graph->states) return 0;
+    for (uint32_t index = 0; index < graph->transition_count; index++) {
+        const llg_sequence_transition_t* transition = &graph->transitions[index];
+        if (transition->from >= graph->states || transition->to >= graph->states ||
+            transition->max_delay < transition->min_delay ||
+            (transition->atom != LLG_SEQUENCE_EPSILON && !graph->atom))
+            return 0;
+    }
+    return 1;
+}
+
+int llg_assertion_register_sequence(
+    sv4_t* clock, int edge, sv4_t* disable,
+    const llg_sequence_graph_t* antecedent,
+    const llg_sequence_graph_t* consequent,
+    llg_concurrent_assertion_action_fn pass_action,
+    llg_concurrent_assertion_action_fn fail_action, void* data, int kind,
+    int overlapped, uint64_t identity, const char* label, const char* location) {
+    if (!g.main_co || g.running || g.config_error || !clock ||
+        !valid_sequence_graph(consequent) ||
+        (antecedent && !valid_sequence_graph(antecedent)) ||
+        (edge != LLG_EV_POSEDGE && edge != LLG_EV_NEGEDGE) ||
+        kind < LLG_ASSERTION_ASSERT || kind > LLG_ASSERTION_COVER ||
+        (overlapped != 0 && overlapped != 1)) {
+        fprintf(stderr, "llg: invalid concurrent sequence assertion registration\n");
+        llg_last_failure = 1;
+        g.finish = 1;
+        return 0;
+    }
+    llg_concurrent_assertion_t* assertion =
+        (llg_concurrent_assertion_t*)llg_checked_calloc(
+            1, sizeof(*assertion), "concurrent sequence assertion");
+    assertion->clock = clock;
+    assertion->edge = edge;
+    assertion->disable = disable;
+    assertion->pass_action = pass_action;
+    assertion->fail_action = fail_action;
+    assertion->data = data;
+    assertion->kind = kind;
+    assertion->overlapped = overlapped;
+    assertion->identity = identity;
+    assertion->label = label;
+    assertion->location = location;
+    assertion->antecedent_sequence = antecedent;
+    assertion->consequent_sequence = consequent;
+    if (g.assertion_tail)
+        g.assertion_tail->next = assertion;
+    else
+        g.assertions = assertion;
+    g.assertion_tail = assertion;
+    return 1;
 }
 
 static int llg_fmt_arg_same(const llg_fmt_arg_t* a, const llg_fmt_arg_t* b) {
