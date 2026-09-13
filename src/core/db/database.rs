@@ -447,6 +447,10 @@ pub struct Db {
     /// Statically initialized virtual-interface variables and their concrete
     /// interface instances. Runtime reassignment remains outside this map.
     virtual_interface_targets: HashMap<NodeId, NodeId>,
+    /// DPI-C import contracts copied from the frontend syntax/flags.  This is
+    /// a side table so synthetic test nodes and the existing NodeKind ABI do
+    /// not need a lossy placeholder field.
+    dpi_imports: HashMap<NodeId, DpiImportInfo>,
     /// Nets declared implicitly by Slang's semantic analysis.
     implicit_nets: HashSet<NodeId>,
     /// Context conversions inserted by Slang rather than written as casts.
@@ -454,6 +458,15 @@ pub struct Db {
     /// Exact admitted source buffers keyed by their frontend file name.
     source_files: HashMap<String, String>,
     elaborated_type_ranges: Vec<ElaboratedTypeRanges>,
+}
+
+/// Owned DPI-C declaration metadata.  The C linkage spelling is copied from
+/// the import declaration (or falls back to the HDL name when omitted).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DpiImportInfo {
+    pub c_name: String,
+    pub context: bool,
+    pub pure: bool,
 }
 
 /// Unpacked-array metadata captured at build time, kept out of the
@@ -3725,6 +3738,7 @@ impl Db {
             clocking_blocks: HashMap::new(),
             clocking_vars: HashMap::new(),
             virtual_interface_targets: HashMap::new(),
+            dpi_imports: HashMap::new(),
             implicit_nets: HashSet::new(),
             implicit_conversions: HashSet::new(),
             source_files: HashMap::new(),
@@ -3777,6 +3791,7 @@ impl Db {
             clocking_blocks: HashMap::new(),
             clocking_vars: HashMap::new(),
             virtual_interface_targets: HashMap::new(),
+            dpi_imports: HashMap::new(),
             implicit_nets: HashSet::new(),
             implicit_conversions: HashSet::new(),
             source_files: HashMap::new(),
@@ -3864,6 +3879,31 @@ impl Db {
         let mut packed_dimensions = HashMap::new();
         let mut clocking_blocks = HashMap::new();
         let mut clocking_vars = HashMap::new();
+        let dpi_imports = snapshot
+            .semantic_nodes
+            .iter()
+            .filter(|semantic| {
+                semantic.kind == SemanticKind::Subroutine
+                    && semantic.auxiliary & crate::ffi::slang::SUBROUTINE_DPI_IMPORT != 0
+            })
+            .map(|semantic| {
+                let id = ids[&semantic.id];
+                let c_name = if semantic.definition_name.is_empty() {
+                    semantic.name.clone()
+                } else {
+                    semantic.definition_name.clone()
+                };
+                (
+                    id,
+                    DpiImportInfo {
+                        c_name,
+                        context: semantic.auxiliary & crate::ffi::slang::SUBROUTINE_DPI_CONTEXT
+                            != 0,
+                        pure: semantic.auxiliary & crate::ffi::slang::SUBROUTINE_DPI_PURE != 0,
+                    },
+                )
+            })
+            .collect::<HashMap<_, _>>();
         for semantic in &snapshot.semantic_nodes {
             let id = ids[&semantic.id];
             let edges = semantic_edges(snapshot, semantic)?;
@@ -4469,6 +4509,7 @@ impl Db {
             clocking_blocks,
             clocking_vars,
             virtual_interface_targets,
+            dpi_imports,
             implicit_nets,
             implicit_conversions,
             source_files: snapshot
@@ -4548,6 +4589,11 @@ impl Db {
 
     pub fn design_name(&self) -> &str {
         &self.design_name
+    }
+
+    /// Return the owned DPI-C import contract for a subroutine declaration.
+    pub fn dpi_import(&self, id: NodeId) -> Option<&DpiImportInfo> {
+        self.dpi_imports.get(&id)
     }
 
     pub fn arrays(&self) -> &HashMap<NodeId, ArrayMeta> {

@@ -64,6 +64,7 @@ if(NOT MSVC)
   target_link_libraries(sim PRIVATE m)
 endif()
 {WAVE_SETUP}
+{DPI_LINK}
 "#;
 
 const WAVE_CMAKE: &str = r#"find_package(Threads REQUIRED)
@@ -79,6 +80,10 @@ pub struct CmakeBuildOpts {
     /// `None`, `$CMAKE_GENERATOR` is forwarded if set and otherwise cmake
     /// chooses its host default.
     pub generator: Option<String>,
+    /// Explicit user DPI-C libraries. Paths are passed to CMake as link
+    /// items, so missing or non-files are rejected before configuration and
+    /// no ambient linker search path can silently select a different ABI.
+    pub dpi_libraries: Vec<PathBuf>,
 }
 
 /// Failure while writing, configuring, or compiling a generated model.
@@ -97,6 +102,9 @@ pub enum BuildError {
     InvalidModelWidth(String),
     /// Generated source requested invalid coroutine stack metadata.
     InvalidModelStack(String),
+    /// A user-supplied DPI-C library is missing or cannot be represented
+    /// safely in the generated CMake file.
+    InvalidDpiLibrary { path: PathBuf, reason: String },
     /// The configured CMake program could not be launched.
     CmakeLaunch { program: String, source: io::Error },
     /// CMake configuration failed after one clean retry.
@@ -129,6 +137,11 @@ impl fmt::Display for BuildError {
             ),
             Self::InvalidModelWidth(width) => write!(f, "invalid generated model packed width `{width}`; expected 1..{}", super::emit_c::LLG_WIDTH_LIMIT),
             Self::InvalidModelStack(value) => write!(f, "invalid generated model stack value count `{value}`"),
+            Self::InvalidDpiLibrary { path, reason } => write!(
+                f,
+                "invalid DPI-C library {}: {reason}",
+                path.display()
+            ),
             Self::CmakeLaunch { program, source } => write!(
                 f,
                 "cmake not found or not runnable: {program} (install cmake): {source}"
@@ -169,7 +182,8 @@ pub fn build_model_cmake_with_opts(
     extra: &[(&str, &str)],
     opts: &CmakeBuildOpts,
 ) -> Result<PathBuf, BuildError> {
-    generate_model_sources(out_dir, extra)?;
+    validate_dpi_libraries(opts)?;
+    generate_model_sources_with_opts(out_dir, extra, opts)?;
 
     let cc = resolve_cc();
     let flags = c_flags()?;
@@ -244,19 +258,31 @@ pub fn build_model_cmake_with_opts(
 /// part of the current source set (and not the CMake `build/` directory) are
 /// deleted, so artifacts of earlier runs never accumulate.
 pub fn generate_model_sources(out_dir: &Path, extra: &[(&str, &str)]) -> Result<(), BuildError> {
+    generate_model_sources_with_opts(out_dir, extra, &CmakeBuildOpts::default())
+}
+
+/// Write generated sources and CMake metadata with explicit build options.
+/// This is also used by `llg --gen-only`, so the printed project remains
+/// buildable with the same user DPI libraries supplied to the driver.
+pub fn generate_model_sources_with_opts(
+    out_dir: &Path,
+    extra: &[(&str, &str)],
+    opts: &CmakeBuildOpts,
+) -> Result<(), BuildError> {
+    validate_dpi_libraries(opts)?;
     super::write_sim_sources(out_dir, extra)?;
     let waveform = waveform_enabled(extra);
     if waveform {
         super::rt::write_waveform_sources(out_dir)?;
     }
-    write_cmakelists(out_dir, extra, waveform)?;
+    write_cmakelists(out_dir, extra, waveform, opts)?;
     prune_stale_entries(out_dir, extra, waveform);
     Ok(())
 }
 
 /// File names [`super::write_sim_sources`] always writes (must mirror its
 /// fixed list there) plus this module's own `CMakeLists.txt`.
-const FIXED_SOURCE_NAMES: [&str; 17] = [
+const FIXED_SOURCE_NAMES: [&str; 18] = [
     "llg_rt.h",
     "llg_rt.c",
     "llg_value.h",
@@ -273,6 +299,7 @@ const FIXED_SOURCE_NAMES: [&str; 17] = [
     "aco.c",
     "acosw.S",
     "aco_assert_override.h",
+    "svdpi.h",
     "CMakeLists.txt",
 ];
 
@@ -342,6 +369,7 @@ fn write_cmakelists(
     out_dir: &Path,
     extra: &[(&str, &str)],
     waveform: bool,
+    opts: &CmakeBuildOpts,
 ) -> Result<(), BuildError> {
     let mut sources: Vec<&str> = extra
         .iter()
@@ -365,13 +393,82 @@ fn write_cmakelists(
         .replace("{SOURCES}", &sources.join(" "))
         .replace("{MODEL_WIDTH}", &model_capacity(extra)?.to_string())
         .replace("{STACK_VALUES}", &model_stack_values(extra)?.to_string())
-        .replace("{WAVE_SETUP}", if waveform { WAVE_CMAKE } else { "" });
+        .replace("{WAVE_SETUP}", if waveform { WAVE_CMAKE } else { "" })
+        .replace("{DPI_LINK}", &dpi_link_setup(opts)?);
     let cmakelists_path = out_dir.join("CMakeLists.txt");
     std::fs::write(&cmakelists_path, cmakelists).map_err(|source| BuildError::Io {
         action: "write",
         path: cmakelists_path,
         source,
     })
+}
+
+fn validate_dpi_libraries(opts: &CmakeBuildOpts) -> Result<(), BuildError> {
+    for path in &opts.dpi_libraries {
+        canonical_dpi_library(path)?;
+    }
+    Ok(())
+}
+
+/// Validate one library and return an absolute spelling for CMake. Relative
+/// command-line paths are resolved against the driver's CWD, not the generated
+/// model directory, so emitting them unchanged would link a different path.
+fn canonical_dpi_library(path: &Path) -> Result<PathBuf, BuildError> {
+    if !path.is_file() {
+        return Err(BuildError::InvalidDpiLibrary {
+            path: path.to_path_buf(),
+            reason: "path is not a regular file".to_owned(),
+        });
+    }
+    let canonical = path
+        .canonicalize()
+        .map_err(|error| BuildError::InvalidDpiLibrary {
+            path: path.to_path_buf(),
+            reason: format!("cannot resolve path: {error}"),
+        })?;
+    let Some(path_text) = canonical.to_str() else {
+        return Err(BuildError::InvalidDpiLibrary {
+            path: path.to_path_buf(),
+            reason: "path is not valid UTF-8".to_owned(),
+        });
+    };
+    if path_text.contains('"') {
+        return Err(BuildError::InvalidDpiLibrary {
+            path: path.to_path_buf(),
+            reason: "path contains a double quote".to_owned(),
+        });
+    }
+    if path_text.contains('$') || path_text.contains('\n') || path_text.contains('\r') {
+        return Err(BuildError::InvalidDpiLibrary {
+            path: path.to_path_buf(),
+            reason: "path contains a CMake interpolation or line-break character".to_owned(),
+        });
+    }
+    Ok(canonical)
+}
+
+fn dpi_link_setup(opts: &CmakeBuildOpts) -> Result<String, BuildError> {
+    if opts.dpi_libraries.is_empty() {
+        return Ok(String::new());
+    }
+    let libraries = opts
+        .dpi_libraries
+        .iter()
+        .map(|path| canonical_dpi_library(path))
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .map(|path| {
+            // CMake accepts forward slashes on all supported hosts. Escape a
+            // list separator so a Windows path cannot be split into two link
+            // items when the cache is parsed.
+            path.to_string_lossy()
+                .replace('\\', "/")
+                .replace(';', "\\;")
+        })
+        .map(|path| format!("\"{path}\""))
+        .collect::<Vec<_>>()
+        .join(" ");
+    Ok(format!("target_link_libraries(sim PRIVATE {libraries})"))
 }
 
 fn model_capacity(extra: &[(&str, &str)]) -> Result<u32, BuildError> {

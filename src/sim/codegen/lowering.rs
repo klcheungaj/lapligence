@@ -238,6 +238,7 @@ use crate::core::db::{
     VariableLifetime,
 };
 use crate::core::elab::{self, Bit, Val};
+use crate::core::model::TypeInfo;
 use crate::core::value::ValueData;
 use crate::ffi::slang::LanguageEdition;
 use crate::sim::emit_c::{
@@ -715,6 +716,11 @@ struct Codegen<'a> {
     /// FuncTask arena node → call-site resolution metadata (model index,
     /// signature).  Emitted functions only; registered by the prototype walk.
     func_meta: HashMap<NodeId, FuncMeta>,
+    /// C linkage name → canonical lowered DPI signature.  Slang diagnoses
+    /// conflicting imports in one frontend compilation; this second check
+    /// protects the owned/lowered boundary when cloned declarations arrive
+    /// through different semantic paths.
+    dpi_signatures: HashMap<String, String>,
     /// Persistent storage for every formal of static subroutines,
     /// keyed by (owning instance, formal declaration).
     static_formals: HashMap<(NodeId, NodeId), SignalInfo>,
@@ -934,6 +940,7 @@ impl<'a> Codegen<'a> {
                 .expect("the default timescale has non-zero precision"),
             cur_fn_ir: None,
             func_meta: HashMap::new(),
+            dpi_signatures: HashMap::new(),
             static_formals: HashMap::new(),
             static_string_formals: HashMap::new(),
             static_chandle_formals: HashMap::new(),

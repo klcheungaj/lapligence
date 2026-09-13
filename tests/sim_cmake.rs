@@ -182,6 +182,7 @@ fn explicit_generator_build_and_run() {
         let gen = compile_counter(dir.path())?;
         let opts = sim::build::CmakeBuildOpts {
             generator: Some(GENERATOR.to_string()),
+            ..Default::default()
         };
         let exe = sim::build::build_model_cmake_with_opts(
             dir.path(),
@@ -213,6 +214,7 @@ fn invalid_generator_error() {
 
     let opts = sim::build::CmakeBuildOpts {
         generator: Some("No Such Generator".to_string()),
+        ..Default::default()
     };
     let result =
         sim::build::build_model_cmake_with_opts(dir.path(), &[("model.c", STUB_MODEL_C)], &opts);

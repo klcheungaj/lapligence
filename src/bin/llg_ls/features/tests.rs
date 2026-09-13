@@ -438,6 +438,7 @@ fn sample_parts() -> (DesignModel, Vec<FileTokens>) {
                 ref_static: false,
             },
         ],
+        dpi_import: None,
         scope: "top.u0".to_owned(),
     };
     let run = FuncDef {
@@ -456,6 +457,7 @@ fn sample_parts() -> (DesignModel, Vec<FileTokens>) {
             const_ref: false,
             ref_static: false,
         }],
+        dpi_import: None,
         scope: "top.u0".to_owned(),
     };
     let inst = InstanceModel {
@@ -5266,6 +5268,7 @@ fn class_analysis() -> Analysis {
                 col: 3,
                 ret: None,
                 args: Vec::new(),
+                dpi_import: None,
                 scope: "Counter".to_owned(),
             },
             FuncDef {
@@ -5277,6 +5280,7 @@ fn class_analysis() -> Analysis {
                 col: 3,
                 ret: Some(int_ty()),
                 args: Vec::new(),
+                dpi_import: None,
                 scope: "Counter".to_owned(),
             },
         ],

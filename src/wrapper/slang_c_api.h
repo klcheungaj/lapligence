@@ -380,7 +380,13 @@ enum {
 
 /* Subroutine qualifiers carried in LlgSlangSemanticNode::auxiliary. */
 enum {
-  LLG_SLANG_SUBROUTINE_STATIC = 1ull << 0
+  LLG_SLANG_SUBROUTINE_STATIC = 1ull << 0,
+  /* The remaining bits preserve the DPI-C import contract after native Slang
+   * memory has been released.  They are meaningful only on subroutine nodes;
+   * definition_name carries the optional C linkage identifier. */
+  LLG_SLANG_SUBROUTINE_DPI_IMPORT = 1ull << 8,
+  LLG_SLANG_SUBROUTINE_DPI_CONTEXT = 1ull << 9,
+  LLG_SLANG_SUBROUTINE_DPI_PURE = 1ull << 10
 };
 
 /* Conditional/case qualifiers carried in LlgSlangSemanticNode::auxiliary.

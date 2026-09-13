@@ -17,6 +17,8 @@
   repository codes describe semantic operations and edge roles; unsupported
   Slang constructs remain explicit records. Four-state values preserve value
   and unknown limbs, and SystemVerilog strings preserve arbitrary bytes.
+- DPI metadata: imported subroutine C names and context/pure qualifiers are
+  copied into owned records; no native syntax view is exposed to consumers.
 - Errors: HDL errors remain diagnostics in a successful snapshot. Invalid
   input, configured-limit failures, frontend/bridge failures, and malformed ABI
   output return typed Rust errors.

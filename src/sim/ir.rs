@@ -3099,6 +3099,33 @@ pub struct IrFormal {
     pub(in crate::sim) string: bool,
 }
 
+/// Owned DPI-C linkage qualifiers attached to one imported subroutine.
+///
+/// The generated wrapper keeps this metadata separate from the internal
+/// simulator calling convention.  `c_name` is emitted only after lowering has
+/// validated the bounded scalar ABI, while `pure` and `context` remain
+/// available to effect analysis and diagnostics.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct IrDpiImport {
+    pub(in crate::sim) c_name: String,
+    pub(in crate::sim) context: bool,
+    pub(in crate::sim) pure: bool,
+}
+
+impl IrDpiImport {
+    pub fn c_name(&self) -> &str {
+        &self.c_name
+    }
+
+    pub fn is_context(&self) -> bool {
+        self.context
+    }
+
+    pub fn is_pure(&self) -> bool {
+        self.pure
+    }
+}
+
 impl IrFormal {
     pub fn new(is_out: bool, width: u32, signed: bool) -> Result<Self, IrValidationError> {
         validate_width("formal.width", width)?;
@@ -3211,6 +3238,9 @@ pub struct IrFunc {
     pub(in crate::sim) ret_string: bool,
     /// Return type; `None` for tasks and void functions.
     pub(in crate::sim) ret: Option<IrType>,
+    /// Foreign DPI-C import contract. Imported functions use the same
+    /// internal call ABI as ordinary subroutines and are rendered as thunks.
+    pub(in crate::sim) dpi: Option<IrDpiImport>,
     /// Class-method functions receive one hidden `void *` receiver before
     /// their ordinary formals. `None` denotes a module/package subprogram.
     pub(in crate::sim) receiver_class: Option<usize>,
@@ -3240,6 +3270,7 @@ impl IrFunc {
             ret_chandle: false,
             ret_string: false,
             ret,
+            dpi: None,
             receiver_class: None,
             formals,
             locals,
@@ -3276,6 +3307,9 @@ impl IrFunc {
     }
     pub fn ret(&self) -> Option<IrType> {
         self.ret
+    }
+    pub fn dpi_import(&self) -> Option<&IrDpiImport> {
+        self.dpi.as_ref()
     }
     pub fn formals(&self) -> &[IrFormal] {
         &self.formals

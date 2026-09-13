@@ -145,6 +145,41 @@ fn port_array_index_vectors(dims: &[(i32, i32)]) -> Vec<Vec<i32>> {
     values
 }
 
+/// Return the canonical scalar spelling used in a generated DPI-C prototype.
+/// Packed vectors wider than one bit, 4-state integer atoms beyond scalar
+/// `logic`/`reg`, and all aggregates remain reserved for later work.
+fn dpi_type_key(ty: &TypeInfo, width: u32, two_state: bool) -> Result<String, String> {
+    let key = match ty.kind.as_str() {
+        "bit" if width == 1 && two_state => "svBit".to_owned(),
+        "logic" | "reg" if width == 1 && !two_state => "svLogic".to_owned(),
+        "byte" if width == 8 && two_state => {
+            if ty.signed { "int8_t" } else { "uint8_t" }.to_owned()
+        }
+        "shortint" if width == 16 && two_state => {
+            if ty.signed { "int16_t" } else { "uint16_t" }.to_owned()
+        }
+        "int" if width == 32 && two_state => {
+            if ty.signed { "int32_t" } else { "uint32_t" }.to_owned()
+        }
+        "longint" if width == 64 && two_state => {
+            if ty.signed { "int64_t" } else { "uint64_t" }.to_owned()
+        }
+        "real" if width == 0 => "real".to_owned(),
+        "shortreal" if width == 0 => "shortreal".to_owned(),
+        "chandle" if width == 0 => "chandle".to_owned(),
+        "string" if width == 0 => "string".to_owned(),
+        _ => {
+            return Err(format!(
+                "DPI-C type `{}` ({} bits, {}) is outside the supported scalar ABI",
+                ty.render(),
+                width,
+                if two_state { "2-state" } else { "4-state" }
+            ));
+        }
+    };
+    Ok(key)
+}
+
 #[derive(Default)]
 struct ProcessContractScan {
     event_controls: Vec<NodeId>,
@@ -4690,8 +4725,24 @@ impl<'a> Codegen<'a> {
             } = self.kind(*c)
             {
                 let automatic = *automatic;
-                let has_wait = *is_task && self.task_has_wait(*c, inst);
-                let (is_task_f, ret, formals) = self.func_info(*c, inst)?;
+                let dpi = self.db.dpi_import(*c).cloned();
+                let (is_task_f, function_ret, formals) = if dpi.is_some() {
+                    let is_task = match self.kind(*c) {
+                        NodeKind::FuncTask { is_task, .. } => *is_task,
+                        _ => return Err("non-FuncTask in function prototype collection".to_owned()),
+                    };
+                    // DPI imports use only the owned semantic type record;
+                    // ordinary source-text width recovery is intentionally
+                    // bypassed for both the return and formal list.
+                    (is_task, None, self.func_formals(*c))
+                } else {
+                    self.func_info(*c, inst)?
+                };
+                let ret = if dpi.is_some() {
+                    self.dpi_return_info(*c)?
+                } else {
+                    function_ret
+                };
                 let formals_ir: Vec<IrFormal> = formals
                     .iter()
                     .map(|(io, is_out)| -> Result<IrFormal, String> {
@@ -4722,6 +4773,8 @@ impl<'a> Codegen<'a> {
                                     ref_static: *ref_static,
                                     width: if is_handle_kind(&ty.kind) || is_real_kind(&ty.kind) {
                                         0
+                                    } else if dpi.is_some() {
+                                        ty.width.unwrap_or(0)
                                     } else {
                                         ty.width
                                             .map(|width| {
@@ -4743,7 +4796,21 @@ impl<'a> Codegen<'a> {
                         }
                     })
                     .collect::<Result<Vec<_>, String>>()?;
-                if !automatic {
+                if let Some(dpi) = &dpi {
+                    self.validate_dpi_import(*c, inst, dpi, &formals_ir)?;
+                    if self
+                        .func_names
+                        .values()
+                        .any(|internal_name| internal_name == &dpi.c_name)
+                    {
+                        return Err(format!(
+                            "DPI-C symbol `{}` collides with a generated simulator function name",
+                            dpi.c_name
+                        ));
+                    }
+                }
+                let has_wait = *is_task && dpi.is_none() && self.task_has_wait(*c, inst);
+                if !automatic && dpi.is_none() {
                     for (idx, ((io, _), formal)) in formals.iter().zip(&formals_ir).enumerate() {
                         if formal.is_ref() {
                             continue;
@@ -4949,6 +5016,11 @@ impl<'a> Codegen<'a> {
                         } if is_handle_kind(&ty.kind)
                     ),
                     ret_string: self.is_string_return(*c),
+                    dpi: dpi.as_ref().map(|dpi| crate::sim::ir::IrDpiImport {
+                        c_name: dpi.c_name.clone(),
+                        context: dpi.context,
+                        pure: dpi.pure,
+                    }),
                     ret: ret.map(|(w, s, two_state, shortreal)| {
                         if w == 0 {
                             IrType::Real { shortreal }
@@ -4961,13 +5033,14 @@ impl<'a> Codegen<'a> {
                         }
                     }),
                     receiver_class: self.class_nodes.get(&inst).copied().filter(|_| {
-                        !matches!(
-                            self.kind(*c),
-                            NodeKind::FuncTask {
-                                is_static: true,
-                                ..
-                            }
-                        )
+                        dpi.is_none()
+                            && !matches!(
+                                self.kind(*c),
+                                NodeKind::FuncTask {
+                                    is_static: true,
+                                    ..
+                                }
+                            )
                     }),
                     formals: formals_ir,
                     locals: Vec::new(),
@@ -5000,7 +5073,9 @@ impl<'a> Codegen<'a> {
     /// calls whose waits suspend the current libaco coroutine.
     pub(super) fn emit_func_bodies(&mut self, inst: NodeId) -> Result<(), String> {
         for c in &self.node(inst).children {
-            if matches!(self.kind(*c), NodeKind::FuncTask { .. }) {
+            if matches!(self.kind(*c), NodeKind::FuncTask { .. })
+                && self.db.dpi_import(*c).is_none()
+            {
                 let path = self.instance_path_of(inst);
                 self.emit_func_task(&path, inst, *c)?;
             }
@@ -5142,6 +5217,42 @@ impl<'a> Codegen<'a> {
     /// functions and tasks.
     // The tuple mirrors the semantic function/task signature without introducing a
     // public one-off type solely for this private lowering boundary.
+    fn dpi_return_info(&self, ft: NodeId) -> Result<Option<(u32, bool, bool, bool)>, String> {
+        let NodeKind::FuncTask { is_task, ret, .. } = self.kind(ft) else {
+            return Err("non-FuncTask passed to dpi_return_info".to_owned());
+        };
+        if *is_task {
+            return Ok(None);
+        }
+        let Some(ty) = ret else {
+            return Ok(None);
+        };
+        if matches!(ty.kind.as_str(), "void" | "chandle" | "class" | "string") {
+            return Ok(None);
+        }
+        if is_real_kind(&ty.kind) {
+            return Ok(Some((0, false, false, ty.kind == "shortreal")));
+        }
+        let width = ty
+            .width
+            .ok_or_else(|| format!("return type of `{}` has no width", self.node(ft).name))?;
+        if width > LLG_MAX_WIDTH {
+            return Err(format!(
+                "return type of `{}` is {width} bits wide; the runtime maximum supported width is {LLG_MAX_WIDTH}",
+                self.node(ft).name
+            ));
+        }
+        let return_var = self
+            .node(ft)
+            .children
+            .iter()
+            .copied()
+            .find(|child| matches!(self.kind(*child), NodeKind::Var { .. }));
+        let two_state = return_var.is_some_and(|return_var| self.db.is_two_state_type(return_var))
+            || is_two_state_kind(&ty.kind);
+        Ok(Some((width, ty.signed, two_state, false)))
+    }
+
     #[allow(clippy::type_complexity)]
     pub(super) fn func_info(
         &self,
@@ -5193,20 +5304,156 @@ impl<'a> Codegen<'a> {
             }
             None => None,
         };
-        let mut formals = Vec::new();
-        for c in &self.node(ft).children {
-            match self.kind(*c) {
-                NodeKind::FuncArg { direction, .. } => {
-                    let is_out = matches!(direction, DbDirection::Output | DbDirection::Inout);
-                    formals.push((*c, is_out));
-                }
+        Ok((is_task, ret, self.func_formals(ft)))
+    }
+
+    /// Return formal declarations in source order without applying any
+    /// source-text recovery to their owned widths.  DPI imports use this
+    /// helper directly so a packed range elsewhere on a declaration line
+    /// cannot influence their canonical C ABI.
+    fn func_formals(&self, ft: NodeId) -> Vec<(NodeId, bool)> {
+        self.node(ft)
+            .children
+            .iter()
+            .copied()
+            .take_while(|child| {
+                matches!(
+                    self.kind(*child),
+                    NodeKind::FuncArg { .. } | NodeKind::Var { .. }
+                )
+            })
+            .filter_map(|child| match self.kind(child) {
+                NodeKind::FuncArg { direction, .. } => Some((
+                    child,
+                    matches!(direction, DbDirection::Output | DbDirection::Inout),
+                )),
                 // The function-name return variable comes before the formals
                 // in the fixed child order; skip it.
-                NodeKind::Var { .. } => {}
-                _ => break, // body comes after the formals
-            }
+                NodeKind::Var { .. } => None,
+                _ => unreachable!("func_formals take_while kind"),
+            })
+            .collect()
+    }
+
+    /// Validate and register the bounded DPI-C ABI supported by H27.  The
+    /// simulator's internal `sv4_t`/owned-string ABI remains private; only
+    /// scalar canonical DPI types cross the generated thunk boundary.
+    fn validate_dpi_import(
+        &mut self,
+        ft: NodeId,
+        inst: NodeId,
+        dpi: &crate::core::db::DpiImportInfo,
+        formals: &[IrFormal],
+    ) -> Result<(), String> {
+        if dpi.c_name.is_empty()
+            || !dpi.c_name.chars().enumerate().all(|(index, ch)| {
+                if index == 0 {
+                    ch == '_' || ch.is_ascii_alphabetic()
+                } else {
+                    ch == '_' || ch.is_ascii_alphanumeric()
+                }
+            })
+        {
+            return Err(format!(
+                "DPI-C import `{}` has an invalid C linkage identifier `{}`",
+                self.node(ft).name,
+                dpi.c_name
+            ));
         }
-        Ok((is_task, ret, formals))
+        if self.class_nodes.contains_key(&inst) {
+            return Err(format!(
+                "DPI-C import `{}` in a class method is not supported",
+                self.node(ft).name
+            ));
+        }
+        let is_task = match self.kind(ft) {
+            NodeKind::FuncTask { is_task, .. } => *is_task,
+            _ => return Err("non-FuncTask passed to validate_dpi_import".to_owned()),
+        };
+        let ret = self.dpi_return_info(ft)?;
+        if dpi.pure && is_task {
+            return Err(format!(
+                "DPI-C import task `{}` cannot be pure",
+                self.node(ft).name
+            ));
+        }
+        let ret_key = match self.kind(ft) {
+            NodeKind::FuncTask { ret: Some(ty), .. } if ty.kind != "void" => {
+                let width = if is_real_kind(&ty.kind) || is_handle_kind(&ty.kind) {
+                    0
+                } else {
+                    ty.width
+                        .map(|width| {
+                            if self.db.dpi_import(ft).is_some() {
+                                width
+                            } else {
+                                self.effective_decl_width(ft, inst, width)
+                            }
+                        })
+                        .unwrap_or(0)
+                };
+                let two_state = ret.is_some_and(|(_, _, two_state, _)| two_state);
+                dpi_type_key(ty, width, two_state)?
+            }
+            _ => "void".to_owned(),
+        };
+        // C linkage is global, and these qualifiers are part of the owned
+        // declaration contract even though they do not change the C ABI.
+        // Treat a qualifier mismatch as a conflict rather than silently
+        // assigning one optimizer/effect interpretation to both imports.
+        let mut key = format!(
+            "context={};pure={};return={ret_key}",
+            dpi.context as u8, dpi.pure as u8
+        );
+        for (index, ((formal, _), ir)) in self
+            .node(ft)
+            .children
+            .iter()
+            .filter_map(|child| match self.kind(*child) {
+                NodeKind::FuncArg { direction, ty, .. } => Some(((*direction, ty), *child)),
+                _ => None,
+            })
+            .zip(formals)
+            .enumerate()
+        {
+            let (direction, ty) = formal;
+            if matches!(direction, DbDirection::Ref) || ir.is_ref() {
+                return Err(format!(
+                    "DPI-C import `{}` formal {index} uses unsupported ref direction",
+                    self.node(ft).name
+                ));
+            }
+            if ir.event {
+                return Err(format!(
+                    "DPI-C import `{}` formal {index} has unsupported event type",
+                    self.node(ft).name
+                ));
+            }
+            let width = if ir.real || ir.chandle || ir.string {
+                0
+            } else {
+                ir.width
+            };
+            let type_key = dpi_type_key(ty, width, ir.two_state)?;
+            if dpi.pure && !matches!(direction, DbDirection::Input) {
+                return Err(format!(
+                    "pure DPI-C import `{}` formal {index} must be input",
+                    self.node(ft).name
+                ));
+            }
+            key.push_str(&format!(";arg{index}={direction:?}:{type_key}"));
+        }
+        if let Some(previous) = self.dpi_signatures.get(&dpi.c_name) {
+            if previous != &key {
+                return Err(format!(
+                    "DPI-C symbol `{}` has conflicting imported signatures",
+                    dpi.c_name
+                ));
+            }
+        } else {
+            self.dpi_signatures.insert(dpi.c_name.clone(), key);
+        }
+        Ok(())
     }
 
     /// The body statement identified by Slang's semantic `Body` relationship.

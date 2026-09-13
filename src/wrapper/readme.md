@@ -5,7 +5,8 @@
   - `slang_c_api.h/.cpp`: bounded compile-to-owned-snapshot capture from Slang,
     including compiler and analysis diagnostics, typed elaborated nodes and
     edges, resolved type and constant tables, source ranges, and lexical tokens
-    with declaration/reference/connection-label bindings.
+    with declaration/reference/connection-label bindings. DPI-C import aliases
+    and context/pure flags are copied into the owned subroutine records.
   - `slang/CMakeLists.txt`: isolated Slang and C ABI shim build.
   - `mimalloc_shim.c`: musl-link allocation redirection.
 - Boundary: C++ ownership and exceptions stop here; Rust uses C-compatible APIs.

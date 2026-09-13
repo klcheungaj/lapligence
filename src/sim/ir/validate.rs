@@ -3366,7 +3366,25 @@ impl Validator<'_> {
                     }
                 }
                 for (idx, (lhs, _, width, _)) in call.copyouts.iter().enumerate() {
-                    self.validate_width(*width, &format!("{path}.copyouts[{idx}].width"))?;
+                    if *width == 0 {
+                        let is_real_target = match lhs {
+                            IrLhs::Whole(signal) => self
+                                .model
+                                .signals
+                                .get(*signal)
+                                .is_some_and(|signal| matches!(signal.ty, IrType::Real { .. })),
+                            IrLhs::WholeRef { width, .. } => *width == 0,
+                            _ => false,
+                        };
+                        if !is_real_target {
+                            return self.fail(
+                                format!("{path}.copyouts[{idx}].width"),
+                                "zero-width call copyout requires a real target",
+                            );
+                        }
+                    } else {
+                        self.validate_width(*width, &format!("{path}.copyouts[{idx}].width"))?;
+                    }
                     self.validate_lhs(lhs, formals, &format!("{path}.copyouts[{idx}].lhs"))?;
                 }
             }

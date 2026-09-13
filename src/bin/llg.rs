@@ -5,7 +5,7 @@
 //! ```text
 //! llg [generate options] [build options] <file.sv>... [-- <plusargs>...]
 //! generate: --top <module>  --edition <2001|2009>  --compilation-units <separate|merged>  --include-dir <path>  --define <NAME[=VALUE]>  --lint  --lint-json [<path>]  --lint-config <file>  --gen-only  --no-opt  --stop-policy <resume|exit>
-//! build:    --generator <backend>        # cmake -G backend (Ninja, "Unix Makefiles", ...)
+//! build:    --generator <backend>  --dpi-lib <path>...  # CMake generator and DPI-C libraries
 //! ```
 //!
 //! `--lint` runs the shared linter (`core::lint`) over the compiled design
@@ -66,6 +66,7 @@ struct DriverOptions {
     lint_json_path: Option<PathBuf>,
     lint_config_path: Option<PathBuf>,
     generator: Option<String>,
+    dpi_libraries: Vec<PathBuf>,
     gen_only: bool,
     no_opt: bool,
     stop_policy: StopPolicy,
@@ -111,7 +112,7 @@ fn parse_args(args: Vec<String>) -> Result<DriverOptions, i32> {
         eprintln!(
             "usage: llg [generate options] [build options] <file.sv>... [-- <plusargs>...]\n\
              generate: --top <module>  --edition <2001|2009>  --compilation-units <separate|merged>  --include-dir <path>  --define <NAME[=VALUE]>  --lint  --lint-json [<path>]  --lint-config <file>  --gen-only  --no-opt\n\
-             build:    --generator <backend>        # cmake -G backend (Ninja, \"Unix Makefiles\", ...)
+             build:    --generator <backend>  --dpi-lib <path>...  # CMake generator and DPI-C libraries
              stop:     --stop-policy <resume|exit>  # `$stop` handling (default: resume)"
         );
         return Err(2);
@@ -129,6 +130,7 @@ fn parse_args(args: Vec<String>) -> Result<DriverOptions, i32> {
     let mut lint_json_path: Option<PathBuf> = None;
     let mut lint_config_path: Option<PathBuf> = None;
     let mut generator: Option<String> = None;
+    let mut dpi_libraries: Vec<PathBuf> = Vec::new();
     let mut gen_only = false;
     let mut no_opt = false;
     let mut stop_policy = StopPolicy::Resume;
@@ -162,7 +164,8 @@ Options:
       --stop-policy <resume|exit>
                               Handle `$stop` by resuming (default) or exiting
       --                    Pass remaining arguments to the generated simulator
-      --generator <backend>  Select the CMake generator"
+      --generator <backend>  Select the CMake generator
+      --dpi-lib <path>       Link one explicit DPI-C library (repeatable)"
                 );
                 return Err(0);
             }
@@ -215,6 +218,13 @@ Options:
                 Some(g) => generator = Some(g),
                 None => {
                     eprintln!("llg: --generator requires a backend name");
+                    return Err(2);
+                }
+            },
+            "--dpi-lib" => match it.next() {
+                Some(path) if !path.is_empty() => dpi_libraries.push(PathBuf::from(path)),
+                _ => {
+                    eprintln!("llg: --dpi-lib requires a library path");
                     return Err(2);
                 }
             },
@@ -273,6 +283,7 @@ Options:
         lint_json_path,
         lint_config_path,
         generator,
+        dpi_libraries,
         gen_only,
         no_opt,
         stop_policy,
@@ -293,6 +304,7 @@ fn run(options: DriverOptions) -> i32 {
         lint_json_path,
         lint_config_path,
         generator,
+        dpi_libraries,
         gen_only,
         no_opt,
         stop_policy,
@@ -460,7 +472,11 @@ fn run(options: DriverOptions) -> i32 {
         if generator.is_some() {
             eprintln!("llg: warning: --generator ignored with --gen-only");
         }
-        if let Err(e) = sim::build::generate_model_sources(&out_dir, &model) {
+        let opts = sim::build::CmakeBuildOpts {
+            generator: None,
+            dpi_libraries,
+        };
+        if let Err(e) = sim::build::generate_model_sources_with_opts(&out_dir, &model, &opts) {
             eprintln!("llg: {e}");
             return 1;
         }
@@ -469,7 +485,11 @@ fn run(options: DriverOptions) -> i32 {
     }
 
     // 5. Build the model with CMake (the only supported builder).
-    let opts = sim::build::CmakeBuildOpts { generator };
+    let opts = sim::build::CmakeBuildOpts {
+        generator,
+        dpi_libraries,
+        ..Default::default()
+    };
     let exe = match sim::build::build_model_cmake_with_opts(&out_dir, &model, &opts) {
         Ok(e) => e,
         Err(e) => {

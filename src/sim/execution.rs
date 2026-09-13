@@ -603,6 +603,12 @@ fn collect_effects(
                 effects.push(ExecutionEffect::Suspend);
             }
             IrStmt::Call(call) => {
+                // Imported DPI calls are deliberately classified as runtime
+                // services too.  Even a declaration marked `pure` is a
+                // foreign boundary whose optimizer-safe input-only contract
+                // was checked during lowering; retaining the effect keeps an
+                // observable native implementation from being removed or
+                // reordered by a later pass.
                 effects.push(ExecutionEffect::RuntimeService);
                 if call
                     .args()
@@ -1034,6 +1040,9 @@ fn collect_expression_effects(
             }
         }
         IrExprKind::CallFn(call) => {
+            // Keep DPI imports on the conservative foreign-call effect path;
+            // `pure` is metadata for validation and diagnostics, not a license
+            // to speculate across an opaque native implementation.
             effects.push(ExecutionEffect::RuntimeService);
             if call.args().iter().any(|arg| {
                 matches!(

@@ -124,10 +124,16 @@ impl<'a> SlangTypeProjector<'a> {
 
     fn type_info(&self, ty: &SlangType) -> Result<TypeInfo, String> {
         let builtin_integral = matches!(ty.kind, TypeKind::Integral)
-            .then(|| match ty.display_name.as_str() {
-                "logic" | "bit" | "reg" | "int" | "integer" | "longint" | "byte" | "shortint"
-                | "time" => Some(ty.display_name.as_str()),
-                _ => None,
+            .then(|| {
+                let spelling = ty
+                    .display_name
+                    .strip_suffix(" unsigned")
+                    .unwrap_or(&ty.display_name);
+                match spelling {
+                    "logic" | "bit" | "reg" | "int" | "integer" | "longint" | "byte"
+                    | "shortint" | "time" => Some(spelling),
+                    _ => None,
+                }
             })
             .flatten();
         let kind = match ty.kind {

@@ -210,6 +210,11 @@ See `tests/sim_net_defaults.rs`.
   rejected until persistent string ownership and typed object-formal copy
   semantics are available; automatic string-key `foreach` iterators are the
   bounded loop-scoped exception.
+- DPI-C imports use a separate canonical `svdpi.h` thunk for scalar
+  `bit`/`logic`/`reg`, two-state integral atoms, real/shortreal, chandle, and string
+  formals. C names and pure/context qualifiers remain owned metadata; missing
+  or conflicting explicit libraries/signatures fail before simulation.
+  Packed/open arrays, `ref`, exports, and context callbacks remain deferred.
 - Fork/join supports process bodies plus legal detached `join_none` branches in
   automatic packed subroutines. Captured branch values use owned activation
   frames and are released on completion or cancellation; blocking function

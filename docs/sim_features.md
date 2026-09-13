@@ -442,7 +442,7 @@ Tracked so nothing is lost; all de-prioritized behind RTL-simulation support.
 | Checkers | `checker … endchecker` | §1800-2009 ch17 | [SV-2009] |
 | Coverage | covergroups, coverpoints, cross | §1800-2009 ch18 | [SV-2005] |
 | Constrained randomization | `randomize()`, rand/c, constraints, `std::randomize` | §1800-2009 ch18 | [SV-2005] |
-| DPI | import/export functions, contexts | §1800-2009 ch35 | [SV-2005] |
+| DPI beyond the bounded subset | exports, packed/open arrays, reference formals, and context callbacks | §1800-2009 ch35 | [SV-2005] |
 | PLI/VPI | `tf_`/`acc_`/`vpi_` interface, PLI applications | §1364-2001 ch20–27 | [1995]/[2001] |
 | Specify blocks | module paths, edge/state-dependent paths, `PATHPULSE$` | §1800-2009 ch30 | [1995]/[SV-2009 restored] |
 | Timing checks | `$setup/$hold/$width/…`, notifiers, `&&&` conditions | §1800-2009 ch31 | [1995]/[SV-2009 restored] |
@@ -463,7 +463,7 @@ Tracked so nothing is lost; all de-prioritized behind RTL-simulation support.
 ## Remaining-work inventory
 
 The original audit IDs are stable. This inventory currently contains 62 remaining
-groups (20 missing, 42 partial); groups 9, 27, 38, 50, 51, 57, 58, 59, 60 and 63 are completed. Counts refer to grouped
+groups (19 missing, 43 partial); groups 9, 27, 38, 50, 51, 57, 58, 59, 60 and 63 are completed. Counts refer to grouped
 capabilities, not individual keywords, system functions or standard clauses.
 
 
@@ -472,7 +472,7 @@ capabilities, not individual keywords, system functions or standard clauses.
 | 1 | Missing | Charge-storage nets | `trireg`, charge strengths, charge decay and charge sharing. |
 | 2 | Missing | Tagged unions | Tagged storage, construction and matching. |
 | 3 | Partial | Real types | Scalar `real`/`realtime`/`shortreal` ports, combinational reads, event/wait controls, typed changed-write notifications, continuous assignments, and real monitor/strobe arguments are covered. General ports, aggregate/container storage, and reference-real subroutine forms remain. |
-| 4 | Partial | Strings | General string ports, formals, locals, static string-returning functions, continuous assignments and sensitivity. |
+| 4 | Partial | Strings | General string ports, formals, locals, static string-returning functions, continuous assignments and sensitivity; bounded DPI-C string imports are covered separately. |
 | 5 | Partial | Chandles | Ports, packed containment, arithmetic, continuous assignment and sensitivity remain unsupported; the bounded implementation covers null/copy/comparison and Boolean operations, automatic/static locals, represented aggregate members, mixed signatures, output/inout/ref/const-ref aliases, delay-bearing tasks and chandle-input→chandle-return functions. |
 | 6 | Partial | Structures and untagged unions | Nested unpacked/object members, recursive defaults and nominal type keys, anonymous copies without type identity, unequal-width unpacked unions, ordinary aggregate copy ports/nets and general subroutine storage. |
 | 7 | Partial | Fixed unpacked arrays | Whole-array procedural assignment and concatenation, slices/partial indexing, general element types, multidimensional copy-port forms and runtime-indexed copy-port actuals. Fixed-array reference ports and element indexed part-selects now have file-based read/write, range, state-conversion, wide/invalid-index and delayed-NBA coverage. |
@@ -515,7 +515,7 @@ capabilities, not individual keywords, system functions or standard clauses.
 | 44 | Missing | Recursive timed tasks | Recursion through delay/wait-bearing tasks. |
 | 45 | Partial | Parallel subroutine bodies | Detached `join_none` branches in packed subroutine bodies retain automatic formals/locals; resumable timed task activations, full ref/copy-out semantics and broader detached-function forms remain. Ordinary blocking timing in functions is illegal. |
 | 46 | Missing | Cross-instance subroutine calls | Hierarchical calls to tasks/functions outside the calling instance, including interface/package subroutine contexts. |
-| 47 | Partial | Subroutine copy-out and storage | General unpacked/aggregate storage plus string/event output/inout call paths and legal NBAs to persistent unpacked subroutine storage remain. Chandle output/inout/ref/const-ref aliases and bounded delayed-task lifetime are covered. Packed and scalar real/shortreal static function output/inout expression copy-out is covered; NBAs to automatic variables are language-illegal and excluded. |
+| 47 | Partial | Subroutine copy-out and storage | General unpacked/aggregate storage plus string/event output/inout call paths and legal NBAs to persistent unpacked subroutine storage remain. Chandle output/inout/ref/const-ref aliases and bounded delayed-task lifetime are covered. Packed and scalar real/shortreal static function output/inout expression copy-out is covered; bounded DPI-C scalar string output/inout is covered separately. NBAs to automatic variables are language-illegal and excluded. |
 | 48 | Partial | File I/O | Owned standard-stream/ordinary-file descriptors, multichannel output, `$fopen/$fclose/$fdisplay/$fwrite/$fstrobe/$fmonitor`, `$fscanf/$sscanf/$fread/$fgets/$fgetc/$ungetc`, and `$ftell/$fseek/$rewind/$fflush/$ferror/$feof` are covered in both optimizer modes. Broader aggregate input remains separate. |
 | 49 | Partial | Display families and formatting | Typed console, file and string formatting preserves packed, real, and owned string values, supports the legal `%d/%h/%x/%b/%o/%c/%u/%z/%v/%t/%f/%e/%g/%s/%m/%l` conversions, width/precision directives, exact `%%` escaping, and HDL hierarchy names. Deferred string/real snapshots retain safe ownership, monitor object dependencies trigger settled reports, and strobes retain issue order; aggregate pattern values remain outside the bounded formatter. |
 | 50 | Completed | String formatting tasks/functions | `$sformat`, `$swrite` and their radix variants, plus `$sformatf`, use typed owned arguments and the shared formatter. Native string and packed string-like destinations receive normal truncation/padding; dynamic/nested format expressions and source-order, exactly-once arguments are covered by `sim_h04_string_format.rs`. |
@@ -538,6 +538,6 @@ capabilities, not individual keywords, system functions or standard clauses.
 | 67 | Missing | Checkers | Checker declarations, instances and checker execution. |
 | 68 | Missing | Functional coverage | Covergroups, coverpoints, bins, crosses, sampling, coverage queries/control and coverage database system tasks. |
 | 69 | Missing | Constrained and structured randomization | `rand/randc`, constraints, object and `std::randomize`, `randcase` and `randsequence`. |
-| 70 | Missing | DPI | DPI import/export of functions/tasks, context/pure semantics and foreign-call integration. |
+| 70 | Partial | DPI | Bounded DPI-C imports of scalar `bit`/`logic`/`reg`, two-state integral atoms, `real`/`shortreal`, `chandle`, and `string` preserve C aliases and pure/context metadata, support input/output/inout roundtrips, and link only explicitly supplied libraries (`sim_dpi.rs`). Exports, packed vectors/open arrays, reference formals, and context callbacks remain unsupported. |
 | 71 | Missing | PLI/VPI | Standard `tf_`, `acc_`, `vpi_` interfaces, callbacks and PLI application integration. |
 | 72 | Missing | Virtual interfaces | Virtual-interface handles, assignment and member access through those handles. |

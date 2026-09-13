@@ -176,6 +176,12 @@ coverage for the same rule IDs.
   actionable error); skips gracefully when cmake is absent.
   Its source-generation check also pins the separate value-runtime translation
   unit and retention of both value files during stale-source cleanup.
+- `sim_dpi.rs` covers bounded DPI-C scalar (`bit`/`logic`/`reg` and
+  two-state integral) imports, owned aliases and
+  pure/context metadata, explicit CMake library linkage, roundtrip values and
+  out/inout directions, plus missing-symbol, conflicting-signature and
+  unsupported-vector failures. Native shared-library cases skip on non-Unix
+  hosts or when CMake/a C compiler is unavailable.
 - `vendor_patches.rs` exercises clean-checkout application, already-applied
   acceptance, and mismatch rejection for the portable native-build patch
   preparer.

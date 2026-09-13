@@ -155,8 +155,18 @@ pub struct FuncDef {
     /// Return type; `None` for void functions and tasks.
     pub ret: Option<TypeInfo>,
     pub args: Vec<FuncArgDef>,
+    /// Owned DPI-C import metadata, when this declaration is foreign.
+    pub dpi_import: Option<DpiImportDef>,
     /// Full name of the instance the clone belongs to.
     pub scope: String,
+}
+
+/// C linkage and optimizer qualifiers for a DPI-C import.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DpiImportDef {
+    pub c_name: String,
+    pub context: bool,
+    pub pure: bool,
 }
 
 /// One elaborated generate block instance, e.g. `gen_blk[0]`.
@@ -439,6 +449,11 @@ fn instance_from_db(db: &db::Db, id: NodeId) -> InstanceModel {
                 col: db.node(*c).col,
                 ret: ret.clone(),
                 args: func_args_from_db(db, *c),
+                dpi_import: db.dpi_import(*c).map(|dpi| DpiImportDef {
+                    c_name: dpi.c_name.clone(),
+                    context: dpi.context,
+                    pure: dpi.pure,
+                }),
                 scope: full_name.clone(),
             }),
             _ => None,
@@ -617,6 +632,11 @@ fn class_from_db(db: &db::Db, id: NodeId) -> ClassDef {
                     col: db.node(*c).col,
                     ret,
                     args: func_args_from_db(db, *c),
+                    dpi_import: db.dpi_import(*c).map(|dpi| DpiImportDef {
+                        c_name: dpi.c_name.clone(),
+                        context: dpi.context,
+                        pure: dpi.pure,
+                    }),
                     // Class definitions are not per-instance; the method scope
                     // is the (library-stripped) class name.
                     scope: scope.clone(),

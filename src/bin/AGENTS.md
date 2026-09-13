@@ -16,6 +16,9 @@ LSP-only tower-lsp/tokio/dashmap code stays in `llg_ls`.
 - `--generator <backend>` selects CMake `-G`; `--gen-only` stops after model
   sources + `CMakeLists.txt`. CMake is the only model builder; see
   [../sim/AGENTS.md](../sim/AGENTS.md) for compiler/flags/environment selection.
+- `--dpi-lib <path>` may be repeated to link explicitly supplied DPI-C
+  libraries; paths are validated before CMake and are also retained by
+  `--gen-only` in the generated project.
 - `--no-opt` disables simulator IR optimization passes; the default enables
   them. File-based conformance tests exercise both CLI modes.
 - `--include-dir <path>`/`-I <path>` adds an include-search directory. The

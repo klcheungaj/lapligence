@@ -1739,6 +1739,25 @@ public:
       addLifetime(result, symbol.defaultLifetime);
       if (symbol.flags.has(MethodFlags::Static))
         result.auxiliary |= LLG_SLANG_SUBROUTINE_STATIC;
+      if (symbol.flags.has(MethodFlags::DPIImport)) {
+        result.auxiliary |= LLG_SLANG_SUBROUTINE_DPI_IMPORT;
+        if (symbol.flags.has(MethodFlags::DPIContext))
+          result.auxiliary |= LLG_SLANG_SUBROUTINE_DPI_CONTEXT;
+        if (symbol.flags.has(MethodFlags::Pure))
+          result.auxiliary |= LLG_SLANG_SUBROUTINE_DPI_PURE;
+
+        // Keep the C linkage spelling in the owned semantic record.  Slang
+        // has already validated the identifier, but retaining the fallback
+        // makes the boundary robust for syntax-recovered declarations.
+        std::string_view cName = symbol.name;
+        if (const auto* syntaxNode = symbol.getSyntax();
+            syntaxNode && syntaxNode->kind == syntax::SyntaxKind::DPIImport) {
+          const auto& dpi = syntaxNode->template as<syntax::DPIImportSyntax>();
+          if (!dpi.c_identifier.isMissing())
+            cName = dpi.c_identifier.valueText();
+        }
+        result.definition_name = storeString(capture.output, cName);
+      }
     }
     if constexpr (std::same_as<T, SubroutineSymbol>) {
       if (symbol.subroutineKind == SubroutineKind::Task)
@@ -1778,7 +1797,11 @@ public:
             id;
         capture.semanticEdge(returnId, LLG_SLANG_EDGE_RETURN_OWNER, id);
       }
-      symbol.getBody().visit(*this);
+      // DPI imports are declarations only.  Visiting getBody() would expose
+      // native syntax implementation details and can manufacture a phantom
+      // body node for a prototype with no body.
+      if (!symbol.flags.has(MethodFlags::DPIImport))
+        symbol.getBody().visit(*this);
     }
     if constexpr (std::same_as<T, PrimitiveInstanceSymbol>) {
       if (const TimingControl* delay = symbol.getDelay())

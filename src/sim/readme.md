@@ -34,6 +34,11 @@
   force/release, packed port links, dependency wakeups, and waveform reads use
   those groups. Dynamic selects, aggregate, and switch-level alias forms remain
   unsupported.
+- **DPI-C imports:** bounded scalar `bit`/`logic`/`reg`, two-state integral,
+  real/shortreal, chandle, and string imports cross an emitted canonical
+  `svdpi.h` thunk; C linkage libraries are supplied explicitly to CMake.
+  Exports, packed/open arrays, reference formals, and context callbacks remain
+  outside this boundary.
 - **Entry point:** `src/bin/llg.rs` drives compile → lower → optimize → emit →
   build → run.
 - **Validation:** simulator behavior is covered by `tests/sim_*.rs`, scheduler

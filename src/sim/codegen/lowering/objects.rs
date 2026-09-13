@@ -1639,7 +1639,17 @@ impl Codegen<'_> {
             {
                 let op = *op;
                 let (a, b) = (operands[0], operands[1]);
-                let is_process = [a, b].iter().any(|node| self.is_process_expr(path, *node));
+                // `null` is shared by process, class, and chandle types. Let
+                // the non-null operand select the object equality domain.
+                let is_process = [a, b].iter().any(|node| {
+                    !matches!(
+                        self.kind(*node),
+                        NodeKind::Expr(ExprKind::Constant {
+                            const_type: ConstantType::Null,
+                            ..
+                        })
+                    ) && self.is_process_expr(path, *node)
+                });
                 if is_process {
                     if !matches!(
                         op,

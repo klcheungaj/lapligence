@@ -45,8 +45,10 @@ executables:
   Generator selection: `CmakeBuildOpts.generator` (driver
   `--generator <backend>` via `build_model_cmake_with_opts`) >
   `$CMAKE_GENERATOR` passthrough > cmake's host default.
-  `generate_model_sources` writes sources + `CMakeLists.txt` only (driver
-  `--gen-only`).  Env vars: `LLG_CMAKE` (cmake program), `LLG_CC`/`CC`
+  `CmakeBuildOpts.dpi_libraries` (driver `--dpi-lib <path>`, repeatable)
+  supplies validated, explicit DPI-C link files; `svdpi.h` is copied into
+  each generated source tree. `generate_model_sources` writes sources +
+  `CMakeLists.txt` only (driver `--gen-only`). Env vars: `LLG_CMAKE` (cmake program), `LLG_CC`/`CC`
   compiler chain, `LLG_CFLAGS` appended.  Missing cmake → actionable error
   naming install; flags containing double quotes are rejected;
   `cmake_available()` probes for a usable cmake once per process.

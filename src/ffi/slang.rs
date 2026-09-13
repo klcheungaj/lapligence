@@ -545,6 +545,10 @@ pub enum SemanticKind {
 const ARGUMENT_CONST_REF: u64 = 1 << 0;
 const ARGUMENT_REF_STATIC: u64 = 1 << 1;
 pub(crate) const SUBROUTINE_STATIC: u64 = 1 << 0;
+/// DPI-C import metadata copied from Slang's method flags and syntax.
+pub(crate) const SUBROUTINE_DPI_IMPORT: u64 = 1 << 8;
+pub(crate) const SUBROUTINE_DPI_CONTEXT: u64 = 1 << 9;
+pub(crate) const SUBROUTINE_DPI_PURE: u64 = 1 << 10;
 
 /// Repository-owned qualifier tags stored in a statement's auxiliary field.
 /// Keep these values in lockstep with the C ABI, rather than exposing Slang's
@@ -2107,8 +2111,19 @@ fn validate_semantic_auxiliary(node: &RawSemanticNode) -> Result<(), SlangError>
         }
         // Parameter auxiliary metadata carries the frontend's override bit.
         (12, _, _) => node.auxiliary <= 1,
-        // Subroutine qualifiers carry the static-method bit.
-        (16, _, _) => node.auxiliary <= 1,
+        // Subroutine qualifiers carry the static-method bit and the
+        // repository-owned DPI-C import/context/pure bits. Context and pure
+        // are only meaningful for an import, so malformed native snapshots
+        // cannot smuggle those qualifiers onto an ordinary subroutine.
+        (16, _, _) => {
+            let allowed = SUBROUTINE_STATIC
+                | SUBROUTINE_DPI_IMPORT
+                | SUBROUTINE_DPI_CONTEXT
+                | SUBROUTINE_DPI_PURE;
+            node.auxiliary & !allowed == 0
+                && (node.auxiliary & (SUBROUTINE_DPI_CONTEXT | SUBROUTINE_DPI_PURE) == 0
+                    || node.auxiliary & SUBROUTINE_DPI_IMPORT != 0)
+        }
         // Argument qualifiers carry const-ref and ref-static bits.
         (17, _, _) => node.auxiliary <= 3,
         // Statement subkind 42 covers both `wait` and `wait_order`; the

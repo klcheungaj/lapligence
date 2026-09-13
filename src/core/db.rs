@@ -14,12 +14,12 @@ pub use database::{
     AssertionBinding, AssertionCaseItem, AssertionExprKind, AssertionUnaryOp,
     AssignmentPatternKeyType, AssociativeIndex, CaseItem, ClockingBlockInfo, ClockingEdge,
     ClockingSkew, ClockingVarInfo, ConcurrentAssertionKind, ConstantSource, Db, DbError,
-    DriverDelay, ElaboratedTypeRanges, EnumMember, EnumTypeMetadata, EventSpec, EventTriggerTiming,
-    ExprKind, GateTerm, ImmediateAssertionKind, IntraControl, Node, NodeId, NodeKind, PackedMember,
-    PackedRange, PrimClass, ProcessKind, StmtKind, StreamOperand, StreamingDirection,
-    TimeLiteralScale, TimeUnit, TypeDescriptor, TypeId, TypeShape, ValueCopySemantics,
-    ValueDefaultSemantics, ValueDestroySemantics, ValueEqualitySemantics, VariableLifetime,
-    VariableLifetimeQualifier,
+    DpiImportInfo, DriverDelay, ElaboratedTypeRanges, EnumMember, EnumTypeMetadata, EventSpec,
+    EventTriggerTiming, ExprKind, GateTerm, ImmediateAssertionKind, IntraControl, Node, NodeId,
+    NodeKind, PackedMember, PackedRange, PrimClass, ProcessKind, StmtKind, StreamOperand,
+    StreamingDirection, TimeLiteralScale, TimeUnit, TypeDescriptor, TypeId, TypeShape,
+    ValueCopySemantics, ValueDefaultSemantics, ValueDestroySemantics, ValueEqualitySemantics,
+    VariableLifetime, VariableLifetimeQualifier,
 };
 pub use domain::{
     AlwaysKind, CapturedSemanticKind, CaseKind, ConstantType, Direction, JoinKind, NetType,

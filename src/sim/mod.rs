@@ -62,6 +62,10 @@ pub(crate) fn write_sim_sources(
             "aco_assert_override.h",
             include_str!("../../vendor/libaco/aco_assert_override.h"),
         ),
+        (
+            "svdpi.h",
+            include_str!("../../vendor/slang/external/ieee1800/svdpi.h"),
+        ),
     ];
     files.extend_from_slice(extra);
 
