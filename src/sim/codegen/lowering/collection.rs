@@ -448,6 +448,156 @@ impl<'a> Codegen<'a> {
         self.proc_process_locals.get(&node).map(String::as_str)
     }
 
+    /// Register a semaphore declared in a procedural body. Automatic
+    /// semaphores live in the activation C frame; static declarations use a
+    /// model object so repeated process activations share one semaphore.
+    pub(super) fn collect_semaphore_local(
+        &mut self,
+        path: &str,
+        node: NodeId,
+    ) -> Result<ChandleTarget, String> {
+        if let Some(name) = self.proc_semaphore_locals.get(&node) {
+            return Ok(ChandleTarget::Local(name.clone()));
+        }
+        if let Some(index) = self.proc_semaphore_static_objects.get(&(self.inst, node)) {
+            return Ok(ChandleTarget::Object(*index));
+        }
+        let is_semaphore = matches!(
+            self.kind(node),
+            NodeKind::Var { ty }
+                if ty.kind == "class" && ty.type_name.as_deref() == Some("semaphore")
+        );
+        if !is_semaphore {
+            return Err(format!(
+                "procedural semaphore declaration `{}` has a non-semaphore type in `{path}`",
+                self.node(node).name
+            ));
+        }
+        match self.db.variable_lifetime(node) {
+            VariableLifetime::Automatic => {
+                let name = format!("_ls{}", node.index());
+                self.proc_semaphore_locals.insert(node, name.clone());
+                Ok(ChandleTarget::Local(name))
+            }
+            VariableLifetime::Static => {
+                let index = self.collect_semaphore_static_object(path, node)?;
+                if let Some(initializer) = self.db.var_initializer(node) {
+                    if !matches!(
+                        self.kind(initializer),
+                        NodeKind::Expr(ExprKind::Constant {
+                            const_type: ConstantType::Null,
+                            ..
+                        })
+                    ) {
+                        self.semaphore_initializers.push((
+                            node,
+                            index,
+                            initializer,
+                            path.to_owned(),
+                        ));
+                    }
+                }
+                Ok(ChandleTarget::Object(index))
+            }
+            VariableLifetime::Unavailable => Err(format!(
+                "resolved lifetime is unavailable for semaphore `{}` in `{path}`",
+                self.node(node).name
+            )),
+        }
+    }
+
+    pub(super) fn collect_semaphore_static_object(
+        &mut self,
+        path: &str,
+        node: NodeId,
+    ) -> Result<usize, String> {
+        if let Some(index) = self.proc_semaphore_static_objects.get(&(self.inst, node)) {
+            return Ok(*index);
+        }
+        let is_semaphore = matches!(
+            self.kind(node),
+            NodeKind::Var { ty }
+                if ty.kind == "class" && ty.type_name.as_deref() == Some("semaphore")
+        );
+        if !is_semaphore {
+            return Err(format!(
+                "procedural semaphore declaration `{}` has a non-semaphore type in `{path}`",
+                self.node(node).name
+            ));
+        }
+        if self.db.variable_lifetime(node) != VariableLifetime::Static {
+            return Err(format!(
+                "semaphore `{}` in `{path}` is not static",
+                self.node(node).name
+            ));
+        }
+        let index = self.model.objects.len();
+        self.model.objects.push(crate::sim::ir::IrObject {
+            c_name: format!("O_P{}_S{}", self.inst.index(), node.index()),
+            ty: crate::sim::ir::IrObjectType::Semaphore,
+            initial: None,
+        });
+        self.proc_semaphore_static_objects
+            .insert((self.inst, node), index);
+        Ok(index)
+    }
+
+    pub(super) fn proc_semaphore_local_name(&self, node: NodeId) -> Option<&str> {
+        self.proc_semaphore_locals.get(&node).map(String::as_str)
+    }
+
+    /// Resolve a procedural semaphore declaration through lexical begin/loop
+    /// scopes, mirroring the process-handle resolver.
+    pub(super) fn lexical_proc_semaphore_decl(&self, reference: NodeId) -> Option<NodeId> {
+        let name = self.node(reference).name.as_str();
+        let mut parent = self.node(reference).parent;
+        while let Some(scope) = parent {
+            if matches!(self.kind(scope), NodeKind::Stmt(StmtKind::Begin)) {
+                if let Some(variable) = self.node(scope).children.iter().find(|child| {
+                    matches!(
+                        self.kind(**child),
+                        NodeKind::Var { ty }
+                            if ty.kind == "class"
+                                && ty.type_name.as_deref() == Some("semaphore")
+                    ) && self.node(**child).name == name
+                }) {
+                    return Some(*variable);
+                }
+            }
+            let variable = match self.kind(scope) {
+                NodeKind::Stmt(StmtKind::For { vars, .. }) => vars
+                    .iter()
+                    .find(|variable| {
+                        matches!(
+                            self.kind(**variable),
+                            NodeKind::Var { ty }
+                                if ty.kind == "class"
+                                    && ty.type_name.as_deref() == Some("semaphore")
+                        ) && self.node(**variable).name == name
+                    })
+                    .copied(),
+                NodeKind::Stmt(StmtKind::Foreach { vars, .. }) => vars
+                    .iter()
+                    .flatten()
+                    .find(|variable| {
+                        matches!(
+                            self.kind(**variable),
+                            NodeKind::Var { ty }
+                                if ty.kind == "class"
+                                    && ty.type_name.as_deref() == Some("semaphore")
+                        ) && self.node(**variable).name == name
+                    })
+                    .copied(),
+                _ => None,
+            };
+            if variable.is_some() {
+                return variable;
+            }
+            parent = self.node(scope).parent;
+        }
+        None
+    }
+
     /// Resolve a process declaration through begin/loop lexical scopes,
     /// including static declarations whose storage is model-backed.
     pub(super) fn lexical_proc_process_decl(&self, reference: NodeId) -> Option<NodeId> {
@@ -2480,6 +2630,12 @@ impl<'a> Codegen<'a> {
                                 aggregate_path_suffix(&member_path)
                             ));
                         }
+                    }
+                    crate::sim::ir::IrObjectType::Semaphore => {
+                        return Err(format!(
+                            "semaphore aggregate initializer `{}` is not supported",
+                            aggregate_path_suffix(&member_path)
+                        ));
                     }
                     crate::sim::ir::IrObjectType::Process => {
                         return Err(format!(
@@ -9514,6 +9670,7 @@ impl<'a> Codegen<'a> {
                 info,
                 initial,
                 lifetime: binding.storage.lifetime(),
+                kind: binding.storage.kind(),
             });
         }
         if let Some(info) = self.proc_local_info(target) {
@@ -9527,6 +9684,33 @@ impl<'a> Codegen<'a> {
                         None,
                     ),
                     lifetime: StorageLifetime::Automatic,
+                    kind: super::storage_kind(info.width),
+                });
+            }
+            return None;
+        }
+        if let Some(name) = self.proc_semaphore_local_name(target) {
+            if self.db.variable_lifetime(target) == VariableLifetime::Automatic {
+                return Some(CaptureSource {
+                    info: ProcLocalInfo {
+                        c_name: name.to_owned(),
+                        width: 1,
+                        signed: false,
+                        two_state: true,
+                        static_signal: None,
+                    },
+                    initial: IrExpr::new(
+                        IrExprKind::Verbatim {
+                            code: name.to_owned(),
+                            width: 1,
+                            signed: false,
+                        },
+                        1,
+                        false,
+                        None,
+                    ),
+                    lifetime: StorageLifetime::Automatic,
+                    kind: StorageKind::Opaque,
                 });
             }
             return None;
@@ -9547,6 +9731,7 @@ impl<'a> Codegen<'a> {
                 } else {
                     StorageLifetime::Static
                 },
+                kind: super::storage_kind(*width),
             });
         }
         if let Some(storage) = function.persistent.get(&target) {
@@ -9560,6 +9745,7 @@ impl<'a> Codegen<'a> {
                 },
                 initial: sig_read_expr_full(storage),
                 lifetime: StorageLifetime::Static,
+                kind: super::storage_kind(storage.width),
             });
         }
         if let Some(arg) = function.arg_read.get(&target) {
@@ -9583,6 +9769,7 @@ impl<'a> Codegen<'a> {
                 } else {
                     StorageLifetime::Automatic
                 },
+                kind: super::storage_kind(arg.width),
             });
         }
         if function.ret_node == Some(target) {
@@ -9606,6 +9793,7 @@ impl<'a> Codegen<'a> {
                 } else {
                     StorageLifetime::Static
                 },
+                kind: super::storage_kind(ret.width),
             });
         }
         None
@@ -11400,8 +11588,16 @@ impl<'a> Codegen<'a> {
         scan: &mut ProcessContractScan,
         visited_functions: &mut HashSet<NodeId>,
     ) -> Result<(), String> {
+        if self.is_process_self_call(node) {
+            return Ok(());
+        }
+        if self.is_semaphore_constructor_call(node) {
+            for child in &self.node(node).children {
+                self.scan_process_contract(*child, scan, visited_functions)?;
+            }
+            return Ok(());
+        }
         match self.kind(node) {
-            NodeKind::FuncCall { .. } if self.is_process_self_call(node) => return Ok(()),
             NodeKind::Stmt(StmtKind::EventControl { .. }) => scan.event_controls.push(node),
             NodeKind::Stmt(StmtKind::DelayControl { .. } | StmtKind::CycleDelayControl { .. })
             | NodeKind::Stmt(StmtKind::Wait { .. })
@@ -11730,8 +11926,16 @@ impl<'a> Codegen<'a> {
         writes: &mut HashSet<IrDependency>,
         visited_functions: &mut HashSet<NodeId>,
     ) -> Result<(), String> {
+        if self.is_process_self_call(node) {
+            return Ok(());
+        }
+        if self.is_semaphore_constructor_call(node) {
+            for child in &self.node(node).children {
+                self.walk_process_writes(*child, writes, visited_functions)?;
+            }
+            return Ok(());
+        }
         match self.kind(node) {
-            NodeKind::FuncCall { .. } if self.is_process_self_call(node) => return Ok(()),
             NodeKind::Stmt(StmtKind::Assign { .. })
             | NodeKind::Stmt(StmtKind::ProcContAssign { .. })
             | NodeKind::Stmt(StmtKind::Force { .. })
@@ -11988,6 +12192,19 @@ impl<'a> Codegen<'a> {
         include_function_bodies: bool,
     ) -> Result<(), String> {
         if self.is_process_self_call(node) {
+            return Ok(());
+        }
+        if self.is_semaphore_constructor_call(node) {
+            for child in &self.node(node).children {
+                self.walk_read_signals_mode(
+                    scope_path,
+                    *child,
+                    seen,
+                    visited,
+                    out,
+                    include_function_bodies,
+                )?;
+            }
             return Ok(());
         }
         if self.object_of(scope_path, node).is_some() {

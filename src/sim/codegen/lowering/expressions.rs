@@ -4786,6 +4786,10 @@ impl<'a> Codegen<'a> {
                             index,
                             self.lower_chandle(path, value_node)?,
                         ),
+                        IrObjectType::Semaphore => IrObjectStmt::ChandleAssign(
+                            index,
+                            self.lower_chandle(path, value_node)?,
+                        ),
                         IrObjectType::Process => {
                             return Err(format!(
                                 "process aggregate member assignment is not supported in `{path}`"
@@ -4964,6 +4968,9 @@ impl<'a> Codegen<'a> {
                     IrObjectType::Chandle => {
                         IrObjectStmt::ChandleAssign(lhs_object, IrChandleExpr::Read(rhs_object))
                     }
+                    IrObjectType::Semaphore => {
+                        IrObjectStmt::ChandleAssign(lhs_object, IrChandleExpr::Read(rhs_object))
+                    }
                     IrObjectType::Process => {
                         return Err(format!(
                             "process aggregate member assignment is not supported in `{path}`"
@@ -5107,8 +5114,14 @@ impl<'a> Codegen<'a> {
                     (Some(left), Some(right)) => {
                         let left_index = self.reference_object(left);
                         let right_index = self.reference_object(right);
-                        if self.model.objects[left_index].ty == IrObjectType::Chandle {
-                            if self.model.objects[right_index].ty != IrObjectType::Chandle {
+                        if matches!(
+                            self.model.objects[left_index].ty,
+                            IrObjectType::Chandle | IrObjectType::Semaphore
+                        ) {
+                            if !matches!(
+                                self.model.objects[right_index].ty,
+                                IrObjectType::Chandle | IrObjectType::Semaphore
+                            ) {
                                 return Err(format!(
                                     "aggregate equality has mismatched object members in `{path}`"
                                 ));

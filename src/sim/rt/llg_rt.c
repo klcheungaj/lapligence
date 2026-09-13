@@ -124,7 +124,8 @@ typedef enum {
     W_LEVEL,
     W_FORK,    // llg_join: waiting for a fork group
     W_FORK_ALL, // llg_wait_fork: waiting for all of the current proc's groups
-    W_PROCESS  // process::await: waiting for one stable process handle
+    W_PROCESS, // process::await: waiting for one stable process handle
+    W_SEMAPHORE // semaphore::get: waiting for one FIFO key request
 } llg_wait_kind_t;
 
 typedef struct llg_nba {
@@ -168,6 +169,8 @@ struct llg_inertial {
     uint64_t turn_off;
 };
 
+typedef struct llg_semaphore_wait llg_semaphore_wait_t;
+
 typedef struct llg_wait {
     struct llg_wait* next;         // all active waits (signal + timed + zero-delay)
     struct llg_wait* time_next;    // sorted timed list
@@ -194,7 +197,24 @@ typedef struct llg_wait {
     llg_fork_group_t* grp;       // W_FORK: group being joined
     llg_proc_t* parent;          // W_FORK_ALL: the waiting proc itself
     llg_process_handle_t* process_target; // W_PROCESS: retained await target
+    llg_semaphore_t* semaphore;  // W_SEMAPHORE: owning semaphore
+    llg_semaphore_wait_t* semaphore_waiter; // W_SEMAPHORE: FIFO node
+    uint64_t semaphore_keys;     // W_SEMAPHORE: requested key count
 } llg_wait_t;
+
+struct llg_semaphore_wait {
+    llg_semaphore_wait_t* next;
+    llg_semaphore_t* owner;
+    llg_proc_t* proc;
+    uint64_t keys;
+};
+
+struct llg_semaphore {
+    uint64_t available;
+    llg_semaphore_wait_t* wait_head;
+    llg_semaphore_wait_t* wait_tail;
+    llg_semaphore_t* next_all;
+};
 
 typedef struct llg_fork_child {
     struct llg_fork_child* next;
@@ -324,6 +344,8 @@ static void assertion_disable_signal_changed(sv4_t* signal);
 static void assertion_clock_signal_changed(sv4_t* signal, sv4_t old,
                                            sv4_t value);
 static void wake_proc(llg_proc_t* p);
+static void semaphore_waiter_unlink(llg_wait_t* wait);
+static void semaphore_wake_available(llg_semaphore_t* semaphore);
 static void llg_kill_proc_tree(llg_proc_t* p);
 static void llg_kill_proc_tree_internal(llg_proc_t* p, int notify_parent);
 static void llg_fork_group_child_done(llg_fork_group_t* grp);
@@ -415,6 +437,13 @@ void llg_frame_capture_real(llg_frame_t* frame, size_t slot, double value) {
     entry->value.real = value;
 }
 
+void llg_frame_capture_opaque(llg_frame_t* frame, size_t slot, void* value) {
+    llg_frame_slot_t* entry = frame_slot(frame, slot);
+    frame_clear_alias(entry);
+    entry->kind = LLG_FRAME_OPAQUE;
+    entry->value.opaque = value;
+}
+
 void llg_frame_alias_value(llg_frame_t* frame, size_t slot, sv4_t* target) {
     if (!target) {
         fprintf(stderr, "llg: activation frame alias target is null\n");
@@ -503,6 +532,17 @@ double llg_frame_read_real(const llg_frame_t* frame, size_t slot) {
     return entry->alias_kind == LLG_FRAME_ALIAS_REAL
                ? *entry->alias.real
                : entry->value.real;
+}
+
+void* llg_frame_read_opaque(const llg_frame_t* frame, size_t slot) {
+    const llg_frame_slot_t* entry = frame_slot_const(frame, slot);
+    if (entry->alias_kind == LLG_FRAME_ALIAS_SLOT) {
+        return llg_frame_read_opaque(entry->alias.slot.frame, entry->alias.slot.slot);
+    }
+    if (llg_frame_slot_kind(frame, slot) != LLG_FRAME_OPAQUE) {
+        frame_kind_error(LLG_FRAME_OPAQUE, llg_frame_slot_kind(frame, slot));
+    }
+    return entry->value.opaque;
 }
 
 void llg_frame_write_real(llg_frame_t* frame, size_t slot, double value) {
@@ -830,6 +870,7 @@ typedef struct {
     int program_completion_pending; // finish after current-slot work drains
     llg_proc_t* retired_procs; // cancelled coroutines awaiting a safe destroy point
     llg_process_handle_t* process_handles; // stable identities for live/exited procs
+    llg_semaphore_t* semaphores; // all semaphore objects owned by this run
     llg_fork_group_t* zombie_groups; // completed/killed groups awaiting teardown
     llg_activation_t* activations; // active named block/task invocations
     llg_monitor_state_t mon;   // the active $monitor (at most one)
@@ -1595,6 +1636,78 @@ static void remove_inactive_entry(llg_wait_t* w) {
     remove_zero_wait_entry(w);
 }
 
+static int semaphore_key_count(sv4_t value, uint64_t* result) {
+    int64_t signed_value = 0;
+    if (!result || !sv4_to_index_i64(value, &signed_value) || signed_value < 0) {
+        fprintf(stderr,
+                "llg: semaphore key count must be a known nonnegative integral value\n");
+        llg_last_failure = 1;
+        g.finish = 1;
+        return 0;
+    }
+    *result = (uint64_t)signed_value;
+    return 1;
+}
+
+static int semaphore_valid(llg_semaphore_t* semaphore, const char* action) {
+    if (semaphore) return 1;
+    fprintf(stderr, "llg: semaphore %s requires a live semaphore handle\n", action);
+    llg_last_failure = 1;
+    g.finish = 1;
+    return 0;
+}
+
+// Remove a blocked get without changing the semaphore's available keys.  This
+// is used by process cancellation and teardown before the process storage is
+// reclaimed, so a killed waiter can never consume a later put.
+static void semaphore_waiter_unlink(llg_wait_t* wait) {
+    if (!wait || !wait->semaphore_waiter) return;
+    llg_semaphore_wait_t* node = wait->semaphore_waiter;
+    llg_semaphore_t* semaphore = wait->semaphore ? wait->semaphore : node->owner;
+    if (semaphore) {
+        llg_semaphore_wait_t** slot = &semaphore->wait_head;
+        while (*slot && *slot != node) slot = &(*slot)->next;
+        if (*slot == node) {
+            *slot = node->next;
+            if (semaphore->wait_tail == node) {
+                semaphore->wait_tail = NULL;
+                for (llg_semaphore_wait_t* item = semaphore->wait_head; item;
+                     item = item->next)
+                    semaphore->wait_tail = item;
+            }
+        }
+    }
+    free(node);
+    wait->semaphore = NULL;
+    wait->semaphore_waiter = NULL;
+    wait->semaphore_keys = 0;
+}
+
+// Service only the head request.  A later smaller request cannot bypass a
+// larger request at the front of the specified semaphore FIFO.
+static void semaphore_wake_available(llg_semaphore_t* semaphore) {
+    if (!semaphore) return;
+    while (semaphore->wait_head) {
+        llg_semaphore_wait_t* node = semaphore->wait_head;
+        if (node->keys > semaphore->available) break;
+        semaphore->wait_head = node->next;
+        if (!semaphore->wait_head) semaphore->wait_tail = NULL;
+        llg_proc_t* proc = node->proc;
+        llg_wait_t* wait = proc ? &proc->wait : NULL;
+        if (!proc || !wait || wait->kind != W_SEMAPHORE ||
+            wait->semaphore_waiter != node) {
+            free(node);
+            continue;
+        }
+        semaphore->available -= node->keys;
+        free(node);
+        wait->semaphore = NULL;
+        wait->semaphore_waiter = NULL;
+        wait->semaphore_keys = 0;
+        wake_proc(proc);
+    }
+}
+
 // Remove a W_EVENT/W_MIXED waiter from every named-event list it registered
 // on; defined below with the other named-event helpers.
 static void event_unlink(llg_wait_t* w);
@@ -1788,6 +1901,7 @@ static void wake_proc(llg_proc_t* p) {
         event_unlink(w);
     }
     if (w->kind == W_EVENT_TRIGGERED) event_triggered_unlink(w);
+    if (w->kind == W_SEMAPHORE) semaphore_waiter_unlink(w);
     free_expression_wait(w);
     free(w->specs);
     free(w->dependencies);
@@ -1808,6 +1922,7 @@ static void wake_proc(llg_proc_t* p) {
     w->process_target = NULL;
     w->n_order = 0;
     w->order_next = 0;
+    w->semaphore_keys = 0;
     w->kind = W_NONE;
     g.wait_count--;
     if (process_target) llg_process_release(process_target);
@@ -1971,6 +2086,7 @@ static void llg_kill_proc(llg_proc_t* p, int notify_parent) {
             event_unlink(w);
         }
         if (w->kind == W_EVENT_TRIGGERED) event_triggered_unlink(w);
+        if (w->kind == W_SEMAPHORE) semaphore_waiter_unlink(w);
         free_expression_wait(w);
         free(w->specs);
         free(w->dependencies);
@@ -1992,6 +2108,7 @@ static void llg_kill_proc(llg_proc_t* p, int notify_parent) {
         w->n_order = 0;
         w->order_next = 0;
         w->order_result_value = 0;
+        w->semaphore_keys = 0;
         w->kind = W_NONE;
         g.wait_count--;
         if (process_target) llg_process_release(process_target);
@@ -2213,6 +2330,89 @@ void llg_process_await(llg_process_handle_t* handle) {
     llg_process_retain(handle);
     register_wait();
     aco_yield();
+}
+
+llg_semaphore_t* llg_semaphore_new(sv4_t key_count) {
+    uint64_t keys = 0;
+    if (!semaphore_key_count(key_count, &keys)) return NULL;
+    llg_semaphore_t* semaphore = (llg_semaphore_t*)llg_checked_calloc(
+        1, sizeof(*semaphore), "semaphore");
+    semaphore->available = keys;
+    semaphore->next_all = g.semaphores;
+    g.semaphores = semaphore;
+    return semaphore;
+}
+
+void llg_semaphore_put(llg_semaphore_t* semaphore, sv4_t key_count) {
+    if (!region_can_mutate("semaphore put") ||
+        !semaphore_valid(semaphore, "put"))
+        return;
+    uint64_t keys = 0;
+    if (!semaphore_key_count(key_count, &keys) || keys == 0) return;
+    if (keys > UINT64_MAX - semaphore->available) {
+        fprintf(stderr, "llg: semaphore key count overflow in put\n");
+        llg_last_failure = 1;
+        g.finish = 1;
+        return;
+    }
+    semaphore->available += keys;
+    semaphore_wake_available(semaphore);
+}
+
+void llg_semaphore_get(llg_semaphore_t* semaphore, sv4_t key_count) {
+    if (!region_can_mutate("semaphore get") ||
+        !semaphore_valid(semaphore, "get"))
+        return;
+    llg_proc_t* current = llg_current();
+    if (!current) {
+        fprintf(stderr, "llg: semaphore get requested outside a simulation process\n");
+        llg_last_failure = 1;
+        g.finish = 1;
+        return;
+    }
+    uint64_t keys = 0;
+    if (!semaphore_key_count(key_count, &keys) || keys == 0) return;
+    if (!semaphore->wait_head && semaphore->available >= keys) {
+        semaphore->available -= keys;
+        return;
+    }
+
+    llg_wait_t* wait = &current->wait;
+    llg_semaphore_wait_t* node = (llg_semaphore_wait_t*)llg_checked_calloc(
+        1, sizeof(*node), "semaphore waiter");
+    node->owner = semaphore;
+    node->proc = current;
+    node->keys = keys;
+    if (semaphore->wait_tail) {
+        semaphore->wait_tail->next = node;
+    } else {
+        semaphore->wait_head = node;
+    }
+    semaphore->wait_tail = node;
+    wait->kind = W_SEMAPHORE;
+    wait->resume_region = region_is_reactive(current->region)
+                              ? LLG_REGION_REACTIVE
+                              : LLG_REGION_ACTIVE;
+    wait->semaphore = semaphore;
+    wait->semaphore_waiter = node;
+    wait->semaphore_keys = keys;
+    process_status_set(current, LLG_PROCESS_WAITING);
+    register_wait();
+    aco_yield();
+}
+
+int llg_semaphore_try_get(llg_semaphore_t* semaphore, sv4_t key_count) {
+    if (!region_can_mutate("semaphore try_get") ||
+        !semaphore_valid(semaphore, "try_get"))
+        return 0;
+    uint64_t keys = 0;
+    if (!semaphore_key_count(key_count, &keys)) return 0;
+    if (keys == 0) return 1;
+    // Preserve the specified FIFO ordering: an immediate attempt never skips
+    // an already queued request, even when enough keys are currently visible.
+    if (semaphore->wait_head || semaphore->available < keys) return 0;
+    semaphore->available -= keys;
+    return 1;
 }
 
 // One child of `grp` finished (llg_proc_done).  Decrement the live count,
@@ -3561,6 +3761,7 @@ static void free_proc_storage(llg_proc_t* p) {
     }
     event_unlink(&p->wait);
     event_triggered_unlink(&p->wait);
+    semaphore_waiter_unlink(&p->wait);
     free_expression_wait(&p->wait);
     free(p->wait.specs);
     free(p->wait.dependencies);
@@ -3727,6 +3928,17 @@ void llg_rt_cleanup(void) {
         if (g.all_procs[i]) free_proc_storage(g.all_procs[i]);
     }
     reap_retired_procs();
+    while (g.semaphores) {
+        llg_semaphore_t* semaphore = g.semaphores;
+        g.semaphores = semaphore->next_all;
+        while (semaphore->wait_head) {
+            llg_semaphore_wait_t* next = semaphore->wait_head->next;
+            free(semaphore->wait_head);
+            semaphore->wait_head = next;
+        }
+        semaphore->wait_tail = NULL;
+        free(semaphore);
+    }
     // External HDL references may keep terminal process identities alive, but
     // no handle may retain a pointer into the context being reset below.
     llg_process_handle_t* handle = g.process_handles;

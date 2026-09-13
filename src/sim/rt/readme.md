@@ -28,6 +28,9 @@
   form preserves `system(NULL)`, distinct from an explicit empty command.
   `$swrite`/`$sformat`/`$sformatf` use the same typed formatter as display tasks;
   formatted results own their bytes independently of source arguments.
+  Semaphores (§1800-2009 15.3) keep runtime-owned key counts and a specified
+  FIFO waiter queue; blocking `get` registrations are removed on process
+  cancellation and all semaphore storage is reclaimed at runtime cleanup.
   Hosted C targets are required; freestanding targets are unsupported.
   File output uses an owned 32-slot descriptor table: stdout/stderr masks,
   ordinary host files, multichannel fan-out, typed deferred output, checked

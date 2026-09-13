@@ -1156,6 +1156,29 @@ impl EmitCtx<'_, '_> {
                                 self.cg.kind(*child),
                                 NodeKind::Var { ty }
                                     if ty.kind == "class"
+                                        && ty.type_name.as_deref() == Some("semaphore")
+                            ) {
+                                let target = self.cg.collect_semaphore_local(&self.path, *child)?;
+                                let init = self
+                                    .cg
+                                    .db
+                                    .var_initializer(*child)
+                                    .map(|initializer| {
+                                        self.cg.lower_chandle(&self.path, initializer)
+                                    })
+                                    .transpose()?;
+                                match target {
+                                    ChandleTarget::Local(name) => body.push(IrStmt::Object(
+                                        IrObjectStmt::ChandleDeclareLocal(name, init),
+                                    )),
+                                    ChandleTarget::Object(_) => {}
+                                }
+                                continue;
+                            }
+                            if matches!(
+                                self.cg.kind(*child),
+                                NodeKind::Var { ty }
+                                    if ty.kind == "class"
                                         && ty.type_name.as_deref() == Some("process")
                             ) {
                                 match self.cg.collect_process_local(&self.path, *child)? {
@@ -1567,12 +1590,13 @@ impl EmitCtx<'_, '_> {
                 callee,
                 ..
             } => {
-                if matches!(name.as_str(), "suspend" | "await")
-                    && self.cg.is_process_expr(&self.path, *receiver)
+                if (matches!(name.as_str(), "suspend" | "await")
+                    && self.cg.is_process_expr(&self.path, *receiver))
+                    || (name == "get" && self.cg.is_semaphore_expr(&self.path, *receiver))
                 {
                     if self.in_final {
                         return Err(format!(
-                            "process method `{name}` inside a final block in `{}` is not allowed",
+                            "blocking method `{name}` inside a final block in `{}` is not allowed",
                             self.path
                         ));
                     }
@@ -1790,6 +1814,26 @@ impl EmitCtx<'_, '_> {
                 ProcessTarget::Object(index) => init
                     .map(|value| vec![IrStmt::Object(IrObjectStmt::ProcessAssign(index, value))])
                     .unwrap_or_default(),
+            });
+        }
+
+        if matches!(
+            self.cg.kind(declaration),
+            NodeKind::Var { ty }
+                if ty.kind == "class" && ty.type_name.as_deref() == Some("semaphore")
+        ) {
+            let target = self.cg.collect_semaphore_local(&self.path, declaration)?;
+            let init = self
+                .cg
+                .db
+                .var_initializer(declaration)
+                .map(|initializer| self.cg.lower_chandle(&self.path, initializer))
+                .transpose()?;
+            return Ok(match target {
+                ChandleTarget::Local(name) => vec![IrStmt::Object(
+                    IrObjectStmt::ChandleDeclareLocal(name, init),
+                )],
+                ChandleTarget::Object(_) => Vec::new(),
             });
         }
 
@@ -3876,7 +3920,7 @@ impl EmitCtx<'_, '_> {
                     source.lifetime,
                     StorageOwnership::Owned,
                 )
-                .with_kind(super::storage_kind(source.info.width));
+                .with_kind(source.kind);
                 let local = ProcLocalInfo {
                     c_name: Codegen::capture_local_name(storage),
                     width: source.info.width,

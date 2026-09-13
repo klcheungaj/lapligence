@@ -7,6 +7,10 @@ use super::{IrCallArg, IrEnumMember, IrExpr};
 pub enum IrObjectType {
     String,
     Chandle,
+    /// A SystemVerilog semaphore object.  The C representation is an opaque
+    /// runtime pointer, but keeping a distinct IR type prevents accidental
+    /// treatment as an ordinary user chandle during lowering and cleanup.
+    Semaphore,
     /// Stable SystemVerilog `process` class handle. The pointed-to identity
     /// remains valid after coroutine completion until all copies release it.
     Process,
@@ -290,6 +294,7 @@ pub enum IrObjectQuery {
     StringAtoreal(IrStringExpr),
     StringPacked(IrStringExpr),
     ChandleEq(IrChandleExpr, IrChandleExpr),
+    SemaphoreTryGet(IrChandleExpr, IrExpr),
     ProcessEq(IrProcessExpr, IrProcessExpr),
     ProcessStatus(IrProcessExpr),
     ArrayQuery(IrArrayQuery),
@@ -311,6 +316,8 @@ pub enum IrObjectStmt {
     ChandleDeclareLocal(String, Option<IrChandleExpr>),
     ChandleAssign(usize, IrChandleExpr),
     ChandleAssignLocal(String, IrChandleExpr),
+    SemaphorePut(IrChandleExpr, IrExpr),
+    SemaphoreGet(IrChandleExpr, IrExpr),
     /// Declare an automatic process handle local. The optional initializer is
     /// restricted to `null` or `process::self()` by lowering.
     ProcessDeclareLocal(String, Option<IrProcessExpr>),
@@ -824,6 +831,17 @@ impl IrObjectQuery {
                 a.validate(model, formals, chandle_return)?;
                 b.validate(model, formals, chandle_return)
             }
+            Self::SemaphoreTryGet(receiver, keys) => {
+                receiver.validate(model, formals, chandle_return)?;
+                if keys.is_real() {
+                    Err(super::IrValidationError::new(
+                        "semaphore",
+                        "semaphore key count must be integral",
+                    ))
+                } else {
+                    Ok(())
+                }
+            }
             Self::ProcessEq(a, b) => {
                 a.validate(model, formals)?;
                 b.validate(model, formals)
@@ -862,6 +880,10 @@ impl IrObjectQuery {
                 a.expressions(visit);
                 b.expressions(visit);
             }
+            Self::SemaphoreTryGet(receiver, keys) => {
+                receiver.expressions(visit);
+                visit(keys);
+            }
             Self::ProcessEq(_, _) => {}
             Self::ProcessStatus(_) => {}
             Self::ArrayQuery(query) => query.expressions(visit),
@@ -896,6 +918,10 @@ impl IrObjectQuery {
             Self::ChandleEq(a, b) => {
                 a.expressions_mut(visit);
                 b.expressions_mut(visit);
+            }
+            Self::SemaphoreTryGet(receiver, keys) => {
+                receiver.expressions_mut(visit);
+                visit(keys);
             }
             Self::ProcessEq(_, _) => {}
             Self::ProcessStatus(_) => {}
@@ -986,7 +1012,7 @@ impl IrObjectStmt {
                     .unwrap_or(Ok(()))
             }
             Self::ChandleAssign(index, value) => {
-                object_type(model, *index, IrObjectType::Chandle)?;
+                pointer_object_type(model, *index)?;
                 value.validate(model, formals, chandle_return)
             }
             Self::ChandleAssignLocal(name, value) => {
@@ -997,6 +1023,17 @@ impl IrObjectStmt {
                     ));
                 }
                 value.validate(model, formals, chandle_return)
+            }
+            Self::SemaphorePut(receiver, keys) | Self::SemaphoreGet(receiver, keys) => {
+                receiver.validate(model, formals, chandle_return)?;
+                if keys.is_real() {
+                    Err(super::IrValidationError::new(
+                        "semaphore",
+                        "semaphore key count must be integral",
+                    ))
+                } else {
+                    Ok(())
+                }
             }
             Self::ProcessDeclareLocal(name, value) => {
                 if name.is_empty() {
@@ -1044,6 +1081,10 @@ impl IrObjectStmt {
             }
             Self::StringItoaLocal(_, value, _) | Self::StringRealtoaLocal(_, value) => visit(value),
             Self::ChandleDeclareLocal(_, Some(value)) => value.expressions(visit),
+            Self::SemaphorePut(receiver, keys) | Self::SemaphoreGet(receiver, keys) => {
+                receiver.expressions(visit);
+                visit(keys);
+            }
             Self::ChandleDeclareLocal(_, None)
             | Self::ChandleAssign(..)
             | Self::ChandleAssignLocal(..)
@@ -1070,6 +1111,10 @@ impl IrObjectStmt {
             }
             Self::StringItoaLocal(_, value, _) | Self::StringRealtoaLocal(_, value) => visit(value),
             Self::ChandleDeclareLocal(_, Some(value)) => value.expressions_mut(visit),
+            Self::SemaphorePut(receiver, keys) | Self::SemaphoreGet(receiver, keys) => {
+                receiver.expressions_mut(visit);
+                visit(keys);
+            }
             Self::ChandleDeclareLocal(_, None)
             | Self::ChandleAssign(..)
             | Self::ChandleAssignLocal(..)
@@ -1186,7 +1231,7 @@ impl IrChandleExpr {
                 }
                 key.validate(model, None)
             }
-            Self::Read(index) => object_type(model, *index, IrObjectType::Chandle),
+            Self::Read(index) => pointer_object_type(model, *index),
             Self::Call {
                 function,
                 args,
@@ -1315,6 +1360,24 @@ fn object_type(
         Err(super::IrValidationError::new(
             "object",
             format!("index {index} does not refer to {ty:?} storage"),
+        ))
+    }
+}
+
+fn pointer_object_type(
+    model: &super::IrModel,
+    index: usize,
+) -> Result<(), super::IrValidationError> {
+    if model
+        .objects
+        .get(index)
+        .is_some_and(|object| matches!(object.ty, IrObjectType::Chandle | IrObjectType::Semaphore))
+    {
+        Ok(())
+    } else {
+        Err(super::IrValidationError::new(
+            "object",
+            format!("index {index} does not refer to pointer storage"),
         ))
     }
 }

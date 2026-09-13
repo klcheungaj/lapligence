@@ -424,6 +424,7 @@ fn generate_from_db_with_opts_impl(
     cg.emit_array_initializers()?;
     cg.emit_container_initializers()?;
     cg.emit_class_object_initializers()?;
+    cg.emit_semaphore_initializers()?;
     let mut model = std::mem::replace(
         &mut cg.model,
         IrModel::new(String::new(), Timescale::DEFAULT.precision_fs)
@@ -519,6 +520,7 @@ struct CaptureSource {
     info: ProcLocalInfo,
     initial: IrExpr,
     lifetime: StorageLifetime,
+    kind: StorageKind,
 }
 
 fn storage_kind(width: u32) -> StorageKind {
@@ -786,6 +788,9 @@ struct Codegen<'a> {
     /// Class variables with declaration-time `new(...)` initializers are
     /// deferred until class methods have prototypes and can be called.
     class_object_initializers: Vec<(NodeId, usize, NodeId, String)>,
+    /// Semaphore variables with declaration-time `new(...)` initializers are
+    /// deferred until the generated runtime process starts.
+    semaphore_initializers: Vec<(NodeId, usize, NodeId, String)>,
     /// Receiver used while lowering a class property's default expression or
     /// constructor body during a fresh allocation.
     class_init_receiver: Option<IrChandleExpr>,
@@ -810,6 +815,11 @@ struct Codegen<'a> {
     /// Persistent process-handle objects for static procedural declarations,
     /// keyed by elaborated instance and declaration identity.
     proc_process_static_objects: HashMap<(NodeId, NodeId), usize>,
+    /// Automatic semaphore locals declared in process bodies.
+    proc_semaphore_locals: HashMap<NodeId, String>,
+    /// Persistent semaphore objects for static procedural declarations,
+    /// keyed by elaborated instance and declaration identity.
+    proc_semaphore_static_objects: HashMap<(NodeId, NodeId), usize>,
     /// Hidden static process-local storage keyed by elaborated instance and
     /// declaration. A declaration node is shared by module instances, while
     /// its static lifetime is per elaborated instance.
@@ -997,6 +1007,7 @@ impl<'a> Codegen<'a> {
             class_static_signals: HashMap::new(),
             class_static_objects: HashMap::new(),
             class_object_initializers: Vec::new(),
+            semaphore_initializers: Vec::new(),
             class_init_receiver: None,
             unpacked_aggregates: HashMap::new(),
             aggregate_objects: HashMap::new(),
@@ -1004,6 +1015,8 @@ impl<'a> Codegen<'a> {
             proc_string_locals: HashMap::new(),
             proc_process_locals: HashMap::new(),
             proc_process_static_objects: HashMap::new(),
+            proc_semaphore_locals: HashMap::new(),
+            proc_semaphore_static_objects: HashMap::new(),
             proc_local_instances: HashMap::new(),
             capture_locals: HashMap::new(),
             net_inits: Vec::new(),

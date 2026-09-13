@@ -237,13 +237,13 @@ impl<'db> SemanticModel<'db> {
             else {
                 continue;
             };
-            if name == "self"
+            if (name == "self" || (name == "new" && semaphore_constructor(self.db, owner)))
                 && matches!(self.db.node_kind(*callee), NodeKind::Other)
                 && self.db.semantic_kind(*callee) == Some(CapturedSemanticKind::Unsupported)
             {
-                // Slang keeps the built-in process::self() callee as an
-                // unowned semantic placeholder. The method call consumes it
-                // while resolving the receiver.
+                // Slang keeps built-in process::self() and semaphore::new()
+                // callees as unowned semantic placeholders. The typed call
+                // consumes that metadata while resolving the operation.
                 placeholders[callee.index()] = true;
             }
         }
@@ -283,12 +283,12 @@ impl<'db> SemanticModel<'db> {
                 ),
                 _ => false,
             };
-            if is_process_method || is_virtual_interface {
-                // Slang represents built-in process method callees with the
-                // same unowned placeholder used by process::self(). The typed
-                // receiver and method name fully consume that metadata. A
-                // virtual-interface method is resolved through its owned
-                // descriptor and runtime environment instead.
+            let is_semaphore_method = matches!(name.as_str(), "put" | "get" | "try_get")
+                && semaphore_reference(self.db, *receiver);
+            if is_process_method || is_virtual_interface || is_semaphore_method {
+                // Slang represents these built-in or runtime-resolved method
+                // callees with unowned placeholders. Their typed receivers
+                // and method names fully consume that metadata.
                 placeholders[callee.index()] = true;
             }
         }
@@ -561,6 +561,52 @@ fn process_reference(db: &Db, id: NodeId) -> bool {
         }
     }
     false
+}
+
+fn semaphore_reference(db: &Db, id: NodeId) -> bool {
+    let mut current = id;
+    for _ in 0..db.nodes().len() {
+        match db.node_kind(current) {
+            NodeKind::Expr(ExprKind::Ref {
+                target: Some(target),
+            }) => current = *target,
+            NodeKind::Expr(ExprKind::Cast { operand, .. }) => current = *operand,
+            NodeKind::Expr(ExprKind::NewClass {
+                class_name: Some(name),
+                ..
+            }) => return name == "semaphore",
+            NodeKind::Var { ty } | NodeKind::FuncArg { ty, .. } => {
+                return ty.kind == "class" && ty.type_name.as_deref() == Some("semaphore");
+            }
+            NodeKind::FuncCall {
+                callee: Some(callee),
+                ..
+            } => {
+                return matches!(
+                    db.node_kind(*callee),
+                    NodeKind::FuncTask {
+                        ret: Some(ty),
+                        ..
+                    } if ty.kind == "class" && ty.type_name.as_deref() == Some("semaphore")
+                );
+            }
+            _ => return false,
+        }
+    }
+    false
+}
+
+fn semaphore_constructor(db: &Db, id: NodeId) -> bool {
+    db.node_ids().any(|owner| {
+        matches!(
+            db.node_kind(owner),
+            NodeKind::Expr(ExprKind::NewClass {
+                class_name: Some(name),
+                constructor: Some(constructor),
+                ..
+            }) if name == "semaphore" && *constructor == id
+        )
+    })
 }
 
 fn scope_reference_is_metadata(db: &Db, owner: NodeId, reference: NodeId, target: NodeId) -> bool {

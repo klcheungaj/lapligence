@@ -2046,9 +2046,10 @@ fn format_frame_capture(
             "    llg_frame_capture_real({frame}, {}u, {initial});\n",
             storage.slot()
         ),
-        StorageKind::Opaque => {
-            return Err("opaque activation capture reached C emission".to_owned())
-        }
+        StorageKind::Opaque => format!(
+            "    llg_frame_capture_opaque({frame}, {}u, {initial});\n",
+            storage.slot()
+        ),
     };
     Ok(call)
 }
@@ -2598,8 +2599,12 @@ pub(super) fn render_pre_fn_impl(
                         "    double {local} = llg_frame_read_real(llg_proc_frame(self), {}u);\n",
                         capture.storage().slot()
                     )),
-                    StorageKind::Packed | StorageKind::Opaque => out.push_str(&format!(
+                    StorageKind::Packed => out.push_str(&format!(
                         "    sv4_t {local} = llg_frame_read_value(llg_proc_frame(self), {}u);\n",
+                        capture.storage().slot()
+                    )),
+                    StorageKind::Opaque => out.push_str(&format!(
+                        "    void *{local} = llg_frame_read_opaque(llg_proc_frame(self), {}u);\n",
                         capture.storage().slot()
                     )),
                 }
@@ -2661,8 +2666,12 @@ pub(super) fn render_pre_fn_impl(
                         "    double {local} = llg_frame_read_real(frame, {}u);\n",
                         capture.storage().slot()
                     )),
-                    StorageKind::Packed | StorageKind::Opaque => out.push_str(&format!(
+                    StorageKind::Packed => out.push_str(&format!(
                         "    sv4_t {local} = llg_frame_read_value(frame, {}u);\n",
+                        capture.storage().slot()
+                    )),
+                    StorageKind::Opaque => out.push_str(&format!(
+                        "    void *{local} = llg_frame_read_opaque(frame, {}u);\n",
                         capture.storage().slot()
                     )),
                 }

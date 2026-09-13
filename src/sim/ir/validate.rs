@@ -944,6 +944,7 @@ impl Validator<'_> {
                 )?;
                 let expected = match query.as_ref() {
                     IrObjectQuery::ChandleEq(..) => Some((1, false)),
+                    IrObjectQuery::SemaphoreTryGet(..) => Some((32, true)),
                     IrObjectQuery::ProcessEq(..) => Some((1, false)),
                     IrObjectQuery::StringGetc(..) => Some((8, true)),
                     IrObjectQuery::StringAtoreal(..) => Some((0, true)),

@@ -390,6 +390,12 @@ pub(super) fn query(
             chandle(ctx, a)?,
             chandle(ctx, b)?
         ),
+        IrObjectQuery::SemaphoreTryGet(receiver, keys) => format!(
+            "sv4_from_u64((uint64_t)llg_semaphore_try_get((llg_semaphore_t *){}, {}), {width}, {})",
+            chandle(ctx, receiver)?,
+            render_expr_impl(ctx, keys)?.code,
+            u8::from(signed)
+        ),
         IrObjectQuery::ProcessEq(a, b) => format!(
             "sv4_from_u64({} == {}, 1, 0)",
             process(ctx, a)?,
@@ -631,6 +637,16 @@ pub(super) fn statement(ctx: &RCtx<'_>, operation: &IrObjectStmt) -> Result<Stri
         IrObjectStmt::ChandleAssignLocal(target, value) => {
             format!("    {target} = {};\n", chandle(ctx, value)?)
         }
+        IrObjectStmt::SemaphorePut(receiver, keys) => format!(
+            "    llg_semaphore_put((llg_semaphore_t *){}, {});\n",
+            chandle(ctx, receiver)?,
+            render_expr_impl(ctx, keys)?.code
+        ),
+        IrObjectStmt::SemaphoreGet(receiver, keys) => format!(
+            "    llg_semaphore_get((llg_semaphore_t *){}, {});\n",
+            chandle(ctx, receiver)?,
+            render_expr_impl(ctx, keys)?.code
+        ),
         IrObjectStmt::ProcessDeclareLocal(name, value) => {
             let mut out = format!(
                 "    llg_process_handle_t *{name} = NULL;\n    llg_process_local_register(&{name});\n"

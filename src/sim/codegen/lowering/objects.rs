@@ -12,6 +12,22 @@ impl Codegen<'_> {
         matches!(self.kind(node), NodeKind::FuncCall { name, .. } if name == "self")
     }
 
+    pub(super) fn is_semaphore_constructor_call(&self, node: NodeId) -> bool {
+        if !matches!(self.kind(node), NodeKind::FuncCall { name, .. } if name == "new") {
+            return false;
+        }
+        self.db.node_ids().any(|owner| {
+            matches!(
+                self.kind(owner),
+                NodeKind::Expr(ExprKind::NewClass {
+                    class_name: Some(name),
+                    constructor: Some(constructor),
+                    ..
+                }) if name == "semaphore" && *constructor == node
+            )
+        })
+    }
+
     fn is_process_rng_receiver(&self, node: NodeId) -> bool {
         match self.kind(node) {
             NodeKind::FuncCall { .. } if self.is_process_self_call(node) => true,
@@ -41,6 +57,39 @@ impl Codegen<'_> {
             let value = self.lower_chandle(&path, initializer)?;
             let c_name = format!("p_{}_class_init_{index}", ident(&path));
             let label = format!("{path}.class_initializer.{index}");
+            processes.push(IrProcess::new_with_origin(
+                c_name,
+                label,
+                IrShape::RunOnce,
+                Vec::new(),
+                vec![IrStmt::Object(IrObjectStmt::ChandleAssign(object, value))],
+                self.origin(object_node),
+            ));
+        }
+        self.model.processes.splice(0..0, processes);
+        Ok(())
+    }
+
+    /// Construct semaphore objects from declaration initializers in a small
+    /// run-once process.  `new(...)` is a runtime operation and cannot appear
+    /// in a C static initializer; running these before user processes preserves
+    /// the time-zero object construction order.
+    pub(super) fn emit_semaphore_initializers(&mut self) -> Result<(), String> {
+        let initializers = std::mem::take(&mut self.semaphore_initializers);
+        let mut processes = Vec::with_capacity(initializers.len());
+        for (index, (object_node, object, initializer, path)) in
+            initializers.into_iter().enumerate()
+        {
+            let owner = self.owning_inst(object_node).ok_or_else(|| {
+                format!(
+                    "semaphore initializer for `{}` has no owning module instance",
+                    self.node(object_node).full_name
+                )
+            })?;
+            self.inst = owner;
+            let value = self.lower_chandle(&path, initializer)?;
+            let c_name = format!("p_{}_semaphore_init_{index}", ident(&path));
+            let label = format!("{path}.semaphore_initializer.{index}");
             processes.push(IrProcess::new_with_origin(
                 c_name,
                 label,
@@ -654,6 +703,24 @@ impl Codegen<'_> {
                 .or_else(|| self.class_init_receiver.clone())
                 .ok_or_else(|| format!("super constructor has no receiver in `{path}"));
         }
+        if class_name == Some("semaphore") {
+            let args = constructor
+                .map(|constructor| self.call_argument_nodes(constructor))
+                .unwrap_or_default();
+            let keys = match args.as_slice() {
+                [] => lhs_integer_expr(0),
+                [value] => self.semaphore_key_argument(path, *value)?,
+                _ => {
+                    return Err(format!(
+                        "semaphore constructor takes zero or one key-count argument in `{path}`"
+                    ))
+                }
+            };
+            return Ok(IrChandleExpr::Verbatim(format!(
+                "llg_semaphore_new({})",
+                self.render_ir_code(&keys)?
+            )));
+        }
         let name = class_name.unwrap_or("<specialized class>");
         let class_node = class_type
             .and_then(|type_id| self.db.class_for_type(type_id))
@@ -851,6 +918,17 @@ impl Codegen<'_> {
         let value = self.lower_expr(path, node)?;
         ir_to_storage(value, width, true, true)
     }
+
+    fn semaphore_key_argument(&mut self, path: &str, node: NodeId) -> Result<IrExpr, String> {
+        let value = self.lower_expr(path, node)?;
+        if value.is_real() {
+            return Err(format!("semaphore key count must be integral in `{path}`"));
+        }
+        // Built-in semaphore methods take a signed 32-bit `int` keyCount.
+        // Keep X/Z bits intact for the runtime boundary instead of applying
+        // the two-state conversion used by ordinary array indices.
+        ir_to_storage(value, 32, true, false)
+    }
     pub(super) fn lower_boolean_expr(
         &mut self,
         path: &str,
@@ -880,6 +958,7 @@ impl Codegen<'_> {
                 "string" => IrObjectType::String,
                 "chandle" => IrObjectType::Chandle,
                 "class" if ty.type_name.as_deref() == Some("process") => IrObjectType::Process,
+                "class" if ty.type_name.as_deref() == Some("semaphore") => IrObjectType::Semaphore,
                 "class" => IrObjectType::Chandle,
                 "virtual_interface" => IrObjectType::Chandle,
                 _ => return Ok(false),
@@ -931,6 +1010,16 @@ impl Codegen<'_> {
                         }
                     } else if self.lower_chandle(path, init)? != IrChandleExpr::Null {
                         return Err("chandle declaration initializer must be null".to_owned());
+                    }
+                }
+                IrObjectType::Semaphore => {
+                    if matches!(self.kind(init), NodeKind::Expr(ExprKind::NewClass { .. })) {
+                        self.semaphore_initializers
+                            .push((node, index, init, path.to_owned()));
+                    } else if self.lower_chandle(path, init)? != IrChandleExpr::Null {
+                        return Err(
+                            "semaphore declaration initializer must be new or null".to_owned()
+                        );
                     }
                 }
                 IrObjectType::Process => {
@@ -1108,7 +1197,10 @@ impl Codegen<'_> {
             }
         }
         if let Some(index) = self.object_of(path, node) {
-            if self.model.objects[index].ty == IrObjectType::Chandle {
+            if matches!(
+                self.model.objects[index].ty,
+                IrObjectType::Chandle | IrObjectType::Semaphore
+            ) {
                 return true;
             }
         }
@@ -1126,6 +1218,102 @@ impl Codegen<'_> {
                 .ok()
                 .and_then(|(function, _)| self.func_meta.get(&function))
                 .is_some_and(|meta| meta.ret_chandle);
+        }
+        false
+    }
+
+    /// Return whether an expression is specifically a SystemVerilog
+    /// semaphore handle.  Semaphores share the native pointer ABI with
+    /// chandles, but their methods must lower to the blocking runtime service.
+    pub(super) fn is_semaphore_expr(&self, path: &str, node: NodeId) -> bool {
+        if matches!(
+            self.kind(node),
+            NodeKind::Expr(ExprKind::NewClass {
+                class_name: Some(name),
+                ..
+            }) if name == "semaphore"
+        ) {
+            return true;
+        }
+        if let NodeKind::Expr(ExprKind::Cast { operand, ty, .. }) = self.kind(node) {
+            if ty.kind == "class" && ty.type_name.as_deref() == Some("semaphore") {
+                return true;
+            }
+            if self.is_semaphore_expr(path, *operand) {
+                return true;
+            }
+        }
+        let target = match self.kind(node) {
+            NodeKind::Expr(ExprKind::Ref { target }) => *target,
+            _ => Some(node),
+        };
+        if target.is_some_and(|target| {
+            matches!(
+                self.kind(target),
+                NodeKind::Var { ty } | NodeKind::FuncArg { ty, .. }
+                    if ty.kind == "class" && ty.type_name.as_deref() == Some("semaphore")
+            )
+        }) {
+            return true;
+        }
+        if let Some(function) = &self.func {
+            if target.is_some_and(|target| function.chandle_read.contains_key(&target))
+                && target.is_some_and(|target| {
+                    matches!(
+                        self.kind(target),
+                        NodeKind::Var { ty } | NodeKind::FuncArg { ty, .. }
+                            if ty.kind == "class"
+                                && ty.type_name.as_deref() == Some("semaphore")
+                    )
+                })
+            {
+                return true;
+            }
+            if matches!(
+                self.kind(node),
+                NodeKind::Expr(ExprKind::Ref { target: None })
+            ) && function.chandle_read.keys().any(|target| {
+                self.node(*target).name == self.node(node).name
+                    && matches!(
+                        self.kind(*target),
+                        NodeKind::Var { ty } | NodeKind::FuncArg { ty, .. }
+                            if ty.kind == "class"
+                                && ty.type_name.as_deref() == Some("semaphore")
+                    )
+            }) {
+                return true;
+            }
+        }
+        if self
+            .object_of(path, node)
+            .is_some_and(|index| self.model.objects[index].ty == IrObjectType::Semaphore)
+        {
+            return true;
+        }
+        if self.lexical_proc_semaphore_decl(node).is_some() {
+            return true;
+        }
+        if let NodeKind::FuncCall {
+            is_task: false,
+            callee,
+            ..
+        } = self.kind(node)
+        {
+            if self
+                .resolve_callee_env(self.inst, &self.node(node).name, false, *callee)
+                .ok()
+                .is_some_and(|(function, _)| {
+                    matches!(
+                        self.kind(function),
+                        NodeKind::FuncTask {
+                            ret: Some(ty), ..
+                        } if ty.kind == "class"
+                            && ty.type_name.as_deref() == Some("semaphore")
+                    )
+                })
+            {
+                return true;
+            }
         }
         false
     }
@@ -1550,11 +1738,53 @@ impl Codegen<'_> {
             return Ok((target, read));
         }
         if let Some(index) = self.object_of(path, node) {
-            if self.model.objects[index].ty == IrObjectType::Chandle {
+            if matches!(
+                self.model.objects[index].ty,
+                IrObjectType::Chandle | IrObjectType::Semaphore
+            ) {
                 return Ok((ChandleTarget::Object(index), read));
             }
         }
+        if let Some(target) = self.semaphore_lvalue_target(path, node)? {
+            return Ok((target, read));
+        }
         Err("chandle output/ref actual must be a named chandle lvalue".to_owned())
+    }
+
+    /// Resolve a procedural semaphore's pointer slot for assignments and
+    /// output/ref actuals. Procedural automatic storage is emitted as a C
+    /// local, while static storage is represented by a runtime-owned object.
+    fn semaphore_lvalue_target(
+        &mut self,
+        path: &str,
+        node: NodeId,
+    ) -> Result<Option<ChandleTarget>, String> {
+        let target = match self.kind(node) {
+            NodeKind::Expr(ExprKind::Ref { target }) => *target,
+            _ => Some(node),
+        };
+        let declaration = self.lexical_proc_semaphore_decl(node).or_else(|| {
+            target.filter(|target| {
+                matches!(
+                    self.kind(*target),
+                    NodeKind::Var { ty }
+                        if ty.kind == "class"
+                            && ty.type_name.as_deref() == Some("semaphore")
+                )
+            })
+        });
+        let Some(declaration) = declaration else {
+            return Ok(None);
+        };
+        if let Some(name) = self.proc_semaphore_local_name(declaration) {
+            return Ok(Some(ChandleTarget::Local(name.to_owned())));
+        }
+        if self.db.variable_lifetime(declaration) == VariableLifetime::Static {
+            return Ok(Some(ChandleTarget::Object(
+                self.collect_semaphore_static_object(path, declaration)?,
+            )));
+        }
+        Ok(None)
     }
 
     pub(super) fn chandle_target_address(&self, target: &ChandleTarget) -> String {
@@ -1638,6 +1868,19 @@ impl Codegen<'_> {
             NodeKind::Expr(ExprKind::Ref { target }) => *target,
             _ => Some(node),
         };
+        if let Some(captured) = self
+            .capture_target(node)
+            .or_else(|| target.filter(|target| self.capture_locals.contains_key(target)))
+        {
+            let binding = self
+                .capture_binding(captured)
+                .expect("capture target must have a binding");
+            if binding.storage.kind() == StorageKind::Opaque {
+                return Ok(IrChandleExpr::LocalRead(Codegen::capture_local_name(
+                    binding.storage,
+                )));
+            }
+        }
         if let Some(function) = &self.func {
             if let Some(value) = target.and_then(|target| function.chandle_read.get(&target)) {
                 return Ok(value.clone());
@@ -1653,6 +1896,41 @@ impl Codegen<'_> {
                 {
                     return Ok(value.clone());
                 }
+            }
+        }
+        // Module/class object storage is collected before procedural locals.
+        // Resolve it first so a top-level semaphore is not mistaken for a
+        // second hidden procedural object for the same declaration.
+        if let Some(index) = self.object_of(path, node) {
+            if matches!(
+                self.model.objects[index].ty,
+                IrObjectType::Chandle | IrObjectType::Semaphore
+            ) {
+                return Ok(IrChandleExpr::Read(index));
+            }
+        }
+        if let Some(variable) = self.lexical_proc_semaphore_decl(node) {
+            if let Some(name) = self.proc_semaphore_local_name(variable) {
+                return Ok(IrChandleExpr::LocalRead(name.to_owned()));
+            }
+            if self.db.variable_lifetime(variable) == VariableLifetime::Static {
+                let index = self.collect_semaphore_static_object(path, variable)?;
+                return Ok(IrChandleExpr::Read(index));
+            }
+        }
+        if let Some(variable) = target.filter(|target| {
+            matches!(
+                self.kind(*target),
+                NodeKind::Var { ty }
+                    if ty.kind == "class" && ty.type_name.as_deref() == Some("semaphore")
+            )
+        }) {
+            if let Some(name) = self.proc_semaphore_local_name(variable) {
+                return Ok(IrChandleExpr::LocalRead(name.to_owned()));
+            }
+            if self.db.variable_lifetime(variable) == VariableLifetime::Static {
+                let index = self.collect_semaphore_static_object(path, variable)?;
+                return Ok(IrChandleExpr::Read(index));
             }
         }
         if let NodeKind::FuncCall {
@@ -1729,12 +2007,11 @@ impl Codegen<'_> {
                 depth: parse_depth(&self.depth_arg),
             });
         }
-        if let Some(index) = self.object_of(path, node) {
-            if self.model.objects[index].ty == IrObjectType::Chandle {
-                return Ok(IrChandleExpr::Read(index));
-            }
-        }
-        Err("chandle values can only be copied from chandle or null".to_owned())
+        Err(format!(
+            "chandle values can only be copied from chandle or null (node {:?} `{}` in `{path}`)",
+            self.kind(node),
+            self.node(node).name
+        ))
     }
 
     pub(super) fn lower_string(
@@ -2086,6 +2363,28 @@ impl Codegen<'_> {
                 name,
                 receiver: Some(receiver),
                 ..
+            } if name == "try_get" && self.is_semaphore_expr(path, *receiver) => {
+                let receiver = *receiver;
+                let args = self.node(node).children.get(1..).unwrap_or_default();
+                let keys = match args {
+                    [] => lhs_integer_expr(1),
+                    [value] => self.semaphore_key_argument(path, *value)?,
+                    _ => {
+                        return Err(format!(
+                            "semaphore try_get takes zero or one key-count argument in `{path}`"
+                        ))
+                    }
+                };
+                (
+                    IrObjectQuery::SemaphoreTryGet(self.lower_chandle(path, receiver)?, keys),
+                    32,
+                    true,
+                )
+            }
+            NodeKind::MethodCall {
+                name,
+                receiver: Some(receiver),
+                ..
             } if name == "status" && self.is_process_expr(path, *receiver) => {
                 let receiver = *receiver;
                 let args = self.node(node).children.get(1..).unwrap_or_default();
@@ -2152,8 +2451,8 @@ impl Codegen<'_> {
             {
                 let op = *op;
                 let (a, b) = (operands[0], operands[1]);
-                // `null` is shared by process, class, and chandle types. Let
-                // the non-null operand select the object equality domain.
+                // `null` is shared by process, semaphore, class, and chandle
+                // types. Let the non-null operand select the equality domain.
                 let is_process = [a, b].iter().any(|node| {
                     !matches!(
                         self.kind(*node),
@@ -2343,7 +2642,7 @@ impl Codegen<'_> {
             .is_process_expr(path, object_node)
             .then(|| self.lower_process_lvalue(path, object_node))
             .transpose()?;
-        let chandle_target = self.func.as_ref().and_then(|function| {
+        let mut chandle_target = self.func.as_ref().and_then(|function| {
             target_node
                 .and_then(|target| function.chandle_write.get(&target).cloned())
                 .or_else(|| {
@@ -2363,6 +2662,9 @@ impl Codegen<'_> {
                     .flatten()
                 })
         });
+        if chandle_target.is_none() {
+            chandle_target = self.semaphore_lvalue_target(path, object_node)?;
+        }
         let string_target = self.func.as_ref().and_then(|function| {
             target_node
                 .and_then(|target| function.string_write.get(&target).cloned())
@@ -2465,6 +2767,12 @@ impl Codegen<'_> {
                 self.validate_virtual_interface_assignment(object_node, rhs, path)?;
                 IrObjectStmt::ChandleAssign(index, self.lower_chandle(path, rhs)?)
             }
+            IrObjectType::Semaphore => {
+                if indexed.is_some() {
+                    return Err("semaphore handle cannot be indexed".to_owned());
+                }
+                IrObjectStmt::ChandleAssign(index, self.lower_chandle(path, rhs)?)
+            }
             IrObjectType::Process => {
                 if indexed.is_some() {
                     return Err("process handle cannot be indexed".to_owned());
@@ -2542,6 +2850,24 @@ impl Codegen<'_> {
                     name, path
                 )),
                 _ => Err(format!("unsupported process random method: {name}")),
+            };
+        }
+        if self.is_semaphore_expr(path, receiver) {
+            let args = self.node(node).children.get(1..).unwrap_or_default();
+            let keys = match args {
+                [] => lhs_integer_expr(1),
+                [value] => self.semaphore_key_argument(path, *value)?,
+                _ => {
+                    return Err(format!(
+                        "semaphore method `{name}` takes zero or one key-count argument in `{path}`"
+                    ))
+                }
+            };
+            let receiver = self.lower_chandle(path, receiver)?;
+            return match name.as_str() {
+                "put" => Ok(IrStmt::Object(IrObjectStmt::SemaphorePut(receiver, keys))),
+                "get" => Ok(IrStmt::Object(IrObjectStmt::SemaphoreGet(receiver, keys))),
+                _ => Err(format!("unsupported semaphore method: {name}")),
             };
         }
         let index = self.object_of(path, receiver);

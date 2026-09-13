@@ -89,6 +89,7 @@ fn render_model(execution: &ExecutionModel, capacity: u32) -> Result<String, Str
         let ty = match object.ty {
             crate::sim::ir::IrObjectType::String => "llg_string_t",
             crate::sim::ir::IrObjectType::Chandle => "void *",
+            crate::sim::ir::IrObjectType::Semaphore => "llg_semaphore_t *",
             crate::sim::ir::IrObjectType::Process => "llg_process_handle_t *",
         };
         out.push_str(&format!("static {ty} {} = {{0}};\n", object.c_name));
@@ -1903,6 +1904,12 @@ fn render_main(execution: &ExecutionModel) -> Result<String, String> {
                 out.push_str(&format!("    {} = NULL;\n", object.c_name));
             }
             crate::sim::ir::IrObjectType::Chandle => {}
+            crate::sim::ir::IrObjectType::Semaphore => {
+                // Semaphore storage is owned by the runtime registry.  The
+                // post-run pointer is only a stale model reference and must
+                // not be released through the generic chandle path.
+                out.push_str(&format!("    {} = NULL;\n", object.c_name));
+            }
         }
     }
     for container in &model.containers {

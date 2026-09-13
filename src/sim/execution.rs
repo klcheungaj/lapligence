@@ -526,6 +526,7 @@ fn collect_effects(
                 if matches!(
                     statement,
                     IrObjectStmt::ProcessAwait(_)
+                        | IrObjectStmt::SemaphoreGet(..)
                         | IrObjectStmt::ProcessControl {
                             op: crate::sim::ir::IrProcessControl::Suspend,
                             ..
@@ -1440,6 +1441,10 @@ fn collect_object_statement_effects(
         IrObjectStmt::ChandleAssign(_, value) | IrObjectStmt::ChandleAssignLocal(_, value) => {
             collect_chandle_effects(ir, value, effects, visited_calls)
         }
+        IrObjectStmt::SemaphorePut(receiver, keys) | IrObjectStmt::SemaphoreGet(receiver, keys) => {
+            collect_chandle_effects(ir, receiver, effects, visited_calls);
+            collect_expression_effects(ir, keys, effects, visited_calls);
+        }
         IrObjectStmt::ProcessDeclareLocal(_, _)
         | IrObjectStmt::ProcessAssign(_, _)
         | IrObjectStmt::ProcessAssignLocal(_, _)
@@ -1489,6 +1494,10 @@ fn collect_object_query_effects(
         IrObjectQuery::ChandleEq(a, b) => {
             collect_chandle_effects(ir, a, effects, visited_calls);
             collect_chandle_effects(ir, b, effects, visited_calls);
+        }
+        IrObjectQuery::SemaphoreTryGet(receiver, keys) => {
+            collect_chandle_effects(ir, receiver, effects, visited_calls);
+            collect_expression_effects(ir, keys, effects, visited_calls);
         }
         IrObjectQuery::ProcessEq(_, _) | IrObjectQuery::ProcessStatus(_) => {}
         IrObjectQuery::ArrayQuery(query) => {

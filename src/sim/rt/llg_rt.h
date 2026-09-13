@@ -174,6 +174,7 @@ void llg_inertial_selected_net(llg_inertial_t** handle, llg_net_t* net,
 
 typedef struct llg_proc llg_proc_t;
 typedef struct llg_process_handle llg_process_handle_t;
+typedef struct llg_semaphore llg_semaphore_t;
 typedef struct llg_frame llg_frame_t;
 typedef struct llg_activation llg_activation_t;
 typedef struct { sv4_t* sig; int kind; } llg_event_spec_t;
@@ -598,6 +599,17 @@ void llg_process_kill(llg_process_handle_t* handle);
 void llg_process_suspend(llg_process_handle_t* handle);
 void llg_process_resume(llg_process_handle_t* handle);
 void llg_process_await(llg_process_handle_t* handle);
+
+// ── Semaphores (IEEE 1800-2009 §15.3) ─────────────────────────────────────────
+//
+// A semaphore owns its key count and FIFO waiter queue in the runtime.  The
+// generated model only holds an opaque pointer; each key-count argument is a
+// four-state value so invalid/unknown counts are diagnosed at the boundary.
+llg_semaphore_t* llg_semaphore_new(sv4_t key_count);
+void llg_semaphore_put(llg_semaphore_t* semaphore, sv4_t key_count);
+void llg_semaphore_get(llg_semaphore_t* semaphore, sv4_t key_count);
+int llg_semaphore_try_get(llg_semaphore_t* semaphore, sv4_t key_count);
+
 // Cooperative generated-loop interruption point.  It returns while the
 // current process remains within its zero-time budget; on exhaustion it emits
 // a source-bearing diagnostic and exits that coroutine without returning.
@@ -695,6 +707,7 @@ void llg_frame_retain(llg_frame_t* frame);
 void llg_frame_release(llg_frame_t* frame);
 void llg_frame_capture_value(llg_frame_t* frame, size_t slot, sv4_t value);
 void llg_frame_capture_real(llg_frame_t* frame, size_t slot, double value);
+void llg_frame_capture_opaque(llg_frame_t* frame, size_t slot, void* value);
 void llg_frame_alias_value(llg_frame_t* frame, size_t slot, sv4_t* target);
 void llg_frame_alias_real(llg_frame_t* frame, size_t slot, double* target);
 void llg_frame_alias_slot(llg_frame_t* frame, size_t slot,
@@ -704,6 +717,7 @@ llg_frame_slot_kind_t llg_frame_slot_kind(const llg_frame_t* frame,
 sv4_t llg_frame_read_value(const llg_frame_t* frame, size_t slot);
 void llg_frame_write_value(llg_frame_t* frame, size_t slot, sv4_t value);
 double llg_frame_read_real(const llg_frame_t* frame, size_t slot);
+void* llg_frame_read_opaque(const llg_frame_t* frame, size_t slot);
 void llg_frame_write_real(llg_frame_t* frame, size_t slot, double value);
 // Suspend until `grp` completes according to its join kind.
 void llg_join(llg_fork_group_t* grp);

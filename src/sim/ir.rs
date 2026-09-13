@@ -117,9 +117,9 @@ pub enum StorageKind {
     Packed,
     /// IEEE real/shortreal storage (`double` in the runtime frame).
     Real,
-    /// An object or aggregate handle, reserved for a future owned clone/drop
-    /// implementation.  Lowering rejects these until that ownership contract
-    /// is available.
+    /// A runtime-owned object handle copied into an activation frame.  The
+    /// handle itself remains owned by the runtime object registry; frames do
+    /// not retain host pointers or attempt to clone/drop the object.
     Opaque,
 }
 

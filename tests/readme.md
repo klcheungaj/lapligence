@@ -30,6 +30,9 @@
 - `sim_process_control`: process-class identity/status observations,
   suspended waits, terminal awaits, recursive kill cleanup and independent
   delayed NBA ownership in both optimizer modes.
+- `sim_semaphore`: zero-key construction and exact `try_get` results,
+  differing-count FIFO contention, suspended wake deferral, task-handle
+  arguments, and cancellation-safe blocked waiters in both optimizer modes.
 - [Physical-time regressions](fixtures/sim/physical_time/readme.md): 1fs–100s
   scheduling, checked overflow, and femtosecond waveform timestamps.
 - [Waveform regressions](fixtures/sim/waveform/readme.md): file-backed VCD/FST
