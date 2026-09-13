@@ -892,7 +892,8 @@ pub struct AssertionCaseItem {
 
 /// One formal-to-actual mapping retained for a named sequence/property
 /// instance. The assertion body is still owned separately, so lowering can
-/// reject unsupported instances without discarding the binding identity.
+/// consume Slang's expanded body for admitted instances while retaining the
+/// binding identity for diagnostics and future forms.
 #[derive(Clone, Debug)]
 pub struct AssertionBinding {
     pub formal: NodeId,
@@ -2585,7 +2586,6 @@ fn assertion_expr_from_slang(
                 .iter()
                 .map(|edge| {
                     edge.sequence_delay
-                        .clone()
                         .map(|range| AssertionRange {
                             min: range.min,
                             max: range.max,
@@ -2608,7 +2608,7 @@ fn assertion_expr_from_slang(
             op: assertion_unary_from_slang(node.operation)?,
             expr: required(SemanticEdgeRole::Body, "unary assertion body")?,
             ranged: node.auxiliary & SEMANTIC_ASSERTION_RANGE != 0,
-            range: (node.auxiliary & SEMANTIC_ASSERTION_RANGE != 0).then(|| AssertionRange {
+            range: (node.auxiliary & SEMANTIC_ASSERTION_RANGE != 0).then_some(AssertionRange {
                 min: node.assertion_range_min,
                 max: node.assertion_range_max,
             }),

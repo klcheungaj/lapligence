@@ -1,6 +1,6 @@
-//! File-based acceptance tests for H20/H22 concurrent assertion sampling,
-//! sequence matching, and attempt scheduling. Each fixture is run through
-//! both optimizer modes.
+//! File-based acceptance tests for H20/H22/H23 concurrent assertion sampling,
+//! sequence/property composition, and attempt scheduling. Each fixture is run
+//! through both optimizer modes.
 
 #[path = "support/sim_cli.rs"]
 mod sim_cli;
@@ -134,10 +134,30 @@ fn concurrent_assertions_preserve_zero_and_ranged_delays() {
 }
 
 #[test]
-fn concurrent_assertions_reject_named_property_instances_fail_closed() {
+fn concurrent_assertions_expand_named_sequence_and_property_instances() {
+    sim_cli::run_case(
+        "concurrent_assertions",
+        "property_instances",
+        "PROPERTY_INSTANCE_PASS\nDEFAULT_ARGUMENT_PASS\nDISABLE_ARGUMENT_PASS\nPROPERTY_NOT_PASS\nPROPERTY_AND_PASS\nNAMED_COMPOSITION_PASS\nNAMED_OR_PASS\nNAMED_NOT_PASS\nPROPERTY_IFF_PASS\nPROPERTY_IMPLIES_PASS\nSEQUENCE_INSTANCE_PASS\nSEQUENCE_NAMED_ARGS_PASS\nPROPERTY_INSTANCE_PASS\nDEFAULT_ARGUMENT_PASS\nDISABLE_ARGUMENT_PASS\nPROPERTY_NOT_PASS\nPROPERTY_AND_PASS\nNAMED_COMPOSITION_PASS\nNAMED_OR_PASS\nNAMED_NOT_PASS\nPROPERTY_IFF_PASS\nPROPERTY_IMPLIES_PASS\n",
+        "",
+        &[],
+    );
+}
+
+#[test]
+fn concurrent_assertions_reject_unsupported_named_property_temporal_forms() {
     sim_cli::reject_case(
         "concurrent_assertions",
         "unsupported_instance",
-        "assertion instances with formal bindings are not supported",
+        "assertion binary operator Until is not supported",
+    );
+}
+
+#[test]
+fn concurrent_assertions_reject_conflicting_named_property_clocks() {
+    sim_cli::reject_case(
+        "concurrent_assertions",
+        "unsupported_clock_instance",
+        "multiple clocks in concurrent assertion",
     );
 }

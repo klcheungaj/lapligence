@@ -10,6 +10,10 @@
 - Concurrent assertions are lowered into dedicated assertion instances rather
   than ordinary process statements; their packed predicates sample in
   Preponed, attempts resolve in Observed, and action processes run in Reactive.
+  The bounded lowering composes one-cycle property booleans and follows owned
+  named sequence/property instance bodies, declaration arguments, and
+  compatible clock/disable metadata; unsupported temporal forms remain
+  source-located failures.
 - **Runtime:** `rt/` supplies value operations, scheduling, strings, containers,
   optional waveforms, and coroutine support. It is compiled with each model and
   is not linked into the Rust binaries.

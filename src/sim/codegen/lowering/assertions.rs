@@ -1,19 +1,19 @@
 //! Concurrent assertion lowering.
 //!
 //! The H22 sequence lowerer uses one shared sampled-clock automaton for
-//! concatenation, repetition, and the admitted sequence combinators. The
-//! owned assertion graph still retains every Slang property/sequence node;
-//! forms outside the executable subset fail closed here rather than becoming
-//! an untimed immediate assertion.
+//! concatenation, repetition, and the admitted sequence combinators. H23 adds
+//! bounded one-cycle property composition and recursive use of owned named
+//! sequence/property bodies. Forms outside the executable subset fail closed
+//! here rather than becoming an untimed immediate assertion.
 
 use super::*;
 use crate::core::db::{
     AssertionBinaryOp, AssertionExprKind, AssertionRange, AssertionRepetition,
-    AssertionRepetitionKind, ConcurrentAssertionKind, EventSpec,
+    AssertionRepetitionKind, AssertionUnaryOp, ConcurrentAssertionKind, EventSpec,
 };
 use crate::sim::ir::{
     IrAssertion, IrBinOp, IrConcurrentAssertionKind, IrExpr, IrExprKind, IrProcess,
-    IrSampledDomain, IrSequence, IrSequenceRange, IrSequenceTransition, IrShape,
+    IrSampledDomain, IrSequence, IrSequenceRange, IrSequenceTransition, IrShape, IrUnOp,
 };
 
 struct PropertyParts {
@@ -168,7 +168,7 @@ impl Codegen<'_> {
             other => return Err(format!("node is not a concurrent assertion: {other:?}")),
         };
         let location = self.source_location(assertion);
-        let parts = self.lower_property(path, property)?;
+        let parts = self.lower_property(path, property, assertion)?;
         let sampled_clock = SampledClock {
             signal: parts.clock_signal,
             posedge: parts.posedge,
@@ -226,10 +226,40 @@ impl Codegen<'_> {
         Ok(())
     }
 
-    fn lower_property(&mut self, path: &str, root: NodeId) -> Result<PropertyParts, String> {
+    fn lower_property(
+        &mut self,
+        path: &str,
+        root: NodeId,
+        origin: NodeId,
+    ) -> Result<PropertyParts, String> {
+        self.lower_property_inner(path, root, None, None, origin)
+    }
+
+    fn assertion_location(&self, node: NodeId, origin: NodeId) -> String {
+        let location = self.source_location(node);
+        if location == "<unknown>:0:0" {
+            self.source_location(origin)
+        } else {
+            location
+        }
+    }
+
+    /// Lower one property expression while carrying metadata inherited from
+    /// an enclosing named property/sequence instance. Slang has already
+    /// expanded assertion actuals into the owned instance body, so recursive
+    /// lowering preserves the binding semantics without reinterpreting source
+    /// text or formal names.
+    fn lower_property_inner(
+        &mut self,
+        path: &str,
+        root: NodeId,
+        inherited_clock: Option<(usize, bool)>,
+        inherited_disable: Option<usize>,
+        origin: NodeId,
+    ) -> Result<PropertyParts, String> {
         let mut current = root;
-        let mut clock = None;
-        let mut disable = None;
+        let mut clock = inherited_clock;
+        let mut disable = inherited_disable;
         loop {
             match self.kind(current) {
                 NodeKind::AssertionExpr(AssertionExprKind::Clocking {
@@ -238,44 +268,64 @@ impl Codegen<'_> {
                     expr,
                     ..
                 }) => {
-                    if clock.replace((*signal, *posedge)).is_some() {
-                        return Err(format!(
-                            "multiple clocks in concurrent assertion at {}",
-                            self.source_location(current)
-                        ));
+                    let signal = self.lower_assertion_signal(path, *signal, "clock")?;
+                    match clock {
+                        None => clock = Some((signal, *posedge)),
+                        Some((existing, existing_posedge))
+                            if existing == signal && existing_posedge == *posedge => {}
+                        Some(_) => {
+                            return Err(format!(
+                                "multiple clocks in concurrent assertion at {}",
+                                self.assertion_location(current, origin)
+                            ));
+                        }
                     }
                     current = *expr;
                 }
                 NodeKind::AssertionExpr(AssertionExprKind::DisableIff {
                     condition, expr, ..
                 }) => {
-                    if disable.replace(*condition).is_some() {
-                        return Err(format!(
-                            "multiple disable iff conditions in concurrent assertion at {}",
-                            self.source_location(current)
-                        ));
+                    let signal = self.lower_assertion_signal(path, *condition, "disable iff")?;
+                    match disable {
+                        None => disable = Some(signal),
+                        Some(existing) if existing == signal => {}
+                        Some(_) => {
+                            return Err(format!(
+                                "multiple disable iff conditions in concurrent assertion at {}",
+                                self.assertion_location(current, origin)
+                            ));
+                        }
                     }
                     current = *expr;
                 }
                 _ => break,
             }
         }
-        if matches!(
-            self.kind(current),
-            NodeKind::AssertionExpr(AssertionExprKind::Simple { expr, .. })
-                if matches!(self.kind(*expr), NodeKind::Expr(ExprKind::AssertionInstance { .. }))
-        ) {
-            return Err(format!(
-                "assertion instances with formal bindings are not supported at {path}"
-            ));
+
+        // An assertion instance's body is an owned, already-bound assertion
+        // expression. Re-enter it with the clock/disable metadata collected
+        // above. This admits named sequence/property use while retaining the
+        // exact declaration argument/default expansion performed by Slang.
+        if let Some(body) = match self.kind(current) {
+            NodeKind::AssertionExpr(AssertionExprKind::Simple {
+                expr,
+                repeated: false,
+                repetition: None,
+            }) => match self.kind(*expr) {
+                NodeKind::Expr(ExprKind::AssertionInstance { body, .. }) => Some(*body),
+                _ => None,
+            },
+            _ => None,
+        } {
+            return self.lower_property_inner(path, body, clock, disable, origin);
         }
-        let (clock_node, posedge) = clock.ok_or_else(|| {
-            format!("concurrent assertions require one explicit signal clock at {path}")
+
+        let (clock_signal, posedge) = clock.ok_or_else(|| {
+            format!(
+                "concurrent assertions require one explicit signal clock at {} ({path})",
+                self.assertion_location(current, origin)
+            )
         })?;
-        let clock_signal = self.lower_assertion_signal(path, clock_node, "clock")?;
-        let disable_signal = disable
-            .map(|condition| self.lower_assertion_signal(path, condition, "disable iff"))
-            .transpose()?;
         let (antecedent_node, consequent_node, overlapped) = match self.kind(current) {
             NodeKind::AssertionExpr(AssertionExprKind::Binary {
                 op: AssertionBinaryOp::OverlappedImplication,
@@ -291,7 +341,7 @@ impl Codegen<'_> {
             _ => {
                 return Err(format!(
                     "unsupported concurrent assertion property at {}",
-                    self.source_location(current)
+                    self.assertion_location(current, origin)
                 ))
             }
         };
@@ -320,11 +370,12 @@ impl Codegen<'_> {
             }
         })();
         self.sampled_clock = previous_clock;
-        let (antecedent, consequent, antecedent_sequence, consequent_sequence) = expressions?;
+        let (antecedent, consequent, antecedent_sequence, consequent_sequence) = expressions
+            .map_err(|error| format!("{error} (assertion at {})", self.source_location(origin)))?;
         Ok(PropertyParts {
             clock_signal,
             posedge,
-            disable_signal,
+            disable_signal: disable,
             antecedent,
             consequent,
             antecedent_sequence,
@@ -538,8 +589,19 @@ impl Codegen<'_> {
 
     fn sequence_requires_engine(&self, node: NodeId) -> bool {
         match self.kind(node) {
-            NodeKind::AssertionExpr(AssertionExprKind::Simple { repetition, .. }) => {
+            NodeKind::AssertionExpr(AssertionExprKind::Simple {
+                expr,
+                repetition,
+                repeated,
+            }) => {
                 repetition.is_some()
+                    || *repeated
+                    || match self.kind(*expr) {
+                        NodeKind::Expr(ExprKind::AssertionInstance { body, .. }) => {
+                            self.sequence_requires_engine(*body)
+                        }
+                        _ => false,
+                    }
             }
             NodeKind::AssertionExpr(AssertionExprKind::SequenceConcat { .. })
             | NodeKind::AssertionExpr(AssertionExprKind::SequenceWithMatch { .. })
@@ -565,6 +627,30 @@ impl Codegen<'_> {
         builder.finish(fragment)
     }
 
+    fn validate_nested_clock(
+        &mut self,
+        path: &str,
+        node: NodeId,
+        signal: NodeId,
+        posedge: bool,
+        role: &str,
+    ) -> Result<(), String> {
+        let signal = self.lower_assertion_signal(path, signal, "clock")?;
+        let Some(expected) = self.sampled_clock else {
+            return Err(format!(
+                "nested assertion clock has no enclosing sampled domain in {role} at {} ({path})",
+                self.source_location(node)
+            ));
+        };
+        if signal != expected.signal || posedge != expected.posedge {
+            return Err(format!(
+                "nested assertion clock conflicts with the enclosing sampled domain in {role} at {} ({path})",
+                self.source_location(node)
+            ));
+        }
+        Ok(())
+    }
+
     fn lower_sequence_fragment(
         &mut self,
         path: &str,
@@ -578,6 +664,12 @@ impl Codegen<'_> {
                 repeated,
                 repetition,
             }) => {
+                if !*repeated && repetition.is_none() {
+                    if let NodeKind::Expr(ExprKind::AssertionInstance { body, .. }) = self.kind(*expr)
+                    {
+                        return self.lower_sequence_fragment(path, *body, builder, role);
+                    }
+                }
                 let atom = self.lower_sequence_atom(path, *expr, role)?;
                 if let Some(repetition) = repetition {
                     if !*repeated {
@@ -635,8 +727,8 @@ impl Codegen<'_> {
                 if let Some(repetition) = repetition {
                     // A sequence-with-match repetition is represented by a
                     // direct repeated body in Slang's owned graph. Match
-                    // items are rejected above because their per-thread
-                    // mutable state belongs to H23.
+                    // items remain outside this bounded H23 subset because
+                    // their per-thread mutable state needs a richer engine.
                     let atom = self.sequence_fragment_atom(builder, fragment)?;
                     self.lower_repetition(builder, atom, repetition)
                 } else {
@@ -657,6 +749,31 @@ impl Codegen<'_> {
                 builder.mark_first_match(fragment.accept);
                 Ok(fragment)
             }
+            NodeKind::AssertionExpr(AssertionExprKind::Unary {
+                op: AssertionUnaryOp::Not,
+                expr,
+                ranged: false,
+                range: None,
+            }) => {
+                let atom = self.lower_one_cycle_assertion(path, *expr, role)?;
+                let start = builder.state()?;
+                let accept = builder.state()?;
+                builder.edge(
+                    start,
+                    accept,
+                    zero_range(),
+                    Some(IrExpr::new(
+                        IrExprKind::Un {
+                            op: IrUnOp::LogNot,
+                            a: Box::new(atom),
+                        },
+                        1,
+                        false,
+                        None,
+                    )),
+                )?;
+                Ok(SequenceFragment { start, accept })
+            }
             NodeKind::AssertionExpr(AssertionExprKind::Binary { op, left, right }) => {
                 match op {
                     AssertionBinaryOp::Or => {
@@ -674,8 +791,8 @@ impl Codegen<'_> {
                     | AssertionBinaryOp::Intersect
                     | AssertionBinaryOp::Throughout
                     | AssertionBinaryOp::Within => {
-                        let left = self.lower_sequence_atom_node(path, *left, role)?;
-                        let right = self.lower_sequence_atom_node(path, *right, role)?;
+                        let left = self.lower_one_cycle_assertion(path, *left, role)?;
+                        let right = self.lower_one_cycle_assertion(path, *right, role)?;
                         let atom = IrExpr::new(
                             IrExprKind::Bin {
                                 op: IrBinOp::LogAnd,
@@ -691,15 +808,32 @@ impl Codegen<'_> {
                         builder.edge(start, accept, zero_range(), Some(atom))?;
                         Ok(SequenceFragment { start, accept })
                     }
+                    AssertionBinaryOp::Iff | AssertionBinaryOp::Implies => {
+                        let atom = self.lower_one_cycle_assertion(path, node, role)?;
+                        let start = builder.state()?;
+                        let accept = builder.state()?;
+                        builder.edge(start, accept, zero_range(), Some(atom))?;
+                        Ok(SequenceFragment { start, accept })
+                    }
                     unsupported => Err(format!(
-                        "assertion binary operator {unsupported:?} is not supported in concurrent assertion {role} at {path}"
+                        "assertion binary operator {unsupported:?} is not supported in concurrent assertion {role} at {} ({path})",
+                        self.source_location(node)
                     )),
                 }
             }
-            NodeKind::AssertionExpr(AssertionExprKind::Clocking { expr, .. })
-            | NodeKind::AssertionExpr(AssertionExprKind::DisableIff { expr, .. }) => {
+            NodeKind::AssertionExpr(AssertionExprKind::Clocking {
+                signal,
+                posedge,
+                expr,
+                ..
+            }) => {
+                self.validate_nested_clock(path, node, *signal, *posedge, role)?;
                 self.lower_sequence_fragment(path, *expr, builder, role)
             }
+            NodeKind::AssertionExpr(AssertionExprKind::DisableIff { .. }) => Err(format!(
+                "nested disable iff is not supported in concurrent assertion {role} at {} ({path})",
+                self.source_location(node)
+            )),
             NodeKind::AssertionExpr(kind) => Err(format!(
                 "assertion sequence form {kind:?} is not supported in concurrent assertion {role} at {path}"
             )),
@@ -715,6 +849,9 @@ impl Codegen<'_> {
         node: NodeId,
         role: &str,
     ) -> Result<IrExpr, String> {
+        if let NodeKind::Expr(ExprKind::AssertionInstance { body, .. }) = self.kind(node) {
+            return self.lower_one_cycle_assertion(path, *body, role);
+        }
         let expression = self.lower_boolean_expr(path, node)?;
         if expression.is_real() || !sampled_compatible(&expression) {
             return Err(format!(
@@ -724,7 +861,14 @@ impl Codegen<'_> {
         Ok(expression)
     }
 
-    fn lower_sequence_atom_node(
+    /// Lower a property expression that is known to complete on the current
+    /// sampled tick. This is deliberately narrower than the full SVA
+    /// property algebra: temporal implications and unbounded operators need
+    /// attempt-level state and remain explicit fail-closed boundaries. The
+    /// admitted boolean forms are useful for named property/sequence bodies,
+    /// `not`, and one-cycle Boolean compositions already represented by the
+    /// H22 automaton.
+    fn lower_one_cycle_assertion(
         &mut self,
         path: &str,
         node: NodeId,
@@ -733,10 +877,77 @@ impl Codegen<'_> {
         match self.kind(node) {
             NodeKind::AssertionExpr(AssertionExprKind::Simple {
                 expr,
-                repetition: None,
                 repeated: false,
+                repetition: None,
             }) => self.lower_sequence_atom(path, *expr, role),
-            _ => self.lower_sequence_atom(path, node, role),
+            NodeKind::AssertionExpr(AssertionExprKind::Clocking {
+                signal,
+                posedge,
+                expr,
+                ..
+            }) => {
+                self.validate_nested_clock(path, node, *signal, *posedge, role)?;
+                self.lower_one_cycle_assertion(path, *expr, role)
+            }
+            NodeKind::AssertionExpr(AssertionExprKind::DisableIff { .. }) => Err(format!(
+                "nested disable iff is not supported in concurrent assertion {role} at {} ({path})",
+                self.source_location(node)
+            )),
+            NodeKind::AssertionExpr(AssertionExprKind::Unary {
+                op: AssertionUnaryOp::Not,
+                expr,
+                ranged: false,
+                range: None,
+            }) => {
+                let value = self.lower_one_cycle_assertion(path, *expr, role)?;
+                Ok(IrExpr::new(
+                    IrExprKind::Un {
+                        op: IrUnOp::LogNot,
+                        a: Box::new(value),
+                    },
+                    1,
+                    false,
+                    None,
+                ))
+            }
+            NodeKind::AssertionExpr(AssertionExprKind::Binary { op, left, right })
+                if matches!(
+                    op,
+                    AssertionBinaryOp::And
+                        | AssertionBinaryOp::Or
+                        | AssertionBinaryOp::Iff
+                        | AssertionBinaryOp::Implies
+                ) =>
+            {
+                let left = self.lower_one_cycle_assertion(path, *left, role)?;
+                let right = self.lower_one_cycle_assertion(path, *right, role)?;
+                let op = match op {
+                    AssertionBinaryOp::And => IrBinOp::LogAnd,
+                    AssertionBinaryOp::Or => IrBinOp::LogOr,
+                    AssertionBinaryOp::Iff => IrBinOp::LogEquiv,
+                    AssertionBinaryOp::Implies => IrBinOp::LogImpl,
+                    _ => {
+                        return Err(format!(
+                            "property expression operator {op:?} is not a one-cycle boolean form in {role} at {} ({path})",
+                            self.source_location(node)
+                        ));
+                    }
+                };
+                Ok(IrExpr::new(
+                    IrExprKind::Bin {
+                        op,
+                        a: Box::new(left),
+                        b: Box::new(right),
+                    },
+                    1,
+                    false,
+                    None,
+                ))
+            }
+            other => Err(format!(
+                "property expression {other:?} is not a one-cycle boolean form in {role} at {} ({path})",
+                self.source_location(node)
+            )),
         }
     }
 

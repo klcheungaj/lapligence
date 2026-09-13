@@ -39,11 +39,14 @@
   sequence assertions lower to dedicated IR assertion instances. A shared NFA
   retains `##` fixed/ranged delays, consecutive/nonconsecutive/goto repetition
   (including unbounded endpoints), `or`, direct one-cycle `and`/`intersect`,
-  `throughout`/`within`, and `first_match` endpoint selection. Predicates use
-  immutable sampled values; asynchronous `disable iff`, overlap mode, labels,
-  and action callbacks remain explicit. Match-item side effects, formal-bound
-  instances, and temporal property operators outside this sequence subset
-  remain source-located fail-closed boundaries.
+  `throughout`/`within`, and `first_match` endpoint selection. Named
+  sequence/property instances reuse Slang's owned actual/default expansion;
+  one-cycle property `not`/`and`/`or`/`iff`/`implies` forms and compatible
+  clock/disable metadata are composed without re-parsing source. Predicates use immutable
+  sampled values; asynchronous `disable iff`, overlap mode, labels, and action
+  callbacks remain explicit. Match-item side effects, conflicting clock or
+  disable metadata, and temporal property operators outside this bounded
+  subset remain source-located fail-closed boundaries.
 - **Evaluated events:** Explicit event expressions retain only their expression
   and qualifier dependencies. Read-only input/`const ref` function calls are
   checked transitively for disallowed effects, and automatic locals/formals are

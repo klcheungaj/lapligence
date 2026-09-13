@@ -4,6 +4,8 @@
   build processes and initialization data.
 - **`statements.rs`:** lower procedural statements through `EmitCtx`.
 - **`expressions.rs`:** lower expressions and assignment targets to typed IR.
+- **`assertions.rs`:** lower the bounded concurrent-assertion sequence
+  automaton, named instance expansion, and sampled property composition.
 - **Shared state:** `lowering.rs` owns orchestration, data types, and helpers;
   children communicate through explicit `pub(super)` seams.
 - **Boundary:** Slang semantic capture is confined to `core::db`; these modules
