@@ -143,14 +143,15 @@ endmodule
     //   t=0  the always process registers an @(w) wait (w=0); the initial
     //        delays #2.
     //   t=2  force w = 1: 0->1, the change wakes the always process, which
-    //        prints "consumer at 2 w=1" and re-registers on w.
+    //        prints "consumer at 2000 w=1" in the default design-precision
+    //        units and re-registers on w.
     //   t=4  release w retains 1, so no second event is generated.
     //   t=6  $finish.
     //
     // Expected stdout (exactly):
-    //   consumer at 2 w=1
+    //   consumer at 2000 w=1
     let (stdout, _warnings, _model) = run_sim(sv, "tb", "wake").expect("simulation should run");
-    assert_eq!(stdout, "consumer at 2 w=1\n");
+    assert_eq!(stdout, "consumer at 2000 w=1\n");
 }
 
 /// (d) An NBA to a forced target is dropped at commit: `x <= 8'h5a` on a
@@ -250,7 +251,7 @@ endmodule
     //   x=22 t=6
     //   x=33 t=8
     let (stdout, _warnings, _model) = run_sim(sv, "tb", "pcalife").expect("simulation should run");
-    assert_eq!(stdout, "x=22 t=4\nx=22 t=6\nx=33 t=8\n");
+    assert_eq!(stdout, "x=22 t=4000\nx=22 t=6000\nx=33 t=8000\n");
 }
 
 /// (f) force/release priority over an active procedural continuous
@@ -436,7 +437,7 @@ endmodule
     //   q=b2 t=10
     let (stdout, warnings, _model) =
         run_sim(sv, "tb", "pcadeorder").expect("simulation should run");
-    assert_eq!(stdout, "q=b2 t=6\nq=b2 t=8\nq=b2 t=10\n");
+    assert_eq!(stdout, "q=b2 t=6000\nq=b2 t=8000\nq=b2 t=10000\n");
     assert!(
         !warnings.iter().any(|w| w.contains("has no effect")),
         "the deassign must resolve its pre-scanned site, got warnings: {warnings:?}"

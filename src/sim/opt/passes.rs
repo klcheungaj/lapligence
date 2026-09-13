@@ -752,6 +752,17 @@ fn walk_stmt_mut(s: &mut IrStmt, f: &mut impl FnMut(&mut IrExpr)) {
             descriptor: Some(descriptor),
             ..
         } => walk_expr_mut(descriptor, f),
+        IrStmt::TimeFormat {
+            units,
+            precision,
+            suffix,
+            minimum_field_width,
+        } => {
+            walk_expr_mut(units, f);
+            walk_expr_mut(precision, f);
+            walk_expr_mut(minimum_field_width, f);
+            suffix.expressions_mut(&mut |expression| walk_expr_mut(expression, f));
+        }
         IrStmt::WaveLimit(limit) => walk_expr_mut(limit, f),
         IrStmt::Call(call) => {
             walk_call_args_mut(&mut call.args, f);
@@ -2349,6 +2360,17 @@ fn collect_stmt_rw(s: &IrStmt, model: &IrModel, rw: &mut Rw) {
             descriptor: Some(descriptor),
             ..
         } => collect_expr_reads(descriptor, model, rw),
+        IrStmt::TimeFormat {
+            units,
+            precision,
+            suffix,
+            minimum_field_width,
+        } => {
+            collect_expr_reads(units, model, rw);
+            collect_expr_reads(precision, model, rw);
+            collect_expr_reads(minimum_field_width, model, rw);
+            suffix.expressions(&mut |expression| collect_expr_reads(expression, model, rw));
+        }
         IrStmt::WaveLimit(limit) => collect_expr_reads(limit, model, rw),
         IrStmt::Call(call) => collect_call_rw(call, model, rw),
         IrStmt::Return { value: Some(value) } => collect_expr_reads(value, model, rw),

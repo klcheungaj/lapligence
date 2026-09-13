@@ -42,6 +42,8 @@ mod stop;
 mod system;
 #[path = "sim_partial_features/system_functions.rs"]
 mod system_functions;
+#[path = "sim_partial_features/timeformat.rs"]
+mod timeformat;
 #[path = "sim_partial_features/timing.rs"]
 mod timing;
 

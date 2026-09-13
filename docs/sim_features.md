@@ -362,7 +362,7 @@ Time:
 - ✅ **$time** module-unit scaled and rounded, `%t` consumes it — §1364-2001 17.7.1 **[1995]** using checked femtosecond-to-unit conversion
 - ✅ **$stime/$realtime** — §1364-2001 17.7.2–17.7.3 **[1995]** `$stime` rounds in the calling module's unit before returning the low 32 bits; `$realtime` preserves fractional module-unit time (sim_timescale.rs, sim_physical_time.rs, sim_partial_features.rs)
 - ✅ **$printtimescale** — §1364-2001 17.3.1 **[1995]**
-- ❌ **$timeformat** — §1364-2001 17.3.2 **[1995]** unsupported-task reject
+- ✅ **$timeformat** — §1364-2001 17.3.2 / §1800-2009 20.4.2 **[1995/SV-2009]** design-wide units, precision, suffix, and minimum-width state; runtime expressions and `%t` conversion across display/write/strobe/monitor are covered (sim_partial_features.rs)
 
 Control / misc:
 
@@ -520,7 +520,7 @@ capabilities, not individual keywords, system functions or standard clauses.
 | 49 | Partial | Display families and formatting | Typed console, file and string formatting preserves packed, real, and owned string values, supports the legal `%d/%h/%x/%b/%o/%c/%u/%z/%v/%t/%f/%e/%g/%s/%m/%l` conversions, width/precision directives, exact `%%` escaping, and HDL hierarchy names. Deferred string/real snapshots retain safe ownership, monitor object dependencies trigger settled reports, and strobes retain issue order; aggregate pattern values remain outside the bounded formatter. |
 | 50 | Completed | String formatting tasks/functions | `$sformat`, `$swrite` and their radix variants, plus `$sformatf`, use typed owned arguments and the shared formatter. Native string and packed string-like destinations receive normal truncation/padding; dynamic/nested format expressions and source-order, exactly-once arguments are covered by `sim_h04_string_format.rs`. |
 | 51 | Completed | Memory file loading and writing | Fixed one-dimensional packed memories support four-state `$readmemh/$readmemb` parsing (comments, radix words, `@` jumps, range/order/size diagnostics) and SystemVerilog `$writememh/$writememb` output with round-trip coverage; dynamic/queue/associative, multidimensional and real memories are rejected, as are writers in Verilog-2001 mode. |
-| 52 | Partial | Real-time reporting and time formatting | `$timeformat` remains missing. `$realtime` returns fractional time in the calling module's units; `$time` and `$stime` round to the nearest local unit (exact halves upward) before `$stime` applies its low-32-bit result width. |
+| 52 | Partial | Real-time reporting and time formatting | `$timeformat` stores design-wide units, precision, suffix, and minimum field width; `%t` converts integral and real values from each owning module's time unit across display/write/strobe/monitor, while `$realtime` remains fractional and `$time`/`$stime` round to the nearest local unit (exact halves upward) before `$stime` applies its low-32-bit result width. |
 | 53 | Partial | Simulation suspension | `$stop` supports resumable coroutine suspension and explicit CLI resume/exit policy; a full interactive debugger/control protocol is outside this boundary. |
 | 54 | Missing | PLA modeling | Synchronous/asynchronous AND/NAND/OR/NOR array/plane system tasks. |
 | 55 | Partial | Stochastic queues | `$q_initialize/$q_add/$q_remove/$q_full/$q_exam` with FIFO/LIFO state, documented status codes, simulation-time statistics and whole packed integer outputs; selected/real output targets remain rejected. |

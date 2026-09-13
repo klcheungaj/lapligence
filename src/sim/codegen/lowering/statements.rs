@@ -723,6 +723,7 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
                 newline,
                 default_radix,
                 descriptor,
+                time_unit_fs,
             } => {
                 let args = args
                     .into_iter()
@@ -746,6 +747,7 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
                     newline,
                     default_radix,
                     descriptor: descriptor.map(capture),
+                    time_unit_fs,
                 })
             }
             IrStmt::Severity {
@@ -4217,6 +4219,7 @@ impl EmitCtx<'_, '_> {
                         newline,
                         default_radix,
                         descriptor,
+                        time_unit_fs: self.cg.timescale_of_node(h).unit_fs,
                     }]);
                 }
                 DisplayTaskKind::Deferred { strobe, file } => {
@@ -4282,6 +4285,7 @@ impl EmitCtx<'_, '_> {
                     self.pre_fns.push(crate::sim::ir::IrPreFn::DisplayEval {
                         c_name: eval_name.clone(),
                         args: display_args.clone(),
+                        time_unit_fs: self.cg.timescale_of_node(h).unit_fs,
                     });
                     return Ok(vec![IrStmt::MonitorSet {
                         strobe,
@@ -4487,6 +4491,60 @@ impl EmitCtx<'_, '_> {
                     unit_fs: ts.unit_fs,
                     precision_fs: ts.precision_fs,
                     label: self.path.clone(),
+                }])
+            }
+            "$timeformat" => {
+                if !args.is_empty() && args.len() != 4 {
+                    return Err(format!(
+                        "$timeformat requires either zero or four arguments in `{}`",
+                        self.path
+                    ));
+                }
+                let default_units = (-15..=0)
+                    .find(|exponent| time_exponent_to_fs(*exponent) == self.cg.design_precision_fs)
+                    .ok_or_else(|| {
+                        format!(
+                            "$timeformat default units cannot represent design precision in `{}`",
+                            self.path
+                        )
+                    })?;
+                let units = args
+                    .first()
+                    .map(|node| self.cg.lower_expr(&self.path, *node))
+                    .transpose()?
+                    .unwrap_or_else(|| lhs_integer_expr(i128::from(default_units)));
+                let precision = args
+                    .get(1)
+                    .map(|node| self.cg.lower_expr(&self.path, *node))
+                    .transpose()?
+                    .unwrap_or_else(|| lhs_integer_expr(0));
+                let suffix = args
+                    .get(2)
+                    .map(|node| self.cg.lower_string(&self.path, *node))
+                    .transpose()?
+                    .unwrap_or_else(|| IrStringExpr::Literal(Vec::new()));
+                let minimum_field_width = args
+                    .get(3)
+                    .map(|node| self.cg.lower_expr(&self.path, *node))
+                    .transpose()?
+                    .unwrap_or_else(|| lhs_integer_expr(20));
+                for (label, value) in [
+                    ("units", &units),
+                    ("precision", &precision),
+                    ("minimum field width", &minimum_field_width),
+                ] {
+                    if value.is_real() {
+                        return Err(format!(
+                            "$timeformat {label} argument must be integral in `{}`",
+                            self.path
+                        ));
+                    }
+                }
+                Ok(vec![IrStmt::TimeFormat {
+                    units,
+                    precision,
+                    suffix,
+                    minimum_field_width,
                 }])
             }
             "$displayon" | "$displayoff" => {
@@ -4763,9 +4821,9 @@ impl EmitCtx<'_, '_> {
                     c_fmt.push(conversion);
                 }
                 't' => {
-                    // %t consumes an argument (typically $time); the runtime
-                    // prints the argument's value as a decimal (already scaled
-                    // to the caller's time unit by the $time emission).
+                    // %t consumes an integral or real time value.  The runtime
+                    // applies the design-wide `$timeformat` conversion using
+                    // the owning scope's unit metadata.
                     if arg_idx >= display_args.len() {
                         return Err(format!(
                             "{name} format `%{conv}` in `{}` has no argument",
@@ -4775,9 +4833,10 @@ impl EmitCtx<'_, '_> {
                     if !matches!(
                         &display_args[arg_idx],
                         crate::sim::ir::IrDisplayArg::Packed(_)
+                            | crate::sim::ir::IrDisplayArg::Real(_)
                     ) {
                         return Err(format!(
-                            "{name} format `%t` requires a packed argument in `{}`",
+                            "{name} format `%t` requires a packed or real argument in `{}`",
                             self.path
                         ));
                     }

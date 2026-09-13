@@ -123,7 +123,7 @@ endmodule
 "#;
 
     let stdout = run_sim(sv, "gencond").expect("simulation should run");
-    assert_eq!(stdout, "t=1 x=x\nt=6 x=0\nt=17 x=0\n");
+    assert_eq!(stdout, "t=1000 x=x\nt=6000 x=0\nt=17000 x=0\n");
 }
 
 /// Nested direct conditional scopes retain all executable content: the child

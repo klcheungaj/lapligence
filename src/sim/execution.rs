@@ -596,7 +596,8 @@ fn collect_effects(
             | IrStmt::Finish
             | IrStmt::FinishControl { .. }
             | IrStmt::ProgramExit
-            | IrStmt::PrintTimescale { .. } => effects.push(ExecutionEffect::RuntimeService),
+            | IrStmt::PrintTimescale { .. }
+            | IrStmt::TimeFormat { .. } => effects.push(ExecutionEffect::RuntimeService),
             IrStmt::StopControl { .. } => {
                 effects.push(ExecutionEffect::RuntimeService);
                 effects.push(ExecutionEffect::Suspend);
@@ -910,6 +911,17 @@ fn collect_statement_expression_effects(
             descriptor: Some(descriptor),
             ..
         } => collect_expression_effects(ir, descriptor, effects, visited_calls),
+        IrStmt::TimeFormat {
+            units,
+            precision,
+            suffix,
+            minimum_field_width,
+        } => {
+            for expression in [units, precision, minimum_field_width] {
+                collect_expression_effects(ir, expression, effects, visited_calls);
+            }
+            collect_string_effects(ir, suffix, effects, visited_calls);
+        }
         IrStmt::Call(call) => {
             for argument in call.args() {
                 match argument {

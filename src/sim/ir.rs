@@ -2589,6 +2589,9 @@ pub enum IrStmt {
         default_radix: IrDisplayRadix,
         /// `None` targets stdout; `Some` is a descriptor/MCD expression.
         descriptor: Option<IrExpr>,
+        /// Physical unit of packed/real display arguments in this owning
+        /// scope. `%t` converts from this unit to the design-wide format.
+        time_unit_fs: u64,
     },
     /// SystemVerilog runtime severity task (`$info`, `$warning`, `$error`, or
     /// `$fatal`). Arguments use the same typed formatter as display tasks and
@@ -2697,6 +2700,15 @@ pub enum IrStmt {
         unit_fs: u64,
         precision_fs: u64,
         label: String,
+    },
+    /// `$timeformat(units, precision, suffix, minimum_field_width)`.
+    /// Arguments are evaluated at execution time in the owning process; the
+    /// runtime stores the resulting design-wide formatting state.
+    TimeFormat {
+        units: IrExpr,
+        precision: IrExpr,
+        suffix: IrStringExpr,
+        minimum_field_width: IrExpr,
     },
     /// Statement-position function/task call (delay-free callees).
     Call(IrCall),
@@ -2840,6 +2852,8 @@ pub enum IrPreFn {
     DisplayEval {
         c_name: String,
         args: Vec<IrDisplayArg>,
+        /// Physical unit of the deferred arguments' owning scope for `%t`.
+        time_unit_fs: u64,
     },
     /// `static void c_name(double* out, void* context) { *out = value; }` for
     /// real event expressions. The callback is side-effect free and

@@ -30,8 +30,9 @@ contracts. `lower_expr`/`lower_stmt`/`lower_lhs` produce typed IR only.
   re-evaluate after their storage dependencies change. Wait-bearing tasks are
   inlined.
 - `$display` format strings are parsed at codegen time; `%t` consumes an
-  argument (typically `$time`) — codegen and the runtime `llg_display`
-  must agree on specifier/argument counts.
+  integral or real argument (typically `$time`/`$realtime`) and carries the
+  owning scope's physical unit into the runtime formatter. `$timeformat`
+  arguments remain runtime expressions and update design-wide state.
 - Expression widths: constants, parameters, signals and concat/replication
   results are checked against the generated model's `LLG_MAX_WIDTH`; the
   backend rejects widths at its exclusive `1 << 20` limit. The IR does not
@@ -397,11 +398,12 @@ and rejection messages.
   precision from the nearest owning Slang module instance and scales every
   delay by `N * unit / design_precision` before calling `llg_wait_time`.
   `$time`/`$stime` return the current time rounded to the nearest calling
-  module unit (exact halves upward) after scaling (`llg_time_scaled`), so
-  `%t`/`%0d` displays show the rounded unit-scaled time; `$realtime` retains
-  the fractional unit-scaled value. `$printtimescale` prints the calling
-  module's unit/precision. Compilation-unit and declaration inheritance are
-  frontend responsibilities.
+  module unit (exact halves upward) after scaling (`llg_time_scaled`), while
+  `$realtime` retains the fractional unit-scaled value. `%t` then converts
+  either value from the owning scope's unit through the design-wide
+  `$timeformat` units, precision, suffix, and minimum field width.
+  `$printtimescale` prints the calling module's unit/precision. Compilation-
+  unit and declaration inheritance are frontend responsibilities.
 - The scheduler runs in design-precision ticks: the design precision is the
   FINEST precision across every module (default 1ns/1ps for modules without a
   directive), so 1 tick = design_precision ps.  The runtime itself stays

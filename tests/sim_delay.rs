@@ -67,10 +67,10 @@ endmodule
     //   t=5  a := 1 (the captured value); the process continues: b=2;
     //        $display shows a=1 (early RHS), b=2.
     //
-    // Expected stdout (exactly):
-    //   t=5 a=1 b=2
+    // Expected stdout (exactly; default `%t` uses the 1ps design precision):
+    //   t=5000 a=1 b=2
     let stdout = run_sim(sv, "blk").expect("simulation should run");
-    assert_eq!(stdout, "t=5 a=1 b=2\n", "stdout: {stdout}");
+    assert_eq!(stdout, "t=5000 a=1 b=2\n", "stdout: {stdout}");
 }
 
 /// (b) NBA intra-assignment delay commit time: `a <= #4 8'h07;` executed at
@@ -105,7 +105,7 @@ endmodule
     // active processes' wakeup order.
     let stdout = run_sim(sv, "nba").expect("simulation should run");
     assert_eq!(
-        stdout, "t=1 a=00\nt=2 a=00\nstrobe t=4 a=07\n",
+        stdout, "t=1000 a=00\nt=2000 a=00\nstrobe t=4000 a=07\n",
         "stdout: {stdout}"
     );
 }
@@ -148,7 +148,7 @@ endmodule
     //   t=6 y=0000
     let stdout = run_sim(sv, "calag").expect("simulation should run");
     assert_eq!(
-        stdout, "t=0 y=xxxx\nt=4 y=0001\nt=6 y=0000\n",
+        stdout, "t=0 y=xxxx\nt=4000 y=0001\nt=6000 y=0000\n",
         "stdout: {stdout}"
     );
 }
@@ -186,7 +186,7 @@ endmodule
     //   t=1 y=x
     //   t=3 y=1
     let stdout = run_sim(sv, "capar").expect("simulation should run");
-    assert_eq!(stdout, "t=1 y=x\nt=3 y=1\n", "stdout: {stdout}");
+    assert_eq!(stdout, "t=1000 y=x\nt=3000 y=1\n", "stdout: {stdout}");
 }
 
 /// (d) The continuous assign's first update is delayed by D: with
@@ -224,7 +224,10 @@ endmodule
     //   t=2 y=x
     //   t=3 y=1
     let stdout = run_sim(sv, "cat0").expect("simulation should run");
-    assert_eq!(stdout, "t=0 y=x\nt=2 y=x\nt=3 y=1\n", "stdout: {stdout}");
+    assert_eq!(
+        stdout, "t=0 y=x\nt=2000 y=x\nt=3000 y=1\n",
+        "stdout: {stdout}"
+    );
 }
 
 /// A delayed continuous assignment rejects a short pulse and schedules the
@@ -273,14 +276,14 @@ endmodule
     //           delay failed to scale, y would already be 1 here).
     //   t=30    (plain #2 after it): CA wrote y=1 at tick 20 → display y=1.
     //   t=50    display y=1.
-    //   %t shows $time in the module's unit: ticks*1ns/10ns.
+    //   %t shows the design-precision value: ticks*1ns/1ns.
     //
     // Expected stdout (exactly):
-    //   t=1 y=x
-    //   t=3 y=1
-    //   t=5 y=1
+    //   t=10 y=x
+    //   t=30 y=1
+    //   t=50 y=1
     let stdout = run_sim(sv, "cats").expect("simulation should run");
-    assert_eq!(stdout, "t=1 y=x\nt=3 y=1\nt=5 y=1\n", "stdout: {stdout}");
+    assert_eq!(stdout, "t=10 y=x\nt=30 y=1\nt=50 y=1\n", "stdout: {stdout}");
 }
 
 /// (f) Zero-delay forms: `a = #0 rhs` lands through the inactive region of
@@ -319,16 +322,16 @@ endmodule
     //                     continuations drain first; then #1 moves the
     //                     process to the timed queue, ending the drain.
     //   NBA region:       commit c=1.
-    //   t=1:              display "t=1 c=1"; then #1 $finish.
+    //   t=1 ns:            display "t=1000 c=1"; then #1 $finish.
     //
     // Expected stdout (exactly):
     //   t=0 a=5a
     //   d1 c=x
     //   d2 c=x
-    //   t=1 c=1
+    //   t=1000 c=1
     let stdout = run_sim(sv, "zero").expect("simulation should run");
     assert_eq!(
-        stdout, "t=0 a=5a\nd1 c=x\nd2 c=x\nt=1 c=1\n",
+        stdout, "t=0 a=5a\nd1 c=x\nd2 c=x\nt=1000 c=1\n",
         "stdout: {stdout}"
     );
 }
@@ -356,7 +359,7 @@ endmodule
 "#;
 
     let stdout = run_sim(sv, "par").expect("simulation should run");
-    assert_eq!(stdout, "t=2 a=1\nt=5 a=0\n", "stdout: {stdout}");
+    assert_eq!(stdout, "t=2000 a=1\nt=5000 a=0\n", "stdout: {stdout}");
 }
 
 /// A delay control starting on the line after its assignment operator keeps
@@ -379,7 +382,7 @@ endmodule
 "#;
 
     let stdout = run_sim(sv, "multiline_intra_delay").expect("simulation should run");
-    assert_eq!(stdout, "t=2 a=1\n", "stdout: {stdout}");
+    assert_eq!(stdout, "t=2000 a=1\n", "stdout: {stdout}");
 }
 
 /// (g) Fractional and unit-suffixed intra-assignment delays retain their
@@ -404,7 +407,7 @@ module tb;
 endmodule
 "#;
     let stdout = run_sim(sv, "intra_fractional_literals").expect("simulation should run");
-    assert_eq!(stdout, "t=1 a=2\n", "stdout: {stdout}");
+    assert_eq!(stdout, "t=1000 a=2\n", "stdout: {stdout}");
 }
 
 /// (h) Statement delays accept both a bare fixed-point value in the calling
@@ -427,7 +430,7 @@ module tb;
 endmodule
 "#;
     let stdout = run_sim(sv, "stmt_fractional_literals").expect("simulation should run");
-    assert_eq!(stdout, "t=1 a=9\n", "stdout: {stdout}");
+    assert_eq!(stdout, "t=1000 a=9\n", "stdout: {stdout}");
 }
 
 /// Procedural delay controls accept elaborated parameters, parenthesized
@@ -454,7 +457,7 @@ endmodule
 
     let stdout = run_sim(sv, "stmt_expr").expect("simulation should run");
     assert_eq!(
-        stdout, "t=2 parameter\nt=7 expression\nt=1007 underscore\nt=1007 width-wrap\n",
+        stdout, "t=2000 parameter\nt=7000 expression\nt=1007000 underscore\nt=1007000 width-wrap\n",
         "stdout: {stdout}"
     );
 }
@@ -492,7 +495,7 @@ endmodule
 "#;
 
     let stdout = run_sim(sv, "mixed_width_stmt_delay").expect("simulation should run");
-    assert_eq!(stdout, "t=16\n");
+    assert_eq!(stdout, "t=16000\n");
 }
 
 /// A mixed-signedness outer expression can reinterpret an already-computed
@@ -516,7 +519,7 @@ endmodule
 "#;
 
     let stdout = run_sim(sv, "mixed_sign_stmt_delay").expect("simulation should run");
-    assert_eq!(stdout, "t=4\n");
+    assert_eq!(stdout, "t=4000\n");
 }
 
 /// Runtime delay values are sampled before suspension.
@@ -685,7 +688,7 @@ endmodule
     })
     .expect("delay parity setup");
 
-    let expected = "t=5 a=1 b=2 y=x\nt=9 y=1\nt=11 y=1\n";
+    let expected = "t=5000 a=1 b=2 y=x\nt=9000 y=1\nt=11000 y=1\n";
     assert_eq!(on.expect("opt-on run"), expected);
     assert_eq!(off.expect("opt-off run"), expected);
 }

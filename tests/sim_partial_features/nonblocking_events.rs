@@ -12,7 +12,7 @@ fn nonblocking_named_event_triggers_preserve_direct_and_delay_semantics() {
 fn nonblocking_event_controls_register_at_issue_time() {
     run_case(
         "nonblocking_event_triggers",
-        "CHECK: controlled caller=running\nCHECK: repeated caller=running\nCHECK: deferred stage=1\nCHECK: immediate woke=0\nCHECK: controlled time=1\nCHECK: delayed time=2\nCHECK: mixed wakes=1\nCHECK: repeated time=3\n",
+        "CHECK: controlled caller=running\nCHECK: repeated caller=running\nCHECK: deferred stage=1\nCHECK: immediate woke=0\nCHECK: controlled time=1000\nCHECK: delayed time=2000\nCHECK: mixed wakes=1\nCHECK: repeated time=3000\n",
     );
 }
 
@@ -20,7 +20,7 @@ fn nonblocking_event_controls_register_at_issue_time() {
 fn nonblocking_event_repeat_registers_dynamic_count() {
     run_case(
         "nonblocking_event_repeat_dynamic",
-        "CHECK: repeated count time=2\n",
+        "CHECK: repeated count time=2000\n",
     );
 }
 
@@ -44,6 +44,6 @@ fn nonblocking_event_triggers_preserve_nba_order_and_same_slot_wakes() {
 fn nonblocking_event_trigger_keeps_hierarchical_source_identity() {
     run_case(
         "nonblocking_event_hierarchy",
-        "CHECK: caller=running\nCHECK: hierarchy time=1\n",
+        "CHECK: caller=running\nCHECK: hierarchy time=1000\n",
     );
 }

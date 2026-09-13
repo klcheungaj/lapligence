@@ -101,7 +101,8 @@ coverage for the same rule IDs.
   event qualification, expression/LSB edges, constant waits, delayed and selected
   NBAs, runtime procedural delays, real blocking captures, declared packed
   ranges and array indexed part-selects, inertial driver scheduling and settled
-  strobe output, runtime real math and fractional time. HDL lives
+  strobe output, runtime real math, fractional time, and `$timeformat` state.
+  HDL lives
   in `fixtures/sim/partial_features/`; the shared `support/sim_cli.rs` harness
   passes each file to `llg` in both optimizer modes, isolates child working
   directories, compares specification-derived output and asserts diagnostics.

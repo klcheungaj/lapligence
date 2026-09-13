@@ -20,9 +20,10 @@
 //
 // Time is measured in integer ticks; 1 tick == the design precision (the
 // finest `timescale` precision across the design).  The runtime itself is
-// timescale-agnostic: the codegen scales every `#N` delay and `$time`/`%t`
-// read per the calling module's `timescale` unit before calling
-// `llg_wait_time` / `llg_time`. `$finish` reports its validated level through
+// timescale-agnostic: the codegen scales every `#N` delay and `$time` read per
+// the calling module's `timescale` unit before calling `llg_wait_time` /
+// `llg_time`. Typed `%t` arguments retain that owning unit and are converted
+// through the design-wide `$timeformat` state. `$finish` reports its validated level through
 // `llg_rt_finish_with_level`, sets a flag, and exits the current coroutine;
 // no coroutine is resumed after a finish. `$stop` reports through
 // `llg_rt_stop_with_level`, yields the current coroutine, and preserves every
@@ -74,6 +75,10 @@ enum {
 
 typedef struct {
     int kind;
+    // Physical unit of a packed/real `%t` argument in femtoseconds.  Zero
+    // keeps the legacy ABI's design-precision fallback for hand-written
+    // runtime callers; generated display evaluators always set it.
+    uint64_t time_unit_fs;
     union {
         sv4_t packed;
         double real;
@@ -242,6 +247,15 @@ void llg_rt_init(void);
 // `$test$plusargs`/`$value$plusargs`. The runtime never takes ownership of
 // `argv`; callers keep it valid for the duration of the simulation.
 void llg_rt_init_with_args(int argc, char** argv);
+// Initialize a runtime whose scheduler ticks represent `precision_fs`
+// femtoseconds. Generated models use this entry point so the default
+// `$timeformat` unit is the design precision, while standalone callers retain
+// the one-femtosecond default through llg_rt_init().
+void llg_rt_init_with_precision(uint64_t precision_fs);
+// Combine the generated model's command-line view with its scheduler tick
+// precision. The runtime borrows `argv` for the duration of the simulation.
+void llg_rt_init_with_args_and_precision(int argc, char** argv,
+                                         uint64_t precision_fs);
 // Release all runtime-owned scheduler, coroutine, fork-group, monitor and
 // strobe allocations. Call only when no runtime coroutine is executing; init
 // and run invoke it automatically. Repeated calls are safe.
@@ -300,6 +314,11 @@ uint64_t llg_time(void);              // current tick count
 // The caller applies any result-width conversion (for example, $stime's
 // low-32-bit result) after this operation.
 uint64_t llg_time_scaled(uint64_t precision_fs, uint64_t unit_fs);
+// Set the design-wide `$timeformat` state. The suffix is consumed by the
+// runtime on both success and controlled failure. Arguments are evaluated by
+// generated code before this call, in source order.
+void llg_timeformat(sv4_t units, sv4_t precision, llg_string_t suffix,
+                    sv4_t minimum_field_width);
 // Diagnostic count of allocated process objects, including completed fork
 // parents retained while detached descendants are still live.
 int llg_rt_process_count(void);

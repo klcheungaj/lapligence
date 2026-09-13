@@ -121,12 +121,12 @@ endmodule
     assert_eq!(
         stdout,
         "0 bus=zz drv=zz en0=0 en1=0\n\
-         10 bus=0a drv=zz en0=1 en1=0\n\
-         20 bus=0a drv=zz en0=1 en1=1\n\
-         30 bus=0x drv=zz en0=1 en1=1\n\
-         40 bus=xx drv=zz en0=1 en1=1\n\
-         50 bus=5a drv=5a en0=0 en1=0\n\
-         60 bus=xx drv=xx en0=0 en1=0\n"
+         10000 bus=0a drv=zz en0=1 en1=0\n\
+         20000 bus=0a drv=zz en0=1 en1=1\n\
+         30000 bus=0x drv=zz en0=1 en1=1\n\
+         40000 bus=xx drv=zz en0=1 en1=1\n\
+         50000 bus=5a drv=5a en0=0 en1=0\n\
+         60000 bus=xx drv=xx en0=0 en1=0\n"
     );
 }
 

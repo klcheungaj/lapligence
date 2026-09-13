@@ -751,8 +751,9 @@ fn render_main(execution: &ExecutionModel) -> Result<String, String> {
         sampled: false,
         activation_label: None,
     };
-    let mut out = String::from(
-        "int main(int argc, char** argv) {\n    llg_rt_init_with_args(argc, argv);\n    if (llg_rt_failed()) {\n        llg_rt_cleanup();\n        return 1;\n    }\n",
+    let mut out = format!(
+        "int main(int argc, char** argv) {{\n    llg_rt_init_with_args_and_precision(argc, argv, {}ULL);\n    if (llg_rt_failed()) {{\n        llg_rt_cleanup();\n        return 1;\n    }}\n",
+        model.precision_fs
     );
     for (index, signal) in model.signals.iter().enumerate() {
         if !signal.net_alias.is_empty() {

@@ -4,7 +4,7 @@ use super::run_case;
 fn future_nba_advances_time_without_live_processes() {
     super::run_case_with_stderr(
         "nba_only_future",
-        "final 7 42\n",
+        "final 7000 42\n",
         "llg: simulation ended without $finish (no processes remain) at time 7000\n",
     );
 }
@@ -24,7 +24,10 @@ fn selected_nbas_preserve_four_state_bits_and_ignore_invalid_indices() {
 
 #[test]
 fn delayed_nba_captures_values_and_continues_without_suspending() {
-    run_case("delayed_nba", "issued 0 0 9\npending 2 0\ncommitted 5 7\n");
+    run_case(
+        "delayed_nba",
+        "issued 0 0 9\npending 2000 0\ncommitted 5000 7\n",
+    );
 }
 
 #[test]
@@ -34,7 +37,7 @@ fn delayed_nba_outlives_its_process_and_commits_after_active_events() {
 
 #[test]
 fn delayed_nbas_keep_issue_order_and_capture_selected_targets() {
-    run_case("delayed_nba_select", "4 c1bd 42 00\n");
+    run_case("delayed_nba_select", "4000 c1bd 42 00\n");
 }
 
 #[test]

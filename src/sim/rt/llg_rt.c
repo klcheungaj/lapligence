@@ -25,6 +25,11 @@
 #define LLG_MODEL_STACK_VALUES 256u
 #endif
 
+// `%t` renders into the same bounded buffers as other display conversions.
+// Keep the runtime precision below that capacity so a runtime argument cannot
+// request an unbounded fixed-point expansion.
+#define LLG_TIMEFORMAT_MAX_PRECISION (LLG_MAX_WIDTH * 2u + 128u)
+
 // ── Fatal boundary checks ────────────────────────────────────────────────────
 
 static void llg_fatal_allocation(const char* what, size_t count, size_t size) {
@@ -55,6 +60,31 @@ static void* llg_checked_calloc(size_t count, size_t size, const char* what) {
 }
 
 static void llg_fmt_args_destroy(llg_fmt_arg_t* args, int n);
+static size_t llg_format_time_integer(sv4_t value, uint64_t source_unit_fs,
+                                      char* raw, size_t cap);
+
+static const char* llg_parse_legacy_spec(const char* p, int* has_width,
+                                         int* width, int* zero) {
+    *has_width = 0;
+    *width = 0;
+    *zero = 0;
+    while (*p == '-' || *p == '+' || *p == ' ' || *p == '#') p++;
+    if (*p == '0') {
+        *zero = 1;
+        p++;
+    }
+    while (*p >= '0' && *p <= '9') {
+        *has_width = 1;
+        if (*width <= (INT_MAX - (*p - '0')) / 10)
+            *width = *width * 10 + (*p - '0');
+        p++;
+    }
+    if (*p == '.') {
+        p++;
+        while (*p >= '0' && *p <= '9') p++;
+    }
+    return p;
+}
 
 static size_t llg_coroutine_stack_size(void) {
     const size_t base = 4u << 20;
@@ -640,6 +670,13 @@ typedef struct llg_concurrent_assertion {
     llg_assertion_attempt_t* attempts_tail;
 } llg_concurrent_assertion_t;
 
+typedef struct {
+    uint64_t unit_fs;
+    int precision;
+    int minimum_field_width;
+    llg_string_t suffix;
+} llg_timeformat_state_t;
+
 // An event-controlled `->>` is not a suspended process.  Its source
 // descriptors and snapshots live here until one source matches, then the
 // target is submitted to the ordinary NBA queue.
@@ -695,6 +732,8 @@ typedef struct {
     llg_wait_t* waiters;      // all active waits
     int wait_count;
     uint64_t now;
+    uint64_t design_precision_fs;
+    llg_timeformat_state_t time_format;
     llg_region_t current_region;
     uint64_t callback_sequence;
     llg_region_callback_t* callbacks; // sorted by time, region, issue order
@@ -810,6 +849,72 @@ static char llg_file_global_message[160];
 static int llg_file_defer_cleanup;
 
 static void llg_file_cleanup(void);
+
+// `llg_rt_run` tears down the scheduler before generated final blocks run,
+// but `$timeformat` is design-wide state that remains observable there. Keep
+// a cloned snapshot across that teardown and move it back for the finals.
+static llg_timeformat_state_t llg_final_time_format;
+static uint64_t llg_final_design_precision_fs;
+static int llg_final_timeformat_valid;
+
+static void llg_clear_final_timeformat(void) {
+    if (!llg_final_timeformat_valid) return;
+    llg_string_destroy(&llg_final_time_format.suffix);
+    memset(&llg_final_time_format, 0, sizeof(llg_final_time_format));
+    llg_final_design_precision_fs = 0;
+    llg_final_timeformat_valid = 0;
+}
+
+static void llg_save_final_timeformat(void) {
+    llg_clear_final_timeformat();
+    llg_final_design_precision_fs = g.design_precision_fs;
+    llg_final_time_format.unit_fs = g.time_format.unit_fs;
+    llg_final_time_format.precision = g.time_format.precision;
+    llg_final_time_format.minimum_field_width = g.time_format.minimum_field_width;
+    llg_final_time_format.suffix = llg_string_clone(&g.time_format.suffix);
+    llg_final_timeformat_valid = 1;
+}
+
+static void llg_restore_final_timeformat(void) {
+    if (!llg_final_timeformat_valid) return;
+    g.design_precision_fs = llg_final_design_precision_fs;
+    g.time_format.unit_fs = llg_final_time_format.unit_fs;
+    g.time_format.precision = llg_final_time_format.precision;
+    g.time_format.minimum_field_width = llg_final_time_format.minimum_field_width;
+    g.time_format.suffix = llg_final_time_format.suffix;
+    llg_final_time_format.suffix = (llg_string_t){0};
+    llg_final_design_precision_fs = 0;
+    llg_final_timeformat_valid = 0;
+}
+
+// `$timeformat` units are decimal powers of seconds.  The runtime stores all
+// quantities as femtoseconds, so keep the finite standard range in one table
+// instead of relying on floating-point conversions.
+static uint64_t llg_time_unit_from_exponent(int64_t exponent) {
+    static const uint64_t units[] = {
+        1ULL, 10ULL, 100ULL, 1000ULL, 10000ULL, 100000ULL,
+        1000000ULL, 10000000ULL, 100000000ULL, 1000000000ULL,
+        10000000000ULL, 100000000000ULL, 1000000000000ULL,
+        10000000000000ULL, 100000000000000ULL, 1000000000000000ULL,
+    };
+    if (exponent < -15 || exponent > 0) return 0;
+    return units[(size_t)(exponent + 15)];
+}
+
+static int llg_time_unit_exponent(uint64_t unit_fs) {
+    for (int exponent = -15; exponent <= 0; ++exponent) {
+        if (llg_time_unit_from_exponent(exponent) == unit_fs) return exponent;
+    }
+    return INT_MIN;
+}
+
+static void llg_timeformat_defaults(uint64_t precision_fs) {
+    g.design_precision_fs = precision_fs;
+    g.time_format.unit_fs = precision_fs;
+    g.time_format.precision = 0;
+    g.time_format.minimum_field_width = 20;
+    g.time_format.suffix = llg_string_bytes("", 0);
+}
 
 typedef struct llg_dependency_binding {
     struct llg_dependency_binding* next;
@@ -3400,6 +3505,7 @@ void llg_rt_cleanup(void) {
     free_sampled_values();
     free_assertions();
     free_q_queues();
+    llg_string_destroy(&g.time_format.suffix);
 
     for (int i = 0; i < g.n_procs; i++) {
         if (g.all_procs[i]) free_proc_storage(g.all_procs[i]);
@@ -3435,7 +3541,9 @@ void llg_rt_cleanup(void) {
     }
 }
 
-void llg_rt_init_with_args(int argc, char** argv) {
+void llg_rt_init_with_args_and_precision(int argc, char** argv,
+                                         uint64_t precision_fs) {
+    llg_clear_final_timeformat();
     llg_rt_cleanup();
     llg_last_failure = 0;
     llg_last_config_error = 0;
@@ -3444,6 +3552,14 @@ void llg_rt_init_with_args(int argc, char** argv) {
     llg_assertion_cover_count = 0;
     llg_assertion_vacuous_total = 0;
     llg_n_finals = 0; // a fresh run never inherits final registrations
+    if (precision_fs == 0) {
+        fprintf(stderr, "llg: runtime precision must be non-zero\n");
+        llg_last_failure = 1;
+        llg_last_config_error = 1;
+        g.config_error = 1;
+        return;
+    }
+    llg_timeformat_defaults(precision_fs);
     if (!configure_limits() || !configure_stop_policy()) {
         llg_last_failure = 1;
         llg_last_config_error = 1;
@@ -3462,8 +3578,16 @@ void llg_rt_init_with_args(int argc, char** argv) {
     g.share_stack = aco_share_stack_new(llg_coroutine_stack_size());
 }
 
+void llg_rt_init_with_args(int argc, char** argv) {
+    llg_rt_init_with_args_and_precision(argc, argv, 1);
+}
+
+void llg_rt_init_with_precision(uint64_t precision_fs) {
+    llg_rt_init_with_args_and_precision(0, NULL, precision_fs);
+}
+
 void llg_rt_init(void) {
-    llg_rt_init_with_args(0, NULL);
+    llg_rt_init_with_args_and_precision(0, NULL, 1);
 }
 
 // ── Command-line plusargs ───────────────────────────────────────────────────
@@ -4224,6 +4348,56 @@ uint64_t llg_time_scaled(uint64_t precision_fs, uint64_t unit_fs) {
     }
     return scaled;
 #endif
+}
+
+static void llg_timeformat_error(const char* message, llg_string_t* suffix) {
+    fprintf(stderr, "llg: $timeformat %s\n", message);
+    if (suffix) llg_string_destroy(suffix);
+    llg_last_failure = 1;
+    g.finish = 1;
+}
+
+void llg_timeformat(sv4_t units, sv4_t precision, llg_string_t suffix,
+                    sv4_t minimum_field_width) {
+    if (!region_can_mutate("$timeformat state update")) {
+        llg_string_destroy(&suffix);
+        return;
+    }
+    if (sv4_is_unknown(units) || !sv4_fits_i64(units)) {
+        llg_timeformat_error("units must be a known signed integer", &suffix);
+        return;
+    }
+    if (sv4_is_unknown(precision) || !sv4_fits_i64(precision)) {
+        llg_timeformat_error("precision must be a known signed integer", &suffix);
+        return;
+    }
+    if (sv4_is_unknown(minimum_field_width) ||
+        !sv4_fits_i64(minimum_field_width)) {
+        llg_timeformat_error("minimum field width must be a known signed integer",
+                             &suffix);
+        return;
+    }
+    int64_t units_value = sv4_to_i64(units);
+    int64_t precision_value = sv4_to_i64(precision);
+    int64_t width_value = sv4_to_i64(minimum_field_width);
+    uint64_t unit_fs = llg_time_unit_from_exponent(units_value);
+    if (!unit_fs) {
+        llg_timeformat_error("units must be between -15 and 0", &suffix);
+        return;
+    }
+    if (precision_value < 0 ||
+        precision_value > (int64_t)LLG_TIMEFORMAT_MAX_PRECISION) {
+        llg_timeformat_error("precision is out of range for the formatter", &suffix);
+        return;
+    }
+    if (width_value < 0 || width_value > (int64_t)(LLG_MAX_WIDTH * 2u + 256u)) {
+        llg_timeformat_error("minimum field width is out of range", &suffix);
+        return;
+    }
+    llg_string_move(&g.time_format.suffix, suffix);
+    g.time_format.unit_fs = unit_fs;
+    g.time_format.precision = (int)precision_value;
+    g.time_format.minimum_field_width = (int)width_value;
 }
 
 int llg_rt_process_count(void) {
@@ -5791,22 +5965,33 @@ static void llg_format_array(char* out, size_t cap, const char* fmt,
     while (*p && len + 1 < cap) {
         char c = *p++;
         if (c == '%') {
-            // Skip flags and width/precision digits.
-            while (*p == '-' || *p == '+' || *p == ' ' || *p == '#' ||
-                   *p == '0' || *p == '.' || (*p >= '0' && *p <= '9')) {
-                p++;
-            }
+            int has_width;
+            int width;
+            int zero;
+            p = llg_parse_legacy_spec(p, &has_width, &width, &zero);
             c = *p;
             if (c) ++p;
             if (c == '%') {
                 llg_append(out, cap, &len, '%');
             } else if ((c == 'd' || c == 'h' || c == 'b' || c == 'o' || c == 't') &&
                        argi < n) {
-                // %t prints its argument's value in ticks, like $display
-                // (sv4_format has no 't' case, so format as decimal).
-                char tmp[LLG_MAX_WIDTH + 2u];
-                sv4_format(c == 't' ? 'd' : c, args[argi++], tmp, sizeof(tmp));
-                for (char* q = tmp; *q && len + 1 < cap; q++) out[len++] = *q;
+                char tmp[LLG_MAX_WIDTH * 2u + 256u];
+                size_t tmp_len;
+                if (c == 't') {
+                    tmp_len = llg_format_time_integer(args[argi++],
+                                                      g.design_precision_fs,
+                                                      tmp, sizeof(tmp));
+                    if (!has_width && !zero) width = g.time_format.minimum_field_width;
+                } else {
+                    sv4_format(c, args[argi++], tmp, sizeof(tmp));
+                    tmp_len = strlen(tmp);
+                }
+                while (width > 0 && (size_t)width > tmp_len && len + 1 < cap) {
+                    out[len++] = ' ';
+                    width--;
+                }
+                for (size_t i = 0; i < tmp_len && len + 1 < cap; i++)
+                    out[len++] = tmp[i];
             } else {
                 out[len++] = '%';
                 if (c && len + 1 < cap) out[len++] = c;
@@ -5829,6 +6014,15 @@ static void llg_print_array(const char* fmt, const sv4_t* args, int n) {
     size_t cap = strlen(fmt) + 1;
     for (int i = 0; i < n; ++i) {
         size_t extra = (size_t)args[i].width + 2u;
+        if ((size_t)g.time_format.minimum_field_width > SIZE_MAX - extra)
+            llg_fatal_allocation("formatted line", 1, SIZE_MAX);
+        extra += (size_t)g.time_format.minimum_field_width;
+        if ((size_t)g.time_format.precision > SIZE_MAX - extra)
+            llg_fatal_allocation("formatted line", 1, SIZE_MAX);
+        extra += (size_t)g.time_format.precision;
+        if (g.time_format.suffix.len > SIZE_MAX - extra)
+            llg_fatal_allocation("formatted line", 1, SIZE_MAX);
+        extra += g.time_format.suffix.len;
         if (extra > SIZE_MAX - cap) llg_fatal_allocation("formatted line", cap, extra);
         cap += extra;
     }
@@ -5898,6 +6092,146 @@ static const char* llg_parse_typed_spec(const char* start, const char* p,
     }
     (void)start;
     return p;
+}
+
+static int llg_decimal_increment(char* digits, size_t* length, size_t cap) {
+    for (size_t i = *length; i > 0; --i) {
+        if (digits[i - 1] != '9') {
+            digits[i - 1]++;
+            return 1;
+        }
+        digits[i - 1] = '0';
+    }
+    if (*length >= cap) return 0;
+    memmove(digits + 1, digits, *length);
+    digits[0] = '1';
+    (*length)++;
+    return 1;
+}
+
+static int llg_time_format_exponents(int* source, int* display) {
+    int display_exponent = llg_time_unit_exponent(g.time_format.unit_fs);
+    if (display_exponent == INT_MIN) return 0;
+    int source_exponent = llg_time_unit_exponent(g.design_precision_fs);
+    if (source_exponent == INT_MIN) source_exponent = display_exponent;
+    *source = source_exponent;
+    *display = display_exponent;
+    return 1;
+}
+
+// Convert an integral time argument from its owning scope's unit to the
+// design-wide `$timeformat` unit, rounding the discarded decimal digits half
+// up.  The conversion operates on decimal digits so wide four-state values do
+// not pass through a host integer or floating-point type.
+static size_t llg_format_time_integer(sv4_t value, uint64_t source_unit_fs,
+                                      char* raw, size_t cap) {
+    char decimal[LLG_MAX_WIDTH * 2u + 256u];
+    char scaled[LLG_MAX_WIDTH * 2u + 256u];
+    sv4_to_dec_string(value, decimal, sizeof(decimal));
+    size_t decimal_len = strlen(decimal);
+    size_t len = 0;
+    if (decimal_len == 0) return 0;
+    if (decimal[0] == 'x') {
+        llg_append_text(raw, cap, &len, decimal, decimal_len);
+        llg_append_text(raw, cap, &len, g.time_format.suffix.data,
+                        g.time_format.suffix.len);
+        return len;
+    }
+    int source_exponent;
+    int display_exponent;
+    if (!llg_time_format_exponents(&source_exponent, &display_exponent)) {
+        source_exponent = display_exponent = 0;
+    }
+    int metadata_exponent = llg_time_unit_exponent(source_unit_fs);
+    if (metadata_exponent != INT_MIN) source_exponent = metadata_exponent;
+    int negative = decimal[0] == '-';
+    const char* digits = decimal + (negative ? 1 : 0);
+    size_t digits_len = decimal_len - (negative ? 1u : 0u);
+    int scale = source_exponent - display_exponent + g.time_format.precision;
+    size_t scaled_len = 0;
+    if (scale >= 0) {
+        // Multiplying zero by a power of ten must not manufacture trailing
+        // zero digits; keeping its canonical representation also preserves
+        // the expected `%0t` spelling at time zero.
+        if (digits_len == 1 && digits[0] == '0') {
+            scaled[0] = '0';
+            scaled_len = 1;
+        } else {
+            size_t max_scaled = sizeof(scaled) - 1u;
+            if (digits_len > max_scaled || (size_t)scale > max_scaled - digits_len)
+                llg_fatal_allocation("formatted time", 1,
+                                     digits_len + (size_t)scale + 1u);
+            memcpy(scaled, digits, digits_len);
+            scaled_len = digits_len;
+            for (int i = 0; i < scale; ++i)
+                scaled[scaled_len++] = '0';
+        }
+    } else {
+        size_t drop = (size_t)(-scale);
+        size_t keep = drop < digits_len ? digits_len - drop : 0;
+        if (keep) memcpy(scaled, digits, keep);
+        scaled_len = keep;
+        if (scaled_len == 0) scaled[scaled_len++] = '0';
+        // If the value has fewer digits than the discarded scale, the
+        // leading discarded decimal digits are zero (for example 7/10^9),
+        // so inspect the first actually discarded digit only when it exists.
+        int round_up = drop <= digits_len && digits[digits_len - drop] >= '5';
+        if (round_up) (void)llg_decimal_increment(scaled, &scaled_len, sizeof(scaled));
+    }
+    int precision = g.time_format.precision;
+    if (negative) llg_append(raw, cap, &len, '-');
+    if (scaled_len > (size_t)precision) {
+        size_t integer_len = scaled_len - (size_t)precision;
+        llg_append_text(raw, cap, &len, scaled, integer_len);
+        if (precision) {
+            llg_append(raw, cap, &len, '.');
+            llg_append_text(raw, cap, &len, scaled + integer_len,
+                            (size_t)precision);
+        }
+    } else {
+        llg_append(raw, cap, &len, '0');
+        if (precision) {
+            llg_append(raw, cap, &len, '.');
+            for (size_t i = scaled_len; i < (size_t)precision; ++i)
+                llg_append(raw, cap, &len, '0');
+            llg_append_text(raw, cap, &len, scaled, scaled_len);
+        }
+    }
+    llg_append_text(raw, cap, &len, g.time_format.suffix.data,
+                    g.time_format.suffix.len);
+    return len;
+}
+
+static size_t llg_format_time_real(double value, uint64_t source_unit_fs,
+                                   char* raw, size_t cap) {
+    int source_exponent;
+    int display_exponent;
+    if (!llg_time_format_exponents(&source_exponent, &display_exponent)) {
+        source_exponent = display_exponent = 0;
+    }
+    int metadata_exponent = llg_time_unit_exponent(source_unit_fs);
+    if (metadata_exponent != INT_MIN) source_exponent = metadata_exponent;
+    double scale = (double)llg_time_unit_from_exponent(source_exponent) /
+                   (double)llg_time_unit_from_exponent(display_exponent);
+    // C's printf family is allowed to honor the process rounding mode.  The
+    // simulator's time formatter instead uses the standard decimal rule for
+    // discarded digits (exact halves away from zero), so round in the scaled
+    // decimal domain before asking snprintf only to render the fixed digits.
+    double scaled = value * scale;
+    double factor = 1.0;
+    for (int i = 0; i < g.time_format.precision && isfinite(factor); ++i)
+        factor *= 10.0;
+    if (isfinite(scaled)) {
+        double rounded = round(scaled * factor);
+        if (isfinite(rounded)) scaled = rounded / factor;
+    }
+    int written = snprintf(raw, cap, "%.*f", g.time_format.precision,
+                           scaled);
+    size_t len = written < 0 ? 0 : (size_t)written;
+    if (len >= cap) len = cap ? cap - 1 : 0;
+    llg_append_text(raw, cap, &len, g.time_format.suffix.data,
+                    g.time_format.suffix.len);
+    return len;
 }
 
 static size_t llg_format_raw2(sv4_t value, char* raw, size_t cap) {
@@ -6154,11 +6488,18 @@ static size_t llg_format_typed(char* out, size_t cap, const char* fmt,
             sv4_format(conversion == 'x' ? 'h' : conversion, packed, raw, sizeof(raw));
             raw_len = strlen(raw);
         } else if (conversion == 't' && arg->kind == LLG_FMT_PACKED) {
-            sv4_format('d', arg->value.packed, raw, sizeof(raw));
-            raw_len = strlen(raw);
+            raw_len = llg_format_time_integer(arg->value.packed,
+                                              arg->time_unit_fs, raw, sizeof(raw));
             if (!spec.has_width && !spec.zero) {
-                spec.width = 20;
-                spec.has_width = 1;
+                spec.width = g.time_format.minimum_field_width;
+                spec.has_width = spec.width > 0;
+            }
+        } else if (conversion == 't' && arg->kind == LLG_FMT_REAL) {
+            raw_len = llg_format_time_real(arg->value.real, arg->time_unit_fs,
+                                           raw, sizeof(raw));
+            if (!spec.has_width && !spec.zero) {
+                spec.width = g.time_format.minimum_field_width;
+                spec.has_width = spec.width > 0;
             }
         } else if (conversion == 'c' && arg->kind == LLG_FMT_PACKED) {
             raw_len = llg_format_char(arg->value.packed, raw, sizeof(raw));
@@ -7091,7 +7432,20 @@ static char* llg_typed_line_alloc(const char* fmt, llg_fmt_arg_t* args, int n,
                 llg_fatal_allocation("typed formatted line", 1, SIZE_MAX);
             extra += (size_t)args[i].value.packed.width * 8u;
         }
-        if (args[i].kind == LLG_FMT_STRING) extra += args[i].value.string.len;
+        if (args[i].kind == LLG_FMT_STRING) {
+            if (args[i].value.string.len > SIZE_MAX - extra)
+                llg_fatal_allocation("typed formatted line", 1, SIZE_MAX);
+            extra += args[i].value.string.len;
+        }
+        if ((size_t)g.time_format.minimum_field_width > SIZE_MAX - extra)
+            llg_fatal_allocation("typed formatted line", 1, SIZE_MAX);
+        extra += (size_t)g.time_format.minimum_field_width;
+        if ((size_t)g.time_format.precision > SIZE_MAX - extra)
+            llg_fatal_allocation("typed formatted line", 1, SIZE_MAX);
+        extra += (size_t)g.time_format.precision;
+        if (g.time_format.suffix.len > SIZE_MAX - extra)
+            llg_fatal_allocation("typed formatted line", 1, SIZE_MAX);
+        extra += g.time_format.suffix.len;
         if (extra > SIZE_MAX - cap) llg_fatal_allocation("typed formatted line", cap, extra);
         cap += extra;
     }
@@ -8385,12 +8739,16 @@ void llg_spawn_final(void (*fn)(llg_proc_t*), const char* name) {
 }
 
 void llg_rt_run_finals(void) {
-    if (llg_n_finals == 0) return;
+    if (llg_n_finals == 0) {
+        llg_clear_final_timeformat();
+        return;
+    }
     // `$stop` is a resumable scheduler suspension, not a simulation exit.
     // Do not run final procedures while an embedding has intentionally
     // returned control to its caller under the EXIT policy.
     if (g.suspended) return;
     if (llg_last_config_error) {
+        llg_clear_final_timeformat();
         llg_n_finals = 0;
         return;
     }
@@ -8405,6 +8763,7 @@ void llg_rt_run_finals(void) {
     aco_thread_init(llg_last_word);
     g.main_co = aco_create(NULL, NULL, 0, NULL, NULL);
     g.share_stack = aco_share_stack_new(llg_coroutine_stack_size());
+    llg_restore_final_timeformat();
     g.now = llg_final_time;
     g.zero_loop_limit = llg_configured_zero_loop_limit;
     g.process_step_limit = llg_configured_process_step_limit;
@@ -8524,6 +8883,7 @@ void llg_rt_run(void) {
     // final procedures, regardless of whether its issuing process completed.
     g.running = 0;
     llg_file_defer_cleanup = llg_n_finals != 0;
+    if (llg_n_finals > 0) llg_save_final_timeformat();
     llg_rt_cleanup();
     llg_file_defer_cleanup = 0;
 }
@@ -8536,22 +8896,25 @@ static void llg_vprint(const char* fmt, va_list ap, int newline) {
         char c = *p++;
         if (c == '%') {
             const char* spec_start = p - 1;
-            // Skip flags and width/precision digits.
-            while (*p == '-' || *p == '+' || *p == ' ' || *p == '#' ||
-                   *p == '0' || *p == '.' || (*p >= '0' && *p <= '9')) {
-                p++;
-            }
+            int has_width;
+            int width;
+            int zero;
+            p = llg_parse_legacy_spec(p, &has_width, &width, &zero);
             c = *p;
             if (c) ++p;
             if (c == '%') {
                 fputc('%', stdout);
             } else if (c == 't') {
-                // %t prints the value of its argument (typically $time) in
-                // ticks, matching the generated code which passes the arg.
                 sv4_t v = va_arg(ap, sv4_t);
-                char tmp[LLG_MAX_WIDTH + 2u];
-                sv4_format('d', v, tmp, sizeof(tmp));
-                fputs(tmp, stdout);
+                char tmp[LLG_MAX_WIDTH * 2u + 256u];
+                size_t len = llg_format_time_integer(v, g.design_precision_fs,
+                                                      tmp, sizeof(tmp));
+                if (!has_width && !zero) width = g.time_format.minimum_field_width;
+                while (width > 0 && (size_t)width > len) {
+                    fputc(' ', stdout);
+                    width--;
+                }
+                fwrite(tmp, 1, len, stdout);
             } else if (c == 's') {
                 const char* s = va_arg(ap, const char*);
                 if (s) {

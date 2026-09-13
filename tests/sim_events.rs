@@ -109,7 +109,10 @@ endmodule
 
     let (stdout, _warnings, _model) =
         run_sim(sv, "tb", "handshake").expect("simulation should run");
-    assert_eq!(stdout, "triggered at 5\nc1 woken at 5\nc2 woken at 5\n");
+    assert_eq!(
+        stdout,
+        "triggered at 5000\nc1 woken at 5000\nc2 woken at 5000\n"
+    );
 }
 
 /// (b) Multiple waiters are woken EXACTLY once each by one trigger: a third
@@ -217,7 +220,7 @@ endmodule
     //   second wake (1) at 8
 
     let (stdout, _warnings, model) = run_sim(sv, "tb", "mixed").expect("simulation should run");
-    assert_eq!(stdout, "first wake (0) at 4\nsecond wake (1) at 8\n");
+    assert_eq!(stdout, "first wake (0) at 4000\nsecond wake (1) at 8000\n");
     assert_eq!(
         model.matches("llg_wait_mixed(src, 2);").count(),
         2,
@@ -266,7 +269,7 @@ endmodule
     let (stdout, _warnings, _model) = run_sim(sv, "tb", "event-or").expect("simulation should run");
     assert_eq!(
         stdout,
-        "trigger ev2 at 3\nwake one at 3\ntrigger ev1 at 5\nwake two at 5\n"
+        "trigger ev2 at 3000\nwake one at 3000\ntrigger ev1 at 5000\nwake two at 5000\n"
     );
 }
 
@@ -307,7 +310,7 @@ endmodule
     //   triggered at 2
 
     let (stdout, _warnings, _model) = run_sim(sv, "tb", "nolatch").expect("simulation should run");
-    assert_eq!(stdout, "triggered at 2\n");
+    assert_eq!(stdout, "triggered at 2000\n");
 }
 
 /// (e) A zero-delay trigger loop (`#0 -> ev` ping-ponged between two events)
@@ -389,11 +392,11 @@ endmodule
     //   t=20 $finish.
     //
     // Expected stdout (exactly):
-    //   gen 0 woken at 3
-    //   gen 1 woken at 3
+    //   gen 0 woken at 3000
+    //   gen 1 woken at 3000
 
     let (stdout, _warnings, _model) = run_sim(sv, "tb", "genscope").expect("simulation should run");
-    assert_eq!(stdout, "gen 0 woken at 3\ngen 1 woken at 3\n");
+    assert_eq!(stdout, "gen 0 woken at 3000\ngen 1 woken at 3000\n");
 }
 
 /// (g) `@(posedge ev)` is a frontend type error; legal event arrays are
@@ -476,7 +479,7 @@ endmodule
 "#;
     let (stdout, _warnings, model) =
         run_sim(sv, "tb", "event-array").expect("event array simulation should run");
-    assert_eq!(stdout, "literal wake at 2\nindexed wake at 4\n");
+    assert_eq!(stdout, "literal wake at 2000\nindexed wake at 4000\n");
     assert!(model.contains("llg_event_array_select"));
 }
 
@@ -508,7 +511,7 @@ endmodule
 "#;
     let (stdout, _warnings, _model) =
         run_sim(sv, "tb", "event-arg").expect("event argument simulation should run");
-    assert_eq!(stdout, "formal alias wake at 2\n");
+    assert_eq!(stdout, "formal alias wake at 2000\n");
 }
 
 #[test]
@@ -545,7 +548,7 @@ endmodule
 "#;
     let (stdout, _warnings, _model) =
         run_sim(sv, "tb", "event-arg-delay").expect("delayed event argument simulation should run");
-    assert_eq!(stdout, "captured object at 2\n");
+    assert_eq!(stdout, "captured object at 2000\n");
 }
 
 #[test]
@@ -575,7 +578,7 @@ endmodule
 "#;
     let (stdout, _warnings, _model) = run_sim(sv, "tb", "event-function-arg")
         .expect("event function argument simulation should run");
-    assert_eq!(stdout, "function alias wake at 2\n");
+    assert_eq!(stdout, "function alias wake at 2000\n");
 }
 
 #[test]
@@ -638,7 +641,7 @@ endmodule
 "#;
     let (stdout, _warnings, _model) =
         run_sim(sv, "tb", "event-reassign").expect("event reassignment simulation should run");
-    assert_eq!(stdout, "new object at 2\nold object at 3\n");
+    assert_eq!(stdout, "new object at 2000\nold object at 3000\n");
 }
 
 /// (h) Optimizer parity: a design mixing events, signals and dead storage
@@ -726,7 +729,7 @@ endmodule
         Ok(on)
     });
     let stdout = result.expect("both runs should succeed");
-    assert_eq!(stdout, "data=2a at 5\na set at 9\n");
+    assert_eq!(stdout, "data=2a at 5000\na set at 9000\n");
 }
 
 #[test]
@@ -809,7 +812,7 @@ endmodule
         run_sim(sv, "tb", "event-order").expect("wait_order simulation should run");
     assert_eq!(
         stdout,
-        "first success at 2\nsecond failure at 3\ncounts: 1 1\n"
+        "first success at 2000\nsecond failure at 3000\ncounts: 1 1\n"
     );
     assert!(model.contains("llg_wait_order"));
 }
@@ -879,5 +882,5 @@ endmodule
         Ok(on)
     });
     let stdout = result.expect("both H15 runs should succeed");
-    assert_eq!(stdout, "ordered at 4\n");
+    assert_eq!(stdout, "ordered at 4000\n");
 }

@@ -332,10 +332,11 @@ endmodule
 /// Hand-simulation:
 ///   t=0  clk=0 (blocking); the bare always registers its posedge waiter;
 ///        always#5 waits t=5; initial waits #25.
-///   t=25 initial: $display("done at 25"); $finish.
+///   t=25 ns initial: default `%t` reports 25000 design-precision ticks;
+///        $finish.
 ///
 /// Expected stdout (exactly):
-///   done at 25
+///   done at 25000
 #[test]
 fn sim_bare_event_control() {
     if !llg::sim::build::cmake_available() {
@@ -353,5 +354,5 @@ fn sim_bare_event_control() {
     end
 endmodule
 "#;
-    assert_stdout("bare_ev", sv, "done at 25\n");
+    assert_stdout("bare_ev", sv, "done at 25000\n");
 }

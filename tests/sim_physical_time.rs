@@ -54,7 +54,7 @@ fn physical_time_large_second_scopes_do_not_collapse() {
     sim_cli::run_case(
         "physical_time",
         "large_seconds",
-        "ten-global=10\nhundred-global=100\n",
+        "ten-global=10000000000000000\nhundred-global=100000000000000000\n",
         "",
         &[],
     );

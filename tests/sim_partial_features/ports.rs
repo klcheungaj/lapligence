@@ -7,7 +7,7 @@ fn port_defaults_and_generate_actuals_use_their_elaborated_scope() {
 
 #[test]
 fn reference_aliases_preserve_initialization_and_edge_visibility() {
-    run_case("reference_initialization", "initial a\nedge 1 b b\n");
+    run_case("reference_initialization", "initial a\nedge 1000 b b\n");
 }
 
 #[test]

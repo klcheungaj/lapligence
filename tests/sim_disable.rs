@@ -266,10 +266,10 @@ endmodule
     // Expected stdout (exactly):
     //   wait assigned 3
     //   skip zero
-    //   r=3 t=2
+    //   r=3 t=2000
 
     let (stdout, _warnings) = run_sim(sv, "tb", "inlret").expect("simulation should run");
-    assert_eq!(stdout, "wait assigned 3\nskip zero\nr=3 t=2\n");
+    assert_eq!(stdout, "wait assigned 3\nskip zero\nr=3 t=2000\n");
 }
 
 /// (d) break/continue inside every loop shape, iteration counts pinned.

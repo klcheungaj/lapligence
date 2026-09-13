@@ -197,7 +197,7 @@ endmodule
     //   t=25 fact(5)=120
 
     let (stdout, _warnings) = run_sim(sv, "tb", "fact").expect("simulation should run");
-    assert_eq!(stdout, "t=15 fact(5)=120\nt=25 fact(5)=120\n");
+    assert_eq!(stdout, "t=15000 fact(5)=120\nt=25000 fact(5)=120\n");
 }
 
 /// (b) Empty function body used as a statement: the definition must codegen
@@ -248,7 +248,7 @@ endmodule
     //   t=25 out=3
 
     let (stdout, _warnings) = run_sim(sv, "tb", "empty").expect("simulation should run");
-    assert_eq!(stdout, "t=15 out=3\nt=25 out=3\n");
+    assert_eq!(stdout, "t=15000 out=3\nt=25000 out=3\n");
 }
 
 /// (c) Task with an output formal, blocking write.  The output actual is a
@@ -299,7 +299,7 @@ endmodule
     //   t=25 d=7 q=8
 
     let (stdout, _warnings) = run_sim(sv, "tb", "taskblk").expect("simulation should run");
-    assert_eq!(stdout, "t=5 d=x q=x\nt=15 d=7 q=8\nt=25 d=7 q=8\n");
+    assert_eq!(stdout, "t=5000 d=x q=x\nt=15000 d=7 q=8\nt=25000 d=7 q=8\n");
 }
 
 /// (d) A static task output formal retains the value committed by its prior
@@ -398,7 +398,7 @@ fn sim_recursive_timed_task_uses_independent_activations() {
     run_fixture_both_opts(
         "recursive_timed_task.sv",
         "recursive_timed_task",
-        "recursive result=3 t=3\n",
+        "recursive result=3 t=3000\n",
     )
     .expect("recursive timed task must preserve each activation and copy-out");
 }
@@ -413,7 +413,7 @@ fn sim_mutual_recursive_timed_tasks_suspend_and_return() {
     run_fixture_both_opts(
         "mutual_recursive_timed_tasks.sv",
         "mutual_recursive_timed_tasks",
-        "mutual result=1 t=4\n",
+        "mutual result=1 t=4000\n",
     )
     .expect("mutually recursive timed tasks must share the typed call ABI");
 }
@@ -428,7 +428,7 @@ fn sim_timed_task_nested_fork_join_variants() {
     run_fixture_both_opts(
         "timed_task_fork_joins.sv",
         "timed_task_fork_joins",
-        "fork result=11 t=2\n",
+        "fork result=11 t=2000\n",
     )
     .expect("timed task fork/join variants must retain caller state");
 }
@@ -443,7 +443,7 @@ fn sim_timed_task_ref_alias_survives_suspension() {
     run_fixture_both_opts(
         "timed_task_ref_alias.sv",
         "timed_task_ref_alias",
-        "ref value=42 t=1\n",
+        "ref value=42 t=1000\n",
     )
     .expect("ref actuals must remain aliases while a task is suspended");
 }
@@ -539,7 +539,10 @@ endmodule
     //   t=15 a=3 out=3 out2=3
 
     let (stdout, warnings) = run_sim(sv, "tb", "combsens").expect("simulation should run");
-    assert_eq!(stdout, "t=6 a=3 out=3 out2=3\nt=15 a=3 out=3 out2=3\n");
+    assert_eq!(
+        stdout,
+        "t=6000 a=3 out=3 out2=3\nt=15000 a=3 out=3 out2=3\n"
+    );
     assert!(
         !warnings.iter().any(|w| w.contains("reads no signals")),
         "unexpected warnings: {warnings:?}"
@@ -598,7 +601,7 @@ endmodule
     //   t=25 out=12
 
     let (stdout, _warnings) = run_sim(sv, "tb", "defref").expect("simulation should run");
-    assert_eq!(stdout, "t=15 out=12\nt=25 out=12\n");
+    assert_eq!(stdout, "t=15000 out=12\nt=25000 out=12\n");
 }
 
 /// (f-semantic) The owned semantic DB must retain the call target and both
@@ -706,7 +709,7 @@ endmodule
     //   t=25 out=42
 
     let (stdout, _warnings) = run_sim(sv, "tb", "wrin").expect("simulation should run");
-    assert_eq!(stdout, "t=15 out=42\nt=25 out=42\n");
+    assert_eq!(stdout, "t=15000 out=42\nt=25000 out=42\n");
 }
 
 /// (h) Delay-bearing task inlined at its call site: the caller's `$display`
@@ -758,7 +761,10 @@ endmodule
     //   t=20 after-call out=2
 
     let (stdout, _warnings) = run_sim(sv, "tb", "taskdelay").expect("simulation should run");
-    assert_eq!(stdout, "t=10 after-call out=x\nt=20 after-call out=2\n");
+    assert_eq!(
+        stdout,
+        "t=10000 after-call out=x\nt=20000 after-call out=2\n"
+    );
 }
 
 /// A subroutine input argument is an assignment-like context (IEEE 1800-2009

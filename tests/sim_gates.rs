@@ -349,7 +349,7 @@ module tb;
 endmodule
 "#;
     let stdout = run_sim(sv, "delay").expect("simulation should run");
-    assert_eq!(stdout, "1 x\n2 1\n3 1\n4 0\n");
+    assert_eq!(stdout, "1000 x\n2000 1\n3000 1\n4000 0\n");
 }
 
 // ── Parameterized gate delay folds through the parameter value ─────────────
@@ -376,7 +376,7 @@ module tb #(parameter D = 3) ();
 endmodule
 "#;
     let stdout = run_sim(sv, "pardelay").expect("simulation should run");
-    assert_eq!(stdout, "2 x\n4 1\n");
+    assert_eq!(stdout, "2000 x\n4000 1\n");
 }
 
 /// A delayed gate rejects a short pulse and schedules the later stable

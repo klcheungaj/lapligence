@@ -555,6 +555,29 @@ fn stmt_temp_slots(stmt: &IrStmt) -> Result<u64, String> {
             }
             Ok(slots)
         }
+        IrStmt::TimeFormat {
+            units,
+            precision,
+            suffix,
+            minimum_field_width,
+        } => {
+            let mut slots = checked_sum(
+                [
+                    expr_slots(units)?,
+                    expr_slots(precision)?,
+                    expr_slots(minimum_field_width)?,
+                ],
+                "timeformat argument slots",
+            )?;
+            let mut suffix_slots = Ok(0);
+            suffix.expressions(&mut |expr| {
+                suffix_slots = suffix_slots
+                    .clone()
+                    .and_then(|n| checked_add(n, expr_slots(expr)?, "timeformat suffix slots"));
+            });
+            slots = checked_add(slots, suffix_slots?, "timeformat argument slots")?;
+            Ok(slots)
+        }
         IrStmt::Call(call) => call_slots(call),
         IrStmt::Return { value } => value
             .as_deref()

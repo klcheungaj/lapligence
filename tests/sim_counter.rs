@@ -102,7 +102,8 @@ fn sim_rt_selftest() {
 
 /// always_comb (no explicit event control) must evaluate once at t=0 and then
 /// re-run only when a READ signal changes — the LHS must not be in the
-/// sensitivity set (no self-wake), and %t must consume its $time argument.
+/// sensitivity set (no self-wake), and `%t` must consume its `$time` argument
+/// in the default design-precision units.
 #[test]
 fn sim_always_comb_and_display_t() {
     if !llg::sim::build::cmake_available() {
@@ -128,7 +129,8 @@ endmodule
 "#;
     let stdout = run_sim(sv, "comb").expect("simulation should run");
     // t=1: out still 2 (a=1 assigned after the display); t=2: out=1; t=3: out=2.
-    assert_eq!(stdout, "t=1 out=2\nt=2 out=1\nt=3 out=2\n");
+    // The default 1ns/1ps design precision renders those times as 1000/2000/3000.
+    assert_eq!(stdout, "t=1000 out=2\nt=2000 out=1\nt=3000 out=2\n");
 }
 
 /// A packed vector wider than the former 1024-bit implementation ceiling must

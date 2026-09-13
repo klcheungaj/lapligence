@@ -81,12 +81,12 @@ endmodule
     //   t=20 $finish.
     //
     // Expected stdout (exactly):
-    //   c2 at 5
-    //   c1 at 5
+    //   c2 at 5000
+    //   c1 at 5000
 
     let (stdout, _warnings, _model) =
         run_sim(sv, "tb", "handshake").expect("simulation should run");
-    assert_eq!(stdout, "c2 at 5\nc1 at 5\n");
+    assert_eq!(stdout, "c2 at 5000\nc1 at 5000\n");
 }
 
 /// (b) Immediate: `wait (1'b1)` is a constant-true condition with no read
@@ -155,11 +155,11 @@ endmodule
     //   t=20 $finish.
     //
     // Expected stdout (exactly):
-    //   go set at 3
-    //   data=2a at 3
+    //   go set at 3000
+    //   data=2a at 3000
 
     let (stdout, _warnings, _model) = run_sim(sv, "tb", "thenbody").expect("simulation should run");
-    assert_eq!(stdout, "go set at 3\ndata=2a at 3\n");
+    assert_eq!(stdout, "go set at 3000\ndata=2a at 3000\n");
 }
 
 /// (d) Wait in a task: the task is wait-bearing, so it must be inlined at its
@@ -201,11 +201,11 @@ endmodule
     //   t=20 $finish.
     //
     // Expected stdout (exactly):
-    //   go set at 2
-    //   task wait done at 2
+    //   go set at 2000
+    //   task wait done at 2000
 
     let (stdout, _warnings, model) = run_sim(sv, "tb", "taskwait").expect("simulation should run");
-    assert_eq!(stdout, "go set at 2\ntask wait done at 2\n");
+    assert_eq!(stdout, "go set at 2000\ntask wait done at 2000\n");
     assert!(
         model.contains("if (sv4_to_bool(G_tb_go)) break;"),
         "inlined wait loop not found in generated C"
@@ -254,10 +254,10 @@ endmodule
     //   t=30 $finish.
     //
     // Expected stdout (exactly):
-    //   a set at 3
-    //   b set at 7
-    //   compound at 7
+    //   a set at 3000
+    //   b set at 7000
+    //   compound at 7000
 
     let (stdout, _warnings, _model) = run_sim(sv, "tb", "compound").expect("simulation should run");
-    assert_eq!(stdout, "a set at 3\nb set at 7\ncompound at 7\n");
+    assert_eq!(stdout, "a set at 3000\nb set at 7000\ncompound at 7000\n");
 }

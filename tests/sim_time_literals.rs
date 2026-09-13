@@ -214,11 +214,11 @@ endmodule
         let database = compile_database(dir, source)?;
         assert_eq!(
             build_and_run(dir, &database, &OptConfig::default(), "optimized")?,
-            "time=2\n"
+            "time=2000\n"
         );
         assert_eq!(
             build_and_run(dir, &database, &OptConfig::none(), "unoptimized")?,
-            "time=2\n"
+            "time=2000\n"
         );
         Ok(())
     })

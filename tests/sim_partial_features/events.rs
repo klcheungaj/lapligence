@@ -14,7 +14,7 @@ fn vector_edges_use_only_the_least_significant_bit() {
 
 #[test]
 fn constant_false_wait_suspends_without_blocking_time_advance() {
-    run_case("wait_constant_false", "ready 0\nlater 3\n");
+    run_case("wait_constant_false", "ready 0\nlater 3000\n");
 }
 
 #[test]

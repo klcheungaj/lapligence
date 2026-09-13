@@ -1,13 +1,14 @@
-//! End-to-end simulator tests for timescale-aware delays: `#N` delays scale
-//! by the calling module's `timescale unit`, and `$time`/`$stime` return the
-//! current time in the calling module's unit.
+//! End-to-end simulator tests for timescale-aware delays: `#N` delays scale by
+//! the calling module's `timescale` unit, `$time`/`$stime` return the current
+//! time in the calling module's unit, and `%t` uses the design-wide default
+//! `$timeformat` unit.
 //!
 //! The scheduler runs in design-precision ticks (the finest precision across
 //! the design); the codegen scales `#N` up to ticks and `$time` down to the
 //! calling module's unit, so observable behavior matches Verilator's
-//! per-module timescale practice.  Modules without a `timescale directive
-//! default to 1ns/1ps (TIMESCALEMOD behavior), which keeps the pre-timescale
-//! test outputs unchanged.
+//! per-module timescale practice. Modules without a `timescale` directive
+//! default to 1ns/1ps (TIMESCALEMOD behavior). `%t` defaults to the finest
+//! design precision, as specified by `$timeformat`.
 
 #[path = "support/sim.rs"]
 mod sim_harness;
@@ -81,7 +82,7 @@ fn run_design(name: &str, files: &[(&str, &str)]) -> Result<String, String> {
 
 /// (a) Two modules with DIFFERENT timescales: `#5` in a `10ns/1ns` module is
 /// 50 ns while `#50` in a `1ns/1ps` module is 50 ns — both wake at the same
-/// wall time and each `$time` shows the unit-scaled value.
+/// wall time and each `%t` shows the design-precision-scaled value.
 ///
 /// Timescales: slow (10ns/1ns → unit 10000 ps, precision 1000 ps), fast
 /// (1ns/1ps → unit 1000 ps, precision 1 ps), tb (no directive → default
@@ -93,15 +94,15 @@ fn run_design(name: &str, files: &[(&str, &str)]) -> Result<String, String> {
 ///        fast #50 → 50 * 1000 / 1   = 50000 ticks (50 ns)
 ///        tb   #95 → 95 * 1000 / 1   = 95000 ticks (95 ns)
 ///   t=50 ns (50000 ticks):
-///        slow wakes: $time = 50000 * 1 / 10000 = 5   → "slow t=5"
-///        fast wakes: $time = 50000 * 1 / 1000  = 50  → "fast t=50"
+///        slow `%t`: 50000 ticks → "slow t=50000"
+///        fast `%t`: 50000 ticks → "fast t=50000"
 ///   t=95 ns (95000 ticks):
-///        tb wakes:   $time = 95000 * 1 / 1000  = 95  → "tb t=95"; $finish.
+///        tb `%t`: 95000 ticks → "tb t=95000"; $finish.
 ///
 /// Expected stdout (exactly):
-///   slow t=5
-///   fast t=50
-///   tb t=95
+///   slow t=50000
+///   fast t=50000
+///   tb t=95000
 #[test]
 fn timescale_cross_module_units() {
     if !llg::sim::build::cmake_available() {
@@ -146,13 +147,13 @@ fn timescale_cross_module_units() {
         ],
     )
     .expect("simulation should run");
-    assert_eq!(stdout, "slow t=5\nfast t=50\ntb t=95\n");
+    assert_eq!(stdout, "slow t=50000\nfast t=50000\ntb t=95000\n");
 }
 
-/// (b) No timescale → default 1ns/1ps (TIMESCALEMOD): `#5` still displays
-/// "t=5" and `$time` returns the unit-scaled time, so the pre-timescale test
-/// outputs are unchanged.  Also exercises `$printtimescale`, which prints the
-/// calling module's unit/precision.
+/// (b) No timescale → default 1ns/1ps (TIMESCALEMOD): `#5` still produces a
+/// local `$time` of 5, while default `%t` is rendered in the 1ps design
+/// precision. Also exercises `$printtimescale`, which prints the calling
+/// module's unit/precision.
 ///
 /// Timescales: tb (no directive → default unit 1000 ps, precision 1 ps).
 /// Design precision = 1 ps → 1 tick = 1 ps.
@@ -160,14 +161,13 @@ fn timescale_cross_module_units() {
 /// Hand-simulation:
 ///   t=0  always#5 waits 5000 ticks; initial prints the timescale then waits
 ///        #5 → 5000 ticks.
-///   t=5 ns (5000 ticks): initial wakes, $time = 5000 * 1 / 1000 = 5
-///        → "t=5"; waits #10 → t=15 ns.
-///   t=15 ns (15000 ticks): initial wakes, $time = 15 → "t=15"; $finish.
+///   t=5 ns (5000 ticks): initial wakes and `%t` reports 5000; waits #10.
+///   t=15 ns (15000 ticks): `%t` reports 15000; $finish.
 ///
 /// Expected stdout (exactly):
 ///   tb: timescale is 1ns/1ps
-///   t=5
-///   t=15
+///   t=5000
+///   t=15000
 #[test]
 fn timescale_default_1ns_1ps() {
     if !llg::sim::build::cmake_available() {
@@ -192,7 +192,7 @@ fn timescale_default_1ns_1ps() {
         )],
     )
     .expect("simulation should run");
-    assert_eq!(stdout, "tb: timescale is 1ns/1ps\nt=5\nt=15\n");
+    assert_eq!(stdout, "tb: timescale is 1ns/1ps\nt=5000\nt=15000\n");
 }
 
 /// (c) Sub-unit delays: `#3` with `timescale 10ns/1ns` (unit 10000 ps) in a
@@ -207,15 +207,14 @@ fn timescale_default_1ns_1ps() {
 ///        tiny #30 → 30 * 1000 / 1 = 30000 ticks (30 ns)
 ///        tb   #40 → 40 * 1000 / 1 = 40000 ticks (40 ns)
 ///   t=30 ns (30000 ticks):
-///        big wakes:  $time = 30000 * 1 / 10000 = 3  → "big t=3"
-///        tiny wakes: $time = 30000 * 1 / 1000  = 30 → "tiny t=30"
+///        big and tiny `%t` arguments both report 30000.
 ///   t=40 ns (40000 ticks):
-///        tb wakes:   $time = 40000 * 1 / 1000  = 40 → "tb t=40"; $finish.
+///        tb `%t` reports 40000; $finish.
 ///
 /// Expected stdout (exactly):
-///   big t=3
-///   tiny t=30
-///   tb t=40
+///   big t=30000
+///   tiny t=30000
+///   tb t=40000
 #[test]
 fn timescale_sub_unit_delay_jumps() {
     if !llg::sim::build::cmake_available() {
@@ -258,5 +257,5 @@ fn timescale_sub_unit_delay_jumps() {
         ],
     )
     .expect("simulation should run");
-    assert_eq!(stdout, "big t=3\ntiny t=30\ntb t=40\n");
+    assert_eq!(stdout, "big t=30000\ntiny t=30000\ntb t=40000\n");
 }

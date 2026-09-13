@@ -1041,8 +1041,17 @@ fn render_stmt_scoped(
             scope,
             newline,
             descriptor,
+            time_unit_fs,
             ..
-        } => render_typed_display(ctx, fmt, args, scope, *newline, descriptor.as_ref())?,
+        } => render_typed_display(
+            ctx,
+            fmt,
+            args,
+            scope,
+            *newline,
+            descriptor.as_ref(),
+            *time_unit_fs,
+        )?,
         IrStmt::Severity {
             level,
             fmt,
@@ -1232,6 +1241,20 @@ fn render_stmt_scoped(
                 fs_to_timescale_str(*unit_fs),
                 fs_to_timescale_str(*precision_fs),
                 c_string_literal(label)
+            )
+        }
+        IrStmt::TimeFormat {
+            units,
+            precision,
+            suffix,
+            minimum_field_width,
+        } => {
+            let units = render_expr(ctx, units)?.code;
+            let precision = render_expr(ctx, precision)?.code;
+            let suffix = super::objects::string(ctx, suffix)?;
+            let minimum_field_width = render_expr(ctx, minimum_field_width)?.code;
+            format!(
+                "    {{\n        sv4_t _llg_timeformat_units = {units};\n        sv4_t _llg_timeformat_precision = {precision};\n        llg_string_t _llg_timeformat_suffix = {suffix};\n        sv4_t _llg_timeformat_width = {minimum_field_width};\n        llg_timeformat(_llg_timeformat_units, _llg_timeformat_precision, _llg_timeformat_suffix, _llg_timeformat_width);\n    }}\n"
             )
         }
         IrStmt::Call(call) => {
@@ -1516,6 +1539,7 @@ fn render_typed_display(
     scope: &str,
     newline: bool,
     descriptor: Option<&IrExpr>,
+    time_unit_fs: u64,
 ) -> Result<String, String> {
     let scope = c_string_literal(scope);
     let descriptor = descriptor
@@ -1549,11 +1573,11 @@ fn render_typed_display(
     for (index, arg) in args.iter().enumerate() {
         let assignment = match arg {
             IrDisplayArg::Packed(value) => format!(
-                "_display_args[{index}].kind = LLG_FMT_PACKED;\n        _display_args[{index}].value.packed = {};",
+                "_display_args[{index}].kind = LLG_FMT_PACKED;\n        _display_args[{index}].time_unit_fs = {time_unit_fs}ULL;\n        _display_args[{index}].value.packed = {};",
                 render_expr(ctx, value)?.code
             ),
             IrDisplayArg::Real(value) => format!(
-                "_display_args[{index}].kind = LLG_FMT_REAL;\n        _display_args[{index}].value.real = {};",
+                "_display_args[{index}].kind = LLG_FMT_REAL;\n        _display_args[{index}].time_unit_fs = {time_unit_fs}ULL;\n        _display_args[{index}].value.real = {};",
                 render_expr(ctx, value)?.code
             ),
             IrDisplayArg::String(value) => format!(
@@ -2626,7 +2650,11 @@ pub(super) fn render_pre_fn_impl(
             out.push_str("}\n");
             Ok(out)
         }
-        crate::sim::ir::IrPreFn::DisplayEval { c_name, args } => {
+        crate::sim::ir::IrPreFn::DisplayEval {
+            c_name,
+            args,
+            time_unit_fs,
+        } => {
             let mut out = format!(
                 "static void {c_name}(llg_fmt_arg_t* out, void* context) {{\n    (void)context;\n"
             );
@@ -2635,13 +2663,13 @@ pub(super) fn render_pre_fn_impl(
                     IrDisplayArg::Packed(value) => {
                         let rendered = render_expr(ctx, value)?.code;
                         out.push_str(&format!(
-                            "    out[{i}].kind = LLG_FMT_PACKED; out[{i}].value.packed = {rendered};\n"
+                            "    out[{i}].kind = LLG_FMT_PACKED; out[{i}].time_unit_fs = {time_unit_fs}ULL; out[{i}].value.packed = {rendered};\n"
                         ));
                     }
                     IrDisplayArg::Real(value) => {
                         let rendered = render_expr(ctx, value)?.code;
                         out.push_str(&format!(
-                            "    out[{i}].kind = LLG_FMT_REAL; out[{i}].value.real = {rendered};\n"
+                            "    out[{i}].kind = LLG_FMT_REAL; out[{i}].time_unit_fs = {time_unit_fs}ULL; out[{i}].value.real = {rendered};\n"
                         ));
                     }
                     IrDisplayArg::String(value) => {

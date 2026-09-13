@@ -127,7 +127,7 @@ endmodule
     // Expected stdout (exactly):
     //   cnt=2 at t=22
     let (stdout, _stderr) = run_sim(sv, "nba").expect("simulation should run");
-    assert_eq!(stdout, "cnt=2 at t=22\n");
+    assert_eq!(stdout, "cnt=2 at t=22000\n");
 }
 
 /// Slang diagnoses a nonblocking assignment in a final block because it has

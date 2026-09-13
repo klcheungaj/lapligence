@@ -68,22 +68,23 @@ fn run_design(sv: &str, tag: &str) -> Result<String, String> {
 ///        top initial: waits #10.
 ///   t=5  u_bus always: clk 0→1 (posedge); consumer: cnt <= 1.
 ///   t=10 top initial wakes (enqueued at t=0, before the always's t=5
-///        wakeup): displays "10 cnt=1 clk=1", waits #15 → t=25.
+///        wakeup): displays default `%t` value "10000 cnt=1 clk=1", waits
+///        #15 → t=25.
 ///        u_bus always: clk 1→0.
 ///   t=15 clk 0→1 (posedge); cnt <= 2.
 ///   t=20 clk 1→0.
 ///   t=25 top initial wakes first (enqueued at t=10): displays
-///        "25 cnt=2 clk=0", waits #15 → t=40.  u_bus always: clk 0→1;
+///        "25000 cnt=2 clk=0", waits #15 → t=40.  u_bus always: clk 0→1;
 ///        cnt <= 3.
 ///   t=30 clk 1→0.
 ///   t=35 clk 0→1 (posedge); cnt <= 4.
 ///   t=40 top initial wakes first (enqueued at t=25): displays
-///        "40 cnt=4 clk=1"; $finish.
+///        "40000 cnt=4 clk=1"; $finish.
 ///
 /// Expected stdout (exactly):
-///   10 cnt=1 clk=1
-///   25 cnt=2 clk=0
-///   40 cnt=4 clk=1
+///   10000 cnt=1 clk=1
+///   25000 cnt=2 clk=0
+///   40000 cnt=4 clk=1
 #[test]
 fn sim_iface_body_clock_gen() {
     if !llg::sim::build::cmake_available() {
@@ -118,7 +119,10 @@ module top;
 endmodule
 "#;
     let stdout = run_design(sv, "clock_gen").expect("clock-gen design should run");
-    assert_eq!(stdout, "10 cnt=1 clk=1\n25 cnt=2 clk=0\n40 cnt=4 clk=1\n");
+    assert_eq!(
+        stdout,
+        "10000 cnt=1 clk=1\n25000 cnt=2 clk=0\n40000 cnt=4 clk=1\n"
+    );
 }
 
 /// (b) Combinational logic inside an interface: the interface's `always_comb`

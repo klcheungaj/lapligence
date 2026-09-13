@@ -3310,6 +3310,27 @@ impl Validator<'_> {
                     return self.fail(path, "timescale units must be non-zero");
                 }
             }
+            IrStmt::TimeFormat {
+                units,
+                precision,
+                suffix,
+                minimum_field_width,
+            } => {
+                for (label, value) in [
+                    ("units", units),
+                    ("precision", precision),
+                    ("minimum field width", minimum_field_width),
+                ] {
+                    self.validate_expr(value, formals, &format!("{path}.{label}"))?;
+                    if value.is_real() {
+                        return self.fail(
+                            format!("{path}.{label}"),
+                            "timeformat argument must be packed",
+                        );
+                    }
+                }
+                suffix.validate(self.model, self.string_return.get())?;
+            }
             IrStmt::Call(call) => {
                 self.validate_call_target(call.f, &call.args, formals, path, true)?;
                 let callee = &self.model.funcs[call.f];

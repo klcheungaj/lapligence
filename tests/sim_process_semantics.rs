@@ -25,7 +25,7 @@ fn at_star_does_not_follow_called_function_reads() {
     sim_cli::run_case(
         "process_semantics",
         "at_star_distinct",
-        "t=1 at=x comb=0\nt=2 at=x comb=1\n",
+        "t=1000 at=x comb=0\nt=2000 at=x comb=1\n",
         "llg: $finish at time 2000 at tb:21:9\n",
         &[],
     );
@@ -47,7 +47,7 @@ fn legal_function_side_effect_is_not_rejected() {
     sim_cli::run_case(
         "process_semantics",
         "function_side_effect",
-        "t=1 helper=0 y=0\nt=2 helper=1 y=1\n",
+        "t=1000 helper=0 y=0\nt=2000 helper=1 y=1\n",
         "llg: $finish at time 2000 at tb:21:9\n",
         &[],
     );

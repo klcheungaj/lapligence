@@ -206,10 +206,14 @@ selected range contributes; lowering rejects dynamic net selectors.
   `<threads.h>` as the Windows portability boundary. The overall generated
   simulator still has independent native-Windows/libaco limitations.
 - The runtime is **timescale-agnostic**: it runs in integer design-precision
-  ticks; codegen scales `#N` delays and `$time`/`%t` reads per the calling
-  module's `timescale` before calling `llg_wait_time`/`llg_time_scaled`.
+  ticks; codegen scales `#N` delays and `$time` reads per the calling module's
+  `timescale` before calling `llg_wait_time`/`llg_time_scaled`. Typed `%t`
+  arguments retain their owning module unit for the runtime's design-wide
+  `$timeformat` conversion.
   Integer time queries round by quotient/remainder (exact halves upward);
-  `$realtime` remains a separate fractional operation.
+  `$realtime` remains a separate fractional operation. The runtime owns the
+  design-wide `$timeformat` state and converts typed `%t` arguments from their
+  owning module units without changing scheduler time.
 - Scheduler regions follow the IEEE 1800 §4 fixed-point algorithm: `#0`
   resumes in Inactive or Re-Inactive, NBAs and Re-NBAs retain issue sequence,
   and Reactive callbacks may enqueue Active work for another design iteration.
