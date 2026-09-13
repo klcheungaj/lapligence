@@ -122,8 +122,48 @@ fn function_frame_slots(func: &IrFunc) -> Result<u64, String> {
 fn pre_fn_frame_slots(pre_fn: &IrPreFn) -> Result<u64, String> {
     match pre_fn {
         IrPreFn::Branch { body, .. } => stmt_frame_slots(body),
-        IrPreFn::MonEval { args, .. } => expr_peak(args),
+        IrPreFn::CapturedBranch { captures, body, .. } => checked_add(
+            usize_slots(captures.len(), "captured frame slot count")?,
+            stmt_frame_slots(body)?,
+            "captured branch frame slots",
+        ),
+        IrPreFn::MonEval { args, context, .. } => checked_add(
+            expr_peak(args)?,
+            context
+                .as_ref()
+                .map(|context| usize_slots(context.captures().len(), "event frame slot count"))
+                .transpose()?
+                .unwrap_or(0),
+            "event evaluator frame slots",
+        ),
+        IrPreFn::DisplayEval { args, .. } => {
+            let mut slots = 0;
+            for arg in args {
+                slots = checked_add(slots, display_arg_slots(arg)?, "display evaluator frame slots")?;
+            }
+            Ok(slots)
+        }
+        IrPreFn::RealEval { value, context, .. } => checked_add(
+            expr_slots(value)?,
+            context
+                .as_ref()
+                .map(|context| usize_slots(context.captures().len(), "event frame slot count"))
+                .transpose()?
+                .unwrap_or(0),
+            "real event evaluator frame slots",
+        ),
+        IrPreFn::ForceEval { value, .. } => expr_slots(value),
     }
+}
+
+fn display_arg_slots(arg: &crate::sim::ir::IrDisplayArg) -> Result<u64, String> {
+    let mut expressions = Vec::new();
+    arg.expressions(&mut |expression| expressions.push(expression.clone()));
+    let mut slots = 0;
+    for expression in expressions {
+        slots = checked_add(slots, expr_slots(&expression)?, "display argument frame slots")?;
+    }
+    Ok(slots)
 }
 
 fn stmt_frame_slots(stmts: &[IrStmt]) -> Result<u64, String> {
@@ -141,7 +181,9 @@ fn decl_slots(stmts: &[IrStmt]) -> Result<u64, String> {
     for stmt in stmts {
         let nested = match stmt {
             IrStmt::DeclLocal { .. } => 1,
-            IrStmt::Block(body) | IrStmt::Forever { body } => decl_slots(body)?,
+            IrStmt::Block(body)
+            | IrStmt::Forever { body }
+            | IrStmt::ActivationScope { body, .. } => decl_slots(body)?,
             IrStmt::If { then_, els, .. } => checked_add(
                 decl_slots(then_)?,
                 els.as_deref().map(decl_slots).transpose()?.unwrap_or(0),
@@ -149,7 +191,8 @@ fn decl_slots(stmts: &[IrStmt]) -> Result<u64, String> {
             )?,
             IrStmt::While { body, .. }
             | IrStmt::Repeat { body, .. }
-            | IrStmt::WaitCond { body, .. } => decl_slots(body)?,
+            | IrStmt::WaitCond { body, .. }
+            | IrStmt::WaitEventTriggered { body, .. } => decl_slots(body)?,
             IrStmt::For {
                 init, incr, body, ..
             } => checked_sum(
@@ -167,6 +210,13 @@ fn decl_slots(stmts: &[IrStmt]) -> Result<u64, String> {
                 }
                 item_slots
             }
+            IrStmt::WaitOrder {
+                success, failure, ..
+            } => checked_add(
+                decl_slots(success)?,
+                decl_slots(failure)?,
+                "wait_order declaration slots",
+            )?,
             _ => 0,
         };
         slots = checked_add(slots, nested, "statement declaration slots")?;
@@ -206,12 +256,34 @@ fn stmt_temp_slots(stmt: &IrStmt) -> Result<u64, String> {
             });
             slots
         }
-        IrStmt::Block(body) | IrStmt::Forever { body } => stmt_temp_frame_slots(body),
+        IrStmt::Block(body)
+        | IrStmt::Forever { body }
+        | IrStmt::ActivationScope { body, .. } => stmt_temp_frame_slots(body),
         IrStmt::DeclLocal { init, .. } => init
             .as_deref()
             .map(expr_slots)
             .transpose()
             .map(Option::unwrap_or_default),
+        IrStmt::DeclString { init, .. } => {
+            let mut slots = Ok(1);
+            if let Some(init) = init {
+                init.expressions(&mut |expr| {
+                    slots = slots
+                        .clone()
+                        .and_then(|n| checked_add(n, expr_slots(expr)?, "string initializer slots"));
+                });
+            }
+            slots
+        }
+        IrStmt::DelayedStringAssign { rhs, .. } => {
+            let mut slots = Ok(0);
+            rhs.expressions(&mut |expr| {
+                slots = slots
+                    .clone()
+                    .and_then(|n| checked_add(n, expr_slots(expr)?, "delayed string slots"));
+            });
+            slots
+        }
         IrStmt::Assign { lhs, rhs, .. }
         | IrStmt::DelayedAssign { lhs, rhs, .. }
         | IrStmt::InertialAssign { lhs, rhs, .. } => checked_add(
@@ -219,6 +291,8 @@ fn stmt_temp_slots(stmt: &IrStmt) -> Result<u64, String> {
             expr_slots(rhs)?,
             "assignment temporary slots",
         ),
+        IrStmt::EventAssign { .. } | IrStmt::EventCapture { .. } => Ok(0),
+        IrStmt::PcaAssign { value, .. } | IrStmt::PcaDrive { value, .. } => expr_slots(value),
         IrStmt::If { cond, then_, els } => checked_sum(
             [
                 expr_slots(cond)?,
@@ -273,11 +347,44 @@ fn stmt_temp_slots(stmt: &IrStmt) -> Result<u64, String> {
             stmt_temp_frame_slots(body)?,
             "wait temporary slots",
         ),
-        IrStmt::Force { value, .. } | IrStmt::WaveLimit(value) => expr_slots(value),
+        IrStmt::WaitEventTriggered { body, .. } => stmt_temp_frame_slots(body),
+        IrStmt::WaitOrder {
+            success, failure, ..
+        } => checked_add(
+            stmt_temp_frame_slots(success)?,
+            stmt_temp_frame_slots(failure)?,
+            "wait_order temporary slots",
+        ),
+        IrStmt::CapturedFork { branches, .. } => {
+            let mut slots = 0;
+            for branch in branches {
+                for capture in branch.captures() {
+                    slots = checked_add(
+                        slots,
+                        expr_slots(capture.initial())?,
+                        "captured fork initializer slots",
+                    )?;
+                }
+            }
+            Ok(slots)
+        }
+        IrStmt::Force { lhs, value, .. } => checked_add(
+            lhs_slots(lhs)?,
+            expr_slots(value)?,
+            "force target and value slots",
+        ),
+        IrStmt::WaveLimit(value) => expr_slots(value),
         IrStmt::Display { args, .. } => {
             let mut slots = 0;
             for (arg, _) in args {
                 slots = checked_add(slots, expr_slots(arg)?, "display argument slots")?;
+            }
+            Ok(slots)
+        }
+        IrStmt::DisplayTyped { args, .. } => {
+            let mut slots = 0;
+            for arg in args {
+                slots = checked_add(slots, display_arg_slots(arg)?, "typed display argument slots")?;
             }
             Ok(slots)
         }
@@ -287,23 +394,31 @@ fn stmt_temp_slots(stmt: &IrStmt) -> Result<u64, String> {
             .map(expr_slots)
             .transpose()
             .map(Option::unwrap_or_default),
+        IrStmt::NonblockingEventTriggerWhen {
+            repeat: Some(repeat), ..
+        } => expr_slots(repeat),
+        IrStmt::NonblockingEventTriggerWhen { repeat: None, .. } => Ok(0),
         IrStmt::Delay { .. }
         | IrStmt::WaitEvents { .. }
         | IrStmt::EventTrigger { .. }
+        | IrStmt::NonblockingEventTrigger { .. }
         | IrStmt::WaitAny { .. }
         | IrStmt::Fork { .. }
         | IrStmt::WaitFork
         | IrStmt::DisableFork
+        | IrStmt::DisableTarget { .. }
+        | IrStmt::PcaDeassign { .. }
         | IrStmt::Release { .. }
         | IrStmt::MonitorSet { .. }
         | IrStmt::MonitorEnable(_)
         | IrStmt::WaveFile(_)
-        | IrStmt::WaveDumpVars
+        | IrStmt::WaveDumpVars(_)
         | IrStmt::WaveOn
         | IrStmt::WaveOff
         | IrStmt::WaveDumpAll
         | IrStmt::WaveFlush
         | IrStmt::Finish
+        | IrStmt::FinishControl { .. }
         | IrStmt::PrintTimescale { .. }
         | IrStmt::Label(_)
         | IrStmt::Goto(_)
@@ -341,14 +456,62 @@ fn call_arg_slots(args: &[IrCallArg]) -> Result<u64, String> {
     for arg in args {
         let arg_slots = match arg {
             IrCallArg::Val(value) => expr_slots(value)?,
-            IrCallArg::OutAddr(_) => 0,
+            IrCallArg::StringVal(value) => {
+                let mut slots: u64 = 1;
+                value.expressions(&mut |expr| {
+                    slots = slots.saturating_add(expr_slots(expr).unwrap_or(0));
+                });
+                slots
+            }
+            IrCallArg::ChandleVal(_)
+            | IrCallArg::ChandleAddr(_)
+            | IrCallArg::ChandleRefAddr(_)
+            | IrCallArg::OutAddr(_)
+            | IrCallArg::RefAddr { .. } => 0,
+            IrCallArg::StringOutAddr(_) | IrCallArg::StringRefAddr { .. } => 0,
+            IrCallArg::StringOutTemp {
+                init,
+                storage_read,
+                ..
+            } => {
+                let mut slots: u64 = 1;
+                if let Some(init) = init {
+                    init.expressions(&mut |expr| {
+                        slots = slots.saturating_add(expr_slots(expr).unwrap_or(0));
+                    });
+                }
+                if let Some(read) = storage_read {
+                    read.expressions(&mut |expr| {
+                        slots = slots.saturating_add(expr_slots(expr).unwrap_or(0));
+                    });
+                }
+                slots
+            }
             IrCallArg::OutTemp {
-                init, writeback, ..
+                init,
+                writeback,
+                storage_lhs,
+                storage_read,
+                selector_inits,
+                ..
             } => checked_sum(
                 [
                     1,
                     init.as_deref().map(expr_slots).transpose()?.unwrap_or(0),
                     lhs_slots(writeback)?,
+                    storage_lhs
+                        .as_deref()
+                        .map(lhs_slots)
+                        .transpose()?
+                        .unwrap_or(0),
+                    storage_read
+                        .as_deref()
+                        .map(expr_slots)
+                        .transpose()?
+                        .unwrap_or(0),
+                    selector_inits.iter().try_fold(0, |slots, (_, _, _, _, init)| {
+                        checked_add(slots, expr_slots(init)?, "selector initializer slots")
+                    })?,
                 ],
                 "output argument temporary slots",
             )?,
@@ -397,6 +560,11 @@ fn expr_slots(expr: &IrExpr) -> Result<u64, String> {
         | IrExprKind::Convert { a }
         | IrExprKind::ToTwoState { a }
         | IrExprKind::RealUn { a, .. } => expr_slots(a)?,
+        IrExprKind::Mutation(mutation) => checked_add(
+            lhs_slots(&mutation.lhs)?,
+            expr_slots(&mutation.value)?,
+            "mutation expression slots",
+        )?,
         IrExprKind::Mux { sel, a, b } => checked_sum(
             [expr_slots(sel)?, expr_slots(a)?, expr_slots(b)?],
             "conditional expression slots",
@@ -452,6 +620,7 @@ fn expr_slots(expr: &IrExpr) -> Result<u64, String> {
         | IrExprKind::LocalRead(_)
         | IrExprKind::FormalRead(_)
         | IrExprKind::Fill(_)
+        | IrExprKind::EventTriggered(_)
         | IrExprKind::Verbatim { .. } => 0,
     };
     checked_add(u64::from(!expr.is_real()), children, "expression slots")
@@ -497,7 +666,7 @@ fn lhs_slots(lhs: &IrLhs) -> Result<u64, String> {
             }
             Ok(slots)
         }
-        IrLhs::Whole(_) | IrLhs::WholeRef { .. } | IrLhs::Part(..) => Ok(0),
+        IrLhs::Whole(_) | IrLhs::WholeRef { .. } | IrLhs::Ref { .. } | IrLhs::Part(..) => Ok(0),
     }
 }
 

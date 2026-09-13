@@ -19,12 +19,23 @@ enum {
     LLG_CONTAINER_REDUCE_XOR = 4,
 };
 
+typedef void (*llg_container_notify_fn)(sv4_t* contents, sv4_t* shape,
+                                        int change);
+
+enum {
+    LLG_CONTAINER_CHANGED_CONTENTS = 1,
+    LLG_CONTAINER_CHANGED_SHAPE = 2,
+};
+
 typedef struct {
     sv4_t* data;
     size_t size;
     uint32_t element_width;
     int8_t element_signed;
     uint8_t element_two_state;
+    sv4_t* contents_dependency;
+    sv4_t* shape_dependency;
+    llg_container_notify_fn notify;
 } llg_dyn_array_t;
 
 void llg_dyn_init(llg_dyn_array_t* array, uint32_t element_width,
@@ -51,6 +62,9 @@ typedef struct {
     uint32_t element_width;
     int8_t element_signed;
     uint8_t element_two_state;
+    sv4_t* contents_dependency;
+    sv4_t* shape_dependency;
+    llg_container_notify_fn notify;
 } llg_queue_t;
 
 void llg_queue_init(llg_queue_t* queue, uint32_t element_width,
@@ -99,6 +113,9 @@ typedef struct {
     uint32_t key_width;
     int8_t key_signed;
     uint8_t key_two_state;
+    sv4_t* contents_dependency;
+    sv4_t* shape_dependency;
+    llg_container_notify_fn notify;
 } llg_assoc_t;
 
 void llg_assoc_init_integral(llg_assoc_t* array, uint32_t element_width,

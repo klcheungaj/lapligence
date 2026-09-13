@@ -185,6 +185,15 @@ int sv4_to_bool(sv4_t v) {
     return 0;
 }
 
+sv4_t sv4_repeat_count(sv4_t v) {
+    sv4_require_width(v.width, "repeat count");
+    if (sv4_is_unknown(v) || (v.is_signed && v.width &&
+        ((v.bits[(v.width - 1) / 64] >> ((v.width - 1) % 64)) & 1ULL)))
+        return sv4_from_u64(0, v.width, 0);
+    v.is_signed = 0;
+    return v;
+}
+
 uint64_t sv4_to_u64(sv4_t v) { return v.bits[0] & LLG_MASK(v.width); }
 
 static uint64_t checked_delay_product(uint64_t value, uint64_t scale) {
@@ -328,7 +337,7 @@ sv4_t sv4_resolve_strengths(const sv4_t* const* drivers,
                             const uint8_t* strength0,
                             const uint8_t* strength1, int n_drivers,
                             uint32_t width, int8_t is_signed, int mode) {
-    if (mode != LLG_RESOLVE_WIRE || !strength0 || !strength1)
+    if (!strength0 || !strength1)
         return sv4_resolve(drivers, n_drivers, width, is_signed, mode);
 
     sv4_require_width(width, "strength-aware net");
@@ -343,6 +352,36 @@ sv4_t sv4_resolve_strengths(const sv4_t* const* drivers,
         uint64_t possible0[8] = {0};
         uint64_t possible1[8] = {0};
         uint64_t m = sv4_limb_mask(width, i);
+
+        /* tri0/tri1 and supply0/supply1 contribute an implicit default
+         * source.  It is a real strength-bearing source, rather than a
+         * post-resolution fill, so an equal-strength opposing source can
+         * produce X and a stronger source can override a pull default. */
+        int default_strength = -1;
+        int default_value = -1;
+        if (mode == LLG_RESOLVE_TRI0) {
+            default_strength = LLG_STRENGTH_PULL;
+            default_value = 0;
+        } else if (mode == LLG_RESOLVE_TRI1) {
+            default_strength = LLG_STRENGTH_PULL;
+            default_value = 1;
+        } else if (mode == LLG_RESOLVE_SUPPLY0) {
+            default_strength = LLG_STRENGTH_SUPPLY;
+            default_value = 0;
+        } else if (mode == LLG_RESOLVE_SUPPLY1) {
+            default_strength = LLG_STRENGTH_SUPPLY;
+            default_value = 1;
+        }
+        if (default_strength >= 0) {
+            if (default_value == 0) {
+                known0[default_strength] |= m;
+                possible0[default_strength] |= m;
+            } else {
+                known1[default_strength] |= m;
+                possible1[default_strength] |= m;
+            }
+        }
+
         for (int d = 0; d < n_drivers; d++) {
             const sv4_t* v = drivers[d];
             if (!v) continue;
@@ -366,22 +405,59 @@ sv4_t sv4_resolve_strengths(const sv4_t* const* drivers,
             }
         }
 
-        uint64_t driven = 0;
-        uint64_t definite0 = 0;
-        uint64_t definite1 = 0;
-        uint64_t opposing0 = 0;
-        uint64_t opposing1 = 0;
-        for (int strength = LLG_STRENGTH_SUPPLY;
-             strength > LLG_STRENGTH_HIGHZ; strength--) {
-            opposing0 |= possible0[strength];
-            opposing1 |= possible1[strength];
-            definite0 |= known0[strength] & ~opposing1;
-            definite1 |= known1[strength] & ~opposing0;
-            driven |= possible0[strength] | possible1[strength];
+        uint64_t out0 = 0;
+        uint64_t out1 = 0;
+        uint64_t outx = 0;
+        uint64_t outz = 0;
+        for (uint64_t bit = UINT64_C(1); bit != 0; bit <<= 1) {
+            if (!(m & bit)) continue;
+            int best_k0 = -1;
+            int best_k1 = -1;
+            int best_p0 = -1;
+            int best_p1 = -1;
+            for (int strength = LLG_STRENGTH_SUPPLY;
+                 strength > LLG_STRENGTH_HIGHZ; strength--) {
+                if (best_k0 < 0 && (known0[strength] & bit)) best_k0 = strength;
+                if (best_k1 < 0 && (known1[strength] & bit)) best_k1 = strength;
+                if (best_p0 < 0 && (possible0[strength] & bit)) best_p0 = strength;
+                if (best_p1 < 0 && (possible1[strength] & bit)) best_p1 = strength;
+            }
+
+            if (best_p0 < 0 && best_p1 < 0) {
+                outz |= bit;
+            } else if (mode == LLG_RESOLVE_WAND) {
+                /* A stronger known endpoint wins. At an equal strength,
+                 * wired-AND gives a known 0 precedence over 1/X. */
+                if (best_k0 > best_p1
+                    || (best_k0 >= 0 && best_k0 == best_p1)) {
+                    out0 |= bit;
+                } else if (best_k1 > best_p0) {
+                    out1 |= bit;
+                } else {
+                    outx |= bit;
+                }
+            } else if (mode == LLG_RESOLVE_WOR) {
+                /* Symmetric to WAND: a same-strength known 1 wins the
+                 * wired-OR tie, while a stronger endpoint dominates. */
+                if (best_k1 > best_p0
+                    || (best_k1 >= 0 && best_k1 == best_p0)) {
+                    out1 |= bit;
+                } else if (best_k0 > best_p1) {
+                    out0 |= bit;
+                } else {
+                    outx |= bit;
+                }
+            } else if (best_k0 > best_p1) {
+                out0 |= bit;
+            } else if (best_k1 > best_p0) {
+                out1 |= bit;
+            } else {
+                outx |= bit;
+            }
         }
-        r.bits[i] = definite1 & m;
-        r.x[i] = driven & ~(definite0 | definite1) & m;
-        r.z[i] = ~driven & m;
+        r.bits[i] = out1 & m;
+        r.x[i] = outx & m;
+        r.z[i] = outz & m;
     }
     return r;
 }
@@ -1453,6 +1529,37 @@ void sv4_idx_part_select_set_value(sv4_t* tgt, sv4_t base, uint32_t width,
                             sv4_lsb_bit(value, (int)value_bit));
         }
     }
+}
+
+sv4_t llg_ref_read(const llg_ref_t* ref) {
+    if (!ref || !ref->base) return sv4_x(1, 0);
+    sv4_t value;
+    switch ((llg_ref_kind_t)ref->kind) {
+    case LLG_REF_WHOLE:
+        value = *ref->base;
+        break;
+    case LLG_REF_BIT:
+        value = sv4_bit_select(*ref->base, ref->index);
+        break;
+    case LLG_REF_PART:
+        value = sv4_part_select(*ref->base, ref->left, ref->right);
+        break;
+    case LLG_REF_INDEXED:
+        value = sv4_idx_part_select(*ref->base, ref->index,
+                                    ref->indexed_width,
+                                    ref->indexed_negative);
+        break;
+    case LLG_REF_ARRAY:
+        if (ref->index == UINT64_MAX || ref->index >= ref->array_size)
+            return ref->two_state ? sv4_from_u64(0, ref->width, ref->is_signed)
+                                  : sv4_x(ref->width ? ref->width : 1, ref->is_signed);
+        value = ref->base[ref->index];
+        break;
+    default:
+        return sv4_x(ref->width ? ref->width : 1, ref->is_signed);
+    }
+    value = sv4_cast(value, ref->width, ref->is_signed);
+    return ref->two_state ? sv4_to_two_state(value) : value;
 }
 
 // ── Formatting ────────────────────────────────────────────────────────────────

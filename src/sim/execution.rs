@@ -7,9 +7,10 @@
 use std::collections::HashSet;
 
 use crate::sim::ir::{
-    IrCallArg, IrChandleExpr, IrContainerExpr, IrElemSel, IrExpr, IrExprKind, IrInsideItem,
-    IrJoinKind, IrLhs, IrModel, IrObjectQuery, IrObjectStmt, IrShape, IrStmt, IrStringExpr,
-    IrSysFunc, IrValidationError,
+    IrCallArg, IrChandleExpr, IrContainerExpr, IrDependency, IrElemSel, IrExpr, IrExprKind,
+    IrArrayQueryTarget, IrDisplayArg, IrInsideItem, IrJoinKind, IrLhs, IrModel, IrObjectQuery,
+    IrObjectStmt, IrShape, IrStmt,
+    IrStringExpr, IrSysFunc, IrValidationError,
 };
 use crate::sim::semantic::{ExtensionRef, Origin};
 
@@ -17,19 +18,84 @@ use crate::sim::semantic::{ExtensionRef, Origin};
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ScheduleRegion {
     Preponed,
+    PreponedPli,
+    PreActivePli,
     Active,
     Inactive,
+    PreNbaPli,
+    PreNba,
     NonblockingAssign,
+    PostNba,
+    PostNbaPli,
+    PreObservedPli,
+    PreObserved,
     Observed,
+    PostObserved,
+    PostObservedPli,
     Reactive,
     ReInactive,
+    PreReNbaPli,
+    PreReNba,
     ReNonblockingAssign,
+    PostReNba,
+    PostReNbaPli,
+    PrePostponedPli,
+    PrePostponed,
     Postponed,
+    PostponedPli,
+}
+
+impl ScheduleRegion {
+    pub fn runtime_symbol(self) -> &'static str {
+        match self {
+            Self::Preponed => "LLG_REGION_PREPONED",
+            Self::PreponedPli => "LLG_REGION_PREPONED_PLI",
+            Self::PreActivePli => "LLG_REGION_PRE_ACTIVE_PLI",
+            Self::Active => "LLG_REGION_ACTIVE",
+            Self::Inactive => "LLG_REGION_INACTIVE",
+            Self::PreNbaPli => "LLG_REGION_PRE_NBA_PLI",
+            Self::PreNba => "LLG_REGION_PRE_NBA",
+            Self::NonblockingAssign => "LLG_REGION_NBA",
+            Self::PostNba => "LLG_REGION_POST_NBA",
+            Self::PostNbaPli => "LLG_REGION_POST_NBA_PLI",
+            Self::PreObservedPli => "LLG_REGION_PRE_OBSERVED_PLI",
+            Self::PreObserved => "LLG_REGION_PRE_OBSERVED",
+            Self::Observed => "LLG_REGION_OBSERVED",
+            Self::PostObserved => "LLG_REGION_POST_OBSERVED",
+            Self::PostObservedPli => "LLG_REGION_POST_OBSERVED_PLI",
+            Self::Reactive => "LLG_REGION_REACTIVE",
+            Self::ReInactive => "LLG_REGION_RE_INACTIVE",
+            Self::PreReNbaPli => "LLG_REGION_PRE_RE_NBA_PLI",
+            Self::PreReNba => "LLG_REGION_PRE_RE_NBA",
+            Self::ReNonblockingAssign => "LLG_REGION_RE_NBA",
+            Self::PostReNba => "LLG_REGION_POST_RE_NBA",
+            Self::PostReNbaPli => "LLG_REGION_POST_RE_NBA_PLI",
+            Self::PrePostponedPli => "LLG_REGION_PRE_POSTPONED_PLI",
+            Self::PrePostponed => "LLG_REGION_PRE_POSTPONED",
+            Self::Postponed => "LLG_REGION_POSTPONED",
+            Self::PostponedPli => "LLG_REGION_POSTPONED_PLI",
+        }
+    }
+
+    pub fn is_read_only(self) -> bool {
+        matches!(
+            self,
+            Self::Preponed
+                | Self::PreponedPli
+                | Self::PreObservedPli
+                | Self::PreObserved
+                | Self::Observed
+                | Self::PostObserved
+                | Self::PostObservedPli
+                | Self::Postponed
+                | Self::PostponedPli
+        )
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TriggerPlan {
-    Signals(Vec<String>),
+    Signals(Vec<IrDependency>),
     /// A wait instruction inside the block controls resumption.
     BodyControlled,
 }
@@ -73,6 +139,7 @@ pub struct ExecutionProcess {
     pub entry: usize,
     pub blocks: Vec<ExecutionBlock>,
     pub effects: Vec<ExecutionEffect>,
+    pub region: ScheduleRegion,
 }
 
 /// Complete executable model consumed by optimization and C emission.
@@ -194,40 +261,33 @@ impl ExecutionModel {
                         "control target is out of bounds",
                     ));
                 }
-                if let ExecutionTerminator::Suspend { region, .. } = &block.terminator {
-                    if *region != ScheduleRegion::Active {
-                        return Err(IrValidationError::new(
-                            format!(
-                                "execution.processes[{index}].blocks[{block_index}].terminator"
-                            ),
-                            "the runtime supports process resumption only in the active region",
-                        ));
-                    }
-                }
-
+                // Signal-controlled suspensions carry their own target region.
+                // Body-controlled waits derive their continuation region from
+                // the runtime process region, so neither form is restricted to
+                // the launch region here.
                 if let ExecutionTerminator::Suspend {
                     trigger: TriggerPlan::Signals(signals),
                     ..
                 } = &block.terminator
                 {
                     let unique = signals.iter().collect::<HashSet<_>>();
-                    if signals.iter().any(String::is_empty) || unique.len() != signals.len() {
+                    if unique.len() != signals.len() {
                         return Err(IrValidationError::new(
                             format!(
                                 "execution.processes[{index}].blocks[{block_index}].terminator"
                             ),
-                            "signal trigger names must be non-empty and unique",
+                            "trigger dependencies must be unique",
                         ));
                     }
-                    if let Some(name) = signals
+                    if let Some(dependency) = signals
                         .iter()
-                        .find(|name| !is_emitted_trigger_storage(&self.ir, name))
+                        .find(|dependency| !is_emitted_trigger_storage(&self.ir, dependency))
                     {
                         return Err(IrValidationError::new(
                             format!(
                                 "execution.processes[{index}].blocks[{block_index}].terminator"
                             ),
-                            format!("signal trigger `{name}` has no emitted storage"),
+                            format!("trigger dependency `{dependency:?}` has no emitted storage"),
                         ));
                     }
                 }
@@ -279,7 +339,8 @@ fn collect_control_labels<'a>(
             | IrStmt::While { body, .. }
             | IrStmt::Repeat { body, .. }
             | IrStmt::Forever { body }
-            | IrStmt::WaitCond { body, .. } => {
+            | IrStmt::WaitCond { body, .. }
+            | IrStmt::ActivationScope { body, .. } => {
                 collect_control_labels(body, labels, gotos)?;
             }
             IrStmt::If { then_, els, .. } => {
@@ -306,21 +367,27 @@ fn collect_control_labels<'a>(
     Ok(())
 }
 
-fn is_emitted_trigger_storage(ir: &IrModel, name: &str) -> bool {
-    if ir.signals.iter().any(|signal| {
-        signal.c_name == name
-            && !signal.omit
-            && matches!(signal.ty, crate::sim::ir::IrType::Packed { .. })
-    }) {
-        return true;
+fn is_emitted_trigger_storage(ir: &IrModel, dependency: &IrDependency) -> bool {
+    match dependency {
+        IrDependency::Scalar(name) => ir.signals.iter().any(|signal| {
+            signal.c_name == *name
+                && !signal.omit
+                && matches!(signal.ty, crate::sim::ir::IrType::Packed { .. })
+        }),
+        IrDependency::Real(name) => ir.signals.iter().any(|signal| {
+            signal.c_name == *name
+                && !signal.omit
+                && matches!(signal.ty, crate::sim::ir::IrType::Real { .. })
+        }),
+        IrDependency::ArrayElement { array, index } => ir
+            .arrays
+            .get(*array)
+            .is_some_and(|array| *index < array.total),
+        IrDependency::ArrayContents(array) => *array < ir.arrays.len(),
+        IrDependency::ContainerContents(container) | IrDependency::ContainerShape(container) => {
+            *container < ir.containers.len()
+        }
     }
-    ir.arrays.iter().any(|array| {
-        name.strip_prefix(&array.c_name)
-            .and_then(|suffix| suffix.strip_prefix('['))
-            .and_then(|index| index.strip_suffix(']'))
-            .and_then(|index| index.parse::<u64>().ok())
-            .is_some_and(|index| index < array.total)
-    })
 }
 
 fn build_processes(ir: &mut IrModel) -> Vec<ExecutionProcess> {
@@ -355,6 +422,7 @@ fn build_processes(ir: &mut IrModel) -> Vec<ExecutionProcess> {
                 entry: 0,
                 blocks,
                 effects: Vec::new(),
+                region: ScheduleRegion::Active,
             }
         })
         .collect::<Vec<_>>();
@@ -397,10 +465,17 @@ fn collect_effects(
             IrStmt::InertialAssign { .. } => {
                 effects.push(ExecutionEffect::EnqueueUpdate(ScheduleRegion::Active))
             }
-            IrStmt::Assign { nba: true, .. } | IrStmt::DelayedAssign { .. } => effects.push(
+            IrStmt::Assign { nba: true, .. }
+            | IrStmt::DelayedAssign { .. }
+            | IrStmt::DelayedStringAssign { .. } => effects.push(
                 ExecutionEffect::EnqueueUpdate(ScheduleRegion::NonblockingAssign),
             ),
             IrStmt::Assign { nba: false, .. }
+            | IrStmt::EventAssign { .. }
+            | IrStmt::EventCapture { .. }
+            | IrStmt::PcaAssign { .. }
+            | IrStmt::PcaDrive { .. }
+            | IrStmt::PcaDeassign { .. }
             | IrStmt::DeclLocal { .. }
             | IrStmt::Force { .. }
             | IrStmt::Release { .. }
@@ -416,28 +491,58 @@ fn collect_effects(
             | IrStmt::WaitAny { .. }
             | IrStmt::WaitCond { .. }
             | IrStmt::WaitFork => effects.push(ExecutionEffect::Suspend),
-            IrStmt::EventTrigger { .. } => effects.push(ExecutionEffect::Trigger),
+            IrStmt::WaitEventTriggered { body, .. } => {
+                effects.push(ExecutionEffect::Suspend);
+                collect_effects(ir, body, effects, visited_calls);
+            }
+            IrStmt::WaitOrder {
+                success, failure, ..
+            } => {
+                effects.push(ExecutionEffect::Suspend);
+                collect_effects(ir, success, effects, visited_calls);
+                collect_effects(ir, failure, effects, visited_calls);
+            }
+            IrStmt::EventTrigger { .. }
+            | IrStmt::NonblockingEventTrigger { .. }
+            | IrStmt::NonblockingEventTriggerWhen { .. } => {
+                effects.push(ExecutionEffect::Trigger)
+            }
             IrStmt::Fork {
                 join_kind,
                 branches,
+                ..
             } => {
                 effects.push(ExecutionEffect::Spawn);
                 if !branches.is_empty() && *join_kind != IrJoinKind::None {
                     effects.push(ExecutionEffect::Suspend);
                 }
             }
-            IrStmt::DisableFork => effects.push(ExecutionEffect::RuntimeService),
+            IrStmt::CapturedFork {
+                join_kind,
+                branches,
+                ..
+            } => {
+                effects.push(ExecutionEffect::Spawn);
+                if !branches.is_empty() && *join_kind != IrJoinKind::None {
+                    effects.push(ExecutionEffect::Suspend);
+                }
+            }
+            IrStmt::DisableFork
+            | IrStmt::DisableTarget { .. }
+            | IrStmt::ActivationScope { .. } => effects.push(ExecutionEffect::RuntimeService),
             IrStmt::Display { .. }
+            | IrStmt::DisplayTyped { .. }
             | IrStmt::MonitorSet { .. }
             | IrStmt::MonitorEnable(_)
             | IrStmt::WaveFile(_)
-            | IrStmt::WaveDumpVars
+            | IrStmt::WaveDumpVars(_)
             | IrStmt::WaveOn
             | IrStmt::WaveOff
             | IrStmt::WaveDumpAll
             | IrStmt::WaveFlush
             | IrStmt::WaveLimit(_)
             | IrStmt::Finish
+            | IrStmt::FinishControl { .. }
             | IrStmt::PrintTimescale { .. } => effects.push(ExecutionEffect::RuntimeService),
             IrStmt::Call(call) => {
                 effects.push(ExecutionEffect::RuntimeService);
@@ -459,7 +564,10 @@ fn collect_effects(
             | IrStmt::While { body, .. }
             | IrStmt::Repeat { body, .. }
             | IrStmt::Forever { body }
-            | IrStmt::WaitCond { body, .. } => collect_effects(ir, body, effects, visited_calls),
+            | IrStmt::WaitCond { body, .. }
+            | IrStmt::ActivationScope { body, .. } => {
+                collect_effects(ir, body, effects, visited_calls)
+            }
             IrStmt::If { then_, els, .. } => {
                 collect_effects(ir, then_, effects, visited_calls);
                 if let Some(els) = els {
@@ -525,12 +633,34 @@ fn collect_statement_expression_effects(
             collect_expression_effects(ir, rhs, effects, visited_calls);
             collect_lhs_expression_effects(ir, lhs, effects, visited_calls);
         }
+        IrStmt::DelayedStringAssign { rhs, .. } => {
+            rhs.expressions(&mut |expression| {
+                collect_expression_effects(ir, expression, effects, visited_calls)
+            });
+        }
+        IrStmt::EventAssign { .. } | IrStmt::EventCapture { .. } => {}
+        IrStmt::PcaAssign { value, .. } | IrStmt::PcaDrive { value, .. } => {
+            collect_expression_effects(ir, value, effects, visited_calls);
+        }
         IrStmt::If { cond: rhs, .. }
         | IrStmt::While { cond: rhs, .. }
         | IrStmt::Repeat { count: rhs, .. }
         | IrStmt::WaitCond { cond: rhs, .. }
-        | IrStmt::Force { value: rhs, .. }
         | IrStmt::WaveLimit(rhs) => collect_expression_effects(ir, rhs, effects, visited_calls),
+        IrStmt::WaitEventTriggered { body, .. } => {
+            collect_effects(ir, body, effects, visited_calls)
+        }
+        IrStmt::WaitOrder {
+            success, failure, ..
+        } => {
+            collect_effects(ir, success, effects, visited_calls);
+            collect_effects(ir, failure, effects, visited_calls);
+        }
+        IrStmt::Force { lhs, value, .. } => {
+            collect_expression_effects(ir, value, effects, visited_calls);
+            collect_lhs_expression_effects(ir, lhs, effects, visited_calls);
+        }
+        IrStmt::Release { lhs } => collect_lhs_expression_effects(ir, lhs, effects, visited_calls),
         IrStmt::For { cond, .. } => collect_expression_effects(ir, cond, effects, visited_calls),
         IrStmt::Case { sel, items, .. } => {
             collect_expression_effects(ir, sel, effects, visited_calls);
@@ -540,9 +670,28 @@ fn collect_statement_expression_effects(
                 }
             }
         }
+        IrStmt::CapturedFork { branches, .. } => {
+            for branch in branches {
+                for capture in branch.captures() {
+                    collect_expression_effects(ir, capture.initial(), effects, visited_calls);
+                }
+            }
+        }
         IrStmt::Display { args, .. } => {
             for (expression, _) in args {
                 collect_expression_effects(ir, expression, effects, visited_calls);
+            }
+        }
+        IrStmt::DisplayTyped { args, .. } => {
+            for argument in args {
+                match argument {
+                    IrDisplayArg::Packed(expression) | IrDisplayArg::Real(expression) => {
+                        collect_expression_effects(ir, expression, effects, visited_calls)
+                    }
+                    IrDisplayArg::String(value) => {
+                        collect_string_effects(ir, value, effects, visited_calls)
+                    }
+                }
             }
         }
         IrStmt::Call(call) => {
@@ -551,15 +700,64 @@ fn collect_statement_expression_effects(
                     IrCallArg::Val(expression) => {
                         collect_expression_effects(ir, expression, effects, visited_calls)
                     }
+                    IrCallArg::StringVal(value) => {
+                        collect_string_effects(ir, value, effects, visited_calls)
+                    }
+                    IrCallArg::ChandleVal(value) => {
+                        collect_chandle_effects(ir, value, effects, visited_calls)
+                    }
                     IrCallArg::OutTemp {
-                        init, writeback, ..
+                        init,
+                        writeback,
+                        storage_lhs,
+                        storage_read,
+                        selector_inits,
+                        ..
                     } => {
                         if let Some(init) = init {
                             collect_expression_effects(ir, init, effects, visited_calls);
                         }
                         collect_lhs_expression_effects(ir, writeback, effects, visited_calls);
+                        if let Some(storage_lhs) = storage_lhs {
+                            collect_lhs_expression_effects(
+                                ir,
+                                storage_lhs,
+                                effects,
+                                visited_calls,
+                            );
+                        }
+                        if let Some(storage_read) = storage_read {
+                            collect_expression_effects(
+                                ir,
+                                storage_read,
+                                effects,
+                                visited_calls,
+                            );
+                        }
+                        for (_, _, _, _, init) in selector_inits {
+                            collect_expression_effects(ir, init, effects, visited_calls);
+                        }
                     }
-                    IrCallArg::OutAddr(_) => {}
+                    IrCallArg::OutAddr(_)
+                    | IrCallArg::StringOutAddr(_)
+                    | IrCallArg::StringRefAddr { .. }
+                    | IrCallArg::ChandleAddr(_)
+                    | IrCallArg::ChandleRefAddr(_) => {}
+                    IrCallArg::RefAddr { read, .. } => {
+                        collect_expression_effects(ir, read, effects, visited_calls)
+                    }
+                    IrCallArg::StringOutTemp {
+                        init,
+                        storage_read,
+                        ..
+                    } => {
+                        if let Some(init) = init {
+                            collect_string_effects(ir, init, effects, visited_calls);
+                        }
+                        if let Some(read) = storage_read {
+                            collect_string_effects(ir, read, effects, visited_calls);
+                        }
+                    }
                 }
             }
             for (_, _, init) in call.temps() {
@@ -585,12 +783,19 @@ fn collect_expression_effects(
     visited_calls: &mut HashSet<usize>,
 ) {
     match expression.kind() {
+        IrExprKind::Mutation(mutation) => {
+            effects.push(ExecutionEffect::ImmediateStore);
+            collect_lhs_expression_effects(ir, &mutation.lhs, effects, visited_calls);
+            collect_expression_effects(ir, &mutation.value, effects, visited_calls);
+        }
         IrExprKind::CallFn(call) => {
             effects.push(ExecutionEffect::RuntimeService);
             if call
                 .args()
                 .iter()
-                .any(|arg| matches!(arg, IrCallArg::OutTemp { .. }))
+                .any(|arg| {
+                    matches!(arg, IrCallArg::OutTemp { .. } | IrCallArg::StringOutTemp { .. })
+                })
             {
                 effects.push(ExecutionEffect::ImmediateStore);
             }
@@ -600,15 +805,64 @@ fn collect_expression_effects(
                     IrCallArg::Val(value) => {
                         collect_expression_effects(ir, value, effects, visited_calls)
                     }
+                    IrCallArg::StringVal(value) => {
+                        collect_string_effects(ir, value, effects, visited_calls)
+                    }
+                    IrCallArg::ChandleVal(value) => {
+                        collect_chandle_effects(ir, value, effects, visited_calls)
+                    }
                     IrCallArg::OutTemp {
-                        init, writeback, ..
+                        init,
+                        writeback,
+                        storage_lhs,
+                        storage_read,
+                        selector_inits,
+                        ..
                     } => {
                         if let Some(init) = init {
                             collect_expression_effects(ir, init, effects, visited_calls);
                         }
                         collect_lhs_expression_effects(ir, writeback, effects, visited_calls);
+                        if let Some(storage_lhs) = storage_lhs {
+                            collect_lhs_expression_effects(
+                                ir,
+                                storage_lhs,
+                                effects,
+                                visited_calls,
+                            );
+                        }
+                        if let Some(storage_read) = storage_read {
+                            collect_expression_effects(
+                                ir,
+                                storage_read,
+                                effects,
+                                visited_calls,
+                            );
+                        }
+                        for (_, _, _, _, init) in selector_inits {
+                            collect_expression_effects(ir, init, effects, visited_calls);
+                        }
                     }
-                    IrCallArg::OutAddr(_) => {}
+                    IrCallArg::OutAddr(_)
+                    | IrCallArg::StringOutAddr(_)
+                    | IrCallArg::StringRefAddr { .. }
+                    | IrCallArg::ChandleAddr(_)
+                    | IrCallArg::ChandleRefAddr(_) => {}
+                    IrCallArg::RefAddr { read, .. } => {
+                        collect_expression_effects(ir, read, effects, visited_calls)
+                    }
+                    IrCallArg::StringOutTemp {
+                        init,
+                        storage_read,
+                        ..
+                    } => {
+                        if let Some(init) = init {
+                            collect_string_effects(ir, init, effects, visited_calls);
+                        }
+                        if let Some(read) = storage_read {
+                            collect_string_effects(ir, read, effects, visited_calls);
+                        }
+                    }
                 }
             }
         }
@@ -716,6 +970,7 @@ fn collect_expression_effects(
         | IrExprKind::LocalRead(_)
         | IrExprKind::FormalRead(_)
         | IrExprKind::Fill(_)
+        | IrExprKind::EventTriggered(_)
         | IrExprKind::Verbatim { .. } => {}
     }
 }
@@ -732,12 +987,20 @@ fn collect_object_statement_effects(
         | IrObjectStmt::StringAssignLocal(_, value) => {
             collect_string_effects(ir, value, effects, visited_calls)
         }
+        IrObjectStmt::ChandleDeclareLocal(_, value) => {
+            if let Some(value) = value {
+                collect_chandle_effects(ir, value, effects, visited_calls);
+            }
+        }
         IrObjectStmt::ChandleAssign(_, value) | IrObjectStmt::ChandleAssignLocal(_, value) => {
             collect_chandle_effects(ir, value, effects, visited_calls)
         }
         IrObjectStmt::StringPutc(..)
         | IrObjectStmt::StringItoa(..)
-        | IrObjectStmt::StringRealtoa(..) => {}
+        | IrObjectStmt::StringRealtoa(..)
+        | IrObjectStmt::StringPutcLocal(..)
+        | IrObjectStmt::StringItoaLocal(..)
+        | IrObjectStmt::StringRealtoaLocal(..) => {}
     }
 }
 
@@ -763,6 +1026,12 @@ fn collect_object_query_effects(
             collect_chandle_effects(ir, a, effects, visited_calls);
             collect_chandle_effects(ir, b, effects, visited_calls);
         }
+        IrObjectQuery::ArrayQuery(query) => {
+            effects.push(ExecutionEffect::RuntimeService);
+            if let IrArrayQueryTarget::String { value, .. } = &query.target {
+                collect_string_effects(ir, value, effects, visited_calls);
+            }
+        }
     }
 }
 
@@ -778,6 +1047,29 @@ fn collect_string_effects(
             collect_callee_effects(ir, *function, effects, visited_calls);
             for argument in args {
                 collect_expression_effects(ir, argument, effects, visited_calls);
+            }
+        }
+        IrStringExpr::TypedCall { function, args, .. } => {
+            effects.push(ExecutionEffect::RuntimeService);
+            collect_callee_effects(ir, *function, effects, visited_calls);
+            for argument in args {
+                match argument {
+                    IrCallArg::StringVal(value) => {
+                        collect_string_effects(ir, value, effects, visited_calls)
+                    }
+                    IrCallArg::Val(value) => {
+                        collect_expression_effects(ir, value, effects, visited_calls)
+                    }
+                    IrCallArg::StringOutTemp { init, storage_read, .. } => {
+                        if let Some(init) = init {
+                            collect_string_effects(ir, init, effects, visited_calls);
+                        }
+                        if let Some(read) = storage_read {
+                            collect_string_effects(ir, read, effects, visited_calls);
+                        }
+                    }
+                    _ => {}
+                }
             }
         }
         IrStringExpr::Concat(parts) => {
@@ -798,7 +1090,10 @@ fn collect_string_effects(
             collect_expression_effects(ir, first, effects, visited_calls);
             collect_expression_effects(ir, last, effects, visited_calls);
         }
-        IrStringExpr::Literal(_) | IrStringExpr::Read(_) | IrStringExpr::LocalRead(_) => {}
+        IrStringExpr::Literal(_)
+        | IrStringExpr::Read(_)
+        | IrStringExpr::LocalRead(_)
+        | IrStringExpr::FormalRead(_) => {}
     }
 }
 
@@ -812,7 +1107,25 @@ fn collect_chandle_effects(
         effects.push(ExecutionEffect::RuntimeService);
         collect_callee_effects(ir, *function, effects, visited_calls);
         for argument in args {
-            collect_chandle_effects(ir, argument, effects, visited_calls);
+            match argument {
+                IrCallArg::StringVal(value) => {
+                    collect_string_effects(ir, value, effects, visited_calls)
+                }
+                IrCallArg::ChandleVal(value) => {
+                    collect_chandle_effects(ir, value, effects, visited_calls)
+                }
+                IrCallArg::Val(value) => {
+                    collect_expression_effects(ir, value, effects, visited_calls)
+                }
+                IrCallArg::ChandleAddr(_)
+                | IrCallArg::ChandleRefAddr(_)
+                | IrCallArg::StringOutAddr(_)
+                | IrCallArg::StringRefAddr { .. }
+                | IrCallArg::OutAddr(_)
+                | IrCallArg::RefAddr { .. }
+                | IrCallArg::OutTemp { .. }
+                | IrCallArg::StringOutTemp { .. } => {}
+            }
         }
     }
 }
@@ -844,22 +1157,30 @@ fn collect_lhs_expression_effects(
                 collect_lhs_expression_effects(ir, part, effects, visited_calls);
             }
         }
-        IrLhs::Whole(_) | IrLhs::WholeRef { .. } | IrLhs::Part(..) => {}
+        IrLhs::Whole(_) | IrLhs::WholeRef { .. } | IrLhs::Ref { .. } | IrLhs::Part(..) => {}
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sim::ir::{IrModelParts, IrProcess, IrSignal, IrType};
+    use crate::sim::ir::{IrDependency, IrModelParts, IrProcess, IrSignal, IrType};
 
     fn execution(shape: IrShape, body: Vec<IrStmt>) -> ExecutionModel {
         let signals = match &shape {
             IrShape::SensLoop { reads } => reads
                 .iter()
-                .map(|name| {
-                    IrSignal::new(name.clone(), None, IrType::packed(1, false).unwrap(), None)
-                        .unwrap()
+                .map(|dependency| {
+                    let name = dependency
+                        .scalar_name()
+                        .expect("unit sensitivity tests use scalar dependencies");
+                    IrSignal::new(
+                        name.to_owned(),
+                        None,
+                        IrType::packed(1, false).unwrap(),
+                        None,
+                    )
+                    .unwrap()
                 })
                 .collect(),
             _ => Vec::new(),
@@ -883,7 +1204,7 @@ mod tests {
     fn sensitivity_loop_resumes_its_owned_entry_block() {
         let model = execution(
             IrShape::SensLoop {
-                reads: vec!["a".into()],
+                reads: vec![IrDependency::scalar("a")],
             },
             vec![IrStmt::Nop],
         );
@@ -893,7 +1214,7 @@ mod tests {
         assert_eq!(
             process.blocks[0].terminator,
             ExecutionTerminator::Suspend {
-                trigger: TriggerPlan::Signals(vec!["a".into()]),
+                trigger: TriggerPlan::Signals(vec![IrDependency::scalar("a")]),
                 resume: 0,
                 region: ScheduleRegion::Active,
             }
@@ -956,7 +1277,7 @@ mod tests {
                 IrStmt::InertialAssign {
                     lhs: IrLhs::Whole(0),
                     rhs,
-                    ticks: 3,
+                    delay: crate::sim::ir::IrTransitionDelay::uniform(3),
                 },
             ],
         );
@@ -997,6 +1318,7 @@ mod tests {
                 IrStmt::Fork {
                     join_kind: IrJoinKind::Any,
                     branches: vec![("branch".into(), "top.branch".into())],
+                    target: None,
                 },
                 IrStmt::Object(IrObjectStmt::StringPrint(IrStringExpr::Literal(
                     b"message".to_vec(),
@@ -1046,7 +1368,7 @@ mod tests {
         .unwrap();
         let mut model = ExecutionModel::lower(ir).unwrap();
         model.processes[0].blocks[0].terminator = ExecutionTerminator::Suspend {
-            trigger: TriggerPlan::Signals(vec!["trigger_only".into()]),
+            trigger: TriggerPlan::Signals(vec![IrDependency::scalar("trigger_only")]),
             resume: 0,
             region: ScheduleRegion::Active,
         };
@@ -1077,9 +1399,18 @@ mod tests {
         )
         .unwrap();
 
-        assert!(is_emitted_trigger_storage(&ir, "memory[3]"));
-        assert!(!is_emitted_trigger_storage(&ir, "memory[4]"));
-        assert!(!is_emitted_trigger_storage(&ir, "unknown"));
+        assert!(is_emitted_trigger_storage(
+            &ir,
+            &IrDependency::ArrayElement { array: 0, index: 0 }
+        ));
+        assert!(!is_emitted_trigger_storage(
+            &ir,
+            &IrDependency::ArrayElement { array: 0, index: 4 }
+        ));
+        assert!(!is_emitted_trigger_storage(
+            &ir,
+            &IrDependency::scalar("unknown")
+        ));
     }
 
     #[test]
@@ -1107,8 +1438,8 @@ mod tests {
                     args: vec![(
                         IrExpr::try_new(
                             IrExprKind::SysFunc(IrSysFunc::Time {
-                                precision_ps: 1,
-                                unit_ps: 1,
+                                precision_fs: 1,
+                                unit_fs: 1,
                                 kind: IrTimeKind::Time,
                             }),
                             64,
@@ -1119,6 +1450,7 @@ mod tests {
                         false,
                     )],
                     newline: true,
+                    default_radix: crate::sim::ir::IrDisplayRadix::Decimal,
                 },
                 IrStmt::Finish,
             ],
@@ -1185,6 +1517,25 @@ mod tests {
     }
 
     #[test]
+    fn signal_suspension_carries_a_distinct_resume_region() {
+        let mut model = execution(
+            IrShape::SensLoop {
+                reads: vec![IrDependency::scalar("a")],
+            },
+            vec![IrStmt::Nop],
+        );
+        model.processes[0].blocks[0].terminator = ExecutionTerminator::Suspend {
+            trigger: TriggerPlan::Signals(vec![IrDependency::scalar("a")]),
+            resume: 0,
+            region: ScheduleRegion::Reactive,
+        };
+        model.refresh_effects().unwrap();
+
+        let rendered = crate::sim::emit_c::render(&model).unwrap();
+        assert!(rendered.contains("llg_wait_resume_in_region(LLG_REGION_REACTIVE);"));
+    }
+
+    #[test]
     fn optimization_rebuilds_owned_blocks_without_changing_schedule() {
         use crate::sim::opt::{self, OptConfig};
 
@@ -1199,7 +1550,7 @@ mod tests {
         .unwrap();
         let mut model = execution(
             IrShape::SensLoop {
-                reads: vec!["a".into()],
+                reads: vec![IrDependency::scalar("a")],
             },
             vec![IrStmt::If {
                 cond: false_condition,
@@ -1208,14 +1559,14 @@ mod tests {
             }],
         );
         model.processes[0].blocks[0].terminator = ExecutionTerminator::Suspend {
-            trigger: TriggerPlan::Signals(vec!["a".into()]),
+            trigger: TriggerPlan::Signals(vec![IrDependency::scalar("a")]),
             resume: 1,
             region: ScheduleRegion::Active,
         };
         model.processes[0].blocks.push(ExecutionBlock {
             operations: vec![IrStmt::Finish],
             terminator: ExecutionTerminator::Suspend {
-                trigger: TriggerPlan::Signals(vec!["a".into()]),
+                trigger: TriggerPlan::Signals(vec![IrDependency::scalar("a")]),
                 resume: 1,
                 region: ScheduleRegion::Active,
             },

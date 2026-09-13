@@ -12,29 +12,35 @@ pub(super) fn c_string_literal(value: &str) -> String {
     out
 }
 
-/// The Verilog `timescale string for a value in ps (e.g. 1000 ps → "1ns").
-pub(crate) fn ps_to_timescale_str(v: u64) -> String {
-    const PAIRS: [(u64, &str); 13] = [
-        (1_000_000_000_000, "1s"),
-        (100_000_000_000, "100ms"),
-        (10_000_000_000, "10ms"),
-        (1_000_000_000, "1ms"),
-        (100_000_000, "100us"),
-        (10_000_000, "10us"),
-        (1_000_000, "1us"),
-        (100_000, "100ns"),
-        (10_000, "10ns"),
-        (1_000, "1ns"),
-        (100, "100ps"),
-        (10, "10ps"),
-        (1, "1ps"),
+/// The Verilog `timescale string for a value in fs (e.g. 1_000_000 fs →
+/// "1ns").
+pub(crate) fn fs_to_timescale_str(v: u64) -> String {
+    const PAIRS: [(u64, &str); 18] = [
+        (100_000_000_000_000_000, "100s"),
+        (10_000_000_000_000_000, "10s"),
+        (1_000_000_000_000_000, "1s"),
+        (100_000_000_000_000, "100ms"),
+        (10_000_000_000_000, "10ms"),
+        (1_000_000_000_000, "1ms"),
+        (100_000_000_000, "100us"),
+        (10_000_000_000, "10us"),
+        (1_000_000_000, "1us"),
+        (100_000_000, "100ns"),
+        (10_000_000, "10ns"),
+        (1_000_000, "1ns"),
+        (100_000, "100ps"),
+        (10_000, "10ps"),
+        (1_000, "1ps"),
+        (100, "100fs"),
+        (10, "10fs"),
+        (1, "1fs"),
     ];
     for (val, s) in PAIRS {
         if val == v {
             return s.to_string();
         }
     }
-    format!("{v}ps")
+    format!("{v}fs")
 }
 
 pub(crate) fn emit_real_literal(value: f64) -> String {

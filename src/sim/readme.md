@@ -10,8 +10,22 @@
 - **Runtime:** `rt/` supplies value operations, scheduling, strings, containers,
   optional waveforms, and coroutine support. It is compiled with each model and
   is not linked into the Rust binaries.
+- **Real scheduling:** Scalar `real`/`shortreal` writes use typed double
+  dependency identities, so legal wait, event, combinational, and port paths
+  observe changed values without packed-vector coercion. Signed-zero and NaN
+  change behavior follows the runtime's documented bitwise IEEE policy.
 - **Boundaries:** lowering reads the owned database; the emitter depends only on
   `sim::execution`; simulator code contains no `unsafe` or direct frontend access.
+- **Coverage:** semantic lowering first walks the owned elaborated graph and
+  rejects reachable executable nodes without a lowering contract, retaining
+  source spans while distinguishing declarations and elaboration-only records.
+- **Process families:** `always`, `always_comb`, `always_latch`, and `always_ff`
+  retain their typed kind and write dependencies through IR; implicit
+  sensitivity and single-writer, timing, event, and assignment contracts are
+  checked before C emission.
+- **Subroutine aliases:** `ref` and `const ref` formals retain typed modes and
+  bind directly to caller lvalues, including legal packed selects and fixed
+  array elements; writable aliases commit through the canonical runtime target.
 - **Entry point:** `src/bin/llg.rs` drives compile → lower → optimize → emit →
   build → run.
 - **Validation:** simulator behavior is covered by `tests/sim_*.rs`, scheduler

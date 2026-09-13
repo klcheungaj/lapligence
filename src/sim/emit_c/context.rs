@@ -19,4 +19,8 @@ pub struct RenderedExpr {
 pub struct RCtx<'m> {
     pub model: &'m IrModel,
     pub func: Option<&'m IrFunc>,
+    /// C label used to leave the innermost active named scope when the
+    /// runtime cancels its activation. Nested scopes replace this value while
+    /// rendering their body; the enclosing renderer checks again afterwards.
+    pub activation_label: Option<String>,
 }

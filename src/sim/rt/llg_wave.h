@@ -8,12 +8,14 @@
 extern "C" {
 #endif
 
-int llg_wave_model_init(uint64_t precision_ps);
+int llg_wave_model_init(uint64_t precision_fs);
 int llg_wave_register_sv4(const char* hierarchical_name, sv4_t* value,
                           uint32_t width);
 int llg_wave_register_real(const char* hierarchical_name, double* value);
 void llg_wave_file(const char* path, uint64_t now);
 void llg_wave_dumpvars(uint64_t now);
+void llg_wave_dumpvars_select(uint64_t now, uint32_t depth,
+                              const char* const* names, uint32_t name_count);
 void llg_wave_on(uint64_t now);
 void llg_wave_off(uint64_t now);
 void llg_wave_dumpall(uint64_t now);

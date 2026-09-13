@@ -16,6 +16,15 @@ pub(super) fn string(ctx: &RCtx<'_>, value: &IrStringExpr) -> Result<String, Str
             format!("llg_string_clone(&{})", ctx.model.objects[*index].c_name)
         }
         IrStringExpr::LocalRead(name) => format!("llg_string_clone(&{name})"),
+        IrStringExpr::FormalRead(index) => {
+            format!("llg_string_clone({})", if ctx.func.map(|f| f.formals[*index].is_ref()).unwrap_or(false) {
+                format!("r{index}")
+            } else if ctx.func.map(|f| f.formals[*index].is_out()).unwrap_or(false) {
+                format!("o{index}")
+            } else {
+                format!("&a{index}")
+            })
+        }
         IrStringExpr::Call {
             function,
             args,
@@ -33,6 +42,11 @@ pub(super) fn string(ctx: &RCtx<'_>, value: &IrStringExpr) -> Result<String, Str
                 rendered.join(", ")
             )
         }
+        IrStringExpr::TypedCall {
+            function,
+            args,
+            depth,
+        } => render_typed_call(ctx, *function, args, *depth)?,
         IrStringExpr::Concat(parts) => {
             let mut value = "llg_string_bytes(\"\", 0)".to_owned();
             for part in parts {
@@ -63,22 +77,52 @@ pub(super) fn string(ctx: &RCtx<'_>, value: &IrStringExpr) -> Result<String, Str
     })
 }
 
-pub(super) fn chandle(ctx: &RCtx<'_>, value: &IrChandleExpr) -> String {
-    match value {
+pub(super) fn chandle(ctx: &RCtx<'_>, value: &IrChandleExpr) -> Result<String, String> {
+    Ok(match value {
         IrChandleExpr::Null => "NULL".to_owned(),
         IrChandleExpr::Read(index) => ctx.model.objects[*index].c_name.clone(),
         IrChandleExpr::LocalRead(name) => name.clone(),
-        IrChandleExpr::FormalRead(index) => format!("a{index}"),
+        IrChandleExpr::FormalRead(index) => {
+            let Some(function) = ctx.func else {
+                return Ok(format!("a{index}"));
+            };
+            let Some(formal) = function.formals.get(*index) else {
+                return Ok(format!("a{index}"));
+            };
+            if formal.is_ref() {
+                format!("*r{index}")
+            } else if formal.is_out {
+                format!("*o{index}")
+            } else {
+                format!("a{index}")
+            }
+        }
         IrChandleExpr::Call {
             function,
             args,
             depth,
         } => {
-            let mut args = args.iter().map(|arg| chandle(ctx, arg)).collect::<Vec<_>>();
+            let mut args = args
+                .iter()
+                .map(|arg| match arg {
+                    IrCallArg::ChandleVal(value) => chandle(ctx, value),
+                    IrCallArg::Val(value) => render_expr_impl(ctx, value).map(|value| value.code),
+                    IrCallArg::ChandleAddr(addr)
+                    | IrCallArg::ChandleRefAddr(addr)
+                    | IrCallArg::StringOutAddr(addr)
+                    | IrCallArg::StringRefAddr { addr, .. }
+                    | IrCallArg::OutAddr(addr) => Ok(addr.clone()),
+                    IrCallArg::RefAddr { addr, .. } => Ok(addr.clone()),
+                    IrCallArg::OutTemp { name, .. } => Ok(format!("&{name}")),
+                    IrCallArg::StringVal(_) | IrCallArg::StringOutTemp { .. } => {
+                        Err("string argument is invalid in a chandle call".to_owned())
+                    }
+                })
+                .collect::<Result<Vec<_>, String>>()?;
             args.push(depth.code());
             format!("{}({})", ctx.model.funcs[*function].c_name, args.join(", "))
         }
-    }
+    })
 }
 
 pub(super) fn query(
@@ -113,10 +157,184 @@ pub(super) fn query(
         ),
         IrObjectQuery::ChandleEq(a, b) => format!(
             "sv4_from_u64({} == {}, 1, 0)",
-            chandle(ctx, a),
-            chandle(ctx, b)
+            chandle(ctx, a)?,
+            chandle(ctx, b)?
         ),
+        IrObjectQuery::ArrayQuery(query) => array_query(ctx, query, width, signed)?,
     })
+}
+
+fn static_query_value(kind: IrArrayQueryKind, dimension: IrArrayDimension) -> Option<i128> {
+    let (Some(left), Some(right)) = (dimension.left, dimension.right) else {
+        return None;
+    };
+    match kind {
+        IrArrayQueryKind::Left => Some(left),
+        IrArrayQueryKind::Right => Some(right),
+        IrArrayQueryKind::Low => Some(left.min(right)),
+        IrArrayQueryKind::High => Some(left.max(right)),
+        IrArrayQueryKind::Increment => Some(if left >= right { 1 } else { -1 }),
+        IrArrayQueryKind::Size => left
+            .checked_sub(right)
+            .and_then(|extent| extent.unsigned_abs().checked_add(1))
+            .and_then(|size| i128::try_from(size).ok()),
+    }
+}
+
+fn static_query_code(
+    kind: IrArrayQueryKind,
+    dimension: IrArrayDimension,
+    width: u32,
+    signed: bool,
+) -> Option<String> {
+    static_query_value(kind, dimension).map(|value| {
+        format!(
+            "sv4_from_u64((uint64_t)({value}), {width}, {})",
+            u8::from(signed)
+        )
+    })
+}
+
+fn dynamic_query_code(
+    ctx: &RCtx<'_>,
+    kind: IrArrayQueryKind,
+    target: &IrArrayQueryTarget,
+) -> Result<String, String> {
+    Ok(match target {
+        IrArrayQueryTarget::Container { container, .. } => {
+            let container_model = ctx
+                .model
+                .containers
+                .get(*container)
+                .ok_or_else(|| "array query container index is out of bounds".to_owned())?;
+            let name = &container_model.c_name;
+            match &container_model.kind {
+                IrContainerKind::Dynamic | IrContainerKind::Queue { .. } => {
+                    let size_fn = match &container_model.kind {
+                        IrContainerKind::Dynamic => "llg_dyn_size",
+                        IrContainerKind::Queue { .. } => "llg_queue_size",
+                        IrContainerKind::Associative { .. } => unreachable!(),
+                    };
+                    let size = format!(
+                        "sv4_from_u64((uint64_t){size_fn}(&{name}), 32, 1)"
+                    );
+                    match kind {
+                        IrArrayQueryKind::Left | IrArrayQueryKind::Low => {
+                            "sv4_from_u64(0, 32, 1)".to_owned()
+                        }
+                        IrArrayQueryKind::Right | IrArrayQueryKind::High => format!(
+                            "sv4_sub({size}, sv4_from_u64(1, 32, 1))"
+                        ),
+                        IrArrayQueryKind::Size => size,
+                        IrArrayQueryKind::Increment => {
+                            "sv4_from_u64((uint64_t)-1, 32, 1)".to_owned()
+                        }
+                    }
+                }
+                IrContainerKind::Associative {
+                    key:
+                        IrAssocKey::Integral {
+                            width: key_width,
+                            signed: key_signed,
+                            ..
+                        },
+                } => {
+                    let zero = format!(
+                        "sv4_from_u64(0, {key_width}, {})",
+                        u8::from(*key_signed)
+                    );
+                    match kind {
+                        IrArrayQueryKind::Left => zero,
+                        IrArrayQueryKind::Right => {
+                            format!("sv4_fill(1, {key_width}, {})", u8::from(*key_signed))
+                        }
+                        IrArrayQueryKind::Low | IrArrayQueryKind::High => {
+                            let traversal = if kind == IrArrayQueryKind::Low {
+                                "llg_assoc_first_integral"
+                            } else {
+                                "llg_assoc_last_integral"
+                            };
+                            format!(
+                                "({{ sv4_t _llg_qkey = {zero}; {traversal}(&{name}, &_llg_qkey) ? _llg_qkey : sv4_fill(2, {key_width}, {}) ; }})",
+                                u8::from(*key_signed)
+                            )
+                        }
+                        IrArrayQueryKind::Size => format!(
+                            "sv4_from_u64((uint64_t)llg_assoc_count(&{name}), {key_width}, {})",
+                            u8::from(*key_signed)
+                        ),
+                        IrArrayQueryKind::Increment => {
+                            "sv4_from_u64((uint64_t)-1, 32, 1)".to_owned()
+                        }
+                    }
+                }
+                IrContainerKind::Associative {
+                    key: IrAssocKey::String | IrAssocKey::Wildcard,
+                } => {
+                    return Err(
+                        "array query on a string-keyed or wildcard associative array is unsupported"
+                            .to_owned(),
+                    )
+                }
+            }
+        }
+        IrArrayQueryTarget::String { value, .. } => {
+            let len = format!("llg_string_len({})", string(ctx, value)?);
+            match kind {
+                IrArrayQueryKind::Left | IrArrayQueryKind::Low => {
+                    "sv4_from_u64(0, 32, 1)".to_owned()
+                }
+                IrArrayQueryKind::Right | IrArrayQueryKind::High => format!(
+                    "sv4_sub({len}, sv4_from_u64(1, 32, 1))"
+                ),
+                IrArrayQueryKind::Size => len,
+                IrArrayQueryKind::Increment => {
+                    "sv4_from_u64((uint64_t)-1, 32, 1)".to_owned()
+                }
+            }
+        }
+        IrArrayQueryTarget::Static { .. } => {
+            return Err("runtime query selected a fixed dimension without bounds".to_owned())
+        }
+    })
+}
+
+fn array_query(
+    ctx: &RCtx<'_>,
+    query: &IrArrayQuery,
+    width: u32,
+    signed: bool,
+) -> Result<String, String> {
+    let dimensions = match &query.target {
+        IrArrayQueryTarget::Static { dimensions }
+        | IrArrayQueryTarget::Container { dimensions, .. }
+        | IrArrayQueryTarget::String { dimensions, .. } => dimensions,
+    };
+    if dimensions.is_empty() {
+        return Err("array query target has no dimensions".to_owned());
+    }
+    let selected = |index: usize| {
+        static_query_code(query.kind, dimensions[index], width, signed)
+            .or_else(|| dynamic_query_code(ctx, query.kind, &query.target).ok())
+    };
+    if let Some(dimension) = &query.dimension {
+        let dimension = render_expr_impl(ctx, dimension)?.code;
+        let unknown = format!("sv4_fill(2, {width}, {})", u8::from(signed));
+        let mut choices = unknown.clone();
+        for index in (0..dimensions.len()).rev() {
+            let value = selected(index).ok_or_else(|| {
+                "array query dimension has no representable result".to_owned()
+            })?;
+            choices = format!("(_llg_qindex == {} ? {value} : {choices})", index + 1);
+        }
+        return Ok(format!(
+            "({{ sv4_t _llg_qdim = {dimension}; int64_t _llg_qindex = 0; int _llg_qvalid = sv4_to_index_i64(_llg_qdim, &_llg_qindex); (!_llg_qvalid || _llg_qindex < 1 || _llg_qindex > {}) ? {unknown} : {choices}; }})",
+            dimensions.len()
+        ));
+    }
+    static_query_code(query.kind, dimensions[0], width, signed)
+        .or_else(|| dynamic_query_code(ctx, query.kind, &query.target).ok())
+        .ok_or_else(|| "array query dimension has no representable result".to_owned())
 }
 
 pub(super) fn statement(ctx: &RCtx<'_>, operation: &IrObjectStmt) -> Result<String, String> {
@@ -148,13 +366,116 @@ pub(super) fn statement(ctx: &RCtx<'_>, operation: &IrObjectStmt) -> Result<Stri
             ctx.model.objects[*index].c_name,
             render_expr_impl(ctx, value)?.code
         ),
+        IrObjectStmt::StringPutcLocal(target, position, value) => format!(
+            "    llg_string_putc(&{target}, {}, {});\n",
+            render_expr_impl(ctx, position)?.code,
+            render_expr_impl(ctx, value)?.code
+        ),
+        IrObjectStmt::StringItoaLocal(target, value, base) => format!(
+            "    llg_string_itoa(&{target}, {}, {base});\n",
+            render_expr_impl(ctx, value)?.code
+        ),
+        IrObjectStmt::StringRealtoaLocal(target, value) => format!(
+            "    llg_string_realtoa(&{target}, {});\n",
+            render_expr_impl(ctx, value)?.code
+        ),
+        IrObjectStmt::ChandleDeclareLocal(name, value) => format!(
+            "    void *{name} = {};\n",
+            value
+                .as_ref()
+                .map(|value| chandle(ctx, value))
+                .transpose()?
+                .unwrap_or_else(|| "NULL".to_owned())
+        ),
         IrObjectStmt::ChandleAssign(index, value) => format!(
             "    {} = {};\n",
             ctx.model.objects[*index].c_name,
-            chandle(ctx, value)
+            chandle(ctx, value)?
         ),
         IrObjectStmt::ChandleAssignLocal(target, value) => {
-            format!("    {target} = {};\n", chandle(ctx, value))
+            format!("    {target} = {};\n", chandle(ctx, value)?)
         }
     })
+}
+
+fn render_typed_call(
+    ctx: &RCtx<'_>,
+    function: usize,
+    args: &[IrCallArg],
+    depth: IrDepth,
+) -> Result<String, String> {
+    let f = ctx.model.func(function);
+    let order = f
+        .formals
+        .iter()
+        .enumerate()
+        .filter(|(_, formal)| formal.is_address())
+        .chain(f.formals.iter().enumerate().filter(|(_, formal)| !formal.is_address()));
+    let mut rendered = Vec::new();
+    let mut temps = Vec::new();
+    for ((idx, formal), arg) in order.zip(args) {
+        let value = match arg {
+            IrCallArg::StringVal(value) => string(ctx, value)?,
+            IrCallArg::Val(value) => render_expr_impl(ctx, value)?.code,
+            IrCallArg::StringOutAddr(addr) | IrCallArg::StringRefAddr { addr, .. } => addr.clone(),
+            IrCallArg::OutAddr(addr) | IrCallArg::RefAddr { addr, .. } => addr.clone(),
+            IrCallArg::StringOutTemp {
+                name,
+                init,
+                writeback,
+                storage_addr,
+                storage_read,
+            } => {
+                temps.push((
+                    name,
+                    init.as_deref(),
+                    writeback,
+                    storage_addr.as_deref(),
+                    storage_read.as_deref(),
+                ));
+                storage_addr.clone().unwrap_or_else(|| format!("&{name}"))
+            }
+            IrCallArg::OutTemp { name, storage_addr, .. } => {
+                storage_addr.clone().unwrap_or_else(|| format!("&{name}"))
+            }
+            IrCallArg::ChandleVal(value) => super::objects::chandle(ctx, value)?,
+            IrCallArg::ChandleAddr(addr) | IrCallArg::ChandleRefAddr(addr) => addr.clone(),
+        };
+        rendered.push(value);
+        let _ = idx;
+    }
+    rendered.push(depth.code());
+    let call = format!("{}({})", f.c_name, rendered.join(", "));
+    if temps.is_empty() {
+        return Ok(call);
+    }
+    let mut parts = Vec::new();
+    for (name, init, _, storage_addr, _) in &temps {
+        let init = init
+            .map(|value| string(ctx, value))
+            .transpose()?
+            .unwrap_or_else(|| "(llg_string_t){0}".to_owned());
+        parts.push(format!("llg_string_t {name} = {init}"));
+        if let Some(storage_addr) = storage_addr {
+            parts.push(format!(
+                "llg_string_move({storage_addr}, llg_string_clone(&{name}))"
+            ));
+        }
+    }
+    parts.push(format!("llg_string_t _llg_string_ret = {call}"));
+    for (name, _, writeback, storage_addr, storage_read) in &temps {
+        if let Some(read) = storage_read {
+            let value = string(ctx, read)?;
+            parts.push(format!("llg_string_move(&{name}, {value})"));
+            parts.push(format!(
+                "llg_string_move({writeback}, llg_string_clone(&{name}))"
+            ));
+            parts.push(format!("llg_string_destroy(&{name})"));
+        } else {
+            let _ = storage_addr;
+            parts.push(format!("llg_string_move({writeback}, {name})"));
+        }
+    }
+    parts.push("_llg_string_ret".to_owned());
+    Ok(format!("({{ {}; }})", parts.join("; ")))
 }

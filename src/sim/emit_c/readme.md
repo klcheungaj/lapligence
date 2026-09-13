@@ -9,6 +9,14 @@
   typed tables before indexing.
 - **Model ABI:** `model.rs` derives packed capacity and emits model-wide C
   definitions used by every generated translation unit.
+- **Initialization:** declaration operations retain their source identity,
+  storage lifetime, and edition phase; static locals are file-scope storage,
+  SystemVerilog pre-process operations run in `main()`, and Verilog active
+  operations are emitted as ordinary run-once processes.
+- **Event callbacks:** evaluated event expressions and trigger-time qualifiers
+  receive frame-backed contexts for automatic locals/formals. Generated waits
+  transfer ownership of those contexts to the runtime so callbacks remain
+  valid through suspension and cancellation.
 - **Build handoff:** `build.rs`/CMake combines emitted model sources with the
   embedded runtime.
 

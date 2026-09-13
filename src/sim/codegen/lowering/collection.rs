@@ -1,8 +1,68 @@
 //! Owned-database collection, storage allocation, wiring, and process setup.
 
 use super::*;
+use crate::sim::ir::{IrChandleExpr, IrObjectStmt, IrObjectType, IrStringExpr};
+
+pub(super) fn aggregate_path_suffix(path: &[AggregatePathPart]) -> String {
+    path.iter()
+        .map(|part| match part {
+            AggregatePathPart::Member(name) => name.clone(),
+            AggregatePathPart::Index(index) => format!("i{index}"),
+        })
+        .collect::<Vec<_>>()
+        .join("__")
+}
+
+pub(super) fn aggregate_path_key(path: &[AggregatePathPart]) -> String {
+    path.iter()
+        .map(|part| match part {
+            AggregatePathPart::Member(name) => format!("m:{name}"),
+            AggregatePathPart::Index(index) => format!("i:{index}"),
+        })
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+fn leaf_member(base: &AggregateMember, descriptor: &TypeDescriptor) -> AggregateMember {
+    let packed_ranges = match &descriptor.shape {
+        TypeShape::PackedAtom { ranges } => ranges.clone(),
+        _ => base.packed_ranges.clone(),
+    };
+    let aggregate = match &descriptor.shape {
+        TypeShape::Aggregate(layout) => Some(Box::new(layout.clone())),
+        _ => None,
+    };
+    AggregateMember {
+        name: base.name.clone(),
+        ty: descriptor.info.clone(),
+        two_state: base.two_state,
+        packed_ranges,
+        aggregate,
+        descriptor: descriptor.clone(),
+    }
+}
+
+#[derive(Default)]
+struct ProcessContractScan {
+    event_controls: Vec<NodeId>,
+    fork_controls: Vec<NodeId>,
+    blocking_timing_controls: Vec<NodeId>,
+    disallowed_assignments: Vec<NodeId>,
+    event_triggers: Vec<NodeId>,
+}
+
+#[derive(Clone)]
+struct ProcessWriter {
+    node: NodeId,
+    label: String,
+    writes: HashSet<IrDependency>,
+}
 
 impl<'a> Codegen<'a> {
+    pub(super) fn signal_dependency(&self, info: &SignalInfo) -> IrDependency {
+        self.reference_dependency(info)
+    }
+
     /// Register storage for a procedural declaration.
     ///
     /// Automatic variables remain lexical C locals. Static variables become
@@ -13,8 +73,21 @@ impl<'a> Codegen<'a> {
         path: &str,
         node: NodeId,
     ) -> Result<ProcLocalInfo, String> {
-        if let Some(info) = self.proc_locals.get(&node) {
-            return Ok(info.clone());
+        let lifetime = self.db.variable_lifetime(node);
+        match lifetime {
+            VariableLifetime::Automatic => {
+                if let Some(info) = self.proc_locals.get(&node) {
+                    return Ok(info.clone());
+                }
+            }
+            VariableLifetime::Static => {
+                if let Some(info) = self.proc_local_instances.get(&(self.inst, node)) {
+                    let info = info.clone();
+                    self.proc_locals.insert(node, info.clone());
+                    return Ok(info);
+                }
+            }
+            VariableLifetime::Unavailable => {}
         }
         let ty = match self.kind(node) {
             NodeKind::Var { ty } => ty.clone(),
@@ -24,42 +97,64 @@ impl<'a> Codegen<'a> {
                 ))
             }
         };
-        if is_real_kind(&ty.kind) {
-            return Err(format!(
-                "real/shortreal procedural variable `{}` is not supported in `{path}`",
-                self.node(node).name
-            ));
-        }
-        let width = self.signal_width(path, &self.node(node).name, &ty)?;
-        let (c_name, static_signal) = match self.db.variable_lifetime(node) {
+        let real = is_real_kind(&ty.kind);
+        let width = if real {
+            0
+        } else {
+            self.signal_width(path, &self.node(node).name, &ty)?
+        };
+        let (c_name, static_signal) = match lifetime {
             VariableLifetime::Automatic => (format!("_lv{}", node.index()), None),
             VariableLifetime::Static => {
                 let ir = self.model.signals.len();
                 let signal = SignalInfo {
-                    global: format!("_ls{}", node.index()),
+                    global: format!("_ls{}_{}", self.inst.index(), node.index()),
                     width,
                     signed: ty.signed,
                     two_state: self.db.is_two_state_type(node) || is_two_state_kind(&ty.kind),
-                    real: false,
-                    shortreal: false,
+                    real,
+                    shortreal: real && ty.kind == "shortreal",
                     net_driver: None,
                     ir,
                 };
                 self.model.signals.push(IrSignal {
                     c_name: signal.global.clone(),
                     hdl_name: None,
-                    ty: IrType::Packed {
-                        width: signal.width,
-                        signed: signal.signed,
-                        two_state: signal.two_state,
+                    ty: if real {
+                        IrType::Real {
+                            shortreal: ty.kind == "shortreal",
+                        }
+                    } else {
+                        IrType::Packed {
+                            width: signal.width,
+                            signed: signal.signed,
+                            two_state: signal.two_state,
+                        }
                     },
                     net_driver: None,
                     alias: None,
                     omit: false,
                 });
                 if let Some(initializer) = self.db.var_initializer(node) {
-                    let value = self.var_decl_init(path, &self.node(node).name, initializer)?;
-                    self.var_inits.push((signal.clone(), value));
+                    let lowered = self.lower_declaration_initializer(
+                        path,
+                        node,
+                        initializer,
+                        IrInitTarget::Signal(signal.ir),
+                        signal.width,
+                        signal.signed,
+                        signal.two_state,
+                        signal.real,
+                    );
+                    match lowered {
+                        Ok(initializer) => self.declaration_inits.push(initializer),
+                        Err(lowering_error) => {
+                            let value = self
+                                .var_decl_init(path, &self.node(node).name, initializer)
+                                .map_err(|_| lowering_error)?;
+                            self.var_inits.push((signal.clone(), value));
+                        }
+                    }
                 }
                 (signal.global.clone(), Some(signal))
             }
@@ -74,18 +169,37 @@ impl<'a> Codegen<'a> {
             c_name,
             width,
             signed: ty.signed,
-            two_state: self.db.is_two_state_type(node) || is_two_state_kind(&ty.kind),
+            two_state: if real {
+                false
+            } else {
+                self.db.is_two_state_type(node) || is_two_state_kind(&ty.kind)
+            },
             static_signal,
         };
+        if matches!(lifetime, VariableLifetime::Static) {
+            self.proc_local_instances
+                .insert((self.inst, node), info.clone());
+        }
         self.proc_locals.insert(node, info.clone());
         Ok(info)
+    }
+
+    /// Resolve a process-local declaration in the current elaborated
+    /// instance. Static declarations need the instance-qualified map because
+    /// one owned declaration node can be instantiated more than once.
+    pub(super) fn proc_local_info(&self, node: NodeId) -> Option<&ProcLocalInfo> {
+        match self.db.variable_lifetime(node) {
+            VariableLifetime::Static => self.proc_local_instances.get(&(self.inst, node)),
+            VariableLifetime::Automatic | VariableLifetime::Unavailable => {
+                self.proc_locals.get(&node)
+            }
+        }
     }
 
     pub(super) fn proc_local_target(&self, node: NodeId) -> Option<NodeId> {
         if let Some((variable, _)) = self.lexical_proc_local(node) {
             return self
-                .proc_locals
-                .get(&variable)
+                .proc_local_info(variable)
                 .is_some_and(|info| info.static_signal.is_none())
                 .then_some(variable);
         }
@@ -95,8 +209,7 @@ impl<'a> Codegen<'a> {
         match self.kind(node) {
             NodeKind::Var { .. }
                 if self
-                    .proc_locals
-                    .get(&node)
+                    .proc_local_info(node)
                     .is_some_and(|info| info.static_signal.is_none()) =>
             {
                 Some(node)
@@ -104,8 +217,7 @@ impl<'a> Codegen<'a> {
             NodeKind::Expr(ExprKind::Ref {
                 target: Some(target),
             }) if self
-                .proc_locals
-                .get(target)
+                .proc_local_info(*target)
                 .is_some_and(|info| info.static_signal.is_none()) =>
             {
                 Some(*target)
@@ -123,7 +235,9 @@ impl<'a> Codegen<'a> {
                     matches!(self.kind(**child), NodeKind::Var { .. })
                         && self.node(**child).name == name
                 }) {
-                    return self.proc_locals.get(variable).map(|info| (*variable, info));
+                    return self
+                        .proc_local_info(*variable)
+                        .map(|info| (*variable, info));
                 }
             }
             let vars = match self.kind(scope) {
@@ -135,7 +249,7 @@ impl<'a> Codegen<'a> {
                 vars.iter()
                     .find(|variable| self.node(**variable).name == name)
             }) {
-                if let Some(info) = self.proc_locals.get(variable) {
+                if let Some(info) = self.proc_local_info(*variable) {
                     return Some((*variable, info));
                 }
             }
@@ -187,8 +301,7 @@ impl<'a> Codegen<'a> {
         }) = self.kind(node)
         {
             if self
-                .proc_locals
-                .get(target)
+                .proc_local_info(*target)
                 .is_some_and(|info| info.static_signal.is_none())
             {
                 return Some(*target);
@@ -198,6 +311,96 @@ impl<'a> Codegen<'a> {
             .children
             .iter()
             .find_map(|child| self.nested_proc_local_ref(*child))
+    }
+
+    /// Collect automatic values referenced by one evaluated event expression
+    /// and place them in a private, copied activation frame. The callback may
+    /// run after the issuing process suspends or is re-entered, so it must
+    /// never refer directly to a lexical C local.
+    pub(super) fn event_context(
+        &mut self,
+        expression: NodeId,
+    ) -> Result<Option<IrEventContext>, String> {
+        fn visit(cg: &Codegen<'_>, node: NodeId, out: &mut HashSet<NodeId>) {
+            let target = match cg.kind(node) {
+                NodeKind::Expr(ExprKind::Ref {
+                    target: Some(target),
+                }) => Some(*target),
+                _ => cg.lexical_proc_local(node).map(|(target, _)| target),
+            };
+            if let Some(target) = target {
+                if cg
+                    .capture_source(target)
+                    .is_some_and(|source| source.info.static_signal.is_none())
+                {
+                    out.insert(target);
+                }
+            }
+            for child in &cg.node(node).children {
+                visit(cg, *child, out);
+            }
+        }
+
+        let mut targets = HashSet::new();
+        visit(self, expression, &mut targets);
+        let mut targets = targets.into_iter().collect::<Vec<_>>();
+        targets.sort_by_key(|target| target.index());
+        if targets.is_empty() {
+            return Ok(None);
+        }
+
+        let sources = targets
+            .iter()
+            .map(|target| {
+                self.capture_source(*target).ok_or_else(|| {
+                    format!(
+                        "automatic declaration `{}` was not collected before event capture",
+                        self.node(*target).name
+                    )
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let frame = self.new_frame_id()?;
+        let captures = sources
+            .into_iter()
+            .zip(targets)
+            .filter_map(|(source, target)| {
+                // Inlined const-ref formals can be substituted directly with
+                // their signal/array actual. Such references already have a
+                // stable dependency and must not manufacture a frame whose
+                // initializer would be rendered outside the caller's formal
+                // context. Only lexical C locals need a copied evaluator slot.
+                let IrExprKind::LocalRead(local) = source.initial.kind() else {
+                    return None;
+                };
+                Some((
+                    self.declaration_identity(target),
+                    local.clone(),
+                    source.lifetime,
+                    super::storage_kind(source.info.width),
+                    source.initial,
+                ))
+            })
+            .enumerate()
+            .map(|(slot, (declaration, local, lifetime, kind, initial))| {
+                Ok(IrEventCapture::new(
+                    StorageRef::for_declaration(
+                        frame,
+                        slot as u32,
+                        declaration?,
+                        lifetime,
+                        StorageOwnership::Owned,
+                    )
+                    .with_kind(kind),
+                    local,
+                    initial,
+                ))
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+        if captures.is_empty() {
+            return Ok(None);
+        }
+        Ok(Some(IrEventContext::new(frame, captures)))
     }
 
     /// Walk the instance tree, collecting signals, parameters and gen-scope
@@ -230,6 +433,16 @@ impl<'a> Codegen<'a> {
             self.collect_funcs(*top, &path)?;
             tops.push(*top);
         }
+        // Packages have one shared static environment. Collect them
+        // separately so package state is not duplicated per module user.
+        for package in self.db.packages() {
+            let path = strip_lib(&self.node(*package).name);
+            if path.is_empty() {
+                return Err("package has no name".to_string());
+            }
+            self.collect_instance(*package, &path)?;
+            self.collect_funcs(*package, &path)?;
+        }
         Ok(tops)
     }
 
@@ -237,6 +450,13 @@ impl<'a> Codegen<'a> {
         let Some(layout) = self.db.aggregate_layout(node).cloned() else {
             return Ok(false);
         };
+        // A declaration can be reached through both its instance child list
+        // and a reference-port connection.  Its leaf storage is owned by the
+        // declaration, so collection must be idempotent before allocating
+        // recursive object/signal leaves.
+        if self.unpacked_aggregates.contains_key(&node) {
+            return Ok(true);
+        }
         match layout.kind {
             AggregateKind::PackedStruct => return Ok(false),
             AggregateKind::PackedUnion => {
@@ -257,7 +477,31 @@ impl<'a> Codegen<'a> {
             }
             AggregateKind::UnpackedStruct | AggregateKind::UnpackedUnion => {}
         }
-        if !matches!(self.kind(node), NodeKind::Var { .. }) {
+        let object_name = self.node(node).name.clone();
+        if let Some(aggregate) = self
+            .unpacked_aggregates
+            .iter()
+            .find(|(existing, _)| {
+                self.node(**existing).name == object_name
+                    && self.instance_path_of(**existing) == path
+            })
+            .map(|(_, aggregate)| aggregate.clone())
+        {
+            // Slang can expose the same ref-port aggregate declaration through
+            // more than one child node.  The instance path plus declaration
+            // name identifies one storage owner; reuse its descriptor rather
+            // than allocating duplicate recursive leaves.
+            self.unpacked_aggregates.insert(node, aggregate);
+            return Ok(true);
+        }
+        let is_ref_port = matches!(
+            self.kind(node),
+            NodeKind::Port {
+                direction: DbDirection::Ref,
+                ..
+            }
+        );
+        if !matches!(self.kind(node), NodeKind::Var { .. }) && !is_ref_port {
             if matches!(
                 self.kind(node),
                 NodeKind::Net { .. }
@@ -279,8 +523,9 @@ impl<'a> Codegen<'a> {
         if self.db.nodes().iter().any(|candidate| {
             matches!(
                 &candidate.kind,
-                NodeKind::Port { high, low, .. }
-                    if *high == Some(node) || *low == Some(node)
+                NodeKind::Port { direction, high, low, .. }
+                    if *direction != DbDirection::Ref
+                        && (*high == Some(node) || *low == Some(node))
             )
         }) {
             return Err(format!(
@@ -288,93 +533,74 @@ impl<'a> Codegen<'a> {
                 self.node(node).name
             ));
         }
-        let object_name = self.node(node).name.clone();
         let is_union = layout.kind == AggregateKind::UnpackedUnion;
-        let first_width = layout.members.first().and_then(|member| member.ty.width);
-        if is_union
-            && (first_width.is_none()
-                || layout
-                    .members
-                    .iter()
-                    .any(|member| member.ty.width != first_width))
-        {
-            return Err(format!(
-                "unpacked union `{object_name}` in `{path}` requires equal-width packed-integral members in this implementation"
-            ));
-        }
-        for member in &layout.members {
-            if member.ty.width.is_none()
-                || !matches!(
-                    member.ty.kind.as_str(),
-                    "int"
-                        | "integer"
-                        | "time"
-                        | "longint"
-                        | "byte"
-                        | "shortint"
-                        | "logic"
-                        | "reg"
-                        | "bit"
-                        | "enum"
-                        | "array"
-                )
+        // An untagged union has one storage extent, not one storage slot per
+        // display member.  Legal unequal-width members therefore share a
+        // slot sized to the largest packed member; reads/writes apply the
+        // selected member's own width and signedness at the boundary.
+        let union_signal = if is_union {
+            if layout
+                .members
+                .iter()
+                .any(|member| !matches!(member.descriptor.shape, TypeShape::PackedAtom { .. }))
             {
                 return Err(format!(
-                    "unpacked aggregate member `{}.{}` in `{path}` is not a fixed-width packed-integral value (type `{}`)",
-                    object_name, member.name, member.ty.kind
+                    "unpacked union `{object_name}` in `{path}` requires fixed packed value members"
                 ));
             }
-        }
-
-        let storage_two_state = layout.members.iter().all(|member| member.two_state);
-        let first_member_two_state = layout
-            .members
-            .first()
-            .is_some_and(|member| member.two_state);
-        let union_signal = if is_union {
+            let width = layout
+                .members
+                .iter()
+                .filter_map(|member| member.descriptor.fixed_size_bits())
+                .max()
+                .and_then(|width| u32::try_from(width).ok())
+                .ok_or_else(|| {
+                    format!(
+                        "unpacked union `{object_name}` in `{path}` has an unresolved member width"
+                    )
+                })?;
+            let storage_two_state = layout.members.iter().all(|member| member.two_state);
             Some(self.collect_aggregate_member_signal(
                 path,
                 node,
                 &object_name,
-                None,
-                (first_width.unwrap_or_default(), false, storage_two_state),
+                &object_name,
+                (width, false, storage_two_state),
             )?)
         } else {
             None
         };
-        let mut members = Vec::with_capacity(layout.members.len());
-        for member in layout.members {
-            let signal = match &union_signal {
-                Some(signal) => signal.clone(),
-                None => self.collect_aggregate_member_signal(
-                    path,
-                    node,
-                    &object_name,
-                    Some(&member.name),
-                    (
-                        member.ty.width.unwrap_or_default(),
-                        member.ty.signed,
-                        member.two_state,
-                    ),
-                )?,
-            };
-            members.push(AggregateMemberInfo { member, signal });
+        let mut leaves = Vec::new();
+        for member in &layout.members {
+            self.collect_aggregate_descriptor_leaves(
+                path,
+                node,
+                &object_name,
+                member,
+                &member.descriptor,
+                &[AggregatePathPart::Member(member.name.clone())],
+                union_signal.as_ref(),
+                &mut leaves,
+            )?;
         }
-        if is_union && !storage_two_state && first_member_two_state {
-            let signal = union_signal.as_ref().ok_or_else(|| {
-                format!("unpacked union `{object_name}` in `{path}` has no storage")
-            })?;
-            let limbs = (signal.width as usize).div_ceil(64);
-            let zero = IrConst::packed(
-                vec![0; limbs],
-                vec![0; limbs],
-                vec![0; limbs],
-                signal.width,
-                false,
-                None,
-            )
-            .map_err(|error| error.to_string())?;
-            self.var_inits.push((signal.clone(), zero));
+        if leaves.is_empty() {
+            return Err(format!(
+                "unpacked aggregate `{object_name}` in `{path}` has no supported value leaves"
+            ));
+        }
+        let mut members = Vec::with_capacity(layout.members.len());
+        for member in &layout.members {
+            let path_part = AggregatePathPart::Member(member.name.clone());
+            let storage = leaves
+                .iter()
+                .find(|leaf| leaf.path.as_slice() == [path_part.clone()])
+                .cloned();
+            members.push(storage.unwrap_or_else(|| AggregateMemberInfo {
+                member: member.clone(),
+                signal: None,
+                object: None,
+                path: vec![path_part],
+            }));
         }
         self.unpacked_aggregates.insert(
             node,
@@ -382,9 +608,211 @@ impl<'a> Codegen<'a> {
                 kind: layout.kind,
                 type_identity: layout.type_identity,
                 members,
+                leaves,
             },
         );
         Ok(true)
+    }
+
+    /// Recursively lower a fixed non-class descriptor to owned leaf storage.
+    /// This is an emission detail only; compatibility and copy policy remain
+    /// governed by the recursive descriptor captured in `core::db`.
+    fn collect_aggregate_descriptor_leaves(
+        &mut self,
+        path: &str,
+        object: NodeId,
+        object_name: &str,
+        member: &AggregateMember,
+        descriptor: &TypeDescriptor,
+        member_path: &[AggregatePathPart],
+        shared: Option<&SignalInfo>,
+        leaves: &mut Vec<AggregateMemberInfo>,
+    ) -> Result<(), String> {
+        match &descriptor.shape {
+            TypeShape::PackedAtom { .. } => {
+                let signal = match shared {
+                    Some(signal) => signal.clone(),
+                    None => self.collect_aggregate_member_signal(
+                        path,
+                        object,
+                        object_name,
+                        &aggregate_path_suffix(member_path),
+                        (
+                            descriptor.info.width.unwrap_or_default(),
+                            descriptor.info.signed,
+                            member.two_state,
+                        ),
+                    )?,
+                };
+                if signal.width == 0 {
+                    return Err(format!(
+                        "unpacked aggregate member `{}.{}` in `{path}` has zero width",
+                        object_name,
+                        aggregate_path_suffix(member_path)
+                    ));
+                }
+                leaves.push(AggregateMemberInfo {
+                    member: leaf_member(member, descriptor),
+                    signal: Some(signal),
+                    object: None,
+                    path: member_path.to_vec(),
+                });
+            }
+            TypeShape::Real { shortreal } => {
+                if shared.is_some() {
+                    return Err(format!(
+                        "real member in unpacked union `{object_name}` in `{path}` is not a packed overlay"
+                    ));
+                }
+                let signal = self.collect_aggregate_member_signal(
+                    path,
+                    object,
+                    object_name,
+                    &aggregate_path_suffix(member_path),
+                    (0, false, member.two_state),
+                )?;
+                let ir = signal.ir;
+                self.model.signals[ir].ty = crate::sim::ir::IrType::Real {
+                    shortreal: *shortreal,
+                };
+                self.signals[ir].real = true;
+                self.signals[ir].shortreal = *shortreal;
+                leaves.push(AggregateMemberInfo {
+                    member: leaf_member(member, descriptor),
+                    signal: Some(signal),
+                    object: None,
+                    path: member_path.to_vec(),
+                });
+            }
+            TypeShape::String => {
+                if shared.is_some() {
+                    return Err(format!(
+                        "string member in unpacked union `{object_name}` in `{path}` is not a packed overlay"
+                    ));
+                }
+                let key = aggregate_path_key(member_path);
+                let index = self.model.objects.len();
+                self.model.objects.push(crate::sim::ir::IrObject {
+                    c_name: format!(
+                        "O_{}_{}_{}",
+                        ident(path),
+                        ident(object_name),
+                        ident(&aggregate_path_suffix(member_path))
+                    ),
+                    ty: crate::sim::ir::IrObjectType::String,
+                    initial: None,
+                });
+                self.aggregate_objects.insert((object, key), index);
+                leaves.push(AggregateMemberInfo {
+                    member: leaf_member(member, descriptor),
+                    signal: None,
+                    object: Some(index),
+                    path: member_path.to_vec(),
+                });
+            }
+            TypeShape::Aggregate(layout) => {
+                for nested in &layout.members {
+                    let mut nested_path = member_path.to_vec();
+                    nested_path.push(AggregatePathPart::Member(nested.name.clone()));
+                    self.collect_aggregate_descriptor_leaves(
+                        path,
+                        object,
+                        object_name,
+                        nested,
+                        &nested.descriptor,
+                        &nested_path,
+                        shared,
+                        leaves,
+                    )?;
+                }
+            }
+            TypeShape::FixedArray {
+                dimensions,
+                element,
+            } => {
+                let Some((left, right)) = dimensions.first().copied() else {
+                    return Err(format!(
+                        "fixed array member `{}.{}` in `{path}` has no captured bounds",
+                        object_name,
+                        aggregate_path_suffix(member_path)
+                    ));
+                };
+                let rest = if dimensions.len() == 1 {
+                    None
+                } else {
+                    Some(TypeDescriptor {
+                        id: descriptor.id,
+                        name: descriptor.name.clone(),
+                        info: descriptor.info.clone(),
+                        shape: TypeShape::FixedArray {
+                            dimensions: dimensions[1..].to_vec(),
+                            element: element.clone(),
+                        },
+                    })
+                };
+                let next = rest.as_ref().unwrap_or(element.as_ref());
+                let mut index = left;
+                loop {
+                    let mut element_path = member_path.to_vec();
+                    element_path.push(AggregatePathPart::Index(index));
+                    self.collect_aggregate_descriptor_leaves(
+                        path,
+                        object,
+                        object_name,
+                        member,
+                        next,
+                        &element_path,
+                        shared,
+                        leaves,
+                    )?;
+                    if index == right {
+                        break;
+                    }
+                    index = if left >= right {
+                        index.checked_sub(1)
+                    } else {
+                        index.checked_add(1)
+                    }
+                    .ok_or_else(|| {
+                        format!("fixed array bounds overflow in `{object_name}` in `{path}`")
+                    })?;
+                }
+            }
+            TypeShape::Opaque { kind } if kind == "Chandle" => {
+                if shared.is_some() {
+                    return Err(format!(
+                        "chandle member in unpacked union `{object_name}` in `{path}` is not a packed overlay"
+                    ));
+                }
+                let key = aggregate_path_key(member_path);
+                let index = self.model.objects.len();
+                self.model.objects.push(crate::sim::ir::IrObject {
+                    c_name: format!(
+                        "O_{}_{}_{}",
+                        ident(path),
+                        ident(object_name),
+                        ident(&aggregate_path_suffix(member_path))
+                    ),
+                    ty: crate::sim::ir::IrObjectType::Chandle,
+                    initial: None,
+                });
+                self.aggregate_objects.insert((object, key), index);
+                leaves.push(AggregateMemberInfo {
+                    member: leaf_member(member, descriptor),
+                    signal: None,
+                    object: Some(index),
+                    path: member_path.to_vec(),
+                });
+            }
+            TypeShape::Container { kind, .. } | TypeShape::Opaque { kind } => {
+                return Err(format!(
+                    "unpacked aggregate member `{}.{}` has unsupported recursive storage type `{kind}` in `{path}`",
+                    object_name,
+                    aggregate_path_suffix(member_path)
+                ));
+            }
+        }
+        Ok(())
     }
 
     fn collect_aggregate_member_signal(
@@ -392,36 +820,31 @@ impl<'a> Codegen<'a> {
         path: &str,
         object: NodeId,
         object_name: &str,
-        member_name: Option<&str>,
+        member_name: &str,
         packed_type: (u32, bool, bool),
     ) -> Result<SignalInfo, String> {
         let (width, signed, two_state) = packed_type;
-        if width == 0 {
-            return Err(format!(
-                "unpacked aggregate storage `{object_name}` in `{path}` has zero or unresolved width"
-            ));
-        }
         if width > LLG_MAX_WIDTH {
             return Err(format!(
                 "unpacked aggregate storage `{object_name}` in `{path}` is {width} bits wide; the runtime maximum supported width is {LLG_MAX_WIDTH}"
             ));
         }
-        let storage_name = member_name
-            .map(|member| format!("{object_name}__{member}"))
-            .unwrap_or_else(|| object_name.to_string());
-        let global = global_name(path, &storage_name);
+        let storage_name = format!("{object_name}__{member_name}");
+        let global = if width == 0 {
+            real_global_name(path, &storage_name)
+        } else {
+            global_name(path, &storage_name)
+        };
         let mut hdl_name = self.waveform_name(object);
-        if let Some(member) = member_name {
-            hdl_name.push('\u{1f}');
-            hdl_name.push_str(member);
-        }
+        hdl_name.push('\u{1f}');
+        hdl_name.push_str(member_name);
         let ir = self.model.signals.len();
         let info = SignalInfo {
             global: global.clone(),
             width,
             signed,
             two_state,
-            real: false,
+            real: width == 0,
             shortreal: false,
             net_driver: None,
             ir,
@@ -429,10 +852,14 @@ impl<'a> Codegen<'a> {
         self.model.signals.push(IrSignal {
             c_name: global,
             hdl_name: Some(hdl_name),
-            ty: IrType::Packed {
-                width,
-                signed,
-                two_state,
+            ty: if width == 0 {
+                IrType::Real { shortreal: false }
+            } else {
+                IrType::Packed {
+                    width,
+                    signed,
+                    two_state,
+                }
             },
             net_driver: None,
             alias: None,
@@ -443,18 +870,6 @@ impl<'a> Codegen<'a> {
     }
 
     fn collect_instance(&mut self, inst: NodeId, path: &str) -> Result<(), String> {
-        for child in &self.node(inst).children {
-            if let NodeKind::Port { high, low, .. } = self.kind(*child) {
-                for side in [high, low].into_iter().flatten() {
-                    if self.signal_node_is_real(*side) {
-                        return Err(format!(
-                            "real/shortreal ports are not supported in `{path}` (port `{}`)",
-                            self.node(*child).name
-                        ));
-                    }
-                }
-            }
-        }
         let mut seen: HashSet<String> = HashSet::new();
         for c in &self.node(inst).children {
             let nid = *c;
@@ -541,20 +956,7 @@ impl<'a> Codegen<'a> {
                     }
                 }
                 NodeKind::NamedEvent => {
-                    let name = self.node(nid).name.clone();
-                    if name.is_empty() || !seen.insert(name.clone()) {
-                        continue;
-                    }
-                    let ir = self.model.events.len();
-                    let info = EventInfo {
-                        global: event_global_name(path, &name),
-                        ir,
-                    };
-                    self.model.events.push(IrEvent {
-                        c_name: info.global.clone(),
-                    });
-                    self.events.push(info.clone());
-                    self.event_globals.insert(nid, info);
+                    self.collect_named_event(path, nid, &mut seen)?;
                 }
                 // A declaration initializer on an `array_net` (`reg [7:0] m
                 // [0:3] = '{…}` — represented as a
@@ -587,14 +989,10 @@ impl<'a> Codegen<'a> {
                     } else if self.collect_aggregate_cont_assign_init(path, nid)? {
                         self.scalar_init_ca.insert(nid);
                     } else if matches!(self.net_decl_target(nid), NetDeclTarget::Variable) {
-                        let (info, c) = self.scalar_decl_init(path, nid)?.ok_or_else(|| {
-                            format!(
-                                "variable declaration initializer is not a constant expression \
-                                 in `{path}`"
-                            )
-                        })?;
-                        self.scalar_inits.push((info, c));
-                        self.scalar_init_ca.insert(nid);
+                        // Scalar declaration assignments are lowered after
+                        // the complete scope has allocated its signals and
+                        // parameters, so runtime RHS references can resolve
+                        // regardless of declaration order.
                     }
                 }
                 _ => {}
@@ -605,6 +1003,16 @@ impl<'a> Codegen<'a> {
         // instance's `P` through `param_vals` (params are walked after vars,
         // see `walk_module_inst`).
         self.collect_var_inits(path, inst)?;
+        for child in &self.node(inst).children {
+            if matches!(
+                self.kind(*child),
+                NodeKind::ContAssign { net_decl: true, .. }
+            ) && matches!(self.net_decl_target(*child), NetDeclTarget::Variable)
+                && !self.scalar_init_ca.contains(child)
+            {
+                self.collect_scalar_decl_init(path, *child)?;
+            }
+        }
         for c in &self.node(inst).children {
             match self.kind(*c) {
                 NodeKind::GenScopeArray => self.collect_gen_scope_array(*c, path)?,
@@ -633,6 +1041,7 @@ impl<'a> Codegen<'a> {
     /// collected as signals (function/block locals) carry no
     /// fill; their initializers are handled by their own paths.
     fn collect_var_inits(&mut self, path: &str, inst: NodeId) -> Result<(), String> {
+        self.inst = inst;
         for c in &self.node(inst).children {
             if !matches!(self.kind(*c), NodeKind::Var { .. }) {
                 continue;
@@ -664,8 +1073,23 @@ impl<'a> Codegen<'a> {
                 }
             }
             let name = self.node(*c).name.clone();
-            let cconst = self.var_decl_init(path, &name, init)?;
-            self.var_inits.push((info, cconst));
+            let initializer = self.lower_declaration_initializer(
+                path,
+                *c,
+                init,
+                IrInitTarget::Signal(info.ir),
+                info.width,
+                info.signed,
+                info.two_state,
+                info.real,
+            );
+            match initializer {
+                Ok(initializer) => self.declaration_inits.push(initializer),
+                Err(lowering_error) => match self.var_decl_init(path, &name, init) {
+                    Ok(cconst) => self.var_inits.push((info, cconst)),
+                    Err(_) => return Err(lowering_error),
+                },
+            }
         }
         Ok(())
     }
@@ -700,24 +1124,101 @@ impl<'a> Codegen<'a> {
                 self.node(object).name
             )
         })?;
-        let values = self.aggregate_pattern_values(path, init, layout)?;
-        for (member_index, value_node) in values {
-            let member = aggregate.members.get(member_index).ok_or_else(|| {
-                format!("aggregate initializer member index {member_index} is out of bounds")
+        let mut values = Vec::new();
+        self.aggregate_pattern_leaf_values(path, init, layout, &[], &mut values)?;
+        for (member_path, value_node) in values {
+            let member = aggregate
+                .leaves
+                .iter()
+                .find(|leaf| leaf.path == member_path)
+                .ok_or_else(|| {
+                    format!(
+                        "aggregate initializer path `{}` has no storage in `{path}`",
+                        aggregate_path_suffix(&member_path)
+                    )
+                })?;
+            if let Some(index) = member.object {
+                match self.model.objects[index].ty {
+                    crate::sim::ir::IrObjectType::String => {
+                        self.model.objects[index].initial = Some(self.lower_string(path, value_node)?);
+                    }
+                    crate::sim::ir::IrObjectType::Chandle => {
+                        if self.lower_chandle(path, value_node)? != IrChandleExpr::Null {
+                            return Err(format!(
+                                "chandle aggregate initializer `{}` must be null",
+                                aggregate_path_suffix(&member_path)
+                            ));
+                        }
+                    }
+                }
+                continue;
+            }
+            let signal = member.signal.as_ref().ok_or_else(|| {
+                format!(
+                    "aggregate initializer path `{}` has no scalar storage in `{path}`",
+                    aggregate_path_suffix(&member_path)
+                )
             })?;
+            if signal.real {
+                let value = match self.eval_decl_value(value_node) {
+                    Ok(value) => value,
+                    Err(_) => {
+                        let initializer = self.lower_declaration_initializer(
+                            path,
+                            object,
+                            value_node,
+                            IrInitTarget::Signal(signal.ir),
+                            signal.width,
+                            signal.signed,
+                            signal.two_state,
+                            true,
+                        )?;
+                        self.declaration_inits.push(initializer);
+                        continue;
+                    }
+                };
+                let value = match value {
+                    Val::Real(value) => Val::Real(value),
+                    Val::Bits(value) => Val::Real(
+                        elab::ieee_bits_to_real(&value)
+                            .ok_or_else(|| "real aggregate initializer is not an IEEE value".to_owned())?,
+                    ),
+                    Val::Str(_) => {
+                        return Err(format!(
+                            "string value cannot initialize real aggregate member `{}` in `{path}`",
+                            aggregate_path_suffix(&member_path)
+                        ))
+                    }
+                };
+                self.var_inits.push((signal.clone(), decl_value_to_const(value)?));
+                continue;
+            }
             let width = member.member.ty.width.ok_or_else(|| {
                 format!(
                     "unpacked member `{}` has unresolved width in `{path}`",
-                    member.member.name
+                    aggregate_path_suffix(&member_path)
                 )
             })?;
-            let value =
-                self.aggregate_member_decl_value(path, value_node, &member.member, width)?;
-            let value = value.cast(member.signal.width as usize, member.signal.signed);
-            self.var_inits.push((
-                member.signal.clone(),
-                decl_value_to_const(Val::Bits(value))?,
-            ));
+            match self.aggregate_member_decl_value(path, value_node, &member.member, width) {
+                Ok(value) => {
+                    let value = value.cast(signal.width as usize, signal.signed);
+                    self.var_inits
+                        .push((signal.clone(), decl_value_to_const(Val::Bits(value))?));
+                }
+                Err(_) => {
+                    let initializer = self.lower_declaration_initializer(
+                        path,
+                        object,
+                        value_node,
+                        IrInitTarget::Signal(signal.ir),
+                        signal.width,
+                        signal.signed,
+                        signal.two_state,
+                        false,
+                    )?;
+                    self.declaration_inits.push(initializer);
+                }
+            }
         }
         Ok(())
     }
@@ -830,6 +1331,7 @@ impl<'a> Codegen<'a> {
             op,
             operands,
             reordered,
+            ..
         }) = self.kind(init)
         else {
             return Err(format!(
@@ -896,7 +1398,7 @@ impl<'a> Codegen<'a> {
         }
 
         let mut explicit = vec![None; layout.members.len()];
-        let mut type_values: Vec<(String, Option<AssignmentPatternKeyType>, NodeId)> = Vec::new();
+        let mut type_values: Vec<(String, AssignmentPatternKeyType, NodeId)> = Vec::new();
         let mut default = None;
         for operand in operands {
             let NodeKind::Expr(ExprKind::TaggedPattern {
@@ -929,31 +1431,29 @@ impl<'a> Codegen<'a> {
                 }
                 continue;
             }
+            let Some(key_type) = key_type else {
+                return Err(format!(
+                    "aggregate assignment pattern key `{key}` has no matching member or type in `{path}`"
+                ));
+            };
             if !layout
                 .members
                 .iter()
-                .any(|member| aggregate_member_matches_type_key(member, key, key_type.as_ref()))
+                .any(|member| aggregate_member_matches_type_key(member, key, Some(&key_type)))
             {
                 return Err(format!(
                     "aggregate assignment pattern key `{key}` has no matching member or type in `{path}`"
                 ));
             }
-            type_values.push((key.to_owned(), key_type.clone(), value));
-        }
-
-        for (index, member) in layout.members.iter().enumerate() {
-            if member.aggregate.is_some()
-                && explicit[index].is_none()
-                && (default.is_some()
-                    || type_values.iter().any(|(key, key_type, _)| {
-                        aggregate_member_matches_type_key(member, key, key_type.as_ref())
-                    }))
+            if type_values
+                .iter()
+                .any(|(_, previous, _)| pattern_key_types_equal(previous, key_type))
             {
                 return Err(format!(
-                    "recursive default/type-key assignment into aggregate member `{}` in `{path}` is not supported",
-                    member.name
+                    "duplicate aggregate type key `{key}` in `{path}`"
                 ));
             }
+            type_values.push((key.to_owned(), key_type.clone(), value));
         }
 
         let resolved = layout
@@ -964,7 +1464,7 @@ impl<'a> Codegen<'a> {
                 explicit[index]
                     .or_else(|| {
                         type_values.iter().rev().find_map(|(key, key_type, value)| {
-                            aggregate_member_matches_type_key(member, key, key_type.as_ref())
+                            aggregate_member_matches_type_key(member, key, Some(key_type))
                                 .then_some(*value)
                         })
                     })
@@ -1176,20 +1676,7 @@ impl<'a> Codegen<'a> {
                     }
                 }
                 NodeKind::NamedEvent => {
-                    let name = self.node(nid).name.clone();
-                    if name.is_empty() || !gseen.insert(name.clone()) {
-                        continue;
-                    }
-                    let ir = self.model.events.len();
-                    let info = EventInfo {
-                        global: event_global_name(&gs_path, &name),
-                        ir,
-                    };
-                    self.model.events.push(IrEvent {
-                        c_name: info.global.clone(),
-                    });
-                    self.events.push(info.clone());
-                    self.event_globals.insert(nid, info);
+                    self.collect_named_event(&gs_path, nid, &mut gseen)?;
                 }
                 NodeKind::ContAssign { net_decl: true, .. } => {
                     if let Some((arr, vals)) = self.cont_assign_array_init(&gs_path, nid)? {
@@ -1213,14 +1700,9 @@ impl<'a> Codegen<'a> {
                     } else if self.collect_aggregate_cont_assign_init(&gs_path, nid)? {
                         self.scalar_init_ca.insert(nid);
                     } else if matches!(self.net_decl_target(nid), NetDeclTarget::Variable) {
-                        let (info, c) = self.scalar_decl_init(&gs_path, nid)?.ok_or_else(|| {
-                            format!(
-                                "variable declaration initializer is not a constant expression \
-                                 in `{gs_path}`"
-                            )
-                        })?;
-                        self.scalar_inits.push((info, c));
-                        self.scalar_init_ca.insert(nid);
+                        // See the module-instance path above: defer scalar
+                        // declaration assignments until this scope's
+                        // storage and parameters are complete.
                     }
                 }
                 _ => {}
@@ -1229,6 +1711,16 @@ impl<'a> Codegen<'a> {
         // Variable declaration initializers, folded after the scope's own
         // parameters are collected (see `collect_var_inits`).
         self.collect_var_inits(&gs_path, gs)?;
+        for child in &self.node(gs).children {
+            if matches!(
+                self.kind(*child),
+                NodeKind::ContAssign { net_decl: true, .. }
+            ) && matches!(self.net_decl_target(*child), NetDeclTarget::Variable)
+                && !self.scalar_init_ca.contains(child)
+            {
+                self.collect_scalar_decl_init(&gs_path, *child)?;
+            }
+        }
         for child in self.node(gs).children.clone() {
             match self.kind(child) {
                 NodeKind::GenScope => self.collect_gen_scope(child, &gs_path)?,
@@ -1259,25 +1751,10 @@ impl<'a> Codegen<'a> {
     /// `llg_net_t`'s `resolved` cell and tagged with its driver slot, so
     /// reads/writes/sensitivity all use the resolution cell automatically.
     /// Groups with anything the runtime cannot resolve (non-net members,
-    /// mixed widths, unsupported net types, select-LHS/NBA/task-actual
-    /// writes) are skipped with an explicit warning — never silently.
+    /// mixed widths, unsupported net types, dynamic/NBA/task-actual writes)
+    /// reject code generation rather than disconnecting the net group.
     pub(super) fn build_net_groups(&mut self) -> Result<(), String> {
         let nodes = self.design_nodes();
-        if let Some(array) = nodes.iter().find(|id| {
-            matches!(
-                self.kind(**id),
-                NodeKind::Gate {
-                    class: PrimClass::Array,
-                    ..
-                }
-            )
-        }) {
-            return Err(format!(
-                "primitive array `{}` is not supported",
-                self.display_name(*array)
-            ));
-        }
-        self.build_wired_net_groups(&nodes)?;
         // Union-find over the parent/child nets of every inout port.
         let mut parent: HashMap<NodeId, NodeId> = HashMap::new();
         let mut rank: HashMap<NodeId, u8> = HashMap::new();
@@ -1290,6 +1767,32 @@ impl<'a> Codegen<'a> {
                 ..
             } = self.kind(*id)
             {
+                if let NodeKind::Port {
+                    high_expr: Some(actual),
+                    ..
+                } = self.kind(*id)
+                {
+                    let whole_actual = *actual == *h
+                        || matches!(
+                            self.kind(*actual),
+                            NodeKind::Expr(ExprKind::Ref {
+                                target: Some(target)
+                            }) if *target == *h
+                        )
+                        || self
+                            .hier_path_signal(*actual)
+                            .zip(self.signal_of(*h))
+                            .is_some_and(|(actual, target)| actual.ir == target.ir);
+                    if !whole_actual {
+                        return Err(format!(
+                            "inout port `{}` has a selected or concatenated actual that cannot be resolved safely at {}:{}:{}",
+                            self.node(*id).name,
+                            self.node(*id).file.as_deref().unwrap_or("<unknown>"),
+                            self.node(*id).line,
+                            self.node(*id).col,
+                        ));
+                    }
+                }
                 inout_ports.push(*id);
                 union(&mut parent, &mut rank, *h, *l);
             } else if let NodeKind::Port {
@@ -1308,14 +1811,12 @@ impl<'a> Codegen<'a> {
                 ..
             } = self.kind(*id)
             {
-                self.warnings.push(format!(
-                    "inout port `{}` of `{}`: child-side connection not \
-                     resolved; port connection skipped",
+                return Err(format!(
+                    "inout port `{}` has no child-side connection at {}:{}:{}",
                     self.node(*id).name,
-                    self.node(*id)
-                        .parent
-                        .map(|p| self.node(p).name.clone())
-                        .unwrap_or_default()
+                    self.node(*id).file.as_deref().unwrap_or("<unknown>"),
+                    self.node(*id).line,
+                    self.node(*id).col,
                 ));
             }
         }
@@ -1359,12 +1860,13 @@ impl<'a> Codegen<'a> {
                 .iter()
                 .find(|m| !matches!(self.kind(**m), NodeKind::Net { .. }))
             {
-                self.warnings.push(format!(
-                    "{joined}: member `{}` is not a net; group skipped (inout \
-                     connection dropped)",
-                    self.display_name(*bad)
+                return Err(format!(
+                    "{joined}: member `{}` is not a net at {}:{}:{}",
+                    self.display_name(*bad),
+                    self.node(*bad).file.as_deref().unwrap_or("<unknown>"),
+                    self.node(*bad).line,
+                    self.node(*bad).col,
                 ));
-                continue;
             }
             // 2. Widths must agree across the collapsed net.
             let first_ty = match self.kind(members[0]) {
@@ -1376,52 +1878,63 @@ impl<'a> Codegen<'a> {
                 NodeKind::Net { ty, .. } => ty.width.unwrap_or(1) != width,
                 _ => true,
             }) {
-                self.warnings.push(format!(
-                    "{joined}: member `{}` has a different width than `{}`; \
-                     group skipped (inout connection dropped)",
+                return Err(format!(
+                    "{joined}: member `{}` has a different width than `{}` at {}:{}:{}",
                     self.display_name(*bad),
+                    self.display_name(members[0]),
+                    self.node(*bad).file.as_deref().unwrap_or("<unknown>"),
+                    self.node(*bad).line,
+                    self.node(*bad).col,
+                ));
+            }
+            // 3. Every member contributes to one resolution family. Net and
+            // tri spellings share wire resolution, while wired and biased
+            // spellings retain their own canonical resolver.
+            let kind = match self.kind(members[0]) {
+                NodeKind::Net { net_type, .. } => Self::ir_net_kind(*net_type),
+                _ => None,
+            };
+            let Some(kind) = kind else {
+                return Err(format!(
+                    "{joined}: member `{}` has unsupported net type for an executable inout \
+                     connection",
                     self.display_name(members[0])
                 ));
-                continue;
-            }
-            // 3. Only wire/tri/logic nets support the equal-strength
-            //    resolution the runtime implements (Table 6-2).
-            if let Some(bad) = members.iter().find(|m| match self.kind(**m) {
-                NodeKind::Net { net_type, .. } => {
-                    !matches!(*net_type, NetType::Wire | NetType::Tri | NetType::Logic)
+            };
+            if let Some(bad) = members.iter().skip(1).find(|member| {
+                match self.kind(**member) {
+                    NodeKind::Net { net_type, .. } => Self::ir_net_kind(*net_type) != Some(kind),
+                    _ => true,
                 }
-                _ => true,
             }) {
-                let net_type = match self.kind(*bad) {
-                    NodeKind::Net { net_type, .. } => *net_type,
-                    _ => NetType::None,
-                };
-                self.warnings.push(format!(
-                    "{joined}: member `{}` has unsupported net type {net_type:?} \
-                     (only wire/tri/logic nets resolve); group skipped (inout \
-                     connection dropped)",
-                    self.display_name(*bad)
+                return Err(format!(
+                    "{joined}: member `{}` has an incompatible net type at {}:{}:{}",
+                    self.display_name(*bad),
+                    self.node(*bad).file.as_deref().unwrap_or("<unknown>"),
+                    self.node(*bad).line,
+                    self.node(*bad).col,
                 ));
-                continue;
             }
             // 4. The runtime struct has a fixed driver-slot array.
             if members.len() > LLG_MAX_NET_DRIVERS {
-                self.warnings.push(format!(
-                    "{joined}: {}-member group exceeds the {LLG_MAX_NET_DRIVERS} \
-                     driver-slot limit; group skipped (inout connection dropped)",
-                    members.len()
+                return Err(format!(
+                    "{joined}: {}-member group exceeds the {LLG_MAX_NET_DRIVERS} driver-slot limit at {}:{}:{}",
+                    members.len(),
+                    self.node(members[0]).file.as_deref().unwrap_or("<unknown>"),
+                    self.node(members[0]).line,
+                    self.node(members[0]).col,
                 ));
-                continue;
             }
             // 5. Only whole-signal drivers may touch a member: select LHS,
             //    NBA writes and task `sv4_t*` actuals would bypass the
             //    resolution cell.
             if let Some(reason) = self.unsupported_member_write(members) {
-                self.warnings.push(format!(
-                    "{joined}: {reason}; group skipped (inout connection \
-                     dropped)"
+                return Err(format!(
+                    "{joined}: {reason} at {}:{}:{}",
+                    self.node(members[0]).file.as_deref().unwrap_or("<unknown>"),
+                    self.node(members[0]).line,
+                    self.node(members[0]).col,
                 ));
-                continue;
             }
 
             // Group is valid: assign one driver slot per member (NodeId
@@ -1471,10 +1984,33 @@ impl<'a> Codegen<'a> {
                 c_name: name.clone(),
                 width,
                 signed: first_ty.signed,
-                kind: crate::sim::ir::IrNetKind::Wire,
+                kind,
                 n_drivers: members.len(),
                 driver_strengths: vec![(6, 6); members.len()],
             });
+            for member in members {
+                let Some(signal) = self.sig_globals.get(member).map(|info| info.ir) else {
+                    continue;
+                };
+                let id = self.record_structural_driver(
+                    gidx,
+                    *member,
+                    signal,
+                    StructuralDriverKind::Declaration,
+                    Some(*member),
+                    (6, 6),
+                    None,
+                    0,
+                )?;
+                self.structural_driver_sites.insert((*member, gidx), id);
+            }
+            let sources = self.structural_site_sources(members)?;
+            for (source, strengths) in sources {
+                let signal = self.add_structural_driver(gidx, source, strengths)?;
+                if matches!(self.kind(source), NodeKind::ContAssign { .. }) {
+                    self.wired_driver_sites.insert(source, signal);
+                }
+            }
         }
 
         // Declaration initializers on grouped members (`wire bus = 8'hzz;`)
@@ -1491,7 +2027,264 @@ impl<'a> Codegen<'a> {
             }
         }
         self.scalar_inits = keep;
+        self.build_wired_net_groups(&nodes)?;
         Ok(())
+    }
+
+    fn add_structural_driver(
+        &mut self,
+        group: usize,
+        source: NodeId,
+        strengths: (u8, u8),
+    ) -> Result<usize, String> {
+        self.add_structural_driver_for_terminal(group, source, strengths, 0)
+    }
+
+    /// Add a canonical contribution slot for one primitive output terminal.
+    /// Terminal zero uses the original source/group identity; later outputs
+    /// get an independent slot when they share that resolved group.
+    fn add_structural_driver_for_terminal(
+        &mut self,
+        group: usize,
+        source: NodeId,
+        strengths: (u8, u8),
+        terminal: usize,
+    ) -> Result<usize, String> {
+        let existing = if terminal == 0 {
+            self.structural_driver_sites.get(&(source, group))
+        } else {
+            self.structural_driver_terminal_sites
+                .get(&(source, group, terminal))
+        };
+        if let Some(signal) = existing {
+            return self
+                .structural_drivers
+                .get(signal.0 as usize)
+                .map(|record| record.signal)
+                .ok_or_else(|| {
+                    format!(
+                        "structural driver {} has no recorded signal",
+                        signal.0
+                    )
+                });
+        }
+        let net = self
+            .model
+            .net_groups
+            .get_mut(group)
+            .ok_or_else(|| format!("structural driver references missing net group {group}"))?;
+        let slot = net.n_drivers;
+        if slot >= LLG_MAX_NET_DRIVERS {
+            return Err(format!(
+                "resolved net `{}` has too many structural drivers (limit {})",
+                net.c_name, LLG_MAX_NET_DRIVERS
+            ));
+        }
+        net.n_drivers += 1;
+        net.driver_strengths.push(strengths);
+        let c_name = net.c_name.clone();
+        let width = net.width;
+        let signed = net.signed;
+        let signal = self.model.signals.len();
+        self.model.signals.push(IrSignal {
+            c_name: format!("{c_name}.resolved"),
+            hdl_name: None,
+            ty: IrType::Packed {
+                width,
+                signed,
+                two_state: false,
+            },
+            net_driver: Some((group, slot)),
+            alias: None,
+            omit: false,
+        });
+        let (kind, declaration) = match self.kind(source) {
+            NodeKind::ContAssign { net_decl, .. } => (
+                if *net_decl {
+                    StructuralDriverKind::Declaration
+                } else {
+                    StructuralDriverKind::Continuous
+                },
+                (*net_decl).then_some(source),
+            ),
+            NodeKind::Gate { .. } => (StructuralDriverKind::Primitive, None),
+            NodeKind::Port { .. } => (StructuralDriverKind::Port, None),
+            _ => (StructuralDriverKind::Continuous, None),
+        };
+        let id = self.record_structural_driver(
+            group,
+            source,
+            signal,
+            kind,
+            declaration,
+            strengths,
+            None,
+            terminal,
+        )?;
+        if terminal == 0 {
+            self.structural_driver_sites.insert((source, group), id);
+        } else {
+            self.structural_driver_terminal_sites
+                .insert((source, group, terminal), id);
+        }
+        Ok(signal)
+    }
+
+    fn record_structural_driver(
+        &mut self,
+        group: usize,
+        source: NodeId,
+        signal: usize,
+        kind: StructuralDriverKind,
+        declaration: Option<NodeId>,
+        strengths: (u8, u8),
+        selected_mask: Option<Vec<u64>>,
+        terminal: usize,
+    ) -> Result<DriverId, String> {
+        let net_kind = self
+            .model
+            .net_groups
+            .get(group)
+            .ok_or_else(|| format!("structural driver references missing net group {group}"))?
+            .kind;
+        let id = DriverId(
+            u32::try_from(self.structural_drivers.len())
+                .map_err(|_| "structural driver id space exhausted".to_string())?,
+        );
+        self.structural_drivers.push(StructuralDriverRecord {
+            id,
+            source,
+            declaration,
+            hierarchy: self.display_name(source),
+            group,
+            signal,
+            kind,
+            net_kind,
+            strengths,
+            selected_mask,
+            terminal,
+        });
+        Ok(id)
+    }
+
+    fn structural_driver_signal(&self, source: NodeId, group: usize) -> Option<usize> {
+        self.structural_driver_sites
+            .get(&(source, group))
+            .and_then(|id| self.structural_drivers.get(id.0 as usize))
+            .map(|record| record.signal)
+    }
+
+    fn structural_driver_signal_for_terminal(
+        &self,
+        source: NodeId,
+        group: usize,
+        terminal: usize,
+    ) -> Option<usize> {
+        if terminal == 0 {
+            return self.structural_driver_signal(source, group);
+        }
+        self.structural_driver_terminal_sites
+            .get(&(source, group, terminal))
+            .and_then(|id| self.structural_drivers.get(id.0 as usize))
+            .map(|record| record.signal)
+    }
+
+    fn has_structural_driver(&self, source: NodeId) -> bool {
+        self.structural_driver_sites
+            .keys()
+            .any(|(candidate, _)| *candidate == source)
+    }
+
+    fn structural_site_sources(
+        &self,
+        members: &[NodeId],
+    ) -> Result<Vec<(NodeId, (u8, u8))>, String> {
+        let member_set: HashSet<NodeId> = members.iter().copied().collect();
+        let mut sources: HashMap<NodeId, (u8, u8)> = HashMap::new();
+        for id in self.design_nodes() {
+            match self.kind(id) {
+                NodeKind::ContAssign {
+                    strength0,
+                    strength1,
+                    ..
+                } => {
+                    let Some(lhs) = self.node(id).children.first().copied() else {
+                        continue;
+                    };
+                    if self.nested_member_target(lhs, &member_set).is_some() {
+                        let width = self
+                            .sig_globals
+                            .get(&members[0])
+                            .map(|info| info.width)
+                            .unwrap_or(1);
+                        let strengths = continuous_assignment_strengths_for_width(
+                            *strength0,
+                            *strength1,
+                            &self.display_name(id),
+                            width,
+                        )?;
+                        sources.insert(id, strengths);
+                    }
+                }
+                NodeKind::Gate {
+                    prim_type,
+                    strength0,
+                    strength1,
+                    terms,
+                    ..
+                } => {
+                    if terms.iter().any(|term| {
+                        matches!(term.direction, DbDirection::Output | DbDirection::Inout)
+                            && self.nested_member_target(term.expr, &member_set).is_some()
+                    }) {
+                        let strengths = gate_driver_strengths(
+                            *prim_type,
+                            *strength0,
+                            *strength1,
+                            &self.display_name(id),
+                        )?;
+                        sources.entry(id).or_insert(strengths);
+                    }
+                }
+                NodeKind::Port {
+                    direction,
+                    high,
+                    low,
+                    high_expr,
+                    ..
+                } => {
+                    let target = match direction {
+                        DbDirection::Input => *low,
+                        DbDirection::Output => high_expr.or(*high),
+                        _ => None,
+                    };
+                    if target.is_some_and(|target| {
+                        self.nested_member_target(target, &member_set).is_some()
+                    }) {
+                        sources.entry(id).or_insert((6, 6));
+                    }
+                }
+                _ => {}
+            }
+        }
+        let mut sources = sources.into_iter().collect::<Vec<_>>();
+        sources.sort_by_key(|(source, _)| source.index());
+        Ok(sources)
+    }
+
+    fn ir_net_kind(net_type: NetType) -> Option<crate::sim::ir::IrNetKind> {
+        match net_type {
+            NetType::Wire | NetType::Tri | NetType::Uwire | NetType::Logic => {
+                Some(crate::sim::ir::IrNetKind::Wire)
+            }
+            NetType::Wand | NetType::TriAnd => Some(crate::sim::ir::IrNetKind::Wand),
+            NetType::Wor | NetType::TriOr => Some(crate::sim::ir::IrNetKind::Wor),
+            NetType::Tri0 => Some(crate::sim::ir::IrNetKind::Tri0),
+            NetType::Tri1 => Some(crate::sim::ir::IrNetKind::Tri1),
+            NetType::Supply0 => Some(crate::sim::ir::IrNetKind::Supply0),
+            NetType::Supply1 => Some(crate::sim::ir::IrNetKind::Supply1),
+            NetType::TriReg | NetType::Reg | NetType::None | NetType::Unsupported => None,
+        }
     }
 
     /// Build one resolved group per standalone scalar wire, tri, or wired net.
@@ -1501,6 +2294,19 @@ impl<'a> Codegen<'a> {
     /// the same net object. Ordinary nets participating in module ports or
     /// interfaces stay on the existing link/inout path.
     fn build_wired_net_groups(&mut self, nodes: &[NodeId]) -> Result<(), String> {
+        let inout_members: HashSet<NodeId> = nodes
+            .iter()
+            .filter_map(|id| match self.kind(*id) {
+                NodeKind::Port {
+                    direction: DbDirection::Inout,
+                    high: Some(high),
+                    low: Some(low),
+                    ..
+                } => Some([*high, *low]),
+                _ => None,
+            })
+            .flatten()
+            .collect();
         if let Some(array) = nodes.iter().find(|id| {
             matches!(self.kind(**id), NodeKind::Array { .. })
                 && self.db.array_meta(**id).is_some_and(|meta| {
@@ -1528,8 +2334,7 @@ impl<'a> Codegen<'a> {
             .iter()
             .filter_map(|id| match self.kind(*id) {
                 NodeKind::Net { net_type, .. } => match net_type {
-                    NetType::Wire | NetType::Tri | NetType::Uwire => {
-                        let member_set = HashSet::from([*id]);
+                    NetType::Wire | NetType::Tri | NetType::Uwire | NetType::Logic => {
                         let in_interface = self.node(*id).parent.is_some_and(|parent| {
                             matches!(
                                 self.kind(parent),
@@ -1539,69 +2344,25 @@ impl<'a> Codegen<'a> {
                                 }
                             )
                         });
-                        let used_as_port = nodes.iter().any(|candidate| {
-                            let NodeKind::Port {
-                                high,
-                                low,
-                                high_expr,
-                                ..
-                            } = self.kind(*candidate)
-                            else {
-                                return false;
-                            };
-                            *high == Some(*id)
-                                || *low == Some(*id)
-                                || high_expr.is_some_and(|expr| {
-                                    self.nested_member_target(expr, &member_set).is_some()
-                                })
-                        });
-                        let continuous_driver_count = nodes
-                            .iter()
-                            .filter(|candidate| {
-                                matches!(self.kind(**candidate), NodeKind::ContAssign { .. })
-                                    && self.node(**candidate).children.first().is_some_and(|lhs| {
-                                        self.nested_member_target(*lhs, &member_set).is_some()
-                                    })
-                            })
-                            .count();
-                        let gate_driver_count = nodes
-                            .iter()
-                            .filter(|candidate| {
-                                let NodeKind::Gate { terms, .. } = self.kind(**candidate) else {
-                                    return false;
-                                };
-                                terms.iter().any(|term| {
-                                    matches!(
-                                        term.direction,
-                                        DbDirection::Output | DbDirection::Inout
-                                    ) && self.nested_member_target(term.expr, &member_set).is_some()
-                                })
-                            })
-                            .count();
-                        let has_force_or_release =
-                            nodes.iter().any(|candidate| match self.kind(*candidate) {
-                                NodeKind::Stmt(StmtKind::Force { lhs, .. })
-                                | NodeKind::Stmt(StmtKind::Release { lhs }) => {
-                                    self.nested_member_target(*lhs, &member_set).is_some()
-                                }
-                                _ => false,
-                            });
-                        let legacy_single_gate =
-                            continuous_driver_count == 0 && gate_driver_count == 1;
-                        let legacy_forced_net =
-                            has_force_or_release && continuous_driver_count <= 1;
-                        (!in_interface
-                            && !used_as_port
-                            && !legacy_single_gate
-                            && !legacy_forced_net)
+                        let already_collapsed = self
+                            .sig_globals
+                            .get(id)
+                            .is_some_and(|info| self.model.signals[info.ir].net_driver.is_some());
+                        (!in_interface && !already_collapsed && !inout_members.contains(id))
                             .then_some((*id, crate::sim::ir::IrNetKind::Wire))
                     }
-                    NetType::Wand | NetType::TriAnd => Some((*id, crate::sim::ir::IrNetKind::Wand)),
-                    NetType::Wor | NetType::TriOr => Some((*id, crate::sim::ir::IrNetKind::Wor)),
-                    NetType::Tri0 => Some((*id, crate::sim::ir::IrNetKind::Tri0)),
-                    NetType::Tri1 => Some((*id, crate::sim::ir::IrNetKind::Tri1)),
-                    NetType::Supply0 => Some((*id, crate::sim::ir::IrNetKind::Supply0)),
-                    NetType::Supply1 => Some((*id, crate::sim::ir::IrNetKind::Supply1)),
+                    NetType::Wand | NetType::TriAnd => (!inout_members.contains(id))
+                        .then_some((*id, crate::sim::ir::IrNetKind::Wand)),
+                    NetType::Wor | NetType::TriOr => (!inout_members.contains(id))
+                        .then_some((*id, crate::sim::ir::IrNetKind::Wor)),
+                    NetType::Tri0 => (!inout_members.contains(id))
+                        .then_some((*id, crate::sim::ir::IrNetKind::Tri0)),
+                    NetType::Tri1 => (!inout_members.contains(id))
+                        .then_some((*id, crate::sim::ir::IrNetKind::Tri1)),
+                    NetType::Supply0 => (!inout_members.contains(id))
+                        .then_some((*id, crate::sim::ir::IrNetKind::Supply0)),
+                    NetType::Supply1 => (!inout_members.contains(id))
+                        .then_some((*id, crate::sim::ir::IrNetKind::Supply1)),
                     _ => None,
                 },
                 _ => None,
@@ -1624,28 +2385,7 @@ impl<'a> Codegen<'a> {
                     "wired net `{shown}` declared in an interface is not supported"
                 ));
             }
-            for id in nodes {
-                if let NodeKind::Port {
-                    high,
-                    low,
-                    high_expr,
-                    ..
-                } = self.kind(*id)
-                {
-                    if *high == Some(net)
-                        || *low == Some(net)
-                        || high_expr.is_some_and(|expr| {
-                            self.nested_member_target(expr, &member_set).is_some()
-                        })
-                    {
-                        return Err(format!(
-                            "wired net `{shown}` used as a module port is not supported"
-                        ));
-                    }
-                }
-            }
-
-            let mut sites = Vec::new();
+            let mut sites: HashMap<NodeId, (u8, u8)> = HashMap::new();
             for id in nodes {
                 match self.kind(*id) {
                     NodeKind::ContAssign {
@@ -1670,62 +2410,69 @@ impl<'a> Codegen<'a> {
                         }
                         match self.member_write_kind(lhs, &member_set) {
                             MemberWrite::None => {
-                                if self.nested_member_target(lhs, &member_set).is_some() {
-                                    return Err(format!(
-                                        "concatenated/complex continuous-assignment LHS containing wired net `{shown}` is not supported"
-                                    ));
+                                if matches!(self.kind(lhs), NodeKind::Expr(ExprKind::HierPath { .. }))
+                                {
+                                    let width = self
+                                        .sig_globals
+                                        .get(&net)
+                                        .map(|info| info.width)
+                                        .unwrap_or(1);
+                                    let strengths = continuous_assignment_strengths_for_width(
+                                        *strength0,
+                                        *strength1,
+                                        &shown,
+                                        width,
+                                    )?;
+                                    sites.insert(*id, strengths);
+                                } else if self.nested_member_target(lhs, &member_set).is_some() {
+                                    if !matches!(kind, crate::sim::ir::IrNetKind::Wire) {
+                                        return Err(format!(
+                                            "concatenated/complex continuous-assignment LHS containing wired net `{shown}` is not supported"
+                                        ));
+                                    }
+                                    let width = self
+                                        .sig_globals
+                                        .get(&net)
+                                        .map(|info| info.width)
+                                        .unwrap_or(1);
+                                    let strengths = continuous_assignment_strengths_for_width(
+                                        *strength0,
+                                        *strength1,
+                                        &shown,
+                                        width,
+                                    )?;
+                                    sites.insert(*id, strengths);
                                 }
                             }
                             MemberWrite::Whole => {
-                                let has_explicit_strength = *strength0 != Strength::Unspecified
-                                    || *strength1 != Strength::Unspecified;
-                                if !matches!(kind, crate::sim::ir::IrNetKind::Wire)
-                                    && has_explicit_strength
-                                {
-                                    return Err(format!(
-                                        "drive-strength continuous assignment to wired net `{shown}` is not supported"
-                                    ));
-                                }
-                                if has_explicit_strength
-                                    && self
-                                        .sig_globals
-                                        .get(&net)
-                                        .is_some_and(|info| info.width != 1)
-                                {
-                                    return Err(format!(
-                                        "drive strength on non-scalar net `{shown}` is not permitted by IEEE 1800-2009 10.3.4"
-                                    ));
-                                }
-                                continuous_assignment_strengths(*strength0, *strength1, &shown)?;
-                                sites.push(*id);
+                                let width = self
+                                    .sig_globals
+                                    .get(&net)
+                                    .map(|info| info.width)
+                                    .unwrap_or(1);
+                                sites.insert(
+                                    *id,
+                                    continuous_assignment_strengths_for_width(
+                                        *strength0,
+                                        *strength1,
+                                        &shown,
+                                        width,
+                                    )?,
+                                );
                             }
                             MemberWrite::Select => {
-                                if !matches!(kind, crate::sim::ir::IrNetKind::Wire) {
-                                    return Err(format!(
-                                        "continuous assignment to a select of wired net `{shown}` is not supported"
-                                    ));
-                                }
-                                if (*strength0 != Strength::Unspecified
-                                    || *strength1 != Strength::Unspecified)
-                                    && self
-                                        .sig_globals
-                                        .get(&net)
-                                        .is_some_and(|info| info.width != 1)
-                                {
-                                    return Err(format!(
-                                        "drive strength on non-scalar net `{shown}` is not permitted by IEEE 1800-2009 10.3.4"
-                                    ));
-                                }
-                                continuous_assignment_strengths(*strength0, *strength1, &shown)?;
-                                if matches!(
-                                    self.kind(*id),
-                                    NodeKind::ContAssign { delay: Some(_), .. }
-                                ) {
-                                    return Err(format!(
-                                        "delayed continuous assignment to a select of resolved net `{shown}` is not supported"
-                                    ));
-                                }
-                                sites.push(*id);
+                                let width = self
+                                    .sig_globals
+                                    .get(&net)
+                                    .map(|info| info.width)
+                                    .unwrap_or(1);
+                                let strengths = continuous_assignment_strengths_for_width(
+                                    *strength0,
+                                    *strength1,
+                                    &shown,
+                                    width,
+                                )?;
+                                sites.insert(*id, strengths);
                             }
                         }
                     }
@@ -1759,24 +2506,44 @@ impl<'a> Codegen<'a> {
                             ));
                         }
                     }
-                    NodeKind::Stmt(StmtKind::Force { lhs, .. }) => {
-                        if self.nested_member_target(*lhs, &member_set).is_some() {
-                            return Err(format!("force of wired net `{shown}` is not supported"));
-                        }
+                    NodeKind::Stmt(StmtKind::Force { .. })
+                    | NodeKind::Stmt(StmtKind::Release { .. }) => {}
+                NodeKind::Gate {
+                    prim_type,
+                    strength0,
+                    strength1,
+                    terms,
+                    ..
+                } => {
+                    if terms.iter().any(|term| {
+                        matches!(term.direction, DbDirection::Output | DbDirection::Inout)
+                            && self.nested_member_target(term.expr, &member_set).is_some()
+                    }) {
+                        let strengths = gate_driver_strengths(
+                            *prim_type,
+                            *strength0,
+                            *strength1,
+                            &self.display_name(*id),
+                        )?;
+                        sites.insert(*id, strengths);
                     }
-                    NodeKind::Stmt(StmtKind::Release { lhs }) => {
-                        if self.nested_member_target(*lhs, &member_set).is_some() {
-                            return Err(format!("release of wired net `{shown}` is not supported"));
-                        }
-                    }
-                    NodeKind::Gate { terms, .. } => {
-                        if terms.iter().any(|term| {
-                            matches!(term.direction, DbDirection::Output | DbDirection::Inout)
-                                && self.nested_member_target(term.expr, &member_set).is_some()
+                }
+                    NodeKind::Port {
+                        direction,
+                        high,
+                        low,
+                        high_expr,
+                        ..
+                    } => {
+                        let target = match direction {
+                            DbDirection::Input => *low,
+                            DbDirection::Output => high_expr.or(*high),
+                            _ => None,
+                        };
+                        if target.is_some_and(|target| {
+                            self.nested_member_target(target, &member_set).is_some()
                         }) {
-                            return Err(format!(
-                                "gate output driving wired net `{shown}` is not supported"
-                            ));
+                            sites.insert(*id, (6, 6));
                         }
                     }
                     NodeKind::FuncCall { .. }
@@ -1789,7 +2556,8 @@ impl<'a> Codegen<'a> {
                     _ => {}
                 }
             }
-            sites.sort_by_key(|id| id.0);
+            let mut sites = sites.into_iter().collect::<Vec<_>>();
+            sites.sort_by_key(|(id, _)| id.0);
             if sites.len() > LLG_MAX_NET_DRIVERS {
                 return Err(format!(
                     "wired net `{shown}` has {} continuous driver sites, exceeding the {LLG_MAX_NET_DRIVERS} driver-slot limit",
@@ -1807,29 +2575,14 @@ impl<'a> Codegen<'a> {
             }
             let name = format!("g_net_{}", self.model.net_groups.len());
             let group = self.model.net_groups.len();
-            let n_drivers = sites.len().max(1);
-            let driver_strengths = if sites.is_empty() {
-                vec![(6, 6)]
-            } else {
-                sites
-                    .iter()
-                    .map(|site| match self.kind(*site) {
-                        NodeKind::ContAssign {
-                            strength0,
-                            strength1,
-                            ..
-                        } => continuous_assignment_strengths(*strength0, *strength1, &shown),
-                        _ => Err("internal: net driver site is not a continuous assignment".into()),
-                    })
-                    .collect::<Result<Vec<_>, String>>()?
-            };
+            let initial_drivers = usize::from(sites.is_empty());
             self.model.net_groups.push(crate::sim::ir::IrNetGroup {
                 c_name: name.clone(),
                 width: info.width,
                 signed: info.signed,
                 kind,
-                n_drivers,
-                driver_strengths,
+                n_drivers: initial_drivers,
+                driver_strengths: vec![(6, 6); initial_drivers],
             });
 
             let old_global = info.global;
@@ -1857,21 +2610,25 @@ impl<'a> Codegen<'a> {
                 }
             }
 
-            for (slot, site) in sites.into_iter().enumerate() {
-                let signal = self.model.signals.len();
-                self.model.signals.push(IrSignal {
-                    c_name: resolved.clone(),
-                    hdl_name: None,
-                    ty: IrType::Packed {
-                        width: info.width,
-                        signed: info.signed,
-                        two_state: false,
-                    },
-                    net_driver: Some((group, slot)),
-                    alias: None,
-                    omit: false,
-                });
-                self.wired_driver_sites.insert(site, signal);
+            if sites.is_empty() {
+                let id = self.record_structural_driver(
+                    group,
+                    net,
+                    info.ir,
+                    StructuralDriverKind::Declaration,
+                    Some(net),
+                    (6, 6),
+                    None,
+                    0,
+                )?;
+                self.structural_driver_sites.insert((net, group), id);
+            }
+
+            for (source, strengths) in sites {
+                let signal = self.add_structural_driver(group, source, strengths)?;
+                if matches!(self.kind(source), NodeKind::ContAssign { .. }) {
+                    self.wired_driver_sites.insert(source, signal);
+                }
             }
         }
         Ok(())
@@ -1936,6 +2693,10 @@ impl<'a> Codegen<'a> {
     /// identifier, unlike `.`, so an escaped identifier such as `\a.b` cannot
     /// be mistaken for two scopes by the C waveform runtime.  Generate-scope
     /// spelling is retained verbatim (`g[0]`, not `g_0_`).
+    pub(super) fn waveform_name_for(&self, id: NodeId) -> String {
+        self.waveform_name(id)
+    }
+
     fn waveform_name(&self, id: NodeId) -> String {
         const SEPARATOR: &str = "\u{1f}";
 
@@ -1964,9 +2725,105 @@ impl<'a> Codegen<'a> {
         parts.join(SEPARATOR)
     }
 
+    /// Resolve a `$dumpvars` argument to the owned HDL identity used by the
+    /// waveform catalog.  This deliberately consumes semantic targets rather
+    /// than reconstructing a path from a generated C name.
+    pub(super) fn waveform_selection_name(&self, node: NodeId) -> Result<String, String> {
+        match self.kind(node) {
+            NodeKind::Expr(ExprKind::ScopeRef { target }) => {
+                self.waveform_selection_name(*target)
+            }
+            NodeKind::Expr(ExprKind::Ref { target }) => target
+                .map(|target| self.waveform_selection_name(target))
+                .unwrap_or_else(|| {
+                    Err(format!(
+                        "`$dumpvars` reference `{}` has no resolved target",
+                        self.node(node).name
+                    ))
+                }),
+            NodeKind::Expr(ExprKind::HierPath { refs, .. }) => refs
+                .iter()
+                .rev()
+                .flatten()
+                .next()
+                .copied()
+                .map(|target| self.waveform_selection_name(target))
+                .unwrap_or_else(|| {
+                    Err(format!(
+                        "`$dumpvars` hierarchy `{}` has no resolved target",
+                        self.node(node).name
+                    ))
+                }),
+            NodeKind::Expr(ExprKind::Cast { operand, .. }) => {
+                self.waveform_selection_name(*operand)
+            }
+            NodeKind::Expr(ExprKind::ArraySelect { base, indices }) => {
+                let target = self.waveform_array_target(*base).ok_or_else(|| {
+                    format!(
+                        "cannot resolve `$dumpvars` array selection `{}`",
+                        self.node(node).name
+                    )
+                })?;
+                let info = self.array_of(*base).ok_or_else(|| {
+                    format!(
+                        "array `{}` is not represented in the waveform catalog",
+                        self.node(target).name
+                    )
+                })?;
+                if indices.len() != info.dims.len() {
+                    return Err(format!(
+                        "`$dumpvars` array selection `{}` requires {} declared indices",
+                        self.node(target).name,
+                        info.dims.len()
+                    ));
+                }
+                let mut name = self.waveform_name(target);
+                for index in indices {
+                    let value = self.eval_bound_i128(*index).map_err(|error| {
+                        format!(
+                            "`$dumpvars` array index for `{}` must be a resolved constant: {error}",
+                            self.node(target).name
+                        )
+                    })?;
+                    name.push('[');
+                    name.push_str(&value.to_string());
+                    name.push(']');
+                }
+                Ok(name)
+            }
+            NodeKind::ModuleInst { .. }
+            | NodeKind::GenScopeArray
+            | NodeKind::GenScope
+            | NodeKind::Port { .. }
+            | NodeKind::Net { .. }
+            | NodeKind::Var { .. }
+            | NodeKind::Array { .. } => Ok(self.waveform_name(node)),
+            _ => Err(format!(
+                "`$dumpvars` argument `{}` is not a scope or dumpable storage reference",
+                self.node(node).name
+            )),
+        }
+    }
+
+    fn waveform_array_target(&self, node: NodeId) -> Option<NodeId> {
+        match self.kind(node) {
+            NodeKind::Array { .. } => Some(node),
+            NodeKind::Expr(ExprKind::Ref { target }) => target
+                .and_then(|target| self.waveform_array_target(target)),
+            NodeKind::Expr(ExprKind::HierPath { refs, .. }) => refs
+                .iter()
+                .rev()
+                .flatten()
+                .copied()
+                .find_map(|target| self.waveform_array_target(target)),
+            _ => None,
+        }
+    }
+
     /// The reason a candidate inout-net group cannot be supported, from a
-    /// design-wide scan of every write targeting its members: `None` when
-    /// every write is a whole-signal (blocking or continuous) driver.
+    /// design-wide scan of every write targeting its members: constant
+    /// selected continuous drivers are admitted; procedural and dynamic
+    /// writes still fail closed.
     fn unsupported_member_write(&self, members: &[NodeId]) -> Option<String> {
         let member_set: HashSet<NodeId> = members.iter().copied().collect();
         for id in self.design_nodes() {
@@ -1978,10 +2835,14 @@ impl<'a> Codegen<'a> {
                     match self.member_write_kind(lhs, &member_set) {
                         MemberWrite::None | MemberWrite::Whole => {}
                         MemberWrite::Select => {
-                            return Some(format!(
-                                "bit/part/select LHS on member `{}`",
-                                self.display_name(lhs)
-                            ))
+                            if !self.net_lvalue_selects_are_constant(lhs) {
+                                return Some(format!(
+                                    "dynamic bit/part/select LHS on member `{}`",
+                                    self.display_name(
+                                        self.member_write_base(lhs, &member_set).unwrap_or(lhs)
+                                    )
+                                ));
+                            }
                         }
                     }
                 }
@@ -1994,7 +2855,9 @@ impl<'a> Codegen<'a> {
                         MemberWrite::Select => {
                             return Some(format!(
                                 "bit/part/select LHS on member `{}`",
-                                self.display_name(lhs)
+                                self.display_name(
+                                    self.member_write_base(lhs, &member_set).unwrap_or(lhs)
+                                )
                             ))
                         }
                     }
@@ -2005,10 +2868,10 @@ impl<'a> Codegen<'a> {
                     let Some(lhs) = self.node(id).children.first().copied() else {
                         continue;
                     };
-                    if self.member_write_base(lhs, &member_set).is_some() {
+                    if let Some(member) = self.member_write_base(lhs, &member_set) {
                         return Some(format!(
                             "nonblocking assignment to member `{}`",
-                            self.display_name(lhs)
+                            self.display_name(member)
                         ));
                     }
                 }
@@ -2052,7 +2915,13 @@ impl<'a> Codegen<'a> {
     fn member_write_base(&self, node: NodeId, member_set: &HashSet<NodeId>) -> Option<NodeId> {
         match self.kind(node) {
             NodeKind::Net { .. } if member_set.contains(&node) => Some(node),
-            NodeKind::Expr(ExprKind::Ref { target }) => target.filter(|t| member_set.contains(t)),
+            NodeKind::Expr(ExprKind::Ref { target }) => target.as_ref().and_then(|target| {
+                if member_set.contains(target) {
+                    Some(*target)
+                } else {
+                    self.member_write_base(*target, member_set)
+                }
+            }),
             NodeKind::Expr(ExprKind::HierPath { .. }) => {
                 let signal = self.hier_path_signal(node)?;
                 member_set.iter().find_map(|member| {
@@ -2101,8 +2970,10 @@ impl<'a> Codegen<'a> {
             _ => return None,
         };
         let inst = self.owning_inst(call)?;
-        let ft = self.resolve_callee(inst, &name, is_task, callee).ok()?;
-        let (_, _, formals) = self.func_info(ft, inst).ok()?;
+        let (ft, callee_inst) = self
+            .resolve_callee_env(inst, &name, is_task, callee)
+            .ok()?;
+        let (_, _, formals) = self.func_info(ft, callee_inst).ok()?;
         let args: Vec<NodeId> = self.node(call).children.clone();
         for (idx, (io, is_out)) in formals.iter().enumerate() {
             if !*is_out {
@@ -2270,6 +3141,46 @@ impl<'a> Codegen<'a> {
         Ok(Some((target, vals)))
     }
 
+    fn collect_scalar_decl_init(&mut self, path: &str, ca: NodeId) -> Result<(), String> {
+        let target = self.cont_assign_decl_target(ca).ok_or_else(|| {
+            format!("variable declaration initializer in `{path}` has no scalar target")
+        })?;
+        let info = self.signal_of(target).cloned().ok_or_else(|| {
+            format!(
+                "variable declaration initializer for `{}` in `{path}` has no storage",
+                self.node(target).name
+            )
+        })?;
+        let initializer = self.node(ca).children.get(1).copied().ok_or_else(|| {
+            format!(
+                "variable declaration initializer for `{}` in `{path}` has no RHS",
+                self.node(target).name
+            )
+        })?;
+        if let Some(inst) = self.owning_inst(ca) {
+            self.inst = inst;
+        }
+        let lowered = self.lower_declaration_initializer(
+            path,
+            target,
+            initializer,
+            IrInitTarget::Signal(info.ir),
+            info.width,
+            info.signed,
+            info.two_state,
+            info.real,
+        );
+        match lowered {
+            Ok(initializer) => self.declaration_inits.push(initializer),
+            Err(lowering_error) => {
+                let value = self.scalar_decl_init(path, ca)?.ok_or(lowering_error)?.1;
+                self.scalar_inits.push((info, value));
+            }
+        }
+        self.scalar_init_ca.insert(ca);
+        Ok(())
+    }
+
     /// The declaration-initializer constant of a net-declaration assignment whose LHS
     /// is a scalar variable-like object (`reg y = 0`). The caller classifies
     /// the target first; true nets never enter this constant-only path.
@@ -2383,15 +3294,10 @@ impl<'a> Codegen<'a> {
             .arrays()
             .get(&node)
             .ok_or_else(|| format!("array `{name}` in `{path}` has no captured metadata"))?;
-        let elem_width = match ty.kind.as_str() {
-            "real" | "shortreal" | "real_array" | "shortreal_array" => {
-                return Err(format!(
-                    "array `{name}` in `{path}` has unsupported element type `{}`",
-                    ty.kind
-                ))
-            }
+        let (elem_width, real, shortreal) = match ty.kind.as_str() {
+            "real" | "shortreal" => (0, true, ty.kind == "shortreal"),
             "int" | "integer" | "time" | "longint" | "byte" | "shortint" | "logic" | "reg"
-            | "bit" => ty.width.unwrap_or(1),
+            | "bit" => (ty.width.unwrap_or(1), false, false),
             _ => {
                 return Err(format!(
                     "array `{name}` in `{path}` has unsupported element type `{}`",
@@ -2399,7 +3305,7 @@ impl<'a> Codegen<'a> {
                 ))
             }
         };
-        if elem_width > LLG_MAX_WIDTH {
+        if !real && elem_width > LLG_MAX_WIDTH {
             return Err(format!(
                 "array `{name}` in `{path}` has {elem_width}-bit elements; the \
                  runtime maximum supported width is {LLG_MAX_WIDTH}"
@@ -2435,6 +3341,8 @@ impl<'a> Codegen<'a> {
             elem_width,
             signed: ty.signed,
             two_state: self.db.is_two_state_type(node) || is_two_state_kind(&ty.kind),
+            real,
+            shortreal,
             dims: dims.clone(),
             total,
         });
@@ -2442,6 +3350,8 @@ impl<'a> Codegen<'a> {
             global: global_name(path, name),
             elem_width,
             signed: ty.signed,
+            real,
+            shortreal,
             is_net: meta.net_type().is_some(),
             dims,
             init,
@@ -2460,11 +3370,7 @@ impl<'a> Codegen<'a> {
             .db
             .array_meta(node)
             .ok_or_else(|| format!("container `{name}` in `{path}` has no captured metadata"))?;
-        if meta.initializer().is_some() {
-            return Err(format!(
-                "declaration initializer for resizable container `{name}` in `{path}` is not supported"
-            ));
-        }
+        let has_initializer = meta.initializer().is_some();
         let elem_width = match ty.kind.as_str() {
             "int" | "integer" | "time" | "longint" | "byte" | "shortint" | "logic" | "reg"
             | "bit" => ty.width.unwrap_or(1),
@@ -2511,6 +3417,9 @@ impl<'a> Codegen<'a> {
             },
             kind,
         });
+        if has_initializer {
+            self.container_initializers.push((node, ir));
+        }
         Ok(ContainerInfo { ir })
     }
 
@@ -2531,28 +3440,63 @@ impl<'a> Codegen<'a> {
                 let (is_task_f, ret, formals) = self.func_info(*c, inst)?;
                 let formals_ir: Vec<IrFormal> = formals
                     .iter()
-                    .map(|(io, is_out)| match self.kind(*io) {
-                        NodeKind::FuncArg { ty, .. } => IrFormal {
-                            is_out: *is_out,
-                            width: if ty.kind == "chandle" {
-                                0
-                            } else {
-                                ty.width
-                                    .map(|width| self.effective_decl_width(*io, inst, width))
-                                    .unwrap_or(0)
-                            },
-                            signed: ty.signed,
-                            two_state: self.db.is_two_state_type(*io)
-                                || is_two_state_kind(&ty.kind),
-                            chandle: ty.kind == "chandle",
-                        },
+                    .map(|(io, is_out)| -> Result<IrFormal, String> {
+                        match self.kind(*io) {
+                        NodeKind::FuncArg {
+                            direction,
+                            const_ref,
+                            ref_static,
+                            ty,
+                            ..
+                        } => {
+                            let mode = match direction {
+                                DbDirection::Input => crate::sim::ir::IrFormalMode::Input,
+                                DbDirection::Output => crate::sim::ir::IrFormalMode::Output,
+                                DbDirection::Inout => crate::sim::ir::IrFormalMode::Inout,
+                                DbDirection::Ref => crate::sim::ir::IrFormalMode::Ref,
+                                _ => {
+                                    return Err(format!(
+                                        "unsupported formal direction for `{}`",
+                                        self.node(*io).name
+                                    ));
+                                }
+                            };
+                            Ok(IrFormal {
+                                is_out: *is_out,
+                                mode,
+                                const_ref: *const_ref,
+                                ref_static: *ref_static,
+                                width: if ty.kind == "chandle" || is_real_kind(&ty.kind) {
+                                    0
+                                } else {
+                                    ty.width
+                                        .map(|width| self.effective_decl_width(*io, inst, width))
+                                        .unwrap_or(0)
+                                },
+                                signed: ty.signed,
+                                two_state: self.db.is_two_state_type(*io)
+                                    || is_two_state_kind(&ty.kind),
+                                real: is_real_kind(&ty.kind),
+                                shortreal: ty.kind == "shortreal",
+                                chandle: ty.kind == "chandle",
+                                event: ty.kind == "event",
+                                string: ty.kind == "string",
+                            })
+                        }
                         _ => unreachable!("formal kind"),
+                        }
                     })
-                    .collect();
+                    .collect::<Result<Vec<_>, String>>()?;
                 if !automatic {
                     for (idx, ((io, _), formal)) in formals.iter().zip(&formals_ir).enumerate() {
-                        if formal.chandle {
+                        if formal.is_ref() {
+                            continue;
+                        }
+                        if formal.chandle || formal.event {
                             let object = self.model.objects.len();
+                            if formal.event {
+                                continue;
+                            }
                             self.model.objects.push(crate::sim::ir::IrObject {
                                 c_name: format!("O_f{}_{}_a{idx}", inst.index(), c.index()),
                                 ty: crate::sim::ir::IrObjectType::Chandle,
@@ -2561,24 +3505,40 @@ impl<'a> Codegen<'a> {
                             self.static_chandle_formals.insert((inst, *io), object);
                             continue;
                         }
+                        if formal.string {
+                            let object = self.model.objects.len();
+                            self.model.objects.push(crate::sim::ir::IrObject {
+                                c_name: format!("O_f{}_{}_a{idx}", inst.index(), c.index()),
+                                ty: crate::sim::ir::IrObjectType::String,
+                                initial: None,
+                            });
+                            self.static_string_formals.insert((inst, *io), object);
+                            continue;
+                        }
                         let signal = self.model.signals.len();
                         let info = SignalInfo {
                             global: format!("S_f{}_{}_a{idx}", inst.index(), c.index()),
                             width: formal.width,
                             signed: formal.signed,
                             two_state: formal.two_state,
-                            real: false,
-                            shortreal: false,
+                            real: formal.real,
+                            shortreal: formal.shortreal,
                             net_driver: None,
                             ir: signal,
                         };
                         self.model.signals.push(IrSignal {
                             c_name: info.global.clone(),
                             hdl_name: None,
-                            ty: IrType::Packed {
-                                width: info.width,
-                                signed: info.signed,
-                                two_state: info.two_state,
+                            ty: if info.real {
+                                IrType::Real {
+                                    shortreal: info.shortreal,
+                                }
+                            } else {
+                                IrType::Packed {
+                                    width: info.width,
+                                    signed: info.signed,
+                                    two_state: info.two_state,
+                                }
                             },
                             net_driver: None,
                             alias: None,
@@ -2588,14 +3548,22 @@ impl<'a> Codegen<'a> {
                         self.static_formals.insert((inst, *io), info);
                     }
                 }
-                if !automatic && has_wait {
+                if has_wait {
                     let body = self
                         .func_body(*c)
                         .ok_or_else(|| format!("task `{}` without a body", self.node(*c).name))?;
                     let mut locals = HashMap::new();
+                    let mut chandle_locals = HashMap::new();
                     let mut local_seq = 0;
-                    self.collect_func_locals(body, inst, &mut locals, &mut local_seq, "")?;
-                    for (local, (_, width, signed, two_state)) in locals {
+                    self.collect_func_locals(
+                        body,
+                        inst,
+                        &mut locals,
+                        &mut chandle_locals,
+                        &mut local_seq,
+                        "",
+                    )?;
+                    for (local, _) in chandle_locals {
                         match self.db.variable_lifetime(local) {
                             VariableLifetime::Automatic => continue,
                             VariableLifetime::Static => {}
@@ -2606,24 +3574,66 @@ impl<'a> Codegen<'a> {
                                 ));
                             }
                         }
+                        let object = self.model.objects.len();
+                        self.model.objects.push(crate::sim::ir::IrObject {
+                            c_name: format!("O_f{}_{}_l{}", inst.index(), c.index(), local.index()),
+                            ty: crate::sim::ir::IrObjectType::Chandle,
+                            initial: None,
+                        });
+                        self.static_task_chandle_locals.insert((inst, local), object);
+                    }
+                    for (local, (_, width, signed, two_state, shortreal)) in locals {
+                        match self.db.variable_lifetime(local) {
+                            VariableLifetime::Automatic => continue,
+                            VariableLifetime::Static => {}
+                            VariableLifetime::Unavailable => {
+                                return Err(format!(
+                                    "resolved lifetime is unavailable for task local `{}`",
+                                    self.node(local).name
+                                ));
+                            }
+                        }
+                        if matches!(self.kind(local), NodeKind::Var { ty } if ty.kind == "string") {
+                            let initializer = self.db.var_initializer(local);
+                            let initial = initializer
+                                .map(|initializer| {
+                                    self.lower_string(
+                                        &self.instance_path_of(inst),
+                                        initializer,
+                                    )
+                                })
+                                .transpose()?;
+                            let object = self.model.objects.len();
+                            self.model.objects.push(crate::sim::ir::IrObject {
+                                c_name: format!("O_f{}_{}_l{}", inst.index(), c.index(), local.index()),
+                                ty: crate::sim::ir::IrObjectType::String,
+                                initial,
+                            });
+                            self.static_string_task_locals.insert((inst, local), object);
+                            continue;
+                        }
                         let signal = self.model.signals.len();
                         let info = SignalInfo {
                             global: format!("S_f{}_{}_l{}", inst.index(), c.index(), local.index()),
                             width,
                             signed,
                             two_state,
-                            real: false,
-                            shortreal: false,
+                            real: width == 0,
+                            shortreal,
                             net_driver: None,
                             ir: signal,
                         };
                         self.model.signals.push(IrSignal {
                             c_name: info.global.clone(),
                             hdl_name: None,
-                            ty: IrType::Packed {
-                                width,
-                                signed,
-                                two_state,
+                            ty: if width == 0 {
+                                IrType::Real { shortreal }
+                            } else {
+                                IrType::Packed {
+                                    width,
+                                    signed,
+                                    two_state,
+                                }
                             },
                             net_driver: None,
                             alias: None,
@@ -2631,17 +3641,30 @@ impl<'a> Codegen<'a> {
                         });
                         self.signals.push(info.clone());
                         if let Some(initializer) = self.db.var_initializer(local) {
-                            let value = self.var_decl_init(
+                            self.inst = inst;
+                            let lowered = self.lower_declaration_initializer(
                                 &self.instance_path_of(inst),
-                                &self.node(local).name,
+                                local,
                                 initializer,
-                            )?;
-                            self.model
-                                .init_steps
-                                .push(crate::sim::ir::IrInitStep::SetScalar {
-                                    sig: info.ir,
-                                    value,
-                                });
+                                IrInitTarget::Signal(info.ir),
+                                info.width,
+                                info.signed,
+                                info.two_state,
+                                info.real,
+                            );
+                            match lowered {
+                                Ok(initializer) => self.declaration_inits.push(initializer),
+                                Err(lowering_error) => {
+                                    let value = self
+                                        .var_decl_init(
+                                            &self.instance_path_of(inst),
+                                            &self.node(local).name,
+                                            initializer,
+                                        )
+                                        .map_err(|_| lowering_error)?;
+                                    self.var_inits.push((info.clone(), value));
+                                }
+                            }
                         }
                         self.static_task_locals.insert((inst, local), info);
                     }
@@ -2666,10 +3689,16 @@ impl<'a> Codegen<'a> {
                         } if ty.kind == "chandle"
                     ),
                     ret_string: self.is_string_return(*c),
-                    ret: ret.map(|(w, s, two_state)| IrType::Packed {
-                        width: w,
-                        signed: s,
-                        two_state,
+                    ret: ret.map(|(w, s, two_state, shortreal)| {
+                        if w == 0 {
+                            IrType::Real { shortreal }
+                        } else {
+                            IrType::Packed {
+                                width: w,
+                                signed: s,
+                                two_state,
+                            }
+                        }
                     }),
                     formals: formals_ir,
                     locals: Vec::new(),
@@ -2744,17 +3773,69 @@ impl<'a> Codegen<'a> {
             "sv4_t"
         };
         let mut params = Vec::new();
-        // Tasks: outputs first, then inputs.  The parameter names (`o{idx}` /
-        // `a{idx}`) use the formal's index in the formals list, matching the
-        // `arg_read`/`arg_write` maps built when emitting the body.
+        // Address formals first (outputs/inouts use `o{idx}`, refs use
+        // `r{idx}`), then by-value inputs. Names use the formal's declaration
+        // index, matching the maps built when emitting the body.
         for (idx, (_, is_out)) in formals.iter().enumerate() {
-            if *is_out {
-                params.push(format!("sv4_t* o{idx}"));
+            let direction = match self.kind(formals[idx].0) {
+                NodeKind::FuncArg { direction, .. } => *direction,
+                _ => return Err("non-formal in function signature".to_string()),
+            };
+            if matches!(direction, DbDirection::Ref) {
+                let const_ref = matches!(
+                    self.kind(formals[idx].0),
+                    NodeKind::FuncArg { const_ref: true, .. }
+                );
+                let is_string = matches!(
+                    self.kind(formals[idx].0),
+                    NodeKind::FuncArg { ty, .. } if ty.kind == "string"
+                );
+                let is_chandle = matches!(
+                    self.kind(formals[idx].0),
+                    NodeKind::FuncArg { ty, .. } if ty.kind == "chandle"
+                );
+                params.push(if is_string {
+                    format!(
+                        "{}llg_string_t* r{idx}",
+                        if const_ref { "const " } else { "" }
+                    )
+                } else if is_chandle {
+                    format!(
+                        "void *{}* r{idx}",
+                        if const_ref { "const " } else { "" }
+                    )
+                } else {
+                    format!(
+                        "{}llg_ref_t* r{idx}",
+                        if const_ref { "const " } else { "" }
+                    )
+                });
+            } else if *is_out {
+                let ty = match self.kind(formals[idx].0) {
+                    NodeKind::FuncArg { ty, .. } if ty.kind == "string" => "llg_string_t",
+                    NodeKind::FuncArg { ty, .. } if ty.kind == "chandle" => "void *",
+                    NodeKind::FuncArg { ty, .. } if is_real_kind(&ty.kind) => "double",
+                    _ => "sv4_t",
+                };
+                params.push(format!("{ty}* o{idx}"));
             }
         }
         for (idx, (_, is_out)) in formals.iter().enumerate() {
-            if !*is_out {
-                params.push(format!("sv4_t a{idx}"));
+            let is_ref = matches!(
+                self.kind(formals[idx].0),
+                NodeKind::FuncArg {
+                    direction: DbDirection::Ref,
+                    ..
+                }
+            );
+            if !*is_out && !is_ref {
+                let ty = match self.kind(formals[idx].0) {
+                    NodeKind::FuncArg { ty, .. } if ty.kind == "string" => "llg_string_t",
+                    NodeKind::FuncArg { ty, .. } if ty.kind == "chandle" => "void *",
+                    NodeKind::FuncArg { ty, .. } if is_real_kind(&ty.kind) => "double",
+                    _ => "sv4_t",
+                };
+                params.push(format!("{ty} a{idx}"));
             }
         }
         params.push("int depth".to_string());
@@ -2792,7 +3873,7 @@ impl<'a> Codegen<'a> {
         &self,
         ft: NodeId,
         inst: NodeId,
-    ) -> Result<(bool, Option<(u32, bool, bool)>, Vec<(NodeId, bool)>), String> {
+    ) -> Result<(bool, Option<(u32, bool, bool, bool)>, Vec<(NodeId, bool)>), String> {
         let (is_task, ret) = match self.kind(ft) {
             NodeKind::FuncTask { is_task, ret, .. } => (*is_task, ret.clone()),
             _ => return Err("non-FuncTask passed to func_info".to_string()),
@@ -2808,11 +3889,8 @@ impl<'a> Codegen<'a> {
             Some(ty) if matches!(ty.kind.as_str(), "chandle" | "string") => None,
             Some(ty) => {
                 if is_real_kind(&ty.kind) {
-                    return Err(format!(
-                        "real/shortreal function return `{}` is not supported",
-                        self.node(ft).name
-                    ));
-                }
+                    Some((0, false, false, ty.kind == "shortreal"))
+                } else {
                 match ty.width {
                     Some(w) => {
                         let w = self.effective_decl_width(ft, inst, w);
@@ -2823,7 +3901,7 @@ impl<'a> Codegen<'a> {
                                 self.node(ft).name
                             ));
                         }
-                        Some((w, ty.signed, ret_two_state || is_two_state_kind(&ty.kind)))
+                        Some((w, ty.signed, ret_two_state || is_two_state_kind(&ty.kind), false))
                     }
                     None => {
                         return Err(format!(
@@ -2832,6 +3910,7 @@ impl<'a> Codegen<'a> {
                         ))
                     }
                 }
+                }
             }
             None => None,
         };
@@ -2839,9 +3918,6 @@ impl<'a> Codegen<'a> {
         for c in &self.node(ft).children {
             match self.kind(*c) {
                 NodeKind::FuncArg { direction, ty, .. } => {
-                    if is_real_kind(&ty.kind) {
-                        return Err("real/shortreal function formal is not supported".to_string());
-                    }
                     let is_out = matches!(direction, DbDirection::Output | DbDirection::Inout);
                     formals.push((*c, is_out));
                 }
@@ -2874,23 +3950,6 @@ impl<'a> Codegen<'a> {
         let (is_task, ret, formals) = self.func_info(ft, inst)?;
         let ret_chandle = self.is_chandle_return(ft);
         let ret_string = self.is_string_return(ft);
-        if ret_string && !automatic {
-            return Err(format!(
-                "static string-returning function `{}` is not supported",
-                self.node(ft).name
-            ));
-        }
-        if ret_string
-            && formals.iter().any(|(formal, is_out)| {
-                *is_out
-                    || matches!(self.kind(*formal), NodeKind::FuncArg { ty, .. } if ty.kind == "string" || ty.kind == "chandle")
-            })
-        {
-            return Err(format!(
-                "string-returning function `{}` requires packed input formals only",
-                self.node(ft).name
-            ));
-        }
         let (decl, _) = self.func_signature(ft, inst)?;
         let c_name = self
             .func_names
@@ -2914,11 +3973,12 @@ impl<'a> Codegen<'a> {
 
         // The all-X return value used by the recursion guard.
         let ret_x = match ret {
-            Some((w, s, two_state)) => format!(
+            Some((w, s, two_state, _shortreal)) if w > 0 => format!(
                 "{}({w}, {})",
                 if two_state { "sv4_zero" } else { "sv4_x" },
                 s as u8
             ),
+            Some((_, _, _, _)) => "0.0".to_owned(),
             None => String::new(),
         };
         let guard = if has_ret {
@@ -2931,19 +3991,29 @@ impl<'a> Codegen<'a> {
             )
         };
 
-        let mut locals: HashMap<NodeId, (String, u32, bool, bool)> = HashMap::new();
+        let mut locals: HashMap<NodeId, (String, u32, bool, bool, bool)> = HashMap::new();
+        let mut chandle_locals: HashMap<NodeId, String> = HashMap::new();
         let mut local_seq = 0usize;
-        self.collect_func_locals(body, inst, &mut locals, &mut local_seq, "")?;
+        let local_prefix = format!("_f{}_{}_", inst.index(), ft.index());
+        self.collect_func_locals(
+            body,
+            inst,
+            &mut locals,
+            &mut chandle_locals,
+            &mut local_seq,
+            &local_prefix,
+        )?;
         let mut declaration_initializers = HashMap::new();
         self.collect_subroutine_decl_initializers(body, &mut declaration_initializers);
 
         // Function-name return variable → `_ret` local.
         let ret_ctx = match (ret, ret_var) {
-            (Some((w, s, two_state)), Some(rv)) => Some(RetCtx {
+            (Some((w, s, two_state, shortreal)), Some(rv)) => Some(RetCtx {
                 c_name: "_ret".to_string(),
                 width: w,
                 signed: s,
                 two_state,
+                shortreal,
                 node: Some(rv),
             }),
             _ => None,
@@ -2952,24 +4022,76 @@ impl<'a> Codegen<'a> {
         let mut arg_read: HashMap<NodeId, ArgMap> = HashMap::new();
         let mut arg_ir: HashMap<NodeId, IrExpr> = HashMap::new();
         let mut arg_write: HashMap<NodeId, String> = HashMap::new();
+        let mut arg_lhs: HashMap<NodeId, Lhs> = HashMap::new();
+        let mut const_refs: HashSet<NodeId> = HashSet::new();
+        let const_ref_lhs = HashMap::new();
         let mut persistent = HashMap::new();
         let mut chandle_read = HashMap::new();
         let mut chandle_write = HashMap::new();
         let mut string_read = HashMap::new();
         let mut string_write = HashMap::new();
+        let mut string_addr = HashMap::new();
         let mut static_input_copies = Vec::new();
-        for (idx, (io, is_out)) in formals.iter().enumerate() {
-            if matches!(self.kind(*io), NodeKind::FuncArg { ty, .. } if ty.kind == "chandle") {
-                if *is_out {
-                    return Err(format!(
-                        "output/inout chandle formal `{}` is not supported",
-                        self.node(*io).name
-                    ));
-                }
-                if let Some(object) = (!automatic)
-                    .then(|| self.static_chandle_formals.get(&(inst, *io)).copied())
-                    .flatten()
+        for (local, name) in &chandle_locals {
+            if self.db.variable_lifetime(*local) == VariableLifetime::Static {
+                let object = if let Some(object) =
+                    self.static_task_chandle_locals.get(&(inst, *local)).copied()
                 {
+                    object
+                } else {
+                    let object = self.model.objects.len();
+                    self.model.objects.push(crate::sim::ir::IrObject {
+                        c_name: format!("O_f{}_l{}", inst.index(), local.index()),
+                        ty: crate::sim::ir::IrObjectType::Chandle,
+                        initial: None,
+                    });
+                    self.static_task_chandle_locals
+                        .insert((inst, *local), object);
+                    object
+                };
+                chandle_read.insert(*local, IrChandleExpr::Read(object));
+                chandle_write.insert(*local, ChandleTarget::Object(object));
+            } else {
+                chandle_read.insert(*local, IrChandleExpr::LocalRead(name.clone()));
+                chandle_write.insert(*local, ChandleTarget::Local(name.clone()));
+            }
+        }
+        for (local, (name, ..)) in &locals {
+            if matches!(self.kind(*local), NodeKind::Var { ty } if ty.kind == "string") {
+                string_read.insert(*local, IrStringExpr::LocalRead(name.clone()));
+                string_write.insert(*local, name.clone());
+                string_addr.insert(*local, name.clone());
+            }
+        }
+        for (idx, (io, is_out)) in formals.iter().enumerate() {
+            if matches!(self.kind(*io), NodeKind::FuncArg { ty, .. } if ty.kind == "event") {
+                // Event formals are admitted only through inline call
+                // lowering, which substitutes the caller's object identity.
+                // The fallback C body is retained for deterministic model
+                // shape but has no packed formal storage.
+                continue;
+            }
+            if matches!(self.kind(*io), NodeKind::FuncArg { ty, .. } if ty.kind == "chandle") {
+                let is_ref = matches!(
+                    self.kind(*io),
+                    NodeKind::FuncArg {
+                        direction: DbDirection::Ref,
+                        ..
+                    }
+                );
+                let const_ref = matches!(
+                    self.kind(*io),
+                    NodeKind::FuncArg {
+                        direction: DbDirection::Ref,
+                        const_ref: true,
+                        ..
+                    }
+                );
+                if !is_ref && !*is_out {
+                    if let Some(object) = (!automatic)
+                        .then(|| self.static_chandle_formals.get(&(inst, *io)).copied())
+                        .flatten()
+                    {
                     chandle_read.insert(*io, IrChandleExpr::Read(object));
                     chandle_write.insert(*io, ChandleTarget::Object(object));
                     static_input_copies.push(IrStmt::Object(
@@ -2978,22 +4100,84 @@ impl<'a> Codegen<'a> {
                             IrChandleExpr::FormalRead(idx),
                         ),
                     ));
-                } else {
+                    continue;
+                    }
+                }
+                {
                     chandle_read.insert(*io, IrChandleExpr::FormalRead(idx));
-                    chandle_write.insert(*io, ChandleTarget::Local(format!("a{idx}")));
+                    if !const_ref {
+                        let target = if is_ref {
+                            format!("*r{idx}")
+                        } else if *is_out {
+                            format!("*o{idx}")
+                        } else {
+                            format!("a{idx}")
+                        };
+                        chandle_write.insert(*io, ChandleTarget::Local(target));
+                    }
                 }
                 continue;
             }
-            let (w, s, two_state) = match self.kind(*io) {
+            if matches!(self.kind(*io), NodeKind::FuncArg { ty, .. } if ty.kind == "string") {
+                let is_ref = matches!(
+                    self.kind(*io),
+                    NodeKind::FuncArg { direction: DbDirection::Ref, .. }
+                );
+                let const_ref = matches!(
+                    self.kind(*io),
+                    NodeKind::FuncArg { const_ref: true, .. }
+                );
+                if is_ref {
+                    string_read.insert(*io, IrStringExpr::FormalRead(idx));
+                    string_addr.insert(*io, format!("*r{idx}"));
+                    if !const_ref {
+                        string_write.insert(*io, format!("*r{idx}"));
+                    }
+                } else if let Some(object) = (!automatic)
+                    .then(|| self.static_string_formals.get(&(inst, *io)).copied())
+                    .flatten()
+                {
+                    let name = self.model.objects[object].c_name.clone();
+                    string_read.insert(*io, IrStringExpr::Read(object));
+                    string_write.insert(*io, name.clone());
+                    string_addr.insert(*io, name);
+                    if !*is_out {
+                        static_input_copies.push(IrStmt::Object(
+                            IrObjectStmt::StringAssign(object, IrStringExpr::FormalRead(idx)),
+                        ));
+                    }
+                } else {
+                    string_read.insert(*io, IrStringExpr::FormalRead(idx));
+                    string_write.insert(
+                        *io,
+                        if *is_out {
+                            format!("*o{idx}")
+                        } else {
+                            format!("a{idx}")
+                        },
+                    );
+                    string_addr.insert(
+                        *io,
+                        if *is_out {
+                            format!("*o{idx}")
+                        } else {
+                            format!("a{idx}")
+                        },
+                    );
+                }
+                continue;
+            }
+            let (w, s, two_state, real, shortreal) = match self.kind(*io) {
                 NodeKind::FuncArg { ty, .. } => {
                     if is_real_kind(&ty.kind) {
-                        return Err("real/shortreal function formal is not supported".to_string());
-                    }
-                    match ty.width {
+                        (0, false, false, true, ty.kind == "shortreal")
+                    } else { match ty.width {
                         Some(w) if w <= LLG_MAX_WIDTH => (
                             self.effective_decl_width(*io, inst, w),
                             ty.signed,
-                            is_two_state_kind(&ty.kind),
+                            self.db.is_two_state_type(*io) || is_two_state_kind(&ty.kind),
+                            false,
+                            false,
                         ),
                         Some(w) => {
                             return Err(format!(
@@ -3009,9 +4193,44 @@ impl<'a> Codegen<'a> {
                             ))
                         }
                     }
+                    }
                 }
                 _ => unreachable!("formal kind"),
             };
+            let (is_ref, const_ref) = match self.kind(*io) {
+                NodeKind::FuncArg {
+                    direction: DbDirection::Ref,
+                    const_ref,
+                    ..
+                } => (true, *const_ref),
+                _ => (false, false),
+            };
+            if is_ref {
+                arg_ir.insert(*io, formal_read_expr(idx, w, s));
+                arg_read.insert(
+                    *io,
+                    ArgMap {
+                        width: w,
+                        signed: s,
+                        two_state,
+                    },
+                );
+                if const_ref {
+                    const_refs.insert(*io);
+                } else {
+                    arg_lhs.insert(
+                        *io,
+                        Lhs::Ref {
+                            addr: format!("r{idx}"),
+                            width: w,
+                            signed: s,
+                            two_state,
+                            const_ref: false,
+                        },
+                    );
+                }
+                continue;
+            }
             if let Some(storage) = (!automatic)
                 .then(|| self.static_formals.get(&(inst, *io)).cloned())
                 .flatten()
@@ -3088,6 +4307,7 @@ impl<'a> Codegen<'a> {
                 crate::sim::ir::IrStringExpr::LocalRead("_ret".to_string()),
             );
             string_write.insert(return_var, "_ret".to_string());
+            string_addr.insert(return_var, "_ret".to_string());
         }
 
         let func_ctx = FuncCtx {
@@ -3096,12 +4316,18 @@ impl<'a> Codegen<'a> {
             ret: ret_ctx.clone(),
             arg_read,
             arg_ir,
+            event_args: HashMap::new(),
+            arg_dependencies: HashMap::new(),
             arg_write,
+            arg_lhs,
+            const_refs,
+            const_ref_lhs,
             persistent,
             chandle_read,
             chandle_write,
             string_read,
             string_write,
+            string_addr,
             locals: locals.clone(),
             ret_node: ret_var,
             def_node: Some(ft),
@@ -3115,7 +4341,7 @@ impl<'a> Codegen<'a> {
         // Lower the body under the function context; the guard, `_ret`
         // declaration and locals are rendered by the backend from the
         // `IrFunc` metadata.
-        let (body_stmts, pre_fns) = {
+        let (mut body_stmts, pre_fns) = {
             let mut ctx = EmitCtx::new(
                 self,
                 path.to_string(),
@@ -3130,6 +4356,50 @@ impl<'a> Codegen<'a> {
             let pre_fns = std::mem::take(&mut ctx.pre_fns);
             (body_stmts, pre_fns)
         };
+        // Delay-free tasks need the same declaration-level activation as an
+        // inlined timed task. A self-disable must cancel every active invocation.
+        if is_task {
+            body_stmts = vec![IrStmt::ActivationScope {
+                target: self.activation_target(ft)?,
+                exit: self.new_fn_name(path, "task_exit"),
+                body: body_stmts,
+            }];
+        }
+        let mut declaration_initializations = Vec::new();
+        for (local, (c_name, width, signed, two_state, shortreal)) in &locals {
+            if self.db.variable_lifetime(*local) != VariableLifetime::Static {
+                continue;
+            }
+            let initializer = self
+                .db
+                .var_initializer(*local)
+                .or_else(|| declaration_initializers.get(local).copied());
+            let Some(initializer) = initializer else {
+                continue;
+            };
+            let initialization = self
+                .lower_declaration_initializer(
+                    path,
+                    *local,
+                    initializer,
+                    IrInitTarget::StaticLocal {
+                        function: meta_ir,
+                        name: c_name.clone(),
+                    },
+                    *width,
+                    *signed,
+                    *two_state,
+                    *shortreal,
+                )
+                .map_err(|cause| {
+                    format!(
+                        "static subprogram initializer for `{}` cannot be lowered: {cause}",
+                        self.node(*local).name
+                    )
+                })?;
+            declaration_initializations.push(initialization);
+        }
+        self.declaration_inits.extend(declaration_initializations);
         // Restore the process-level context for whatever is lowered next
         // (continuous assignments, processes).
         self.func = None;
@@ -3139,53 +4409,21 @@ impl<'a> Codegen<'a> {
         let ir_locals = {
             let mut names = locals.into_iter().collect::<Vec<_>>();
             names.sort_by_key(|(id, _)| id.0);
-            let mut initial_by_name = HashMap::new();
-            for (local, (c_name, width, signed, two_state)) in &names {
-                if self.db.variable_lifetime(*local) != VariableLifetime::Static {
-                    continue;
-                }
-                let initializer = self
-                    .db
-                    .var_initializer(*local)
-                    .or_else(|| declaration_initializers.get(local).copied());
-                let Some(initializer) = initializer else {
-                    continue;
-                };
-                let value = self
-                    .var_decl_init(path, &self.node(*local).name, initializer)
-                    .map_err(|cause| {
-                        if automatic {
-                            cause
-                        } else {
-                            format!(
-                                "nonconstant static subprogram initializer for `{}` is not supported: {cause}",
-                                self.node(*local).name
-                            )
-                        }
-                    })?;
-                let expression = IrExpr::new(
-                    IrExprKind::Const(value.clone()),
-                    value.width,
-                    value.signed,
-                    value.fill,
-                );
-                let expression = apply_assignment_expression_width(expression, *width);
-                let expression = ir_to_storage(expression, *width, *signed, *two_state)?;
-                initial_by_name.entry(c_name.clone()).or_insert(expression);
-            }
             let mut emitted = HashSet::new();
             names
                 .into_iter()
                 .filter(|(local, _)| self.db.variable_lifetime(*local) == VariableLifetime::Static)
                 .filter(|(_, (c_name, ..))| emitted.insert(c_name.clone()))
-                .map(|(_, (c_name, width, signed, two_state))| {
-                    let initial = initial_by_name.remove(&c_name);
+                .map(|(local, (c_name, width, signed, two_state, shortreal))| {
                     Ok(crate::sim::ir::IrLocal {
                         c_name,
                         width,
                         signed,
                         two_state,
-                        initial,
+                        real: width == 0,
+                        shortreal,
+                        string: matches!(self.kind(local), NodeKind::Var { ty } if ty.kind == "string"),
+                        initial: None,
                     })
                 })
                 .collect::<Result<Vec<_>, String>>()?
@@ -3209,48 +4447,36 @@ impl<'a> Codegen<'a> {
         &self,
         node: NodeId,
         inst: NodeId,
-        locals: &mut HashMap<NodeId, (String, u32, bool, bool)>,
+        locals: &mut HashMap<NodeId, (String, u32, bool, bool, bool)>,
+        chandle_locals: &mut HashMap<NodeId, String>,
         seq: &mut usize,
         prefix: &str,
     ) -> Result<(), String> {
         if let NodeKind::Stmt(StmtKind::For { body, .. }) = self.kind(node) {
             // For-declaration variables have loop-entry lifetime and are
             // collected by `lower_for`; they are not function-entry locals.
-            return self.collect_func_locals(*body, inst, locals, seq, prefix);
+            return self.collect_func_locals(*body, inst, locals, chandle_locals, seq, prefix);
         }
         if let NodeKind::Var { ty } = self.kind(node) {
-            if ty.kind == "string" {
-                return Err(format!(
-                    "string local `{}` in a function/task is not supported",
-                    self.node(node).name
-                ));
-            }
-            if let Some(lifetime) = self.explicit_local_lifetime(node)? {
-                let enclosing_automatic = self.enclosing_subroutine_is_automatic(node);
-                let overrides = (lifetime == "automatic" && !enclosing_automatic)
-                    || (lifetime == "static" && enclosing_automatic);
-                if overrides {
-                    return Err(format!(
-                        "explicit `{lifetime}` lifetime on subprogram local `{}` overrides the enclosing function/task lifetime and is not supported",
-                        self.node(node).name
-                    ));
+            self.explicit_local_lifetime(node)?;
+            if ty.kind == "chandle" {
+                if !chandle_locals.contains_key(&node) {
+                    let cname = format!("{prefix}_l{seq}");
+                    *seq += 1;
+                    chandle_locals.insert(node, cname);
                 }
-            }
-            if let Some((_, existing)) = locals
-                .iter()
-                .find(|(local, _)| self.node(**local).name == self.node(node).name)
-            {
-                locals.insert(node, existing.clone());
                 return Ok(());
             }
-            if is_real_kind(&ty.kind) {
-                return Err(format!(
-                    "real/shortreal function local `{}` is not supported",
-                    self.node(node).name
-                ));
+            if locals.contains_key(&node) {
+                return Ok(());
             }
-            let w = match ty.width {
-                Some(w) if w <= LLG_MAX_WIDTH => self.effective_decl_width(node, inst, w),
+            let (w, shortreal) = if ty.kind == "string" {
+                (0, false)
+            } else if is_real_kind(&ty.kind) {
+                (0, ty.kind == "shortreal")
+            } else {
+                (match ty.width {
+                    Some(w) if w <= LLG_MAX_WIDTH => self.effective_decl_width(node, inst, w),
                 Some(w) => {
                     return Err(format!(
                         "local `{}` is {w} bits wide; the runtime supports at most \
@@ -3258,15 +4484,25 @@ impl<'a> Codegen<'a> {
                         self.node(node).name
                     ))
                 }
-                None => return Err(format!("local `{}` has no width", self.node(node).name)),
+                    None => return Err(format!("local `{}` has no width", self.node(node).name)),
+                }, false)
             };
             let cname = format!("{prefix}_l{seq}");
             *seq += 1;
-            locals.insert(node, (cname, w, ty.signed, is_two_state_kind(&ty.kind)));
+            locals.insert(
+                node,
+                (
+                    cname,
+                    w,
+                    if w == 0 { false } else { ty.signed },
+                    if w == 0 { false } else { is_two_state_kind(&ty.kind) },
+                    shortreal,
+                ),
+            );
             return Ok(());
         }
         for c in &self.node(node).children {
-            self.collect_func_locals(*c, inst, locals, seq, prefix)?;
+            self.collect_func_locals(*c, inst, locals, chandle_locals, seq, prefix)?;
         }
         Ok(())
     }
@@ -3299,34 +4535,197 @@ impl<'a> Codegen<'a> {
         false
     }
 
-    /// Resolve a call site's callee to its FuncTask arena node.  Prefers the
-    /// captured `callee` (checked to live inside `inst`); falls back to a name
-    /// lookup among the owning instance's function/task definitions.  Callees
-    /// outside the instance (hierarchical calls) are rejected.
-    pub(super) fn resolve_callee(
+    pub(super) fn check_event_expression_effects(
+        &self,
+        expression: NodeId,
+        scope_path: &str,
+    ) -> Result<(), String> {
+        let mut visited = HashSet::new();
+        self.check_event_node(expression, scope_path, &mut visited, None)
+    }
+
+    fn check_event_node(
+        &self,
+        node: NodeId,
+        scope_path: &str,
+        visited_functions: &mut HashSet<NodeId>,
+        function: Option<NodeId>,
+    ) -> Result<(), String> {
+        let rejected = |reason: &str| {
+            Err(format!(
+                "function calls in evaluated event controls are not supported in `{scope_path}`: {reason}"
+            ))
+        };
+        match self.kind(node) {
+            NodeKind::FuncCall {
+                name,
+                is_task,
+                callee,
+            } => {
+                if *is_task {
+                    return rejected("task calls are not read-only");
+                }
+                let (ft, callee_inst) = self
+                    .resolve_callee_env(self.inst, name, false, *callee)
+                    .map_err(|_| {
+                        format!(
+                            "function calls in evaluated event controls are not supported in `{scope_path}`: cannot resolve `{name}`"
+                        )
+                    })?;
+                let (_, _, formals) = self.func_info(ft, callee_inst).map_err(|error| {
+                    format!(
+                        "function calls in evaluated event controls are not supported in `{scope_path}`: {error}"
+                    )
+                })?;
+                for (formal, is_out) in formals {
+                    if is_out {
+                        return rejected("output/inout formals are not read-only");
+                    }
+                    if matches!(
+                        self.kind(formal),
+                        NodeKind::FuncArg {
+                            direction: DbDirection::Ref,
+                            const_ref: false,
+                            ..
+                        }
+                    ) {
+                        return rejected("non-const ref formals are not read-only");
+                    }
+                }
+                if visited_functions.insert(ft) {
+                    let body = self.func_body(ft).ok_or_else(|| {
+                        format!(
+                            "function calls in evaluated event controls are not supported in `{scope_path}`: function `{name}` has no body"
+                        )
+                    })?;
+                    self.check_event_node(body, scope_path, visited_functions, Some(ft))?;
+                }
+            }
+            NodeKind::SysCall { name } => {
+                return rejected(&format!("system call `{name}` has no pure effect summary"));
+            }
+            NodeKind::MethodCall { name, .. } => {
+                return rejected(&format!("method call `{name}` has no pure effect summary"));
+            }
+            NodeKind::Stmt(
+                StmtKind::DelayControl { .. }
+                | StmtKind::EventControl { .. }
+                | StmtKind::Wait { .. }
+                | StmtKind::WaitOrder { .. }
+                | StmtKind::EventTrigger { .. }
+                | StmtKind::Force { .. }
+                | StmtKind::Release { .. }
+                | StmtKind::ProcContAssign { .. }
+                | StmtKind::Fork { .. }
+                | StmtKind::WaitFork
+                | StmtKind::DisableFork,
+            ) => return rejected("timing, event, or scheduler effects are not allowed"),
+            NodeKind::Stmt(StmtKind::Assign { .. }) => {
+                let lhs = self.node(node).children.first().copied().ok_or_else(|| {
+                    format!(
+                        "function calls in evaluated event controls are not supported in `{scope_path}`: malformed assignment"
+                    )
+                })?;
+                if !self.event_local_write_allowed(function, lhs) {
+                    return rejected("function body writes external or persistent storage");
+                }
+            }
+            NodeKind::Expr(ExprKind::Operation { op, operands, .. })
+                if matches!(
+                    op,
+                    Operation::PostIncrement
+                        | Operation::PreIncrement
+                        | Operation::PostDecrement
+                        | Operation::PreDecrement
+                        | Operation::Assignment
+                ) =>
+            {
+                let lhs = operands.first().copied().ok_or_else(|| {
+                    format!(
+                        "function calls in evaluated event controls are not supported in `{scope_path}`: malformed assignment expression"
+                    )
+                })?;
+                if !self.event_local_write_allowed(function, lhs) {
+                    return rejected("function body writes external or persistent storage");
+                }
+            }
+            _ => {}
+        }
+        for child in &self.node(node).children {
+            self.check_event_node(*child, scope_path, visited_functions, function)?;
+        }
+        Ok(())
+    }
+
+    fn event_local_write_allowed(&self, function: Option<NodeId>, lhs: NodeId) -> bool {
+        let Some(function) = function else {
+            return false;
+        };
+        let target = match self.kind(lhs) {
+            NodeKind::Expr(ExprKind::Ref { target }) => *target,
+            NodeKind::Expr(
+                ExprKind::BitSelect { base, .. }
+                | ExprKind::PartSelect { base, .. }
+                | ExprKind::IndexedPartSelect { base, .. }
+                | ExprKind::ArraySelect { base, .. },
+            ) => match self.kind(*base) {
+                NodeKind::Expr(ExprKind::Ref { target }) => *target,
+                _ => None,
+            },
+            NodeKind::Var { .. } => Some(lhs),
+            _ => None,
+        };
+        let Some(target) = target else {
+            return false;
+        };
+        let target = self.canonical_func_target(target).unwrap_or(target);
+        if target == function {
+            return true;
+        }
+        if !self.node_is_within(target, function) {
+            return false;
+        }
+        match self.kind(target) {
+            NodeKind::FuncArg {
+                direction: DbDirection::Input,
+                ..
+            }
+            | NodeKind::Var { .. } => {
+                self.db.variable_lifetime(target) != VariableLifetime::Static
+            }
+            _ => false,
+        }
+    }
+
+    /// Resolve a call site's callee and its owning elaborated environment.
+    /// The captured semantic target is authoritative: its parent chain gives
+    /// the concrete module/interface instance or the single shared package.
+    /// Name lookup remains only for local calls whose frontend snapshot did
+    /// not retain a callee edge.
+    pub(super) fn resolve_callee_env(
         &self,
         inst: NodeId,
         name: &str,
         is_task: bool,
         callee: Option<NodeId>,
-    ) -> Result<NodeId, String> {
+    ) -> Result<(NodeId, NodeId), String> {
         if let Some(ft) = callee {
-            let mut cur = self.node(ft).parent;
-            while let Some(p) = cur {
-                if p == inst {
-                    return Ok(ft);
-                }
-                cur = self.node(p).parent;
+            if !matches!(self.kind(ft), NodeKind::FuncTask { is_task: t, .. } if *t == is_task) {
+                return Err(format!(
+                    "callee `{name}` has an incompatible function/task kind"
+                ));
             }
-            return Err(format!(
-                "hierarchical call `{name}` is not supported (callee outside \
-                 the calling instance)"
-            ));
+            let environment = self.callable_environment(ft).ok_or_else(|| {
+                format!(
+                    "callee `{name}` has no elaborated module, interface, or package environment"
+                )
+            })?;
+            return Ok((ft, environment));
         }
         for c in &self.node(inst).children {
             if let NodeKind::FuncTask { is_task: t, .. } = self.kind(*c) {
                 if *t == is_task && self.node(*c).name == name {
-                    return Ok(*c);
+                    return Ok((*c, inst));
                 }
             }
         }
@@ -3336,6 +4735,34 @@ impl<'a> Codegen<'a> {
         ))
     }
 
+    /// The concrete environment that owns one captured subroutine clone.
+    /// This is structural and never reconstructed from a display name, so
+    /// sibling instances and package users cannot alias.
+    fn callable_environment(&self, ft: NodeId) -> Option<NodeId> {
+        let mut current = self.node(ft).parent;
+        while let Some(id) = current {
+            if matches!(self.kind(id), NodeKind::ModuleInst { .. } | NodeKind::Package) {
+                return Some(id);
+            }
+            current = self.node(id).parent;
+        }
+        None
+    }
+
+    /// Resolve a call site's callee to its FuncTask arena node. This wrapper
+    /// is retained for analyses that only need declaration identity; callers
+    /// that consume signatures or storage use [`resolve_callee_env`].
+    pub(super) fn resolve_callee(
+        &self,
+        inst: NodeId,
+        name: &str,
+        is_task: bool,
+        callee: Option<NodeId>,
+    ) -> Result<NodeId, String> {
+        self.resolve_callee_env(inst, name, is_task, callee)
+            .map(|(ft, _)| ft)
+    }
+
     /// Whether a task's execution can suspend: its body (transitively over
     /// called tasks) contains a delay, event control or wait statement.
     /// Delay-bearing tasks are inlined at their call sites; the others become
@@ -3343,6 +4770,14 @@ impl<'a> Codegen<'a> {
     pub(super) fn task_has_wait(&self, ft: NodeId, inst: NodeId) -> bool {
         let mut seen: HashSet<NodeId> = HashSet::new();
         self.task_has_wait_inner(ft, inst, &mut seen)
+    }
+
+    /// Whether a task can cancel its activation through a named `disable`.
+    /// Such tasks are lowered inline so output/inout copy-out remains inside
+    /// the cancellation boundary instead of running after a C-call returns.
+    pub(super) fn task_has_disable(&self, ft: NodeId, inst: NodeId) -> bool {
+        let mut seen: HashSet<NodeId> = HashSet::new();
+        self.task_has_disable_inner(ft, inst, &mut seen)
     }
 
     /// Whether an NBA in `node` targets subroutine storage which does not
@@ -3466,20 +4901,67 @@ impl<'a> Codegen<'a> {
         self.node_has_wait(body, inst, seen)
     }
 
+    fn task_has_disable_inner(&self, ft: NodeId, inst: NodeId, seen: &mut HashSet<NodeId>) -> bool {
+        if !seen.insert(ft) {
+            return false;
+        }
+        let Some(body) = self.func_body(ft) else {
+            return false;
+        };
+        self.node_has_disable(body, inst, seen)
+    }
+
+    fn node_has_disable(&self, node: NodeId, inst: NodeId, seen: &mut HashSet<NodeId>) -> bool {
+        match self.kind(node) {
+            NodeKind::Stmt(StmtKind::Disable { .. }) => true,
+            NodeKind::FuncCall {
+                is_task: true,
+                callee,
+                ..
+            } => {
+                if let Ok((ft, callee_inst)) = self.resolve_callee_env(
+                    inst,
+                    &self.node(node).name,
+                    true,
+                    *callee,
+                ) {
+                    if self.task_has_disable_inner(ft, callee_inst, seen) {
+                        return true;
+                    }
+                }
+                self.node(node)
+                    .children
+                    .iter()
+                    .any(|c| self.node_has_disable(*c, inst, seen))
+            }
+            _ => self
+                .node(node)
+                .children
+                .iter()
+                .any(|c| self.node_has_disable(*c, inst, seen)),
+        }
+    }
+
     fn node_has_wait(&self, node: NodeId, inst: NodeId, seen: &mut HashSet<NodeId>) -> bool {
         match self.kind(node) {
             NodeKind::Stmt(
                 StmtKind::DelayControl { .. }
                 | StmtKind::EventControl { .. }
-                | StmtKind::Wait { .. },
+                | StmtKind::Wait { .. }
+                | StmtKind::WaitOrder { .. },
             ) => true,
             NodeKind::FuncCall {
                 is_task: true,
                 callee,
                 ..
             } => {
-                if let Ok(ft) = self.resolve_callee(inst, &self.node(node).name, true, *callee) {
-                    if self.task_has_wait_inner(ft, inst, seen) {
+                if let Ok((ft, callee_inst)) = self.resolve_callee_env(
+                    inst,
+                    &self.node(node).name,
+                    true,
+                    *callee,
+                ) {
+                    if self.task_has_wait_inner(ft, callee_inst, seen) {
                         return true;
                     }
                 }
@@ -3524,21 +5006,26 @@ impl<'a> Codegen<'a> {
     ) -> Result<Vec<BoundArg>, String> {
         let mut bound = Vec::with_capacity(formals.len());
         for (idx, (io, is_out)) in formals.iter().enumerate() {
-            let (w, s, two_state) = match self.kind(*io) {
+            let (w, s, two_state, real, shortreal, is_event, is_string) = match self.kind(*io) {
                 NodeKind::FuncArg { ty, .. } => {
-                    if ty.kind == "chandle" {
-                        (0, false, false)
+                    if ty.kind == "event" {
+                        (0, false, false, false, false, true, false)
+                    } else if ty.kind == "chandle" {
+                        (0, false, false, false, false, false, false)
+                    } else if ty.kind == "string" {
+                        (0, false, false, false, false, false, true)
                     } else {
                         if is_real_kind(&ty.kind) {
-                            return Err(
-                                "real/shortreal function formal is not supported".to_string()
-                            );
-                        }
-                        match ty.width {
+                            (0, false, false, true, ty.kind == "shortreal", false, false)
+                        } else { match ty.width {
                             Some(w) if w <= LLG_MAX_WIDTH => (
-                                self.effective_decl_width(*io, inst, w),
-                                ty.signed,
-                                is_two_state_kind(&ty.kind),
+                            self.effective_decl_width(*io, inst, w),
+                            ty.signed,
+                            self.db.is_two_state_type(*io) || is_two_state_kind(&ty.kind),
+                            false,
+                            false,
+                            false,
+                            false,
                             ),
                             Some(w) => {
                                 return Err(format!(
@@ -3553,6 +5040,7 @@ impl<'a> Codegen<'a> {
                                     self.node(*io).name
                                 ))
                             }
+                        }
                         }
                     }
                 }
@@ -3598,8 +5086,12 @@ impl<'a> Codegen<'a> {
                 width: w,
                 signed: s,
                 two_state,
+                real,
+                shortreal,
+                string: is_string,
                 expr,
                 is_default,
+                is_event,
             });
         }
         Ok(bound)
@@ -3650,12 +5142,18 @@ impl<'a> Codegen<'a> {
                 ret: None,
                 arg_read,
                 arg_ir,
+                event_args: HashMap::new(),
+                arg_dependencies: HashMap::new(),
                 arg_write: HashMap::new(),
+                arg_lhs: HashMap::new(),
+                const_refs: HashSet::new(),
+                const_ref_lhs: HashMap::new(),
                 persistent: HashMap::new(),
                 chandle_read: HashMap::new(),
                 chandle_write: HashMap::new(),
                 string_read: HashMap::new(),
                 string_write: HashMap::new(),
+                string_addr: HashMap::new(),
                 locals: HashMap::new(),
                 ret_node: None,
                 // Formal defaults carry exact references to the same formal
@@ -3673,7 +5171,19 @@ impl<'a> Codegen<'a> {
             self.lower_expr(scope_path, bound[idx].expr)?
         };
         let e_ir = apply_assignment_expression_width(e_ir, w);
-        let conv_ir = ir_to_storage(e_ir, w, s, two_state)?;
+        let conv_ir = if bound[idx].real {
+            IrExpr::new(
+                IrExprKind::CastToReal {
+                    a: Box::new(e_ir),
+                    shortreal: bound[idx].shortreal,
+                },
+                0,
+                false,
+                None,
+            )
+        } else {
+            ir_to_storage(e_ir, w, s, two_state)?
+        };
         let code = self.render_ir_code(&conv_ir)?;
         arg_codes[idx] = Some(code.clone());
         if arg_irs.len() <= idx {
@@ -3681,6 +5191,491 @@ impl<'a> Codegen<'a> {
         }
         arg_irs[idx] = Some(conv_ir.clone());
         Ok((code, conv_ir))
+    }
+
+    fn ir_constant_i128(value: &IrExpr) -> Option<i128> {
+        let IrExprKind::Const(value) = value.kind() else {
+            return None;
+        };
+        if value.real_value().is_some()
+            || value.x_mask().iter().any(|mask| *mask != 0)
+            || value.z_mask().iter().any(|mask| *mask != 0)
+            || value.width() > 128
+        {
+            return None;
+        }
+        let low = value.bits().first().copied().unwrap_or(0) as u128;
+        let high = value.bits().get(1).copied().unwrap_or(0) as u128;
+        let raw = low | (high << 64);
+        if value.signed() && value.width() < 128 && value.width() != 0 {
+            let sign = 1u128 << (value.width() - 1);
+            if raw & sign != 0 {
+                return Some((raw | (!0u128 << value.width())) as i128);
+            }
+        }
+        Some(raw as i128)
+    }
+
+    pub(super) fn array_constant_linear_index(
+        array: &ArrayInfo,
+        indices: &[IrExpr],
+    ) -> Option<u64> {
+        if indices.len() != array.dims.len() {
+            return None;
+        }
+        let mut linear = 0u64;
+        for ((left, right), index) in array.dims.iter().zip(indices) {
+            let index = Self::ir_constant_i128(index)?;
+            let lo = i128::from((*left).min(*right));
+            let hi = i128::from((*left).max(*right));
+            if index < lo || index > hi {
+                return None;
+            }
+            let offset = if left >= right {
+                i128::from(*left) - index
+            } else {
+                index - i128::from(*left)
+            };
+            let extent = (i64::from(*left) - i64::from(*right)).unsigned_abs() + 1;
+            linear = linear.checked_mul(extent)?.checked_add(offset as u64)?;
+        }
+        Some(linear)
+    }
+
+    /// Lower a `ref` actual to a checked canonical descriptor.  Unlike an
+    /// output/inout binding this never creates a temporary or a writeback:
+    /// the descriptor names the caller's original storage directly.
+    fn lower_ref_actual_lhs(
+        &mut self,
+        scope_path: &str,
+        node: NodeId,
+    ) -> Result<IrLhs, String> {
+        let Some(function) = self.func.as_ref() else {
+            return self.lower_lhs(scope_path, node);
+        };
+        let target = self.canonical_func_target(node).unwrap_or(node);
+        let target = if function.const_refs.contains(&target) {
+            Some(target)
+        } else {
+            let name = self.node(node).name.as_str();
+            function
+                .const_refs
+                .iter()
+                .find(|formal| self.node(**formal).name == name)
+                .copied()
+        };
+        let Some(target) = target else {
+            return self.lower_lhs(scope_path, node);
+        };
+        if let Some(lhs) = function.const_ref_lhs.get(&target) {
+            return self.lhs_to_ir(lhs.clone());
+        }
+        let Some(arg) = function.arg_ir.get(&target) else {
+            return Err(format!(
+                "const ref actual `{}` has no canonical descriptor in `{scope_path}`",
+                self.node(node).name
+            ));
+        };
+        let IrExprKind::FormalRead(index) = arg.kind() else {
+            return Err(format!(
+                "const ref actual `{}` has no canonical descriptor in `{scope_path}`",
+                self.node(node).name
+            ));
+        };
+        let info = function.arg_read.get(&target).ok_or_else(|| {
+            format!(
+                "const ref actual `{}` has no type metadata in `{scope_path}`",
+                self.node(node).name
+            )
+        })?;
+        Ok(IrLhs::Ref {
+            addr: format!("r{index}"),
+            width: info.width,
+            signed: info.signed,
+            two_state: info.two_state,
+            const_ref: true,
+        })
+    }
+
+    pub(super) fn lower_ref_arg(
+        &mut self,
+        scope_path: &str,
+        bound: &BoundArg,
+        const_ref: bool,
+        ref_static: bool,
+    ) -> Result<IrCallArg, String> {
+        if bound.is_default {
+            return Err(format!(
+                "ref formal cannot use a default argument in `{scope_path}`"
+            ));
+        }
+        if ref_static {
+            let target = match self.kind(bound.expr) {
+                NodeKind::Var { .. } => Some(bound.expr),
+                NodeKind::Expr(ExprKind::Ref { target }) => *target,
+                NodeKind::Expr(
+                    ExprKind::BitSelect { base, .. }
+                    | ExprKind::PartSelect { base, .. }
+                    | ExprKind::IndexedPartSelect { base, .. }
+                    | ExprKind::ArraySelect { base, .. },
+                ) => match self.kind(*base) {
+                    NodeKind::Expr(ExprKind::Ref { target }) => *target,
+                    NodeKind::Var { .. } => Some(*base),
+                    _ => None,
+                },
+                _ => None,
+            }
+            .map(|target| self.canonical_func_target(target).unwrap_or(target));
+            match target.map(|target| self.db.variable_lifetime(target)) {
+                Some(VariableLifetime::Static) => {}
+                Some(VariableLifetime::Automatic) => {
+                    return Err(format!(
+                        "ref static actual in `{scope_path}` cannot bind automatic storage"
+                    ));
+                }
+                Some(VariableLifetime::Unavailable) | None => {
+                    return Err(format!(
+                        "ref static actual in `{scope_path}` has unavailable storage lifetime"
+                    ));
+                }
+            }
+        }
+        let lhs = self.lower_ref_actual_lhs(scope_path, bound.expr)?;
+        let read = self.lower_expr(scope_path, bound.expr)?;
+        let (base, width, signed, two_state, actual_const, kind, fields) = match &lhs {
+            IrLhs::Whole(index) => {
+                let signal = self.model.signals.get(*index).ok_or_else(|| {
+                    format!("reference actual signal {index} is out of bounds in `{scope_path}`")
+                })?;
+                if signal.net_driver.is_some() {
+                    return Err(format!(
+                        "ref actual in `{scope_path}` must be a variable, not a net"
+                    ));
+                }
+                let IrType::Packed {
+                    width,
+                    signed,
+                    two_state,
+                } = signal.ty
+                else {
+                    return Err(format!(
+                        "ref actual in `{scope_path}` must have a packed integral type"
+                    ));
+                };
+                (
+                    format!("&{}", signal.c_name),
+                    width,
+                    signed,
+                    two_state,
+                    false,
+                    "LLG_REF_WHOLE",
+                    String::new(),
+                )
+            }
+            IrLhs::WholeRef {
+                addr,
+                width,
+                signed,
+                two_state,
+                ..
+            } => (
+                addr.clone(),
+                *width,
+                *signed,
+                *two_state,
+                false,
+                "LLG_REF_WHOLE",
+                String::new(),
+            ),
+            IrLhs::Ref {
+                addr,
+                width,
+                signed,
+                two_state,
+                const_ref: actual_const,
+            } => (
+                addr.clone(),
+                *width,
+                *signed,
+                *two_state,
+                *actual_const,
+                "LLG_REF_NESTED",
+                String::new(),
+            ),
+            IrLhs::Bit(index, bit, two_state) => {
+                let signal = self.model.signals.get(*index).ok_or_else(|| {
+                    format!("reference actual signal {index} is out of bounds in `{scope_path}`")
+                })?;
+                if signal.net_driver.is_some() {
+                    return Err(format!("ref actual in `{scope_path}` must be a variable"));
+                }
+                let IrType::Packed { .. } = signal.ty else {
+                    return Err(format!("ref actual in `{scope_path}` must be integral"));
+                };
+                let bit = self.render_ir_code(bit)?;
+                (
+                    format!("&{}", signal.c_name),
+                    1,
+                    false,
+                    *two_state,
+                    false,
+                    "LLG_REF_BIT",
+                    format!(".index = sv4_to_index({bit})"),
+                )
+            }
+            IrLhs::Part(index, left, right, two_state) => {
+                let signal = self.model.signals.get(*index).ok_or_else(|| {
+                    format!("reference actual signal {index} is out of bounds in `{scope_path}`")
+                })?;
+                if signal.net_driver.is_some() {
+                    return Err(format!("ref actual in `{scope_path}` must be a variable"));
+                }
+                let IrType::Packed { .. } = signal.ty else {
+                    return Err(format!("ref actual in `{scope_path}` must be integral"));
+                };
+                let width = left.abs_diff(*right) as u32 + 1;
+                (
+                    format!("&{}", signal.c_name),
+                    width,
+                    false,
+                    *two_state,
+                    false,
+                    "LLG_REF_PART",
+                    format!(".left = {left}, .right = {right}"),
+                )
+            }
+            IrLhs::IdxPart(index, base_index, _, width, negative, two_state) => {
+                let signal = self.model.signals.get(*index).ok_or_else(|| {
+                    format!("reference actual signal {index} is out of bounds in `{scope_path}`")
+                })?;
+                if signal.net_driver.is_some() {
+                    return Err(format!("ref actual in `{scope_path}` must be a variable"));
+                }
+                let IrType::Packed { .. } = signal.ty else {
+                    return Err(format!("ref actual in `{scope_path}` must be integral"));
+                };
+                let base_index = self.render_ir_code(base_index)?;
+                (
+                    format!("&{}", signal.c_name),
+                    *width,
+                    false,
+                    *two_state,
+                    false,
+                    "LLG_REF_INDEXED",
+                    format!(
+                        ".index = sv4_to_index({base_index}), .indexed_width = {width}, \
+                         .indexed_negative = {}",
+                        *negative as u8
+                    ),
+                )
+            }
+            IrLhs::ArrayElem {
+                arr,
+                indices,
+                elem_sel,
+            } => {
+                let array = self.model.arrays.get(*arr).ok_or_else(|| {
+                    format!("reference actual array {arr} is out of bounds in `{scope_path}`")
+                })?;
+                let array_info = ArrayInfo {
+                    global: array.c_name.clone(),
+                    elem_width: array.elem_width,
+                    signed: array.signed,
+                    real: array.real,
+                    shortreal: array.shortreal,
+                    is_net: false,
+                    dims: array.dims.clone(),
+                    init: None,
+                    ir: *arr,
+                };
+                let constant_linear =
+                    Self::array_constant_linear_index(&array_info, indices);
+                if matches!(elem_sel, IrElemSel::Whole) && constant_linear.is_none() {
+                    if indices
+                        .iter()
+                        .all(|index| Self::ir_constant_i128(index).is_some())
+                    {
+                        return Err(format!(
+                            "ref actual array index in `{scope_path}` must be a constant in range"
+                        ));
+                    }
+                    let index_codes = indices
+                        .iter()
+                        .map(|index| self.render_ir_code(index))
+                        .collect::<Result<Vec<_>, _>>()?;
+                    let (decls, condition, linear) = array_guard(array, &index_codes).ok_or_else(|| {
+                        format!(
+                            "ref actual array index in `{scope_path}` has no dimensions"
+                        )
+                    })?;
+                    let index = format!(
+                        "({{ {decls} ({condition}) ? (uint64_t)({linear}) : UINT64_MAX; }})"
+                    );
+                    (
+                        array.c_name.clone(),
+                        array.elem_width,
+                        array.signed,
+                        array.two_state,
+                        false,
+                        "LLG_REF_ARRAY",
+                        format!(
+                            ".array_size = {}ULL, .index = {index}",
+                            array.total
+                        ),
+                    )
+                } else {
+                let linear = Self::array_constant_linear_index(
+                    &array_info,
+                    indices,
+                )
+                .ok_or_else(|| {
+                    format!(
+                        "ref actual array index in `{scope_path}` must be a constant in range"
+                    )
+                })?;
+                let base = format!("&{}[{}]", array.c_name, linear);
+                match elem_sel {
+                    IrElemSel::Whole => (
+                        base,
+                        array.elem_width,
+                        array.signed,
+                        array.two_state,
+                        false,
+                        "LLG_REF_WHOLE",
+                        String::new(),
+                    ),
+                    IrElemSel::Part(left, right) => (
+                        base,
+                        left.abs_diff(*right) as u32 + 1,
+                        false,
+                        array.two_state,
+                        false,
+                        "LLG_REF_PART",
+                        format!(".left = {left}, .right = {right}"),
+                    ),
+                    IrElemSel::Bit(index) => {
+                        let index = self.render_ir_code(index)?;
+                        (
+                            base,
+                            1,
+                            false,
+                            array.two_state,
+                            false,
+                            "LLG_REF_BIT",
+                            format!(".index = sv4_to_index({index})"),
+                        )
+                    }
+                    IrElemSel::Indexed {
+                        base: index,
+                        width,
+                        negative,
+                    } => {
+                        let index = self.render_ir_code(index)?;
+                        (
+                            base,
+                            *width,
+                            false,
+                            array.two_state,
+                            false,
+                            "LLG_REF_INDEXED",
+                            format!(
+                                ".index = sv4_to_index({index}), .indexed_width = {width}, \
+                                 .indexed_negative = {}",
+                                *negative as u8
+                            ),
+                        )
+                    }
+                }
+                }
+            }
+            IrLhs::Stream { .. } => {
+                return Err(format!(
+                    "streaming concatenation is not a legal ref actual in `{scope_path}`"
+                ));
+            }
+        };
+        if width != bound.width || signed != bound.signed || two_state != bound.two_state {
+            return Err(format!(
+                "ref actual type does not exactly match formal in `{scope_path}`"
+            ));
+        }
+        if actual_const && !const_ref {
+            return Err(format!(
+                "const ref actual cannot bind to writable ref formal in `{scope_path}`"
+            ));
+        }
+        let descriptor = if kind == "LLG_REF_NESTED" {
+            base
+        } else {
+            format!(
+                "&(llg_ref_t){{ .base = {base}, .width = {width}, .is_signed = {}, \
+                 .two_state = {}, .kind = {kind}, {fields} }}",
+                signed as u8,
+                two_state as u8
+            )
+        };
+        Ok(IrCallArg::RefAddr {
+            addr: descriptor,
+            width,
+            signed,
+            two_state,
+            const_ref: actual_const,
+            lhs: Box::new(lhs),
+            read: Box::new(read),
+        })
+    }
+
+    pub(super) fn ref_lhs_type(
+        &self,
+        lhs: &IrLhs,
+    ) -> Option<(u32, bool, bool, bool)> {
+        match lhs {
+            IrLhs::Whole(index) => match self.model.signal(*index).ty {
+                IrType::Packed {
+                    width,
+                    signed,
+                    two_state,
+                } => Some((width, signed, two_state, false)),
+                IrType::Real { .. } => None,
+            },
+            IrLhs::WholeRef {
+                width,
+                signed,
+                two_state,
+                ..
+            } => Some((*width, *signed, *two_state, false)),
+            IrLhs::Ref {
+                width,
+                signed,
+                two_state,
+                const_ref,
+                ..
+            } => Some((*width, *signed, *two_state, *const_ref)),
+            IrLhs::Bit(_, _, two_state) => Some((1, false, *two_state, false)),
+            IrLhs::Part(_, left, right, two_state) => {
+                Some((left.abs_diff(*right) as u32 + 1, false, *two_state, false))
+            }
+            IrLhs::IdxPart(_, _, _, width, _, two_state) => {
+                Some((*width, false, *two_state, false))
+            }
+            IrLhs::ArrayElem {
+                arr,
+                elem_sel,
+                ..
+            } => {
+                let array = self.model.arrays.get(*arr)?;
+                let (width, signed) = match elem_sel {
+                    IrElemSel::Whole => (array.elem_width, array.signed),
+                    IrElemSel::Part(left, right) => {
+                        (left.abs_diff(*right) as u32 + 1, false)
+                    }
+                    IrElemSel::Bit(_) => (1, false),
+                    IrElemSel::Indexed { width, .. } => (*width, false),
+                };
+                Some((width, signed, array.two_state, false))
+            }
+            IrLhs::Stream { .. } => None,
+        }
     }
 
     /// Lower a `func_call` expression used as a value: `fn_<callee>(<args>,
@@ -3694,7 +5689,8 @@ impl<'a> Codegen<'a> {
         name: &str,
         callee: Option<NodeId>,
     ) -> Result<IrExpr, String> {
-        let ft = self.resolve_callee(self.inst, name, false, callee)?;
+        let (ft, callee_inst) =
+            self.resolve_callee_env(self.inst, name, false, callee)?;
         let meta = self
             .func_meta
             .get(&ft)
@@ -3706,37 +5702,139 @@ impl<'a> Codegen<'a> {
             ));
         }
         let formals = meta.formals.clone();
-        if formals.iter().any(|(_, is_out)| *is_out)
-            && matches!(
-                self.kind(ft),
-                NodeKind::FuncTask {
-                    automatic: false,
-                    ..
-                }
-            )
-        {
-            return Err(format!(
-                "static function `{name}` with output/inout formals is not supported in expression position"
-            ));
-        }
         let args: Vec<NodeId> = self.node(h).children.clone();
         let bound = self.bind_call_args(self.inst, &formals, &args)?;
+        for (idx, (io, is_out)) in formals.iter().enumerate() {
+            if bound[idx].is_event {
+                return Err(format!(
+                    "event formal `{}` in function expression `{name}` has no typed value call path",
+                    self.node(*io).name
+                ));
+            }
+        }
         // `ret` is `None` for void functions; when the frontend accepts one as
         // a value (for example `out <= vf(4'd2);`), emit the call for its
         // side effects and yields all-X.
         let ret_val = meta.ret;
-        let (ret_w, ret_s, _) = ret_val.unwrap_or((1, false, false));
+        let (ret_w, ret_s, _, _) = ret_val.unwrap_or((1, false, false, false));
 
         let mut out_args: Vec<IrCallArg> = Vec::new();
         let mut in_args: Vec<IrCallArg> = Vec::new();
         let mut arg_codes: Vec<Option<String>> = vec![None; formals.len()];
         let mut arg_irs: Vec<Option<IrExpr>> = vec![None; formals.len()];
         for (idx, (io, is_out)) in formals.iter().enumerate() {
+            if matches!(
+                self.kind(*io),
+                NodeKind::FuncArg { ty, .. } if ty.kind == "chandle"
+            ) {
+                let is_ref = matches!(
+                    self.kind(*io),
+                    NodeKind::FuncArg {
+                        direction: DbDirection::Ref,
+                        ..
+                    }
+                );
+                if is_ref || *is_out {
+                    let (target, _) = self.lower_chandle_lvalue(scope_path, bound[idx].expr)?;
+                    let address = self.chandle_target_address(&target);
+                    if is_ref {
+                        out_args.push(IrCallArg::ChandleRefAddr(address));
+                    } else {
+                        out_args.push(IrCallArg::ChandleAddr(address));
+                    }
+                }
+                continue;
+            }
+            let is_ref = matches!(
+                self.kind(*io),
+                NodeKind::FuncArg {
+                    direction: DbDirection::Ref,
+                    ..
+                }
+            );
+            if is_ref {
+                let (const_ref, ref_static) = match self.kind(*io) {
+                    NodeKind::FuncArg {
+                        direction: DbDirection::Ref,
+                        const_ref,
+                        ref_static,
+                        ..
+                    } => (*const_ref, *ref_static),
+                    _ => unreachable!("ref formal"),
+                };
+                if bound[idx].string {
+                    if !const_ref {
+                        self.ensure_string_actual_writable(scope_path, bound[idx].expr)?;
+                    }
+                    out_args.push(IrCallArg::StringRefAddr {
+                        addr: self.lower_string_actual_address(scope_path, bound[idx].expr)?,
+                        const_ref,
+                    });
+                } else {
+                    out_args.push(self.lower_ref_arg(
+                        scope_path,
+                        &bound[idx],
+                        const_ref,
+                        ref_static,
+                    )?);
+                }
+                if !bound[idx].string {
+                    let read_ir = self.lower_expr(scope_path, bound[idx].expr)?;
+                    arg_codes[idx] = Some(self.render_ir_code(&read_ir)?);
+                    arg_irs[idx] = Some(read_ir);
+                }
+                continue;
+            }
             if *is_out {
-                let tname = format!("_t{}", h.0);
-                let (_init_code, init_ir) =
-                    self.lower_call_temp_init(scope_path, *io, &bound[idx])?;
-                let wb = self.lower_lhs(scope_path, bound[idx].expr)?;
+                if bound[idx].string {
+                    self.ensure_string_actual_writable(scope_path, bound[idx].expr)?;
+                    let tname = format!("_st{}_{}", h.0, idx);
+                    let writeback = self.lower_string_actual_address(scope_path, bound[idx].expr)?;
+                    let init = matches!(
+                        self.kind(*io),
+                        NodeKind::FuncArg { direction: DbDirection::Inout, .. }
+                    )
+                    .then(|| self.lower_string(scope_path, bound[idx].expr))
+                    .transpose()?;
+                    let (storage_addr, storage_read) = self
+                        .static_string_formals
+                        .get(&(callee_inst, *io))
+                        .map(|object| {
+                            (
+                                Some(format!("&{}", self.model.objects[*object].c_name)),
+                                Some(Box::new(IrStringExpr::Read(*object))),
+                            )
+                        })
+                        .unwrap_or((None, None));
+                    out_args.push(IrCallArg::StringOutTemp {
+                        name: tname,
+                        init: init.map(Box::new),
+                        writeback,
+                        storage_addr,
+                        storage_read,
+                    });
+                    continue;
+                }
+                let tname = format!("_t{}_{}", h.0, idx);
+                let (wb, actual_read, selector_inits) =
+                    self.lower_call_actual(scope_path, bound[idx].expr, &format!("{}_{idx}", h.0))?;
+                let (_init_code, init_ir) = self.lower_call_temp_init_from_expr(
+                    *io,
+                    &bound[idx],
+                    actual_read,
+                )?;
+                let storage = self.static_formals.get(&(callee_inst, *io)).cloned();
+                let (storage_addr, storage_lhs, storage_read) = if let Some(storage) = storage {
+                    let lhs = IrLhs::Whole(storage.ir);
+                    let read = sig_read_expr_full(&storage);
+                    (
+                        Some(format!("&{}", storage.global)),
+                        Some(Box::new(lhs)),
+                        Some(Box::new(read)),
+                    )
+                } else {
+                    (None, None, None)
+                };
                 // The temp is the correctly-sized value of the formal while
                 // the call runs (all-X for outputs, the actual for inouts).
                 arg_codes[idx] = Some(tname.clone());
@@ -3750,11 +5848,35 @@ impl<'a> Codegen<'a> {
                     name: tname,
                     init: init_ir.map(Box::new),
                     writeback: Box::new(wb),
+                    storage_addr,
+                    storage_lhs,
+                    storage_read,
+                    selector_inits,
                 });
             }
         }
-        for (idx, (_, is_out)) in formals.iter().enumerate() {
-            if !*is_out {
+        for (idx, (io, is_out)) in formals.iter().enumerate() {
+            let is_ref = matches!(
+                self.kind(*io),
+                NodeKind::FuncArg {
+                    direction: DbDirection::Ref,
+                    ..
+                }
+            );
+            if !*is_out
+                && !is_ref
+                && matches!(self.kind(*io), NodeKind::FuncArg { ty, .. } if ty.kind == "chandle")
+            {
+                in_args.push(IrCallArg::ChandleVal(
+                    self.lower_chandle(scope_path, bound[idx].expr)?,
+                ));
+            } else if !*is_out && !is_ref {
+                if bound[idx].string {
+                    in_args.push(IrCallArg::StringVal(
+                        self.lower_string(scope_path, bound[idx].expr)?,
+                    ));
+                    continue;
+                }
                 let (_code, ir) = self.lower_bound_arg_code(
                     scope_path,
                     &formals,
@@ -3802,12 +5924,331 @@ impl<'a> Codegen<'a> {
                 ..
             } => {
                 let e = self.lower_expr(scope_path, b.expr)?;
+                self.lower_call_temp_init_from_expr(io, b, e)
+            }
+            _ if b.real => Ok(("0.0".to_string(), None)),
+            _ => Ok((format!("sv4_x({}, {})", b.width, b.signed as u8), None)),
+        }
+    }
+
+    /// Lower a caller-side output/inout temp initializer from an already
+    /// evaluated actual read.  Callers use this after freezing selected-LHS
+    /// indices so copy-in and copy-out share one actual identity.
+    pub(super) fn lower_call_temp_init_from_expr(
+        &self,
+        io: NodeId,
+        b: &BoundArg,
+        e: IrExpr,
+    ) -> Result<(String, Option<IrExpr>), String> {
+        match self.kind(io) {
+            NodeKind::FuncArg {
+                direction: DbDirection::Inout,
+                ..
+            } => {
                 let e = apply_assignment_expression_width(e, b.width);
-                let conv = ir_to_storage(e, b.width, b.signed, b.two_state)?;
+                let conv = if b.real {
+                    IrExpr::new(
+                        IrExprKind::CastToReal {
+                            a: Box::new(e),
+                            shortreal: b.shortreal,
+                        },
+                        0,
+                        false,
+                        None,
+                    )
+                } else {
+                    ir_to_storage(e, b.width, b.signed, b.two_state)?
+                };
                 let code = self.render_ir_code(&conv)?;
                 Ok((code, Some(conv)))
             }
+            _ if b.real => Ok(("0.0".to_string(), None)),
             _ => Ok((format!("sv4_x({}, {})", b.width, b.signed as u8), None)),
+        }
+    }
+
+    /// Resolve a whole native string actual to its caller-owned C slot.
+    pub(super) fn lower_string_actual_address(
+        &self,
+        path: &str,
+        actual: NodeId,
+    ) -> Result<String, String> {
+        if matches!(self.kind(actual), NodeKind::Expr(ExprKind::BitSelect { .. })) {
+            return Err(format!(
+                "string output/ref actual in `{path}` must be a whole string lvalue"
+            ));
+        }
+        if let Some(index) = self.object_of(path, actual) {
+            let object = self
+                .model
+                .objects
+                .get(index)
+                .ok_or_else(|| "string object index is out of bounds".to_owned())?;
+            if object.ty != IrObjectType::String {
+                return Err(format!("actual in `{path}` is not string storage"));
+            }
+            return Ok(format!("&{}", object.c_name));
+        }
+        let target = match self.kind(actual) {
+            NodeKind::Expr(ExprKind::Ref { target }) => *target,
+            _ => Some(actual),
+        };
+        let target = self.func.as_ref().and_then(|function| {
+            target
+                .and_then(|target| {
+                    function
+                        .string_write
+                        .get(&target)
+                        .cloned()
+                        .or_else(|| function.string_addr.get(&target).cloned())
+                })
+                .or_else(|| {
+                    matches!(self.kind(actual), NodeKind::Expr(ExprKind::Ref { target: None }))
+                        .then(|| {
+                            function
+                                .string_write
+                                .iter()
+                                .find(|(target, _)| self.node(**target).name == self.node(actual).name)
+                                .map(|(_, value)| value.clone())
+                                .or_else(|| {
+                                    function
+                                        .string_addr
+                                        .iter()
+                                        .find(|(target, _)| {
+                                            self.node(**target).name == self.node(actual).name
+                                        })
+                                        .map(|(_, value)| value.clone())
+                                })
+                        })
+                        .flatten()
+                })
+        });
+        target
+            .map(|target| format!("&{target}"))
+            .ok_or_else(|| format!("string output/ref actual in `{path}` is not a writable lvalue"))
+    }
+
+    /// Reject a string output/inout or mutable-ref actual that is only a
+    /// readable const-ref alias.  Address formation itself remains available
+    /// for const-ref formals and therefore must not perform this check.
+    pub(super) fn ensure_string_actual_writable(
+        &self,
+        path: &str,
+        actual: NodeId,
+    ) -> Result<(), String> {
+        if let Some(index) = self.object_of(path, actual) {
+            let object = self
+                .model
+                .objects
+                .get(index)
+                .ok_or_else(|| "string object index is out of bounds".to_owned())?;
+            return if object.ty == IrObjectType::String {
+                Ok(())
+            } else {
+                Err(format!("actual in `{path}` is not string storage"))
+            };
+        }
+        let target = match self.kind(actual) {
+            NodeKind::Expr(ExprKind::Ref { target }) => *target,
+            _ => Some(actual),
+        };
+        let writable = self.func.as_ref().is_some_and(|function| {
+            target
+                .and_then(|target| function.string_write.get(&target))
+                .is_some()
+                || (matches!(
+                    self.kind(actual),
+                    NodeKind::Expr(ExprKind::Ref { target: None })
+                ) && function
+                    .string_write
+                    .keys()
+                    .any(|target| self.node(*target).name == self.node(actual).name))
+        });
+        if writable {
+            Ok(())
+        } else {
+            Err(format!(
+                "string output/ref actual in `{path}` is a const-ref or non-writable lvalue"
+            ))
+        }
+    }
+
+    /// Lower one output/inout actual once.  Runtime selector expressions are
+    /// captured in caller-side locals before the callee starts; the returned
+    /// read and writeback LHS then use those locals rather than re-evaluating
+    /// an index after the call.
+    pub(super) fn lower_call_actual(
+        &mut self,
+        path: &str,
+        actual: NodeId,
+        tag: &str,
+    ) -> Result<(IrLhs, IrExpr, Vec<(String, u32, bool, bool, IrExpr)>), String> {
+        let lhs = self.lower_lhs(path, actual)?;
+        let mut captures = Vec::new();
+        let mut sequence = 0usize;
+        let (lhs, read) = self.freeze_call_lhs(lhs, tag, &mut sequence, &mut captures)?;
+        let read = read.unwrap_or(self.lower_expr(path, actual)?);
+        Ok((lhs, read, captures))
+    }
+
+    fn freeze_call_lhs(
+        &self,
+        lhs: IrLhs,
+        tag: &str,
+        sequence: &mut usize,
+        captures: &mut Vec<(String, u32, bool, bool, IrExpr)>,
+    ) -> Result<(IrLhs, Option<IrExpr>), String> {
+        let mut capture = |expr: IrExpr| -> Result<IrExpr, String> {
+            if expr.is_real() {
+                return Err(format!(
+                    "real-valued selector in subroutine output/inout actual `{tag}` is not supported"
+                ));
+            }
+            let name = format!("_call_idx_{tag}_{}", *sequence);
+            *sequence += 1;
+            let frozen = IrExpr::new(
+                IrExprKind::LocalRead(name.clone()),
+                expr.width,
+                expr.signed,
+                None,
+            );
+            captures.push((name, expr.width, expr.signed, false, expr));
+            Ok(frozen)
+        };
+        let read_signal = |signal: usize| -> Result<IrExpr, String> {
+            let ty = self
+                .model
+                .signals
+                .get(signal)
+                .ok_or_else(|| format!("subroutine actual signal {signal} is out of bounds"))?
+                .ty;
+            Ok(IrExpr::new(
+                IrExprKind::SigRead(signal),
+                ty.width(),
+                ty.signed(),
+                None,
+            ))
+        };
+        match lhs {
+            IrLhs::Whole(signal) => Ok((lhs, Some(read_signal(signal)?))),
+            IrLhs::Bit(signal, index, two_state) => {
+                let index = capture(index)?;
+                let read = IrExpr::new(
+                    IrExprKind::BitSel {
+                        base: Box::new(read_signal(signal)?),
+                        idx: Box::new(index.clone()),
+                    },
+                    1,
+                    false,
+                    None,
+                );
+                Ok((IrLhs::Bit(signal, index, two_state), Some(read)))
+            }
+            IrLhs::Part(signal, left, right, two_state) => {
+                let width = left
+                    .abs_diff(right)
+                    .checked_add(1)
+                    .and_then(|width| u32::try_from(width).ok())
+                    .ok_or_else(|| "part-select width exceeds the supported range".to_string())?;
+                let read = IrExpr::new(
+                    IrExprKind::PartSel {
+                        base: Box::new(read_signal(signal)?),
+                        left,
+                        right,
+                    },
+                    width,
+                    false,
+                    None,
+                );
+                Ok((IrLhs::Part(signal, left, right, two_state), Some(read)))
+            }
+            IrLhs::IdxPart(signal, base, width_expr, width, negative, two_state) => {
+                let base = capture(base)?;
+                let width_expr = capture(width_expr)?;
+                let read = IrExpr::new(
+                    IrExprKind::IdxPartSel {
+                        base: Box::new(read_signal(signal)?),
+                        base_idx: Box::new(base.clone()),
+                        width_expr: Box::new(width_expr.clone()),
+                        neg: negative,
+                    },
+                    width,
+                    false,
+                    None,
+                );
+                Ok((
+                    IrLhs::IdxPart(signal, base, width_expr, width, negative, two_state),
+                    Some(read),
+                ))
+            }
+            IrLhs::ArrayElem {
+                arr,
+                indices,
+                elem_sel,
+            } => {
+                let array = self.model.arrays.get(arr).ok_or_else(|| {
+                    format!("subroutine actual array {arr} is out of bounds")
+                })?;
+                if array.real {
+                    return Err(
+                        "real unpacked-array output/inout actuals are not supported".to_string(),
+                    );
+                }
+                let indices = indices
+                    .into_iter()
+                    .map(&mut capture)
+                    .collect::<Result<Vec<_>, _>>()?;
+                let elem_sel = match elem_sel {
+                    IrElemSel::Whole => IrElemSel::Whole,
+                    IrElemSel::Part(left, right) => IrElemSel::Part(left, right),
+                    IrElemSel::Bit(index) => IrElemSel::Bit(Box::new(capture(*index)?)),
+                    IrElemSel::Indexed {
+                        base,
+                        width,
+                        negative,
+                    } => IrElemSel::Indexed {
+                        base: Box::new(capture(*base)?),
+                        width,
+                        negative,
+                    },
+                };
+                let (width, signed) = match elem_sel {
+                    IrElemSel::Whole => (array.elem_width, array.signed),
+                    IrElemSel::Part(left, right) => (
+                        left.abs_diff(right)
+                            .checked_add(1)
+                            .and_then(|width| u32::try_from(width).ok())
+                            .ok_or_else(|| {
+                                "array element part-select width exceeds the supported range"
+                                    .to_string()
+                            })?,
+                        false,
+                    ),
+                    IrElemSel::Bit(_) => (1, false),
+                    IrElemSel::Indexed { width, .. } => (width, false),
+                };
+                let read = IrExpr::new(
+                    IrExprKind::ArrayRead {
+                        arr,
+                        indices: indices.clone(),
+                        elem_sel: elem_sel.clone(),
+                    },
+                    width,
+                    signed,
+                    None,
+                );
+                Ok((
+                    IrLhs::ArrayElem {
+                        arr,
+                        indices,
+                        elem_sel,
+                    },
+                    Some(read),
+                ))
+            }
+            lhs @ (IrLhs::WholeRef { .. } | IrLhs::Ref { .. } | IrLhs::Stream { .. }) => {
+                Ok((lhs, None))
+            }
         }
     }
 
@@ -3817,6 +6258,12 @@ impl<'a> Codegen<'a> {
     fn func_write_target(&self, node: NodeId, name: &str) -> Option<Lhs> {
         let f = self.func.as_ref()?;
         let node = self.canonical_func_target(node).unwrap_or(node);
+        if let Some(lhs) = f.arg_lhs.get(&node) {
+            return Some(lhs.clone());
+        }
+        if f.const_refs.contains(&node) {
+            return None;
+        }
         if let Some(info) = f.persistent.get(&node) {
             return Some(Lhs::Whole(info.clone()));
         }
@@ -3827,15 +6274,20 @@ impl<'a> Codegen<'a> {
                     width: am.width,
                     signed: am.signed,
                     two_state: am.two_state,
+                    shortreal: matches!(
+                        self.kind(node),
+                        NodeKind::FuncArg { ty, .. } if ty.kind == "shortreal"
+                    ),
                 });
             }
         }
-        if let Some((cname, w, s, two_state)) = f.locals.get(&node) {
+        if let Some((cname, w, s, two_state, shortreal)) = f.locals.get(&node) {
             return Some(Lhs::WholeRef {
                 addr: format!("&{cname}"),
                 width: *w,
                 signed: *s,
                 two_state: *two_state,
+                shortreal: *shortreal,
             });
         }
         if f.ret_node == Some(node) {
@@ -3845,6 +6297,7 @@ impl<'a> Codegen<'a> {
                     width: r.width,
                     signed: r.signed,
                     two_state: r.two_state,
+                    shortreal: r.shortreal,
                 });
             }
         }
@@ -3859,17 +6312,27 @@ impl<'a> Codegen<'a> {
                         width: am.width,
                         signed: am.signed,
                         two_state: am.two_state,
+                        shortreal: matches!(
+                            self.kind(*io),
+                            NodeKind::FuncArg { ty, .. } if ty.kind == "shortreal"
+                        ),
                     });
                 }
             }
         }
-        for (nid, (cname, w, s, two_state)) in &f.locals {
+        for (io, lhs) in &f.arg_lhs {
+            if self.node(*io).name == name {
+                return Some(lhs.clone());
+            }
+        }
+        for (nid, (cname, w, s, two_state, shortreal)) in &f.locals {
             if self.node(*nid).name == name {
                 return Some(Lhs::WholeRef {
                     addr: format!("&{cname}"),
                     width: *w,
                     signed: *s,
                     two_state: *two_state,
+                    shortreal: *shortreal,
                 });
             }
         }
@@ -3880,10 +6343,63 @@ impl<'a> Codegen<'a> {
                     width: r.width,
                     signed: r.signed,
                     two_state: r.two_state,
+                    shortreal: r.shortreal,
                 });
             }
         }
         None
+    }
+
+    fn is_const_ref_target(&self, node: NodeId, name: &str) -> bool {
+        let Some(func) = self.func.as_ref() else {
+            return false;
+        };
+        let node = self.canonical_func_target(node).unwrap_or(node);
+        func.const_refs.contains(&node)
+            || func
+                .const_refs
+                .iter()
+                .any(|formal| self.node(*formal).name == name)
+    }
+
+    pub(super) fn subroutine_auto_target(&self, node: NodeId) -> bool {
+        self.subroutine_auto_ref(node).is_some()
+    }
+
+    /// Return the canonical automatic subroutine storage referenced by a
+    /// target or expression node.  Force evaluators are emitted outside the
+    /// activation that issued them, so stack-backed formals and locals may
+    /// not be captured; persistent static subroutine storage remains valid.
+    pub(super) fn subroutine_auto_ref(&self, node: NodeId) -> Option<NodeId> {
+        let Some(function) = self.func.as_ref() else {
+            return None;
+        };
+        if !self.function_is_automatic(function) {
+            return None;
+        }
+        let target = match self.kind(node) {
+            NodeKind::Var { .. } => node,
+            NodeKind::Expr(ExprKind::Ref { target }) => target.unwrap_or(node),
+            NodeKind::Expr(
+                ExprKind::BitSelect { base, .. }
+                | ExprKind::PartSelect { base, .. }
+                | ExprKind::IndexedPartSelect { base, .. }
+                | ExprKind::ArraySelect { base, .. },
+            ) => match self.kind(*base) {
+                NodeKind::Expr(ExprKind::Ref { target }) => target.unwrap_or(*base),
+                _ => *base,
+            },
+            _ => return None,
+        };
+        let target = self.canonical_func_target(target).unwrap_or(target);
+        if function.persistent.contains_key(&target) {
+            return None;
+        }
+        (function.locals.contains_key(&target)
+            || function.arg_read.contains_key(&target)
+            || function.arg_write.contains_key(&target)
+            || function.ret_node == Some(target))
+            .then_some(target)
     }
 
     /// Normalize a Slang instantiated subroutine declaration identity to the
@@ -3964,9 +6480,20 @@ impl<'a> Codegen<'a> {
                 .children
                 .iter()
                 .filter_map(|child| match self.kind(*child) {
-                    NodeKind::FuncArg { direction, ty, .. } => {
-                        Some((*direction, ty.kind.clone(), ty.width, ty.signed))
-                    }
+                    NodeKind::FuncArg {
+                        direction,
+                        ty,
+                        const_ref,
+                        ref_static,
+                        ..
+                    } => Some((
+                        *direction,
+                        ty.kind.clone(),
+                        ty.width,
+                        ty.signed,
+                        *const_ref,
+                        *ref_static,
+                    )),
                     _ => None,
                 })
                 .collect::<Vec<_>>()
@@ -3977,17 +6504,15 @@ impl<'a> Codegen<'a> {
     // ── PCA site pre-scan (two-phase discovery, phase 1) ─────────────────────
 
     /// Allocate every procedural continuous assignment site in the instance
-    /// tree BEFORE any body lowers.  Traverses module instances, generate
+    /// tree BEFORE any body lowers. Traverses module instances, generate
     /// scopes and per-iteration instances exactly like the Procs emission
-    /// pass, so
-    /// lower-time lookups into [`Codegen::pca_sites`] see every site
+    /// pass, so lower-time lookups into [`Codegen::pca_sites`] see every site
     /// regardless of process/source order: a `deassign` in a process that
     /// lowers BEFORE the process carrying the matching `assign` must still
     /// clear its enable (a lower-time allocation alone would turn it into a
-    /// permanent no-op), and the multiple-active-sites reject becomes
-    /// order-independent too.  Function/task definition bodies are not
-    /// scanned here: they always lower before any process body, so sites
-    /// inside them still allocate ahead of every process-body deassign.
+    /// permanent no-op). Function/task definition bodies are not scanned
+    /// here: they always lower before any process body, so sites inside them
+    /// still allocate ahead of every process-body deassign.
     pub(super) fn prescan_pca_sites(&mut self, inst: NodeId, path: &str) -> Result<(), String> {
         for c in &self.node(inst).children {
             if matches!(self.kind(*c), NodeKind::Process { .. }) {
@@ -4261,56 +6786,30 @@ impl<'a> Codegen<'a> {
             .ok_or_else(|| format!("continuous assignment without RHS in `{path}`"))?;
         // Callee resolution in the RHS needs the owning instance.
         self.inst = inst;
-        if self.wired_driver_sites.contains_key(&ca) && !self.net_lvalue_selects_are_constant(lhs) {
+        let has_structural_driver = self.has_structural_driver(ca);
+        if has_structural_driver && !self.net_lvalue_selects_are_constant(lhs) {
             return Err(format!(
                 "continuous assignment to a resolved net in `{path}` requires constant select \
                  indices and bounds; dynamic or unpacked-array-dependent selectors are not \
                  supported"
             ));
         }
-        if matches!(self.kind(ca), NodeKind::ContAssign { net_decl: true, .. })
-            && self.contains_unpacked_array(rhs, &mut HashSet::new())
-        {
-            return Err(format!(
-                "net declaration assignment in `{path}` reads an unpacked array, whose \
-                 continuous sensitivity cannot be represented"
-            ));
-        }
         let mut lh = self.lower_lhs(path, lhs)?;
-        if let Some(signal) = self.wired_driver_sites.get(&ca).copied() {
-            let is_wire = self.model.signals[signal]
-                .net_driver
-                .is_some_and(|(group, _)| {
-                    matches!(
-                        self.model.net_groups[group].kind,
-                        crate::sim::ir::IrNetKind::Wire
-                    )
-                });
-            lh = match lh {
-                IrLhs::Whole(_) => IrLhs::Whole(signal),
-                IrLhs::Bit(_, index, two_state) if is_wire => IrLhs::Bit(signal, index, two_state),
-                IrLhs::Part(_, left, right, two_state) if is_wire => {
-                    IrLhs::Part(signal, left, right, two_state)
-                }
-                IrLhs::IdxPart(_, base, width_expr, width, neg, two_state) if is_wire => {
-                    IrLhs::IdxPart(signal, base, width_expr, width, neg, two_state)
-                }
-                _ => {
-                    return Err(format!(
-                        "wired-net driver in `{path}` must target a supported net select"
-                    ));
-                }
-            };
+        if has_structural_driver {
+            if let Some(group) = self.unmapped_structural_group(&lh, ca) {
+                return Err(format!(
+                    "continuous assignment `{}` has no structural driver mapping for resolved net group {} at {}:{}:{}",
+                    self.display_name(ca),
+                    group,
+                    self.node(ca).file.as_deref().unwrap_or("<unknown>"),
+                    self.node(ca).line,
+                    self.node(ca).col,
+                ));
+            }
+            lh = self.remap_structural_lhs(lh, ca);
         }
         let rhs_ir = self.lower_expr(path, rhs)?;
         let rhs_ir = apply_lhs_assignment_context(&self.model, &lh, rhs_ir);
-        let lhs_real = matches!(&lh, IrLhs::Whole(idx)
-            if matches!(self.model.signal(*idx).ty, IrType::Real { .. }));
-        if lhs_real || rhs_ir.is_real() {
-            return Err(format!(
-                "real-valued continuous assignments are not supported in `{path}`"
-            ));
-        }
         // Driver evaluation must keep watching its inputs while a captured
         // propagation event is pending (IEEE 1364-2001 6.1.3).
         let scaled_delay = match self.kind(ca) {
@@ -4319,17 +6818,14 @@ impl<'a> Codegen<'a> {
             } => Some(self.driver_delay_ticks(ca, *de)?),
             _ => None,
         };
-        let assign = if let Some(ticks) = scaled_delay {
-            let IrLhs::Whole(index) = lh else {
-                return Err(format!(
-                    "delayed continuous assignment in `{path}` requires a whole packed driver"
-                ));
-            };
-            self.initialize_delayed_driver(index)?;
+        let assign = if let Some(delay) = scaled_delay {
+            if let IrLhs::Whole(index) = &lh {
+                self.initialize_delayed_driver(*index)?;
+            }
             IrStmt::InertialAssign {
                 lhs: lh,
                 rhs: rhs_ir,
-                ticks,
+                delay,
             }
         } else {
             IrStmt::Assign {
@@ -4393,46 +6889,6 @@ impl<'a> Codegen<'a> {
         }
     }
 
-    /// Whether an expression (including a called function body) reaches an
-    /// unpacked array. Array element storage is not representable in an
-    /// `IrShape::SensLoop` read set, so declaration drivers reject it rather
-    /// than becoming stale after the first evaluation.
-    pub(super) fn contains_unpacked_array(
-        &self,
-        node: NodeId,
-        visited: &mut HashSet<NodeId>,
-    ) -> bool {
-        if !visited.insert(node) {
-            return false;
-        }
-        match self.kind(node) {
-            NodeKind::Array { .. } | NodeKind::Expr(ExprKind::ArraySelect { .. }) => return true,
-            NodeKind::Expr(ExprKind::Ref {
-                target: Some(target),
-            }) if matches!(self.kind(*target), NodeKind::Array { .. }) => {
-                return true;
-            }
-            NodeKind::FuncCall {
-                name,
-                is_task,
-                callee,
-            } => {
-                if let Ok(func) = self.resolve_callee(self.inst, name, *is_task, *callee) {
-                    if let Some(body) = self.func_body(func) {
-                        if self.contains_unpacked_array(body, visited) {
-                            return true;
-                        }
-                    }
-                }
-            }
-            _ => {}
-        }
-        self.node(node)
-            .children
-            .iter()
-            .any(|child| self.contains_unpacked_array(*child, visited))
-    }
-
     /// Allocate the 1-bit enable signal of one procedural continuous
     /// assignment site (`G_<path>_pca$<n>_en`).  Enables are ordinary IR
     /// signals on purpose: the optimizer's read/write collectors, branch
@@ -4462,39 +6918,231 @@ impl<'a> Codegen<'a> {
         ir
     }
 
-    /// The multiple-active-sites reject, shared by the pre-scan claimer and
-    /// lower-time re-check so both produce the same message.
-    pub(super) fn pca_multi_site_err(&self, lhs: NodeId, path: &str) -> String {
-        format!(
-            "variable `{}` in `{path}` already has a procedural continuous \
-             assignment (multiple active PCA sites on one variable are not \
-             supported)",
-            self.node(lhs).name,
-        )
-    }
-
     pub(super) fn new_fn_name(&mut self, path: &str, kind: &str) -> String {
         let n = self.proc_seq;
         self.proc_seq += 1;
         format!("p_{}_{}_{}", ident(path), kind, n)
     }
 
+    pub(super) fn new_frame_id(&mut self) -> Result<FrameId, String> {
+        let id = FrameId::new(self.frame_seq);
+        self.frame_seq = self
+            .frame_seq
+            .checked_add(1)
+            .ok_or_else(|| "activation frame id space exhausted".to_string())?;
+        Ok(id)
+    }
+
+    pub(super) fn capture_binding(&self, node: NodeId) -> Option<&CaptureBinding> {
+        self.capture_locals.get(&node)
+    }
+
+    pub(super) fn capture_source(&self, target: NodeId) -> Option<CaptureSource> {
+        if let Some(binding) = self.capture_binding(target) {
+            let info = binding.local.clone();
+            let initial = IrExpr::new(
+                IrExprKind::LocalRead(Self::capture_local_name(binding.storage)),
+                info.width,
+                info.signed,
+                None,
+            );
+            return Some(CaptureSource {
+                info,
+                initial,
+                lifetime: binding.storage.lifetime(),
+            });
+        }
+        if let Some(info) = self.proc_local_info(target) {
+            if info.static_signal.is_none() {
+                return Some(CaptureSource {
+                    info: info.clone(),
+                    initial: IrExpr::new(
+                        IrExprKind::LocalRead(info.c_name.clone()),
+                        info.width,
+                        info.signed,
+                        None,
+                    ),
+                    lifetime: StorageLifetime::Automatic,
+                });
+            }
+            return None;
+        }
+        let function = self.func.as_ref()?;
+        if let Some((c_name, width, signed, two_state, _shortreal)) = function.locals.get(&target) {
+            return Some(CaptureSource {
+                info: ProcLocalInfo {
+                    c_name: c_name.clone(),
+                    width: *width,
+                    signed: *signed,
+                    two_state: *two_state,
+                    static_signal: None,
+                },
+                initial: IrExpr::new(IrExprKind::LocalRead(c_name.clone()), *width, *signed, None),
+                lifetime: self
+                    .function_is_automatic(function)
+                    .then_some(StorageLifetime::Automatic)
+                    .unwrap_or(StorageLifetime::Static),
+            });
+        }
+        if let Some(storage) = function.persistent.get(&target) {
+            return Some(CaptureSource {
+                info: ProcLocalInfo {
+                    c_name: storage.global.clone(),
+                    width: storage.width,
+                    signed: storage.signed,
+                    two_state: storage.two_state,
+                    static_signal: Some(storage.clone()),
+                },
+                initial: sig_read_expr_full(storage),
+                lifetime: StorageLifetime::Static,
+            });
+        }
+        if let Some(arg) = function.arg_read.get(&target) {
+            let initial = function.arg_ir.get(&target)?.clone();
+            return Some(CaptureSource {
+                info: ProcLocalInfo {
+                    c_name: function
+                        .arg_write
+                        .get(&target)
+                        .and_then(|address| address.strip_prefix('&'))
+                        .unwrap_or_default()
+                        .to_owned(),
+                    width: arg.width,
+                    signed: arg.signed,
+                    two_state: arg.two_state,
+                    static_signal: function.persistent.get(&target).cloned(),
+                },
+                initial,
+                lifetime: if function.persistent.contains_key(&target) {
+                    StorageLifetime::Static
+                } else {
+                    StorageLifetime::Automatic
+                },
+            });
+        }
+        if function.ret_node == Some(target) {
+            let ret = function.ret.as_ref()?;
+            return Some(CaptureSource {
+                info: ProcLocalInfo {
+                    c_name: ret.c_name.clone(),
+                    width: ret.width,
+                    signed: ret.signed,
+                    two_state: ret.two_state,
+                    static_signal: None,
+                },
+                initial: IrExpr::new(
+                    IrExprKind::LocalRead(ret.c_name.clone()),
+                    ret.width,
+                    ret.signed,
+                    None,
+                ),
+                lifetime: self
+                    .function_is_automatic(function)
+                    .then_some(StorageLifetime::Automatic)
+                    .unwrap_or(StorageLifetime::Static),
+            });
+        }
+        None
+    }
+
+    fn function_is_automatic(&self, function: &FuncCtx) -> bool {
+        function.def_node.is_some_and(|definition| {
+            matches!(
+                self.kind(definition),
+                NodeKind::FuncTask {
+                    automatic: true,
+                    ..
+                }
+            )
+        }) || function.def_node.is_none()
+    }
+
+    pub(super) fn capture_target(&self, node: NodeId) -> Option<NodeId> {
+        if self.capture_locals.contains_key(&node) {
+            return Some(node);
+        }
+        if let NodeKind::Expr(ExprKind::Ref {
+            target: Some(target),
+        }) = self.kind(node)
+        {
+            if self.capture_locals.contains_key(target) {
+                return Some(*target);
+            }
+        }
+        self.lexical_proc_local(node)
+            .map(|(target, _)| target)
+            .filter(|target| self.capture_locals.contains_key(target))
+    }
+
+    pub(super) fn nested_capture_ref(&self, node: NodeId) -> Option<NodeId> {
+        if let Some(target) = self.capture_target(node) {
+            return Some(target);
+        }
+        self.node(node)
+            .children
+            .iter()
+            .find_map(|child| self.nested_capture_ref(*child))
+    }
+
+    pub(super) fn capture_local_name(storage: StorageRef) -> String {
+        format!("_fc{}_{}", storage.frame().index(), storage.slot())
+    }
+
+    fn node_is_within(&self, node: NodeId, scope: NodeId) -> bool {
+        let mut current = Some(node);
+        while let Some(candidate) = current {
+            if candidate == scope {
+                return true;
+            }
+            current = self.node(candidate).parent;
+        }
+        false
+    }
+
+    /// Find automatic declarations referenced by a fork branch. Declarations
+    /// inside the branch are owned by that branch and are not captures.
+    pub(super) fn fork_capture_targets(&self, branch: NodeId) -> Vec<NodeId> {
+        fn visit(cg: &Codegen<'_>, node: NodeId, branch: NodeId, out: &mut HashSet<NodeId>) {
+            let target = match cg.kind(node) {
+                NodeKind::Expr(ExprKind::Ref {
+                    target: Some(target),
+                }) => Some(*target),
+                _ => cg.lexical_proc_local(node).map(|(target, _)| target),
+            };
+            if let Some(target) = target {
+                if !cg.node_is_within(target, branch) {
+                    if cg.capture_source(target).is_some() {
+                        out.insert(target);
+                    }
+                }
+            }
+            for child in &cg.node(node).children {
+                visit(cg, *child, branch, out);
+            }
+        }
+
+        let mut targets = HashSet::new();
+        visit(self, branch, branch, &mut targets);
+        let mut targets = targets.into_iter().collect::<Vec<_>>();
+        targets.sort_by_key(|node| node.index());
+        targets
+    }
+
     // ── Structural gate primitives ─────────────────────────────────────────
 
-    /// Lower one structural primitive ([`NodeKind::Gate`]) into ONE comb
-    /// process shaped exactly like a continuous assignment: evaluate at
-    /// spawn, then re-evaluate whenever any input-terminal signal changes
-    /// (`IrShape::SensLoop`; constant drivers like pullup/pulldown use
-    /// `IrShape::RunOnce`).  The output terminal is written with a
-    /// whole-signal blocking write (collapsed-net members go through their
-    /// driver slot automatically).
+    /// Lower one structural primitive ([`NodeKind::Gate`]) into comb processes
+    /// shaped like continuous assignments. Every process evaluates at spawn,
+    /// then re-evaluates whenever an input-terminal dependency changes. A
+    /// multi-output `buf`/`not` gets one process per output so each output can
+    /// retain an independent canonical driver contribution.
     ///
     /// Multi-input logic gates reduce their inputs left-to-right with the
     /// two-input runtime op; nand/nor/xnor negate after the full reduce.
     /// A gate delay `#D` schedules a captured inertial update while the
-    /// process continues watching its inputs. Unsupported primitives (switches, UDPs,
-    /// arrays, strengths, multi-output buf/not, width mismatches, …) are
-    /// rejected with explicit errors here at lowering time.
+    /// process continues watching its inputs. Unsupported primitives
+    /// (switches and UDPs) are rejected with explicit errors here at lowering
+    /// time; terminal legality is checked by the typed LHS/expression
+    /// lowerers.
     fn emit_gate(&mut self, inst: NodeId, path: &str, g: NodeId) -> Result<(), String> {
         let (class, prim_type, strength0, strength1, delay, terms) = match self.kind(g) {
             NodeKind::Gate {
@@ -4534,19 +7182,14 @@ impl<'a> Codegen<'a> {
                      supported"
                 ))
             }
-            PrimClass::Array => {
-                return Err(format!(
-                    "primitive array `{shown}` in `{path}` (a range on a gate or \
-                     UDP instance) is not supported"
-                ))
-            }
+            PrimClass::Array => {}
         }
-        if strength0 != Strength::Unspecified || strength1 != Strength::Unspecified {
-            return Err(format!(
-                "drive-strength specification on gate `{shown}` in `{path}` is not \
-                 supported"
-            ));
-        }
+        let driver_strengths = gate_driver_strengths(
+            prim_type,
+            strength0,
+            strength1,
+            &format!("{path}.{shown}"),
+        )?;
         // Which builtin gate this is; everything outside the supported set
         // (switch/transistor prim types, sequential/combinational UDP types)
         // is rejected.  UDP instances never reach this point (their class was
@@ -4585,89 +7228,46 @@ impl<'a> Codegen<'a> {
                 ))
             }
         };
-        if terms.len() > LLG_MAX_GATE_TERMS {
-            return Err(format!(
-                "gate `{shown}` in `{path}` has {} terminals; at most \
-                 {LLG_MAX_GATE_TERMS} are supported",
-                terms.len()
-            ));
-        }
-        // Resolve every terminal to its signal.  Terminals must be whole
-        // plain signals (a ref to a net/var); select- or expression-
-        // connected terminals are rejected cleanly.
-        let mut infos: Vec<SignalInfo> = Vec::new();
-        for t in &terms {
-            let whole = matches!(
-                self.kind(t.expr),
-                NodeKind::Net { .. } | NodeKind::Var { .. } | NodeKind::Expr(ExprKind::Ref { .. })
-            );
-            if !whole {
-                return Err(format!(
-                    "terminal `{}` of gate `{shown}` in `{path}` is connected \
-                     through a select/expression; gate terminals must be whole \
-                     plain signals",
-                    self.node(t.expr).name
-                ));
-            }
-            let (_, info) = self.resolve_signal_id(path, t.expr).map_err(|_| {
-                format!(
-                    "terminal `{}` of gate `{shown}` in `{path}` does not resolve to \
-                     a plain signal",
-                    self.node(t.expr).name
-                )
-            })?;
-            infos.push(info);
-        }
-        if let Some(bad) = infos.iter().position(|i| i.real) {
-            return Err(format!(
-                "real-valued signal `{}` on terminal {} of gate `{shown}` in \
-                 `{path}` is not supported",
-                infos[bad].global, bad
-            ));
-        }
-        let w = infos.first().map(|i| i.width).unwrap_or(0);
-        if w == 0 {
-            return Err(format!(
-                "gate `{shown}` in `{path}` has a zero-width terminal"
-            ));
-        }
-        if infos.iter().any(|i| i.width != w) {
-            let widths = infos
-                .iter()
-                .map(|i| i.width.to_string())
-                .collect::<Vec<_>>()
-                .join(", ");
-            return Err(format!(
-                "gate `{shown}` in `{path}` connects terminals of different widths \
-                 ({widths}); equal terminal widths are required (mixed widths are \
-                 legal Verilog, but not supported here yet)"
-            ));
-        }
-        // Terminal-count/direction validation per kind.  Directions come from
-        // The semantic per-term classification (terminal 0 = output, except
-        // buf/not where all but the last are outputs).
+        // Terminal-count/direction validation per kind. Directions are
+        // captured by the frontend from the primitive definition: `buf` and
+        // `not` mark every terminal except the final input as an output.
         let out_positions: Vec<usize> = terms
             .iter()
-            .zip(infos.iter())
             .enumerate()
-            .filter(|(_, (t, _))| t.direction == DbDirection::Output)
+            .filter(|(_, t)| t.direction == DbDirection::Output)
+            .map(|(i, _)| i)
+            .collect();
+        let in_positions: Vec<usize> = terms
+            .iter()
+            .enumerate()
+            .filter(|(_, t)| t.direction == DbDirection::Input)
             .map(|(i, _)| i)
             .collect();
         let shape_ok = match op {
-            GateOp::Pull(_) => terms.len() == 1 && out_positions.len() == 1,
-            GateOp::Copy | GateOp::Not => {
-                // Multi-output buf/not forms are not supported.
-                terms.len() == 2 && out_positions.len() == 1
+            GateOp::Pull(_) => {
+                terms.len() == 1 && out_positions.len() == 1 && in_positions.is_empty()
             }
-            GateOp::Enable { .. } => terms.len() == 3 && out_positions.len() == 1,
-            GateOp::Reduce(..) => terms.len() >= 2 && out_positions.len() == 1,
+            GateOp::Copy | GateOp::Not => {
+                !out_positions.is_empty()
+                    && in_positions.len() == 1
+                    && out_positions.len() + in_positions.len() == terms.len()
+            }
+            GateOp::Enable { .. } => {
+                terms.len() == 3 && out_positions.len() == 1 && in_positions.len() == 2
+            }
+            GateOp::Reduce(..) => {
+                terms.len() >= 2
+                    && out_positions.len() == 1
+                    && in_positions.len() >= 1
+                    && out_positions.len() + in_positions.len() == terms.len()
+            }
         };
         if !shape_ok {
             let what = match op {
                 GateOp::Pull(_) => "pullup/pulldown instance takes exactly one output terminal",
                 GateOp::Copy | GateOp::Not => {
-                    "one-output `buf`/`not` gates take exactly one output and one \
-                     input terminal (multi-output forms are not supported)"
+                    "`buf`/`not` gates take one or more output terminals followed by \
+                     exactly one input terminal"
                 }
                 GateOp::Enable { .. } => {
                     "enable gates take exactly one output, one data input and one \
@@ -4685,57 +7285,157 @@ impl<'a> Codegen<'a> {
                 terms.len()
             ));
         }
-        let out_pos = out_positions[0];
-        let in_positions: Vec<usize> = (0..terms.len()).filter(|i| *i != out_pos).collect();
+
         // Callee resolution in the LHS/inputs needs the owning instance.
         self.inst = inst;
-        // The output write goes through the same LHS machinery as a
-        // continuous assignment (collapsed-net members lower to their driver
-        // slot); select/hierarchical outputs remain unsupported.
-        let out_ir = match self.lower_lhs(path, terms[out_pos].expr)? {
-            IrLhs::Whole(idx) => idx,
-            _ => {
-                return Err(format!(
-                    "output terminal of gate `{shown}` in `{path}` must be connected \
-                     to a whole plain signal (select/hierarchical gate outputs are \
-                     not supported)"
-                ))
-            }
-        };
-        // Input expressions + sensitivity set (input base signals only — the
-        // LHS never triggers its own comb process).
-        let mut in_exprs: Vec<IrExpr> = Vec::new();
-        let mut sens: Vec<String> = Vec::new();
+
+        // Lower every terminal through the typed paths used by ordinary
+        // assignments and expressions. This admits selects, constants and
+        // hierarchical references while keeping real values and invalid
+        // output expressions as precise gate diagnostics.
+        let mut terminal_lhs: Vec<Option<IrLhs>> = vec![None; terms.len()];
+        let mut terminal_exprs: Vec<Option<IrExpr>> = vec![None; terms.len()];
+        let mut widths = vec![0u32; terms.len()];
+        let mut sens = Vec::new();
         for i in &in_positions {
-            let e = self.lower_expr(path, terms[*i].expr)?;
-            in_exprs.push(e);
-            let global = &infos[*i].global;
-            if !sens.contains(global) {
-                sens.push(global.clone());
+            let expr = self.lower_expr(path, terms[*i].expr).map_err(|error| {
+                format!(
+                    "input terminal {} of gate `{shown}` in `{path}` is not a legal \
+                     expression: {error}",
+                    i
+                )
+            })?;
+            if expr.is_real() {
+                return Err(format!(
+                    "real-valued input terminal {} of gate `{shown}` in `{path}` \
+                     is not supported",
+                    i
+                ));
+            }
+            if expr.width() == 0 {
+                return Err(format!(
+                    "input terminal {} of gate `{shown}` in `{path}` has zero width",
+                    i
+                ));
+            }
+            widths[*i] = expr.width();
+            terminal_exprs[*i] = Some(expr);
+            for dependency in self.collect_read_signals(path, terms[*i].expr)? {
+                if !sens.contains(&dependency) {
+                    sens.push(dependency);
+                }
             }
         }
-        // Output value computation (vector-wise over the common width).
-        let value = match op {
-            GateOp::Pull(ones) => const_bits_expr(w, ones),
-            GateOp::Copy => in_exprs.remove(0),
-            GateOp::Not => bitneg_full_width(in_exprs.remove(0)),
-            GateOp::Reduce(bop, neg) => {
-                let mut acc = in_exprs.remove(0);
-                for next in in_exprs.drain(..) {
-                    acc = bin_expr(bop, acc, next);
-                }
-                if neg {
-                    bitneg_full_width(acc)
-                } else {
-                    acc
-                }
+        for i in &out_positions {
+            let lhs = self.lower_lhs(path, terms[*i].expr).map_err(|error| {
+                format!(
+                    "output terminal {} of gate `{shown}` in `{path}` is not a legal \
+                     lvalue: {error}",
+                    i
+                )
+            })?;
+            let width = packed_lhs_width(&self.model, &lhs).ok_or_else(|| {
+                format!(
+                    "output terminal {} of gate `{shown}` in `{path}` must be a \
+                     packed net or variable",
+                    i
+                )
+            })?;
+            if width == 0 {
+                return Err(format!(
+                    "output terminal {} of gate `{shown}` in `{path}` has zero width",
+                    i
+                ));
             }
-            GateOp::Enable {
-                invert_out,
-                active_high,
-            } => {
-                let data = in_exprs.remove(0);
-                let en = in_exprs.remove(0);
+            widths[*i] = width;
+            terminal_lhs[*i] = Some(lhs);
+        }
+
+        let scaled_delay = match delay {
+            Some(de) => Some(self.driver_delay_ticks(g, de)?),
+            None => None,
+        };
+
+        for (output_ordinal, out_pos) in out_positions.iter().enumerate() {
+            let raw_lhs = terminal_lhs[*out_pos]
+                .clone()
+                .expect("gate output LHS lowered above");
+            let output_width = widths[*out_pos];
+
+            let group = self.structural_group_for_lhs(&raw_lhs);
+            let terminal_key = group.and_then(|group| {
+                out_positions[..output_ordinal]
+                    .iter()
+                    .find(|previous| {
+                        terminal_lhs[**previous]
+                            .as_ref()
+                            .and_then(|lhs| self.structural_group_for_lhs(lhs))
+                            == Some(group)
+                    })
+                    .map(|_| output_ordinal)
+            });
+            let mut lhs = raw_lhs;
+            if let Some(group) = group {
+                let terminal = terminal_key.unwrap_or(0);
+                if terminal == 0 {
+                    if self.structural_driver_signal(g, group).is_none() {
+                        return Err(format!(
+                            "gate `{shown}` has no structural driver mapping for resolved net \
+                             group {} at {}:{}:{}",
+                            group,
+                            self.node(g).file.as_deref().unwrap_or("<unknown>"),
+                            self.node(g).line,
+                            self.node(g).col,
+                        ));
+                    }
+                } else {
+                    self.add_structural_driver_for_terminal(group, g, driver_strengths, terminal)?;
+                }
+                lhs = self.remap_structural_lhs_for_terminal(lhs, g, terminal);
+            }
+
+            let mut input_values = Vec::with_capacity(in_positions.len());
+            for i in &in_positions {
+                let expr = terminal_exprs[*i]
+                    .clone()
+                    .expect("gate input expression lowered above");
+                input_values.push(IrExpr::resize_to(expr, output_width, false));
+            }
+            let value = match op {
+                GateOp::Pull(ones) => const_bits_expr(output_width, ones),
+                GateOp::Copy => input_values
+                    .into_iter()
+                    .next()
+                    .expect("buf/not shape checked"),
+                GateOp::Not => bitneg_full_width(
+                    input_values
+                        .into_iter()
+                        .next()
+                        .expect("buf/not shape checked"),
+                ),
+                GateOp::Reduce(bop, neg) => {
+                    let mut values = input_values.into_iter();
+                    let mut acc = values.next().expect("logic gate shape checked");
+                    for next in values {
+                        acc = bin_expr(bop, acc, next);
+                    }
+                    if neg {
+                        bitneg_full_width(acc)
+                    } else {
+                        acc
+                    }
+                }
+                GateOp::Enable {
+                    invert_out,
+                    active_high,
+                } => {
+                    let mut values = input_values.into_iter();
+                    let data = values.next().expect("enable gate shape checked");
+                    let en = IrExpr::resize_to(
+                        values.next().expect("enable gate shape checked"),
+                        1,
+                        false,
+                    );
                 // LRM 1364-1995 §7.4 Table 7-5: an ENABLED enable gate acts
                 // like `buf`/`not` (Tables 7-3/7-4), so a data Z must reach
                 // the output as X while known bits pass unchanged.  The mux
@@ -4757,7 +7457,7 @@ impl<'a> Codegen<'a> {
                 } else {
                     data
                 };
-                let z = const_z_expr(w);
+                    let z = const_z_expr(output_width);
                 let (a, b) = if active_high { (data, z) } else { (z, data) };
                 IrExpr::new(
                     IrExprKind::Mux {
@@ -4765,56 +7465,53 @@ impl<'a> Codegen<'a> {
                         a: Box::new(a),
                         b: Box::new(b),
                     },
-                    w,
+                    output_width,
                     false,
                     None,
-                )
+                    )
+                }
+            };
+            let mut body = Vec::new();
+            if let Some(delay) = scaled_delay {
+                if let IrLhs::Whole(index) = &lhs {
+                    self.initialize_delayed_driver(*index)?;
+                }
+                body.push(IrStmt::InertialAssign {
+                    lhs,
+                    rhs: value,
+                    delay,
+                });
+            } else {
+                body.push(IrStmt::Assign {
+                    lhs,
+                    rhs: value,
+                    nba: false,
+                });
             }
-        };
-        // Gate delay `#D`: folded through the parameter values like a
-        // continuous-assignment delay and scaled to design-precision ticks.
-        let scaled_delay = match delay {
-            Some(de) => Some(self.driver_delay_ticks(g, de)?),
-            None => None,
-        };
-        let mut body = Vec::new();
-        if let Some(ticks) = scaled_delay {
-            self.initialize_delayed_driver(out_ir)?;
-            body.push(IrStmt::InertialAssign {
-                lhs: IrLhs::Whole(out_ir),
-                rhs: value,
-                ticks,
-            });
-        } else {
-            body.push(IrStmt::Assign {
-                lhs: IrLhs::Whole(out_ir),
-                rhs: value,
-                nba: false,
-            });
+            let shape = if sens.is_empty() {
+                IrShape::RunOnce
+            } else {
+                IrShape::SensLoop {
+                    reads: sens.clone(),
+                }
+            };
+            let fn_name = self.new_fn_name(path, "gate");
+            let origin = self.origin(g);
+            self.model.processes.push(IrProcess::new_with_origin(
+                fn_name,
+                format!("{path}.{shown}[output{output_ordinal}]"),
+                shape,
+                Vec::new(),
+                body,
+                origin,
+            ));
         }
-        let shape = if sens.is_empty() {
-            // Constant driver (pullup/pulldown): evaluate once at t=0.
-            IrShape::RunOnce
-        } else {
-            IrShape::SensLoop { reads: sens }
-        };
-        let fn_name = self.new_fn_name(path, "gate");
-        let origin = self.origin(g);
-        self.model.processes.push(IrProcess::new_with_origin(
-            fn_name,
-            format!("{path}.{shown}"),
-            shape,
-            Vec::new(),
-            body,
-            origin,
-        ));
         Ok(())
     }
 
     // ── Port links ─────────────────────────────────────────────────────────
 
     pub(super) fn bind_reference_ports(&mut self) -> Result<(), String> {
-        let mut aliases = HashMap::new();
         for port in self.design_nodes() {
             let NodeKind::Port {
                 direction: DbDirection::Ref,
@@ -4835,43 +7532,145 @@ impl<'a> Codegen<'a> {
                     self.display_name(port)
                 )
             })?;
-            let child = self.signal_of(internal).ok_or_else(|| {
-                "reference ports currently require packed scalar/vector storage".to_string()
-            })?;
-            let child_ir = child.ir;
             let path = self
                 .owning_inst(port)
                 .map(|instance| self.instance_path_of(instance))
                 .unwrap_or_default();
-            let IrLhs::Whole(target) = self.lower_lhs(&path, actual)? else {
-                return Err(format!(
-                    "reference port `{}` requires a whole packed variable actual",
-                    self.display_name(port)
-                ));
-            };
-            if self.model.signals[target].ty != self.model.signals[child_ir].ty
-                || self.model.signals[target].net_driver.is_some()
-            {
-                return Err(format!(
-                    "reference port `{}` requires matching variable storage",
-                    self.display_name(port)
-                ));
-            }
-            aliases.insert(child_ir, target);
-        }
-        for (&alias, &target) in &aliases {
-            let mut target = target;
-            let mut seen = HashSet::from([alias]);
-            while let Some(next) = aliases.get(&target) {
-                if !seen.insert(target) {
-                    return Err("cyclic reference port storage".into());
+            if let Some(child) = self.signal_of(internal).cloned() {
+                let target = self.lower_lhs(&path, actual).map_err(|error| {
+                    format!(
+                        "reference port `{}` has an invalid actual: {error}",
+                        self.display_name(port)
+                    )
+                })?;
+                let target = self.reference_lhs(target)?;
+                let Some(target_ty) = self.reference_lhs_type(&target) else {
+                    return Err(format!(
+                        "reference port `{}` requires a typed variable actual",
+                        self.display_name(port)
+                    ));
+                };
+                if !self.reference_actual_is_variable(actual)
+                    || !self.reference_lhs_is_variable(&target)
+                    || self.model.signals[child.ir].ty != target_ty
+                {
+                    return Err(format!(
+                        "reference port `{}` requires matching variable storage",
+                        self.display_name(port)
+                    ));
                 }
-                target = *next;
+                self.reference_signals.insert(child.ir, target);
+                continue;
             }
-            let canonical = self.model.signals[target].clone();
-            self.model.signals[alias].alias = Some(target);
-            self.model.signals[alias].c_name = canonical.c_name;
+
+            if let Some(child) = self.array_of(internal).cloned() {
+                let Some(actual_array) = self.array_of(actual).cloned() else {
+                    return Err(format!(
+                        "reference port `{}` requires a matching fixed-array variable actual",
+                        self.display_name(port)
+                    ));
+                };
+                if !self.reference_actual_is_variable(actual)
+                    || child.is_net
+                    || actual_array.is_net
+                    || child.dims != actual_array.dims
+                    || child.elem_width != actual_array.elem_width
+                    || child.signed != actual_array.signed
+                    || self.model.arrays[child.ir].two_state
+                        != self.model.arrays[actual_array.ir].two_state
+                    || child.real != actual_array.real
+                    || child.shortreal != actual_array.shortreal
+                {
+                    return Err(format!(
+                        "reference port `{}` requires matching fixed-array variable storage (variable {}/{}, formal {:?}/{}/{}/{}, actual {:?}/{}/{}/{})",
+                        self.display_name(port),
+                        self.reference_actual_is_variable(actual),
+                        child.is_net || actual_array.is_net,
+                        child.dims,
+                        child.elem_width,
+                        child.signed,
+                        self.model.arrays[child.ir].two_state,
+                        actual_array.dims,
+                        actual_array.elem_width,
+                        actual_array.signed,
+                        self.model.arrays[actual_array.ir].two_state,
+                    ));
+                }
+                self.reference_arrays
+                    .insert(child.ir, self.reference_array(actual_array.ir));
+                continue;
+            }
+
+            if let Some(child) = self.unpacked_aggregates.get(&internal).cloned() {
+                self.bind_reference_aggregate(port, &path, actual, child)?;
+                continue;
+            }
+
+            if let Some(child_object) = self.object_of(&path, internal) {
+                let Some(actual_object) = self.object_of(&path, actual) else {
+                    return Err(format!(
+                        "reference port `{}` requires a matching object variable actual",
+                        self.display_name(port)
+                    ));
+                };
+                if !self.reference_actual_is_variable(actual)
+                    || self.model.objects[child_object].ty != self.model.objects[actual_object].ty
+                {
+                    return Err(format!(
+                        "reference port `{}` requires matching object storage",
+                        self.display_name(port)
+                    ));
+                }
+                self.reference_objects
+                    .insert(child_object, self.reference_object(actual_object));
+                continue;
+            }
+
+            if self.container_of(internal).is_some() {
+                return Err(format!(
+                    "reference port `{}` cannot bind resizable container storage",
+                    self.display_name(port)
+                ));
+            }
+            return Err(format!(
+                "reference port `{}` requires a supported variable, array, aggregate, or object actual",
+                self.display_name(port)
+            ));
         }
+
+        let signal_bindings = self
+            .reference_signals
+            .keys()
+            .copied()
+            .collect::<Vec<_>>();
+        for child in signal_bindings {
+            let target = self.reference_lhs(IrLhs::Whole(child))?;
+            self.reference_signals.insert(child, target.clone());
+            if let IrLhs::Whole(target) = target {
+                let canonical = self.model.signals[target].clone();
+                self.model.signals[child].alias = Some(target);
+                self.model.signals[child].c_name = canonical.c_name;
+            }
+        }
+        let array_bindings = self
+            .reference_arrays
+            .keys()
+            .copied()
+            .collect::<Vec<_>>();
+        for child in array_bindings {
+            let target = self.reference_array(child);
+            self.reference_arrays.insert(child, target);
+        }
+        let object_bindings = self
+            .reference_objects
+            .keys()
+            .copied()
+            .collect::<Vec<_>>();
+        for child in object_bindings {
+            let target = self.reference_object(child);
+            self.reference_objects.insert(child, target);
+        }
+
         let signals = &self.model.signals;
         let canonicalize = |info: &mut SignalInfo| {
             if let Some(target) = signals[info.ir].alias {
@@ -4891,6 +7690,244 @@ impl<'a> Codegen<'a> {
             }
         }
         Ok(())
+    }
+
+    fn bind_reference_aggregate(
+        &mut self,
+        port: NodeId,
+        path: &str,
+        actual: NodeId,
+        child: UnpackedAggregateInfo,
+    ) -> Result<(), String> {
+        let (actual_target, prefix) = self
+            .unpacked_aggregate_target(actual)
+            .map(|target| (target, Vec::new()))
+            .or_else(|| self.unpacked_path_for_expr(actual))
+            .ok_or_else(|| {
+                format!(
+                    "reference port `{}` requires a matching aggregate variable actual",
+                    self.display_name(port)
+                )
+            })?;
+        let parent = self.unpacked_aggregates.get(&actual_target).cloned().ok_or_else(|| {
+            format!(
+                "reference port `{}` actual aggregate has no captured storage",
+                self.display_name(port)
+            )
+        })?;
+        if !self.reference_actual_is_variable(actual) {
+            return Err(format!(
+                "reference port `{}` requires a variable aggregate actual",
+                self.display_name(port)
+            ));
+        }
+        if prefix.is_empty()
+            && child
+                .type_identity
+                .as_deref()
+                .zip(parent.type_identity.as_deref())
+                .is_some_and(|(left, right)| left != right)
+        {
+            return Err(format!(
+                "reference port `{}` requires matching aggregate type",
+                self.display_name(port)
+            ));
+        }
+        for child_leaf in &child.leaves {
+            let mut parent_path = prefix.clone();
+            parent_path.extend(child_leaf.path.iter().cloned());
+            let parent_leaf = parent.leaves.iter().find(|leaf| leaf.path == parent_path).ok_or_else(|| {
+                format!(
+                    "reference port `{}` aggregate member `{}` has no matching actual storage",
+                    self.display_name(port),
+                    aggregate_path_suffix(&child_leaf.path)
+                )
+            })?;
+            match (&child_leaf.signal, &parent_leaf.signal, child_leaf.object, parent_leaf.object) {
+                (Some(child_signal), Some(parent_signal), _, _) => {
+                    let target = self.reference_lhs(IrLhs::Whole(parent_signal.ir))?;
+                    let Some(target_ty) = self.reference_lhs_type(&target) else {
+                        return Err(format!(
+                            "reference port `{}` aggregate member `{}` has invalid storage",
+                            self.display_name(port),
+                            aggregate_path_suffix(&child_leaf.path)
+                        ));
+                    };
+                    if !self.reference_lhs_is_variable(&target)
+                        || self.model.signals[child_signal.ir].ty != target_ty
+                    {
+                        return Err(format!(
+                            "reference port `{}` aggregate member `{}` has incompatible storage",
+                            self.display_name(port),
+                            aggregate_path_suffix(&child_leaf.path)
+                        ));
+                    }
+                    self.reference_signals.insert(child_signal.ir, target);
+                }
+                (None, None, Some(child_object), Some(parent_object)) => {
+                    if self.model.objects[child_object].ty != self.model.objects[parent_object].ty {
+                        return Err(format!(
+                            "reference port `{}` aggregate member `{}` has incompatible object storage",
+                            self.display_name(port),
+                            aggregate_path_suffix(&child_leaf.path)
+                        ));
+                    }
+                    self.reference_objects
+                        .insert(child_object, self.reference_object(parent_object));
+                }
+                _ => {
+                    return Err(format!(
+                        "reference port `{}` aggregate member `{}` has incompatible shape",
+                        self.display_name(port),
+                        aggregate_path_suffix(&child_leaf.path)
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn remap_structural_lhs(&self, lhs: IrLhs, source: NodeId) -> IrLhs {
+        let remap = |index: usize| {
+            self.model
+                .signals
+                .get(index)
+                .and_then(|signal| signal.net_driver.map(|(group, _)| group))
+                .and_then(|group| self.structural_driver_signal(source, group))
+                .unwrap_or(index)
+        };
+        match lhs {
+            IrLhs::Whole(index) => IrLhs::Whole(remap(index)),
+            IrLhs::Bit(index, expression, two_state) => {
+                IrLhs::Bit(remap(index), expression, two_state)
+            }
+            IrLhs::Part(index, left, right, two_state) => {
+                IrLhs::Part(remap(index), left, right, two_state)
+            }
+            IrLhs::IdxPart(index, base, width, selected_width, negative, two_state) => {
+                IrLhs::IdxPart(
+                    remap(index),
+                    base,
+                    width,
+                    selected_width,
+                    negative,
+                    two_state,
+                )
+            }
+            IrLhs::Stream {
+                parts,
+                width,
+                slice,
+                direction,
+            } => IrLhs::Stream {
+                parts: parts
+                    .into_iter()
+                    .map(|(part, part_width)| (self.remap_structural_lhs(part, source), part_width))
+                    .collect(),
+                width,
+                slice,
+                direction,
+            },
+            other => other,
+        }
+    }
+
+    fn structural_group_for_lhs(&self, lhs: &IrLhs) -> Option<usize> {
+        let signal_group = |index: usize| {
+            self.model
+                .signals
+                .get(index)
+                .and_then(|signal| signal.net_driver.map(|(group, _)| group))
+        };
+        match lhs {
+            IrLhs::Whole(index)
+            | IrLhs::Bit(index, ..)
+            | IrLhs::Part(index, ..)
+            | IrLhs::IdxPart(index, ..) => signal_group(*index),
+            IrLhs::Stream { parts, .. } => parts
+                .iter()
+                .find_map(|(part, _)| self.structural_group_for_lhs(part)),
+            IrLhs::WholeRef { .. } | IrLhs::Ref { .. } | IrLhs::ArrayElem { .. } => None,
+        }
+    }
+
+    fn remap_structural_lhs_for_terminal(
+        &self,
+        lhs: IrLhs,
+        source: NodeId,
+        terminal: usize,
+    ) -> IrLhs {
+        let remap = |index: usize| {
+            self.model
+                .signals
+                .get(index)
+                .and_then(|signal| signal.net_driver.map(|(group, _)| group))
+                .and_then(|group| {
+                    self.structural_driver_signal_for_terminal(source, group, terminal)
+                })
+                .unwrap_or(index)
+        };
+        match lhs {
+            IrLhs::Whole(index) => IrLhs::Whole(remap(index)),
+            IrLhs::Bit(index, expression, two_state) => {
+                IrLhs::Bit(remap(index), expression, two_state)
+            }
+            IrLhs::Part(index, left, right, two_state) => {
+                IrLhs::Part(remap(index), left, right, two_state)
+            }
+            IrLhs::IdxPart(index, base, width, selected_width, negative, two_state) => {
+                IrLhs::IdxPart(
+                    remap(index),
+                    base,
+                    width,
+                    selected_width,
+                    negative,
+                    two_state,
+                )
+            }
+            IrLhs::Stream {
+                parts,
+                width,
+                slice,
+                direction,
+            } => IrLhs::Stream {
+                parts: parts
+                    .into_iter()
+                    .map(|(part, part_width)| {
+                        (
+                            self.remap_structural_lhs_for_terminal(part, source, terminal),
+                            part_width,
+                        )
+                    })
+                    .collect(),
+                width,
+                slice,
+                direction,
+            },
+            other => other,
+        }
+    }
+
+    fn unmapped_structural_group(&self, lhs: &IrLhs, source: NodeId) -> Option<usize> {
+        let signal_group = |index: usize| {
+            self.model
+                .signals
+                .get(index)
+                .and_then(|signal| signal.net_driver.map(|(group, _)| group))
+                .filter(|group| self.structural_driver_signal(source, *group).is_none())
+        };
+        match lhs {
+            IrLhs::Whole(index)
+            | IrLhs::Bit(index, ..)
+            | IrLhs::Part(index, ..)
+            | IrLhs::IdxPart(index, ..) => signal_group(*index),
+            IrLhs::Stream { parts, .. } => parts
+                .iter()
+                .find_map(|(part, _)| self.unmapped_structural_group(part, source)),
+            IrLhs::WholeRef { .. }
+            | IrLhs::Ref { .. }
+            | IrLhs::ArrayElem { .. } => None,
+        }
     }
 
     fn emit_links(&mut self, parent_path: &str, child_inst: NodeId) -> Result<(), String> {
@@ -4933,35 +7970,39 @@ impl<'a> Codegen<'a> {
             };
             let Some(internal) = low else { continue };
             let (_, child_info) = self.resolve_signal_id(&child_path, internal)?;
-            let parent_member = high
-                .and_then(|node| self.signal_of(node))
-                .is_some_and(|info| info.net_driver.is_some());
-            if parent_member || child_info.net_driver.is_some() {
-                self.warnings.push(format!(
-                    "port `{}` of `{child_path}` links a collapsed inout-net \
-                     member; link skipped (the net group resolves the \
-                     connection)",
-                    self.node(port).name
-                ));
-                continue;
-            }
             let (lhs, rhs, reads) = if direction == DbDirection::Input {
                 let rhs = self.lower_expr(parent_path, actual)?;
-                let reads = if let Some(array) = high.and_then(|node| self.array_of(node)) {
-                    vec![self.array_elem_addr(array, actual)?]
-                } else {
-                    if self.contains_unpacked_array(actual, &mut HashSet::new()) {
-                        return Err(format!("input port expression in `{parent_path}` reads an unpacked array whose sensitivity cannot be represented"));
-                    }
-                    self.collect_read_signals(parent_path, actual)?
-                };
-                (IrLhs::Whole(child_info.ir), rhs, reads)
-            } else {
+                let reads = self.collect_read_signals(parent_path, actual)?;
+                let lhs = self.remap_structural_lhs(IrLhs::Whole(child_info.ir), port);
+                if let Some(group) = self.unmapped_structural_group(&lhs, port) {
+                    return Err(format!(
+                        "input port `{}` has no structural driver mapping for resolved net group {} at {}:{}:{}",
+                        self.display_name(port),
+                        group,
+                        self.node(port).file.as_deref().unwrap_or("<unknown>"),
+                        self.node(port).line,
+                        self.node(port).col,
+                    ));
+                }
                 (
-                    self.lower_lhs(parent_path, actual)?,
-                    sig_read_expr_full(&child_info),
-                    vec![child_info.global.clone()],
+                    lhs,
+                    rhs,
+                    reads,
                 )
+            } else {
+                let lhs = self.lower_lhs(parent_path, actual)?;
+                if let Some(group) = self.unmapped_structural_group(&lhs, port) {
+                    return Err(format!(
+                        "output port `{}` has no structural driver mapping for resolved net group {} at {}:{}:{}",
+                        self.display_name(port),
+                        group,
+                        self.node(port).file.as_deref().unwrap_or("<unknown>"),
+                        self.node(port).line,
+                        self.node(port).col,
+                    ));
+                }
+                let lhs = self.remap_structural_lhs(lhs, port);
+                (lhs, sig_read_expr_full(&child_info), vec![self.signal_dependency(&child_info)])
             };
             let rhs = apply_lhs_assignment_context(&self.model, &lhs, rhs);
             let shape = if reads.is_empty() {
@@ -4987,47 +8028,345 @@ impl<'a> Codegen<'a> {
         Ok(())
     }
 
-    /// C address (without the leading `&`) of the array element addressed by a
-    /// constant-index select expression (`cnts[i]` → `G_tb_cnts[(0)]`), used
-    /// as the wait source of an input-port link into an array element.
-    /// Dynamic (non-constant) array-element port connections are not
-    /// supported.
-    fn array_elem_addr(&self, ai: &ArrayInfo, sel: NodeId) -> Result<String, String> {
-        let idx = match self.kind(sel) {
-            NodeKind::Expr(ExprKind::BitSelect { index, .. }) => self.eval_bound_i128(*index)?,
-            NodeKind::Expr(ExprKind::IndexedPartSelect { base_expr, .. }) => {
-                self.eval_bound_i128(*base_expr)?
-            }
-            NodeKind::Expr(ExprKind::PartSelect { left, .. }) => self.eval_bound_i128(*left)?,
-            NodeKind::Expr(ExprKind::ArraySelect { indices, .. }) if indices.len() == 1 => {
-                self.eval_bound_i128(indices[0])?
-            }
-            _ => {
-                return Err(
-                    "array-element port connection with a non-constant index is not \
-                     supported"
-                        .to_string(),
-                )
-            }
-        };
-        if ai.dims.len() != 1 {
-            return Err(format!(
-                "array-element port connection on a {}-dimensional array is not supported",
-                ai.dims.len()
-            ));
-        }
-        let (l, r) = ai.dims[0];
-        let off = if l >= r {
-            l as i128 - idx
-        } else {
-            idx - l as i128
-        };
-        Ok(format!("{}[({off})]", ai.global))
-    }
-
     // ── Processes ──────────────────────────────────────────────────────────
 
+    /// Validate process-family contracts before any process is lowered. These
+    /// checks intentionally live in the simulator semantic boundary rather
+    /// than in lint: disabling lint must not turn an invalid process into a
+    /// generated model with different scheduling semantics.
+    pub(super) fn validate_process_semantics(&mut self) -> Result<(), String> {
+        let process_ids: Vec<NodeId> = self
+            .design_nodes()
+            .into_iter()
+            .filter(|id| matches!(self.kind(*id), NodeKind::Process { .. }))
+            .collect();
+        let mut writers = Vec::new();
+        for process in process_ids {
+            let Some(inst) = self.owning_inst(process) else {
+                continue;
+            };
+            self.inst = inst;
+            let (always_type, stmt) = match self.kind(process) {
+                NodeKind::Process {
+                    kind: ProcessKind::Always { always_type },
+                } => (
+                    Some(*always_type),
+                    self.node(process).children.first().copied(),
+                ),
+                NodeKind::Process {
+                    kind: ProcessKind::Initial | ProcessKind::Final,
+                } => (None, self.node(process).children.first().copied()),
+                _ => (None, None),
+            };
+            let stmt = stmt.ok_or_else(|| {
+                format!(
+                    "process `{}` has no executable statement",
+                    self.node(process).full_name()
+                )
+            })?;
+            let path = self.instance_path_of(inst);
+            self.validate_process_contract(&path, stmt, always_type)?;
+            let writes = self.collect_process_writes(stmt)?;
+            let label = self.process_kind_label(always_type);
+            writers.push(ProcessWriter {
+                node: process,
+                label: format!("{path}.{label}"),
+                writes,
+            });
+        }
+
+        // Continuous assignments are independent drivers. Declaration
+        // initializers for variables/arrays are initialization, not another
+        // process writer; true nets retain their continuous-driver identity.
+        for id in self.db.node_ids() {
+            if !matches!(self.kind(id), NodeKind::ContAssign { .. })
+                || !self.is_runtime_continuous_driver(id)
+            {
+                continue;
+            }
+            let Some(inst) = self.owning_inst(id) else {
+                continue;
+            };
+            self.inst = inst;
+            writers.push(ProcessWriter {
+                node: id,
+                label: format!("{}.continuous", self.instance_path_of(inst)),
+                writes: self.collect_process_writes(id)?,
+            });
+        }
+
+        // A structural gate is also a driver of its output terminal. Include
+        // it so an always-family process cannot silently share that storage.
+        for id in self.db.node_ids() {
+            let NodeKind::Gate { terms, .. } = self.kind(id) else {
+                continue;
+            };
+            let Some(inst) = self.owning_inst(id) else {
+                continue;
+            };
+            self.inst = inst;
+            let mut writes = HashSet::new();
+            for term in terms {
+                if matches!(term.direction, DbDirection::Output | DbDirection::Inout) {
+                    self.add_process_lhs_write(term.expr, &mut writes);
+                }
+            }
+            if !writes.is_empty() {
+                writers.push(ProcessWriter {
+                    node: id,
+                    label: format!("{}.gate", self.instance_path_of(inst)),
+                    writes,
+                });
+            }
+        }
+
+        // A connected port link is a driver on the side it writes: an input
+        // link writes the child storage, an output link writes the parent
+        // actual, and an inout link writes both. Treat links as writers here
+        // so an always-family process cannot share storage with a port path.
+        for id in self.design_nodes() {
+            let (direction, high, low, high_expr) = match self.kind(id) {
+                NodeKind::Port {
+                    direction,
+                    high,
+                    low,
+                    high_expr,
+                    ..
+                } => (*direction, *high, *low, *high_expr),
+                _ => continue,
+            };
+            let Some(inst) = self.owning_inst(id) else {
+                continue;
+            };
+            let targets = match direction {
+                DbDirection::Input => vec![low],
+                DbDirection::Output => vec![high_expr.or(high)],
+                DbDirection::Inout => vec![low, high_expr.or(high)],
+                DbDirection::Mixed
+                | DbDirection::None
+                | DbDirection::Ref
+                | DbDirection::Unsupported => Vec::new(),
+            };
+            let mut writes = HashSet::new();
+            self.inst = inst;
+            for target in targets.into_iter().flatten() {
+                self.add_process_lhs_write(target, &mut writes);
+            }
+            if !writes.is_empty() {
+                writers.push(ProcessWriter {
+                    node: id,
+                    label: format!("{}.port", self.instance_path_of(inst)),
+                    writes,
+                });
+            }
+        }
+
+        for restricted in writers.iter().filter(|writer| {
+            matches!(
+                self.kind(writer.node),
+                NodeKind::Process {
+                    kind: ProcessKind::Always {
+                        always_type: AlwaysKind::Comb | AlwaysKind::Latch | AlwaysKind::FlipFlop,
+                    },
+                }
+            )
+        }) {
+            for other in &writers {
+                if restricted.node == other.node {
+                    continue;
+                }
+                if let Some(storage) = restricted.writes.iter().find(|write| {
+                    other
+                        .writes
+                        .iter()
+                        .any(|candidate| self.same_storage(write, candidate))
+                }) {
+                    return Err(format!(
+                        "semantic error: process `{}` has multiple writers for `{}` at {} (also written by `{}` at {})",
+                        restricted.label,
+                        self.dependency_label(storage),
+                        self.source_location(restricted.node),
+                        other.label,
+                        self.source_location(other.node),
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn process_kind_label(&self, process_kind: Option<AlwaysKind>) -> &'static str {
+        match process_kind {
+            Some(AlwaysKind::Comb) => "always_comb",
+            Some(AlwaysKind::Latch) => "always_latch",
+            Some(AlwaysKind::FlipFlop) => "always_ff",
+            Some(AlwaysKind::Always) | Some(AlwaysKind::Unsupported) => "always",
+            None => "process",
+        }
+    }
+
+    fn dependency_label(&self, dependency: &IrDependency) -> String {
+        match dependency {
+            IrDependency::Scalar(name) | IrDependency::Real(name) => name.clone(),
+            IrDependency::ArrayElement { array, index } => {
+                format!("array[{array}] element {index}")
+            }
+            IrDependency::ArrayContents(array) => format!("array[{array}] contents"),
+            IrDependency::ContainerContents(container) => {
+                format!("container[{container}] contents")
+            }
+            IrDependency::ContainerShape(container) => format!("container[{container}] shape"),
+        }
+    }
+
+    fn is_runtime_continuous_driver(&self, node: NodeId) -> bool {
+        match self.kind(node) {
+            NodeKind::ContAssign { net_decl: true, .. } => {
+                matches!(self.net_decl_target(node), NetDeclTarget::TrueNet)
+            }
+            NodeKind::ContAssign { .. } => true,
+            _ => false,
+        }
+    }
+
+    fn validate_process_contract(
+        &self,
+        path: &str,
+        stmt: NodeId,
+        process_kind: Option<AlwaysKind>,
+    ) -> Result<(), String> {
+        let Some(process_kind) = process_kind else {
+            return Ok(());
+        };
+        let mut scan = ProcessContractScan::default();
+        let mut visited = HashSet::new();
+        self.scan_process_contract(stmt, &mut scan, &mut visited)?;
+        let label = self.process_kind_label(Some(process_kind));
+        if matches!(process_kind, AlwaysKind::Comb | AlwaysKind::Latch)
+            && (!scan.event_controls.is_empty()
+                || !scan.blocking_timing_controls.is_empty()
+                || !scan.fork_controls.is_empty())
+        {
+            let node = scan
+                .event_controls
+                .first()
+                .or_else(|| scan.blocking_timing_controls.first())
+                .or_else(|| scan.fork_controls.first())
+                .copied()
+                .unwrap_or(stmt);
+            return Err(format!(
+                "semantic error: {label} process `{path}` cannot contain a blocking timing control or fork at {}",
+                self.source_location(node)
+            ));
+        }
+        if process_kind == AlwaysKind::FlipFlop {
+            if scan.event_controls.len() != 1 {
+                return Err(format!(
+                    "semantic error: always_ff process `{path}` must contain exactly one event control (found {})",
+                    scan.event_controls.len()
+                ));
+            }
+            if let Some(node) = scan.blocking_timing_controls.first() {
+                return Err(format!(
+                    "semantic error: always_ff process `{path}` cannot contain a timing control at {}",
+                    self.source_location(*node)
+                ));
+            }
+            if let Some(node) = scan.fork_controls.first() {
+                return Err(format!(
+                    "semantic error: always_ff process `{path}` cannot contain a fork at {}",
+                    self.source_location(*node)
+                ));
+            }
+            if let Some(node) = scan.event_triggers.first() {
+                return Err(format!(
+                    "semantic error: always_ff process `{path}` cannot trigger an event at {}",
+                    self.source_location(*node)
+                ));
+            }
+            if let Some(node) = scan.disallowed_assignments.first() {
+                return Err(format!(
+                    "semantic error: always_ff process `{path}` contains an unsupported procedural assignment at {}",
+                    self.source_location(*node)
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    fn source_location(&self, node: NodeId) -> String {
+        let node = self.node(node);
+        format!(
+            "{}:{}:{}",
+            node.file.as_deref().unwrap_or("<unknown>"),
+            node.line,
+            node.col
+        )
+    }
+
+    fn scan_process_contract(
+        &self,
+        node: NodeId,
+        scan: &mut ProcessContractScan,
+        visited_functions: &mut HashSet<NodeId>,
+    ) -> Result<(), String> {
+        match self.kind(node) {
+            NodeKind::Stmt(StmtKind::EventControl { .. }) => scan.event_controls.push(node),
+            NodeKind::Stmt(StmtKind::DelayControl { .. })
+            | NodeKind::Stmt(StmtKind::Wait { .. })
+            | NodeKind::Stmt(StmtKind::WaitOrder { .. })
+            | NodeKind::Stmt(StmtKind::WaitFork) => {
+                scan.blocking_timing_controls.push(node);
+            }
+            NodeKind::Stmt(StmtKind::Assign {
+                blocking: true,
+                delay,
+                ..
+            }) => {
+                if delay.is_some() {
+                    scan.blocking_timing_controls.push(node);
+                }
+            }
+            NodeKind::Stmt(StmtKind::Fork { join_kind, .. }) => {
+                scan.fork_controls.push(node);
+                if *join_kind != DbJoinKind::None {
+                    scan.blocking_timing_controls.push(node);
+                }
+            }
+            NodeKind::Stmt(
+                StmtKind::ProcContAssign { .. }
+                | StmtKind::Force { .. }
+                | StmtKind::Release { .. }
+                | StmtKind::Deassign { .. },
+            ) => scan.disallowed_assignments.push(node),
+            NodeKind::Stmt(StmtKind::EventTrigger { .. }) => {
+                scan.event_triggers.push(node);
+            }
+            NodeKind::FuncCall {
+                name,
+                is_task,
+                callee,
+            } => {
+                let (function, _) =
+                    self.resolve_callee_env(self.inst, name, *is_task, *callee)?;
+                if visited_functions.insert(function) {
+                    if let Some(body) = self.func_body(function) {
+                        self.scan_process_contract(body, scan, visited_functions)?;
+                    }
+                }
+            }
+            _ => {}
+        }
+        for child in &self.node(node).children {
+            self.scan_process_contract(*child, scan, visited_functions)?;
+        }
+        Ok(())
+    }
+
     fn emit_process(&mut self, inst: NodeId, path: &str, proc: NodeId) -> Result<(), String> {
+        // Effect collection resolves callees before EmitCtx::new installs its
+        // context. Never reuse the previous process's instance for this scan.
+        self.inst = inst;
         let (kind, stmt) = match self.kind(proc) {
             NodeKind::Process { kind } => {
                 let stmt = self
@@ -5042,26 +8381,59 @@ impl<'a> Codegen<'a> {
         };
         let is_initial = matches!(kind, ProcessKind::Initial);
         let is_final = matches!(kind, ProcessKind::Final);
+        let always_type = match kind {
+            ProcessKind::Always { always_type } => Some(*always_type),
+            ProcessKind::Initial | ProcessKind::Final => None,
+        };
+        let ir_kind = match kind {
+            ProcessKind::Initial => IrProcessKind::Initial,
+            ProcessKind::Final => IrProcessKind::Final,
+            ProcessKind::Always {
+                always_type: AlwaysKind::Always,
+            } => IrProcessKind::Always,
+            ProcessKind::Always {
+                always_type: AlwaysKind::Comb,
+            } => IrProcessKind::Comb,
+            ProcessKind::Always {
+                always_type: AlwaysKind::Latch,
+            } => IrProcessKind::Latch,
+            ProcessKind::Always {
+                always_type: AlwaysKind::FlipFlop,
+            } => IrProcessKind::FlipFlop,
+            ProcessKind::Always {
+                always_type: AlwaysKind::Unsupported,
+            } => IrProcessKind::Always,
+        };
+        let mut writes: Vec<IrDependency> = self
+            .collect_process_writes(stmt)?
+            .into_iter()
+            .collect();
+        writes.sort_by_key(|dependency| self.dependency_label(dependency));
         let fn_name = self.new_fn_name(path, "proc");
         let (body_stmts, pre_fns, shape) = {
             let mut ctx = EmitCtx::new(self, path.to_string(), inst, "0", None, None, is_final);
+            ctx.process_kind = always_type;
             let body_stmts = ctx.lower_stmt(stmt)?;
             // Fork-branch coroutines and monitor/strobe evaluators attach to
             // the process (rendered ahead of it).
             let pre_fns = std::mem::take(&mut ctx.pre_fns);
-            let kind_label = if is_initial { "initial" } else { "always" };
+            let plain_always = matches!(
+                kind,
+                ProcessKind::Always {
+                    always_type: AlwaysKind::Always
+                }
+            );
             let shape = if is_initial || is_final {
                 // `initial` and `final` bodies run exactly once (finals after
                 // the scheduler exits — the spawn phase is decided below).
                 IrShape::RunOnce
-            } else if !ctx.saw_wait {
-                // always / always_comb / always_ff without any event/delay
-                // control: a combinational process.
-                if assigns_to_real(&body_stmts, &ctx.cg.model) {
-                    return Err(format!("real-valued signals are not supported in combinational processes in `{path}`"));
-                }
+            } else if !plain_always && !ctx.saw_wait {
+                // always_comb/always_latch/always_ff without any event or
+                // delay control use the existing sensitivity-driven shape.
                 // Run once at t=0, then re-run whenever a read signal changes.
-                let sigs = ctx.cg.collect_read_signals(path, stmt)?;
+                let sigs = ctx
+                    .cg
+                    .collect_process_sensitivity(path, stmt, always_type)?;
                 if sigs.is_empty() {
                     ctx.cg.warnings.push(format!(
                         "combinational always process in `{path}` reads no \
@@ -5074,7 +8446,6 @@ impl<'a> Codegen<'a> {
             } else {
                 IrShape::Loop
             };
-            let _ = kind_label;
             (body_stmts, pre_fns, shape)
         };
         let kind_label = if is_initial {
@@ -5082,13 +8453,15 @@ impl<'a> Codegen<'a> {
         } else if is_final {
             "final"
         } else {
-            "always"
+            self.process_kind_label(always_type)
         };
         let origin = self.origin(proc);
-        self.model.processes.push(IrProcess::new_with_origin(
+        self.model.processes.push(IrProcess::new_with_kind_and_writes(
             fn_name.clone(),
             format!("{path}.{kind_label}"),
+            ir_kind,
             shape,
+            writes,
             pre_fns,
             body_stmts,
             origin,
@@ -5101,8 +8474,9 @@ impl<'a> Codegen<'a> {
 
     // ── Signal reads for sensitivity ───────────────────────────────────────
 
-    /// Collect every signal read anywhere in the statement/expression tree
-    /// rooted at `root`, as global names (deduped, deterministic order).
+    /// Collect every storage dependency read anywhere in the
+    /// statement/expression tree rooted at `root` (deduped, deterministic
+    /// order).
     /// Function/task calls descend into the callee bodies (guarded against
     /// recursion), so reads hidden behind a function call contribute to the
     /// sensitivity set.
@@ -5110,18 +8484,309 @@ impl<'a> Codegen<'a> {
         &self,
         scope_path: &str,
         root: NodeId,
-    ) -> Result<Vec<String>, String> {
-        let mut out = Vec::new();
-        let mut seen: HashSet<String> = HashSet::new();
-        let mut visited: HashSet<NodeId> = HashSet::new();
-        self.walk_read_signals(scope_path, root, &mut seen, &mut visited, &mut out)?;
-        if out.iter().any(|name| {
-            self.signals
-                .iter()
-                .any(|info| info.real && info.global == name.as_str())
-        }) {
-            return Err(format!("real-valued signals cannot be used in a combinational sensitivity set in `{scope_path}`"));
+    ) -> Result<Vec<IrDependency>, String> {
+        self.collect_read_dependencies(scope_path, root, true)
+    }
+
+    /// Collect the implicit sensitivity set for a plain `always @*` block.
+    ///
+    /// Verilog wildcard event controls use the expressions visible at the
+    /// call site.  In particular, reads hidden inside a called function are
+    /// not inspected; call arguments themselves remain ordinary reads.
+    pub(super) fn collect_at_star_signals(
+        &self,
+        scope_path: &str,
+        root: NodeId,
+    ) -> Result<Vec<IrDependency>, String> {
+        self.collect_read_dependencies_mode(scope_path, root, false)
+    }
+
+    /// Build the implicit sensitivity set for an always-family process. The
+    /// SystemVerilog forms remove every storage object written by the process
+    /// (including writes performed by called subroutines); plain `@*` keeps
+    /// the Verilog call-site-only read walk and has no such exclusion.
+    fn collect_process_sensitivity(
+        &self,
+        scope_path: &str,
+        root: NodeId,
+        process_kind: Option<AlwaysKind>,
+    ) -> Result<Vec<IrDependency>, String> {
+        let mut reads = if process_kind == Some(AlwaysKind::Always) {
+            self.collect_at_star_signals(scope_path, root)?
+        } else {
+            self.collect_read_signals(scope_path, root)?
+        };
+        if matches!(process_kind, Some(AlwaysKind::Comb | AlwaysKind::Latch)) {
+            let writes = self.collect_process_writes(root)?;
+            reads.retain(|read| !writes.iter().any(|write| self.same_storage(read, write)));
         }
+        Ok(reads)
+    }
+
+    fn same_storage(&self, read: &IrDependency, write: &IrDependency) -> bool {
+        match (read, write) {
+            (IrDependency::Scalar(read), IrDependency::Scalar(write))
+            | (IrDependency::Real(read), IrDependency::Real(write))
+            | (IrDependency::Scalar(read), IrDependency::Real(write))
+            | (IrDependency::Real(read), IrDependency::Scalar(write)) => read == write,
+            (
+                IrDependency::ArrayElement {
+                    array: read_array,
+                    index: read_index,
+                },
+                IrDependency::ArrayElement {
+                    array: write_array,
+                    index: write_index,
+                },
+            ) => read_array == write_array && read_index == write_index,
+            (IrDependency::ArrayElement { array, .. }, IrDependency::ArrayContents(write))
+            | (IrDependency::ArrayContents(array), IrDependency::ArrayContents(write))
+            | (IrDependency::ArrayContents(array), IrDependency::ArrayElement { array: write, .. }) => {
+                array == write
+            }
+            (
+                IrDependency::ContainerContents(container)
+                | IrDependency::ContainerShape(container),
+                IrDependency::ContainerContents(write) | IrDependency::ContainerShape(write),
+            ) => container == write,
+            _ => false,
+        }
+    }
+
+    fn collect_process_writes(&self, root: NodeId) -> Result<HashSet<IrDependency>, String> {
+        let mut writes = HashSet::new();
+        let mut visited = HashSet::new();
+        self.walk_process_writes(root, &mut writes, &mut visited)?;
+        Ok(writes)
+    }
+
+    fn walk_process_writes(
+        &self,
+        node: NodeId,
+        writes: &mut HashSet<IrDependency>,
+        visited_functions: &mut HashSet<NodeId>,
+    ) -> Result<(), String> {
+        match self.kind(node) {
+            NodeKind::Stmt(StmtKind::Assign { .. })
+            | NodeKind::Stmt(StmtKind::ProcContAssign { .. })
+            | NodeKind::Stmt(StmtKind::Force { .. })
+            | NodeKind::ContAssign { .. } => {
+                if let Some(lhs) = self.node(node).children.first() {
+                    self.add_process_lhs_write(*lhs, writes);
+                }
+            }
+            NodeKind::Stmt(StmtKind::Release { lhs })
+            | NodeKind::Stmt(StmtKind::Deassign { lhs }) => {
+                self.add_process_lhs_write(*lhs, writes);
+                return Ok(());
+            }
+            NodeKind::Stmt(StmtKind::VariableDecl { declaration }) => {
+                // A declaration itself is local storage, not a process write
+                // for implicit-sensitivity purposes. Its initializer can
+                // still call a side-effecting function.
+                if let Some(initializer) = self.db.var_initializer(*declaration) {
+                    self.walk_process_writes(initializer, writes, visited_functions)?;
+                }
+                return Ok(());
+            }
+            NodeKind::Expr(ExprKind::Operation { op, operands, .. })
+                if matches!(
+                    op,
+                    Operation::PostIncrement
+                        | Operation::PreIncrement
+                        | Operation::PostDecrement
+                        | Operation::PreDecrement
+                        | Operation::Assignment
+                ) =>
+            {
+                if let Some(lhs) = operands.first() {
+                    self.add_process_lhs_write(*lhs, writes);
+                }
+            }
+            NodeKind::MethodCall {
+                name,
+                receiver: Some(receiver),
+            } if Self::mutating_container_method(name) => {
+                self.add_process_lhs_write(*receiver, writes);
+            }
+            NodeKind::FuncCall {
+                name,
+                is_task,
+                callee,
+            } => {
+                let (ft, callee_inst) =
+                    self.resolve_callee_env(self.inst, name, *is_task, *callee)?;
+                if visited_functions.insert(ft) {
+                    if let Some(body) = self.func_body(ft) {
+                        self.walk_process_writes(body, writes, visited_functions)?;
+                    }
+                }
+                let (_, _, formals) = self.func_info(ft, callee_inst)?;
+                for ((formal, is_out), actual) in formals.iter().zip(&self.node(node).children) {
+                    let writes_actual = *is_out
+                        || matches!(
+                            self.kind(*formal),
+                            NodeKind::FuncArg {
+                                direction: DbDirection::Ref,
+                                const_ref: false,
+                                ..
+                            }
+                        );
+                    if writes_actual {
+                        self.add_process_lhs_write(self.unwrap_output_actual(*actual), writes);
+                    }
+                }
+            }
+            _ => {}
+        }
+        for child in &self.node(node).children {
+            self.walk_process_writes(*child, writes, visited_functions)?;
+        }
+        Ok(())
+    }
+
+    fn mutating_container_method(name: &str) -> bool {
+        matches!(
+            name,
+            "delete" | "push_front" | "push_back" | "pop_front" | "pop_back" | "insert"
+        )
+    }
+
+    fn unwrap_output_actual(&self, node: NodeId) -> NodeId {
+        match self.kind(node) {
+            NodeKind::Expr(ExprKind::Operation { op, operands, .. })
+                if *op == Operation::Assignment =>
+            {
+                operands.first().copied().unwrap_or(node)
+            }
+            _ => node,
+        }
+    }
+
+    fn add_process_lhs_write(&self, lhs: NodeId, writes: &mut HashSet<IrDependency>) {
+        match self.kind(lhs) {
+            NodeKind::Net { .. } | NodeKind::Var { .. } => {
+                if let Some(info) = self.signal_of(lhs) {
+                    writes.insert(self.signal_dependency(info));
+                }
+            }
+            NodeKind::Expr(ExprKind::Ref {
+                target: Some(target),
+            }) => {
+                if let Some(array) = self.array_of(*target) {
+                    writes.insert(IrDependency::ArrayContents(self.reference_array(array.ir)));
+                } else if let Some(container) = self.container_of(*target) {
+                    writes.insert(IrDependency::ContainerContents(container.ir));
+                    writes.insert(IrDependency::ContainerShape(container.ir));
+                } else if let Some(info) = self.signal_of(*target) {
+                    writes.insert(self.signal_dependency(info));
+                }
+            }
+            NodeKind::Expr(ExprKind::HierPath { .. }) => {
+                if let Some((_, _, member)) = self.unpacked_member_info(lhs) {
+                    if let Some(signal) = member.signal.as_ref() {
+                        writes.insert(self.signal_dependency(signal));
+                    }
+                } else if let Some(info) = self.hier_path_signal(lhs) {
+                    writes.insert(self.signal_dependency(info));
+                }
+            }
+            NodeKind::Expr(ExprKind::BitSelect { base, index }) => {
+                if let Some(array) = self.array_of(*base) {
+                    self.add_process_array_write(array, &[*index], writes);
+                } else if let Some(container) = self.container_of(*base) {
+                    writes.insert(IrDependency::ContainerContents(container.ir));
+                    writes.insert(IrDependency::ContainerShape(container.ir));
+                } else {
+                    self.add_process_lhs_write(*base, writes);
+                }
+            }
+            NodeKind::Expr(ExprKind::ArraySelect { base, indices }) => {
+                if let Some(array) = self.array_of(*base) {
+                    self.add_process_array_write(array, indices, writes);
+                } else if let Some(container) = self.container_of(*base) {
+                    writes.insert(IrDependency::ContainerContents(container.ir));
+                    writes.insert(IrDependency::ContainerShape(container.ir));
+                } else {
+                    self.add_process_lhs_write(*base, writes);
+                }
+            }
+            NodeKind::Expr(
+                ExprKind::PartSelect { base, .. } | ExprKind::IndexedPartSelect { base, .. },
+            ) => {
+                self.add_process_lhs_write(*base, writes);
+            }
+            NodeKind::Expr(ExprKind::Operation { operands, .. }) => {
+                for operand in operands {
+                    self.add_process_lhs_write(*operand, writes);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn add_process_array_write(
+        &self,
+        array: &ArrayInfo,
+        indices: &[NodeId],
+        writes: &mut HashSet<IrDependency>,
+    ) {
+        let mut dependencies = Vec::new();
+        let mut seen = HashSet::new();
+        self.add_fixed_array_dependency(array, indices, &mut seen, &mut dependencies);
+        writes.extend(dependencies);
+    }
+
+    /// Collect force-expression dependencies, including real-valued storage.
+    /// Unlike a combinational process sensitivity list, a force evaluator is
+    /// driven by the runtime's typed dependency table, so real reads are
+    /// observable without requiring a packed wait source.
+    pub(super) fn collect_force_read_signals(
+        &self,
+        scope_path: &str,
+        root: NodeId,
+    ) -> Result<Vec<String>, String> {
+        let dependencies = self.collect_read_dependencies(scope_path, root, true)?;
+        dependencies
+            .into_iter()
+            .map(|dependency| match dependency {
+                IrDependency::Scalar(name) | IrDependency::Real(name) => Ok(name),
+                IrDependency::ArrayElement { .. }
+                | IrDependency::ArrayContents(_)
+                | IrDependency::ContainerContents(_)
+                | IrDependency::ContainerShape(_) => Err(format!(
+                    "array/container dependencies cannot yet drive force evaluators in `{scope_path}`"
+                )),
+            })
+            .collect()
+    }
+
+    fn collect_read_dependencies(
+        &self,
+        scope_path: &str,
+        root: NodeId,
+        _allow_real: bool,
+    ) -> Result<Vec<IrDependency>, String> {
+        self.collect_read_dependencies_mode(scope_path, root, true)
+    }
+
+    fn collect_read_dependencies_mode(
+        &self,
+        scope_path: &str,
+        root: NodeId,
+        include_function_bodies: bool,
+    ) -> Result<Vec<IrDependency>, String> {
+        let mut out = Vec::new();
+        let mut seen: HashSet<IrDependency> = HashSet::new();
+        let mut visited: HashSet<NodeId> = HashSet::new();
+        self.walk_read_signals_mode(
+            scope_path,
+            root,
+            &mut seen,
+            &mut visited,
+            &mut out,
+            include_function_bodies,
+        )?;
         Ok(out)
     }
 
@@ -5129,19 +8794,118 @@ impl<'a> Codegen<'a> {
         &self,
         scope_path: &str,
         node: NodeId,
-        seen: &mut HashSet<String>,
+        seen: &mut HashSet<IrDependency>,
         visited: &mut HashSet<NodeId>,
-        out: &mut Vec<String>,
+        out: &mut Vec<IrDependency>,
+    ) -> Result<(), String> {
+        self.walk_read_signals_mode(scope_path, node, seen, visited, out, true)
+    }
+
+    fn walk_read_signals_mode(
+        &self,
+        scope_path: &str,
+        node: NodeId,
+        seen: &mut HashSet<IrDependency>,
+        visited: &mut HashSet<NodeId>,
+        out: &mut Vec<IrDependency>,
+        include_function_bodies: bool,
     ) -> Result<(), String> {
         if self.object_of(scope_path, node).is_some() {
             return Err(format!("string/chandle changes cannot yet be used in sensitivity or wait expressions in `{scope_path}`"));
         }
-        if self.container_of(node).is_some() {
-            return Err(format!(
-                "dynamic/associative array and queue changes cannot yet be used in sensitivity or wait expressions in `{scope_path}`"
-            ));
-        }
         match self.kind(node) {
+            NodeKind::Expr(ExprKind::BitSelect { base, index }) => {
+                if let Some(array) = self.array_of(*base) {
+                    self.add_fixed_array_dependency(array, &[*index], seen, out);
+                    return self.walk_read_signals_mode(
+                        scope_path,
+                        *index,
+                        seen,
+                        visited,
+                        out,
+                        include_function_bodies,
+                    );
+                }
+                if let Some(container) = self.container_of(*base) {
+                    self.add_container_dependencies(container.ir, true, true, seen, out);
+                    return self.walk_read_signals_mode(
+                        scope_path,
+                        *index,
+                        seen,
+                        visited,
+                        out,
+                        include_function_bodies,
+                    );
+                }
+            }
+            NodeKind::Expr(ExprKind::ArraySelect { base, indices }) => {
+                if let Some(array) = self.array_of(*base) {
+                    self.add_fixed_array_dependency(array, indices, seen, out);
+                    for index in indices {
+                        self.walk_read_signals_mode(
+                            scope_path,
+                            *index,
+                            seen,
+                            visited,
+                            out,
+                            include_function_bodies,
+                        )?;
+                    }
+                    return Ok(());
+                }
+                if let Some(container) = self.container_of(*base) {
+                    self.add_container_dependencies(container.ir, true, true, seen, out);
+                    for index in indices {
+                        self.walk_read_signals_mode(
+                            scope_path,
+                            *index,
+                            seen,
+                            visited,
+                            out,
+                            include_function_bodies,
+                        )?;
+                    }
+                    return Ok(());
+                }
+            }
+            NodeKind::MethodCall {
+                name,
+                receiver: Some(receiver),
+            } => {
+                if let Some(container) = self.container_of(*receiver) {
+                    // A pure mutation statement has no read of the receiver.
+                    // Keeping its storage out of an implicit @* set prevents
+                    // an external mutation from re-running a process whose
+                    // only container access is its own write. Value-producing
+                    // methods (including pop_*) still read the receiver.
+                    let receiver_is_read = !matches!(
+                        name.as_str(),
+                        "delete" | "push_front" | "push_back" | "insert"
+                    );
+                    if receiver_is_read {
+                        let (contents, shape) = match name.as_str() {
+                            "size" | "num" | "exists" | "first" | "last" | "next" | "prev" => {
+                                (false, true)
+                            }
+                            _ => (true, true),
+                        };
+                        self.add_container_dependencies(container.ir, contents, shape, seen, out);
+                    }
+                    for child in &self.node(node).children {
+                        if *child != *receiver {
+                            self.walk_read_signals_mode(
+                                scope_path,
+                                *child,
+                                seen,
+                                visited,
+                                out,
+                                include_function_bodies,
+                            )?;
+                        }
+                    }
+                    return Ok(());
+                }
+            }
             NodeKind::Stmt(StmtKind::Assign { .. })
             | NodeKind::Stmt(StmtKind::ProcContAssign { .. }) => {
                 // Sensitivity of a process body: an assignment's LHS base
@@ -5150,25 +8914,141 @@ impl<'a> Codegen<'a> {
                 // process's writes).  Only the LHS's index/bounds
                 // expressions are reads.
                 if let Some(rhs) = self.node(node).children.get(1) {
-                    self.walk_read_signals(scope_path, *rhs, seen, visited, out)?;
+                    self.walk_read_signals_mode(
+                        scope_path,
+                        *rhs,
+                        seen,
+                        visited,
+                        out,
+                        include_function_bodies,
+                    )?;
                 }
                 if let Some(lhs) = self.node(node).children.first() {
-                    self.walk_lhs_select_reads(scope_path, *lhs, seen, visited, out)?;
+                    self.walk_lhs_select_reads_mode(
+                        scope_path,
+                        *lhs,
+                        seen,
+                        visited,
+                        out,
+                        include_function_bodies,
+                    )?;
                 }
                 return Ok(());
             }
-            NodeKind::Stmt(StmtKind::For { cond, body, .. }) => {
-                // The old RELS-based walk does not descend into the for
-                // init/incr statements.
-                self.walk_read_signals(scope_path, *cond, seen, visited, out)?;
-                self.walk_read_signals(scope_path, *body, seen, visited, out)?;
+            NodeKind::Stmt(StmtKind::VariableDecl { declaration }) => {
+                if let Some(initializer) = self.db.var_initializer(*declaration) {
+                    self.walk_read_signals_mode(
+                        scope_path,
+                        initializer,
+                        seen,
+                        visited,
+                        out,
+                        include_function_bodies,
+                    )?;
+                }
+                return Ok(());
+            }
+            NodeKind::Expr(ExprKind::Operation { op, operands, .. })
+                if matches!(
+                    op,
+                    Operation::Assignment
+                        | Operation::PostIncrement
+                        | Operation::PreIncrement
+                        | Operation::PostDecrement
+                        | Operation::PreDecrement
+                ) =>
+            {
+                if let Some(rhs) = operands.get(1) {
+                    self.walk_read_signals_mode(
+                        scope_path,
+                        *rhs,
+                        seen,
+                        visited,
+                        out,
+                        include_function_bodies,
+                    )?;
+                }
+                if let Some(lhs) = operands.first() {
+                    self.walk_lhs_select_reads_mode(
+                        scope_path,
+                        *lhs,
+                        seen,
+                        visited,
+                        out,
+                        include_function_bodies,
+                    )?;
+                }
+                return Ok(());
+            }
+            NodeKind::Stmt(StmtKind::For {
+                vars,
+                init,
+                cond,
+                incr,
+                body,
+            }) => {
+                for variable in vars {
+                    if let Some(initializer) = self.db.var_initializer(*variable) {
+                        self.walk_read_signals_mode(
+                            scope_path,
+                            initializer,
+                            seen,
+                            visited,
+                            out,
+                            include_function_bodies,
+                        )?;
+                    }
+                }
+                for statement in init {
+                    self.walk_read_signals_mode(
+                        scope_path,
+                        *statement,
+                        seen,
+                        visited,
+                        out,
+                        include_function_bodies,
+                    )?;
+                }
+                self.walk_read_signals_mode(
+                    scope_path,
+                    *cond,
+                    seen,
+                    visited,
+                    out,
+                    include_function_bodies,
+                )?;
+                self.walk_read_signals_mode(
+                    scope_path,
+                    *body,
+                    seen,
+                    visited,
+                    out,
+                    include_function_bodies,
+                )?;
+                for statement in incr {
+                    self.walk_read_signals_mode(
+                        scope_path,
+                        *statement,
+                        seen,
+                        visited,
+                        out,
+                        include_function_bodies,
+                    )?;
+                }
                 return Ok(());
             }
             NodeKind::Stmt(StmtKind::Fork { branches, .. }) => {
                 // A fork body reads signals (a `fork … join` branch may block
                 // on signals); descend into the branches for comb sensitivity.
                 for b in branches {
-                    self.walk_read_signals(scope_path, *b, seen, visited, out)?;
+                    self.walk_read_signals_mode(
+                        scope_path,
+                        *b,
+                        seen,
+                        visited,
+                        out,
+                        include_function_bodies,
+                    )?;
                 }
                 return Ok(());
             }
@@ -5184,23 +9064,108 @@ impl<'a> Codegen<'a> {
                 is_task,
                 callee,
             } => {
-                if let Ok(ft) = self.resolve_callee(self.inst, name, *is_task, *callee) {
+                let (ft, callee_inst) =
+                    self.resolve_callee_env(self.inst, name, *is_task, *callee)?;
+                if include_function_bodies {
                     if visited.insert(ft) {
                         if let Some(body) = self.func_body(ft) {
-                            self.walk_read_signals(scope_path, body, seen, visited, out)?;
+                            self.walk_read_signals_mode(
+                                scope_path,
+                                body,
+                                seen,
+                                visited,
+                                out,
+                                include_function_bodies,
+                            )?;
                         }
                     }
                 }
+                let (_, _, formals) = self.func_info(ft, callee_inst)?;
+                for (formal, _) in formals.iter().skip(self.node(node).children.len()) {
+                    if let NodeKind::FuncArg {
+                        default: Some(default),
+                        ..
+                    } = self.kind(*formal)
+                    {
+                        self.walk_read_signals_mode(
+                            scope_path,
+                            *default,
+                            seen,
+                            visited,
+                            out,
+                            include_function_bodies,
+                        )?;
+                    }
+                }
                 for c in &self.node(node).children {
-                    self.walk_read_signals(scope_path, *c, seen, visited, out)?;
+                    self.walk_read_signals_mode(
+                        scope_path,
+                        *c,
+                        seen,
+                        visited,
+                        out,
+                        include_function_bodies,
+                    )?;
                 }
                 return Ok(());
             }
             _ => {}
         }
+        if let Some(container) = self.container_of(node) {
+            self.add_container_dependencies(container.ir, true, true, seen, out);
+        }
+        if let Some((_, _, member)) = self.unpacked_member_info(node) {
+            if let Some(signal) = member.signal.as_ref() {
+                self.add_dependency(self.signal_dependency(signal), seen, out);
+            }
+            return Ok(());
+        }
+        if let NodeKind::Expr(ExprKind::Ref {
+            target: Some(target),
+        }) = self.kind(node)
+        {
+            if let Some(dependencies) = self
+                .func
+                .as_ref()
+                .and_then(|func| func.arg_dependencies.get(target))
+            {
+                for dependency in dependencies {
+                    self.add_dependency(dependency.clone(), seen, out);
+                }
+            }
+            if let Some(array) = self.array_of(*target) {
+                self.add_dependency(
+                    IrDependency::ArrayContents(self.reference_array(array.ir)),
+                    seen,
+                    out,
+                );
+                return Ok(());
+            }
+            if let Some(container) = self.container_of(*target) {
+                self.add_container_dependencies(container.ir, true, true, seen, out);
+                return Ok(());
+            }
+        }
+        if let NodeKind::Array { .. } = self.kind(node) {
+            if let Some(array) = self.array_of(node) {
+                self.add_dependency(
+                    IrDependency::ArrayContents(self.reference_array(array.ir)),
+                    seen,
+                    out,
+                );
+                return Ok(());
+            }
+        }
         self.add_node_read(node, seen, out);
         for c in &self.node(node).children {
-            self.walk_read_signals(scope_path, *c, seen, visited, out)?;
+            self.walk_read_signals_mode(
+                scope_path,
+                *c,
+                seen,
+                visited,
+                out,
+                include_function_bodies,
+            )?;
         }
         Ok(())
     }
@@ -5210,31 +9175,83 @@ impl<'a> Codegen<'a> {
         &self,
         scope_path: &str,
         lhs: NodeId,
-        seen: &mut HashSet<String>,
+        seen: &mut HashSet<IrDependency>,
         visited: &mut HashSet<NodeId>,
-        out: &mut Vec<String>,
+        out: &mut Vec<IrDependency>,
+    ) -> Result<(), String> {
+        self.walk_lhs_select_reads_mode(scope_path, lhs, seen, visited, out, true)
+    }
+
+    fn walk_lhs_select_reads_mode(
+        &self,
+        scope_path: &str,
+        lhs: NodeId,
+        seen: &mut HashSet<IrDependency>,
+        visited: &mut HashSet<NodeId>,
+        out: &mut Vec<IrDependency>,
+        include_function_bodies: bool,
     ) -> Result<(), String> {
         match self.kind(lhs) {
-            NodeKind::Expr(ExprKind::BitSelect { index, .. }) => {
-                self.walk_read_signals(scope_path, *index, seen, visited, out)
-            }
+            NodeKind::Expr(ExprKind::BitSelect { index, .. }) => self.walk_read_signals_mode(
+                scope_path,
+                *index,
+                seen,
+                visited,
+                out,
+                include_function_bodies,
+            ),
             NodeKind::Expr(ExprKind::PartSelect { left, right, .. }) => {
-                self.walk_read_signals(scope_path, *left, seen, visited, out)?;
-                self.walk_read_signals(scope_path, *right, seen, visited, out)
+                self.walk_read_signals_mode(
+                    scope_path,
+                    *left,
+                    seen,
+                    visited,
+                    out,
+                    include_function_bodies,
+                )?;
+                self.walk_read_signals_mode(
+                    scope_path,
+                    *right,
+                    seen,
+                    visited,
+                    out,
+                    include_function_bodies,
+                )
             }
             NodeKind::Expr(ExprKind::IndexedPartSelect {
                 base_expr,
                 width_expr,
                 ..
             }) => {
-                self.walk_read_signals(scope_path, *base_expr, seen, visited, out)?;
-                self.walk_read_signals(scope_path, *width_expr, seen, visited, out)
+                self.walk_read_signals_mode(
+                    scope_path,
+                    *base_expr,
+                    seen,
+                    visited,
+                    out,
+                    include_function_bodies,
+                )?;
+                self.walk_read_signals_mode(
+                    scope_path,
+                    *width_expr,
+                    seen,
+                    visited,
+                    out,
+                    include_function_bodies,
+                )
             }
             NodeKind::Expr(ExprKind::ArraySelect { indices, .. }) => {
                 // The base is the array itself (not a read); only the index
                 // expressions (and any element-level select bounds) are reads.
                 for i in indices {
-                    self.walk_read_signals(scope_path, *i, seen, visited, out)?;
+                    self.walk_read_signals_mode(
+                        scope_path,
+                        *i,
+                        seen,
+                        visited,
+                        out,
+                        include_function_bodies,
+                    )?;
                 }
                 Ok(())
             }
@@ -5250,55 +9267,440 @@ impl<'a> Codegen<'a> {
     }
 
     /// Add `node` to the read set if it is (or resolves to) a signal.
-    fn add_node_read(&self, node: NodeId, seen: &mut HashSet<String>, out: &mut Vec<String>) {
+    fn add_node_read(
+        &self,
+        node: NodeId,
+        seen: &mut HashSet<IrDependency>,
+        out: &mut Vec<IrDependency>,
+    ) {
         match self.kind(node) {
             NodeKind::Net { .. } | NodeKind::Var { .. } => {
                 if let Some(info) = self.signal_of(node) {
-                    if seen.insert(info.global.clone()) {
-                        out.push(info.global.clone());
-                    }
+                    self.add_dependency(self.signal_dependency(info), seen, out);
                 }
             }
             NodeKind::Expr(ExprKind::Ref { target: Some(t) }) => {
                 if let Some(info) = self.signal_of(*t) {
-                    if seen.insert(info.global.clone()) {
-                        out.push(info.global.clone());
-                    }
+                    self.add_dependency(self.signal_dependency(info), seen, out);
                 }
             }
             NodeKind::Expr(ExprKind::HierPath { .. }) => {
                 if let Some(info) = self.hier_path_signal(node) {
-                    if seen.insert(info.global.clone()) {
-                        out.push(info.global.clone());
-                    }
+                    self.add_dependency(self.signal_dependency(info), seen, out);
                 }
             }
             _ => {}
         }
     }
 
+    fn add_dependency(
+        &self,
+        dependency: IrDependency,
+        seen: &mut HashSet<IrDependency>,
+        out: &mut Vec<IrDependency>,
+    ) {
+        if seen.insert(dependency.clone()) {
+            out.push(dependency);
+        }
+    }
+
+    fn add_container_dependencies(
+        &self,
+        container: usize,
+        contents: bool,
+        shape: bool,
+        seen: &mut HashSet<IrDependency>,
+        out: &mut Vec<IrDependency>,
+    ) {
+        if contents {
+            self.add_dependency(IrDependency::ContainerContents(container), seen, out);
+        }
+        if shape {
+            self.add_dependency(IrDependency::ContainerShape(container), seen, out);
+        }
+    }
+
+    fn add_fixed_array_dependency(
+        &self,
+        array: &ArrayInfo,
+        indices: &[NodeId],
+        seen: &mut HashSet<IrDependency>,
+        out: &mut Vec<IrDependency>,
+    ) {
+        if indices.len() != array.dims.len() {
+            self.add_dependency(
+                IrDependency::ArrayContents(self.reference_array(array.ir)),
+                seen,
+                out,
+            );
+            return;
+        }
+        let mut linear = 0u64;
+        for ((left, right), node) in array.dims.iter().zip(indices) {
+            let Some(value) = self.eval_bound_i128(*node).ok() else {
+                self.add_dependency(
+                    IrDependency::ArrayContents(self.reference_array(array.ir)),
+                    seen,
+                    out,
+                );
+                return;
+            };
+            let lo = i128::from((*left).min(*right));
+            let hi = i128::from((*left).max(*right));
+            if value < lo || value > hi {
+                return;
+            }
+            let offset = if left >= right {
+                i128::from(*left) - value
+            } else {
+                value - i128::from(*left)
+            };
+            let extent = (i64::from(*left) - i64::from(*right)).unsigned_abs() + 1;
+            linear = match linear
+                .checked_mul(extent)
+                .and_then(|value| value.checked_add(offset as u64))
+            {
+                Some(value) => value,
+                None => {
+                    self.add_dependency(
+                        IrDependency::ArrayContents(self.reference_array(array.ir)),
+                        seen,
+                        out,
+                    );
+                    return;
+                }
+            };
+        }
+        self.add_dependency(
+            IrDependency::ArrayElement {
+                array: self.reference_array(array.ir),
+                index: linear,
+            },
+            seen,
+            out,
+        );
+    }
+
     // ── Signal resolution ──────────────────────────────────────────────────
 
-    /// The named-event arena node a walked operand resolves to, when it is a
-    /// ref whose target is a captured [`NodeKind::NamedEvent`] (both the
-    /// ref-wrapped and the direct object shapes normalize to `Ref`).
-    pub(super) fn event_target_of(&self, node: NodeId) -> Option<NodeId> {
+    fn collect_named_event(
+        &mut self,
+        path: &str,
+        declaration: NodeId,
+        seen: &mut HashSet<String>,
+    ) -> Result<(), String> {
+        let name = self.node(declaration).name.clone();
+        if name.is_empty() || !seen.insert(name.clone()) {
+            return Ok(());
+        }
+        let Some(metadata) = self.db.event_array_meta(declaration) else {
+            let info = self.new_event_info(event_global_name(path, &name));
+            self.event_globals.insert(declaration, info);
+            return Ok(());
+        };
+        if !matches!(metadata.kind(), ArrayKind::Static) {
+            return Err(format!(
+                "named event array `{name}` in `{path}` has unsupported storage kind"
+            ));
+        }
+        let mut total = 1u64;
+        let mut dims = Vec::with_capacity(metadata.dimensions().len());
+        for (dimension, bounds) in metadata.dimensions().iter().enumerate() {
+            let Some((left, right)) = bounds else {
+                return Err(format!(
+                    "named event array `{name}` in `{path}` has unresolved dimension {dimension}"
+                ));
+            };
+            let extent = (i64::from(*left) - i64::from(*right)).unsigned_abs() + 1;
+            total = total.checked_mul(extent).ok_or_else(|| {
+                format!("named event array `{name}` in `{path}` is too large")
+            })?;
+            dims.push((*left, *right));
+        }
+        if dims.is_empty() {
+            return Err(format!(
+                "named event array `{name}` in `{path}` has no dimensions"
+            ));
+        }
+        for linear in 0..total {
+            let info = self.new_event_info(event_global_name(
+                path,
+                &format!("{name}_{linear}"),
+            ));
+            self.event_elements.insert((declaration, linear), info);
+        }
+        let elements = (0..total)
+            .map(|linear| {
+                self.event_elements
+                    .get(&(declaration, linear))
+                    .map(|info| info.ir)
+                    .ok_or_else(|| {
+                        format!(
+                            "named event array `{name}` in `{path}` lost element {linear}"
+                        )
+                    })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let array = self.model.events.len();
+        self.model.events.push(crate::sim::ir::IrEvent::new_array(
+            event_global_name(path, &name),
+            dims,
+            elements,
+        ));
+        self.event_arrays.insert(declaration, array);
+        Ok(())
+    }
+
+    fn new_event_info(&mut self, global: String) -> EventInfo {
+        let ir = self.model.events.len();
+        let info = EventInfo { global, ir };
+        self.model.events.push(IrEvent::new(info.global.clone()));
+        self.events.push(info.clone());
+        info
+    }
+
+    /// Resolve an event expression to its declaration and any unpacked-array
+    /// indices. The expression remains owned by the DB until this point so a
+    /// reassigned handle can be lowered separately from its synchronization
+    /// object.
+    pub(super) fn event_target_of(&self, node: NodeId) -> Option<EventTarget> {
         match self.kind(node) {
-            NodeKind::Expr(ExprKind::Ref { target: Some(t) }) => {
-                matches!(self.kind(*t), NodeKind::NamedEvent).then_some(*t)
+            NodeKind::NamedEvent => Some(EventTarget {
+                declaration: node,
+                indices: Vec::new(),
+            }),
+            NodeKind::Var { .. }
+                if self.event_globals.contains_key(&node)
+                    || self.event_arrays.contains_key(&node)
+                    || self.db.event_array_meta(node).is_some() =>
+            {
+                Some(EventTarget {
+                    declaration: node,
+                    indices: Vec::new(),
+                })
             }
+            NodeKind::FuncArg { ty, .. } if ty.kind == "event" => Some(EventTarget {
+                declaration: node,
+                indices: Vec::new(),
+            }),
+            NodeKind::Expr(ExprKind::Ref { target: Some(target) })
+                if (matches!(self.kind(*target), NodeKind::NamedEvent)
+                    || matches!(self.kind(*target), NodeKind::Var { .. })
+                    && (self.event_globals.contains_key(target)
+                        || self.event_arrays.contains_key(target)
+                        || self.db.event_array_meta(*target).is_some()))
+                    || matches!(self.kind(*target), NodeKind::FuncArg { ty, .. } if ty.kind == "event") =>
+            {
+                Some(EventTarget {
+                    declaration: *target,
+                    indices: Vec::new(),
+                })
+            }
+            NodeKind::Expr(ExprKind::ArraySelect { base, indices }) => {
+                let mut target = self.event_target_of(*base)?;
+                target.indices.extend(indices.iter().copied());
+                Some(target)
+            }
+            NodeKind::Expr(ExprKind::ScopeRef { target }) => self.event_target_of(*target),
+            NodeKind::Expr(ExprKind::Cast { operand, .. }) => self.event_target_of(*operand),
+            NodeKind::Expr(ExprKind::HierPath { refs, .. }) => refs
+                .iter()
+                .rev()
+                .copied()
+                .flatten()
+                .find(|target| {
+                    matches!(self.kind(*target), NodeKind::NamedEvent)
+                        || matches!(self.kind(*target), NodeKind::Var { .. })
+                            && (self.event_globals.contains_key(target)
+                                || self.event_arrays.contains_key(target)
+                                || self.db.event_array_meta(*target).is_some())
+                })
+                .map(|declaration| EventTarget {
+                    declaration,
+                    indices: Vec::new(),
+                }),
             _ => None,
         }
     }
 
-    /// Model index of a captured named-event node.
-    pub(super) fn event_index_of(&self, ev: NodeId, scope_path: &str) -> Result<usize, String> {
-        self.event_globals.get(&ev).map(|i| i.ir).ok_or_else(|| {
-            format!(
-                "cannot resolve named event reference `{}` in `{scope_path}`",
-                self.node(ev).name
-            )
+    pub(super) fn is_null_event_expression(&self, node: NodeId) -> bool {
+        match self.kind(node) {
+            NodeKind::Expr(ExprKind::Constant {
+                const_type: ConstantType::Null,
+                ..
+            }) => true,
+            NodeKind::Expr(ExprKind::Cast { operand, .. }) => {
+                self.is_null_event_expression(*operand)
+            }
+            _ => false,
+        }
+    }
+
+    /// Model index of a captured named-event expression.
+    pub(super) fn event_index_of(
+        &self,
+        target: &EventTarget,
+        scope_path: &str,
+    ) -> Result<usize, String> {
+        if let Some(metadata) = self.db.event_array_meta(target.declaration) {
+            if target.indices.len() != metadata.dimensions().len() {
+                return Err(format!(
+                    "named event array `{}` in `{scope_path}` requires {} indices",
+                    self.node(target.declaration).name,
+                    metadata.dimensions().len()
+                ));
+            }
+            let mut linear = 0u64;
+            for (bounds, index) in metadata.dimensions().iter().zip(&target.indices) {
+                let Some((left, right)) = *bounds else {
+                    return Err(format!(
+                        "named event array `{}` in `{scope_path}` has unresolved bounds",
+                        self.node(target.declaration).name
+                    ));
+                };
+                let value = self.eval_bound_i128(*index).map_err(|_| {
+                    format!(
+                        "named event array index for `{}` in `{scope_path}` must be a known constant",
+                        self.node(target.declaration).name
+                    )
+                })?;
+                let lo = i128::from(left.min(right));
+                let hi = i128::from(left.max(right));
+                if value < lo || value > hi {
+                    return Err(format!(
+                        "named event array index for `{}` in `{scope_path}` is out of range",
+                        self.node(target.declaration).name
+                    ));
+                }
+                let offset = if left >= right {
+                    i128::from(left) - value
+                } else {
+                    value - i128::from(left)
+                } as u64;
+                let extent = (i64::from(left) - i64::from(right)).unsigned_abs() + 1;
+                linear = linear
+                    .checked_mul(extent)
+                    .and_then(|value| value.checked_add(offset))
+                    .ok_or_else(|| {
+                        format!(
+                            "named event array index for `{}` in `{scope_path}` is too large",
+                            self.node(target.declaration).name
+                        )
+                    })?;
+            }
+            return self
+                .event_elements
+                .get(&(target.declaration, linear))
+                .map(|info| info.ir)
+                .ok_or_else(|| {
+                    format!(
+                        "cannot resolve named event array element `{}` in `{scope_path}`",
+                        self.node(target.declaration).name
+                    )
+                });
+        }
+        if !target.indices.is_empty() {
+            return Err(format!(
+                "named event `{}` in `{scope_path}` is not an array",
+                self.node(target.declaration).name
+            ));
+        }
+        self.event_globals
+            .get(&target.declaration)
+            .map(|info| info.ir)
+            .ok_or_else(|| {
+                format!(
+                    "cannot resolve named event reference `{}` in `{scope_path}`",
+                    self.node(target.declaration).name
+                )
         })
+    }
+
+    /// Lower an event target without losing a runtime array index. Constant
+    /// selects retain the compact scalar handle path; variable selects carry
+    /// typed index expressions to the runtime pointer table.
+    pub(super) fn event_ref_of(
+        &mut self,
+        target: &EventTarget,
+        scope_path: &str,
+    ) -> Result<IrEventRef, String> {
+        if let Some(event) = self
+            .func
+            .as_ref()
+            .and_then(|function| function.event_args.get(&target.declaration))
+        {
+            if !target.indices.is_empty() {
+                return Err(format!(
+                    "event formal `{}` cannot be indexed in `{scope_path}`",
+                    self.node(target.declaration).name
+                ));
+            }
+            return Ok(event.clone());
+        }
+        if matches!(
+            self.kind(target.declaration),
+            NodeKind::FuncArg { ty, .. } if ty.kind == "event"
+        ) {
+            // Event-formal definitions are never called through a C ABI
+            // function: call sites inline them so the handle identity remains
+            // an alias of the actual. Keep the separately emitted body
+            // structurally valid for model construction; its null fallback is
+            // unreachable from an admitted call.
+            return Ok(IrEventRef::Null);
+        }
+        if self.db.event_array_meta(target.declaration).is_some() {
+            if target.indices.len()
+                != self
+                    .db
+                    .event_array_meta(target.declaration)
+                    .expect("event metadata checked above")
+                    .dimensions()
+                    .len()
+            {
+                return Err(format!(
+                    "named event array `{}` requires {} indices",
+                    self.node(target.declaration).name,
+                    self.db
+                        .event_array_meta(target.declaration)
+                        .expect("event metadata checked above")
+                        .dimensions()
+                        .len()
+                ));
+            }
+            if target
+                .indices
+                .iter()
+                .all(|index| self.eval_bound_i128(*index).is_ok())
+            {
+                return Ok(IrEventRef::Static(self.event_index_of(target, scope_path)?));
+            }
+            let array = self
+                .event_arrays
+                .get(&target.declaration)
+                .copied()
+                .ok_or_else(|| {
+                    format!(
+                        "cannot resolve named event array `{}` in `{scope_path}`",
+                        self.node(target.declaration).name
+                    )
+                })?;
+            let indices = target
+                .indices
+                .iter()
+                .map(|index| {
+                    let expression = self.lower_expr(scope_path, *index)?;
+                    if expression.is_real() {
+                        return Err(format!(
+                            "named event array index for `{}` in `{scope_path}` must be integral",
+                            self.node(target.declaration).name
+                        ));
+                    }
+                    Ok(expression)
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            return Ok(IrEventRef::Array { array, indices });
+        }
+        Ok(IrEventRef::Static(self.event_index_of(target, scope_path)?))
     }
 
     /// Resolve a net/var/ref node to a global signal name (used by port
@@ -5425,6 +9827,7 @@ impl<'a> Codegen<'a> {
                             op: Operation::Concat,
                             reordered,
                             operands,
+                            ..
                         }) => {
                             let mut operands = operands.clone();
                             if *reordered {
@@ -5448,8 +9851,31 @@ impl<'a> Codegen<'a> {
                     },
                 })
             }
+            NodeKind::Expr(ExprKind::Operation {
+                op: Operation::Concat,
+                reordered,
+                operands,
+                ..
+            }) => {
+                if operands.is_empty() {
+                    return Err(format!("empty concatenation assignment target in `{path}`"));
+                }
+                let mut operands = operands.clone();
+                if *reordered {
+                    operands.reverse();
+                }
+                let parts = operands
+                    .into_iter()
+                    .map(|operand| self.analyze_lhs(path, operand))
+                    .collect::<Result<Vec<_>, _>>()?;
+                Ok(Lhs::Stream {
+                    parts,
+                    slice: Some(1),
+                    direction: IrStreamDirection::LeftToRight,
+                })
+            }
             NodeKind::Var { .. } => {
-                if let Some(info) = self.proc_locals.get(&lhs) {
+                if let Some(info) = self.proc_local_info(lhs) {
                     if let Some(signal) = &info.static_signal {
                         return Ok(Lhs::Whole(signal.clone()));
                     }
@@ -5458,15 +9884,17 @@ impl<'a> Codegen<'a> {
                         width: info.width,
                         signed: info.signed,
                         two_state: info.two_state,
+                        shortreal: false,
                     });
                 }
-                self.func_write_target(lhs, &self.node(lhs).name)
-                    .ok_or_else(|| {
-                        format!(
-                            "cannot resolve procedural variable `{}` in `{path}`",
-                            self.node(lhs).name
-                        )
-                    })
+                let name = self.node(lhs).name.clone();
+                self.func_write_target(lhs, &name).ok_or_else(|| {
+                    if self.is_const_ref_target(lhs, &name) {
+                        format!("cannot write through const ref `{name}` in `{path}`")
+                    } else {
+                        format!("cannot resolve procedural variable `{name}` in `{path}`")
+                    }
+                })
             }
             NodeKind::Expr(ExprKind::Ref { target }) => {
                 if let Some((_, info)) = self.lexical_proc_local(lhs) {
@@ -5478,6 +9906,7 @@ impl<'a> Codegen<'a> {
                         width: info.width,
                         signed: info.signed,
                         two_state: info.two_state,
+                        shortreal: false,
                     });
                 }
                 if let Some(t) = *target {
@@ -5485,7 +9914,7 @@ impl<'a> Codegen<'a> {
                         return Ok(Lhs::Whole(info.clone()));
                     }
                     if !self.proc_local_is_shadowed(lhs) {
-                        if let Some(info) = self.proc_locals.get(&t) {
+                        if let Some(info) = self.proc_local_info(t) {
                             if let Some(signal) = &info.static_signal {
                                 return Ok(Lhs::Whole(signal.clone()));
                             }
@@ -5494,6 +9923,7 @@ impl<'a> Codegen<'a> {
                                 width: info.width,
                                 signed: info.signed,
                                 two_state: info.two_state,
+                                shortreal: false,
                             });
                         }
                     }
@@ -5502,12 +9932,21 @@ impl<'a> Codegen<'a> {
                     if let Some(lh) = self.func_write_target(t, "") {
                         return Ok(lh);
                     }
+                    if self.is_const_ref_target(t, &self.node(lhs).name) {
+                        return Err(format!(
+                            "cannot write through const ref `{}` in `{path}`",
+                            self.node(lhs).name
+                        ));
+                    }
                 }
                 let name = self.node(lhs).name.clone();
                 if target.is_none() && !name.is_empty() {
                     // io_decls are not indexed, so formals resolve by name.
                     if let Some(lh) = self.func_write_target(NodeId(0), &name) {
                         return Ok(lh);
+                    }
+                    if self.is_const_ref_target(NodeId(0), &name) {
+                        return Err(format!("cannot write through const ref `{name}` in `{path}`"));
                     }
                 }
                 let (name, info) = self.resolve_lhs_target(lhs, *target)?;
@@ -5518,8 +9957,23 @@ impl<'a> Codegen<'a> {
             }
             NodeKind::Expr(ExprKind::BitSelect { base, index }) => {
                 if let Some(mut element) = self.array_element_lhs(path, *base)? {
+                    if element.arr.real {
+                        return Err(format!(
+                            "select on a real array element in `{path}` is not supported"
+                        ));
+                    }
                     element.elem_sel = ElemSel::Bit(self.lower_packed_index(path, *base, *index)?);
                     return Ok(Lhs::ArrayElem(element));
+                }
+                if let Some((info, member, lsb, width)) =
+                    self.packed_member_select_info(*base, &[*index])?
+                {
+                    return Ok(Lhs::Part(
+                        info,
+                        i128::from(lsb) + i128::from(width) - 1,
+                        i128::from(lsb),
+                        member.two_state,
+                    ));
                 }
                 if let Some((info, member)) = self.packed_member_info(*base) {
                     let index = self.eval_bound_i128(*index)?;
@@ -5573,6 +10027,37 @@ impl<'a> Codegen<'a> {
                 Ok(Lhs::Bit(info, index, two_state))
             }
             NodeKind::Expr(ExprKind::ArraySelect { base, indices }) => {
+                if let Some((_target, _kind, member_info)) = self.unpacked_member_info(lhs) {
+                    let member = member_info.member;
+                    let info = member_info.signal.ok_or_else(|| {
+                        format!(
+                            "aggregate member `{}` is not a packed assignment target",
+                            member.name
+                        )
+                    })?;
+                    if info.real {
+                        return Ok(Lhs::Whole(info));
+                    }
+                    let width = member.ty.width.ok_or_else(|| {
+                        format!("unpacked member `{}` has unresolved width", member.name)
+                    })?;
+                    return Ok(Lhs::Part(
+                        info,
+                        i128::from(width - 1),
+                        0,
+                        member.two_state,
+                    ));
+                }
+                if let Some((info, member, lsb, width)) =
+                    self.packed_member_select_info(*base, indices)?
+                {
+                    return Ok(Lhs::Part(
+                        info,
+                        i128::from(lsb) + i128::from(width) - 1,
+                        i128::from(lsb),
+                        member.two_state,
+                    ));
+                }
                 if let Some((info, lsb, width)) = self.packed_select_info(*base, indices)? {
                     let right = i128::from(lsb);
                     let two_state = info.two_state;
@@ -5586,7 +10071,7 @@ impl<'a> Codegen<'a> {
                 let ai = self.array_of(*base).cloned().ok_or_else(|| {
                     format!(
                         "cannot resolve array base of select `{}` in `{path}`",
-                        self.node(*base).name
+                        self.node(*base).name,
                     )
                 })?;
                 let ndims = ai.dims.len();
@@ -5602,6 +10087,11 @@ impl<'a> Codegen<'a> {
                     }));
                 }
                 if indices.len() == ndims + 1 {
+                    if ai.real {
+                        return Err(format!(
+                            "select on a real array element in `{path}` is not supported"
+                        ));
+                    }
                     let last = *indices.last().expect("non-empty indices");
                     let ies = indices[..ndims]
                         .iter()
@@ -5645,7 +10135,24 @@ impl<'a> Codegen<'a> {
                 ))
             }
             NodeKind::Expr(ExprKind::PartSelect { base, left, right }) => {
+                if let Some((info, member, lsb, width)) = self.packed_member_range_info(
+                    *base,
+                    self.eval_bound_i128(*left)?,
+                    self.eval_bound_i128(*right)?,
+                )? {
+                    return Ok(Lhs::Part(
+                        info,
+                        i128::from(lsb) + i128::from(width) - 1,
+                        i128::from(lsb),
+                        member.two_state,
+                    ));
+                }
                 if let Some(mut element) = self.array_element_lhs(path, *base)? {
+                    if element.arr.real {
+                        return Err(format!(
+                            "select on a real array element in `{path}` is not supported"
+                        ));
+                    }
                     element.elem_sel = ElemSel::Part(
                         self.packed_relative_bound(*base, self.eval_bound_i128(*left)?)?,
                         self.packed_relative_bound(*base, self.eval_bound_i128(*right)?)?,
@@ -5690,6 +10197,11 @@ impl<'a> Codegen<'a> {
                 neg,
             }) => {
                 if let Some(mut element) = self.array_element_lhs(path, *base)? {
+                    if element.arr.real {
+                        return Err(format!(
+                            "select on a real array element in `{path}` is not supported"
+                        ));
+                    }
                     let width = self.indexed_part_select_width(*width_expr, path)?;
                     element.elem_sel = ElemSel::Indexed(
                         self.lower_packed_index(path, *base, *base_expr)?,
@@ -5724,9 +10236,15 @@ impl<'a> Codegen<'a> {
                     let member_width = member.ty.width.ok_or_else(|| {
                         format!("unpacked member `{}` has unresolved width", member.name)
                     })?;
-                    let info = member_info.signal;
+                    let info = member_info.signal.ok_or_else(|| {
+                        format!("aggregate member `{}` is not a packed assignment target", member.name)
+                    })?;
                     let two_state = member.two_state;
-                    return Ok(Lhs::Part(info, i128::from(member_width - 1), 0, two_state));
+                    return Ok(if info.real {
+                        Lhs::Whole(info)
+                    } else {
+                        Lhs::Part(info, i128::from(member_width - 1), 0, two_state)
+                    });
                 }
                 if let Some((info, member)) = self.packed_member_info(lhs) {
                     let two_state = member.two_state;
@@ -5824,6 +10342,7 @@ impl<'a> Codegen<'a> {
                 op,
                 reordered,
                 operands,
+                ..
             }) => self.eval_operation_bits(*op, *reordered, operands),
             NodeKind::Expr(ExprKind::Cast { ty, .. })
                 if !is_real_kind(&ty.kind) && ty.kind != "string" && ty.kind != "chandle" =>
@@ -5864,6 +10383,9 @@ impl<'a> Codegen<'a> {
         let NodeKind::Param { ty, .. } = self.kind(parameter) else {
             return Ok(fallback());
         };
+        if self.db.parameter_is_overridden(parameter) {
+            return Ok(fallback());
+        }
         let parameter_name = self.node(parameter).name.as_str();
         let assignment_rhs = self.node(scope).children.iter().find_map(|child| {
             if !matches!(self.kind(*child), NodeKind::ParamAssign { .. }) {
@@ -5874,6 +10396,13 @@ impl<'a> Codegen<'a> {
             };
             (self.node(*lhs).name == parameter_name).then_some(*rhs)
         });
+        let assignment_rhs = assignment_rhs.or_else(|| {
+            self.node(parameter)
+                .children
+                .iter()
+                .copied()
+                .find(|child| matches!(self.kind(*child), NodeKind::Expr(_)))
+        });
         let Some(assignment_rhs) = assignment_rhs else {
             return Ok(fallback());
         };
@@ -5882,7 +10411,10 @@ impl<'a> Codegen<'a> {
             NodeKind::Expr(ExprKind::Cast { ty, .. })
                 if !is_real_kind(&ty.kind) && ty.kind != "string" && ty.kind != "chandle"
         );
-        if frontend_value.is_some() && !integral_cast {
+        if frontend_value.is_some()
+            && !integral_cast
+            && !self.contains_time_literal(assignment_rhs, &mut HashSet::new())
+        {
             return Ok(fallback());
         }
         let Ok(value) = self.eval_decl_value(assignment_rhs) else {
@@ -5919,6 +10451,28 @@ impl<'a> Codegen<'a> {
         ))))
     }
 
+    fn contains_time_literal(&self, node: NodeId, visited: &mut HashSet<NodeId>) -> bool {
+        if !visited.insert(node) {
+            return false;
+        }
+        match self.kind(node) {
+            NodeKind::Expr(ExprKind::Constant { const_type, .. }) => {
+                *const_type == ConstantType::Time
+            }
+            NodeKind::Expr(ExprKind::Operation { operands, .. }) => operands
+                .iter()
+                .any(|operand| self.contains_time_literal(*operand, visited)),
+            NodeKind::Expr(ExprKind::Cast { operand, .. }) => {
+                self.contains_time_literal(*operand, visited)
+            }
+            _ => self
+                .node(node)
+                .children
+                .iter()
+                .any(|child| self.contains_time_literal(*child, visited)),
+        }
+    }
+
     /// Evaluate the packed/real constants accepted in scalar declaration
     /// initializers.  This stays on the owned database and extends the
     /// integer-only bound evaluator only for conversion system functions.
@@ -5936,8 +10490,27 @@ impl<'a> Codegen<'a> {
             }
         }
         match self.kind(node) {
-            NodeKind::Expr(ExprKind::Constant { value, size, .. }) => {
-                val_from_value_data(value, *size)
+            NodeKind::Expr(ExprKind::Constant {
+                value,
+                size,
+                const_type,
+                source,
+                time_scale,
+                ..
+            }) => {
+                let value = val_from_value_data(value, *size)?;
+                if *const_type == ConstantType::Time && self.round_time_literals {
+                    let Val::Real(value) = value else {
+                        return Err("time literal has no real value".to_owned());
+                    };
+                    return Ok(Val::Real(self.rounded_time_literal(
+                        node,
+                        value,
+                        source,
+                        *time_scale,
+                    )?));
+                }
+                Ok(value)
             }
             NodeKind::Expr(ExprKind::Ref { target }) => target
                 .and_then(|target| self.param_vals.get(&target).cloned())
@@ -6220,24 +10793,50 @@ fn aggregate_member_matches_type_key(
     let Some(key_type) = key_type else {
         return false;
     };
-    if matches!(
-        key_type.ty.kind.as_str(),
-        "struct" | "union" | "enum" | "class"
-    ) || matches!(
-        member.ty.kind.as_str(),
-        "struct" | "union" | "enum" | "class"
-    ) {
-        // TypeInfo names do not encode lexical typedef identity. Decline
-        // nominal type keys until capture can prove that identity.
+    pattern_key_matches_descriptor(
+        key_type,
+        &member.descriptor,
+        member.two_state,
+        Some(&member.packed_ranges),
+    )
+}
+
+/// Match a resolved assignment-pattern type key against a complete recursive
+/// descriptor. Frontend type identity is authoritative; display names and
+/// structural similarity cannot make two nominal types compatible.
+pub(super) fn pattern_key_matches_descriptor(
+    key_type: &AssignmentPatternKeyType,
+    descriptor: &TypeDescriptor,
+    two_state: bool,
+    packed_ranges: Option<&[crate::core::db::PackedRange]>,
+) -> bool {
+    if key_type.type_id != descriptor.id {
         return false;
     }
+    let nominal = |kind: &str| matches!(kind, "struct" | "union" | "enum" | "class");
+    if nominal(&key_type.ty.kind) || nominal(&descriptor.info.kind) {
+        return key_type.ty.kind == descriptor.info.kind && key_type.two_state == two_state;
+    }
+    if key_type.ty.kind == "array" || descriptor.info.kind == "array" {
+        return key_type.ty.kind == descriptor.info.kind;
+    }
+    if key_type.ty.kind == "real" || descriptor.info.kind == "real" {
+        return key_type.ty.kind == descriptor.info.kind;
+    }
+    if key_type.ty.kind == "string" || descriptor.info.kind == "string" {
+        return key_type.ty.kind == descriptor.info.kind;
+    }
     if !is_integral_pattern_key_kind(&key_type.ty.kind)
-        || !is_integral_pattern_key_kind(&member.ty.kind)
-        || key_type.ty.signed != member.ty.signed
-        || key_type.two_state != member.two_state
+        || !is_integral_pattern_key_kind(&descriptor.info.kind)
+        || key_type.ty.signed != descriptor.info.signed
+        || key_type.two_state != two_state
     {
         return false;
     }
+    let descriptor_ranges = match &descriptor.shape {
+        TypeShape::PackedAtom { ranges } => ranges.as_slice(),
+        _ => &[],
+    };
     let effective_ranges = |ranges: &[crate::core::db::PackedRange], width: Option<u32>| {
         if !ranges.is_empty() {
             return ranges.to_vec();
@@ -6253,7 +10852,30 @@ fn aggregate_member_matches_type_key(
             .unwrap_or_default()
     };
     effective_ranges(&key_type.packed_ranges, key_type.ty.width)
-        == effective_ranges(&member.packed_ranges, member.ty.width)
+        == effective_ranges(
+            packed_ranges.unwrap_or(descriptor_ranges),
+            descriptor.info.width,
+        )
+}
+
+pub(super) fn pattern_key_types_equal(
+    left: &AssignmentPatternKeyType,
+    right: &AssignmentPatternKeyType,
+) -> bool {
+    left.type_id == right.type_id
+        && left.two_state == right.two_state
+        && left.ty.kind == right.ty.kind
+        && left.ty.width == right.ty.width
+        && left.ty.signed == right.ty.signed
+        && left.packed_ranges == right.packed_ranges
+}
+
+pub(super) fn pattern_key_matches_type_descriptor(
+    key_type: &AssignmentPatternKeyType,
+    descriptor: &TypeDescriptor,
+    two_state: bool,
+) -> bool {
+    pattern_key_matches_descriptor(key_type, descriptor, two_state, None)
 }
 
 fn is_integral_pattern_key_kind(kind: &str) -> bool {
@@ -6312,6 +10934,48 @@ fn continuous_assignment_strengths(
         ));
     }
     Ok((zero, one))
+}
+
+/// Apply the language restriction that an explicit continuous-assignment
+/// strength belongs only to a scalar net.  The resolved runtime still carries
+/// one strength pair per structural driver, so scalar wired and collapsed
+/// groups use the same path as ordinary wires.
+fn continuous_assignment_strengths_for_width(
+    strength0: Strength,
+    strength1: Strength,
+    net_name: &str,
+    width: u32,
+) -> Result<(u8, u8), String> {
+    if (strength0 != Strength::Unspecified || strength1 != Strength::Unspecified) && width != 1 {
+        return Err(format!(
+            "drive strength on non-scalar net `{net_name}` is not permitted by IEEE 1800-2009 10.3.4"
+        ));
+    }
+    continuous_assignment_strengths(strength0, strength1, net_name)
+}
+
+/// Return the effective drive pair for a primitive output.  Ordinary gate
+/// outputs default to strong/strong, while pullup/pulldown primitives are
+/// pull-strength sources.  Explicit gate strengths retain their asymmetric
+/// endpoints and flow into the canonical structural-driver slot.
+fn gate_driver_strengths(
+    prim_type: PrimitiveType,
+    strength0: Strength,
+    strength1: Strength,
+    net_name: &str,
+) -> Result<(u8, u8), String> {
+    let (strength0, strength1) = if strength0 == Strength::Unspecified
+        && strength1 == Strength::Unspecified
+    {
+        match prim_type {
+            PrimitiveType::Pullup => (Strength::HighZ, Strength::Pull),
+            PrimitiveType::Pulldown => (Strength::Pull, Strength::HighZ),
+            _ => (Strength::Strong, Strength::Strong),
+        }
+    } else {
+        (strength0, strength1)
+    };
+    continuous_assignment_strengths(strength0, strength1, net_name)
 }
 
 #[cfg(test)]

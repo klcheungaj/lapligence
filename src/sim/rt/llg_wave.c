@@ -67,6 +67,7 @@ typedef struct {
     uint32_t width;
     uint32_t next_alias;
     uint8_t is_real;
+    uint8_t selected;
 } registration_t;
 
 typedef struct {
@@ -166,6 +167,7 @@ typedef struct {
     uint64_t bytes_written;
     uint64_t byte_limit;
     int have_time;
+    int header_written;
     int active;
     int snapshot_open;
     int limit_reached;
@@ -177,7 +179,7 @@ typedef struct {
     uint32_t reg_cap;
     map_entry_t* map;
     uint32_t map_cap;
-    uint64_t precision_ps;
+    uint64_t precision_fs;
     wave_event_t queue[LLG_WAVE_QUEUE_CAP];
     wave_atomic_u64_t head;
     wave_atomic_u64_t tail;
@@ -394,22 +396,23 @@ static void compact_id(uint32_t value, char out[8]) {
     out[n] = 0;
 }
 
-static void precision_string(uint64_t ps, char out[32]) {
-    static const struct { uint64_t ps; const char* name; } units[] = {
-        {1000000000000ULL, "s"}, {1000000000ULL, "ms"},
-        {1000000ULL, "us"}, {1000ULL, "ns"}, {1ULL, "ps"}
+static void precision_string(uint64_t fs, char out[32]) {
+    static const struct { uint64_t fs; const char* name; } units[] = {
+        {1000000000000000ULL, "s"}, {1000000000000ULL, "ms"},
+        {1000000000ULL, "us"}, {1000000ULL, "ns"},
+        {1000ULL, "ps"}, {1ULL, "fs"}
     };
-    if (!ps) ps = 1;
+    if (!fs) fs = 1;
     for (size_t i = 0; i < sizeof(units) / sizeof(units[0]); i++) {
-        if (ps % units[i].ps) continue;
-        uint64_t scale = ps / units[i].ps;
+        if (fs % units[i].fs) continue;
+        uint64_t scale = fs / units[i].fs;
         if (scale == 1u || scale == 10u || scale == 100u) {
             (void)snprintf(out, 32u, "%llu%s", (unsigned long long)scale,
                            units[i].name);
             return;
         }
     }
-    (void)snprintf(out, 32u, "%llups", (unsigned long long)ps);
+    (void)snprintf(out, 32u, "%llufs", (unsigned long long)fs);
 }
 
 static int writer_bytes(writer_t* w, const char* bytes, size_t len) {
@@ -441,6 +444,54 @@ static int writer_printf(writer_t* w, const char* fmt, ...) {
 
 static uint32_t canonical_index(uint32_t reg_index) {
     return lookup_registration(g_wave.regs[reg_index].ptr);
+}
+
+static uint32_t selected_canonical(uint32_t reg_index) {
+    uint32_t first = canonical_index(reg_index);
+    if (first == LLG_WAVE_NO_REG) return first;
+    for (uint32_t i = first; i != LLG_WAVE_NO_REG;
+         i = g_wave.regs[i].next_alias) {
+        if (g_wave.regs[i].selected) return i;
+    }
+    return LLG_WAVE_NO_REG;
+}
+
+static uint32_t separator_count(const char* name) {
+    uint32_t count = 0;
+    if (!name) return 0;
+    for (const char* p = name; *p; p++)
+        if (*p == LLG_WAVE_HIER_SEP) count++;
+    return count;
+}
+
+static int registration_matches(const registration_t* reg, const char* selection,
+                                uint32_t depth) {
+    size_t selection_len = strlen(selection);
+    if (strncmp(reg->name, selection, selection_len) != 0) return 0;
+    if (reg->name[selection_len] == '\0') return 1;
+    if (reg->name[selection_len] == '[') return 1;
+    if (reg->name[selection_len] != LLG_WAVE_HIER_SEP) return 0;
+    if (depth == 0) return 1;
+    uint32_t reg_depth = separator_count(reg->name);
+    uint32_t selection_depth = separator_count(selection);
+    return reg_depth >= selection_depth &&
+           reg_depth - selection_depth <= depth;
+}
+
+static void select_registrations(uint32_t depth, const char* const* names,
+                                 uint32_t name_count) {
+    for (uint32_t i = 0; i < g_wave.reg_count; i++) {
+        registration_t* reg = &g_wave.regs[i];
+        reg->selected = name_count == 0 && depth == 0;
+        if (reg->selected) continue;
+        for (uint32_t name_index = 0; name_index < name_count; name_index++) {
+            if (names[name_index] &&
+                registration_matches(reg, names[name_index], depth)) {
+                reg->selected = 1;
+                break;
+            }
+        }
+    }
 }
 
 static uint32_t scope_count(const char* name) {
@@ -536,7 +587,7 @@ static void vcd_var(writer_t* w, uint32_t reg_index) {
     char* serialized = leaf_name(reg->name);
     if (!serialized) return;
     char id[8];
-    compact_id(canonical_index(reg_index), id);
+    compact_id(selected_canonical(reg_index), id);
     if (reg->is_real) {
         writer_printf(w, "$var real 64 %s ", id);
     } else {
@@ -549,7 +600,7 @@ static void vcd_var(writer_t* w, uint32_t reg_index) {
 
 static void vcd_header(writer_t* w) {
     char timescale[32];
-    precision_string(g_wave.precision_ps, timescale);
+    precision_string(g_wave.precision_fs, timescale);
     writer_printf(w, "$date\n  reproducible build\n$end\n");
     writer_printf(w, "$version\n  Lapligence asynchronous waveform writer\n$end\n");
     writer_printf(w, "$timescale %s $end\n", timescale);
@@ -558,6 +609,7 @@ static void vcd_header(writer_t* w) {
     const char* previous = NULL;
     for (uint32_t pos = 0; pos < g_wave.reg_count; pos++) {
         uint32_t i = order[pos];
+        if (!g_wave.regs[i].selected) continue;
         scope_transition(w, previous, g_wave.regs[i].name);
         vcd_var(w, i);
         previous = g_wave.regs[i].name;
@@ -569,7 +621,7 @@ static void vcd_header(writer_t* w) {
 
 static void fst_header(writer_t* w) {
     char timescale[32];
-    precision_string(g_wave.precision_ps, timescale);
+    precision_string(g_wave.precision_fs, timescale);
     fstWriterSetVersion(w->fst, "Lapligence asynchronous waveform writer");
     fstWriterSetDate(w->fst, "reproducible build");
     fstWriterSetTimescaleFromString(w->fst, timescale);
@@ -587,13 +639,14 @@ static void fst_header(writer_t* w) {
     for (uint32_t pos = 0; pos < g_wave.reg_count; pos++) {
         uint32_t i = order[pos];
         const registration_t* reg = &g_wave.regs[i];
+        if (!reg->selected) continue;
         scope_transition(w, previous, reg->name);
         char* serialized = leaf_name(reg->name);
         if (!serialized) {
             free(order);
             return;
         }
-        uint32_t canonical = canonical_index(i);
+        uint32_t canonical = selected_canonical(i);
         fstHandle alias = w->fst_handles[canonical];
         enum fstVarType type = reg->is_real ? FST_VT_VCD_REAL : FST_VT_VCD_WIRE;
         fstHandle handle = fstWriterCreateVar(
@@ -656,7 +709,6 @@ static int writer_open(writer_t* w, const char* path) {
             w->format = FORMAT_NONE;
             return 0;
         }
-        vcd_header(w);
     } else {
         w->fst = fstWriterCreate(path, 1);
         if (!w->fst) {
@@ -664,8 +716,15 @@ static int writer_open(writer_t* w, const char* path) {
             w->format = FORMAT_NONE;
             return 0;
         }
-        fst_header(w);
     }
+    return !atomic_int_load(&g_wave.error);
+}
+
+static int writer_write_header(writer_t* w) {
+    if (w->header_written) return 1;
+    if (w->format == FORMAT_VCD) vcd_header(w);
+    else if (w->format == FORMAT_FST) fst_header(w);
+    w->header_written = 1;
     return !atomic_int_load(&g_wave.error);
 }
 
@@ -705,9 +764,10 @@ static void writer_sv4_aliases(writer_t* w, uint32_t first, const sv4_t* value) 
     char bits[LLG_MAX_WIDTH + 1u];
     for (uint32_t i = first; i != LLG_WAVE_NO_REG; i = g_wave.regs[i].next_alias) {
         const registration_t* reg = &g_wave.regs[i];
+        if (!reg->selected) continue;
         if (w->format == FORMAT_VCD) {
             char id[8];
-            compact_id(first, id);
+            compact_id(i, id);
             sv4_text(value, reg->width, bits);
             if (reg->width == 1u) writer_printf(w, "%c%s\n", bits[0], id);
             else writer_printf(w, "b%s %s\n", bits, id);
@@ -720,6 +780,9 @@ static void writer_sv4_aliases(writer_t* w, uint32_t first, const sv4_t* value) 
 }
 
 static void writer_real_aliases(writer_t* w, uint32_t first, double value) {
+    while (first != LLG_WAVE_NO_REG && !g_wave.regs[first].selected)
+        first = g_wave.regs[first].next_alias;
+    if (first == LLG_WAVE_NO_REG) return;
     if (w->format == FORMAT_VCD) {
         char id[8];
         compact_id(first, id);
@@ -731,7 +794,7 @@ static void writer_real_aliases(writer_t* w, uint32_t first, double value) {
 
 static void vcd_off_values(writer_t* w) {
     for (uint32_t i = 0; i < g_wave.reg_count; i++) {
-        if (canonical_index(i) != i) continue;
+        if (!g_wave.regs[i].selected || selected_canonical(i) != i) continue;
         char id[8];
         compact_id(i, id);
         if (g_wave.regs[i].is_real) writer_printf(w, "rNaN %s\n", id);
@@ -755,6 +818,7 @@ static void process_event(writer_t* w, const wave_event_t* e) {
     }
     switch (e->kind) {
         case EV_SNAPSHOT_BEGIN: {
+            if (!writer_write_header(w)) break;
             writer_time(w, e->now);
             snapshot_kind_t kind = (snapshot_kind_t)e->arg;
             if (kind == SNAP_DUMPVARS || kind == SNAP_ON) w->active = 1;
@@ -775,6 +839,7 @@ static void process_event(writer_t* w, const wave_event_t* e) {
             }
             break;
         case EV_OFF:
+            if (!writer_write_header(w)) break;
             writer_time(w, e->now);
             w->active = 0;
             if (w->format == FORMAT_VCD) {
@@ -787,12 +852,14 @@ static void process_event(writer_t* w, const wave_event_t* e) {
             break;
         case EV_CHANGE_SV4:
             if (w->active || e->snapshot) {
+                if (!writer_write_header(w)) break;
                 writer_time(w, e->now);
                 writer_sv4_aliases(w, e->first_reg, &e->payload.sv4);
             }
             break;
         case EV_CHANGE_REAL:
             if (w->active || e->snapshot) {
+                if (!writer_write_header(w)) break;
                 writer_time(w, e->now);
                 writer_real_aliases(w, e->first_reg, e->payload.real);
             }
@@ -802,6 +869,10 @@ static void process_event(writer_t* w, const wave_event_t* e) {
             if (w->format == FORMAT_FST) fstWriterSetDumpSizeLimit(w->fst, e->arg);
             break;
         case EV_FLUSH:
+            if (!writer_write_header(w)) {
+                acknowledge(e->arg);
+                break;
+            }
             writer_time(w, e->now);
             if (w->format == FORMAT_VCD) {
                 if (fflush(w->file) != 0)
@@ -827,6 +898,7 @@ static WAVE_THREAD_RETURN writer_thread(void* unused) {
         wave_event_t event = queue_pop();
         if (event.kind == EV_CLOSE) {
             if (writer.format != FORMAT_NONE) {
+                (void)writer_write_header(&writer);
                 writer_time(&writer, event.now);
                 if (writer.format == FORMAT_FST &&
                     fstWriterGetFseekFailed(writer.fst))
@@ -894,11 +966,13 @@ static void enqueue_snapshot(uint64_t now, snapshot_kind_t kind) {
     for (uint32_t i = 0; i < g_wave.reg_count; i++) {
         registration_t* reg = &g_wave.regs[i];
         if (lookup_registration(reg->ptr) != i) continue;
+        uint32_t selected = selected_canonical(i);
+        if (selected == LLG_WAVE_NO_REG) continue;
         wave_event_t event;
         memset(&event, 0, sizeof(event));
         event.kind = reg->is_real ? EV_CHANGE_REAL : EV_CHANGE_SV4;
         event.now = now;
-        event.first_reg = i;
+        event.first_reg = selected;
         event.snapshot = 1;
         if (reg->is_real) event.payload.real = *(double*)reg->ptr;
         else event.payload.sv4 = *(sv4_t*)reg->ptr;
@@ -918,7 +992,7 @@ static void free_state(void) {
     memset(&g_wave, 0, sizeof(g_wave));
 }
 
-int llg_wave_model_init(uint64_t precision_ps) {
+int llg_wave_model_init(uint64_t precision_fs) {
     if (g_wave.initialized) {
         fprintf(stderr, "llg: waveform: model initialized twice without close\n");
         return -1;
@@ -928,7 +1002,7 @@ int llg_wave_model_init(uint64_t precision_ps) {
     cond_init(&g_wave.not_empty);
     cond_init(&g_wave.not_full);
     cond_init(&g_wave.ack_changed);
-    g_wave.precision_ps = precision_ps ? precision_ps : 1u;
+    g_wave.precision_fs = precision_fs ? precision_fs : 1u;
     g_wave.producer = thread_self();
     g_wave.initialized = 1;
     return 0;
@@ -969,6 +1043,7 @@ static int register_value(const char* name, void* ptr, uint32_t width,
     reg->width = width;
     reg->is_real = (uint8_t)is_real;
     reg->next_alias = LLG_WAVE_NO_REG;
+    reg->selected = 1;
     if (!reg->name) {
         g_wave.reg_count--;
         wave_error("out of memory while registering `%s`", name);
@@ -1001,7 +1076,17 @@ void llg_wave_file(const char* path, uint64_t now) {
 }
 
 void llg_wave_dumpvars(uint64_t now) {
+    llg_wave_dumpvars_select(now, 0, NULL, 0);
+}
+
+void llg_wave_dumpvars_select(uint64_t now, uint32_t depth,
+                              const char* const* names, uint32_t name_count) {
     if (!require_producer("$dumpvars")) return;
+    if (name_count && !names) {
+        wave_error("$dumpvars selection list is null");
+        return;
+    }
+    select_registrations(depth, names, name_count);
     g_wave.producer_dumping = 1;
     enqueue_snapshot(now, SNAP_DUMPVARS);
 }

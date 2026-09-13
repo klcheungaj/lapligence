@@ -1,6 +1,85 @@
 //! Procedural statement lowering through the shared emission context.
 
 use super::*;
+use crate::sim::ir::IrStringExpr;
+use crate::sim::ir::IrObjectStmt;
+
+#[derive(Clone, Copy)]
+enum DisplayTaskKind {
+    Immediate { newline: bool },
+    Deferred { strobe: bool },
+}
+
+fn display_task_variant(name: &str) -> Option<(DisplayTaskKind, IrDisplayRadix)> {
+    let variant = match name {
+        "$display" => (
+            DisplayTaskKind::Immediate { newline: true },
+            IrDisplayRadix::Decimal,
+        ),
+        "$displayb" => (
+            DisplayTaskKind::Immediate { newline: true },
+            IrDisplayRadix::Binary,
+        ),
+        "$displayo" => (
+            DisplayTaskKind::Immediate { newline: true },
+            IrDisplayRadix::Octal,
+        ),
+        "$displayh" => (
+            DisplayTaskKind::Immediate { newline: true },
+            IrDisplayRadix::Hex,
+        ),
+        "$write" => (
+            DisplayTaskKind::Immediate { newline: false },
+            IrDisplayRadix::Decimal,
+        ),
+        "$writeb" => (
+            DisplayTaskKind::Immediate { newline: false },
+            IrDisplayRadix::Binary,
+        ),
+        "$writeo" => (
+            DisplayTaskKind::Immediate { newline: false },
+            IrDisplayRadix::Octal,
+        ),
+        "$writeh" => (
+            DisplayTaskKind::Immediate { newline: false },
+            IrDisplayRadix::Hex,
+        ),
+        "$strobe" => (
+            DisplayTaskKind::Deferred { strobe: true },
+            IrDisplayRadix::Decimal,
+        ),
+        "$strobeb" => (
+            DisplayTaskKind::Deferred { strobe: true },
+            IrDisplayRadix::Binary,
+        ),
+        "$strobeo" => (
+            DisplayTaskKind::Deferred { strobe: true },
+            IrDisplayRadix::Octal,
+        ),
+        "$strobeh" => (
+            DisplayTaskKind::Deferred { strobe: true },
+            IrDisplayRadix::Hex,
+        ),
+        "$monitor" => (
+            DisplayTaskKind::Deferred { strobe: false },
+            IrDisplayRadix::Decimal,
+        ),
+        "$monitorb" => (
+            DisplayTaskKind::Deferred { strobe: false },
+            IrDisplayRadix::Binary,
+        ),
+        "$monitoro" => (
+            DisplayTaskKind::Deferred { strobe: false },
+            IrDisplayRadix::Octal,
+        ),
+        "$monitorh" => (
+            DisplayTaskKind::Deferred { strobe: false },
+            IrDisplayRadix::Hex,
+        ),
+        _ => return None,
+    };
+    Some(variant)
+}
 
 fn loop_index_expr(value: i32) -> IrExpr {
     IrExpr::new(
@@ -40,6 +119,7 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
             cg,
             path,
             saw_wait: false,
+            process_kind: None,
             inst,
             depth_arg: depth_arg.to_string(),
             func,
@@ -166,7 +246,7 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
                 // Inlined task expansion: its body must resolve jumps within
                 // itself only.
                 CtrlScope::TaskBody => break,
-                CtrlScope::Block { .. } => {}
+                CtrlScope::Block => {}
             }
         }
         Err(format!(
@@ -176,61 +256,15 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
         ))
     }
 
-    /// Lower `disable <label>;` (1364-1995 §11) as a same-process jump:
-    ///
-    /// - target is an enclosing named begin block on the scope stack →
-    ///   `goto` its exit label (statements after the disable are skipped);
-    /// - target is the task/function currently being INLINED at this site →
-    ///   jump to that expansion's done label (= early `return;`);
-    /// - target is the plain (non-inlined) function/task whose body is being
-    ///   lowered → an early C `return` from it;
-    /// - anything else (a block/task of another process, a named fork,
-    ///   an outer inlined task) would need cross-coroutine termination and
-    ///   is rejected with a clear error instead of mis-lowering.
+    /// Disable all active invocations of the resolved block or task, including
+    /// self-disable. This is not an early return from only the current call.
     fn lower_disable(&mut self, target: Option<NodeId>) -> Result<Vec<IrStmt>, String> {
-        let Some(t) = target else {
-            return Err(format!(
-                "cannot resolve the target of `disable` in `{}`: no matching \
-                 enclosing named block or task of the same process (cross-\
-                 process disables are not supported)",
-                self.path
-            ));
-        };
-        for scope in self.ctrl.iter_mut().rev() {
-            if let CtrlScope::Block {
-                node,
-                exit,
-                exit_used,
-            } = scope
-            {
-                if *node == t {
-                    *exit_used = true;
-                    return Ok(vec![IrStmt::Goto(exit.clone())]);
-                }
-            }
-        }
-        // Disabling the innermost inlined task equals an early return out of
-        // THIS expansion only; outer inlined tasks stay rejected (their done
-        // labels belong to other expansions).
-        if let Some(inl) = self.inline.as_mut() {
-            if inl.def == t {
-                inl.used = true;
-                return Ok(vec![IrStmt::Goto(inl.done_label.clone())]);
-            }
-        }
-        if let Some(f) = self.func.as_ref() {
-            if f.def_node == Some(t) {
-                return Ok(vec![IrStmt::Return { value: None }]);
-            }
-        }
-        Err(format!(
-            "disable of `{}` in `{}` is not supported: only an \
-             enclosing named block of the same process, or the task itself \
-             as an early return, can be disabled (cross-process disables, \
-             named forks and outer inlined tasks are not supported)",
-            self.cg.node(t).name,
-            self.path
-        ))
+        let target = target.ok_or_else(|| {
+            format!("cannot resolve the target of `disable` in `{}`", self.path)
+        })?;
+        Ok(vec![IrStmt::DisableTarget {
+            target: self.cg.activation_target(target)?,
+        }])
     }
 }
 
@@ -264,13 +298,14 @@ impl EmitCtx<'_, '_> {
                 // inside (including inside inlined task expansions) can
                 // reference it.
                 let named = !self.cg.node(h).name.is_empty();
+                let activation_target = named
+                    .then(|| self.cg.activation_target(h))
+                    .transpose()?;
+                let mut activation_exit = None;
                 if named {
                     let exit = self.new_label("xb");
-                    self.ctrl.push(CtrlScope::Block {
-                        node: h,
-                        exit,
-                        exit_used: false,
-                    });
+                    activation_exit = Some(exit.clone());
+                    self.ctrl.push(CtrlScope::Block);
                 }
                 for s in &children {
                     // Local variable declarations inside the block are hoisted
@@ -285,17 +320,20 @@ impl EmitCtx<'_, '_> {
                 }
                 if named {
                     match self.ctrl.pop() {
-                        Some(CtrlScope::Block {
-                            exit, exit_used, ..
-                        }) => {
-                            if exit_used {
-                                body.push(IrStmt::Label(exit));
-                            }
-                        }
+                        Some(CtrlScope::Block) => {}
                         _ => unreachable!("block scope stack imbalance"),
                     }
                 }
-                Ok(vec![IrStmt::Block(body)])
+                let statement = match (activation_target, activation_exit) {
+                    (Some(target), Some(exit)) => IrStmt::ActivationScope {
+                        target,
+                        exit,
+                        body,
+                    },
+                    (None, None) => IrStmt::Block(body),
+                    _ => unreachable!("named activation scope metadata mismatch"),
+                };
+                Ok(vec![statement])
             }
             NodeKind::Stmt(StmtKind::IfElse { cond }) => {
                 let c = self.cg.lower_boolean_expr(&self.path, *cond)?;
@@ -384,15 +422,14 @@ impl EmitCtx<'_, '_> {
                 }
                 self.lower_event_control(h)
             }
-            NodeKind::Stmt(StmtKind::EventTrigger { target, .. }) => {
-                // `-> ev;` and `->> ev;` both wake every current waiter of the
-                // event. A trigger
-                // never suspends the process, so it is accepted inside
-                // function bodies: IEEE 1800-2009 §13.4.4 explicitly allows
-                // non-blocking statements there ("specifically, nonblocking
-                // assignments, event triggers, …"), and 1364-2001 §10.3.4(a)
-                // bans only statements introduced with #/@/wait.  The
-                // blocking distinction does not affect the runtime wake.
+            NodeKind::Stmt(StmtKind::EventTrigger {
+                blocking,
+                target,
+                timing,
+            }) => {
+                // A trigger never suspends its issuing process, so immediate
+                // triggers remain valid inside function bodies. Nonblocking
+                // triggers are kept distinct through IR and commit in NBA.
                 let target = target.ok_or_else(|| {
                     format!(
                         "cannot resolve named event reference `{}` in `{}`",
@@ -400,8 +437,24 @@ impl EmitCtx<'_, '_> {
                         self.path
                     )
                 })?;
-                let idx = self.cg.event_index_of(target, &self.path)?;
-                Ok(vec![IrStmt::EventTrigger { ev: idx }])
+                let target = self.cg.event_target_of(target).ok_or_else(|| {
+                    format!(
+                        "cannot resolve named event expression `{}` in `{}`",
+                        self.cg.node(h).name,
+                        self.path
+                    )
+                })?;
+                let event = self.cg.event_ref_of(&target, &self.path)?;
+                if *blocking {
+                    if let Some(timing) = timing {
+                        return Err(self.unsupported_event_trigger_timing(
+                            timing,
+                            "blocking event triggers cannot carry timing controls",
+                        ));
+                    }
+                    return Ok(vec![IrStmt::EventTrigger { ev: event }]);
+                }
+                self.lower_nonblocking_event_trigger(h, event, timing.as_ref())
             }
             NodeKind::Stmt(StmtKind::Case { .. }) => self.lower_case(h),
             NodeKind::Stmt(StmtKind::For { .. }) => self.lower_for(h),
@@ -455,13 +508,12 @@ impl EmitCtx<'_, '_> {
                         self.path
                     ));
                 }
-                let c = self.cg.lower_expr(&self.path, *cond)?;
-                if c.is_real() {
-                    return Err(format!(
-                        "real-valued wait conditions are not supported in `{}`",
-                        self.path
-                    ));
+                if let Some(event) = self.triggered_event_ref(*cond)? {
+                    let body = self.wait_body(h)?;
+                    self.saw_wait = true;
+                    return Ok(vec![IrStmt::WaitEventTriggered { event, body }]);
                 }
+                let c = self.cg.lower_expr(&self.path, *cond)?;
                 let sens = self.cg.collect_read_signals(&self.path, *cond)?;
                 self.saw_wait = true;
                 // The body is optional (`wait (cond);`); the semantic database
@@ -479,6 +531,52 @@ impl EmitCtx<'_, '_> {
                     body,
                 }])
             }
+            NodeKind::Stmt(StmtKind::WaitOrder {
+                events,
+                if_true,
+                if_false,
+            }) => {
+                if self.in_final {
+                    return Err(format!(
+                        "wait_order inside a final block in `{}` is not allowed \
+                         (LRM 1800-2005 §10.7: no timing controls in final)",
+                        self.path
+                    ));
+                }
+                if self.func.is_some() && self.inline.is_none() {
+                    return Err(format!(
+                        "wait_order inside a function/task body in `{}` is not supported \
+                         (wait-bearing tasks are inlined at their call sites)",
+                        self.path
+                    ));
+                }
+                if events.is_empty() {
+                    return Err(format!("wait_order without events in `{}`", self.path));
+                }
+                let events = events
+                    .iter()
+                    .map(|event| {
+                        let target = self.cg.event_target_of(*event).ok_or_else(|| {
+                            format!("wait_order has an unresolved event in `{}`", self.path)
+                        })?;
+                        self.cg.event_ref_of(&target, &self.path)
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                let success = if_true
+                    .map(|body| self.lower_stmt(body))
+                    .transpose()?
+                    .unwrap_or_default();
+                let failure = if_false
+                    .map(|body| self.lower_stmt(body))
+                    .transpose()?
+                    .unwrap_or_default();
+                self.saw_wait = true;
+                Ok(vec![IrStmt::WaitOrder {
+                    events,
+                    success,
+                    failure,
+                }])
+            }
             NodeKind::Stmt(StmtKind::Force { .. }) => Ok(vec![self.lower_force(h)?]),
             NodeKind::Stmt(StmtKind::Release { .. }) => Ok(vec![self.lower_release(h)?]),
             NodeKind::Stmt(StmtKind::ProcContAssign { .. }) => self.lower_proc_cont_assign(h),
@@ -489,9 +587,10 @@ impl EmitCtx<'_, '_> {
             NodeKind::Stmt(StmtKind::Empty) => Ok(vec![IrStmt::Nop]),
             NodeKind::Stmt(StmtKind::Return { value }) => Ok(vec![self.lower_return(*value)?]),
             NodeKind::Stmt(StmtKind::Fork {
+                target,
                 join_kind,
                 branches,
-            }) => self.lower_fork(*join_kind, branches),
+            }) => self.lower_fork(*target, *join_kind, branches),
             NodeKind::Stmt(StmtKind::WaitFork) => {
                 // `wait fork;` suspends until every live fork group of the
                 // current process has completed.
@@ -568,7 +667,52 @@ impl EmitCtx<'_, '_> {
             return match self.cg.db.variable_lifetime(declaration) {
                 VariableLifetime::Static => Ok(Vec::new()),
                 VariableLifetime::Automatic => {
-                    let (_, width, signed, two_state) = self
+                    if matches!(self.cg.kind(declaration), NodeKind::Var { ty } if ty.kind == "chandle") {
+                        let name = self
+                            .func
+                            .as_ref()
+                            .and_then(|function| function.chandle_read.get(&declaration))
+                            .and_then(|value| match value {
+                                IrChandleExpr::LocalRead(name) => Some(name.clone()),
+                                _ => None,
+                            })
+                            .ok_or_else(|| {
+                                format!(
+                                    "automatic chandle variable `{}` has no local storage",
+                                    self.cg.node(declaration).name
+                                )
+                            })?;
+                        let init = self
+                            .cg
+                            .db
+                            .var_initializer(declaration)
+                            .map(|initializer| self.cg.lower_chandle(&self.path, initializer))
+                            .transpose()?;
+                        return Ok(vec![IrStmt::Object(
+                            IrObjectStmt::ChandleDeclareLocal(name, init),
+                        )]);
+                    }
+                    if matches!(self.cg.kind(declaration), NodeKind::Var { ty } if ty.kind == "string") {
+                        let name = self
+                            .func
+                            .as_ref()
+                            .and_then(|function| function.locals.get(&declaration))
+                            .map(|(name, ..)| name.clone())
+                            .ok_or_else(|| {
+                                format!(
+                                    "automatic string variable `{}` has no local storage",
+                                    self.cg.node(declaration).name
+                                )
+                            })?;
+                        let init = self
+                            .cg
+                            .db
+                            .var_initializer(declaration)
+                            .map(|initializer| self.cg.lower_string(&self.path, initializer))
+                            .transpose()?;
+                        return Ok(vec![IrStmt::DeclString { name, init }]);
+                    }
+                    let (_, width, signed, two_state, shortreal) = self
                         .func
                         .as_ref()
                         .and_then(|function| function.locals.get(&declaration))
@@ -585,7 +729,20 @@ impl EmitCtx<'_, '_> {
                         .var_initializer(declaration)
                         .map(|initializer| {
                             let expression = self.cg.lower_expr(&self.path, initializer)?;
-                            ir_to_storage(expression, width, signed, two_state).map(Box::new)
+                            if width == 0 {
+                                Ok(IrExpr::new(
+                                    IrExprKind::CastToReal {
+                                        a: Box::new(expression),
+                                        shortreal,
+                                    },
+                                    0,
+                                    false,
+                                    None,
+                                ))
+                            } else {
+                                ir_to_storage(expression, width, signed, two_state)
+                            }
+                            .map(Box::new)
                         })
                         .transpose()?;
                     let name = self
@@ -689,6 +846,40 @@ impl EmitCtx<'_, '_> {
         if is_declaration_initializer {
             return Ok(IrStmt::Nop);
         }
+        if let Some(target) = self.cg.event_target_of(lhs) {
+            if op != Operation::Assignment {
+                return Err(format!(
+                    "compound assignment to named event `{}` in `{}` is not supported",
+                    self.cg.node(target.declaration).name,
+                    self.path
+                ));
+            }
+            if !blocking {
+                return Err(format!(
+                    "nonblocking assignment to named event `{}` in `{}` is not supported",
+                    self.cg.node(target.declaration).name,
+                    self.path
+                ));
+            }
+            let target = self.cg.event_ref_of(&target, &self.path)?;
+            let source = if let Some(source) = self.cg.event_target_of(rhs) {
+                Some(self.cg.event_ref_of(&source, &self.path)?)
+            } else if matches!(
+                self.cg.kind(rhs),
+                NodeKind::Expr(ExprKind::Constant {
+                    const_type: ConstantType::Null,
+                    ..
+                })
+            ) {
+                None
+            } else {
+                return Err(format!(
+                    "named event assignment in `{}` requires another event handle or null",
+                    self.path
+                ));
+            };
+            return Ok(IrStmt::EventAssign { target, source });
+        }
         if let Some(statement) = self
             .cg
             .lower_container_assignment(&self.path, lhs, rhs, blocking, op)?
@@ -706,6 +897,12 @@ impl EmitCtx<'_, '_> {
                 return Err(format!(
                     "nonblocking assignment to inline loop variable `{}` in `{}` is not supported because the update can outlive its lexical storage",
                     self.cg.node(local).name,
+                    self.path
+                ));
+            }
+            if self.cg.subroutine_auto_target(lhs) {
+                return Err(format!(
+                    "nonblocking assignment to automatic subroutine storage in `{}` is not supported because the update can outlive its activation",
                     self.path
                 ));
             }
@@ -770,99 +967,7 @@ impl EmitCtx<'_, '_> {
         lhs: IrExpr,
         rhs: IrExpr,
     ) -> Result<IrExpr, String> {
-        let real = lhs.is_real() || rhs.is_real();
-        let result = match op {
-            Operation::Add | Operation::Subtract | Operation::Multiply => {
-                if real {
-                    let op = match op {
-                        Operation::Add => IrRealBinOp::Add,
-                        Operation::Subtract => IrRealBinOp::Sub,
-                        _ => IrRealBinOp::Mul,
-                    };
-                    real_bin_expr(op, lhs, rhs)
-                } else {
-                    let op = match op {
-                        Operation::Add => IrBinOp::Add,
-                        Operation::Subtract => IrBinOp::Sub,
-                        _ => IrBinOp::Mul,
-                    };
-                    common_bin_expr(op, lhs, rhs)
-                }
-            }
-            Operation::Divide | Operation::Modulo => {
-                if real {
-                    real_bin_expr(
-                        if op == Operation::Divide {
-                            IrRealBinOp::Div
-                        } else {
-                            IrRealBinOp::Mod
-                        },
-                        lhs,
-                        rhs,
-                    )
-                } else {
-                    common_bin_expr(
-                        if op == Operation::Divide {
-                            IrBinOp::Div
-                        } else {
-                            IrBinOp::Mod
-                        },
-                        lhs,
-                        rhs,
-                    )
-                }
-            }
-            Operation::BitwiseAnd | Operation::BitwiseOr | Operation::BitwiseXor => {
-                if real {
-                    return Err(format!(
-                        "bitwise compound assignment on a real value in `{}` is not supported",
-                        self.path
-                    ));
-                }
-                let op = match op {
-                    Operation::BitwiseAnd => IrBinOp::BitAnd,
-                    Operation::BitwiseOr => IrBinOp::BitOr,
-                    _ => IrBinOp::BitXor,
-                };
-                common_bin_expr(op, lhs, rhs)
-            }
-            Operation::ShiftLeft
-            | Operation::ShiftRight
-            | Operation::ArithmeticShiftLeft
-            | Operation::ArithmeticShiftRight => {
-                if real {
-                    return Err(format!(
-                        "shift compound assignment on a real value in `{}` is not supported",
-                        self.path
-                    ));
-                }
-                let width = lhs.width;
-                let signed = lhs.signed;
-                let op = match op {
-                    Operation::ShiftLeft => IrBinOp::Shl,
-                    Operation::ShiftRight => IrBinOp::Shr,
-                    Operation::ArithmeticShiftLeft => IrBinOp::Ashl,
-                    _ => IrBinOp::Ashr,
-                };
-                IrExpr::new(
-                    IrExprKind::Bin {
-                        op,
-                        a: Box::new(lhs),
-                        b: Box::new(rhs),
-                    },
-                    width,
-                    signed,
-                    None,
-                )
-            }
-            other => {
-                return Err(format!(
-                    "unsupported compound assignment operation {other:?} in `{}`",
-                    self.path
-                ))
-            }
-        };
-        Ok(result)
+        super::lower_compound_expr_ir(&self.path, op, lhs, rhs)
     }
 
     /// Lower a statement-position pre/post increment or decrement.  Since
@@ -960,6 +1065,49 @@ impl EmitCtx<'_, '_> {
             .get(1)
             .copied()
             .ok_or_else(|| "assignment without RHS".to_string())?;
+        if self.cg.is_string_expr(&self.path, lhs) {
+            self
+                .cg
+                .ensure_string_actual_writable(&self.path, lhs)?;
+            let target = self
+                .cg
+                .lower_string_actual_address(&self.path, lhs)?
+                .trim_start_matches('&')
+                .to_owned();
+            let value = self.cg.lower_string(&self.path, rhs)?;
+            if !blocking {
+                if self.cg.proc_local_target(lhs).is_some() {
+                    return Err(
+                        "nonblocking delayed assignment requires persistent string storage"
+                            .to_owned(),
+                    );
+                }
+                return Ok(vec![IrStmt::DelayedStringAssign {
+                    target,
+                    rhs: value,
+                    ticks: scaled_ticks,
+                }]);
+            }
+            self.saw_wait = true;
+            let tmp = format!("_st{}", h.0);
+            return Ok(vec![IrStmt::Block(vec![
+                IrStmt::DeclString {
+                    name: tmp.clone(),
+                    init: Some(value),
+                },
+                IrStmt::Delay {
+                    ticks: scaled_ticks,
+                },
+                IrStmt::Object(IrObjectStmt::StringAssignLocal(
+                    target,
+                    IrStringExpr::LocalRead(tmp.clone()),
+                )),
+                IrStmt::Object(IrObjectStmt::StringAssignLocal(
+                    tmp,
+                    IrStringExpr::Literal(Vec::new()),
+                )),
+            ])]);
+        }
         let lh = self.cg.lower_lhs(&self.path, lhs)?;
         let op = match self.cg.kind(h) {
             NodeKind::Stmt(StmtKind::Assign { op, .. }) => *op,
@@ -1020,8 +1168,26 @@ impl EmitCtx<'_, '_> {
         let wait = if implicit || spec_pairs.is_empty() {
             // @* / always_comb without explicit sensitivity, or a condition
             // that produced no specs: wait on the body's read set.
-            IrStmt::WaitAny {
-                sens: self.cg.collect_read_signals(&self.path, body)?,
+            let reads = if implicit && self.process_kind == Some(AlwaysKind::Always) {
+                self.cg.collect_at_star_signals(&self.path, body)?
+            } else {
+                self.cg.collect_read_signals(&self.path, body)?
+            };
+            if implicit
+                && self.process_kind == Some(AlwaysKind::Always)
+                && reads.is_empty()
+            {
+                // An empty `@*` sensitivity list waits forever. Keep the
+                // explicit never-triggered event as the source-level sentinel.
+                let event = self.cg.model.events.len();
+                self.cg.model.events.push(crate::sim::ir::IrEvent::new(
+                    format!("E_{}_at_star_empty_{event}", ident(&self.path)),
+                ));
+                IrStmt::WaitEvents {
+                    specs: vec![(IrWaitSrc::Event(IrEventRef::Static(event)), IrEdge::Any)],
+                }
+            } else {
+                IrStmt::WaitAny { sens: reads }
             }
         } else {
             IrStmt::WaitEvents { specs: spec_pairs }
@@ -1034,6 +1200,118 @@ impl EmitCtx<'_, '_> {
             out.extend(self.lower_stmt(body)?);
         }
         Ok(out)
+    }
+
+    fn wait_body(&mut self, h: NodeId) -> Result<Vec<IrStmt>, String> {
+        let mut body = Vec::new();
+        if let Some(b) = self.cg.node(h).children.get(1) {
+            if !matches!(self.cg.kind(*b), NodeKind::Stmt(StmtKind::Empty)) {
+                body = self.lower_stmt(*b)?;
+            }
+        }
+        Ok(body)
+    }
+
+    fn triggered_event_ref(&mut self, mut node: NodeId) -> Result<Option<IrEventRef>, String> {
+        loop {
+            let operand = match self.cg.kind(node) {
+                NodeKind::Expr(ExprKind::Cast { operand, .. }) => Some(*operand),
+                _ => None,
+            };
+            if let Some(operand) = operand {
+                node = operand;
+                continue;
+            }
+            let receiver = match self.cg.kind(node) {
+                NodeKind::MethodCall {
+                    name,
+                    receiver: Some(receiver),
+                } if name == "triggered" => Some(*receiver),
+                _ => None,
+            };
+            let Some(receiver) = receiver else {
+                return Ok(None);
+            };
+            let target = self.cg.event_target_of(receiver).ok_or_else(|| {
+                format!("event triggered property has an unresolved receiver in `{}`", self.path)
+            })?;
+            return self.cg.event_ref_of(&target, &self.path).map(Some);
+        }
+    }
+
+    fn unsupported_event_trigger_timing(
+        &self,
+        timing: &EventTriggerTiming,
+        reason: &str,
+    ) -> String {
+        let control = match timing {
+            EventTriggerTiming::Delay { control, .. }
+            | EventTriggerTiming::Event { control, .. }
+            | EventTriggerTiming::Repeat { control, .. }
+            | EventTriggerTiming::Unsupported { control } => *control,
+        };
+        let node = self.cg.node(control);
+        let file = node.file.as_deref().unwrap_or("<unknown>");
+        format!(
+            "{reason} at {file}:{}:{} in `{}`",
+            node.line, node.col, self.path
+        )
+    }
+
+    fn lower_nonblocking_event_trigger(
+        &mut self,
+        statement: NodeId,
+        event: IrEventRef,
+        timing: Option<&EventTriggerTiming>,
+    ) -> Result<Vec<IrStmt>, String> {
+        let Some(timing) = timing else {
+            return Ok(vec![IrStmt::NonblockingEventTrigger {
+                ev: event,
+                ticks: None,
+            }]);
+        };
+        match timing {
+            EventTriggerTiming::Delay { expression, .. } => {
+                let ticks = self
+                    .cg
+                    .lower_procedural_delay(&self.path, statement, *expression)?;
+                Ok(vec![IrStmt::NonblockingEventTrigger {
+                    ev: event,
+                    ticks: Some(ticks),
+                }])
+            }
+            EventTriggerTiming::Event { specs, .. } => Ok(vec![
+                IrStmt::NonblockingEventTriggerWhen {
+                    ev: event,
+                    specs: self.lower_event_specs(specs)?,
+                    repeat: None,
+                },
+            ]),
+            EventTriggerTiming::Repeat { count, event: inner, .. } => {
+                let EventTriggerTiming::Event { specs, .. } = inner.as_ref() else {
+                    return Err(self.unsupported_event_trigger_timing(
+                        timing,
+                        "repeat nonblocking event triggers require an event control",
+                    ));
+                };
+                let repeat = self.cg.lower_expr(&self.path, *count)?;
+                if repeat.is_real() {
+                    return Err(self.unsupported_event_trigger_timing(
+                        timing,
+                        "repeat nonblocking event triggers require a packed count",
+                    ));
+                }
+                Ok(vec![IrStmt::NonblockingEventTriggerWhen {
+                    ev: event,
+                    specs: self.lower_event_specs(specs)?,
+                    repeat: Some(repeat),
+                }])
+            }
+            EventTriggerTiming::Unsupported { .. } => Err(self.unsupported_event_trigger_timing(
+                timing,
+                "unsupported nonblocking event-trigger timing",
+            )),
+        }
     }
 
     /// Resolve the captured event specs into atomic wait sources: signal
@@ -1050,44 +1328,27 @@ impl EmitCtx<'_, '_> {
             .collect()
     }
 
-    fn event_evaluator(&mut self, expression: NodeId) -> Result<String, String> {
-        fn contains_call(cg: &Codegen<'_>, node: NodeId, visited: &mut HashSet<NodeId>) -> bool {
-            if !visited.insert(node) {
-                return false;
-            }
-            matches!(cg.kind(node), NodeKind::FuncCall { .. })
-                || cg
-                    .node(node)
-                    .children
-                    .iter()
-                    .any(|child| contains_call(cg, *child, visited))
-        }
-        // Callbacks execute while walking waiter lists. Function effects need
-        // a reentrant scheduler contract before they can run in this context.
-        if contains_call(self.cg, expression, &mut HashSet::new()) {
-            return Err("function calls in evaluated event controls are not yet supported".into());
-        }
-        if self.cg.nested_proc_local_ref(expression).is_some() {
-            return Err("event-expression callbacks cannot yet capture automatic locals".into());
-        }
+    fn event_evaluator(&mut self, expression: NodeId) -> Result<(String, bool), String> {
+        self.cg
+            .check_event_expression_effects(expression, &self.path)?;
         let value = self.cg.lower_expr(&self.path, expression)?;
-        if value.is_real() {
-            return Err(format!(
-                "real-valued signals cannot be event-controlled in `{}`",
-                self.path
-            ));
-        }
-        if self.func.is_some() || self.inline.is_some() {
-            return Err(
-                "event-expression callbacks cannot yet capture subroutine locals or formals".into(),
-            );
-        }
+        let context = self.cg.event_context(expression)?;
         let name = self.cg.new_fn_name(&self.path, "event_eval");
-        self.pre_fns.push(crate::sim::ir::IrPreFn::MonEval {
-            c_name: name.clone(),
-            args: vec![value],
-        });
-        Ok(name)
+        let real = value.is_real();
+        if real {
+            self.pre_fns.push(crate::sim::ir::IrPreFn::RealEval {
+                c_name: name.clone(),
+                value,
+                context,
+            });
+        } else {
+            self.pre_fns.push(crate::sim::ir::IrPreFn::MonEval {
+                c_name: name.clone(),
+                args: vec![value],
+                context,
+            });
+        }
+        Ok((name, real))
     }
 
     fn lower_event_spec(
@@ -1099,7 +1360,12 @@ impl EmitCtx<'_, '_> {
             EventSpec::Qualified { event, condition } => {
                 return self.lower_event_spec(event, Some(*condition))
             }
-            EventSpec::Named(event) => (None, IrEdge::Any, Some(*event)),
+            EventSpec::Named(event) => {
+                let target = self.cg.event_target_of(*event).ok_or_else(|| {
+                    format!("event control has an unresolved named event in `{}`", self.path)
+                })?;
+                (None, IrEdge::Any, Some(target))
+            }
             EventSpec::AnyChange { sig } => {
                 (Some(*sig), IrEdge::Any, self.cg.event_target_of(*sig))
             }
@@ -1122,10 +1388,21 @@ impl EmitCtx<'_, '_> {
             }
         };
         let condition = condition
-            .map(|expression| self.event_evaluator(expression))
-            .transpose()?;
+            .map(|expression| {
+                self.event_evaluator(expression).and_then(|(name, real)| {
+                    if real {
+                        Err(format!(
+                            "real-valued event qualifiers are not supported in `{}`",
+                            self.path
+                        ))
+                    } else {
+                        Ok(name)
+                    }
+                })
+        })
+        .transpose()?;
         if let Some(event) = event {
-            let event = self.cg.event_index_of(event, &self.path)?;
+            let event = self.cg.event_ref_of(&event, &self.path)?;
             return Ok((
                 match condition {
                     Some(condition) => IrWaitSrc::FilteredEvent { event, condition },
@@ -1139,32 +1416,53 @@ impl EmitCtx<'_, '_> {
             self.cg.kind(expression),
             NodeKind::Expr(ExprKind::Ref { .. } | ExprKind::HierPath { .. })
         );
-        if simple && condition.is_none() {
+        let mapped_formal = matches!(
+            self.cg.kind(expression),
+            NodeKind::Expr(ExprKind::Ref {
+                target: Some(target),
+            }) if self
+                .func
+                .as_ref()
+                .is_some_and(|func| func.arg_ir.contains_key(target))
+        );
+        if simple
+            && condition.is_none()
+            && self.cg.nested_proc_local_ref(expression).is_none()
+            && !mapped_formal
+        {
             let (name, info) = self.cg.resolve_signal_id(&self.path, expression)?;
             if info.real {
-                return Err(format!(
-                    "real-valued signals cannot be event-controlled in `{}`",
-                    self.path
-                ));
+                if edge != IrEdge::Any {
+                    return Err(format!(
+                        "edge control on real-valued signal `{name}` is not supported in `{}`",
+                        self.path
+                    ));
+                }
+                return Ok((IrWaitSrc::Real(name), edge));
             }
             return Ok((IrWaitSrc::Sig(name), edge));
         }
         let reads = self.cg.collect_read_signals(&self.path, expression)?;
-        if self
-            .cg
-            .contains_unpacked_array(expression, &mut HashSet::new())
-        {
-            return Err(
-                "event expressions reading unpacked arrays require array sensitivity support"
-                    .into(),
-            );
+        let (eval, real) = self.event_evaluator(expression)?;
+        if real && edge != IrEdge::Any {
+            return Err(format!(
+                "edge control on real-valued expressions is not supported in `{}`",
+                self.path
+            ));
         }
-        let eval = self.event_evaluator(expression)?;
         Ok((
-            IrWaitSrc::Evaluated {
-                eval,
-                condition,
-                reads,
+            if real {
+                IrWaitSrc::EvaluatedReal {
+                    eval,
+                    condition,
+                    reads,
+                }
+            } else {
+                IrWaitSrc::Evaluated {
+                    eval,
+                    condition,
+                    reads,
+                }
             },
             edge,
         ))
@@ -1183,12 +1481,6 @@ impl EmitCtx<'_, '_> {
             .copied()
             .ok_or_else(|| "case without selector".to_string())?;
         let mut sel_ir = self.cg.lower_expr(&self.path, sel)?;
-        if sel_ir.is_real() {
-            return Err(format!(
-                "real-valued case selectors are not supported in `{}`",
-                self.path
-            ));
-        }
         if case_type == DbCaseKind::Inside {
             return self.lower_case_inside(items, sel_ir);
         }
@@ -1208,16 +1500,12 @@ impl EmitCtx<'_, '_> {
         let mut ir_items = Vec::with_capacity(items.len());
         let mut common_width = sel_ir.width;
         let mut common_signed = sel_ir.signed;
+        let mut has_real = sel_ir.is_real();
         for item in items.iter() {
             let mut exprs = Vec::with_capacity(item.exprs.len());
             for e in &item.exprs {
                 let c = self.cg.lower_expr(&self.path, *e)?;
-                if c.is_real() {
-                    return Err(format!(
-                        "real-valued case items are not supported in `{}`",
-                        self.path
-                    ));
-                }
+                has_real |= c.is_real();
                 common_width = common_width.max(c.width);
                 common_signed &= c.signed;
                 exprs.push(c);
@@ -1227,6 +1515,63 @@ impl EmitCtx<'_, '_> {
                 body = self.lower_stmt(s)?;
             }
             ir_items.push(IrCaseItem { exprs, body });
+        }
+        if has_real {
+            if case_type != DbCaseKind::Exact {
+                return Err(format!(
+                    "real-valued case forms require ordinary `case` in `{}`",
+                    self.path
+                ));
+            }
+            // A case selector is evaluated once, including a side-effecting
+            // function call and even a case containing only a default item.
+            let selector_name = self.new_label("real_case");
+            let selector_init = IrStmt::DeclLocal {
+                name: selector_name.clone(),
+                width: sel_ir.width,
+                signed: sel_ir.signed,
+                two_state: false,
+                init: Some(Box::new(sel_ir.clone())),
+            };
+            sel_ir = IrExpr::new(
+                IrExprKind::LocalRead(selector_name),
+                sel_ir.width,
+                sel_ir.signed,
+                None,
+            );
+            let mut default = None;
+            let mut branches = Vec::new();
+            for item in ir_items {
+                if item.exprs.is_empty() {
+                    if default.replace(item.body).is_some() {
+                        return Err(format!(
+                            "case has multiple default items in `{}`",
+                            self.path
+                        ));
+                    }
+                    continue;
+                }
+                let mut condition = None;
+                for expression in item.exprs {
+                    let matched =
+                        common_cmp_expr_ir(IrBinOp::Eq, sel_ir.clone(), expression, &self.path)?;
+                    condition = Some(match condition {
+                        Some(previous) => cmp_expr_ir(IrBinOp::LogOr, previous, matched),
+                        None => matched,
+                    });
+                }
+                branches.push((condition.expect("non-empty case item"), item.body));
+            }
+            let mut tail = default.unwrap_or_default();
+            for (condition, body) in branches.into_iter().rev() {
+                tail = vec![IrStmt::If {
+                    cond: condition,
+                    then_: body,
+                    els: (!tail.is_empty()).then_some(tail),
+                }];
+            }
+            tail.insert(0, selector_init);
+            return Ok(tail);
         }
         // Ordinary case/casez/casex operands share one context-determined
         // maximum width. This is especially visible for an unbased unsized
@@ -1531,6 +1876,7 @@ impl EmitCtx<'_, '_> {
                     width: local.width,
                     signed: local.signed,
                     two_state: local.two_state,
+                    shortreal: false,
                 },
                 rhs: IrExpr::resize_to(loop_index_expr(*left), local.width, local.signed),
                 nba: false,
@@ -1553,6 +1899,7 @@ impl EmitCtx<'_, '_> {
                     width: local.width,
                     signed: local.signed,
                     two_state: local.two_state,
+                    shortreal: false,
                 },
                 rhs: IrExpr::resize_to(next, local.width, local.signed),
                 nba: false,
@@ -1578,29 +1925,22 @@ impl EmitCtx<'_, '_> {
     /// constructs inside a branch append their own pre-functions first,
     /// mirroring the pre-IR emission order.
     ///
-    /// Fork inside a function/task body is rejected: the branch functions are
-    /// standalone coroutines with no access to the enclosing function's
-    /// formals/locals.
+    /// Detached branches may retain automatic subroutine storage through an
+    /// activation frame.  A synchronous function can only use `join_none`,
+    /// while an inlined task body may use the ordinary join variants.
     fn lower_fork(
         &mut self,
+        target: Option<NodeId>,
         join_kind: DbJoinKind,
         branches: &[NodeId],
     ) -> Result<Vec<IrStmt>, String> {
-        if let Some(local) = branches
-            .iter()
-            .find_map(|branch| self.cg.nested_proc_local_ref(*branch))
-        {
-            return Err(format!(
-                "fork branch capture of inline loop variable `{}` in `{}` is not supported",
-                self.cg.node(local).name,
-                self.path
-            ));
-        }
-        if self.func.is_some() {
-            return Err(format!(
-                "fork/join inside a function/task body in `{}` is not supported",
-                self.path
-            ));
+        if let Some(function) = &self.func {
+            if !function.is_task && join_kind != DbJoinKind::None {
+                return Err(format!(
+                    "blocking fork/join in function `{}` is not allowed; use join_none",
+                    self.path
+                ));
+            }
         }
         if self.in_final {
             // A join suspends the process; a final block may not suspend
@@ -1622,204 +1962,481 @@ impl EmitCtx<'_, '_> {
                 ))
             }
         };
+        let target = target
+            .map(|target| self.cg.activation_target(target))
+            .transpose()?;
+        let capture_targets = branches
+            .iter()
+            .map(|branch| self.cg.fork_capture_targets(*branch))
+            .collect::<Vec<_>>();
+        let has_captures = capture_targets.iter().any(|targets| !targets.is_empty());
+        let enclosing_func = self.func.clone();
+        let detached_function_branch = enclosing_func
+            .as_ref()
+            .is_some_and(|function| !function.is_task && function.def_node.is_some())
+            || self.inline.is_some();
+        let process_kind = self.process_kind;
         let mut names = Vec::with_capacity(branches.len());
+        let mut captured_branches = Vec::with_capacity(branches.len());
         for (k, branch) in branches.iter().enumerate() {
             let fn_name = format!("{}_b{}", self.cg.new_fn_name(&self.path, "fork"), k);
-            // Branches live in the same instance scope: same path, same
-            // owning instance; refs resolve to the instance globals.
-            let mut bctx = EmitCtx::new(
-                self.cg,
-                self.path.clone(),
-                self.inst,
-                "0",
-                None,
-                None,
-                false,
-            );
-            let body = bctx.lower_stmt(*branch)?;
-            self.pre_fns.append(&mut bctx.pre_fns);
-            self.pre_fns.push(crate::sim::ir::IrPreFn::Branch {
+            let label = format!("{}.br{k}", self.path);
+            if !has_captures {
+                // Branches live in the same instance scope: same path, same
+                // owning instance; refs resolve to the instance globals.
+                let saved_cg_func = self.cg.func.clone();
+                let saved_cg_depth = self.cg.depth_arg.clone();
+                let (body_result, mut nested_pre_fns) = {
+                    let mut bctx = EmitCtx::new(
+                        self.cg,
+                        self.path.clone(),
+                        self.inst,
+                        "0",
+                        (!detached_function_branch)
+                            .then(|| enclosing_func.clone())
+                            .flatten(),
+                        None,
+                        false,
+                    );
+                    bctx.process_kind = process_kind;
+                    let body_result = bctx.lower_stmt(*branch);
+                    (body_result, std::mem::take(&mut bctx.pre_fns))
+                };
+                self.cg.func = saved_cg_func;
+                self.cg.depth_arg = saved_cg_depth;
+                let body = body_result?;
+                self.pre_fns.append(&mut nested_pre_fns);
+                self.pre_fns.push(crate::sim::ir::IrPreFn::Branch {
+                    c_name: fn_name.clone(),
+                    body,
+                });
+                names.push((fn_name, label));
+                continue;
+            }
+
+            let frame = self.cg.new_frame_id()?;
+            let previous_captures = self.cg.capture_locals.clone();
+            let mut captures = Vec::with_capacity(capture_targets[k].len());
+            for (slot, target) in capture_targets[k].iter().enumerate() {
+                let source = self.cg.capture_source(*target).ok_or_else(|| {
+                    format!(
+                        "automatic declaration `{}` was not collected before fork capture in `{}`",
+                        self.cg.node(*target).name,
+                        self.path
+                    )
+                })?;
+                let initial = previous_captures
+                    .get(target)
+                    .map(|binding| {
+                        IrExpr::new(
+                            IrExprKind::LocalRead(Codegen::capture_local_name(binding.storage)),
+                            binding.local.width,
+                            binding.local.signed,
+                            None,
+                        )
+                    })
+                    .unwrap_or(source.initial);
+                let storage = StorageRef::for_declaration(
+                    frame,
+                    slot as u32,
+                    self.cg.declaration_identity(*target)?,
+                    source.lifetime,
+                    StorageOwnership::Owned,
+                )
+                .with_kind(super::storage_kind(source.info.width));
+                let local = ProcLocalInfo {
+                    c_name: Codegen::capture_local_name(storage),
+                    width: source.info.width,
+                    signed: source.info.signed,
+                    two_state: source.info.two_state,
+                    static_signal: None,
+                };
+                self.cg
+                    .capture_locals
+                    .insert(*target, CaptureBinding { storage, local });
+                captures.push(IrCapture::new(storage, initial));
+            }
+
+            let saved_cg_func = self.cg.func.clone();
+            let saved_cg_depth = self.cg.depth_arg.clone();
+            let (body_result, mut nested_pre_fns) = {
+                let mut bctx = EmitCtx::new(
+                    self.cg,
+                    self.path.clone(),
+                    self.inst,
+                    "0",
+                    (!detached_function_branch)
+                        .then(|| enclosing_func.clone())
+                        .flatten(),
+                    None,
+                    false,
+                );
+                bctx.process_kind = process_kind;
+                let body_result = bctx.lower_stmt(*branch);
+                (body_result, std::mem::take(&mut bctx.pre_fns))
+            };
+            self.cg.func = saved_cg_func;
+            self.cg.depth_arg = saved_cg_depth;
+            self.cg.capture_locals = previous_captures;
+            let body = body_result?;
+            self.pre_fns.append(&mut nested_pre_fns);
+            self.pre_fns.push(crate::sim::ir::IrPreFn::CapturedBranch {
                 c_name: fn_name.clone(),
+                frame,
+                captures: captures.clone(),
                 body,
             });
-            names.push((fn_name, format!("{}.br{k}", self.path)));
+            names.push((fn_name, label));
+            let (branch_name, branch_label) = names
+                .last()
+                .cloned()
+                .expect("captured branch name was just pushed");
+            captured_branches.push(IrCapturedBranch::new(
+                branch_name,
+                branch_label,
+                frame,
+                captures,
+            ));
         }
         // A fork is a wait even for join_none: a wait-free `always` containing
         // `fork … join_none` must not be wrapped as a comb process (its
         // branches are child coroutines, not combinational re-evaluation).
         self.saw_wait = true;
-        Ok(vec![IrStmt::Fork {
-            join_kind: join,
-            branches: names,
-        }])
+        if has_captures {
+            Ok(vec![IrStmt::CapturedFork {
+                join_kind: join,
+                branches: captured_branches,
+                target,
+            }])
+        } else {
+            Ok(vec![IrStmt::Fork {
+                join_kind: join,
+                branches: names,
+                target,
+            }])
+        }
     }
 
-    /// Lower `force lhs = rhs;` — override a whole signal's value until
-    /// released.  While forced, the runtime drops procedural writes to the
-    /// signal; only whole-signal targets are supported (no selects/arrays, no
-    /// collapsed-net members).
+    /// Lower `force lhs = rhs;` into a live runtime binding. The target keeps
+    /// its canonical assignment shape so selected and concatenated net
+    /// targets can be overlaid without losing their underlying drivers.
     fn lower_force(&mut self, h: NodeId) -> Result<IrStmt, String> {
         let NodeKind::Stmt(StmtKind::Force { lhs, rhs }) = self.cg.kind(h) else {
             return Err("expected a typed force statement".to_string());
         };
+        let diagnostic_path = self.force_diagnostic_path(h);
         let (lhs, rhs) = (*lhs, *rhs);
-        let lh = self.cg.lower_lhs(&self.path, lhs)?;
-        let (sig_idx, width, signed) = match &lh {
-            IrLhs::Whole(idx) => {
-                let sig = self.cg.model.signal(*idx);
-                match sig.ty {
-                    IrType::Real { .. } => {
-                        return Err(
-                            "force/release of real-valued signal is not supported".to_string()
-                        );
-                    }
-                    t => {
-                        if sig.net_driver.is_none() {
-                            (*idx, t.width(), t.signed())
-                        } else {
-                            return Err(format!(
-                                "force on `{}` in `{}` is not supported (whole signals only)",
-                                self.cg.node(lhs).name,
-                                self.path
-                            ));
-                        }
-                    }
-                }
-            }
-            _ => {
+        if let Some(target) = self.nested_subroutine_auto_ref(lhs) {
+            return Err(format!(
+                "force target in `{diagnostic_path}` cannot refer to automatic subroutine storage `{}`",
+                self.cg.node(target).name
+            ));
+        }
+        if self.cg.nested_proc_local_ref(rhs).is_some() {
+            return Err(format!(
+                "force RHS in `{diagnostic_path}` cannot capture an automatic procedural local"
+            ));
+        }
+        if let Some(target) = self.nested_subroutine_auto_ref(rhs) {
+            return Err(format!(
+                "force RHS in `{diagnostic_path}` cannot capture automatic subroutine storage `{}`",
+                self.cg.node(target).name
+            ));
+        }
+        if let Some(target) = self.cg.nested_capture_ref(rhs) {
+            return Err(format!(
+                "force RHS in `{diagnostic_path}` cannot capture activation storage `{}`",
+                self.cg.node(target).name
+            ));
+        }
+        let lh = self
+            .cg
+            .lower_lhs(&self.path, lhs)
+            .map_err(|error| self.force_error(&diagnostic_path, error))?;
+        let target_real = validate_force_lhs(&self.cg.model, &lh, &diagnostic_path)?;
+        let rhs_ir = self
+            .cg
+            .lower_expr(&self.path, rhs)
+            .map_err(|error| self.force_error(&diagnostic_path, error))?;
+        let value = if target_real {
+            let IrLhs::Whole(index) = &lh else {
                 return Err(format!(
-                    "force on `{}` in `{}` is not supported (whole signals only)",
-                    self.cg.node(lhs).name,
-                    self.path
-                ))
-            }
+                    "real force target in `{diagnostic_path}` must be a whole variable"
+                ));
+            };
+            let shortreal = match self.cg.model.signal(*index).ty {
+                IrType::Real { shortreal } => shortreal,
+                _ => false,
+            };
+            IrExpr::new(
+                IrExprKind::CastToReal {
+                    a: Box::new(rhs_ir),
+                    shortreal,
+                },
+                0,
+                true,
+                None,
+            )
+        } else {
+            let width = packed_lhs_width(&self.cg.model, &lh)
+                .ok_or_else(|| format!("force target in `{}` has no packed width", self.path))?;
+            let signed = force_lhs_signed(&self.cg.model, &lh);
+            let rhs_ir = apply_assignment_expression_width(rhs_ir, width);
+            // Force uses the same value-preserving RHS-to-target conversion as
+            // ordinary assignments (LRM §10.7). Per-part two-state coercion is
+            // applied by the runtime when a force spans a concatenation.
+            ir_to_vector(rhs_ir, width, signed)?
         };
-        let rhs_ir = apply_assignment_expression_width(self.cg.lower_expr(&self.path, rhs)?, width);
-        // Force writes an assignment into the signal: value-preserving
-        // RHS→target conversion (LRM §10.7).
-        let value = ir_to_vector(rhs_ir, width, signed)?;
+        let eval = self.cg.new_fn_name(&self.path, "force_eval");
+        self.pre_fns.push(crate::sim::ir::IrPreFn::ForceEval {
+            c_name: eval.clone(),
+            value: value.clone(),
+            real: target_real,
+        });
+        let read_names = self.cg.collect_force_read_signals(&diagnostic_path, rhs)?;
+        let mut reads = Vec::with_capacity(read_names.len());
+        for name in read_names {
+            let index = self
+                .cg
+                .model
+                .signals
+                .iter()
+                .position(|signal| signal.c_name == name)
+                .ok_or_else(|| {
+                    format!(
+                        "force dependency `{name}` in `{diagnostic_path}` has no lowered storage"
+                    )
+                })?;
+            if !reads.contains(&index) {
+                reads.push(index);
+            }
+        }
         Ok(IrStmt::Force {
-            sig: sig_idx,
+            lhs: lh,
             value,
+            eval,
+            reads,
         })
     }
 
-    /// Lower `release lhs;` — cancel a procedural force on a whole signal.
+    /// Lower `release lhs;` against the same canonical target descriptor used
+    /// by `force`, so selected nets release only their matching overlay.
     fn lower_release(&mut self, h: NodeId) -> Result<IrStmt, String> {
         let NodeKind::Stmt(StmtKind::Release { lhs }) = self.cg.kind(h) else {
             return Err("expected a typed release statement".to_string());
         };
+        let diagnostic_path = self.force_diagnostic_path(h);
         let lhs = *lhs;
-        let lh = self.cg.lower_lhs(&self.path, lhs)?;
-        match &lh {
-            IrLhs::Whole(idx) => {
-                let sig = self.cg.model.signal(*idx);
-                if matches!(sig.ty, IrType::Real { .. }) {
-                    return Err("force/release of real-valued signal is not supported".to_string());
-                }
-                if sig.net_driver.is_some() {
-                    return Err(format!(
-                        "release on `{}` in `{}` is not supported (whole signals only)",
-                        self.cg.node(lhs).name,
-                        self.path
-                    ));
-                }
-                Ok(IrStmt::Release { sig: *idx })
+        if let Some(target) = self.nested_subroutine_auto_ref(lhs) {
+            return Err(format!(
+                "release target in `{diagnostic_path}` cannot refer to automatic subroutine storage `{}`",
+                self.cg.node(target).name
+            ));
+        }
+        let lh = self
+            .cg
+            .lower_lhs(&self.path, lhs)
+            .map_err(|error| self.force_error(&diagnostic_path, error))?;
+        validate_force_lhs(&self.cg.model, &lh, &diagnostic_path)?;
+        Ok(IrStmt::Release { lhs: lh })
+    }
+
+    fn nested_subroutine_auto_ref(&self, node: NodeId) -> Option<NodeId> {
+        if let Some(target) = self.cg.subroutine_auto_ref(node) {
+            return Some(target);
+        }
+        self.cg
+            .node(node)
+            .children
+            .iter()
+            .find_map(|child| self.nested_subroutine_auto_ref(*child))
+    }
+
+    fn force_error(&self, diagnostic_path: &str, error: String) -> String {
+        if diagnostic_path == self.path {
+            error
+        } else {
+            format!("{error} (source location: {diagnostic_path})")
+        }
+    }
+
+    fn force_diagnostic_path(&self, node: NodeId) -> String {
+        let source = self.cg.node(node);
+        match (source.file.as_deref(), source.line, source.col) {
+            (Some(file), line, col) if line > 0 => {
+                format!("{} at {file}:{line}:{col}", self.path)
             }
-            _ => Err(format!(
-                "release on `{}` in `{}` is not supported (whole signals only)",
-                self.cg.node(lhs).name,
+            _ => self.path.clone(),
+        }
+    }
+
+    /// Collect the plain source nodes that make up a legal ordinary packed
+    /// concatenation target. Streaming targets are a different language
+    /// construct and remain outside procedural continuous assignment support.
+    fn pca_source_nodes(&self, lhs: NodeId, out: &mut Vec<NodeId>) -> Result<(), String> {
+        match self.cg.kind(lhs) {
+            NodeKind::Expr(ExprKind::Operation {
+                op: Operation::Concat,
+                reordered,
+                operands,
+                ..
+            }) => {
+                let mut operands = operands.clone();
+                if *reordered {
+                    operands.reverse();
+                }
+                for operand in operands {
+                    self.pca_source_nodes(operand, out)?;
+                }
+                Ok(())
+            }
+            NodeKind::Expr(ExprKind::Streaming { .. }) => Err(format!(
+                "procedural continuous assignment on a streaming target in `{}` is not \
+                 supported",
                 self.path
             )),
+            _ => {
+                out.push(lhs);
+                Ok(())
+            }
         }
+    }
+
+    fn pca_lhs_parts(
+        &self,
+        lhs: &IrLhs,
+        out: &mut Vec<usize>,
+        stmt: &str,
+    ) -> Result<(), String> {
+        match lhs {
+            IrLhs::Whole(index) => out.push(*index),
+            IrLhs::Stream { parts, .. } => {
+                for (part, _) in parts {
+                    self.pca_lhs_parts(part, out, stmt)?;
+                }
+            }
+            _ => {
+                return Err(format!(
+                    "procedural continuous `{stmt}` on a select in `{}` is not supported \
+                     (whole variables and ordinary concatenations only)",
+                    self.path
+                ));
+            }
+        }
+        Ok(())
     }
 
     /// Resolve the target of a procedural continuous `assign` / `deassign`.
     /// Variables only (LRM 1364-1995 §9.4): nets, selects/part-selects/
-    /// array elements, hierarchical paths and real variables are
-    /// rejected cleanly.  Returns the signal's IR index plus its info.
-    fn pca_target(&mut self, lhs: NodeId, stmt: &str) -> Result<(usize, SignalInfo), String> {
-        if matches!(self.cg.kind(lhs), NodeKind::Expr(ExprKind::HierPath { .. })) {
-            return Err(format!(
-                "procedural continuous `{stmt}` on a hierarchical target in `{}` is not \
-                 supported (variables of the current scope only)",
-                self.path
-            ));
-        }
-        let lh = self.cg.lower_lhs(&self.path, lhs)?;
-        let sig_idx = match &lh {
-            IrLhs::Whole(idx) => *idx,
-            _ => {
+    /// array elements, hierarchical paths and streaming targets are rejected
+    /// cleanly. Whole real variables and ordinary packed concatenations are
+    /// represented as several target bindings sharing one site identity.
+    fn pca_targets(&mut self, lhs: NodeId, stmt: &str) -> Result<Vec<(usize, SignalInfo)>, String> {
+        let mut source_nodes = Vec::new();
+        self.pca_source_nodes(lhs, &mut source_nodes)?;
+        for source in &source_nodes {
+            if matches!(self.cg.kind(*source), NodeKind::Expr(ExprKind::HierPath { .. })) {
                 return Err(format!(
-                    "procedural continuous `{stmt}` on a select in `{}` is not supported \
-                     (whole variables only)",
+                    "procedural continuous `{stmt}` on a hierarchical target in `{}` is not \
+                     supported (variables of the current scope only)",
                     self.path
                 ));
             }
-        };
-        // Net targets: the elaborated ref normally binds the declaration, so
-        // the net/var distinction is read straight off the arena node.
-        // A module-level `reg` can be captured as a net node, but its semantic
-        // net type still identifies it as variable storage.
-        if let NodeKind::Expr(ExprKind::Ref { target: Some(t) }) = self.cg.kind(lhs) {
-            if let NodeKind::Net { net_type, .. } = self.cg.kind(*t) {
-                if *net_type != NetType::Reg {
-                    return Err(format!(
-                        "procedural continuous `{stmt}` on net `{}` in `{}` is not supported \
-                         (variables only)",
-                        self.cg.node(*t).name,
-                        self.path
-                    ));
+            // Net targets: the elaborated ref normally binds the declaration,
+            // so the net/var distinction is read straight off the arena node.
+            // A module-level `reg` can be captured as a net node, but its
+            // semantic net type still identifies it as variable storage.
+            if let NodeKind::Expr(ExprKind::Ref { target: Some(target) }) = self.cg.kind(*source)
+            {
+                if let NodeKind::Net { net_type, .. } = self.cg.kind(*target) {
+                    if *net_type != NetType::Reg {
+                        return Err(format!(
+                            "procedural continuous `{stmt}` on net `{}` in `{}` is not supported \
+                             (variables only)",
+                            self.cg.node(*target).name,
+                            self.path
+                        ));
+                    }
                 }
             }
-        }
-        let info = self
-            .cg
-            .signals
-            .iter()
-            .find(|i| i.ir == sig_idx)
-            .cloned()
-            .ok_or_else(|| {
-                format!(
-                    "cannot collect `{}` in `{}` as a procedural continuous assignment \
-                     target (whole variables of the current scope only)",
-                    self.cg.node(lhs).name,
+            if !matches!(
+                self.cg.kind(*source),
+                NodeKind::Var { .. } | NodeKind::Expr(ExprKind::Ref { .. })
+            ) {
+                return Err(format!(
+                    "procedural continuous `{stmt}` on a select in `{}` is not supported \
+                     (whole variables and ordinary concatenations only)",
                     self.path
-                )
-            })?;
-        if info.real {
+                ));
+            }
+        }
+
+        let lowered = self.cg.lower_lhs(&self.path, lhs)?;
+        let mut indices = Vec::new();
+        self.pca_lhs_parts(&lowered, &mut indices, stmt)?;
+        if indices.len() != source_nodes.len() {
             return Err(format!(
-                "procedural continuous `{stmt}` on real-valued variable in `{}` is not \
-                 supported",
+                "procedural continuous `{stmt}` target shape in `{}` is not supported",
                 self.path
             ));
         }
-        Ok((sig_idx, info))
+        let mut targets = Vec::with_capacity(indices.len());
+        for sig_idx in indices {
+            let info = self
+                .cg
+                .signals
+                .iter()
+                .find(|info| info.ir == sig_idx)
+                .cloned()
+                .ok_or_else(|| {
+                    format!(
+                        "cannot collect `{}` in `{}` as a procedural continuous assignment \
+                         target (whole variables of the current scope only)",
+                        self.cg.node(lhs).name,
+                        self.path
+                    )
+                })?;
+            targets.push((sig_idx, info));
+        }
+        if targets.len() > 1 && targets.iter().any(|(_, info)| info.real) {
+            return Err(format!(
+                "procedural continuous `{stmt}` concatenation in `{}` must contain only \
+                 packed variables",
+                self.path
+            ));
+        }
+        Ok(targets)
     }
 
     /// Pre-scan phase 1 for one process body: resolve each collected
     /// ProcContAssign target and allocate its site (enable signal) without
-    /// lowering anything.  A variable that already has a site is rejected
-    /// HERE — order-independently, whichever statement comes second in the
-    /// db child order.
+    /// lowering anything. Distinct sites may target the same variable; the
+    /// runtime replaces the active binding when one executes.
     pub(super) fn claim_pca_sites(&mut self, nodes: &[NodeId]) -> Result<(), String> {
         for n in nodes {
             let NodeKind::Stmt(StmtKind::ProcContAssign { lhs, .. }) = self.cg.kind(*n) else {
                 return Err("expected a typed procedural continuous assignment".to_string());
             };
             let lhs = *lhs;
-            let (sig_idx, _) = self.pca_target(lhs, "assign")?;
-            if self.cg.pca_sites.contains_key(&sig_idx) {
-                return Err(self.cg.pca_multi_site_err(lhs, &self.path));
-            }
-            let en = self.cg.new_pca_enable(&self.path);
-            self.cg.pca_sites.insert(
-                sig_idx,
-                PcaSite {
+            let targets = self.pca_targets(lhs, "assign")?;
+            let existing = targets.iter().find_map(|(sig_idx, _)| {
+                self.cg
+                    .pca_sites
+                    .get(&(*n, *sig_idx))
+                    .map(|site| (site.en, site.site))
+            });
+            let (en, site) = existing.unwrap_or_else(|| {
+                let site = self.cg.pca_seq;
+                let en = self.cg.new_pca_enable(&self.path);
+                (en, site)
+            });
+            for (sig_idx, _) in targets {
+                self.cg.pca_sites.entry((*n, sig_idx)).or_insert(PcaSite {
                     en,
+                    site,
                     guarded_by: None,
-                },
-            );
+                });
+            }
         }
         Ok(())
     }
@@ -1834,28 +2451,44 @@ impl EmitCtx<'_, '_> {
     /// }
     /// ```
     ///
-    /// The statement itself sets `en = 1` AND performs an immediate blocking
-    /// write (so the value updates in the same delta); `deassign` clears
-    /// `en` only — the variable KEEPS its last value (LRM).  Both writes go
-    /// through the normal `llg_ba` path, so an active `force` keeps
-    /// overriding the PCA (LRM 10.6 interplay).
+    /// The statement activates its runtime binding and performs an immediate
+    /// write (so the value updates in the same delta); `deassign` removes the
+    /// binding and the variable KEEPS its last value (LRM). Distinct sites
+    /// share one target-level binding, so a later execution replaces the
+    /// earlier site.
     ///
     /// NBA-vs-PCA interplay: while a site is enabled, ordinary procedural
-    /// writes to the variable — blocking AND non-blocking — still take
-    /// effect immediately/as usual; the guard never wakes on changes of the
-    /// TARGET itself, so such a write survives until the next wake
-    /// triggered by an RHS-read or the enable, which re-drives the variable
-    /// from the CURRENT rhs.
+    /// writes to the variable — blocking AND non-blocking — are suppressed by
+    /// the runtime; the guard never wakes on changes of the TARGET itself.
     ///
     /// Sites are pre-allocated by [`Codegen::prescan_pca_sites`] before any
-    /// body lowers; this method only CLAIMS the pre-allocated site by
-    /// materializing its guard process.
+    /// body lowers; this method claims the pre-allocated site by materializing
+    /// its guard process.
     fn lower_proc_cont_assign(&mut self, h: NodeId) -> Result<Vec<IrStmt>, String> {
         let NodeKind::Stmt(StmtKind::ProcContAssign { lhs, rhs }) = self.cg.kind(h) else {
             return Err("expected a typed procedural continuous assignment".to_string());
         };
         let (lhs, rhs) = (*lhs, *rhs);
-        let (sig_idx, info) = self.pca_target(lhs, "assign")?;
+        if self.func.is_some() || self.inline.is_some() {
+            return Err(format!(
+                "procedural continuous assignment in `{}` cannot escape a function or task activation",
+                self.path
+            ));
+        }
+        if let Some(target) = self.cg.nested_capture_ref(rhs) {
+            return Err(format!(
+                "procedural continuous assignment in `{}` cannot capture activation storage `{}`",
+                self.path,
+                self.cg.node(target).name
+            ));
+        }
+        let targets = self.pca_targets(lhs, "assign")?;
+        let (first_sig, first_info) = targets.first().cloned().ok_or_else(|| {
+            format!(
+                "procedural continuous assignment in `{}` has no target",
+                self.path
+            )
+        })?;
 
         // The dedicated guard process: waits on the RHS read set ∪ {en} and
         // re-writes the CURRENT rhs whenever it wakes while enabled.
@@ -1864,97 +2497,118 @@ impl EmitCtx<'_, '_> {
         let mut visited = HashSet::new();
         self.cg
             .walk_read_signals(&self.path, rhs, &mut seen, &mut visited, &mut sens)?;
-        let rhs_reads_real = sens
-            .iter()
-            .any(|name| self.cg.signals.iter().any(|i| i.real && &i.global == name));
-        if rhs_reads_real {
-            return Err(format!(
-                "real-valued signals in the RHS of a procedural continuous \
-                 assignment in `{}` are not supported",
-                self.path
-            ));
-        }
-        let rhs_ir =
-            apply_assignment_expression_width(self.cg.lower_expr(&self.path, rhs)?, info.width);
-        // The guard re-writes an assignment into the variable:
-        // value-preserving RHS→target conversion (LRM §10.7).
-        let value = ir_to_vector(rhs_ir, info.width, info.signed)?;
-        let one = IrExpr::new(
-            IrExprKind::Const(IrConst {
-                bits: vec![1],
-                x: vec![0],
-                z: vec![0],
-                width: 1,
-                signed: false,
-                real: None,
-                fill: None,
-            }),
-            1,
-            false,
-            None,
-        );
-
-        // Site bookkeeping.  Sites exist for every process-body statement
+        let rhs_ir = self.cg.lower_expr(&self.path, rhs)?;
+        let values = if first_info.real {
+            if targets.len() != 1 {
+                return Err(format!(
+                    "procedural continuous assignment target in `{}` mixes real and packed values",
+                    self.path
+                ));
+            }
+            vec![(first_sig, rhs_ir)]
+        } else {
+            let total_width = targets.iter().try_fold(0u32, |width, (_, info)| {
+                width.checked_add(info.width)
+            }).ok_or_else(|| {
+                format!(
+                    "procedural continuous assignment target width overflows in `{}`",
+                    self.path
+                )
+            })?;
+            let rhs_ir = apply_assignment_expression_width(rhs_ir, total_width);
+            let rhs_ir = ir_to_storage(rhs_ir, total_width, false, false)?;
+            let mut cursor = total_width;
+            let mut values = Vec::with_capacity(targets.len());
+            for (sig_idx, info) in &targets {
+                let right = cursor.checked_sub(info.width).ok_or_else(|| {
+                    format!(
+                        "procedural continuous assignment target width underflows in `{}`",
+                        self.path
+                    )
+                })?;
+                let part = IrExpr::new(
+                    IrExprKind::PartSel {
+                        base: Box::new(rhs_ir.clone()),
+                        left: i64::from(cursor - 1),
+                        right: i64::from(right),
+                    },
+                    info.width,
+                    false,
+                    None,
+                );
+                values.push((
+                    *sig_idx,
+                    ir_to_storage(part, info.width, info.signed, info.two_state)?,
+                ));
+                cursor = right;
+            }
+            values
+        };
+        // Site bookkeeping. Sites exist for every process-body statement
         // already (pre-scan); a missing entry is only reachable from trees
         // the pre-scan does not walk (defensive fallback with identical
-        // semantics).
+        // semantics). A delay-bearing task body can be lowered at several
+        // call sites, so its one guard and site identity are reused.
         let existing = self
             .cg
             .pca_sites
-            .get(&sig_idx)
-            .map(|s| (s.en, s.guarded_by));
-        let en_ir = match existing {
-            Some((en, Some(prev))) => {
-                if prev != h {
-                    return Err(self.cg.pca_multi_site_err(lhs, &self.path));
-                }
-                // The same statement lowered again (a delay-bearing task
-                // body inlined at several call sites): site and guard both
-                // exist — only re-execute enable + immediate write.
-                return Ok(vec![
-                    IrStmt::Assign {
-                        lhs: IrLhs::Whole(en),
-                        rhs: one,
-                        nba: false,
-                    },
-                    IrStmt::Assign {
-                        lhs: IrLhs::Whole(sig_idx),
-                        rhs: value,
-                        nba: false,
-                    },
-                ]);
+            .get(&(h, first_sig))
+            .map(|s| (s.en, s.site, s.guarded_by));
+        let (en_ir, site_id) = match existing {
+            Some((en, site, Some(_))) => {
+                return Ok(values
+                    .into_iter()
+                    .map(|(sig, value)| IrStmt::PcaAssign {
+                        sig,
+                        enable: en,
+                        site,
+                        value,
+                    })
+                    .collect());
             }
-            Some((en, None)) => {
-                if let Some(site) = self.cg.pca_sites.get_mut(&sig_idx) {
-                    site.guarded_by = Some(h);
+            Some((en, site, None)) => {
+                for (sig, _) in &targets {
+                    if let Some(pca) = self.cg.pca_sites.get_mut(&(h, *sig)) {
+                        pca.guarded_by = Some(h);
+                    }
                 }
-                en
+                (en, site)
             }
             None => {
+                let site = self.cg.pca_seq;
                 let en = self.cg.new_pca_enable(&self.path);
-                self.cg.pca_sites.insert(
-                    sig_idx,
-                    PcaSite {
-                        en,
-                        guarded_by: Some(h),
-                    },
-                );
-                en
+                for (sig, _) in &targets {
+                    self.cg.pca_sites.insert(
+                        (h, *sig),
+                        PcaSite {
+                            en,
+                            site,
+                            guarded_by: Some(h),
+                        },
+                    );
+                }
+                (en, site)
             }
         };
         let en_global = self.cg.model.signals[en_ir].c_name.clone();
-        if !sens.contains(&en_global) {
-            sens.push(en_global);
+        let en_dependency = crate::sim::ir::IrDependency::scalar(en_global);
+        if !sens.contains(&en_dependency) {
+            sens.push(en_dependency);
         }
+        let drives = values
+            .iter()
+            .map(|(sig, value)| IrStmt::PcaDrive {
+                sig: *sig,
+                enable: en_ir,
+                site: site_id,
+                value: value.clone(),
+            })
+            .collect();
         let guard_body = vec![
             IrStmt::WaitAny { sens },
             IrStmt::If {
                 cond: IrExpr::new(IrExprKind::SigRead(en_ir), 1, false, None),
-                then_: vec![IrStmt::Assign {
-                    lhs: IrLhs::Whole(sig_idx),
-                    rhs: value.clone(),
-                    nba: false,
-                }],
+                then_: drives,
                 els: None,
             },
         ];
@@ -1969,121 +2623,142 @@ impl EmitCtx<'_, '_> {
             origin,
         ));
 
-        // Statement execution: enable, then the immediate blocking write
-        // (dropped by the runtime while the target is forced).
-        Ok(vec![
-            IrStmt::Assign {
-                lhs: IrLhs::Whole(en_ir),
-                rhs: one,
-                nba: false,
-            },
-            IrStmt::Assign {
-                lhs: IrLhs::Whole(sig_idx),
-                rhs: value,
-                nba: false,
-            },
-        ])
+        // Statement execution activates/replaces the binding and immediately
+        // drives the target. The runtime drops the target write while forced
+        // but retains the evaluated RHS for release.
+        Ok(values
+            .into_iter()
+            .map(|(sig, value)| IrStmt::PcaAssign {
+                sig,
+                enable: en_ir,
+                site: site_id,
+                value,
+            })
+            .collect())
     }
 
-    /// Lower `deassign <variable>;` — cancel the procedural continuous
-    /// assignment by clearing the site's enable.  The variable KEEPS its
-    /// last assigned value (LRM 1364-1995 §9.4).  A `deassign` on a variable
-    /// without any PCA site has no effect (warned); net/select/hierarchical
-    /// targets are rejected like `assign` targets.  Sites are pre-allocated
-    /// before any body lowers (`Codegen::prescan_pca_sites`), so this finds
-    /// its site regardless of which process lowers first.
+    /// Lower `deassign <variable>;` — remove the target's active procedural
+    /// continuous assignment binding. The variable KEEPS its last assigned
+    /// value (LRM 1364-1995 §9.4). Deassign before any assign is harmless;
+    /// net/select/hierarchical targets are rejected like `assign` targets.
     fn lower_deassign(&mut self, lhs: NodeId) -> Result<Vec<IrStmt>, String> {
-        let (sig_idx, _) = self.pca_target(lhs, "deassign")?;
-        match self.cg.pca_sites.get(&sig_idx) {
-            Some(site) => {
-                let en_ir = site.en;
-                let zero = IrExpr::new(
-                    IrExprKind::Const(IrConst {
-                        bits: vec![0],
-                        x: vec![0],
-                        z: vec![0],
-                        width: 1,
-                        signed: false,
-                        real: None,
-                        fill: None,
-                    }),
-                    1,
-                    false,
-                    None,
-                );
-                Ok(vec![IrStmt::Assign {
-                    lhs: IrLhs::Whole(en_ir),
-                    rhs: zero,
-                    nba: false,
-                }])
-            }
-            None => {
-                self.cg.warnings.push(format!(
-                    "deassign of `{}` in `{}` has no effect (no procedural \
-                     continuous assignment on this variable)",
-                    self.cg.node(lhs).name,
-                    self.path
-                ));
-                Ok(vec![IrStmt::Nop])
-            }
-        }
+        Ok(self
+            .pca_targets(lhs, "deassign")?
+            .into_iter()
+            .map(|(sig, _)| IrStmt::PcaDeassign { sig })
+            .collect())
     }
 
     /// Lower system-task calls ($display/$monitor/$strobe/$finish/…).
     /// Skippable constructs warn here and produce no statements.
+    fn lower_dumpvars(&mut self, args: &[NodeId]) -> Result<IrStmt, String> {
+        let (depth, first_selection) = match args.first().copied() {
+            Some(first) => match self.cg.eval_bound_i128(first) {
+                Ok(value) => {
+                    let depth = u32::try_from(value).map_err(|_| {
+                        format!(
+                            "$dumpvars depth must be a non-negative 32-bit constant in `{}`",
+                            self.path
+                        )
+                    })?;
+                    (depth, 1usize)
+                }
+                Err(_) => (0, 0usize),
+            },
+            None => (0, 0usize),
+        };
+        let mut names = args[first_selection..]
+            .iter()
+            .map(|argument| self.cg.waveform_selection_name(*argument))
+            .collect::<Result<Vec<_>, _>>()?;
+        // `$dumpvars(depth)` uses the current elaborated module instance as
+        // its implicit scope.  Keep this as owned hierarchy metadata rather
+        // than converting the textual process path at runtime.
+        if names.is_empty() && depth != 0 {
+            names.push(self.cg.waveform_name_for(self.inst));
+        }
+        Ok(IrStmt::WaveDumpVars(crate::sim::ir::IrWaveDumpVars::new(
+            depth, names,
+        )))
+    }
+
     fn lower_sys_call(&mut self, h: NodeId, name: &str) -> Result<Vec<IrStmt>, String> {
         let args: Vec<NodeId> = self.cg.node(h).children.clone();
+        if let Some((task_kind, default_radix)) = display_task_variant(name) {
+            match task_kind {
+                DisplayTaskKind::Immediate { newline } => {
+                    let (fmt, display_args) =
+                        self.parse_display_call(name, &args, default_radix)?;
+                    return Ok(vec![IrStmt::DisplayTyped {
+                        fmt,
+                        args: display_args,
+                        scope: self.path.clone(),
+                        newline,
+                        default_radix,
+                    }]);
+                }
+                DisplayTaskKind::Deferred { strobe } => {
+                    if self.func.is_some() || self.inline.is_some() {
+                        return Err(format!(
+                            "{name} in `{}` cannot escape a function or task activation",
+                            self.path
+                        ));
+                    }
+                    if let Some(local) = args
+                        .iter()
+                        .find_map(|arg| self.cg.nested_proc_local_ref(*arg))
+                    {
+                        return Err(format!(
+                            "{name} cannot defer a reference to inline loop variable `{}` in `{}`",
+                            self.cg.node(local).name,
+                            self.path
+                        ));
+                    }
+                    if let Some(local) =
+                        args.iter().find_map(|arg| self.cg.nested_capture_ref(*arg))
+                    {
+                        return Err(format!(
+                            "{name} in `{}` cannot defer a reference to activation storage `{}`",
+                            self.path,
+                            self.cg.node(local).name
+                        ));
+                    }
+                    if self.in_final {
+                        return Err(format!(
+                            "{name} inside a final block in `{}` is not supported: \
+                             no scheduled output events execute after final procedures",
+                            self.path
+                        ));
+                    }
+                    let (fmt, display_args) =
+                        self.parse_display_call(name, &args, default_radix)?;
+                    let reads = if !strobe {
+                        self.collect_monitor_reads(&args)?
+                    } else {
+                        Vec::new()
+                    };
+                    // Generated re-evaluator: reads the CURRENT values of the
+                    // displayed arguments each time the runtime prints (after an
+                    // NBA commit for the monitor, at the end of the time step for
+                    // $strobe).  Attached ahead of the enclosing function/process.
+                    let eval_name = self.cg.new_fn_name(&self.path, "mon");
+                    self.pre_fns.push(crate::sim::ir::IrPreFn::DisplayEval {
+                        c_name: eval_name.clone(),
+                        args: display_args.clone(),
+                    });
+                    return Ok(vec![IrStmt::MonitorSet {
+                        strobe,
+                        fmt,
+                        eval: eval_name,
+                        n_args: display_args.len(),
+                        reads,
+                        default_radix,
+                        scope: self.path.clone(),
+                    }]);
+                }
+            }
+        }
         match name {
-            "$display" | "$write" => {
-                if let Some(statements) =
-                    self.cg
-                        .lower_object_display(&self.path, &args, name == "$display")?
-                {
-                    return Ok(statements);
-                }
-                let (fmt, display_args) = self.parse_display_call(name, &args, true)?;
-                Ok(vec![IrStmt::Display {
-                    fmt,
-                    args: display_args,
-                    newline: name == "$display",
-                }])
-            }
-            "$monitor" | "$strobe" => {
-                if let Some(local) = args
-                    .iter()
-                    .find_map(|arg| self.cg.nested_proc_local_ref(*arg))
-                {
-                    return Err(format!(
-                        "{name} cannot defer a reference to inline loop variable `{}` in `{}`",
-                        self.cg.node(local).name,
-                        self.path
-                    ));
-                }
-                if self.in_final {
-                    return Err(format!(
-                        "{name} inside a final block in `{}` is not supported: \
-                         no scheduled output events execute after final procedures",
-                        self.path
-                    ));
-                }
-                let (fmt, display_args) = self.parse_display_call(name, &args, false)?;
-                // Generated re-evaluator: reads the CURRENT values of the
-                // displayed arguments each time the runtime prints (after an
-                // NBA commit for the monitor, at the end of the time step for
-                // $strobe).  Attached ahead of the enclosing function/process.
-                let eval_name = self.cg.new_fn_name(&self.path, "mon");
-                let eval_args = display_args.iter().map(|(e, _)| e.clone()).collect();
-                self.pre_fns.push(crate::sim::ir::IrPreFn::MonEval {
-                    c_name: eval_name.clone(),
-                    args: eval_args,
-                });
-                Ok(vec![IrStmt::MonitorSet {
-                    strobe: name == "$strobe",
-                    fmt,
-                    eval: eval_name,
-                    n_args: display_args.len(),
-                }])
-            }
             "$monitoron" => Ok(vec![IrStmt::MonitorEnable(true)]),
             "$monitoroff" => Ok(vec![IrStmt::MonitorEnable(false)]),
             "$dumpfile" => {
@@ -2112,16 +2787,8 @@ impl EmitCtx<'_, '_> {
                 Ok(vec![IrStmt::WaveFile(path)])
             }
             "$dumpvars" => {
-                if !args.is_empty() && !self.cg.warned_dumpvars_filtering {
-                    self.cg.warnings.push(
-                        "$dumpvars depth/scope filtering is not yet implemented; dumping all \
-                         registered storage"
-                            .to_string(),
-                    );
-                    self.cg.warned_dumpvars_filtering = true;
-                }
                 self.cg.model.waveform = true;
-                Ok(vec![IrStmt::WaveDumpVars])
+                Ok(vec![self.lower_dumpvars(&args)?])
             }
             "$dumpon" | "$dumpoff" | "$dumpall" | "$dumpflush" => {
                 if !args.is_empty() {
@@ -2153,12 +2820,59 @@ impl EmitCtx<'_, '_> {
                 self.cg.model.waveform = true;
                 Ok(vec![IrStmt::WaveLimit(limit)])
             }
-            "$finish" => Ok(vec![IrStmt::Finish]),
+            "$finish" => {
+                // Slang's FinishControlTask enforces the target-edition
+                // finish_number contract with constant evaluation. Keep the
+                // validated level concrete in the IR; runtime expressions
+                // are not legal finish arguments in either selected edition.
+                let verbosity = match args.as_slice() {
+                    [] => 1,
+                    [argument] => {
+                        let value = self.cg.eval_bits(*argument).map_err(|error| {
+                            format!(
+                                "$finish argument at {} must be an integral constant 0, 1, or 2: {error}",
+                                self.finish_location(h)
+                            )
+                        })?;
+                        if value.is_unknown() {
+                            return Err(format!(
+                                "$finish argument at {} must be a known integral constant 0, 1, or 2",
+                                self.finish_location(h)
+                            ));
+                        }
+                        let value = value.to_u128().ok_or_else(|| {
+                            format!(
+                                "$finish argument at {} must be an integral constant 0, 1, or 2",
+                                self.finish_location(h)
+                            )
+                        })?;
+                        u8::try_from(value)
+                            .ok()
+                            .filter(|value| *value <= 2)
+                            .ok_or_else(|| {
+                                format!(
+                                    "$finish argument at {} must be 0, 1, or 2 (got {value})",
+                                    self.finish_location(h)
+                                )
+                            })?
+                    }
+                    _ => {
+                        return Err(format!(
+                            "$finish accepts at most one argument at {}",
+                            self.finish_location(h)
+                        ));
+                    }
+                };
+                Ok(vec![IrStmt::FinishControl {
+                    verbosity,
+                    location: self.finish_location(h),
+                }])
+            }
             "$printtimescale" => {
                 let ts = self.cg.timescale_of_node(h);
                 Ok(vec![IrStmt::PrintTimescale {
-                    unit_ps: ts.unit_ps,
-                    precision_ps: ts.precision_ps,
+                    unit_fs: ts.unit_fs,
+                    precision_fs: ts.precision_fs,
                     label: self.path.clone(),
                 }])
             }
@@ -2172,50 +2886,73 @@ impl EmitCtx<'_, '_> {
         }
     }
 
-    /// Parse a $display/$monitor/$strobe call's arguments into the C format
-    /// string and the lowered value expressions (with their realness flags).
-    /// The first string constant is the format; every remaining argument is a
-    /// value expression consumed by one format specifier (`%d/%h/%b/%o/%t`,
-    /// `%s` only when `allow_strings`).  `allow_strings` is true for $display
-    /// (whose `llg_display` reads string arguments from the varargs);
-    /// monitors and strobes pass false because their arguments are
-    /// re-evaluated as `sv4_t` values by the generated eval function.
-    fn parse_display_call(
-        &mut self,
-        name: &str,
+    /// Collect the signal storage that can trigger a monitor. The format
+    /// string is display metadata, and symbolic time queries have no signal
+    /// reads, so only value arguments contribute to this list.
+    fn collect_monitor_reads(
+        &self,
         args: &[NodeId],
-        allow_strings: bool,
-    ) -> Result<(String, Vec<(IrExpr, bool)>), String> {
-        let mut fmt_arg: Option<String> = None;
-        let mut display_args = Vec::new();
-        for a in args {
+    ) -> Result<Vec<crate::sim::ir::IrDependency>, String> {
+        let mut fmt_seen = false;
+        let mut reads = Vec::new();
+        let mut seen = HashSet::new();
+        for arg in args {
             let is_fmt = matches!(
-                self.cg.kind(*a),
+                self.cg.kind(*arg),
                 NodeKind::Expr(ExprKind::Constant {
                     const_type: ConstantType::String,
                     ..
                 })
             );
-            if is_fmt && fmt_arg.is_none() {
-                fmt_arg = match self.cg.kind(*a) {
-                    NodeKind::Expr(ExprKind::Constant { value, .. }) => {
-                        Some(decoded_string_text(value, name)?)
-                    }
-                    _ => None,
-                };
-            } else {
-                let e = self.cg.lower_expr(&self.path, *a)?;
-                display_args.push((e.clone(), e.is_real()));
+            if is_fmt && !fmt_seen {
+                fmt_seen = true;
+                continue;
+            }
+            if self.cg.is_string_expr(&self.path, *arg) {
+                continue;
+            }
+            for read in self.cg.collect_read_signals(&self.path, *arg)? {
+                if seen.insert(read.clone()) {
+                    reads.push(read);
+                }
             }
         }
-        let fmt =
-            fmt_arg.ok_or_else(|| format!("{name} without a format string in `{}`", self.path))?;
-        if !allow_strings && display_args.iter().any(|(e, _)| e.is_real()) {
-            return Err(format!(
-                "{name} cannot monitor/strobe real-valued arguments in `{}`",
-                self.path
-            ));
+        Ok(reads)
+    }
+
+    /// Parse a display-family call into a C format string and typed values.
+    /// Values remain packed, real, or owned strings until the shared runtime
+    /// formatter consumes them. A literal first string is the format; when it
+    /// is absent each argument gets its family default conversion.
+    fn parse_display_call(
+        &mut self,
+        name: &str,
+        args: &[NodeId],
+        default_radix: IrDisplayRadix,
+    ) -> Result<(String, Vec<crate::sim::ir::IrDisplayArg>), String> {
+        let mut fmt_arg: Option<String> = None;
+        let mut display_args = Vec::new();
+        for a in args {
+            let is_fmt = self.literal_string(*a, name)?.is_some() && fmt_arg.is_none();
+            if is_fmt && fmt_arg.is_none() {
+                fmt_arg = self.literal_string(*a, name)?;
+            } else {
+                display_args.push(self.lower_display_arg(*a)?);
+            }
         }
+        let Some(fmt) = fmt_arg else {
+            let mut c_fmt = String::from("\"");
+            for arg in &display_args {
+                c_fmt.push('%');
+                c_fmt.push(match arg {
+                    crate::sim::ir::IrDisplayArg::Real(_) => 'f',
+                    crate::sim::ir::IrDisplayArg::String(_) => 's',
+                    crate::sim::ir::IrDisplayArg::Packed(_) => default_radix.specifier(),
+                });
+            }
+            c_fmt.push('"');
+            return Ok((c_fmt, display_args));
+        };
         let mut c_fmt = String::from("\"");
         let mut arg_idx = 0usize;
         let mut chars = fmt.chars().peekable();
@@ -2226,13 +2963,18 @@ impl EmitCtx<'_, '_> {
             }
             let mut spec = String::from("%");
             while let Some(&n) = chars.peek() {
-                if n == '-' || n == '+' || n == '0' || n == '.' || n.is_ascii_digit() {
+                if matches!(n, '-' | '+' | ' ' | '#' | '0' | '.') || n.is_ascii_digit() {
                     spec.push(chars.next().unwrap());
                 } else {
                     break;
                 }
             }
-            let conv = chars.next().unwrap_or('%');
+            let Some(conv) = chars.next() else {
+                return Err(format!(
+                    "incomplete {name} format at end of `{}`",
+                    self.path
+                ));
+            };
             spec.push(conv);
             match conv {
                 'd' | 'h' | 'b' | 'o' => {
@@ -2242,9 +2984,9 @@ impl EmitCtx<'_, '_> {
                             self.path
                         ));
                     }
-                    if display_args[arg_idx].0.is_real() {
+                    if !matches!(&display_args[arg_idx], crate::sim::ir::IrDisplayArg::Packed(_)) {
                         return Err(format!(
-                            "{name} integer format `%{conv}` cannot consume a real in `{}`",
+                            "{name} integer format `%{conv}` requires a packed argument in `{}`",
                             self.path
                         ));
                     }
@@ -2253,37 +2995,29 @@ impl EmitCtx<'_, '_> {
                     c_fmt.push(conv);
                 }
                 's' => {
-                    if !allow_strings {
-                        return Err(format!(
-                            "{name} format `%s` in `{}` is not supported (monitor/\
-                             strobe arguments are re-evaluated as values)",
-                            self.path
-                        ));
-                    }
                     if arg_idx >= display_args.len() {
                         return Err(format!(
                             "{name} format `%{conv}` in `{}` has no argument",
+                            self.path
+                        ));
+                    }
+                    if !matches!(&display_args[arg_idx], crate::sim::ir::IrDisplayArg::String(_)) {
+                        return Err(format!(
+                            "{name} format `%s` requires a string argument in `{}`",
                             self.path
                         ));
                     }
                     arg_idx += 1;
-                    c_fmt.push('%');
-                    c_fmt.push(conv);
+                    c_fmt.push_str(&spec);
                 }
                 'f' | 'e' | 'g' => {
-                    if !allow_strings {
-                        return Err(format!(
-                            "{name} real formatting is not supported for monitor/strobe in `{}`",
-                            self.path
-                        ));
-                    }
                     if arg_idx >= display_args.len() {
                         return Err(format!(
                             "{name} format `%{conv}` in `{}` has no argument",
                             self.path
                         ));
                     }
-                    if !display_args[arg_idx].0.is_real() {
+                    if !matches!(&display_args[arg_idx], crate::sim::ir::IrDisplayArg::Real(_)) {
                         return Err(format!(
                             "{name} real format `%{conv}` requires a real argument in `{}`",
                             self.path
@@ -2302,11 +3036,20 @@ impl EmitCtx<'_, '_> {
                             self.path
                         ));
                     }
+                    if !matches!(&display_args[arg_idx], crate::sim::ir::IrDisplayArg::Packed(_)) {
+                        return Err(format!(
+                            "{name} format `%t` requires a packed argument in `{}`",
+                            self.path
+                        ));
+                    }
                     arg_idx += 1;
-                    c_fmt.push('%');
-                    c_fmt.push('t');
+                    c_fmt.push_str(&spec);
                 }
-                '%' => c_fmt.push('%'),
+                'm' => {
+                    // `%m` is a scope query and consumes no value argument.
+                    c_fmt.push_str(&spec);
+                }
+                '%' => c_fmt.push_str(&spec),
                 other => {
                     return Err(format!(
                         "unsupported {name} format specifier `%{other}` in `{}`",
@@ -2315,16 +3058,34 @@ impl EmitCtx<'_, '_> {
                 }
             }
         }
-        if arg_idx != display_args.len() {
-            return Err(format!(
-                "{name} in `{}` has {} argument(s) for {} format specifier(s)",
-                self.path,
-                display_args.len(),
-                arg_idx
-            ));
+        while arg_idx < display_args.len() {
+            c_fmt.push('%');
+            c_fmt.push(match &display_args[arg_idx] {
+                crate::sim::ir::IrDisplayArg::Real(_) => 'f',
+                crate::sim::ir::IrDisplayArg::String(_) => 's',
+                crate::sim::ir::IrDisplayArg::Packed(_) => default_radix.specifier(),
+            });
+            arg_idx += 1;
         }
         c_fmt.push('"');
         Ok((c_fmt, display_args))
+    }
+
+    fn lower_display_arg(
+        &mut self,
+        node: NodeId,
+    ) -> Result<crate::sim::ir::IrDisplayArg, String> {
+        if self.cg.is_string_expr(&self.path, node) {
+            return Ok(crate::sim::ir::IrDisplayArg::String(
+                self.cg.lower_string(&self.path, node)?,
+            ));
+        }
+        let value = self.cg.lower_expr(&self.path, node)?;
+        Ok(if value.is_real() {
+            crate::sim::ir::IrDisplayArg::Real(value)
+        } else {
+            crate::sim::ir::IrDisplayArg::Packed(value)
+        })
     }
 
     /// Recover a source string literal through the implicit string cast that
@@ -2341,6 +3102,14 @@ impl EmitCtx<'_, '_> {
             }
             _ => Ok(None),
         }
+    }
+
+    fn finish_location(&self, node: NodeId) -> String {
+        let source = self.cg.node(node);
+        if source.line == 0 {
+            return self.path.clone();
+        }
+        format!("{}:{}:{}", self.path, source.line, source.col)
     }
 
     /// Lower a `task_call` statement (or a function call used as a statement).
@@ -2361,7 +3130,9 @@ impl EmitCtx<'_, '_> {
                 ));
             }
         }
-        let ft = self.cg.resolve_callee(self.inst, name, is_task, callee)?;
+        let (ft, callee_inst) = self
+            .cg
+            .resolve_callee_env(self.inst, name, is_task, callee)?;
         let automatic = matches!(
             self.cg.kind(ft),
             NodeKind::FuncTask {
@@ -2385,11 +3156,18 @@ impl EmitCtx<'_, '_> {
             .func_names
             .get(&ft)
             .ok_or_else(|| format!("task `{name}` has no C name"))?;
-        let (_, _, formals) = self.cg.func_info(ft, self.inst)?;
+        let (_, _, formals) = self.cg.func_info(ft, callee_inst)?;
         let args: Vec<NodeId> = self.cg.node(h).children.clone();
         let bound = self.cg.bind_call_args(self.inst, &formals, &args)?;
-        if is_task && self.cg.task_has_wait(ft, self.inst) {
-            self.lower_task_inline(ft, h, &formals, &bound)
+        let has_event_formal = bound.iter().any(|argument| argument.is_event);
+        if has_event_formal {
+            return self.lower_task_inline(ft, callee_inst, h, &formals, &bound);
+        }
+        if is_task
+            && (self.cg.task_has_wait(ft, callee_inst)
+                || self.cg.task_has_disable(ft, callee_inst))
+        {
+            self.lower_task_inline(ft, callee_inst, h, &formals, &bound)
         } else {
             let fidx = self
                 .cg
@@ -2397,7 +3175,7 @@ impl EmitCtx<'_, '_> {
                 .get(&ft)
                 .map(|m| m.ir)
                 .ok_or_else(|| format!("task `{name}` has no C name"))?;
-            self.lower_call_stmts(fidx, h, &formals, &bound)
+            self.lower_call_stmts(fidx, callee_inst, h, &formals, &bound)
         }
     }
 
@@ -2406,6 +3184,7 @@ impl EmitCtx<'_, '_> {
     fn lower_call_stmts(
         &mut self,
         fidx: usize,
+        callee_inst: NodeId,
         h: NodeId,
         formals: &[(NodeId, bool)],
         bound: &[BoundArg],
@@ -2421,11 +3200,127 @@ impl EmitCtx<'_, '_> {
         let mut before = Vec::new();
         let mut after = Vec::new();
         for (idx, (io, is_out)) in formals.iter().enumerate() {
+            if matches!(
+                self.cg.kind(*io),
+                NodeKind::FuncArg { ty, .. } if ty.kind == "chandle"
+            ) {
+                let is_ref = matches!(
+                    self.cg.kind(*io),
+                    NodeKind::FuncArg {
+                        direction: DbDirection::Ref,
+                        ..
+                    }
+                );
+                if is_ref || *is_out {
+                    let (target, _) = self.cg.lower_chandle_lvalue(&self.path, bound[idx].expr)?;
+                    let address = self.cg.chandle_target_address(&target);
+                    if is_ref {
+                        out_args.push(IrCallArg::ChandleRefAddr(address));
+                    } else {
+                        out_args.push(IrCallArg::ChandleAddr(address));
+                    }
+                } else {
+                    in_args.push(IrCallArg::ChandleVal(
+                        self.cg.lower_chandle(&self.path, bound[idx].expr)?,
+                    ));
+                }
+                continue;
+            }
+            let is_ref = matches!(
+                self.cg.kind(*io),
+                NodeKind::FuncArg {
+                    direction: DbDirection::Ref,
+                    ..
+                }
+            );
+            if is_ref {
+                let (const_ref, ref_static) = match self.cg.kind(*io) {
+                    NodeKind::FuncArg {
+                        direction: DbDirection::Ref,
+                        const_ref,
+                        ref_static,
+                        ..
+                    } => (*const_ref, *ref_static),
+                    _ => unreachable!("ref formal"),
+                };
+                if bound[idx].string {
+                    if !const_ref {
+                        self
+                            .cg
+                            .ensure_string_actual_writable(&self.path, bound[idx].expr)?;
+                    }
+                    out_args.push(IrCallArg::StringRefAddr {
+                        addr: self
+                            .cg
+                            .lower_string_actual_address(&self.path, bound[idx].expr)?,
+                        const_ref,
+                    });
+                } else {
+                    out_args.push(self.cg.lower_ref_arg(
+                        &self.path,
+                        &bound[idx],
+                        const_ref,
+                        ref_static,
+                    )?);
+                }
+                if !bound[idx].string {
+                    let read_ir = self.cg.lower_expr(&self.path, bound[idx].expr)?;
+                    arg_codes[idx] = Some(self.cg.render_ir_code(&read_ir)?);
+                    arg_irs[idx] = Some(read_ir);
+                }
+                continue;
+            }
             if !*is_out {
                 continue;
             }
-            let lh = self.cg.lower_lhs(&self.path, bound[idx].expr)?;
-            if let Some(storage) = self.cg.static_formals.get(&(self.inst, *io)).cloned() {
+            if bound[idx].string {
+                self
+                    .cg
+                    .ensure_string_actual_writable(&self.path, bound[idx].expr)?;
+                let writeback = self
+                    .cg
+                    .lower_string_actual_address(&self.path, bound[idx].expr)?;
+                let init = matches!(
+                    self.cg.kind(*io),
+                    NodeKind::FuncArg { direction: DbDirection::Inout, .. }
+                )
+                .then(|| self.cg.lower_string(&self.path, bound[idx].expr))
+                .transpose()?;
+                let (storage_addr, storage_read) = self
+                    .cg
+                    .static_string_formals
+                    .get(&(callee_inst, *io))
+                    .map(|object| {
+                        (
+                            Some(format!("&{}", self.cg.model.objects[*object].c_name)),
+                            Some(Box::new(IrStringExpr::Read(*object))),
+                        )
+                    })
+                    .unwrap_or((None, None));
+                out_args.push(IrCallArg::StringOutTemp {
+                    name: format!("_st{}_{}", h.0, idx),
+                    init: init.map(Box::new),
+                    writeback,
+                    storage_addr,
+                    storage_read,
+                });
+                continue;
+            }
+            let (lh, actual_read, selector_inits) = self.cg.lower_call_actual(
+                &self.path,
+                bound[idx].expr,
+                &format!("{}_{}", h.0, idx),
+            )?;
+            for (name, width, signed, two_state, init) in selector_inits {
+                before.push(IrStmt::DeclLocal {
+                    name,
+                    width,
+                    signed,
+                    two_state,
+                    init: Some(Box::new(init)),
+                });
+            }
+            if let Some(storage) = self.cg.static_formals.get(&(callee_inst, *io)).cloned() {
                 let storage_lhs = IrLhs::Whole(storage.ir);
                 if matches!(
                     self.cg.kind(*io),
@@ -2434,7 +3329,7 @@ impl EmitCtx<'_, '_> {
                         ..
                     }
                 ) {
-                    let value = self.cg.lower_expr(&self.path, bound[idx].expr)?;
+                    let value = actual_read.clone();
                     before.push(IrStmt::Assign {
                         rhs: apply_lhs_assignment_context(&self.cg.model, &storage_lhs, value),
                         lhs: storage_lhs.clone(),
@@ -2458,8 +3353,9 @@ impl EmitCtx<'_, '_> {
                 continue;
             }
             let tname = format!("_a{}_{}", h.0, idx);
-            let (_init_code, init_ir) =
-                self.cg.lower_call_temp_init(&self.path, *io, &bound[idx])?;
+            let (_init_code, init_ir) = self
+                .cg
+                .lower_call_temp_init_from_expr(*io, &bound[idx], actual_read)?;
             temps.push((tname.clone(), idx, init_ir));
             copyouts.push((lh, tname.clone(), bound[idx].width, bound[idx].signed));
             arg_irs[idx] = Some(IrExpr::new(
@@ -2471,18 +3367,36 @@ impl EmitCtx<'_, '_> {
             arg_codes[idx] = Some(tname.clone());
             out_args.push(IrCallArg::OutAddr(format!("&{tname}")));
         }
-        for (idx, (_, is_out)) in formals.iter().enumerate() {
-            if !*is_out {
-                let mut own_irs: Vec<Option<IrExpr>> = vec![None; formals.len()];
-                let (_code, ir) = self.cg.lower_bound_arg_code(
-                    &self.path,
-                    formals,
-                    bound,
-                    idx,
-                    &mut arg_codes,
-                    &mut own_irs,
-                )?;
-                in_args.push(IrCallArg::Val(ir));
+        for (idx, (io, is_out)) in formals.iter().enumerate() {
+            let is_ref = matches!(
+                self.cg.kind(*io),
+                NodeKind::FuncArg {
+                    direction: DbDirection::Ref,
+                    ..
+                }
+            );
+            if !*is_out
+                && !is_ref
+                && matches!(self.cg.kind(*io), NodeKind::FuncArg { ty, .. } if ty.kind == "chandle")
+            {
+                continue;
+            }
+            if !*is_out && !is_ref {
+                if bound[idx].string {
+                    in_args.push(IrCallArg::StringVal(
+                        self.cg.lower_string(&self.path, bound[idx].expr)?,
+                    ));
+                } else {
+                    let (_code, ir) = self.cg.lower_bound_arg_code(
+                        &self.path,
+                        formals,
+                        bound,
+                        idx,
+                        &mut arg_codes,
+                        &mut arg_irs,
+                    )?;
+                    in_args.push(IrCallArg::Val(ir));
+                }
             }
         }
         out_args.extend(in_args);
@@ -2511,11 +3425,13 @@ impl EmitCtx<'_, '_> {
     fn lower_task_inline(
         &mut self,
         ft: NodeId,
+        callee_inst: NodeId,
         h: NodeId,
         formals: &[(NodeId, bool)],
         bound: &[BoundArg],
     ) -> Result<IrStmt, String> {
         let tname = self.cg.node(ft).name.clone();
+        let activation_target = self.cg.activation_target(ft)?;
         let automatic = matches!(
             self.cg.kind(ft),
             NodeKind::FuncTask {
@@ -2535,40 +3451,344 @@ impl EmitCtx<'_, '_> {
             .func_body(ft)
             .ok_or_else(|| format!("task `{tname}` without a body"))?;
 
-        // Automatic task locals get fresh C names per inline site. Static
-        // tasks instead map these declarations to model-global storage below.
-        let mut locals: HashMap<NodeId, (String, u32, bool, bool)> = HashMap::new();
+        // Resolve each declaration's lifetime independently: automatic locals
+        // get fresh C names per inline site, while static locals map to
+        // model-global storage below even in an automatic task.
+        let mut locals: HashMap<NodeId, (String, u32, bool, bool, bool)> = HashMap::new();
+        let mut chandle_locals: HashMap<NodeId, String> = HashMap::new();
         let mut local_seq = 0usize;
         let prefix = format!("_i{}", h.0);
         self.cg
-            .collect_func_locals(body, self.inst, &mut locals, &mut local_seq, &prefix)?;
+            .collect_func_locals(
+                body,
+                callee_inst,
+                &mut locals,
+                &mut chandle_locals,
+                &mut local_seq,
+                &prefix,
+            )?;
 
         // Formals bound to the caller's argument expressions.
         let mut arg_read: HashMap<NodeId, ArgMap> = HashMap::new();
         let mut arg_ir: HashMap<NodeId, IrExpr> = HashMap::new();
+        let mut event_args: HashMap<NodeId, IrEventRef> = HashMap::new();
+        let mut arg_dependencies: HashMap<NodeId, Vec<IrDependency>> = HashMap::new();
         let mut arg_write: HashMap<NodeId, String> = HashMap::new();
+        let mut arg_lhs: HashMap<NodeId, Lhs> = HashMap::new();
+        let mut const_refs: HashSet<NodeId> = HashSet::new();
+        let mut const_ref_lhs: HashMap<NodeId, Lhs> = HashMap::new();
         let mut persistent = HashMap::new();
-        let chandle_read = HashMap::new();
-        let chandle_write = HashMap::new();
-        let string_read = HashMap::new();
-        let string_write = HashMap::new();
+        let mut chandle_read = HashMap::new();
+        let mut chandle_write = HashMap::new();
+        let mut string_read = HashMap::new();
+        let mut string_write = HashMap::new();
+        let mut string_addr = HashMap::new();
         let mut arg_codes: Vec<Option<String>> = vec![None; formals.len()];
         let mut arg_irs: Vec<Option<IrExpr>> = vec![None; formals.len()];
         let mut before = Vec::new();
         let mut after = Vec::new();
+        let mut string_cleanups = Vec::new();
         // Automatic input formals bound to caller rvalue expressions need a
         // writable local copy. Static formals use their persistent signal.
         let mut input_copies: Vec<(String, IrExpr, bool)> = Vec::new();
         for (idx, (io, is_out)) in formals.iter().enumerate() {
-            if matches!(self.cg.kind(*io), NodeKind::FuncArg { ty, .. } if ty.kind == "chandle") {
-                return Err(format!(
-                    "chandle formal `{}` on delay-bearing task `{tname}` is not supported",
-                    self.cg.node(*io).name
-                ));
-            }
             let b = &bound[idx];
+            if b.is_event {
+                let output_only = *is_out
+                    && matches!(
+                        self.cg.kind(*io),
+                        NodeKind::FuncArg {
+                            direction: DbDirection::Output,
+                            ..
+                        }
+                    );
+                let actual = (!output_only && !self.cg.is_null_event_expression(b.expr))
+                    .then(|| self.cg.event_target_of(b.expr))
+                    .flatten();
+                let event = if let Some(target) = actual.as_ref() {
+                    self.cg.event_ref_of(target, &self.path)?
+                } else {
+                    IrEventRef::Null
+                };
+                if !output_only && actual.is_none() && !self.cg.is_null_event_expression(b.expr) {
+                    return Err(format!(
+                        "event actual for formal `{}` in task `{tname}` is not a named event (node kind: {:?})",
+                        self.cg.node(*io).name,
+                        self.cg.kind(b.expr)
+                    ));
+                }
+                let captured = format!("_ievent_{}_{}", h.0, idx);
+                before.push(IrStmt::EventCapture {
+                    name: captured.clone(),
+                    source: event,
+                });
+                if *is_out {
+                    let Some(target) = actual else {
+                        return Err(format!(
+                            "event output formal `{}` in task `{tname}` requires an event actual",
+                            self.cg.node(*io).name
+                        ));
+                    };
+                    let target = self.cg.event_ref_of(&target, &self.path)?;
+                    after.push(IrStmt::EventAssign {
+                        target,
+                        source: Some(IrEventRef::Captured(captured.clone())),
+                    });
+                }
+                event_args.insert(*io, IrEventRef::Captured(captured));
+                continue;
+            }
+            if matches!(self.cg.kind(*io), NodeKind::FuncArg { ty, .. } if ty.kind == "chandle") {
+                let is_ref = matches!(
+                    self.cg.kind(*io),
+                    NodeKind::FuncArg {
+                        direction: DbDirection::Ref,
+                        ..
+                    }
+                );
+                let const_ref = matches!(
+                    self.cg.kind(*io),
+                    NodeKind::FuncArg {
+                        direction: DbDirection::Ref,
+                        const_ref: true,
+                        ..
+                    }
+                );
+                if is_ref || *is_out {
+                    let (target, read) = self.cg.lower_chandle_lvalue(&self.path, b.expr)?;
+                    chandle_read.insert(*io, read);
+                    if !const_ref {
+                        chandle_write.insert(*io, target);
+                    }
+                } else {
+                    let cname = format!("_il{}_{}", h.0, idx);
+                    let value = self.cg.lower_chandle(&self.path, b.expr)?;
+                    before.push(IrStmt::Object(IrObjectStmt::ChandleDeclareLocal(
+                        cname.clone(),
+                        Some(value),
+                    )));
+                    chandle_read.insert(*io, IrChandleExpr::LocalRead(cname.clone()));
+                    chandle_write.insert(*io, ChandleTarget::Local(cname));
+                }
+                continue;
+            }
+            if b.string {
+                let is_ref = matches!(
+                    self.cg.kind(*io),
+                    NodeKind::FuncArg {
+                        direction: DbDirection::Ref,
+                        ..
+                    }
+                );
+                let const_ref = matches!(
+                    self.cg.kind(*io),
+                    NodeKind::FuncArg { const_ref: true, .. }
+                );
+                if is_ref {
+                    if !const_ref {
+                        self
+                            .cg
+                            .ensure_string_actual_writable(&self.path, b.expr)?;
+                    }
+                    let address = self
+                        .cg
+                        .lower_string_actual_address(&self.path, b.expr)?;
+                    let target = address.trim_start_matches('&').to_owned();
+                    string_read.insert(*io, self.cg.lower_string(&self.path, b.expr)?);
+                    string_addr.insert(*io, target.clone());
+                    if !const_ref {
+                        string_write.insert(*io, target);
+                    }
+                } else if let Some(object) = (!automatic)
+                    .then(|| self.cg.static_string_formals.get(&(callee_inst, *io)).copied())
+                    .flatten()
+                {
+                    let name = self.cg.model.objects[object].c_name.clone();
+                    string_read.insert(*io, IrStringExpr::Read(object));
+                    string_addr.insert(*io, name.clone());
+                    string_write.insert(*io, name);
+                    if !*is_out
+                        || matches!(
+                            self.cg.kind(*io),
+                            NodeKind::FuncArg {
+                                direction: DbDirection::Inout,
+                                ..
+                            }
+                        )
+                    {
+                        before.push(IrStmt::Object(IrObjectStmt::StringAssign(
+                            object,
+                            self.cg.lower_string(&self.path, b.expr)?,
+                        )));
+                    }
+                    if *is_out {
+                        self
+                            .cg
+                            .ensure_string_actual_writable(&self.path, b.expr)?;
+                        let actual = self
+                            .cg
+                            .lower_string_actual_address(&self.path, b.expr)?
+                            .trim_start_matches('&')
+                            .to_owned();
+                        after.push(IrStmt::Object(IrObjectStmt::StringAssignLocal(
+                            actual,
+                            IrStringExpr::Read(object),
+                        )));
+                    }
+                } else if *is_out {
+                    self
+                        .cg
+                        .ensure_string_actual_writable(&self.path, b.expr)?;
+                    let cname = format!("_is{}_{}", h.0, idx);
+                    let init = if matches!(
+                        self.cg.kind(*io),
+                        NodeKind::FuncArg {
+                            direction: DbDirection::Inout,
+                            ..
+                        }
+                    ) {
+                        Some(self.cg.lower_string(&self.path, b.expr)?)
+                    } else {
+                        None
+                    };
+                    before.push(IrStmt::DeclString {
+                        name: cname.clone(),
+                        init,
+                    });
+                    let actual = self
+                        .cg
+                        .lower_string_actual_address(&self.path, b.expr)?
+                        .trim_start_matches('&')
+                        .to_owned();
+                    string_read.insert(*io, IrStringExpr::LocalRead(cname.clone()));
+                    string_write.insert(*io, cname.clone());
+                    string_addr.insert(*io, cname.clone());
+                    after.push(IrStmt::Object(IrObjectStmt::StringAssignLocal(
+                        actual,
+                        IrStringExpr::LocalRead(cname.clone()),
+                    )));
+                    string_cleanups.push(cname);
+                } else {
+                    let cname = format!("_il{}_{}", h.0, idx);
+                    before.push(IrStmt::DeclString {
+                        name: cname.clone(),
+                        init: Some(self.cg.lower_string(&self.path, b.expr)?),
+                    });
+                    string_read.insert(*io, IrStringExpr::LocalRead(cname.clone()));
+                    string_write.insert(*io, cname.clone());
+                    string_addr.insert(*io, cname.clone());
+                    string_cleanups.push(cname);
+                }
+                continue;
+            }
+            let is_ref = matches!(
+                self.cg.kind(*io),
+                NodeKind::FuncArg {
+                    direction: DbDirection::Ref,
+                    ..
+                }
+            );
+            if is_ref {
+                let actual_lhs = self.cg.lower_lhs(&self.path, b.expr)?;
+                let (actual_lhs, read_ir) = match actual_lhs {
+                    IrLhs::ArrayElem {
+                        arr,
+                        indices,
+                        elem_sel: IrElemSel::Whole,
+                    } => {
+                        let array = self.cg.model.arrays.get(arr).ok_or_else(|| {
+                            format!("ref actual array {arr} for task `{tname}` is out of bounds")
+                        })?;
+                        let mut frozen = Vec::with_capacity(indices.len());
+                        for (index_no, index) in indices.into_iter().enumerate() {
+                            let name = format!("_ref_idx_{}_{}_{}", h.0, idx, index_no);
+                            let (width, signed) = (index.width, index.signed);
+                            before.push(IrStmt::DeclLocal {
+                                name: name.clone(),
+                                width,
+                                signed,
+                                two_state: false,
+                                init: Some(Box::new(index)),
+                            });
+                            frozen.push(IrExpr::new(
+                                IrExprKind::LocalRead(name),
+                                width,
+                                signed,
+                                None,
+                            ));
+                        }
+                        let read = IrExpr::new(
+                            IrExprKind::ArrayRead {
+                                arr,
+                                indices: frozen.clone(),
+                                elem_sel: IrElemSel::Whole,
+                            },
+                            array.elem_width,
+                            array.signed,
+                            None,
+                        );
+                        (
+                            IrLhs::ArrayElem {
+                                arr,
+                                indices: frozen,
+                                elem_sel: IrElemSel::Whole,
+                            },
+                            read,
+                        )
+                    }
+                    actual_lhs => {
+                        let read_ir = self.cg.lower_expr(&self.path, b.expr)?;
+                        (actual_lhs, read_ir)
+                    }
+                };
+                let (width, signed, two_state, actual_const) = self
+                    .cg
+                    .ref_lhs_type(&actual_lhs)
+                    .ok_or_else(|| {
+                        format!("ref actual for task `{tname}` is not an integral lvalue")
+                    })?;
+                if (width, signed, two_state) != (b.width, b.signed, b.two_state) {
+                    return Err(format!(
+                        "ref actual for task `{tname}` does not exactly match its formal"
+                    ));
+                }
+                let const_ref = matches!(
+                    self.cg.kind(*io),
+                    NodeKind::FuncArg {
+                        direction: DbDirection::Ref,
+                        const_ref: true,
+                        ..
+                    }
+                );
+                if actual_const && !const_ref {
+                    return Err(format!(
+                        "const ref actual cannot bind to writable ref formal in `{tname}`"
+                    ));
+                }
+                arg_codes[idx] = Some(self.cg.render_ir_code(&read_ir)?);
+                arg_ir.insert(*io, read_ir.clone());
+                arg_dependencies.insert(
+                    *io,
+                    self.cg.collect_read_signals(&self.path, b.expr)?,
+                );
+                arg_read.insert(
+                    *io,
+                    ArgMap {
+                        width,
+                        signed,
+                        two_state,
+                    },
+                );
+                if const_ref {
+                    const_refs.insert(*io);
+                    const_ref_lhs.insert(*io, Lhs::Canonical(actual_lhs));
+                } else {
+                    arg_lhs.insert(*io, Lhs::Canonical(actual_lhs));
+                }
+                continue;
+            }
             if let Some(storage) = (!automatic)
-                .then(|| self.cg.static_formals.get(&(self.inst, *io)).cloned())
+                .then(|| self.cg.static_formals.get(&(callee_inst, *io)).cloned())
                 .flatten()
             {
                 let storage_lhs = IrLhs::Whole(storage.ir);
@@ -2576,6 +3796,7 @@ impl EmitCtx<'_, '_> {
                 arg_write.insert(*io, format!("&{}", storage.global));
                 persistent.insert(*io, storage.clone());
                 arg_ir.insert(*io, storage_read.clone());
+                arg_dependencies.insert(*io, vec![self.cg.signal_dependency(&storage)]);
                 arg_read.insert(
                     *io,
                     ArgMap {
@@ -2606,11 +3827,27 @@ impl EmitCtx<'_, '_> {
                         nba: false,
                     });
                 } else {
-                    let actual_lhs = self.cg.lower_lhs(&self.path, b.expr)?;
+                    let (actual_lhs, actual_read, selector_inits) = self.cg.lower_call_actual(
+                        &self.path,
+                        b.expr,
+                        &format!("{}_{}", h.0, idx),
+                    )?;
+                    for (name, width, signed, two_state, init) in selector_inits {
+                        before.push(IrStmt::DeclLocal {
+                            name,
+                            width,
+                            signed,
+                            two_state,
+                            init: Some(Box::new(init)),
+                        });
+                    }
                     if is_inout {
-                        let value = self.cg.lower_expr(&self.path, b.expr)?;
                         before.push(IrStmt::Assign {
-                            rhs: apply_lhs_assignment_context(&self.cg.model, &storage_lhs, value),
+                            rhs: apply_lhs_assignment_context(
+                                &self.cg.model,
+                                &storage_lhs,
+                                actual_read,
+                            ),
                             lhs: storage_lhs,
                             nba: false,
                         });
@@ -2626,20 +3863,65 @@ impl EmitCtx<'_, '_> {
                     });
                 }
             } else if *is_out {
-                let lh = self.cg.lower_lhs(&self.path, b.expr)?;
-                let addr = match &lh {
-                    IrLhs::Whole(sig_i) => format!("&{}", self.cg.model.signal(*sig_i).c_name),
-                    IrLhs::WholeRef { addr, .. } => addr.clone(),
-                    _ => {
-                        return Err(format!(
-                            "output argument of task `{tname}` bound to a select \
-                             is not supported"
-                        ))
+                let (actual_lhs, actual_read, selector_inits) = self.cg.lower_call_actual(
+                    &self.path,
+                    b.expr,
+                    &format!("{}_{}", h.0, idx),
+                )?;
+                for (name, width, signed, two_state, init) in selector_inits {
+                    before.push(IrStmt::DeclLocal {
+                        name,
+                        width,
+                        signed,
+                        two_state,
+                        init: Some(Box::new(init)),
+                    });
+                }
+                let cname = format!("_io{}_{}", h.0, idx);
+                let is_inout = matches!(
+                    self.cg.kind(*io),
+                    NodeKind::FuncArg {
+                        direction: DbDirection::Inout,
+                        ..
                     }
+                );
+                let init = if is_inout {
+                    self.cg
+                        .lower_call_temp_init_from_expr(*io, b, actual_read)?
+                        .1
+                } else {
+                    None
                 };
-                let read_ir = self.cg.lower_expr(&self.path, b.expr)?;
-                arg_write.insert(*io, addr);
+                before.push(IrStmt::DeclLocal {
+                    name: cname.clone(),
+                    width: b.width,
+                    signed: b.signed,
+                    two_state: b.two_state,
+                    init: init.map(Box::new),
+                });
+                let read_ir = IrExpr::new(
+                    IrExprKind::LocalRead(cname.clone()),
+                    b.width,
+                    b.signed,
+                    None,
+                );
+                arg_write.insert(*io, format!("&{cname}"));
                 arg_ir.insert(*io, read_ir.clone());
+                if is_inout {
+                    arg_dependencies.insert(
+                        *io,
+                        self.cg.collect_read_signals(&self.path, b.expr)?,
+                    );
+                }
+                after.push(IrStmt::Assign {
+                    rhs: apply_lhs_assignment_context(
+                        &self.cg.model,
+                        &actual_lhs,
+                        read_ir.clone(),
+                    ),
+                    lhs: actual_lhs,
+                    nba: false,
+                });
                 arg_read.insert(
                     *io,
                     ArgMap {
@@ -2682,34 +3964,108 @@ impl EmitCtx<'_, '_> {
             }
         }
 
-        if !automatic {
-            let persistent_locals = locals
-                .keys()
-                .copied()
-                .filter(|local| self.cg.db.variable_lifetime(*local) == VariableLifetime::Static)
-                .collect::<Vec<_>>();
-            for local in persistent_locals {
-                let storage = self
-                    .cg
-                    .static_task_locals
-                    .get(&(self.inst, local))
-                    .cloned()
-                    .ok_or_else(|| {
-                        format!("static task `{tname}` local has no persistent storage")
-                    })?;
-                arg_write.insert(local, format!("&{}", storage.global));
-                persistent.insert(local, storage.clone());
-                arg_ir.insert(local, sig_read_expr_full(&storage));
-                arg_read.insert(
-                    local,
-                    ArgMap {
-                        width: storage.width,
-                        signed: storage.signed,
-                        two_state: storage.two_state,
-                    },
-                );
-                locals.remove(&local);
+        for (local, cname) in &chandle_locals {
+            match self.cg.db.variable_lifetime(*local) {
+                VariableLifetime::Automatic => {
+                    chandle_read.insert(*local, IrChandleExpr::LocalRead(cname.clone()));
+                    chandle_write.insert(*local, ChandleTarget::Local(cname.clone()));
+                }
+                VariableLifetime::Static => {}
+                VariableLifetime::Unavailable => {
+                    return Err(format!(
+                        "resolved lifetime is unavailable for task local `{}`",
+                        self.cg.node(*local).name
+                    ));
+                }
             }
+        }
+
+        for (local, (cname, ..)) in &locals {
+            if matches!(self.cg.kind(*local), NodeKind::Var { ty } if ty.kind == "string")
+                && self.cg.db.variable_lifetime(*local) == VariableLifetime::Automatic
+            {
+                string_read.insert(*local, IrStringExpr::LocalRead(cname.clone()));
+                string_write.insert(*local, cname.clone());
+                string_addr.insert(*local, cname.clone());
+            }
+        }
+
+        let persistent_locals = locals
+            .keys()
+            .copied()
+            .filter(|local| self.cg.db.variable_lifetime(*local) == VariableLifetime::Static)
+            .collect::<Vec<_>>();
+        for local in persistent_locals {
+            if matches!(self.cg.kind(local), NodeKind::Var { ty } if ty.kind == "string") {
+                let object = self
+                    .cg
+                    .static_string_task_locals
+                    .get(&(callee_inst, local))
+                    .copied()
+                    .ok_or_else(|| {
+                        format!("static string task `{tname}` local has no persistent storage")
+                    })?;
+                let name = self.cg.model.objects[object].c_name.clone();
+                string_read.insert(local, IrStringExpr::Read(object));
+                string_write.insert(local, name.clone());
+                string_addr.insert(local, name);
+                locals.remove(&local);
+                continue;
+            }
+            let storage = self
+                .cg
+                .static_task_locals
+                .get(&(callee_inst, local))
+                .cloned()
+                .ok_or_else(|| {
+                    format!("static task `{tname}` local has no persistent storage")
+                })?;
+            arg_write.insert(local, format!("&{}", storage.global));
+            persistent.insert(local, storage.clone());
+            arg_ir.insert(local, sig_read_expr_full(&storage));
+            arg_read.insert(
+                local,
+                ArgMap {
+                    width: storage.width,
+                    signed: storage.signed,
+                    two_state: storage.two_state,
+                },
+            );
+            locals.remove(&local);
+        }
+        let persistent_chandle_locals = chandle_locals
+            .keys()
+            .copied()
+            .filter(|local| self.cg.db.variable_lifetime(*local) == VariableLifetime::Static)
+            .collect::<Vec<_>>();
+        for local in persistent_chandle_locals {
+            let object = if let Some(object) = self
+                .cg
+                .static_task_chandle_locals
+                .get(&(callee_inst, local))
+                .copied()
+            {
+                object
+            } else {
+                let object = self.cg.model.objects.len();
+                self.cg.model.objects.push(crate::sim::ir::IrObject {
+                    c_name: format!(
+                        "O_f{}_{}_l{}",
+                        callee_inst.index(),
+                        ft.index(),
+                        local.index()
+                    ),
+                    ty: crate::sim::ir::IrObjectType::Chandle,
+                    initial: None,
+                });
+                self.cg
+                    .static_task_chandle_locals
+                    .insert((callee_inst, local), object);
+                object
+            };
+            chandle_read.insert(local, IrChandleExpr::Read(object));
+            chandle_write.insert(local, ChandleTarget::Object(object));
+            chandle_locals.remove(&local);
         }
 
         let done_label = format!("_id{}", h.0);
@@ -2724,30 +4080,37 @@ impl EmitCtx<'_, '_> {
             ret: None,
             arg_read,
             arg_ir,
+            event_args,
+            arg_dependencies,
             arg_write,
+            arg_lhs,
+            const_refs,
+            const_ref_lhs,
             persistent,
             chandle_read,
             chandle_write,
             string_read,
             string_write,
+            string_addr,
             locals,
             ret_node: None,
-            // Deliberately None: a `disable <taskname>;` inside an inlined
-            // body must jump to THIS expansion's done label (the InlineCtx
-            // check runs first), never emit a C return out of the caller's
-            // coroutine.
+            // This expansion has no separate C function identity. Runtime
+            // activation targets implement disable; only return uses done_label.
             def_node: None,
         };
         let inline = InlineCtx {
             done_label: done_label.clone(),
-            def: ft,
             chain,
             used: false,
         };
 
         // Swap in the inline context (and sync the codegen for expression
         // resolution), then restore on the way out.
-        let saved_cg = (self.cg.func.take(), self.cg.depth_arg.clone());
+        let saved_cg = (
+            self.cg.func.take(),
+            self.cg.depth_arg.clone(),
+            self.cg.inst,
+        );
         let saved_ctx = (self.func.take(), self.inline.take(), self.depth_arg.clone());
         let depth = format!("({}) + 1", saved_ctx.2);
         self.cg.func = Some(func.clone());
@@ -2772,15 +4135,38 @@ impl EmitCtx<'_, '_> {
         // of the caller's loops (it must resolve within the task body or be
         // rejected cleanly).
         self.ctrl.push(CtrlScope::TaskBody);
-        stmts.extend(self.lower_stmt(body)?);
+        // Actual expressions were lowered in the caller context above. The
+        // task body must resolve nested calls, locals, and instance storage
+        // in the callee's concrete environment.
+        let saved_inst = self.inst;
+        self.inst = callee_inst;
+        self.cg.inst = callee_inst;
+        let task_body_result = self.lower_stmt(body);
+        self.inst = saved_inst;
+        self.cg.inst = saved_cg.2;
+        let mut task_body = task_body_result?;
         match self.ctrl.pop() {
             Some(CtrlScope::TaskBody) => {}
             _ => unreachable!("task-body scope stack imbalance"),
         }
         if self.inline.as_ref().map(|i| i.used).unwrap_or(false) {
-            stmts.push(IrStmt::Label(done_label));
+            task_body.push(IrStmt::Label(done_label));
         }
-        stmts.extend(after);
+        // Copy-out and event-formal rebinding are part of the activation's
+        // normal return path. Keeping them inside the scope lets the emitted
+        // cancellation guard jump over them when `disable` unwinds a task.
+        task_body.extend(after);
+        stmts.push(IrStmt::ActivationScope {
+            target: activation_target,
+            exit: self.new_label("xt"),
+            body: task_body,
+        });
+        for cname in string_cleanups {
+            stmts.push(IrStmt::Object(IrObjectStmt::StringAssignLocal(
+                cname,
+                IrStringExpr::Literal(Vec::new()),
+            )));
+        }
 
         self.cg.func = saved_cg.0;
         self.cg.depth_arg = saved_cg.1;
@@ -2842,6 +4228,111 @@ impl EmitCtx<'_, '_> {
                 self.path
             )),
         }
+    }
+}
+
+fn force_constant_index(expr: &IrExpr) -> bool {
+    let IrExprKind::Const(value) = expr.kind() else {
+        return false;
+    };
+    value.real_value().is_none()
+        && value.x_mask().iter().all(|mask| *mask == 0)
+        && value.z_mask().iter().all(|mask| *mask == 0)
+}
+
+/// Validate the force/release target shape shared by lowering and emission.
+/// Packed variable selects are intentionally rejected; a selected net is
+/// represented by a fixed part descriptor and can therefore preserve all
+/// current driver contributions on release.
+fn validate_force_lhs(model: &IrModel, lhs: &IrLhs, path: &str) -> Result<bool, String> {
+    match lhs {
+        IrLhs::Whole(index) => {
+            let signal = model.signals.get(*index).ok_or_else(|| {
+                format!("force target signal {index} is out of bounds in `{path}`")
+            })?;
+            Ok(matches!(signal.ty, IrType::Real { .. }))
+        }
+        IrLhs::WholeRef { .. } => Err(format!(
+            "force/release target in `{path}` does not have persistent canonical storage"
+        )),
+        IrLhs::Ref { .. } => Err(format!(
+            "force/release target in `{path}` cannot be a ref formal"
+        )),
+        IrLhs::Bit(index, select, _) => {
+            let signal = model.signals.get(*index).ok_or_else(|| {
+                format!("force target signal {index} is out of bounds in `{path}`")
+            })?;
+            if signal.net_driver.is_none() {
+                return Err(format!(
+                    "force/release of a variable bit-select in `{path}` is not supported"
+                ));
+            }
+            if !force_constant_index(select) {
+                return Err(format!(
+                    "force/release net bit-select in `{path}` requires a constant index"
+                ));
+            }
+            Ok(false)
+        }
+        IrLhs::Part(index, ..) => {
+            let signal = model.signals.get(*index).ok_or_else(|| {
+                format!("force target signal {index} is out of bounds in `{path}`")
+            })?;
+            if signal.net_driver.is_none() {
+                return Err(format!(
+                    "force/release of a variable part-select in `{path}` is not supported"
+                ));
+            }
+            Ok(false)
+        }
+        IrLhs::IdxPart(..) => Err(format!(
+            "force/release indexed part-select in `{path}` requires a constant net part-select"
+        )),
+        IrLhs::ArrayElem { .. } => Err(format!(
+            "force/release of an unpacked-array element in `{path}` is not supported"
+        )),
+        IrLhs::Stream {
+            parts,
+            slice,
+            direction,
+            ..
+        } => {
+            let mut real = false;
+            for (part, _) in parts {
+                if matches!(part, IrLhs::Stream { slice: nested_slice, direction: nested_direction, .. }
+                    if *nested_slice != 1
+                        || !matches!(nested_direction, IrStreamDirection::LeftToRight))
+                {
+                    return Err(format!(
+                        "nested streaming force/release target in `{path}` is not supported"
+                    ));
+                }
+                if validate_force_lhs(model, part, path)? {
+                    real = true;
+                }
+            }
+            if *slice == 0 {
+                return Err(format!(
+                    "force/release streaming target in `{path}` has zero slice size"
+                ));
+            }
+            let _ = direction;
+            if real && parts.len() != 1 {
+                return Err(format!(
+                    "force/release concatenation containing a real target in `{path}` is not supported"
+                ));
+            }
+            Ok(real)
+        }
+    }
+}
+
+fn force_lhs_signed(model: &IrModel, lhs: &IrLhs) -> bool {
+    match lhs {
+        IrLhs::Whole(index) => model.signal(*index).ty.signed(),
+        IrLhs::WholeRef { signed, .. } => *signed,
+        IrLhs::Ref { signed, .. } => *signed,
+        _ => false,
     }
 }
 

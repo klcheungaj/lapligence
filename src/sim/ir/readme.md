@@ -17,12 +17,18 @@ invariants.
 `IrModel` is the staging owner used while converting semantic database nodes.
 `ExecutionModel::lower` moves every process body out of that staging table and
 into executable basic blocks. The staging process entries retain names,
-helpers, and spawn identity because functions, storage, and call references
-share their checked index tables.
+helpers, spawn identity, process kind, and typed write dependencies because
+functions, storage, and call references share their checked index tables.
 
 Variable aliases identify canonical storage explicitly. Event-evaluation helpers,
-read dependencies, delayed NBA operations and real math functions are validated
-before optimization/emission; deferred updates remain distinct from suspension.
+typed evaluator contexts, read dependencies, delayed NBA operations and real math
+functions are validated before optimization/emission; deferred updates remain
+distinct from suspension. Evaluator contexts carry activation-owned storage
+identities rather than transient C addresses.
+`IrInitialization` keeps declaration identity, `StorageLifetime`, source origin,
+and the Verilog/SystemVerilog execution phase attached to scalar static
+initializers. Automatic declaration values remain activation-local operations;
+static local storage is never initialized lazily by a first subprogram call.
 Procedural delays retain either constant ticks or a typed runtime expression
 with module-unit and precision scales. Validation, effect analysis, optimization
 and stack sizing traverse that expression like other statement operands.

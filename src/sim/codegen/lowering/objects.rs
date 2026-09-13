@@ -1,7 +1,8 @@
 //! Lower non-integral values without encoding their storage as packed bits.
 use super::*;
 use crate::sim::ir::{
-    IrChandleExpr, IrObject, IrObjectQuery, IrObjectStmt, IrObjectType, IrStringExpr,
+    IrChandleExpr, IrDisplayRadix, IrObject, IrObjectQuery, IrObjectStmt, IrObjectType,
+    IrStringExpr,
 };
 
 impl Codegen<'_> {
@@ -10,20 +11,21 @@ impl Codegen<'_> {
         path: &str,
         args: &[NodeId],
         newline: bool,
+        default_radix: IrDisplayRadix,
     ) -> Result<Option<Vec<IrStmt>>, String> {
         if !args.iter().any(|arg| self.is_string_expr(path, *arg)) {
             return Ok(None);
         }
-        let Some((first, values)) = args.split_first() else {
+        let Some((first, rest)) = args.split_first() else {
             return Ok(None);
         };
-        let fmt = match self.kind(*first) {
+        let (fmt, values) = match self.kind(*first) {
             NodeKind::Expr(ExprKind::Constant {
                 const_type: ConstantType::String,
                 value,
                 ..
-            }) => decoded_string_bytes(value)?,
-            _ => return Err("string display requires a literal format".to_owned()),
+            }) => (decoded_string_bytes(value)?, rest),
+            _ => (Vec::new(), args),
         };
         let fmt = String::from_utf8(fmt)
             .map_err(|_| "string display format must contain valid UTF-8".to_owned())?;
@@ -42,7 +44,7 @@ impl Codegen<'_> {
                 continue;
             }
             if !text.is_empty() {
-                result.push(display_text(&text));
+                result.push(display_text(&text, default_radix));
                 text.clear();
             }
             let mut spec = String::from("%");
@@ -78,20 +80,41 @@ impl Codegen<'_> {
                     fmt: c_quoted(&spec),
                     args: vec![(value.clone(), value.is_real())],
                     newline: false,
+                    default_radix,
                 });
             }
         }
-        if arg != values.len() {
-            return Err("extra string display arguments are unsupported".to_owned());
+        while arg < values.len() {
+            let node = values[arg];
+            arg += 1;
+            if self.is_string_expr(path, node) {
+                result.push(IrStmt::Object(IrObjectStmt::StringPrint(
+                    self.lower_string(path, node)?,
+                )));
+            } else {
+                let value = self.lower_expr(path, node)?;
+                let spec = if value.is_real() {
+                    "%f".to_owned()
+                } else {
+                    format!("%{}", default_radix.specifier())
+                };
+                result.push(IrStmt::Display {
+                    fmt: c_quoted(&spec),
+                    args: vec![(value.clone(), value.is_real())],
+                    newline: false,
+                    default_radix,
+                });
+            }
         }
         if !text.is_empty() {
-            result.push(display_text(&text));
+            result.push(display_text(&text, default_radix));
         }
         if newline {
             result.push(IrStmt::Display {
                 fmt: "\"\"".to_owned(),
                 args: vec![],
                 newline: true,
+                default_radix,
             });
         }
         Ok(Some(result))
@@ -110,10 +133,7 @@ impl Codegen<'_> {
         path: &str,
         node: NodeId,
     ) -> Result<IrExpr, String> {
-        if self
-            .object_of(path, node)
-            .is_some_and(|index| self.model.objects[index].ty == IrObjectType::Chandle)
-        {
+        if self.is_chandle_expr(path, node) {
             let equal = object_query(
                 IrObjectQuery::ChandleEq(self.lower_chandle(path, node)?, IrChandleExpr::Null),
                 1,
@@ -171,14 +191,29 @@ impl Codegen<'_> {
     }
 
     pub(super) fn object_of(&self, path: &str, node: NodeId) -> Option<usize> {
+        if let Some((target, _kind, member)) = self.unpacked_member_info(node) {
+            if let Some(index) = member.object {
+                return Some(self.reference_object(index));
+            }
+            // A recursive aggregate leaf is still declaration-owned even when
+            // its representation is a packed/real signal. Do not fall
+            // through to display-name lookup for those values.
+            if self.unpacked_aggregates.contains_key(&target) {
+                return None;
+            }
+        }
         if let Some(index) = self.object_globals.get(&node) {
-            return Some(*index);
+            return Some(self.reference_object(*index));
         }
         if let NodeKind::Expr(ExprKind::Ref {
             target: Some(target),
         }) = self.kind(node)
         {
-            return self.object_globals.get(target).copied();
+            return self
+                .object_globals
+                .get(target)
+                .copied()
+                .map(|index| self.reference_object(index));
         }
         if !matches!(
             self.kind(node),
@@ -190,6 +225,7 @@ impl Codegen<'_> {
             .get(path)?
             .get(&self.node(node).name)
             .copied()
+            .map(|index| self.reference_object(index))
     }
 
     pub(super) fn is_string_expr(&self, path: &str, node: NodeId) -> bool {
@@ -233,9 +269,9 @@ impl Codegen<'_> {
         } = self.kind(node)
         {
             if self
-                .resolve_callee(self.inst, &self.node(node).name, false, *callee)
+                .resolve_callee_env(self.inst, &self.node(node).name, false, *callee)
                 .ok()
-                .and_then(|function| self.func_meta.get(&function))
+                .and_then(|(function, _)| self.func_meta.get(&function))
                 .is_some_and(|meta| meta.ret_string)
             {
                 return true;
@@ -248,6 +284,7 @@ impl Codegen<'_> {
             return true;
         }
         match self.kind(node) {
+            NodeKind::SysCall { name } if name == "$typename" => true,
             NodeKind::Param { ty, .. } => ty.kind == "string",
             NodeKind::Expr(ExprKind::Ref {
                 target: Some(target),
@@ -271,7 +308,104 @@ impl Codegen<'_> {
         }
     }
 
-    pub(super) fn lower_chandle(&self, path: &str, node: NodeId) -> Result<IrChandleExpr, String> {
+    /// Return whether an expression is a native chandle without requiring it
+    /// to be backed by a model-global object. Function formals, automatic
+    /// locals, and chandle-returning calls all live in the function context.
+    pub(super) fn is_chandle_expr(&self, path: &str, node: NodeId) -> bool {
+        if let NodeKind::Expr(ExprKind::Cast { operand, ty, .. }) = self.kind(node) {
+            if ty.kind == "chandle" {
+                return true;
+            }
+            if self.is_chandle_expr(path, *operand) {
+                return false;
+            }
+        }
+        let target = match self.kind(node) {
+            NodeKind::Expr(ExprKind::Ref { target }) => *target,
+            _ => Some(node),
+        };
+        if let Some(function) = &self.func {
+            if target.is_some_and(|target| function.chandle_read.contains_key(&target)) {
+                return true;
+            }
+            if matches!(self.kind(node), NodeKind::Expr(ExprKind::Ref { target: None }))
+                && function
+                    .chandle_read
+                    .keys()
+                    .any(|target| self.node(*target).name == self.node(node).name)
+            {
+                return true;
+            }
+        }
+        if let Some(index) = self.object_of(path, node) {
+            if self.model.objects[index].ty == IrObjectType::Chandle {
+                return true;
+            }
+        }
+        if let NodeKind::FuncCall {
+            is_task: false,
+            callee,
+            ..
+        } = self.kind(node)
+        {
+            return self
+                .resolve_callee_env(self.inst, &self.node(node).name, false, *callee)
+                .ok()
+                .and_then(|(function, _)| self.func_meta.get(&function))
+                .is_some_and(|meta| meta.ret_chandle);
+        }
+        false
+    }
+
+    /// Resolve a chandle lvalue to its native pointer identity and its
+    /// caller-owned pointer slot. The address is never an integer encoding.
+    pub(super) fn lower_chandle_lvalue(
+        &mut self,
+        path: &str,
+        node: NodeId,
+    ) -> Result<(ChandleTarget, IrChandleExpr), String> {
+        let read = self.lower_chandle(path, node)?;
+        let target = match self.kind(node) {
+            NodeKind::Expr(ExprKind::Ref { target }) => *target,
+            _ => Some(node),
+        };
+        let mapped = self.func.as_ref().and_then(|function| {
+            target
+                .and_then(|target| function.chandle_write.get(&target).cloned())
+                .or_else(|| {
+                    matches!(self.kind(node), NodeKind::Expr(ExprKind::Ref { target: None }))
+                        .then(|| {
+                            function
+                                .chandle_write
+                                .iter()
+                                .find(|(target, _)| {
+                                    self.node(**target).name == self.node(node).name
+                                })
+                                .map(|(_, target)| target.clone())
+                        })
+                        .flatten()
+                })
+        });
+        if let Some(target) = mapped {
+            return Ok((target, read));
+        }
+        if let Some(index) = self.object_of(path, node) {
+            if self.model.objects[index].ty == IrObjectType::Chandle {
+                return Ok((ChandleTarget::Object(index), read));
+            }
+        }
+        Err("chandle output/ref actual must be a named chandle lvalue".to_owned())
+    }
+
+    pub(super) fn chandle_target_address(&self, target: &ChandleTarget) -> String {
+        match target {
+            ChandleTarget::Object(index) => format!("&{}", self.model.objects[*index].c_name),
+            ChandleTarget::Local(name) if name.starts_with('*') => format!("&({name})"),
+            ChandleTarget::Local(name) => format!("&{name}"),
+        }
+    }
+
+    pub(super) fn lower_chandle(&mut self, path: &str, node: NodeId) -> Result<IrChandleExpr, String> {
         if let NodeKind::Expr(ExprKind::Cast { operand, ty, .. }) = self.kind(node) {
             if ty.kind == "chandle" {
                 return self.lower_chandle(path, *operand);
@@ -313,10 +447,12 @@ impl Codegen<'_> {
             ..
         } = self.kind(node)
         {
-            let ft = self.resolve_callee(self.inst, &self.node(node).name, false, *callee)?;
+            let (ft, _callee_inst) =
+                self.resolve_callee_env(self.inst, &self.node(node).name, false, *callee)?;
             let meta = self
                 .func_meta
                 .get(&ft)
+                .cloned()
                 .ok_or_else(|| format!("function `{}` has no C name", self.node(ft).name))?;
             if !meta.ret_chandle {
                 return Err(format!(
@@ -324,24 +460,58 @@ impl Codegen<'_> {
                     self.node(ft).name
                 ));
             }
-            if meta.formals.iter().any(|(formal, is_out)| {
-                *is_out
-                    || !matches!(self.kind(*formal), NodeKind::FuncArg { ty, .. } if ty.kind == "chandle")
-            }) {
-                return Err(format!(
-                    "chandle function `{}` must have only chandle input formals",
-                    self.node(ft).name
-                ));
-            }
             let args = self.node(node).children.clone();
             let bound = self.bind_call_args(self.inst, &meta.formals, &args)?;
-            let args = bound
-                .iter()
-                .map(|arg| self.lower_chandle(path, arg.expr))
-                .collect::<Result<Vec<_>, _>>()?;
+            let mut out_args = Vec::new();
+            let mut in_args = Vec::new();
+            let mut arg_codes = vec![None; meta.formals.len()];
+            let mut arg_irs = vec![None; meta.formals.len()];
+            for (idx, (formal, is_out)) in meta.formals.iter().enumerate() {
+                let is_chandle = matches!(
+                    self.kind(*formal),
+                    NodeKind::FuncArg { ty, .. } if ty.kind == "chandle"
+                );
+                let is_ref = matches!(
+                    self.kind(*formal),
+                    NodeKind::FuncArg {
+                        direction: DbDirection::Ref,
+                        ..
+                    }
+                );
+                if is_ref || *is_out {
+                    if !is_chandle {
+                        return Err(format!(
+                            "chandle function `{}` does not support packed output/ref formals",
+                            self.node(ft).name
+                        ));
+                    }
+                    let (target, _) = self.lower_chandle_lvalue(path, bound[idx].expr)?;
+                    let address = self.chandle_target_address(&target);
+                    if is_ref {
+                        out_args.push(IrCallArg::ChandleRefAddr(address));
+                    } else {
+                        out_args.push(IrCallArg::ChandleAddr(address));
+                    }
+                } else if is_chandle {
+                    in_args.push(IrCallArg::ChandleVal(
+                        self.lower_chandle(path, bound[idx].expr)?,
+                    ));
+                } else {
+                    let (_, value) = self.lower_bound_arg_code(
+                        path,
+                        &meta.formals,
+                        &bound,
+                        idx,
+                        &mut arg_codes,
+                        &mut arg_irs,
+                    )?;
+                    in_args.push(IrCallArg::Val(value));
+                }
+            }
+            out_args.extend(in_args);
             return Ok(IrChandleExpr::Call {
                 function: meta.ir,
-                args,
+                args: out_args,
                 depth: parse_depth(&self.depth_arg),
             });
         }
@@ -385,7 +555,8 @@ impl Codegen<'_> {
             ..
         } = self.kind(node)
         {
-            let ft = self.resolve_callee(self.inst, &self.node(node).name, false, *callee)?;
+            let (ft, _) =
+                self.resolve_callee_env(self.inst, &self.node(node).name, false, *callee)?;
             let meta = self
                 .func_meta
                 .get(&ft)
@@ -397,35 +568,107 @@ impl Codegen<'_> {
                     self.node(ft).name
                 ));
             }
-            if meta.formals.iter().any(|(formal, is_out)| {
-                *is_out
-                    || !matches!(self.kind(*formal), NodeKind::FuncArg { ty, .. } if ty.width.is_some() && ty.kind != "string" && ty.kind != "chandle")
-            }) {
-                return Err(format!(
-                    "string function `{}` must have only packed input formals",
-                    self.node(ft).name
-                ));
-            }
             let formals = meta.formals.clone();
             let actuals = self.node(node).children.clone();
             let bound = self.bind_call_args(self.inst, &formals, &actuals)?;
             let mut arg_codes = vec![None; formals.len()];
             let mut arg_irs = vec![None; formals.len()];
-            let mut args = Vec::with_capacity(formals.len());
-            for idx in 0..formals.len() {
-                let (_, arg) = self.lower_bound_arg_code(
-                    path,
-                    &formals,
-                    &bound,
-                    idx,
-                    &mut arg_codes,
-                    &mut arg_irs,
-                )?;
-                args.push(arg);
+            let mut out_args = Vec::new();
+            let mut in_args = Vec::new();
+            for (idx, (io, is_out)) in formals.iter().enumerate() {
+                let is_ref = matches!(
+                    self.kind(*io),
+                    NodeKind::FuncArg { direction: DbDirection::Ref, .. }
+                );
+                if is_ref {
+                    if !bound[idx].string {
+                        return Err(format!(
+                            "string-returning function `{}` only supports string ref formals",
+                            self.node(ft).name
+                        ));
+                    }
+                    let const_ref = matches!(
+                        self.kind(*io),
+                        NodeKind::FuncArg { const_ref: true, .. }
+                    );
+                    if !const_ref {
+                        self.ensure_string_actual_writable(path, bound[idx].expr)?;
+                    }
+                    let addr = self.lower_string_actual_address(path, bound[idx].expr)?;
+                    out_args.push(IrCallArg::StringRefAddr { addr, const_ref });
+                } else if *is_out {
+                    if !bound[idx].string {
+                        return Err(format!(
+                            "string-returning function `{}` does not support packed output formals",
+                            self.node(ft).name
+                        ));
+                    }
+                    self.ensure_string_actual_writable(path, bound[idx].expr)?;
+                    let writeback = self.lower_string_actual_address(path, bound[idx].expr)?;
+                    let init = matches!(
+                        self.kind(*io),
+                        NodeKind::FuncArg { direction: DbDirection::Inout, .. }
+                    )
+                    .then(|| self.lower_string(path, bound[idx].expr))
+                    .transpose()?;
+                    let (storage_addr, storage_read) = self
+                        .static_string_formals
+                        .get(&(self.inst, *io))
+                        .map(|object| {
+                            (
+                                Some(format!("&{}", self.model.objects[*object].c_name)),
+                                Some(Box::new(IrStringExpr::Read(*object))),
+                            )
+                        })
+                        .unwrap_or((None, None));
+                    out_args.push(IrCallArg::StringOutTemp {
+                        name: format!("_st{}_{}", node.0, idx),
+                        init: init.map(Box::new),
+                        writeback,
+                        storage_addr,
+                        storage_read,
+                    });
+                } else if bound[idx].string {
+                    in_args.push(IrCallArg::StringVal(self.lower_string(path, bound[idx].expr)?));
+                } else {
+                    let (_, arg) = self.lower_bound_arg_code(
+                        path,
+                        &formals,
+                        &bound,
+                        idx,
+                        &mut arg_codes,
+                        &mut arg_irs,
+                    )?;
+                    in_args.push(IrCallArg::Val(arg));
+                }
             }
-            return Ok(IrStringExpr::Call {
+            out_args.extend(in_args);
+            let typed = out_args.iter().any(|arg| {
+                matches!(
+                    arg,
+                    IrCallArg::StringVal(_)
+                        | IrCallArg::StringOutAddr(_)
+                        | IrCallArg::StringRefAddr { .. }
+                        | IrCallArg::StringOutTemp { .. }
+                )
+            });
+            if !typed {
+                let args = out_args
+                    .into_iter()
+                    .map(|arg| match arg {
+                        IrCallArg::Val(value) => Ok(value),
+                        _ => Err("internal non-packed argument in string call".to_owned()),
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                return Ok(IrStringExpr::Call {
+                    function: meta.ir,
+                    args,
+                    depth: parse_depth(&self.depth_arg),
+                });
+            }
+            return Ok(IrStringExpr::TypedCall {
                 function: meta.ir,
-                args,
+                args: out_args,
                 depth: parse_depth(&self.depth_arg),
             });
         }
@@ -436,6 +679,17 @@ impl Codegen<'_> {
             return Err("chandle cannot be converted to string".to_owned());
         }
         match self.kind(node) {
+            NodeKind::SysCall { name } if name == "$typename" => {
+                let [argument] = self.node(node).children.as_slice() else {
+                    return Err(format!("$typename requires exactly one argument in `{path}`"));
+                };
+                let descriptor = self.query_descriptor(*argument).ok_or_else(|| {
+                    format!(
+                        "$typename argument has no owned type metadata in `{path}`"
+                    )
+                })?;
+                Ok(IrStringExpr::Literal(descriptor.name.as_bytes().to_vec()))
+            }
             NodeKind::Expr(ExprKind::Constant { const_type: ConstantType::String, value, .. }) => Ok(IrStringExpr::Literal(decoded_string_bytes(value)?)),
             NodeKind::Expr(ExprKind::Ref {target:Some(target)}) if matches!(self.kind(*target),NodeKind::Param {ty,..} if ty.kind=="string") => self.lower_string(path,*target),
             NodeKind::Param {ty,value,..} if ty.kind=="string" => {
@@ -447,11 +701,19 @@ impl Codegen<'_> {
             NodeKind::Expr(ExprKind::Cast { operand, ty, .. }) if ty.kind == "string" => {
                 let operand = *operand;
                 if self.is_string_expr(path,operand) { return self.lower_string(path,operand); }
+                if let NodeKind::Expr(ExprKind::Constant {
+                    const_type: ConstantType::String,
+                    value,
+                    ..
+                }) = self.kind(operand)
+                {
+                    return Ok(IrStringExpr::Literal(decoded_string_bytes(value)?));
+                }
                 let value = self.lower_expr(path,operand)?;
                 if value.is_real() { return Err("real to string cast is unsupported".to_owned()); }
                 Ok(IrStringExpr::FromPacked(Box::new(value)))
             }
-            NodeKind::Expr(ExprKind::Operation {op,operands,reordered}) if matches!(op, Operation::Concat | Operation::MultiConcat) => {
+            NodeKind::Expr(ExprKind::Operation {op,operands,reordered,..}) if matches!(op, Operation::Concat | Operation::MultiConcat) => {
                 let repeat = *op == Operation::MultiConcat;
                 let mut operands = operands.clone();
                 if *reordered { operands.reverse(); }
@@ -487,9 +749,7 @@ impl Codegen<'_> {
             NodeKind::Expr(ExprKind::Operation { op, operands, .. })
                 if *op == Operation::LogicalNot
                     && operands.len() == 1
-                    && self
-                        .object_of(path, operands[0])
-                        .is_some_and(|i| self.model.objects[i].ty == IrObjectType::Chandle) =>
+                    && self.is_chandle_expr(path, operands[0]) =>
             {
                 (
                     IrObjectQuery::ChandleEq(
@@ -578,10 +838,9 @@ impl Codegen<'_> {
             NodeKind::Expr(ExprKind::Operation { op, operands, .. }) if operands.len() == 2 => {
                 let op = *op;
                 let (a, b) = (operands[0], operands[1]);
-                let is_chandle = [a, b].iter().any(|node| {
-                    self.object_of(path, *node)
-                        .is_some_and(|i| self.model.objects[i].ty == IrObjectType::Chandle)
-                });
+                let is_chandle = [a, b]
+                    .iter()
+                    .any(|node| self.is_chandle_expr(path, *node));
                 if is_chandle {
                     if matches!(op, Operation::LogicalAnd | Operation::LogicalOr) {
                         let a = self.lower_boolean_expr(path, a)?;
@@ -737,7 +996,16 @@ impl Codegen<'_> {
                     .flatten()
                 })
         });
+        let string_const_ref = self.func.as_ref().is_some_and(|function| {
+            target_node.is_some_and(|target| {
+                function.string_read.contains_key(&target)
+                    && !function.string_write.contains_key(&target)
+            })
+        });
         let index = self.object_of(path, object_node);
+        if string_const_ref && string_target.is_none() {
+            return Err("cannot mutate a const-ref string formal".to_owned());
+        }
         if index.is_none() && chandle_target.is_none() && string_target.is_none() {
             return Ok(None);
         }
@@ -761,8 +1029,12 @@ impl Codegen<'_> {
             })));
         }
         if let Some(target) = string_target {
-            if indexed.is_some() {
-                return Err("string return storage cannot be indexed".to_owned());
+            if let Some((_, position)) = indexed {
+                return Ok(Some(IrStmt::Object(IrObjectStmt::StringPutcLocal(
+                    target,
+                    self.object_int_argument(path, position, 32)?,
+                    self.object_int_argument(path, rhs, 8)?,
+                ))));
             }
             return Ok(Some(IrStmt::Object(IrObjectStmt::StringAssignLocal(
                 target,
@@ -801,11 +1073,46 @@ impl Codegen<'_> {
             } => (name.clone(), *receiver),
             _ => return Err("object method has no receiver".to_owned()),
         };
-        let index = self
-            .object_of(path, receiver)
-            .ok_or("unsupported object method receiver")?;
-        if self.model.objects[index].ty != IrObjectType::String {
-            return Err("chandle has no built-in methods".to_owned());
+        let index = self.object_of(path, receiver);
+        let local = if index.is_none() {
+            let target = match self.kind(receiver) {
+                NodeKind::Expr(ExprKind::Ref { target: Some(target) }) => Some(*target),
+                _ => Some(receiver),
+            };
+            self.func.as_ref().and_then(|function| {
+                target
+                    .and_then(|target| function.string_write.get(&target).cloned())
+                    .or_else(|| {
+                        function
+                            .string_write
+                            .iter()
+                            .find(|(target, _)| self.node(**target).name == self.node(receiver).name)
+                            .map(|(_, value)| value.clone())
+                    })
+            })
+        } else {
+            None
+        };
+        if index.is_none() && local.is_none() {
+            let const_ref = self.func.as_ref().is_some_and(|function| {
+                let target = match self.kind(receiver) {
+                    NodeKind::Expr(ExprKind::Ref { target: Some(target) }) => Some(*target),
+                    _ => Some(receiver),
+                };
+                target.is_some_and(|target| {
+                    function.string_read.contains_key(&target)
+                        && !function.string_write.contains_key(&target)
+                })
+            });
+            if const_ref {
+                return Err("cannot mutate a const-ref string formal".to_owned());
+            }
+            return Err("unsupported object method receiver".to_owned());
+        }
+        if let Some(index) = index {
+            if self.model.objects[index].ty != IrObjectType::String {
+                return Err("chandle has no built-in methods".to_owned());
+            }
         }
         let args = self.node(node).children[1..].to_vec();
         let operation = match (name.as_str(), args.as_slice()) {
@@ -824,23 +1131,36 @@ impl Codegen<'_> {
                         None,
                     )
                 };
-                IrObjectStmt::StringRealtoa(index, value)
+                match index {
+                    Some(index) => IrObjectStmt::StringRealtoa(index, value),
+                    None => IrObjectStmt::StringRealtoaLocal(local.clone().unwrap(), value),
+                }
             }
-            ("putc", [position, value]) => IrObjectStmt::StringPutc(
-                index,
-                self.object_int_argument(path, *position, 32)?,
-                self.object_int_argument(path, *value, 8)?,
-            ),
-            ("itoa" | "hextoa" | "octtoa" | "bintoa", [value]) => IrObjectStmt::StringItoa(
-                index,
-                ir_to_storage(self.lower_expr(path, *value)?, 32, true, false)?,
-                match name.as_str() {
+            ("putc", [position, value]) => match index {
+                Some(index) => IrObjectStmt::StringPutc(
+                    index,
+                    self.object_int_argument(path, *position, 32)?,
+                    self.object_int_argument(path, *value, 8)?,
+                ),
+                None => IrObjectStmt::StringPutcLocal(
+                    local.clone().unwrap(),
+                    self.object_int_argument(path, *position, 32)?,
+                    self.object_int_argument(path, *value, 8)?,
+                ),
+            },
+            ("itoa" | "hextoa" | "octtoa" | "bintoa", [value]) => {
+                let value = ir_to_storage(self.lower_expr(path, *value)?, 32, true, false)?;
+                let base = match name.as_str() {
                     "hextoa" => 16,
                     "octtoa" => 8,
                     "bintoa" => 2,
                     _ => 10,
-                },
-            ),
+                };
+                match index {
+                    Some(index) => IrObjectStmt::StringItoa(index, value, base),
+                    None => IrObjectStmt::StringItoaLocal(local.clone().unwrap(), value, base),
+                }
+            }
             _ => {
                 return Err(format!(
                     "unsupported string statement method or argument count: {name}"
@@ -851,7 +1171,7 @@ impl Codegen<'_> {
     }
 }
 
-fn object_query(query: IrObjectQuery, width: u32, signed: bool) -> IrExpr {
+pub(super) fn object_query(query: IrObjectQuery, width: u32, signed: bool) -> IrExpr {
     IrExpr::new(
         IrExprKind::ObjectQuery(Box::new(query)),
         width,
@@ -869,10 +1189,11 @@ fn c_quoted(value: &str) -> String {
             .collect::<String>()
     )
 }
-fn display_text(value: &str) -> IrStmt {
+fn display_text(value: &str, default_radix: IrDisplayRadix) -> IrStmt {
     IrStmt::Display {
         fmt: c_quoted(&value.replace('%', "%%")),
         args: vec![],
         newline: false,
+        default_radix,
     }
 }

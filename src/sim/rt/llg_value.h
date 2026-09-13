@@ -47,7 +47,35 @@ typedef struct {
     int8_t is_signed;          // signedness for resize/compare
 } sv4_t;
 
-// Equal-strength net resolution modes.  The pure resolver has no scheduler
+// Canonical lvalue descriptor used by subroutine `ref` arguments.  The
+// descriptor always names the original packed storage (`base`); selected
+// aliases retain their source bounds so reads and writes remain immediate and
+// do not require copy-in/copy-out temporaries.
+typedef enum {
+    LLG_REF_WHOLE = 0,
+    LLG_REF_BIT = 1,
+    LLG_REF_PART = 2,
+    LLG_REF_INDEXED = 3,
+    LLG_REF_ARRAY = 4,
+} llg_ref_kind_t;
+
+typedef struct {
+    sv4_t* base;
+    uint32_t width;
+    int8_t is_signed;
+    uint8_t two_state;
+    uint8_t kind;
+    int64_t left;
+    int64_t right;
+    uint64_t index;
+    uint32_t indexed_width;
+    uint8_t indexed_negative;
+    uint64_t array_size;
+} llg_ref_t;
+
+sv4_t llg_ref_read(const llg_ref_t* ref);
+
+// Net resolution modes.  The pure resolver has no scheduler
 // dependency; llg_rt.c is responsible for publishing changes to waiters.
 enum {
     LLG_RESOLVE_WIRE = 0,
@@ -134,6 +162,9 @@ sv4_t sv4_onehot(sv4_t v, int allow_zero); // one-bit predicate, X/Z ignored
 
 int sv4_is_unknown(sv4_t v);      // any bit X or Z
 int sv4_to_bool(sv4_t v);         // != 0 with no unknown bits, else 0
+// Normalize a repeat count without truncating wide values. Unknown, Z, and
+// negative signed counts mean zero iterations; positive counts are unsigned.
+sv4_t sv4_repeat_count(sv4_t v);
 uint64_t sv4_to_u64(sv4_t v);     // low limb; meaningful only when width <= 64
 // Convert a packed index without silently discarding upper bits.  Unknown,
 // negative, and wider-than-uint64 values return UINT64_MAX (always out of
@@ -162,7 +193,10 @@ sv4_t sv4_resolve(const sv4_t* const* drivers, int n_drivers,
 // Resolve direct driver contributions with one strength endpoint for each
 // logic value. An X contribution spans both endpoint ranges; therefore a
 // known value is stable only when a known driver strictly dominates every
-// possible opposite endpoint. Strength arrays contain n_drivers entries.
+// possible opposite endpoint. WAND/WOR use the same ordered endpoints and
+// apply their wired tie rule. TRI0/TRI1 and SUPPLY0/SUPPLY1 add their
+// implicit pull/supply source at the corresponding strength. Strength arrays
+// contain n_drivers entries.
 sv4_t sv4_resolve_strengths(const sv4_t* const* drivers,
                             const uint8_t* strength0,
                             const uint8_t* strength1, int n_drivers,

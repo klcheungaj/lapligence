@@ -328,6 +328,12 @@ pub(super) fn declaration_and_init(
             ),
         },
     };
+    let init = format!(
+        "{init}    {}.contents_dependency = &{}_llg_contents_dep;\n\
+             {}.shape_dependency = &{}_llg_shape_dep;\n\
+             {}.notify = llg_dependency_notify;\n",
+        container.c_name, container.c_name, container.c_name, container.c_name, container.c_name
+    );
     Ok((declaration, init))
 }
 

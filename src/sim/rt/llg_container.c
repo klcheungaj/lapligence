@@ -124,6 +124,11 @@ static void llg_check_same_element_type(uint32_t dst_width, int8_t dst_signed,
         llg_container_fatal("incompatible container element types");
 }
 
+static void llg_notify(llg_container_notify_fn notify, sv4_t* contents,
+                       sv4_t* shape, int change) {
+    if (notify && change) notify(contents, shape, change);
+}
+
 void llg_dyn_init(llg_dyn_array_t* array, uint32_t element_width,
                   int8_t element_signed, int element_two_state) {
     llg_check_element_type(element_width);
@@ -139,9 +144,15 @@ void llg_dyn_destroy(llg_dyn_array_t* array) {
 }
 
 void llg_dyn_delete(llg_dyn_array_t* array) {
+    int changed = array->size != 0;
     free(array->data);
     array->data = NULL;
     array->size = 0;
+    llg_notify(array->notify, array->contents_dependency,
+               array->shape_dependency,
+               changed ? LLG_CONTAINER_CHANGED_CONTENTS |
+                            LLG_CONTAINER_CHANGED_SHAPE
+                       : 0);
 }
 
 static uint64_t llg_dynamic_size(sv4_t value) {
@@ -175,9 +186,25 @@ void llg_dyn_new(llg_dyn_array_t* dst, sv4_t requested_size,
                                         dst->element_signed,
                                         dst->element_two_state);
     for (size_t i = copied; i < size; ++i) data[i] = initial;
+    int shape_changed = dst->size != size;
+    int contents_changed = shape_changed;
+    if (!contents_changed) {
+        for (size_t i = 0; i < size; ++i) {
+            if (!sv4_same(dst->data[i], data[i])) {
+                contents_changed = 1;
+                break;
+            }
+        }
+    }
+    llg_container_notify_fn notify = dst->notify;
+    sv4_t* contents_dependency = dst->contents_dependency;
+    sv4_t* shape_dependency = dst->shape_dependency;
     free(dst->data);
     dst->data = data;
     dst->size = size;
+    llg_notify(notify, contents_dependency, shape_dependency,
+               (contents_changed ? LLG_CONTAINER_CHANGED_CONTENTS : 0) |
+                   (shape_changed ? LLG_CONTAINER_CHANGED_SHAPE : 0));
 }
 
 void llg_dyn_resize(llg_dyn_array_t* array, sv4_t size) {
@@ -196,9 +223,25 @@ void llg_dyn_assign_values(llg_dyn_array_t* dst, const sv4_t* values,
         data[i] = llg_element_assign(values[i], dst->element_width,
                                      dst->element_signed,
                                      dst->element_two_state);
+    int shape_changed = dst->size != count;
+    int contents_changed = shape_changed;
+    if (!contents_changed) {
+        for (size_t i = 0; i < count; ++i) {
+            if (!sv4_same(dst->data[i], data[i])) {
+                contents_changed = 1;
+                break;
+            }
+        }
+    }
+    llg_container_notify_fn notify = dst->notify;
+    sv4_t* contents_dependency = dst->contents_dependency;
+    sv4_t* shape_dependency = dst->shape_dependency;
     free(dst->data);
     dst->data = data;
     dst->size = count;
+    llg_notify(notify, contents_dependency, shape_dependency,
+               (contents_changed ? LLG_CONTAINER_CHANGED_CONTENTS : 0) |
+                   (shape_changed ? LLG_CONTAINER_CHANGED_SHAPE : 0));
 }
 
 size_t llg_dyn_size(const llg_dyn_array_t* array) { return array->size; }
@@ -214,9 +257,13 @@ sv4_t llg_dyn_get(const llg_dyn_array_t* array, sv4_t index) {
 int llg_dyn_set(llg_dyn_array_t* array, sv4_t index, sv4_t value) {
     size_t native;
     if (!llg_index(index, array->size, 0, &native)) return 0;
-    array->data[native] = llg_element_assign(
+    sv4_t assigned = llg_element_assign(
         value, array->element_width, array->element_signed,
         array->element_two_state);
+    if (sv4_same(array->data[native], assigned)) return 1;
+    array->data[native] = assigned;
+    llg_notify(array->notify, array->contents_dependency,
+               array->shape_dependency, LLG_CONTAINER_CHANGED_CONTENTS);
     return 1;
 }
 
@@ -260,7 +307,15 @@ void llg_queue_destroy(llg_queue_t* queue) {
     memset(queue, 0, sizeof(*queue));
 }
 
-void llg_queue_delete(llg_queue_t* queue) { queue->size = 0; }
+void llg_queue_delete(llg_queue_t* queue) {
+    int changed = queue->size != 0;
+    queue->size = 0;
+    llg_notify(queue->notify, queue->contents_dependency,
+               queue->shape_dependency,
+               changed ? LLG_CONTAINER_CHANGED_CONTENTS |
+                            LLG_CONTAINER_CHANGED_SHAPE
+                       : 0);
+}
 
 void llg_queue_copy(llg_queue_t* dst, const llg_queue_t* src) {
     if (dst == src) return;
@@ -268,11 +323,27 @@ void llg_queue_copy(llg_queue_t* dst, const llg_queue_t* src) {
                                 dst->element_two_state, src->element_width,
                                 src->element_signed, src->element_two_state);
     size_t count = src->size < dst->limit ? src->size : dst->limit;
+    int shape_changed = dst->size != count;
+    int contents_changed = shape_changed;
+    if (!contents_changed) {
+        for (size_t i = 0; i < count; ++i) {
+            if (!sv4_same(dst->data[i], src->data[i])) {
+                contents_changed = 1;
+                break;
+            }
+        }
+    }
+    llg_container_notify_fn notify = dst->notify;
+    sv4_t* contents_dependency = dst->contents_dependency;
+    sv4_t* shape_dependency = dst->shape_dependency;
     llg_queue_reserve(dst, count);
     if (count) memcpy(dst->data, src->data, count * sizeof(*dst->data));
     dst->size = count;
     if (count != src->size)
         llg_container_warning("bounded queue assignment discarded tail elements");
+    llg_notify(notify, contents_dependency, shape_dependency,
+               (contents_changed ? LLG_CONTAINER_CHANGED_CONTENTS : 0) |
+                   (shape_changed ? LLG_CONTAINER_CHANGED_SHAPE : 0));
 }
 
 void llg_queue_assign_values(llg_queue_t* dst, const sv4_t* values,
@@ -283,6 +354,19 @@ void llg_queue_assign_values(llg_queue_t* dst, const sv4_t* values,
         data[i] = llg_element_assign(values[i], dst->element_width,
                                      dst->element_signed,
                                      dst->element_two_state);
+    int shape_changed = dst->size != retained;
+    int contents_changed = shape_changed;
+    if (!contents_changed) {
+        for (size_t i = 0; i < retained; ++i) {
+            if (!sv4_same(dst->data[i], data[i])) {
+                contents_changed = 1;
+                break;
+            }
+        }
+    }
+    llg_container_notify_fn notify = dst->notify;
+    sv4_t* contents_dependency = dst->contents_dependency;
+    sv4_t* shape_dependency = dst->shape_dependency;
     free(dst->data);
     dst->data = data;
     dst->size = retained;
@@ -290,6 +374,9 @@ void llg_queue_assign_values(llg_queue_t* dst, const sv4_t* values,
     if (retained != count)
         llg_container_warning(
             "bounded queue assignment pattern discarded tail elements");
+    llg_notify(notify, contents_dependency, shape_dependency,
+               (contents_changed ? LLG_CONTAINER_CHANGED_CONTENTS : 0) |
+                   (shape_changed ? LLG_CONTAINER_CHANGED_SHAPE : 0));
 }
 
 size_t llg_queue_size(const llg_queue_t* queue) { return queue->size; }
@@ -312,12 +399,29 @@ void llg_queue_push_back(llg_queue_t* queue, sv4_t value) {
     queue->data[queue->size++] = llg_element_assign(
         value, queue->element_width, queue->element_signed,
         queue->element_two_state);
+    llg_notify(queue->notify, queue->contents_dependency,
+               queue->shape_dependency,
+               LLG_CONTAINER_CHANGED_CONTENTS | LLG_CONTAINER_CHANGED_SHAPE);
 }
 
 void llg_queue_push_front(llg_queue_t* queue, sv4_t value) {
     if (queue->limit == 0) {
         llg_container_warning("bounded queue push_front discarded new element");
         return;
+    }
+    sv4_t assigned = llg_element_assign(value, queue->element_width,
+                                        queue->element_signed,
+                                        queue->element_two_state);
+    int shape_changed = queue->size < queue->limit;
+    int contents_changed = shape_changed;
+    if (!shape_changed) {
+        for (size_t i = 0; i < queue->size; ++i) {
+            sv4_t expected = i == 0 ? assigned : queue->data[i - 1];
+            if (!sv4_same(queue->data[i], expected)) {
+                contents_changed = 1;
+                break;
+            }
+        }
     }
     if (queue->size < queue->limit) {
         if (queue->size == SIZE_MAX) llg_container_fatal("queue size overflow");
@@ -329,9 +433,11 @@ void llg_queue_push_front(llg_queue_t* queue, sv4_t value) {
     if (queue->size > 1)
         memmove(queue->data + 1, queue->data,
                 (queue->size - 1) * sizeof(*queue->data));
-    queue->data[0] = llg_element_assign(value, queue->element_width,
-                                        queue->element_signed,
-                                        queue->element_two_state);
+    queue->data[0] = assigned;
+    llg_notify(queue->notify, queue->contents_dependency,
+               queue->shape_dependency,
+               (contents_changed ? LLG_CONTAINER_CHANGED_CONTENTS : 0) |
+                   (shape_changed ? LLG_CONTAINER_CHANGED_SHAPE : 0));
 }
 
 int llg_queue_set(llg_queue_t* queue, sv4_t index, sv4_t value) {
@@ -345,9 +451,13 @@ int llg_queue_set(llg_queue_t* queue, sv4_t index, sv4_t value) {
         llg_queue_push_back(queue, value);
         return queue->size != before;
     }
-    queue->data[native] = llg_element_assign(
+    sv4_t assigned = llg_element_assign(
         value, queue->element_width, queue->element_signed,
         queue->element_two_state);
+    if (sv4_same(queue->data[native], assigned)) return 1;
+    queue->data[native] = assigned;
+    llg_notify(queue->notify, queue->contents_dependency,
+               queue->shape_dependency, LLG_CONTAINER_CHANGED_CONTENTS);
     return 1;
 }
 
@@ -362,6 +472,22 @@ int llg_queue_insert(llg_queue_t* queue, sv4_t index, sv4_t value) {
         llg_container_warning("bounded queue insert discarded new element");
         return 0;
     }
+    sv4_t assigned = llg_element_assign(value, queue->element_width,
+                                        queue->element_signed,
+                                        queue->element_two_state);
+    int shape_changed = queue->size < queue->limit;
+    int contents_changed = shape_changed;
+    if (!shape_changed) {
+        for (size_t i = 0; i < queue->size; ++i) {
+            sv4_t expected = i == native
+                                  ? assigned
+                                  : queue->data[i < native ? i : i - 1];
+            if (!sv4_same(queue->data[i], expected)) {
+                contents_changed = 1;
+                break;
+            }
+        }
+    }
     if (queue->size < queue->limit) {
         if (queue->size == SIZE_MAX) llg_container_fatal("queue size overflow");
         llg_queue_reserve(queue, queue->size + 1);
@@ -372,9 +498,11 @@ int llg_queue_insert(llg_queue_t* queue, sv4_t index, sv4_t value) {
     if (native + 1 < queue->size)
         memmove(queue->data + native + 1, queue->data + native,
                 (queue->size - native - 1) * sizeof(*queue->data));
-    queue->data[native] = llg_element_assign(
-        value, queue->element_width, queue->element_signed,
-        queue->element_two_state);
+    queue->data[native] = assigned;
+    llg_notify(queue->notify, queue->contents_dependency,
+               queue->shape_dependency,
+               (contents_changed ? LLG_CONTAINER_CHANGED_CONTENTS : 0) |
+                   (shape_changed ? LLG_CONTAINER_CHANGED_SHAPE : 0));
     return 1;
 }
 
@@ -385,6 +513,9 @@ int llg_queue_delete_index(llg_queue_t* queue, sv4_t index) {
         memmove(queue->data + native, queue->data + native + 1,
                 (queue->size - native - 1) * sizeof(*queue->data));
     --queue->size;
+    llg_notify(queue->notify, queue->contents_dependency,
+               queue->shape_dependency,
+               LLG_CONTAINER_CHANGED_CONTENTS | LLG_CONTAINER_CHANGED_SHAPE);
     return 1;
 }
 
@@ -395,13 +526,23 @@ sv4_t llg_queue_pop_front(llg_queue_t* queue) {
             memmove(queue->data, queue->data + 1,
                     (queue->size - 1) * sizeof(*queue->data));
         --queue->size;
+        llg_notify(queue->notify, queue->contents_dependency,
+                   queue->shape_dependency,
+                   LLG_CONTAINER_CHANGED_CONTENTS |
+                       LLG_CONTAINER_CHANGED_SHAPE);
     }
     return result;
 }
 
 sv4_t llg_queue_pop_back(llg_queue_t* queue) {
     sv4_t result = llg_queue_back(queue);
-    if (queue->size) --queue->size;
+    if (queue->size) {
+        --queue->size;
+        llg_notify(queue->notify, queue->contents_dependency,
+                   queue->shape_dependency,
+                   LLG_CONTAINER_CHANGED_CONTENTS |
+                       LLG_CONTAINER_CHANGED_SHAPE);
+    }
     return result;
 }
 
@@ -457,13 +598,22 @@ void llg_assoc_init_string(llg_assoc_t* array, uint32_t element_width,
 }
 
 void llg_assoc_delete(llg_assoc_t* array) {
+    int changed = array->size != 0;
     for (size_t i = 0; i < array->size; ++i)
         free(array->entries[i].string_key);
     array->size = 0;
+    llg_notify(array->notify, array->contents_dependency,
+               array->shape_dependency,
+               changed ? LLG_CONTAINER_CHANGED_CONTENTS |
+                            LLG_CONTAINER_CHANGED_SHAPE
+                       : 0);
 }
 
 void llg_assoc_destroy(llg_assoc_t* array) {
+    llg_container_notify_fn notify = array->notify;
+    array->notify = NULL;
     llg_assoc_delete(array);
+    array->notify = notify;
     free(array->entries);
     memset(array, 0, sizeof(*array));
 }
@@ -577,6 +727,13 @@ int llg_assoc_set_integral(llg_assoc_t* array, sv4_t key, sv4_t value) {
     }
     int found;
     size_t position = llg_assoc_integral_position(array, normalized, &found);
+    sv4_t assigned = llg_element_assign(
+        value, array->element_width, array->element_signed,
+        array->element_two_state);
+    int shape_changed = !found;
+    int contents_changed = !found;
+    if (found && !sv4_same(array->entries[position].value, assigned))
+        contents_changed = 1;
     if (!found) {
         if (array->size == SIZE_MAX)
             llg_container_fatal("associative-array size overflow");
@@ -588,9 +745,11 @@ int llg_assoc_set_integral(llg_assoc_t* array, sv4_t key, sv4_t value) {
         array->entries[position].integral_key = normalized;
         ++array->size;
     }
-    array->entries[position].value = llg_element_assign(
-        value, array->element_width, array->element_signed,
-        array->element_two_state);
+    array->entries[position].value = assigned;
+    llg_notify(array->notify, array->contents_dependency,
+               array->shape_dependency,
+               (contents_changed ? LLG_CONTAINER_CHANGED_CONTENTS : 0) |
+                   (shape_changed ? LLG_CONTAINER_CHANGED_SHAPE : 0));
     return 1;
 }
 
@@ -612,6 +771,9 @@ int llg_assoc_delete_integral(llg_assoc_t* array, sv4_t key) {
         memmove(array->entries + position, array->entries + position + 1,
                 (array->size - position - 1) * sizeof(*array->entries));
     --array->size;
+    llg_notify(array->notify, array->contents_dependency,
+               array->shape_dependency,
+               LLG_CONTAINER_CHANGED_CONTENTS | LLG_CONTAINER_CHANGED_SHAPE);
     return 1;
 }
 
@@ -705,6 +867,13 @@ int llg_assoc_set_string(llg_assoc_t* array, const void* key, size_t key_length,
     llg_check_string_key(array, key, key_length);
     int found;
     size_t position = llg_assoc_string_position(array, key, key_length, &found);
+    sv4_t assigned = llg_element_assign(
+        value, array->element_width, array->element_signed,
+        array->element_two_state);
+    int shape_changed = !found;
+    int contents_changed = !found;
+    if (found && !sv4_same(array->entries[position].value, assigned))
+        contents_changed = 1;
     if (!found) {
         if (array->size == SIZE_MAX)
             llg_container_fatal("associative-array size overflow");
@@ -719,9 +888,11 @@ int llg_assoc_set_string(llg_assoc_t* array, const void* key, size_t key_length,
         array->entries[position].string_length = key_length;
         ++array->size;
     }
-    array->entries[position].value = llg_element_assign(
-        value, array->element_width, array->element_signed,
-        array->element_two_state);
+    array->entries[position].value = assigned;
+    llg_notify(array->notify, array->contents_dependency,
+               array->shape_dependency,
+               (contents_changed ? LLG_CONTAINER_CHANGED_CONTENTS : 0) |
+                   (shape_changed ? LLG_CONTAINER_CHANGED_SHAPE : 0));
     return 1;
 }
 
@@ -744,6 +915,9 @@ int llg_assoc_delete_string(llg_assoc_t* array, const void* key,
         memmove(array->entries + position, array->entries + position + 1,
                 (array->size - position - 1) * sizeof(*array->entries));
     --array->size;
+    llg_notify(array->notify, array->contents_dependency,
+               array->shape_dependency,
+               LLG_CONTAINER_CHANGED_CONTENTS | LLG_CONTAINER_CHANGED_SHAPE);
     return 1;
 }
 
@@ -805,6 +979,37 @@ void llg_assoc_copy(llg_assoc_t* dst, const llg_assoc_t* src) {
         dst->key_two_state != src->key_two_state)
         llg_container_fatal("incompatible associative-array index types");
 
+    int shape_changed = dst->size != src->size;
+    int contents_changed = shape_changed;
+    if (!contents_changed) {
+        for (size_t i = 0; i < src->size; ++i) {
+            int key_changed;
+            if (src->key_kind == LLG_ASSOC_INTEGRAL) {
+                key_changed = !sv4_same(dst->entries[i].integral_key,
+                                        src->entries[i].integral_key);
+            } else {
+                key_changed = dst->entries[i].string_length !=
+                                  src->entries[i].string_length ||
+                              (src->entries[i].string_length &&
+                               memcmp(dst->entries[i].string_key,
+                                      src->entries[i].string_key,
+                                      src->entries[i].string_length) != 0);
+            }
+            if (key_changed) {
+                shape_changed = 1;
+                contents_changed = 1;
+                break;
+            }
+            if (!sv4_same(dst->entries[i].value, src->entries[i].value)) {
+                contents_changed = 1;
+                break;
+            }
+        }
+    }
+    llg_container_notify_fn notify = dst->notify;
+    sv4_t* contents_dependency = dst->contents_dependency;
+    sv4_t* shape_dependency = dst->shape_dependency;
+
     llg_assoc_entry_t* entries = llg_alloc_items(src->size, sizeof(*entries));
     if (src->size) memset(entries, 0, src->size * sizeof(*entries));
     for (size_t i = 0; i < src->size; ++i) {
@@ -818,9 +1023,14 @@ void llg_assoc_copy(llg_assoc_t* dst, const llg_assoc_t* src) {
                    src->entries[i].string_length);
         }
     }
+    dst->notify = NULL;
     llg_assoc_delete(dst);
+    dst->notify = notify;
     free(dst->entries);
     dst->entries = entries;
     dst->size = src->size;
     dst->capacity = src->size;
+    llg_notify(notify, contents_dependency, shape_dependency,
+               (contents_changed ? LLG_CONTAINER_CHANGED_CONTENTS : 0) |
+                   (shape_changed ? LLG_CONTAINER_CHANGED_SHAPE : 0));
 }

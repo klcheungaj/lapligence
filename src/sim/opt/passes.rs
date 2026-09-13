@@ -30,8 +30,10 @@ use std::collections::HashSet;
 use crate::core::elab::{self, Bit, Value};
 use crate::sim::execution::{ExecutionModel, ExecutionProcess, TriggerPlan};
 use crate::sim::ir::{
-    IrBinOp, IrCallArg, IrCaseKind, IrConst, IrElemSel, IrExpr, IrExprKind, IrInsideItem, IrLhs,
-    IrModel, IrPreFn, IrRealBinOp, IrRealUnOp, IrStmt, IrSysFunc, IrUnOp, IrWaitSrc,
+    IrBinOp, IrCallArg, IrCaseKind, IrConst, IrDependency, IrElemSel, IrExpr, IrExprKind,
+    IrFormal, IrInsideItem, IrLhs, IrModel, IrPreFn, IrProcessKind, IrRealBinOp, IrRealUnOp,
+    IrStmt,
+    IrSysFunc, IrUnOp, IrWaitSrc,
 };
 
 /// Run the enabled passes over `model` in a fixed order.
@@ -98,7 +100,7 @@ fn prune_model_control(model: &mut IrModel) {
     for process in &mut model.processes {
         prune_stmt_list(&mut process.body);
         for pre in &mut process.pre_fns {
-            if let IrPreFn::Branch { body, .. } = pre {
+            if let IrPreFn::Branch { body, .. } | IrPreFn::CapturedBranch { body, .. } = pre {
                 prune_stmt_list(body);
             }
         }
@@ -107,7 +109,7 @@ fn prune_model_control(model: &mut IrModel) {
         // `-Wall` clean.
         strip_unreferenced_labels(&mut process.body);
         for pre in &mut process.pre_fns {
-            if let IrPreFn::Branch { body, .. } = pre {
+            if let IrPreFn::Branch { body, .. } | IrPreFn::CapturedBranch { body, .. } = pre {
                 strip_unreferenced_labels(body);
             }
         }
@@ -115,13 +117,13 @@ fn prune_model_control(model: &mut IrModel) {
     for function in &mut model.funcs {
         prune_stmt_list(&mut function.body);
         for pre in &mut function.pre_fns {
-            if let IrPreFn::Branch { body, .. } = pre {
+            if let IrPreFn::Branch { body, .. } | IrPreFn::CapturedBranch { body, .. } = pre {
                 prune_stmt_list(body);
             }
         }
         strip_unreferenced_labels(&mut function.body);
         for pre in &mut function.pre_fns {
-            if let IrPreFn::Branch { body, .. } = pre {
+            if let IrPreFn::Branch { body, .. } | IrPreFn::CapturedBranch { body, .. } = pre {
                 strip_unreferenced_labels(body);
             }
         }
@@ -275,15 +277,50 @@ fn walk_call_args_mut(args: &mut [IrCallArg], f: &mut impl FnMut(&mut IrExpr)) {
     for arg in args {
         match arg {
             IrCallArg::Val(e) => walk_expr_mut(e, f),
+            IrCallArg::StringVal(value) => {
+                value.expressions_mut(&mut |child| walk_expr_mut(child, f));
+            }
             IrCallArg::OutTemp {
-                init, writeback, ..
+                init,
+                writeback,
+                storage_lhs,
+                storage_read,
+                selector_inits,
+                ..
             } => {
                 if let Some(init) = init {
                     walk_expr_mut(init, f);
                 }
                 walk_lhs_mut(writeback, f);
+                if let Some(storage_lhs) = storage_lhs {
+                    walk_lhs_mut(storage_lhs, f);
+                }
+                if let Some(storage_read) = storage_read {
+                    walk_expr_mut(storage_read, f);
+                }
+                for (_, _, _, _, init) in selector_inits {
+                    walk_expr_mut(init, f);
+                }
             }
             IrCallArg::OutAddr(_) => {}
+            IrCallArg::StringOutAddr(_) | IrCallArg::StringRefAddr { .. } => {}
+            IrCallArg::RefAddr { read, lhs, .. } => {
+                walk_expr_mut(read, f);
+                walk_lhs_mut(lhs, f);
+            }
+            IrCallArg::StringOutTemp {
+                init,
+                storage_read,
+                ..
+            } => {
+                if let Some(init) = init {
+                    init.expressions_mut(&mut |child| walk_expr_mut(child, f));
+                }
+                if let Some(read) = storage_read {
+                    read.expressions_mut(&mut |child| walk_expr_mut(child, f));
+                }
+            }
+            IrCallArg::ChandleVal(_) | IrCallArg::ChandleAddr(_) | IrCallArg::ChandleRefAddr(_) => {}
         }
     }
 }
@@ -356,6 +393,10 @@ fn walk_expr_mut(e: &mut IrExpr, f: &mut impl FnMut(&mut IrExpr)) {
             }
         }
         IrExprKind::CallFn(call) => walk_call_args_mut(&mut call.args, f),
+        IrExprKind::Mutation(mutation) => {
+            walk_lhs_mut(&mut mutation.lhs, f);
+            walk_expr_mut(&mut mutation.value, f);
+        }
         IrExprKind::SysFunc(sf) => match sf {
             IrSysFunc::Clog2(a)
             | IrSysFunc::Bits(a)
@@ -390,7 +431,9 @@ fn walk_stmt_mut(s: &mut IrStmt, f: &mut impl FnMut(&mut IrExpr)) {
         IrStmt::Object(operation) => {
             operation.expressions_mut(&mut |child| walk_expr_mut(child, f))
         }
-        IrStmt::Block(b) | IrStmt::Forever { body: b } => walk_stmts_mut(b, f),
+        IrStmt::Block(b)
+        | IrStmt::Forever { body: b }
+        | IrStmt::ActivationScope { body: b, .. } => walk_stmts_mut(b, f),
         IrStmt::Repeat { count, body } => {
             walk_expr_mut(count, f);
             walk_stmts_mut(body, f);
@@ -403,6 +446,12 @@ fn walk_stmt_mut(s: &mut IrStmt, f: &mut impl FnMut(&mut IrExpr)) {
         | IrStmt::InertialAssign { lhs, rhs, .. } => {
             walk_lhs_mut(lhs, f);
             walk_expr_mut(rhs, f);
+        }
+        IrStmt::DelayedStringAssign { rhs, .. } => {
+            rhs.expressions_mut(&mut |expr| walk_expr_mut(expr, f));
+        }
+        IrStmt::PcaAssign { value, .. } | IrStmt::PcaDrive { value, .. } => {
+            walk_expr_mut(value, f);
         }
         IrStmt::If { cond, then_, els } => {
             walk_expr_mut(cond, f);
@@ -418,6 +467,11 @@ fn walk_stmt_mut(s: &mut IrStmt, f: &mut impl FnMut(&mut IrExpr)) {
         IrStmt::WaitCond { cond, body, .. } => {
             walk_expr_mut(cond, f);
             walk_stmts_mut(body, f);
+        }
+        IrStmt::WaitEventTriggered { body, .. } => walk_stmts_mut(body, f),
+        IrStmt::WaitOrder { success, failure, .. } => {
+            walk_stmts_mut(success, f);
+            walk_stmts_mut(failure, f);
         }
         IrStmt::For {
             init,
@@ -439,10 +493,25 @@ fn walk_stmt_mut(s: &mut IrStmt, f: &mut impl FnMut(&mut IrExpr)) {
                 walk_stmts_mut(&mut item.body, f);
             }
         }
-        IrStmt::Force { value, .. } => walk_expr_mut(value, f),
+        IrStmt::CapturedFork { branches, .. } => {
+            for branch in branches {
+                for capture in &mut branch.captures {
+                    walk_expr_mut(capture.initial_mut(), f);
+                }
+            }
+        }
+        IrStmt::Force { lhs, value, .. } => {
+            walk_lhs_mut(lhs, f);
+            walk_expr_mut(value, f);
+        }
         IrStmt::Display { args, .. } => {
             for (e, _) in args {
                 walk_expr_mut(e, f);
+            }
+        }
+        IrStmt::DisplayTyped { args, .. } => {
+            for arg in args {
+                arg.expressions_mut(&mut |expression| walk_expr_mut(expression, f));
             }
         }
         IrStmt::WaveLimit(limit) => walk_expr_mut(limit, f),
@@ -473,11 +542,38 @@ fn walk_stmts_mut(stmts: &mut [IrStmt], f: &mut impl FnMut(&mut IrExpr)) {
 fn walk_pre_fn_mut(pre: &mut IrPreFn, f: &mut impl FnMut(&mut IrExpr)) {
     match pre {
         IrPreFn::Branch { body, .. } => walk_stmts_mut(body, f),
-        IrPreFn::MonEval { args, .. } => {
+        IrPreFn::CapturedBranch { captures, body, .. } => {
+            for capture in captures {
+                walk_expr_mut(capture.initial_mut(), f);
+            }
+            walk_stmts_mut(body, f);
+        }
+        IrPreFn::MonEval { args, context, .. } => {
             for e in args {
                 walk_expr_mut(e, f);
             }
+            if let Some(context) = context {
+                for capture in context.captures_mut() {
+                    walk_expr_mut(capture.initial_mut(), f);
+                }
+            }
         }
+        IrPreFn::DisplayEval { args, .. } => {
+            for arg in args {
+                arg.expressions_mut(&mut |expression| walk_expr_mut(expression, f));
+            }
+        }
+        IrPreFn::RealEval {
+            value, context, ..
+        } => {
+            walk_expr_mut(value, f);
+            if let Some(context) = context {
+                for capture in context.captures_mut() {
+                    walk_expr_mut(capture.initial_mut(), f);
+                }
+            }
+        }
+        IrPreFn::ForceEval { value, .. } => walk_expr_mut(value, f),
     }
 }
 
@@ -498,6 +594,11 @@ fn walk_model_exprs_mut(model: &mut IrModel, f: &mut impl FnMut(&mut IrExpr)) {
             walk_pre_fn_mut(pre, f);
         }
         walk_stmts_mut(&mut p.body, f);
+    }
+    for step in &mut model.init_steps {
+        if let crate::sim::ir::IrInitStep::Initialize(initialization) = step {
+            walk_expr_mut(&mut initialization.value, f);
+        }
     }
 }
 
@@ -750,6 +851,10 @@ fn ident_children(e: &mut IrExpr) {
             }
         }
         IrExprKind::Stream { value, .. } => ident_expr(value),
+        IrExprKind::Mutation(mutation) => {
+            walk_lhs_mut(&mut mutation.lhs, &mut |child| ident_expr(child));
+            ident_expr(&mut mutation.value);
+        }
         IrExprKind::Inside { value, items } => {
             ident_expr(value);
             for item in items {
@@ -791,15 +896,53 @@ fn ident_children(e: &mut IrExpr) {
             for arg in &mut call.args {
                 match arg {
                     IrCallArg::Val(ex) => ident_expr(ex),
+                    IrCallArg::StringVal(value) => {
+                        value.expressions_mut(&mut |child| ident_expr(child));
+                    }
                     IrCallArg::OutTemp {
-                        init, writeback, ..
+                        init,
+                        writeback,
+                        storage_lhs,
+                        storage_read,
+                        selector_inits,
+                        ..
                     } => {
                         if let Some(init) = init {
                             ident_expr(init);
                         }
                         ident_lhs(writeback);
+                        if let Some(storage_lhs) = storage_lhs {
+                            ident_lhs(storage_lhs);
+                        }
+                        if let Some(storage_read) = storage_read {
+                            ident_expr(storage_read);
+                        }
+                        for (_, _, _, _, init) in selector_inits {
+                            ident_expr(init);
+                        }
                     }
-                    IrCallArg::OutAddr(_) => {}
+            IrCallArg::OutAddr(_)
+            | IrCallArg::StringOutAddr(_)
+            | IrCallArg::StringRefAddr { .. }
+            | IrCallArg::ChandleVal(_)
+            | IrCallArg::ChandleAddr(_)
+            | IrCallArg::ChandleRefAddr(_) => {}
+            IrCallArg::RefAddr { read, lhs, .. } => {
+                ident_expr(read);
+                ident_lhs(lhs);
+            }
+                    IrCallArg::StringOutTemp {
+                        init,
+                        storage_read,
+                        ..
+                    } => {
+                        if let Some(init) = init {
+                            init.expressions_mut(&mut |child| ident_expr(child));
+                        }
+                        if let Some(read) = storage_read {
+                            read.expressions_mut(&mut |child| ident_expr(child));
+                        }
+                    }
                 }
             }
         }
@@ -995,7 +1138,7 @@ fn prune_stmt_list(stmts: &mut Vec<IrStmt>) {
 
 fn prune_nested_in_place(s: &mut IrStmt) {
     match s {
-        IrStmt::Block(b) => prune_stmt_list(b),
+        IrStmt::Block(b) | IrStmt::ActivationScope { body: b, .. } => prune_stmt_list(b),
         IrStmt::If { then_, els, .. } => {
             prune_stmt_list(then_);
             if let Some(els) = els {
@@ -1021,6 +1164,11 @@ fn prune_nested_in_place(s: &mut IrStmt) {
             }
             _ => prune_stmt_list(body),
         },
+        IrStmt::WaitEventTriggered { body, .. } => prune_stmt_list(body),
+        IrStmt::WaitOrder { success, failure, .. } => {
+            prune_stmt_list(success);
+            prune_stmt_list(failure);
+        }
         IrStmt::Repeat { body, .. } | IrStmt::Forever { body } => prune_stmt_list(body),
         IrStmt::For {
             init, incr, body, ..
@@ -1051,7 +1199,9 @@ fn collect_goto_names(stmts: &[IrStmt], out: &mut HashSet<String>) {
             IrStmt::Goto(l) => {
                 out.insert(l.clone());
             }
-            IrStmt::Block(b) | IrStmt::Forever { body: b } => collect_goto_names(b, out),
+        IrStmt::Block(b)
+        | IrStmt::Forever { body: b }
+        | IrStmt::ActivationScope { body: b, .. } => collect_goto_names(b, out),
             IrStmt::If { then_, els, .. } => {
                 collect_goto_names(then_, out);
                 if let Some(els) = els {
@@ -1073,7 +1223,12 @@ fn collect_goto_names(stmts: &[IrStmt], out: &mut HashSet<String>) {
                     collect_goto_names(&item.body, out);
                 }
             }
-            IrStmt::WaitCond { body: b, .. } => collect_goto_names(b, out),
+        IrStmt::WaitCond { body: b, .. } => collect_goto_names(b, out),
+        IrStmt::WaitEventTriggered { body: b, .. } => collect_goto_names(b, out),
+        IrStmt::WaitOrder { success, failure, .. } => {
+            collect_goto_names(success, out);
+            collect_goto_names(failure, out);
+        }
             _ => {}
         }
     }
@@ -1094,7 +1249,9 @@ fn strip_labels_in(stmts: &mut Vec<IrStmt>, referenced: &HashSet<String>) {
     stmts.retain(|s| !matches!(s, IrStmt::Label(l) if !referenced.contains(l)));
     for s in stmts.iter_mut() {
         match s {
-            IrStmt::Block(b) | IrStmt::Forever { body: b } => strip_labels_in(b, referenced),
+            IrStmt::Block(b)
+            | IrStmt::Forever { body: b }
+            | IrStmt::ActivationScope { body: b, .. } => strip_labels_in(b, referenced),
             IrStmt::If { then_, els, .. } => {
                 strip_labels_in(then_, referenced);
                 if let Some(els) = els {
@@ -1117,6 +1274,11 @@ fn strip_labels_in(stmts: &mut Vec<IrStmt>, referenced: &HashSet<String>) {
                 }
             }
             IrStmt::WaitCond { body: b, .. } => strip_labels_in(b, referenced),
+            IrStmt::WaitEventTriggered { body: b, .. } => strip_labels_in(b, referenced),
+            IrStmt::WaitOrder { success, failure, .. } => {
+                strip_labels_in(success, referenced);
+                strip_labels_in(failure, referenced);
+            }
             _ => {}
         }
     }
@@ -1222,6 +1384,18 @@ impl Rw {
     }
 }
 
+fn mark_dependency_read(dependency: &IrDependency, model: &IrModel, rw: &mut Rw) {
+    if let IrDependency::Scalar(name) | IrDependency::Real(name) = dependency {
+        if let Some(i) = model
+            .signals
+            .iter()
+            .position(|signal| signal.c_name == *name)
+        {
+            rw.read(i);
+        }
+    }
+}
+
 fn mark_unused_storage(model: &mut IrModel, execution: Option<&[ExecutionProcess]>) {
     let mut rw = Rw::default();
     for object in &model.objects {
@@ -1231,7 +1405,7 @@ fn mark_unused_storage(model: &mut IrModel, execution: Option<&[ExecutionProcess
     }
     // Sensitivity lists and link sources are reads (plain globals only;
     // array-element addresses carry brackets and match nothing).
-    let mut sens: Vec<String> = Vec::new();
+    let mut sens: Vec<IrDependency> = Vec::new();
     for p in &model.processes {
         if let crate::sim::ir::IrShape::SensLoop { reads } = &p.shape {
             sens.extend(reads.iter().cloned());
@@ -1240,7 +1414,7 @@ fn mark_unused_storage(model: &mut IrModel, execution: Option<&[ExecutionProcess
             sens_lists_of(x, &mut sens);
         }
         for pre in &p.pre_fns {
-            if let IrPreFn::Branch { body, .. } = pre {
+            if let IrPreFn::Branch { body, .. } | IrPreFn::CapturedBranch { body, .. } = pre {
                 for x in body {
                     sens_lists_of(x, &mut sens);
                 }
@@ -1283,15 +1457,20 @@ fn mark_unused_storage(model: &mut IrModel, execution: Option<&[ExecutionProcess
             }
         }
     }
-    for name in &sens {
-        if let Some(i) = model.signals.iter().position(|sg| sg.c_name == *name) {
-            rw.read(i);
-        }
+    for dependency in &sens {
+        mark_dependency_read(dependency, model, &mut rw);
     }
-    // Declaration initializers count as writes.
+    // Declaration initializers count as writes and their RHSs count as reads.
     for step in &model.init_steps {
-        if let crate::sim::ir::IrInitStep::SetScalar { sig, .. } = step {
-            rw.write(*sig);
+        match step {
+            crate::sim::ir::IrInitStep::SetScalar { sig, .. } => rw.write(*sig),
+            crate::sim::ir::IrInitStep::Initialize(initialization) => {
+                collect_expr_reads(&initialization.value, model, &mut rw);
+                if let crate::sim::ir::IrInitTarget::Signal(sig) = &initialization.target {
+                    rw.write(*sig);
+                }
+            }
+            _ => {}
         }
     }
     let waveform = model.waveform;
@@ -1323,12 +1502,39 @@ fn mark_unused_storage(model: &mut IrModel, execution: Option<&[ExecutionProcess
 fn collect_pre_fns_rw(pre_fns: &[IrPreFn], model: &IrModel, rw: &mut Rw) {
     for pre in pre_fns {
         match pre {
-            IrPreFn::MonEval { args, .. } => {
+            IrPreFn::MonEval { args, context, .. } => {
                 for e in args {
                     collect_expr_reads(e, model, rw);
                 }
+                if let Some(context) = context {
+                    for capture in context.captures() {
+                        collect_expr_reads(capture.initial(), model, rw);
+                    }
+                }
             }
+            IrPreFn::DisplayEval { args, .. } => {
+                for arg in args {
+                    arg.expressions(&mut |expression| collect_expr_reads(expression, model, rw));
+                }
+            }
+            IrPreFn::RealEval {
+                value, context, ..
+            } => {
+                collect_expr_reads(value, model, rw);
+                if let Some(context) = context {
+                    for capture in context.captures() {
+                        collect_expr_reads(capture.initial(), model, rw);
+                    }
+                }
+            }
+            IrPreFn::ForceEval { value, .. } => collect_expr_reads(value, model, rw),
             IrPreFn::Branch { body, .. } => collect_stmts_rw(body, model, rw),
+            IrPreFn::CapturedBranch { captures, body, .. } => {
+                for capture in captures {
+                    collect_expr_reads(capture.initial(), model, rw);
+                }
+                collect_stmts_rw(body, model, rw);
+            }
         }
     }
 }
@@ -1337,7 +1543,7 @@ fn collect_pre_fns_rw(pre_fns: &[IrPreFn], model: &IrModel, rw: &mut Rw) {
 /// wait sources).  Every statement position is visited: blocks, if/else,
 /// loops, case items + default, and wait bodies.  Named-event entries are
 /// skipped here (they are not signal storage).
-fn sens_lists_of(s: &IrStmt, out: &mut Vec<String>) {
+fn sens_lists_of(s: &IrStmt, out: &mut Vec<IrDependency>) {
     match s {
         IrStmt::WaitCond { sens, body, .. } => {
             out.extend(sens.iter().cloned());
@@ -1348,14 +1554,18 @@ fn sens_lists_of(s: &IrStmt, out: &mut Vec<String>) {
         IrStmt::WaitEvents { specs } => {
             for (src, _) in specs {
                 match src {
-                    IrWaitSrc::Sig(name) => out.push(name.clone()),
-                    IrWaitSrc::Evaluated { reads, .. } => out.extend(reads.iter().cloned()),
+                    IrWaitSrc::Sig(name) => out.push(IrDependency::scalar(name)),
+                    IrWaitSrc::Real(name) => out.push(IrDependency::real(name)),
+                    IrWaitSrc::Evaluated { reads, .. } | IrWaitSrc::EvaluatedReal { reads, .. } => {
+                        out.extend(reads.iter().cloned())
+                    }
                     _ => {}
                 }
             }
         }
         IrStmt::WaitAny { sens } => out.extend(sens.iter().cloned()),
         IrStmt::Block(b)
+        | IrStmt::ActivationScope { body: b, .. }
         | IrStmt::While { body: b, .. }
         | IrStmt::Repeat { body: b, .. }
         | IrStmt::Forever { body: b } => {
@@ -1408,7 +1618,9 @@ fn collect_stmt_rw(s: &IrStmt, model: &IrModel, rw: &mut Rw) {
         IrStmt::Object(operation) => {
             operation.expressions(&mut |child| collect_expr_reads(child, model, rw))
         }
-        IrStmt::Block(b) => collect_stmts_rw(b, model, rw),
+        IrStmt::Block(b) | IrStmt::ActivationScope { body: b, .. } => {
+            collect_stmts_rw(b, model, rw)
+        }
         IrStmt::DeclLocal {
             init: Some(init), ..
         } => collect_expr_reads(init, model, rw),
@@ -1418,6 +1630,20 @@ fn collect_stmt_rw(s: &IrStmt, model: &IrModel, rw: &mut Rw) {
             collect_lhs_rw(lhs, model, rw);
             collect_expr_reads(rhs, model, rw);
         }
+        IrStmt::DelayedStringAssign { rhs, .. } => {
+            rhs.expressions(&mut |expr| collect_expr_reads(expr, model, rw));
+        }
+        IrStmt::PcaAssign {
+            sig, enable, value, ..
+        }
+        | IrStmt::PcaDrive {
+            sig, enable, value, ..
+        } => {
+            rw.write(*sig);
+            rw.write(*enable);
+            collect_expr_reads(value, model, rw);
+        }
+        IrStmt::PcaDeassign { sig } => rw.write(*sig),
         IrStmt::If { cond, then_, els } => {
             collect_expr_reads(cond, model, rw);
             collect_stmts_rw(then_, model, rw);
@@ -1452,12 +1678,15 @@ fn collect_stmt_rw(s: &IrStmt, model: &IrModel, rw: &mut Rw) {
         }
         IrStmt::WaitCond { cond, sens, body } => {
             collect_expr_reads(cond, model, rw);
-            for name in sens {
-                if let Some(i) = model.signals.iter().position(|sg| sg.c_name == *name) {
-                    rw.read(i);
-                }
+            for dependency in sens {
+                mark_dependency_read(dependency, model, rw);
             }
             collect_stmts_rw(body, model, rw);
+        }
+        IrStmt::WaitEventTriggered { body, .. } => collect_stmts_rw(body, model, rw),
+        IrStmt::WaitOrder { success, failure, .. } => {
+            collect_stmts_rw(success, model, rw);
+            collect_stmts_rw(failure, model, rw);
         }
         // Event-control and combinational wait sources are reads of the
         // named signal globals (lowering emits their addresses into the wait
@@ -1466,33 +1695,40 @@ fn collect_stmt_rw(s: &IrStmt, model: &IrModel, rw: &mut Rw) {
         // event globals are always emitted, so they are simply skipped.
         IrStmt::WaitEvents { specs } => {
             for (src, _) in specs {
-                let reads = match src {
-                    IrWaitSrc::Sig(name) => std::slice::from_ref(name),
-                    IrWaitSrc::Evaluated { reads, .. } => reads.as_slice(),
-                    _ => &[],
-                };
-                for name in reads {
-                    if let Some(i) = model.signals.iter().position(|sg| sg.c_name == *name) {
-                        rw.read(i);
+                match src {
+                    IrWaitSrc::Sig(name) => {
+                        mark_dependency_read(&IrDependency::scalar(name), model, rw)
                     }
+                    IrWaitSrc::Real(name) => {
+                        mark_dependency_read(&IrDependency::real(name), model, rw)
+                    }
+                    IrWaitSrc::Evaluated { reads, .. } | IrWaitSrc::EvaluatedReal { reads, .. } => {
+                        for dependency in reads {
+                            mark_dependency_read(dependency, model, rw);
+                        }
+                    }
+                    _ => {}
                 }
             }
         }
         IrStmt::WaitAny { sens } => {
-            for name in sens {
-                if let Some(i) = model.signals.iter().position(|sg| sg.c_name == *name) {
-                    rw.read(i);
-                }
+            for dependency in sens {
+                mark_dependency_read(dependency, model, rw);
             }
         }
-        IrStmt::Force { sig, value } => {
-            rw.write(*sig);
+        IrStmt::Force { lhs, value, .. } => {
+            collect_lhs_rw(lhs, model, rw);
             collect_expr_reads(value, model, rw);
         }
-        IrStmt::Release { sig } => rw.write(*sig),
+        IrStmt::Release { lhs } => collect_lhs_rw(lhs, model, rw),
         IrStmt::Display { args, .. } => {
             for (e, _) in args {
                 collect_expr_reads(e, model, rw);
+            }
+        }
+        IrStmt::DisplayTyped { args, .. } => {
+            for arg in args {
+                arg.expressions(&mut |expression| collect_expr_reads(expression, model, rw));
             }
         }
         IrStmt::WaveLimit(limit) => collect_expr_reads(limit, model, rw),
@@ -1503,9 +1739,12 @@ fn collect_stmt_rw(s: &IrStmt, model: &IrModel, rw: &mut Rw) {
 }
 
 fn collect_call_rw(call: &crate::sim::ir::IrCall, model: &IrModel, rw: &mut Rw) {
-    for arg in &call.args {
+    for (index, arg) in call.args.iter().enumerate() {
         match arg {
             IrCallArg::Val(e) => collect_expr_reads(e, model, rw),
+            IrCallArg::StringVal(value) => {
+                value.expressions(&mut |expression| collect_expr_reads(expression, model, rw));
+            }
             IrCallArg::OutAddr(addr) => {
                 // `&G_sig` / `G_sig`: a passed output/inout actual both reads
                 // and writes its target (function-scope names never match).
@@ -1515,14 +1754,60 @@ fn collect_call_rw(call: &crate::sim::ir::IrCall, model: &IrModel, rw: &mut Rw) 
                     rw.write(i);
                 }
             }
+            IrCallArg::RefAddr { lhs, read, .. } => {
+                collect_expr_reads(read, model, rw);
+                if call_formal(model, call.function_index(), index)
+                    .is_none_or(|formal| !formal.is_const_ref())
+                {
+                    collect_lhs_rw(lhs, model, rw);
+                }
+            }
+            IrCallArg::StringOutAddr(addr) | IrCallArg::StringRefAddr { addr, .. } => {
+                let name = addr.trim_start_matches('&');
+                if let Some(i) = model.signals.iter().position(|sg| sg.c_name == name) {
+                    rw.read(i);
+                    if call_formal(model, call.function_index(), index)
+                        .is_none_or(|formal| !formal.is_const_ref())
+                    {
+                        rw.write(i);
+                    }
+                }
+            }
             IrCallArg::OutTemp {
-                init, writeback, ..
+                init,
+                writeback,
+                storage_lhs,
+                storage_read,
+                selector_inits,
+                ..
             } => {
                 if let Some(init) = init {
                     collect_expr_reads(init, model, rw);
                 }
                 collect_lhs_rw(writeback, model, rw);
+                if let Some(storage_lhs) = storage_lhs {
+                    collect_lhs_rw(storage_lhs, model, rw);
+                }
+                if let Some(storage_read) = storage_read {
+                    collect_expr_reads(storage_read, model, rw);
+                }
+                for (_, _, _, _, init) in selector_inits {
+                    collect_expr_reads(init, model, rw);
+                }
             }
+            IrCallArg::StringOutTemp {
+                init,
+                storage_read,
+                ..
+            } => {
+                if let Some(init) = init {
+                    init.expressions(&mut |expression| collect_expr_reads(expression, model, rw));
+                }
+                if let Some(read) = storage_read {
+                    read.expressions(&mut |expression| collect_expr_reads(expression, model, rw));
+                }
+            }
+            IrCallArg::ChandleVal(_) | IrCallArg::ChandleAddr(_) | IrCallArg::ChandleRefAddr(_) => {}
         }
     }
     // Caller-side output/inout temps live here, not in `args`: their
@@ -1543,6 +1828,7 @@ fn collect_lhs_rw(l: &IrLhs, model: &IrModel, rw: &mut Rw) {
     match l {
         IrLhs::Whole(i) => rw.write(*i),
         IrLhs::WholeRef { .. } => {}
+        IrLhs::Ref { .. } => {}
         IrLhs::Bit(i, idx, _) => {
             rw.write(*i);
             collect_expr_reads(idx, model, rw);
@@ -1632,6 +1918,10 @@ fn collect_children_reads(e: &IrExpr, model: &IrModel, rw: &mut Rw) {
             collect_expr_reads(base, model, rw);
             collect_expr_reads(idx, model, rw);
         }
+        IrExprKind::Mutation(mutation) => {
+            collect_lhs_rw(&mutation.lhs, model, rw);
+            collect_expr_reads(&mutation.value, model, rw);
+        }
         IrExprKind::PartSel { base, .. } => collect_expr_reads(base, model, rw),
         IrExprKind::IdxPartSel {
             base,
@@ -1656,7 +1946,9 @@ fn collect_children_reads(e: &IrExpr, model: &IrModel, rw: &mut Rw) {
                 collect_expr_reads(idx, model, rw);
             }
         }
-        IrExprKind::CallFn(call) => collect_call_rw_readonly(&call.args, model, rw),
+        IrExprKind::CallFn(call) => {
+            collect_call_rw_readonly(call.function_index(), &call.args, model, rw)
+        }
         IrExprKind::SysFunc(sf) => match sf {
             IrSysFunc::Clog2(a)
             | IrSysFunc::Bits(a)
@@ -1678,41 +1970,87 @@ fn collect_children_reads(e: &IrExpr, model: &IrModel, rw: &mut Rw) {
     }
 }
 
-fn collect_call_rw_readonly(args: &[IrCallArg], model: &IrModel, rw: &mut Rw) {
-    for arg in args {
+fn collect_call_rw_readonly(
+    function: usize,
+    args: &[IrCallArg],
+    model: &IrModel,
+    rw: &mut Rw,
+) {
+    for (index, arg) in args.iter().enumerate() {
         match arg {
             IrCallArg::Val(e) => collect_expr_reads(e, model, rw),
+            IrCallArg::StringVal(value) => {
+                value.expressions(&mut |expression| collect_expr_reads(expression, model, rw));
+            }
             IrCallArg::OutAddr(addr) => {
                 let name = addr.trim_start_matches('&');
                 if let Some(i) = model.signals.iter().position(|sg| sg.c_name == name) {
                     rw.read(i);
                 }
             }
+            IrCallArg::RefAddr { lhs, read, .. } => {
+                collect_expr_reads(read, model, rw);
+                if call_formal(model, function, index)
+                    .is_none_or(|formal| !formal.is_const_ref())
+                {
+                    collect_lhs_rw(lhs, model, rw);
+                }
+            }
+            IrCallArg::StringOutAddr(addr) | IrCallArg::StringRefAddr { addr, .. } => {
+                let name = addr.trim_start_matches('&');
+                if let Some(i) = model.signals.iter().position(|sg| sg.c_name == name) {
+                    rw.read(i);
+                }
+            }
             IrCallArg::OutTemp {
-                init, writeback, ..
+                init,
+                writeback,
+                storage_lhs,
+                storage_read,
+                selector_inits,
+                ..
             } => {
                 if let Some(init) = init {
                     collect_expr_reads(init, model, rw);
                 }
                 // Writebacks inside expression calls copy temps back into the
                 // actuals: count as writes.
-                collect_lhs_write_only(writeback, model, rw);
+                collect_lhs_rw(writeback, model, rw);
+                if let Some(storage_lhs) = storage_lhs {
+                    collect_lhs_rw(storage_lhs, model, rw);
+                }
+                if let Some(storage_read) = storage_read {
+                    collect_expr_reads(storage_read, model, rw);
+                }
+                for (_, _, _, _, init) in selector_inits {
+                    collect_expr_reads(init, model, rw);
+                }
             }
+            IrCallArg::StringOutTemp {
+                init,
+                storage_read,
+                ..
+            } => {
+                if let Some(init) = init {
+                    init.expressions(&mut |expression| collect_expr_reads(expression, model, rw));
+                }
+                if let Some(read) = storage_read {
+                    read.expressions(&mut |expression| collect_expr_reads(expression, model, rw));
+                }
+            }
+            IrCallArg::ChandleVal(_) | IrCallArg::ChandleAddr(_) | IrCallArg::ChandleRefAddr(_) => {}
         }
     }
 }
 
-fn collect_lhs_write_only(l: &IrLhs, _model: &IrModel, rw: &mut Rw) {
-    match l {
-        IrLhs::Whole(i) => rw.write(*i),
-        IrLhs::Bit(i, ..) | IrLhs::Part(i, ..) | IrLhs::IdxPart(i, ..) => rw.write(*i),
-        IrLhs::Stream { parts, .. } => {
-            for (part, _) in parts {
-                collect_lhs_write_only(part, _model, rw);
-            }
-        }
-        _ => {}
-    }
+fn call_formal(model: &IrModel, function: usize, index: usize) -> Option<&IrFormal> {
+    let callee = model.funcs.get(function)?;
+    callee
+        .formals
+        .iter()
+        .filter(|formal| formal.is_address())
+        .chain(callee.formals.iter().filter(|formal| !formal.is_address()))
+        .nth(index)
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -1721,8 +2059,8 @@ fn collect_lhs_write_only(l: &IrLhs, _model: &IrModel, rw: &mut Rw) {
 mod tests {
     use super::*;
     use crate::sim::ir::{
-        IrCall, IrCallArg, IrCaseItem, IrDepth, IrEdge, IrFunc, IrLocal, IrProcess, IrShape,
-        IrSignal, IrType,
+        IrCall, IrCallArg, IrCaseItem, IrDependency, IrDepth, IrEdge, IrEventRef, IrFunc, IrLocal, IrProcess,
+        IrShape, IrSignal, IrType,
     };
 
     // ── builders ──────────────────────────────────────────────────────────
@@ -1866,7 +2204,7 @@ mod tests {
     fn model_with(body: Vec<IrStmt>, signals: Vec<IrSignal>) -> IrModel {
         IrModel {
             design_name: "t".to_string(),
-            precision_ps: 1,
+            precision_fs: 1,
             waveform: false,
             signals,
             net_groups: Vec::new(),
@@ -1878,7 +2216,9 @@ mod tests {
             processes: vec![IrProcess {
                 c_name: "p_t_proc_0".to_string(),
                 label: "t.always".to_string(),
+                kind: IrProcessKind::Synthetic,
                 shape: IrShape::RunOnce,
+                writes: Vec::new(),
                 pre_fns: Vec::new(),
                 body,
                 origin: crate::sim::semantic::Origin::Synthetic {
@@ -2466,7 +2806,7 @@ mod tests {
     fn prune_wait_cond_true_splices_body_false_stays() {
         let wait_true = IrStmt::WaitCond {
             cond: konst(1, 1),
-            sens: vec!["G_s0".to_string()],
+            sens: vec![IrDependency::scalar("G_s0")],
             body: vec![marker(42)],
         };
         let mut m = model_with(vec![wait_true], sigs(1));
@@ -2618,7 +2958,7 @@ mod tests {
         let mut m = model_with(body, signals);
         // s3 is read by a combinational sensitivity list.
         m.processes[0].shape = IrShape::SensLoop {
-            reads: vec!["G_s3".to_string()],
+            reads: vec![IrDependency::scalar("G_s3")],
         };
         run(&mut m, &storage_only());
         assert!(m.signals[0].omit, "untouched signal is omitted");
@@ -2677,7 +3017,7 @@ mod tests {
             IrStmt::If {
                 cond: IrExpr::new(IrExprKind::SigRead(0), 8, false, None),
                 then_: vec![IrStmt::WaitAny {
-                    sens: vec!["G_s2".to_string()],
+                    sens: vec![IrDependency::scalar("G_s2")],
                 }],
                 els: None,
             },
@@ -2697,12 +3037,14 @@ mod tests {
         let body = vec![IrStmt::WaitEvents {
             specs: vec![
                 (IrWaitSrc::Sig("G_s1".to_string()), IrEdge::Any),
-                (IrWaitSrc::Event(0), IrEdge::Any),
+                (IrWaitSrc::Event(IrEventRef::Static(0)), IrEdge::Any),
             ],
         }];
         let mut m = model_with(body, sigs(3));
         m.events.push(crate::sim::ir::IrEvent {
             c_name: "E_tb_ev".to_string(),
+            array_dims: None,
+            array_elements: Vec::new(),
         });
         run(&mut m, &storage_only());
         assert!(m.signals[0].omit, "untouched signal is still omitted");
@@ -2722,7 +3064,7 @@ mod tests {
             cond: konst(1, 1),
             body: vec![IrStmt::WaitCond {
                 cond: konst(0, 1),
-                sens: vec!["G_s3".to_string()],
+                sens: vec![IrDependency::scalar("G_s3")],
                 body: vec![marker(42)],
             }],
         }];
@@ -2744,7 +3086,7 @@ mod tests {
                     specs: vec![(IrWaitSrc::Sig("G_s1".to_string()), IrEdge::Any)],
                 },
                 IrStmt::WaitAny {
-                    sens: vec!["G_s2".to_string(), "G_s3".to_string()],
+                    sens: vec![IrDependency::scalar("G_s2"), IrDependency::scalar("G_s3")],
                 },
             ],
         }];

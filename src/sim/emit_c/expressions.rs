@@ -5,12 +5,13 @@ use super::context::{RCtx, RenderedExpr};
 use super::EmitError;
 use crate::sim::ir::{
     IrBinOp, IrBitQuery, IrCallArg, IrElemSel, IrExpr, IrExprKind, IrInsideItem, IrLhs,
+    IrStringExpr,
     IrRealBinOp, IrRealUnOp, IrStreamDirection, IrSysFunc, IrType, IrUnOp,
 };
 
 /// The real-value code of a rendered operand: bare for real expressions,
 /// `sv4_to_real(...)` for packed ones.
-fn real_code(e: &RenderedExpr) -> String {
+pub(super) fn real_code(e: &RenderedExpr) -> String {
     if e.width == 0 {
         e.code.clone()
     } else {
@@ -92,7 +93,18 @@ pub(super) fn render_expr_impl(ctx: &RCtx<'_>, e: &IrExpr) -> Result<RenderedExp
                 .formals
                 .get(*idx)
                 .ok_or_else(|| "internal: formal read out of range".to_string())?;
-            let code = if form.is_out {
+            let code = if form.real {
+                if form.is_ref() {
+                    return Err("real ref formal is not supported".to_string());
+                }
+                if form.is_out {
+                    round_shortreal(format!("*o{idx}"), form.shortreal)
+                } else {
+                    round_shortreal(format!("a{idx}"), form.shortreal)
+                }
+            } else if form.is_ref() {
+                format!("llg_ref_read(r{idx})")
+            } else if form.is_out {
                 format!("sv4_resize(*o{idx}, {}, {})", form.width, form.signed as u8)
             } else {
                 format!("a{idx}")
@@ -105,6 +117,18 @@ pub(super) fn render_expr_impl(ctx: &RCtx<'_>, e: &IrExpr) -> Result<RenderedExp
             }
         }
         IrExprKind::CallFn(call) => render_call_expr(ctx, call)?,
+        IrExprKind::EventTriggered(event) => {
+            let event = super::statements::event_ref_code(ctx, event)?;
+            RenderedExpr {
+                code: format!(
+                    "sv4_from_u64(llg_event_triggered({event}) ? 1ULL : 0ULL, 1, 0)"
+                ),
+                width: 1,
+                signed: false,
+                fill: None,
+            }
+        }
+        IrExprKind::Mutation(mutation) => render_mutation_expr(ctx, e, mutation)?,
         IrExprKind::Bin { op, a, b } => {
             let ra = w(a)?;
             let rb = w(b)?;
@@ -128,7 +152,15 @@ pub(super) fn render_expr_impl(ctx: &RCtx<'_>, e: &IrExpr) -> Result<RenderedExp
                             bool_code(&rb)
                         )
                     } else {
-                        format!("sv4_logand({}, {})", ra.code, rb.code)
+                        // Evaluate the left operand once. X/Z is not a
+                        // definite false: evaluate the right side in that case
+                        // so the four-state truth table can resolve X && 0.
+                        format!(
+                            "({{ sv4_t _llg_logic_left = {}; \
+                             (!sv4_to_bool(_llg_logic_left) && !sv4_is_unknown(_llg_logic_left)) \
+                             ? sv4_from_u64(0, 1, 0) : sv4_logand(_llg_logic_left, {}); }})",
+                            ra.code, rb.code
+                        )
                     }
                 }
                 IrBinOp::LogOr => {
@@ -139,7 +171,15 @@ pub(super) fn render_expr_impl(ctx: &RCtx<'_>, e: &IrExpr) -> Result<RenderedExp
                             bool_code(&rb)
                         )
                     } else {
-                        format!("sv4_logor({}, {})", ra.code, rb.code)
+                        // Case-item chains also use logical OR. Calling
+                        // sv4_logor eagerly evaluates later item expressions,
+                        // even when an earlier item already matched.
+                        format!(
+                            "({{ sv4_t _llg_logic_left = {}; \
+                             sv4_to_bool(_llg_logic_left) ? sv4_from_u64(1, 1, 0) \
+                             : sv4_logor(_llg_logic_left, {}); }})",
+                            ra.code, rb.code
+                        )
                     }
                 }
                 IrBinOp::Eq => cmp_expr(&ra, &rb, "=="),
@@ -351,7 +391,14 @@ pub(super) fn render_expr_impl(ctx: &RCtx<'_>, e: &IrExpr) -> Result<RenderedExp
             for i in indices {
                 index_codes.push(w(i)?.code);
             }
-            let elem = guarded_array_read(ai, &index_codes);
+            if ai.real && !matches!(elem_sel, IrElemSel::Whole) {
+                return Err("select on a real array element is not supported".to_string());
+            }
+            let elem = if ai.real {
+                guarded_real_array_read(ai, &index_codes)
+            } else {
+                guarded_array_read(ai, &index_codes)
+            };
             let (code, width, signed) = match elem_sel {
                 IrElemSel::Whole => (elem, ai.elem_width, ai.signed),
                 IrElemSel::Part(l, r) => (
@@ -530,10 +577,10 @@ pub(super) fn render_expr_impl(ctx: &RCtx<'_>, e: &IrExpr) -> Result<RenderedExp
                 }
             }
             IrSysFunc::Realtime {
-                precision_ps,
-                unit_ps,
+                precision_fs,
+                unit_fs,
             } => RenderedExpr {
-                code: format!("((double)llg_time() * {precision_ps}.0 / {unit_ps}.0)"),
+                code: format!("((double)llg_time() * {precision_fs}.0 / {unit_fs}.0)"),
                 width: 0,
                 signed: true,
                 fill: None,
@@ -620,15 +667,15 @@ pub(super) fn render_expr_impl(ctx: &RCtx<'_>, e: &IrExpr) -> Result<RenderedExp
                 }
             }
             IrSysFunc::Time {
-                precision_ps,
-                unit_ps,
+                precision_fs,
+                unit_fs,
                 kind,
             } => {
                 let width = kind.width();
                 RenderedExpr {
                     code: format!(
                         "sv4_from_u64(llg_time_scaled({}, {}), {}, 0)",
-                        precision_ps, unit_ps, width
+                        precision_fs, unit_fs, width
                     ),
                     width,
                     signed: false,
@@ -732,6 +779,16 @@ fn guarded_array_read(ai: &crate::sim::ir::IrArray, index_codes: &[String]) -> S
     }
 }
 
+fn guarded_real_array_read(ai: &crate::sim::ir::IrArray, index_codes: &[String]) -> String {
+    match array_guard(ai, index_codes) {
+        Some((decls, cond, lin)) => format!(
+            "({{ {decls}({cond}) ? {}[({lin})] : 0.0; }})",
+            ai.c_name
+        ),
+        None => format!("{}[0]", ai.c_name),
+    }
+}
+
 pub(super) fn coerce_two_state(code: String, two_state: bool) -> String {
     if two_state {
         format!("sv4_to_two_state({code})")
@@ -763,6 +820,302 @@ fn rendered_to_vector(r: &RenderedExpr, width: u32, signed: bool) -> Result<Stri
     } else {
         Ok(arg_resize(&r.code, width, signed))
     }
+}
+
+fn lhs_shape(ctx: &RCtx<'_>, lhs: &IrLhs) -> (u32, bool) {
+    match lhs {
+        IrLhs::Whole(index) => {
+            let ty = ctx.model.signal(*index).ty;
+            (ty.width(), ty.signed())
+        }
+        IrLhs::WholeRef { width, signed, .. } | IrLhs::Ref { width, signed, .. } => {
+            (*width, *signed)
+        }
+        IrLhs::Bit(..) => (1, false),
+        IrLhs::Part(_, left, right, _) => (left.abs_diff(*right) as u32 + 1, false),
+        IrLhs::IdxPart(_, _, _, width, _, _) => (*width, false),
+        IrLhs::ArrayElem { arr, elem_sel, .. } => {
+            let array = ctx.model.array(*arr);
+            match elem_sel {
+                IrElemSel::Whole => (array.elem_width, array.signed),
+                IrElemSel::Part(left, right) => (left.abs_diff(*right) as u32 + 1, false),
+                IrElemSel::Bit(_) => (1, false),
+                IrElemSel::Indexed { width, .. } => (*width, false),
+            }
+        }
+        IrLhs::Stream { width, .. } => (*width, false),
+    }
+}
+
+fn retag_lhs_value(value: RenderedExpr, width: u32, signed: bool) -> RenderedExpr {
+    if width == 0 {
+        return RenderedExpr {
+            code: if value.width == 0 {
+                value.code
+            } else {
+                format!("sv4_to_real({})", value.code)
+            },
+            width,
+            signed,
+            fill: None,
+        };
+    }
+    let code = if value.width == 0 {
+        format!("sv4_from_real({}, {width}, {})", value.code, signed as u8)
+    } else if let Some(fill) = value.fill {
+        format!("sv4_fill({fill}, {width}, {})", signed as u8)
+    } else {
+        format!("sv4_resize({}, {width}, {})", value.code, signed as u8)
+    };
+    RenderedExpr {
+        code,
+        width,
+        signed,
+        fill: None,
+    }
+}
+
+/// Read an assignment target through the same descriptor shapes used by
+/// ordinary expressions. Dynamic indices have already been replaced by local
+/// captures before this helper is called.
+fn render_lhs_value(
+    ctx: &RCtx<'_>,
+    lhs: &IrLhs,
+    width: u32,
+    signed: bool,
+) -> Result<RenderedExpr, String> {
+    let value = match lhs {
+        IrLhs::Whole(index) => {
+            let signal = ctx.model.signal(*index);
+            IrExpr::new(
+                IrExprKind::SigRead(*index),
+                signal.ty.width(),
+                signal.ty.signed(),
+                None,
+            )
+        }
+        IrLhs::WholeRef { addr, width, signed, .. } => {
+            return Ok(RenderedExpr {
+                code: format!("*({addr})"),
+                width: *width,
+                signed: *signed,
+                fill: None,
+            });
+        }
+        IrLhs::Ref { addr, width, signed, .. } => {
+            return Ok(RenderedExpr {
+                code: format!("llg_ref_read({addr})"),
+                width: *width,
+                signed: *signed,
+                fill: None,
+            });
+        }
+        IrLhs::Bit(index, select, _) => {
+            let signal = ctx.model.signal(*index);
+            IrExpr::new(
+                IrExprKind::BitSel {
+                    base: Box::new(IrExpr::new(
+                        IrExprKind::SigRead(*index),
+                        signal.ty.width(),
+                        signal.ty.signed(),
+                        None,
+                    )),
+                    idx: Box::new(select.clone()),
+                },
+                1,
+                false,
+                None,
+            )
+        }
+        IrLhs::Part(index, left, right, _) => {
+            let signal = ctx.model.signal(*index);
+            IrExpr::new(
+                IrExprKind::PartSel {
+                    base: Box::new(IrExpr::new(
+                        IrExprKind::SigRead(*index),
+                        signal.ty.width(),
+                        signal.ty.signed(),
+                        None,
+                    )),
+                    left: *left,
+                    right: *right,
+                },
+                left.abs_diff(*right) as u32 + 1,
+                false,
+                None,
+            )
+        }
+        IrLhs::IdxPart(index, base, width_expr, selected_width, neg, _) => {
+            let signal = ctx.model.signal(*index);
+            IrExpr::new(
+                IrExprKind::IdxPartSel {
+                    base: Box::new(IrExpr::new(
+                        IrExprKind::SigRead(*index),
+                        signal.ty.width(),
+                        signal.ty.signed(),
+                        None,
+                    )),
+                    base_idx: Box::new(base.clone()),
+                    width_expr: Box::new(width_expr.clone()),
+                    neg: *neg,
+                },
+                *selected_width,
+                false,
+                None,
+            )
+        }
+        IrLhs::ArrayElem {
+            arr,
+            indices,
+            elem_sel,
+        } => {
+            let (element_width, element_signed) = lhs_shape(ctx, lhs);
+            IrExpr::new(
+                IrExprKind::ArrayRead {
+                    arr: *arr,
+                    indices: indices.clone(),
+                    elem_sel: elem_sel.clone(),
+                },
+                element_width,
+                element_signed,
+                None,
+            )
+        }
+        IrLhs::Stream { .. } => {
+            return Err("streaming assignment target cannot be read as a mutation expression".into())
+        }
+    };
+    Ok(retag_lhs_value(render_expr_impl(ctx, &value)?, width, signed))
+}
+
+fn capture_lhs_indices(ctx: &RCtx<'_>, lhs: &IrLhs) -> Result<(String, IrLhs), String> {
+    fn capture(
+        ctx: &RCtx<'_>,
+        expression: &IrExpr,
+        declarations: &mut String,
+        next: &mut usize,
+    ) -> Result<IrExpr, String> {
+        let rendered = render_expr_impl(ctx, expression)?;
+        let name = format!("_llg_mut_idx{next}");
+        *next += 1;
+        let ty = if expression.width == 0 { "double" } else { "sv4_t" };
+        declarations.push_str(&format!("{ty} {name} = {}; ", rendered.code));
+        Ok(IrExpr::new(
+            IrExprKind::LocalRead(name),
+            expression.width,
+            expression.signed,
+            expression.fill,
+        ))
+    }
+
+    fn visit(
+        ctx: &RCtx<'_>,
+        lhs: &mut IrLhs,
+        declarations: &mut String,
+        next: &mut usize,
+    ) -> Result<(), String> {
+        match lhs {
+            IrLhs::Bit(_, index, _) => {
+                *index = capture(ctx, index, declarations, next)?;
+            }
+            IrLhs::IdxPart(_, base, width_expr, _, _, _) => {
+                *base = capture(ctx, base, declarations, next)?;
+                *width_expr = capture(ctx, width_expr, declarations, next)?;
+            }
+            IrLhs::ArrayElem {
+                indices, elem_sel, ..
+            } => {
+                for index in indices {
+                    *index = capture(ctx, index, declarations, next)?;
+                }
+                match elem_sel {
+                    IrElemSel::Bit(index) => {
+                        *index = Box::new(capture(ctx, index, declarations, next)?);
+                    }
+                    IrElemSel::Indexed { base, .. } => {
+                        *base = Box::new(capture(ctx, base, declarations, next)?);
+                    }
+                    IrElemSel::Whole | IrElemSel::Part(..) => {}
+                }
+            }
+            IrLhs::Stream { parts, .. } => {
+                for (part, _) in parts {
+                    visit(ctx, part, declarations, next)?;
+                }
+            }
+            IrLhs::Whole(_) | IrLhs::WholeRef { .. } | IrLhs::Ref { .. } | IrLhs::Part(..) => {}
+        }
+        Ok(())
+    }
+
+    let mut captured = lhs.clone();
+    let mut declarations = String::new();
+    let mut next = 0;
+    visit(ctx, &mut captured, &mut declarations, &mut next)?;
+    Ok((declarations, captured))
+}
+
+fn render_mutation_expr(
+    ctx: &RCtx<'_>,
+    expression: &IrExpr,
+    mutation: &crate::sim::ir::IrMutationExpr,
+) -> Result<RenderedExpr, String> {
+    let (mut declarations, lhs) = capture_lhs_indices(ctx, &mutation.lhs)?;
+    let needs_current = mutation.reads_current || mutation.post;
+    let current = if needs_current {
+        Some(render_lhs_value(
+            ctx,
+            &lhs,
+            mutation.current_width,
+            mutation.current_signed,
+        )?)
+    } else {
+        None
+    };
+    if let Some(current) = &current {
+        let ty = if mutation.current_width == 0 { "double" } else { "sv4_t" };
+        if mutation.post {
+            declarations.push_str(&format!(
+                "{ty} _llg_mut_old = {}; {ty} _llg_mut_current = _llg_mut_old; ",
+                current.code
+            ));
+        } else {
+            declarations.push_str(&format!(
+                "{ty} _llg_mut_current = {}; ",
+                current.code
+            ));
+        }
+    }
+    let value = render_expr_impl(ctx, &mutation.value)?;
+    let value_ty = if value.width == 0 { "double" } else { "sv4_t" };
+    declarations.push_str(&format!(
+        "{value_ty} _llg_mut_new = {}; ",
+        value.code
+    ));
+    let new_expr = IrExpr::new(
+        IrExprKind::LocalRead("_llg_mut_new".to_owned()),
+        value.width,
+        value.signed,
+        None,
+    );
+    let write = render_assign(ctx, &lhs, &new_expr, false)?;
+    let result = if mutation.post {
+        "_llg_mut_old".to_owned()
+    } else {
+        render_lhs_value(
+            ctx,
+            &lhs,
+            expression.width,
+            expression.signed,
+        )?
+        .code
+    };
+    Ok(RenderedExpr {
+        code: format!("({{ {declarations} {write} {result}; }})"),
+        width: expression.width,
+        signed: expression.signed,
+        fill: None,
+    })
 }
 
 /// Full assignment statement assigning `rhs` into the LHS target:
@@ -832,6 +1185,55 @@ pub(super) fn render_assign(
             matches!(direction, IrStreamDirection::RightToLeft) as u8
         ));
     }
+    if let IrLhs::WholeRef {
+        addr,
+        width,
+        shortreal,
+        ..
+    } = lh
+    {
+        if *width == 0 {
+            let rendered = render_expr_impl(ctx, rhs)?;
+            let value = if rendered.width == 0 {
+                rendered.code
+            } else {
+                format!("sv4_to_real({})", rendered.code)
+            };
+            return Ok(format!(
+                "llg_ba_d({addr}, {});",
+                round_shortreal(value, *shortreal)
+            ));
+        }
+    }
+    if let IrLhs::Ref {
+        addr,
+        width,
+        signed,
+        two_state,
+        const_ref,
+    } = lh
+    {
+        if *const_ref {
+            return Err("write through const ref formal is not supported".to_string());
+        }
+        let rendered = render_expr_impl(ctx, rhs)?;
+        let value = if rendered.width == 0 {
+            format!(
+                "sv4_from_real({}, {}, {})",
+                rendered.code,
+                width,
+                *signed as u8
+            )
+        } else if let Some(fill) = rendered.fill {
+            format!("sv4_fill({fill}, {width}, {})", *signed as u8)
+        } else {
+            format!("sv4_cast({}, {width}, {})", rendered.code, *signed as u8)
+        };
+        return Ok(format!(
+            "llg_ref_write({addr}, {});",
+            coerce_two_state(value, *two_state)
+        ));
+    }
     // A real RHS is converted to the target's vector shape up front.
     let converted: Option<(String, u32, bool)> = if rhs.width == 0 {
         let (width, signed) = match lh {
@@ -839,7 +1241,9 @@ pub(super) fn render_assign(
                 let t = ctx.model.signal(*idx).ty;
                 (t.width(), t.signed())
             }
-            IrLhs::WholeRef { width, signed, .. } => (*width, *signed),
+            IrLhs::WholeRef { width, signed, .. } | IrLhs::Ref { width, signed, .. } => {
+                (*width, *signed)
+            }
             IrLhs::Bit(..) => (1, false),
             IrLhs::Part(_, left, right, _) => (((left - right).abs() + 1) as u32, false),
             IrLhs::IdxPart(_, _, _, width, _, _) => (*width, false),
@@ -876,6 +1280,23 @@ pub(super) fn render_assign(
     } = lh
     {
         let ai = ctx.model.array(*arr);
+        if ai.real {
+            if !matches!(elem_sel, IrElemSel::Whole) {
+                return Err("select on a real array element is not supported".to_string());
+            }
+            let mut index_codes = Vec::with_capacity(indices.len());
+            for index in indices {
+                index_codes.push(render_expr_impl(ctx, index)?.code);
+            }
+            let (decls, condition, linear) = array_guard(ai, &index_codes)
+                .unwrap_or_else(|| (String::new(), "1".to_string(), "0".to_string()));
+            let rr = render_expr_impl(ctx, rhs)?;
+            let value = round_shortreal(real_code(&rr), ai.shortreal);
+            return Ok(format!(
+                "{{ {decls} if ({condition}) llg_ba_d(&{}[({linear})], {value}); }}",
+                ai.c_name
+            ));
+        }
         let call = "llg_ba";
         // Assignment padding follows the RHS's OWN signedness (LRM §10.7);
         // `sv4_cast` keys the extension off the value, so the tags stay the
@@ -1037,7 +1458,7 @@ pub(super) fn render_assign(
         | IrLhs::IdxPart(idx, .., selected_two_state) => {
             ctx.model.signal(*idx).ty.two_state() || *selected_two_state
         }
-        IrLhs::WholeRef { two_state, .. } => *two_state,
+        IrLhs::WholeRef { two_state, .. } | IrLhs::Ref { two_state, .. } => *two_state,
         _ => false,
     };
     // Assignment padding follows the RHS's OWN signedness (LRM §10.7);
@@ -1072,6 +1493,21 @@ pub(super) fn render_assign(
             signed,
             ..
         } => format!("{addr}, {}", resize(&rhs_code, *width, *signed)),
+        IrLhs::Ref {
+            addr,
+            width,
+            signed,
+            const_ref,
+            ..
+        } => {
+            if *const_ref {
+                return Err("write through const ref formal is not supported".to_string());
+            }
+            return Ok(format!(
+                "llg_ref_write({addr}, {});",
+                resize(&rhs_code, *width, *signed)
+            ));
+        }
         IrLhs::Bit(idx, ie, _) => {
             let sig = ctx.model.signal(*idx);
             let v = resize(&rhs_code, 1, false);
@@ -1137,46 +1573,110 @@ fn render_call_expr(
         name: &'a str,
         init: Option<&'a IrExpr>,
         wb: &'a IrLhs,
+        storage_lhs: Option<&'a IrLhs>,
+        storage_read: Option<&'a IrExpr>,
+        selector_inits: &'a [(String, u32, bool, bool, IrExpr)],
     }
     let mut temps: Vec<TempInfo<'_>> = Vec::new();
+    struct StringTempInfo<'a> {
+        idx: usize,
+        name: &'a str,
+        init: Option<&'a IrStringExpr>,
+        writeback: &'a str,
+        storage_addr: Option<&'a str>,
+        storage_read: Option<&'a IrStringExpr>,
+    }
+    let mut string_temps: Vec<StringTempInfo<'_>> = Vec::new();
     let mut call_args: Vec<String> = Vec::new();
     let formal_order = f
         .formals
         .iter()
         .enumerate()
-        .filter(|(_, formal)| formal.is_out)
+        .filter(|(_, formal)| formal.is_address())
         .chain(
             f.formals
                 .iter()
                 .enumerate()
-                .filter(|(_, formal)| !formal.is_out),
+                .filter(|(_, formal)| !formal.is_address()),
         );
     for ((idx, _), arg) in formal_order.zip(&call.args) {
         match arg {
-            IrCallArg::Val(e) => call_args.push(coerce_two_state(
-                render_expr_impl(ctx, e)?.code,
-                f.formals[idx].two_state,
-            )),
+            IrCallArg::StringVal(value) => {
+                call_args.push(super::objects::string(ctx, value)?);
+            }
+            IrCallArg::Val(e) => {
+                let rendered = render_expr_impl(ctx, e)?;
+                let form = &f.formals[idx];
+                call_args.push(if form.real {
+                    round_shortreal(real_code(&rendered), form.shortreal)
+                } else {
+                    coerce_two_state(rendered.code, form.two_state)
+                });
+            }
+            IrCallArg::ChandleVal(value) => {
+                call_args.push(super::objects::chandle(ctx, value)?);
+            }
+            IrCallArg::ChandleAddr(addr) | IrCallArg::ChandleRefAddr(addr) => {
+                call_args.push(addr.clone());
+            }
             IrCallArg::OutAddr(addr) => call_args.push(addr.clone()),
+            IrCallArg::RefAddr { addr, .. } => call_args.push(addr.clone()),
+            IrCallArg::StringOutAddr(addr) | IrCallArg::StringRefAddr { addr, .. } => {
+                call_args.push(addr.clone())
+            }
+            IrCallArg::StringOutTemp {
+                name,
+                init,
+                writeback,
+                storage_addr,
+                storage_read,
+            } => {
+                string_temps.push(StringTempInfo {
+                    idx,
+                    name,
+                    init: init.as_deref(),
+                    writeback,
+                    storage_addr: storage_addr.as_deref(),
+                    storage_read: storage_read.as_deref(),
+                });
+                call_args.push(
+                    storage_addr
+                        .as_deref()
+                        .map(str::to_owned)
+                        .unwrap_or_else(|| format!("&{name}")),
+                );
+            }
             IrCallArg::OutTemp {
                 name,
                 init,
                 writeback,
+                storage_addr,
+                storage_lhs,
+                storage_read,
+                selector_inits,
             } => {
                 temps.push(TempInfo {
                     idx,
                     name,
                     init: init.as_deref(),
                     wb: writeback,
+                    storage_lhs: storage_lhs.as_deref(),
+                    storage_read: storage_read.as_deref(),
+                    selector_inits,
                 });
-                call_args.push(format!("&{name}"));
+                call_args.push(
+                    storage_addr
+                        .as_deref()
+                        .map(str::to_owned)
+                        .unwrap_or_else(|| format!("&{name}")),
+                );
             }
         }
     }
     call_args.push(call.depth.code());
     let call_code = format!("{}({})", f.c_name, call_args.join(", "));
 
-    if temps.is_empty() {
+    if temps.is_empty() && string_temps.is_empty() {
         if !call.void_x {
             return Ok(RenderedExpr {
                 code: call_code,
@@ -1196,35 +1696,108 @@ fn render_call_expr(
     let mut parts: Vec<String> = Vec::new();
     for t in &temps {
         let form = &f.formals[t.idx];
+        for (name, width, signed, two_state, init) in t.selector_inits {
+            let rendered = render_expr_impl(ctx, init)?;
+            let init = if *width == 0 {
+                real_code(&rendered)
+            } else {
+                coerce_two_state(rendered.code, *two_state)
+            };
+            parts.push(format!(
+                "{} {} = {init}",
+                if *width == 0 { "double" } else { "sv4_t" },
+                name
+            ));
+            let _ = signed;
+        }
         let init = match t.init {
+            Some(expr) if form.real => {
+                round_shortreal(real_code(&render_expr_impl(ctx, expr)?), form.shortreal)
+            }
             Some(expr) => coerce_two_state(render_expr_impl(ctx, expr)?.code, form.two_state),
+            None if form.real => "0.0".to_string(),
             None => packed_default(form.width, form.signed, form.two_state),
         };
-        parts.push(format!("sv4_t {} = {init}", t.name));
+        parts.push(format!(
+            "{} {} = {init}",
+            if form.real { "double" } else { "sv4_t" },
+            t.name
+        ));
+        if let (Some(storage_lhs), Some(_)) = (t.storage_lhs, t.init) {
+            let staged = IrExpr::new(
+                IrExprKind::LocalRead(t.name.to_string()),
+                form.width,
+                form.signed,
+                None,
+            );
+            parts.push(
+                render_assign(ctx, storage_lhs, &staged, false)?
+                    .trim_end_matches(';')
+                    .to_string(),
+            );
+        }
+    }
+    for t in &string_temps {
+        let init = t
+            .init
+            .map(|value| super::objects::string(ctx, value))
+            .transpose()?
+            .unwrap_or_else(|| "(llg_string_t){0}".to_owned());
+        parts.push(format!("llg_string_t {} = {init}", t.name));
+        if let Some(storage_addr) = t.storage_addr {
+            parts.push(format!(
+                "llg_string_move({storage_addr}, llg_string_clone(&{}))",
+                t.name
+            ));
+        }
     }
     if has_ret {
-        parts.push(format!("sv4_t _r = {call_code}"));
+        parts.push(format!(
+            "{} _r = {call_code}",
+            if matches!(f.ret, Some(crate::sim::ir::IrType::Real { .. })) {
+                "double"
+            } else {
+                "sv4_t"
+            }
+        ));
     } else {
         parts.push(call_code.clone());
     }
     for t in &temps {
         let form = &f.formals[t.idx];
-        let rhs = IrExpr::new(
-            IrExprKind::LocalRead(t.name.to_string()),
-            form.width,
-            form.signed,
-            None,
-        );
+        let rhs = t.storage_read.cloned().unwrap_or_else(|| {
+            IrExpr::new(
+                IrExprKind::LocalRead(t.name.to_string()),
+                form.width,
+                form.signed,
+                None,
+            )
+        });
         let stmt = render_assign(ctx, t.wb, &rhs, false)?;
         parts.push(stmt.trim_end_matches(';').to_string());
+    }
+    for t in &string_temps {
+        let source = t
+            .storage_read
+            .map(|value| super::objects::string(ctx, value))
+            .transpose()?
+            .unwrap_or_else(|| format!("llg_string_clone(&{})", t.name));
+        if t.storage_addr.is_some() {
+            parts.push(format!("llg_string_move(&{}, {source})", t.name));
+        }
+        parts.push(format!("llg_string_move({}, {})", t.writeback, if t.storage_addr.is_some() { format!("llg_string_clone(&{})", t.name) } else { t.name.to_owned() }));
     }
     if has_ret {
         parts.push("_r".to_string());
     } else {
-        parts.push(format!("sv4_x({ret_w}, {})", ret_s as u8));
+            parts.push(if matches!(f.ret, Some(crate::sim::ir::IrType::Real { .. })) {
+                "0.0".to_string()
+            } else {
+                format!("sv4_x({ret_w}, {})", ret_s as u8)
+            });
     }
     Ok(RenderedExpr {
-        code: format!("({{ {} }})", parts.join("; ")),
+        code: format!("({{ {}; }})", parts.join("; ")),
         width: ret_w,
         signed: ret_s,
         fill: None,

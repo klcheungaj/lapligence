@@ -42,6 +42,11 @@ static sv4_t b4(const char* s) { // MSB-first bit string with 0/1/x/z
 
 static uint64_t u(sv4_t v) { return sv4_to_u64(v); }
 static int isx(sv4_t v) { return sv4_is_unknown(v); }
+static double real_from_bits(uint64_t bits) {
+    double value;
+    memcpy(&value, &bits, sizeof(value));
+    return value;
+}
 
 // Wide-value helpers: build from raw limbs (LSB-first).
 static sv4_t w128(uint64_t lo, uint64_t hi) {
@@ -839,6 +844,69 @@ static void proc_kick(llg_proc_t* self) {
     llg_proc_done(self);
 }
 
+static double real_dependency_value;
+static int real_dependency_wakes;
+static int real_expression_wakes;
+
+static void real_expression_eval(double* out, void* context) {
+    (void)context;
+    *out = real_dependency_value + 1.0;
+}
+
+static void real_dependency_waiter(llg_proc_t* self) {
+    for (int i = 0; i < 3; i++) {
+        llg_wait_dependency_t dependency = { NULL, &real_dependency_value };
+        llg_wait_any_dependencies(&dependency, 1);
+        real_dependency_wakes++;
+    }
+    llg_proc_done(self);
+}
+
+static void real_expression_waiter(llg_proc_t* self) {
+    llg_wait_dependency_t dependency = { NULL, &real_dependency_value };
+    llg_expr_event_spec_t expression = {
+        .real_eval = real_expression_eval,
+        .kind = LLG_EV_ANY,
+        .dependencies = &dependency,
+        .n_dependencies = 1,
+        .real = 1,
+    };
+    for (int i = 0; i < 3; i++) {
+        llg_wait_expressions(&expression, 1);
+        real_expression_wakes++;
+    }
+    llg_proc_done(self);
+}
+
+static void real_dependency_writer(llg_proc_t* self) {
+    llg_wait_time(1);
+    llg_ba_d(&real_dependency_value, 0.0);
+    llg_wait_time(1);
+    llg_ba_d(&real_dependency_value, 1.0);
+    llg_wait_time(1);
+    llg_ba_d(&real_dependency_value, 1.0);
+    llg_wait_time(1);
+    llg_ba_d(&real_dependency_value, -0.0);
+    llg_wait_time(1);
+    llg_ba_d(&real_dependency_value, real_from_bits(0x7ff8000000000000ULL));
+    llg_wait_time(1);
+    llg_ba_d(&real_dependency_value, real_from_bits(0x7ff8000000000000ULL));
+    llg_proc_done(self);
+}
+
+static void test_real_dependencies(void) {
+    llg_rt_init();
+    real_dependency_value = 0.0;
+    real_dependency_wakes = 0;
+    real_expression_wakes = 0;
+    llg_spawn(real_dependency_waiter, "real-dependency-waiter");
+    llg_spawn(real_expression_waiter, "real-expression-waiter");
+    llg_spawn(real_dependency_writer, "real-dependency-writer");
+    llg_rt_run();
+    CHECK(real_dependency_wakes == 3);
+    CHECK(real_expression_wakes == 3);
+}
+
 // Delay ordering: two processes with staggered #delays must wake in time order.
 static uint64_t order_log[8];
 static int order_n;
@@ -1321,8 +1389,29 @@ static void test_llg_net(void) {
 
 static sv4_t f_sig = SV4_C(0, 8);
 
+static sv4_t f_live_target = SV4_C(0, 1);
+static sv4_t f_live_source = SV4_C(1, 1);
+
+static void f_live_eval(sv4_t* out) {
+    *out = f_live_source;
+}
+
+static void test_force_live_expression(void) {
+    llg_rt_init();
+    f_live_target = SV4_C(0, 1);
+    f_live_source = SV4_C(1, 1);
+    llg_force_read_t reads[] = {{&f_live_source, NULL, 0}};
+    llg_force_part_t part = {&f_live_target, NULL, 0, 0, 1, 0, 0};
+    llg_force_expr_parts(&part, 1, 0, 0, f_live_eval, reads, 1);
+    CHECK(u(f_live_target) == 1);
+    llg_ba(&f_live_source, SV4_C(0, 1));
+    CHECK(u(f_live_target) == 0);
+    llg_release_parts(&part, 1, 0, 0);
+    CHECK(u(f_live_target) == 0);
+}
+
 static void test_force_release(void) {
-    // force then a blocking write ignored; release restores the pre-force value
+    // A procedural variable retains the currently forced value on release.
     llg_rt_init();
     f_sig = SV4_C(0x11, 8);
     llg_force(&f_sig, SV4_C(0xff, 8));
@@ -1330,10 +1419,10 @@ static void test_force_release(void) {
     llg_ba(&f_sig, SV4_C(0x22, 8)); // dropped while forced
     CHECK(u(f_sig) == 0xff);
     llg_release(&f_sig);
-    CHECK(u(f_sig) == 0x11); // restored to the value saved at force time
+    CHECK(u(f_sig) == 0xff); // no stale pre-force value is restored
 
-    // force twice: the second force updates the value, release restores the
-    // ORIGINAL pre-force value
+    // force twice: the second force replaces the live value and release keeps
+    // that replacement.
     llg_rt_init();
     f_sig = SV4_C(0x11, 8);
     llg_force(&f_sig, SV4_C(0xaa, 8));
@@ -1342,7 +1431,7 @@ static void test_force_release(void) {
     llg_ba(&f_sig, SV4_C(0xcc, 8)); // still dropped
     CHECK(u(f_sig) == 0xbb);
     llg_release(&f_sig);
-    CHECK(u(f_sig) == 0x11); // the original saved value wins
+    CHECK(u(f_sig) == 0xbb); // the latest forced value is retained
 
     // releasing an unforced signal is a no-op (LRM 10.6.2)
     llg_rt_init();
@@ -1421,7 +1510,7 @@ static llg_inertial_t* inertial_handle;
 static sv4_t inertial_target;
 
 static void inertial_producer(llg_proc_t* self) {
-    llg_inertial_assign(&inertial_handle, &inertial_target, SV4_C(1, 1), 2);
+    llg_inertial_assign(&inertial_handle, &inertial_target, SV4_C(1, 1), 2, 2, 2);
     llg_proc_done(self);
 }
 
@@ -1443,7 +1532,7 @@ static void test_inertial_lifetime(void) {
     }
     llg_rt_init();
     inertial_target = sv4_x(1, 0);
-    llg_inertial_assign(&inertial_handle, &inertial_target, SV4_C(0, 1), 100);
+    llg_inertial_assign(&inertial_handle, &inertial_target, SV4_C(0, 1), 100, 100, 100);
     CHECK(inertial_handle != NULL);
     llg_rt_init();
     CHECK(inertial_handle == NULL);
@@ -1470,21 +1559,317 @@ static int run_scaled_time_overflow_probe(void) {
     return 2; // llg_time_scaled must abort before the scheduler returns
 }
 
+static int budget_finite_count;
+
+static void budget_finite_proc(llg_proc_t* self) {
+    for (int i = 0; i < 4; i++) {
+        llg_budget_point("selftest.sv:1:1");
+        budget_finite_count++;
+    }
+    llg_rt_finish();
+    llg_proc_done(self);
+}
+
+static void budget_infinite_proc(llg_proc_t* self) {
+    (void)self;
+    for (;;) llg_budget_point("selftest.sv:2:1");
+}
+
+static int run_budget_finite_probe(void) {
+    llg_rt_init();
+    budget_finite_count = 0;
+    llg_spawn(budget_finite_proc, "budget-finite");
+    llg_rt_run();
+    return !llg_rt_failed() && budget_finite_count == 4 ? 0 : 1;
+}
+
+static int run_budget_infinite_probe(void) {
+    llg_rt_init();
+    llg_spawn(budget_infinite_proc, "budget-infinite");
+    llg_rt_run();
+    return llg_rt_failed() ? 0 : 1;
+}
+
+static void time_scaled_rounding_proc(llg_proc_t* self) {
+    CHECK(llg_time_scaled(1, 10) == 0);
+    llg_wait_time(14);
+    CHECK(llg_time_scaled(1, 10) == 1);
+    llg_wait_time(1);
+    CHECK(llg_time_scaled(1, 10) == 2);
+    llg_wait_time(1);
+    CHECK(llg_time_scaled(1, 10) == 2);
+    llg_rt_finish();
+    llg_proc_done(self);
+}
+
+static void test_time_scaled_rounding(void) {
+    llg_rt_init();
+    llg_spawn(time_scaled_rounding_proc, "time-scaled-rounding");
+    llg_rt_run();
+}
+
+static void test_activation_frames(void) {
+    sv4_t target = SV4_C(0, 8);
+    double real_target = 1.25;
+    llg_frame_t* frame = llg_frame_new(3);
+    llg_frame_capture_value(frame, 0, SV4_C(0x5a, 8));
+    llg_frame_alias_value(frame, 1, &target);
+    llg_frame_capture_real(frame, 2, real_target);
+    CHECK(sv4_same(llg_frame_read_value(frame, 0), SV4_C(0x5a, 8)));
+    CHECK(sv4_same(llg_frame_read_value(frame, 1), SV4_C(0, 8)));
+    CHECK(llg_frame_slot_kind(frame, 2) == LLG_FRAME_REAL);
+    CHECK(llg_frame_read_real(frame, 2) == 1.25);
+    llg_frame_retain(frame);
+    llg_frame_release(frame);
+    llg_frame_write_value(frame, 1, SV4_C(0xa5, 8));
+    llg_frame_write_real(frame, 2, 2.5);
+    CHECK(sv4_same(target, SV4_C(0xa5, 8)));
+    CHECK(llg_frame_read_real(frame, 2) == 2.5);
+    llg_frame_release(frame);
+
+    llg_frame_t* source = llg_frame_new(1);
+    llg_frame_capture_real(source, 0, 3.5);
+    llg_frame_t* alias = llg_frame_new(1);
+    llg_frame_alias_slot(alias, 0, source, 0);
+    llg_frame_release(source);
+    CHECK(llg_frame_read_real(alias, 0) == 3.5);
+    llg_frame_write_real(alias, 0, 4.5);
+    CHECK(llg_frame_read_real(alias, 0) == 4.5);
+    llg_frame_release(alias);
+}
+
+static sv4_t activation_cancel_target;
+
+static void activation_cancel_child(llg_proc_t* self) {
+    llg_wait_time(100);
+    llg_frame_write_value(llg_proc_frame(self), 0, SV4_C(1, 1));
+    llg_proc_done(self);
+}
+
+static void activation_cancel_parent(llg_proc_t* self) {
+    llg_frame_t* frame = llg_frame_new(1);
+    llg_frame_alias_value(frame, 0, &activation_cancel_target);
+    llg_fork_group_t* group = llg_fork_group_new(LLG_JOIN_NONE);
+    llg_fork_with_frame(activation_cancel_child, "activation-cancel-child", group, frame);
+    llg_frame_release(frame);
+    llg_disable_fork();
+    llg_rt_request_finish();
+    llg_proc_done(self);
+}
+
+static void test_activation_frame_cancellation(void) {
+    llg_rt_init();
+    activation_cancel_target = SV4_C(0, 1);
+    llg_spawn(activation_cancel_parent, "activation-cancel-parent");
+    llg_rt_run();
+    CHECK(sv4_same(activation_cancel_target, SV4_C(0, 1)));
+    CHECK(!llg_rt_failed());
+}
+
+static int region_trace[LLG_REGION_COUNT];
+static int region_trace_args[LLG_REGION_COUNT];
+static int region_trace_n;
+static int region_reentry_seen;
+static int region_timed_seen;
+static int region_pre_postponed_reentry_seen;
+static int region_observed_reactive_seen;
+static sv4_t region_sample_signal;
+static sv4_t region_resume_signal;
+static int region_resume_seen;
+
+static void region_trace_callback(void* data) {
+    int expected = *(const int*)data;
+    int actual = (int)llg_current_region();
+    CHECK(actual == expected);
+    region_trace[actual]++;
+    region_trace_n++;
+    if (actual == LLG_REGION_PREPONED) {
+        const sv4_t* sampled = llg_sampled_value(&region_sample_signal);
+        CHECK(sampled && sv4_same(*sampled, SV4_C(0, 1)));
+    }
+    if (actual == LLG_REGION_REACTIVE) {
+        CHECK(llg_schedule_region_callback(
+            LLG_REGION_ACTIVE, region_trace_callback,
+            &region_trace_args[LLG_REGION_ACTIVE]) == 1);
+    }
+    if (actual == LLG_REGION_POSTPONED_PLI) llg_rt_request_finish();
+}
+
+static void region_read_only_callback(void* data) {
+    (void)data;
+    llg_ba(&region_sample_signal, SV4_C(1, 1));
+}
+
+static void region_illegal_schedule_callback(void* data) {
+    (void)data;
+    CHECK(llg_schedule_region_callback(
+              LLG_REGION_ACTIVE, region_trace_callback,
+              &region_trace_args[LLG_REGION_ACTIVE]) == 0);
+}
+
+static void region_pre_postponed_write_callback(void* data) {
+    (void)data;
+    llg_ba(&region_sample_signal, SV4_C(1, 1));
+}
+
+static void region_pre_postponed_waiter(llg_proc_t* self) {
+    llg_wait_level(&region_sample_signal, SV4_C(1, 1));
+    CHECK(llg_current_region() == LLG_REGION_ACTIVE);
+    region_pre_postponed_reentry_seen = 1;
+    llg_proc_done(self);
+}
+
+static void region_reactive_followup(void* data) {
+    (void)data;
+    CHECK(llg_current_region() == LLG_REGION_REACTIVE);
+    region_observed_reactive_seen = 1;
+    CHECK(llg_schedule_region_callback(
+              LLG_REGION_ACTIVE, region_trace_callback,
+              &region_trace_args[LLG_REGION_ACTIVE]) == 1);
+}
+
+static void region_observed_callback(void* data) {
+    (void)data;
+    CHECK(llg_current_region() == LLG_REGION_OBSERVED);
+    CHECK(llg_schedule_region_callback(
+              LLG_REGION_REACTIVE, region_reactive_followup, NULL) == 1);
+}
+
+static void region_resume_write(void* data) {
+    (void)data;
+    llg_ba(&region_resume_signal, SV4_C(1, 1));
+}
+
+static void region_resume_proc(llg_proc_t* self) {
+    CHECK(llg_schedule_region_callback(
+              LLG_REGION_ACTIVE, region_resume_write, NULL) == 1);
+    llg_wait_resume_in_region(LLG_REGION_REACTIVE);
+    llg_wait_any((sv4_t*[]){&region_resume_signal}, 1);
+    CHECK(llg_current_region() == LLG_REGION_REACTIVE);
+    region_resume_seen++;
+    llg_rt_request_finish();
+    llg_proc_done(self);
+}
+
+static void region_timed_callback(void* data) {
+    int expected = *(const int*)data;
+    CHECK(llg_current_region() == (llg_region_t)expected);
+    CHECK(llg_time() == 1);
+    region_timed_seen++;
+    llg_rt_request_finish();
+}
+
+static int run_region_probe(void) {
+    llg_rt_init();
+    region_sample_signal = SV4_C(0, 1);
+    llg_sampled_register(&region_sample_signal);
+    memset(region_trace, 0, sizeof(region_trace));
+    region_trace_n = 0;
+    region_reentry_seen = 0;
+    for (int i = 0; i < LLG_REGION_COUNT; i++) {
+        region_trace_args[i] = i;
+        CHECK(llg_schedule_region_callback(
+                  (llg_region_t)i, region_trace_callback, &region_trace_args[i]) == 1);
+    }
+    CHECK(llg_register_pli_callback(
+              LLG_REGION_PRE_ACTIVE_PLI, region_trace_callback,
+              &region_trace_args[LLG_REGION_PRE_ACTIVE_PLI]) == 1);
+    llg_rt_run();
+    for (int i = 0; i < LLG_REGION_COUNT; i++) CHECK(region_trace[i] >= 1);
+    CHECK(region_trace[LLG_REGION_ACTIVE] == 2);
+    CHECK(region_trace_n == LLG_REGION_COUNT + 2);
+    region_reentry_seen = region_trace[LLG_REGION_ACTIVE] == 2;
+    CHECK(region_reentry_seen);
+    CHECK(!llg_rt_failed());
+
+    llg_rt_init();
+    region_resume_signal = SV4_C(0, 1);
+    region_resume_seen = 0;
+    llg_spawn(region_resume_proc, "explicit-region-resume");
+    llg_rt_run();
+    CHECK(region_resume_seen == 1);
+    CHECK(!llg_rt_failed());
+
+    llg_rt_init();
+    region_timed_seen = 0;
+    region_trace_args[LLG_REGION_ACTIVE] = LLG_REGION_ACTIVE;
+    CHECK(llg_schedule_region_callback_after(
+              LLG_REGION_ACTIVE, region_timed_callback,
+              &region_trace_args[LLG_REGION_ACTIVE], 1) == 1);
+    llg_rt_run();
+    CHECK(region_timed_seen == 1);
+    CHECK(!llg_rt_failed());
+
+    llg_rt_init();
+    memset(region_trace, 0, sizeof(region_trace));
+    region_observed_reactive_seen = 0;
+    region_trace_args[LLG_REGION_POSTPONED_PLI] = LLG_REGION_POSTPONED_PLI;
+    CHECK(llg_schedule_region_callback(
+              LLG_REGION_OBSERVED, region_observed_callback, NULL) == 1);
+    CHECK(llg_schedule_region_callback(
+              LLG_REGION_POSTPONED_PLI, region_trace_callback,
+              &region_trace_args[LLG_REGION_POSTPONED_PLI]) == 1);
+    llg_rt_run();
+    CHECK(region_observed_reactive_seen);
+    CHECK(region_trace[LLG_REGION_ACTIVE] == 1);
+    CHECK(!llg_rt_failed());
+
+    llg_rt_init();
+    region_sample_signal = SV4_C(0, 1);
+    region_pre_postponed_reentry_seen = 0;
+    llg_spawn(region_pre_postponed_waiter, "pre-postponed-waiter");
+    CHECK(llg_schedule_region_callback(
+              LLG_REGION_PRE_POSTPONED, region_pre_postponed_write_callback, NULL) == 1);
+    CHECK(llg_schedule_region_callback(
+              LLG_REGION_POSTPONED_PLI, region_trace_callback,
+              &region_trace_args[LLG_REGION_POSTPONED_PLI]) == 1);
+    llg_rt_run();
+    CHECK(sv4_same(region_sample_signal, SV4_C(1, 1)));
+    CHECK(region_pre_postponed_reentry_seen);
+    CHECK(!llg_rt_failed());
+
+    llg_rt_init();
+    region_sample_signal = SV4_C(0, 1);
+    llg_schedule_region_callback(
+        LLG_REGION_OBSERVED, region_read_only_callback, NULL);
+    llg_rt_run();
+    CHECK(llg_rt_failed());
+    CHECK(sv4_same(region_sample_signal, SV4_C(0, 1)));
+
+    llg_rt_init();
+    CHECK(llg_schedule_region_callback(
+              LLG_REGION_OBSERVED, region_illegal_schedule_callback, NULL) == 1);
+    llg_rt_run();
+    CHECK(llg_rt_failed());
+    return failures == 0 ? 0 : 1;
+}
+
 int main(int argc, char** argv) {
     if (argc == 2 && strcmp(argv[1], "--time-overflow-probe") == 0)
         return run_time_overflow_probe();
     if (argc == 2 && strcmp(argv[1], "--scaled-time-overflow-probe") == 0)
         return run_scaled_time_overflow_probe();
+    if (argc == 2 && strcmp(argv[1], "--budget-finite-probe") == 0)
+        return run_budget_finite_probe();
+    if (argc == 2 && strcmp(argv[1], "--budget-infinite-probe") == 0)
+        return run_budget_infinite_probe();
+    if (argc == 2 && strcmp(argv[1], "--region-probe") == 0)
+        return run_region_probe();
     test_sv4_ops();
     test_sv4_wide();
     check_vector_table();
+    test_real_dependencies();
     test_llg_net();
     test_scheduler();
     test_fork_join();
     test_force_release();
+    test_force_live_expression();
     test_force_nba_dropped();
     test_force_wakes_waiters();
     test_inertial_lifetime();
+    test_time_scaled_rounding();
+    test_activation_frames();
+    test_activation_frame_cancellation();
     if (failures == 0) {
         printf("llg_rt selftest: all ok\n");
         return 0;

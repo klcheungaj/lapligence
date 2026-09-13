@@ -30,7 +30,8 @@ pub use containers::{
     IrContainerReduction, IrContainerStmt,
 };
 pub use objects::{
-    IrChandleExpr, IrObject, IrObjectQuery, IrObjectStmt, IrObjectType, IrStringExpr,
+    IrArrayDimension, IrArrayQuery, IrArrayQueryKind, IrArrayQueryTarget, IrChandleExpr,
+    IrDisplayArg, IrObject, IrObjectQuery, IrObjectStmt, IrObjectType, IrStringExpr,
 };
 
 pub use validate::IrValidationError;
@@ -60,6 +61,200 @@ pub enum IrType {
         /// `true` for `shortreal` (values round through C `float`).
         shortreal: bool,
     },
+}
+
+/// Stable identity for one activation frame.
+///
+/// A frame id is assigned while lowering a fork capture site.  It is kept
+/// separate from generated C names so later passes can reason about storage
+/// ownership without treating an emitter spelling as an address.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct FrameId(u32);
+
+impl FrameId {
+    pub const fn new(index: u32) -> Self {
+        Self(index)
+    }
+
+    pub const fn index(self) -> u32 {
+        self.0
+    }
+}
+
+/// Lifetime class of a typed storage descriptor.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum StorageLifetime {
+    /// One model-wide/static declaration.
+    Static,
+    /// One invocation or lexical block activation.
+    Automatic,
+}
+
+/// Ownership mode of a typed storage descriptor.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum StorageOwnership {
+    /// The owner is an enclosing activation and must outlive this use.
+    Borrowed,
+    /// This frame owns a cloned value until the capture completes.
+    Owned,
+    /// Multiple child activations retain one shared frame.
+    Shared,
+}
+
+/// Value representation carried by an activation slot.
+///
+/// This is deliberately independent of [`IrType`]: a storage descriptor
+/// identifies ownership and lifetime, while the expression type identifies
+/// how a value is evaluated.  Keeping the two separate lets retained frames
+/// grow to strings/aggregates without making a C pointer the storage ABI.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum StorageKind {
+    /// Four-state packed storage (`sv4_t`).
+    Packed,
+    /// IEEE real/shortreal storage (`double` in the runtime frame).
+    Real,
+    /// An object or aggregate handle, reserved for a future owned clone/drop
+    /// implementation.  Lowering rejects these until that ownership contract
+    /// is available.
+    Opaque,
+}
+
+/// A typed reference to one slot in an activation frame.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct StorageRef {
+    frame: FrameId,
+    slot: u32,
+    declaration: u32,
+    lifetime: StorageLifetime,
+    ownership: StorageOwnership,
+    kind: StorageKind,
+}
+
+impl StorageRef {
+    pub const fn new(
+        frame: FrameId,
+        slot: u32,
+        lifetime: StorageLifetime,
+        ownership: StorageOwnership,
+    ) -> Self {
+        Self {
+            frame,
+            slot,
+            declaration: u32::MAX,
+            lifetime,
+            ownership,
+            kind: StorageKind::Packed,
+        }
+    }
+
+    pub const fn for_declaration(
+        frame: FrameId,
+        slot: u32,
+        declaration: u32,
+        lifetime: StorageLifetime,
+        ownership: StorageOwnership,
+    ) -> Self {
+        Self {
+            frame,
+            slot,
+            declaration,
+            lifetime,
+            ownership,
+            kind: StorageKind::Packed,
+        }
+    }
+
+    pub const fn frame(self) -> FrameId {
+        self.frame
+    }
+
+    pub const fn slot(self) -> u32 {
+        self.slot
+    }
+
+    pub const fn declaration(self) -> Option<u32> {
+        if self.declaration == u32::MAX {
+            None
+        } else {
+            Some(self.declaration)
+        }
+    }
+
+    pub const fn lifetime(self) -> StorageLifetime {
+        self.lifetime
+    }
+
+    pub const fn ownership(self) -> StorageOwnership {
+        self.ownership
+    }
+
+    pub const fn kind(self) -> StorageKind {
+        self.kind
+    }
+
+    pub const fn with_kind(mut self, kind: StorageKind) -> Self {
+        self.kind = kind;
+        self
+    }
+}
+
+/// A stable storage dependency used by sensitivity-driven processes and waits.
+///
+/// Dependency keys identify storage rather than transient addresses.  In
+/// particular, resizable containers use their contents/shape keys instead of
+/// retaining pointers into allocations that a resize or delete may replace.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum IrDependency {
+    /// A scalar packed value (the string is the generated C storage name).
+    Scalar(String),
+    /// A scalar real/shortreal value (the string is the generated C storage
+    /// name). Real storage is kept distinct from packed `sv4_t` storage so
+    /// wait and sensitivity lowering cannot accidentally use vector helpers.
+    Real(String),
+    /// One element of a fixed unpacked array, in flattened storage order.
+    ArrayElement { array: usize, index: u64 },
+    /// Any value in a fixed unpacked array.
+    ArrayContents(usize),
+    /// A value in a dynamic/queue/associative container.
+    ContainerContents(usize),
+    /// Container membership/size/shape (including insertion/deletion).
+    ContainerShape(usize),
+}
+
+impl IrDependency {
+    pub fn scalar(name: impl Into<String>) -> Self {
+        Self::Scalar(name.into())
+    }
+
+    pub fn real(name: impl Into<String>) -> Self {
+        Self::Real(name.into())
+    }
+
+    pub fn scalar_name(&self) -> Option<&str> {
+        match self {
+            Self::Scalar(name) => Some(name),
+            _ => None,
+        }
+    }
+
+    pub fn real_name(&self) -> Option<&str> {
+        match self {
+            Self::Real(name) => Some(name),
+            _ => None,
+        }
+    }
+}
+
+impl From<String> for IrDependency {
+    fn from(value: String) -> Self {
+        Self::Scalar(value)
+    }
+}
+
+impl From<&str> for IrDependency {
+    fn from(value: &str) -> Self {
+        Self::Scalar(value.to_owned())
+    }
 }
 
 impl IrType {
@@ -240,6 +435,16 @@ pub enum IrExprKind {
     FormalRead(usize),
     /// Function call used as a value.
     CallFn(Box<IrCallExpr>),
+    /// Persistent same-time-slot state of a named-event synchronization
+    /// object. The object is resolved from the canonical event handle at the
+    /// point where the expression executes.
+    EventTriggered(IrEventRef),
+    /// A blocking assignment-like expression. The target descriptor is
+    /// evaluated once by the emitter, `value` computes the value to commit
+    /// (using `_llg_mut_current` for compound/inc-dec forms), and the result
+    /// is the old target value for post forms or the committed target value
+    /// otherwise.
+    Mutation(Box<IrMutationExpr>),
     Bin {
         op: IrBinOp,
         a: Box<IrExpr>,
@@ -368,6 +573,17 @@ pub struct IrExpr {
     pub(in crate::sim) width: u32,
     pub(in crate::sim) signed: bool,
     pub(in crate::sim) fill: Option<u8>,
+}
+
+/// Explicit sequencing metadata for an expression-valued mutation.
+#[derive(Clone, Debug, PartialEq)]
+pub struct IrMutationExpr {
+    pub(in crate::sim) lhs: IrLhs,
+    pub(in crate::sim) value: Box<IrExpr>,
+    pub(in crate::sim) current_width: u32,
+    pub(in crate::sim) current_signed: bool,
+    pub(in crate::sim) reads_current: bool,
+    pub(in crate::sim) post: bool,
 }
 
 impl IrExpr {
@@ -534,13 +750,13 @@ pub enum IrSysFunc {
     /// Real math functions defined by IEEE 1800-2009 table 20-4.
     Math { kind: IrMathFunc, args: Vec<IrExpr> },
     /// Fractional time in the calling module's time unit.
-    Realtime { precision_ps: u64, unit_ps: u64 },
+    Realtime { precision_fs: u64, unit_fs: u64 },
     /// `$clog2(x)` → `sv4_clog2(code)` (32-bit unsigned).
     Clog2(Box<IrExpr>),
     /// `$time`/`$stime` scaled to the calling module's unit.
     Time {
-        precision_ps: u64,
-        unit_ps: u64,
+        precision_fs: u64,
+        unit_fs: u64,
         kind: IrTimeKind,
     },
     /// `$bits(x)` → `SV4_C(width, 32)` (32-bit signed).
@@ -677,10 +893,38 @@ pub enum IrInsideItem {
 pub enum IrCallArg {
     /// Input formal value.
     Val(IrExpr),
+    /// Input native string formal. String bytes stay owned and typed.
+    StringVal(IrStringExpr),
+    /// Input chandle formal value.  Chandles remain native opaque pointers;
+    /// they are never reinterpreted as packed storage.
+    ChandleVal(IrChandleExpr),
+    /// Output/inout chandle formal bound to a caller-owned `void **`.
+    ChandleAddr(String),
+    /// Chandle `ref` formal bound to a caller-owned pointer slot.
+    ChandleRefAddr(String),
+    /// Output/inout native string formal bound to a caller-owned slot.
+    StringOutAddr(String),
+    /// Native string `ref` formal bound to a whole caller-owned slot.
+    StringRefAddr { addr: String, const_ref: bool },
     /// Output/inout formal bound to a direct C address (statement calls):
     /// `&G_sig`, a whole-reference address (`o0`, `&_l0`) or a caller-side
     /// temp declared separately (`&_t5`); passed to the callee verbatim.
     OutAddr(String),
+    /// Reference formal bound to a canonical lvalue descriptor.  The string
+    /// is a complete `llg_ref_t*` expression and remains valid for the call;
+    /// the remaining fields retain the checked actual shape in typed IR.
+    RefAddr {
+        addr: String,
+        width: u32,
+        signed: bool,
+        two_state: bool,
+        const_ref: bool,
+        /// Typed caller-side lvalue used for dependency and write analysis.
+        lhs: Box<IrLhs>,
+        /// Caller-side read used for dependency/effect analysis. The C
+        /// descriptor evaluates the address separately at the call boundary.
+        read: Box<IrExpr>,
+    },
     /// Output/inout formal bound to a caller-side temp inside an
     /// expression-position GNU statement expression.  `init` is `None` for
     /// outputs (all-X temp sized by the formal's type) and the actual's
@@ -690,6 +934,24 @@ pub enum IrCallArg {
         name: String,
         init: Option<Box<IrExpr>>,
         writeback: Box<IrLhs>,
+        /// Optional persistent formal storage used by a static function call.
+        /// The caller-side temp still stages the actual value, while the C
+        /// call receives this address and the value is copied back from the
+        /// typed storage after return.
+        storage_addr: Option<String>,
+        storage_lhs: Option<Box<IrLhs>>,
+        storage_read: Option<Box<IrExpr>>,
+        /// Caller-side selector values captured before the callee runs. Each
+        /// tuple is `(name, width, signed, two_state, initializer)`.
+        selector_inits: Vec<(String, u32, bool, bool, IrExpr)>,
+    },
+    /// Caller-side temp for an output/inout native string formal.
+    StringOutTemp {
+        name: String,
+        init: Option<Box<IrStringExpr>>,
+        writeback: String,
+        storage_addr: Option<String>,
+        storage_read: Option<Box<IrStringExpr>>,
     },
 }
 
@@ -849,6 +1111,19 @@ pub enum IrLhs {
         width: u32,
         signed: bool,
         two_state: bool,
+        /// Real storage rounds through `float` when this is a shortreal.
+        shortreal: bool,
+    },
+    /// A subroutine `ref` formal.  The address names an `llg_ref_t` descriptor
+    /// and writes are committed through its canonical target immediately.
+    Ref {
+        addr: String,
+        width: u32,
+        signed: bool,
+        two_state: bool,
+        /// Whether this descriptor is read-only because it names a `const
+        /// ref` formal in the enclosing activation.
+        const_ref: bool,
     },
     /// Bit-select `[idx]` of a signal.
     Bit(usize, IrExpr, bool),
@@ -925,25 +1200,55 @@ pub enum IrEdge {
     Any,
 }
 
+/// A named-event handle reference. `Static` points at one lowered handle,
+/// while `Array` resolves an unpacked event-array element at the point where
+/// the operation is issued. `Null` is the legal null event handle and keeps
+/// the operation suspended/no-op without manufacturing a pulse object.
+#[derive(Clone, Debug, PartialEq)]
+pub enum IrEventRef {
+    Static(usize),
+    Array {
+        /// Index of the array descriptor in [`IrModel::events`].
+        array: usize,
+        indices: Vec<IrExpr>,
+    },
+    /// A handle copied into activation-owned storage at call time.
+    Captured(String),
+    Null,
+}
+
 /// One source entry of an atomic multi-source wait: a signal/array-element
 /// wait address (its C name, `&`-prefixed at emission) or a named event
-/// (index into [`IrModel::events`]).
+/// handle reference.
 #[derive(Clone, Debug, PartialEq)]
 pub enum IrWaitSrc {
     /// A value expression, evaluated synchronously when a dependency changes.
     Evaluated {
         eval: String,
         condition: Option<String>,
-        reads: Vec<String>,
+        reads: Vec<IrDependency>,
+    },
+    /// A real-valued expression, evaluated synchronously when one of its
+    /// typed dependencies changes. Real event controls use bitwise value
+    /// change semantics, matching runtime real assignment observation.
+    EvaluatedReal {
+        eval: String,
+        condition: Option<String>,
+        reads: Vec<IrDependency>,
     },
     /// Named event with a qualifier evaluated at trigger time.
-    FilteredEvent { event: usize, condition: String },
+    FilteredEvent {
+        event: IrEventRef,
+        condition: String,
+    },
     /// Signal (or array-element address) C name; edge per the paired
     /// [`IrEdge`].
     Sig(String),
+    /// Real/shortreal signal C name; only `IrEdge::Any` is legal.
+    Real(String),
     /// Named event; any trigger wakes the waiter ([`IrEdge`] is ignored,
     /// events are edge-triggered by definition).
-    Event(usize),
+    Event(IrEventRef),
 }
 
 /// Fork join kinds (`LLG_JOIN`/`LLG_JOIN_NONE`/`LLG_JOIN_ANY`).
@@ -967,6 +1272,27 @@ pub enum IrDelay {
     },
 }
 
+/// Rise/fall/turn-off propagation delays for one inertial driver, already
+/// converted to design-precision ticks.  A single source delay is represented
+/// by repeating the same value in all three slots; a two-value source form
+/// uses the minimum rise/fall value for turn-off.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct IrTransitionDelay {
+    pub rise: u64,
+    pub fall: u64,
+    pub turn_off: u64,
+}
+
+impl IrTransitionDelay {
+    pub const fn uniform(ticks: u64) -> Self {
+        Self {
+            rise: ticks,
+            fall: ticks,
+            turn_off: ticks,
+        }
+    }
+}
+
 impl IrDelay {
     pub(in crate::sim) fn expression(&self) -> Option<&IrExpr> {
         match self {
@@ -980,6 +1306,181 @@ impl IrDelay {
             Self::Constant(_) => None,
             Self::Runtime { value, .. } => Some(value),
         }
+    }
+}
+
+/// One value copied into a detached fork activation.
+#[derive(Clone, Debug, PartialEq)]
+pub struct IrCapture {
+    storage: StorageRef,
+    initial: IrExpr,
+}
+
+/// One automatic value copied into an evaluated-event environment.
+///
+/// The generated callback uses `local` only as a lexical substitution key;
+/// `storage` remains the typed identity used to allocate the runtime frame.
+#[derive(Clone, Debug, PartialEq)]
+pub struct IrEventCapture {
+    storage: StorageRef,
+    local: String,
+    initial: IrExpr,
+}
+
+impl IrEventCapture {
+    pub fn new(storage: StorageRef, local: String, initial: IrExpr) -> Self {
+        Self {
+            storage,
+            local,
+            initial,
+        }
+    }
+
+    pub fn storage(&self) -> StorageRef {
+        self.storage
+    }
+
+    pub fn local(&self) -> &str {
+        &self.local
+    }
+
+    pub fn initial(&self) -> &IrExpr {
+        &self.initial
+    }
+
+    pub(in crate::sim) fn initial_mut(&mut self) -> &mut IrExpr {
+        &mut self.initial
+    }
+}
+
+/// Persistent evaluator state for an expression event or trigger-time
+/// qualifier. The emitter materializes the frame and the runtime retains it
+/// across suspension, cancellation, and nested activations.
+#[derive(Clone, Debug, PartialEq)]
+pub struct IrEventContext {
+    frame: FrameId,
+    captures: Vec<IrEventCapture>,
+}
+
+impl IrEventContext {
+    pub fn new(frame: FrameId, captures: Vec<IrEventCapture>) -> Self {
+        Self { frame, captures }
+    }
+
+    pub fn frame(&self) -> FrameId {
+        self.frame
+    }
+
+    pub fn captures(&self) -> &[IrEventCapture] {
+        &self.captures
+    }
+
+    pub(in crate::sim) fn captures_mut(&mut self) -> &mut [IrEventCapture] {
+        &mut self.captures
+    }
+}
+
+impl IrCapture {
+    pub fn new(storage: StorageRef, initial: IrExpr) -> Self {
+        Self { storage, initial }
+    }
+
+    pub fn storage(&self) -> StorageRef {
+        self.storage
+    }
+
+    pub fn initial(&self) -> &IrExpr {
+        &self.initial
+    }
+
+    pub(in crate::sim) fn initial_mut(&mut self) -> &mut IrExpr {
+        &mut self.initial
+    }
+}
+
+/// A fork branch carrying one independently-owned activation frame.
+#[derive(Clone, Debug, PartialEq)]
+pub struct IrCapturedBranch {
+    pub(in crate::sim) c_name: String,
+    pub(in crate::sim) label: String,
+    pub(in crate::sim) frame: FrameId,
+    pub(in crate::sim) captures: Vec<IrCapture>,
+}
+
+impl IrCapturedBranch {
+    pub fn new(c_name: String, label: String, frame: FrameId, captures: Vec<IrCapture>) -> Self {
+        Self {
+            c_name,
+            label,
+            frame,
+            captures,
+        }
+    }
+
+    pub fn c_name(&self) -> &str {
+        &self.c_name
+    }
+
+    pub fn label(&self) -> &str {
+        &self.label
+    }
+
+    pub fn frame(&self) -> FrameId {
+        self.frame
+    }
+
+    pub fn captures(&self) -> &[IrCapture] {
+        &self.captures
+    }
+}
+
+/// Default radix used for unformatted integral display arguments.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum IrDisplayRadix {
+    Decimal,
+    Binary,
+    Octal,
+    Hex,
+}
+
+impl IrDisplayRadix {
+    /// Return the format conversion used by this radix.
+    pub const fn specifier(self) -> char {
+        match self {
+            Self::Decimal => 'd',
+            Self::Binary => 'b',
+            Self::Octal => 'o',
+            Self::Hex => 'h',
+        }
+    }
+}
+
+/// Resolved identity of a named procedural activation. Declaration and
+/// elaborated-instance identities are kept separate so equal source names in
+/// different instances cannot alias at runtime.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct IrActivationTarget {
+    declaration: u32,
+    instance: u32,
+}
+
+impl IrActivationTarget {
+    /// Construct a target from owned semantic identities.
+    pub const fn new(declaration: u32, instance: u32) -> Self {
+        Self {
+            declaration,
+            instance,
+        }
+    }
+
+    /// Resolved declaration identity.
+    pub const fn declaration(self) -> u32 {
+        self.declaration
+    }
+
+    /// Elaborated instance identity.
+    pub const fn instance(self) -> u32 {
+        self.instance
     }
 }
 
@@ -1001,6 +1502,19 @@ pub enum IrStmt {
         init: Option<Box<IrExpr>>,
         two_state: bool,
     },
+    /// Declare an automatic native string slot at the source declaration.
+    /// The optional initializer is an owned byte-string expression.
+    DeclString {
+        name: String,
+        init: Option<IrStringExpr>,
+    },
+    /// Capture an owned string value now and commit it to persistent storage
+    /// in a future NBA region.
+    DelayedStringAssign {
+        target: String,
+        rhs: IrStringExpr,
+        ticks: IrDelay,
+    },
     /// Capture a nonblocking update now and commit in a future NBA region.
     DelayedAssign {
         lhs: IrLhs,
@@ -1011,13 +1525,47 @@ pub enum IrStmt {
     InertialAssign {
         lhs: IrLhs,
         rhs: IrExpr,
-        ticks: u64,
+        delay: IrTransitionDelay,
     },
     /// Blocking (`nba == false`) or nonblocking assignment, including reals.
     Assign {
         lhs: IrLhs,
         rhs: IrExpr,
         nba: bool,
+    },
+    /// Rebind an event variable to another persistent synchronization object
+    /// or to null. Existing waiters stay on the old object; only future
+    /// trigger/wait operations observe the new handle.
+    EventAssign {
+        target: IrEventRef,
+        source: Option<IrEventRef>,
+    },
+    /// Copy the current event object identity into activation-owned handle
+    /// storage. Later reassignment of the caller's handle cannot retarget the
+    /// suspended activation.
+    EventCapture {
+        name: String,
+        source: IrEventRef,
+    },
+    /// Activate or replace one procedural continuous-assignment binding and
+    /// immediately drive its target.
+    PcaAssign {
+        sig: usize,
+        enable: usize,
+        site: usize,
+        value: IrExpr,
+    },
+    /// Re-evaluate an active procedural continuous-assignment binding.
+    PcaDrive {
+        sig: usize,
+        enable: usize,
+        site: usize,
+        value: IrExpr,
+    },
+    /// Remove the active procedural continuous-assignment binding while
+    /// retaining the target's last driven value.
+    PcaDeassign {
+        sig: usize,
     },
     If {
         cond: IrExpr,
@@ -1030,7 +1578,7 @@ pub enum IrStmt {
         cond: IrExpr,
         body: Vec<IrStmt>,
     },
-    /// `repeat (count) body` — the runtime loop uses the `_rc`/`_ri` temps.
+    /// `repeat (count) body` — count is evaluated once at its full packed width.
     Repeat {
         count: IrExpr,
         body: Vec<IrStmt>,
@@ -1059,23 +1607,49 @@ pub enum IrStmt {
     WaitEvents {
         specs: Vec<(IrWaitSrc, IrEdge)>,
     },
-    /// `-> ev;` — trigger the named event (index into [`IrModel::events`]);
-    /// wakes ALL current waiters. Non-blocking triggers (`->>`) currently lower
-    /// the same way because the owned semantic projection lacks the distinction.
+    /// `-> ev;` — trigger the named event immediately (index into
+    /// [`IrModel::events`]); wakes ALL current waiters.
     EventTrigger {
-        ev: usize,
+        ev: IrEventRef,
+    },
+    /// `->> ev` — queue the named-event trigger in NBA without suspending
+    /// the issuing process. An optional delay is evaluated at issue time.
+    NonblockingEventTrigger {
+        ev: IrEventRef,
+        ticks: Option<IrDelay>,
+    },
+    /// `->> timing ev` where the timing control is an event or repeat event
+    /// control.  The source descriptors are registered at issue time and the
+    /// target is queued in NBA only after the control has matched.
+    NonblockingEventTriggerWhen {
+        ev: IrEventRef,
+        specs: Vec<(IrWaitSrc, IrEdge)>,
+        repeat: Option<IrExpr>,
     },
     /// Combinational-style suspension: ONE atomic `llg_wait_any` on the
-    /// precomputed read set (empty set lowers to `llg_wait_time(0)`).
+    /// precomputed read set (an empty set waits indefinitely).
     WaitAny {
-        sens: Vec<String>,
+        sens: Vec<IrDependency>,
     },
     /// `wait (cond) body` — spin on the condition, suspending on changes of
     /// its precomputed read set, then run the body once.
     WaitCond {
         cond: IrExpr,
-        sens: Vec<String>,
+        sens: Vec<IrDependency>,
         body: Vec<IrStmt>,
+    },
+    /// `wait (event.triggered) body` — wait on persistent state without
+    /// turning ordinary event waits into level waits.
+    WaitEventTriggered {
+        event: IrEventRef,
+        body: Vec<IrStmt>,
+    },
+    /// `wait_order (...) action else failure` — one ordered monitor over
+    /// canonical synchronization objects, with one-shot action selection.
+    WaitOrder {
+        events: Vec<IrEventRef>,
+        success: Vec<IrStmt>,
+        failure: Vec<IrStmt>,
     },
     /// `fork … join/join_any/join_none`.  Branch coroutine functions live on
     /// the enclosing process's `pre_fns`; each site records its branch
@@ -1083,44 +1657,92 @@ pub enum IrStmt {
     Fork {
         join_kind: IrJoinKind,
         branches: Vec<(String, String)>,
+        /// Resolved target for a named fork scope, if any.
+        target: Option<IrActivationTarget>,
+    },
+    /// `fork … join` with one owned activation frame per branch. Captures are
+    /// evaluated at the fork site, before any child is scheduled.
+    CapturedFork {
+        join_kind: IrJoinKind,
+        branches: Vec<IrCapturedBranch>,
+        /// Resolved target for a named fork scope, if any.
+        target: Option<IrActivationTarget>,
+    },
+    /// Register one named block/task activation while its body executes.
+    /// `exit` is a unique C label emitted after the body so cancellation can
+    /// leave the scope without running statements after the disabled boundary.
+    ActivationScope {
+        target: IrActivationTarget,
+        exit: String,
+        body: Vec<IrStmt>,
+    },
+    /// Disable every currently active invocation matching a resolved target.
+    /// The runtime wakes suspended owners and the generated activation scopes
+    /// unwind cooperatively through their exit labels.
+    DisableTarget {
+        target: IrActivationTarget,
     },
     /// `wait fork;`
     WaitFork,
     /// `disable fork;`
     DisableFork,
-    /// `force sig = value;` (whole signals only).
+    /// `force lhs = value;` with a live RHS evaluator and explicit source
+    /// dependencies. The evaluator is attached to the owning process's
+    /// [`IrPreFn::ForceEval`] entries and is re-run by the runtime whenever a
+    /// dependency changes.
     Force {
-        sig: usize,
+        lhs: IrLhs,
         value: IrExpr,
+        eval: String,
+        reads: Vec<usize>,
     },
-    /// `release sig;`
+    /// `release lhs;`
     Release {
-        sig: usize,
+        lhs: IrLhs,
     },
     /// `$display`/`$write` — the format string is already parsed and escaped;
     /// `newline` distinguishes `$display` (true) from `$write` (false), and
-    /// each argument bool flags a real-valued expression.
+    /// each argument bool flags a real-valued expression. `default_radix`
+    /// records the family variant for unformatted integral arguments.
     Display {
         fmt: String,
         args: Vec<(IrExpr, bool)>,
         newline: bool,
+        default_radix: IrDisplayRadix,
+    },
+    /// Typed `$display`/`$write`. Unlike the legacy `Display` form this keeps
+    /// real and string values native until the shared runtime formatter.
+    DisplayTyped {
+        fmt: String,
+        args: Vec<IrDisplayArg>,
+        scope: String,
+        newline: bool,
+        default_radix: IrDisplayRadix,
     },
     /// `$monitor`/`$strobe` — `eval` is the C name of the re-evaluation
     /// function attached to the owning process/function's `pre_fns`, and
-    /// `n_args` its argument count.
+    /// `n_args` its argument count. Monitor-only `reads` contains the stable
+    /// storage dependencies that can trigger a report; display-only time
+    /// queries are intentionally absent. `default_radix` records the family
+    /// variant for unformatted integral arguments.
     MonitorSet {
         strobe: bool,
         fmt: String,
         eval: String,
         n_args: usize,
+        reads: Vec<IrDependency>,
+        default_radix: IrDisplayRadix,
+        /// HDL hierarchy used by `%m`; never a generated C identifier.
+        scope: String,
     },
     /// `$monitoron` (true) / `$monitoroff` (false).
     MonitorEnable(bool),
     /// `$dumpfile("path")` — the literal HDL string, escaped by the backend.
     WaveFile(String),
-    /// `$dumpvars(...)`; scope/depth filtering is currently conservative and
-    /// all registered storage is dumped.
-    WaveDumpVars,
+    /// `$dumpvars(...)`; the depth and source-identity selection are captured
+    /// before C emission so the runtime never has to infer HDL meaning from a
+    /// generated identifier.
+    WaveDumpVars(IrWaveDumpVars),
     /// `$dumpon`.
     WaveOn,
     /// `$dumpoff`.
@@ -1133,11 +1755,16 @@ pub enum IrStmt {
     WaveLimit(IrExpr),
     /// `$finish`.
     Finish,
+    /// `$finish` with its validated diagnostic level and source call site.
+    FinishControl {
+        verbosity: u8,
+        location: String,
+    },
     /// `$printtimescale` for a module whose unit/precision and instance path
     /// label were captured at lowering.
     PrintTimescale {
-        unit_ps: u64,
-        precision_ps: u64,
+        unit_fs: u64,
+        precision_fs: u64,
         label: String,
     },
     /// Statement-position function/task call (delay-free callees).
@@ -1156,17 +1783,52 @@ pub enum IrStmt {
     Nop,
 }
 
+/// Owned selection metadata for one `$dumpvars` call.
+///
+/// Names use the same ASCII unit-separator hierarchy encoding as
+/// [`IrSignal::hdl_name`] and [`IrArray::hdl_name`].  `depth == 0` means
+/// unlimited depth; an empty name list therefore selects the complete design.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct IrWaveDumpVars {
+    pub(in crate::sim) depth: u32,
+    pub(in crate::sim) names: Vec<String>,
+}
+
+impl IrWaveDumpVars {
+    pub fn new(depth: u32, names: Vec<String>) -> Self {
+        Self { depth, names }
+    }
+
+    pub fn depth(&self) -> u32 {
+        self.depth
+    }
+
+    pub fn names(&self) -> &[String] {
+        &self.names
+    }
+}
+
 impl IrStmt {
     pub(in crate::sim) fn delay_expression(&self) -> Option<&IrExpr> {
         match self {
-            Self::Delay { ticks } | Self::DelayedAssign { ticks, .. } => ticks.expression(),
+            Self::Delay { ticks }
+            | Self::DelayedAssign { ticks, .. }
+            | Self::DelayedStringAssign { ticks, .. }
+            | Self::NonblockingEventTrigger {
+                ticks: Some(ticks), ..
+            } => ticks.expression(),
             _ => None,
         }
     }
 
     pub(in crate::sim) fn delay_expression_mut(&mut self) -> Option<&mut IrExpr> {
         match self {
-            Self::Delay { ticks } | Self::DelayedAssign { ticks, .. } => ticks.expression_mut(),
+            Self::Delay { ticks }
+            | Self::DelayedAssign { ticks, .. }
+            | Self::NonblockingEventTrigger {
+                ticks: Some(ticks), ..
+            } => ticks.expression_mut(),
+            Self::NonblockingEventTrigger { ticks: None, .. } => None,
             _ => None,
         }
     }
@@ -1179,8 +1841,46 @@ impl IrStmt {
 pub enum IrPreFn {
     /// `static void c_name(llg_proc_t* self) { body; llg_proc_done; return; }`
     Branch { c_name: String, body: Vec<IrStmt> },
-    /// `static void c_name(sv4_t* out) { out[i] = arg; }`
-    MonEval { c_name: String, args: Vec<IrExpr> },
+    /// `Branch` with an owned frame made available to the callback. The frame
+    /// is released by the runtime when the child completes or is cancelled.
+    CapturedBranch {
+        c_name: String,
+        frame: FrameId,
+        captures: Vec<IrCapture>,
+        body: Vec<IrStmt>,
+    },
+    /// `static void c_name(sv4_t* out, void* context) { out[i] = arg; }`. An
+    /// evaluated event may carry a copied activation frame for local/formal
+    /// references; monitor callbacks use a null context.
+    MonEval {
+        c_name: String,
+        args: Vec<IrExpr>,
+        context: Option<IrEventContext>,
+    },
+    /// Typed display-family re-evaluator. Values are owned by the runtime
+    /// while a monitor or strobe is pending, so string temporaries cannot
+    /// dangle across the postponed region.
+    DisplayEval {
+        c_name: String,
+        args: Vec<IrDisplayArg>,
+    },
+    /// `static void c_name(double* out, void* context) { *out = value; }` for
+    /// real event expressions. The callback is side-effect free and
+    /// reentrant.
+    RealEval {
+        c_name: String,
+        value: IrExpr,
+        context: Option<IrEventContext>,
+    },
+    /// `static void c_name(sv4_t* out) { *out = value; }` (or the equivalent
+    /// `double` callback when `real` is true). Force evaluators have no
+    /// coroutine or process-local state and can therefore remain live after
+    /// the issuing process suspends.
+    ForceEval {
+        c_name: String,
+        value: IrExpr,
+        real: bool,
+    },
 }
 
 /// How a process function wraps its body.
@@ -1189,24 +1889,46 @@ pub enum IrShape {
     /// Run the body once, then `llg_proc_done(self); return;`
     /// (initial blocks, constant comb drivers, warn-and-run-once comb).
     RunOnce,
-    /// Wrap the body in a plain `for (;;)` (event/delay-controlled always).
+    /// Wrap the body in a plain `for (;;)` (all ordinary `always` procedures,
+    /// including those whose first iteration has no timing control).
     Loop,
     /// Evaluate the body once, then loop `wait_any(reads); body`
-    /// (continuous assignments, links, combinational processes).  `reads`
-    /// are wait-source C names; the LHS base signals are never included
-    /// (self-wake prevention happened at lowering). Execution lowering uses
-    /// one self-resuming block, so the body has a single owner.
-    SensLoop { reads: Vec<String> },
+    /// (continuous assignments, links, combinational processes). `reads` are
+    /// stable typed storage dependencies; the LHS base signals are never
+    /// included (self-wake prevention happened at lowering). Execution
+    /// lowering uses one self-resuming block, so the body has a single owner.
+    SensLoop { reads: Vec<IrDependency> },
 }
 
-/// A coroutine process (comb driver, plain port link, always/initial
-/// block, or fork branch group host).  Push order equals spawn order.
+/// Semantic origin of one lowered process. Synthetic drivers and links use
+/// [`Self::Synthetic`]; user-declared procedures retain their exact
+/// SystemVerilog process kind so later validation and emission cannot flatten
+/// `always_comb`, `always_latch`, and `always_ff` into a generic process.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IrProcessKind {
+    Synthetic,
+    Initial,
+    Final,
+    Always,
+    Comb,
+    Latch,
+    FlipFlop,
+}
+
+/// A coroutine process (comb driver, plain port link, always/initial block, or
+/// fork branch group host). Push order equals spawn order. Ordinary `always`
+/// uses [`IrShape::Loop`], while implicit-sensitivity processes use
+/// [`IrShape::SensLoop`].
 #[derive(Clone, Debug, PartialEq)]
 pub struct IrProcess {
     pub(in crate::sim) c_name: String,
     /// Spawn label (`tb.u.assign`, `top.initial`, …).
     pub(in crate::sim) label: String,
+    pub(in crate::sim) kind: IrProcessKind,
     pub(in crate::sim) shape: IrShape,
+    /// Stable storage keys written by the source process, including writes
+    /// performed by called subroutines. Synthetic drivers leave this empty.
+    pub(in crate::sim) writes: Vec<IrDependency>,
     pub(in crate::sim) pre_fns: Vec<IrPreFn>,
     pub(in crate::sim) body: Vec<IrStmt>,
     pub(in crate::sim) origin: crate::sim::semantic::Origin,
@@ -1237,10 +1959,54 @@ impl IrProcess {
         body: Vec<IrStmt>,
         origin: crate::sim::semantic::Origin,
     ) -> Self {
+        Self::new_with_kind(
+            c_name,
+            label,
+            IrProcessKind::Synthetic,
+            shape,
+            pre_fns,
+            body,
+            origin,
+        )
+    }
+
+    pub(in crate::sim) fn new_with_kind(
+        c_name: String,
+        label: String,
+        kind: IrProcessKind,
+        shape: IrShape,
+        pre_fns: Vec<IrPreFn>,
+        body: Vec<IrStmt>,
+        origin: crate::sim::semantic::Origin,
+    ) -> Self {
+        Self::new_with_kind_and_writes(
+            c_name,
+            label,
+            kind,
+            shape,
+            Vec::new(),
+            pre_fns,
+            body,
+            origin,
+        )
+    }
+
+    pub(in crate::sim) fn new_with_kind_and_writes(
+        c_name: String,
+        label: String,
+        kind: IrProcessKind,
+        shape: IrShape,
+        writes: Vec<IrDependency>,
+        pre_fns: Vec<IrPreFn>,
+        body: Vec<IrStmt>,
+        origin: crate::sim::semantic::Origin,
+    ) -> Self {
         Self {
             c_name,
             label,
+            kind,
             shape,
+            writes,
             pre_fns,
             body,
             origin,
@@ -1252,6 +2018,14 @@ impl IrProcess {
     }
     pub fn label(&self) -> &str {
         &self.label
+    }
+    /// Return the source or synthetic family of this process.
+    pub fn kind(&self) -> IrProcessKind {
+        self.kind
+    }
+    /// Return the stable storage keys written by this process.
+    pub fn writes(&self) -> &[IrDependency] {
+        &self.writes
     }
     pub fn shape(&self) -> &IrShape {
         &self.shape
@@ -1268,6 +2042,15 @@ impl IrProcess {
     }
 }
 
+/// Passing mode of a lowered function/task formal.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IrFormalMode {
+    Input,
+    Output,
+    Inout,
+    Ref,
+}
+
 /// A formal argument of a lowered function/task.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct IrFormal {
@@ -1275,11 +2058,27 @@ pub struct IrFormal {
     /// for inputs (passed by value as `sv4_t a{idx}`).  Indices are the
     /// formal's declaration position.
     pub(in crate::sim) is_out: bool,
+    pub(in crate::sim) mode: IrFormalMode,
+    /// `true` only for a `const ref` formal.
+    pub(in crate::sim) const_ref: bool,
+    /// `true` only for a `ref static` formal.
+    pub(in crate::sim) ref_static: bool,
     pub(in crate::sim) width: u32,
     pub(in crate::sim) signed: bool,
     pub(in crate::sim) two_state: bool,
+    /// Native real formal; width/signedness are unused when set.
+    pub(in crate::sim) real: bool,
+    /// `true` for a `shortreal` formal. The value is rounded at the formal
+    /// storage boundary, just like a shortreal signal.
+    pub(in crate::sim) shortreal: bool,
     /// Non-integral native pointer formal; width/signedness are unused.
     pub(in crate::sim) chandle: bool,
+    /// Named-event formal. Event handles are resolved by inline call lowering,
+    /// not represented as packed values in the C ABI.
+    pub(in crate::sim) event: bool,
+    /// Native arbitrary-byte string formal. String formals use
+    /// `llg_string_t` values/pointers rather than packed storage.
+    pub(in crate::sim) string: bool,
 }
 
 impl IrFormal {
@@ -1287,21 +2086,53 @@ impl IrFormal {
         validate_width("formal.width", width)?;
         Ok(Self {
             is_out,
+            mode: if is_out {
+                IrFormalMode::Output
+            } else {
+                IrFormalMode::Input
+            },
+            const_ref: false,
+            ref_static: false,
             width,
             signed,
             two_state: false,
+            real: false,
+            shortreal: false,
             chandle: false,
+            event: false,
+            string: false,
         })
     }
 
     pub fn is_out(&self) -> bool {
         self.is_out
     }
+    pub fn mode(&self) -> IrFormalMode {
+        self.mode
+    }
+    pub fn is_ref(&self) -> bool {
+        self.mode == IrFormalMode::Ref
+    }
+    pub fn is_const_ref(&self) -> bool {
+        self.is_ref() && self.const_ref
+    }
+    pub fn is_ref_static(&self) -> bool {
+        self.is_ref() && self.ref_static
+    }
+    pub fn is_address(&self) -> bool {
+        self.is_out || self.is_ref()
+    }
     pub fn width(&self) -> u32 {
         self.width
     }
     pub fn signed(&self) -> bool {
         self.signed
+    }
+    pub fn is_event(&self) -> bool {
+        self.event
+    }
+    pub fn is_string(&self) -> bool {
+        self.string
     }
 }
 
@@ -1312,7 +2143,13 @@ pub struct IrLocal {
     pub(in crate::sim) width: u32,
     pub(in crate::sim) signed: bool,
     pub(in crate::sim) two_state: bool,
-    /// Constant declaration initializer, applied once to static storage.
+    pub(in crate::sim) real: bool,
+    pub(in crate::sim) shortreal: bool,
+    /// Native string storage; width/signedness are unused when set.
+    pub(in crate::sim) string: bool,
+    /// Legacy inline initializer for IRs that model local storage directly;
+    /// lowered declarations use [`IrInitialization`] so runtime values keep
+    /// their declaration and scheduling metadata.
     pub(in crate::sim) initial: Option<IrExpr>,
 }
 
@@ -1324,6 +2161,9 @@ impl IrLocal {
             width,
             signed,
             two_state: false,
+            real: false,
+            shortreal: false,
+            string: false,
             initial: None,
         })
     }
@@ -1401,7 +2241,8 @@ impl IrFunc {
                     format!("sv4_x({width}, {})", signed as u8)
                 }
             }
-            _ => String::new(),
+            Some(IrType::Real { .. }) => "0.0".to_string(),
+            None => String::new(),
         }
     }
 
@@ -1428,6 +2269,81 @@ impl IrFunc {
     }
 }
 
+/// Scheduling phase for a declaration initializer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IrInitPhase {
+    /// SystemVerilog static initialization, before ordinary processes spawn.
+    BeforeProcesses,
+    /// Verilog declaration initialization, represented as an active process.
+    ActiveRegion,
+}
+
+/// Storage targeted by a typed declaration initializer.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum IrInitTarget {
+    /// A model signal (module or synthesized static storage).
+    Signal(usize),
+    /// A persistent local belonging to one lowered function.
+    StaticLocal { function: usize, name: String },
+}
+
+/// One declaration initializer with its semantic identity and scheduling
+/// metadata.  The source origin carries the declaration's source range (or a
+/// truthful synthetic origin when the frontend omitted source provenance).
+#[derive(Clone, Debug, PartialEq)]
+pub struct IrInitialization {
+    pub(in crate::sim) declaration: u32,
+    pub(in crate::sim) lifetime: StorageLifetime,
+    pub(in crate::sim) phase: IrInitPhase,
+    pub(in crate::sim) target: IrInitTarget,
+    pub(in crate::sim) value: IrExpr,
+    pub(in crate::sim) origin: crate::sim::semantic::Origin,
+}
+
+impl IrInitialization {
+    pub fn new(
+        declaration: u32,
+        lifetime: StorageLifetime,
+        phase: IrInitPhase,
+        target: IrInitTarget,
+        value: IrExpr,
+        origin: crate::sim::semantic::Origin,
+    ) -> Self {
+        Self {
+            declaration,
+            lifetime,
+            phase,
+            target,
+            value,
+            origin,
+        }
+    }
+
+    pub fn declaration(&self) -> u32 {
+        self.declaration
+    }
+
+    pub fn lifetime(&self) -> StorageLifetime {
+        self.lifetime
+    }
+
+    pub fn phase(&self) -> IrInitPhase {
+        self.phase
+    }
+
+    pub fn target(&self) -> &IrInitTarget {
+        &self.target
+    }
+
+    pub fn value(&self) -> &IrExpr {
+        &self.value
+    }
+
+    pub fn origin(&self) -> &crate::sim::semantic::Origin {
+        &self.origin
+    }
+}
+
 /// One `main()` initialization step, applied before any process runs.
 #[derive(Clone, Debug, PartialEq)]
 pub enum IrInitStep {
@@ -1449,6 +2365,9 @@ pub enum IrInitStep {
         slot: usize,
         value: IrConst,
     },
+    /// Apply a declaration initializer according to its recorded lifetime and
+    /// edition-specific scheduling phase.
+    Initialize(IrInitialization),
 }
 
 /// One lowered signal (or real companion): a global `sv4_t`/`double`.
@@ -1607,6 +2526,10 @@ pub struct IrArray {
     pub(in crate::sim) elem_width: u32,
     pub(in crate::sim) signed: bool,
     pub(in crate::sim) two_state: bool,
+    /// Native real elements use `double` storage rather than `sv4_t`.
+    pub(in crate::sim) real: bool,
+    /// `true` for shortreal elements; writes round through a C float.
+    pub(in crate::sim) shortreal: bool,
     /// `(left, right)` per declared dimension, in declaration order.
     pub(in crate::sim) dims: Vec<(i32, i32)>,
     /// Total element count (product of dimension sizes).
@@ -1644,6 +2567,8 @@ impl IrArray {
             elem_width,
             signed,
             two_state: false,
+            real: false,
+            shortreal: false,
             dims,
             total,
         })
@@ -1667,22 +2592,78 @@ impl IrArray {
     pub fn total(&self) -> u64 {
         self.total
     }
+
+    /// Return the source spelling of one flattened element using each
+    /// declaration's actual left/right bounds.  The flat order is row-major
+    /// with the leftmost dimension slowest, matching Verilog indexing.
+    pub fn waveform_element_name(&self, index: u64) -> Option<String> {
+        if index >= self.total {
+            return None;
+        }
+        let mut remainder = index;
+        let mut indices = vec![0i64; self.dims.len()];
+        for dimension in (0..self.dims.len()).rev() {
+            let (left, right) = self.dims[dimension];
+            let extent = (i64::from(left) - i64::from(right)).unsigned_abs() + 1;
+            let offset = remainder % extent;
+            remainder /= extent;
+            let offset = i64::try_from(offset).ok()?;
+            indices[dimension] = if left >= right {
+                i64::from(left) - offset
+            } else {
+                i64::from(left) + offset
+            };
+        }
+        let mut name = self.hdl_name.clone();
+        for index in indices {
+            name.push('[');
+            name.push_str(&index.to_string());
+            name.push(']');
+        }
+        Some(name)
+    }
 }
 
-/// A lowered named event (`event ev;`): a global `llg_event_t` with its own
-/// waiter list.  Events are never pruned by the optimizer (they are not
-/// storage); every declared event is emitted unconditionally.
+/// A lowered named event (`event ev;`): a global `llg_event_t` handle backed by
+/// a persistent runtime synchronization object. Events are never pruned by the
+/// optimizer; handle assignment changes future registrations without moving
+/// waiters already attached to the old object.
 #[derive(Clone, Debug, PartialEq)]
 pub struct IrEvent {
     pub(in crate::sim) c_name: String,
+    /// Array descriptors do not own a handle themselves. They name the
+    /// pointer table and retain the element event indices for emission.
+    pub(in crate::sim) array_dims: Option<Vec<(i32, i32)>>,
+    pub(in crate::sim) array_elements: Vec<usize>,
 }
 
 impl IrEvent {
     pub fn new(c_name: String) -> Self {
-        Self { c_name }
+        Self {
+            c_name,
+            array_dims: None,
+            array_elements: Vec::new(),
+        }
+    }
+
+    pub fn new_array(c_name: String, dims: Vec<(i32, i32)>, elements: Vec<usize>) -> Self {
+        Self {
+            c_name,
+            array_dims: Some(dims),
+            array_elements: elements,
+        }
     }
     pub fn c_name(&self) -> &str {
         &self.c_name
+    }
+    pub fn is_array(&self) -> bool {
+        self.array_dims.is_some()
+    }
+    pub fn array_dims(&self) -> Option<&[(i32, i32)]> {
+        self.array_dims.as_deref()
+    }
+    pub fn array_elements(&self) -> &[usize] {
+        &self.array_elements
     }
 }
 
@@ -1694,8 +2675,8 @@ impl IrEvent {
 #[derive(Clone, Debug)]
 pub struct IrModel {
     pub(in crate::sim) design_name: String,
-    /// Design time precision in ps (scheduler tick unit).
-    pub(in crate::sim) precision_ps: u64,
+    /// Design time precision in fs (scheduler tick unit).
+    pub(in crate::sim) precision_fs: u64,
     /// At least one waveform-control system task was lowered.
     pub(in crate::sim) waveform: bool,
     pub(in crate::sim) signals: Vec<IrSignal>,
@@ -1744,25 +2725,25 @@ pub struct IrModelParts {
 
 impl IrModel {
     /// Start an incrementally lowered model with a valid scheduler precision.
-    pub fn new(design_name: String, precision_ps: u64) -> Result<Self, IrValidationError> {
-        Self::from_parts(design_name, precision_ps, IrModelParts::default())
+    pub fn new(design_name: String, precision_fs: u64) -> Result<Self, IrValidationError> {
+        Self::from_parts(design_name, precision_fs, IrModelParts::default())
     }
 
     /// Build a complete model and validate all representation invariants.
     pub fn from_parts(
         design_name: String,
-        precision_ps: u64,
+        precision_fs: u64,
         parts: IrModelParts,
     ) -> Result<Self, IrValidationError> {
-        if precision_ps == 0 {
+        if precision_fs == 0 {
             return Err(IrValidationError::new(
-                "precision_ps",
+                "precision_fs",
                 "scheduler precision must be non-zero",
             ));
         }
         let model = Self {
             design_name,
-            precision_ps,
+            precision_fs,
             waveform: parts.waveform,
             signals: parts.signals,
             net_groups: parts.net_groups,
@@ -1783,8 +2764,8 @@ impl IrModel {
     pub fn design_name(&self) -> &str {
         &self.design_name
     }
-    pub fn precision_ps(&self) -> u64 {
-        self.precision_ps
+    pub fn precision_fs(&self) -> u64 {
+        self.precision_fs
     }
     pub fn waveform_enabled(&self) -> bool {
         self.waveform
@@ -1854,5 +2835,41 @@ impl IrModel {
                 (f.as_str(), label)
             })
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{FrameId, StorageKind, StorageLifetime, StorageOwnership, StorageRef};
+
+    #[test]
+    fn activation_storage_descriptor_keeps_declaration_identity() {
+        let storage = StorageRef::for_declaration(
+            FrameId::new(7),
+            3,
+            41,
+            StorageLifetime::Automatic,
+            StorageOwnership::Owned,
+        );
+
+        assert_eq!(storage.frame(), FrameId::new(7));
+        assert_eq!(storage.slot(), 3);
+        assert_eq!(storage.declaration(), Some(41));
+        assert_eq!(storage.lifetime(), StorageLifetime::Automatic);
+        assert_eq!(storage.ownership(), StorageOwnership::Owned);
+        assert_eq!(storage.kind(), StorageKind::Packed);
+        assert_eq!(
+            storage.with_kind(StorageKind::Real).kind(),
+            StorageKind::Real
+        );
+        assert_ne!(
+            storage,
+            StorageRef::new(
+                FrameId::new(7),
+                3,
+                StorageLifetime::Automatic,
+                StorageOwnership::Owned,
+            )
+        );
     }
 }

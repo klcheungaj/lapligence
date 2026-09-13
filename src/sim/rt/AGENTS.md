@@ -20,13 +20,14 @@ the generated `model.c` into a standalone executable and is deliberately
     decimal conversion; partially out-of-range part-select reads retain valid
     bits and fill missing positions with X. Semantics mirror `core::elab::Value` (kept in sync).
     `sv4_resolve` combines equal-strength driver values independently of the
-    scheduler; `sv4_resolve_strengths` additionally applies per-driver 0/1
-    endpoints for ordinary wires. An X contribution represents both endpoint
+    scheduler; `sv4_resolve_strengths` applies per-driver 0/1 endpoints to
+    every canonical net mode. An X contribution represents both endpoint
     ranges, so a known driver resolves the bit only when it strictly dominates
     every possible opposite value. Wire conflicts yield X, wired-AND 0
-    dominates X, wired-OR 1 dominates X, and Z is neutral in every mode. No active drivers yield Z.
-    Tri0/tri1 modes instead fill undriven bits with their pull defaults;
-    supply0/supply1 modes dominate ordinary implicit-strength contributions.
+    dominates equal-strength X/1 ties, wired-OR 1 dominates equal-strength
+    X/0 ties, and Z is neutral in every mode. No explicit or implicit source
+    yields Z. Tri0/tri1 add pull defaults and supply0/supply1 add supply
+    defaults at their standard strengths.
     Bit-vector queries count known one bits across all limbs, ignore X/Z for
     `$countones`/`$onehot`/`$onehot0`, and detect either state for `$isunknown`.
   - Real-number hooks — packed-to-`double` conversion across all `sv4_t`
@@ -34,8 +35,11 @@ the generated `model.c` into a standalone executable and is deliberately
     conversion (targets up to the model width), scalar truth conversion, wide
     division/modulo/power, and `%f`/`%e`/`%g` formatting support the procedural
     scalar real/shortreal contract. `shortreal` precision is enforced by
-    codegen at assignments and initialization; unsupported double-aware
-    scheduling contexts are rejected before generated C is compiled.
+    codegen at assignments and initialization; typed double dependencies drive
+    real `wait`, any-change `@` controls, scalar real ports, and combinational
+    sensitivity without routing through packed storage. Unsupported arrays,
+    continuous assignments, and subprogram storage remain rejected before
+    generated C is compiled.
     `$rtoi` truncates rather than using assignment rounding; real/shortreal
     bitcasts use `memcpy` and require 64-bit `double`/32-bit `float` storage.
     Delay conversion accepts explicit unit/precision tick scales: packed X/Z
@@ -46,11 +50,18 @@ the generated `model.c` into a standalone executable and is deliberately
 - `llg_rt.h` / `llg_rt.c` — event scheduler and simulation-facing services.
   The header includes `llg_value.h` as a source-compatible facade; the C
   implementation links value operations rather than including their source.
-  Libaco coroutines execute an IEEE 1800 §4 region loop (active → inactive
-  `#0` → NBA commit → re-run woken processes → next timed wakeup).
-  Services include edge/event/level waits, fork/join, blocking/nonblocking
-  packed and double assignments, net resolution, force/release, and
-  `$display`/`$monitor`/`$strobe`/`$finish`/`$time`.
+  Libaco coroutines execute an IEEE 1800 §4 region loop with typed queues for
+  Preponed, Active, Inactive, Pre-NBA/NBA/Post-NBA, Pre-Observed/Observed/
+  Post-Observed, Reactive/Re-Inactive/Pre-Re-NBA/Re-NBA/Post-Re-NBA and
+  Pre-Postponed/Postponed, plus every PLI control point. The design and
+  reactive sets iterate to a fixed point before postponed output. Services
+  include edge/event/level waits, fork/join, blocking/nonblocking packed and
+  double assignments, typed packed/real dependency notifications, nonblocking
+  named-event NBA triggers, net resolution,
+  force/release, region callbacks, sampled-value views, and
+  `$display`/`$monitor`/`$strobe`/`$finish`/`$time`. Generated loop back-edges
+  call a cooperative budget point so a coroutine that never yields cannot
+  monopolize the host; the diagnostic retains the process source location.
   Completed fork parents remain alive until detached descendants finish;
   process-table slots are reused, and allocations are released on scheduler
   exit or reinitialization.
@@ -100,7 +111,10 @@ the generated `model.c` into a standalone executable and is deliberately
 [../../../tests/AGENTS.md](../../../tests/AGENTS.md) describes property/vector checks.
 
 One coroutine runs each always/initial (including generated scopes),
-continuous assignment and port link; fork branches use `llg_fork`. Active
+continuous assignment and port link; ordinary fork branches use `llg_fork`,
+while captured branches use `llg_fork_with_frame` with ref-counted activation
+storage. The creator releases its frame after spawning, and completion,
+cancellation, and process teardown release the child-owned frame. Active
 coroutines are FIFO. Immediate NBA lists and the global timed NBA queue commit
 in issue order within the NBA region, re-iterating to quiescence before advancing
 time. Future NBAs own captured values and persistent destination pointers,
@@ -112,17 +126,22 @@ an unchanged value retains its deadline; returning to the current contribution
 cancels without replacement. The sorted event queue advances time independently
 of process waiters. Static generated handles are reset by cleanup before their
 runtime-owned driver storage is freed; reinitialization releases pending events.
-Zero-delay driver updates drain in the active region. Strobe and change-driven
-monitor checks run only after active/inactive/NBA work has reached quiescence.
+Zero-delay driver updates drain in the active region. Strobe and monitor checks
+run only after active/inactive/NBA work has reached quiescence; monitor
+registration and enabling force one queued report, while only registered
+signal dependencies mark later checks dirty.
 The scheduler stops on `$finish` or deadlock.
 Per-waiter snapshots detect posedge 0→1, 0→X/Z, X/Z→1 (negedge mirrored), using
-only the LSB for packed vector edges. Expression waits own copied dependency
+only the LSB for packed vector edges. Real any-change snapshots compare the
+IEEE-754 representation bit-for-bit: signed-zero transitions wake, identical
+NaN payloads do not, and a changed NaN payload wakes deterministically.
+Expression waits own copied typed dependency
 lists and value snapshots; `iff` callbacks run at the trigger, including named
 events. Wakeup, disable and teardown free these allocations and unregister all
 named events. A zero-dependency signal wait remains suspended without polling.
 `llg_wait_any` uses snapshots; event or-lists require atomic
 `llg_wait_any_events`, never sequential waits. See the lowering guide for
-force/release and inout resolution approximations.
+force/release and inout resolution boundaries.
 Net groups select wire/wired-AND/wired-OR/pull/supply resolution through the standalone
 value API; `llg_net_write` publishes only resolved-value changes to waiters.
 Generated driver cells start at Z. Lowering explicitly writes X into an
@@ -161,13 +180,20 @@ selected range contributes; lowering rejects dynamic net selectors.
   `<threads.h>` as the Windows portability boundary. The overall generated
   simulator still has independent native-Windows/libaco limitations.
 - The runtime is **timescale-agnostic**: it runs in integer design-precision
-  ticks; the codegen scales `#N` delays and `$time`/`%t` reads per the
-  calling module's `timescale` before calling `llg_wait_time`/`llg_time`.
-- Scheduler region model follows the implemented IEEE 1800 §4 subset
-  (active/inactive/NBA; observed/reactive regions are absent): `#0` resumes in
-  the inactive region between active and NBA, and a per-time-step iteration
-  counter trips `LLG_ZERO_LOOP_LIMIT` zero-delay loops. Verified by
-  `tests/region_conformance.rs`.
+  ticks; codegen scales `#N` delays and `$time`/`%t` reads per the calling
+  module's `timescale` before calling `llg_wait_time`/`llg_time_scaled`.
+  Integer time queries round by quotient/remainder (exact halves upward);
+  `$realtime` remains a separate fractional operation.
+- Scheduler regions follow the IEEE 1800 §4 fixed-point algorithm: `#0`
+  resumes in Inactive or Re-Inactive, NBAs and Re-NBAs retain issue sequence,
+  and Reactive callbacks may enqueue Active work for another design iteration.
+  Preponed, Observed and Postponed callback views are immutable; illegal writes
+  and read-only callback scheduling report a controlled runtime failure.
+  `LLG_ZERO_LOOP_LIMIT` bounds region passes and `LLG_PROCESS_STEP_LIMIT`
+  bounds generated loop back-edges (the former also supplies the latter when
+  explicitly set); both require positive decimal `uint64_t` values and fail
+  before simulation on invalid/overflow input. Verified by the region callback
+  probe, `tests/region_conformance.rs`, and the runtime boundary probes.
 - Coroutines must never return without `llg_proc_done`/`aco_exit` (the
   runtime aborts on that — codegen bug).
 

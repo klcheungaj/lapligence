@@ -1,14 +1,254 @@
 //! Expression and assignment-target lowering into typed simulator IR.
 
 use super::*;
+use super::collection::aggregate_path_suffix;
+use super::objects::object_query;
+use crate::sim::ir::{
+    IrArrayDimension, IrArrayQuery, IrArrayQueryKind, IrArrayQueryTarget, IrBinOp, IrChandleExpr,
+    IrObjectQuery, IrObjectStmt, IrObjectType, IrStringExpr,
+};
 
 impl<'a> Codegen<'a> {
+    pub(super) fn query_descriptor(&self, node: NodeId) -> Option<&TypeDescriptor> {
+        self.db.type_descriptor(node).or_else(|| match self.kind(node) {
+            NodeKind::Expr(ExprKind::Ref {
+                target: Some(target),
+            }) => self.db.type_descriptor(*target),
+            NodeKind::Expr(ExprKind::HierPath { refs, .. }) => refs
+                .iter()
+                .rev()
+                .flatten()
+                .find_map(|target| self.db.type_descriptor(*target)),
+            _ => None,
+        })
+    }
+
+    fn query_dimensions_for(descriptor: &TypeDescriptor) -> Vec<IrArrayDimension> {
+        match &descriptor.shape {
+            TypeShape::PackedAtom { ranges } => {
+                if ranges.is_empty() {
+                    descriptor
+                        .info
+                        .width
+                        .filter(|width| *width > 1)
+                        .map(|width| {
+                            vec![IrArrayDimension {
+                                left: Some(i128::from(width) - 1),
+                                right: Some(0),
+                            }]
+                        })
+                        .unwrap_or_default()
+                } else {
+                    ranges
+                        .iter()
+                        .map(|range| IrArrayDimension {
+                            left: Some(range.left),
+                            right: Some(range.right),
+                        })
+                        .collect()
+                }
+            }
+            TypeShape::Aggregate(layout)
+                if matches!(
+                    layout.kind,
+                    AggregateKind::PackedStruct | AggregateKind::PackedUnion
+                ) && descriptor.info.width.is_some_and(|width| width > 1) =>
+            {
+                vec![IrArrayDimension {
+                    left: descriptor.info.width.map(|width| i128::from(width) - 1),
+                    right: Some(0),
+                }]
+            }
+            TypeShape::FixedArray {
+                dimensions,
+                element,
+            } => {
+                let mut result = dimensions
+                    .iter()
+                    .map(|(left, right)| IrArrayDimension {
+                        left: Some(i128::from(*left)),
+                        right: Some(i128::from(*right)),
+                    })
+                    .collect::<Vec<_>>();
+                result.extend(Self::query_dimensions_for(element));
+                result
+            }
+            TypeShape::Container { element, .. } => {
+                let mut result = vec![IrArrayDimension {
+                    left: None,
+                    right: None,
+                }];
+                result.extend(Self::query_dimensions_for(element));
+                result
+            }
+            TypeShape::String => vec![IrArrayDimension {
+                left: None,
+                right: None,
+            }],
+            TypeShape::Real { .. } | TypeShape::Opaque { .. } | TypeShape::Aggregate(_) => {
+                Vec::new()
+            }
+        }
+    }
+
+    fn query_unpacked_dimensions_for(descriptor: &TypeDescriptor) -> u32 {
+        match &descriptor.shape {
+            TypeShape::FixedArray {
+                dimensions,
+                element,
+            } => u32::try_from(dimensions.len()).unwrap_or(u32::MAX)
+                .saturating_add(Self::query_unpacked_dimensions_for(element)),
+            TypeShape::Container { element, .. } => {
+                1_u32.saturating_add(Self::query_unpacked_dimensions_for(element))
+            }
+            _ => 0,
+        }
+    }
+
+    fn query_target(
+        &mut self,
+        path: &str,
+        node: NodeId,
+    ) -> Result<(IrArrayQueryTarget, Vec<IrArrayDimension>), String> {
+        let descriptor = self
+            .query_descriptor(node)
+            .cloned()
+            .ok_or_else(|| format!("array query argument has no owned type metadata in `{path}`"))?;
+        let dimensions = Self::query_dimensions_for(&descriptor);
+        if dimensions.is_empty() {
+            return Err(format!(
+                "array query argument in `{path}` has no queryable dimensions"
+            ));
+        }
+        if let Some(container) = self.container_of(node) {
+            return Ok((
+                IrArrayQueryTarget::Container {
+                    container: container.ir,
+                    dimensions: dimensions.clone(),
+                },
+                dimensions,
+            ));
+        }
+        if self
+            .object_of(path, node)
+            .is_some_and(|index| self.model.objects[index].ty == IrObjectType::String)
+        {
+            return Ok((
+                IrArrayQueryTarget::String {
+                    value: self.lower_string(path, node)?,
+                    dimensions: dimensions.clone(),
+                },
+                dimensions,
+            ));
+        }
+        Ok((
+            IrArrayQueryTarget::Static {
+                dimensions: dimensions.clone(),
+            },
+            dimensions,
+        ))
+    }
+
+    fn query_integer(value: i128) -> IrExpr {
+        IrExpr::resize_to(lhs_integer_expr(value), 32, true)
+    }
+
+    fn static_array_query(kind: IrArrayQueryKind, dimension: IrArrayDimension) -> Option<i128> {
+        let (Some(left), Some(right)) = (dimension.left, dimension.right) else {
+            return None;
+        };
+        match kind {
+            IrArrayQueryKind::Left => Some(left),
+            IrArrayQueryKind::Right => Some(right),
+            IrArrayQueryKind::Low => Some(left.min(right)),
+            IrArrayQueryKind::High => Some(left.max(right)),
+            IrArrayQueryKind::Increment => Some(if left >= right { 1 } else { -1 }),
+            IrArrayQueryKind::Size => left
+                .checked_sub(right)
+                .and_then(|extent| extent.unsigned_abs().checked_add(1))
+                .and_then(|size| i128::try_from(size).ok()),
+        }
+    }
+
+    fn lower_array_query(
+        &mut self,
+        path: &str,
+        name: &str,
+        args: &[NodeId],
+    ) -> Result<IrExpr, String> {
+        let [first, rest @ ..] = args else {
+            return Err(format!(
+                "{name} requires one or two arguments in `{path}`"
+            ));
+        };
+        if rest.len() > 1 {
+            return Err(format!("{name} requires one or two arguments in `{path}`"));
+        }
+        let (target, dimensions) = self.query_target(path, *first)?;
+        let dimension_node = rest.first().copied();
+        let known_dimension = dimension_node.and_then(|node| self.eval_bound_i128(node).ok());
+        if let Some(index) = known_dimension {
+            if index < 1 || usize::try_from(index).ok().is_none_or(|index| index > dimensions.len())
+            {
+                return Err(format!(
+                    "{name} dimension {index} is outside the queryable range in `{path}`"
+                ));
+            }
+        }
+        let selected = known_dimension
+            .and_then(|index| usize::try_from(index - 1).ok())
+            .and_then(|index| dimensions.get(index).copied());
+        if let Some(selected) = selected {
+            if let Some(value) = Self::static_array_query(
+                match name {
+                    "$left" => IrArrayQueryKind::Left,
+                    "$right" => IrArrayQueryKind::Right,
+                    "$low" => IrArrayQueryKind::Low,
+                    "$high" => IrArrayQueryKind::High,
+                    "$increment" => IrArrayQueryKind::Increment,
+                    "$size" => IrArrayQueryKind::Size,
+                    _ => unreachable!(),
+                },
+                selected,
+            ) {
+                if selected.left.is_some() {
+                    return Ok(Self::query_integer(value));
+                }
+            }
+        }
+        let kind = match name {
+            "$left" => IrArrayQueryKind::Left,
+            "$right" => IrArrayQueryKind::Right,
+            "$low" => IrArrayQueryKind::Low,
+            "$high" => IrArrayQueryKind::High,
+            "$increment" => IrArrayQueryKind::Increment,
+            "$size" => IrArrayQueryKind::Size,
+            _ => unreachable!(),
+        };
+        let dimension = dimension_node
+            .map(|node| self.lower_expr(path, node).map(Box::new))
+            .transpose()?;
+        let query = IrArrayQuery {
+            kind,
+            target,
+            dimension,
+        };
+        let (width, signed) = query.result_type(&self.model);
+        Ok(IrExpr::new(
+            IrExprKind::ObjectQuery(Box::new(IrObjectQuery::ArrayQuery(query))),
+            width,
+            signed,
+            None,
+        ))
+    }
+
     /// Render context for the IR built so far (the enclosing function, when
     /// any, resolves formal reads).
     fn render_ctx(&self) -> RCtx<'_> {
         RCtx {
             model: &self.model,
             func: self.cur_fn_ir.map(|i| &self.model.funcs[i]),
+            activation_label: None,
         }
     }
 
@@ -57,6 +297,11 @@ impl<'a> Codegen<'a> {
             NodeKind::Expr(ExprKind::Ref { target }) => self.lower_ref_expr(scope_path, h, *target),
             NodeKind::Expr(ExprKind::BitSelect { base, index }) => {
                 if let Some(ai) = self.array_of(*base).cloned() {
+                    if ai.real {
+                        return Err(format!(
+                            "select on a real array element in `{scope_path}` is not supported"
+                        ));
+                    }
                     if ai.dims.len() != 1 {
                         return Err(format!(
                             "array slice access (`{}[...]` on a {}-dimensional array) \
@@ -68,7 +313,7 @@ impl<'a> Codegen<'a> {
                     let ie = self.lower_expr(scope_path, *index)?;
                     return Ok(IrExpr::new(
                         IrExprKind::ArrayRead {
-                            arr: ai.ir,
+                            arr: self.reference_array(ai.ir),
                             indices: vec![ie],
                             elem_sel: IrElemSel::Whole,
                         },
@@ -77,12 +322,31 @@ impl<'a> Codegen<'a> {
                         None,
                     ));
                 }
+                if let Some((info, member, lsb, width)) =
+                    self.packed_member_select_info(*base, &[*index])?
+                {
+                    let selected = IrExpr::new(
+                        IrExprKind::PartSel {
+                            base: Box::new(self.signal_read_expr(&info)?),
+                            left: i64::from(lsb) + i64::from(width) - 1,
+                            right: i64::from(lsb),
+                        },
+                        width,
+                        false,
+                        None,
+                    );
+                    return Ok(if member.two_state {
+                        IrExpr::to_two_state(selected)
+                    } else {
+                        selected
+                    });
+                }
                 if let Some((info, lsb, width)) = self.packed_select_info(*base, &[*index])? {
                     if width > 1 {
                         let right = i64::from(lsb);
                         return Ok(IrExpr::new(
                             IrExprKind::PartSel {
-                                base: Box::new(sig_read_expr_full(&info)),
+                                base: Box::new(self.signal_read_expr(&info)?),
                                 left: right + i64::from(width) - 1,
                                 right,
                             },
@@ -110,11 +374,59 @@ impl<'a> Codegen<'a> {
                 ))
             }
             NodeKind::Expr(ExprKind::ArraySelect { base, indices }) => {
+                if let Some((_target, _kind, member_info)) = self.unpacked_member_info(h) {
+                    let member = member_info.member;
+                    let signal = member_info.signal.ok_or_else(|| {
+                        if member_info.object.is_some() {
+                            format!(
+                                "string aggregate member `{}` must be used in a string context",
+                                member.name
+                            )
+                        } else {
+                            format!("aggregate member `{}` has no scalar storage", member.name)
+                        }
+                    })?;
+                    let value = if signal.real {
+                        self.signal_read_expr(&signal)?
+                    } else {
+                        IrExpr::resize_to(
+                            self.signal_read_expr(&signal)?,
+                            member.ty.width.ok_or_else(|| {
+                                format!("unpacked member `{}` has unresolved width", member.name)
+                            })?,
+                            member.ty.signed,
+                        )
+                    };
+                    return Ok(if member.two_state && !signal.real {
+                        IrExpr::to_two_state(value)
+                    } else {
+                        value
+                    });
+                }
+                if let Some((info, member, lsb, width)) =
+                    self.packed_member_select_info(*base, indices)?
+                {
+                    let selected = IrExpr::new(
+                        IrExprKind::PartSel {
+                            base: Box::new(self.signal_read_expr(&info)?),
+                            left: i64::from(lsb) + i64::from(width) - 1,
+                            right: i64::from(lsb),
+                        },
+                        width,
+                        false,
+                        None,
+                    );
+                    return Ok(if member.two_state {
+                        IrExpr::to_two_state(selected)
+                    } else {
+                        selected
+                    });
+                }
                 if let Some((info, lsb, width)) = self.packed_select_info(*base, indices)? {
                     let right = i64::from(lsb);
                     return Ok(IrExpr::new(
                         IrExprKind::PartSel {
-                            base: Box::new(sig_read_expr_full(&info)),
+                            base: Box::new(self.signal_read_expr(&info)?),
                             left: right + i64::from(width) - 1,
                             right,
                         },
@@ -125,8 +437,9 @@ impl<'a> Codegen<'a> {
                 }
                 let ai = self.array_of(*base).cloned().ok_or_else(|| {
                     format!(
-                        "cannot resolve array base of select `{}` in `{scope_path}`",
-                        self.node(*base).name
+                        "cannot resolve array base of select `{}` in `{scope_path}` (base kind: {:?})",
+                        self.node(*base).name,
+                        self.kind(*base)
                     )
                 })?;
                 let ndims = ai.dims.len();
@@ -137,7 +450,7 @@ impl<'a> Codegen<'a> {
                         .collect::<Result<Vec<_>, _>>()?;
                     return Ok(IrExpr::new(
                         IrExprKind::ArrayRead {
-                            arr: ai.ir,
+                            arr: self.reference_array(ai.ir),
                             indices: ies,
                             elem_sel: IrElemSel::Whole,
                         },
@@ -147,6 +460,11 @@ impl<'a> Codegen<'a> {
                     ));
                 }
                 if indices.len() == ndims + 1 {
+                    if ai.real {
+                        return Err(format!(
+                            "select on a real array element in `{scope_path}` is not supported"
+                        ));
+                    }
                     let last = *indices.last().expect("non-empty indices");
                     let ies = indices[..ndims]
                         .iter()
@@ -187,7 +505,7 @@ impl<'a> Codegen<'a> {
                     };
                     return Ok(IrExpr::new(
                         IrExprKind::ArrayRead {
-                            arr: ai.ir,
+                            arr: self.reference_array(ai.ir),
                             indices: ies,
                             elem_sel,
                         },
@@ -210,6 +528,27 @@ impl<'a> Codegen<'a> {
                     return Err(format!(
                         "select on real-valued signal in `{scope_path}` is not supported"
                     ));
+                }
+                if let Some((info, member, lsb, width)) = self.packed_member_range_info(
+                    *base,
+                    self.eval_bound_i128(*left)?,
+                    self.eval_bound_i128(*right)?,
+                )? {
+                    let selected = IrExpr::new(
+                        IrExprKind::PartSel {
+                            base: Box::new(self.signal_read_expr(&info)?),
+                            left: i64::from(lsb) + i64::from(width) - 1,
+                            right: i64::from(lsb),
+                        },
+                        width,
+                        false,
+                        None,
+                    );
+                    return Ok(if member.two_state {
+                        IrExpr::to_two_state(selected)
+                    } else {
+                        selected
+                    });
                 }
                 let mut l = self.eval_bound_i128(*left)?;
                 let mut r = self.eval_bound_i128(*right)?;
@@ -329,8 +668,15 @@ impl<'a> Codegen<'a> {
             NodeKind::Expr(ExprKind::Operation {
                 op,
                 reordered,
+                assignment,
                 operands,
-            }) => self.lower_operation(scope_path, *op, *reordered, operands),
+            }) => self.lower_operation(
+                scope_path,
+                *op,
+                *reordered,
+                *assignment,
+                operands,
+            ),
             NodeKind::Expr(ExprKind::Cast {
                 operand,
                 ty,
@@ -403,24 +749,55 @@ impl<'a> Codegen<'a> {
                 }
                 self.lower_func_call_expr(scope_path, h, name, *callee)
             }
+            NodeKind::MethodCall {
+                name,
+                receiver: Some(receiver),
+            } if name == "triggered" => {
+                let target = self.event_target_of(*receiver).ok_or_else(|| {
+                    format!(
+                        "event triggered property has an unresolved receiver in `{scope_path}`"
+                    )
+                })?;
+                let event = self.event_ref_of(&target, scope_path)?;
+                Ok(IrExpr::new(
+                    IrExprKind::EventTriggered(event),
+                    1,
+                    false,
+                    None,
+                ))
+            }
             NodeKind::Expr(ExprKind::HierPath { .. }) => {
                 if let Some((_target, _kind, member_info)) = self.unpacked_member_info(h) {
                     let member = member_info.member;
-                    let member_value = IrExpr::resize_to(
-                        sig_read_expr_full(&member_info.signal),
-                        member.ty.width.ok_or_else(|| {
-                            format!("unpacked member `{}` has unresolved width", member.name)
-                        })?,
-                        member.ty.signed,
-                    );
-                    return Ok(if member.two_state {
+                    let signal = member_info.signal.ok_or_else(|| {
+                        if member_info.object.is_some() {
+                            format!(
+                                "string aggregate member `{}` must be used in a string context",
+                                member.name
+                            )
+                        } else {
+                            format!("aggregate member `{}` has no scalar storage", member.name)
+                        }
+                    })?;
+                    let member_value = if signal.real {
+                        self.signal_read_expr(&signal)?
+                    } else {
+                        IrExpr::resize_to(
+                            self.signal_read_expr(&signal)?,
+                            member.ty.width.ok_or_else(|| {
+                                format!("unpacked member `{}` has unresolved width", member.name)
+                            })?,
+                            member.ty.signed,
+                        )
+                    };
+                    return Ok(if member.two_state && !member_value.is_real() {
                         IrExpr::to_two_state(member_value)
                     } else {
                         member_value
                     });
                 }
                 if let Some((info, member)) = self.packed_member_info(h) {
-                    let base = sig_read_expr_full(&info);
+                    let base = self.signal_read_expr(&info)?;
                     let member_value = IrExpr::new(
                         IrExprKind::PartSel {
                             base: Box::new(base),
@@ -441,7 +818,7 @@ impl<'a> Codegen<'a> {
                 // Interface and ordinary hierarchical members both resolve
                 // to their concrete owned storage identity.
                 if let Some(info) = self.hier_path_signal(h) {
-                    return Ok(sig_read_expr_full(info));
+                    return self.signal_read_expr(info);
                 }
                 Err(format!(
                     "hierarchical reference `{}` is not supported (in `{scope_path}`): {:?}",
@@ -552,9 +929,23 @@ impl<'a> Codegen<'a> {
         r: NodeId,
         target: Option<NodeId>,
     ) -> Result<IrExpr, String> {
+        if let Some(captured) = self
+            .capture_target(r)
+            .or_else(|| target.filter(|target| self.capture_locals.contains_key(target)))
+        {
+            let binding = self
+                .capture_binding(captured)
+                .expect("capture target must have a binding");
+            return Ok(IrExpr::new(
+                IrExprKind::LocalRead(Codegen::capture_local_name(binding.storage)),
+                binding.local.width,
+                binding.local.signed,
+                None,
+            ));
+        }
         if let Some((_, info)) = self.lexical_proc_local(r) {
             if let Some(signal) = &info.static_signal {
-                return Ok(sig_read_expr_full(signal));
+                return self.signal_read_expr(signal);
             }
             return Ok(IrExpr::new(
                 IrExprKind::LocalRead(info.c_name.clone()),
@@ -565,6 +956,14 @@ impl<'a> Codegen<'a> {
         }
         if let Some(t) = target {
             let t = self.canonical_func_target(t).unwrap_or(t);
+            if let Some(binding) = self.capture_binding(t) {
+                return Ok(IrExpr::new(
+                    IrExprKind::LocalRead(Codegen::capture_local_name(binding.storage)),
+                    binding.local.width,
+                    binding.local.signed,
+                    None,
+                ));
+            }
             if self.unpacked_aggregates.contains_key(&t) {
                 return Err(format!(
                     "whole unpacked aggregate `{}` is not supported in scalar expression `{scope_path}`",
@@ -572,12 +971,12 @@ impl<'a> Codegen<'a> {
                 ));
             }
             if let Some(info) = self.signal_of(t) {
-                return Ok(sig_read_expr_full(info));
+                return self.signal_read_expr(info);
             }
             if !self.proc_local_is_shadowed(r) {
-                if let Some(info) = self.proc_locals.get(&t) {
+                if let Some(info) = self.proc_local_info(t) {
                     if let Some(signal) = &info.static_signal {
-                        return Ok(sig_read_expr_full(signal));
+                        return self.signal_read_expr(signal);
                     }
                     return Ok(IrExpr::new(
                         IrExprKind::LocalRead(info.c_name.clone()),
@@ -593,7 +992,7 @@ impl<'a> Codegen<'a> {
                 if let Some(ir) = f.arg_ir.get(&t) {
                     return Ok(ir.clone());
                 }
-                if let Some((cname, w, s, _)) = f.locals.get(&t) {
+                if let Some((cname, w, s, _, _shortreal)) = f.locals.get(&t) {
                     return Ok(IrExpr::new(
                         IrExprKind::LocalRead(cname.clone()),
                         *w,
@@ -667,7 +1066,7 @@ impl<'a> Codegen<'a> {
                         return Ok(ir.clone());
                     }
                 }
-                for (node, (cname, w, s, _)) in &f.locals {
+                for (node, (cname, w, s, _, _shortreal)) in &f.locals {
                     if self.node(*node).name == name {
                         return Ok(IrExpr::new(
                             IrExprKind::LocalRead(cname.clone()),
@@ -697,7 +1096,7 @@ impl<'a> Codegen<'a> {
                 .get(scope_path)
                 .and_then(|m| m.get(&name))
             {
-                return Ok(sig_read_expr_full(info));
+                return self.signal_read_expr(info);
             }
             // Some unqualified module-local enum uses can lack a resolved
             // target. Resolve those only against the current
@@ -740,7 +1139,14 @@ impl<'a> Codegen<'a> {
     /// called `read_const` directly on a handle.
     pub(super) fn const_of_node(&self, node: NodeId) -> Result<IrConst, String> {
         match self.kind(node) {
-            NodeKind::Expr(ExprKind::Constant { value, size, .. }) => {
+            NodeKind::Expr(ExprKind::Constant {
+                value,
+                size,
+                const_type,
+                source,
+                time_scale,
+                ..
+            }) => {
                 let mut c = if let Some(fill) = self.source_fill_literal(node) {
                     IrConst {
                         bits: vec![(fill == 1) as u64],
@@ -754,6 +1160,17 @@ impl<'a> Codegen<'a> {
                 } else {
                     read_const_from(value, *size)?
                 };
+                if *const_type == ConstantType::Time && self.round_time_literals {
+                    let raw = c.real_value().ok_or_else(|| {
+                        format!(
+                            "time literal at {}:{}:{} has no real value",
+                            self.node(node).file.as_deref().unwrap_or("<unknown>"),
+                            self.node(node).line,
+                            self.node(node).col
+                        )
+                    })?;
+                    c = IrConst::real(self.rounded_time_literal(node, raw, source, *time_scale)?);
+                }
                 let (signed, literal_width) = self.signed_based_literal_info(node);
                 if signed {
                     if let Some(width) = literal_width {
@@ -799,9 +1216,21 @@ impl<'a> Codegen<'a> {
         scope_path: &str,
         otype: Operation,
         reordered: bool,
+        assignment: bool,
         operands: &[NodeId],
     ) -> Result<IrExpr, String> {
         super::validate_operation_arity(otype, operands.len(), scope_path)?;
+        if assignment
+            || matches!(
+                otype,
+                Operation::PreIncrement
+                    | Operation::PreDecrement
+                    | Operation::PostIncrement
+                    | Operation::PostDecrement
+            )
+        {
+            return self.lower_mutation_expression(scope_path, otype, operands, assignment);
+        }
         macro_rules! op {
             ($i:expr) => {
                 self.lower_expr(scope_path, operands[$i])?
@@ -917,16 +1346,31 @@ impl<'a> Codegen<'a> {
                 Ok(cmp_expr_ir(IrBinOp::LogOr, a, b))
             }
             Operation::Equal => {
+                if let Some(value) =
+                    self.lower_unpacked_aggregate_comparison(scope_path, otype, operands)?
+                {
+                    return Ok(value);
+                }
                 let a = op!(0);
                 let b = op!(1);
                 common_cmp_expr_ir(IrBinOp::Eq, a, b, scope_path)
             }
             Operation::NotEqual => {
+                if let Some(value) =
+                    self.lower_unpacked_aggregate_comparison(scope_path, otype, operands)?
+                {
+                    return Ok(value);
+                }
                 let a = op!(0);
                 let b = op!(1);
                 common_cmp_expr_ir(IrBinOp::Neq, a, b, scope_path)
             }
             Operation::CaseEqual => {
+                if let Some(value) =
+                    self.lower_unpacked_aggregate_comparison(scope_path, otype, operands)?
+                {
+                    return Ok(value);
+                }
                 let a = op!(0);
                 let b = op!(1);
                 if a.is_real() || b.is_real() {
@@ -937,6 +1381,11 @@ impl<'a> Codegen<'a> {
                 common_cmp_expr_ir(IrBinOp::CaseEq, a, b, scope_path)
             }
             Operation::CaseNotEqual => {
+                if let Some(value) =
+                    self.lower_unpacked_aggregate_comparison(scope_path, otype, operands)?
+                {
+                    return Ok(value);
+                }
                 let a = op!(0);
                 let b = op!(1);
                 if a.is_real() || b.is_real() {
@@ -1322,6 +1771,96 @@ impl<'a> Codegen<'a> {
         }
     }
 
+    fn lower_mutation_expression(
+        &mut self,
+        scope_path: &str,
+        op: Operation,
+        operands: &[NodeId],
+        _assignment: bool,
+    ) -> Result<IrExpr, String> {
+        let lhs_node = *operands.first().ok_or_else(|| {
+            format!("assignment-like expression in `{scope_path}` has no left operand")
+        })?;
+        let lhs = self.lower_lhs(scope_path, lhs_node)?;
+        if matches!(lhs, IrLhs::Stream { .. }) {
+            return Err(format!(
+                "assignment-like expression to a streaming target in `{scope_path}` is not supported"
+            ));
+        }
+        // Lowering the LHS expression here is only for its final type. The
+        // runtime read is reconstructed from the canonical descriptor, so a
+        // dynamic index is never evaluated by both the read and the write.
+        let current_type = self.lower_expr(scope_path, lhs_node)?;
+        let post = matches!(op, Operation::PostIncrement | Operation::PostDecrement);
+        let reads_current = !matches!(op, Operation::Assignment);
+        let value = if op == Operation::Assignment {
+            let rhs_node = *operands.get(1).ok_or_else(|| {
+                format!("assignment expression in `{scope_path}` has no right operand")
+            })?;
+            let rhs = self.lower_expr(scope_path, rhs_node)?;
+            apply_lhs_assignment_context(&self.model, &lhs, rhs)
+        } else {
+            let current = IrExpr::new(
+                IrExprKind::LocalRead("_llg_mut_current".to_owned()),
+                current_type.width,
+                current_type.signed,
+                None,
+            );
+            let rhs = if matches!(
+                op,
+                Operation::PreIncrement
+                    | Operation::PostIncrement
+                    | Operation::PreDecrement
+                    | Operation::PostDecrement
+            ) {
+                if current.is_real() {
+                    real_literal_expr(1.0)
+                } else {
+                    IrExpr::new(
+                        IrExprKind::Const(IrConst {
+                            bits: vec![1],
+                            x: vec![0],
+                            z: vec![0],
+                            width: 32,
+                            signed: true,
+                            real: None,
+                            fill: None,
+                        }),
+                        32,
+                        true,
+                        None,
+                    )
+                }
+            } else {
+                let rhs_node = *operands.get(1).ok_or_else(|| {
+                    format!("compound assignment in `{scope_path}` has no right operand")
+                })?;
+                self.lower_expr(scope_path, rhs_node)?
+            };
+            let arithmetic = if matches!(op, Operation::PreDecrement | Operation::PostDecrement) {
+                Operation::Subtract
+            } else if matches!(op, Operation::PreIncrement | Operation::PostIncrement) {
+                Operation::Add
+            } else {
+                op
+            };
+            super::lower_compound_expr_ir(scope_path, arithmetic, current, rhs)?
+        };
+        Ok(IrExpr::new(
+            IrExprKind::Mutation(Box::new(crate::sim::ir::IrMutationExpr {
+                lhs,
+                value: Box::new(value),
+                current_width: current_type.width,
+                current_signed: current_type.signed,
+                reads_current,
+                post,
+            })),
+            current_type.width,
+            current_type.signed,
+            None,
+        ))
+    }
+
     fn lower_member_select_index(
         &mut self,
         scope_path: &str,
@@ -1396,10 +1935,78 @@ impl<'a> Codegen<'a> {
             ));
         }
         match name {
+            "$dimensions" | "$unpacked_dimensions" => {
+                let [arg] = args.as_slice() else {
+                    return Err(format!(
+                        "{name} requires exactly one argument in `{scope_path}`"
+                    ));
+                };
+                let descriptor = self.query_descriptor(*arg).ok_or_else(|| {
+                    format!(
+                        "{name} argument has no owned type metadata in `{scope_path}`"
+                    )
+                })?;
+                let count = if name == "$dimensions" {
+                    Self::query_dimensions_for(descriptor).len()
+                } else {
+                    usize::try_from(Self::query_unpacked_dimensions_for(descriptor))
+                        .unwrap_or(usize::MAX)
+                };
+                Ok(Self::query_integer(i128::try_from(count).map_err(|_| {
+                    format!("{name} dimension count is too large in `{scope_path}`")
+                })?))
+            }
+            "$isunbounded" => {
+                let [arg] = args.as_slice() else {
+                    return Err(format!(
+                        "$isunbounded requires exactly one argument in `{scope_path}`"
+                    ));
+                };
+                let target = match self.kind(*arg) {
+                    NodeKind::Expr(ExprKind::Ref {
+                        target: Some(target),
+                    }) => *target,
+                    _ => *arg,
+                };
+                let is_unbounded = matches!(self.kind(target), NodeKind::Expr(ExprKind::Unbounded))
+                    || matches!(
+                        self.kind(target),
+                        NodeKind::Param { ty, .. }
+                            if ty.kind == "unbounded"
+                                || ty.type_name.as_deref() == Some("$")
+                    )
+                    || self.query_descriptor(target).is_some_and(|descriptor| {
+                        descriptor.info.kind == "unbounded"
+                            || descriptor.name == "$"
+                            || descriptor.name.contains("unbounded")
+                    });
+                if !is_unbounded && !matches!(self.kind(target), NodeKind::Param { .. }) {
+                    return Err(format!(
+                        "$isunbounded requires a parameter or unbounded literal in `{scope_path}`"
+                    ));
+                }
+                Ok(IrExpr::new(
+                    IrExprKind::Const(IrConst {
+                        bits: vec![u64::from(is_unbounded)],
+                        x: vec![0],
+                        z: vec![0],
+                        width: 1,
+                        signed: false,
+                        real: None,
+                        fill: None,
+                    }),
+                    1,
+                    false,
+                    None,
+                ))
+            }
+            "$left" | "$right" | "$low" | "$high" | "$increment" | "$size" => {
+                self.lower_array_query(scope_path, name, &args)
+            }
             "$realtime" => Ok(IrExpr::new(
                 IrExprKind::SysFunc(IrSysFunc::Realtime {
-                    precision_ps: self.design_precision_ps,
-                    unit_ps: self.timescale_of_node(call).unit_ps,
+                    precision_fs: self.design_precision_fs,
+                    unit_fs: self.timescale_of_node(call).unit_fs,
                 }),
                 0,
                 true,
@@ -1521,9 +2128,9 @@ impl<'a> Codegen<'a> {
             "$time" | "$stime" => {
                 // Both functions return the current time in the CALLING
                 // module's unit; `$stime` is the 32-bit form. `llg_time()` is
-                // in design-precision ticks (1 tick = design_precision_ps
-                // ps), so now_ps = now * P.
-                let unit_ps = self.timescale_of_node(call).unit_ps;
+                // in design-precision ticks (1 tick = design_precision_fs
+                // fs), so now_fs = now * P.
+                let unit_fs = self.timescale_of_node(call).unit_fs;
                 let kind = if name == "$stime" {
                     IrTimeKind::STime
                 } else {
@@ -1532,8 +2139,8 @@ impl<'a> Codegen<'a> {
                 let width = kind.width();
                 Ok(IrExpr::new(
                     IrExprKind::SysFunc(IrSysFunc::Time {
-                        precision_ps: self.design_precision_ps,
-                        unit_ps,
+                        precision_fs: self.design_precision_fs,
+                        unit_fs,
                         kind,
                     }),
                     width,
@@ -1546,6 +2153,63 @@ impl<'a> Codegen<'a> {
                     .first()
                     .copied()
                     .ok_or_else(|| format!("$bits without argument in `{scope_path}`"))?;
+                if let Some(descriptor) = self.query_descriptor(a).cloned() {
+                    if let Some(width) = descriptor.fixed_size_bits() {
+                        return Ok(Self::query_integer(i128::try_from(width).map_err(
+                            |_| format!("$bits result is too wide in `{scope_path}"),
+                        )?));
+                    }
+                    if let Some(container) = self.container_of(a) {
+                        let element_width = match self.model.containers[container.ir].element {
+                            IrType::Packed { width, .. } => width,
+                            IrType::Real { .. } => {
+                                return Err(format!(
+                                    "$bits on a real container is not supported in `{scope_path}`"
+                                ))
+                            }
+                        };
+                        let size = IrExpr::new(
+                            IrExprKind::Container(Box::new(IrContainerExpr::Size(container.ir))),
+                            32,
+                            true,
+                            None,
+                        );
+                        return Ok(IrExpr::new(
+                            IrExprKind::Bin {
+                                op: IrBinOp::Mul,
+                                a: Box::new(size),
+                                b: Box::new(Self::query_integer(i128::from(element_width))),
+                            },
+                            32,
+                            true,
+                            None,
+                        ));
+                    }
+                    if descriptor.shape == TypeShape::String
+                        && self
+                            .object_of(scope_path, a)
+                            .is_some_and(|index| self.model.objects[index].ty == IrObjectType::String)
+                    {
+                        let len = IrExpr::new(
+                            IrExprKind::ObjectQuery(Box::new(IrObjectQuery::StringLen(
+                                self.lower_string(scope_path, a)?,
+                            ))),
+                            32,
+                            true,
+                            None,
+                        );
+                        return Ok(IrExpr::new(
+                            IrExprKind::Bin {
+                                op: IrBinOp::Mul,
+                                a: Box::new(len),
+                                b: Box::new(Self::query_integer(8)),
+                            },
+                            32,
+                            true,
+                            None,
+                        ));
+                    }
+                }
                 let a = self.lower_expr(scope_path, a)?;
                 if a.is_real() {
                     return Err(format!(
@@ -1584,6 +2248,18 @@ impl<'a> Codegen<'a> {
     /// converted to [`IrLhs`] (identical by construction during the seam
     /// transition; sub-expression codes ride along verbatim).
     pub(super) fn lower_lhs(&mut self, path: &str, lhs: NodeId) -> Result<IrLhs, String> {
+        if let Some(target) = self.capture_target(lhs) {
+            let binding = self
+                .capture_binding(target)
+                .expect("capture target must have a binding");
+            return Ok(IrLhs::WholeRef {
+                addr: format!("&{}", Codegen::capture_local_name(binding.storage)),
+                width: binding.local.width,
+                signed: binding.local.signed,
+                two_state: binding.local.two_state,
+                shortreal: false,
+            });
+        }
         let lh = self.analyze_lhs(path, lhs)?;
         self.lhs_to_ir(lh)
     }
@@ -1725,42 +2401,80 @@ impl<'a> Codegen<'a> {
                     self.node(lhs_target).name
                 )
             })?;
-            let values = self.aggregate_pattern_values(path, rhs, layout)?;
+            let mut values = Vec::new();
+            self.aggregate_pattern_leaf_values(path, rhs, layout, &[], &mut values)?;
             let mut assignments = Vec::with_capacity(values.len());
-            for (member_index, value) in values {
-                let left = lhs_aggregate.members.get(member_index).ok_or_else(|| {
-                    format!("aggregate pattern member index {member_index} is out of bounds")
+            let mut captures = Vec::new();
+            let mut captured = HashMap::<NodeId, (String, u32, bool)>::new();
+            for (member_path, value_node) in values {
+                let left = lhs_aggregate
+                    .leaves
+                    .iter()
+                    .find(|leaf| leaf.path == member_path)
+                    .ok_or_else(|| {
+                        format!(
+                            "aggregate pattern path `{}` has no destination in `{path}`",
+                            aggregate_path_suffix(&member_path)
+                        )
                 })?;
-                let width = left.member.ty.width.ok_or_else(|| {
-                    format!(
-                        "unpacked member `{}` has unresolved width",
-                        left.member.name
+                if let Some(index) = left.object {
+                    if nba {
+                        return Err(format!(
+                            "nonblocking assignment to object aggregate member `{}` is not supported in `{path}`",
+                            aggregate_path_suffix(&member_path)
+                        ));
+                    }
+                    let operation = match self.model.objects[index].ty {
+                        IrObjectType::String => {
+                            IrObjectStmt::StringAssign(index, self.lower_string(path, value_node)?)
+                        }
+                        IrObjectType::Chandle => {
+                            IrObjectStmt::ChandleAssign(index, self.lower_chandle(path, value_node)?)
+                        }
+                    };
+                    assignments.push(IrStmt::Object(operation));
+                    continue;
+                }
+                let lhs = self.aggregate_leaf_lhs(left)?;
+                let value = if let Some((name, width, signed)) = captured.get(&value_node) {
+                    IrExpr::new(
+                        IrExprKind::LocalRead(name.clone()),
+                        *width,
+                        *signed,
+                        None,
                     )
-                })?;
-                let value = self.lower_expr(path, value)?;
-                let lhs = IrLhs::Part(
-                    left.signal.ir,
-                    i64::from(width - 1),
-                    0,
-                    left.member.two_state,
-                );
+                } else {
+                    let source = self.lower_expr(path, value_node)?;
+                    let name = format!("_agg{}_{}", lhs_target.0, value_node.0);
+                    let (width, signed) = (source.width, source.signed);
+                    captures.push(IrStmt::DeclLocal {
+                        name: name.clone(),
+                        width,
+                        signed,
+                        two_state: false,
+                        init: Some(Box::new(source)),
+                    });
+                    captured.insert(value_node, (name.clone(), width, signed));
+                    IrExpr::new(IrExprKind::LocalRead(name), width, signed, None)
+                };
                 let value = apply_lhs_assignment_context(&self.model, &lhs, value);
-                assignments.push(IrStmt::Assign {
-                    lhs,
-                    rhs: value,
-                    nba,
-                });
+                assignments.push(IrStmt::Assign { lhs, rhs: value, nba });
             }
-            return Ok(Some(IrStmt::Block(assignments)));
+            captures.extend(assignments);
+            return Ok(Some(IrStmt::Block(captures)));
         }
         if lhs_aggregate.kind == AggregateKind::UnpackedStruct
             && matches!(self.kind(rhs), NodeKind::Expr(ExprKind::Constant { .. }))
+            && lhs_aggregate
+                .leaves
+                .iter()
+                .all(|leaf| leaf.path.len() == 1 && leaf.signal.is_some())
         {
             // The frontend folds constant unpacked-structure assignment patterns
             // to one integral payload. Recover the positional member values
             // from the standard first-member-most-significant layout.
             let total_width = lhs_aggregate
-                .members
+                .leaves
                 .iter()
                 .try_fold(0u32, |width, member| {
                     width.checked_add(member.member.ty.width?)
@@ -1768,8 +2482,8 @@ impl<'a> Codegen<'a> {
                 .ok_or_else(|| format!("unpacked struct pattern width overflow in `{path}`"))?;
             let packed = IrExpr::convert_to(self.lower_expr(path, rhs)?, total_width, false);
             let mut right = 0u32;
-            let mut values = Vec::with_capacity(lhs_aggregate.members.len());
-            for member in lhs_aggregate.members.iter().rev() {
+            let mut values = Vec::with_capacity(lhs_aggregate.leaves.len());
+            for member in lhs_aggregate.leaves.iter().rev() {
                 let width = member.member.ty.width.ok_or_else(|| {
                     format!(
                         "unpacked member `{}` has unresolved width",
@@ -1794,12 +2508,7 @@ impl<'a> Codegen<'a> {
                     false,
                     None,
                 );
-                let lhs = IrLhs::Part(
-                    left.signal.ir,
-                    i64::from(width - 1),
-                    0,
-                    left.member.two_state,
-                );
+                let lhs = self.aggregate_leaf_lhs(left)?;
                 let value = apply_lhs_assignment_context(&self.model, &lhs, value);
                 assignments.push(IrStmt::Assign {
                     lhs,
@@ -1834,9 +2543,7 @@ impl<'a> Codegen<'a> {
                 .zip(&rhs_aggregate.members)
                 .all(|(left, right)| {
                     left.member.name == right.member.name
-                        && left.member.ty == right.member.ty
-                        && left.member.two_state == right.member.two_state
-                        && left.member.packed_ranges == right.member.packed_ranges
+                        && left.member.descriptor == right.member.descriptor
                 });
         if !compatible {
             return Err(format!(
@@ -1846,83 +2553,723 @@ impl<'a> Codegen<'a> {
             ));
         }
         if lhs_aggregate.kind == AggregateKind::UnpackedUnion {
-            let lhs = lhs_aggregate.members.first().ok_or_else(|| {
+            let lhs = lhs_aggregate.leaves.first().ok_or_else(|| {
                 format!(
                     "unpacked union `{}` has no members",
                     self.node(lhs_target).name
                 )
             })?;
-            let rhs = rhs_aggregate.members.first().ok_or_else(|| {
+            let rhs = rhs_aggregate.leaves.first().ok_or_else(|| {
                 format!(
                     "unpacked union `{}` has no members",
                     self.node(rhs_target).name
                 )
             })?;
-            return Ok(Some(IrStmt::Assign {
-                lhs: IrLhs::Whole(lhs.signal.ir),
-                rhs: sig_read_expr_full(&rhs.signal),
-                nba,
-            }));
+            if let (Some(lhs_signal), Some(rhs_signal)) = (&lhs.signal, &rhs.signal) {
+                return Ok(Some(IrStmt::Assign {
+                    lhs: self.reference_lhs(IrLhs::Whole(lhs_signal.ir))?,
+                    rhs: self.signal_read_expr(rhs_signal)?,
+                    nba,
+                }));
+            }
+            return Err(format!(
+                "unpacked union `{}` has no packed storage in `{path}`",
+                self.node(lhs_target).name
+            ));
         }
-        let mut assignments = Vec::with_capacity(lhs_aggregate.members.len());
-        for (left, right) in lhs_aggregate.members.iter().zip(&rhs_aggregate.members) {
-            let width = left.member.ty.width.ok_or_else(|| {
-                format!(
-                    "unpacked member `{}` has unresolved width",
-                    left.member.name
-                )
-            })?;
-            let mut value = IrExpr::resize_to(
-                sig_read_expr_full(&right.signal),
-                width,
-                right.member.ty.signed,
-            );
-            if right.member.two_state {
+        let mut assignments = Vec::with_capacity(lhs_aggregate.leaves.len());
+        for left in &lhs_aggregate.leaves {
+            let right = rhs_aggregate
+                .leaves
+                .iter()
+                .find(|right| right.path == left.path)
+                .ok_or_else(|| {
+                    format!(
+                        "aggregate member path `{}` is missing from assignment source in `{path}`",
+                        aggregate_path_suffix(&left.path)
+                    )
+                })?;
+            if let (Some(lhs_object), Some(rhs_object)) = (left.object, right.object) {
+                if nba {
+                    return Err(format!(
+                        "nonblocking assignment to object aggregate member `{}` is not supported in `{path}`",
+                        aggregate_path_suffix(&left.path)
+                    ));
+                }
+                let lhs_object = self.reference_object(lhs_object);
+                let rhs_object = self.reference_object(rhs_object);
+                let operation = match self.model.objects[lhs_object].ty {
+                    IrObjectType::String => IrObjectStmt::StringAssign(
+                        lhs_object,
+                        IrStringExpr::Read(rhs_object),
+                    ),
+                    IrObjectType::Chandle => IrObjectStmt::ChandleAssign(
+                        lhs_object,
+                        IrChandleExpr::Read(rhs_object),
+                    ),
+                };
+                assignments.push(IrStmt::Object(operation));
+                continue;
+            }
+            let lhs = self.aggregate_leaf_lhs(left)?;
+            let mut value = self.aggregate_leaf_read(right)?;
+            if right.member.two_state && !value.is_real() {
                 value = IrExpr::to_two_state(value);
             }
-            let lhs = IrLhs::Part(
-                left.signal.ir,
-                i64::from(width - 1),
-                0,
-                left.member.two_state,
-            );
             let value = apply_lhs_assignment_context(&self.model, &lhs, value);
-            assignments.push(IrStmt::Assign {
-                lhs,
-                rhs: value,
-                nba,
-            });
+            assignments.push(IrStmt::Assign { lhs, rhs: value, nba });
         }
         Ok(Some(IrStmt::Block(assignments)))
     }
 
+    /// Compare two complete fixed unpacked aggregate values without
+    /// flattening their storage into one packed expression.  Each leaf keeps
+    /// its owned representation: packed leaves retain four-state comparison,
+    /// real leaves use real comparison, and string leaves compare the owned
+    /// runtime objects.  The aggregate result is the logical conjunction of
+    /// leaf equalities; `!=`/case-`!=` invert that result after all leaves have
+    /// participated, preserving unknown propagation for packed values.
+    fn lower_unpacked_aggregate_comparison(
+        &self,
+        path: &str,
+        op: Operation,
+        operands: &[NodeId],
+    ) -> Result<Option<IrExpr>, String> {
+        if !matches!(
+            op,
+            Operation::Equal
+                | Operation::NotEqual
+                | Operation::CaseEqual
+                | Operation::CaseNotEqual
+        ) {
+            return Ok(None);
+        }
+        let [lhs, rhs] = operands else {
+            return Ok(None);
+        };
+        let left = self.unpacked_aggregate_info(*lhs);
+        let right = self.unpacked_aggregate_info(*rhs);
+        if left.is_none() && right.is_none() {
+            return Ok(None);
+        }
+        let (left_target, left_aggregate) = left.ok_or_else(|| {
+            format!("aggregate equality has a non-aggregate operand in `{path}`")
+        })?;
+        let (right_target, right_aggregate) = right.ok_or_else(|| {
+            format!("aggregate equality has a non-aggregate operand in `{path}`")
+        })?;
+        let compatible = match (
+            left_aggregate.type_identity.as_deref(),
+            right_aggregate.type_identity.as_deref(),
+        ) {
+            (Some(left), Some(right)) => left == right,
+            (None, None) => left_target == right_target,
+            _ => false,
+        } && left_aggregate.kind == right_aggregate.kind
+            && left_aggregate.members.len() == right_aggregate.members.len()
+            && left_aggregate
+                .members
+                .iter()
+                .zip(&right_aggregate.members)
+                .all(|(left, right)| {
+                    left.member.name == right.member.name
+                        && left.member.descriptor == right.member.descriptor
+                });
+        if !compatible {
+            return Err(format!(
+                "aggregate equality compares incompatible types `{}` and `{}` in `{path}`",
+                self.node(left_target).name,
+                self.node(right_target).name
+            ));
+        }
+
+        let compare = |op: IrBinOp, left: IrExpr, right: IrExpr| {
+            if op == IrBinOp::CaseEq || op == IrBinOp::CaseNeq {
+                if left.is_real() || right.is_real() {
+                    return Err(format!(
+                        "case equality on real aggregate member in `{path}` is not supported"
+                    ));
+                }
+                Ok(cmp_expr_ir(op, left, right))
+            } else {
+                common_cmp_expr_ir(op, left, right, path)
+            }
+        };
+        let equality = if left_aggregate.kind == AggregateKind::UnpackedUnion {
+            let left = left_aggregate.leaves.first().ok_or_else(|| {
+                format!("unpacked union `{}` has no members", self.node(left_target).name)
+            })?;
+            let right = right_aggregate.leaves.first().ok_or_else(|| {
+                format!("unpacked union `{}` has no members", self.node(right_target).name)
+            })?;
+            let left = left.signal.as_ref().ok_or_else(|| {
+                format!("unpacked union `{}` has no packed storage", self.node(left_target).name)
+            })?;
+            let right = right.signal.as_ref().ok_or_else(|| {
+                format!("unpacked union `{}` has no packed storage", self.node(right_target).name)
+            })?;
+            compare(
+                if matches!(op, Operation::CaseEqual | Operation::CaseNotEqual) {
+                    IrBinOp::CaseEq
+                } else {
+                    IrBinOp::Eq
+                },
+                self.signal_read_expr(left)?,
+                self.signal_read_expr(right)?,
+            )?
+        } else {
+            let mut equality = None;
+            for left in &left_aggregate.leaves {
+                let right = right_aggregate
+                    .leaves
+                    .iter()
+                    .find(|right| right.path == left.path)
+                    .ok_or_else(|| {
+                        format!(
+                            "aggregate equality path `{}` is missing in `{path}`",
+                            aggregate_path_suffix(&left.path)
+                        )
+                    })?;
+                let member_equal = match (left.object, right.object) {
+                    (Some(left), Some(right)) => {
+                        let left_index = self.reference_object(left);
+                        let right_index = self.reference_object(right);
+                        if self.model.objects[left_index].ty == IrObjectType::Chandle {
+                            if self.model.objects[right_index].ty != IrObjectType::Chandle {
+                                return Err(format!(
+                                    "aggregate equality has mismatched object members in `{path}`"
+                                ));
+                            }
+                            object_query(
+                                IrObjectQuery::ChandleEq(
+                                    IrChandleExpr::Read(left_index),
+                                    IrChandleExpr::Read(right_index),
+                                ),
+                                1,
+                                false,
+                            )
+                        } else {
+                        let compare = IrExpr::new(
+                            IrExprKind::ObjectQuery(Box::new(IrObjectQuery::StringCompare(
+                                IrStringExpr::Read(left_index),
+                                IrStringExpr::Read(right_index),
+                                false,
+                            ))),
+                            32,
+                            true,
+                            None,
+                        );
+                        let zero = IrExpr::new(
+                            IrExprKind::Const(
+                                IrConst::packed(vec![0], vec![], vec![], 32, true, None)
+                                    .map_err(|error| error.to_string())?,
+                            ),
+                            32,
+                            true,
+                            None,
+                        );
+                        cmp_expr_ir(IrBinOp::Eq, compare, zero)
+                        }
+                    }
+                    (None, None) => compare(
+                        if matches!(op, Operation::CaseEqual | Operation::CaseNotEqual) {
+                            IrBinOp::CaseEq
+                        } else {
+                            IrBinOp::Eq
+                        },
+                        self.aggregate_leaf_read(left)?,
+                        self.aggregate_leaf_read(right)?,
+                    )?,
+                    _ => {
+                        return Err(format!(
+                            "aggregate equality has mismatched object/scalar member `{}` in `{path}`",
+                            aggregate_path_suffix(&left.path)
+                        ));
+                    }
+                };
+                equality = Some(match equality {
+                    Some(previous) => cmp_expr_ir(
+                        IrBinOp::LogAnd,
+                        previous,
+                        member_equal,
+                    ),
+                    None => member_equal,
+                });
+            }
+            equality.ok_or_else(|| format!("aggregate equality has no value leaves in `{path}"))?
+        };
+        Ok(Some(if matches!(op, Operation::NotEqual | Operation::CaseNotEqual) {
+            IrExpr::new(
+                IrExprKind::Un {
+                    op: IrUnOp::LogNot,
+                    a: Box::new(equality),
+                },
+                1,
+                false,
+                None,
+            )
+        } else {
+            equality
+        }))
+    }
+
+    fn aggregate_leaf_lhs(&self, leaf: &AggregateMemberInfo) -> Result<IrLhs, String> {
+        let signal = leaf.signal.as_ref().ok_or_else(|| {
+            format!(
+                "aggregate member `{}` is not a packed or real assignment target",
+                aggregate_path_suffix(&leaf.path)
+            )
+        })?;
+        if signal.real {
+            self.reference_lhs(IrLhs::Whole(signal.ir))
+        } else {
+            let width = leaf.member.ty.width.ok_or_else(|| {
+                format!(
+                    "aggregate member `{}` has unresolved width",
+                    aggregate_path_suffix(&leaf.path)
+                )
+            })?;
+            self.reference_lhs(IrLhs::Part(
+                signal.ir,
+                i64::from(width - 1),
+                0,
+                leaf.member.two_state,
+            ))
+        }
+    }
+
+    fn aggregate_leaf_read(&self, leaf: &AggregateMemberInfo) -> Result<IrExpr, String> {
+        let signal = leaf.signal.as_ref().ok_or_else(|| {
+            format!(
+                "aggregate member `{}` is not a packed or real expression",
+                aggregate_path_suffix(&leaf.path)
+            )
+        })?;
+        let value = self.signal_read_expr(signal)?;
+        Ok(if signal.real {
+            value
+        } else {
+            IrExpr::resize_to(
+                value,
+                leaf.member.ty.width.ok_or_else(|| {
+                    format!(
+                        "aggregate member `{}` has unresolved width",
+                        aggregate_path_suffix(&leaf.path)
+                    )
+                })?,
+                leaf.member.ty.signed,
+            )
+        })
+    }
+
+    pub(super) fn aggregate_pattern_leaf_values(
+        &self,
+        path: &str,
+        node: NodeId,
+        layout: &crate::core::db::AggregateLayout,
+        prefix: &[AggregatePathPart],
+        out: &mut Vec<(Vec<AggregatePathPart>, NodeId)>,
+    ) -> Result<(), String> {
+        let values = self.aggregate_pattern_values(path, node, layout)?;
+        for (index, value) in values {
+            let member = layout.members.get(index).ok_or_else(|| {
+                format!("aggregate pattern member index {index} is out of bounds in `{path}`")
+            })?;
+            let mut member_path = prefix.to_vec();
+            member_path.push(AggregatePathPart::Member(member.name.clone()));
+            self.aggregate_descriptor_pattern_values(
+                path,
+                value,
+                &member.descriptor,
+                &member_path,
+                out,
+            )?;
+        }
+        Ok(())
+    }
+
+    fn aggregate_descriptor_pattern_values(
+        &self,
+        path: &str,
+        node: NodeId,
+        descriptor: &TypeDescriptor,
+        prefix: &[AggregatePathPart],
+        out: &mut Vec<(Vec<AggregatePathPart>, NodeId)>,
+    ) -> Result<(), String> {
+        match &descriptor.shape {
+            TypeShape::Aggregate(layout) => {
+                if matches!(
+                    self.kind(node),
+                    NodeKind::Expr(ExprKind::Operation { op, .. })
+                        if *op == Operation::AssignmentPattern
+                ) {
+                    self.aggregate_pattern_leaf_values(path, node, layout, prefix, out)
+                } else {
+                    self.aggregate_descriptor_default_values(path, node, descriptor, prefix, out)
+                }
+            }
+            TypeShape::FixedArray {
+                dimensions,
+                element,
+            } => {
+                let (left, right) = dimensions.first().copied().ok_or_else(|| {
+                    format!("fixed array pattern has no captured bounds in `{path}`")
+                })?;
+                let next = if dimensions.len() == 1 {
+                    element.as_ref().clone()
+                } else {
+                    TypeDescriptor {
+                        id: descriptor.id,
+                        name: descriptor.name.clone(),
+                        info: descriptor.info.clone(),
+                        shape: TypeShape::FixedArray {
+                            dimensions: dimensions[1..].to_vec(),
+                            element: element.clone(),
+                        },
+                    }
+                };
+                if !matches!(
+                    self.kind(node),
+                    NodeKind::Expr(ExprKind::Operation { op, .. })
+                        if *op == Operation::AssignmentPattern
+                ) {
+                    return self.aggregate_descriptor_default_values(
+                        path, node, &next, prefix, out,
+                    );
+                }
+                let values = self.fixed_pattern_operands(path, node, (left, right), &next)?;
+                for (offset, value) in values.into_iter().enumerate() {
+                    let index = if left >= right {
+                        left - i32::try_from(offset).map_err(|_| {
+                            format!("fixed array pattern index overflow in `{path}`")
+                        })?
+                    } else {
+                        left + i32::try_from(offset).map_err(|_| {
+                            format!("fixed array pattern index overflow in `{path}`")
+                        })?
+                    };
+                    let mut element_path = prefix.to_vec();
+                    element_path.push(AggregatePathPart::Index(index));
+                    self.aggregate_descriptor_pattern_values(
+                        path,
+                        value,
+                        &next,
+                        &element_path,
+                        out,
+                    )?;
+                }
+                Ok(())
+            }
+            _ => {
+                out.push((prefix.to_vec(), node));
+                Ok(())
+            }
+        }
+    }
+
+    /// Expand a scalar/default value through every recursive leaf while
+    /// retaining the original source node for single-evaluation lowering.
+    fn aggregate_descriptor_default_values(
+        &self,
+        path: &str,
+        node: NodeId,
+        descriptor: &TypeDescriptor,
+        prefix: &[AggregatePathPart],
+        out: &mut Vec<(Vec<AggregatePathPart>, NodeId)>,
+    ) -> Result<(), String> {
+        match &descriptor.shape {
+            TypeShape::Aggregate(layout) => {
+                if matches!(
+                    layout.kind,
+                    AggregateKind::PackedUnion | AggregateKind::UnpackedUnion
+                ) {
+                    return Err(format!(
+                        "untagged union assignment pattern in `{path}` must select exactly one member"
+                    ));
+                }
+                for member in &layout.members {
+                    let mut member_path = prefix.to_vec();
+                    member_path.push(AggregatePathPart::Member(member.name.clone()));
+                    self.aggregate_descriptor_default_values(
+                        path,
+                        node,
+                        &member.descriptor,
+                        &member_path,
+                        out,
+                    )?;
+                }
+                Ok(())
+            }
+            TypeShape::FixedArray {
+                dimensions,
+                element,
+            } => {
+                let (left, right) = dimensions.first().copied().ok_or_else(|| {
+                    format!("fixed array pattern has no captured bounds in `{path}`")
+                })?;
+                let next = if dimensions.len() == 1 {
+                    element.as_ref().clone()
+                } else {
+                    TypeDescriptor {
+                        id: descriptor.id,
+                        name: descriptor.name.clone(),
+                        info: descriptor.info.clone(),
+                        shape: TypeShape::FixedArray {
+                            dimensions: dimensions[1..].to_vec(),
+                            element: element.clone(),
+                        },
+                    }
+                };
+                let count = (i64::from(left) - i64::from(right)).unsigned_abs() + 1;
+                let count = usize::try_from(count)
+                    .map_err(|_| format!("fixed array pattern is too large in `{path}`"))?;
+                for offset in 0..count {
+                    let offset = i32::try_from(offset)
+                        .map_err(|_| format!("fixed array pattern index overflow in `{path}`"))?;
+                    let index = if left >= right {
+                        left - offset
+                    } else {
+                        left + offset
+                    };
+                    let mut element_path = prefix.to_vec();
+                    element_path.push(AggregatePathPart::Index(index));
+                    self.aggregate_descriptor_default_values(
+                        path,
+                        node,
+                        &next,
+                        &element_path,
+                        out,
+                    )?;
+                }
+                Ok(())
+            }
+            _ => {
+                out.push((prefix.to_vec(), node));
+                Ok(())
+            }
+        }
+    }
+
+    fn fixed_pattern_operands(
+        &self,
+        path: &str,
+        node: NodeId,
+        bounds: (i32, i32),
+        element: &TypeDescriptor,
+    ) -> Result<Vec<NodeId>, String> {
+        let (left, right) = bounds;
+        let count = (i64::from(left) - i64::from(right)).unsigned_abs() + 1;
+        let count = usize::try_from(count)
+            .map_err(|_| format!("fixed array pattern is too large in `{path}`"))?;
+        let NodeKind::Expr(ExprKind::Operation {
+            op,
+            operands,
+            reordered,
+            ..
+        }) = self.kind(node)
+        else {
+            return Err(format!("array initializer in `{path}` is not an assignment pattern"));
+        };
+        if *op != Operation::AssignmentPattern {
+            return Err(format!("array initializer in `{path}` is not an assignment pattern"));
+        }
+        let mut values = operands.clone();
+        if *reordered {
+            values.reverse();
+        }
+        let tagged = values.iter().any(|value| {
+            matches!(self.kind(*value), NodeKind::Expr(ExprKind::TaggedPattern { .. }))
+        });
+        if !tagged {
+            if values.len() != count {
+                return Err(format!(
+                    "array assignment pattern in `{path}` has {} positional values; expected {count}",
+                    values.len()
+                ));
+            }
+            return Ok(values);
+        }
+        if values.iter().any(|value| {
+            !matches!(self.kind(*value), NodeKind::Expr(ExprKind::TaggedPattern { .. }))
+        }) {
+            return Err(format!(
+                "mixed positional and keyed array assignment pattern in `{path}` is not supported"
+            ));
+        }
+
+        let mut explicit = vec![None; count];
+        let mut type_values = Vec::<(crate::core::db::AssignmentPatternKeyType, NodeId)>::new();
+        let mut default = None;
+        for operand in values {
+            let NodeKind::Expr(ExprKind::TaggedPattern {
+                key,
+                key_type,
+                value,
+            }) = self.kind(operand)
+            else {
+                continue;
+            };
+            let key = key.as_deref().ok_or_else(|| {
+                format!("array assignment pattern key is unavailable in `{path}`")
+            })?;
+            let value = value.ok_or_else(|| {
+                format!("array assignment pattern key `{key}` has no value in `{path}`")
+            })?;
+            if key == "default" {
+                if default.replace(value).is_some() {
+                    return Err(format!(
+                        "duplicate default key in array assignment pattern in `{path}`"
+                    ));
+                }
+                continue;
+            }
+            if let Some(index) = Self::parse_pattern_index(key) {
+                let offset = if left >= right {
+                    i64::from(left) - i64::from(index)
+                } else {
+                    i64::from(index) - i64::from(left)
+                };
+                let Some(offset) = usize::try_from(offset).ok().filter(|offset| *offset < count)
+                else {
+                    return Err(format!(
+                        "array assignment pattern index `{key}` is out of bounds in `{path}`"
+                    ));
+                };
+                if explicit[offset].replace(value).is_some() {
+                    return Err(format!(
+                        "duplicate array assignment pattern index `{key}` in `{path}`"
+                    ));
+                }
+                continue;
+            }
+            let Some(key_type) = key_type else {
+                return Err(format!(
+                    "array assignment pattern key `{key}` has no matching index or type in `{path}`"
+                ));
+            };
+            if !super::collection::pattern_key_matches_descriptor(
+                &key_type,
+                element,
+                Self::descriptor_two_state(element),
+                None,
+            ) {
+                return Err(format!(
+                    "array assignment pattern key `{key}` has no matching index or type in `{path}`"
+                ));
+            }
+            if type_values
+                .iter()
+                .any(|(previous, _)| {
+                    super::collection::pattern_key_types_equal(previous, &key_type)
+                })
+            {
+                return Err(format!(
+                    "duplicate array assignment pattern type key `{key}` in `{path}`"
+                ));
+            }
+            type_values.push((key_type.clone(), value));
+        }
+
+        let mut resolved = Vec::with_capacity(count);
+        for offset in 0..count {
+            let value = explicit[offset]
+                .or_else(|| {
+                    type_values.iter().rev().find_map(|(key_type, value)| {
+                        super::collection::pattern_key_matches_descriptor(
+                            key_type,
+                            element,
+                            Self::descriptor_two_state(element),
+                            None,
+                        )
+                        .then_some(*value)
+                    })
+                })
+                .or(default);
+            let Some(value) = value else {
+                let offset = i32::try_from(offset).unwrap_or(i32::MAX);
+                let index = if left >= right {
+                    left - offset
+                } else {
+                    left + offset
+                };
+                return Err(format!(
+                    "array assignment pattern in `{path}` does not cover index `{index}`"
+                ));
+            };
+            resolved.push(value);
+        }
+        Ok(resolved)
+    }
+
+    fn parse_pattern_index(key: &str) -> Option<i32> {
+        let key = key.trim();
+        let key = key
+            .strip_prefix('[')
+            .and_then(|key| key.strip_suffix(']'))
+            .unwrap_or(key)
+            .trim();
+        key.parse::<i32>().ok()
+    }
+
+    fn descriptor_two_state(descriptor: &TypeDescriptor) -> bool {
+        matches!(
+            descriptor.info.kind.as_str(),
+            "bit" | "byte" | "shortint" | "int" | "longint" | "time"
+        )
+    }
+
     /// Convert a pre-IR [`Lhs`] to its [`IrLhs`] form using the registered
     /// model indices.
-    fn lhs_to_ir(&self, lh: Lhs) -> Result<IrLhs, String> {
+    pub(super) fn lhs_to_ir(&self, lh: Lhs) -> Result<IrLhs, String> {
         Ok(match lh {
-            Lhs::Whole(info) => IrLhs::Whole(info.ir),
+            Lhs::Whole(info) => self.reference_lhs(IrLhs::Whole(info.ir))?,
             Lhs::WholeRef {
                 addr,
                 width,
                 signed,
                 two_state,
+                shortreal,
             } => IrLhs::WholeRef {
                 addr,
                 width,
                 signed,
                 two_state,
+                shortreal,
             },
-            Lhs::Bit(info, index, two_state) => IrLhs::Bit(info.ir, index, two_state),
+            Lhs::Ref {
+                addr,
+                width,
+                signed,
+                two_state,
+                const_ref,
+            } => IrLhs::Ref {
+                addr,
+                width,
+                signed,
+                two_state,
+                const_ref,
+            },
+            Lhs::Canonical(lhs) => lhs,
+            Lhs::Bit(info, index, two_state) => {
+                self.reference_lhs(IrLhs::Bit(info.ir, index, two_state))?
+            }
             Lhs::Part(info, left, right, two_state) => {
                 let (left, right, _) =
                     checked_select_bounds(left, right, "assignment part select")?;
-                IrLhs::Part(info.ir, left, right, two_state)
+                self.reference_lhs(IrLhs::Part(info.ir, left, right, two_state))?
             }
             Lhs::IdxPart(info, base, width_expr, width, neg, two_state) => {
-                IrLhs::IdxPart(info.ir, base, width_expr, width, neg, two_state)
+                self.reference_lhs(IrLhs::IdxPart(
+                    info.ir,
+                    base,
+                    width_expr,
+                    width,
+                    neg,
+                    two_state,
+                ))?
             }
-            Lhs::ArrayElem(ae) => IrLhs::ArrayElem {
-                arr: ae.arr.ir,
+            Lhs::ArrayElem(ae) => self.reference_lhs(IrLhs::ArrayElem {
+                arr: self.reference_array(ae.arr.ir),
                 indices: ae.indices,
                 elem_sel: match ae.elem_sel {
                     ElemSel::Whole => IrElemSel::Whole,
@@ -1938,7 +3285,7 @@ impl<'a> Codegen<'a> {
                         negative,
                     },
                 },
-            },
+            })?,
             Lhs::Stream {
                 parts,
                 slice,

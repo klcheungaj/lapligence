@@ -42,3 +42,15 @@ Operation operand arity is validated at this boundary and reused by executable
 lowering. A malformed frontend projection therefore returns a source-linked
 error before constant evaluation or runtime lowering can index a missing
 operand.
+
+## Simulation coverage ledger
+
+`simulation_coverage()` walks only the owned graph reachable from elaborated
+top instances, including embedded references and declaration initializers. Each
+node is classified as executable, declaration-only, elaboration-consumed,
+intentionally unreachable, or unsupported. Native semantic kind and detail are
+retained by `core::db` when a frontend-neutral node has no direct variant, so a
+reachable unknown statement or expression produces a source-located error
+instead of becoming `NodeKind::Other` and disappearing. Inactive generate
+branches and declaration-only frontend records remain in the ledger without
+being treated as executable obligations.

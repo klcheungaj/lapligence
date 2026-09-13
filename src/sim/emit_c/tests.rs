@@ -1,5 +1,5 @@
 use super::*;
-use crate::sim::ir::{IrExpr, IrExprKind, IrModel, IrPreFn, IrStmt};
+use crate::sim::ir::{IrEventRef, IrExpr, IrExprKind, IrModel, IrPreFn, IrStmt};
 
 fn render(model: &IrModel) -> Result<String, EmitError> {
     let execution = crate::sim::execution::ExecutionModel::lower(model.clone())
@@ -49,11 +49,70 @@ fn executable_sensitivity_blocks_drive_process_emission() {
 }
 
 #[test]
+fn executable_loop_blocks_have_cooperative_budget_points() {
+    use crate::sim::ir::{IrModelParts, IrProcess, IrShape};
+
+    let process = IrProcess::new(
+        "p_loop".into(),
+        "top.loop".into(),
+        IrShape::Loop,
+        vec![],
+        vec![IrStmt::Nop],
+    );
+    let model = IrModel::from_parts(
+        "top".into(),
+        1,
+        IrModelParts {
+            processes: vec![process],
+            spawns: vec!["p_loop".into()],
+            ..IrModelParts::default()
+        },
+    )
+    .unwrap();
+
+    let rendered = render(&model).unwrap();
+
+    assert!(rendered
+        .contains("llg_budget_point(\"<synthetic: manually constructed process top.loop>\");"));
+}
+
+#[test]
+fn nonblocking_event_trigger_renders_nba_operation() {
+    use crate::sim::ir::{IrEvent, IrModelParts, IrProcess, IrShape};
+
+    let process = IrProcess::new(
+        "p_event".into(),
+        "top.initial".into(),
+        IrShape::RunOnce,
+        vec![],
+        vec![IrStmt::NonblockingEventTrigger {
+            ev: IrEventRef::Static(0),
+            ticks: Some(crate::sim::ir::IrDelay::Constant(2)),
+        }],
+    );
+    let model = IrModel::from_parts(
+        "top".into(),
+        1,
+        IrModelParts {
+            events: vec![IrEvent::new("top__event".into())],
+            processes: vec![process],
+            spawns: vec!["p_event".into()],
+            ..IrModelParts::default()
+        },
+    )
+    .unwrap();
+
+    let rendered = render(&model).unwrap();
+    assert!(rendered.contains("llg_nba_event_after(&top__event, 2ULL);"));
+}
+
+#[test]
 fn runtime_width_limit_is_a_backend_policy_not_an_ir_invariant() {
     let model = IrModel::new("wide".to_owned(), 1).unwrap();
     let ctx = RCtx {
         model: &model,
         func: None,
+        activation_label: None,
     };
     for width in [LLG_WIDTH_LIMIT, LLG_WIDTH_LIMIT + 1, u32::MAX] {
         let ty = crate::sim::ir::IrType::packed(width, false).unwrap();
@@ -98,6 +157,7 @@ fn runtime_width_limit_is_a_backend_policy_not_an_ir_invariant() {
         let helper = IrPreFn::MonEval {
             c_name: "probe".into(),
             args: vec![expression],
+            context: None,
         };
         model.validate_pre_fn(&helper, None).unwrap();
         assert!(render_pre_fn(&ctx, &helper)
@@ -167,6 +227,7 @@ fn indexed_read_uses_its_elaborated_extent() {
         &RCtx {
             model: &model,
             func: None,
+            activation_label: None,
         },
         &expression,
     )
@@ -205,6 +266,7 @@ fn selected_net_driver_preserves_member_state_conversion() {
         &RCtx {
             model: &model,
             func: None,
+            activation_label: None,
         },
         &statement,
     )
@@ -219,6 +281,7 @@ fn detached_fragments_reject_missing_storage_before_rendering() {
     let ctx = RCtx {
         model: &model,
         func: None,
+        activation_label: None,
     };
     let expression = IrExpr::try_new(IrExprKind::SigRead(7), 1, false, None).unwrap();
     let error = match render_expr(&ctx, &expression) {
@@ -240,6 +303,7 @@ fn detached_fragments_reject_missing_storage_before_rendering() {
     let helper = IrPreFn::MonEval {
         c_name: "monitor".to_owned(),
         args: vec![expression],
+        context: None,
     };
     assert!(matches!(
         render_pre_fn(&ctx, &helper),
@@ -250,7 +314,7 @@ fn detached_fragments_reject_missing_storage_before_rendering() {
 #[test]
 fn model_render_rejects_invalid_internal_precision() {
     let mut model = IrModel::new("empty".to_owned(), 1).unwrap();
-    model.precision_ps = 0;
+    model.precision_fs = 0;
     assert!(matches!(render(&model), Err(EmitError::InvalidIr(_))));
 }
 
@@ -303,7 +367,12 @@ fn output_temporary_uses_its_declared_formal_after_c_argument_reordering() {
                     width: 16,
                     signed: true,
                     two_state: false,
+                    shortreal: false,
                 }),
+                storage_addr: None,
+                storage_lhs: None,
+                storage_read: None,
+                selector_inits: Vec::new(),
             },
             IrCallArg::Val(input),
         ],
@@ -315,6 +384,7 @@ fn output_temporary_uses_its_declared_formal_after_c_argument_reordering() {
         &RCtx {
             model: &model,
             func: None,
+            activation_label: None,
         },
         &expression,
     )
@@ -324,4 +394,147 @@ fn output_temporary_uses_its_declared_formal_after_c_argument_reordering() {
         "{}",
         rendered.code
     );
+}
+
+#[test]
+fn captured_fork_emits_owned_frame_lifecycle() {
+    use crate::sim::ir::{
+        FrameId, IrCapture, IrCapturedBranch, IrModelParts, IrProcess, IrShape, StorageLifetime,
+        StorageOwnership, StorageRef,
+    };
+
+    let frame = FrameId::new(2);
+    let storage = StorageRef::for_declaration(
+        frame,
+        0,
+        17,
+        StorageLifetime::Automatic,
+        StorageOwnership::Owned,
+    );
+    let value = IrExpr::try_new(
+        IrExprKind::Const(
+            crate::sim::ir::IrConst::packed(vec![0x5a], vec![0], vec![0], 8, false, None).unwrap(),
+        ),
+        8,
+        false,
+        None,
+    )
+    .unwrap();
+    let capture = IrCapture::new(storage, value);
+    let branch = IrCapturedBranch::new(
+        "p_capture_branch".into(),
+        "top.capture".into(),
+        frame,
+        vec![capture.clone()],
+    );
+    let process = IrProcess::new(
+        "p_host".into(),
+        "top.host".into(),
+        IrShape::RunOnce,
+        vec![IrPreFn::CapturedBranch {
+            c_name: "p_capture_branch".into(),
+            frame,
+            captures: vec![capture],
+            body: vec![IrStmt::Nop],
+        }],
+        vec![IrStmt::CapturedFork {
+            join_kind: crate::sim::ir::IrJoinKind::None,
+            branches: vec![branch],
+            target: None,
+        }],
+    );
+    let model = IrModel::from_parts(
+        "top".into(),
+        1,
+        IrModelParts {
+            processes: vec![process],
+            spawns: vec!["p_host".into()],
+            ..IrModelParts::default()
+        },
+    )
+    .unwrap();
+
+    let rendered = render(&model).unwrap();
+    assert!(rendered.contains("llg_frame_new(1)"));
+    assert!(rendered.contains("llg_frame_capture_value(_frame_2, 0u"));
+    assert!(rendered.contains("llg_fork_with_frame(p_capture_branch"));
+    assert!(rendered.contains("llg_frame_read_value(llg_proc_frame(self), 0u)"));
+    assert!(rendered.contains("llg_frame_release(_frame_2)"));
+}
+
+#[test]
+fn evaluated_event_emits_owned_context_and_contextual_callback() {
+    use crate::sim::ir::{
+        FrameId, IrDependency, IrEventCapture, IrEventContext, IrModelParts, IrProcess, IrShape,
+        StorageLifetime, StorageOwnership, StorageRef,
+    };
+
+    let frame = FrameId::new(4);
+    let storage = StorageRef::for_declaration(
+        frame,
+        0,
+        23,
+        StorageLifetime::Automatic,
+        StorageOwnership::Owned,
+    );
+    let callback_value = IrExpr::try_new(
+        IrExprKind::LocalRead("_local".into()),
+        1,
+        false,
+        None,
+    )
+    .unwrap();
+    let initial = IrExpr::try_new(IrExprKind::Fill(0), 1, false, None).unwrap();
+    let context = IrEventContext::new(
+        frame,
+        vec![IrEventCapture::new(storage, "_local".into(), initial)],
+    );
+    let process = IrProcess::new(
+        "p_event".into(),
+        "top.event".into(),
+        IrShape::RunOnce,
+        vec![IrPreFn::MonEval {
+            c_name: "p_eval".into(),
+            args: vec![callback_value],
+            context: Some(context),
+        }],
+        vec![IrStmt::WaitEvents {
+            specs: vec![
+                (
+                    crate::sim::ir::IrWaitSrc::Evaluated {
+                        eval: "p_eval".into(),
+                        condition: None,
+                        reads: vec![IrDependency::Scalar("signal".into())],
+                    },
+                    crate::sim::ir::IrEdge::Any,
+                ),
+            ],
+        }],
+    );
+    let model = IrModel::from_parts(
+        "top".into(),
+        1,
+        IrModelParts {
+            signals: vec![crate::sim::ir::IrSignal::new(
+                "signal".into(),
+                None,
+                crate::sim::ir::IrType::packed(1, false).unwrap(),
+                None,
+            )
+            .unwrap()],
+            processes: vec![process],
+            spawns: vec!["p_event".into()],
+            ..IrModelParts::default()
+        },
+    )
+    .unwrap();
+
+    let rendered = render(&model).unwrap();
+    assert!(rendered.contains("static void p_eval(sv4_t* out, void* context)"));
+    assert!(rendered.contains(
+        "out[0] = llg_frame_read_value((const llg_frame_t*)context, 0u);"
+    ));
+    assert!(rendered.contains("llg_frame_t* _event_frame_4 = llg_frame_new(1u);"));
+    assert!(rendered.contains(".eval_context = _event_frame_4"));
+    assert!(rendered.contains("llg_wait_expressions(_events, 1);"));
 }

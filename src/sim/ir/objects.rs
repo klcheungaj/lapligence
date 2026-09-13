@@ -1,6 +1,6 @@
 //! Non-integral storage and expressions, kept distinct from packed vectors.
 
-use super::IrExpr;
+use super::{IrCallArg, IrExpr};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 /// Non-integral scalar storage categories, independent of the packed backend.
@@ -25,9 +25,20 @@ pub enum IrStringExpr {
     Literal(Vec<u8>),
     Read(usize),
     LocalRead(String),
+    /// Read and clone a native string formal. The callee owns the returned
+    /// value; the formal itself remains caller-owned for ref/output aliases.
+    FormalRead(usize),
     Call {
         function: usize,
         args: Vec<IrExpr>,
+        depth: super::IrDepth,
+    },
+    /// Typed subroutine call used when at least one formal is a native string
+    /// (or when an object-valued output/ref formal needs call-boundary
+    /// ownership). Arguments use the same ABI order as [`IrCall`].
+    TypedCall {
+        function: usize,
+        args: Vec<super::IrCallArg>,
         depth: super::IrDepth,
     },
     Concat(Vec<IrStringExpr>),
@@ -35,6 +46,69 @@ pub enum IrStringExpr {
     FromPacked(Box<IrExpr>),
     Case(Box<IrStringExpr>, bool),
     Substr(Box<IrStringExpr>, Box<IrExpr>, Box<IrExpr>),
+}
+
+/// One typed argument of a display-family task.
+///
+/// Display values stay in their native representation until the runtime
+/// formatter consumes them. In particular, strings are not converted through
+/// packed bits and real values are not passed through a variadic C call.
+#[derive(Clone, Debug, PartialEq)]
+pub enum IrDisplayArg {
+    Packed(IrExpr),
+    Real(IrExpr),
+    String(IrStringExpr),
+}
+
+impl IrDisplayArg {
+    pub(in crate::sim) fn validate(
+        &self,
+        model: &super::IrModel,
+        string_return: Option<bool>,
+        path: &str,
+    ) -> Result<(), super::IrValidationError> {
+        match self {
+            Self::Packed(value) => {
+                if value.is_real() {
+                    return Err(super::IrValidationError::new(
+                        path,
+                        "display packed argument cannot be real",
+                    ));
+                }
+                let _ = (model, path);
+                Ok(())
+            }
+            Self::Real(value) => {
+                if !value.is_real() {
+                    return Err(super::IrValidationError::new(
+                        path,
+                        "display real argument is not real",
+                    ));
+                }
+                let _ = (model, path);
+                Ok(())
+            }
+            Self::String(value) => value.validate(model, string_return),
+        }
+    }
+
+    pub(in crate::sim) fn expressions(&self, visit: &mut impl FnMut(&IrExpr)) {
+        match self {
+            Self::Packed(value) | Self::Real(value) => visit(value),
+            Self::String(value) => value.expressions(visit),
+        }
+    }
+
+    pub(in crate::sim) fn expressions_mut(&mut self, visit: &mut impl FnMut(&mut IrExpr)) {
+        match self {
+            Self::Packed(value) | Self::Real(value) => visit(value),
+            Self::String(value) => value.expressions_mut(visit),
+        }
+    }
+
+    pub(in crate::sim) fn is_packed(&self) -> bool {
+        matches!(self, Self::Packed(_))
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -46,7 +120,10 @@ pub enum IrChandleExpr {
     FormalRead(usize),
     Call {
         function: usize,
-        args: Vec<IrChandleExpr>,
+        /// Arguments are stored in the generated C parameter order.  The
+        /// typed variants preserve packed arguments and pointer addresses
+        /// without making a chandle look like an integer.
+        args: Vec<IrCallArg>,
         depth: super::IrDepth,
     },
 }
@@ -61,6 +138,7 @@ pub enum IrObjectQuery {
     StringAtoreal(IrStringExpr),
     StringPacked(IrStringExpr),
     ChandleEq(IrChandleExpr, IrChandleExpr),
+    ArrayQuery(IrArrayQuery),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -72,6 +150,11 @@ pub enum IrObjectStmt {
     StringPutc(usize, IrExpr, IrExpr),
     StringItoa(usize, IrExpr, u32),
     StringRealtoa(usize, IrExpr),
+    StringPutcLocal(String, IrExpr, IrExpr),
+    StringItoaLocal(String, IrExpr, u32),
+    StringRealtoaLocal(String, IrExpr),
+    /// Declare an automatic native chandle local at the source declaration.
+    ChandleDeclareLocal(String, Option<IrChandleExpr>),
     ChandleAssign(usize, IrChandleExpr),
     ChandleAssignLocal(String, IrChandleExpr),
 }
@@ -91,11 +174,8 @@ impl IrStringExpr {
             ));
         }
         match self {
-            Self::LocalRead(name) if name == "_ret" && string_return == Some(true) => Ok(()),
-            Self::LocalRead(_) => Err(super::IrValidationError::new(
-                "string local",
-                "unknown string return storage",
-            )),
+            Self::LocalRead(name) if !name.is_empty() => Ok(()),
+            Self::FormalRead(_) => Ok(()),
             Self::Call {
                 function,
                 args,
@@ -134,6 +214,28 @@ impl IrStringExpr {
                 }
                 Ok(())
             }
+            Self::TypedCall {
+                function,
+                args,
+                depth,
+            } => {
+                if depth.func_base && string_return.is_none() {
+                    return Err(super::IrValidationError::new(
+                        "string call",
+                        "function-relative call depth outside a function",
+                    ));
+                }
+                let callee = model.funcs.get(*function).ok_or_else(|| {
+                    super::IrValidationError::new("string call", "function index is out of bounds")
+                })?;
+                if !callee.ret_string || callee.formals.len() != args.len() {
+                    return Err(super::IrValidationError::new(
+                        "string call",
+                        "typed string call target has an incompatible signature",
+                    ));
+                }
+                Ok(())
+            }
             Self::Read(index) => object_type(model, *index, IrObjectType::String),
             Self::Concat(parts) => parts
                 .iter()
@@ -146,8 +248,19 @@ impl IrStringExpr {
     }
     pub(in crate::sim) fn expressions(&self, visit: &mut impl FnMut(&IrExpr)) {
         match self {
-            Self::Literal(_) | Self::Read(_) | Self::LocalRead(_) => {}
+            Self::Literal(_) | Self::Read(_) | Self::LocalRead(_) | Self::FormalRead(_) => {}
             Self::Call { args, .. } => args.iter().for_each(visit),
+            Self::TypedCall { args, .. } => {
+                for arg in args {
+                    match arg {
+                        super::IrCallArg::StringVal(value) => value.expressions(visit),
+                        super::IrCallArg::StringOutTemp { init: Some(value), .. } => {
+                            value.expressions(visit)
+                        }
+                        _ => {}
+                    }
+                }
+            }
             Self::Concat(parts) => {
                 for part in parts {
                     part.expressions(visit);
@@ -168,8 +281,19 @@ impl IrStringExpr {
     }
     pub(in crate::sim) fn expressions_mut(&mut self, visit: &mut impl FnMut(&mut IrExpr)) {
         match self {
-            Self::Literal(_) | Self::Read(_) | Self::LocalRead(_) => {}
+            Self::Literal(_) | Self::Read(_) | Self::LocalRead(_) | Self::FormalRead(_) => {}
             Self::Call { args, .. } => args.iter_mut().for_each(visit),
+            Self::TypedCall { args, .. } => {
+                for arg in args {
+                    match arg {
+                        super::IrCallArg::StringVal(value) => value.expressions_mut(visit),
+                        super::IrCallArg::StringOutTemp { init: Some(value), .. } => {
+                            value.expressions_mut(visit)
+                        }
+                        _ => {}
+                    }
+                }
+            }
             Self::Concat(parts) => {
                 for part in parts {
                     part.expressions_mut(visit);
@@ -186,6 +310,131 @@ impl IrStringExpr {
                 visit(first);
                 visit(last);
             }
+        }
+    }
+}
+
+/// One declared dimension. `None` denotes a runtime-sized dimension (dynamic
+/// array, queue, associative array, or string); fixed bounds are retained as
+/// signed source values so direction and negative ranges remain observable.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct IrArrayDimension {
+    pub left: Option<i128>,
+    pub right: Option<i128>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IrArrayQueryKind {
+    Left,
+    Right,
+    Low,
+    High,
+    Increment,
+    Size,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum IrArrayQueryTarget {
+    Static {
+        dimensions: Vec<IrArrayDimension>,
+    },
+    Container {
+        container: usize,
+        dimensions: Vec<IrArrayDimension>,
+    },
+    String {
+        value: IrStringExpr,
+        dimensions: Vec<IrArrayDimension>,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct IrArrayQuery {
+    pub kind: IrArrayQueryKind,
+    pub target: IrArrayQueryTarget,
+    /// None means the LRM default dimension of one.
+    pub dimension: Option<Box<IrExpr>>,
+}
+
+impl IrArrayQuery {
+    pub(in crate::sim) fn result_type(&self, model: &super::IrModel) -> (u32, bool) {
+        if self.kind == IrArrayQueryKind::Increment {
+            return (32, true);
+        }
+        if let IrArrayQueryTarget::Container { container, .. } = &self.target {
+            if let Some(container) = model.containers.get(*container) {
+                if let super::IrContainerKind::Associative {
+                    key: super::IrAssocKey::Integral {
+                        width, signed, ..
+                    },
+                } = &container.kind
+                {
+                    return (*width, *signed);
+                }
+            }
+        }
+        (32, true)
+    }
+
+    fn dimensions(&self) -> &[IrArrayDimension] {
+        match &self.target {
+            IrArrayQueryTarget::Static { dimensions }
+            | IrArrayQueryTarget::Container { dimensions, .. }
+            | IrArrayQueryTarget::String { dimensions, .. } => dimensions,
+        }
+    }
+
+    pub(in crate::sim) fn validate(
+        &self,
+        model: &super::IrModel,
+        string_return: Option<bool>,
+    ) -> Result<(), super::IrValidationError> {
+        if self.dimensions().is_empty() {
+            return Err(super::IrValidationError::new(
+                "array query",
+                "query target has no dimensions",
+            ));
+        }
+        if self
+            .dimension
+            .as_ref()
+            .is_some_and(|dimension| dimension.is_real())
+        {
+            return Err(super::IrValidationError::new(
+                "array query",
+                "dimension selector must be integral",
+            ));
+        }
+        match &self.target {
+            IrArrayQueryTarget::Static { .. } => Ok(()),
+            IrArrayQueryTarget::Container { container, .. } => {
+                if model.containers.get(*container).is_none() {
+                    return Err(super::IrValidationError::new(
+                        "array query",
+                        "container index is out of bounds",
+                    ));
+                }
+                Ok(())
+            }
+            IrArrayQueryTarget::String { value, .. } => value.validate(model, string_return),
+        }
+    }
+
+    pub(in crate::sim) fn expressions(&self, visit: &mut impl FnMut(&IrExpr)) {
+        if let Some(dimension) = &self.dimension {
+            visit(dimension);
+        }
+        if let IrArrayQueryTarget::String { value, .. } = &self.target {
+            value.expressions(visit);
+        }
+    }
+
+    pub(in crate::sim) fn expressions_mut(&mut self, visit: &mut impl FnMut(&mut IrExpr)) {
+        if let Some(dimension) = &mut self.dimension {
+            visit(dimension);
+        }
+        if let IrArrayQueryTarget::String { value, .. } = &mut self.target {
+            value.expressions_mut(visit);
         }
     }
 }
@@ -215,6 +464,7 @@ impl IrObjectQuery {
                 a.validate(model, formals, chandle_return)?;
                 b.validate(model, formals, chandle_return)
             }
+            Self::ArrayQuery(query) => query.validate(model, string_return),
         }
     }
     pub(in crate::sim) fn expressions(&self, visit: &mut impl FnMut(&IrExpr)) {
@@ -231,7 +481,11 @@ impl IrObjectQuery {
                 a.expressions(visit);
                 b.expressions(visit);
             }
-            Self::ChandleEq(..) => {}
+            Self::ChandleEq(a, b) => {
+                a.expressions(visit);
+                b.expressions(visit);
+            }
+            Self::ArrayQuery(query) => query.expressions(visit),
         }
     }
     pub(in crate::sim) fn expressions_mut(&mut self, visit: &mut impl FnMut(&mut IrExpr)) {
@@ -248,7 +502,11 @@ impl IrObjectQuery {
                 a.expressions_mut(visit);
                 b.expressions_mut(visit);
             }
-            Self::ChandleEq(..) => {}
+            Self::ChandleEq(a, b) => {
+                a.expressions_mut(visit);
+                b.expressions_mut(visit);
+            }
+            Self::ArrayQuery(query) => query.expressions_mut(visit),
         }
     }
 }
@@ -271,13 +529,43 @@ impl IrObjectStmt {
                 value.validate(model, string_return)
             }
             Self::StringAssignLocal(name, value) => {
-                if name != "_ret" || string_return != Some(true) {
+                if name.is_empty() {
                     return Err(super::IrValidationError::new(
                         "string local",
-                        "unknown string return storage",
+                        "local name must not be empty",
                     ));
                 }
                 value.validate(model, string_return)
+            }
+            Self::StringPutcLocal(name, index, value) => {
+                if name.is_empty() {
+                    return Err(super::IrValidationError::new(
+                        "string local",
+                        "local name must not be empty",
+                    ));
+                }
+                let _ = (index, model, formals);
+                let _ = value;
+                Ok(())
+            }
+            Self::StringItoaLocal(name, value, base) => {
+                if name.is_empty() || !matches!(base, 2 | 8 | 10 | 16) {
+                    return Err(super::IrValidationError::new(
+                        "string local",
+                        "invalid local string conversion",
+                    ));
+                }
+                let _ = value;
+                Ok(())
+            }
+            Self::StringRealtoaLocal(name, value) => {
+                if name.is_empty() || !value.is_real() {
+                    return Err(super::IrValidationError::new(
+                        "string local",
+                        "realtoa requires a named string local and real argument",
+                    ));
+                }
+                Ok(())
             }
             Self::StringPutc(index, _, _) | Self::StringItoa(index, _, _) => {
                 object_type(model, *index, IrObjectType::String)
@@ -292,15 +580,27 @@ impl IrObjectStmt {
                 }
                 Ok(())
             }
+            Self::ChandleDeclareLocal(name, value) => {
+                if name.is_empty() {
+                    return Err(super::IrValidationError::new(
+                        "chandle local",
+                        "local name must not be empty",
+                    ));
+                }
+                value
+                    .as_ref()
+                    .map(|value| value.validate(model, formals, chandle_return))
+                    .unwrap_or(Ok(()))
+            }
             Self::ChandleAssign(index, value) => {
                 object_type(model, *index, IrObjectType::Chandle)?;
                 value.validate(model, formals, chandle_return)
             }
             Self::ChandleAssignLocal(name, value) => {
-                if name != "_ret" || chandle_return != Some(true) {
+                if name.is_empty() {
                     return Err(super::IrValidationError::new(
                         "chandle local",
-                        "unknown chandle return storage",
+                        "local name must not be empty",
                     ));
                 }
                 value.validate(model, formals, chandle_return)
@@ -317,7 +617,17 @@ impl IrObjectStmt {
                 visit(value);
             }
             Self::StringItoa(_, value, _) | Self::StringRealtoa(_, value) => visit(value),
-            Self::ChandleAssign(..) | Self::ChandleAssignLocal(..) => {}
+            Self::StringPutcLocal(_, index, value) => {
+                visit(index);
+                visit(value);
+            }
+            Self::StringItoaLocal(_, value, _) | Self::StringRealtoaLocal(_, value) => {
+                visit(value)
+            }
+            Self::ChandleDeclareLocal(_, Some(value)) => value.expressions(visit),
+            Self::ChandleDeclareLocal(_, None)
+            | Self::ChandleAssign(..)
+            | Self::ChandleAssignLocal(..) => {}
         }
     }
     pub(in crate::sim) fn expressions_mut(&mut self, visit: &mut impl FnMut(&mut IrExpr)) {
@@ -330,13 +640,23 @@ impl IrObjectStmt {
                 visit(value);
             }
             Self::StringItoa(_, value, _) | Self::StringRealtoa(_, value) => visit(value),
-            Self::ChandleAssign(..) | Self::ChandleAssignLocal(..) => {}
+            Self::StringPutcLocal(_, index, value) => {
+                visit(index);
+                visit(value);
+            }
+            Self::StringItoaLocal(_, value, _) | Self::StringRealtoaLocal(_, value) => {
+                visit(value)
+            }
+            Self::ChandleDeclareLocal(_, Some(value)) => value.expressions_mut(visit),
+            Self::ChandleDeclareLocal(_, None)
+            | Self::ChandleAssign(..)
+            | Self::ChandleAssignLocal(..) => {}
         }
     }
 }
 
 impl IrChandleExpr {
-    fn validate(
+    pub(in crate::sim) fn validate(
         &self,
         model: &super::IrModel,
         formals: &[super::IrFormal],
@@ -345,20 +665,21 @@ impl IrChandleExpr {
         match self {
             Self::Null => Ok(()),
             Self::LocalRead(name) if name == "_ret" && chandle_return == Some(true) => Ok(()),
+            Self::LocalRead(name) if !name.is_empty() => Ok(()),
             Self::LocalRead(_) => Err(super::IrValidationError::new(
                 "chandle local",
-                "unknown chandle return storage",
+                "local name must not be empty",
             )),
             Self::FormalRead(index) => {
                 if formals
                     .get(*index)
-                    .is_some_and(|formal| formal.chandle && !formal.is_out)
+                    .is_some_and(|formal| formal.chandle)
                 {
                     Ok(())
                 } else {
                     Err(super::IrValidationError::new(
                         "chandle formal",
-                        "index does not refer to a chandle input formal",
+                        "index does not refer to a chandle formal",
                     ))
                 }
             }
@@ -377,20 +698,85 @@ impl IrChandleExpr {
                 let callee = model.funcs.get(*function).ok_or_else(|| {
                     super::IrValidationError::new("chandle call", "function index is out of bounds")
                 })?;
-                if !callee.ret_chandle
-                    || callee.formals.len() != args.len()
-                    || callee
-                        .formals
-                        .iter()
-                        .any(|formal| formal.is_out || !formal.chandle)
-                {
+                if !callee.ret_chandle || callee.formals.len() != args.len() {
                     return Err(super::IrValidationError::new(
                         "chandle call",
-                        "callee must return chandle and have only chandle input formals",
+                        "callee must return chandle and have one typed argument per formal",
                     ));
                 }
-                args.iter()
-                    .try_for_each(|arg| arg.validate(model, formals, chandle_return))
+                let parameter_order = callee
+                    .formals
+                    .iter()
+                    .filter(|formal| formal.is_address())
+                    .chain(callee.formals.iter().filter(|formal| !formal.is_address()));
+                for (arg, formal) in args.iter().zip(parameter_order) {
+                    match (arg, formal) {
+                        (IrCallArg::ChandleVal(value), formal)
+                            if formal.chandle && !formal.is_address() => {
+                            value.validate(model, formals, chandle_return)?;
+                        }
+                        (IrCallArg::Val(value), formal) if !formal.chandle && !formal.is_address() => {
+                            if value.is_real() != formal.real
+                                || value.width != formal.width
+                                || value.signed != formal.signed
+                            {
+                                return Err(super::IrValidationError::new(
+                                    "chandle call",
+                                    "packed argument type disagrees with its formal",
+                                ));
+                            }
+                        }
+                        (IrCallArg::ChandleAddr(addr), formal)
+                            if formal.chandle && formal.is_out && !formal.is_ref() => {
+                            if addr.is_empty() {
+                                return Err(super::IrValidationError::new(
+                                    "chandle call",
+                                    "output address must not be empty",
+                                ));
+                            }
+                        }
+                        (IrCallArg::ChandleRefAddr(addr), formal)
+                            if formal.chandle && formal.is_ref() => {
+                            if addr.is_empty() {
+                                return Err(super::IrValidationError::new(
+                                    "chandle call",
+                                    "reference address must not be empty",
+                                ));
+                            }
+                        }
+                        _ => {
+                            return Err(super::IrValidationError::new(
+                                "chandle call",
+                                "argument kind does not match its chandle signature",
+                            ));
+                        }
+                    }
+                }
+                Ok(())
+            }
+        }
+    }
+
+    pub(in crate::sim) fn expressions(&self, visit: &mut impl FnMut(&IrExpr)) {
+        if let Self::Call { args, .. } = self {
+            for arg in args {
+                match arg {
+                    IrCallArg::Val(value) => visit(value),
+                    IrCallArg::ChandleVal(value) => value.expressions(visit),
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    pub(in crate::sim) fn expressions_mut(&mut self, visit: &mut impl FnMut(&mut IrExpr)) {
+        if let Self::Call { args, .. } = self {
+            for arg in args {
+                match arg {
+                    IrCallArg::Val(value) => visit(value),
+                    IrCallArg::ChandleVal(value) => value.expressions_mut(visit),
+                    _ => {}
+                }
             }
         }
     }

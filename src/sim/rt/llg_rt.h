@@ -2,35 +2,29 @@
 // models. Four-state values are provided by llg_value.h.
 
 // Processes are libaco coroutines; each generated process function is spawned
-// via `llg_spawn` and suspends inside the `llg_wait_*` calls.  The scheduler
-// (`llg_rt_run`) implements the IEEE 1800-2017 §4 region model within one
-// time step:
+// via `llg_spawn` and suspends inside the `llg_wait_*` calls. The scheduler
+// (`llg_rt_run`) keeps a separate queue for every IEEE 1800-2017 §4 execution
+// region. Region queues are drained to a fixed point in the Figure 4-1 order;
+// reactive work may enqueue design work and starts another design iteration
+// before the postponed output point. Legacy Verilog scheduling remains the
+// Active/Inactive/NBA subset of this state machine.
 //
-//   1. active region: run every ready coroutine once (FIFO ready queue);
-//   2. inactive region: wake every `#0` waiter (`llg_wait_time(0)`) and run
-//      the resulting active work; a `#0` executed from an inactive
-//      continuation schedules a re-inactive pass, so the region is drained in
-//      a loop;
-//   3. NBA region: commit every process's recorded non-blocking assignments
-//      (per-process lists, recording order); commits write signals and wake
-//      waiters, re-triggering the active region;
-//   4. repeat the active → inactive → NBA sequence while new events appeared
-//      in this time step;
-//   5. otherwise advance time to the next pending timed wakeup (sorted list);
-//      with none left, stop on `$finish` or report a deadlock.
-//
-// A zero-delay guard trips after LLG_ZERO_LOOP_LIMIT scheduler iterations
-// within one time step (`always #0;` / NBA-oscillation loops / non-quiescing
-// trigger cascades) and aborts the run with "llg: zero-delay loop detected
-// at time N".  The guard unit is a scheduler iteration: each region pass AND
-// each individual coroutine resume counts toward it.
+// Zero-time progress is bounded by two runtime limits.  The scheduler guard
+// counts region passes and coroutine resumes; the process guard counts
+// generated loop back-edges, so a coroutine that never yields is still
+// interruptible.  Both default to LLG_ZERO_LOOP_LIMIT and can be configured
+// with the LLG_ZERO_LOOP_LIMIT environment variable.  The per-process limit
+// can be overridden with LLG_PROCESS_STEP_LIMIT (or the legacy-compatible
+// LLG_NONCONVERGENCE_LIMIT alias).  Limits must be positive decimal uint64
+// values; invalid or overflowing values are diagnosed before simulation.
 //
 // Time is measured in integer ticks; 1 tick == the design precision (the
 // finest `timescale` precision across the design).  The runtime itself is
 // timescale-agnostic: the codegen scales every `#N` delay and `$time`/`%t`
 // read per the calling module's `timescale` unit before calling
-// `llg_wait_time` / `llg_time`.  `$finish` sets a flag and `llg_rt_run`
-// returns; no coroutine is resumed after a finish.
+// `llg_wait_time` / `llg_time`. `$finish` reports its validated level through
+// `llg_rt_finish_with_level`, sets a flag, and exits the current coroutine;
+// no coroutine is resumed after a finish.
 
 #ifndef LLG_RT_H
 #define LLG_RT_H
@@ -39,10 +33,41 @@
 #include <stdint.h>
 
 #include "llg_value.h"
+#include "llg_string.h"
+
+#ifndef LLG_ZERO_LOOP_LIMIT
+#define LLG_ZERO_LOOP_LIMIT 10000000ULL
+#endif
+
+#ifndef LLG_PROCESS_STEP_LIMIT
+#define LLG_PROCESS_STEP_LIMIT LLG_ZERO_LOOP_LIMIT
+#endif
 
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+// Typed display values. The runtime owns string members after a display call
+// or while a deferred monitor/strobe snapshot is live.
+enum {
+    LLG_FMT_PACKED = 0,
+    LLG_FMT_REAL = 1,
+    LLG_FMT_STRING = 2,
+};
+
+typedef struct {
+    int kind;
+    union {
+        sv4_t packed;
+        double real;
+        llg_string_t string;
+    } value;
+} llg_fmt_arg_t;
+
+typedef struct {
+    int kind;
+    void* ptr;
+} llg_display_read_t;
 
 // ── Collapsed inout nets ──────────────────────────────────────────────────────
 //
@@ -50,8 +75,10 @@ extern "C" {
 // (IEEE 1800-2017 §23.3.3.7): every side writes a per-driver slot and readers
 // see the wire/tri resolution of all slots. Standalone continuous-assignment
 // groups carry per-slot drive-strength endpoints; collapsed inout and wired
-// groups use the default strong endpoints with their established modes.
-// All-Z when no driver is active; equal-strength conflicts resolve to X.
+// groups carry their per-slot strength endpoints through the same resolver.
+// TRI0/TRI1 and SUPPLY0/SUPPLY1 retain their implicit pull/supply source.
+// All-Z is produced only when no explicit or implicit source is active;
+// equal-strength conflicts resolve according to the net's wired rule.
 //
 // The struct is a valid file-scope static initializer: driver cells are
 // separate `sv4_t` globals whose addresses the codegen wires into `drivers`.
@@ -77,14 +104,69 @@ void llg_net_write(llg_net_t* net, int idx, sv4_t value);
 // resets the handle to NULL. Repeated evaluation never suspends the caller.
 typedef struct llg_inertial llg_inertial_t;
 void llg_inertial_assign(llg_inertial_t** handle, sv4_t* target,
-                         sv4_t value, uint64_t ticks);
+                         sv4_t value, uint64_t rise, uint64_t fall,
+                         uint64_t turn_off);
 void llg_inertial_net(llg_inertial_t** handle, llg_net_t* net, int slot,
-                      sv4_t value, uint64_t ticks);
+                      sv4_t value, uint64_t rise, uint64_t fall,
+                      uint64_t turn_off);
+void llg_inertial_selected_assign(llg_inertial_t** handle, sv4_t* target,
+                                  sv4_t value, sv4_t mask, uint64_t rise,
+                                  uint64_t fall, uint64_t turn_off);
+void llg_inertial_selected_net(llg_inertial_t** handle, llg_net_t* net,
+                               int slot, sv4_t value, sv4_t mask,
+                               uint64_t rise, uint64_t fall,
+                               uint64_t turn_off);
 
 // ── Scheduler ─────────────────────────────────────────────────────────────────
 
 typedef struct llg_proc llg_proc_t;
+typedef struct llg_frame llg_frame_t;
+typedef struct llg_activation llg_activation_t;
 typedef struct { sv4_t* sig; int kind; } llg_event_spec_t;
+// One typed storage dependency. Exactly one pointer is non-null; real
+// dependencies point directly at the generated double companion. Real
+// equality follows the write path's bitwise comparison and never converts
+// through packed storage.
+typedef struct {
+    sv4_t* sig;
+    double* real;
+} llg_wait_dependency_t;
+
+// Execution regions, in reference-algorithm order. PLI control points are
+// explicit even when no public VPI registration has been lowered yet. The
+// semantic aliases keep generated Verilog-facing code readable.
+typedef enum {
+    LLG_REGION_PREPONED = 0,
+    LLG_REGION_PREPONED_PLI,
+    LLG_REGION_PRE_ACTIVE_PLI,
+    LLG_REGION_ACTIVE,
+    LLG_REGION_INACTIVE,
+    LLG_REGION_PRE_NBA_PLI,
+    LLG_REGION_PRE_NBA,
+    LLG_REGION_NBA,
+    LLG_REGION_POST_NBA,
+    LLG_REGION_POST_NBA_PLI,
+    LLG_REGION_PRE_OBSERVED_PLI,
+    LLG_REGION_PRE_OBSERVED,
+    LLG_REGION_OBSERVED,
+    LLG_REGION_POST_OBSERVED,
+    LLG_REGION_POST_OBSERVED_PLI,
+    LLG_REGION_REACTIVE,
+    LLG_REGION_RE_INACTIVE,
+    LLG_REGION_PRE_RE_NBA_PLI,
+    LLG_REGION_PRE_RE_NBA,
+    LLG_REGION_RE_NBA,
+    LLG_REGION_POST_RE_NBA,
+    LLG_REGION_POST_RE_NBA_PLI,
+    LLG_REGION_PRE_POSTPONED_PLI,
+    LLG_REGION_PRE_POSTPONED,
+    LLG_REGION_POSTPONED,
+    LLG_REGION_POSTPONED_PLI,
+    LLG_REGION_COUNT
+} llg_region_t;
+
+#define LLG_REGION_NONBLOCKING_ASSIGN LLG_REGION_NBA
+#define LLG_REGION_RE_NONBLOCKING_ASSIGN LLG_REGION_RE_NBA
 
 #define LLG_MAX_PROCS 4096
 
@@ -102,46 +184,99 @@ void llg_rt_init(void);
 void llg_rt_cleanup(void);
 // Run until $finish, a deadlock, or all processes ending.
 void llg_rt_run(void);
-void llg_rt_finish(void);             // $finish
+// True when the runtime stopped because of a configuration, nonconvergence,
+// or other controlled simulation failure.  The result survives cleanup.
+int llg_rt_failed(void);
+// Region currently being drained. During initialization this is PREPONED.
+llg_region_t llg_current_region(void);
+// Return a stable printable name for diagnostics and callback traces.
+const char* llg_region_name(llg_region_t region);
+// True for sampling/observation/output regions while the scheduler is running.
+int llg_region_is_read_only(void);
+// Request scheduler termination from a non-coroutine callback. Unlike
+// llg_rt_finish, this returns to the callback and is safe outside a process.
+void llg_rt_request_finish(void);
+// Terminate the current simulation process and mark the scheduler for exit;
+// neither entry point returns to generated HDL. The legacy entry point is a
+// quiet level-0 finish without source metadata.
+_Noreturn void llg_rt_finish(void);
+_Noreturn void llg_rt_finish_with_level(int verbosity, const char* location);
 uint64_t llg_time(void);              // current tick count
-uint64_t llg_time_scaled(uint64_t precision_ps, uint64_t unit_ps);
+// Current time rounded to the nearest local unit; exact half units round up.
+// The caller applies any result-width conversion (for example, $stime's
+// low-32-bit result) after this operation.
+uint64_t llg_time_scaled(uint64_t precision_fs, uint64_t unit_fs);
 // Diagnostic count of allocated process objects, including completed fork
 // parents retained while detached descendants are still live.
 int llg_rt_process_count(void);
 
+// Stable dependency markers used by generated fixed-array and container
+// readers. A marker's address remains valid when a resizable container moves
+// its backing storage. Bindings are cleared by llg_rt_cleanup.
+void llg_dependency_bind(sv4_t* target, sv4_t* dependency);
+void llg_dependency_bind_real(double* target, sv4_t* dependency);
+void llg_dependency_changed(sv4_t* dependency);
+void llg_dependency_notify(sv4_t* contents, sv4_t* shape, int change);
+
 void llg_display(const char* fmt, ...);  // formatted output followed by a newline
 void llg_write(const char* fmt, ...);    // formatted output without a newline
+void llg_display_typed(const char* fmt, llg_fmt_arg_t* args, int n,
+                       const char* scope);
+void llg_write_typed(const char* fmt, llg_fmt_arg_t* args, int n,
+                     const char* scope);
 
 // ── $monitor / $strobe ────────────────────────────────────────────────────────
 //
 // A monitor's or strobe's arguments are re-evaluated by generated code through
-// `eval`, which writes one `sv4_t` per argument into `out`, so the runtime
-// reads the CURRENT values each time it prints (after the NBA region commits,
-// for $strobe).  Format strings support the same specifiers as
-// `llg_display` (`%d %h %b %o %t`; `%s` is rejected by the codegen for
-// monitors/strobes).
+// `eval`, which writes one owned `llg_fmt_arg_t` per argument into `out`, so
+// the runtime reads CURRENT values each time it prints (after the NBA region
+// commits, for $strobe). Format strings use the same typed formatter as
+// immediate display/write, including `%m`, real, and string conversions.
 
-typedef void (*llg_mon_eval_fn)(sv4_t* out);
+typedef void (*llg_mon_eval_fn)(sv4_t* out, void* context);
+typedef void (*llg_real_eval_fn)(double* out, void* context);
+typedef void (*llg_display_eval_fn)(llg_fmt_arg_t* out, void* context);
 
-// Register (or replace) the active $monitor: prints `fmt` immediately with
-// the current argument values, then after every NBA commit whenever any
-// argument differs from the last printed line.  Only the most recent
+// Register (or replace) the active $monitor.  `reads` contains the signal
+// pointers that trigger re-evaluation; display-only time queries are not
+// triggers.  Registration queues a report for the scheduler's settled
+// observation point rather than printing immediately.  Only the most recent
 // $monitor is active; a new call replaces the previous one.
+void llg_monitor_with_reads(const char* fmt, int n, llg_mon_eval_fn eval,
+                            sv4_t* const* reads, int n_reads);
+// Compatibility entry point for callers without an explicit trigger set.
 void llg_monitor(const char* fmt, int n, llg_mon_eval_fn eval);
 // Queue a $strobe: prints `fmt` once with the argument values read after the
 // NBA region of the current time step commits (unlike $display, which reads
 // them when the statement executes). Printing waits for active/inactive/NBA
 // iteration to settle, including driver updates triggered by NBAs.
 void llg_strobe(const char* fmt, int n, llg_mon_eval_fn eval);
+void llg_monitor_with_typed_reads(const char* fmt, int n,
+                                  llg_display_eval_fn eval, const char* scope,
+                                  const llg_display_read_t* reads, int n_reads);
+void llg_strobe_typed(const char* fmt, int n, llg_display_eval_fn eval,
+                      const char* scope);
 // $monitoron / $monitoroff: resume / suspend the active monitor.  While
-// suspended the last-printed snapshot is kept; resuming re-prints if any
-// argument changed since the last printed line.
+// suspended the last-printed snapshot is kept; enabling queues one report at
+// the next settled observation point even when values are unchanged.
 void llg_monitor_set(int on);
 
 // Spawn one process; `fn` must never return without calling `llg_proc_done`.
 llg_proc_t* llg_spawn(void (*fn)(llg_proc_t*), const char* name);
+// Spawn a process directly into an explicit execution region. This is the
+// runtime hook used by future assertion/program/VPI lowering; ordinary HDL
+// processes use llg_spawn (ACTIVE).
+llg_proc_t* llg_spawn_in_region(void (*fn)(llg_proc_t*), const char* name,
+                                llg_region_t region);
+// Return the activation frame retained by a process, or NULL for ordinary
+// static-storage processes. The returned pointer is borrowed from `self`.
+llg_frame_t* llg_proc_frame(llg_proc_t* self);
 // Terminate the current process (wraps aco_exit; never returns).
-void llg_proc_done(llg_proc_t* self);
+_Noreturn void llg_proc_done(llg_proc_t* self);
+// Cooperative generated-loop interruption point.  It returns while the
+// current process remains within its zero-time budget; on exhaustion it emits
+// a source-bearing diagnostic and exits that coroutine without returning.
+void llg_budget_point(const char* location);
 
 // ── final blocks ──────────────────────────────────────────────────────────────
 //
@@ -181,11 +316,14 @@ void llg_rt_run_finals(void);
 //     llg_fork(child_b, "b", g);
 //     llg_join(g);   // suspend until the group completes
 //
-// `llg_wait_fork` suspends until every live group of the current process is
-// done (useful after join_none / join_any, whose groups outlive the parent's
-// wait).  `llg_disable_fork` kills all descendants of the current process;
-// killed children's immediate NBA lists are discarded. Future updates already
-// in the global timed NBA queue retain their persistent targets.
+// `join_none` children are created in source order but become eligible only
+// when their parent first suspends or terminates. `llg_wait_fork` suspends until
+// every live group of the current process is done (useful after join_none /
+// join_any, whose groups outlive the parent's wait). `llg_disable_fork` kills
+// all descendants of the current process, including children still pending
+// their first execution; killed children's immediate NBA lists are discarded.
+// Future updates already in the global timed NBA queue retain their persistent
+// targets.
 
 typedef struct llg_fork_group llg_fork_group_t;
 
@@ -199,8 +337,43 @@ enum {
 // Create a fork group owned by the current process (registers it on the
 // process's live-group list).
 llg_fork_group_t* llg_fork_group_new(int join_kind);
+// Create a named fork group whose resolved target can be disabled from any
+// process in the same elaborated instance. Anonymous groups use the function
+// above and carry no disable target.
+llg_fork_group_t* llg_fork_group_new_target(int join_kind,
+                                            uint32_t declaration,
+                                            uint32_t instance);
 // Spawn `fn` as a child of `grp`; `fn` must end with `llg_proc_done`.
 llg_proc_t* llg_fork(void (*fn)(llg_proc_t*), const char* name, llg_fork_group_t* grp);
+// Spawn a child with one retained reference to `frame`. The child releases
+// that reference on completion or cancellation; the caller retains ownership
+// of its own reference and may release it after this call.
+llg_proc_t* llg_fork_with_frame(void (*fn)(llg_proc_t*), const char* name,
+                                llg_fork_group_t* grp, llg_frame_t* frame);
+// Create and manage typed activation storage. Slots hold copied values by
+// default; frame aliases retain their source frame, while legacy model-storage
+// aliases borrow only the generated static cell. No activation slot retains a
+// host stack pointer.
+typedef enum {
+    LLG_FRAME_PACKED = 0,
+    LLG_FRAME_REAL = 1,
+    LLG_FRAME_OPAQUE = 2,
+} llg_frame_slot_kind_t;
+llg_frame_t* llg_frame_new(size_t slots);
+void llg_frame_retain(llg_frame_t* frame);
+void llg_frame_release(llg_frame_t* frame);
+void llg_frame_capture_value(llg_frame_t* frame, size_t slot, sv4_t value);
+void llg_frame_capture_real(llg_frame_t* frame, size_t slot, double value);
+void llg_frame_alias_value(llg_frame_t* frame, size_t slot, sv4_t* target);
+void llg_frame_alias_real(llg_frame_t* frame, size_t slot, double* target);
+void llg_frame_alias_slot(llg_frame_t* frame, size_t slot,
+                          llg_frame_t* target, size_t target_slot);
+llg_frame_slot_kind_t llg_frame_slot_kind(const llg_frame_t* frame,
+                                          size_t slot);
+sv4_t llg_frame_read_value(const llg_frame_t* frame, size_t slot);
+void llg_frame_write_value(llg_frame_t* frame, size_t slot, sv4_t value);
+double llg_frame_read_real(const llg_frame_t* frame, size_t slot);
+void llg_frame_write_real(llg_frame_t* frame, size_t slot, double value);
 // Suspend until `grp` completes according to its join kind.
 void llg_join(llg_fork_group_t* grp);
 // Suspend until every live group of the current process has completed.
@@ -208,11 +381,25 @@ void llg_wait_fork(void);
 // Kill every descendant of the current process (immediate NBA lists are discarded).
 void llg_disable_fork(void);
 
+// Named block/task activation registry. Declaration and instance identities
+// come from the owned semantic database; textual names never reach this ABI.
+llg_activation_t* llg_activation_enter(uint32_t declaration,
+                                       uint32_t instance);
+void llg_activation_exit(llg_activation_t* activation);
+int llg_activation_cancelled(void);
+void llg_disable_target(uint32_t declaration, uint32_t instance);
+
 void llg_wait_time(uint64_t ticks);   // #delay; 0 yields into the inactive region of the same time step
+// Set the explicit region used by the next signal/dependency wait. Generated
+// sensitivity terminators use this to migrate a coroutine across region sets.
+void llg_wait_resume_in_region(llg_region_t region);
 // Suspend until the requested transition of `sig`.
 void llg_wait_edge(sv4_t* sig, int posedge);
 // Suspend until any of `sigs` differs from its value at wait time.
 void llg_wait_any(sv4_t** sigs, int n);
+// Suspend until any packed or real dependency changes. Each entry has exactly
+// one of `sig`/`real` set.
+void llg_wait_any_dependencies(const llg_wait_dependency_t* deps, int n);
 // Suspend until any event spec fires (or-list of @(posedge a or b ...)).
 void llg_wait_any_events(llg_event_spec_t* specs, int n);
 // Suspend until `sig` equals `value` (unknown never matches).
@@ -230,22 +417,63 @@ void llg_wait_level(sv4_t* sig, sv4_t value);
 // LLG_MAX_EVENT_WAITERS aborts the run like the other runtime resource
 // limits.
 //
-// The struct is a valid static initializer (`{{ 0 }, 0}`): generated models
-// define one global per declared event.
+// The struct is a valid zero initializer: generated models define one global
+// per declared event. Ordinary waiters and persistent-trigger waiters are
+// separate so a trigger never latches an ordinary `@(event)` control.
 
 #define LLG_MAX_EVENT_WAITERS 64
 
 typedef struct {
     llg_proc_t* waiters[LLG_MAX_EVENT_WAITERS];
     int n_waiters;
+    llg_proc_t* triggered_waiters[LLG_MAX_EVENT_WAITERS];
+    int n_triggered_waiters;
+    uint64_t triggered_time;
+    int triggered;
+} llg_event_object_t;
+
+typedef struct {
+    llg_event_object_t* object;
 } llg_event_t;
+
+// Resolve a fixed unpacked event-array select using declaration-order
+// flattening. Unknown/out-of-range indices resolve to a null handle, which
+// preserves the ordinary null-event trigger/wait behavior.
+llg_event_t* llg_event_array_select(llg_event_t* const* elements,
+                                     uint64_t total,
+                                     const int32_t* left,
+                                     const int32_t* right,
+                                     const sv4_t* indices,
+                                     int n);
+
+// Assigning a handle changes only the future object resolved by the target;
+// waiter registrations already attached to the previous object are retained.
+void llg_event_assign(llg_event_t* target, const llg_event_t* source);
+void llg_event_assign_null(llg_event_t* target);
 
 // Wake every current waiter of `ev` and clear its waiter list.
 void llg_event_trigger(llg_event_t* ev);
+// Return whether the synchronization object was triggered in the current
+// simulation time slot. A null handle is never triggered.
+int llg_event_triggered(const llg_event_t* ev);
+// Queue a nonblocking event trigger for the NBA region. The event pointer is
+// copied into runtime-owned queue state, so the issuing process may finish
+// before the trigger commits.
+void llg_nba_event(llg_event_t* ev);
+// Queue a nonblocking event trigger after `ticks`; zero stays in the current
+// time slot's NBA region, while a positive delay enters the timed NBA queue.
+void llg_nba_event_after(llg_event_t* ev, uint64_t ticks);
 // Suspend until `ev` is triggered.
 void llg_wait_event(llg_event_t* ev);
 // Suspend until any of `evs` is triggered (one atomic registration).
 void llg_wait_events(const llg_event_t* const* evs, int n);
+// Suspend until the event's persistent same-time-slot triggered state is set.
+// If it is already set in the current slot, this returns immediately.
+void llg_wait_event_triggered(const llg_event_t* ev);
+// Suspend until the listed event objects trigger in order. Repeated events
+// already consumed are ignored; a future event arriving early fails the
+// monitor and stores a negative result in `result`.
+void llg_wait_order(const llg_event_t* const* evs, int n, int* result);
 
 // One source of a mixed signal/event or-list (`@(posedge a or ev)`): exactly
 // one of `sig`/`ev` is set.  Exactly one such wait covers ALL entries, so a
@@ -262,17 +490,61 @@ void llg_wait_mixed(llg_wait_src_t* srcs, int n);
 
 // Evaluators and dependencies refer to model storage. The runtime copies
 // every descriptor and dependency array before suspending the caller.
-// Callbacks must not suspend or mutate scheduler-observed storage.
+// Callbacks must not suspend or mutate scheduler-observed storage. When a
+// generated descriptor supplies eval_context or condition_context, it passes
+// ownership of one initial llg_frame_t reference to the expression wait; the
+// wait releases that reference on wake, cancellation, or runtime teardown.
 typedef struct {
     sv4_t* sig;
     llg_mon_eval_fn eval;
     llg_mon_eval_fn condition;
     const llg_event_t* event;
+    // Resolved at wait registration so a later handle assignment does not
+    // move or suppress this expression waiter.
+    llg_event_object_t* event_object;
     sv4_t** reads;
     int n_reads;
     int kind;
+    double* real_sig;
+    llg_real_eval_fn real_eval;
+    llg_wait_dependency_t* dependencies;
+    int n_dependencies;
+    int real;
+    void* eval_context;
+    void* condition_context;
 } llg_expr_event_spec_t;
 void llg_wait_expressions(const llg_expr_event_spec_t* specs, int n);
+// Register a nonblocking trigger whose source control is evaluated at issue
+// time. The copied descriptors remain live until one source matches; the
+// target event is then submitted to the ordinary NBA queue. `repeat` is zero
+// for a no-op request and otherwise the number of matches required.
+void llg_nba_event_when(const llg_expr_event_spec_t* specs, int n,
+                        llg_event_t* target, uint64_t repeat);
+// Normalize a packed repeat count without truncating values wider than 64 bits.
+uint64_t llg_repeat_count(sv4_t value);
+
+// One-shot region callback hooks. `data` remains caller-owned and is passed
+// unchanged. A zero delay schedules the callback in the current time slot;
+// positive delays enter the timed callback queue. Writable iterative regions
+// may re-enter design/reactive work; read-only phases reject current-slot
+// scheduling except for the Observed-to-Reactive assertion handoff.
+typedef void (*llg_region_callback_fn)(void* data);
+int llg_schedule_region_callback(llg_region_t region,
+                                 llg_region_callback_fn callback, void* data);
+int llg_schedule_region_callback_after(llg_region_t region,
+                                       llg_region_callback_fn callback,
+                                       void* data, uint64_t ticks);
+// Explicit name for PLI users; currently one-shot and otherwise identical to
+// llg_schedule_region_callback.
+int llg_register_pli_callback(llg_region_t region,
+                              llg_region_callback_fn callback, void* data);
+
+// Register a signal for a copied, immutable value sampled at the beginning of
+// each time slot. The returned pointer is runtime-owned and valid until the
+// next llg_rt_cleanup. Unregistered signals produce a controlled diagnostic.
+void llg_sampled_register(sv4_t* signal);
+const sv4_t* llg_sampled_value(const sv4_t* signal);
+int llg_sampled_copy(const sv4_t* signal, sv4_t* out);
 
 // Assignments.  llg_nba records on the current process's list and commits in
 // the NBA region; llg_ba writes immediately and notifies waiters.
@@ -281,27 +553,74 @@ void llg_nba(sv4_t* target, sv4_t value);
 // A zero tick delay stays in the current time slot's NBA region.
 void llg_nba_after(sv4_t* target, sv4_t value, uint64_t ticks);
 void llg_nba_d_after(double* target, double value, uint64_t ticks);
+void llg_string_nba_after(llg_string_t* target, llg_string_t value,
+                          uint64_t ticks);
 // Merge only known-one mask positions into the target at commit time.
 void llg_nba_masked(sv4_t* target, sv4_t value, sv4_t mask, uint64_t ticks);
 void llg_ba(sv4_t* target, sv4_t value);
+// Commit a write through a canonical `ref` descriptor immediately. Selected
+// aliases update the original storage once, preserving normal wakeups and
+// force/continuous-assignment checks.
+void llg_ref_write(llg_ref_t* ref, sv4_t value);
 void llg_nba_d(double* target, double value);
 void llg_ba_d(double* target, double value);
 
+// Procedural continuous assignments. Each generated assignment site has a
+// stable identity; executing a new site replaces the target's active binding.
+// Ordinary blocking/NBA writes to an active target are ignored. Deassign keeps
+// the last driven value, and a live binding remains beneath force/release.
+#define LLG_MAX_PCA 4096
+void llg_pca_assign(sv4_t* target, sv4_t* enable, uint64_t site, sv4_t value);
+void llg_pca_drive(sv4_t* target, sv4_t* enable, uint64_t site, sv4_t value);
+void llg_pca_deassign(sv4_t* target);
+void llg_pca_assign_d(double* target, sv4_t* enable, uint64_t site, double value);
+void llg_pca_drive_d(double* target, sv4_t* enable, uint64_t site, double value);
+void llg_pca_deassign_d(double* target);
+
 // ── force / release ───────────────────────────────────────────────────────────
 //
-// `force sig = expr;` overrides a signal's value until `release sig;` (LRM
-// 10.6.2): while forced, procedural writes — blocking (`llg_ba`) and
-// non-blocking (NBA commits) — to the signal are ignored.  `llg_force` saves
-// the pre-force value and writes the forced value through `sig_write` (so
-// waiters wake); `llg_release` removes the entry and restores the saved
-// value.  Re-forcing an already forced signal updates the forced value but
-// keeps the ORIGINAL saved value; releasing an unforced signal is a no-op.
-// The table is fixed-size (LLG_MAX_FORCE); a force beyond the limit aborts
-// like the other runtime resource limits.  Net resolution writes
-// (`llg_net_write`) and monitor/strobe reads are unaffected.
+// A force entry is an overriding live driver. Its callback is evaluated when
+// the force is installed and whenever one of its explicitly registered source
+// values changes. Packed targets are described as one or more canonical
+// storage parts; a net pointer on a part keeps the underlying driver
+// resolution available for release and re-application. No pre-force value is
+// saved: variables retain the currently forced value on release, while nets
+// are recomputed from their current driver slots.
 
 #define LLG_MAX_FORCE 64
 
+typedef struct {
+    sv4_t* target;
+    llg_net_t* net;
+    int64_t left;
+    int64_t right;
+    uint32_t width;
+    uint32_t value_lsb;
+    int two_state;
+} llg_force_part_t;
+
+typedef struct {
+    sv4_t* sig;
+    double* real;
+    int is_real;
+} llg_force_read_t;
+
+typedef void (*llg_force_eval_fn)(sv4_t* out);
+typedef void (*llg_force_real_eval_fn)(double* out);
+
+void llg_force_expr_parts(const llg_force_part_t* parts, int n_parts,
+                          uint32_t stream_slice, int stream_right_to_left,
+                          llg_force_eval_fn eval,
+                          const llg_force_read_t* reads, int n_reads);
+void llg_release_parts(const llg_force_part_t* parts, int n_parts,
+                       uint32_t stream_slice, int stream_right_to_left);
+void llg_force_real(double* target, llg_force_real_eval_fn eval,
+                    const llg_force_read_t* reads, int n_reads);
+void llg_release_real(double* target);
+
+// Legacy constant-value entry points retained for runtime self-tests and
+// hand-written generated models. They use the same live-entry table but have
+// no source dependencies.
 void llg_force(sv4_t* sig, sv4_t value);
 void llg_release(sv4_t* sig);
 

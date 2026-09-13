@@ -46,6 +46,7 @@ static int file_contains(const char* path, const char* needle) {
 
 int main(void) {
     const char* vcd_path = "llg_wave_selftest.vcd";
+    const char* selected_vcd_path = "llg_wave_selection_selftest.vcd";
     const char* fst_path = "llg_wave_selftest.FST";
     sv4_t packed = SV4_X(8);
     sv4_t punctuated = SV4_C(0, 1);
@@ -78,7 +79,7 @@ int main(void) {
     llg_wave_flush(2500);
     // FLUSH is an acknowledgement barrier: the file is readable through the
     // last prior event before close joins the worker.
-    CHECK(file_contains(vcd_path, "$timescale 10ps $end"));
+    CHECK(file_contains(vcd_path, "$timescale 10fs $end"));
     CHECK(file_contains(vcd_path, "$scope module top $end"));
     CHECK(file_contains(vcd_path, "$scope module unit $end"));
     CHECK(file_contains(vcd_path, "a$2Db $end"));
@@ -88,6 +89,26 @@ int main(void) {
     CHECK(file_contains(vcd_path, "#2500\n"));
     CHECK(llg_wave_close(2500) == 0);
     CHECK(file_contains(vcd_path, "$enddefinitions $end"));
+
+    // Selection is applied before the lazy header is emitted.  This keeps
+    // excluded storage out of both VCD hierarchy and value records while
+    // retaining declared array indices and pointer aliases.
+    sv4_t mem_three = SV4_C(3, 8);
+    sv4_t mem_two = SV4_C(2, 8);
+    const char* selections[] = {"top\037mem", "top\037alias"};
+    CHECK(llg_wave_model_init(1) == 0);
+    CHECK(llg_wave_register_sv4("top\037value", &packed, 8) == 0);
+    CHECK(llg_wave_register_sv4("top\037alias", &packed, 8) == 0);
+    CHECK(llg_wave_register_sv4("top\037mem[3]", &mem_three, 8) == 0);
+    CHECK(llg_wave_register_sv4("top\037mem[2]", &mem_two, 8) == 0);
+    llg_wave_file(selected_vcd_path, 0);
+    llg_wave_dumpvars_select(0, 0, selections, 2);
+    llg_wave_flush(0);
+    CHECK(file_contains(selected_vcd_path, "alias $end"));
+    CHECK(!file_contains(selected_vcd_path, "value $end"));
+    CHECK(file_contains(selected_vcd_path, "mem$5B3$5D $end"));
+    CHECK(file_contains(selected_vcd_path, "mem$5B2$5D $end"));
+    CHECK(llg_wave_close(0) == 0);
 
     packed = SV4_C(0, 8);
     CHECK(llg_wave_model_init(1) == 0);
@@ -110,6 +131,7 @@ int main(void) {
     llg_rt_cleanup();
 
     (void)remove(vcd_path);
+    (void)remove(selected_vcd_path);
     (void)remove(fst_path);
     puts("llg waveform selftest: OK");
     return 0;

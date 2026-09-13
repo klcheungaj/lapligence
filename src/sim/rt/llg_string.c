@@ -22,11 +22,8 @@ static llg_string_t string_alloc(size_t length) {
 }
 
 llg_string_t llg_string_bytes(const char *bytes, size_t length) {
-    size_t n = 0;
-    for (size_t i = 0; i < length; ++i) if (bytes[i]) ++n;
-    llg_string_t value = string_alloc(n);
-    n = 0;
-    for (size_t i = 0; i < length; ++i) if (bytes[i]) value.data[n++] = bytes[i];
+    llg_string_t value = string_alloc(length);
+    if (length) memcpy(value.data, bytes, length);
     return value;
 }
 
@@ -92,16 +89,20 @@ llg_string_t llg_string_substr(llg_string_t value, sv4_t first, sv4_t last) {
 
 llg_string_t llg_string_from_packed(sv4_t value) {
     value = sv4_to_two_state(value);
-    size_t length = ((size_t)value.width + 7) / 8;
-    llg_string_t result = string_alloc(length);
-    size_t n = 0;
-    for (size_t i = length; i; --i) {
+    size_t raw_length = ((size_t)value.width + 7) / 8;
+    size_t length = 0;
+    for (size_t i = raw_length; i; --i) {
         size_t bit = (i - 1) * 8;
         unsigned char byte = (unsigned char)(value.bits[bit / 64] >> (bit % 64));
-        if (byte) result.data[n++] = (char)byte;
+        if (byte) ++length;
     }
-    result.len = n;
-    if (result.data) result.data[n] = 0;
+    llg_string_t result = string_alloc(length);
+    size_t out = 0;
+    for (size_t i = raw_length; i; --i) {
+        size_t bit = (i - 1) * 8;
+        unsigned char byte = (unsigned char)(value.bits[bit / 64] >> (bit % 64));
+        if (byte) result.data[out++] = (char)byte;
+    }
     return result;
 }
 
@@ -133,7 +134,7 @@ sv4_t llg_string_getc(llg_string_t value, sv4_t index) {
 void llg_string_putc(llg_string_t *value, sv4_t index, sv4_t character) {
     int64_t i;
     unsigned char c = (unsigned char)sv4_to_two_state(character).bits[0];
-    if (c && sv4_to_index_i64(index, &i) && i >= 0 && (uint64_t)i < value->len)
+    if (sv4_to_index_i64(index, &i) && i >= 0 && (uint64_t)i < value->len)
         value->data[(size_t)i] = (char)c;
 }
 
