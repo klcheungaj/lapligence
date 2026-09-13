@@ -581,7 +581,12 @@ enum {
   LLG_SLANG_CONTINUOUS_ASSIGN_NET_DECL = 228,
   LLG_SLANG_VARIABLE_GENVAR = 229,
   LLG_SLANG_SCOPE_CLOCKING_BLOCK = 230,
-  LLG_SLANG_VARIABLE_CLOCKING = 231
+  LLG_SLANG_VARIABLE_CLOCKING = 231,
+  /* A local assertion variable is not an instance member in Slang, but its
+   * declaration/type is still an owned value symbol used by sequence match
+   * items. Keep it distinct from ordinary model storage for downstream
+   * per-attempt lowering. */
+  LLG_SLANG_VARIABLE_ASSERTION_LOCAL = 232
 };
 
 /* Clocking metadata carried in LlgSlangSemanticNode::auxiliary. Edge codes

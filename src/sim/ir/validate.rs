@@ -802,6 +802,35 @@ impl Validator<'_> {
                             "sequence transition atom is out of bounds",
                         );
                     }
+                    match (transition.match_start, transition.match_count) {
+                        (None, 0) => {}
+                        (Some(start), count) => {
+                            let Some(end) = start.checked_add(count) else {
+                                return self.fail(
+                                    format!(
+                                        "{path}.{name}.transitions[{transition_index}].match_count"
+                                    ),
+                                    "sequence match-item range overflows",
+                                );
+                            };
+                            if end as usize > sequence.match_items.len() {
+                                return self.fail(
+                                    format!(
+                                        "{path}.{name}.transitions[{transition_index}].match_start"
+                                    ),
+                                    "sequence match-item range is out of bounds",
+                                );
+                            }
+                        }
+                        (None, _) => {
+                            return self.fail(
+                                format!(
+                                    "{path}.{name}.transitions[{transition_index}].match_count"
+                                ),
+                                "non-empty sequence match-item range has no start",
+                            );
+                        }
+                    }
                 }
                 for (atom_index, atom) in sequence.atoms.iter().enumerate() {
                     self.validate_expr(atom, &[], &format!("{path}.{name}.atoms[{atom_index}]"))?;
@@ -809,6 +838,40 @@ impl Validator<'_> {
                         return self.fail(
                             format!("{path}.{name}.atoms[{atom_index}]"),
                             "sequence atom must be packed",
+                        );
+                    }
+                }
+                for (local_index, local) in sequence.locals.iter().enumerate() {
+                    if local.width == 0 {
+                        return self.fail(
+                            format!("{path}.{name}.locals[{local_index}].width"),
+                            "local assertion variable must have a packed width",
+                        );
+                    }
+                }
+                for (item_index, item) in sequence.match_items.iter().enumerate() {
+                    self.validate_expr(
+                        item,
+                        &[],
+                        &format!("{path}.{name}.match_items[{item_index}]"),
+                    )?;
+                    if item.is_real() {
+                        return self.fail(
+                            format!("{path}.{name}.match_items[{item_index}]"),
+                            "sequence match item must be a packed expression",
+                        );
+                    }
+                }
+                for (initializer_index, initializer) in sequence.initializers.iter().enumerate() {
+                    self.validate_expr(
+                        initializer,
+                        &[],
+                        &format!("{path}.{name}.initializers[{initializer_index}]"),
+                    )?;
+                    if initializer.is_real() {
+                        return self.fail(
+                            format!("{path}.{name}.initializers[{initializer_index}]"),
+                            "sequence local initializer must be packed",
                         );
                     }
                 }

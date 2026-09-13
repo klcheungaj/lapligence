@@ -481,12 +481,16 @@ typedef void (*llg_concurrent_assertion_action_fn)(llg_proc_t* self);
 #define LLG_SEQUENCE_UNBOUNDED UINT64_MAX
 #define LLG_SEQUENCE_EPSILON UINT32_MAX
 typedef int (*llg_sequence_atom_fn)(uint32_t atom, void* data);
+typedef void (*llg_sequence_init_fn)(void* data);
+typedef void (*llg_sequence_match_fn)(uint32_t item, void* data);
 typedef struct {
     uint32_t from;
     uint32_t to;
     uint64_t min_delay;
     uint64_t max_delay;
     uint32_t atom;
+    uint32_t match_start;
+    uint32_t match_count;
 } llg_sequence_transition_t;
 typedef struct {
     uint32_t states;
@@ -498,8 +502,25 @@ typedef struct {
     const uint32_t* first_match_states;
     llg_sequence_atom_fn atom;
     void* data;
+    llg_sequence_init_fn init;
     int first_match;
+    uint32_t local_count;
+    const struct llg_sequence_local* locals;
+    uint32_t match_item_count;
+    llg_sequence_match_fn match;
 } llg_sequence_graph_t;
+typedef struct llg_sequence_local {
+    uint32_t width;
+    int8_t is_signed;
+    uint8_t two_state;
+} llg_sequence_local_t;
+/* Match-item callbacks use these helpers to address storage owned by their
+ * current sequence attempt. The runtime validates the opaque attempt/slot
+ * pair before returning a pointer, so generated callbacks cannot escape the
+ * attempt's lifetime. */
+sv4_t* llg_sequence_local_addr(void* attempt, uint32_t slot);
+sv4_t llg_sequence_local_read(void* attempt, uint32_t slot);
+void llg_sequence_local_write(sv4_t* target, sv4_t value);
 int llg_assertion_register(
     sv4_t* clock, int edge, sv4_t* disable,
     llg_concurrent_assertion_predicate_fn antecedent,

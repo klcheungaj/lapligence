@@ -83,7 +83,11 @@
   predicates read immutable Preponed packed snapshots in Observed, asynchronous
   `disable iff` clears pending attempts at writes, and pass/fail actions queue
   in Reactive. Vacuous implication successes are counted separately, while
-  pending attempts are discarded at end of simulation.
+  pending attempts are discarded at end of simulation. Sequence graphs carry
+  bounded local-variable descriptors, per-thread four-state snapshots, local
+  input-formal initializers, and ordered match-item callbacks; branch joins
+  deduplicate only equivalent local snapshots, so overlapping attempts and
+  distinct sequence threads do not share mutable state.
 - **Real dependencies:** scalar `real`/`shortreal` storage uses typed double
   dependencies for `wait`, any-change `@` controls, combinational links, and
   scalar ports. Writes notify only when the IEEE representation changes:

@@ -8727,7 +8727,7 @@ impl<'a> Codegen<'a> {
             };
         let is_class_constructor =
             self.class_method_owner(ft).is_some() && self.node(ft).name == "new";
-        if ret_val.is_none() && !is_class_constructor {
+        if ret_val.is_none() && !is_class_constructor && !self.lowering_assertion_match_item {
             self.warnings.push(format!(
                 "void function `{name}` used as a value in `{scope_path}`; result is X"
             ));

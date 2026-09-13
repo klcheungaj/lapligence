@@ -915,10 +915,22 @@ fn walk_model_exprs_mut(model: &mut IrModel, f: &mut impl FnMut(&mut IrExpr)) {
             for atom in &mut sequence.atoms {
                 walk_expr_mut(atom, f);
             }
+            for item in &mut sequence.match_items {
+                walk_expr_mut(item, f);
+            }
+            for initializer in &mut sequence.initializers {
+                walk_expr_mut(initializer, f);
+            }
         }
         if let Some(sequence) = &mut assertion.consequent_sequence {
             for atom in &mut sequence.atoms {
                 walk_expr_mut(atom, f);
+            }
+            for item in &mut sequence.match_items {
+                walk_expr_mut(item, f);
+            }
+            for initializer in &mut sequence.initializers {
+                walk_expr_mut(initializer, f);
             }
         }
     }
@@ -1970,6 +1982,12 @@ fn mark_unused_storage(model: &mut IrModel, execution: Option<&[ExecutionProcess
         {
             for atom in &sequence.atoms {
                 collect_expr_reads(atom, model, &mut rw);
+            }
+            for item in &sequence.match_items {
+                collect_expr_reads(item, model, &mut rw);
+            }
+            for initializer in &sequence.initializers {
+                collect_expr_reads(initializer, model, &mut rw);
             }
         }
     }

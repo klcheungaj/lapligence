@@ -2665,7 +2665,12 @@ pub(super) fn render_assign(
         }
     }
 
-    let call = "llg_ba";
+    let call = match lh {
+        IrLhs::WholeRef { addr, .. } if addr.starts_with("llg_sequence_local_addr(") => {
+            "llg_sequence_local_write"
+        }
+        _ => "llg_ba",
+    };
     let two_state = match lh {
         IrLhs::Whole(idx) => ctx.model.signal(*idx).ty.two_state(),
         IrLhs::Bit(idx, _, selected_two_state)

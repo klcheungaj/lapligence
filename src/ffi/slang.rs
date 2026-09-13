@@ -617,6 +617,9 @@ pub const SEMANTIC_TIMING_CYCLE_DELAY: u32 = 117;
 pub const SEMANTIC_TIMING_ONE_STEP_DELAY: u32 = 118;
 pub const SEMANTIC_SCOPE_CLOCKING_BLOCK: u32 = 230;
 pub const SEMANTIC_VARIABLE_CLOCKING: u32 = 231;
+/// Local assertion variables are materialized by Slang per assertion attempt;
+/// they are not members of the enclosing instance scope.
+pub const SEMANTIC_VARIABLE_ASSERTION_LOCAL: u32 = 232;
 pub const CLOCKING_BLOCK_DEFAULT: u64 = 1 << 0;
 pub const CLOCKING_BLOCK_GLOBAL: u64 = 1 << 1;
 pub const CLOCKING_INPUT_EDGE_SHIFT: u32 = 2;
@@ -2166,7 +2169,10 @@ fn validate_semantic_subkind(kind: u32, subkind: u32) -> Result<(), SlangError> 
         26 => matches!(subkind, 0 | 112..=118),
         28 => matches!(subkind, 0..=13),
         20..=22 => matches!(subkind, 0 | 76),
-        9 => matches!(subkind, 0 | 229 | SEMANTIC_VARIABLE_CLOCKING),
+        9 => matches!(
+            subkind,
+            0 | 229 | SEMANTIC_VARIABLE_CLOCKING | SEMANTIC_VARIABLE_ASSERTION_LOCAL
+        ),
         2 | 3 | 5..=7 | 10..=12 | 16 | 17 | 23 | 24 | 27 | 255 => subkind == 0,
         _ => true,
     };

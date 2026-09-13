@@ -2280,11 +2280,26 @@ pub struct IrSequenceTransition {
     pub delay: IrSequenceRange,
     /// Index into [`IrSequence::atoms`]. `None` is an epsilon edge.
     pub atom: Option<u32>,
+    /// Start and length of the match-item range evaluated when this edge is
+    /// consumed. A zero length means that the edge has no side effects.
+    pub match_start: Option<u32>,
+    pub match_count: u32,
+}
+
+/// Shape metadata for one local assertion variable. Storage is allocated per
+/// active sequence attempt by the C runtime, never in the model's global
+/// signal table.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct IrSequenceLocal {
+    pub width: u32,
+    pub signed: bool,
+    pub two_state: bool,
 }
 
 /// Thompson-style sequence automaton consumed by the sampled assertion
-/// runtime. Atom expressions are evaluated against the immutable sampled
-/// view; transitions retain every endpoint and support unbounded ranges.
+/// runtime. Atom expressions and local-formal initializers are evaluated
+/// against the immutable sampled view; transitions retain every endpoint,
+/// support unbounded ranges, and carry ordered match-item effect ranges.
 #[derive(Clone, Debug, PartialEq)]
 pub struct IrSequence {
     pub(in crate::sim) states: u32,
@@ -2294,9 +2309,18 @@ pub struct IrSequence {
     pub(in crate::sim) atoms: Vec<IrExpr>,
     pub(in crate::sim) first_match: bool,
     pub(in crate::sim) first_match_states: Vec<u32>,
+    pub(in crate::sim) locals: Vec<IrSequenceLocal>,
+    pub(in crate::sim) match_items: Vec<IrExpr>,
+    /// Per-attempt writes used to initialize local input formals before the
+    /// first sampled atom. Each expression targets one sequence-local slot.
+    pub(in crate::sim) initializers: Vec<IrExpr>,
 }
 
 impl IrSequence {
+    // A sequence constructor keeps each validated graph component explicit;
+    // grouping them into an untyped tuple would make the emission contract
+    // harder to audit.
+    #[allow(clippy::too_many_arguments)]
     pub(in crate::sim) fn new(
         states: u32,
         start: u32,
@@ -2305,6 +2329,9 @@ impl IrSequence {
         atoms: Vec<IrExpr>,
         first_match: bool,
         first_match_states: Vec<u32>,
+        locals: Vec<IrSequenceLocal>,
+        match_items: Vec<IrExpr>,
+        initializers: Vec<IrExpr>,
     ) -> Result<Self, IrValidationError> {
         if states == 0 || start >= states || accept >= states {
             return Err(IrValidationError::new(
@@ -2327,6 +2354,29 @@ impl IrSequence {
                     ));
                 }
             }
+            match (transition.match_start, transition.match_count) {
+                (None, 0) => {}
+                (Some(start), count) => {
+                    let end = start.checked_add(count).ok_or_else(|| {
+                        IrValidationError::new(
+                            format!("sequence.transitions[{index}].match_count"),
+                            "sequence match-item range overflows",
+                        )
+                    })?;
+                    if end as usize > match_items.len() {
+                        return Err(IrValidationError::new(
+                            format!("sequence.transitions[{index}].match_start"),
+                            "sequence match-item range is out of bounds",
+                        ));
+                    }
+                }
+                (None, _) => {
+                    return Err(IrValidationError::new(
+                        format!("sequence.transitions[{index}].match_count"),
+                        "non-empty sequence match-item range has no start",
+                    ));
+                }
+            }
             if transition
                 .delay
                 .max
@@ -2344,6 +2394,20 @@ impl IrSequence {
                 "first_match endpoint state is out of bounds",
             ));
         }
+        for (index, local) in locals.iter().enumerate() {
+            if local.width == 0 {
+                return Err(IrValidationError::new(
+                    format!("sequence.locals[{index}].width"),
+                    "local assertion variable must have a packed width",
+                ));
+            }
+        }
+        if locals.is_empty() && !initializers.is_empty() {
+            return Err(IrValidationError::new(
+                "sequence.initializers",
+                "sequence local initializer has no local storage",
+            ));
+        }
         Ok(Self {
             states,
             start,
@@ -2352,6 +2416,9 @@ impl IrSequence {
             atoms,
             first_match,
             first_match_states,
+            locals,
+            match_items,
+            initializers,
         })
     }
 
@@ -2381,6 +2448,18 @@ impl IrSequence {
 
     pub fn first_match_states(&self) -> &[u32] {
         &self.first_match_states
+    }
+
+    pub fn locals(&self) -> &[IrSequenceLocal] {
+        &self.locals
+    }
+
+    pub fn match_items(&self) -> &[IrExpr] {
+        &self.match_items
+    }
+
+    pub fn initializers(&self) -> &[IrExpr] {
+        &self.initializers
     }
 }
 

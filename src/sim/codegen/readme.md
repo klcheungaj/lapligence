@@ -42,11 +42,17 @@
   `throughout`/`within`, and `first_match` endpoint selection. Named
   sequence/property instances reuse Slang's owned actual/default expansion;
   one-cycle property `not`/`and`/`or`/`iff`/`implies` forms and compatible
-  clock/disable metadata are composed without re-parsing source. Predicates use immutable
-  sampled values; asynchronous `disable iff`, overlap mode, labels, and action
-  callbacks remain explicit. Match-item side effects, conflicting clock or
-  disable metadata, and temporal property operators outside this bounded
-  subset remain source-located fail-closed boundaries.
+  clock/disable metadata are composed without re-parsing source. Sequence-local
+  packed values use per-attempt/per-thread snapshots; top-level typed local
+  input formals (including declaration defaults) are initialized at attempt
+  entry, and
+  ordered whole-local assignments, increments, and void subroutine calls are
+  evaluated at match endpoints. Predicates use immutable sampled values;
+  asynchronous `disable iff`, overlap mode, labels, and action callbacks
+  remain explicit. Output/inout/ref formal copy-out, selected-local lvalues,
+  repeated match-item bodies, conflicting clock or disable metadata, and
+  temporal property operators outside this bounded subset remain
+  source-located fail-closed boundaries.
 - **Evaluated events:** Explicit event expressions retain only their expression
   and qualifier dependencies. Read-only input/`const ref` function calls are
   checked transitively for disallowed effects, and automatic locals/formals are

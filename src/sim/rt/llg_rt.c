@@ -749,6 +749,10 @@ typedef struct llg_sequence_token {
     struct llg_sequence_token* next;
     uint32_t state;
     uint64_t entered_cycle;
+    /* A sequence thread carries its own local assertion state.  Keeping this
+     * on the token prevents `or`/repetition joins from merging distinct
+     * match-item histories merely because their automaton state is equal. */
+    sv4_t* locals;
 } llg_sequence_token_t;
 
 typedef struct llg_sequence_attempt {
@@ -759,6 +763,7 @@ typedef struct llg_sequence_attempt {
      * eligible until this sampled-clock ordinal. */
     uint64_t due_cycle;
     int matched;
+    sv4_t* locals;
 } llg_sequence_attempt_t;
 
 typedef struct llg_concurrent_assertion {
@@ -4364,8 +4369,10 @@ static void free_assertion_attempts(llg_concurrent_assertion_t* assertion) {
             while (attempt->tokens) {
                 llg_sequence_token_t* token = attempt->tokens;
                 attempt->tokens = token->next;
+                free(token->locals);
                 free(token);
             }
+            free(attempt->locals);
             free(attempt);
         }
         *tails[list_index] = NULL;
@@ -9244,21 +9251,91 @@ static void assertion_attempt_enqueue(llg_concurrent_assertion_t* assertion) {
     assertion->attempts_tail = attempt;
 }
 
-static int sequence_token_present(const llg_sequence_token_t* list,
-                                  uint32_t state, uint64_t entered_cycle) {
+static llg_sequence_attempt_t* sequence_attempt_from_data(void* data) {
+    return (llg_sequence_attempt_t*)data;
+}
+
+sv4_t* llg_sequence_local_addr(void* data, uint32_t slot) {
+    llg_sequence_attempt_t* attempt = sequence_attempt_from_data(data);
+    if (!attempt || !attempt->graph || slot >= attempt->graph->local_count ||
+        !attempt->locals) {
+        fprintf(stderr, "llg runtime fatal: invalid sequence local slot %u\n",
+                (unsigned)slot);
+        llg_last_failure = 1;
+        g.finish = 1;
+        return NULL;
+    }
+    return &attempt->locals[slot];
+}
+
+sv4_t llg_sequence_local_read(void* data, uint32_t slot) {
+    sv4_t* value = llg_sequence_local_addr(data, slot);
+    return value ? *value : sv4_x(1, 0);
+}
+
+void llg_sequence_local_write(sv4_t* target, sv4_t value) {
+    if (!target) {
+        fprintf(stderr, "llg runtime fatal: null sequence local target\n");
+        llg_last_failure = 1;
+        g.finish = 1;
+        return;
+    }
+    /* Local assertion storage is private to one attempt. It has no signal
+     * waiters, force/PCA drivers, or scheduler-visible notifications, so the
+     * match-item write is intentionally a direct value replacement even while
+     * the enclosing assertion is being resolved in Observed. */
+    *target = value;
+}
+
+static int sequence_locals_same(const sv4_t* left, const sv4_t* right,
+                                uint32_t count) {
+    if (count == 0) return 1;
+    if (!left || !right) return 0;
+    for (uint32_t index = 0; index < count; index++)
+        if (!sv4_same(left[index], right[index])) return 0;
+    return 1;
+}
+
+static sv4_t* sequence_locals_clone(const llg_sequence_graph_t* graph,
+                                    const sv4_t* locals) {
+    if (!graph || graph->local_count == 0) return NULL;
+    if (!locals) {
+        fprintf(stderr, "llg runtime fatal: missing sequence thread locals\n");
+        llg_last_failure = 1;
+        g.finish = 1;
+        return NULL;
+    }
+    sv4_t* copy = (sv4_t*)llg_checked_calloc(
+        graph->local_count, sizeof(*copy), "concurrent assertion sequence thread locals");
+    memcpy(copy, locals, graph->local_count * sizeof(*copy));
+    return copy;
+}
+
+static int sequence_token_present(const llg_sequence_graph_t* graph,
+                                  const llg_sequence_token_t* list,
+                                  uint32_t state, uint64_t entered_cycle,
+                                  const sv4_t* locals) {
     for (const llg_sequence_token_t* token = list; token; token = token->next)
-        if (token->state == state && token->entered_cycle == entered_cycle)
+        if (token->state == state && token->entered_cycle == entered_cycle &&
+            sequence_locals_same(token->locals, locals, graph->local_count))
             return 1;
     return 0;
 }
 
-static int sequence_token_add(llg_sequence_token_t** list, uint32_t state,
-                              uint64_t entered_cycle) {
-    if (sequence_token_present(*list, state, entered_cycle)) return 0;
+static int sequence_token_add(const llg_sequence_graph_t* graph,
+                              llg_sequence_token_t** list, uint32_t state,
+                              uint64_t entered_cycle, const sv4_t* locals) {
+    if (sequence_token_present(graph, *list, state, entered_cycle, locals))
+        return 0;
     llg_sequence_token_t* token = (llg_sequence_token_t*)llg_checked_calloc(
         1, sizeof(*token), "concurrent assertion sequence token");
     token->state = state;
     token->entered_cycle = entered_cycle;
+    token->locals = sequence_locals_clone(graph, locals);
+    if (graph->local_count != 0 && !token->locals) {
+        free(token);
+        return 0;
+    }
     token->next = *list;
     *list = token;
     return 1;
@@ -9267,6 +9344,7 @@ static int sequence_token_add(llg_sequence_token_t** list, uint32_t state,
 static void sequence_tokens_free(llg_sequence_token_t* tokens) {
     while (tokens) {
         llg_sequence_token_t* next = tokens->next;
+        free(tokens->locals);
         free(tokens);
         tokens = next;
     }
@@ -9277,6 +9355,21 @@ static int sequence_is_first_match_state(const llg_sequence_graph_t* graph,
     for (uint32_t index = 0; index < graph->first_match_state_count; index++)
         if (graph->first_match_states[index] == state) return 1;
     return 0;
+}
+
+static void sequence_match_items(const llg_sequence_graph_t* graph,
+                                 llg_sequence_attempt_t* attempt,
+                                 uint32_t start, uint32_t count) {
+    if (count == 0) return;
+    if (!graph->match || start > graph->match_item_count ||
+        count > graph->match_item_count - start) {
+        fprintf(stderr, "llg runtime fatal: invalid sequence match-item range\n");
+        llg_last_failure = 1;
+        g.finish = 1;
+        return;
+    }
+    for (uint32_t index = 0; index < count; index++)
+        graph->match(start + index, attempt);
 }
 
 /* Advance one sequence NFA by one sampled clock edge.  Epsilon edges with a
@@ -9295,18 +9388,21 @@ static int sequence_attempt_step(llg_sequence_attempt_t* attempt,
     for (llg_sequence_token_t* token = attempt->tokens; token;
          token = token->next) {
         if (token->state == graph->accept) *accepted = 1;
-        sequence_token_add(&work, token->state, token->entered_cycle);
+        sequence_token_add(graph, &work, token->state, token->entered_cycle,
+                           token->locals);
     }
     if (*accepted) attempt->matched = 1;
     if (*accepted && graph->first_match) {
+        attempt->locals = NULL;
         sequence_tokens_free(work);
         return 0;
     }
     while (work) {
         llg_sequence_token_t* token = work;
         work = token->next;
-        if (sequence_token_present(processed, token->state,
-                                   token->entered_cycle)) {
+        if (sequence_token_present(graph, processed, token->state,
+                                   token->entered_cycle, token->locals)) {
+            free(token->locals);
             free(token);
             continue;
         }
@@ -9338,18 +9434,40 @@ static int sequence_attempt_step(llg_sequence_attempt_t* attempt,
                 elapsed > transition->max_delay)
                 continue;
             if (elapsed < transition->min_delay) {
-                sequence_token_add(&next, token->state, token->entered_cycle);
+                sequence_token_add(graph, &next, token->state,
+                                   token->entered_cycle, token->locals);
                 continue;
             }
+            sv4_t* branch_locals = sequence_locals_clone(graph, token->locals);
+            if (graph->local_count != 0 && !branch_locals) {
+                sequence_tokens_free(work);
+                sequence_tokens_free(processed);
+                sequence_tokens_free(next);
+                attempt->locals = NULL;
+                return 0;
+            }
+            attempt->locals = branch_locals;
             if (transition->atom != LLG_SEQUENCE_EPSILON) {
                 if (!graph->atom ||
-                    !graph->atom(transition->atom, graph->data)) {
+                    !graph->atom(transition->atom, attempt)) {
                     if (transition->max_delay == LLG_SEQUENCE_UNBOUNDED ||
                         elapsed < transition->max_delay)
-                        sequence_token_add(&next, token->state,
-                                           token->entered_cycle);
+                        sequence_token_add(graph, &next, token->state,
+                                           token->entered_cycle, token->locals);
+                    free(branch_locals);
+                    attempt->locals = NULL;
                     continue;
                 }
+            }
+            sequence_match_items(graph, attempt, transition->match_start,
+                                 transition->match_count);
+            if (g.finish) {
+                free(branch_locals);
+                attempt->locals = NULL;
+                sequence_tokens_free(work);
+                sequence_tokens_free(processed);
+                sequence_tokens_free(next);
+                return 0;
             }
             int destination_is_first_match =
                 sequence_is_first_match_state(graph, transition->to);
@@ -9364,28 +9482,31 @@ static int sequence_attempt_step(llg_sequence_attempt_t* attempt,
                 *accepted = 1;
                 attempt->matched = 1;
                 if (graph->first_match) {
+                    free(branch_locals);
+                    attempt->locals = NULL;
                     sequence_tokens_free(work);
                     sequence_tokens_free(processed);
                     sequence_tokens_free(next);
                     return 0;
                 }
-            } else if (sequence_token_add(&next, transition->to, cycle)) {
-                llg_sequence_token_t* advanced = (llg_sequence_token_t*)llg_checked_calloc(
-                    1, sizeof(*advanced), "concurrent assertion sequence work token");
-                advanced->state = transition->to;
-                advanced->entered_cycle = cycle;
-                advanced->next = work;
-                work = advanced;
+            } else if (sequence_token_add(graph, &next, transition->to, cycle,
+                                          branch_locals)) {
+                sequence_token_add(graph, &work, transition->to, cycle,
+                                   branch_locals);
             }
             if (!token_is_first_match && !destination_is_first_match &&
                 (transition->max_delay == LLG_SEQUENCE_UNBOUNDED ||
                  elapsed < transition->max_delay))
-                sequence_token_add(&next, token->state, token->entered_cycle);
+                sequence_token_add(graph, &next, token->state,
+                                   token->entered_cycle, token->locals);
+            free(branch_locals);
+            attempt->locals = NULL;
             if (destination_is_first_match) break;
         }
     }
     sequence_tokens_free(processed);
     sequence_tokens_free(attempt->tokens);
+    attempt->locals = NULL;
     attempt->tokens = next;
     if (*accepted) attempt->matched = 1;
     return attempt->tokens != NULL;
@@ -9397,7 +9518,22 @@ static llg_sequence_attempt_t* sequence_attempt_new(
         1, sizeof(*attempt), "concurrent assertion sequence attempt");
     attempt->graph = graph;
     attempt->due_cycle = due_cycle;
-    sequence_token_add(&attempt->tokens, graph->start, due_cycle);
+    if (graph->local_count != 0) {
+        attempt->locals = (sv4_t*)llg_checked_calloc(
+            graph->local_count, sizeof(*attempt->locals),
+            "concurrent assertion sequence locals");
+        for (uint32_t index = 0; index < graph->local_count; index++) {
+            const llg_sequence_local_t* local = &graph->locals[index];
+            sv4_t value = sv4_x(local->width, local->is_signed);
+            if (local->two_state) value = sv4_to_two_state(value);
+            attempt->locals[index] = value;
+        }
+    }
+    if (graph->init) graph->init(attempt);
+    sequence_token_add(graph, &attempt->tokens, graph->start, due_cycle,
+                       attempt->locals);
+    free(attempt->locals);
+    attempt->locals = NULL;
     return attempt;
 }
 
@@ -9414,6 +9550,7 @@ static void sequence_attempt_append(llg_sequence_attempt_t** head,
 static void sequence_attempt_discard(llg_sequence_attempt_t* attempt) {
     if (!attempt) return;
     sequence_tokens_free(attempt->tokens);
+    free(attempt->locals);
     free(attempt);
 }
 
@@ -9745,8 +9882,15 @@ static int valid_sequence_graph(const llg_sequence_graph_t* graph) {
     if (!graph || graph->states == 0 || graph->start >= graph->states ||
         graph->accept >= graph->states ||
         (graph->transition_count != 0 && !graph->transitions) ||
-        (graph->first_match_state_count != 0 && !graph->first_match_states))
+        (graph->first_match_state_count != 0 && !graph->first_match_states) ||
+        (graph->local_count != 0 && !graph->locals))
         return 0;
+    for (uint32_t index = 0; index < graph->local_count; index++) {
+        const llg_sequence_local_t* local = &graph->locals[index];
+        if (local->width == 0 || local->width > LLG_MAX_WIDTH ||
+            (local->two_state != 0 && local->two_state != 1))
+            return 0;
+    }
     for (uint32_t index = 0; index < graph->first_match_state_count; index++)
         if (graph->first_match_states[index] >= graph->states) return 0;
     for (uint32_t index = 0; index < graph->transition_count; index++) {
@@ -9754,6 +9898,11 @@ static int valid_sequence_graph(const llg_sequence_graph_t* graph) {
         if (transition->from >= graph->states || transition->to >= graph->states ||
             transition->max_delay < transition->min_delay ||
             (transition->atom != LLG_SEQUENCE_EPSILON && !graph->atom))
+            return 0;
+        if (transition->match_count > graph->match_item_count ||
+            transition->match_start > graph->match_item_count -
+                transition->match_count ||
+            (transition->match_count != 0 && !graph->match))
             return 0;
     }
     return 1;

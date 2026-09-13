@@ -1681,6 +1681,20 @@ impl<'a> Codegen<'a> {
                 ));
             }
         }
+        if let Some(target) = target {
+            if let Some(binding) = self.assertion_local_binding(target)? {
+                self.ensure_assertion_local_initializer(scope_path, target, binding)?;
+                return Ok(IrExpr::new(
+                    IrExprKind::LocalRead(format!(
+                        "llg_sequence_local_read(data, {}u)",
+                        binding.slot
+                    )),
+                    binding.width,
+                    binding.signed,
+                    None,
+                ));
+            }
+        }
         if let Some(captured) = self
             .capture_target(r)
             .or_else(|| target.filter(|target| self.capture_locals.contains_key(target)))
@@ -4539,6 +4553,24 @@ impl<'a> Codegen<'a> {
     /// converted to [`IrLhs`] (identical by construction during the seam
     /// transition; sub-expression codes ride along verbatim).
     pub(super) fn lower_lhs(&mut self, path: &str, lhs: NodeId) -> Result<IrLhs, String> {
+        if let Some(target) = self.assertion_local_lhs_target(lhs) {
+            let binding = self
+                .assertion_local_binding(target)?
+                .ok_or_else(|| "local assertion variable is outside a sequence graph".to_owned())?;
+            if let Some(direction) = self.db.assertion_formal_direction(target) {
+                return Err(format!(
+                    "assertion formal `{}` cannot be assigned through {direction:?} direction in `{path}`",
+                    self.node(target).name
+                ));
+            }
+            return Ok(IrLhs::WholeRef {
+                addr: format!("llg_sequence_local_addr(data, {}u)", binding.slot),
+                width: binding.width,
+                signed: binding.signed,
+                two_state: binding.two_state,
+                shortreal: false,
+            });
+        }
         let mut clocking_targets = Vec::new();
         let all_clocking = self.clocking_lhs_targets(lhs, &mut clocking_targets);
         if !clocking_targets.is_empty() {

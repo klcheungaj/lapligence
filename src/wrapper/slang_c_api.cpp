@@ -1063,7 +1063,8 @@ uint32_t semanticSymbolKind(SymbolKind kind) {
     case SymbolKind::Field:
     case SymbolKind::ClassProperty:
     case SymbolKind::Iterator:
-    case SymbolKind::PatternVar: return LLG_SLANG_SEMANTIC_VARIABLE;
+    case SymbolKind::PatternVar:
+    case SymbolKind::LocalAssertionVar: return LLG_SLANG_SEMANTIC_VARIABLE;
     case SymbolKind::NetType: return LLG_SLANG_SEMANTIC_UNSUPPORTED;
     case SymbolKind::Parameter:
     case SymbolKind::TypeParameter:
@@ -1768,6 +1769,11 @@ public:
                        | (clockingEdgeCode(symbol.outputSkew.edge)
                           << LLG_SLANG_CLOCKING_VAR_OUTPUT_EDGE_SHIFT);
     }
+    if constexpr (std::same_as<T, LocalAssertionVarSymbol>) {
+      result.subkind = LLG_SLANG_VARIABLE_ASSERTION_LOCAL;
+      if (symbol.formalPort && symbol.formalPort->direction)
+        addDirection(result, *symbol.formalPort->direction);
+    }
     if constexpr (std::derived_from<T, VariableSymbol> &&
                   !std::same_as<T, ClockVarSymbol>) {
       if (result.kind == LLG_SLANG_SEMANTIC_VARIABLE ||
@@ -2142,6 +2148,8 @@ public:
           capture.output.semantic_nodes[static_cast<size_t>(targetId)];
       if (targetNode.name.len == 0) {
         targetNode.kind = semanticSymbolKind(target->kind);
+        if (target->kind == SymbolKind::LocalAssertionVar)
+          targetNode.subkind = LLG_SLANG_VARIABLE_ASSERTION_LOCAL;
         targetNode.name = storeString(capture.output, target->name);
         targetNode.detail = storeString(capture.output, toString(target->kind));
         targetNode.range = target->location.valid()
@@ -2520,6 +2528,8 @@ private:
     auto& node = capture.output.semantic_nodes[static_cast<size_t>(id)];
     if (node.name.len == 0) {
       node.kind = semanticSymbolKind(symbol.kind);
+      if (symbol.kind == SymbolKind::LocalAssertionVar)
+        node.subkind = LLG_SLANG_VARIABLE_ASSERTION_LOCAL;
       node.name = storeString(capture.output, symbol.name);
       node.detail = storeString(capture.output, toString(symbol.kind));
       node.range = capture.span(symbol.location, symbol.name.size());

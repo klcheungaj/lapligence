@@ -474,6 +474,14 @@ fn assertion_sequence_atom_name(index: usize, role: &str) -> String {
     format!("llg_assertion_sequence_{index}_{role}_atom")
 }
 
+fn assertion_sequence_match_name(index: usize, role: &str) -> String {
+    format!("llg_assertion_sequence_{index}_{role}_match")
+}
+
+fn assertion_sequence_init_name(index: usize, role: &str) -> String {
+    format!("llg_assertion_sequence_{index}_{role}_init")
+}
+
 fn render_assertion_sequence(
     model: &IrModel,
     index: usize,
@@ -505,6 +513,33 @@ fn render_assertion_sequence(
         ));
     }
     out.push_str("    default: return 0;\n    }\n}\n\n");
+    let init_name = assertion_sequence_init_name(index, role);
+    if !sequence.initializers().is_empty() {
+        out.push_str(&format!("static void {init_name}(void* data) {{\n"));
+        out.push_str("    (void)data;\n");
+        for (initializer_index, initializer) in sequence.initializers().iter().enumerate() {
+            let rendered = super::expressions::render_expr_impl(&ctx, initializer)?;
+            out.push_str(&format!(
+                "    (void)({}); /* local formal initializer {initializer_index} */\n",
+                rendered.code
+            ));
+        }
+        out.push_str("}\n\n");
+    }
+    let match_name = assertion_sequence_match_name(index, role);
+    if !sequence.match_items().is_empty() {
+        out.push_str(&format!(
+            "static void {match_name}(uint32_t item, void* data) {{\n    (void)data;\n    switch (item) {{\n"
+        ));
+        for (item_index, item) in sequence.match_items().iter().enumerate() {
+            let rendered = super::expressions::render_expr_impl(&ctx, item)?;
+            out.push_str(&format!(
+                "    case {item_index}u: (void)({}); break; /* sequence match item {item_index} */\n",
+                rendered.code,
+            ));
+        }
+        out.push_str("    default: break;\n    }\n}\n\n");
+    }
     let transition_name = format!(
         "{name}_transitions",
         name = assertion_sequence_name(index, role)
@@ -523,9 +558,13 @@ fn render_assertion_sequence(
             .atom
             .map(|value| format!("{value}u"))
             .unwrap_or_else(|| "LLG_SEQUENCE_EPSILON".to_owned());
+        let match_start = transition
+            .match_start
+            .map(|value| format!("{value}u"))
+            .unwrap_or_else(|| "0u".to_owned());
         out.push_str(&format!(
-            "    {{{}u, {}u, {}ULL, {max}, {atom}}},\n",
-            transition.from, transition.to, transition.delay.min
+            "    {{{}u, {}u, {}ULL, {max}, {atom}, {match_start}, {}u}},\n",
+            transition.from, transition.to, transition.delay.min, transition.match_count,
         ));
     }
     out.push_str("};\n");
@@ -547,14 +586,45 @@ fn render_assertion_sequence(
     } else {
         first_match_states_name.clone()
     };
+    let locals_name = format!("{sequence_name}_locals");
+    if !sequence.locals().is_empty() {
+        out.push_str(&format!(
+            "static const llg_sequence_local_t {locals_name}[{}] = {{\n",
+            sequence.locals().len()
+        ));
+        for local in sequence.locals() {
+            out.push_str(&format!(
+                "    {{{}u, {}, {}}},\n",
+                local.width, local.signed as u8, local.two_state as u8
+            ));
+        }
+        out.push_str("};\n");
+    }
+    let locals_ptr = if sequence.locals().is_empty() {
+        "NULL".to_owned()
+    } else {
+        locals_name
+    };
+    let match_ptr = if sequence.match_items().is_empty() {
+        "NULL".to_owned()
+    } else {
+        match_name
+    };
+    let init_ptr = if sequence.initializers().is_empty() {
+        "NULL".to_owned()
+    } else {
+        init_name
+    };
     out.push_str(&format!(
-        "static const llg_sequence_graph_t {sequence_name} = {{ {}u, {}u, {}u, {}u, {transition_name}, {}u, {first_match_states_ptr}, {atom_name}, NULL, {} }};\n\n",
+        "static const llg_sequence_graph_t {sequence_name} = {{ {}u, {}u, {}u, {}u, {transition_name}, {}u, {first_match_states_ptr}, {atom_name}, NULL, {init_ptr}, {}, {}u, {locals_ptr}, {}u, {match_ptr} }};\n\n",
         sequence.states(),
         sequence.start(),
         sequence.accept(),
         sequence.transitions().len(),
         first_match_states.len(),
         sequence.first_match() as u8,
+        sequence.locals().len(),
+        sequence.match_items().len(),
     ));
     Ok(out)
 }

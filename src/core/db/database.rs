@@ -457,6 +457,20 @@ pub struct Db {
     packed_dimensions: HashMap<NodeId, Vec<PackedRange>>,
     /// True for declarations whose complete packed type has a two-state base.
     two_state_types: HashSet<NodeId>,
+    /// Local assertion variables are materialized independently for each
+    /// sequence/property attempt. Slang does not attach them to an instance
+    /// scope, so retain their declaration identity in a side table instead of
+    /// treating them as model-global storage.
+    assertion_local_vars: HashSet<NodeId>,
+    /// Direction metadata for assertion formal variables. Local assertion
+    /// declarations have no direction; retaining this separate map lets
+    /// lowering distinguish per-attempt input captures from output/inout
+    /// formals without changing the stable [`NodeKind::Var`] shape.
+    assertion_formal_directions: HashMap<NodeId, Direction>,
+    /// Cloned Slang declarations may retain a source-identity edge to their
+    /// canonical formal declaration. This map is owned metadata, not a native
+    /// AST relationship.
+    source_identities: HashMap<NodeId, NodeId>,
     /// Clocking block declarations and their resolved clock events/skews.
     clocking_blocks: HashMap<NodeId, ClockingBlockInfo>,
     /// Clocking block variables and the source signal each samples.
@@ -3944,6 +3958,9 @@ impl Db {
             enum_types: HashMap::new(),
             packed_dimensions: HashMap::new(),
             two_state_types: HashSet::new(),
+            assertion_local_vars: HashSet::new(),
+            assertion_formal_directions: HashMap::new(),
+            source_identities: HashMap::new(),
             clocking_blocks: HashMap::new(),
             clocking_vars: HashMap::new(),
             modport_directions: HashMap::new(),
@@ -3999,6 +4016,9 @@ impl Db {
             enum_types: HashMap::new(),
             packed_dimensions: HashMap::new(),
             two_state_types: HashSet::new(),
+            assertion_local_vars: HashSet::new(),
+            assertion_formal_directions: HashMap::new(),
+            source_identities: HashMap::new(),
             clocking_blocks: HashMap::new(),
             clocking_vars: HashMap::new(),
             modport_directions: HashMap::new(),
@@ -4039,6 +4059,15 @@ impl Db {
                 "Slang semantic node ids are not contiguous arena indices".to_owned(),
             ));
         }
+        let mut source_identities = HashMap::new();
+        for semantic in &snapshot.semantic_nodes {
+            let id = ids[&semantic.id];
+            for edge in semantic_edges(snapshot, semantic)? {
+                if edge.role == SemanticEdgeRole::SourceIdentity {
+                    source_identities.insert(id, semantic_id(&ids, edge.target_id)?);
+                }
+            }
+        }
 
         let mut nodes = Vec::with_capacity(snapshot.semantic_nodes.len());
         let overridden_parameters = snapshot
@@ -4078,6 +4107,30 @@ impl Db {
         let mut vars_init = HashMap::new();
         let mut net_delays = HashMap::new();
         let mut two_state_types = HashSet::new();
+        let assertion_local_vars = snapshot
+            .semantic_nodes
+            .iter()
+            .filter(|semantic| {
+                semantic.kind == SemanticKind::Variable
+                    && semantic.subkind == crate::ffi::slang::SEMANTIC_VARIABLE_ASSERTION_LOCAL
+            })
+            .map(|semantic| ids[&semantic.id])
+            .collect();
+        let assertion_formal_directions = snapshot
+            .semantic_nodes
+            .iter()
+            .filter(|semantic| {
+                (semantic.kind == SemanticKind::Argument
+                    || (semantic.kind == SemanticKind::Variable
+                        && semantic.subkind
+                            == crate::ffi::slang::SEMANTIC_VARIABLE_ASSERTION_LOCAL))
+                    && (semantic.is_input
+                        || semantic.is_output
+                        || semantic.is_inout
+                        || semantic.is_ref)
+            })
+            .map(|semantic| (ids[&semantic.id], direction_from_slang(semantic)))
+            .collect();
         let mut implicit_nets = HashSet::new();
         let mut implicit_conversions = HashSet::new();
         let mut var_lifetimes = HashMap::new();
@@ -4787,6 +4840,9 @@ impl Db {
             enum_types,
             packed_dimensions,
             two_state_types,
+            assertion_local_vars,
+            assertion_formal_directions,
+            source_identities,
             clocking_blocks,
             clocking_vars,
             modport_directions,
@@ -5108,6 +5164,53 @@ impl Db {
 
     pub fn is_two_state_type(&self, id: NodeId) -> bool {
         self.two_state_types.contains(&id)
+    }
+
+    /// Whether `id` names a Slang-materialized local assertion variable.
+    /// These declarations have per-attempt storage in sequence callbacks and
+    /// must never be resolved as instance-global signals.
+    pub fn is_assertion_local_var(&self, id: NodeId) -> bool {
+        self.assertion_local_vars.contains(&id)
+    }
+
+    /// Return the direction of an assertion formal variable when Slang
+    /// materialized one. Ordinary sequence locals intentionally return
+    /// `None` because they are not formals.
+    pub fn assertion_formal_direction(&self, id: NodeId) -> Option<Direction> {
+        if let Some(direction) = self.assertion_formal_directions.get(&id) {
+            return Some(*direction);
+        }
+        let node = self.nodes.get(id.index())?;
+        self.assertion_formal_directions
+            .iter()
+            .find_map(|(formal, direction)| {
+                let candidate = self.nodes.get(formal.index())?;
+                (candidate.name == node.name
+                    && candidate.file == node.file
+                    && candidate.line == node.line
+                    && candidate.col == node.col
+                    && candidate.end_line == node.end_line
+                    && candidate.end_col == node.end_col)
+                    .then_some(*direction)
+            })
+    }
+
+    /// Follow Slang's owned source-identity alias for a cloned declaration or
+    /// reference. Identity aliases are only used to correlate formal symbols;
+    /// ordinary storage lookup continues to use the concrete node identity.
+    pub fn source_identity(&self, id: NodeId) -> NodeId {
+        let mut current = id;
+        let mut seen = HashSet::new();
+        while seen.insert(current) {
+            let Some(&representative) = self.source_identities.get(&current) else {
+                break;
+            };
+            if representative == current {
+                break;
+            }
+            current = representative;
+        }
+        current
     }
 
     pub fn is_implicit_net(&self, id: NodeId) -> bool {

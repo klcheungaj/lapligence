@@ -3,8 +3,10 @@
 //! The H22 sequence lowerer uses one shared sampled-clock automaton for
 //! concatenation, repetition, and the admitted sequence combinators. H23 adds
 //! bounded one-cycle property composition and recursive use of owned named
-//! sequence/property bodies. Forms outside the executable subset fail closed
-//! here rather than becoming an untimed immediate assertion.
+//! sequence/property bodies; H24 adds per-attempt local storage, local input
+//! formal capture, and ordered match-item effects. Forms outside the
+//! executable subset fail closed here rather than becoming an untimed
+//! immediate assertion.
 
 use super::*;
 use crate::core::db::{
@@ -12,8 +14,9 @@ use crate::core::db::{
     AssertionRepetitionKind, AssertionUnaryOp, ConcurrentAssertionKind, EventSpec,
 };
 use crate::sim::ir::{
-    IrAssertion, IrBinOp, IrConcurrentAssertionKind, IrExpr, IrExprKind, IrProcess,
-    IrSampledDomain, IrSequence, IrSequenceRange, IrSequenceTransition, IrShape, IrUnOp,
+    IrAssertion, IrBinOp, IrConcurrentAssertionKind, IrExpr, IrExprKind, IrLhs, IrProcess,
+    IrSampledDomain, IrSequence, IrSequenceLocal, IrSequenceRange, IrSequenceTransition, IrShape,
+    IrUnOp,
 };
 
 struct PropertyParts {
@@ -33,6 +36,7 @@ struct SequenceBuilder {
     atoms: Vec<IrExpr>,
     first_match: bool,
     first_match_states: Vec<u32>,
+    match_items: Vec<IrExpr>,
 }
 
 struct SequenceFragment {
@@ -48,6 +52,7 @@ impl SequenceBuilder {
             atoms: Vec::new(),
             first_match: false,
             first_match_states: Vec::new(),
+            match_items: Vec::new(),
         }
     }
 
@@ -83,6 +88,8 @@ impl SequenceBuilder {
                 max: delay.max,
             },
             atom,
+            match_start: None,
+            match_count: 0,
         });
         Ok(())
     }
@@ -91,7 +98,59 @@ impl SequenceBuilder {
         self.edge(from, to, delay, None)
     }
 
-    fn finish(self, fragment: SequenceFragment) -> Result<IrSequence, String> {
+    /// Attach source-order match items to every path entering a fragment's
+    /// endpoint. The fragment has just been lowered, so no enclosing
+    /// concatenation edge has been emitted yet; this keeps each side effect at
+    /// the sequence point where its match item is prescribed.
+    fn attach_match_items(&mut self, endpoint: u32, items: Vec<IrExpr>) -> Result<(), String> {
+        if items.is_empty() {
+            return Ok(());
+        }
+        let start = u32::try_from(self.match_items.len())
+            .map_err(|_| "sequence has too many match-item expressions".to_owned())?;
+        let count = u32::try_from(items.len())
+            .map_err(|_| "sequence has too many match-item expressions".to_owned())?;
+        let mut attached = false;
+        for transition in &mut self.transitions {
+            if transition.to != endpoint {
+                continue;
+            }
+            attached = true;
+            if transition.match_count == 0 {
+                transition.match_start = Some(start);
+                transition.match_count = count;
+                continue;
+            }
+            let existing_start = transition
+                .match_start
+                .ok_or_else(|| "sequence transition has an invalid match-item range".to_owned())?;
+            let existing_end = existing_start
+                .checked_add(transition.match_count)
+                .ok_or_else(|| "sequence match-item range overflows".to_owned())?;
+            if existing_end != start {
+                return Err(
+                    "nested sequence match items do not have a contiguous source-order range"
+                        .to_owned(),
+                );
+            }
+            transition.match_count = transition
+                .match_count
+                .checked_add(count)
+                .ok_or_else(|| "sequence match-item range overflows".to_owned())?;
+        }
+        if !attached {
+            return Err("sequence match item has no reachable endpoint".to_owned());
+        }
+        self.match_items.extend(items);
+        Ok(())
+    }
+
+    fn finish(
+        self,
+        fragment: SequenceFragment,
+        locals: Vec<IrSequenceLocal>,
+        initializers: Vec<IrExpr>,
+    ) -> Result<IrSequence, String> {
         IrSequence::new(
             self.next_state,
             fragment.start,
@@ -100,6 +159,9 @@ impl SequenceBuilder {
             self.atoms,
             self.first_match,
             self.first_match_states,
+            locals,
+            self.match_items,
+            initializers,
         )
         .map_err(|error| error.to_string())
     }
@@ -306,18 +368,23 @@ impl Codegen<'_> {
         // expression. Re-enter it with the clock/disable metadata collected
         // above. This admits named sequence/property use while retaining the
         // exact declaration argument/default expansion performed by Slang.
-        if let Some(body) = match self.kind(current) {
+        if let Some(instance) = match self.kind(current) {
             NodeKind::AssertionExpr(AssertionExprKind::Simple {
                 expr,
                 repeated: false,
                 repetition: None,
             }) => match self.kind(*expr) {
-                NodeKind::Expr(ExprKind::AssertionInstance { body, .. }) => Some(*body),
+                NodeKind::Expr(ExprKind::AssertionInstance { .. }) => Some(*expr),
                 _ => None,
             },
             _ => None,
         } {
-            return self.lower_property_inner(path, body, clock, disable, origin);
+            let capture_at_attempt_entry = self.assertion_instance_depth == 0;
+            return self
+                .lower_assertion_instance(instance, capture_at_attempt_entry, |this, body| {
+                    this.lower_property_inner(path, body, clock, disable, origin)
+                })?
+                .ok_or_else(|| "assertion instance body is missing".to_owned());
         }
 
         let (clock_signal, posedge) = clock.ok_or_else(|| {
@@ -622,9 +689,52 @@ impl Codegen<'_> {
         node: NodeId,
         role: &str,
     ) -> Result<IrSequence, String> {
+        let previous_locals = self.assertion_local_bindings.take();
+        let previous_initializers = self.assertion_local_initializers.take();
+        self.assertion_local_bindings = Some(HashMap::new());
+        self.assertion_local_initializers = Some(HashMap::new());
         let mut builder = SequenceBuilder::new();
-        let fragment = self.lower_sequence_fragment(path, node, &mut builder, role)?;
-        builder.finish(fragment)
+        let result = self
+            .lower_sequence_fragment(path, node, &mut builder, role)
+            .and_then(|fragment| {
+                let mut local_bindings = self
+                    .assertion_local_bindings
+                    .as_ref()
+                    .into_iter()
+                    .flat_map(|bindings| bindings.values().copied())
+                    .collect::<Vec<_>>();
+                local_bindings.sort_by_key(|binding| binding.slot);
+                let locals = local_bindings
+                    .iter()
+                    .map(|binding| IrSequenceLocal {
+                        width: binding.width,
+                        signed: binding.signed,
+                        two_state: binding.two_state,
+                    })
+                    .collect();
+                let mut initializers = Vec::new();
+                if let Some(initializer_map) = self.assertion_local_initializers.as_ref() {
+                    for (target, initializer) in initializer_map {
+                        let Some(binding) = self
+                            .assertion_local_bindings
+                            .as_ref()
+                            .and_then(|bindings| bindings.get(target))
+                        else {
+                            return Err("assertion local initializer has no local slot".to_owned());
+                        };
+                        initializers.push((binding.slot, initializer.clone()));
+                    }
+                }
+                initializers.sort_by_key(|(slot, _)| *slot);
+                let initializers = initializers
+                    .into_iter()
+                    .map(|(_, initializer)| initializer)
+                    .collect();
+                builder.finish(fragment, locals, initializers)
+            });
+        self.assertion_local_bindings = previous_locals;
+        self.assertion_local_initializers = previous_initializers;
+        result
     }
 
     fn validate_nested_clock(
@@ -665,9 +775,14 @@ impl Codegen<'_> {
                 repetition,
             }) => {
                 if !*repeated && repetition.is_none() {
-                    if let NodeKind::Expr(ExprKind::AssertionInstance { body, .. }) = self.kind(*expr)
-                    {
-                        return self.lower_sequence_fragment(path, *body, builder, role);
+                    let capture_at_attempt_entry =
+                        self.assertion_instance_depth == 0 && builder.next_state == 0;
+                    if let Some(result) = self.lower_assertion_instance(
+                        *expr,
+                        capture_at_attempt_entry,
+                        |this, body| this.lower_sequence_fragment(path, body, builder, role),
+                    )? {
+                        return Ok(result);
                     }
                 }
                 let atom = self.lower_sequence_atom(path, *expr, role)?;
@@ -710,11 +825,10 @@ impl Codegen<'_> {
                 repetition,
                 ..
             }) => {
-                if !match_items.is_empty() {
-                    return Err(format!(
-                        "sequence match items are not supported in concurrent assertion {role} at {path}"
-                    ));
-                }
+                let lowered_match_items = match_items
+                    .iter()
+                    .map(|item| self.lower_assertion_match_item(path, *item, role))
+                    .collect::<Result<Vec<_>, _>>()?;
                 let fragment = if matches!(self.kind(*expr), NodeKind::AssertionExpr(_)) {
                     self.lower_sequence_fragment(path, *expr, builder, role)?
                 } else {
@@ -724,11 +838,23 @@ impl Codegen<'_> {
                     builder.edge(start, accept, zero_range(), Some(atom))?;
                     SequenceFragment { start, accept }
                 };
+                if !lowered_match_items.is_empty() {
+                    builder.attach_match_items(fragment.accept, lowered_match_items)?;
+                }
                 if let Some(repetition) = repetition {
+                    if builder
+                        .transitions
+                        .iter()
+                        .any(|transition| transition.to == fragment.accept
+                            && transition.match_count != 0)
+                    {
+                        return Err(format!(
+                            "repeated sequence match items are not supported in concurrent assertion {role} at {path}"
+                        ));
+                    }
                     // A sequence-with-match repetition is represented by a
                     // direct repeated body in Slang's owned graph. Match
-                    // items remain outside this bounded H23 subset because
-                    // their per-thread mutable state needs a richer engine.
+                    // items run when the enclosing graph reaches its endpoint.
                     let atom = self.sequence_fragment_atom(builder, fragment)?;
                     self.lower_repetition(builder, atom, repetition)
                 } else {
@@ -739,14 +865,14 @@ impl Codegen<'_> {
                 sequence,
                 match_items,
             }) => {
-                if !match_items.is_empty() {
-                    return Err(format!(
-                        "first_match match items are not supported in concurrent assertion {role} at {path}"
-                    ));
-                }
                 let fragment = self.lower_sequence_fragment(path, *sequence, builder, role)?;
                 builder.first_match = true;
                 builder.mark_first_match(fragment.accept);
+                let lowered = match_items
+                    .iter()
+                    .map(|item| self.lower_assertion_match_item(path, *item, role))
+                    .collect::<Result<Vec<_>, _>>()?;
+                builder.attach_match_items(fragment.accept, lowered)?;
                 Ok(fragment)
             }
             NodeKind::AssertionExpr(AssertionExprKind::Unary {
@@ -849,8 +975,13 @@ impl Codegen<'_> {
         node: NodeId,
         role: &str,
     ) -> Result<IrExpr, String> {
-        if let NodeKind::Expr(ExprKind::AssertionInstance { body, .. }) = self.kind(node) {
-            return self.lower_one_cycle_assertion(path, *body, role);
+        let capture_at_attempt_entry = self.assertion_instance_depth == 0;
+        if let Some(result) =
+            self.lower_assertion_instance(node, capture_at_attempt_entry, |this, body| {
+                this.lower_one_cycle_assertion(path, body, role)
+            })?
+        {
+            return Ok(result);
         }
         let expression = self.lower_boolean_expr(path, node)?;
         if expression.is_real() || !sampled_compatible(&expression) {
@@ -973,6 +1104,43 @@ impl Codegen<'_> {
         }
         candidate
             .ok_or_else(|| "sequence repetition requires a single sampled sequence atom".to_owned())
+    }
+
+    /// Match items are evaluated at their lowered sequence endpoint, in source
+    /// order. Their bounded form is an assignment/increment to a local
+    /// assertion variable or a subroutine call. A function result is discarded
+    /// at this statement position, while arbitrary global writes remain
+    /// fail-closed because they would cross the sampled callback's ownership
+    /// boundary.
+    fn lower_assertion_match_item(
+        &mut self,
+        path: &str,
+        node: NodeId,
+        role: &str,
+    ) -> Result<IrExpr, String> {
+        let previous = self.lowering_assertion_match_item;
+        self.lowering_assertion_match_item = true;
+        let expression = self.lower_expr(path, node);
+        self.lowering_assertion_match_item = previous;
+        let expression = expression?;
+        match expression.kind() {
+            IrExprKind::Mutation(mutation)
+                if matches!(
+                    &mutation.lhs,
+                    IrLhs::WholeRef { addr, .. }
+                        if addr.starts_with("llg_sequence_local_addr(")
+                ) =>
+            {
+                Ok(expression)
+            }
+            IrExprKind::CallFn(_) => Ok(expression),
+            IrExprKind::Mutation(_) => Err(format!(
+                "sequence match item must assign a local assertion variable in {role} at {path}"
+            )),
+            _ => Err(format!(
+                "unsupported sequence match item in concurrent assertion {role} at {path}"
+            )),
+        }
     }
 
     fn lower_repetition(
@@ -1106,6 +1274,11 @@ impl Codegen<'_> {
 pub(super) fn sampled_compatible(expression: &IrExpr) -> bool {
     match expression.kind() {
         IrExprKind::Const(_) | IrExprKind::SigRead(_) | IrExprKind::Fill(_) => true,
+        // Sequence-local reads are backed by the private attempt frame and
+        // are sampled atom values just like signal reads. Other evaluator
+        // locals (for example a procedural capture) must not leak into an
+        // assertion's sampled expression.
+        IrExprKind::LocalRead(name) if name.starts_with("llg_sequence_local_read(") => true,
         IrExprKind::Bin { a, b, .. } => sampled_compatible(a) && sampled_compatible(b),
         IrExprKind::Un { a, .. }
         | IrExprKind::CastToPacked { a }

@@ -145,6 +145,39 @@ fn concurrent_assertions_expand_named_sequence_and_property_instances() {
 }
 
 #[test]
+fn concurrent_assertions_isolate_local_match_item_state() {
+    sim_cli::run_case(
+        "concurrent_assertions",
+        "h24_local_match",
+        "H24_CALL_PASS\nH24_LOCAL_PASS\nH24_LOCAL_PASS\n",
+        "",
+        &[],
+    );
+}
+
+#[test]
+fn concurrent_assertions_keep_branch_local_match_state_isolated() {
+    sim_cli::run_case(
+        "concurrent_assertions",
+        "h24_branch_locals",
+        "H24_BRANCH_PASS\n",
+        "",
+        &[],
+    );
+}
+
+#[test]
+fn concurrent_assertions_capture_local_formal_defaults() {
+    sim_cli::run_case(
+        "concurrent_assertions",
+        "h24_formal_default",
+        "H24_DEFAULT_PASS\n",
+        "",
+        &[],
+    );
+}
+
+#[test]
 fn concurrent_assertions_reject_unsupported_named_property_temporal_forms() {
     sim_cli::reject_case(
         "concurrent_assertions",
