@@ -21,8 +21,14 @@
 //!   clean-from-scratch retry before the error is reported.
 //!
 //! Generator selection: [`CmakeBuildOpts::generator`] > `$CMAKE_GENERATOR` >
-//! none (cmake picks its default generator for the host).  The driver's
-//! `--generator <backend>` flag feeds [`CmakeBuildOpts::generator`].
+//! none (cmake picks its default generator for the host). The optional
+//! [`CmakeBuildOpts::launcher`] is forwarded without selecting a default.
+//!
+//! Normal builds compile the runtime into a process-shared user/build cache
+//! (override with `LLG_RUNTIME_CACHE_DIR`) and
+//! link each generated model against the cached static archive. The cache key
+//! covers the packed-value ABI, sources, toolchain, flags, generator, launcher,
+//! platform, and waveform support. `--gen-only` output remains self-contained.
 //!
 //! Environment variables:
 //!
@@ -34,6 +40,8 @@
 //!   reliably.
 //! - `LLG_CMAKE` — explicit cmake program override; default `cmake`
 //!   (also used by [`cmake_available`]).
+//! - `LLG_RUNTIME_CACHE_DIR` — shared static-runtime cache root; defaults to
+//!   the platform user cache directory, or Cargo's build output directory.
 
 use std::error::Error;
 use std::fmt;
@@ -41,12 +49,10 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::OnceLock;
+use std::time::{Duration, Instant, SystemTime};
 
-/// The generated project file.  `{SOURCES}` is replaced with the actual
-/// source list (`model.c llg_value.c llg_container.c llg_string.c llg_rt.c
-/// llg_random.c llg_rng.c llg_vpi.c
-/// aco.c acosw.S`, plus waveform/libfst C
-/// files when enabled); everything else is fixed.
+/// The generated project file. Cached builds compile only the model sources;
+/// self-contained `--gen-only` output retains the runtime and libaco sources.
 /// ASM is enabled because libaco's context switch lives in `acosw.S`.
 const CMAKELISTS_TEMPLATE: &str = r#"cmake_minimum_required(VERSION 3.16)
 project(llg_sim_model C ASM)
@@ -57,9 +63,15 @@ if(NOT CMAKE_BUILD_TYPE)
 endif()
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 include_directories(${CMAKE_SOURCE_DIR})
-add_executable(sim {SOURCES})
+if(LLG_RUNTIME_LIBRARY)
+  add_library(llg_runtime STATIC IMPORTED)
+  set_target_properties(llg_runtime PROPERTIES IMPORTED_LOCATION "${LLG_RUNTIME_LIBRARY}")
+  add_executable(sim {MODEL_SOURCES})
+  target_link_libraries(sim PRIVATE llg_runtime)
+else()
+  add_executable(sim {ALL_SOURCES})
+endif()
 target_compile_definitions(sim PRIVATE LLG_MODEL_MAX_WIDTH={MODEL_WIDTH})
-target_compile_definitions(sim PRIVATE LLG_MODEL_STACK_VALUES={STACK_VALUES})
 set_target_properties(sim PROPERTIES ENABLE_EXPORTS ON)
 if(NOT MSVC)
   target_link_libraries(sim PRIVATE m)
@@ -71,10 +83,29 @@ endif()
 {DPI_LINK}
 "#;
 
+const RUNTIME_CMAKELISTS_TEMPLATE: &str = r#"cmake_minimum_required(VERSION 3.16)
+project(llg_sim_runtime C ASM)
+set(CMAKE_C_STANDARD 11)
+set(CMAKE_C_STANDARD_REQUIRED ON)
+if(NOT CMAKE_BUILD_TYPE)
+  set(CMAKE_BUILD_TYPE Release)
+endif()
+add_library(llg_runtime STATIC {RUNTIME_SOURCES})
+target_include_directories(llg_runtime PRIVATE ${CMAKE_SOURCE_DIR})
+target_compile_definitions(llg_runtime PRIVATE LLG_MODEL_MAX_WIDTH={MODEL_WIDTH})
+{WAVE_DEFINITION}
+"#;
+
 const WAVE_CMAKE: &str = r#"find_package(Threads REQUIRED)
 find_package(ZLIB REQUIRED)
 target_link_libraries(sim PRIVATE Threads::Threads ZLIB::ZLIB)
 target_compile_definitions(sim PRIVATE LLG_WAVEFORM=1 FST_CONFIG_INCLUDE=\"fst_config.h\")"#;
+const RUNTIME_WAVE_DEFINITION: &str =
+    "target_compile_definitions(llg_runtime PRIVATE LLG_WAVEFORM=1 FST_CONFIG_INCLUDE=\\\"fst_config.h\\\")";
+
+const RUNTIME_CACHE_LOCK_TIMEOUT: Duration = Duration::from_secs(300);
+const RUNTIME_CACHE_STALE_AFTER: Duration = Duration::from_secs(3600);
+const RUNTIME_CACHE_LOCK_POLL: Duration = Duration::from_millis(25);
 
 /// Options for [`build_model_cmake_with_opts`].
 #[derive(Default, Clone)]
@@ -88,6 +119,10 @@ pub struct CmakeBuildOpts {
     /// items, so missing or non-files are rejected before configuration and
     /// no ambient linker search path can silently select a different ABI.
     pub dpi_libraries: Vec<PathBuf>,
+    /// Optional C compiler launcher handed to CMake as
+    /// `CMAKE_C_COMPILER_LAUNCHER` (for example `ccache` or `sccache`). No
+    /// launcher is selected when this is `None`.
+    pub launcher: Option<String>,
 }
 
 /// Failure while writing, configuring, or compiling a generated model.
@@ -117,6 +152,10 @@ pub enum BuildError {
     Compile { output: String },
     /// CMake succeeded but no simulator executable was produced.
     ExecutableNotFound { directory: PathBuf, listing: String },
+    /// CMake succeeded but no cached runtime archive was produced.
+    RuntimeLibraryNotFound { directory: PathBuf },
+    /// Another process did not finish populating the shared runtime cache.
+    RuntimeCacheLock { directory: PathBuf },
 }
 
 impl BuildError {
@@ -159,6 +198,16 @@ impl fmt::Display for BuildError {
                 "sim executable not found under {}: {listing}",
                 directory.display()
             ),
+            Self::RuntimeLibraryNotFound { directory } => write!(
+                f,
+                "shared runtime archive not found under {}",
+                directory.display()
+            ),
+            Self::RuntimeCacheLock { directory } => write!(
+                f,
+                "timed out waiting for shared runtime cache {}",
+                directory.display()
+            ),
         }
     }
 }
@@ -193,6 +242,9 @@ pub fn build_model_cmake_with_opts(
     let flags = c_flags()?;
     let build_dir = out_dir.join("build");
     let cmake_prog = resolve_cmake();
+    let width = model_capacity(extra)?;
+    let waveform = waveform_enabled(extra);
+    let runtime_library = prepare_runtime_cache(width, waveform, &cc, &flags, &cmake_prog, opts)?;
 
     // Drop an incompatible CMake build tree so configure starts clean: no
     // cache means a previous configure died midway; a generator mismatch
@@ -217,9 +269,17 @@ pub fn build_model_cmake_with_opts(
     if let Some(generator) = generator_for(opts) {
         configure.arg("-G").arg(generator);
     }
+    configure.arg(format!(
+        "-DCMAKE_C_COMPILER_LAUNCHER={}",
+        opts.launcher.as_deref().unwrap_or("")
+    ));
     configure
         .arg(format!("-DCMAKE_C_COMPILER={cc}"))
-        .arg(format!("-DCMAKE_C_FLAGS:STRING={flags}"));
+        .arg(format!("-DCMAKE_C_FLAGS:STRING={flags}"))
+        .arg(format!(
+            "-DLLG_RUNTIME_LIBRARY={}",
+            runtime_library.display()
+        ));
     let launch_error = |source| BuildError::CmakeLaunch {
         program: cmake_prog.clone(),
         source,
@@ -378,6 +438,9 @@ fn write_cmakelists(
     waveform: bool,
     opts: &CmakeBuildOpts,
 ) -> Result<(), BuildError> {
+    // Keep validating emitted frame metadata even though it is now consumed
+    // only by model.c at runtime initialization, not by runtime compilation.
+    let _ = model_stack_values(extra)?;
     let mut sources: Vec<&str> = extra
         .iter()
         .map(|(name, _)| *name)
@@ -397,10 +460,15 @@ fn write_cmakelists(
     if waveform {
         sources.extend(["llg_wave.c", "fstapi.c", "fastlz.c", "lz4.c"]);
     }
+    let model_sources: Vec<&str> = extra
+        .iter()
+        .map(|(name, _)| *name)
+        .filter(|name| name.ends_with(".c") || name.ends_with(".S"))
+        .collect();
     let cmakelists = CMAKELISTS_TEMPLATE
-        .replace("{SOURCES}", &sources.join(" "))
+        .replace("{MODEL_SOURCES}", &model_sources.join(" "))
+        .replace("{ALL_SOURCES}", &sources.join(" "))
         .replace("{MODEL_WIDTH}", &model_capacity(extra)?.to_string())
-        .replace("{STACK_VALUES}", &model_stack_values(extra)?.to_string())
         .replace("{WAVE_SETUP}", if waveform { WAVE_CMAKE } else { "" })
         .replace("{DPI_LINK}", &dpi_link_setup(opts)?);
     let cmakelists_path = out_dir.join("CMakeLists.txt");
@@ -477,6 +545,312 @@ fn dpi_link_setup(opts: &CmakeBuildOpts) -> Result<String, BuildError> {
         .collect::<Vec<_>>()
         .join(" ");
     Ok(format!("target_link_libraries(sim PRIVATE {libraries})"))
+}
+
+/// Build or reuse the immutable runtime archive for one value-layout ABI.
+///
+/// The packed width remains part of `sv4_t`'s C layout, so it is necessarily
+/// part of the cache key. Stack headroom is deliberately absent: generated
+/// model code passes that value to `llg_rt_init_with_stack` at runtime.
+fn prepare_runtime_cache(
+    width: u32,
+    waveform: bool,
+    cc: &str,
+    flags: &str,
+    cmake_prog: &str,
+    opts: &CmakeBuildOpts,
+) -> Result<PathBuf, BuildError> {
+    let key = runtime_cache_key(width, waveform, cc, flags, cmake_prog, opts);
+    let cache_root = runtime_cache_root();
+    let entry = cache_root.join(key);
+    if let Some(library) = cached_runtime_library(&entry) {
+        return Ok(library);
+    }
+
+    std::fs::create_dir_all(&cache_root).map_err(|source| BuildError::Io {
+        action: "create runtime cache",
+        path: cache_root.clone(),
+        source,
+    })?;
+    let _lock = RuntimeCacheLock::acquire(&entry)?;
+    if let Some(library) = cached_runtime_library(&entry) {
+        return Ok(library);
+    }
+
+    std::fs::create_dir_all(&entry).map_err(|source| BuildError::Io {
+        action: "create runtime cache entry",
+        path: entry.clone(),
+        source,
+    })?;
+    let ready_path = entry.join("ready");
+    match std::fs::remove_file(&ready_path) {
+        Ok(()) => {}
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(source) => {
+            return Err(BuildError::Io {
+                action: "clear incomplete runtime cache marker",
+                path: ready_path,
+                source,
+            });
+        }
+    }
+    super::write_sim_sources(&entry, &[])?;
+    if waveform {
+        super::rt::write_waveform_sources(&entry)?;
+    }
+    let runtime_sources = runtime_source_names(waveform).join(" ");
+    let cmakelists = RUNTIME_CMAKELISTS_TEMPLATE
+        .replace("{RUNTIME_SOURCES}", &runtime_sources)
+        .replace("{MODEL_WIDTH}", &width.to_string())
+        .replace(
+            "{WAVE_DEFINITION}",
+            if waveform {
+                RUNTIME_WAVE_DEFINITION
+            } else {
+                ""
+            },
+        );
+    let cmakelists_path = entry.join("CMakeLists.txt");
+    std::fs::write(&cmakelists_path, cmakelists).map_err(|source| BuildError::Io {
+        action: "write runtime cache project",
+        path: cmakelists_path,
+        source,
+    })?;
+
+    let build_dir = entry.join("build");
+    if build_dir.exists() {
+        match cached_generator(&build_dir) {
+            None => remove_dir_all_quiet(&build_dir),
+            Some(cached) => {
+                if generator_for(opts).is_some_and(|requested| requested != cached) {
+                    remove_dir_all_quiet(&build_dir);
+                }
+            }
+        }
+    }
+
+    let mut configure = Command::new(cmake_prog);
+    configure.arg("-S").arg(&entry).arg("-B").arg(&build_dir);
+    if let Some(generator) = generator_for(opts) {
+        configure.arg("-G").arg(generator);
+    }
+    configure
+        .arg(format!("-DCMAKE_C_COMPILER={cc}"))
+        .arg(format!("-DCMAKE_C_FLAGS:STRING={flags}"))
+        .arg(format!(
+            "-DCMAKE_C_COMPILER_LAUNCHER={}",
+            opts.launcher.as_deref().unwrap_or("")
+        ));
+    let launch_error = |source| BuildError::CmakeLaunch {
+        program: cmake_prog.to_owned(),
+        source,
+    };
+    let mut output = configure.output().map_err(&launch_error)?;
+    if !output.status.success() {
+        remove_dir_all_quiet(&build_dir);
+        output = configure.output().map_err(&launch_error)?;
+    }
+    if !output.status.success() {
+        return Err(BuildError::Configure {
+            command: format!("{configure:?}"),
+            output: output_tail(&output),
+        });
+    }
+
+    let mut build = Command::new(cmake_prog);
+    build
+        .arg("--build")
+        .arg(&build_dir)
+        .arg("--config")
+        .arg("Release")
+        .arg("--target")
+        .arg("llg_runtime");
+    let output = build.output().map_err(launch_error)?;
+    if !output.status.success() {
+        return Err(BuildError::Compile {
+            output: output_tail(&output),
+        });
+    }
+    let library =
+        find_runtime_library(&build_dir).ok_or_else(|| BuildError::RuntimeLibraryNotFound {
+            directory: build_dir.clone(),
+        })?;
+    std::fs::write(&ready_path, b"ready\n").map_err(|source| BuildError::Io {
+        action: "mark runtime cache ready",
+        path: ready_path,
+        source,
+    })?;
+    Ok(library)
+}
+
+fn runtime_source_names(waveform: bool) -> Vec<&'static str> {
+    let mut sources = vec![
+        "llg_value.c",
+        "llg_rng.c",
+        "llg_rt.c",
+        "llg_random.c",
+        "llg_vpi.c",
+        "aco.c",
+        "acosw.S",
+        "llg_container.c",
+        "llg_string.c",
+    ];
+    if waveform {
+        sources.extend(["llg_wave.c", "fstapi.c", "fastlz.c", "lz4.c"]);
+    }
+    sources
+}
+
+fn runtime_cache_root() -> PathBuf {
+    if let Some(path) = std::env::var_os("LLG_RUNTIME_CACHE_DIR") {
+        return PathBuf::from(path);
+    }
+    if let Some(path) = std::env::var_os("XDG_CACHE_HOME") {
+        return PathBuf::from(path).join("lapligence/runtime");
+    }
+    if let Some(path) = std::env::var_os("LOCALAPPDATA") {
+        return PathBuf::from(path).join("Lapligence/runtime");
+    }
+    if let Some(path) = std::env::var_os("HOME") {
+        let path = PathBuf::from(path);
+        return if cfg!(target_os = "macos") {
+            path.join("Library/Caches/Lapligence/runtime")
+        } else {
+            path.join(".cache/lapligence/runtime")
+        };
+    }
+    PathBuf::from(env!("OUT_DIR")).join("sim-runtime-cache")
+}
+
+fn runtime_cache_key(
+    width: u32,
+    waveform: bool,
+    cc: &str,
+    flags: &str,
+    cmake_prog: &str,
+    opts: &CmakeBuildOpts,
+) -> String {
+    let mut hash = 0xcbf29ce484222325u64;
+    let compiler = compiler_identity(cc);
+    let generator = generator_for(opts).unwrap_or_default();
+    for text in [
+        RUNTIME_CMAKELISTS_TEMPLATE,
+        RUNTIME_WAVE_DEFINITION,
+        super::rt::runtime_sources().0,
+        super::rt::runtime_sources().1,
+        super::rt::value_sources().0,
+        super::rt::value_sources().1,
+        super::rt::random_sources().0,
+        super::rt::random_sources().1,
+        super::rt::rng_sources().0,
+        super::rt::rng_sources().1,
+        super::rt::vpi_sources().0,
+        super::rt::vpi_sources().1,
+        super::rt::vpi_bridge_header(),
+        super::rt::container_sources().0,
+        super::rt::container_sources().1,
+        super::rt::string_sources().0,
+        super::rt::string_sources().1,
+        super::rt::libaco_sources().0,
+        super::rt::libaco_sources().1,
+        super::rt::libaco_sources().2,
+        include_str!("../../vendor/libaco/aco_assert_override.h"),
+        include_str!("../../vendor/slang/external/ieee1800/svdpi.h"),
+        cc,
+        flags,
+        cmake_prog,
+        &compiler,
+        &generator,
+        opts.launcher.as_deref().unwrap_or(""),
+        std::env::consts::OS,
+        std::env::consts::ARCH,
+    ] {
+        for byte in text.as_bytes() {
+            hash ^= u64::from(*byte);
+            hash = hash.wrapping_mul(0x100000001b3);
+        }
+    }
+    if waveform {
+        for (_, source) in super::rt::waveform_sources() {
+            for byte in source.as_bytes() {
+                hash ^= u64::from(*byte);
+                hash = hash.wrapping_mul(0x100000001b3);
+            }
+        }
+    }
+    format!("w{width}-wave{}-{hash:016x}", u8::from(waveform))
+}
+
+fn compiler_identity(cc: &str) -> String {
+    let mut identity = cc.to_owned();
+    for argument in ["--version", "-dumpmachine"] {
+        if let Ok(output) = Command::new(cc).arg(argument).output() {
+            identity.push('\n');
+            identity.push_str(&String::from_utf8_lossy(&output.stdout));
+            identity.push_str(&String::from_utf8_lossy(&output.stderr));
+        }
+    }
+    identity
+}
+
+fn find_runtime_library(build_dir: &Path) -> Option<PathBuf> {
+    let mut found = Vec::new();
+    collect_named_files(build_dir, "libllg_runtime.a", &mut found);
+    collect_named_files(build_dir, "llg_runtime.lib", &mut found);
+    found.sort();
+    found.into_iter().next()
+}
+
+fn cached_runtime_library(entry: &Path) -> Option<PathBuf> {
+    entry
+        .join("ready")
+        .is_file()
+        .then(|| find_runtime_library(&entry.join("build")))
+        .flatten()
+}
+
+struct RuntimeCacheLock {
+    path: PathBuf,
+}
+
+impl RuntimeCacheLock {
+    fn acquire(entry: &Path) -> Result<Self, BuildError> {
+        let path = entry.with_extension("lock");
+        let started = Instant::now();
+        loop {
+            match std::fs::create_dir(&path) {
+                Ok(()) => return Ok(Self { path }),
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+                    let stale = std::fs::metadata(&path)
+                        .and_then(|metadata| metadata.modified())
+                        .ok()
+                        .and_then(|modified| SystemTime::now().duration_since(modified).ok())
+                        .is_some_and(|age| age > RUNTIME_CACHE_STALE_AFTER);
+                    if stale {
+                        remove_dir_all_quiet(&path);
+                        continue;
+                    }
+                    if started.elapsed() > RUNTIME_CACHE_LOCK_TIMEOUT {
+                        return Err(BuildError::RuntimeCacheLock { directory: path });
+                    }
+                    std::thread::sleep(RUNTIME_CACHE_LOCK_POLL);
+                }
+                Err(source) => {
+                    return Err(BuildError::Io {
+                        action: "lock runtime cache",
+                        path,
+                        source,
+                    });
+                }
+            }
+        }
+    }
+}
+
+impl Drop for RuntimeCacheLock {
+    fn drop(&mut self) {
+        remove_dir_all_quiet(&self.path);
+    }
 }
 
 fn model_capacity(extra: &[(&str, &str)]) -> Result<u32, BuildError> {
@@ -695,6 +1069,32 @@ mod tests {
         ])
         .is_err());
         assert!(model_stack_values(&[("a.c", "#define LLG_MODEL_STACK_VALUES 0\n")]).is_err());
+    }
+
+    #[test]
+    fn runtime_cache_key_varies_with_abi_and_toolchain_options() {
+        let defaults = CmakeBuildOpts::default();
+        let base = runtime_cache_key(64, false, "cc", "-O2", "cmake", &defaults);
+        assert_eq!(
+            base,
+            runtime_cache_key(64, false, "cc", "-O2", "cmake", &defaults)
+        );
+        assert_ne!(
+            base,
+            runtime_cache_key(128, false, "cc", "-O2", "cmake", &defaults)
+        );
+        assert_ne!(
+            base,
+            runtime_cache_key(64, true, "cc", "-O2", "cmake", &defaults)
+        );
+        let launched = CmakeBuildOpts {
+            launcher: Some("ccache".to_owned()),
+            ..Default::default()
+        };
+        assert_ne!(
+            base,
+            runtime_cache_key(64, false, "cc", "-O2", "cmake", &launched)
+        );
     }
 
     #[test]

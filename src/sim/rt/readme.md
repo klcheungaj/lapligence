@@ -1,7 +1,7 @@
 # `sim/rt`
 
-- **Purpose:** embedded C11 runtime sources compiled into each generated model;
-  they are not linked into Rust binaries.
+- **Purpose:** embedded C11 runtime sources compiled into cached static archives
+  for generated models; they are not linked into Rust binaries.
 - **Value layer:** `llg_value.h/.c` implements model-width four-state values,
   operations, resolution, formatting, and numeric conversions.
 - **Legacy random layer:** `llg_random.h/.c` implements Verilog-2001
@@ -164,7 +164,8 @@
   headers expressed in the exact femtosecond tick unit; `gtkwave/`
   contains the pinned FST sources; libaco sources provide model coroutines.
 - **Embedding:** `mod.rs` exposes source pairs; `sim::build` writes them with
-  generated model sources and builds them with CMake.
+  generated model sources, caches compatible runtime archives, and builds with
+  CMake. Generated source-only projects remain self-contained.
 - **Checks:** standalone value/random/container runtime probes and Rust
   integration tests cover the runtime boundary.
 

@@ -5,7 +5,7 @@
 //! ```text
 //! llg [generate options] [build options] <file.sv>... [-- <plusargs>...]
 //! generate: --top <module>  --edition <2001|2009>  --compilation-units <separate|merged>  --include-dir <path>  --define <NAME[=VALUE]>  --define-system-task <prototype>  --lint  --lint-json [<path>]  --lint-config <file>  --gen-only  --no-opt  --stop-policy <resume|exit>
-//! build:    --generator <backend>  --dpi-lib <path>...  # CMake generator and DPI-C libraries
+//! build:    --generator <backend>  --launcher <program>  --dpi-lib <path>...
 //! ```
 //!
 //! `--lint` runs the shared linter (`core::lint`) over the compiled design
@@ -35,7 +35,9 @@
 //!   `$LLG_CFLAGS`).
 //! - `--generator <backend>` selects cmake's generator backend (`-G`,
 //!   e.g. `Ninja`, `"Unix Makefiles"`); it overrides `$CMAKE_GENERATOR`.
-//!   Ignored with a warning when combined with `--gen-only`.
+//! - `--launcher <program>` selects `CMAKE_C_COMPILER_LAUNCHER` (for example,
+//!   `ccache` or `sccache`). No launcher is selected by default.
+//!   Build options are ignored with a warning when combined with `--gen-only`.
 //! - `--gen-only` stops after emitting the model + runtime +
 //!   `CMakeLists.txt` into `target/sim/<design>` (prints the directory,
 //!   exits 0) without configuring/building/running.
@@ -68,6 +70,7 @@ struct DriverOptions {
     lint_config_path: Option<PathBuf>,
     generator: Option<String>,
     dpi_libraries: Vec<PathBuf>,
+    launcher: Option<String>,
     gen_only: bool,
     no_opt: bool,
     stop_policy: StopPolicy,
@@ -113,7 +116,7 @@ fn parse_args(args: Vec<String>) -> Result<DriverOptions, i32> {
         eprintln!(
             "usage: llg [generate options] [build options] <file.sv>... [-- <plusargs>...]\n\
              generate: --top <module>  --edition <2001|2009>  --compilation-units <separate|merged>  --include-dir <path>  --define <NAME[=VALUE]>  --define-system-task <prototype>  --lint  --lint-json [<path>]  --lint-config <file>  --gen-only  --no-opt\n\
-             build:    --generator <backend>  --dpi-lib <path>...  # CMake generator and DPI-C libraries
+             build:    --generator <backend>  --launcher <program>  --dpi-lib <path>...\n\
              stop:     --stop-policy <resume|exit>  # `$stop` handling (default: resume)"
         );
         return Err(2);
@@ -133,6 +136,7 @@ fn parse_args(args: Vec<String>) -> Result<DriverOptions, i32> {
     let mut lint_config_path: Option<PathBuf> = None;
     let mut generator: Option<String> = None;
     let mut dpi_libraries: Vec<PathBuf> = Vec::new();
+    let mut launcher: Option<String> = None;
     let mut gen_only = false;
     let mut no_opt = false;
     let mut stop_policy = StopPolicy::Resume;
@@ -169,6 +173,7 @@ Options:
                               Handle `$stop` by resuming (default) or exiting
       --                    Pass remaining arguments to the generated simulator
       --generator <backend>  Select the CMake generator
+      --launcher <program>   Select the CMake C compiler launcher
       --dpi-lib <path>       Link one explicit DPI-C library (repeatable)"
                 );
                 return Err(0);
@@ -239,6 +244,13 @@ Options:
                     return Err(2);
                 }
             },
+            "--launcher" => match it.next() {
+                Some(value) if !value.is_empty() => launcher = Some(value),
+                _ => {
+                    eprintln!("llg: --launcher requires a program name");
+                    return Err(2);
+                }
+            },
             "--gen-only" | "-gen-only" => gen_only = true,
             "--no-opt" => no_opt = true,
             "--stop-policy" => match it.next() {
@@ -296,6 +308,7 @@ Options:
         lint_config_path,
         generator,
         dpi_libraries,
+        launcher,
         gen_only,
         no_opt,
         stop_policy,
@@ -318,6 +331,7 @@ fn run(options: DriverOptions) -> i32 {
         lint_config_path,
         generator,
         dpi_libraries,
+        launcher,
         gen_only,
         no_opt,
         stop_policy,
@@ -483,12 +497,13 @@ fn run(options: DriverOptions) -> i32 {
     let out_dir = PathBuf::from("target/sim").join(gen_name(&gen));
     let model = [("model.c", gen.model_c.as_str())];
     if gen_only {
-        if generator.is_some() {
-            eprintln!("llg: warning: --generator ignored with --gen-only");
+        if generator.is_some() || launcher.is_some() {
+            eprintln!("llg: warning: build options ignored with --gen-only");
         }
         let opts = sim::build::CmakeBuildOpts {
             generator: None,
             dpi_libraries,
+            launcher: None,
         };
         if let Err(e) = sim::build::generate_model_sources_with_opts(&out_dir, &model, &opts) {
             eprintln!("llg: {e}");
@@ -502,6 +517,7 @@ fn run(options: DriverOptions) -> i32 {
     let opts = sim::build::CmakeBuildOpts {
         generator,
         dpi_libraries,
+        launcher,
     };
     let exe = match sim::build::build_model_cmake_with_opts(&out_dir, &model, &opts) {
         Ok(e) => e,

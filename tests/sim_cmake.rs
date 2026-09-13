@@ -1,6 +1,6 @@
 //! Integration tests for the CMake-based model builder (`sim::build`) — the
 //! only supported model-build path — and the `llg` driver's build-time
-//! `--generator` flag.
+//! generator/launcher options.
 //!
 //! The
 //! library-level cases run with the CWD pointed at a fresh harness temp dir;
@@ -105,6 +105,8 @@ fn generated_sources_keep_value_runtime_as_a_separate_translation_unit() {
     let cmake = std::fs::read_to_string(dir.path().join("CMakeLists.txt")).unwrap();
     assert!(cmake
         .contains("model.c llg_value.c llg_rng.c llg_rt.c llg_random.c llg_vpi.c aco.c acosw.S"));
+    assert!(cmake.contains("if(LLG_RUNTIME_LIBRARY)"));
+    assert!(!cmake.contains("target_compile_definitions(sim PRIVATE LLG_MODEL_STACK_VALUES"));
     let (runtime_header, runtime_source) = sim::rt::runtime_sources();
     assert!(runtime_header.contains("#include \"llg_value.h\""));
     assert!(!runtime_source.contains("#include \"llg_value.c\""));
@@ -196,6 +198,39 @@ fn explicit_generator_build_and_run() {
 
     let stdout = result.expect("explicit-generator simulation should run");
     assert_eq!(stdout, EXPECTED_STDOUT);
+}
+
+/// A caller-provided compiler launcher reaches both the cached runtime build
+/// and the per-model compile. POSIX `env` is a transparent executable launcher
+/// and avoids requiring an optional compiler-cache package on test hosts.
+#[cfg(unix)]
+#[test]
+fn explicit_launcher_build_and_run() {
+    let _guard = TEST_LOCK.lock().unwrap();
+    if !sim::build::cmake_available() {
+        eprintln!("SKIP: cmake not available");
+        return;
+    }
+    let dir = fresh_dir("explicit-launcher");
+    let result = sim_harness::with_cwd(dir.path(), || {
+        let generated = compile_counter(dir.path())?;
+        let opts = sim::build::CmakeBuildOpts {
+            launcher: Some("env".to_owned()),
+            ..Default::default()
+        };
+        let executable = sim::build::build_model_cmake_with_opts(
+            dir.path(),
+            &[("model.c", generated.model_c.as_str())],
+            &opts,
+        )
+        .map_err(|error| format!("cmake build: {error}"))?;
+        run_sim(&executable)
+    });
+
+    assert_eq!(
+        result.expect("launcher-built simulation should run"),
+        EXPECTED_STDOUT
+    );
 }
 
 /// An unsupported generator name must surface as a clear error from the

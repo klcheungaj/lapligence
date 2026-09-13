@@ -22,9 +22,7 @@
 #include <errno.h>
 
 // Generated budgets include function frames through the recursion guard.
-#ifndef LLG_MODEL_STACK_VALUES
-#define LLG_MODEL_STACK_VALUES 256u
-#endif
+#define LLG_DEFAULT_STACK_VALUES 256u
 
 // `%t` renders into the same bounded buffers as other display conversions.
 // Keep the runtime precision below that capacity so a runtime argument cannot
@@ -60,6 +58,8 @@ static void* llg_checked_calloc(size_t count, size_t size, const char* what) {
     return ptr;
 }
 
+static size_t llg_stack_values = LLG_DEFAULT_STACK_VALUES;
+
 static void llg_fmt_args_destroy(llg_fmt_arg_t* args, int n);
 static size_t llg_format_time_integer(sv4_t value, uint64_t source_unit_fs,
                                       char* raw, size_t cap);
@@ -89,9 +89,9 @@ static const char* llg_parse_legacy_spec(const char* p, int* has_width,
 
 static size_t llg_coroutine_stack_size(void) {
     const size_t base = 4u << 20;
-    if (LLG_MODEL_STACK_VALUES > (SIZE_MAX - base) / sizeof(sv4_t))
-        llg_fatal_allocation("coroutine stack", LLG_MODEL_STACK_VALUES, sizeof(sv4_t));
-    return base + (size_t)LLG_MODEL_STACK_VALUES * sizeof(sv4_t);
+    if (llg_stack_values > (SIZE_MAX - base) / sizeof(sv4_t))
+        llg_fatal_allocation("coroutine stack", llg_stack_values, sizeof(sv4_t));
+    return base + llg_stack_values * sizeof(sv4_t);
 }
 
 static int llg_sv4_nlimbs(uint32_t width) {

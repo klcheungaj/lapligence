@@ -62,6 +62,7 @@ fn simulator_information_exits_without_compiling_or_installing_memory_limits() {
     assert!(String::from_utf8_lossy(&output.stdout).contains("--define <NAME[=VALUE]>"));
     assert!(String::from_utf8_lossy(&output.stdout).contains("--define-system-task <prototype>"));
     assert!(String::from_utf8_lossy(&output.stdout).contains("--stop-policy <resume|exit>"));
+    assert!(String::from_utf8_lossy(&output.stdout).contains("--launcher"));
 }
 
 #[cfg(feature = "lsp")]
@@ -72,10 +73,18 @@ fn server_information_exits_without_serving_or_logging() {
 
 #[test]
 fn simulator_missing_option_value_is_a_usage_error() {
-    let output = invoke(env!("CARGO_BIN_EXE_llg"), &["--generator"]);
-    assert_eq!(output.status.code(), Some(2), "{output:?}");
-    assert!(output.stdout.is_empty(), "{output:?}");
-    assert!(String::from_utf8_lossy(&output.stderr).contains("requires a backend name"));
+    for (option, diagnostic) in [
+        ("--generator", "requires a backend name"),
+        ("--launcher", "requires a program name"),
+    ] {
+        let output = invoke(env!("CARGO_BIN_EXE_llg"), &[option]);
+        assert_eq!(output.status.code(), Some(2), "{output:?}");
+        assert!(output.stdout.is_empty(), "{output:?}");
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains(diagnostic),
+            "{output:?}"
+        );
+    }
 }
 
 #[test]

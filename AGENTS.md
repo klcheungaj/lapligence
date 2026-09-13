@@ -47,7 +47,7 @@ map](docs/source_layout.md) locates implementation domains.
   feature and the bin's `required-features = ["lsp"]`. `cargo build --lib --no-default-features`
   must work without them.
 - Bins import `llg::core`, `llg::ffi`, and `llg::sim`; no `#[path]` includes. libaco sources are
-  embedded and compiled with generated C models, never linked into Rust binaries.
+  embedded in the cached generated-model runtime archive, never linked into Rust binaries.
 
 ## Build and references
 

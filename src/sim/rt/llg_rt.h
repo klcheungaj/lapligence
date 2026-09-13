@@ -337,6 +337,15 @@ void llg_rt_init_with_precision(uint64_t precision_fs);
 // precision. The runtime borrows `argv` for the duration of the simulation.
 void llg_rt_init_with_args_and_precision(int argc, char** argv,
                                          uint64_t precision_fs);
+// Initialize with model-specific coroutine stack headroom. The value counts
+// maximum-width sv4_t slots and is kept out of the runtime's compiled ABI so
+// one runtime archive can serve models with different frame requirements.
+void llg_rt_init_with_stack(size_t stack_values);
+// Combine command-line arguments, scheduler precision, and model-specific
+// coroutine stack headroom for generated models.
+void llg_rt_init_with_args_precision_and_stack(int argc, char** argv,
+                                               uint64_t precision_fs,
+                                               size_t stack_values);
 // Release all runtime-owned scheduler, coroutine, fork-group, monitor and
 // strobe allocations. Call only when no runtime coroutine is executing; init
 // and run invoke it automatically. Repeated calls are safe.

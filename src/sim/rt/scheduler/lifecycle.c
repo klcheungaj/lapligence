@@ -312,8 +312,9 @@ void llg_rt_cleanup(void) {
     }
 }
 
-void llg_rt_init_with_args_and_precision(int argc, char** argv,
-                                         uint64_t precision_fs) {
+void llg_rt_init_with_args_precision_and_stack(int argc, char** argv,
+                                               uint64_t precision_fs,
+                                               size_t stack_values) {
     llg_clear_final_timeformat();
     llg_rt_cleanup();
     llg_last_failure = 0;
@@ -331,6 +332,14 @@ void llg_rt_init_with_args_and_precision(int argc, char** argv,
         g.config_error = 1;
         return;
     }
+    if (stack_values == 0) {
+        fprintf(stderr, "llg: runtime coroutine stack value count must be non-zero\n");
+        llg_last_failure = 1;
+        llg_last_config_error = 1;
+        g.config_error = 1;
+        return;
+    }
+    llg_stack_values = stack_values;
     llg_timeformat_defaults(precision_fs);
     if (!configure_limits() || !configure_stop_policy()) {
         llg_last_failure = 1;
@@ -348,6 +357,16 @@ void llg_rt_init_with_args_and_precision(int argc, char** argv,
     aco_thread_init(llg_last_word);
     g.main_co = aco_create(NULL, NULL, 0, NULL, NULL);
     g.share_stack = aco_share_stack_new(llg_coroutine_stack_size());
+}
+
+void llg_rt_init_with_args_and_precision(int argc, char** argv,
+                                         uint64_t precision_fs) {
+    llg_rt_init_with_args_precision_and_stack(
+        argc, argv, precision_fs, LLG_DEFAULT_STACK_VALUES);
+}
+
+void llg_rt_init_with_stack(size_t stack_values) {
+    llg_rt_init_with_args_precision_and_stack(0, NULL, 1, stack_values);
 }
 
 void llg_rt_init_with_args(int argc, char** argv) {

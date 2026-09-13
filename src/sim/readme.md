@@ -5,8 +5,9 @@
   - `codegen.rs` exposes lowering from the owned `core::db` design to typed IR.
   - `opt.rs` applies conservative IR transformations.
   - `emit_c.rs` renders validated IR as C11.
-  - `build.rs` builds the generated model with CMake, the embedded runtime, and
-    libaco sources from `rt/`.
+  - `build.rs` builds the generated model with CMake and links a cached static
+    runtime archive; source-only output includes the runtime and libaco sources
+    from `rt/`.
 - Concurrent assertions are lowered into dedicated assertion instances rather
   than ordinary process statements; their packed predicates sample in
   Preponed, attempts resolve in Observed, and action processes run in Reactive.
@@ -15,8 +16,8 @@
   compatible clock/disable metadata; unsupported temporal forms remain
   source-located failures.
 - **Runtime:** `rt/` supplies value operations, scheduling, strings, containers,
-  optional waveforms, and coroutine support. It is compiled with each model and
-  is not linked into the Rust binaries.
+  optional waveforms, and coroutine support. Compatible models reuse its cached
+  static archive; it is not linked into the Rust binaries.
 - **Real scheduling:** Scalar `real`/`shortreal` writes use typed double
   dependency identities, so legal wait, event, combinational, and port paths
   observe changed values without packed-vector coercion. Signed-zero and NaN

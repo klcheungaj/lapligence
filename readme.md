@@ -200,8 +200,15 @@ Common options:
 - `--lint-config <file>`: load rule settings from a TOML file.
 - `--gen-only`: generate C11 sources and `CMakeLists.txt` without building.
 - `--generator <name>`: choose a CMake generator, such as `Ninja`.
+- `--launcher <program>`: optionally set CMake's C compiler launcher, such as
+  `ccache` or `sccache`; no launcher is selected by default.
 - `--`: pass the remaining arguments to the generated simulator for
   `$test$plusargs`/`$value$plusargs` (for example, `llg tb.sv -- +mode=fast`).
+
+Normal builds cache compatible C runtime archives in the platform user cache,
+so generated models usually compile only their model-specific C file. Set
+`LLG_RUNTIME_CACHE_DIR` to choose a different cache root. `--gen-only` output
+remains self-contained and does not require that cache.
 
 Exit status is `0` on success, `1` on compile/lint/build errors, and `2` for
 invalid command-line usage. A completed simulator's exit status is propagated.

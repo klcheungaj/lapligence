@@ -165,10 +165,12 @@ selected range contributes; lowering rejects dynamic net selectors.
   - `selftest_source()` → `llg_rt_selftest.c`.
   - `waveform_sources()` / `waveform_selftest_source()` → the optional waveform runtime, libfst
     snapshot, and standalone waveform self-test.
-- `sim::build::generate_model_sources` / `build_model_cmake[_with_opts]` write the runtime +
-  libaco sources (plus `aco_assert_override.h`) and the extra sources (generated model or
-  selftest) into a build directory and build them with CMake, so libaco is compiled together
-  with the model at model-build time.
+- `sim::build::generate_model_sources` writes the runtime + libaco sources (plus
+  `aco_assert_override.h`) and generated model into a self-contained source tree.
+  `build_model_cmake[_with_opts]` compiles or reuses a compatible runtime archive
+  and links model-specific sources against it. The generated model passes stack
+  headroom through `llg_rt_init_with_args_precision_and_stack` because stack size
+  is model-specific and is not part of the runtime archive ABI.
 
 ## Requirements
 
@@ -203,10 +205,10 @@ selected range contributes; lowering rejects dynamic net selectors.
 ## Interactions
 
 - Above: `src/sim/codegen/` selects runtime operations in IR and `src/sim/emit_c/` emits calls
-  into the runtime API; `src/bin/llg.rs` (builds model + runtime + libaco via `sim::build`),
+  into the runtime API; `src/bin/llg.rs` (builds the model and cached runtime via `sim::build`),
   `tests/sim_counter.rs` (`sim_rt_selftest`).
-- Below: `vendor/libaco` (coroutine library, embedded and compiled with the model, never linked
-  into Rust).
+- Below: `vendor/libaco` (coroutine library, embedded in the cached runtime archive, never
+  linked into Rust).
 
 ## Retained references and sequence endpoints
 
