@@ -115,3 +115,162 @@ fn null_class_handle_access_fails_at_runtime_in_both_optimizer_modes() {
     })
     .expect("null class fixture should report a runtime failure");
 }
+
+#[test]
+fn inherited_virtual_methods_casts_and_specializations_match_across_optimizer_modes() {
+    if !sim::build::cmake_available() {
+        eprintln!("SKIP: cmake not available");
+        return;
+    }
+
+    let expected = concat!(
+        "dispatch=28 static=4 base_field=3 super=14\n",
+        "widths=15/170\n",
+        "constructors=2/7\n",
+        "cast=1 down=28\n",
+        "bad_cast=0 bad_null=0\n",
+        "null_cast=0 null=0\n",
+        "null_literal_cast=0 null=0\n",
+    );
+    with_compiled_fixture(
+        "inheritance.sv",
+        "tb",
+        "classes-inheritance",
+        |dir, database| {
+            let mut outputs = Vec::new();
+            for (variant, options) in [
+                ("unoptimized", OptConfig::none()),
+                ("optimized", OptConfig::default()),
+            ] {
+                let generated = sim::codegen::generate_from_db_with_opts(database, &options)
+                    .map_err(|error| format!("{variant} lowering: {error}"))?;
+                let executable = sim::build::build_model_cmake(
+                    &dir.join(variant),
+                    &[("model.c", generated.model_c.as_str())],
+                )
+                .map_err(|error| format!("{variant} C model build: {error}"))?;
+                let actual = sim_harness::run_executable(&executable)
+                    .map_err(|error| format!("{variant} execution: {error}"))?;
+                if actual != expected {
+                    return Err(format!("{variant}: expected {expected:?}, got {actual:?}"));
+                }
+                outputs.push(actual);
+            }
+            if outputs[0] != outputs[1] {
+                return Err("optimizer changed inherited class semantics".to_owned());
+            }
+            Ok(())
+        },
+    )
+    .expect("inheritance fixture should compile, build, and execute");
+}
+
+#[test]
+fn pure_virtual_and_out_of_block_methods_match_across_optimizer_modes() {
+    if !sim::build::cmake_available() {
+        eprintln!("SKIP: cmake not available");
+        return;
+    }
+
+    let expected = "direct=11 dynamic=13\n";
+    with_compiled_fixture(
+        "pure_virtual.sv",
+        "tb",
+        "classes-pure-virtual",
+        |dir, database| {
+            let mut outputs = Vec::new();
+            for (variant, options) in [
+                ("unoptimized", OptConfig::none()),
+                ("optimized", OptConfig::default()),
+            ] {
+                let generated = sim::codegen::generate_from_db_with_opts(database, &options)
+                    .map_err(|error| format!("{variant} lowering: {error}"))?;
+                let executable = sim::build::build_model_cmake(
+                    &dir.join(variant),
+                    &[("model.c", generated.model_c.as_str())],
+                )
+                .map_err(|error| format!("{variant} C model build: {error}"))?;
+                let actual = sim_harness::run_executable(&executable)
+                    .map_err(|error| format!("{variant} execution: {error}"))?;
+                if actual != expected {
+                    return Err(format!("{variant}: expected {expected:?}, got {actual:?}"));
+                }
+                outputs.push(actual);
+            }
+            if outputs[0] != outputs[1] {
+                return Err("optimizer changed pure virtual class semantics".to_owned());
+            }
+            Ok(())
+        },
+    )
+    .expect("pure virtual fixture should compile, build, and execute");
+}
+
+#[test]
+fn forward_class_typedef_and_const_property_match_across_optimizer_modes() {
+    if !sim::build::cmake_available() {
+        eprintln!("SKIP: cmake not available");
+        return;
+    }
+
+    let expected = "value=6\n";
+    with_compiled_fixture(
+        "forward_const.sv",
+        "tb",
+        "classes-forward-const",
+        |dir, database| {
+            for (variant, options) in [
+                ("unoptimized", OptConfig::none()),
+                ("optimized", OptConfig::default()),
+            ] {
+                let generated = sim::codegen::generate_from_db_with_opts(database, &options)
+                    .map_err(|error| format!("{variant} lowering: {error}"))?;
+                let executable = sim::build::build_model_cmake(
+                    &dir.join(variant),
+                    &[("model.c", generated.model_c.as_str())],
+                )
+                .map_err(|error| format!("{variant} C model build: {error}"))?;
+                let actual = sim_harness::run_executable(&executable)
+                    .map_err(|error| format!("{variant} execution: {error}"))?;
+                if actual != expected {
+                    return Err(format!("{variant}: expected {expected:?}, got {actual:?}"));
+                }
+            }
+            Ok(())
+        },
+    )
+    .expect("forward typedef/const fixture should compile, build, and execute");
+}
+
+#[test]
+fn abstract_class_construction_is_rejected_by_frontend() {
+    let source_fixture = fixture("abstract_new.sv");
+    sim_harness::with_frontend_temp_cwd("classes-abstract-new", |dir| {
+        let source = dir.join("abstract_new.sv");
+        std::fs::copy(&source_fixture, &source)
+            .map_err(|error| format!("copy fixture: {error}"))?;
+        let error = compile::compile_checked(&compile::CompileOpts {
+            files: vec![source.to_string_lossy().into_owned()],
+            top: Some("tb".to_owned()),
+            ..Default::default()
+        })
+        .expect_err("constructing a virtual class must be rejected");
+        let diagnostics = error
+            .diagnostics()
+            .map(|diagnostics| {
+                diagnostics
+                    .iter()
+                    .map(|diagnostic| diagnostic.message.as_str())
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            })
+            .unwrap_or_else(|| error.to_string());
+        if !diagnostics.contains("cannot create instance of virtual class") {
+            return Err(format!(
+                "unexpected abstract-class diagnostic: {diagnostics}"
+            ));
+        }
+        Ok(())
+    })
+    .expect("abstract class construction should produce a frontend diagnostic");
+}

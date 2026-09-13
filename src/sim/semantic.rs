@@ -1487,6 +1487,7 @@ mod tests {
                 NodeKind::FuncCall {
                     name: "f".into(),
                     is_task: false,
+                    is_super: false,
                     callee: Some(NodeId(2)),
                 },
                 Some(NodeId(0)),
@@ -1497,6 +1498,10 @@ mod tests {
                     is_task: false,
                     automatic: true,
                     is_static: false,
+                    is_virtual: false,
+                    is_pure: false,
+                    is_final: false,
+                    is_constructor: false,
                     ret: None,
                     body: Some(NodeId(3)),
                 },
@@ -1512,6 +1517,7 @@ mod tests {
                 NodeKind::FuncCall {
                     name: "f".into(),
                     is_task: false,
+                    is_super: false,
                     callee: Some(NodeId(2)),
                 },
                 Some(NodeId(3)),

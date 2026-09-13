@@ -2175,6 +2175,24 @@ fn render_dynamic_cast(
     expression: &IrExpr,
     cast: &crate::sim::ir::IrDynamicCast,
 ) -> Result<RenderedExpr, String> {
+    if let (Some(target), Some(source), Some(expected)) = (
+        cast.class_target.as_deref(),
+        cast.class_source.as_ref(),
+        cast.class_expected,
+    ) {
+        let source = super::objects::chandle(ctx, source)?;
+        return Ok(RenderedExpr {
+            code: format!(
+                "({{ void *_llg_cast_source = {source}; int _llg_cast_ok = \
+                 _llg_cast_source && llg_class_is_a(_llg_cast_source, {expected}); \
+                 if (_llg_cast_ok) *({target}) = _llg_cast_source; \
+                 sv4_from_u64((uint64_t)_llg_cast_ok, 1, 0); }})"
+            ),
+            width: expression.width,
+            signed: expression.signed,
+            fill: None,
+        });
+    }
     let (mut declarations, lhs) = capture_lhs_indices(ctx, &cast.lhs)?;
     let rhs = render_expr_impl(ctx, &cast.rhs)?;
     let (rhs_type, rhs_name) = if rhs.width == 0 {
@@ -2808,7 +2826,8 @@ fn render_call_expr(
         call_args.insert(0, super::objects::chandle(ctx, receiver)?);
     }
     call_args.push(call.depth.code());
-    let call_code = format!("{}({})", f.c_name, call_args.join(", "));
+    let callee = super::function_call_name(f, call.virtual_dispatch);
+    let call_code = format!("{}({})", callee, call_args.join(", "));
 
     if temps.is_empty() && string_temps.is_empty() {
         if !call.void_x {

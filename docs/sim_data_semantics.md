@@ -190,10 +190,13 @@ Nominal type keys, nested recursive defaults, nested unpacked or object
 members, aggregate ports/nets/subprogram storage, tagged unions, and general
 aggregate slices remain outside the profile. The simulator's bounded class
 subset covers nominal handles, heap `new`, packed/real properties,
-default/explicit constructors, static packed/real properties and methods,
-this-bound methods, null checks, and shallow handle aliasing (§§8.3–8.10).
-Inheritance, virtual/parameterized classes, string/chandle/class properties,
-timing-bearing class tasks, access qualifiers, and virtual
+default/explicit constructors, base layout and constructor chaining, static
+packed/real properties and methods, this-bound methods, virtual/super
+dispatch, checked nominal casts, parameterized layouts, pure virtual methods,
+out-of-block definitions, forward class typedefs, const properties,
+frontend-validated protected/local access, null checks, and shallow handle
+aliasing (§§8.3–8.26). String/chandle/class
+properties, timing-bearing class tasks, constrained randomization, and virtual
 interfaces remain outside the profile.
 Resizable containers currently target one-dimensional
 packed elements; focused integral- and string-key associative access, element

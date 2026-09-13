@@ -18,6 +18,10 @@ pub enum IrObjectType {
 #[derive(Clone, Debug, PartialEq)]
 pub struct IrClass {
     pub(in crate::sim) c_name: String,
+    /// Base class layout index, if this is a derived class.  Emitted structs
+    /// flatten the base fields in declaration order so a base receiver points
+    /// at the same object prefix as its derived allocation.
+    pub(in crate::sim) base: Option<usize>,
     pub(in crate::sim) fields: Vec<IrClassField>,
 }
 

@@ -682,6 +682,12 @@ pub struct IrDynamicCast {
     pub(in crate::sim) target_two_state: bool,
     pub(in crate::sim) target_shortreal: bool,
     pub(in crate::sim) valid_values: Vec<IrExpr>,
+    /// Class-cast representation used by `$cast` when the destination and
+    /// source are nominal class handles. The ordinary scalar fields remain a
+    /// validation placeholder so optimizer traversal has one cast node kind.
+    pub(in crate::sim) class_target: Option<String>,
+    pub(in crate::sim) class_source: Option<IrChandleExpr>,
+    pub(in crate::sim) class_expected: Option<usize>,
 }
 
 impl IrExpr {
@@ -1499,6 +1505,8 @@ pub struct IrCallExpr {
     pub(in crate::sim) depth: IrDepth,
     /// Optional hidden receiver passed before ordinary method formals.
     pub(in crate::sim) receiver: Option<IrChandleExpr>,
+    /// Dispatch through the callee's virtual slot using the runtime class id.
+    pub(in crate::sim) virtual_dispatch: bool,
     /// Void callee used as a value: yield all-X (warning issued at lowering).
     pub(in crate::sim) void_x: bool,
 }
@@ -1512,6 +1520,7 @@ impl IrCallExpr {
             args,
             depth,
             receiver: None,
+            virtual_dispatch: false,
             void_x,
         }
     }
@@ -1548,6 +1557,8 @@ pub struct IrCall {
     pub(in crate::sim) depth: IrDepth,
     /// Optional hidden receiver passed before ordinary method formals.
     pub(in crate::sim) receiver: Option<IrChandleExpr>,
+    /// Dispatch through the callee's virtual slot using the runtime class id.
+    pub(in crate::sim) virtual_dispatch: bool,
     /// `(temp name, formal index, init)` triples declared right before the
     /// call; `init` is `None` for outputs (all-X temp sized by the formal)
     /// and the actual's current value for inouts.
@@ -1570,6 +1581,7 @@ impl IrCall {
             args,
             depth,
             receiver: None,
+            virtual_dispatch: false,
             temps,
             copyouts,
         }
@@ -3311,6 +3323,8 @@ pub struct IrFunc {
     /// Class-method functions receive one hidden `void *` receiver before
     /// their ordinary formals. `None` denotes a module/package subprogram.
     pub(in crate::sim) receiver_class: Option<usize>,
+    /// Stable slot assigned to virtual methods in one inheritance family.
+    pub(in crate::sim) virtual_slot: Option<usize>,
     pub(in crate::sim) formals: Vec<IrFormal>,
     /// Resolved-static locals in emission order (node-id sorted at lowering).
     /// Resolved-automatic locals remain declaration-site [`IrStmt::DeclLocal`]
@@ -3339,6 +3353,7 @@ impl IrFunc {
             ret,
             dpi: None,
             receiver_class: None,
+            virtual_slot: None,
             formals,
             locals,
             pre_fns,

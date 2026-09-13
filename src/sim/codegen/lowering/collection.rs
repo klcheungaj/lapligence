@@ -775,6 +775,15 @@ impl<'a> Codegen<'a> {
         for class in self.db.classes() {
             self.collect_class_funcs(*class)?;
         }
+        let mut next_virtual_slot = 0;
+        let mut class_virtual_slots = HashMap::new();
+        for class in self.db.classes().to_vec() {
+            self.assign_class_virtual_slots(
+                class,
+                &mut class_virtual_slots,
+                &mut next_virtual_slot,
+            );
+        }
         for top in self.db.tops() {
             let path = strip_lib(&self.node(*top).name);
             if path.is_empty() {
@@ -816,14 +825,99 @@ impl<'a> Codegen<'a> {
             .get(&class)
             .copied()
             .ok_or_else(|| format!("class `{}` has no layout", self.node(class).name))?;
-        for child in self.node(class).children.clone() {
-            if matches!(self.kind(child), NodeKind::FuncTask { .. }) {
-                let name = self.node(child).name.clone();
-                self.func_names
-                    .insert(child, format!("fn_class_{class_index}_{}", ident(&name)));
-            }
+        for child in self.class_method_nodes(class) {
+            let name = self.node(child).name.clone();
+            self.func_names
+                .insert(child, format!("fn_class_{class_index}_{}", ident(&name)));
         }
         Ok(())
+    }
+
+    /// Return executable class subroutines, unwrapping Slang's method
+    /// prototype nodes. A prototype owns a synthetic subroutine child; the
+    /// prototype itself has no body and must not become a C function.
+    pub(super) fn class_method_nodes(&self, class: NodeId) -> Vec<NodeId> {
+        fn visit(cg: &Codegen<'_>, node: NodeId, methods: &mut Vec<NodeId>) {
+            let NodeKind::FuncTask { .. } = cg.kind(node) else {
+                return;
+            };
+            if cg.db.subroutine_body(node).is_some() {
+                methods.push(node);
+            } else {
+                for child in cg.node(node).children.iter().copied() {
+                    visit(cg, child, methods);
+                }
+            }
+        }
+
+        let mut methods = Vec::new();
+        for child in self.node(class).children.iter().copied() {
+            visit(self, child, &mut methods);
+        }
+        methods
+    }
+
+    fn method_signature_key(&self, method: NodeId) -> String {
+        let mut key = self.node(method).name.clone();
+        key.push('#');
+        for argument in self
+            .node(method)
+            .children
+            .iter()
+            .copied()
+            .filter(|child| matches!(self.kind(*child), NodeKind::FuncArg { .. }))
+        {
+            if let NodeKind::FuncArg { ty, direction, .. } = self.kind(argument) {
+                key.push_str(&format!(
+                    "{:?}:{}:{}:{:?};",
+                    direction,
+                    ty.kind,
+                    ty.width.unwrap_or_default(),
+                    ty.signed
+                ));
+            }
+        }
+        key
+    }
+
+    fn assign_class_virtual_slots(
+        &mut self,
+        class: NodeId,
+        all_slots: &mut HashMap<NodeId, HashMap<String, usize>>,
+        next: &mut usize,
+    ) {
+        if all_slots.contains_key(&class) {
+            return;
+        }
+        let mut slots = self
+            .db
+            .class_metadata(class)
+            .and_then(|metadata| metadata.base)
+            .map(|base| {
+                self.assign_class_virtual_slots(base, all_slots, next);
+                all_slots.get(&base).cloned().unwrap_or_default()
+            })
+            .unwrap_or_default();
+        for child in self.class_method_nodes(class) {
+            let is_virtual = matches!(
+                self.kind(child),
+                NodeKind::FuncTask {
+                    is_virtual: true,
+                    ..
+                }
+            );
+            if !is_virtual {
+                continue;
+            }
+            let key = self.method_signature_key(child);
+            let slot = slots.entry(key).or_insert_with(|| {
+                let slot = *next;
+                *next += 1;
+                slot
+            });
+            self.method_virtual_slots.insert(child, *slot);
+        }
+        all_slots.insert(class, slots);
     }
 
     pub(super) fn emit_class_func_prototypes(&mut self) -> Result<(), String> {
@@ -880,11 +974,17 @@ impl<'a> Codegen<'a> {
     /// Instance properties live in the emitted heap object and are mapped by
     /// declaration identity, so same-named classes/properties cannot alias.
     fn collect_classes(&mut self) -> Result<(), String> {
-        for class in self.db.classes() {
-            let class_index = self.model.classes.len();
-            self.class_nodes.insert(*class, class_index);
+        let classes = self.db.classes().to_vec();
+        // Allocate every nominal index before resolving bases.  Generic
+        // specializations can be visited in an order that differs from their
+        // source declaration, so a one-pass map would lose a base edge.
+        for (class_index, class) in classes.iter().copied().enumerate() {
+            self.class_nodes.insert(class, class_index);
+        }
+        for class in classes {
+            let class_index = self.class_nodes[&class];
             let mut fields = Vec::new();
-            for child in self.node(*class).children.clone() {
+            for child in self.node(class).children.clone() {
                 let NodeKind::Var { ty } = self.kind(child) else {
                     continue;
                 };
@@ -1029,8 +1129,53 @@ impl<'a> Codegen<'a> {
             }
             self.model.classes.push(IrClass {
                 c_name: format!("llg_class_{class_index}"),
+                base: self
+                    .db
+                    .class_metadata(class)
+                    .and_then(|metadata| metadata.base)
+                    .and_then(|base| self.class_nodes.get(&base).copied()),
                 fields,
             });
+        }
+        // Derived objects use a flattened prefix-compatible layout.  Process
+        // bases before derived classes even if generic specialization capture
+        // ordered the semantic class nodes the other way around. Keep field
+        // declaration identities mapped to their final index so base
+        // references, hidden members, and downcasts all select the right C
+        // member without a second object allocation.
+        let mut pending = self.db.classes().to_vec();
+        let mut flattened = HashSet::new();
+        while !pending.is_empty() {
+            let before = pending.len();
+            pending.retain(|class| {
+                let class_index = self.class_nodes[class];
+                let Some(base_index) = self.model.classes[class_index].base else {
+                    flattened.insert(class_index);
+                    return false;
+                };
+                if !flattened.contains(&base_index) {
+                    return true;
+                }
+                let inherited = self.model.classes[base_index].fields.clone();
+                let own_len = self.model.classes[class_index].fields.len();
+                for (owner, index) in self.class_fields.values_mut() {
+                    if *owner == class_index {
+                        *index += inherited.len();
+                    }
+                }
+                let mut fields = inherited;
+                fields.extend(
+                    self.model.classes[class_index].fields[..own_len]
+                        .iter()
+                        .cloned(),
+                );
+                self.model.classes[class_index].fields = fields;
+                flattened.insert(class_index);
+                false
+            });
+            if pending.len() == before {
+                return Err("class inheritance layout contains a cycle".to_owned());
+            }
         }
         Ok(())
     }
@@ -4719,11 +4864,21 @@ impl<'a> Codegen<'a> {
     /// Their `llg_wait_*` operations suspend the caller's libaco coroutine, so
     /// each recursive C activation remains resumable without source unrolling.
     pub(super) fn emit_func_prototypes(&mut self, inst: NodeId) -> Result<(), String> {
-        for c in &self.node(inst).children {
+        let class_methods;
+        let children = if self.class_nodes.contains_key(&inst) {
+            class_methods = self.class_method_nodes(inst);
+            &class_methods
+        } else {
+            &self.node(inst).children
+        };
+        for c in children {
             if let NodeKind::FuncTask {
                 is_task, automatic, ..
             } = self.kind(*c)
             {
+                if !self.func_names.contains_key(c) {
+                    continue;
+                }
                 let automatic = *automatic;
                 let dpi = self.db.dpi_import(*c).cloned();
                 let (is_task_f, function_ret, formals) = if dpi.is_some() {
@@ -5042,6 +5197,7 @@ impl<'a> Codegen<'a> {
                                 }
                             )
                     }),
+                    virtual_slot: self.method_virtual_slots.get(c).copied(),
                     formals: formals_ir,
                     locals: Vec::new(),
                     pre_fns: Vec::new(),
@@ -5072,8 +5228,16 @@ impl<'a> Codegen<'a> {
     /// Emit every function/task body. Timing-capable tasks are ordinary C
     /// calls whose waits suspend the current libaco coroutine.
     pub(super) fn emit_func_bodies(&mut self, inst: NodeId) -> Result<(), String> {
-        for c in &self.node(inst).children {
+        let class_methods;
+        let children = if self.class_nodes.contains_key(&inst) {
+            class_methods = self.class_method_nodes(inst);
+            &class_methods
+        } else {
+            &self.node(inst).children
+        };
+        for c in children {
             if matches!(self.kind(*c), NodeKind::FuncTask { .. })
+                && self.func_names.contains_key(c)
                 && self.db.dpi_import(*c).is_none()
             {
                 let path = self.instance_path_of(inst);
@@ -5482,6 +5646,19 @@ impl<'a> Codegen<'a> {
             .get(&ft)
             .cloned()
             .ok_or_else(|| format!("function `{}` has no C name", self.node(ft).name))?;
+        let meta_ir = self
+            .func_meta
+            .get(&ft)
+            .map(|meta| meta.ir)
+            .ok_or_else(|| format!("function `{}` has no model entry", self.node(ft).name))?;
+        if matches!(self.kind(ft), NodeKind::FuncTask { is_pure: true, .. }) {
+            // Pure virtual methods have no executable source body. Keep a
+            // typed fallback so the virtual dispatcher has a linkable target
+            // for an invalid abstract-object call; valid concrete objects
+            // always select an overriding implementation instead.
+            self.model.funcs[meta_ir].body = vec![IrStmt::Return { value: None }];
+            return Ok(());
+        }
         let has_ret = ret.is_some() || ret_chandle || ret_string;
         // Slang binds an assignment to the function name directly to the
         // subroutine symbol; that symbol is the return-storage identity.
@@ -5894,11 +6071,6 @@ impl<'a> Codegen<'a> {
             ret_node: ret_var,
             def_node: Some(ft),
         };
-        let meta_ir = self
-            .func_meta
-            .get(&ft)
-            .map(|m| m.ir)
-            .ok_or_else(|| format!("function `{}` has no C name", self.node(ft).name))?;
         self.cur_fn_ir = Some(meta_ir);
         // Lower the body under the function context; the guard, `_ret`
         // declaration and locals are rendered by the backend from the
@@ -6174,6 +6346,7 @@ impl<'a> Codegen<'a> {
                 name,
                 is_task,
                 callee,
+                ..
             } => {
                 if *is_task {
                     return rejected("task calls are not read-only");
@@ -7387,6 +7560,22 @@ impl<'a> Codegen<'a> {
         name: &str,
         callee: Option<NodeId>,
     ) -> Result<IrExpr, String> {
+        let args = self.call_argument_nodes(h);
+        self.lower_func_call_expr_with_args(scope_path, h, name, callee, &args)
+    }
+
+    /// Lower a resolved function call with an explicit argument list.  The
+    /// class constructor path uses this for Slang's implicit base
+    /// `super.new()` call, whose source has no call-expression node of its
+    /// own but still needs the callee's default argument binding.
+    pub(super) fn lower_func_call_expr_with_args(
+        &mut self,
+        scope_path: &str,
+        h: NodeId,
+        name: &str,
+        callee: Option<NodeId>,
+        args: &[NodeId],
+    ) -> Result<IrExpr, String> {
         let (ft, callee_inst) = self.resolve_callee_env(self.inst, name, false, callee)?;
         let meta = self
             .func_meta
@@ -7399,8 +7588,7 @@ impl<'a> Codegen<'a> {
             ));
         }
         let formals = meta.formals.clone();
-        let args = self.call_argument_nodes(h);
-        let bound = self.bind_call_args(self.inst, &formals, &args)?;
+        let bound = self.bind_call_args(self.inst, &formals, args)?;
         for (idx, (io, _is_out)) in formals.iter().enumerate() {
             if bound[idx].is_event {
                 return Err(format!(
@@ -7600,10 +7788,8 @@ impl<'a> Codegen<'a> {
         } else {
             None
         };
-        let is_class_constructor = self
-            .class_nodes
-            .contains_key(&self.node(ft).parent.unwrap_or(NodeId(0)))
-            && self.node(ft).name == "new";
+        let is_class_constructor =
+            self.class_method_owner(ft).is_some() && self.node(ft).name == "new";
         if ret_val.is_none() && !is_class_constructor {
             self.warnings.push(format!(
                 "void function `{name}` used as a value in `{scope_path}`; result is X"
@@ -7616,6 +7802,7 @@ impl<'a> Codegen<'a> {
                 args: out_args,
                 depth,
                 receiver,
+                virtual_dispatch: false,
                 void_x: ret_val.is_none(),
             })),
             ret_w,
@@ -10633,6 +10820,7 @@ impl<'a> Codegen<'a> {
                 name,
                 is_task,
                 callee,
+                ..
             } => {
                 let (function, _) = self.resolve_callee_env(self.inst, name, *is_task, *callee)?;
                 if visited_functions.insert(function) {
@@ -10974,6 +11162,7 @@ impl<'a> Codegen<'a> {
                 name,
                 is_task,
                 callee,
+                ..
             } => {
                 let (ft, callee_inst) =
                     self.resolve_callee_env(self.inst, name, *is_task, *callee)?;
@@ -11445,6 +11634,7 @@ impl<'a> Codegen<'a> {
                 name,
                 is_task,
                 callee,
+                ..
             } => {
                 let (ft, callee_inst) =
                     self.resolve_callee_env(self.inst, name, *is_task, *callee)?;

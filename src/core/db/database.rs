@@ -67,6 +67,21 @@ pub struct PackedRange {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct TypeId(pub u64);
 
+/// Owned nominal metadata for one class declaration or concrete generic
+/// specialization.  The frontend identity is reduced to arena/type ids so
+/// inheritance and construction never require retaining a Slang pointer.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ClassMetadata {
+    pub type_id: Option<TypeId>,
+    pub base: Option<NodeId>,
+    /// Frontend-owned call used to initialize the base, when the source has
+    /// explicit `super.new(...)` or extends-clause arguments.
+    pub base_constructor: Option<NodeId>,
+    pub is_abstract: bool,
+    pub is_final: bool,
+    pub is_interface: bool,
+}
+
 /// Copy policy for a recursive value.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ValueCopySemantics {
@@ -404,6 +419,8 @@ pub struct Db {
     flat_modules: Vec<NodeId>,
     packages: Vec<NodeId>,
     classes: Vec<NodeId>,
+    /// Class inheritance and nominal type metadata keyed by class node.
+    class_metadata: HashMap<NodeId, ClassMetadata>,
     design_name: String,
     /// Unpacked-array dimension/initializer metadata, keyed by each
     /// [`NodeKind::Array`] arena node (see [`ArrayMeta`]).
@@ -699,6 +716,9 @@ pub enum NodeKind {
         name: String,
         /// `true` for a `task_call` (statement), `false` for a `func_call`.
         is_task: bool,
+        /// `true` when the call uses the `super` qualifier and must bind to
+        /// the declaring base implementation.
+        is_super: bool,
         /// Arena node of the callee [`NodeKind::FuncTask`] (the per-instance
         /// clone), when it was already captured when the call site was walked.
         callee: Option<NodeId>,
@@ -708,6 +728,14 @@ pub enum NodeKind {
         automatic: bool,
         /// `true` for a class method declared with the `static` qualifier.
         is_static: bool,
+        /// `true` when the method participates in virtual dispatch.
+        is_virtual: bool,
+        /// `true` for a pure virtual method with no implementation.
+        is_pure: bool,
+        /// `true` when a virtual method forbids overrides in derived classes.
+        is_final: bool,
+        /// `true` for a class constructor (`new`).
+        is_constructor: bool,
         /// Return type, `None` for void functions and tasks.
         ret: Option<TypeInfo>,
         /// Exact executable body attached by Slang.
@@ -1403,7 +1431,13 @@ pub enum ExprKind {
     /// owned initializer edge when one exists.
     NewClass {
         class_name: Option<String>,
+        /// Canonical class type identity; names are insufficient for generic
+        /// specializations that share one source spelling.
+        class_type: Option<TypeId>,
         constructor: Option<NodeId>,
+        /// `true` for a `super.new(...)` expression.  It invokes the base
+        /// implementation without allocating another object.
+        is_super_class: bool,
     },
     AssertionInstance {
         target: NodeId,
@@ -2730,6 +2764,10 @@ fn node_kind_from_slang(
             is_task: node.is_task,
             automatic: node.is_automatic,
             is_static: node.auxiliary & crate::ffi::slang::SUBROUTINE_STATIC != 0,
+            is_virtual: node.auxiliary & crate::ffi::slang::SUBROUTINE_VIRTUAL != 0,
+            is_pure: node.auxiliary & crate::ffi::slang::SUBROUTINE_PURE != 0,
+            is_final: node.auxiliary & crate::ffi::slang::SUBROUTINE_FINAL != 0,
+            is_constructor: node.auxiliary & crate::ffi::slang::SUBROUTINE_CONSTRUCTOR != 0,
             ret: (!node.is_task && ty.kind != "void").then_some(ty),
             body: first(SemanticEdgeRole::Body)?,
         },
@@ -2756,6 +2794,7 @@ fn node_kind_from_slang(
         SemanticKind::FunctionCall => NodeKind::FuncCall {
             name: node.name.clone(),
             is_task: node.is_task,
+            is_super: node.auxiliary & crate::ffi::slang::CALL_SUPER != 0,
             callee: first(SemanticEdgeRole::Callee)?,
         },
         SemanticKind::EnumConstant => NodeKind::EnumConst {
@@ -3485,7 +3524,9 @@ fn expression_from_slang(
         },
         87 => ExprKind::NewClass {
             class_name: ty.type_name.clone(),
+            class_type: node.type_id.map(TypeId),
             constructor: first(SemanticEdgeRole::Initializer)?,
+            is_super_class: node.auxiliary & crate::ffi::slang::NEW_CLASS_SUPER != 0,
         },
         90 => {
             let target = node
@@ -3757,6 +3798,7 @@ impl Db {
             flat_modules: Vec::new(),
             packages: Vec::new(),
             classes: Vec::new(),
+            class_metadata: HashMap::new(),
             design_name: "test".to_owned(),
             arrays: HashMap::new(),
             event_arrays: HashMap::new(),
@@ -3810,6 +3852,7 @@ impl Db {
             flat_modules: Vec::new(),
             packages: Vec::new(),
             classes: Vec::new(),
+            class_metadata: HashMap::new(),
             design_name: design_name.into(),
             arrays,
             event_arrays: HashMap::new(),
@@ -4513,6 +4556,29 @@ impl Db {
             .filter(|node| node.kind == SemanticKind::Class)
             .map(|node| ids[&node.id])
             .collect();
+        let class_metadata = snapshot
+            .semantic_nodes
+            .iter()
+            .filter(|node| node.kind == SemanticKind::Class)
+            .map(|node| -> Result<(NodeId, ClassMetadata), DbError> {
+                let id = ids[&node.id];
+                Ok((
+                    id,
+                    ClassMetadata {
+                        type_id: node.type_id.map(TypeId),
+                        base: node.target_id.and_then(|target| ids.get(&target).copied()),
+                        base_constructor: edge_target(
+                            &ids,
+                            semantic_edges(snapshot, node)?,
+                            SemanticEdgeRole::BaseConstructor,
+                        )?,
+                        is_abstract: node.auxiliary & crate::ffi::slang::CLASS_ABSTRACT != 0,
+                        is_final: node.auxiliary & crate::ffi::slang::CLASS_FINAL != 0,
+                        is_interface: node.auxiliary & crate::ffi::slang::CLASS_INTERFACE != 0,
+                    },
+                ))
+            })
+            .collect::<Result<HashMap<_, _>, _>>()?;
         let design_name = tops
             .first()
             .map(|id| nodes[id.index()].name.clone())
@@ -4528,6 +4594,7 @@ impl Db {
             flat_modules,
             packages,
             classes,
+            class_metadata,
             design_name,
             arrays,
             event_arrays,
@@ -4623,6 +4690,22 @@ impl Db {
 
     pub fn classes(&self) -> &[NodeId] {
         &self.classes
+    }
+
+    /// Return the owned inheritance/type metadata for a class node.
+    pub fn class_metadata(&self, id: NodeId) -> Option<&ClassMetadata> {
+        self.class_metadata.get(&id)
+    }
+
+    pub(crate) fn class_metadata_entries(&self) -> &HashMap<NodeId, ClassMetadata> {
+        &self.class_metadata
+    }
+
+    /// Resolve a canonical frontend class type id to its owned class node.
+    pub fn class_for_type(&self, type_id: TypeId) -> Option<NodeId> {
+        self.class_metadata
+            .iter()
+            .find_map(|(node, metadata)| (metadata.type_id == Some(type_id)).then_some(*node))
     }
 
     pub fn design_name(&self) -> &str {

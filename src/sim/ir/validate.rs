@@ -1133,6 +1133,36 @@ impl Validator<'_> {
                 if expr.width != 1 || expr.signed || expr.fill.is_some() {
                     return self.fail(path, "$cast status must be a 1-bit unsigned value");
                 }
+                if cast.class_target.is_some()
+                    || cast.class_source.is_some()
+                    || cast.class_expected.is_some()
+                {
+                    if cast.class_target.is_none()
+                        || cast.class_source.is_none()
+                        || cast.class_expected.is_none()
+                        || cast.target_width != 0
+                        || !cast.valid_values.is_empty()
+                    {
+                        return self.fail(path, "class $cast metadata is incomplete");
+                    }
+                    if !matches!(cast.lhs, IrLhs::WholeRef { width: 0, .. }) {
+                        return self.fail(path, "class $cast target is not a handle slot");
+                    }
+                    if cast.class_target.as_deref().is_none_or(str::is_empty) {
+                        return self.fail(path, "class $cast target address is empty");
+                    }
+                    let Some(expected) = cast.class_expected else {
+                        return self.fail(path, "class $cast target type is missing");
+                    };
+                    if expected >= self.model.classes.len() {
+                        return self.fail(path, "class $cast target type is out of bounds");
+                    }
+                    let Some(source) = cast.class_source.as_ref() else {
+                        return self.fail(path, "class $cast source is missing");
+                    };
+                    source.validate(self.model, formals, self.chandle_return.get())?;
+                    return Ok(());
+                }
                 self.validate_lhs(&cast.lhs, formals, &format!("{path}.lhs"))?;
                 let lhs_width = self.lhs_packed_width(&cast.lhs);
                 if cast.target_width == 0 {

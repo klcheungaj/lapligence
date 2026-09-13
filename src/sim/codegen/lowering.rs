@@ -764,6 +764,8 @@ struct Codegen<'a> {
     scope_object_names: HashMap<String, HashMap<String, usize>>,
     /// Nominal class declaration → execution-IR layout index.
     class_nodes: HashMap<NodeId, usize>,
+    /// Class method declaration → virtual dispatch slot.
+    method_virtual_slots: HashMap<NodeId, usize>,
     /// Class property declaration → `(layout index, field index)` for
     /// non-static properties.
     class_fields: HashMap<NodeId, (usize, usize)>,
@@ -967,6 +969,7 @@ impl<'a> Codegen<'a> {
             object_globals: HashMap::new(),
             scope_object_names: HashMap::new(),
             class_nodes: HashMap::new(),
+            method_virtual_slots: HashMap::new(),
             class_fields: HashMap::new(),
             class_static_signals: HashMap::new(),
             class_static_objects: HashMap::new(),

@@ -423,6 +423,9 @@ fn walk_expr_mut(e: &mut IrExpr, f: &mut impl FnMut(&mut IrExpr)) {
         IrExprKind::DynamicCast(cast) => {
             walk_lhs_mut(&mut cast.lhs, f);
             walk_expr_mut(&mut cast.rhs, f);
+            if let Some(source) = &mut cast.class_source {
+                source.expressions_mut(&mut |child| walk_expr_mut(child, f));
+            }
             for value in &mut cast.valid_values {
                 walk_expr_mut(value, f);
             }
@@ -1150,6 +1153,9 @@ fn ident_children(e: &mut IrExpr) {
         IrExprKind::DynamicCast(cast) => {
             walk_lhs_mut(&mut cast.lhs, &mut |child| ident_expr(child));
             ident_expr(&mut cast.rhs);
+            if let Some(source) = &mut cast.class_source {
+                source.expressions_mut(&mut |child| ident_expr(child));
+            }
             for value in &mut cast.valid_values {
                 ident_expr(value);
             }
@@ -2636,6 +2642,9 @@ fn collect_children_reads(e: &IrExpr, model: &IrModel, rw: &mut Rw) {
         IrExprKind::DynamicCast(cast) => {
             collect_lhs_rw(&cast.lhs, model, rw);
             collect_expr_reads(&cast.rhs, model, rw);
+            if let Some(source) = &cast.class_source {
+                source.expressions(&mut |child| collect_expr_reads(child, model, rw));
+            }
             for value in &cast.valid_values {
                 collect_expr_reads(value, model, rw);
             }
@@ -3978,6 +3987,7 @@ mod tests {
             ],
             depth: IrDepth::PROC,
             receiver: None,
+            virtual_dispatch: false,
             temps: vec![(
                 "_a0".to_string(),
                 0,

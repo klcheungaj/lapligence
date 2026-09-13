@@ -1330,11 +1330,8 @@ fn render_stmt_scoped(
                 call_args.insert(0, super::objects::chandle(ctx, receiver)?);
             }
             call_args.push(call.depth.code());
-            out.push_str(&format!(
-                "        {}({});\n",
-                f.c_name,
-                call_args.join(", ")
-            ));
+            let callee = super::function_call_name(f, call.virtual_dispatch);
+            out.push_str(&format!("        {callee}({});\n", call_args.join(", ")));
             for (lh, tname, w, s) in &call.copyouts {
                 let rhs = IrExpr::new(IrExprKind::LocalRead(tname.clone()), *w, *s, None);
                 out.push_str(&format!(

@@ -381,12 +381,33 @@ enum {
 /* Subroutine qualifiers carried in LlgSlangSemanticNode::auxiliary. */
 enum {
   LLG_SLANG_SUBROUTINE_STATIC = 1ull << 0,
+  LLG_SLANG_SUBROUTINE_VIRTUAL = 1ull << 1,
+  LLG_SLANG_SUBROUTINE_PURE = 1ull << 2,
+  LLG_SLANG_SUBROUTINE_FINAL = 1ull << 3,
+  LLG_SLANG_SUBROUTINE_CONSTRUCTOR = 1ull << 4,
   /* The remaining bits preserve the DPI-C import contract after native Slang
    * memory has been released.  They are meaningful only on subroutine nodes;
    * definition_name carries the optional C linkage identifier. */
   LLG_SLANG_SUBROUTINE_DPI_IMPORT = 1ull << 8,
   LLG_SLANG_SUBROUTINE_DPI_CONTEXT = 1ull << 9,
   LLG_SLANG_SUBROUTINE_DPI_PURE = 1ull << 10
+};
+
+/* Class qualifiers carried in LlgSlangSemanticNode::auxiliary. */
+enum {
+  LLG_SLANG_CLASS_ABSTRACT = 1ull << 0,
+  LLG_SLANG_CLASS_FINAL = 1ull << 1,
+  LLG_SLANG_CLASS_INTERFACE = 1ull << 2
+};
+
+/* New-class expression qualifiers carried in auxiliary. */
+enum {
+  LLG_SLANG_NEW_CLASS_SUPER = 1ull << 0
+};
+
+/* User subroutine-call qualifiers carried in auxiliary. */
+enum {
+  LLG_SLANG_CALL_SUPER = 1ull << 0
 };
 
 /* Conditional/case qualifiers carried in LlgSlangSemanticNode::auxiliary.
@@ -719,7 +740,9 @@ enum {
   LLG_SLANG_EDGE_CLOCKING = 34,
   /* Assertion-instance formal/actual pairs use the same positional index. */
   LLG_SLANG_EDGE_ASSERTION_FORMAL = 35,
-  LLG_SLANG_EDGE_ASSERTION_ACTUAL = 36
+  LLG_SLANG_EDGE_ASSERTION_ACTUAL = 36,
+  /* Implicit/extends-clause base-constructor invocation owned by a class. */
+  LLG_SLANG_EDGE_BASE_CONSTRUCTOR = 37
 };
 
 typedef struct {

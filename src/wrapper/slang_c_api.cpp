@@ -27,6 +27,7 @@
 #include "slang/ast/Scope.h"
 #include "slang/ast/SemanticFacts.h"
 #include "slang/ast/symbols/CompilationUnitSymbols.h"
+#include "slang/ast/symbols/ClassSymbols.h"
 #include "slang/ast/symbols/InstanceSymbols.h"
 #include "slang/ast/symbols/MemberSymbols.h"
 #include "slang/ast/symbols/ParameterSymbols.h"
@@ -1232,6 +1233,20 @@ bool isSystemMethodCall(const CallExpression& expression) {
          info.subroutine.get();
 }
 
+bool isSuperMethodCall(const CallExpression& expression) {
+  if (!expression.syntax ||
+      expression.syntax->kind != syntax::SyntaxKind::InvocationExpression)
+    return false;
+
+  const auto& invocation =
+      expression.syntax->as<syntax::InvocationExpressionSyntax>();
+  if (invocation.left->kind != syntax::SyntaxKind::ScopedName)
+    return false;
+
+  const auto& scoped = invocation.left->as<syntax::ScopedNameSyntax>();
+  return scoped.left->getLastToken().kind == parsing::TokenKind::SuperKeyword;
+}
+
 const Expression* unwrapImplicitConversions(const Expression& expression) {
   const Expression* unwrapped = &expression;
   while (unwrapped->kind == ExpressionKind::Conversion) {
@@ -1740,6 +1755,15 @@ public:
       addLifetime(result, symbol.defaultLifetime);
       if (symbol.flags.has(MethodFlags::Static))
         result.auxiliary |= LLG_SLANG_SUBROUTINE_STATIC;
+      if (symbol.isVirtual())
+        result.auxiliary |= LLG_SLANG_SUBROUTINE_VIRTUAL;
+      if (symbol.flags.has(MethodFlags::Pure) &&
+          !symbol.flags.has(MethodFlags::DPIImport))
+        result.auxiliary |= LLG_SLANG_SUBROUTINE_PURE;
+      if (symbol.flags.has(MethodFlags::Final))
+        result.auxiliary |= LLG_SLANG_SUBROUTINE_FINAL;
+      if (symbol.flags.has(MethodFlags::Constructor))
+        result.auxiliary |= LLG_SLANG_SUBROUTINE_CONSTRUCTOR;
       if (symbol.flags.has(MethodFlags::DPIImport)) {
         result.auxiliary |= LLG_SLANG_SUBROUTINE_DPI_IMPORT;
         if (symbol.flags.has(MethodFlags::DPIContext))
@@ -1758,6 +1782,35 @@ public:
             cName = dpi.c_identifier.valueText();
         }
         result.definition_name = storeString(capture.output, cName);
+      }
+    }
+    if constexpr (std::same_as<T, ClassType>) {
+      result.type_id = capture.type(symbol);
+      if (symbol.isAbstract)
+        result.auxiliary |= LLG_SLANG_CLASS_ABSTRACT;
+      if (symbol.isFinal)
+        result.auxiliary |= LLG_SLANG_CLASS_FINAL;
+      if (symbol.isInterface)
+        result.auxiliary |= LLG_SLANG_CLASS_INTERFACE;
+      if (const Type* base = symbol.getBaseClass()) {
+        const Type& canonical = base->getCanonicalType();
+        if (!canonical.isError()) {
+          const uint64_t baseId = capture.ensureSemantic(&canonical);
+          capture.output.semantic_nodes[static_cast<size_t>(id)].target_id = baseId;
+          capture.semanticEdge(id, LLG_SLANG_EDGE_REFERENCE, baseId);
+        }
+      }
+      // Slang synthesizes the base-constructor call for an extends clause and
+      // exposes an owned expression for it. Capture that expression explicitly
+      // so lowering can preserve argument evaluation and default binding.
+      if (const Expression* baseConstructor = symbol.getBaseConstructorCall()) {
+        // The generic symbol visitor pushes the current symbol below this
+        // block. Push it locally so the synthetic call and its argument nodes
+        // remain owned by the class rather than the enclosing module scope.
+        parents.push_back(id);
+        baseConstructor->visit(*this);
+        parents.pop_back();
+        capture.semanticRole(id, baseConstructor, LLG_SLANG_EDGE_BASE_CONSTRUCTOR);
       }
     }
     if constexpr (std::same_as<T, SubroutineSymbol>) {
@@ -2902,6 +2955,9 @@ private:
         capture.semanticRole(id, initializer, LLG_SLANG_EDGE_INITIALIZER);
     }
     else if constexpr (std::same_as<T, NewClassExpression>) {
+      if (expression.isSuperClass)
+        capture.output.semantic_nodes[static_cast<size_t>(id)].auxiliary |=
+            LLG_SLANG_NEW_CLASS_SUPER;
       if (const Expression* constructor = expression.constructorCall())
         capture.semanticRole(id, constructor, LLG_SLANG_EDGE_INITIALIZER);
     }
@@ -2934,6 +2990,9 @@ private:
           capture.semanticEdge(id, LLG_SLANG_EDGE_CALLEE, target);
         }
       }
+      if (isSuperMethodCall(expression))
+        capture.output.semantic_nodes[static_cast<size_t>(id)].auxiliary |=
+            LLG_SLANG_CALL_SUPER;
     }
     else if constexpr (std::same_as<T, AssertionInstanceExpression>) {
       capture.semanticRole(id, &expression.body, LLG_SLANG_EDGE_BODY);

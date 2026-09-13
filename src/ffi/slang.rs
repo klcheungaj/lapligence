@@ -549,6 +549,15 @@ pub(crate) const SUBROUTINE_STATIC: u64 = 1 << 0;
 pub(crate) const SUBROUTINE_DPI_IMPORT: u64 = 1 << 8;
 pub(crate) const SUBROUTINE_DPI_CONTEXT: u64 = 1 << 9;
 pub(crate) const SUBROUTINE_DPI_PURE: u64 = 1 << 10;
+pub(crate) const SUBROUTINE_VIRTUAL: u64 = 1 << 1;
+pub(crate) const SUBROUTINE_PURE: u64 = 1 << 2;
+pub(crate) const SUBROUTINE_FINAL: u64 = 1 << 3;
+pub(crate) const SUBROUTINE_CONSTRUCTOR: u64 = 1 << 4;
+pub(crate) const CLASS_ABSTRACT: u64 = 1 << 0;
+pub(crate) const CLASS_FINAL: u64 = 1 << 1;
+pub(crate) const CLASS_INTERFACE: u64 = 1 << 2;
+pub(crate) const NEW_CLASS_SUPER: u64 = 1 << 0;
+pub(crate) const CALL_SUPER: u64 = 1 << 0;
 
 /// Repository-owned qualifier tags stored in a statement's auxiliary field.
 /// Keep these values in lockstep with the C ABI, rather than exposing Slang's
@@ -743,6 +752,7 @@ pub enum SemanticEdgeRole {
     Clocking,
     AssertionFormal,
     AssertionActual,
+    BaseConstructor,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1838,6 +1848,7 @@ fn decode_semantic_edges(
                 34 => SemanticEdgeRole::Clocking,
                 35 => SemanticEdgeRole::AssertionFormal,
                 36 => SemanticEdgeRole::AssertionActual,
+                37 => SemanticEdgeRole::BaseConstructor,
                 _ => return Err(invalid_native("semantic edge has an unknown role")),
             };
             Ok(SemanticEdge {
@@ -2113,12 +2124,14 @@ fn validate_semantic_auxiliary(node: &RawSemanticNode) -> Result<(), SlangError>
         }
         // Parameter auxiliary metadata carries the frontend's override bit.
         (12, _, _) => node.auxiliary <= 1,
-        // Subroutine qualifiers carry the static-method bit and the
-        // repository-owned DPI-C import/context/pure bits. Context and pure
-        // are only meaningful for an import, so malformed native snapshots
-        // cannot smuggle those qualifiers onto an ordinary subroutine.
+        // Subroutine qualifiers carry method and DPI-C metadata. Context and
+        // DPI purity are meaningful only for imports.
         (16, _, _) => {
             let allowed = SUBROUTINE_STATIC
+                | SUBROUTINE_VIRTUAL
+                | SUBROUTINE_PURE
+                | SUBROUTINE_FINAL
+                | SUBROUTINE_CONSTRUCTOR
                 | SUBROUTINE_DPI_IMPORT
                 | SUBROUTINE_DPI_CONTEXT
                 | SUBROUTINE_DPI_PURE;
@@ -2151,6 +2164,12 @@ fn validate_semantic_auxiliary(node: &RawSemanticNode) -> Result<(), SlangError>
         // Keep the count bounded independently of the later DB allocation.
         (18, 59, _) => node.auxiliary <= 4096,
         (18, 33 | 34, _) => node.auxiliary <= SEMANTIC_UNIQUE_PRIORITY_PRIORITY,
+        // Class qualifiers and `new super` are repository-owned flags.
+        (3, _, _) => node.auxiliary & !(CLASS_ABSTRACT | CLASS_FINAL | CLASS_INTERFACE) == 0,
+        (19, 87, _) => node.auxiliary & !NEW_CLASS_SUPER == 0,
+        // A call qualified with `super` must bind directly to its declaring
+        // base implementation instead of participating in virtual dispatch.
+        (22, 76, _) => node.auxiliary & !CALL_SUPER == 0,
         (19, 69, 40) => node.auxiliary == 0 || node.flags & 1 != 0,
         (19, 69, 41) => node.auxiliary > 0 || node.flags & 1 != 0,
         _ => node.auxiliary == 0,

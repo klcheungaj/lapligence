@@ -76,11 +76,66 @@ impl Codegen<'_> {
             NodeKind::MethodCall { callee, .. } | NodeKind::FuncCall { callee, .. } => *callee,
             _ => None,
         };
-        matches!(
-            callee,
-            Some(callee)
-                if self.class_nodes.contains_key(&self.node(callee).parent.unwrap_or(NodeId(0)))
-        )
+        callee.is_some_and(|callee| self.class_method_owner(callee).is_some())
+    }
+
+    /// Find the class owning a method declaration. Out-of-block methods are
+    /// represented by a method-prototype wrapper between the executable
+    /// subroutine and its class, so checking only the immediate parent loses
+    /// the class receiver for those calls.
+    pub(super) fn class_method_owner(&self, callee: NodeId) -> Option<NodeId> {
+        let mut current = Some(callee);
+        while let Some(node) = current {
+            if self.class_nodes.contains_key(&node) {
+                return Some(node);
+            }
+            current = self.node(node).parent;
+        }
+        None
+    }
+
+    /// Whether a class call should use the runtime override selected by its
+    /// receiver's nominal class.  `super` explicitly suppresses virtual
+    /// dispatch and therefore binds to the declaring base implementation.
+    pub(super) fn class_method_virtual_dispatch(&self, node: NodeId) -> bool {
+        let (callee, receiver, is_super) = match self.kind(node) {
+            NodeKind::MethodCall {
+                callee, receiver, ..
+            } => (*callee, *receiver, false),
+            NodeKind::FuncCall {
+                callee, is_super, ..
+            } => (*callee, None, *is_super),
+            _ => return false,
+        };
+        if is_super {
+            return false;
+        }
+        if receiver.is_some_and(|receiver| {
+            matches!(
+                self.kind(receiver),
+                NodeKind::Expr(ExprKind::NewClass {
+                    is_super_class: true,
+                    ..
+                })
+            )
+        }) {
+            return false;
+        }
+        callee.is_some_and(|callee| {
+            matches!(
+                self.kind(callee),
+                NodeKind::FuncTask {
+                    is_virtual: true,
+                    ..
+                }
+            ) && !matches!(
+                self.kind(callee),
+                NodeKind::FuncTask {
+                    is_static: true,
+                    ..
+                }
+            )
+        })
     }
 
     /// Resolve the receiver for a class subroutine call. Explicit receivers
@@ -100,10 +155,7 @@ impl Codegen<'_> {
         let Some(callee) = callee else {
             return Err("class method call has no resolved callee".to_owned());
         };
-        if !self
-            .class_nodes
-            .contains_key(&self.node(callee).parent.unwrap_or(NodeId(0)))
-        {
+        if self.class_method_owner(callee).is_none() {
             return Ok(None);
         }
         if matches!(
@@ -132,12 +184,23 @@ impl Codegen<'_> {
             IrChandleExpr::Verbatim(code) => code.clone(),
             IrChandleExpr::Read(index) => self.model.objects[*index].c_name.clone(),
             IrChandleExpr::LocalRead(name) => name.clone(),
-            IrChandleExpr::FormalRead(index) => self
-                .func
-                .as_ref()
-                .and_then(|function| function.chandle_read.get(&NodeId(*index as u32)))
-                .map(|_| format!("a{index}"))
-                .unwrap_or_else(|| format!("a{index}")),
+            IrChandleExpr::FormalRead(index) => {
+                let Some(function) = self.func.as_ref() else {
+                    return format!("a{index}");
+                };
+                let Some((formal, _)) = function
+                    .chandle_read
+                    .iter()
+                    .find(|(_, value)| matches!(value, IrChandleExpr::FormalRead(formal) if formal == index))
+                else {
+                    return format!("a{index}");
+                };
+                if let Some(ChandleTarget::Local(name)) = function.chandle_write.get(formal) {
+                    name.clone()
+                } else {
+                    format!("*r{index}")
+                }
+            }
             IrChandleExpr::ContainerGet { .. }
             | IrChandleExpr::ContainerGetNested { .. }
             | IrChandleExpr::AssociativeGet { .. }
@@ -200,6 +263,39 @@ impl Codegen<'_> {
                 self.node(field).name
             )),
         }
+    }
+
+    fn node_contains_super_constructor(&self, root: NodeId) -> bool {
+        let mut pending = vec![root];
+        let mut visited = HashSet::new();
+        while let Some(node) = pending.pop() {
+            if !visited.insert(node) {
+                continue;
+            }
+            if matches!(
+                self.kind(node),
+                NodeKind::Expr(ExprKind::NewClass {
+                    is_super_class: true,
+                    ..
+                })
+            ) {
+                return true;
+            }
+            pending.extend(self.node(node).children.iter().copied());
+        }
+        false
+    }
+
+    fn class_constructor(&self, class: NodeId) -> Option<NodeId> {
+        self.class_method_nodes(class).into_iter().find(|child| {
+            matches!(
+                self.kind(*child),
+                NodeKind::FuncTask {
+                    is_constructor: true,
+                    ..
+                }
+            )
+        })
     }
 
     pub(super) fn class_field_expr(
@@ -287,16 +383,46 @@ impl Codegen<'_> {
         path: &str,
         node: NodeId,
         class_name: Option<&str>,
+        class_type: Option<crate::core::db::TypeId>,
         constructor: Option<NodeId>,
+        is_super_class: bool,
     ) -> Result<IrChandleExpr, String> {
-        let name = class_name
-            .ok_or_else(|| format!("class construction has no resolved type in `{path}`"))?;
+        if is_super_class {
+            return self
+                .func
+                .as_ref()
+                .and_then(|function| function.class_receiver.clone())
+                .or_else(|| self.class_init_receiver.clone())
+                .ok_or_else(|| format!("super constructor has no receiver in `{path}"));
+        }
+        let name = class_name.unwrap_or("<specialized class>");
+        let class_node = class_type
+            .and_then(|type_id| self.db.class_for_type(type_id))
+            .or_else(|| {
+                self.db
+                    .classes()
+                    .iter()
+                    .find(|class| self.node(**class).name == name)
+                    .copied()
+            });
+        let class_node = class_node
+            .ok_or_else(|| format!("class `{name}` has no captured layout in `{path}"))?;
+        if let Some(metadata) = self.db.class_metadata(class_node) {
+            if metadata.is_abstract || metadata.is_interface {
+                return Err(format!(
+                    "cannot construct {} class `{name}` in `{path}`",
+                    if metadata.is_interface {
+                        "interface"
+                    } else {
+                        "abstract"
+                    }
+                ));
+            }
+        }
         let class = self
-            .db
-            .classes()
-            .iter()
-            .find(|class| self.node(**class).name == name)
-            .and_then(|class| self.class_nodes.get(class).copied())
+            .class_nodes
+            .get(&class_node)
+            .copied()
             .ok_or_else(|| format!("class `{name}` has no captured layout in `{path}`"))?;
         let layout = self
             .model
@@ -312,12 +438,32 @@ impl Codegen<'_> {
             "if (!_llg_obj) { fprintf(stderr, \"llg: class allocation failed\\n\"); exit(EXIT_FAILURE); } ",
         );
         code.push_str(&format!("_llg_obj->_llg_class_id = {class}; "));
-        self.class_init_receiver = Some(IrChandleExpr::LocalRead("_llg_obj".to_owned()));
-        let mut class_fields = self
-            .class_fields
-            .iter()
-            .filter(|(_, (class_index, _))| *class_index == class)
-            .map(|(field_node, (_, field_index))| (*field_node, *field_index))
+        // Preserve an enclosing constructor's receiver while lowering a
+        // nested `new` expression.  Class-valued locals are legal even though
+        // class-valued properties remain outside this bounded layout, and a
+        // nested allocation must not make subsequent outer `this` accesses
+        // receiver-less.
+        let previous_class_init_receiver = self
+            .class_init_receiver
+            .replace(IrChandleExpr::LocalRead("_llg_obj".to_owned()));
+        let mut class_chain = Vec::new();
+        let mut current = Some(class_node);
+        while let Some(current_class) = current {
+            class_chain.push(self.class_nodes[&current_class]);
+            current = self
+                .db
+                .class_metadata(current_class)
+                .and_then(|metadata| metadata.base);
+        }
+        class_chain.reverse();
+        let mut class_fields = class_chain
+            .into_iter()
+            .flat_map(|owner| {
+                self.class_fields
+                    .iter()
+                    .filter(move |(_, (class_index, _))| *class_index == owner)
+                    .map(|(field_node, (_, field_index))| (*field_node, *field_index))
+            })
             .collect::<Vec<_>>();
         class_fields.sort_by_key(|(_, field_index)| *field_index);
         for (field_node, field_index) in class_fields {
@@ -373,6 +519,53 @@ impl Codegen<'_> {
                 | crate::sim::ir::IrClassFieldType::Chandle => {}
             }
         }
+        let explicit_base = constructor
+            .and_then(|constructor| match self.kind(constructor) {
+                NodeKind::FuncCall { callee, .. } => *callee,
+                _ => None,
+            })
+            .and_then(|constructor| self.func_body(constructor))
+            .is_some_and(|body| self.node_contains_super_constructor(body));
+        if !explicit_base {
+            let base_constructor = self
+                .db
+                .class_metadata(class_node)
+                .and_then(|metadata| metadata.base_constructor)
+                .and_then(|base_call| match self.kind(base_call) {
+                    NodeKind::FuncCall { callee, .. } => Some((base_call, *callee)),
+                    _ => None,
+                })
+                .or_else(|| {
+                    self.db
+                        .class_metadata(class_node)
+                        .and_then(|metadata| metadata.base)
+                        .and_then(|base| self.class_constructor(base))
+                        .map(|constructor| (node, Some(constructor)))
+                });
+            if let Some((base_call, base_constructor)) = base_constructor {
+                let Some(base_constructor) = base_constructor else {
+                    return Err(format!(
+                        "base constructor for `{name}` is unresolved in `{path}`"
+                    ));
+                };
+                let mut call = if base_call == node {
+                    self.lower_func_call_expr_with_args(
+                        path,
+                        base_call,
+                        "new",
+                        Some(base_constructor),
+                        &[],
+                    )?
+                } else {
+                    self.lower_func_call_expr(path, base_call, "new", Some(base_constructor))?
+                };
+                if let IrExprKind::CallFn(call_expr) = &mut call.kind {
+                    call_expr.receiver = Some(IrChandleExpr::LocalRead("_llg_obj".to_owned()));
+                    call_expr.virtual_dispatch = false;
+                }
+                code.push_str(&format!("{}; ", self.render_ir_code(&call)?));
+            }
+        }
         if let Some(constructor) = constructor {
             let (name, callee) = match self.kind(constructor) {
                 NodeKind::FuncCall { name, callee, .. } => (name.clone(), *callee),
@@ -385,7 +578,7 @@ impl Codegen<'_> {
             code.push_str(&format!("{}; ", self.render_ir_code(&call)?));
         }
         code.push_str("(void*)_llg_obj; })");
-        self.class_init_receiver = None;
+        self.class_init_receiver = previous_class_init_receiver;
         let _ = node;
         Ok(IrChandleExpr::Verbatim(code))
     }
@@ -1107,10 +1300,19 @@ impl Codegen<'_> {
         }
         if let NodeKind::Expr(ExprKind::NewClass {
             class_name,
+            class_type,
             constructor,
+            is_super_class,
         }) = self.kind(node)
         {
-            return self.lower_new_class(path, node, class_name.as_deref(), *constructor);
+            return self.lower_new_class(
+                path,
+                node,
+                class_name.as_deref(),
+                *class_type,
+                *constructor,
+                *is_super_class,
+            );
         }
         if matches!(
             self.kind(node),

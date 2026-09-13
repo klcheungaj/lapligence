@@ -630,6 +630,7 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
                 name,
                 is_task,
                 callee,
+                ..
             } => Some((statement, name.as_str(), *is_task, *callee)),
             NodeKind::Stmt(StmtKind::Begin) => {
                 self.cg.node(statement).children.iter().find_map(|child| {
@@ -638,6 +639,7 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
                             name,
                             is_task,
                             callee,
+                            ..
                         } => Some((*child, name.as_str(), *is_task, *callee)),
                         _ => None,
                     }
@@ -1251,11 +1253,33 @@ impl EmitCtx<'_, '_> {
             {
                 Ok(vec![self.lower_inc_dec(*op, operands)?])
             }
+            NodeKind::Expr(ExprKind::NewClass {
+                is_super_class: true,
+                constructor: Some(constructor),
+                ..
+            }) => {
+                let (name, is_task, callee) = match self.cg.kind(*constructor) {
+                    NodeKind::FuncCall {
+                        name,
+                        is_task,
+                        callee,
+                        ..
+                    } => (name.clone(), *is_task, *callee),
+                    _ => return Err("super constructor edge is not a function call".to_owned()),
+                };
+                Ok(vec![self.lower_task_call(
+                    *constructor,
+                    &name,
+                    is_task,
+                    callee,
+                )?])
+            }
             NodeKind::SysCall { name } => self.lower_sys_call(h, name),
             NodeKind::FuncCall {
                 name,
                 is_task,
                 callee,
+                ..
             } => {
                 if self.in_final && *is_task {
                     return Err(format!(
@@ -5253,7 +5277,15 @@ impl EmitCtx<'_, '_> {
         callee: Option<NodeId>,
     ) -> Result<IrStmt, String> {
         if let Some(f) = &self.func {
-            if !f.is_task {
+            if !f.is_task
+                // A constructor invocation is a task-shaped call in Slang's
+                // snapshot, but it is legal while lowering a class
+                // constructor function.  Use the active receiver rather
+                // than the call-site parent: `super.new`'s callee is owned by
+                // the base class and therefore is not always recognized by
+                // `is_class_method_call`.
+                && !(name == "new" && f.class_receiver.is_some())
+            {
                 return Err(format!(
                     "task call `{name}` inside function `{}` is not supported",
                     f.name
@@ -5549,6 +5581,7 @@ impl EmitCtx<'_, '_> {
             args: out_args,
             depth,
             receiver,
+            virtual_dispatch: self.cg.class_method_virtual_dispatch(h),
             temps,
             copyouts,
         });

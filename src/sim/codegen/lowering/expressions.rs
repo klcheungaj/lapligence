@@ -942,6 +942,7 @@ impl<'a> Codegen<'a> {
             let mut value = self.lower_func_call_expr(scope_path, h, &name, callee)?;
             if let IrExprKind::CallFn(call) = &mut value.kind {
                 call.receiver = receiver;
+                call.virtual_dispatch = self.class_method_virtual_dispatch(h);
             }
             return Ok(value);
         }
@@ -1456,13 +1457,18 @@ impl<'a> Codegen<'a> {
                 name,
                 is_task,
                 callee,
+                ..
             } => {
                 if *is_task {
                     return Err(format!(
                         "task call `{name}` used as an expression in `{scope_path}`"
                     ));
                 }
-                self.lower_func_call_expr(scope_path, h, name, *callee)
+                let mut value = self.lower_func_call_expr(scope_path, h, name, *callee)?;
+                if let IrExprKind::CallFn(call) = &mut value.kind {
+                    call.virtual_dispatch = self.class_method_virtual_dispatch(h);
+                }
+                Ok(value)
             }
             NodeKind::MethodCall {
                 name,
@@ -2689,6 +2695,31 @@ impl<'a> Codegen<'a> {
         })
     }
 
+    fn class_node_for_type_expr(&self, node: NodeId) -> Option<NodeId> {
+        let candidate = match self.kind(node) {
+            NodeKind::Expr(ExprKind::Ref { target }) => target.unwrap_or(node),
+            NodeKind::Expr(ExprKind::NewClass { class_type, .. }) => {
+                return class_type.and_then(|type_id| self.db.class_for_type(type_id));
+            }
+            _ => node,
+        };
+        self.db
+            .type_descriptor(candidate)
+            .filter(|descriptor| descriptor.info.kind == "class")
+            .and_then(|descriptor| self.db.class_for_type(descriptor.id))
+            .or_else(|| {
+                matches!(self.kind(candidate), NodeKind::Var { ty } if ty.kind == "class")
+                    .then(|| {
+                        self.db
+                            .classes()
+                            .iter()
+                            .find(|class| self.node(**class).name == self.node(candidate).name)
+                            .copied()
+                    })
+                    .flatten()
+            })
+    }
+
     /// Flatten one fixed-size unpacked value in the declaration order required
     /// by a bit-stream cast. Dynamic containers, strings, real leaves, and
     /// unions remain outside this fixed-size lowering boundary.
@@ -2808,6 +2839,60 @@ impl<'a> Codegen<'a> {
             }
             _ => *destination,
         };
+        if let Some(target_class_node) = self.class_node_for_type_expr(destination) {
+            let source_is_null = matches!(
+                self.kind(*source),
+                NodeKind::Expr(ExprKind::Constant {
+                    const_type: ConstantType::Null,
+                    ..
+                })
+            );
+            if !source_is_null && !self.is_chandle_expr(path, *source) {
+                return Err(format!(
+                    "$cast class source is not a class handle in `{path}`"
+                ));
+            }
+            let (target, _) = self.lower_chandle_lvalue(path, destination)?;
+            let target_address = self.chandle_target_address(&target);
+            let source = self.lower_chandle(path, *source)?;
+            let expected = self
+                .class_nodes
+                .get(&target_class_node)
+                .copied()
+                .ok_or_else(|| format!("$cast target class has no execution layout in `{path}"))?;
+            return Ok(IrExpr::new(
+                IrExprKind::DynamicCast(Box::new(crate::sim::ir::IrDynamicCast {
+                    lhs: IrLhs::WholeRef {
+                        addr: target_address.clone(),
+                        width: 0,
+                        signed: false,
+                        two_state: false,
+                        shortreal: false,
+                    },
+                    rhs: IrExpr::new(
+                        IrExprKind::Verbatim {
+                            code: "0".to_owned(),
+                            width: 1,
+                            signed: false,
+                        },
+                        1,
+                        false,
+                        None,
+                    ),
+                    target_width: 0,
+                    target_signed: false,
+                    target_two_state: false,
+                    target_shortreal: false,
+                    valid_values: Vec::new(),
+                    class_target: Some(target_address),
+                    class_source: Some(source),
+                    class_expected: Some(expected),
+                })),
+                1,
+                false,
+                None,
+            ));
+        }
         let lhs = self.lower_lhs(path, destination)?;
         let (target_width, target_signed, target_two_state, target_shortreal) =
             self.dynamic_cast_lhs_shape(&lhs)?;
@@ -2910,6 +2995,9 @@ impl<'a> Codegen<'a> {
                 target_two_state,
                 target_shortreal,
                 valid_values,
+                class_target: None,
+                class_source: None,
+                class_expected: None,
             })),
             1,
             false,

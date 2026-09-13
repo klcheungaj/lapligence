@@ -39,5 +39,20 @@ pub(crate) use names::{
     escaped_char, event_global_name, global_name, ident, real_global_name, strip_lib,
 };
 
+/// Select the generated C entry point for one lowered call. Virtual methods
+/// share a dispatch helper; ordinary and explicit-`super` calls retain the
+/// concrete function symbol.
+pub(crate) fn function_call_name(
+    function: &crate::sim::ir::IrFunc,
+    virtual_dispatch: bool,
+) -> String {
+    if virtual_dispatch {
+        if let Some(slot) = function.virtual_slot {
+            return format!("llg_class_dispatch_{slot}");
+        }
+    }
+    function.c_name.clone()
+}
+
 #[cfg(test)]
 mod tests;

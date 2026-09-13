@@ -97,6 +97,30 @@ impl Validator<'_> {
             matches!(kind, NodeKind::ClassDef)
         })?;
 
+        for (class, metadata) in self.db.class_metadata_entries() {
+            let path = format!("class_metadata[{}]", class.0);
+            if !self.db.classes().contains(class) {
+                return self.fail(path, "metadata key is not a class root");
+            }
+            if let Some(base) = metadata.base {
+                self.node(base, &format!("{path}.base"))?;
+                if !matches!(self.db.node_kind(base), NodeKind::ClassDef) {
+                    return self.fail(format!("{path}.base"), "base is not a class node");
+                }
+                if base == *class {
+                    return self.fail(format!("{path}.base"), "class inherits from itself");
+                }
+            }
+            let mut seen = HashSet::new();
+            let mut current = Some(*class);
+            while let Some(id) = current {
+                if !seen.insert(id) {
+                    return self.fail(path.clone(), "class inheritance contains a cycle");
+                }
+                current = self.db.class_metadata(id).and_then(|entry| entry.base);
+            }
+        }
+
         for (array, metadata) in self.db.arrays() {
             let node = self.node(*array, &format!("arrays[{}]", array.0))?;
             if !matches!(node.kind, NodeKind::Array { .. }) {
@@ -642,6 +666,10 @@ mod tests {
                 is_task: false,
                 automatic: true,
                 is_static: false,
+                is_virtual: false,
+                is_pure: false,
+                is_final: false,
+                is_constructor: false,
                 ret: None,
                 body: Some(NodeId(1)),
             },
@@ -740,6 +768,10 @@ mod tests {
             is_task: true,
             automatic: false,
             is_static: false,
+            is_virtual: false,
+            is_pure: false,
+            is_final: false,
+            is_constructor: false,
             ret: None,
             body: Some(NodeId(1)),
         });
