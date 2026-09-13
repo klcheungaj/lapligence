@@ -85,6 +85,6 @@ fn unsupported_sequence_status_fails_closed() {
     sim_cli::reject_case(
         "concurrent_assertions",
         "unsupported_sequence_status",
-        "sequence `.matched` status is not supported",
+        "sequence `.triggered` status is not supported",
     );
 }

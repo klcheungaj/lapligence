@@ -107,7 +107,7 @@ coverage for the same rule IDs.
   passes each file to `llg` in both optimizer modes, isolates child working
   directories, compares specification-derived output and asserts diagnostics.
   Both suites require CMake and run in the sanitizer job.
-- `sim_concurrent_assertions.rs` covers the H20/H25 concurrent-assertion
+- `sim_concurrent_assertions.rs` covers the H20–H26 concurrent-assertion
   subset: Preponed sampling across NBA updates, asynchronous `disable iff`
   cancellation and restart, FIFO overlapping attempts, vacuity accounting,
   end-of-simulation pending-attempt disposal, sequence concatenation and
@@ -123,6 +123,9 @@ coverage for the same rule IDs.
   lives in
   `fixtures/sim/concurrent_assertions/`; the shared CLI harness runs every
   fixture through `llg` and `llg --no-opt` with exact stdout and diagnostics.
+  H26 fixtures additionally cover bounded blocking `expect`, sequence
+  `.matched`, and level-0 assertion ON/OFF/KILL controls with rejection
+  coverage for unsupported action controls and scope/argument forms.
 - `sim_sampled_values.rs` covers H21 sampled-value domains: preponed
   `$sampled`, explicit and default clocks, initial/gated `$past` history,
   global-clock history/status functions, packed status values and LSB/X/Z edge

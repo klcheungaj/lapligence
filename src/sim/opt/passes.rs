@@ -767,6 +767,11 @@ fn walk_stmt_mut(s: &mut IrStmt, f: &mut impl FnMut(&mut IrExpr)) {
                 arg.expressions_mut(&mut |expression| walk_expr_mut(expression, f));
             }
         }
+        IrStmt::AssertionControl { args, .. } => {
+            for arg in args {
+                walk_expr_mut(arg, f);
+            }
+        }
         IrStmt::MonitorSet {
             descriptor: Some(descriptor),
             ..
@@ -2496,6 +2501,11 @@ fn collect_stmt_rw(s: &IrStmt, model: &IrModel, rw: &mut Rw) {
                 arg.expressions(&mut |expression| collect_expr_reads(expression, model, rw));
             }
         }
+        IrStmt::AssertionControl { args, .. } => {
+            for arg in args {
+                collect_expr_reads(arg, model, rw);
+            }
+        }
         IrStmt::MonitorSet {
             descriptor: Some(descriptor),
             ..
@@ -3999,6 +4009,7 @@ mod tests {
         let mut m = model_with(Vec::new(), sigs(3));
         m.assertions.push(IrAssertion::new(
             7,
+            "tb".to_string(),
             "a".to_string(),
             "tb:1".to_string(),
             IrConcurrentAssertionKind::Assert,

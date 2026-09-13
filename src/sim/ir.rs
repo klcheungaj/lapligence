@@ -2248,6 +2248,18 @@ impl IrSeverityLevel {
     }
 }
 
+/// Bounded assertion-control task family. The runtime accepts the standard
+/// on/off/kill directives and the corresponding full `$assertcontrol`
+/// directive; unsupported pass/fail/vacuity controls remain fail-closed in
+/// lowering.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum IrAssertionControlKind {
+    On,
+    Off,
+    Kill,
+    Control,
+}
+
 /// Immediate assertion flavor retained through lowering for runtime dispatch.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum IrImmediateAssertionKind {
@@ -2262,6 +2274,9 @@ pub enum IrConcurrentAssertionKind {
     Assert,
     Assume,
     Cover,
+    /// Procedural `expect` uses the same sampled property engine but arms a
+    /// single assertion attempt and suspends its caller until the endpoint.
+    Expect,
 }
 
 /// A cycle range used by one sequence transition. `None` for `max` is an
@@ -2478,6 +2493,9 @@ impl IrSequence {
 #[derive(Clone, Debug, PartialEq)]
 pub struct IrAssertion {
     pub(in crate::sim) identity: u64,
+    /// HDL instance path that owns the assertion. Assertion-control scopes
+    /// match this path and its labelled descendants at runtime.
+    pub(in crate::sim) scope: String,
     pub(in crate::sim) label: String,
     pub(in crate::sim) location: String,
     pub(in crate::sim) kind: IrConcurrentAssertionKind,
@@ -2503,6 +2521,7 @@ impl IrAssertion {
     #[allow(clippy::too_many_arguments)]
     pub(in crate::sim) fn new(
         identity: u64,
+        scope: String,
         label: String,
         location: String,
         kind: IrConcurrentAssertionKind,
@@ -2517,6 +2536,7 @@ impl IrAssertion {
     ) -> Self {
         Self {
             identity,
+            scope,
             label,
             location,
             kind,
@@ -2539,6 +2559,7 @@ impl IrAssertion {
     #[allow(clippy::too_many_arguments)]
     pub(in crate::sim) fn new_sequence(
         identity: u64,
+        scope: String,
         label: String,
         location: String,
         kind: IrConcurrentAssertionKind,
@@ -2553,6 +2574,7 @@ impl IrAssertion {
     ) -> Self {
         Self {
             identity,
+            scope,
             label,
             location,
             kind,
@@ -2574,6 +2596,10 @@ impl IrAssertion {
 
     pub fn identity(&self) -> u64 {
         self.identity
+    }
+
+    pub fn scope(&self) -> &str {
+        &self.scope
     }
 
     pub fn label(&self) -> &str {
@@ -3037,6 +3063,20 @@ pub enum IrStmt {
         /// Source context shown in the runtime diagnostic prefix.
         location: String,
         fatal_finish_number: Option<u8>,
+    },
+    /// `$asserton`, `$assertoff`, `$assertkill`, or the bounded
+    /// `$assertcontrol` form. Integral arguments are evaluated at the call
+    /// site; scope names are owned source hierarchy strings captured by the
+    /// frontend and never reconstructed from generated C identifiers.
+    AssertionControl {
+        kind: IrAssertionControlKind,
+        args: Vec<IrExpr>,
+        scopes: Vec<String>,
+    },
+    /// Procedural `expect` arms one registered property assertion and blocks
+    /// the calling process until its first bounded pass/fail endpoint.
+    Expect {
+        identity: u64,
     },
     /// Immediate `assert`, `assume` or `cover`. The condition is evaluated
     /// once at this statement; omitted action arms remain `None` so codegen

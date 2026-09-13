@@ -3765,6 +3765,38 @@ impl Validator<'_> {
                     result?;
                 }
             }
+            IrStmt::AssertionControl { kind, args, scopes } => {
+                if scopes.iter().any(String::is_empty) {
+                    return self.fail(path, "assertion control scope must not be empty");
+                }
+                if matches!(kind, crate::sim::ir::IrAssertionControlKind::Control)
+                    && args.is_empty()
+                {
+                    return self.fail(path, "$assertcontrol requires a control_type argument");
+                }
+                if args.len() > 4 {
+                    return self.fail(
+                        path,
+                        "assertion control accepts at most four integral arguments",
+                    );
+                }
+                for (idx, arg) in args.iter().enumerate() {
+                    self.validate_expr(arg, formals, &format!("{path}.args[{idx}]"))?;
+                    if arg.is_real() || arg.width == 0 {
+                        return self.fail(
+                            format!("{path}.args[{idx}]"),
+                            "assertion control arguments must be integral",
+                        );
+                    }
+                    if arg.width > 64 {
+                        return self.fail(
+                            format!("{path}.args[{idx}]"),
+                            "assertion control arguments are limited to 64 bits",
+                        );
+                    }
+                }
+            }
+            IrStmt::Expect { .. } => {}
             IrStmt::MonitorSet { descriptor, .. } => {
                 if let Some(descriptor) = descriptor {
                     self.validate_expr(descriptor, formals, &format!("{path}.descriptor"))?;

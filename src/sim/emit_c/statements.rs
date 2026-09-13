@@ -10,10 +10,10 @@ use super::expressions::{
 use super::EmitError;
 use crate::sim::execution::ScheduleRegion;
 use crate::sim::ir::{
-    IrCallArg, IrClockingSampleMode, IrDependency, IrDisplayArg, IrEdge, IrExpr, IrExprKind,
-    IrFileOp, IrImmediateAssertionKind, IrLhs, IrMemoryRadix, IrSeverityLevel, IrStochasticStmt,
-    IrStreamDirection, IrStreamSelector, IrStreamTarget, IrType, IrUniquePriorityCheck, IrWaitSrc,
-    StorageKind,
+    IrAssertionControlKind, IrCallArg, IrClockingSampleMode, IrDependency, IrDisplayArg, IrEdge,
+    IrExpr, IrExprKind, IrFileOp, IrImmediateAssertionKind, IrLhs, IrMemoryRadix, IrSeverityLevel,
+    IrStochasticStmt, IrStreamDirection, IrStreamSelector, IrStreamTarget, IrType,
+    IrUniquePriorityCheck, IrWaitSrc, StorageKind,
 };
 
 // ── Statement rendering ───────────────────────────────────────────────────────
@@ -352,6 +352,61 @@ fn render_vpi_call(ctx: &RCtx<'_>, name: &str, args: &[IrExpr]) -> Result<String
         c_string_literal(name),
         args.len()
     ))
+}
+
+fn render_assertion_control(
+    ctx: &RCtx<'_>,
+    kind: IrAssertionControlKind,
+    args: &[IrExpr],
+    scopes: &[String],
+) -> Result<String, String> {
+    let kind = match kind {
+        IrAssertionControlKind::On => "LLG_ASSERTION_CONTROL_ON",
+        IrAssertionControlKind::Off => "LLG_ASSERTION_CONTROL_OFF",
+        IrAssertionControlKind::Kill => "LLG_ASSERTION_CONTROL_KILL",
+        IrAssertionControlKind::Control => "LLG_ASSERTION_CONTROL_FULL",
+    };
+    let mut out = String::from("    {\n");
+    let mut names = Vec::with_capacity(args.len());
+    for (index, arg) in args.iter().enumerate() {
+        let rendered = render_expr(ctx, arg)?;
+        if rendered.width == 0 {
+            return Err("assertion control arguments must be integral".to_owned());
+        }
+        let name = format!("_llg_assertion_control_arg_{index}");
+        out.push_str(&format!("        sv4_t {name} = {};\n", rendered.code));
+        names.push(name);
+    }
+    if names.is_empty() {
+        out.push_str("        (void)llg_assertion_control(");
+        out.push_str(kind);
+        out.push_str(", NULL, 0, ");
+    } else {
+        out.push_str(&format!(
+            "        sv4_t _llg_assertion_control_args[{}] = {{ {} }};\n",
+            names.len(),
+            names.join(", ")
+        ));
+        out.push_str(&format!(
+            "        (void)llg_assertion_control({kind}, _llg_assertion_control_args, {}, ",
+            names.len()
+        ));
+    }
+    if scopes.is_empty() {
+        out.push_str("NULL, 0);\n");
+    } else {
+        let scope_count = scopes.len();
+        let rendered_scopes = scopes
+            .iter()
+            .map(|scope| c_string_literal(scope))
+            .collect::<Vec<_>>()
+            .join(", ");
+        out.push_str(&format!(
+            "(const char* const[]){{ {rendered_scopes} }}, {scope_count});\n"
+        ));
+    }
+    out.push_str("    }\n");
+    Ok(out)
 }
 
 fn render_stmt_scoped(
@@ -1115,6 +1170,14 @@ fn render_stmt_scoped(
             location,
             *fatal_finish_number,
         )?,
+        IrStmt::AssertionControl {
+            kind,
+            args,
+            scopes: assertion_scopes,
+        } => render_assertion_control(ctx, *kind, args, assertion_scopes)?,
+        IrStmt::Expect { identity } => format!(
+            "    if (!llg_assertion_expect_start({identity}ULL)) return;\n    llg_wait_assertion({identity}ULL);\n"
+        ),
         IrStmt::ImmediateAssertion {
             kind,
             condition,

@@ -541,6 +541,10 @@ fn collect_effects(
             | IrStmt::WaitAny { .. }
             | IrStmt::WaitCond { .. }
             | IrStmt::WaitFork => effects.push(ExecutionEffect::Suspend),
+            IrStmt::Expect { .. } => {
+                effects.push(ExecutionEffect::RuntimeService);
+                effects.push(ExecutionEffect::Suspend);
+            }
             IrStmt::WaitEventTriggered { body, .. } => {
                 effects.push(ExecutionEffect::Suspend);
                 collect_effects(ir, body, effects, visited_calls);
@@ -582,6 +586,7 @@ fn collect_effects(
             IrStmt::System(_) | IrStmt::VpiCall { .. } => {
                 effects.push(ExecutionEffect::RuntimeService)
             }
+            IrStmt::AssertionControl { .. } => effects.push(ExecutionEffect::RuntimeService),
             IrStmt::Memory { .. } | IrStmt::RandomSeed { .. } | IrStmt::RandomStateSet { .. } => {
                 effects.push(ExecutionEffect::RuntimeService)
             }
@@ -850,6 +855,11 @@ fn collect_statement_expression_effects(
         | IrStmt::WaveLimit(rhs) => collect_expression_effects(ir, rhs, effects, visited_calls),
         IrStmt::ImmediateAssertion { condition, .. } => {
             collect_expression_effects(ir, condition, effects, visited_calls)
+        }
+        IrStmt::AssertionControl { args, .. } => {
+            for argument in args {
+                collect_expression_effects(ir, argument, effects, visited_calls);
+            }
         }
         IrStmt::DeferredImmediateAssertion {
             condition,

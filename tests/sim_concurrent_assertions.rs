@@ -1,5 +1,6 @@
-//! File-based acceptance tests for H20/H22/H23/H24/H25 concurrent assertion
-//! sampling, sequence/property composition, clock/control flow, and attempt
+//! File-based acceptance tests for H20/H22/H23/H24/H25/H26 concurrent
+//! assertion sampling, sequence/property composition, clock/control flow,
+//! assertion controls, and attempt
 //! scheduling. Each fixture is run through both optimizer modes.
 
 #[path = "support/sim_cli.rs"]
@@ -167,6 +168,44 @@ fn concurrent_assertions_keep_branch_local_match_state_isolated() {
 }
 
 #[test]
+fn concurrent_assertions_block_expect_until_its_endpoint() {
+    sim_cli::run_case("concurrent_assertions", "expect", "EXPECT_PASS\n", "", &[]);
+}
+
+#[test]
+fn concurrent_assertions_expose_sequence_matched_endpoint() {
+    sim_cli::run_case(
+        "concurrent_assertions",
+        "sequence_matched",
+        "MATCHED_PASS\n",
+        "",
+        &[],
+    );
+}
+
+#[test]
+fn concurrent_assertions_control_named_instances_and_kill_attempts() {
+    sim_cli::run_case(
+        "concurrent_assertions",
+        "assertion_control",
+        "ON_PASS\nOFF_REENABLED\nON_PASS\n",
+        "",
+        &[],
+    );
+}
+
+#[test]
+fn concurrent_assertions_control_hierarchy_selectors() {
+    sim_cli::run_case(
+        "concurrent_assertions",
+        "assertion_control_hierarchy",
+        "HIERARCHY_PASS\n",
+        "",
+        &[],
+    );
+}
+
+#[test]
 fn concurrent_assertions_capture_local_formal_defaults() {
     sim_cli::run_case(
         "concurrent_assertions",
@@ -250,5 +289,41 @@ fn concurrent_assertions_reject_unbounded_cross_clock_delay() {
         "concurrent_assertions",
         "h25_unsupported_multiclock",
         "multiclocked sequence",
+    );
+}
+
+#[test]
+fn concurrent_assertions_reject_unimplemented_action_controls() {
+    sim_cli::reject_case(
+        "concurrent_assertions",
+        "unsupported_assertion_control",
+        "outside the bounded simulator subset",
+    );
+}
+
+#[test]
+fn concurrent_assertions_reject_unresolved_control_scopes() {
+    sim_cli::reject_case(
+        "concurrent_assertions",
+        "unsupported_assertion_scope",
+        "expected scope or assertion name",
+    );
+}
+
+#[test]
+fn concurrent_assertions_reject_unsupported_control_arguments() {
+    sim_cli::reject_case(
+        "concurrent_assertions",
+        "unsupported_assertion_argument",
+        "bounded $assertcontrol supports only ON, OFF, and KILL",
+    );
+}
+
+#[test]
+fn concurrent_assertions_reject_unsupported_control_levels() {
+    sim_cli::reject_case(
+        "concurrent_assertions",
+        "unsupported_assertion_level",
+        "bounded assertion control supports only level 0",
     );
 }

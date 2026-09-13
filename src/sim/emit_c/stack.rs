@@ -558,6 +558,8 @@ fn stmt_temp_slots(stmt: &IrStmt) -> Result<u64, String> {
             }
             Ok(slots)
         }
+        IrStmt::AssertionControl { args, .. } => expr_sum(args, "assertion control argument slots"),
+        IrStmt::Expect { .. } => Ok(0),
         IrStmt::TimeFormat {
             units,
             precision,

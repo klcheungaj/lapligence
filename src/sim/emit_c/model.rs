@@ -2420,6 +2420,7 @@ fn render_main(execution: &ExecutionModel) -> Result<String, String> {
             IrConcurrentAssertionKind::Assert => "LLG_ASSERTION_ASSERT",
             IrConcurrentAssertionKind::Assume => "LLG_ASSERTION_ASSUME",
             IrConcurrentAssertionKind::Cover => "LLG_ASSERTION_COVER",
+            IrConcurrentAssertionKind::Expect => "LLG_ASSERTION_EXPECT",
         };
         let edge = if assertion.posedge() {
             "LLG_EV_POSEDGE"
@@ -2434,7 +2435,7 @@ fn render_main(execution: &ExecutionModel) -> Result<String, String> {
             let consequent = format!("&{}", assertion_sequence_name(index, "consequent"));
             if assertion.abort_condition().is_some() {
                 out.push_str(&format!(
-                    "    if (!llg_assertion_register_sequence_control(&{}, {}, {}, {}, {}, {}, {}, {}, NULL, {}, {}, {}, {}, {}ULL, {}, {})) return 1;\n",
+                    "    if (!llg_assertion_register_sequence_control(&{}, {}, {}, {}, {}, {}, {}, {}, NULL, {}, {}, {}, {}, {}ULL, {}, {}, {})) return 1;\n",
                     clock,
                     edge,
                     disable,
@@ -2450,10 +2451,11 @@ fn render_main(execution: &ExecutionModel) -> Result<String, String> {
                     assertion.identity(),
                     c_string_literal(assertion.label()),
                     c_string_literal(assertion.location()),
+                    c_string_literal(assertion.scope()),
                 ));
             } else {
                 out.push_str(&format!(
-                    "    if (!llg_assertion_register_sequence(&{}, {}, {}, {}, {}, {}, {}, NULL, {}, {}, {}ULL, {}, {})) return 1;\n",
+                    "    if (!llg_assertion_register_sequence(&{}, {}, {}, {}, {}, {}, {}, NULL, {}, {}, {}ULL, {}, {}, {})) return 1;\n",
                     clock,
                     edge,
                     disable,
@@ -2466,6 +2468,7 @@ fn render_main(execution: &ExecutionModel) -> Result<String, String> {
                     assertion.identity(),
                     c_string_literal(assertion.label()),
                     c_string_literal(assertion.location()),
+                    c_string_literal(assertion.scope()),
                 ));
             }
         } else {
@@ -2475,7 +2478,7 @@ fn render_main(execution: &ExecutionModel) -> Result<String, String> {
             let consequent = assertion_predicate_name(index, "consequent");
             if assertion.abort_condition().is_some() {
                 out.push_str(&format!(
-                    "    if (!llg_assertion_register_control(&{}, {}, {}, {}, {}, {}, {}, {}, NULL, {}, {}, {}, {}, {}ULL, {}, {})) return 1;\n",
+                    "    if (!llg_assertion_register_control(&{}, {}, {}, {}, {}, {}, {}, {}, NULL, {}, {}, {}, {}, {}ULL, {}, {}, {})) return 1;\n",
                     clock,
                     edge,
                     disable,
@@ -2491,10 +2494,11 @@ fn render_main(execution: &ExecutionModel) -> Result<String, String> {
                     assertion.identity(),
                     c_string_literal(assertion.label()),
                     c_string_literal(assertion.location()),
+                    c_string_literal(assertion.scope()),
                 ));
             } else {
                 out.push_str(&format!(
-                    "    if (!llg_assertion_register(&{}, {}, {}, {}, {}, {}, {}, NULL, {}, {}, {}ULL, {}, {})) return 1;\n",
+                    "    if (!llg_assertion_register(&{}, {}, {}, {}, {}, {}, {}, NULL, {}, {}, {}ULL, {}, {}, {})) return 1;\n",
                     clock,
                     edge,
                     disable,
@@ -2507,6 +2511,7 @@ fn render_main(execution: &ExecutionModel) -> Result<String, String> {
                     assertion.identity(),
                     c_string_literal(assertion.label()),
                     c_string_literal(assertion.location()),
+                    c_string_literal(assertion.scope()),
                 ));
             }
         }

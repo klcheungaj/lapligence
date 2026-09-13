@@ -1,6 +1,7 @@
 // llg-test-fixture: tests/fixtures/sim/concurrent_assertions/unsupported_sequence_status.sv
-// IEEE 1800-2009 16.9.3/16.13: sequence match endpoints are not guessed as
-// sampled Boolean values while the general sequence engine remains deferred.
+// IEEE 1800-2009 §16.11: `.triggered` has event-like persistence semantics
+// distinct from the bounded `.matched` endpoint and remains fail-closed until
+// that status can be captured without guessing its time-slot lifetime.
 module tb;
     logic clk;
     logic value;
@@ -8,7 +9,7 @@ module tb;
         value;
     endsequence
 
-    bad: assert property (@(posedge clk) s.matched);
+    bad: assert property (@(posedge clk) s.triggered);
 
     initial begin
         clk = 1'b0;

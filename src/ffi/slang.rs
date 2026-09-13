@@ -580,6 +580,7 @@ pub const SEMANTIC_STMT_IMMEDIATE_COVER: u32 = 63;
 pub const SEMANTIC_STMT_CONCURRENT_ASSERT: u32 = 64;
 pub const SEMANTIC_STMT_CONCURRENT_ASSUME: u32 = 65;
 pub const SEMANTIC_STMT_CONCURRENT_COVER: u32 = 66;
+pub const SEMANTIC_STMT_CONCURRENT_EXPECT: u32 = 67;
 
 pub const SEMANTIC_ASSERTION_EXPR_INVALID: u32 = 1;
 pub const SEMANTIC_ASSERTION_EXPR_SIMPLE: u32 = 2;
@@ -2163,7 +2164,7 @@ fn validate_semantic_subkind(kind: u32, subkind: u32) -> Result<(), SlangError> 
         13 => matches!(subkind, 0..=6),
         14 => matches!(subkind, 0 | 228),
         15 => matches!(subkind, 0 | 160..=164 | 200..=227),
-        18 => matches!(subkind, 0 | 32..=66),
+        18 => matches!(subkind, 0 | 32..=67),
         19 => matches!(subkind, 0 | 64..=78 | 80..=91),
         25 => matches!(subkind, 0 | 194 | SEMANTIC_SCOPE_CLOCKING_BLOCK),
         26 => matches!(subkind, 0 | 112..=118),
@@ -3322,6 +3323,7 @@ mod tests {
         assert!(validate_semantic_subkind(18, SEMANTIC_STMT_CONCURRENT_ASSERT).is_ok());
         assert!(validate_semantic_subkind(18, SEMANTIC_STMT_CONCURRENT_ASSUME).is_ok());
         assert!(validate_semantic_subkind(18, SEMANTIC_STMT_CONCURRENT_COVER).is_ok());
+        assert!(validate_semantic_subkind(18, SEMANTIC_STMT_CONCURRENT_EXPECT).is_ok());
         assert!(validate_semantic_subkind(19, 86).is_ok());
         assert!(validate_semantic_subkind(19, 89).is_ok());
         assert!(validate_semantic_subkind(19, SEMANTIC_EXPR_ASSERTION_INSTANCE).is_ok());
@@ -3330,7 +3332,7 @@ mod tests {
         assert!(validate_semantic_subkind(25, SEMANTIC_SCOPE_CLOCKING_BLOCK).is_ok());
         assert!(validate_semantic_subkind(9, SEMANTIC_VARIABLE_CLOCKING).is_ok());
         assert!(validate_semantic_subkind(26, SEMANTIC_TIMING_ONE_STEP_DELAY).is_ok());
-        assert!(validate_semantic_subkind(18, 67).is_err());
+        assert!(validate_semantic_subkind(18, 68).is_err());
         assert!(validate_semantic_subkind(19, 79).is_err());
         assert!(validate_semantic_subkind(28, SEMANTIC_ASSERTION_EXPR_SIMPLE).is_ok());
         assert!(validate_semantic_subkind(28, SEMANTIC_ASSERTION_EXPR_DISABLE_IFF).is_ok());

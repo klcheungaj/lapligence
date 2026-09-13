@@ -674,6 +674,39 @@ fn semaphore_constructor(db: &Db, id: NodeId) -> bool {
 fn scope_reference_is_metadata(db: &Db, owner: NodeId, reference: NodeId, target: NodeId) -> bool {
     let owner_node = db.node(owner);
     match owner_node.kind() {
+        NodeKind::SysCall { name }
+            if matches!(
+                name.as_str(),
+                "$asserton"
+                    | "$assertoff"
+                    | "$assertkill"
+                    | "$assertcontrol"
+                    | "$assertpasson"
+                    | "$assertpassoff"
+                    | "$assertfailon"
+                    | "$assertfailoff"
+                    | "$assertnonvacuouson"
+                    | "$assertvacuousoff"
+            ) =>
+        {
+            // Slang binds the optional level/control prefix as expressions and
+            // hierarchy selectors as ArbitrarySymbol nodes. Only the latter
+            // are represented as ScopeRef by the owned DB; assertion-control
+            // targets are metadata and never executable value reads.
+            owner_node
+                .children()
+                .iter()
+                .skip(if name == "$assertcontrol" { 4 } else { 1 })
+                .any(|arg| *arg == reference)
+                && matches!(
+                    db.node_kind(target),
+                    NodeKind::ModuleInst { .. }
+                        | NodeKind::GenScope
+                        | NodeKind::GenScopeArray
+                        | NodeKind::Stmt(StmtKind::Begin)
+                        | NodeKind::Stmt(StmtKind::ConcurrentAssertion { .. })
+                )
+        }
         NodeKind::SysCall { name } if name == "$dumpvars" => {
             // The first argument is a depth expression, not a selection.
             owner_node.children().first() != Some(&reference)

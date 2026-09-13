@@ -128,6 +128,7 @@ typedef enum {
     W_SEMAPHORE, // semaphore::get: waiting for one FIFO key request
     W_MAILBOX_GET,
     W_MAILBOX_PUT,
+    W_ASSERTION, // procedural expect waiting for one assertion endpoint
 } llg_wait_kind_t;
 
 typedef struct llg_nba {
@@ -194,6 +195,7 @@ typedef struct llg_wait {
     int n_order;
     int order_next;
     int order_result_value;
+    uint64_t assertion_identity; // W_ASSERTION
     sv4_t* sig;                   // W_LEVEL
     sv4_t level_val;              // W_LEVEL
     llg_fork_group_t* grp;       // W_FORK: group being joined
@@ -378,6 +380,7 @@ static void assertion_clock_signal_changed(sv4_t* signal, sv4_t old,
 struct llg_concurrent_assertion;
 static void free_assertion_clock_events(struct llg_concurrent_assertion* assertion);
 static void wake_proc(llg_proc_t* p);
+static void wake_assertion_waiter(uint64_t identity);
 static void semaphore_waiter_unlink(llg_wait_t* wait);
 static void semaphore_wake_available(llg_semaphore_t* semaphore);
 static void llg_kill_proc_tree(llg_proc_t* p);
@@ -802,9 +805,12 @@ typedef struct llg_concurrent_assertion {
     int overlapped;
     int abort_reject;
     int abort_sync;
+    int enabled;
+    int expect_active;
     uint64_t identity;
     const char* label;
     const char* location;
+    const char* scope;
     int edge_pending;
     llg_assertion_attempt_t* attempts;
     llg_assertion_attempt_t* attempts_tail;
@@ -1124,7 +1130,7 @@ static llg_dependency_binding_t* llg_dependency_bindings;
 static int llg_last_failure;
 static int llg_last_config_error;
 static uint64_t llg_severity_counts[4];
-static uint64_t llg_assertion_failure_counts[2];
+static uint64_t llg_assertion_failure_counts[4];
 static uint64_t llg_assertion_cover_count;
 static uint64_t llg_assertion_vacuous_total;
 static uint64_t llg_assertion_event_order;
@@ -2018,6 +2024,7 @@ static void wake_proc(llg_proc_t* p) {
     memset(&w->mailbox_target, 0, sizeof(w->mailbox_target));
     w->n_order = 0;
     w->order_next = 0;
+    w->assertion_identity = 0;
     w->semaphore_keys = 0;
     w->kind = W_NONE;
     g.wait_count--;
@@ -2031,6 +2038,16 @@ static void wake_proc(llg_proc_t* p) {
     } else {
         process_status_set(p, LLG_PROCESS_RUNNING);
         enqueue_region(p, w->resume_region);
+    }
+}
+
+static void wake_assertion_waiter(uint64_t identity) {
+    llg_wait_t* wait = g.waiters;
+    while (wait) {
+        llg_wait_t* next = wait->next;
+        if (wait->kind == W_ASSERTION && wait->assertion_identity == identity)
+            wake_proc(wait->proc);
+        wait = next;
     }
 }
 
@@ -2627,6 +2644,14 @@ static void llg_kill_proc(llg_proc_t* p, int notify_parent) {
 
     llg_wait_t* w = &p->wait;
     if (w->kind != W_NONE) {
+        if (w->kind == W_ASSERTION) {
+            for (llg_concurrent_assertion_t* assertion = g.assertions; assertion;
+                 assertion = assertion->next) {
+                if (assertion->identity == w->assertion_identity &&
+                    assertion->kind == LLG_ASSERTION_EXPECT)
+                    assertion->expect_active = 0;
+            }
+        }
         remove_waiters_entry(w);
         if (w->kind == W_TIME) {
             remove_timed_entry(w);
@@ -2666,6 +2691,7 @@ static void llg_kill_proc(llg_proc_t* p, int notify_parent) {
         w->n_order = 0;
         w->order_next = 0;
         w->order_result_value = 0;
+        w->assertion_identity = 0;
         w->semaphore_keys = 0;
         w->kind = W_NONE;
         g.wait_count--;
@@ -5077,12 +5103,22 @@ static void report_finish(int verbosity, const char* location) {
         }
         if (llg_assertion_failure_counts[LLG_ASSERTION_ASSERT] != 0 ||
             llg_assertion_failure_counts[LLG_ASSERTION_ASSUME] != 0 ||
+            llg_assertion_failure_counts[LLG_ASSERTION_EXPECT] != 0 ||
             llg_assertion_cover_count != 0) {
-            fprintf(stderr,
-                    "llg: assertion counts: assert_failed=%llu assume_failed=%llu cover=%llu\n",
-                    (unsigned long long)llg_assertion_failure_counts[LLG_ASSERTION_ASSERT],
-                    (unsigned long long)llg_assertion_failure_counts[LLG_ASSERTION_ASSUME],
-                    (unsigned long long)llg_assertion_cover_count);
+            if (llg_assertion_failure_counts[LLG_ASSERTION_EXPECT] != 0) {
+                fprintf(stderr,
+                        "llg: assertion counts: assert_failed=%llu assume_failed=%llu expect_failed=%llu cover=%llu\n",
+                        (unsigned long long)llg_assertion_failure_counts[LLG_ASSERTION_ASSERT],
+                        (unsigned long long)llg_assertion_failure_counts[LLG_ASSERTION_ASSUME],
+                        (unsigned long long)llg_assertion_failure_counts[LLG_ASSERTION_EXPECT],
+                        (unsigned long long)llg_assertion_cover_count);
+            } else {
+                fprintf(stderr,
+                        "llg: assertion counts: assert_failed=%llu assume_failed=%llu cover=%llu\n",
+                        (unsigned long long)llg_assertion_failure_counts[LLG_ASSERTION_ASSERT],
+                        (unsigned long long)llg_assertion_failure_counts[LLG_ASSERTION_ASSUME],
+                        (unsigned long long)llg_assertion_cover_count);
+            }
         }
         if (llg_assertion_vacuous_total != 0)
             fprintf(stderr, "llg: assertion vacuous=%llu\n",
@@ -5949,6 +5985,20 @@ void llg_wait_event_triggered(const llg_event_t* ev) {
                            : LLG_REGION_ACTIVE;
     w->triggered_ev = ev ? ev->object : NULL;
     event_triggered_list_add(w->triggered_ev, p);
+    register_wait();
+    aco_yield();
+}
+
+void llg_wait_assertion(uint64_t identity) {
+    llg_proc_t* p = llg_current();
+    if (!p || !region_can_mutate("expect scheduling")) return;
+    llg_wait_t* w = &p->wait;
+    w->kind = W_ASSERTION;
+    // An assertion result is observed before Reactive actions, so resume the
+    // procedural expect continuation in Reactive after its action callback
+    // has been queued.
+    w->resume_region = LLG_REGION_REACTIVE;
+    w->assertion_identity = identity;
     register_wait();
     aco_yield();
 }
@@ -9253,13 +9303,14 @@ static const char* llg_assertion_name(int kind) {
     switch (kind) {
         case LLG_ASSERTION_ASSERT: return "assert";
         case LLG_ASSERTION_ASSUME: return "assume";
+        case LLG_ASSERTION_EXPECT: return "expect";
         default: return "invalid";
     }
 }
 
 void llg_assertion_failure(int kind, uint64_t identity, const char* label,
                            const char* location) {
-    if (kind < LLG_ASSERTION_ASSERT || kind > LLG_ASSERTION_ASSUME) {
+    if (kind < LLG_ASSERTION_ASSERT || kind > LLG_ASSERTION_EXPECT) {
         fprintf(stderr, "llg runtime fatal: invalid assertion kind %d\n", kind);
         abort();
     }
@@ -9294,13 +9345,172 @@ void llg_assertion_cover(uint64_t identity, const char* label, const char* locat
 
 uint64_t llg_assertion_count(int kind) {
     if (kind == LLG_ASSERTION_COVER) return llg_assertion_cover_count;
-    if (kind == LLG_ASSERTION_ASSERT || kind == LLG_ASSERTION_ASSUME)
+    if (kind >= LLG_ASSERTION_ASSERT && kind <= LLG_ASSERTION_EXPECT)
         return llg_assertion_failure_counts[kind];
     return 0;
 }
 
 uint64_t llg_assertion_vacuous_count(void) {
     return llg_assertion_vacuous_total;
+}
+
+static llg_concurrent_assertion_t* find_assertion(uint64_t identity) {
+    for (llg_concurrent_assertion_t* assertion = g.assertions; assertion;
+         assertion = assertion->next) {
+        if (assertion->identity == identity) return assertion;
+    }
+    return NULL;
+}
+
+static int path_matches_selector(const char* path, const char* selector) {
+    if (!path || !selector || !path[0] || !selector[0]) return 0;
+    if (strcmp(path, selector) == 0) return 1;
+    size_t path_len = strlen(path);
+    size_t selector_len = strlen(selector);
+    if (path_len > selector_len &&
+        path[path_len - selector_len - 1] == '.' &&
+        strcmp(path + path_len - selector_len, selector) == 0)
+        return 1;
+    return selector_len < path_len &&
+           strncmp(path, selector, selector_len) == 0 &&
+           path[selector_len] == '.';
+}
+
+static int assertion_matches_scope(const llg_concurrent_assertion_t* assertion,
+                                   const char* selector) {
+    if (!selector || !selector[0]) return 0;
+    if (path_matches_selector(assertion->scope, selector)) return 1;
+    const char* scope = assertion->scope ? assertion->scope : "";
+    const char* label = assertion->label ? assertion->label : "";
+    if (!label[0]) return 0;
+    size_t scope_len = strlen(scope);
+    size_t label_len = strlen(label);
+    size_t full_len = scope_len + (scope_len != 0) + label_len;
+    char* full = (char*)llg_checked_malloc(full_len + 1, 1,
+                                           "assertion hierarchy selector");
+    if (scope_len != 0) {
+        memcpy(full, scope, scope_len);
+        full[scope_len] = '.';
+    }
+    memcpy(full + scope_len + (scope_len != 0), label, label_len);
+    full[full_len] = '\0';
+    int matched = path_matches_selector(full, selector);
+    free(full);
+    return matched;
+}
+
+static int assertion_matches_type(const llg_concurrent_assertion_t* assertion,
+                                  uint64_t assertion_type,
+                                  uint64_t directive_type) {
+    // Table 20-6: concurrent assertions use bit 1 and expect uses bit 16.
+    // Immediate/unique report classes are intentionally ignored because this
+    // runtime registry owns only sampled concurrent instances.
+    uint64_t type_bit = assertion->kind == LLG_ASSERTION_EXPECT ? 16u : 1u;
+    if ((assertion_type & type_bit) == 0) return 0;
+    uint64_t directive_bit = assertion->kind == LLG_ASSERTION_COVER
+                                 ? 2u
+                                 : assertion->kind == LLG_ASSERTION_ASSUME ? 4u : 1u;
+    return (directive_type & directive_bit) != 0;
+}
+
+static int assertion_control_failure(const char* reason) {
+    fprintf(stderr, "llg: assertion control error: %s\n", reason);
+    llg_last_failure = 1;
+    g.finish = 1;
+    return 0;
+}
+
+static int assertion_control_arg(const sv4_t* value, uint64_t* result) {
+    if (!value || value->width == 0 || value->width > 64 ||
+        sv4_is_unknown(*value))
+        return 0;
+    *result = sv4_to_u64(*value);
+    return 1;
+}
+
+int llg_assertion_control(int kind, const sv4_t* args, int n_args,
+                          const char* const* scopes, int n_scopes) {
+    if (!region_can_mutate("assertion control")) return 0;
+    if (kind < LLG_ASSERTION_CONTROL_ON || kind > LLG_ASSERTION_CONTROL_FULL ||
+        n_args < 0 || n_args > 4 || n_scopes < 0 ||
+        (n_args != 0 && !args) || (n_scopes != 0 && !scopes))
+        return assertion_control_failure("invalid control argument shape");
+
+    uint64_t values[4] = {0, 0, 0, 0};
+    for (int index = 0; index < n_args; index++) {
+        if (!assertion_control_arg(&args[index], &values[index]))
+            return assertion_control_failure("control arguments must be known 64-bit integers");
+    }
+
+    int operation = kind;
+    uint64_t assertion_type = UINT64_C(255);
+    uint64_t directive_type = UINT64_C(7);
+    if (kind == LLG_ASSERTION_CONTROL_FULL) {
+        if (n_args < 1) return assertion_control_failure("$assertcontrol requires control_type");
+        uint64_t control_type = values[0];
+        if (control_type < 3 || control_type > 5)
+            return assertion_control_failure("bounded $assertcontrol supports only ON, OFF, and KILL");
+        operation = control_type - 3;
+        if (n_args > 1) assertion_type = values[1];
+        if (n_args > 2) directive_type = values[2];
+        // The optional fourth argument is `levels`. This bounded registry
+        // implements the standard level-0 (all descendants) selector; other
+        // hierarchy-depth policies remain fail-closed until represented in
+        // the owned assertion catalog.
+        if (n_args > 3 && values[3] != 0)
+            return assertion_control_failure("bounded assertion control supports only level 0");
+        if (assertion_type > 255 || directive_type > 7)
+            return assertion_control_failure("unsupported assertion or directive type");
+    } else if (n_args > 1) {
+        return assertion_control_failure("assertion control task takes one level argument");
+    } else if (n_args == 1 && values[0] != 0) {
+        return assertion_control_failure("bounded assertion control supports only level 0");
+    }
+
+    for (llg_concurrent_assertion_t* assertion = g.assertions; assertion;
+         assertion = assertion->next) {
+        if (kind == LLG_ASSERTION_CONTROL_FULL &&
+            !assertion_matches_type(assertion, assertion_type, directive_type))
+            continue;
+        int selected = n_scopes == 0;
+        for (int index = 0; !selected && index < n_scopes; index++)
+            selected = assertion_matches_scope(assertion, scopes[index]);
+        if (!selected) continue;
+        switch (operation) {
+            case LLG_ASSERTION_CONTROL_ON:
+                assertion->enabled = 1;
+                break;
+            case LLG_ASSERTION_CONTROL_OFF:
+                assertion->enabled = 0;
+                break;
+            case LLG_ASSERTION_CONTROL_KILL:
+                free_assertion_attempts(assertion);
+                assertion->edge_pending = 0;
+                if (assertion->kind == LLG_ASSERTION_EXPECT &&
+                    assertion->expect_active) {
+                    assertion->expect_active = 0;
+                    wake_assertion_waiter(assertion->identity);
+                }
+                break;
+            default:
+                return assertion_control_failure("invalid assertion control operation");
+        }
+    }
+    return 1;
+}
+
+int llg_assertion_expect_start(uint64_t identity) {
+    if (!region_can_mutate("expect scheduling")) return 0;
+    llg_concurrent_assertion_t* assertion = find_assertion(identity);
+    llg_proc_t* current = llg_current();
+    if (!assertion || assertion->kind != LLG_ASSERTION_EXPECT || !current ||
+        assertion->expect_active)
+        return assertion_control_failure("expect has no unique inactive assertion instance");
+    free_assertion_attempts(assertion);
+    assertion->expect_active = 1;
+    assertion->edge_pending = 0;
+    assertion->sequence_cycle = 0;
+    return 1;
 }
 
 static void assertion_attempt_enqueue(llg_concurrent_assertion_t* assertion) {
@@ -9782,6 +9992,10 @@ static void assertion_result(llg_concurrent_assertion_t* assertion, int success,
             assertion_action(assertion, assertion->fail_action);
         }
     }
+    if (assertion->kind == LLG_ASSERTION_EXPECT && assertion->expect_active) {
+        assertion->expect_active = 0;
+        wake_assertion_waiter(assertion->identity);
+    }
 }
 
 static void assertion_disable_signal_changed(sv4_t* signal) {
@@ -9829,7 +10043,9 @@ static void assertion_abort_attempts(llg_concurrent_assertion_t* assertion) {
 static void assertion_abort_condition_changed(void) {
     for (llg_concurrent_assertion_t* assertion = g.assertions; assertion;
          assertion = assertion->next) {
-        if (assertion->abort_condition && !assertion->abort_sync &&
+        if (assertion->enabled &&
+            (assertion->kind != LLG_ASSERTION_EXPECT || assertion->expect_active) &&
+            assertion->abort_condition && !assertion->abort_sync &&
             assertion->abort_condition(assertion->data)) {
             assertion_abort_attempts(assertion);
             if (g.finish) return;
@@ -9885,6 +10101,9 @@ static void assertion_clock_signal_changed(sv4_t* signal, sv4_t old,
     uint64_t order = llg_assertion_event_order++;
     for (llg_concurrent_assertion_t* assertion = g.assertions; assertion;
          assertion = assertion->next) {
+        if (!assertion->enabled ||
+            (assertion->kind == LLG_ASSERTION_EXPECT && !assertion->expect_active))
+            continue;
         if (assertion->disable && sv4_to_bool(*assertion->disable)) continue;
         if (assertion->clock == signal &&
             ev_matches(old, value, assertion->edge)) {
@@ -9930,6 +10149,8 @@ static int run_sequence_concurrent_assertion(llg_concurrent_assertion_t* asserti
                 assertion->sequence_antecedents_tail = NULL;
             if (!attempt->matched) assertion_result(assertion, 1, 1);
             sequence_attempt_discard(attempt);
+            if (assertion->kind == LLG_ASSERTION_EXPECT && !assertion->expect_active)
+                return 1;
         } else {
             antecedent_link = &attempt->next;
         }
@@ -9958,6 +10179,8 @@ static int run_sequence_concurrent_assertion(llg_concurrent_assertion_t* asserti
         } else {
             if (!attempt->matched) assertion_result(assertion, 1, 1);
             sequence_attempt_discard(attempt);
+            if (assertion->kind == LLG_ASSERTION_EXPECT && !assertion->expect_active)
+                return 1;
         }
     } else if (root_event) {
         llg_sequence_attempt_t* attempt = sequence_attempt_new(
@@ -9983,6 +10206,8 @@ static int run_sequence_concurrent_assertion(llg_concurrent_assertion_t* asserti
                 assertion->sequence_consequents_tail = NULL;
             sequence_attempt_discard(attempt);
             assertion_result(assertion, accepted, 0);
+            if (assertion->kind == LLG_ASSERTION_EXPECT && !assertion->expect_active)
+                return 1;
             if (g.finish) return 0;
         } else {
             consequent_link = &attempt->next;
@@ -9999,7 +10224,14 @@ static int run_sequence_concurrent_assertion(llg_concurrent_assertion_t* asserti
 static void run_concurrent_assertion(llg_concurrent_assertion_t* assertion) {
     // A clock transition is observed after Active/NBA writes, while every
     // predicate reads the immutable Preponed snapshot from this time slot.
+    if (!assertion->enabled ||
+        (assertion->kind == LLG_ASSERTION_EXPECT && !assertion->expect_active)) {
+        assertion->edge_pending = 0;
+        free_assertion_clock_events(assertion);
+        return;
+    }
     if (assertion->disable && sv4_to_bool(*assertion->disable)) {
+        assertion->edge_pending = 0;
         free_assertion_attempts(assertion);
         return;
     }
@@ -10102,10 +10334,10 @@ int llg_assertion_register_control(
     llg_concurrent_assertion_action_fn pass_action,
     llg_concurrent_assertion_action_fn fail_action, void* data, int kind,
     int overlapped, int abort_reject, int abort_sync, uint64_t identity,
-    const char* label, const char* location) {
+    const char* label, const char* location, const char* scope) {
     if (!g.main_co || g.running || g.config_error || !clock || !consequent ||
         (edge != LLG_EV_POSEDGE && edge != LLG_EV_NEGEDGE) ||
-        kind < LLG_ASSERTION_ASSERT || kind > LLG_ASSERTION_COVER ||
+        kind < LLG_ASSERTION_ASSERT || kind > LLG_ASSERTION_EXPECT ||
         (overlapped != 0 && overlapped != 1) ||
         (abort_reject != 0 && abort_reject != 1) ||
         (abort_sync != 0 && abort_sync != 1) ||
@@ -10134,6 +10366,9 @@ int llg_assertion_register_control(
     assertion->identity = identity;
     assertion->label = label;
     assertion->location = location;
+    assertion->scope = scope;
+    assertion->enabled = 1;
+    assertion->expect_active = 0;
     if (g.assertion_tail) {
         g.assertion_tail->next = assertion;
     } else {
@@ -10149,10 +10384,12 @@ int llg_assertion_register(
     llg_concurrent_assertion_predicate_fn consequent,
     llg_concurrent_assertion_action_fn pass_action,
     llg_concurrent_assertion_action_fn fail_action, void* data, int kind,
-    int overlapped, uint64_t identity, const char* label, const char* location) {
+    int overlapped, uint64_t identity, const char* label, const char* location,
+    const char* scope) {
     return llg_assertion_register_control(
         clock, edge, disable, antecedent, consequent, NULL, pass_action,
-        fail_action, data, kind, overlapped, 0, 0, identity, label, location);
+        fail_action, data, kind, overlapped, 0, 0, identity, label, location,
+        scope);
 }
 
 void llg_deferred_assertion(int kind, int passed, uint64_t identity,
@@ -10257,12 +10494,12 @@ int llg_assertion_register_sequence_control(
     llg_concurrent_assertion_action_fn pass_action,
     llg_concurrent_assertion_action_fn fail_action, void* data, int kind,
     int overlapped, int abort_reject, int abort_sync, uint64_t identity,
-    const char* label, const char* location) {
+    const char* label, const char* location, const char* scope) {
     if (!g.main_co || g.running || g.config_error || !clock ||
         !valid_sequence_graph(consequent, clock, edge) ||
         (antecedent && !valid_sequence_graph(antecedent, clock, edge)) ||
         (edge != LLG_EV_POSEDGE && edge != LLG_EV_NEGEDGE) ||
-        kind < LLG_ASSERTION_ASSERT || kind > LLG_ASSERTION_COVER ||
+        kind < LLG_ASSERTION_ASSERT || kind > LLG_ASSERTION_EXPECT ||
         (overlapped != 0 && overlapped != 1) ||
         (abort_reject != 0 && abort_reject != 1) ||
         (abort_sync != 0 && abort_sync != 1) ||
@@ -10289,6 +10526,9 @@ int llg_assertion_register_sequence_control(
     assertion->identity = identity;
     assertion->label = label;
     assertion->location = location;
+    assertion->scope = scope;
+    assertion->enabled = 1;
+    assertion->expect_active = 0;
     assertion->antecedent_sequence = antecedent;
     assertion->consequent_sequence = consequent;
     if (g.assertion_tail)
@@ -10305,10 +10545,12 @@ int llg_assertion_register_sequence(
     const llg_sequence_graph_t* consequent,
     llg_concurrent_assertion_action_fn pass_action,
     llg_concurrent_assertion_action_fn fail_action, void* data, int kind,
-    int overlapped, uint64_t identity, const char* label, const char* location) {
+    int overlapped, uint64_t identity, const char* label, const char* location,
+    const char* scope) {
     return llg_assertion_register_sequence_control(
         clock, edge, disable, antecedent, consequent, NULL, pass_action,
-        fail_action, data, kind, overlapped, 0, 0, identity, label, location);
+        fail_action, data, kind, overlapped, 0, 0, identity, label, location,
+        scope);
 }
 
 static int llg_fmt_arg_same(const llg_fmt_arg_t* a, const llg_fmt_arg_t* b) {

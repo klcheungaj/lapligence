@@ -27,8 +27,9 @@ use crate::ffi::slang::{
     SEMANTIC_ASSERTION_RANGE, SEMANTIC_ASSERTION_REPETITION, SEMANTIC_ASSERTION_STRONG,
     SEMANTIC_EXPR_CLOCKING_EVENT, SEMANTIC_SCOPE_CLOCKING_BLOCK, SEMANTIC_STMT_CONCURRENT_ASSERT,
     SEMANTIC_STMT_CONCURRENT_ASSUME, SEMANTIC_STMT_CONCURRENT_COVER,
-    SEMANTIC_STMT_IMMEDIATE_ASSERT, SEMANTIC_STMT_IMMEDIATE_ASSUME, SEMANTIC_STMT_IMMEDIATE_COVER,
-    SEMANTIC_TIMING_CYCLE_DELAY, SEMANTIC_TIMING_ONE_STEP_DELAY, SEMANTIC_VARIABLE_CLOCKING,
+    SEMANTIC_STMT_CONCURRENT_EXPECT, SEMANTIC_STMT_IMMEDIATE_ASSERT,
+    SEMANTIC_STMT_IMMEDIATE_ASSUME, SEMANTIC_STMT_IMMEDIATE_COVER, SEMANTIC_TIMING_CYCLE_DELAY,
+    SEMANTIC_TIMING_ONE_STEP_DELAY, SEMANTIC_VARIABLE_CLOCKING,
 };
 use std::collections::{HashMap, HashSet};
 use std::error::Error;
@@ -842,6 +843,7 @@ pub enum ConcurrentAssertionKind {
     Assert,
     Assume,
     Cover,
+    Expect,
 }
 
 /// Operators in the owned assertion-expression graph.  Keeping these
@@ -2934,6 +2936,17 @@ fn node_kind_from_slang(
         },
         SemanticKind::Scope => NodeKind::Stmt(StmtKind::Begin),
         SemanticKind::TimingControl => NodeKind::Other,
+        // Assertion-control hierarchy arguments are exported by vendored
+        // Slang as an `ArbitrarySymbol` expression even though that node is
+        // not assigned the ordinary expression semantic kind. Preserve its
+        // resolved target as owned scope metadata instead of exposing a
+        // borrowed/opaque executable node to simulator lowering.
+        SemanticKind::Unsupported if node.detail == "ArbitrarySymbol" => {
+            match first(SemanticEdgeRole::Reference)? {
+                Some(target) => NodeKind::Expr(ExprKind::ScopeRef { target }),
+                None => NodeKind::Other,
+            }
+        }
         SemanticKind::Unsupported => NodeKind::Other,
     })
 }
@@ -2975,11 +2988,13 @@ fn statement_from_slang(
         }
         SEMANTIC_STMT_CONCURRENT_ASSERT
         | SEMANTIC_STMT_CONCURRENT_ASSUME
-        | SEMANTIC_STMT_CONCURRENT_COVER => StmtKind::ConcurrentAssertion {
+        | SEMANTIC_STMT_CONCURRENT_COVER
+        | SEMANTIC_STMT_CONCURRENT_EXPECT => StmtKind::ConcurrentAssertion {
             kind: match node.subkind {
                 SEMANTIC_STMT_CONCURRENT_ASSERT => ConcurrentAssertionKind::Assert,
                 SEMANTIC_STMT_CONCURRENT_ASSUME => ConcurrentAssertionKind::Assume,
                 SEMANTIC_STMT_CONCURRENT_COVER => ConcurrentAssertionKind::Cover,
+                SEMANTIC_STMT_CONCURRENT_EXPECT => ConcurrentAssertionKind::Expect,
                 _ => unreachable!("concurrent assertion subkind was prevalidated"),
             },
             property: required(SemanticEdgeRole::PropertySpec, "assertion property")?,

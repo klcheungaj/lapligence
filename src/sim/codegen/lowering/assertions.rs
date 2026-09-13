@@ -265,6 +265,7 @@ impl Codegen<'_> {
             ConcurrentAssertionKind::Assert => IrConcurrentAssertionKind::Assert,
             ConcurrentAssertionKind::Assume => IrConcurrentAssertionKind::Assume,
             ConcurrentAssertionKind::Cover => IrConcurrentAssertionKind::Cover,
+            ConcurrentAssertionKind::Expect => IrConcurrentAssertionKind::Expect,
         };
         let abort_condition = parts.abort_condition.clone();
         let abort_reject = parts.abort_reject;
@@ -272,6 +273,7 @@ impl Codegen<'_> {
         if let Some(consequent) = parts.consequent {
             let assertion = IrAssertion::new(
                 assertion.index() as u64,
+                path.to_owned(),
                 label,
                 location,
                 kind,
@@ -293,6 +295,7 @@ impl Codegen<'_> {
         } else if let Some(consequent) = parts.consequent_sequence {
             let assertion = IrAssertion::new_sequence(
                 assertion.index() as u64,
+                path.to_owned(),
                 label,
                 location,
                 kind,
@@ -316,6 +319,9 @@ impl Codegen<'_> {
                 "concurrent assertion has no lowered consequent at {path}"
             ));
         }
+        // The assertion registration is shared with ordinary concurrent
+        // assertions. The enclosing statement lowerer emits the procedural
+        // arm/wait marker for `expect` after this model entry is complete.
         Ok(())
     }
 
@@ -899,6 +905,11 @@ impl Codegen<'_> {
                         NodeKind::Expr(ExprKind::AssertionInstance { body, .. }) => {
                             self.sequence_requires_engine(*body)
                         }
+                        // A sequence `.matched` endpoint is a sequence
+                        // fragment, not an ordinary sampled Boolean. Keep it
+                        // in the NFA so multi-cycle receivers retain their
+                        // endpoint timing and local-attempt state.
+                        NodeKind::MethodCall { name, .. } if name == "matched" => true,
                         _ => false,
                     }
             }
@@ -1001,6 +1012,30 @@ impl Codegen<'_> {
                 repetition,
             }) => {
                 if !*repeated && repetition.is_none() {
+                    let matched_receiver = match self.kind(*expr) {
+                        NodeKind::MethodCall {
+                            name: method,
+                            receiver: Some(receiver),
+                            ..
+                        } if method == "matched" => Some(*receiver),
+                        _ => None,
+                    };
+                    if let Some(receiver) = matched_receiver {
+                        let capture_at_attempt_entry =
+                            self.assertion_instance_depth == 0 && builder.next_state == 0;
+                        let result = self.lower_assertion_instance(
+                            receiver,
+                            capture_at_attempt_entry,
+                            |this, body| {
+                                this.lower_sequence_fragment(path, body, builder, role)
+                            },
+                        )?;
+                        return result.ok_or_else(|| {
+                            format!(
+                                "sequence `.matched` receiver is not an assertion instance in {role} at {path}"
+                            )
+                        });
+                    }
                     let capture_at_attempt_entry =
                         self.assertion_instance_depth == 0 && builder.next_state == 0;
                     if let Some(result) = self.lower_assertion_instance(

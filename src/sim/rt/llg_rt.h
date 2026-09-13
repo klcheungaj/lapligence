@@ -71,6 +71,14 @@ enum {
     LLG_ASSERTION_ASSERT = 0,
     LLG_ASSERTION_ASSUME = 1,
     LLG_ASSERTION_COVER = 2,
+    LLG_ASSERTION_EXPECT = 3,
+};
+
+enum {
+    LLG_ASSERTION_CONTROL_ON = 0,
+    LLG_ASSERTION_CONTROL_OFF = 1,
+    LLG_ASSERTION_CONTROL_KILL = 2,
+    LLG_ASSERTION_CONTROL_FULL = 3,
 };
 
 typedef struct {
@@ -467,6 +475,10 @@ void llg_assertion_failure(int kind, uint64_t identity, const char* label,
 void llg_assertion_cover(uint64_t identity, const char* label, const char* location);
 uint64_t llg_assertion_count(int kind);
 uint64_t llg_assertion_vacuous_count(void);
+int llg_assertion_control(int kind, const sv4_t* args, int n_args,
+                          const char* const* scopes, int n_scopes);
+int llg_assertion_expect_start(uint64_t identity);
+void llg_wait_assertion(uint64_t identity);
 
 // Concurrent assertion callbacks are generated as side-effect-free sampled
 // predicates and Reactive-region action processes. The runtime owns the
@@ -532,7 +544,8 @@ int llg_assertion_register(
     llg_concurrent_assertion_predicate_fn consequent,
     llg_concurrent_assertion_action_fn pass_action,
     llg_concurrent_assertion_action_fn fail_action, void* data, int kind,
-    int overlapped, uint64_t identity, const char* label, const char* location);
+    int overlapped, uint64_t identity, const char* label, const char* location,
+    const char* scope);
 /* Extended concurrent-assertion registration with bounded accept_on /
  * reject_on controls. `abort_condition` is evaluated from the live value
  * domain for asynchronous controls and from the immutable sampled domain for
@@ -546,7 +559,7 @@ int llg_assertion_register_control(
     llg_concurrent_assertion_action_fn pass_action,
     llg_concurrent_assertion_action_fn fail_action, void* data, int kind,
     int overlapped, int abort_reject, int abort_sync, uint64_t identity,
-    const char* label, const char* location);
+    const char* label, const char* location, const char* scope);
 // Queue one deferred immediate-assertion result. The condition result and
 // selected action are fixed at statement execution; the runtime matures the
 // report in Reactive and owns `frame` until the callback (or teardown).
@@ -561,7 +574,8 @@ int llg_assertion_register_sequence(
     const llg_sequence_graph_t* consequent,
     llg_concurrent_assertion_action_fn pass_action,
     llg_concurrent_assertion_action_fn fail_action, void* data, int kind,
-    int overlapped, uint64_t identity, const char* label, const char* location);
+    int overlapped, uint64_t identity, const char* label, const char* location,
+    const char* scope);
 int llg_assertion_register_sequence_control(
     sv4_t* clock, int edge, sv4_t* disable,
     const llg_sequence_graph_t* antecedent,
@@ -570,7 +584,7 @@ int llg_assertion_register_sequence_control(
     llg_concurrent_assertion_action_fn pass_action,
     llg_concurrent_assertion_action_fn fail_action, void* data, int kind,
     int overlapped, int abort_reject, int abort_sync, uint64_t identity,
-    const char* label, const char* location);
+    const char* label, const char* location, const char* scope);
 
 // ── Command-line plusargs ───────────────────────────────────────────────────
 //

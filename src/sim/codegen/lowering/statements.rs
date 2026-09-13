@@ -2,9 +2,10 @@
 
 use super::objects::object_query;
 use super::*;
+use crate::core::db::ConcurrentAssertionKind;
 use crate::sim::ir::{
-    IrContainerElement, IrObjectQuery, IrObjectStmt, IrStringExpr, IrVpiCompileArg,
-    IrVpiCompileCall,
+    IrAssertionControlKind, IrContainerElement, IrObjectQuery, IrObjectStmt, IrStringExpr,
+    IrVpiCompileArg, IrVpiCompileCall,
 };
 
 fn default_real_local_initializer(width: u32) -> Option<Box<IrExpr>> {
@@ -1283,10 +1284,30 @@ impl EmitCtx<'_, '_> {
             NodeKind::Stmt(assertion @ StmtKind::ImmediateAssertion { .. }) => {
                 self.lower_immediate_assertion(h, assertion)
             }
-            NodeKind::Stmt(StmtKind::ConcurrentAssertion { .. }) => {
+            NodeKind::Stmt(StmtKind::ConcurrentAssertion { kind, .. }) => {
+                if matches!(kind, ConcurrentAssertionKind::Expect) {
+                    if self.in_final {
+                        return Err(format!(
+                            "procedural expect cannot suspend inside a final block in `{}`",
+                            self.path
+                        ));
+                    }
+                    if self.timing_forbidden() {
+                        return Err(format!(
+                            "procedural expect cannot suspend inside a function in `{}`",
+                            self.path
+                        ));
+                    }
+                }
                 let path = self.path.clone();
                 self.cg.emit_concurrent_assertion(self.inst, &path, h)?;
-                Ok(Vec::new())
+                if matches!(kind, ConcurrentAssertionKind::Expect) {
+                    Ok(vec![IrStmt::Expect {
+                        identity: h.index() as u64,
+                    }])
+                } else {
+                    Ok(Vec::new())
+                }
             }
             NodeKind::Stmt(StmtKind::IfElse { cond, check }) => {
                 let c = self.cg.lower_boolean_expr(&self.path, *cond)?;
@@ -4769,6 +4790,102 @@ impl EmitCtx<'_, '_> {
         })
     }
 
+    fn assertion_control_target_scope(&self, target: NodeId, task: &str) -> Result<String, String> {
+        if !matches!(
+            self.cg.kind(target),
+            NodeKind::ModuleInst { .. }
+                | NodeKind::GenScopeArray
+                | NodeKind::GenScope
+                | NodeKind::Stmt(StmtKind::Begin)
+                | NodeKind::Stmt(StmtKind::ConcurrentAssertion { .. })
+        ) {
+            return Err(format!(
+                "{task} scope argument must resolve to a hierarchy or assertion in `{}`",
+                self.path
+            ));
+        }
+        let path = self.cg.waveform_name_for(target).replace('\u{1f}', ".");
+        if path.is_empty() {
+            Err(format!(
+                "{task} scope has an empty hierarchy in `{}`",
+                self.path
+            ))
+        } else {
+            Ok(path)
+        }
+    }
+
+    fn assertion_control_scope(&self, node: NodeId, task: &str) -> Result<String, String> {
+        match self.cg.kind(node) {
+            NodeKind::Expr(ExprKind::HierPath { refs, .. }) => refs
+                .iter()
+                .rev()
+                .flatten()
+                .next()
+                .copied()
+                .map(|target| self.assertion_control_target_scope(target, task))
+                .unwrap_or_else(|| {
+                    Err(format!(
+                        "{task} scope argument has no resolved hierarchy in `{}`",
+                        self.path
+                    ))
+                }),
+            NodeKind::Expr(ExprKind::ScopeRef { target }) => {
+                self.assertion_control_target_scope(*target, task)
+            }
+            _ => Err(format!(
+                "{task} scope argument must be a resolved hierarchy or assertion name in `{}`",
+                self.path
+            )),
+        }
+    }
+
+    fn lower_assertion_control(
+        &mut self,
+        task: &str,
+        kind: IrAssertionControlKind,
+        args: &[NodeId],
+    ) -> Result<IrStmt, String> {
+        let (integral_count, scope_start) = if kind == IrAssertionControlKind::Control {
+            if args.is_empty() {
+                return Err(format!(
+                    "$assertcontrol requires one to four integral control arguments in `{}`",
+                    self.path
+                ));
+            }
+            // Slang captures the optional assertion/directive/levels fields as
+            // positional integral arguments. A hierarchy selector can only
+            // follow the fourth field. With fewer than four arguments all
+            // captured arguments are therefore integral; otherwise the first
+            // four are controls and the remainder are selectors.
+            let integral_count = args.len().min(4);
+            (integral_count, integral_count)
+        } else {
+            let has_level = !args.is_empty();
+            (has_level as usize, has_level as usize)
+        };
+        let mut lowered = Vec::with_capacity(integral_count);
+        for argument in args.iter().take(integral_count) {
+            let value = self.cg.lower_expr(&self.path, *argument)?;
+            if value.is_real() {
+                return Err(format!(
+                    "{task} control arguments must be integral in `{}`",
+                    self.path
+                ));
+            }
+            lowered.push(value);
+        }
+        let scopes = args[scope_start..]
+            .iter()
+            .map(|argument| self.assertion_control_scope(*argument, task))
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(IrStmt::AssertionControl {
+            kind,
+            args: lowered,
+            scopes,
+        })
+    }
+
     fn lower_sys_call(&mut self, h: NodeId, name: &str) -> Result<Vec<IrStmt>, String> {
         let args: Vec<NodeId> = self.cg.node(h).children.clone();
         if let Some(level) = severity_task_variant(name) {
@@ -4951,6 +5068,35 @@ impl EmitCtx<'_, '_> {
             return Ok(vec![self.lower_stochastic_task(name, &args)?]);
         }
         match name {
+            "$asserton" => Ok(vec![self.lower_assertion_control(
+                name,
+                IrAssertionControlKind::On,
+                &args,
+            )?]),
+            "$assertoff" => Ok(vec![self.lower_assertion_control(
+                name,
+                IrAssertionControlKind::Off,
+                &args,
+            )?]),
+            "$assertkill" => Ok(vec![self.lower_assertion_control(
+                name,
+                IrAssertionControlKind::Kill,
+                &args,
+            )?]),
+            "$assertcontrol" => Ok(vec![self.lower_assertion_control(
+                name,
+                IrAssertionControlKind::Control,
+                &args,
+            )?]),
+            "$assertpasson"
+            | "$assertpassoff"
+            | "$assertfailon"
+            | "$assertfailoff"
+            | "$assertnonvacuouson"
+            | "$assertvacuousoff" => Err(format!(
+                "assertion control task `{name}` is outside the bounded simulator subset in `{}`",
+                self.path
+            )),
             "$swrite" | "$swriteb" | "$swriteo" | "$swriteh" => {
                 let Some((target, values)) = args.split_first() else {
                     return Err(format!("{name} requires a destination in `{}`", self.path));
