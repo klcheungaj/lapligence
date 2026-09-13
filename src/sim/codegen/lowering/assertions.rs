@@ -1139,12 +1139,10 @@ impl Codegen<'_> {
                 };
                 let previous_clock = self.sampled_clock;
                 self.sampled_clock = fragment.trailing_clock.or(previous_clock);
-                let lowered_match_items = (|| {
-                    match_items
-                        .iter()
-                        .map(|item| self.lower_assertion_match_item(path, *item, role))
-                        .collect::<Result<Vec<_>, _>>()
-                })();
+                let lowered_match_items = match_items
+                    .iter()
+                    .map(|item| self.lower_assertion_match_item(path, *item, role))
+                    .collect::<Result<Vec<_>, _>>();
                 self.sampled_clock = previous_clock;
                 let lowered_match_items = lowered_match_items?;
                 if !lowered_match_items.is_empty() {
@@ -1184,12 +1182,10 @@ impl Codegen<'_> {
                 builder.mark_first_match(fragment.accept);
                 let previous_clock = self.sampled_clock;
                 self.sampled_clock = fragment.trailing_clock.or(previous_clock);
-                let lowered = (|| {
-                    match_items
-                        .iter()
-                        .map(|item| self.lower_assertion_match_item(path, *item, role))
-                        .collect::<Result<Vec<_>, _>>()
-                })();
+                let lowered = match_items
+                    .iter()
+                    .map(|item| self.lower_assertion_match_item(path, *item, role))
+                    .collect::<Result<Vec<_>, _>>();
                 self.sampled_clock = previous_clock;
                 let lowered = lowered?;
                 builder.attach_match_items(fragment.accept, lowered)?;
