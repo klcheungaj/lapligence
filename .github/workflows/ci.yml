@@ -42,7 +42,7 @@ jobs:
           # build.rs compiles vendor/ directly; required for cargo check too.
           submodules: recursive
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.98.0
         with:
           components: rustfmt, clippy
 
@@ -65,18 +65,18 @@ jobs:
         run: cargo fmt --check
 
       - name: cargo check (all targets and features)
-        run: cargo check --all-targets --all-features
+        run: cargo check --locked --all-targets --all-features
 
       - name: cargo check (minimal library features)
-        run: cargo check --lib --no-default-features
+        run: cargo check --locked --lib --no-default-features
 
       - name: cargo clippy (-D warnings)
-        run: cargo clippy --all-targets --all-features -- -D warnings
+        run: cargo clippy --locked --all-targets --all-features -- -D warnings
 
       # Several boundary tests change process-global state, so unit tests in
       # one executable must not overlap.
       - name: cargo test
-        run: cargo test --jobs 2 --all-features -- --test-threads=1
+        run: cargo test --locked --jobs 2 --all-features -- --test-threads=1
 
       - name: Report runner resources
         if: always()
@@ -109,7 +109,7 @@ jobs:
         with:
           submodules: recursive
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.98.0
 
       - uses: Swatinem/rust-cache@v2
         with:
@@ -124,11 +124,11 @@ jobs:
 
       - name: Run generated runtime and model probes under sanitizers
         run: >-
-          cargo test --jobs 2 --all-features
+          cargo test --locked --jobs 2 --all-features
           --test runtime_values --test runtime_boundaries --test sim_counter
           --test sim_data_types --test sim_data_types_next --test sim_data_types_completion
           --test sim_type_conformance --test sim_partial_features --test sim_net_resolution --test sim_net_defaults
-          --test sim_function --test sim_loops
+          --test sim_function --test sim_loops --test sim_procedural_assign
           -- --test-threads=1
 
       - name: Report runner resources
@@ -145,7 +145,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.98.0
 
       - name: Install cargo-audit
         run: cargo install cargo-audit --locked
@@ -208,7 +208,7 @@ jobs:
 
       - name: Install Rust target
         if: matrix.platform != 'linux'
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@1.98.0
         with:
           targets: ${{ matrix.target }}
 
@@ -253,7 +253,7 @@ jobs:
             --workdir /workspace \
             --env CMAKE_GENERATOR=Ninja \
             --env LLG_TARGET="${{ matrix.target }}" \
-            rust:alpine sh -euxc '
+            rust:1.98.0-alpine sh -euxc '
               apk add --no-cache build-base cmake git linux-headers ninja patch python3
               git config --global --add safe.directory /workspace
               git config --global --add safe.directory /workspace/vendor/slang

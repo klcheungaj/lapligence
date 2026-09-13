@@ -18,7 +18,7 @@
 #     -v "$(pwd)":/workspace \
 #     -v llg-target:/workspace/target \
 #     llg-dev \
-#     cargo build --release --target x86_64-unknown-linux-musl
+#     cargo build --locked --release --target x86_64-unknown-linux-musl
 #
 # The named volume `llg-target` persists incremental compilation artefacts
 # across runs.  Drop it with `docker volume rm llg-target` for a clean build.
@@ -55,7 +55,7 @@ ENV RUSTUP_HOME=/opt/rustup \
 
 RUN curl https://sh.rustup.rs -sSf | sh -s -- -y \
         --no-modify-path \
-        --default-toolchain stable \
+        --default-toolchain 1.98.0 \
         --profile minimal
 
 ENV PATH="/opt/cargo/bin:${PATH}"
@@ -103,4 +103,4 @@ RUN rm -f src/main.rs src/bin/helloslang.rs
 
 # Default command builds the project in debug mode against the musl target.
 # Override by passing a different `cargo` invocation to `docker run`.
-CMD ["cargo", "build", "--target", "x86_64-unknown-linux-musl"]
+CMD ["cargo", "build", "--locked", "--target", "x86_64-unknown-linux-musl"]

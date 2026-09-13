@@ -18,9 +18,9 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 if cargo nextest --version >/dev/null 2>&1; then
-    exec cargo nextest run "$@"
+    exec cargo nextest run --locked "$@"
 else
     echo "note: cargo-nextest not found; falling back to 'cargo test' (binaries run serially)" >&2
     echo "      install it with: cargo install cargo-nextest --locked" >&2
-    exec cargo test "$@"
+    exec cargo test --locked "$@"
 fi
