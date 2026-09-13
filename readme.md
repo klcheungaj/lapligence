@@ -303,17 +303,24 @@ Run one integration-test binary:
 scripts/run-tests.sh --test sim_counter
 ```
 
-The script uses `cargo-nextest` when available and otherwise falls back to
-`cargo test`. Install nextest with:
+The script uses `cargo-nextest`, which is the repository's default test
+runner. Install it with:
 
 ```sh
 cargo install cargo-nextest --locked
 ```
 
-Run the same serialized test command used by CI:
+Run tests directly through nextest:
 
 ```sh
-cargo test --locked --all-features -- --test-threads=1
+cargo nextest run --locked --all-features
+```
+
+The default profile runs up to 8 tests concurrently. On a machine with enough
+CPU and memory, opt in to the 32-thread profile:
+
+```sh
+cargo nextest run --locked --profile max-threads --all-features
 ```
 
 Before submitting a change, run the main checks:
@@ -323,10 +330,8 @@ cargo fmt --check
 cargo check --locked --all-targets --all-features
 cargo check --locked --lib --no-default-features
 cargo clippy --locked --all-targets --all-features -- -D warnings
-
-cargo test --locked --all-features
-or 
-cargo nextest run --all-features
+cargo nextest run --locked --all-features
+cargo test --locked --doc --all-features
 ```
 
 ## Build cleanup

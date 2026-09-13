@@ -242,12 +242,12 @@ serialization and logging). Keep these aligned with `memory_limit.rs`, `ffi/proc
 startup integration probe is `sim_memory_guard.rs`.
 
 ```sh
-cargo test --lib memory_limit::tests -- --test-threads=1
-cargo test --lib ffi::process_memory -- --test-threads=1
-cargo test --test sim_memory_guard -- --test-threads=1
-cargo test --bin llg_ls input_budget -- --test-threads=1
-cargo test --bin llg_ls oversized -- --test-threads=1
-cargo test --bin llg_ls response_budget -- --test-threads=1
+cargo nextest run --locked --lib memory_limit::tests
+cargo nextest run --locked --lib ffi::process_memory
+cargo nextest run --locked --test sim_memory_guard
+cargo nextest run --locked --bin llg_ls input_budget
+cargo nextest run --locked --bin llg_ls oversized
+cargo nextest run --locked --bin llg_ls response_budget
 ```
 
 ## CI and release gate
@@ -255,20 +255,23 @@ cargo test --bin llg_ls response_budget -- --test-threads=1
 [ci.yml](../.github/workflows/ci.yml) runs the Ubuntu test gates and five-platform build matrix
 on pushes to `master`, manual dispatch for the selected branch, and GitHub Release publication
 (`release: published`, including prereleases). Draft saves and standalone tag pushes do not
-trigger CI. Before release, run its complete serialized `lint` gate:
+trigger CI. Before release, run its complete `lint` gate:
 
 ```sh
 cargo fmt --check
-cargo check --all-targets --all-features
-cargo check --lib --no-default-features
-cargo clippy --all-targets --all-features -- -D warnings
-cargo test --all-features -- --test-threads=1
+cargo check --locked --all-targets --all-features
+cargo check --locked --lib --no-default-features
+cargo clippy --locked --all-targets --all-features -- -D warnings
+cargo nextest run --locked --all-features
+cargo test --locked --doc --all-features
 ```
 
-Ubuntu lint/sanitizer jobs disable Rust debug info and incremental compilation, strip executable
-debug sections (including the native frontend's), cap Cargo test builds at two concurrent jobs
-independently of serialized execution, and report disk/memory usage even on failure. Keep debug
-assertions, overflow checks, and generated C sanitizer flags enabled/unchanged as configured.
+The Ubuntu lint and sanitizer jobs disable Rust debug info and incremental
+compilation and strip debug sections (including the linked native frontend's)
+from Rust executables. Nextest applies the repository's bounded heavyweight
+test group while generated runtimes share compatible cached static archives.
+Jobs report disk/memory use even after failures. Debug assertions and overflow
+checks remain enabled; generated C sanitizer flags are unchanged.
 
 Workflow caches retain Cargo downloads only, excluding compiled targets and installed Cargo
 binaries to reduce use of the repository's 10 GB cache budget. Only release events upload
@@ -277,9 +280,10 @@ upload no artifacts. Retention does not enforce the account's 500 MB artifact bu
 concurrent runs or other repositories. Runner working-disk usage is separate from these quotas.
 
 The `generated-runtime-sanitizers` job has a 180-minute limit and runs `runtime_values`,
-`runtime_boundaries`, `sim_counter`, `sim_data_types`, `sim_data_types_next`,
+`runtime_random`, `runtime_boundaries`, `sim_counter`, `sim_data_types`, `sim_data_types_next`,
 `sim_data_types_completion`, `sim_type_conformance`, `sim_partial_features`,
-`sim_net_resolution`, `sim_net_defaults`, `sim_function`, and `sim_loops` with GCC ASan/UBSan.
+`sim_net_resolution`, `sim_net_defaults`, `sim_function`, `sim_loops`, and
+`sim_procedural_assign` with GCC ASan/UBSan.
 This checks generated C/runtime memory safety, not LSP admission. The 15-minute
 `dependency-audit` job runs `cargo audit` on those triggers and Mondays at 04:17 UTC. Neither
 uploads reports; workflow logs are evidence.

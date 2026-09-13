@@ -6,21 +6,18 @@
 #   scripts/run-tests.sh --test sim_counter       # subset; args pass through
 #   scripts/run-tests.sh --test model_tests --test elab_resolve
 #
-# Uses cargo-nextest when installed: every test runs in its own process and
-# the many integration-test binaries execute concurrently (see
-# .config/nextest.toml for the profile).  Falls back to plain `cargo test`
-# otherwise, which still parallelizes tests within each binary but runs one
-# binary after another.
+# Uses cargo-nextest: every test runs in its own process and the many
+# integration-test binaries execute concurrently (see .config/nextest.toml).
 #
 # Install nextest with: cargo install cargo-nextest --locked
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-if cargo nextest --version >/dev/null 2>&1; then
-    exec cargo nextest run --locked "$@"
-else
-    echo "note: cargo-nextest not found; falling back to 'cargo test' (binaries run serially)" >&2
-    echo "      install it with: cargo install cargo-nextest --locked" >&2
-    exec cargo test --locked "$@"
+if ! cargo nextest --version >/dev/null 2>&1; then
+    echo "error: cargo-nextest is required; install it with:" >&2
+    echo "       cargo install cargo-nextest --locked" >&2
+    exit 2
 fi
+
+exec cargo nextest run --locked "$@"

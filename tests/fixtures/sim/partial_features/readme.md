@@ -10,7 +10,7 @@ intentional rejection cases.
 From the repository root:
 
 ```sh
-cargo test --test sim_partial_features -- --test-threads=1
+cargo nextest run --locked --test sim_partial_features
 cargo run --bin llg -- --top tb tests/fixtures/sim/partial_features/delayed_nba.sv
 ```
 

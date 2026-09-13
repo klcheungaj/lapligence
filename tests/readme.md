@@ -86,20 +86,23 @@
 ### Prerequisites
 
 - Rust 1.98.0 toolchain and initialized vendored dependencies.
+- `cargo-nextest` (`cargo install cargo-nextest --locked`).
 - CMake and a C compiler; the file-based conformance suites require both.
 - Run commands from the repository root.
+- Nextest runs 8 tests concurrently by default; use
+  `--profile max-threads` to opt in to 32 on a sufficiently large host.
 
 ### Focused simulator suites
 
 ```sh
-cargo test --locked --test sim_type_conformance --test sim_partial_features -- --test-threads=1
-cargo test --locked --test sim_data_types --test sim_data_types_extended --test sim_data_type_edges -- --test-threads=1
-cargo test --locked --test sim_data_types_next --test sim_data_types_completion --test sim_net_resolution --test sim_net_defaults --test runtime_values --test runtime_random -- --test-threads=1
+cargo nextest run --locked --test sim_type_conformance --test sim_partial_features
+cargo nextest run --locked --test sim_data_types --test sim_data_types_extended --test sim_data_type_edges
+cargo nextest run --locked --test sim_data_types_next --test sim_data_types_completion --test sim_net_resolution --test sim_net_defaults --test runtime_values --test runtime_random
 ```
 
 ```sh
-cargo test --locked --test sim_physical_time -- --test-threads=1
-cargo test --locked --test sim_mailboxes -- --test-threads=1
+cargo nextest run --locked --test sim_physical_time
+cargo nextest run --locked --test sim_mailboxes
 ```
 
 ### One readable fixture
@@ -116,7 +119,7 @@ LLG_CC=gcc \
 LLG_CFLAGS='-DACO_USE_ASAN -fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=all' \
 ASAN_OPTIONS='detect_leaks=1:strict_string_checks=1' \
 UBSAN_OPTIONS='print_stacktrace=1:halt_on_error=1' \
-cargo test --locked --test sim_partial_features --test sim_type_conformance --test sim_procedural_assign --test runtime_values --test runtime_random -- --test-threads=1
+cargo nextest run --locked --test sim_partial_features --test sim_type_conformance --test sim_procedural_assign --test runtime_values --test runtime_random
 ```
 
 ### Repository gate
@@ -126,7 +129,8 @@ cargo fmt --check
 cargo check --locked --all-targets --all-features
 cargo check --locked --lib --no-default-features
 cargo clippy --locked --all-targets --all-features -- -D warnings
-cargo test --locked --all-features -- --test-threads=1
+cargo nextest run --locked --all-features
+cargo test --locked --doc --all-features
 ```
 
 - [CI workflow](../.github/workflows/ci.yml): full suite selection, sanitizer settings and release checks.

@@ -15,5 +15,5 @@
 Run serially:
 
 ```sh
-cargo test --test sim_data_types_next -- --test-threads=1
+cargo nextest run --locked --test sim_data_types_next
 ```

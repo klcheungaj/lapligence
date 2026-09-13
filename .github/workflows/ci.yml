@@ -46,6 +46,8 @@ jobs:
         with:
           components: rustfmt, clippy
 
+      - uses: taiki-e/install-action@nextest
+
       - uses: Swatinem/rust-cache@v2
         with:
           # Keep native archives and test executables out of the 10 GB cache budget.
@@ -73,10 +75,11 @@ jobs:
       - name: cargo clippy (-D warnings)
         run: cargo clippy --locked --all-targets --all-features -- -D warnings
 
-      # Several boundary tests change process-global state, so unit tests in
-      # one executable must not overlap.
-      - name: cargo test
-        run: cargo test --locked --jobs 2 --all-features -- --test-threads=1
+      - name: cargo nextest
+        run: cargo nextest run --locked --all-features
+
+      - name: cargo test (doc tests)
+        run: cargo test --locked --doc --all-features
 
       - name: Report runner resources
         if: always()
@@ -111,6 +114,8 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@1.98.0
 
+      - uses: taiki-e/install-action@nextest
+
       - uses: Swatinem/rust-cache@v2
         with:
           prefix-key: registry-only-v1
@@ -124,12 +129,11 @@ jobs:
 
       - name: Run generated runtime and model probes under sanitizers
         run: >-
-          cargo test --locked --jobs 2 --all-features
+          cargo nextest run --locked --all-features
           --test runtime_values --test runtime_random --test runtime_boundaries --test sim_counter
           --test sim_data_types --test sim_data_types_next --test sim_data_types_completion
           --test sim_type_conformance --test sim_partial_features --test sim_net_resolution --test sim_net_defaults
           --test sim_function --test sim_loops --test sim_procedural_assign
-          -- --test-threads=1
 
       - name: Report runner resources
         if: always()
