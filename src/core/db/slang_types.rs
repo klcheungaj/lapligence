@@ -2,7 +2,7 @@
 
 use super::{
     AggregateKind, AggregateLayout, AggregateMember, ArrayKind, AssociativeIndex,
-    ElaboratedTypeRanges, NodeId, PackedMember, PackedRange,
+    ElaboratedTypeRanges, NodeId, PackedMember, PackedRange, TypeDescriptor, TypeId, TypeShape,
 };
 use crate::core::model::TypeInfo;
 use crate::ffi::slang::{
@@ -22,6 +22,7 @@ pub(super) struct ArrayTypeProjection {
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct TypeProjection {
     pub type_info: TypeInfo,
+    pub descriptor: TypeDescriptor,
     pub two_state: bool,
     pub packed_dimensions: Vec<PackedRange>,
     pub packed_members: Option<Vec<PackedMember>>,
@@ -62,9 +63,11 @@ impl<'a> SlangTypeProjector<'a> {
         let packed_members = self.packed_members(packed_base)?;
         let mut visiting = HashSet::new();
         let aggregate_layout = self.aggregate_layout(packed_base, &mut visiting)?;
+        let descriptor = self.descriptor(ty, &mut HashSet::new())?;
         let array = self.array(ty)?;
         Ok(TypeProjection {
             type_info,
+            descriptor,
             two_state: !ty.is_four_state,
             packed_dimensions,
             packed_members,
@@ -294,12 +297,17 @@ impl<'a> SlangTypeProjector<'a> {
             .iter()
             .map(|member| {
                 let member_ty = self.ty(member.type_id)?;
+                let descriptor = self.descriptor(member_ty, visiting)?;
                 Ok(AggregateMember {
                     name: member.name.clone(),
                     ty: self.type_info(member_ty)?,
                     two_state: !member_ty.is_four_state,
                     packed_ranges: self.member_packed_ranges(member_ty)?,
-                    aggregate: self.aggregate_layout(member_ty, visiting)?.map(Box::new),
+                    aggregate: match &descriptor.shape {
+                        TypeShape::Aggregate(layout) => Some(Box::new(layout.clone())),
+                        _ => None,
+                    },
+                    descriptor,
                 })
             })
             .collect::<Result<Vec<_>, String>>()?;
@@ -307,8 +315,96 @@ impl<'a> SlangTypeProjector<'a> {
         Ok(Some(AggregateLayout {
             kind,
             type_identity: Some(format!("type#{}", ty.id)),
+            type_id: Some(TypeId(ty.id)),
             members,
         }))
+    }
+
+    /// Build one complete recursive descriptor from the owned Slang type
+    /// table. Arrays retain bounds and their element descriptor; aggregates
+    /// retain nominal identity and every nested member shape.
+    fn descriptor(
+        &self,
+        ty: &SlangType,
+        visiting: &mut HashSet<u64>,
+    ) -> Result<TypeDescriptor, String> {
+        if !visiting.insert(ty.id) {
+            return Err(format!("cycle in Slang value type {}", ty.id));
+        }
+        let info = self.type_info(ty)?;
+        let shape = match ty.kind {
+            TypeKind::Integral | TypeKind::Enum | TypeKind::PackedArray => {
+                TypeShape::PackedAtom {
+                    ranges: self.packed_dimensions(ty)?,
+                }
+            }
+            TypeKind::Floating => TypeShape::Real {
+                shortreal: ty.bit_width == 32,
+            },
+            TypeKind::String => TypeShape::String,
+            TypeKind::PackedStruct
+            | TypeKind::PackedUnion
+            | TypeKind::UnpackedStruct
+            | TypeKind::UnpackedUnion => {
+                // `aggregate_layout` owns the insertion/removal of the
+                // aggregate id while it walks members.  The descriptor has
+                // already inserted it for the outer shape, so hand that
+                // ownership to the layout walk before delegating.
+                visiting.remove(&ty.id);
+                TypeShape::Aggregate(
+                    self.aggregate_layout(ty, visiting)?
+                        .ok_or_else(|| format!("missing aggregate layout for type {}", ty.id))?,
+                )
+            }
+            TypeKind::FixedUnpackedArray => {
+                let mut dimensions = Vec::new();
+                let mut current = ty;
+                let mut seen = HashSet::new();
+                while current.kind == TypeKind::FixedUnpackedArray {
+                    if !seen.insert(current.id) {
+                        return Err(format!("cycle in Slang unpacked array type {}", current.id));
+                    }
+                    let range = self.one_range(current, TypeRangeKind::Unpacked)?;
+                    dimensions.push((
+                        i32::try_from(range.left).map_err(|_| {
+                            format!("array type {} left bound is outside i32", current.id)
+                        })?,
+                        i32::try_from(range.right).map_err(|_| {
+                            format!("array type {} right bound is outside i32", current.id)
+                        })?,
+                    ));
+                    current = self.element_type(current, "fixed unpacked array")?;
+                }
+                TypeShape::FixedArray {
+                    dimensions,
+                    element: Box::new(self.descriptor(current, visiting)?),
+                }
+            }
+            TypeKind::DynamicArray | TypeKind::AssociativeArray | TypeKind::Queue => {
+                TypeShape::Container {
+                    kind: format!("{:?}", ty.kind),
+                    element: Box::new(self.descriptor(
+                        self.element_type(ty, "container")?,
+                        visiting,
+                    )?),
+                }
+            }
+            TypeKind::Chandle
+            | TypeKind::Class
+            | TypeKind::Event
+            | TypeKind::Void
+            | TypeKind::Aggregate
+            | TypeKind::Other => TypeShape::Opaque {
+                kind: format!("{:?}", ty.kind),
+            },
+        };
+        visiting.remove(&ty.id);
+        Ok(TypeDescriptor {
+            id: TypeId(ty.id),
+            name: ty.display_name.clone(),
+            info,
+            shape,
+        })
     }
 
     fn array(&self, ty: &SlangType) -> Result<Option<ArrayTypeProjection>, String> {
@@ -425,6 +521,10 @@ fn nominal_identity(display_name: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::db::{
+        ValueCopySemantics, ValueDefaultSemantics, ValueDestroySemantics,
+        ValueEqualitySemantics,
+    };
 
     fn ty(id: u64, kind: TypeKind, bit_width: u64) -> SlangType {
         SlangType {
@@ -474,6 +574,33 @@ mod tests {
         };
 
         let projection = projector.project(2).expect("project static array");
+        match &projection.descriptor.shape {
+            TypeShape::FixedArray {
+                dimensions,
+                element,
+            } => {
+                assert_eq!(dimensions, &vec![(1, 0), (3, 0)]);
+                assert_eq!(element.info.width, Some(8));
+                assert!(matches!(element.shape, TypeShape::PackedAtom { .. }));
+            }
+            shape => panic!("expected recursive fixed-array descriptor, got {shape:?}"),
+        }
+        assert_eq!(
+            projection.descriptor.copy_semantics(),
+            ValueCopySemantics::Deep
+        );
+        assert_eq!(
+            projection.descriptor.default_semantics(),
+            ValueDefaultSemantics::Recursive
+        );
+        assert_eq!(
+            projection.descriptor.destroy_semantics(),
+            ValueDestroySemantics::Recursive
+        );
+        assert_eq!(
+            projection.descriptor.equality_semantics(),
+            ValueEqualitySemantics::Recursive
+        );
         let array = projection.array.expect("array metadata");
         assert_eq!(array.kind, ArrayKind::Static);
         assert_eq!(array.dimensions, vec![Some((1, 0)), Some((3, 0))]);
@@ -509,6 +636,15 @@ mod tests {
         };
 
         let projection = projector.project(2).expect("project packed struct");
+        match &projection.descriptor.shape {
+            TypeShape::Aggregate(layout) => match &layout.members[0].descriptor.shape {
+                TypeShape::PackedAtom { ranges } => {
+                    assert_eq!(ranges, &[PackedRange { left: 7, right: 0 }]);
+                }
+                shape => panic!("expected packed member descriptor, got {shape:?}"),
+            },
+            shape => panic!("expected aggregate descriptor, got {shape:?}"),
+        }
         let packed = projection.packed_members.expect("packed members");
         assert_eq!(packed[0].name, "data");
         assert_eq!(

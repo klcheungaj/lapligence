@@ -10,17 +10,17 @@
 
 use super::slang_types::SlangTypeProjector;
 use super::{
-    AlwaysKind, CaseKind, ConstantType, DbValidationError, Direction, JoinKind, NetType,
-    ObjectType, Operation, PrimitiveType, Strength,
+    AlwaysKind, CapturedSemanticKind, CaseKind, ConstantType, DbValidationError, Direction,
+    JoinKind, NetType, ObjectType, Operation, PrimitiveType, Strength,
 };
 
 use crate::core::elab::Val;
 use crate::core::model::TypeInfo;
 use crate::core::value::ValueData;
 use crate::ffi::slang::{
-    ConstantValue as SlangConstantValue, SemanticDefinitionKind, SemanticDriveStrength,
-    SemanticEdgeRole, SemanticKind, SemanticNode, SemanticOperation, SemanticTimeScale,
-    SemanticTimeUnit, Snapshot as SlangSnapshot,
+    ConstantValue as SlangConstantValue, LanguageEdition, SemanticDefinitionKind,
+    SemanticDriveStrength, SemanticEdgeRole, SemanticKind, SemanticNode, SemanticOperation,
+    SemanticTimeScale, SemanticTimeUnit, Snapshot as SlangSnapshot,
 };
 use std::collections::{HashMap, HashSet};
 use std::error::Error;
@@ -49,6 +49,171 @@ impl NodeId {
 pub struct PackedRange {
     pub left: i128,
     pub right: i128,
+}
+
+/// Stable identity of one frontend-owned type record.
+///
+/// This is deliberately the captured semantic type id, not a display name or
+/// a pointer into Slang.  It remains useful when two anonymous aggregates have
+/// identical members but are not assignment-compatible.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct TypeId(pub u64);
+
+/// Copy policy for a recursive value.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ValueCopySemantics {
+    /// Copy the value recursively, including every fixed aggregate element.
+    Deep,
+    /// Copy the owning handle while preserving the referenced object's
+    /// identity.  Dynamic containers and opaque handles use this policy until
+    /// their dedicated runtime contracts are lowered.
+    Handle,
+}
+
+/// Default initialization policy for a recursive value.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ValueDefaultSemantics {
+    FourStateX,
+    TwoStateZero,
+    RealZero,
+    EmptyString,
+    NullHandle,
+    Recursive,
+}
+
+/// Destruction policy for owned recursive storage.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ValueDestroySemantics {
+    Trivial,
+    Recursive,
+    Handle,
+}
+
+/// Equality policy recorded with a recursive descriptor.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ValueEqualitySemantics {
+    FourState,
+    Real,
+    String,
+    Recursive,
+    HandleIdentity,
+    Unsupported,
+}
+
+/// The recursive shape of a frontend-owned value.
+#[derive(Clone, Debug, PartialEq)]
+pub enum TypeShape {
+    PackedAtom {
+        ranges: Vec<PackedRange>,
+    },
+    Real {
+        shortreal: bool,
+    },
+    String,
+    Aggregate(AggregateLayout),
+    FixedArray {
+        dimensions: Vec<(i32, i32)>,
+        element: Box<TypeDescriptor>,
+    },
+    Container {
+        kind: String,
+        element: Box<TypeDescriptor>,
+    },
+    Opaque {
+        kind: String,
+    },
+}
+
+/// Canonical owned type metadata used by aggregate and future activation
+/// storage.  It intentionally contains no frontend references.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TypeDescriptor {
+    pub id: TypeId,
+    /// Exact frontend-rendered type spelling, retained for `$typename` and
+    /// diagnostics without requiring a frontend object at simulation time.
+    pub name: String,
+    pub info: TypeInfo,
+    pub shape: TypeShape,
+}
+
+impl TypeDescriptor {
+    pub fn copy_semantics(&self) -> ValueCopySemantics {
+        match self.shape {
+            TypeShape::Container { .. } | TypeShape::Opaque { .. } => ValueCopySemantics::Handle,
+            _ => ValueCopySemantics::Deep,
+        }
+    }
+
+    pub fn default_semantics(&self) -> ValueDefaultSemantics {
+        match self.shape {
+            TypeShape::PackedAtom { .. } => {
+                if self.info.kind == "bit"
+                    || matches!(self.info.kind.as_str(), "int" | "integer" | "longint" | "byte" | "shortint" | "time")
+                {
+                    ValueDefaultSemantics::TwoStateZero
+                } else {
+                    ValueDefaultSemantics::FourStateX
+                }
+            }
+            TypeShape::Real { .. } => ValueDefaultSemantics::RealZero,
+            TypeShape::String => ValueDefaultSemantics::EmptyString,
+            TypeShape::Aggregate(_) | TypeShape::FixedArray { .. } => {
+                ValueDefaultSemantics::Recursive
+            }
+            TypeShape::Container { .. } | TypeShape::Opaque { .. } => {
+                ValueDefaultSemantics::NullHandle
+            }
+        }
+    }
+
+    pub fn destroy_semantics(&self) -> ValueDestroySemantics {
+        match self.shape {
+            TypeShape::Aggregate(_) | TypeShape::FixedArray { .. } => {
+                ValueDestroySemantics::Recursive
+            }
+            TypeShape::Container { .. } | TypeShape::Opaque { .. } => {
+                ValueDestroySemantics::Handle
+            }
+            _ => ValueDestroySemantics::Trivial,
+        }
+    }
+
+    pub fn equality_semantics(&self) -> ValueEqualitySemantics {
+        match self.shape {
+            TypeShape::PackedAtom { .. } => ValueEqualitySemantics::FourState,
+            TypeShape::Real { .. } => ValueEqualitySemantics::Real,
+            TypeShape::String => ValueEqualitySemantics::String,
+            TypeShape::Aggregate(_) | TypeShape::FixedArray { .. } => {
+                ValueEqualitySemantics::Recursive
+            }
+            TypeShape::Container { .. } | TypeShape::Opaque { .. } => {
+                ValueEqualitySemantics::HandleIdentity
+            }
+        }
+    }
+
+    pub fn fixed_size_bits(&self) -> Option<u64> {
+        match &self.shape {
+            TypeShape::PackedAtom { .. } => self.info.width.map(u64::from),
+            TypeShape::Aggregate(layout) => {
+                if matches!(layout.kind, AggregateKind::PackedStruct | AggregateKind::PackedUnion) {
+                    layout.members.iter().try_fold(0u64, |total, member| {
+                        total.checked_add(member.descriptor.fixed_size_bits()?)
+                    })
+                } else {
+                    None
+                }
+            }
+            TypeShape::FixedArray { dimensions, element } => {
+                let count = dimensions.iter().try_fold(1u64, |total, (left, right)| {
+                    let extent = (i64::from(*left) - i64::from(*right)).unsigned_abs();
+                    total.checked_mul(extent.checked_add(1)?)
+                })?;
+                element.fixed_size_bits()?.checked_mul(count)
+            }
+            _ => None,
+        }
+    }
 }
 
 /// Ordered packed dimensions for one elaborated declaration.
@@ -96,6 +261,9 @@ pub struct AggregateMember {
     pub packed_ranges: Vec<PackedRange>,
     /// Nested structure/union layout when this member is itself aggregate.
     pub aggregate: Option<Box<AggregateLayout>>,
+    /// Complete recursive member type, including fixed unpacked arrays and
+    /// non-integral leaves which do not have a packed width.
+    pub descriptor: TypeDescriptor,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -104,12 +272,17 @@ pub struct AggregateLayout {
     /// Database-local identity of Slang's canonical aggregate type. Equal
     /// identities prove assignment compatibility; member shape alone does not.
     pub type_identity: Option<String>,
+    pub type_id: Option<TypeId>,
     pub members: Vec<AggregateMember>,
 }
 
 /// Exact owned metadata for a type key in an assignment pattern.
 #[derive(Clone, Debug, PartialEq)]
 pub struct AssignmentPatternKeyType {
+    /// Canonical frontend type identity.  Width, signedness, and state domain
+    /// are not sufficient to decide whether a nominal aggregate/type key
+    /// matches a member.
+    pub type_id: TypeId,
     pub ty: TypeInfo,
     pub two_state: bool,
     pub packed_ranges: Vec<PackedRange>,
@@ -166,6 +339,15 @@ impl From<String> for DbError {
 #[derive(Debug)]
 pub struct Db {
     nodes: Vec<Node>,
+    /// Complete language policy selected for the owned frontend snapshot.
+    edition: LanguageEdition,
+    overridden_parameters: HashSet<NodeId>,
+    /// Native semantic categories retained for coverage checks when the
+    /// frontend-neutral [`NodeKind`] intentionally has no direct variant.
+    semantic_kinds: Vec<CapturedSemanticKind>,
+    /// Native detail text retained alongside [`semantic_kinds`] for
+    /// source-located diagnostics about otherwise unsupported nodes.
+    semantic_details: Vec<String>,
     tops: Vec<NodeId>,
     flat_modules: Vec<NodeId>,
     packages: Vec<NodeId>,
@@ -174,6 +356,15 @@ pub struct Db {
     /// Unpacked-array dimension/initializer metadata, keyed by each
     /// [`NodeKind::Array`] arena node (see [`ArrayMeta`]).
     arrays: HashMap<NodeId, ArrayMeta>,
+    /// Unpacked-array metadata for named-event declarations. Event arrays keep
+    /// their declaration identity as [`NodeKind::NamedEvent`] while this side
+    /// table records the index shape needed by the simulator.
+    event_arrays: HashMap<NodeId, ArrayMeta>,
+    /// Canonical owner/path for array-select expressions whose frontend base
+    /// is a detached synthetic array node (for example a member array inside
+    /// an unpacked aggregate).  Keeping this identity in the owned snapshot
+    /// avoids resolving equal display names at lowering time.
+    array_select_paths: HashMap<NodeId, (NodeId, Vec<String>)>,
     vars_init: HashMap<NodeId, NodeId>,
     var_lifetimes: HashMap<NodeId, VariableLifetime>,
     var_lifetime_qualifiers: HashMap<NodeId, VariableLifetimeQualifier>,
@@ -182,6 +373,8 @@ pub struct Db {
     packed_members: HashMap<NodeId, Vec<PackedMember>>,
     /// Structure/union category and members keyed by the declared object.
     aggregate_layouts: HashMap<NodeId, AggregateLayout>,
+    /// Complete recursive type descriptors keyed by the declared object.
+    type_descriptors: HashMap<NodeId, TypeDescriptor>,
     /// Ordered ranges of multidimensional packed declarations.
     packed_dimensions: HashMap<NodeId, Vec<PackedRange>>,
     /// True for declarations whose complete packed type has a two-state base.
@@ -421,6 +614,10 @@ pub enum NodeKind {
         direction: Direction,
         ty: TypeInfo,
         default: Option<NodeId>,
+        /// `true` for a `const ref` formal.
+        const_ref: bool,
+        /// `true` for a `ref static` formal.
+        ref_static: bool,
     },
     EnumConst {
         value: Option<Val>,
@@ -538,11 +735,19 @@ pub enum StmtKind {
     EventTrigger {
         blocking: bool,
         target: Option<NodeId>,
+        timing: Option<EventTriggerTiming>,
     },
     /// `wait (cond) stmt` — suspend until `cond` is true, then run the body.
     /// The (optional) body statement is captured as a child node.
     Wait {
         cond: NodeId,
+    },
+    /// `wait_order (...) action else failure` — suspend until canonical event
+    /// objects arrive in order, retaining both action statements.
+    WaitOrder {
+        events: Vec<NodeId>,
+        if_true: Option<NodeId>,
+        if_false: Option<NodeId>,
     },
     /// `force lhs = rhs` — force a net/var until released or deassigned.
     Force {
@@ -571,6 +776,9 @@ pub enum StmtKind {
         value: Option<NodeId>,
     },
     Fork {
+        /// Resolved declaration identity for a named fork scope. Anonymous
+        /// fork statements carry no target.
+        target: Option<NodeId>,
         join_kind: JoinKind,
         branches: Vec<NodeId>,
     },
@@ -620,6 +828,59 @@ pub enum IntraControl {
     EventOrRepeat,
 }
 
+/// Timing attached to a nonblocking named-event trigger (`->> timing ev`).
+///
+/// The timing control remains an owned semantic value until simulator
+/// lowering.  Unsupported timing nodes are retained so a consumer can issue
+/// a source-located rejection instead of silently treating them as an
+/// immediate trigger.
+#[derive(Debug)]
+pub enum EventTriggerTiming {
+    Delay {
+        control: NodeId,
+        expression: NodeId,
+    },
+    Event {
+        control: NodeId,
+        specs: Vec<EventSpec>,
+        implicit: bool,
+    },
+    Repeat {
+        control: NodeId,
+        count: NodeId,
+        event: Box<EventTriggerTiming>,
+    },
+    Unsupported {
+        control: NodeId,
+    },
+}
+
+impl EventTriggerTiming {
+    pub(crate) fn referenced_nodes(&self, nodes: &mut Vec<NodeId>) {
+        match self {
+            Self::Delay {
+                control,
+                expression,
+            } => nodes.extend([*control, *expression]),
+            Self::Event { control, specs, .. } => {
+                nodes.push(*control);
+                for spec in specs {
+                    spec.referenced_nodes(nodes);
+                }
+            }
+            Self::Repeat {
+                control,
+                count,
+                event,
+            } => {
+                nodes.extend([*control, *count]);
+                event.referenced_nodes(nodes);
+            }
+            Self::Unsupported { control } => nodes.push(*control),
+        }
+    }
+}
+
 /// One sensitivity entry of an event control.
 #[derive(Debug)]
 pub enum EventSpec {
@@ -635,9 +896,9 @@ pub enum EventSpec {
     AnyChange {
         sig: NodeId,
     },
-    /// A named event (`@(ev)`) — the value is the arena node of the
-    /// [`NodeKind::NamedEvent`] declaration (resolved through the operand's
-    /// ref or from the direct object).
+    /// A named event (`@(ev)`) — the value is the owned event expression. It
+    /// remains an expression node so array selects and hierarchical paths keep
+    /// their declaration identity and indices until simulator lowering.
     Named(NodeId),
 }
 
@@ -656,6 +917,9 @@ impl EventSpec {
 /// Kind of a captured expression.
 #[derive(Debug)]
 pub enum ExprKind {
+    /// A non-value symbol used as scope/interface metadata, never a signal read.
+    /// Consumers must validate the use site before treating it as elaboration-only.
+    ScopeRef { target: NodeId },
     Constant {
         value: ValueData,
         size: i32,
@@ -666,6 +930,11 @@ pub enum ExprKind {
     Operation {
         op: Operation,
         reordered: bool,
+        /// Whether this operation is the assignment-expression form of the
+        /// operation (including compound assignments). The frontend uses the
+        /// same semantic operation for `+` and `+=`; retaining the source
+        /// operation subkind keeps that distinction in the owned DB.
+        assignment: bool,
         operands: Vec<NodeId>,
     },
     /// A streaming concatenation with Slang's resolved slice size and exact
@@ -702,6 +971,12 @@ pub enum ExprKind {
     Ref {
         target: Option<NodeId>,
     },
+    /// A type-only expression admitted by an unevaluated system-function
+    /// argument (for example `$bits(int)` or `$typename(my_t)`).
+    DataType,
+    /// The SystemVerilog unbounded literal `$`, retained independently from
+    /// ordinary constants so `$isunbounded` does not evaluate its argument.
+    Unbounded,
     BitSelect {
         base: NodeId,
         index: NodeId,
@@ -759,7 +1034,7 @@ pub enum ConstantSource {
     Unavailable,
 }
 
-/// Exact source unit carried by a SystemVerilog time literal.
+/// Owning scope's base time unit carried by a SystemVerilog time literal.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TimeLiteralScale {
     pub unit: TimeUnit,
@@ -1135,8 +1410,16 @@ fn driver_delay(
         [rise, fall] => DriverDelay::RiseFall(*rise, *fall),
         [rise, fall, turn_off] => DriverDelay::RiseFallTurnOff(*rise, *fall, *turn_off),
         _ => {
+            let location = source_position(snapshot, semantic)
+                .ok()
+                .and_then(|(file, line, col, _, _)| {
+                    file.map(|file| format!(" at {file}:{line}:{col}"))
+                })
+                .unwrap_or_default();
             return Err(DbError::InvalidSnapshot(
-                "driver timing control requires one to three delay expressions".into(),
+                format!(
+                    "driver timing control{location} requires one to three delay expressions"
+                ),
             ));
         }
     }))
@@ -1538,6 +1821,8 @@ fn node_kind_from_slang(
             direction: direction_from_slang(node),
             ty,
             default: first(SemanticEdgeRole::DefaultValue)?,
+            const_ref: node.is_const_ref,
+            ref_static: node.is_ref_static,
         },
         SemanticKind::Statement => statement_from_slang(snapshot, node, edges, ids)?,
         SemanticKind::Expression => {
@@ -1646,6 +1931,21 @@ fn statement_from_slang(
         39 => StmtKind::Forever {
             body: required(SemanticEdgeRole::Body, "forever body")?,
         },
+        42 if node.auxiliary == 1 => {
+            let mut events = edges
+                .iter()
+                .filter(|edge| edge.role == SemanticEdgeRole::Event)
+                .collect::<Vec<_>>();
+            events.sort_by_key(|edge| edge.index);
+            StmtKind::WaitOrder {
+                events: events
+                    .into_iter()
+                    .map(|edge| semantic_id(ids, edge.target_id))
+                    .collect::<Result<Vec<_>, _>>()?,
+                if_true: first(SemanticEdgeRole::Then)?,
+                if_false: first(SemanticEdgeRole::Else)?,
+            }
+        }
         42 => StmtKind::Wait {
             cond: required(SemanticEdgeRole::Condition, "wait condition")?,
         },
@@ -1722,6 +2022,11 @@ fn statement_from_slang(
                     vec![body]
                 };
             StmtKind::Fork {
+                target: node
+                    .target_id
+                    .map(|symbol| block_statement_for_symbol(snapshot, ids, symbol))
+                    .transpose()?
+                    .flatten(),
                 join_kind: match node.subkind {
                     56 => JoinKind::All,
                     57 => JoinKind::Any,
@@ -1738,7 +2043,10 @@ fn statement_from_slang(
         40 => timing_statement(snapshot, node, edges, ids)?,
         41 => StmtKind::EventTrigger {
             blocking: !node.is_nonblocking,
-            target: resolved_edge_target(snapshot, ids, edges, SemanticEdgeRole::Event)?,
+            target: edge_target(ids, edges, SemanticEdgeRole::Event)?,
+            timing: edge_target(ids, edges, SemanticEdgeRole::Delay)?
+                .map(|timing| event_trigger_timing(snapshot, timing, ids))
+                .transpose()?,
         },
         _ => StmtKind::Unsupported {
             object_type: ObjectType::UnsupportedStatement,
@@ -1832,6 +2140,62 @@ fn timing_statement(
     })
 }
 
+fn event_trigger_timing(
+    snapshot: &SlangSnapshot,
+    timing_id: NodeId,
+    ids: &HashMap<u64, NodeId>,
+) -> Result<EventTriggerTiming, DbError> {
+    let timing = snapshot
+        .semantic_nodes
+        .get(timing_id.index())
+        .ok_or_else(|| {
+            DbError::InvalidSnapshot("event-trigger timing control node is missing".into())
+        })?;
+    let edges = semantic_edges(snapshot, timing)?;
+    match timing.subkind {
+        112 => {
+            let delays: Vec<NodeId> = edges
+                .iter()
+                .filter(|edge| edge.role == SemanticEdgeRole::Delay)
+                .map(|edge| semantic_id(ids, edge.target_id))
+                .collect::<Result<_, _>>()?;
+            match delays.as_slice() {
+                [delay] => Ok(EventTriggerTiming::Delay {
+                    control: timing_id,
+                    expression: *delay,
+                }),
+                // Delay3 and 1step controls are retained as unsupported
+                // timing nodes rather than degrading to the first operand.
+                _ => Ok(EventTriggerTiming::Unsupported { control: timing_id }),
+            }
+        }
+        113 | 114 | 115 => {
+            let (specs, implicit) = event_specs(snapshot, timing, ids)?;
+            Ok(EventTriggerTiming::Event {
+                control: timing_id,
+                specs,
+                implicit,
+            })
+        }
+        116 => {
+            let count = edge_target(ids, edges, SemanticEdgeRole::Condition)?.ok_or_else(|| {
+                DbError::InvalidSnapshot("repeated event trigger has no count".into())
+            })?;
+            let event = edge_target(ids, edges, SemanticEdgeRole::Event)?.ok_or_else(|| {
+                DbError::InvalidSnapshot("repeated event trigger has no event control".into())
+            })?;
+            Ok(EventTriggerTiming::Repeat {
+                control: timing_id,
+                count,
+                event: Box::new(event_trigger_timing(snapshot, event, ids)?),
+            })
+        }
+        // Cycle delays and any future bridge timing kinds remain represented
+        // by their owned timing node until a simulator implementation exists.
+        _ => Ok(EventTriggerTiming::Unsupported { control: timing_id }),
+    }
+}
+
 fn event_specs(
     snapshot: &SlangSnapshot,
     timing: &SemanticNode,
@@ -1842,21 +2206,7 @@ fn event_specs(
         113 => {
             let sig = edge_target(ids, edges, SemanticEdgeRole::Event)?
                 .ok_or_else(|| DbError::InvalidSnapshot("signal event has no expression".into()))?;
-            let resolved = snapshot
-                .semantic_nodes
-                .get(sig.index())
-                .and_then(|expression| expression.target_id)
-                .map(|id| semantic_id(ids, id))
-                .transpose()?;
-            let named_event = resolved.filter(|target| {
-                matches!(
-                    snapshot
-                        .semantic_nodes
-                        .get(target.index())
-                        .map(|node| node.kind),
-                    Some(SemanticKind::NamedEvent)
-                )
-            });
+            let named_event = is_named_event_expression(snapshot, ids, sig)?;
             let specs = if timing.is_both_edges {
                 vec![
                     EventSpec::Edge { sig, posedge: true },
@@ -1870,8 +2220,8 @@ fn event_specs(
                     sig,
                     posedge: timing.is_posedge,
                 }]
-            } else if let Some(event) = named_event {
-                vec![EventSpec::Named(event)]
+            } else if named_event {
+                vec![EventSpec::Named(sig)]
             } else {
                 vec![EventSpec::AnyChange { sig }]
             };
@@ -1895,9 +2245,10 @@ fn event_specs(
                 .iter()
                 .filter(|edge| edge.role == SemanticEdgeRole::Event)
             {
+                let event_id = semantic_id(ids, edge.target_id)?;
                 let event = snapshot
                     .semantic_nodes
-                    .get(edge.target_id as usize)
+                    .get(event_id.index())
                     .ok_or_else(|| DbError::InvalidSnapshot("event list item is missing".into()))?;
                 specs.extend(event_specs(snapshot, event, ids)?.0);
             }
@@ -1911,15 +2262,60 @@ fn event_specs(
     }
 }
 
+fn is_named_event_expression(
+    snapshot: &SlangSnapshot,
+    ids: &HashMap<u64, NodeId>,
+    expression: NodeId,
+) -> Result<bool, DbError> {
+    let node = snapshot
+        .semantic_nodes
+        .get(expression.index())
+        .ok_or_else(|| DbError::InvalidSnapshot("event expression is missing".into()))?;
+    if node.kind == SemanticKind::NamedEvent {
+        return Ok(true);
+    }
+    if node.kind != SemanticKind::Expression {
+        return Ok(false);
+    }
+    match node.subkind {
+        65 => node
+            .target_id
+            .map(|target| semantic_id(ids, target))
+            .transpose()?
+            .map_or(Ok(false), |target| {
+                is_named_event_expression(snapshot, ids, target)
+            }),
+        73 => {
+            let edges = semantic_edges(snapshot, node)?;
+            edge_target(ids, edges, SemanticEdgeRole::Base)?
+                .map_or(Ok(false), |base| {
+                    is_named_event_expression(snapshot, ids, base)
+                })
+        }
+        75 => node
+            .target_id
+            .map(|target| semantic_id(ids, target))
+            .transpose()?
+            .map_or(Ok(false), |target| {
+                is_named_event_expression(snapshot, ids, target)
+            }),
+        _ => Ok(false),
+    }
+}
+
 fn source_spelling(snapshot: &SlangSnapshot, node: &SemanticNode) -> Option<String> {
+    // The bridge exports the expanded token for time literals. Never guess a
+    // macro's replacement by scanning raw source: inactive branches, undef,
+    // includes, and function-like macros make that semantically incorrect.
+    if node.kind == SemanticKind::Expression && node.subkind == 85 && !node.name.is_empty() {
+        return Some(node.name.clone());
+    }
     let range = node.range?;
-    let file = snapshot
-        .files
-        .iter()
-        .find(|file| file.id == range.file_id)?;
+    let file = snapshot.files.iter().find(|file| file.id == range.file_id)?;
     let start = usize::try_from(range.start).ok()?;
     let end = usize::try_from(range.end).ok()?;
-    file.text.get(start..end).map(str::to_owned)
+    let spelling = file.text.get(start..end)?;
+    (!spelling.is_empty()).then(|| spelling.to_owned())
 }
 
 fn expression_from_slang(
@@ -1934,6 +2330,17 @@ fn expression_from_slang(
     let required = |role, name| {
         first(role)?.ok_or_else(|| DbError::InvalidSnapshot(format!("{name} is missing")))
     };
+    if node.detail == "ArbitrarySymbol" {
+        return Ok(NodeKind::Expr(ExprKind::ScopeRef {
+            target: required(SemanticEdgeRole::Reference, "scope reference target")?,
+        }));
+    }
+    if node.detail == "DataType" {
+        return Ok(NodeKind::Expr(ExprKind::DataType));
+    }
+    if node.detail == "UnboundedLiteral" {
+        return Ok(NodeKind::Expr(ExprKind::Unbounded));
+    }
     Ok(NodeKind::Expr(match node.subkind {
         64 | 85 => {
             let value = node
@@ -2021,6 +2428,7 @@ fn expression_from_slang(
                 })?;
                 let projection = type_projector.project(type_id)?;
                 Some(AssignmentPatternKeyType {
+                    type_id: projection.descriptor.id,
                     ty: projection.type_info,
                     two_state: projection.two_state,
                     packed_ranges: projection.packed_dimensions,
@@ -2121,6 +2529,7 @@ fn expression_from_slang(
             ExprKind::Operation {
                 op: operation_from_slang(node.operation, node.subkind == 66),
                 reordered: false,
+                assignment: node.subkind == 71,
                 operands,
             }
         }
@@ -2197,18 +2606,25 @@ impl Db {
     pub(super) fn empty_for_validation_test() -> Self {
         Self {
             nodes: Vec::new(),
+            edition: LanguageEdition::SystemVerilog2009,
+            overridden_parameters: HashSet::new(),
+            semantic_kinds: Vec::new(),
+            semantic_details: Vec::new(),
             tops: Vec::new(),
             flat_modules: Vec::new(),
             packages: Vec::new(),
             classes: Vec::new(),
             design_name: "test".to_owned(),
             arrays: HashMap::new(),
+            event_arrays: HashMap::new(),
+            array_select_paths: HashMap::new(),
             vars_init: HashMap::new(),
             var_lifetimes: HashMap::new(),
             var_lifetime_qualifiers: HashMap::new(),
             method_calls_with_clause: HashSet::new(),
             packed_members: HashMap::new(),
             aggregate_layouts: HashMap::new(),
+            type_descriptors: HashMap::new(),
             packed_dimensions: HashMap::new(),
             two_state_types: HashSet::new(),
             implicit_nets: HashSet::new(),
@@ -2235,18 +2651,25 @@ impl Db {
     ) -> Result<Self, DbError> {
         let db = Self {
             nodes,
+            edition: LanguageEdition::SystemVerilog2009,
+            overridden_parameters: HashSet::new(),
+            semantic_kinds: Vec::new(),
+            semantic_details: Vec::new(),
             tops,
             flat_modules: Vec::new(),
             packages: Vec::new(),
             classes: Vec::new(),
             design_name: design_name.into(),
             arrays,
+            event_arrays: HashMap::new(),
+            array_select_paths: HashMap::new(),
             vars_init: HashMap::new(),
             var_lifetimes: HashMap::new(),
             var_lifetime_qualifiers: HashMap::new(),
             method_calls_with_clause: HashSet::new(),
             packed_members: HashMap::new(),
             aggregate_layouts: HashMap::new(),
+            type_descriptors: HashMap::new(),
             packed_dimensions: HashMap::new(),
             two_state_types: HashSet::new(),
             implicit_nets: HashSet::new(),
@@ -2286,7 +2709,28 @@ impl Db {
         }
 
         let mut nodes = Vec::with_capacity(snapshot.semantic_nodes.len());
+        let overridden_parameters = snapshot
+            .semantic_nodes
+            .iter()
+            .enumerate()
+            .filter(|(_, semantic)| {
+                semantic.kind == SemanticKind::Parameter && semantic.auxiliary == 1
+            })
+            .map(|(index, _)| NodeId::from_index(index))
+            .collect();
+        let semantic_kinds = snapshot
+            .semantic_nodes
+            .iter()
+            .map(|semantic| semantic.kind.into())
+            .collect();
+        let semantic_details = snapshot
+            .semantic_nodes
+            .iter()
+            .map(|semantic| semantic.detail.clone())
+            .collect();
         let mut arrays = HashMap::new();
+        let mut event_arrays = HashMap::new();
+        let mut array_select_paths = HashMap::new();
         let mut vars_init = HashMap::new();
         let mut two_state_types = HashSet::new();
         let mut implicit_nets = HashSet::new();
@@ -2296,6 +2740,7 @@ impl Db {
         let mut method_calls_with_clause = HashSet::new();
         let mut packed_members = HashMap::new();
         let mut aggregate_layouts = HashMap::new();
+        let mut type_descriptors = HashMap::new();
         let mut packed_dimensions = HashMap::new();
         for semantic in &snapshot.semantic_nodes {
             let id = ids[&semantic.id];
@@ -2431,6 +2876,10 @@ impl Db {
                 };
                 var_lifetime_qualifiers.insert(id, lifetime);
             }
+            let is_event_array = semantic.kind == SemanticKind::NamedEvent
+                && projection
+                    .as_ref()
+                    .is_some_and(|projection| projection.array.is_some());
             let is_array = matches!(semantic.kind, SemanticKind::Variable | SemanticKind::Net)
                 && semantic.subkind != 229
                 && projection
@@ -2462,7 +2911,26 @@ impl Db {
                     },
                 );
             }
+            if is_event_array {
+                let array = projection
+                    .as_ref()
+                    .and_then(|projection| projection.array.as_ref());
+                event_arrays.insert(
+                    id,
+                    ArrayMeta {
+                        kind: array
+                            .map(|array| array.kind.clone())
+                            .unwrap_or(ArrayKind::Static),
+                        dims: array
+                            .map(|array| array.dimensions.clone())
+                            .unwrap_or_default(),
+                        init: edge_target(&ids, edges, SemanticEdgeRole::Initializer)?,
+                        net_type: None,
+                    },
+                );
+            }
             if let Some(projection) = &projection {
+                type_descriptors.insert(id, projection.descriptor.clone());
                 if !projection.packed_dimensions.is_empty() {
                     packed_dimensions.insert(id, projection.packed_dimensions.clone());
                 }
@@ -2504,6 +2972,25 @@ impl Db {
             let (file, line, col, end_line, end_col) = source_position(snapshot, semantic)?;
             let mut kind =
                 node_kind_from_slang(snapshot, &type_projector, semantic, edges, &ids, type_info)?;
+            if semantic.kind == SemanticKind::Expression && semantic.subkind == 73 {
+                if let Some(base) = edge_target(&ids, edges, SemanticEdgeRole::Base)? {
+                    if let Some((parts, refs)) = member_path_from_slang(
+                        snapshot,
+                        &ids,
+                        &snapshot.semantic_nodes[base.index()],
+                        0,
+                    )? {
+                        if parts.len() > 1 {
+                            if let Some(owner) = refs.into_iter().flatten().next() {
+                                array_select_paths.insert(
+                                    id,
+                                    (owner, parts.into_iter().skip(1).collect()),
+                                );
+                            }
+                        }
+                    }
+                }
+            }
             if is_array {
                 let element_type = projection
                     .as_ref()
@@ -2562,6 +3049,22 @@ impl Db {
                     _ => edge_target(&ids, edges, SemanticEdgeRole::Body)?
                         .into_iter()
                         .collect(),
+                };
+            } else if semantic.kind == SemanticKind::Statement
+                && semantic.subkind == 42
+                && semantic.auxiliary == 1
+            {
+                children = match &kind {
+                    NodeKind::Stmt(StmtKind::WaitOrder {
+                        events,
+                        if_true,
+                        if_false,
+                    }) => {
+                        let mut values = events.clone();
+                        values.extend(if_true.iter().chain(if_false.iter()).copied());
+                        values
+                    }
+                    _ => Vec::new(),
                 };
             }
             let target_name = || {
@@ -2671,18 +3174,25 @@ impl Db {
             .unwrap_or_else(|| "design".to_owned());
         let db = Self {
             nodes,
+            edition: snapshot.edition(),
+            overridden_parameters,
+            semantic_kinds,
+            semantic_details,
             tops,
             flat_modules,
             packages,
             classes,
             design_name,
             arrays,
+            event_arrays,
+            array_select_paths,
             vars_init,
             var_lifetimes,
             var_lifetime_qualifiers,
             method_calls_with_clause,
             packed_members,
             aggregate_layouts,
+            type_descriptors,
             packed_dimensions,
             two_state_types,
             implicit_nets,
@@ -2723,6 +3233,22 @@ impl Db {
         (0..self.nodes.len()).map(NodeId::from_index)
     }
 
+    /// Native semantic category retained for nodes imported from Slang.
+    /// Synthetic test databases do not have a native category and return
+    /// `None`.
+    pub fn semantic_kind(&self, id: NodeId) -> Option<CapturedSemanticKind> {
+        self.semantic_kinds.get(id.index()).copied()
+    }
+
+    /// Native detail retained for diagnostics about a captured node.
+    pub fn semantic_detail(&self, id: NodeId) -> Option<&str> {
+        self.semantic_details.get(id.index()).map(String::as_str)
+    }
+
+    pub(crate) fn semantic_metadata_lengths(&self) -> (usize, usize) {
+        (self.semantic_kinds.len(), self.semantic_details.len())
+    }
+
     pub fn tops(&self) -> &[NodeId] {
         &self.tops
     }
@@ -2749,6 +3275,25 @@ impl Db {
 
     pub fn array_meta(&self, id: NodeId) -> Option<&ArrayMeta> {
         self.arrays.get(&id)
+    }
+
+    /// Return unpacked-array metadata for a named-event declaration, when the
+    /// declaration has an unpacked event-array type.
+    pub fn event_arrays(&self) -> &HashMap<NodeId, ArrayMeta> {
+        &self.event_arrays
+    }
+
+    pub fn event_array_meta(&self, id: NodeId) -> Option<&ArrayMeta> {
+        self.event_arrays.get(&id)
+    }
+
+    /// Resolve an array-select expression to its aggregate owner and
+    /// declaration-relative member path, when Slang exposed that path through
+    /// owned member references.
+    pub fn array_select_path(&self, id: NodeId) -> Option<(NodeId, &[String])> {
+        self.array_select_paths
+            .get(&id)
+            .map(|(owner, path)| (*owner, path.as_slice()))
     }
 
     pub fn var_initializers(&self) -> &HashMap<NodeId, NodeId> {
@@ -2800,6 +3345,12 @@ impl Db {
 
     pub fn aggregate_layout(&self, id: NodeId) -> Option<&AggregateLayout> {
         self.aggregate_layouts.get(&id)
+    }
+
+    /// Return the complete recursive type descriptor captured for a
+    /// declaration, when Slang supplied a type record for it.
+    pub fn type_descriptor(&self, id: NodeId) -> Option<&TypeDescriptor> {
+        self.type_descriptors.get(&id)
     }
 
     pub fn packed_dimensions(&self, id: NodeId) -> Option<&[PackedRange]> {
@@ -2861,5 +3412,16 @@ impl Db {
 
     pub fn node_count(&self) -> usize {
         self.nodes.len()
+    }
+
+    /// Complete language policy selected when this database was captured.
+    pub fn edition(&self) -> LanguageEdition {
+        self.edition
+    }
+
+    /// Whether Slang replaced this parameter's declaration initializer with
+    /// an explicit elaboration override.
+    pub fn parameter_is_overridden(&self, id: NodeId) -> bool {
+        self.overridden_parameters.contains(&id)
     }
 }

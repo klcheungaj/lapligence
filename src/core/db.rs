@@ -12,12 +12,14 @@ mod validate;
 pub use database::{
     AggregateKind, AggregateLayout, AggregateMember, ArrayKind, ArrayMeta,
     AssignmentPatternKeyType, AssociativeIndex, CaseItem, ConstantSource, Db, DbError, DriverDelay,
-    ElaboratedTypeRanges, EventSpec, ExprKind, GateTerm, IntraControl, Node, NodeId, NodeKind,
-    PackedMember, PackedRange, PrimClass, ProcessKind, StmtKind, StreamOperand, StreamingDirection,
+    ElaboratedTypeRanges, EventSpec, EventTriggerTiming, ExprKind, GateTerm, IntraControl, Node,
+    NodeId, NodeKind, PackedMember, PackedRange, PrimClass, ProcessKind, StmtKind, StreamOperand,
+    StreamingDirection, TimeLiteralScale, TimeUnit, TypeDescriptor, TypeId, TypeShape,
+    ValueCopySemantics, ValueDefaultSemantics, ValueDestroySemantics, ValueEqualitySemantics,
     VariableLifetime, VariableLifetimeQualifier,
 };
 pub use domain::{
-    AlwaysKind, CaseKind, ConstantType, Direction, JoinKind, NetType, ObjectType, Operation,
-    PrimitiveType, Strength,
+    AlwaysKind, CapturedSemanticKind, CaseKind, ConstantType, Direction, JoinKind, NetType,
+    ObjectType, Operation, PrimitiveType, Strength,
 };
 pub use validate::DbValidationError;

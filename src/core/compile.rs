@@ -5,13 +5,13 @@
 
 use crate::core::tokens::FileTokens;
 use crate::ffi::slang::{self, CompileOptions, CompileRequest, Define, Limits, ParameterOverride};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
 pub use crate::ffi::slang::{
-    Diagnostic as SlangDiagnostic, DiagnosticProvider, DiagnosticSeverity, DiagnosticSubsystem,
-    Snapshot, Source, SourceRange,
+    CompilationUnitMode, Diagnostic as SlangDiagnostic, DiagnosticProvider, DiagnosticSeverity,
+    DiagnosticSubsystem, LanguageEdition, Snapshot, Source, SourceRange,
 };
 
 /// A source buffer owned by a compile request.
@@ -49,17 +49,24 @@ pub struct CompileOpts {
     /// Already-admitted compilation units and include buffers.
     pub sources: Vec<OwnedSource>,
     pub top: Option<String>,
+    /// Complete language policy for the compilation. The default is
+    /// SystemVerilog-2009; `` `begin_keywords `` remains lexical only.
+    pub edition: LanguageEdition,
     /// Definitions in `NAME` or `NAME=VALUE` form.
     pub defines: Vec<String>,
     /// Top-level overrides in `NAME=VALUE` form.
     pub param_overrides: Vec<String>,
     /// Logical search prefixes. In-memory callers must also supply include
-    /// contents in [`sources`](Self::sources); path mode admits literal
-    /// includes through bounded Rust reads before entering Slang.
+    /// contents in [`sources`](Self::sources); path mode admits literal and
+    /// bounded macro-expanded includes through Rust reads before entering
+    /// cache-only Slang.
     pub include_dirs: Vec<String>,
     /// Check every definition as an uninstantiated library unit instead of
     /// recursively elaborating inferred top-level designs.
     pub library_units: bool,
+    /// Select whether admitted compilation-unit buffers share preprocessing and
+    /// `$unit` scope. The default keeps each buffer independent.
+    pub compilation_unit_mode: CompilationUnitMode,
     pub limits: Limits,
 }
 
@@ -251,37 +258,25 @@ pub fn compile(opts: &CompileOpts) -> Result<CompileOut, StartupError> {
         remaining = remaining.saturating_sub(name.len() as u64 + text.len() as u64);
         owned.push(OwnedSource::compilation_unit(name, text));
     }
-    let mut cursor = 0;
-    while cursor < owned.len() {
-        let including = PathBuf::from(&owned[cursor].name);
-        let targets = literal_includes(&owned[cursor].text);
-        for target in targets {
-            let Some(path) = resolve_include(&including, &target, &opts.include_dirs) else {
-                continue;
-            };
-            if !identities.insert(path.clone()) {
-                continue;
-            }
-            if opts.sources.len().saturating_add(owned.len())
-                >= usize::try_from(opts.limits.max_sources).unwrap_or(usize::MAX)
-            {
-                return Err(StartupError::new(
-                    StartupErrorKind::InvalidArgument,
-                    "literal include graph exceeds the configured Slang source limit",
-                ));
-            }
-            let name = path.to_string_lossy().into_owned();
-            let content_limit = remaining.checked_sub(name.len() as u64).ok_or_else(|| {
-                StartupError::new(
-                    StartupErrorKind::InvalidArgument,
-                    format!("include path {name} exceeds the configured Slang byte limit"),
-                )
-            })?;
-            let text = read_bounded(&name, content_limit)?;
-            remaining = remaining.saturating_sub(name.len() as u64 + text.len() as u64);
-            owned.push(OwnedSource::include(name, text));
+    let root_count = owned.len();
+    let mut macros = macro_environment_from_defines(&opts.defines);
+    for root_index in 0..root_count {
+        if matches!(opts.compilation_unit_mode, CompilationUnitMode::Separate) {
+            macros = macro_environment_from_defines(&opts.defines);
         }
-        cursor += 1;
+        let root = owned[root_index].clone();
+        let mut include_stack = vec![PathBuf::from(&root.name)];
+        admit_macro_includes(
+            &root.name,
+            &root.text,
+            opts,
+            &mut macros,
+            &mut identities,
+            &mut owned,
+            &mut remaining,
+            &mut include_stack,
+            0,
+        )?;
     }
     if opts.sources.len().saturating_add(owned.len())
         > usize::try_from(opts.limits.max_sources).unwrap_or(usize::MAX)
@@ -371,6 +366,8 @@ fn compile_source_groups(
             .map(|value| parse_override(value))
             .collect::<Result<_, _>>()?,
         library_units: opts.library_units,
+        compilation_unit_mode: opts.compilation_unit_mode,
+        edition: opts.edition,
         limits: opts.limits,
     };
     let snapshot = slang::compile(&CompileRequest {
@@ -468,92 +465,645 @@ fn normalize_include_dir(value: &str) -> String {
 
 fn resolve_include(including: &Path, target: &str, include_dirs: &[String]) -> Option<PathBuf> {
     let target = Path::new(target);
-    let mut candidates = Vec::with_capacity(include_dirs.len().saturating_add(1));
-    if target.is_absolute() {
-        candidates.push(target.to_path_buf());
-    } else {
-        if let Some(parent) = including.parent() {
-            candidates.push(parent.join(target));
-        }
-        candidates.extend(include_dirs.iter().map(|dir| Path::new(dir).join(target)));
+    let mut roots = Vec::with_capacity(include_dirs.len().saturating_add(1));
+    if let Some(parent) = including.parent() {
+        roots.push(parent.to_path_buf());
     }
-    candidates.into_iter().find_map(|candidate| {
-        candidate
-            .is_file()
-            .then(|| candidate.canonicalize().ok())
-            .flatten()
+    roots.extend(include_dirs.iter().map(|dir| PathBuf::from(dir)));
+    let roots: Vec<_> = roots
+        .into_iter()
+        .filter_map(|root| root.canonicalize().ok())
+        .filter(|root| root.is_dir())
+        .collect();
+    if roots.is_empty() {
+        return None;
+    }
+    let candidates = if target.is_absolute() {
+        roots
+            .iter()
+            .map(|root| (target.to_path_buf(), root))
+            .collect::<Vec<_>>()
+    } else {
+        roots
+            .iter()
+            .map(|root| (root.join(target), root))
+            .collect::<Vec<_>>()
+    };
+    candidates.into_iter().find_map(|(candidate, root)| {
+        let canonical = candidate.canonicalize().ok()?;
+        if canonical.is_file() && canonical.starts_with(root) {
+            Some(canonical)
+        } else {
+            None
+        }
     })
 }
 
-/// Extract literal quoted includes without treating comments or ordinary
-/// strings as directives. Dynamic and macro-generated targets remain for
-/// Slang to diagnose because no bounded file can be admitted for them.
-fn literal_includes(source: &str) -> Vec<String> {
-    let bytes = source.as_bytes();
-    let mut targets = Vec::new();
-    let mut index = 0;
-    let mut block_comment = false;
-    while index < bytes.len() {
-        if block_comment {
-            if bytes[index..].starts_with(b"*/") {
-                block_comment = false;
-                index += 2;
-            } else {
-                index += 1;
-            }
-            continue;
-        }
-        if bytes[index..].starts_with(b"//") {
-            index += 2;
-            while index < bytes.len() && bytes[index] != b'\n' {
-                index += 1;
-            }
-            continue;
-        }
-        if bytes[index..].starts_with(b"/*") {
-            block_comment = true;
-            index += 2;
-            continue;
-        }
-        if bytes[index] == b'"' {
-            index += 1;
-            while index < bytes.len() {
-                if bytes[index] == b'\\' {
-                    index = index.saturating_add(2);
-                } else if bytes[index] == b'"' {
-                    index += 1;
-                    break;
-                } else {
-                    index += 1;
-                }
-            }
-            continue;
-        }
-        if bytes[index..].starts_with(b"`include") {
-            let after = index + b"`include".len();
-            if after == bytes.len()
-                || !matches!(bytes[after], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_' | b'$')
+const MAX_INCLUDE_DISCOVERY_DEPTH: usize = 256;
+const MAX_MACRO_EXPANSION_DEPTH: usize = 64;
+
+#[derive(Clone, Debug)]
+struct MacroDefinition {
+    parameters: Option<Vec<String>>,
+    body: String,
+}
+
+type MacroEnvironment = HashMap<String, MacroDefinition>;
+
+#[derive(Clone, Copy, Debug)]
+struct ConditionalFrame {
+    parent_active: bool,
+    branch_taken: bool,
+    active: bool,
+}
+
+fn macro_environment_from_defines(defines: &[String]) -> MacroEnvironment {
+    defines
+        .iter()
+        .map(|value| {
+            let define = parse_define(value);
+            (
+                define.name,
+                MacroDefinition {
+                    parameters: None,
+                    body: define.value.unwrap_or_default(),
+                },
+            )
+        })
+        .collect()
+}
+
+fn admit_macro_includes(
+    name: &str,
+    text: &str,
+    opts: &CompileOpts,
+    macros: &mut MacroEnvironment,
+    identities: &mut HashSet<PathBuf>,
+    owned: &mut Vec<OwnedSource>,
+    remaining: &mut u64,
+    include_stack: &mut Vec<PathBuf>,
+    depth: usize,
+) -> Result<(), StartupError> {
+    if depth > MAX_INCLUDE_DISCOVERY_DEPTH {
+        return Err(StartupError::new(
+            StartupErrorKind::LimitExceeded,
+            "include expansion depth exceeds the configured admission limit",
+        ));
+    }
+    let including = Path::new(name);
+    let mut admit = |target: String, macros: &mut MacroEnvironment| -> Result<(), StartupError> {
+        let Some(path) = resolve_include(including, &target, &opts.include_dirs) else {
+            // Leave missing, malformed, and unauthorized targets for Slang so
+            // its diagnostic retains the original directive and source range.
+            return Ok(());
+        };
+        let path_name = path.to_string_lossy().into_owned();
+        if !identities.contains(&path) {
+            if opts.sources.len().saturating_add(owned.len())
+                >= usize::try_from(opts.limits.max_sources).unwrap_or(usize::MAX)
             {
-                let mut start = after;
-                while start < bytes.len() && bytes[start].is_ascii_whitespace() {
-                    start += 1;
-                }
-                if start < bytes.len() && bytes[start] == b'"' {
-                    let mut end = start + 1;
-                    while end < bytes.len() && bytes[end] != b'"' && bytes[end] != b'\n' {
-                        end += 1;
-                    }
-                    if end < bytes.len() && bytes[end] == b'"' {
-                        targets.push(String::from_utf8_lossy(&bytes[start + 1..end]).into_owned());
-                        index = end + 1;
-                        continue;
+                return Err(StartupError::new(
+                    StartupErrorKind::InvalidArgument,
+                    "include graph exceeds the configured Slang source limit",
+                ));
+            }
+            let content_limit = remaining
+                .checked_sub(path_name.len() as u64)
+                .ok_or_else(|| {
+                    StartupError::new(
+                        StartupErrorKind::LimitExceeded,
+                        format!("include path {path_name} exceeds the configured Slang byte limit"),
+                    )
+                })?;
+            let child_text = read_bounded(&path_name, content_limit)?;
+            *remaining = remaining.saturating_sub(path_name.len() as u64 + child_text.len() as u64);
+            identities.insert(path.clone());
+            owned.push(OwnedSource::include(path_name.clone(), child_text));
+        }
+
+        // A repeated include still executes its directives, but a cycle must
+        // stop admission recursion and remain visible to Slang's diagnostics.
+        if include_stack.iter().any(|entry| entry == &path) {
+            return Ok(());
+        }
+        let Some(child) = owned
+            .iter()
+            .find(|source| source.name == path_name)
+            .cloned()
+        else {
+            return Ok(());
+        };
+        include_stack.push(path.clone());
+        admit_macro_includes(
+            &child.name,
+            &child.text,
+            opts,
+            macros,
+            identities,
+            owned,
+            remaining,
+            include_stack,
+            depth + 1,
+        )?;
+        include_stack.pop();
+        Ok(())
+    };
+    scan_preprocessor_includes(text, macros, &mut admit)
+}
+
+/// Extract literal and macro-expanded includes without treating comments or
+/// ordinary strings as directives. Macro expansion is only used to discover
+/// bounded, authorized files; Slang remains the source of preprocessing
+/// diagnostics and semantic macro identity.
+fn literal_includes(source: &str) -> Vec<String> {
+    let mut macros = MacroEnvironment::new();
+    preprocessor_includes(source, &mut macros)
+}
+
+fn preprocessor_includes(source: &str, macros: &mut MacroEnvironment) -> Vec<String> {
+    let mut includes = Vec::new();
+    let mut collect = |target: String, _macros: &mut MacroEnvironment| {
+        includes.push(target);
+        Ok(())
+    };
+    scan_preprocessor_includes(source, macros, &mut collect)
+        .expect("include collection cannot fail");
+    includes
+}
+
+fn scan_preprocessor_includes<F>(
+    source: &str,
+    macros: &mut MacroEnvironment,
+    on_include: &mut F,
+) -> Result<(), StartupError>
+where
+    F: FnMut(String, &mut MacroEnvironment) -> Result<(), StartupError>,
+{
+    let mut conditions = Vec::new();
+    let mut block_comment = false;
+    for raw_line in logical_preprocessor_lines(source) {
+        let line = strip_preprocessor_comments(&raw_line, &mut block_comment);
+        let Some((directive, arguments)) = preprocessor_directive(&line) else {
+            continue;
+        };
+        match directive {
+            "ifdef" | "ifndef" => {
+                let parent_active = conditions
+                    .last()
+                    .map_or(true, |frame: &ConditionalFrame| frame.active);
+                let name = first_macro_identifier(arguments);
+                let defined = name.is_some_and(|name| macros.contains_key(name));
+                let condition = if directive == "ifdef" {
+                    defined
+                } else {
+                    !defined
+                };
+                conditions.push(ConditionalFrame {
+                    parent_active,
+                    branch_taken: parent_active && condition,
+                    active: parent_active && condition,
+                });
+            }
+            "elsif" => {
+                if let Some(frame) = conditions.last_mut() {
+                    if !frame.parent_active || frame.branch_taken {
+                        frame.active = false;
+                    } else {
+                        let condition = first_macro_identifier(arguments)
+                            .is_some_and(|name| macros.contains_key(name));
+                        frame.active = condition;
+                        frame.branch_taken = condition;
                     }
                 }
             }
+            "else" => {
+                if let Some(frame) = conditions.last_mut() {
+                    frame.active = frame.parent_active && !frame.branch_taken;
+                    frame.branch_taken = true;
+                }
+            }
+            "endif" => {
+                conditions.pop();
+            }
+            _ if !conditions.last().map_or(true, |frame| frame.active) => {}
+            "define" => define_macro(arguments, macros),
+            "undef" => {
+                if let Some(name) = first_macro_identifier(arguments) {
+                    macros.remove(name);
+                }
+            }
+            "undefineall" => macros.clear(),
+            "include" => {
+                if let Some(target) = include_target(arguments, macros) {
+                    on_include(target, macros)?;
+                }
+            }
+            _ => {}
+        }
+        if !matches!(
+            directive,
+            "ifdef"
+                | "ifndef"
+                | "elsif"
+                | "else"
+                | "endif"
+                | "define"
+                | "undef"
+                | "undefineall"
+                | "include"
+        ) && conditions.last().map_or(true, |frame| frame.active)
+        {
+            if let Some(target) = expanded_include_target(&line, macros) {
+                on_include(target, macros)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn logical_preprocessor_lines(source: &str) -> Vec<String> {
+    let mut lines = Vec::new();
+    let mut current = String::new();
+    for raw in source.split_inclusive('\n') {
+        let mut line = raw.strip_suffix('\n').unwrap_or(raw);
+        if line.ends_with('\r') {
+            line = &line[..line.len() - 1];
+        }
+        if line.ends_with('\\') {
+            current.push_str(&line[..line.len() - 1]);
+        } else {
+            current.push_str(line);
+            lines.push(std::mem::take(&mut current));
+        }
+    }
+    if !current.is_empty() {
+        lines.push(current);
+    }
+    lines
+}
+
+fn strip_preprocessor_comments(line: &str, block_comment: &mut bool) -> String {
+    let mut result = String::with_capacity(line.len());
+    let mut string = false;
+    let mut escaped = false;
+    let mut characters = line.chars().peekable();
+    while let Some(character) = characters.next() {
+        if *block_comment {
+            if character == '*' && characters.peek() == Some(&'/') {
+                characters.next();
+                *block_comment = false;
+            }
+            continue;
+        }
+        if !string && character == '/' {
+            match characters.peek().copied() {
+                Some('/') => break,
+                Some('*') => {
+                    characters.next();
+                    *block_comment = true;
+                    continue;
+                }
+                _ => {}
+            }
+        }
+        result.push(character);
+        if character == '"' && !escaped {
+            string = !string;
+        }
+        escaped = character == '\\' && !escaped;
+        if character != '\\' {
+            escaped = false;
+        }
+    }
+    result
+}
+
+fn preprocessor_directive(line: &str) -> Option<(&str, &str)> {
+    let bytes = line.as_bytes();
+    let mut string = false;
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'"' && (index == 0 || bytes[index - 1] != b'\\') {
+            string = !string;
+        } else if !string && bytes[index] == b'`' {
+            break;
         }
         index += 1;
     }
-    targets
+    if index == bytes.len() {
+        return None;
+    }
+    let rest = &line[index + 1..];
+    let end = rest
+        .find(|character: char| !is_macro_identifier_continue(character))
+        .unwrap_or(rest.len());
+    Some((&rest[..end], rest[end..].trim_start()))
+}
+
+fn is_macro_identifier_start(character: char) -> bool {
+    character.is_ascii_alphabetic() || character == '_' || character == '$'
+}
+
+fn is_macro_identifier_continue(character: char) -> bool {
+    is_macro_identifier_start(character) || character.is_ascii_digit()
+}
+
+fn first_macro_identifier(text: &str) -> Option<&str> {
+    let start = text
+        .char_indices()
+        .find(|(_, character)| is_macro_identifier_start(*character))
+        .map(|(index, _)| index)?;
+    let end = text[start..]
+        .char_indices()
+        .find(|(_, character)| !is_macro_identifier_continue(*character))
+        .map_or(text.len(), |(index, _)| start + index);
+    Some(&text[start..end])
+}
+
+fn define_macro(arguments: &str, macros: &mut MacroEnvironment) {
+    let Some(name) = first_macro_identifier(arguments) else {
+        return;
+    };
+    let name_start = name.as_ptr() as usize - arguments.as_ptr() as usize;
+    let name_end = name_start + name.len();
+    let mut cursor = name_end;
+    let bytes = arguments.as_bytes();
+    if cursor < bytes.len() && bytes[cursor] == b'(' {
+        let Some((parameters, body_start)) = macro_parameters(arguments, cursor) else {
+            return;
+        };
+        macros.insert(
+            name.to_owned(),
+            MacroDefinition {
+                parameters: Some(parameters),
+                body: arguments[body_start..].trim_start().to_owned(),
+            },
+        );
+    } else {
+        while cursor < bytes.len() && bytes[cursor].is_ascii_whitespace() {
+            cursor += 1;
+        }
+        macros.insert(
+            name.to_owned(),
+            MacroDefinition {
+                parameters: None,
+                body: arguments[cursor..].to_owned(),
+            },
+        );
+    }
+}
+
+fn macro_parameters(text: &str, open: usize) -> Option<(Vec<String>, usize)> {
+    let bytes = text.as_bytes();
+    let mut cursor = open + 1;
+    let mut parameters = Vec::new();
+    loop {
+        while cursor < bytes.len() && bytes[cursor].is_ascii_whitespace() {
+            cursor += 1;
+        }
+        if cursor >= bytes.len() {
+            return None;
+        }
+        if bytes[cursor] == b')' {
+            return Some((parameters, cursor + 1));
+        }
+        let start = cursor;
+        while cursor < bytes.len() && is_macro_identifier_continue(bytes[cursor] as char) {
+            cursor += 1;
+        }
+        if start == cursor {
+            return None;
+        }
+        parameters.push(text[start..cursor].to_owned());
+        while cursor < bytes.len() && bytes[cursor].is_ascii_whitespace() {
+            cursor += 1;
+        }
+        if cursor < bytes.len() && bytes[cursor] == b',' {
+            cursor += 1;
+            continue;
+        }
+        if cursor < bytes.len() && bytes[cursor] == b')' {
+            return Some((parameters, cursor + 1));
+        }
+        return None;
+    }
+}
+
+fn include_target(arguments: &str, macros: &MacroEnvironment) -> Option<String> {
+    let expanded = expand_macros(arguments, macros);
+    let trimmed = expanded.trim_start();
+    let (closing, start) = match trimmed.as_bytes().first().copied()? {
+        b'"' => (b'"', 1),
+        b'<' => (b'>', 1),
+        _ => return None,
+    };
+    let bytes = trimmed.as_bytes();
+    let mut cursor = start;
+    while cursor < bytes.len() {
+        if closing == b'"' && bytes[cursor] == b'\\' {
+            cursor = cursor.saturating_add(2);
+            continue;
+        }
+        if bytes[cursor] == closing {
+            let raw = &trimmed[start..cursor];
+            if closing == b'"' {
+                return Some(unescape_include_name(raw));
+            }
+            return Some(raw.to_owned());
+        }
+        if bytes[cursor] == b'\n' || bytes[cursor] == b'\r' {
+            return None;
+        }
+        cursor += 1;
+    }
+    None
+}
+
+fn expanded_include_target(line: &str, macros: &MacroEnvironment) -> Option<String> {
+    let expanded = expand_macros(line, macros);
+    let (directive, arguments) = preprocessor_directive(&expanded)?;
+    (directive == "include").then(|| include_target(arguments, macros))?
+}
+
+fn unescape_include_name(value: &str) -> String {
+    let mut output = String::with_capacity(value.len());
+    let mut escaped = false;
+    for character in value.chars() {
+        if escaped {
+            output.push(character);
+            escaped = false;
+        } else if character == '\\' {
+            escaped = true;
+        } else {
+            output.push(character);
+        }
+    }
+    if escaped {
+        output.push('\\');
+    }
+    output
+}
+
+fn expand_macros(text: &str, macros: &MacroEnvironment) -> String {
+    let mut stack = Vec::new();
+    expand_macro_text(text, macros, &mut stack, 0)
+}
+
+fn expand_macro_text(
+    text: &str,
+    macros: &MacroEnvironment,
+    stack: &mut Vec<String>,
+    depth: usize,
+) -> String {
+    if depth > MAX_MACRO_EXPANSION_DEPTH {
+        return text.to_owned();
+    }
+    let bytes = text.as_bytes();
+    let mut output = String::with_capacity(text.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'`' && index + 1 < bytes.len() && bytes[index + 1] == b'"' {
+            output.push('"');
+            index += 2;
+            continue;
+        }
+        if bytes[index] == b'`' && index + 1 < bytes.len() && bytes[index + 1] == b'`' {
+            index += 2;
+            continue;
+        }
+        let invoked = if bytes[index] == b'`'
+            && index + 1 < bytes.len()
+            && is_macro_identifier_start(bytes[index + 1] as char)
+        {
+            index += 1;
+            true
+        } else {
+            false
+        };
+        let character = bytes[index] as char;
+        if !is_macro_identifier_start(character) {
+            output.push(character);
+            index += 1;
+            continue;
+        }
+        let start = index;
+        index += 1;
+        while index < bytes.len() && is_macro_identifier_continue(bytes[index] as char) {
+            index += 1;
+        }
+        let name = &text[start..index];
+        if !invoked {
+            output.push_str(name);
+            continue;
+        }
+        let Some(definition) = macros.get(name) else {
+            output.push('`');
+            output.push_str(name);
+            continue;
+        };
+        if stack.iter().any(|active| active == name) {
+            output.push('`');
+            output.push_str(name);
+            continue;
+        }
+        let Some(parameters) = definition.parameters.as_ref() else {
+            stack.push(name.to_owned());
+            output.push_str(&expand_macro_text(
+                &definition.body,
+                macros,
+                stack,
+                depth + 1,
+            ));
+            stack.pop();
+            continue;
+        };
+        if index >= bytes.len() || bytes[index] != b'(' {
+            output.push('`');
+            output.push_str(name);
+            continue;
+        }
+        let Some((arguments, end)) = macro_call_arguments(text, index) else {
+            output.push('`');
+            output.push_str(name);
+            continue;
+        };
+        if arguments.len() != parameters.len() {
+            output.push('`');
+            output.push_str(name);
+            continue;
+        }
+        let expanded_arguments: Vec<_> = arguments
+            .iter()
+            .map(|argument| expand_macro_text(argument, macros, stack, depth + 1))
+            .collect();
+        let substituted =
+            substitute_macro_arguments(&definition.body, parameters, &expanded_arguments);
+        stack.push(name.to_owned());
+        output.push_str(&expand_macro_text(&substituted, macros, stack, depth + 1));
+        stack.pop();
+        index = end;
+    }
+    output
+}
+
+fn macro_call_arguments(text: &str, open: usize) -> Option<(Vec<String>, usize)> {
+    let bytes = text.as_bytes();
+    let mut cursor = open + 1;
+    let mut depth = 1_u32;
+    let mut start = cursor;
+    let mut arguments = Vec::new();
+    let mut string = false;
+    while cursor < bytes.len() {
+        let byte = bytes[cursor];
+        if string {
+            if byte == b'"' && bytes.get(cursor.wrapping_sub(1)) != Some(&b'\\') {
+                string = false;
+            }
+        } else if byte == b'"' {
+            string = true;
+        } else if byte == b'(' {
+            depth += 1;
+        } else if byte == b')' {
+            depth -= 1;
+            if depth == 0 {
+                if cursor > start || !arguments.is_empty() {
+                    arguments.push(text[start..cursor].to_owned());
+                }
+                return Some((arguments, cursor + 1));
+            }
+        } else if byte == b',' && depth == 1 {
+            arguments.push(text[start..cursor].to_owned());
+            start = cursor + 1;
+        }
+        cursor += 1;
+    }
+    None
+}
+
+fn substitute_macro_arguments(text: &str, parameters: &[String], arguments: &[String]) -> String {
+    let bytes = text.as_bytes();
+    let mut output = String::with_capacity(text.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        let character = bytes[index] as char;
+        if !is_macro_identifier_start(character) {
+            output.push(character);
+            index += 1;
+            continue;
+        }
+        let start = index;
+        index += 1;
+        while index < bytes.len() && is_macro_identifier_continue(bytes[index] as char) {
+            index += 1;
+        }
+        let name = &text[start..index];
+        if let Some(parameter) = parameters.iter().position(|parameter| parameter == name) {
+            output.push_str(&arguments[parameter]);
+        } else {
+            output.push_str(name);
+        }
+    }
+    output
 }
 
 pub fn compile_checked(opts: &CompileOpts) -> Result<CompileOut, CompileError> {
@@ -788,6 +1338,42 @@ mod tests {
         assert_eq!(
             literal_includes(source),
             vec!["first.svh".to_owned(), "second.svh".to_owned()]
+        );
+    }
+
+    #[test]
+    fn macro_include_scan_expands_nested_and_function_like_names() {
+        let source = r#"
+            `define QUOTE(name) `"name`"
+            `define LEAF nested.svh
+            `define HEADER `QUOTE(`LEAF)
+            `ifdef ENABLE_HEADER
+              `include `HEADER
+            `else
+              `include "disabled.svh"
+            `endif
+        "#;
+        let mut macros = macro_environment_from_defines(&["ENABLE_HEADER".to_owned()]);
+        assert_eq!(
+            preprocessor_includes(source, &mut macros),
+            vec!["nested.svh".to_owned()]
+        );
+    }
+
+    #[test]
+    fn macro_include_scan_tracks_redefinitions_and_ignores_inactive_branches() {
+        let source = r#"
+            `define HEADER "first.svh"
+            `ifdef USE_SECOND
+              `undef HEADER
+              `define HEADER "second.svh"
+            `endif
+            `include `HEADER
+        "#;
+        let mut macros = macro_environment_from_defines(&["USE_SECOND".to_owned()]);
+        assert_eq!(
+            preprocessor_includes(source, &mut macros),
+            vec!["second.svh".to_owned()]
         );
     }
 

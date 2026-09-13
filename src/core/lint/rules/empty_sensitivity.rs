@@ -116,7 +116,9 @@ fn body_is_trustworthy(db: &Db, root: NodeId) -> bool {
             | StmtKind::WaitFork,
         ) => return false,
         NodeKind::Stmt(StmtKind::Assign { delay: Some(_), .. }) => return false,
-        NodeKind::Expr(ExprKind::Ref { target: None } | ExprKind::Other) => return false,
+        NodeKind::Expr(
+            ExprKind::Ref { target: None } | ExprKind::ScopeRef { .. } | ExprKind::Other,
+        ) => return false,
         NodeKind::Expr(ExprKind::HierPath { refs, .. })
             if refs.is_empty() || refs.iter().any(Option::is_none) =>
         {

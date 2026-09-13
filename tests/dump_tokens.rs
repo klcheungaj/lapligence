@@ -504,9 +504,9 @@ fn module_inst_json_golden_matches_fixture() {
                 (Some(want_line), Some(want_col)),
                 "wrong target at {line}:{col}: {token}"
             );
-            let (label, connection) = match want_via {
-                "label" => (true, false),
-                "connection" => (false, true),
+            let (label, connection, kind, sym) = match want_via {
+                "label" => (true, false, "port-connection-label", "function/connectionLabel"),
+                "connection" => (false, true, "port", "parameter/readonly"),
                 _ => panic!("unknown via {want_via}"),
             };
             assert_eq!(
@@ -514,6 +514,11 @@ fn module_inst_json_golden_matches_fixture() {
                 (&json!(label), &json!(connection)),
                 "wrong provenance at {line}:{col}: {token}"
             );
+            // Both modules declare ports here. Pin their source-level identity
+            // before blessing can accidentally accept the internal net kind.
+            assert_eq!(binding["targetKind"], "port", "wrong target kind: {token}");
+            assert_eq!(token["tokenKind"], kind, "wrong token kind: {token}");
+            assert_eq!(token["sym"], sym, "wrong semantic token: {token}");
         }
         assert!(!rows(line, col).is_empty(), "no rows at {line}:{col}");
     };

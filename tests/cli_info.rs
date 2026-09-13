@@ -54,6 +54,10 @@ fn simulator_information_exits_without_compiling_or_installing_memory_limits() {
     check_information(env!("CARGO_BIN_EXE_llg"), "llg", "--gen-only");
     let output = invoke(env!("CARGO_BIN_EXE_llg"), &["--help"]);
     assert!(String::from_utf8_lossy(&output.stdout).contains("--no-opt"));
+    assert!(String::from_utf8_lossy(&output.stdout).contains("--edition <2001|2009>"));
+    assert!(
+        String::from_utf8_lossy(&output.stdout).contains("--compilation-units <separate|merged>")
+    );
 }
 
 #[cfg(feature = "lsp")]
@@ -68,6 +72,41 @@ fn simulator_missing_option_value_is_a_usage_error() {
     assert_eq!(output.status.code(), Some(2), "{output:?}");
     assert!(output.stdout.is_empty(), "{output:?}");
     assert!(String::from_utf8_lossy(&output.stderr).contains("requires a backend name"));
+}
+
+#[test]
+fn simulator_edition_option_rejects_missing_and_unknown_values() {
+    for (args, expected) in [
+        (&["--edition"][..], "requires 2001 or 2009"),
+        (&["--edition", "2017"][..], "expected 2001 or 2009"),
+    ] {
+        let output = invoke(env!("CARGO_BIN_EXE_llg"), args);
+        assert_eq!(output.status.code(), Some(2), "{output:?}");
+        assert!(output.stdout.is_empty(), "{output:?}");
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains(expected),
+            "{output:?}"
+        );
+    }
+}
+
+#[test]
+fn simulator_compilation_unit_mode_rejects_missing_and_unknown_values() {
+    for (args, expected) in [
+        (&["--compilation-units"][..], "requires separate or merged"),
+        (
+            &["--compilation-units", "grouped"][..],
+            "expected separate or merged",
+        ),
+    ] {
+        let output = invoke(env!("CARGO_BIN_EXE_llg"), args);
+        assert_eq!(output.status.code(), Some(2), "{output:?}");
+        assert!(output.stdout.is_empty(), "{output:?}");
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains(expected),
+            "{output:?}"
+        );
+    }
 }
 
 #[cfg(feature = "lsp")]

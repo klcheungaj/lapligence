@@ -7,8 +7,9 @@ rules apply throughout. See child guides for module contracts.
 
 Owned by [memory_limit.rs](memory_limit.rs), with platform primitives in
 [ffi/process_memory.rs](ffi/process_memory.rs). Both frontend entry points
-install it; `llg_ls` wires the sampler into lifecycle logging and `llg`
-reports status and warnings to stderr.
+install it after accepting command-line work and before admitting source input;
+help, version, and usage-error exits do not install the policy. `llg_ls` wires
+the sampler into lifecycle logging and `llg` reports status and warnings to stderr.
 
 The `llg_ls` language-server and `llg` simulator-driver executables can
 enforce a process-wide memory ceiling. The ceiling covers Rust allocations and

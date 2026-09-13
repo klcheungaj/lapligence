@@ -174,7 +174,8 @@ endmodule
         };
         let output = run_llg(&dir.path, &args);
         assert!(output.status.success(), "{}", stderr(&output));
-        assert_eq!(String::from_utf8_lossy(&output.stdout), "literal=2.1\n");
+        // IEEE 1800-2009 5.8 rounds 2.15ns to the local 100ps precision.
+        assert_eq!(String::from_utf8_lossy(&output.stdout), "literal=2.2\n");
     }
 }
 

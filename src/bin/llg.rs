@@ -4,7 +4,7 @@
 //!
 //! ```text
 //! llg [generate options] [build options] <file.sv>...
-//! generate: --top <module>  --lint  --lint-json [<path>]  --lint-config <file>  --gen-only  --no-opt
+//! generate: --top <module>  --edition <2001|2009>  --compilation-units <separate|merged>  --lint  --lint-json [<path>]  --lint-config <file>  --gen-only  --no-opt
 //! build:    --generator <backend>        # cmake -G backend (Ninja, "Unix Makefiles", ...)
 //! ```
 //!
@@ -55,6 +55,8 @@ use llg::sim;
 #[derive(Debug)]
 struct DriverOptions {
     top: Option<String>,
+    edition: compile::LanguageEdition,
+    compilation_unit_mode: compile::CompilationUnitMode,
     files: Vec<String>,
     lint_mode: bool,
     lint_json_mode: bool,
@@ -81,13 +83,15 @@ fn parse_args(args: Vec<String>) -> Result<DriverOptions, i32> {
     if args.is_empty() {
         eprintln!(
             "usage: llg [generate options] [build options] <file.sv>...\n\
-             generate: --top <module>  --lint  --lint-json [<path>]  --lint-config <file>  --gen-only  --no-opt\n\
+             generate: --top <module>  --edition <2001|2009>  --compilation-units <separate|merged>  --lint  --lint-json [<path>]  --lint-config <file>  --gen-only  --no-opt\n\
              build:    --generator <backend>        # cmake -G backend (Ninja, \"Unix Makefiles\", ...)"
         );
         return Err(2);
     }
 
     let mut top: Option<String> = None;
+    let mut edition = compile::LanguageEdition::default();
+    let mut compilation_unit_mode = compile::CompilationUnitMode::default();
     let mut files: Vec<String> = Vec::new();
     let mut lint_mode = false;
     let mut lint_json_mode = false;
@@ -109,6 +113,9 @@ Options:
   -h, --help                 Print help and exit
   -V, --version              Print the package version and exit
       --top <module>         Select the top module
+      --edition <2001|2009> Select the language edition (default: 2009)
+      --compilation-units <separate|merged>
+                              Select compilation-unit grouping (default: separate)
       --lint                 Run lint before simulation
       --lint-json [<path>]   Report lint as JSON and exit
       --lint-config <file>   Load lint configuration
@@ -123,6 +130,32 @@ Options:
                 return Err(0);
             }
             "--top" | "-top" => top = it.next(),
+            "--edition" => match it.next() {
+                Some(value) => match value.parse() {
+                    Ok(value) => edition = value,
+                    Err(error) => {
+                        eprintln!("llg: {error}");
+                        return Err(2);
+                    }
+                },
+                None => {
+                    eprintln!("llg: --edition requires 2001 or 2009");
+                    return Err(2);
+                }
+            },
+            "--compilation-units" | "--compilation-unit-mode" => match it.next() {
+                Some(value) => match value.parse() {
+                    Ok(value) => compilation_unit_mode = value,
+                    Err(error) => {
+                        eprintln!("llg: {error}");
+                        return Err(2);
+                    }
+                },
+                None => {
+                    eprintln!("llg: --compilation-units requires separate or merged");
+                    return Err(2);
+                }
+            },
             "--generator" | "-generator" => match it.next() {
                 Some(g) => generator = Some(g),
                 None => {
@@ -161,6 +194,8 @@ Options:
 
     Ok(DriverOptions {
         top,
+        edition,
+        compilation_unit_mode,
         files,
         lint_mode,
         lint_json_mode,
@@ -175,6 +210,8 @@ Options:
 fn run(options: DriverOptions) -> i32 {
     let DriverOptions {
         top,
+        edition,
+        compilation_unit_mode,
         files,
         lint_mode,
         lint_json_mode,
@@ -208,6 +245,8 @@ fn run(options: DriverOptions) -> i32 {
     let out = match compile::compile_checked(&compile::CompileOpts {
         files,
         top,
+        edition,
+        compilation_unit_mode,
         ..Default::default()
     }) {
         Ok(out) => out,

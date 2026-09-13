@@ -56,6 +56,19 @@ struct Validator<'db> {
 
 impl Validator<'_> {
     fn validate(&self) -> Result<(), DbValidationError> {
+        let (semantic_kinds, semantic_details) = self.db.semantic_metadata_lengths();
+        if semantic_kinds != 0 && semantic_kinds != self.db.nodes().len() {
+            return self.fail(
+                "semantic_kinds",
+                "native semantic category table does not match node arena",
+            );
+        }
+        if semantic_details != 0 && semantic_details != self.db.nodes().len() {
+            return self.fail(
+                "semantic_details",
+                "native semantic detail table does not match node arena",
+            );
+        }
         for (index, node) in self.db.nodes().iter().enumerate() {
             let path = format!("nodes[{index}]");
             if let Some(parent) = node.parent {
@@ -94,6 +107,22 @@ impl Validator<'_> {
             }
             if let Some(init) = metadata.init {
                 self.node(init, &format!("arrays[{}].init", array.0))?;
+            }
+        }
+
+        for (event, metadata) in self.db.event_arrays() {
+            let node = self.node(*event, &format!("event_arrays[{}]", event.0))?;
+            if !matches!(node.kind, NodeKind::NamedEvent) {
+                return self.fail(
+                    format!("event_arrays[{}]", event.0),
+                    "metadata key is not a named-event declaration",
+                );
+            }
+            if metadata.init.is_some() {
+                return self.fail(
+                    format!("event_arrays[{}].init", event.0),
+                    "named-event arrays cannot have declaration initializers",
+                );
             }
         }
 
@@ -343,6 +372,14 @@ fn driver_delay_refs(delay: Option<DriverDelay>, refs: &mut Vec<NodeId>) {
 fn statement_refs(statement: &StmtKind, refs: &mut Vec<NodeId>) {
     match statement {
         StmtKind::IfElse { cond } | StmtKind::Wait { cond } => refs.push(*cond),
+        StmtKind::WaitOrder {
+            events,
+            if_true,
+            if_false,
+        } => {
+            refs.extend(events.iter().copied());
+            refs.extend(if_true.iter().chain(if_false.iter()).copied());
+        }
         StmtKind::Assign { delay, .. } => {
             if let Some(IntraControl::Delay(delay)) = delay {
                 refs.push(*delay);
@@ -379,9 +416,13 @@ fn statement_refs(statement: &StmtKind, refs: &mut Vec<NodeId>) {
             }
             refs.extend(*body);
         }
-        StmtKind::EventTrigger { target, .. }
-        | StmtKind::Disable { target }
-        | StmtKind::Return { value: target } => refs.extend(*target),
+        StmtKind::EventTrigger { target, timing, .. } => {
+            refs.extend(*target);
+            if let Some(timing) = timing {
+                timing.referenced_nodes(refs);
+            }
+        }
+        StmtKind::Disable { target } | StmtKind::Return { value: target } => refs.extend(*target),
         StmtKind::Force { lhs, rhs } | StmtKind::ProcContAssign { lhs, rhs } => {
             refs.extend([*lhs, *rhs])
         }
@@ -404,6 +445,7 @@ fn statement_refs(statement: &StmtKind, refs: &mut Vec<NodeId>) {
 
 fn expression_refs(expression: &ExprKind, refs: &mut Vec<NodeId>) {
     match expression {
+        ExprKind::ScopeRef { target } => refs.push(*target),
         ExprKind::Operation { operands, .. } => refs.extend(operands.iter().copied()),
         ExprKind::TaggedPattern { value, .. } => refs.extend(*value),
         ExprKind::Cast { operand, .. } => refs.push(*operand),
@@ -431,7 +473,10 @@ fn expression_refs(expression: &ExprKind, refs: &mut Vec<NodeId>) {
             refs.extend(indices.iter().copied());
         }
         ExprKind::HierPath { refs: parts, .. } => refs.extend(parts.iter().flatten().copied()),
-        ExprKind::Constant { .. } | ExprKind::Other => {}
+        ExprKind::Constant { .. }
+        | ExprKind::DataType
+        | ExprKind::Unbounded
+        | ExprKind::Other => {}
     }
 }
 
@@ -487,6 +532,16 @@ mod tests {
         }))])
         .expect_err("embedded reference must be checked");
         assert!(error.to_string().contains("nodes[0].kind.refs[0]"));
+    }
+
+    #[test]
+    fn rejects_out_of_bounds_scope_reference_targets() {
+        let error = from_nodes(vec![node(NodeKind::Expr(ExprKind::ScopeRef {
+            target: NodeId(1),
+        }))])
+        .expect_err("metadata targets must still be validated");
+        assert!(error.to_string().contains("nodes[0].kind.refs[0]"));
+        assert!(error.to_string().contains("out of bounds"));
     }
 
     #[test]

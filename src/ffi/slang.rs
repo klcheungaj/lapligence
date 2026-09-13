@@ -24,9 +24,20 @@ const STATUS_FRONTEND_ERROR: u32 = 3;
 const STATUS_INTERNAL_ERROR: u32 = 4;
 
 const COMPILE_LIBRARY_UNITS: u32 = 1 << 0;
+const COMPILE_EDITION_VERILOG_2001: u32 = 1 << 1;
+const COMPILE_EDITION_SYSTEMVERILOG_2009: u32 = 1 << 2;
+const COMPILE_MERGED_COMPILATION_UNITS: u32 = 1 << 3;
 const SNAPSHOT_HAS_ERRORS: u32 = 1 << 0;
 const SNAPSHOT_ANALYSIS_RAN: u32 = 1 << 1;
-const SNAPSHOT_KNOWN_FLAGS: u32 = SNAPSHOT_HAS_ERRORS | SNAPSHOT_ANALYSIS_RAN;
+const SNAPSHOT_EDITION_VERILOG_2001: u32 = 1 << 8;
+const SNAPSHOT_EDITION_SYSTEMVERILOG_2009: u32 = 1 << 9;
+const SNAPSHOT_MERGED_COMPILATION_UNITS: u32 = 1 << 10;
+const SNAPSHOT_EDITION_MASK: u32 =
+    SNAPSHOT_EDITION_VERILOG_2001 | SNAPSHOT_EDITION_SYSTEMVERILOG_2009;
+const SNAPSHOT_KNOWN_FLAGS: u32 = SNAPSHOT_HAS_ERRORS
+    | SNAPSHOT_ANALYSIS_RAN
+    | SNAPSHOT_EDITION_MASK
+    | SNAPSHOT_MERGED_COMPILATION_UNITS;
 const MAX_SOURCES: usize = 4_096;
 const MAX_DEFINES: usize = 4_096;
 const MAX_TOP_MODULES: usize = 4_096;
@@ -76,6 +87,118 @@ pub struct ParameterOverride {
     pub value: String,
 }
 
+/// Explicit language policy applied to the complete compilation.
+///
+/// Preprocessor `` `begin_keywords `` regions can change lexical keyword
+/// lookup, but they never change this compilation-wide semantic target.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum LanguageEdition {
+    /// IEEE 1364-2001 Verilog semantics.
+    Verilog2001,
+    /// IEEE 1800-2009 SystemVerilog semantics.
+    #[default]
+    SystemVerilog2009,
+}
+
+impl LanguageEdition {
+    fn compile_flag(self) -> u32 {
+        match self {
+            Self::Verilog2001 => COMPILE_EDITION_VERILOG_2001,
+            Self::SystemVerilog2009 => COMPILE_EDITION_SYSTEMVERILOG_2009,
+        }
+    }
+
+    fn from_snapshot_flags(flags: u32) -> Result<Self, SlangError> {
+        match flags & SNAPSHOT_EDITION_MASK {
+            SNAPSHOT_EDITION_VERILOG_2001 => Ok(Self::Verilog2001),
+            SNAPSHOT_EDITION_SYSTEMVERILOG_2009 => Ok(Self::SystemVerilog2009),
+            0 => Err(invalid_native(
+                "snapshot does not identify its language edition",
+            )),
+            _ => Err(invalid_native(
+                "snapshot identifies multiple language editions",
+            )),
+        }
+    }
+}
+
+impl fmt::Display for LanguageEdition {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::Verilog2001 => "2001",
+            Self::SystemVerilog2009 => "2009",
+        })
+    }
+}
+
+impl str::FromStr for LanguageEdition {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value.to_ascii_lowercase().as_str() {
+            "2001" | "1364-2001" | "verilog-2001" => Ok(Self::Verilog2001),
+            "2009" | "1800-2009" | "systemverilog-2009" => Ok(Self::SystemVerilog2009),
+            _ => Err(format!(
+                "unsupported language edition `{value}` (expected 2001 or 2009)"
+            )),
+        }
+    }
+}
+
+/// Explicitly selects whether admitted compilation-unit buffers are parsed as
+/// one unit or as one unit per buffer. Include-only buffers remain cache-only
+/// inputs in either mode and retain the identity of their including source.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum CompilationUnitMode {
+    /// Each admitted compilation-unit buffer has an independent preprocessor
+    /// and `$unit` scope. This is the compatibility default.
+    #[default]
+    Separate,
+    /// All admitted compilation-unit buffers are parsed in caller order as
+    /// one syntax tree while retaining per-buffer source locations.
+    Merged,
+}
+
+impl CompilationUnitMode {
+    fn compile_flag(self) -> u32 {
+        match self {
+            Self::Separate => 0,
+            Self::Merged => COMPILE_MERGED_COMPILATION_UNITS,
+        }
+    }
+
+    fn from_snapshot_flags(flags: u32) -> Self {
+        if flags & SNAPSHOT_MERGED_COMPILATION_UNITS != 0 {
+            Self::Merged
+        } else {
+            Self::Separate
+        }
+    }
+}
+
+impl fmt::Display for CompilationUnitMode {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::Separate => "separate",
+            Self::Merged => "merged",
+        })
+    }
+}
+
+impl str::FromStr for CompilationUnitMode {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value.to_ascii_lowercase().as_str() {
+            "separate" | "per-file" | "per_file" => Ok(Self::Separate),
+            "merged" | "all" => Ok(Self::Merged),
+            _ => Err(format!(
+                "unsupported compilation-unit mode `{value}` (expected separate or merged)"
+            )),
+        }
+    }
+}
+
 /// Native and Rust-side capture limits for one compilation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Limits {
@@ -121,6 +244,8 @@ impl Default for Limits {
 /// Typed options for an in-memory Slang compilation.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct CompileOptions {
+    /// Complete compilation language policy. The default is SystemVerilog-2009.
+    pub edition: LanguageEdition,
     /// Preprocessor definitions applied before parsing compilation units.
     pub defines: Vec<Define>,
     /// Explicit top module names; empty lets Slang select tops.
@@ -133,6 +258,9 @@ pub struct CompileOptions {
     /// Treat compilation units as library units so definitions are checked
     /// once without inferring and recursively elaborating design tops.
     pub library_units: bool,
+    /// Group admitted compilation-unit buffers before preprocessing. The
+    /// default keeps each buffer as an independent compilation unit.
+    pub compilation_unit_mode: CompilationUnitMode,
     pub limits: Limits,
 }
 
@@ -412,6 +540,9 @@ pub enum SemanticKind {
     Unsupported,
 }
 
+const ARGUMENT_CONST_REF: u64 = 1 << 0;
+const ARGUMENT_REF_STATIC: u64 = 1 << 1;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SemanticOperation {
     None,
@@ -554,6 +685,10 @@ pub struct SemanticNode {
     pub is_output: bool,
     pub is_inout: bool,
     pub is_ref: bool,
+    /// `const ref` qualification for a formal argument.
+    pub is_const_ref: bool,
+    /// `ref static` qualification for a formal argument.
+    pub is_ref_static: bool,
     pub is_implicit_conversion: bool,
     pub is_propagated_conversion: bool,
     pub is_indexed_up: bool,
@@ -572,6 +707,7 @@ pub struct SemanticNode {
     pub port_connection_open: bool,
     pub method_with_clause: bool,
     pub definition_kind: Option<SemanticDefinitionKind>,
+    /// Symbol/expression name; a time literal carries its exact expanded token.
     pub name: String,
     /// Exact Slang kind spelling, retained for unsupported constructs.
     pub detail: String,
@@ -655,6 +791,10 @@ pub struct LexicalToken {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Snapshot {
     flags: u32,
+    /// Complete compilation language policy recorded by the native bridge.
+    pub edition: LanguageEdition,
+    /// Compilation-unit grouping selected for this snapshot.
+    pub compilation_unit_mode: CompilationUnitMode,
     pub files: Vec<File>,
     pub diagnostics: Vec<Diagnostic>,
     pub instances: Vec<Instance>,
@@ -676,6 +816,10 @@ impl Snapshot {
 
     pub fn analysis_ran(&self) -> bool {
         self.flags & SNAPSHOT_ANALYSIS_RAN != 0
+    }
+
+    pub fn edition(&self) -> LanguageEdition {
+        self.edition
     }
 }
 
@@ -1036,11 +1180,12 @@ pub fn compile(request: &CompileRequest<'_>) -> Result<Snapshot, SlangError> {
     let limits = request.options.limits;
     let raw_request = RawCompileRequest {
         abi_version: ABI_VERSION,
-        flags: if request.options.library_units {
+        flags: (if request.options.library_units {
             COMPILE_LIBRARY_UNITS
         } else {
             0
-        },
+        }) | request.options.edition.compile_flag()
+            | request.options.compilation_unit_mode.compile_flag(),
         sources: raw_sources.as_ptr(),
         source_count: raw_sources.len() as u64,
         defines: raw_defines.as_ptr(),
@@ -1091,6 +1236,11 @@ pub fn compile(request: &CompileRequest<'_>) -> Result<Snapshot, SlangError> {
     }
     let snapshot = SnapshotOwner(snapshot);
     let mut decoded = decode_snapshot(&snapshot, &limits)?;
+    if decoded.edition != request.options.edition {
+        return Err(invalid_native(
+            "native snapshot language edition does not match the compile request",
+        ));
+    }
     for file in &mut decoded.files {
         let source = request
             .sources
@@ -1536,6 +1686,8 @@ fn decode_snapshot(owner: &SnapshotOwner, limits: &Limits) -> Result<Snapshot, S
     drop(unexpected_error);
     Ok(Snapshot {
         flags: view.flags,
+        edition: LanguageEdition::from_snapshot_flags(view.flags)?,
+        compilation_unit_mode: CompilationUnitMode::from_snapshot_flags(view.flags),
         files,
         diagnostics,
         instances,
@@ -1717,10 +1869,11 @@ fn decode_semantic_nodes(
                     ));
                 }
             }
+            let kind = decode_semantic_kind(node.kind)?;
             Ok(SemanticNode {
                 id: node.id,
                 parent_id,
-                kind: decode_semantic_kind(node.kind)?,
+                kind,
                 subkind: node.subkind,
                 operation: decode_semantic_operation(node.operation)?,
                 is_bad: node.flags & 1 != 0,
@@ -1735,6 +1888,10 @@ fn decode_semantic_nodes(
                 is_output: node.flags & (1 << 9) != 0,
                 is_inout: node.flags & (1 << 10) != 0,
                 is_ref: node.flags & (1 << 11) != 0,
+                is_const_ref: kind == SemanticKind::Argument
+                    && node.auxiliary & ARGUMENT_CONST_REF != 0,
+                is_ref_static: kind == SemanticKind::Argument
+                    && node.auxiliary & ARGUMENT_REF_STATIC != 0,
                 is_implicit_conversion: node.flags & (1 << 12) != 0,
                 is_propagated_conversion: node.flags & (1 << 30) != 0,
                 is_indexed_up: node.flags & (1 << 16) != 0,
@@ -1847,7 +2004,13 @@ fn validate_semantic_auxiliary(node: &RawSemanticNode) -> Result<(), SlangError>
         // An incomplete declaration placeholder may not carry its resolved
         // lifetime yet; complete variable nodes use static or automatic.
         (9 | 11, _, _) => matches!(node.auxiliary, 0..=2),
-        // A bad expression may not have reached Slang's stream normalization.
+        // Parameter auxiliary metadata carries the frontend's override bit.
+        (12, _, _) => node.auxiliary <= 1,
+        // Argument qualifiers carry const-ref and ref-static bits.
+        (17, _, _) => node.auxiliary <= 3,
+        // Statement subkind 42 covers both `wait` and `wait_order`; the
+        // auxiliary marker distinguishes the ordered form.
+        (18, 42, _) => node.auxiliary <= 1,
         (19, 69, 40) => node.auxiliary == 0 || node.flags & 1 != 0,
         (19, 69, 41) => node.auxiliary > 0 || node.flags & 1 != 0,
         _ => node.auxiliary == 0,
@@ -2949,5 +3112,30 @@ mod tests {
         assert!(enforce_count(5, 4, "type members").is_err());
         assert!(enforce_count(4, 4, "constants").is_ok());
         assert!(enforce_count(5, 4, "constants").is_err());
+    }
+
+    #[test]
+    fn language_edition_parser_and_default_are_explicit() {
+        assert_eq!(
+            LanguageEdition::default(),
+            LanguageEdition::SystemVerilog2009
+        );
+        assert_eq!(LanguageEdition::Verilog2001.to_string(), "2001");
+        assert_eq!(LanguageEdition::SystemVerilog2009.to_string(), "2009");
+        assert_eq!(
+            "1364-2001".parse::<LanguageEdition>(),
+            Ok(LanguageEdition::Verilog2001)
+        );
+        assert_eq!(
+            "1800-2009".parse::<LanguageEdition>(),
+            Ok(LanguageEdition::SystemVerilog2009)
+        );
+        assert!("2017".parse::<LanguageEdition>().is_err());
+        assert_eq!(
+            LanguageEdition::from_snapshot_flags(SNAPSHOT_EDITION_VERILOG_2001),
+            Ok(LanguageEdition::Verilog2001)
+        );
+        assert!(LanguageEdition::from_snapshot_flags(0).is_err());
+        assert!(LanguageEdition::from_snapshot_flags(SNAPSHOT_EDITION_MASK).is_err());
     }
 }

@@ -40,6 +40,11 @@ Required integer; must be `1`.
   the top-level instances only, and an override no top module declares is
   reported as an error.
 
+The simulator driver selects compilation-unit grouping independently with
+`--compilation-units separate|merged`. The default is `separate`, matching the
+language-server admission model; `merged` is explicit and preserves each
+source buffer's identity while sharing preprocessing and `$unit` scope.
+
 ## `[lint]` — linter configuration
 
 - `enabled` (bool) — global switch; `false` disables every rule (a per-rule
@@ -109,10 +114,12 @@ severity = "error"
 ## `[analysis]` — input-size safeguards
 
 - `max_file_bytes` (positive integer) — maximum UTF-8 buffer or on-disk byte
-  length of one unique compilation unit or resolved literal include. Default
+  length of one unique compilation unit or resolved include, including a
+  bounded macro-expanded filename. Default
   `1048576` (1 MiB).
 - `max_total_input_bytes` (positive integer) — maximum sum of the measured
-  unique compilation units and resolved literal includes in one analysis.
+  unique compilation units and resolved includes in one analysis, including
+  bounded macro-expanded filenames.
   Canonicalized paths are counted once, including include cycles. Default
   `8388608` (8 MiB).
 

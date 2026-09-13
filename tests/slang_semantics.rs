@@ -1,3 +1,4 @@
+use llg::core::db::{EventTriggerTiming, NodeKind, StmtKind};
 use llg::ffi::slang::{
     self, CompileOptions, CompileRequest, ConstantValue, SemanticEdge, SemanticEdgeRole,
     SemanticKind, SemanticNode, SemanticOperation, SemanticTimeScale, SemanticTimeUnit, Source,
@@ -328,6 +329,36 @@ endmodule
 }
 
 #[test]
+fn captures_nonblocking_event_trigger_mode_and_delay_in_owned_db() {
+    let snapshot = compile(
+        r#"
+module top;
+    event done;
+    initial begin
+        ->> #2 done;
+    end
+endmodule
+"#,
+    );
+    let db = llg::core::db::Db::from_slang(&snapshot).expect("owned event-trigger graph");
+    let trigger = db
+        .node_ids()
+        .find_map(|id| match db.node_kind(id) {
+            NodeKind::Stmt(StmtKind::EventTrigger {
+                blocking: false,
+                timing:
+                    Some(EventTriggerTiming::Delay {
+                        expression: delay, ..
+                    }),
+                ..
+            }) => Some(*delay),
+            _ => None,
+        })
+        .expect("owned DB retains nonblocking trigger delay");
+    assert!(matches!(db.node_kind(trigger), NodeKind::Expr(_)));
+}
+
+#[test]
 fn captures_packed_unpacked_and_aggregate_type_shape() {
     let snapshot = compile(
         r#"
@@ -442,6 +473,110 @@ endmodule
 }
 
 #[test]
+fn connection_actual_tokens_use_canonical_source_identity() {
+    use llg::ffi::slang::{LanguageEdition, LexicalKind, LexicalRole};
+
+    let source = r#"
+module child(input clk, input din, output dout);
+    assign dout = clk & din;
+endmodule
+module top(input clk, input din, output dout);
+    wire local_net;
+    reg local_var;
+    assign local_net = clk;
+    initial local_var = 0;
+    child u_ports(.clk(clk), .din(din), .dout(dout));
+    child u_locals(.clk(local_net), .din(local_var), .dout());
+endmodule
+"#;
+    let cases = [
+        (
+            ".clk(clk)", ".clk(", "input clk", "input ", "clk",
+            LexicalKind::Port, SemanticKind::Port, SemanticKind::Net,
+        ),
+        (
+            ".din(din)", ".din(", "input din", "input ", "din",
+            LexicalKind::Port, SemanticKind::Port, SemanticKind::Net,
+        ),
+        (
+            ".dout(dout)", ".dout(", "output dout", "output ", "dout",
+            LexicalKind::Port, SemanticKind::Port, SemanticKind::Net,
+        ),
+        (
+            ".clk(local_net)", ".clk(", "wire local_net", "wire ", "local_net",
+            LexicalKind::Net, SemanticKind::Net, SemanticKind::Net,
+        ),
+        (
+            ".din(local_var)", ".din(", "reg local_var", "reg ", "local_var",
+            LexicalKind::Variable, SemanticKind::Variable, SemanticKind::Variable,
+        ),
+    ];
+
+    for edition in [
+        LanguageEdition::Verilog2001,
+        LanguageEdition::SystemVerilog2009,
+    ] {
+        let sources = [Source::compilation_unit("connection-identity.v", source)];
+        let options = CompileOptions {
+            edition,
+            ..Default::default()
+        };
+        let snapshot = slang::compile(&CompileRequest {
+            sources: &sources,
+            options: &options,
+        })
+        .expect("connection source should compile");
+        assert!(
+            !snapshot.has_errors(),
+            "edition={edition:?}: {:?}",
+            snapshot.diagnostics
+        );
+
+        for (connection, prefix, declaration, decl_prefix, name, kind, target_kind, storage_kind) in
+            cases
+        {
+            let start =
+                (source.find(connection).expect("connection spelling") + prefix.len()) as u64;
+            let declaration_start =
+                (source.rfind(declaration).expect("parent declaration") + decl_prefix.len()) as u64;
+            let mut tokens = snapshot.lexical_tokens.iter().filter(|token| {
+                token.range.is_some_and(|range| range.start == start)
+                    && !token.is_missing
+                    && !token.is_skipped
+            });
+            let token = tokens.next().expect("one lexical actual token");
+            assert!(tokens.next().is_none(), "duplicate actual token: {connection}");
+            assert_eq!(token.text, name);
+            assert_eq!(token.role, LexicalRole::ConnectionActual);
+            assert_eq!(token.kind, kind, "wrong lexical kind: {connection}");
+            let target = node_by_id(&snapshot, token.semantic_id.expect("bound actual"));
+            assert_eq!(target.name, name);
+            assert_eq!(target.kind, target_kind, "wrong source identity: {connection}");
+            assert_eq!(
+                target.range.expect("declaration range").start,
+                declaration_start,
+                "actual must stay in the parent scope: {connection}"
+            );
+
+            // Lexical normalization must not rewrite the simulator's
+            // expression targets from storage symbols to port symbols.
+            let expression = snapshot
+                .semantic_nodes
+                .iter()
+                .find(|node| {
+                    node.kind == SemanticKind::Expression
+                        && node.target_id.is_some()
+                        && node.range.is_some_and(|range| range.start == start)
+                })
+                .expect("actual's semantic reference");
+            let storage = node_by_id(&snapshot, expression.target_id.unwrap());
+            assert_eq!(storage.kind, storage_kind, "storage changed: {connection}");
+            assert_eq!(storage.range.unwrap().start, declaration_start);
+        }
+    }
+}
+
+#[test]
 fn captures_port_declarations_actuals_and_per_port_connections() {
     let snapshot = compile(
         r#"
@@ -507,5 +642,56 @@ endmodule
             }
             other => panic!("unexpected port `{other}`"),
         }
+    }
+}
+
+#[test]
+fn owned_scope_names_keep_interface_and_dump_metadata_without_executable_placeholders() {
+    let snapshot = compile(
+        r#"
+interface bus;
+    logic data;
+    modport reader(input data);
+endinterface
+module consumer(bus.reader b);
+    wire value = b.data;
+endmodule
+module bare_consumer(bus b);
+    wire value = b.data;
+endmodule
+module top;
+    bus b();
+    consumer c(.b(b.reader));
+    bare_consumer d(.b(b));
+    initial begin
+        $dumpvars(0, top);
+        #1 $finish(0);
+    end
+endmodule
+"#,
+    );
+    let db = llg::core::db::Db::from_slang(&snapshot).expect("owned scope metadata");
+    let coverage = llg::sim::semantic::SemanticModel::from_db(&db).simulation_coverage();
+    let scopes: Vec<_> = db
+        .node_ids()
+        .filter(|id| {
+            matches!(
+                db.node_kind(*id),
+                NodeKind::Expr(llg::core::db::ExprKind::ScopeRef { .. })
+            )
+        })
+        .collect();
+    assert!(
+        scopes.len() >= 3,
+        "bare interface, modport, and dump scope must be captured"
+    );
+    for id in scopes {
+        assert_eq!(
+            coverage[id.index()].class,
+            llg::sim::semantic::SimulationNodeClass::ElaborationConsumed,
+            "scope expression {} is not an executable value: {:?}",
+            id.index(),
+            db.node(id),
+        );
     }
 }

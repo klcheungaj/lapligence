@@ -132,6 +132,10 @@ pub struct FuncArgDef {
     pub ty: TypeInfo,
     /// `true` when the formal carries a default value (`input int a = 7`).
     pub has_default: bool,
+    /// `true` when the formal is a read-only `const ref` alias.
+    pub const_ref: bool,
+    /// `true` when the formal uses the explicit `ref static` lifetime.
+    pub ref_static: bool,
 }
 
 /// A function or task definition captured in an elaborated instance scope.
@@ -474,11 +478,15 @@ fn func_args_from_db(db: &db::Db, ft_id: NodeId) -> Vec<FuncArgDef> {
                 direction,
                 ty,
                 default,
+                const_ref,
+                ref_static,
             } => Some(FuncArgDef {
                 name: db.node(*c).name.clone(),
                 direction: model_direction(*direction),
                 ty: ty.clone(),
                 has_default: default.is_some(),
+                const_ref: *const_ref,
+                ref_static: *ref_static,
             }),
             _ => None,
         })

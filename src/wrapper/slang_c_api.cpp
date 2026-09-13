@@ -29,10 +29,14 @@
 #include "slang/ast/symbols/CompilationUnitSymbols.h"
 #include "slang/ast/symbols/InstanceSymbols.h"
 #include "slang/ast/symbols/ParameterSymbols.h"
+#include "slang/ast/symbols/VariableSymbols.h"
+#include "slang/ast/types/AllTypes.h"
 #include "slang/ast/types/Type.h"
+#include "slang/diagnostics/AnalysisDiags.h"
 #include "slang/diagnostics/DiagnosticEngine.h"
 #include "slang/diagnostics/DiagnosticClient.h"
 #include "slang/numeric/ConstantValue.h"
+#include "slang/parsing/Parser.h"
 #include "slang/parsing/Preprocessor.h"
 #include "slang/parsing/LexerFacts.h"
 #include "slang/syntax/AllSyntax.h"
@@ -66,6 +70,33 @@ constexpr uint64_t kDefaultMaxRelatedDiagnostics = 80000;
 constexpr uint64_t kHardMaxRelatedDiagnostics = 800000;
 constexpr uint64_t kDefaultMaxOutputBytes = 64 * 1024 * 1024;
 constexpr uint64_t kHardMaxOutputBytes = 512 * 1024 * 1024;
+
+// Named-event identity is carried by the terminal event type even when the
+// declaration adds one or more unpacked dimensions. Keep this test in the
+// frontend capture so the owned database receives one declaration identity
+// for both scalar events and legal event arrays.
+bool isNamedEventType(const Type& type) {
+  const Type& canonical = type.getCanonicalType();
+  if (canonical.isEvent())
+    return true;
+  if (canonical.kind == SymbolKind::FixedSizeUnpackedArrayType) {
+    const auto& array = canonical.as<FixedSizeUnpackedArrayType>();
+    return isNamedEventType(array.elementType);
+  }
+  if (canonical.kind == SymbolKind::DynamicArrayType) {
+    const auto& array = canonical.as<DynamicArrayType>();
+    return isNamedEventType(array.elementType);
+  }
+  if (canonical.kind == SymbolKind::AssociativeArrayType) {
+    const auto& array = canonical.as<AssociativeArrayType>();
+    return isNamedEventType(array.elementType);
+  }
+  if (canonical.kind == SymbolKind::QueueType) {
+    const auto& array = canonical.as<QueueType>();
+    return isNamedEventType(array.elementType);
+  }
+  return false;
+}
 constexpr uint64_t kDefaultMaxSemanticNodes = 1000000;
 constexpr uint64_t kHardMaxSemanticNodes = 4000000;
 constexpr uint64_t kDefaultMaxSemanticEdges = 4000000;
@@ -112,6 +143,30 @@ void addChecked(uint64_t& total, uint64_t amount, uint64_t limit,
     throw BridgeFailure(LLG_SLANG_STATUS_LIMIT_EXCEEDED,
                         std::string(description) + " limit exceeded");
   total += amount;
+}
+
+struct EditionPolicy {
+  LanguageVersion languageVersion;
+  parsing::KeywordVersion keywordVersion;
+  uint32_t snapshotFlag;
+};
+
+EditionPolicy editionPolicy(uint32_t flags) {
+  constexpr uint32_t editionMask =
+      LLG_SLANG_COMPILE_EDITION_VERILOG_2001 |
+      LLG_SLANG_COMPILE_EDITION_SYSTEMVERILOG_2009;
+  switch (flags & editionMask) {
+    case 0:
+    case LLG_SLANG_COMPILE_EDITION_SYSTEMVERILOG_2009:
+      return {LanguageVersion::v1800_2017, parsing::KeywordVersion::v1800_2009,
+              LLG_SLANG_SNAPSHOT_EDITION_SYSTEMVERILOG_2009};
+    case LLG_SLANG_COMPILE_EDITION_VERILOG_2001:
+      return {LanguageVersion::v1364_2005, parsing::KeywordVersion::v1364_2001,
+              LLG_SLANG_SNAPSHOT_EDITION_VERILOG_2001};
+    default:
+      throw BridgeFailure(LLG_SLANG_STATUS_INVALID_ARGUMENT,
+                          "multiple language editions were selected");
+  }
 }
 
 } // namespace
@@ -251,6 +306,7 @@ struct Capture {
   std::unordered_map<uint64_t, uint64_t> lexicalTargetAliases;
   std::unordered_map<const syntax::SyntaxNode*, std::vector<uint64_t>>
       sourceIdentityGroups;
+  std::unordered_set<const ParameterSymbol*> overriddenParameters;
   uint64_t valueBits = 0;
   uint64_t semanticEdgeCount = 0;
   bool declarationOnly = false;
@@ -683,6 +739,13 @@ struct Capture {
         kind = LLG_SLANG_PARAMETER_VALUE;
         typeId = type(parameter.getType());
         constantId = constant(parameter.getValue());
+        const auto* syntax = parameter.getSyntax();
+        const auto* overrides = instance.body.hierarchyOverrideNode;
+        if (instance.isTopLevel() && syntax &&
+            ((overrides && overrides->paramOverrides.find(syntax) !=
+                              overrides->paramOverrides.end()) ||
+             parameter.isOverridden()))
+          overriddenParameters.insert(&parameter);
       }
       else if (symbol.kind == SymbolKind::TypeParameter) {
         const auto& parameter = symbol.as<TypeParameterSymbol>();
@@ -870,6 +933,19 @@ struct Capture {
   void sourceIdentity(const syntax::SyntaxNode* syntaxNode, uint64_t semanticId) {
     if (syntaxNode)
       sourceIdentityGroups[syntaxNode].push_back(semanticId);
+  }
+
+  void markOverriddenParameters() {
+    // Overrides belong to an elaborated parameter, not every instance that
+    // happens to share its source declaration (syntax node).
+    for (const auto* parameter : overriddenParameters) {
+      auto it = semanticIds.find(parameter);
+      if (it == semanticIds.end())
+        continue;
+      auto& node = output.semantic_nodes[static_cast<size_t>(it->second)];
+      if (node.kind == LLG_SLANG_SEMANTIC_PARAMETER)
+        node.auxiliary = 1;
+    }
   }
 
   void finalizeSourceIdentities() {
@@ -1405,6 +1481,8 @@ public:
       result.type_id = capture.type(symbol.getReturnType());
     if constexpr (std::same_as<T, ParameterSymbol>) {
       result.constant_id = capture.constant(symbol.getValue());
+      if (symbol.isOverridden())
+        result.auxiliary = 1;
       if (symbol.isFromGenvar()) {
         result.flags |= LLG_SLANG_SEMANTIC_IMPLICIT;
         const Scope* blockScope = symbol.getParentScope();
@@ -1505,8 +1583,13 @@ public:
       addDirection(result, symbol.direction);
     if constexpr (std::same_as<T, MultiPortSymbol>)
       addDirection(result, symbol.direction);
-    if constexpr (std::same_as<T, FormalArgumentSymbol>)
+    if constexpr (std::same_as<T, FormalArgumentSymbol>) {
       addDirection(result, symbol.direction);
+      if (symbol.flags.has(VariableFlags::Const))
+        result.auxiliary |= LLG_SLANG_ARGUMENT_CONST_REF;
+      if (symbol.flags.has(VariableFlags::RefStatic))
+        result.auxiliary |= LLG_SLANG_ARGUMENT_REF_STATIC;
+    }
     if constexpr (std::same_as<T, ProceduralBlockSymbol>)
       result.subkind = processKind(symbol.procedureKind);
     if constexpr (std::same_as<T, ContinuousAssignSymbol>)
@@ -1514,7 +1597,7 @@ public:
     if constexpr (std::same_as<T, VariableSymbol>) {
       if (symbol.flags.has(VariableFlags::CompilerGenerated))
         result.flags |= LLG_SLANG_SEMANTIC_IMPLICIT;
-      if (symbol.getType().isEvent())
+      if (isNamedEventType(symbol.getType()))
         result.kind = LLG_SLANG_SEMANTIC_NAMED_EVENT;
       addExplicitVariableLifetime(result, symbol);
     }
@@ -1747,8 +1830,15 @@ public:
         result.subkind = LLG_SLANG_SUBKIND_NONE;
       }
     }
-    if constexpr (std::same_as<T, TimeLiteral>)
+    if constexpr (std::same_as<T, TimeLiteral>) {
       addTimeScale(result, expression.getScale());
+      // Literal names carry the exact post-preprocessing token spelling.
+      // Source ranges point to macro invocation sites and cannot reconstruct
+      // conditional definitions, include-file macros, or token concatenation.
+      if (expression.syntax)
+        result.name = storeString(capture.output,
+                                 expression.syntax->getFirstToken().rawText());
+    }
     if constexpr (std::same_as<T, ConversionExpression>) {
       if (expression.isImplicit())
         result.flags |= LLG_SLANG_SEMANTIC_IMPLICIT_CONVERSION;
@@ -2652,6 +2742,19 @@ private:
       capture.semanticRole(id, &statement.cond, LLG_SLANG_EDGE_CONDITION);
       capture.semanticRole(id, &statement.stmt, LLG_SLANG_EDGE_BODY);
     }
+    else if constexpr (std::same_as<T, WaitOrderStatement>) {
+      uint32_t index = 0;
+      for (const Expression* event : statement.events)
+        capture.semanticRole(id, event, LLG_SLANG_EDGE_EVENT, index++);
+      if (statement.ifTrue)
+        capture.semanticRole(id, statement.ifTrue, LLG_SLANG_EDGE_THEN);
+      if (statement.ifFalse)
+        capture.semanticRole(id, statement.ifFalse, LLG_SLANG_EDGE_ELSE);
+      // Wait and wait_order intentionally share the stable ABI subkind. The
+      // auxiliary marker preserves the distinction without spending a new
+      // semantic flag bit or leaking Slang enum values across the boundary.
+      capture.output.semantic_nodes[static_cast<size_t>(id)].auxiliary = 1;
+    }
     else if constexpr (std::same_as<T, ReturnStatement>) {
       if (statement.expr)
         capture.semanticRole(id, statement.expr, LLG_SLANG_EDGE_BODY);
@@ -2711,6 +2814,13 @@ private:
       uint32_t index = 0;
       for (const TimingControl* event : node.events)
         capture.semanticRole(id, event, LLG_SLANG_EDGE_EVENT, index++);
+    }
+    else if constexpr (std::same_as<T, RepeatedEventControl>) {
+      capture.semanticRole(id, &node.expr, LLG_SLANG_EDGE_CONDITION);
+      capture.semanticRole(id, &node.event, LLG_SLANG_EDGE_EVENT);
+    }
+    else if constexpr (std::same_as<T, CycleDelayControl>) {
+      capture.semanticRole(id, &node.expr, LLG_SLANG_EDGE_DELAY);
     }
   }
 };
@@ -2866,7 +2976,9 @@ public:
       if (auto it = connectionLabels.find(
               {token.range.file_id, token.range.start, token.range.end});
           it != connectionLabels.end()) {
-        semanticId = it->second.semantic_id;
+        // Scoped syntax lookups can name a port's internal net / variable.
+        // Use the same source identity as expression-derived references below.
+        semanticId = capture.canonicalLexicalTarget(it->second.semantic_id);
         role = it->second.role;
         boundKind = it->second.kind;
       }
@@ -3016,7 +3128,7 @@ public:
   void issue(DiagnosticEngine& diagnosticEngine, const Diagnostic& diagnostic) {
     root = &diagnostic;
     rootIndex = LLG_SLANG_INVALID_ID;
-    if (diagnostic.isError())
+    if (diagnostic.isError() && diagnostic.code != diag::AlwaysWithoutTimingControl)
       capture.output.flags |= LLG_SLANG_SNAPSHOT_HAS_ERRORS;
     diagnosticEngine.issue(diagnostic);
     root = nullptr;
@@ -3102,9 +3214,15 @@ std::unique_ptr<LlgSlangSnapshot> compileImpl(const LlgSlangCompileRequest& requ
   if (request.abi_version != LLG_SLANG_ABI_VERSION)
     throw BridgeFailure(LLG_SLANG_STATUS_INVALID_ARGUMENT,
                         "unsupported Slang ABI version");
-  if ((request.flags & ~LLG_SLANG_COMPILE_LIBRARY_UNITS) != 0)
+  constexpr uint32_t knownFlags =
+      LLG_SLANG_COMPILE_LIBRARY_UNITS |
+      LLG_SLANG_COMPILE_EDITION_VERILOG_2001 |
+      LLG_SLANG_COMPILE_EDITION_SYSTEMVERILOG_2009 |
+      LLG_SLANG_COMPILE_MERGED_COMPILATION_UNITS;
+  if ((request.flags & ~knownFlags) != 0)
     throw BridgeFailure(LLG_SLANG_STATUS_INVALID_ARGUMENT,
                         "unknown compile request flags");
+  const EditionPolicy edition = editionPolicy(request.flags);
   if (request.source_count != 0 && request.sources == nullptr)
     throw BridgeFailure(LLG_SLANG_STATUS_INVALID_ARGUMENT,
                         "sources has a null pointer");
@@ -3194,6 +3312,7 @@ std::unique_ptr<LlgSlangSnapshot> compileImpl(const LlgSlangCompileRequest& requ
   }
 
   CompilationOptions compilationOptions;
+  compilationOptions.languageVersion = edition.languageVersion;
   if ((request.flags & LLG_SLANG_COMPILE_LIBRARY_UNITS) != 0)
     compilationOptions.flags |= CompilationFlags::IgnoreUninstantiatedModules;
   compilationOptions.defaultTimeScale = TimeScale(
@@ -3267,29 +3386,59 @@ std::unique_ptr<LlgSlangSnapshot> compileImpl(const LlgSlangCompileRequest& requ
     buffers.push_back(sourceManager.assignText(sourcePaths[i], sourceTexts[i]));
 
   parsing::PreprocessorOptions preprocessorOptions;
+  preprocessorOptions.languageVersion = edition.languageVersion;
   preprocessorOptions.predefines = std::move(predefines);
   preprocessorOptions.additionalIncludePaths = std::move(includeDirs);
+  preprocessorOptions.keywordMapping.reserve(sourcePaths.size());
+  for (const std::string& path : sourcePaths)
+    preprocessorOptions.keywordMapping.emplace_back(path, edition.keywordVersion);
+  parsing::LexerOptions lexerOptions;
+  lexerOptions.languageVersion = edition.languageVersion;
+  parsing::ParserOptions parserOptions;
+  parserOptions.languageVersion = edition.languageVersion;
   Bag parseOptions;
   parseOptions.set(std::move(preprocessorOptions));
+  parseOptions.set(std::move(lexerOptions));
+  parseOptions.set(std::move(parserOptions));
   Bag compileOptions;
   compileOptions.set(std::move(compilationOptions));
   Compilation compilation(compileOptions);
   bool anyCompilationUnit = false;
-  for (uint64_t i = 0; i < request.source_count; i++) {
-    if ((request.sources[i].flags & LLG_SLANG_SOURCE_COMPILATION_UNIT) == 0)
-      continue;
-    anyCompilationUnit = true;
-    auto tree = syntax::SyntaxTree::fromBuffer(
-        buffers[static_cast<size_t>(i)], sourceManager, parseOptions);
-    if ((request.flags & LLG_SLANG_COMPILE_LIBRARY_UNITS) != 0)
-      tree->isLibraryUnit = true;
-    compilation.addSyntaxTree(std::move(tree));
+  if ((request.flags & LLG_SLANG_COMPILE_MERGED_COMPILATION_UNITS) != 0) {
+    std::vector<SourceBuffer> compilationBuffers;
+    compilationBuffers.reserve(static_cast<size_t>(request.source_count));
+    for (uint64_t i = 0; i < request.source_count; i++) {
+      if ((request.sources[i].flags & LLG_SLANG_SOURCE_COMPILATION_UNIT) != 0)
+        compilationBuffers.push_back(buffers[static_cast<size_t>(i)]);
+    }
+    anyCompilationUnit = !compilationBuffers.empty();
+    if (anyCompilationUnit) {
+      auto tree = syntax::SyntaxTree::fromBuffers(
+          compilationBuffers, sourceManager, parseOptions);
+      if ((request.flags & LLG_SLANG_COMPILE_LIBRARY_UNITS) != 0)
+        tree->isLibraryUnit = true;
+      compilation.addSyntaxTree(std::move(tree));
+    }
+  } else {
+    for (uint64_t i = 0; i < request.source_count; i++) {
+      if ((request.sources[i].flags & LLG_SLANG_SOURCE_COMPILATION_UNIT) == 0)
+        continue;
+      anyCompilationUnit = true;
+      auto tree = syntax::SyntaxTree::fromBuffer(
+          buffers[static_cast<size_t>(i)], sourceManager, parseOptions);
+      if ((request.flags & LLG_SLANG_COMPILE_LIBRARY_UNITS) != 0)
+        tree->isLibraryUnit = true;
+      compilation.addSyntaxTree(std::move(tree));
+    }
   }
   if (!anyCompilationUnit)
     throw BridgeFailure(LLG_SLANG_STATUS_INVALID_ARGUMENT,
                         "at least one compilation unit source is required");
 
   auto output = std::make_unique<LlgSlangSnapshot>();
+  output->flags |= edition.snapshotFlag;
+  if ((request.flags & LLG_SLANG_COMPILE_MERGED_COMPILATION_UNITS) != 0)
+    output->flags |= LLG_SLANG_SNAPSHOT_MERGED_COMPILATION_UNITS;
   output->output_byte_limit = effectiveLimit(request.limits.max_output_bytes,
       kDefaultMaxOutputBytes, kHardMaxOutputBytes);
   Capture capture{*output, sourceManager, request.limits,
@@ -3356,6 +3505,7 @@ std::unique_ptr<LlgSlangSnapshot> compileImpl(const LlgSlangCompileRequest& requ
     auto analysisClient = std::make_shared<CaptureClient>(
         capture, LLG_SLANG_DIAG_ANALYSIS);
     engine.addClient(analysisClient);
+    engine.setSeverity(diag::AlwaysWithoutTimingControl, DiagnosticSeverity::Warning);
     for (const Diagnostic& diagnostic : diagnostics)
       analysisClient->issue(engine, diagnostic);
     output->flags |= LLG_SLANG_SNAPSHOT_ANALYSIS_RAN;
@@ -3367,6 +3517,7 @@ std::unique_ptr<LlgSlangSnapshot> compileImpl(const LlgSlangCompileRequest& requ
     for (const Symbol* definition : compilation.getDefinitions())
       definition->visit(semanticCapture);
   }
+  capture.markOverriddenParameters();
   capture.finalizeSourceIdentities();
   capture.finalizeSemanticEdges();
 

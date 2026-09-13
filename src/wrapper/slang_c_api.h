@@ -65,7 +65,15 @@ typedef struct {
 enum {
   /* Parse all compilation units as library units. Definitions are checked as
    * uninstantiated scopes instead of being inferred as recursive design tops. */
-  LLG_SLANG_COMPILE_LIBRARY_UNITS = 1u << 0
+  LLG_SLANG_COMPILE_LIBRARY_UNITS = 1u << 0,
+  /* Select the complete compilation language policy. If neither edition bit
+   * is set, the bridge uses SystemVerilog-2009 for compatibility. These bits
+   * affect the global policy only; `begin_keywords` remains lexical. */
+  LLG_SLANG_COMPILE_EDITION_VERILOG_2001 = 1u << 1,
+  LLG_SLANG_COMPILE_EDITION_SYSTEMVERILOG_2009 = 1u << 2,
+  /* Parse all admitted compilation-unit buffers in source order as one unit.
+   * When absent, each compilation-unit buffer is parsed separately. */
+  LLG_SLANG_COMPILE_MERGED_COMPILATION_UNITS = 1u << 3
 };
 
 typedef struct {
@@ -94,7 +102,10 @@ enum {
 
 enum {
   LLG_SLANG_SNAPSHOT_HAS_ERRORS = 1u << 0,
-  LLG_SLANG_SNAPSHOT_ANALYSIS_RAN = 1u << 1
+  LLG_SLANG_SNAPSHOT_ANALYSIS_RAN = 1u << 1,
+  LLG_SLANG_SNAPSHOT_EDITION_VERILOG_2001 = 1u << 8,
+  LLG_SLANG_SNAPSHOT_EDITION_SYSTEMVERILOG_2009 = 1u << 9,
+  LLG_SLANG_SNAPSHOT_MERGED_COMPILATION_UNITS = 1u << 10
 };
 
 enum {
@@ -354,6 +365,12 @@ enum {
   LLG_SLANG_SEMANTIC_PORT_CONNECTION_OPEN = 1u << 29,
   LLG_SLANG_SEMANTIC_PROPAGATED_CONVERSION = 1u << 30,
   LLG_SLANG_SEMANTIC_METHOD_WITH_CLAUSE = 1u << 31
+};
+
+/* Argument-only qualifiers carried in LlgSlangSemanticNode::auxiliary. */
+enum {
+  LLG_SLANG_ARGUMENT_CONST_REF = 1ull << 0,
+  LLG_SLANG_ARGUMENT_REF_STATIC = 1ull << 1
 };
 
 enum {
