@@ -177,6 +177,7 @@ typedef struct llg_process_handle llg_process_handle_t;
 typedef struct llg_semaphore llg_semaphore_t;
 typedef struct llg_frame llg_frame_t;
 typedef struct llg_activation llg_activation_t;
+typedef struct llg_mailbox llg_mailbox_t;
 typedef struct { sv4_t* sig; int kind; } llg_event_spec_t;
 // One typed storage dependency. Exactly one pointer is non-null; real
 // dependencies point directly at the generated double companion. Real
@@ -186,6 +187,68 @@ typedef struct {
     sv4_t* sig;
     double* real;
 } llg_wait_dependency_t;
+
+// ── Mailboxes (IEEE 1800-2009 §15.4) ────────────────────────────────────────
+// Message and destination descriptors are borrowed for one operation. A
+// string in a message descriptor is owned by the descriptor until the
+// runtime either queues/delivers it or destroys it on a failed try operation;
+// packed and handle values are copied by value/identity respectively.
+enum {
+    LLG_MAILBOX_PACKED = 0,
+    LLG_MAILBOX_REAL = 1,
+    LLG_MAILBOX_STRING = 2,
+    LLG_MAILBOX_HANDLE = 3,
+    LLG_MAILBOX_UNTYPED = 4,
+};
+
+typedef struct {
+    int kind;
+    uint32_t width;
+    int8_t is_signed;
+    int8_t two_state;
+    int8_t shortreal;
+    union {
+        sv4_t packed;
+        double real;
+        llg_string_t string;
+        void* handle;
+    } value;
+} llg_mailbox_value_t;
+
+typedef struct {
+    int kind;
+    uint32_t width;
+    int8_t is_signed;
+    int8_t two_state;
+    int8_t shortreal;
+    union {
+        sv4_t* packed;
+        double* real;
+        llg_string_t* string;
+        void** handle;
+    } target;
+} llg_mailbox_target_t;
+
+llg_mailbox_value_t llg_mailbox_value_packed(sv4_t value, uint32_t width,
+                                              int is_signed, int two_state);
+llg_mailbox_value_t llg_mailbox_value_real(double value, int shortreal);
+llg_mailbox_value_t llg_mailbox_value_string(llg_string_t value);
+llg_mailbox_value_t llg_mailbox_value_handle(void* value);
+llg_mailbox_target_t llg_mailbox_target_packed(sv4_t* target, uint32_t width,
+                                                int is_signed, int two_state);
+llg_mailbox_target_t llg_mailbox_target_real(double* target, int shortreal);
+llg_mailbox_target_t llg_mailbox_target_string(llg_string_t* target);
+llg_mailbox_target_t llg_mailbox_target_handle(void** target);
+llg_mailbox_t* llg_mailbox_new(sv4_t bound, int kind, uint32_t width,
+                               int is_signed, int two_state, int shortreal);
+uint64_t llg_mailbox_num(const llg_mailbox_t* mailbox);
+void llg_mailbox_put_value(llg_mailbox_t* mailbox, llg_mailbox_value_t value);
+int llg_mailbox_try_put_value(llg_mailbox_t* mailbox,
+                              llg_mailbox_value_t value);
+void llg_mailbox_get_value(llg_mailbox_t* mailbox, llg_mailbox_target_t target,
+                           int peek);
+int llg_mailbox_try_get_value(llg_mailbox_t* mailbox,
+                              llg_mailbox_target_t target, int peek);
 
 // Execution regions, in reference-algorithm order. PLI control points are
 // explicit even when no public VPI registration has been lowered yet. The

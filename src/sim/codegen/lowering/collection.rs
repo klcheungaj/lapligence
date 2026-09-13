@@ -367,6 +367,130 @@ impl<'a> Codegen<'a> {
         self.proc_string_locals.get(&node).map(String::as_str)
     }
 
+    /// Register an automatic mailbox declared in a process body. Mailboxes
+    /// are native runtime pointers and therefore cannot use packed local
+    /// storage. A declaration-derived name keeps nested activations distinct
+    /// without relying on source spelling.
+    pub(super) fn collect_mailbox_local(
+        &mut self,
+        path: &str,
+        node: NodeId,
+    ) -> Result<String, String> {
+        if let Some(name) = self.proc_mailbox_locals.get(&node) {
+            return Ok(name.clone());
+        }
+        if !self.is_mailbox_expr(path, node) {
+            return Err(format!(
+                "procedural mailbox declaration `{}` in `{path}` has no mailbox type",
+                self.node(node).name
+            ));
+        }
+        if self.db.variable_lifetime(node) != VariableLifetime::Automatic {
+            return Err(format!(
+                "process-local mailbox `{}` in `{path}` is not automatic",
+                self.node(node).name
+            ));
+        }
+        let name = format!("_lm{}", node.index());
+        self.proc_mailbox_locals.insert(node, name.clone());
+        Ok(name)
+    }
+
+    /// Register the model-backed identity of a static mailbox declared in a
+    /// process body. Its declaration-time constructor is emitted with the
+    /// other time-zero mailbox initializers.
+    pub(super) fn collect_mailbox_static_object(
+        &mut self,
+        path: &str,
+        node: NodeId,
+    ) -> Result<usize, String> {
+        if let Some(index) = self.proc_mailbox_static_objects.get(&(self.inst, node)) {
+            return Ok(*index);
+        }
+        if !self.is_mailbox_expr(path, node) {
+            return Err(format!(
+                "procedural mailbox declaration `{}` in `{path}` has no mailbox type",
+                self.node(node).name
+            ));
+        }
+        if self.db.variable_lifetime(node) != VariableLifetime::Static {
+            return Err(format!(
+                "process-local mailbox `{}` in `{path}` is not static",
+                self.node(node).name
+            ));
+        }
+        let index = self.model.objects.len();
+        self.model.objects.push(crate::sim::ir::IrObject {
+            c_name: format!("O_M{}_L{}", self.inst.index(), node.index()),
+            ty: IrObjectType::Chandle,
+            initial: None,
+        });
+        if let Some(initializer) = self.db.var_initializer(node) {
+            self.mailbox_object_initializers
+                .push((node, index, initializer, path.to_owned()));
+        }
+        self.proc_mailbox_static_objects
+            .insert((self.inst, node), index);
+        Ok(index)
+    }
+
+    pub(super) fn proc_mailbox_local_name(&self, node: NodeId) -> Option<&str> {
+        self.proc_mailbox_locals.get(&node).map(String::as_str)
+    }
+
+    /// Resolve a process-local mailbox through lexical begin/loop scopes.
+    /// Owned references normally carry a target declaration; the name walk is
+    /// retained for frontend references whose target was not captured.
+    pub(super) fn lexical_proc_mailbox_local(&self, reference: NodeId) -> Option<(NodeId, &str)> {
+        if let NodeKind::Expr(ExprKind::Ref {
+            target: Some(target),
+        }) = self.kind(reference)
+        {
+            if let Some(name) = self.proc_mailbox_local_name(*target) {
+                return Some((*target, name));
+            }
+        }
+        if let Some(name) = self.proc_mailbox_local_name(reference) {
+            return Some((reference, name));
+        }
+        let name = self.node(reference).name.as_str();
+        let mut parent = self.node(reference).parent;
+        while let Some(scope) = parent {
+            if matches!(self.kind(scope), NodeKind::Stmt(StmtKind::Begin)) {
+                if let Some(variable) = self.node(scope).children.iter().find(|child| {
+                    self.is_mailbox_expr("", **child) && self.node(**child).name == name
+                }) {
+                    if let Some(c_name) = self.proc_mailbox_local_name(*variable) {
+                        return Some((*variable, c_name));
+                    }
+                }
+            }
+            let variable = match self.kind(scope) {
+                NodeKind::Stmt(StmtKind::For { vars, .. }) => vars
+                    .iter()
+                    .find(|variable| {
+                        self.is_mailbox_expr("", **variable) && self.node(**variable).name == name
+                    })
+                    .copied(),
+                NodeKind::Stmt(StmtKind::Foreach { vars, .. }) => vars
+                    .iter()
+                    .flatten()
+                    .find(|variable| {
+                        self.is_mailbox_expr("", **variable) && self.node(**variable).name == name
+                    })
+                    .copied(),
+                _ => None,
+            };
+            if let Some(variable) = variable {
+                if let Some(c_name) = self.proc_mailbox_local_name(variable) {
+                    return Some((variable, c_name));
+                }
+            }
+            parent = self.node(scope).parent;
+        }
+        None
+    }
+
     /// Register a process handle declared in a procedural body. Automatic
     /// handles live in the activation's C frame; static handles use a model
     /// object so their identity survives repeated activations.
@@ -6510,6 +6634,21 @@ impl<'a> Codegen<'a> {
                         .insert((inst, *local), object);
                     object
                 };
+                // Mailboxes use the same native pointer storage as other
+                // handles, but their declaration initializer must construct
+                // a runtime mailbox before the first function call.  Queue
+                // it with the other model-time mailbox initializers instead
+                // of silently dropping it with ordinary static handles.
+                if self.is_mailbox_expr(path, *local) {
+                    if let Some(initializer) = self.db.var_initializer(*local) {
+                        self.mailbox_object_initializers.push((
+                            *local,
+                            object,
+                            initializer,
+                            path.to_owned(),
+                        ));
+                    }
+                }
                 chandle_read.insert(*local, IrChandleExpr::Read(object));
                 chandle_write.insert(*local, ChandleTarget::Object(object));
             } else {
@@ -7270,6 +7409,32 @@ impl<'a> Codegen<'a> {
             "cannot resolve callee `{name}` in `{}`",
             self.node(inst).name
         ))
+    }
+
+    /// Slang records a mailbox constructor's anonymous built-in callee as a
+    /// normal function call. It is consumed by mailbox lowering and must not
+    /// be resolved as a user function while collecting process contracts or
+    /// signal dependencies.
+    pub(super) fn is_mailbox_constructor_call(&self, node: NodeId) -> bool {
+        let NodeKind::FuncCall {
+            name,
+            callee: Some(_),
+            ..
+        } = self.kind(node)
+        else {
+            return false;
+        };
+        if name != "new" {
+            return false;
+        }
+        let Some(parent) = self.node(node).parent else {
+            return false;
+        };
+        matches!(self.kind(parent), NodeKind::Expr(ExprKind::NewClass { .. }))
+            && self
+                .db
+                .type_descriptor(parent)
+                .is_some_and(|descriptor| descriptor.name.starts_with("mailbox#("))
     }
 
     /// The concrete environment that owns one captured subroutine clone.
@@ -11597,6 +11762,12 @@ impl<'a> Codegen<'a> {
             }
             return Ok(());
         }
+        if self.is_mailbox_constructor_call(node) {
+            for child in &self.node(node).children {
+                self.scan_process_contract(*child, scan, visited_functions)?;
+            }
+            return Ok(());
+        }
         match self.kind(node) {
             NodeKind::Stmt(StmtKind::EventControl { .. }) => scan.event_controls.push(node),
             NodeKind::Stmt(StmtKind::DelayControl { .. } | StmtKind::CycleDelayControl { .. })
@@ -11935,6 +12106,12 @@ impl<'a> Codegen<'a> {
             }
             return Ok(());
         }
+        if self.is_mailbox_constructor_call(node) {
+            for child in &self.node(node).children {
+                self.walk_process_writes(*child, writes, visited_functions)?;
+            }
+            return Ok(());
+        }
         match self.kind(node) {
             NodeKind::Stmt(StmtKind::Assign { .. })
             | NodeKind::Stmt(StmtKind::ProcContAssign { .. })
@@ -12195,6 +12372,19 @@ impl<'a> Codegen<'a> {
             return Ok(());
         }
         if self.is_semaphore_constructor_call(node) {
+            for child in &self.node(node).children {
+                self.walk_read_signals_mode(
+                    scope_path,
+                    *child,
+                    seen,
+                    visited,
+                    out,
+                    include_function_bodies,
+                )?;
+            }
+            return Ok(());
+        }
+        if self.is_mailbox_constructor_call(node) {
             for child in &self.node(node).children {
                 self.walk_read_signals_mode(
                     scope_path,

@@ -286,6 +286,73 @@ pub(super) fn chandle(ctx: &RCtx<'_>, value: &IrChandleExpr) -> Result<String, S
     })
 }
 
+fn mailbox_expr(ctx: &RCtx<'_>, value: &IrMailboxExpr) -> Result<String, String> {
+    Ok(match value {
+        IrMailboxExpr::Null => "NULL".to_owned(),
+        IrMailboxExpr::Read(value) => format!("(llg_mailbox_t*){}", chandle(ctx, value)?),
+        IrMailboxExpr::New { bound, element } => {
+            let (kind, width, signed, two_state, shortreal) = match element {
+                IrMailboxElement::Untyped => (4, 0, 0, 0, 0),
+                IrMailboxElement::Packed {
+                    width,
+                    signed,
+                    two_state,
+                } => (0, *width, i32::from(*signed), i32::from(*two_state), 0),
+                IrMailboxElement::Real { shortreal } => (1, 0, 0, 0, i32::from(*shortreal)),
+                IrMailboxElement::String => (2, 0, 0, 0, 0),
+                IrMailboxElement::Handle => (3, 0, 0, 0, 0),
+            };
+            format!(
+                "llg_mailbox_new({}, {kind}, {width}, {signed}, {two_state}, {shortreal})",
+                render_expr_impl(ctx, bound)?.code
+            )
+        }
+    })
+}
+
+fn mailbox_value(ctx: &RCtx<'_>, value: &IrMailboxValue) -> Result<String, String> {
+    Ok(match value {
+        IrMailboxValue::Packed { value, two_state } => format!(
+            "llg_mailbox_value_packed({}, {}, {}, {})",
+            render_expr_impl(ctx, value)?.code,
+            value.width,
+            i32::from(value.signed),
+            i32::from(*two_state)
+        ),
+        IrMailboxValue::Real { value, shortreal } => format!(
+            "llg_mailbox_value_real({}, {})",
+            render_expr_impl(ctx, value)?.code,
+            i32::from(*shortreal)
+        ),
+        IrMailboxValue::String(value) => {
+            format!("llg_mailbox_value_string({})", string(ctx, value)?)
+        }
+        IrMailboxValue::Handle(value) => {
+            format!("llg_mailbox_value_handle({})", chandle(ctx, value)?)
+        }
+    })
+}
+
+fn mailbox_target(target: &IrMailboxTarget) -> String {
+    match target {
+        IrMailboxTarget::Packed {
+            addr,
+            width,
+            signed,
+            two_state,
+        } => format!(
+            "llg_mailbox_target_packed({addr}, {width}, {}, {})",
+            i32::from(*signed),
+            i32::from(*two_state)
+        ),
+        IrMailboxTarget::Real { addr, shortreal } => {
+            format!("llg_mailbox_target_real({addr}, {})", i32::from(*shortreal))
+        }
+        IrMailboxTarget::String { addr } => format!("llg_mailbox_target_string({addr})"),
+        IrMailboxTarget::Handle { addr } => format!("llg_mailbox_target_handle({addr})"),
+    }
+}
+
 pub(super) fn process(ctx: &RCtx<'_>, value: &IrProcessExpr) -> Result<String, String> {
     Ok(match value {
         IrProcessExpr::Null => "NULL".to_owned(),
@@ -395,6 +462,33 @@ pub(super) fn query(
             chandle(ctx, receiver)?,
             render_expr_impl(ctx, keys)?.code,
             u8::from(signed)
+        ),
+        IrObjectQuery::MailboxNum(mailbox) => format!(
+            "sv4_from_u64((uint64_t)llg_mailbox_num((llg_mailbox_t*){}), {width}, {})",
+            chandle(ctx, mailbox)?,
+            u8::from(signed)
+        ),
+        IrObjectQuery::MailboxTryPut { mailbox, value } => format!(
+            "sv4_from_u64((uint64_t)llg_mailbox_try_put_value((llg_mailbox_t*){}, {}), {width}, {})",
+            chandle(ctx, mailbox)?,
+            mailbox_value(ctx, value)?,
+            u8::from(signed)
+        ),
+        IrObjectQuery::MailboxTryGet {
+            mailbox,
+            target,
+            peek,
+        } => format!(
+            "sv4_from_u64((uint64_t)llg_mailbox_try_get_value((llg_mailbox_t*){}, {}, {}), {width}, {})",
+            chandle(ctx, mailbox)?,
+            mailbox_target(target),
+            i32::from(*peek),
+            u8::from(signed)
+        ),
+        IrObjectQuery::MailboxEq(a, b) => format!(
+            "sv4_from_u64({} == {}, 1, 0)",
+            mailbox_expr(ctx, a)?,
+            mailbox_expr(ctx, b)?
         ),
         IrObjectQuery::ProcessEq(a, b) => format!(
             "sv4_from_u64({} == {}, 1, 0)",
@@ -646,6 +740,87 @@ pub(super) fn statement(ctx: &RCtx<'_>, operation: &IrObjectStmt) -> Result<Stri
             "    llg_semaphore_get((llg_semaphore_t *){}, {});\n",
             chandle(ctx, receiver)?,
             render_expr_impl(ctx, keys)?.code
+        ),
+        IrObjectStmt::MailboxAssign(index, value) => format!(
+            "    {} = (void*){};\n",
+            ctx.model.objects[*index].c_name,
+            mailbox_expr(ctx, value)?
+        ),
+        IrObjectStmt::MailboxAssignLocal(target, value) => {
+            format!("    {target} = (void*){};\n", mailbox_expr(ctx, value)?)
+        }
+        IrObjectStmt::MailboxPut(index, mailbox, value, try_put) => {
+            let function = if *try_put {
+                "llg_mailbox_try_put_value"
+            } else {
+                "llg_mailbox_put_value"
+            };
+            let call = format!(
+                "{function}((llg_mailbox_t*){}, {})",
+                chandle(ctx, mailbox)?,
+                mailbox_value(ctx, value)?
+            );
+            let _ = index;
+            if *try_put {
+                format!("    (void){call};\n")
+            } else {
+                format!("    {call};\n")
+            }
+        }
+        IrObjectStmt::MailboxPutLocal(local, mailbox, value, try_put) => {
+            let function = if *try_put {
+                "llg_mailbox_try_put_value"
+            } else {
+                "llg_mailbox_put_value"
+            };
+            let call = format!(
+                "{function}((llg_mailbox_t*){}, {})",
+                chandle(ctx, mailbox)?,
+                mailbox_value(ctx, value)?
+            );
+            let _ = local;
+            if *try_put {
+                format!("    (void){call};\n")
+            } else {
+                format!("    {call};\n")
+            }
+        }
+        IrObjectStmt::MailboxTryPut(_index, mailbox, value) => format!(
+            "    (void)llg_mailbox_try_put_value((llg_mailbox_t*){}, {});\n",
+            chandle(ctx, mailbox)?,
+            mailbox_value(ctx, value)?
+        ),
+        IrObjectStmt::MailboxTryPutLocal(_local, mailbox, value) => format!(
+            "    (void)llg_mailbox_try_put_value((llg_mailbox_t*){}, {});\n",
+            chandle(ctx, mailbox)?,
+            mailbox_value(ctx, value)?
+        ),
+        IrObjectStmt::MailboxGet(index, mailbox, target, peek) => {
+            let _ = index;
+            format!(
+                "    llg_mailbox_get_value((llg_mailbox_t*){}, {}, {});\n",
+                chandle(ctx, mailbox)?,
+                mailbox_target(target),
+                i32::from(*peek)
+            )
+        }
+        IrObjectStmt::MailboxGetLocal(_local, mailbox, target, peek) => format!(
+            "    llg_mailbox_get_value((llg_mailbox_t*){}, {}, {});\n",
+            chandle(ctx, mailbox)?,
+            mailbox_target(target),
+            i32::from(*peek)
+        ),
+        IrObjectStmt::MailboxTryGet(_index, mailbox, target, peek) => format!(
+            "    (void)llg_mailbox_try_get_value((llg_mailbox_t*){}, {}, {});\n",
+            chandle(ctx, mailbox)?,
+            mailbox_target(target),
+            i32::from(*peek)
+        ),
+        IrObjectStmt::MailboxTryGetLocal(_local, mailbox, target, peek) => format!(
+            "    (void)llg_mailbox_try_get_value((llg_mailbox_t*){}, {}, {});\n",
+            chandle(ctx, mailbox)?,
+            mailbox_target(target),
+            i32::from(*peek)
         ),
         IrObjectStmt::ProcessDeclareLocal(name, value) => {
             let mut out = format!(

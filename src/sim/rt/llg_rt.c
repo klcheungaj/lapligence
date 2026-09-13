@@ -125,7 +125,9 @@ typedef enum {
     W_FORK,    // llg_join: waiting for a fork group
     W_FORK_ALL, // llg_wait_fork: waiting for all of the current proc's groups
     W_PROCESS, // process::await: waiting for one stable process handle
-    W_SEMAPHORE // semaphore::get: waiting for one FIFO key request
+    W_SEMAPHORE, // semaphore::get: waiting for one FIFO key request
+    W_MAILBOX_GET,
+    W_MAILBOX_PUT,
 } llg_wait_kind_t;
 
 typedef struct llg_nba {
@@ -200,6 +202,11 @@ typedef struct llg_wait {
     llg_semaphore_t* semaphore;  // W_SEMAPHORE: owning semaphore
     llg_semaphore_wait_t* semaphore_waiter; // W_SEMAPHORE: FIFO node
     uint64_t semaphore_keys;     // W_SEMAPHORE: requested key count
+    struct llg_wait* mailbox_next; // W_MAILBOX_*: mailbox waiter list
+    llg_mailbox_t* mailbox;      // W_MAILBOX_*: owning mailbox
+    llg_mailbox_target_t mailbox_target; // W_MAILBOX_GET
+    int mailbox_peek;            // W_MAILBOX_GET: leave the message queued
+    llg_mailbox_value_t mailbox_value;   // W_MAILBOX_PUT
 } llg_wait_t;
 
 struct llg_semaphore_wait {
@@ -214,6 +221,28 @@ struct llg_semaphore {
     llg_semaphore_wait_t* wait_head;
     llg_semaphore_wait_t* wait_tail;
     llg_semaphore_t* next_all;
+};
+
+typedef struct llg_mailbox_message {
+    struct llg_mailbox_message* next;
+    llg_mailbox_value_t value;
+} llg_mailbox_message_t;
+
+struct llg_mailbox {
+    uint64_t bound;              // zero is unbounded
+    int kind;                    // LLG_MAILBOX_* expected message kind
+    uint32_t width;
+    int8_t is_signed;
+    int8_t two_state;
+    int8_t shortreal;
+    uint64_t length;
+    llg_mailbox_message_t* head;
+    llg_mailbox_message_t* tail;
+    llg_wait_t* get_head;
+    llg_wait_t* get_tail;
+    llg_wait_t* put_head;
+    llg_wait_t* put_tail;
+    struct llg_mailbox* next;
 };
 
 typedef struct llg_fork_child {
@@ -340,6 +369,8 @@ static void deferred_trigger_event(llg_event_object_t* ev);
 static void process_local_release_all(llg_proc_t* proc);
 static void start_pending_fork_children(llg_proc_t* parent);
 static void event_triggered_unlink(llg_wait_t* w);
+static void mailbox_unlink_wait(llg_wait_t* w);
+static void mailbox_value_destroy(llg_mailbox_value_t* value);
 static void assertion_disable_signal_changed(sv4_t* signal);
 static void assertion_clock_signal_changed(sv4_t* signal, sv4_t old,
                                            sv4_t value);
@@ -894,6 +925,7 @@ typedef struct {
     llg_proc_t* retired_procs; // cancelled coroutines awaiting a safe destroy point
     llg_process_handle_t* process_handles; // stable identities for live/exited procs
     llg_semaphore_t* semaphores; // all semaphore objects owned by this run
+    llg_mailbox_t* mailboxes;       // runtime-owned mailbox objects
     llg_fork_group_t* zombie_groups; // completed/killed groups awaiting teardown
     llg_activation_t* activations; // active named block/task invocations
     llg_monitor_state_t mon;   // the active $monitor (at most one)
@@ -1925,6 +1957,8 @@ static void wake_proc(llg_proc_t* p) {
     }
     if (w->kind == W_EVENT_TRIGGERED) event_triggered_unlink(w);
     if (w->kind == W_SEMAPHORE) semaphore_waiter_unlink(w);
+    if (w->kind == W_MAILBOX_GET || w->kind == W_MAILBOX_PUT)
+        mailbox_unlink_wait(w);
     free_expression_wait(w);
     free(w->specs);
     free(w->dependencies);
@@ -1932,6 +1966,7 @@ static void wake_proc(llg_proc_t* p) {
     free(w->real_last);
     free(w->evs);
     free(w->order_sequence);
+    mailbox_value_destroy(&w->mailbox_value);
     llg_process_handle_t* process_target = w->process_target;
     w->specs = NULL;
     w->dependencies = NULL;
@@ -1943,6 +1978,10 @@ static void wake_proc(llg_proc_t* p) {
     w->n_evs = 0;
     w->triggered_ev = NULL;
     w->process_target = NULL;
+    w->mailbox = NULL;
+    w->mailbox_next = NULL;
+    w->mailbox_peek = 0;
+    memset(&w->mailbox_target, 0, sizeof(w->mailbox_target));
     w->n_order = 0;
     w->order_next = 0;
     w->semaphore_keys = 0;
@@ -1980,6 +2019,461 @@ static void register_wait(void) {
     g.waiters = w;
     g.wait_count++;
     if (!p->suspended) process_status_set(p, LLG_PROCESS_WAITING);
+}
+
+// ── Mailboxes ────────────────────────────────────────────────────────────────
+
+static void mailbox_value_destroy(llg_mailbox_value_t* value) {
+    if (!value) return;
+    if (value->kind == LLG_MAILBOX_STRING)
+        llg_string_destroy(&value->value.string);
+    memset(value, 0, sizeof(*value));
+}
+
+llg_mailbox_value_t llg_mailbox_value_packed(sv4_t value, uint32_t width,
+                                              int is_signed, int two_state) {
+    llg_mailbox_value_t result = {0};
+    result.kind = LLG_MAILBOX_PACKED;
+    result.width = width;
+    result.is_signed = (int8_t)is_signed;
+    result.two_state = (int8_t)two_state;
+    result.value.packed = value;
+    return result;
+}
+
+llg_mailbox_value_t llg_mailbox_value_real(double value, int shortreal) {
+    llg_mailbox_value_t result = {0};
+    result.kind = LLG_MAILBOX_REAL;
+    result.shortreal = (int8_t)shortreal;
+    result.value.real = shortreal ? (double)(float)value : value;
+    return result;
+}
+
+llg_mailbox_value_t llg_mailbox_value_string(llg_string_t value) {
+    llg_mailbox_value_t result = {0};
+    result.kind = LLG_MAILBOX_STRING;
+    result.value.string = value;
+    return result;
+}
+
+llg_mailbox_value_t llg_mailbox_value_handle(void* value) {
+    llg_mailbox_value_t result = {0};
+    result.kind = LLG_MAILBOX_HANDLE;
+    result.value.handle = value;
+    return result;
+}
+
+llg_mailbox_target_t llg_mailbox_target_packed(sv4_t* target, uint32_t width,
+                                                int is_signed, int two_state) {
+    llg_mailbox_target_t result = {0};
+    result.kind = LLG_MAILBOX_PACKED;
+    result.width = width;
+    result.is_signed = (int8_t)is_signed;
+    result.two_state = (int8_t)two_state;
+    result.target.packed = target;
+    return result;
+}
+
+llg_mailbox_target_t llg_mailbox_target_real(double* target, int shortreal) {
+    llg_mailbox_target_t result = {0};
+    result.kind = LLG_MAILBOX_REAL;
+    result.shortreal = (int8_t)shortreal;
+    result.target.real = target;
+    return result;
+}
+
+llg_mailbox_target_t llg_mailbox_target_string(llg_string_t* target) {
+    llg_mailbox_target_t result = {0};
+    result.kind = LLG_MAILBOX_STRING;
+    result.target.string = target;
+    return result;
+}
+
+llg_mailbox_target_t llg_mailbox_target_handle(void** target) {
+    llg_mailbox_target_t result = {0};
+    result.kind = LLG_MAILBOX_HANDLE;
+    result.target.handle = target;
+    return result;
+}
+
+static int mailbox_message_kind_matches(const llg_mailbox_t* mailbox,
+                                        const llg_mailbox_value_t* value) {
+    if (!mailbox || !value) return 0;
+    if (mailbox->kind == LLG_MAILBOX_UNTYPED) return 1;
+    if (mailbox->kind != value->kind) return 0;
+    switch (mailbox->kind) {
+    case LLG_MAILBOX_PACKED:
+        return mailbox->width == value->width &&
+               mailbox->is_signed == value->is_signed &&
+               mailbox->two_state == value->two_state;
+    case LLG_MAILBOX_REAL:
+        return mailbox->shortreal == value->shortreal;
+    case LLG_MAILBOX_STRING:
+    case LLG_MAILBOX_HANDLE:
+        return 1;
+    default:
+        return 0;
+    }
+}
+
+static int mailbox_target_matches(const llg_mailbox_value_t* value,
+                                  const llg_mailbox_target_t* target) {
+    return value && target && value->kind == target->kind;
+}
+
+static void mailbox_deliver(const llg_mailbox_value_t* value,
+                            const llg_mailbox_target_t* target) {
+    if (!mailbox_target_matches(value, target)) return;
+    if (!target->target.packed && target->kind == LLG_MAILBOX_PACKED) return;
+    if (!target->target.real && target->kind == LLG_MAILBOX_REAL) return;
+    if (!target->target.string && target->kind == LLG_MAILBOX_STRING) return;
+    if (!target->target.handle && target->kind == LLG_MAILBOX_HANDLE) return;
+    switch (target->kind) {
+    case LLG_MAILBOX_PACKED: {
+        sv4_t converted = sv4_cast(value->value.packed, target->width,
+                                   target->is_signed);
+        if (target->two_state) converted = sv4_to_two_state(converted);
+        llg_ba(target->target.packed, converted);
+        break;
+    }
+    case LLG_MAILBOX_REAL:
+        llg_ba_d(target->target.real,
+                 target->shortreal ? (double)(float)value->value.real
+                                   : value->value.real);
+        break;
+    case LLG_MAILBOX_STRING:
+        llg_string_move(target->target.string,
+                        llg_string_clone(&value->value.string));
+        break;
+    case LLG_MAILBOX_HANDLE:
+        *target->target.handle = value->value.handle;
+        break;
+    default:
+        break;
+    }
+}
+
+static void mailbox_message_append(llg_mailbox_t* mailbox,
+                                   llg_mailbox_value_t value) {
+    llg_mailbox_message_t* message = (llg_mailbox_message_t*)llg_checked_calloc(
+        1, sizeof(*message), "mailbox message");
+    message->value = value;
+    if (mailbox->tail)
+        mailbox->tail->next = message;
+    else
+        mailbox->head = message;
+    mailbox->tail = message;
+    mailbox->length++;
+}
+
+static llg_mailbox_message_t* mailbox_message_pop(llg_mailbox_t* mailbox) {
+    llg_mailbox_message_t* message = mailbox->head;
+    if (!message) return NULL;
+    mailbox->head = message->next;
+    if (!mailbox->head) mailbox->tail = NULL;
+    message->next = NULL;
+    mailbox->length--;
+    return message;
+}
+
+static void mailbox_unlink_wait(llg_wait_t* wait) {
+    if (!wait || !wait->mailbox) return;
+    llg_mailbox_t* mailbox = wait->mailbox;
+    llg_wait_t** head = wait->kind == W_MAILBOX_PUT
+                            ? &mailbox->put_head
+                            : &mailbox->get_head;
+    llg_wait_t** tail = wait->kind == W_MAILBOX_PUT
+                            ? &mailbox->put_tail
+                            : &mailbox->get_tail;
+    llg_wait_t** cursor = head;
+    while (*cursor) {
+        if (*cursor == wait) {
+            *cursor = wait->mailbox_next;
+            if (*tail == wait) *tail = NULL;
+            if (!*head) {
+                *tail = NULL;
+            } else if (!*tail) {
+                llg_wait_t* last = *head;
+                while (last->mailbox_next) last = last->mailbox_next;
+                *tail = last;
+            }
+            wait->mailbox_next = NULL;
+            return;
+        }
+        cursor = &(*cursor)->mailbox_next;
+    }
+    wait->mailbox_next = NULL;
+}
+
+static void mailbox_append_wait(llg_mailbox_t* mailbox, llg_wait_t* wait,
+                                 int put) {
+    llg_wait_t** head = put ? &mailbox->put_head : &mailbox->get_head;
+    llg_wait_t** tail = put ? &mailbox->put_tail : &mailbox->get_tail;
+    wait->mailbox_next = NULL;
+    if (*tail)
+        (*tail)->mailbox_next = wait;
+    else
+        *head = wait;
+    *tail = wait;
+}
+
+static llg_wait_t* mailbox_compatible_get_waiter(llg_mailbox_t* mailbox,
+                                                  const llg_mailbox_value_t* value) {
+    for (llg_wait_t* wait = mailbox->get_head; wait;
+         wait = wait->mailbox_next) {
+        if (mailbox_target_matches(value, &wait->mailbox_target)) return wait;
+    }
+    return NULL;
+}
+
+static void mailbox_remove_and_wake(llg_wait_t* wait) {
+    if (!wait) return;
+    mailbox_unlink_wait(wait);
+    wait->mailbox = NULL;
+    wake_proc(wait->proc);
+}
+
+static int mailbox_take_value(llg_mailbox_t* mailbox,
+                              llg_mailbox_target_t target, int peek);
+static void mailbox_service_get_waiters(llg_mailbox_t* mailbox);
+
+static void mailbox_service_put_waiters(llg_mailbox_t* mailbox) {
+    while (mailbox && mailbox->put_head &&
+           (mailbox->bound == 0 || mailbox->length < mailbox->bound)) {
+        llg_wait_t* wait = mailbox->put_head;
+        llg_mailbox_value_t value = wait->mailbox_value;
+        memset(&wait->mailbox_value, 0, sizeof(wait->mailbox_value));
+        if (!mailbox->head) {
+            llg_wait_t* get = mailbox_compatible_get_waiter(mailbox, &value);
+            if (get) {
+                if (get->mailbox_peek) {
+                    mailbox_message_append(mailbox, value);
+                    (void)mailbox_take_value(mailbox, get->mailbox_target, 1);
+                } else {
+                    mailbox_deliver(&value, &get->mailbox_target);
+                    mailbox_value_destroy(&value);
+                }
+                mailbox_remove_and_wake(get);
+            } else {
+                mailbox_message_append(mailbox, value);
+            }
+        } else {
+            mailbox_message_append(mailbox, value);
+        }
+        mailbox_remove_and_wake(wait);
+        mailbox_service_get_waiters(mailbox);
+    }
+}
+
+static llg_mailbox_t* mailbox_require(llg_mailbox_t* mailbox,
+                                      const char* operation) {
+    if (mailbox) return mailbox;
+    fprintf(stderr, "llg: mailbox %s on a null handle\n", operation);
+    llg_last_failure = 1;
+    g.finish = 1;
+    return NULL;
+}
+
+llg_mailbox_t* llg_mailbox_new(sv4_t bound, int kind, uint32_t width,
+                               int is_signed, int two_state, int shortreal) {
+    if (sv4_is_unknown(bound)) {
+        fprintf(stderr, "llg: mailbox bound contains X/Z\n");
+        llg_last_failure = 1;
+        g.finish = 1;
+        return NULL;
+    }
+    if (bound.width > 64) {
+        fprintf(stderr, "llg: mailbox bound exceeds 64-bit capacity\n");
+        llg_last_failure = 1;
+        g.finish = 1;
+        return NULL;
+    }
+    if (bound.is_signed && sv4_to_i64(bound) < 0) {
+        fprintf(stderr, "llg: mailbox bound must be non-negative\n");
+        llg_last_failure = 1;
+        g.finish = 1;
+        return NULL;
+    }
+    if (kind < LLG_MAILBOX_PACKED || kind > LLG_MAILBOX_UNTYPED ||
+        (kind == LLG_MAILBOX_PACKED && width == 0) ||
+        (kind != LLG_MAILBOX_PACKED && width != 0) ||
+        (kind != LLG_MAILBOX_PACKED && (is_signed || two_state)) ||
+        (kind != LLG_MAILBOX_REAL && shortreal)) {
+        fprintf(stderr, "llg: invalid mailbox element descriptor\n");
+        llg_last_failure = 1;
+        g.finish = 1;
+        return NULL;
+    }
+    llg_mailbox_t* mailbox = (llg_mailbox_t*)llg_checked_calloc(
+        1, sizeof(*mailbox), "mailbox");
+    mailbox->bound = sv4_to_u64(bound);
+    mailbox->kind = kind;
+    mailbox->width = width;
+    mailbox->is_signed = (int8_t)is_signed;
+    mailbox->two_state = (int8_t)two_state;
+    mailbox->shortreal = (int8_t)shortreal;
+    mailbox->next = g.mailboxes;
+    g.mailboxes = mailbox;
+    return mailbox;
+}
+
+uint64_t llg_mailbox_num(const llg_mailbox_t* mailbox) {
+    mailbox = mailbox_require((llg_mailbox_t*)mailbox, "num");
+    return mailbox ? mailbox->length : 0;
+}
+
+void llg_mailbox_put_value(llg_mailbox_t* mailbox, llg_mailbox_value_t value) {
+    mailbox = mailbox_require(mailbox, "put");
+    if (!mailbox) {
+        mailbox_value_destroy(&value);
+        return;
+    }
+    if (!mailbox_message_kind_matches(mailbox, &value)) {
+        fprintf(stderr, "llg: mailbox put value does not match its type\n");
+        llg_last_failure = 1;
+        g.finish = 1;
+        mailbox_value_destroy(&value);
+        return;
+    }
+    if (!mailbox->head) {
+        llg_wait_t* get = mailbox_compatible_get_waiter(mailbox, &value);
+        if (get) {
+            if (get->mailbox_peek) {
+                mailbox_message_append(mailbox, value);
+                (void)mailbox_take_value(mailbox, get->mailbox_target, 1);
+            } else {
+                mailbox_deliver(&value, &get->mailbox_target);
+                mailbox_value_destroy(&value);
+            }
+            mailbox_remove_and_wake(get);
+            mailbox_service_get_waiters(mailbox);
+            return;
+        }
+    }
+    if (mailbox->bound == 0 || mailbox->length < mailbox->bound) {
+        mailbox_message_append(mailbox, value);
+        mailbox_service_get_waiters(mailbox);
+        return;
+    }
+    llg_proc_t* proc = llg_current();
+    if (!proc || !region_can_mutate("mailbox put wait")) {
+        mailbox_value_destroy(&value);
+        return;
+    }
+    llg_wait_t* wait = &proc->wait;
+    wait->kind = W_MAILBOX_PUT;
+    wait->resume_region = region_is_reactive(proc->region)
+                              ? LLG_REGION_REACTIVE
+                              : LLG_REGION_ACTIVE;
+    wait->mailbox = mailbox;
+    wait->mailbox_value = value;
+    register_wait();
+    mailbox_append_wait(mailbox, wait, 1);
+    aco_yield();
+}
+
+int llg_mailbox_try_put_value(llg_mailbox_t* mailbox,
+                              llg_mailbox_value_t value) {
+    mailbox = mailbox_require(mailbox, "try_put");
+    if (!mailbox) {
+        mailbox_value_destroy(&value);
+        return 0;
+    }
+    if (!mailbox_message_kind_matches(mailbox, &value)) {
+        mailbox_value_destroy(&value);
+        return 0;
+    }
+    if (!mailbox->head) {
+        llg_wait_t* get = mailbox_compatible_get_waiter(mailbox, &value);
+        if (get) {
+            int peek = get->mailbox_peek;
+            if (peek) {
+                mailbox_message_append(mailbox, value);
+                (void)mailbox_take_value(mailbox, get->mailbox_target, 1);
+            } else {
+                mailbox_deliver(&value, &get->mailbox_target);
+                mailbox_value_destroy(&value);
+            }
+            mailbox_remove_and_wake(get);
+            mailbox_service_get_waiters(mailbox);
+            return 1;
+        }
+    }
+    if (mailbox->bound != 0 && mailbox->length >= mailbox->bound) {
+        mailbox_value_destroy(&value);
+        return 0;
+    }
+    mailbox_message_append(mailbox, value);
+    mailbox_service_get_waiters(mailbox);
+    return 1;
+}
+
+static int mailbox_take_value(llg_mailbox_t* mailbox,
+                              llg_mailbox_target_t target, int peek) {
+    if (!mailbox || !mailbox->head ||
+        !mailbox_target_matches(&mailbox->head->value, &target))
+        return 0;
+    llg_mailbox_message_t* message = mailbox->head;
+    mailbox_deliver(&message->value, &target);
+    if (!peek) {
+        message = mailbox_message_pop(mailbox);
+        mailbox_value_destroy(&message->value);
+        free(message);
+        mailbox_service_put_waiters(mailbox);
+    }
+    return 1;
+}
+
+// Wake compatible waiting getters in FIFO waiter order. A peek does not remove
+// the front message, so every compatible peek waiter may observe that message;
+// a consuming getter then removes it for the remaining queue.
+static void mailbox_service_get_waiters(llg_mailbox_t* mailbox) {
+    while (mailbox && mailbox->head) {
+        llg_wait_t* get =
+            mailbox_compatible_get_waiter(mailbox, &mailbox->head->value);
+        if (!get) return;
+        llg_mailbox_message_t* message = mailbox->head;
+        int peek = get->mailbox_peek;
+        mailbox_deliver(&message->value, &get->mailbox_target);
+        if (!peek) {
+            message = mailbox_message_pop(mailbox);
+            mailbox_value_destroy(&message->value);
+            free(message);
+        }
+        mailbox_remove_and_wake(get);
+    }
+}
+
+static void llg_mailbox_wait_get(llg_mailbox_t* mailbox,
+                                 llg_mailbox_target_t target, int peek) {
+    llg_proc_t* proc = llg_current();
+    if (!proc || !region_can_mutate("mailbox get wait")) return;
+    llg_wait_t* wait = &proc->wait;
+    wait->kind = W_MAILBOX_GET;
+    wait->resume_region = region_is_reactive(proc->region)
+                              ? LLG_REGION_REACTIVE
+                              : LLG_REGION_ACTIVE;
+    wait->mailbox = mailbox;
+    wait->mailbox_target = target;
+    wait->mailbox_peek = peek;
+    register_wait();
+    mailbox_append_wait(mailbox, wait, 0);
+    aco_yield();
+}
+
+void llg_mailbox_get_value(llg_mailbox_t* mailbox, llg_mailbox_target_t target,
+                           int peek) {
+    mailbox = mailbox_require(mailbox, "get");
+    if (!mailbox) return;
+    if (mailbox_take_value(mailbox, target, peek)) return;
+    llg_mailbox_wait_get(mailbox, target, peek);
+}
+
+int llg_mailbox_try_get_value(llg_mailbox_t* mailbox,
+                              llg_mailbox_target_t target, int peek) {
+    mailbox = mailbox_require(mailbox, peek ? "try_peek" : "try_get");
+    if (!mailbox) return 0;
+    return mailbox_take_value(mailbox, target, peek);
 }
 
 // ── Named events ──────────────────────────────────────────────────────────────
@@ -2110,6 +2604,8 @@ static void llg_kill_proc(llg_proc_t* p, int notify_parent) {
         }
         if (w->kind == W_EVENT_TRIGGERED) event_triggered_unlink(w);
         if (w->kind == W_SEMAPHORE) semaphore_waiter_unlink(w);
+        if (w->kind == W_MAILBOX_GET || w->kind == W_MAILBOX_PUT)
+            mailbox_unlink_wait(w);
         free_expression_wait(w);
         free(w->specs);
         free(w->dependencies);
@@ -2117,6 +2613,7 @@ static void llg_kill_proc(llg_proc_t* p, int notify_parent) {
         free(w->real_last);
         free(w->evs);
         free(w->order_sequence);
+        mailbox_value_destroy(&w->mailbox_value);
         llg_process_handle_t* process_target = w->process_target;
         w->specs = NULL;
         w->dependencies = NULL;
@@ -2128,6 +2625,10 @@ static void llg_kill_proc(llg_proc_t* p, int notify_parent) {
         w->n_evs = 0;
         w->triggered_ev = NULL;
         w->process_target = NULL;
+        w->mailbox = NULL;
+        w->mailbox_next = NULL;
+        w->mailbox_peek = 0;
+        memset(&w->mailbox_target, 0, sizeof(w->mailbox_target));
         w->n_order = 0;
         w->order_next = 0;
         w->order_result_value = 0;
@@ -3785,6 +4286,9 @@ static void free_proc_storage(llg_proc_t* p) {
     event_unlink(&p->wait);
     event_triggered_unlink(&p->wait);
     semaphore_waiter_unlink(&p->wait);
+    if (p->wait.kind == W_MAILBOX_GET || p->wait.kind == W_MAILBOX_PUT)
+        mailbox_unlink_wait(&p->wait);
+    mailbox_value_destroy(&p->wait.mailbox_value);
     free_expression_wait(&p->wait);
     free(p->wait.specs);
     free(p->wait.dependencies);
@@ -3908,6 +4412,19 @@ static void free_q_queues(void) {
     }
 }
 
+static void free_mailboxes(void) {
+    while (g.mailboxes) {
+        llg_mailbox_t* mailbox = g.mailboxes;
+        g.mailboxes = mailbox->next;
+        while (mailbox->head) {
+            llg_mailbox_message_t* message = mailbox_message_pop(mailbox);
+            mailbox_value_destroy(&message->value);
+            free(message);
+        }
+        free(mailbox);
+    }
+}
+
 void llg_rt_cleanup(void) {
     for (int i = 0; i < g.force_count; i++) force_free_entry(&g.force_table[i]);
     while (g.inertial_drivers) {
@@ -3972,6 +4489,7 @@ void llg_rt_cleanup(void) {
     for (int i = 0; i < g.n_procs; i++) {
         if (g.all_procs[i]) free_proc_storage(g.all_procs[i]);
     }
+    free_mailboxes();
     reap_retired_procs();
     while (g.semaphores) {
         llg_semaphore_t* semaphore = g.semaphores;

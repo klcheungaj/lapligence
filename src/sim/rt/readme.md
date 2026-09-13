@@ -68,6 +68,13 @@
   generation-checked object/iteration/value API, startup-loaded system-task and
   function plugins, compiletf/sizetf/calltf dispatch, and start/end callbacks;
   unsupported standard properties fail through `vpi_chk_error`.
+- **Mailboxes:**
+  Typed and untyped mailbox handles use owned FIFO message nodes with optional
+  bounds (`new(0)` is unbounded), exact `num`/`put`/`get`/`peek` and
+  `try_*` operations, native string ownership, four-state packed copies, and
+  class/chandle pointer identity. Blocking producers and consumers have FIFO
+  wait lists; process cancellation removes waiters and destroys pending
+  string messages before mailbox teardown.
 - **Random streams:** `llg_rng.h/.c` provides deterministic PCG streams with
   stable process/fork derivation, unbiased inclusive ranges, and versioned
   state snapshots. The scheduler binds one stream to each generated process;

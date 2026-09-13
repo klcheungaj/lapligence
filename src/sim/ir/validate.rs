@@ -1119,6 +1119,10 @@ impl Validator<'_> {
                     IrObjectQuery::StringInside { .. } => Some((1, false)),
                     IrObjectQuery::StringPacked(..) => None,
                     IrObjectQuery::ProcessStatus(..) => Some((32, false)),
+                    IrObjectQuery::MailboxNum(..)
+                    | IrObjectQuery::MailboxTryPut { .. }
+                    | IrObjectQuery::MailboxTryGet { .. } => Some((32, true)),
+                    IrObjectQuery::MailboxEq(..) => Some((1, false)),
                     IrObjectQuery::ArrayQuery(query) => Some(query.result_type(self.model)),
                     _ => Some((32, true)),
                 };
@@ -1154,6 +1158,9 @@ impl Validator<'_> {
                                             format_value(low) || format_value(high)
                                         }
                                     })
+                            }
+                            IrObjectQuery::MailboxTryPut { value, .. } => {
+                                matches!(value, IrMailboxValue::Real { .. })
                             }
                             _ => false,
                         };
@@ -2903,8 +2910,16 @@ impl Validator<'_> {
                                 | IrObjectStmt::StringAssign(..)
                                 | IrObjectStmt::StringAssignLocal(..)
                         );
+                        let mailbox_value = matches!(
+                            operation,
+                            IrObjectStmt::MailboxPut(..)
+                                | IrObjectStmt::MailboxPutLocal(..)
+                                | IrObjectStmt::MailboxTryPut(..)
+                                | IrObjectStmt::MailboxTryPutLocal(..)
+                        );
                         if child.is_real()
                             && !string_value
+                            && !mailbox_value
                             && !matches!(operation, IrObjectStmt::StringRealtoa(..))
                         {
                             self.fail(path, "object statement requires packed operands")

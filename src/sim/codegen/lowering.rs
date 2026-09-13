@@ -425,6 +425,7 @@ fn generate_from_db_with_opts_impl(
     cg.emit_container_initializers()?;
     cg.emit_class_object_initializers()?;
     cg.emit_semaphore_initializers()?;
+    cg.emit_mailbox_object_initializers()?;
     let mut model = std::mem::replace(
         &mut cg.model,
         IrModel::new(String::new(), Timescale::DEFAULT.precision_fs)
@@ -925,6 +926,10 @@ struct Codegen<'a> {
     /// Semaphore variables with declaration-time `new(...)` initializers are
     /// deferred until the generated runtime process starts.
     semaphore_initializers: Vec<(NodeId, usize, NodeId, String)>,
+    /// Mailbox variables with declaration-time `new(...)` initializers use
+    /// the same time-zero ordering, but are constructed by the mailbox
+    /// runtime rather than a user class constructor.
+    mailbox_object_initializers: Vec<(NodeId, usize, NodeId, String)>,
     /// Receiver used while lowering a class property's default expression or
     /// constructor body during a fresh allocation.
     class_init_receiver: Option<IrChandleExpr>,
@@ -942,6 +947,12 @@ struct Codegen<'a> {
     /// strings have a distinct C representation and therefore do not fit the
     /// packed/real `ProcLocalInfo` table.
     proc_string_locals: HashMap<NodeId, String>,
+    /// Automatic mailbox handles declared in a process body. Mailboxes use
+    /// native runtime pointers, so they are kept separate from packed locals.
+    proc_mailbox_locals: HashMap<NodeId, String>,
+    /// Persistent mailbox objects for static procedural declarations, keyed
+    /// by elaborated instance and declaration identity.
+    proc_mailbox_static_objects: HashMap<(NodeId, NodeId), usize>,
     /// Automatic process handles declared inside a process body. Process
     /// identities use the runtime's reference-counted handle ABI rather than
     /// packed/real process-local storage.
@@ -1142,11 +1153,14 @@ impl<'a> Codegen<'a> {
             class_static_objects: HashMap::new(),
             class_object_initializers: Vec::new(),
             semaphore_initializers: Vec::new(),
+            mailbox_object_initializers: Vec::new(),
             class_init_receiver: None,
             unpacked_aggregates: HashMap::new(),
             aggregate_objects: HashMap::new(),
             proc_locals: HashMap::new(),
             proc_string_locals: HashMap::new(),
+            proc_mailbox_locals: HashMap::new(),
+            proc_mailbox_static_objects: HashMap::new(),
             proc_process_locals: HashMap::new(),
             proc_process_static_objects: HashMap::new(),
             proc_semaphore_locals: HashMap::new(),

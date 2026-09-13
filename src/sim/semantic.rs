@@ -291,6 +291,44 @@ impl<'db> SemanticModel<'db> {
                 // and method names fully consume that metadata.
                 placeholders[callee.index()] = true;
             }
+            if matches!(
+                name.as_str(),
+                "num" | "put" | "get" | "peek" | "try_put" | "try_get" | "try_peek"
+            ) && mailbox_reference(self.db, *receiver)
+                && matches!(self.db.node_kind(*callee), NodeKind::Other)
+                && self.db.semantic_kind(*callee) == Some(CapturedSemanticKind::Unsupported)
+            {
+                // Slang leaves built-in mailbox methods with an unowned
+                // callee placeholder. The typed mailbox receiver and method
+                // name are consumed by the simulator lowering.
+                placeholders[callee.index()] = true;
+            }
+        }
+        for owner in self.db.node_ids() {
+            let NodeKind::Expr(ExprKind::NewClass {
+                constructor: Some(constructor),
+                ..
+            }) = self.db.node_kind(owner)
+            else {
+                continue;
+            };
+            if !mailbox_reference(self.db, owner) {
+                continue;
+            }
+            let NodeKind::FuncCall {
+                callee: Some(callee),
+                ..
+            } = self.db.node_kind(*constructor)
+            else {
+                continue;
+            };
+            if matches!(self.db.node_kind(*callee), NodeKind::Other)
+                && self.db.semantic_kind(*callee) == Some(CapturedSemanticKind::Unsupported)
+            {
+                // The built-in mailbox constructor is represented by the
+                // same anonymous callee placeholder as its methods.
+                placeholders[callee.index()] = true;
+            }
         }
         // A captured ArbitrarySymbol is not generally executable. Admit only
         // typed interface actuals and $dumpvars scope/storage arguments, and
@@ -589,6 +627,30 @@ fn semaphore_reference(db: &Db, id: NodeId) -> bool {
                         ..
                     } if ty.kind == "class" && ty.type_name.as_deref() == Some("semaphore")
                 );
+            }
+            _ => return false,
+        }
+    }
+    false
+}
+
+fn mailbox_reference(db: &Db, id: NodeId) -> bool {
+    let mut current = id;
+    for _ in 0..db.nodes().len() {
+        match db.node_kind(current) {
+            NodeKind::Expr(ExprKind::Ref {
+                target: Some(target),
+            }) => current = *target,
+            NodeKind::Expr(ExprKind::Cast { operand, .. }) => current = *operand,
+            NodeKind::Expr(ExprKind::NewClass { .. }) => {
+                return db
+                    .type_descriptor(current)
+                    .is_some_and(|descriptor| descriptor.name.starts_with("mailbox#("));
+            }
+            NodeKind::Var { .. } | NodeKind::FuncArg { .. } => {
+                return db
+                    .type_descriptor(current)
+                    .is_some_and(|descriptor| descriptor.name.starts_with("mailbox#("));
             }
             _ => return false,
         }

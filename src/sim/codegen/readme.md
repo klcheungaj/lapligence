@@ -68,6 +68,11 @@
   callbacks. Actions remain within Slang's single-call contract; automatic or
   dynamic `ref` actuals, timing/control actions, and unsupported opaque values
   fail closed with source-linked diagnostics.
+- **Mailboxes:** Typed and untyped mailbox declarations lower to runtime-owned
+  FIFO handles with optional bounds, copy/identity-aware packed, real, string,
+  and handle values, blocking and nonblocking methods, writable `get` targets,
+  and process-local/static handle storage. Waiter suspension and cancellation
+  are delegated to the runtime mailbox queues.
 
 See [`docs/sim_features.md`](../../../docs/sim_features.md) for the supported
 feature surface and rejection boundaries.

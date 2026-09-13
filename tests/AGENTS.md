@@ -184,6 +184,10 @@ coverage for the same rule IDs.
   through `llg` and `llg --no-opt`, covering rebinding, class-held methods and
   clocking samples, modport views, fixed/dynamic/queue handle arrays, null
   access, and nominal parameter mismatch diagnostics.
+- `sim_mailboxes.rs` runs checked-in mailbox fixtures through both optimizer
+  modes, covering typed/untyped bounded and unbounded FIFO storage, all
+  blocking/nonblocking mailbox methods, native value ownership and handle
+  identity, waiter handoff, and cancellation cleanup.
 - `sim_cmake.rs` covers the build path (5 cases: library-level
   end-to-end CMake build, explicit `CmakeBuildOpts` generator backend,
   invalid-generator configure error, driver default, missing-cmake

@@ -33,6 +33,9 @@
 - `sim_semaphore`: zero-key construction and exact `try_get` results,
   differing-count FIFO contention, suspended wake deferral, task-handle
   arguments, and cancellation-safe blocked waiters in both optimizer modes.
+- `sim_mailboxes`: typed/untyped bounded and unbounded mailbox FIFO order,
+  peek/try APIs, packed/real/string/handle copy semantics, waiter handoff and
+  process-kill cleanup in both optimizer modes.
 - [Physical-time regressions](fixtures/sim/physical_time/readme.md): 1fs–100s
   scheduling, checked overflow, and femtosecond waveform timestamps.
 - [Waveform regressions](fixtures/sim/waveform/readme.md): file-backed VCD/FST
@@ -96,6 +99,7 @@ cargo test --locked --test sim_data_types_next --test sim_data_types_completion 
 
 ```sh
 cargo test --locked --test sim_physical_time -- --test-threads=1
+cargo test --locked --test sim_mailboxes -- --test-threads=1
 ```
 
 ### One readable fixture

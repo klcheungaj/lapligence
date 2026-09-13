@@ -273,6 +273,68 @@ pub enum IrProcessExpr {
     FormalRead(usize),
 }
 
+/// Element type retained by a mailbox constructor.  Mailbox messages carry
+/// their own runtime tag as well, so untyped mailboxes can safely preserve
+/// heterogeneous values while typed mailboxes reject incompatible calls.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IrMailboxElement {
+    Untyped,
+    Packed {
+        width: u32,
+        signed: bool,
+        two_state: bool,
+    },
+    Real {
+        shortreal: bool,
+    },
+    String,
+    Handle,
+}
+
+/// A value copied into a mailbox. Strings are lowered as owned expressions;
+/// handle values retain pointer identity while packed values are copied by
+/// value.
+#[derive(Clone, Debug, PartialEq)]
+pub enum IrMailboxValue {
+    Packed { value: IrExpr, two_state: bool },
+    Real { value: IrExpr, shortreal: bool },
+    String(IrStringExpr),
+    Handle(IrChandleExpr),
+}
+
+/// A writable mailbox destination. The address is complete C lvalue syntax
+/// (for example `&G_x` or `o0`) and remains valid across a suspended call.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum IrMailboxTarget {
+    Packed {
+        addr: String,
+        width: u32,
+        signed: bool,
+        two_state: bool,
+    },
+    Real {
+        addr: String,
+        shortreal: bool,
+    },
+    String {
+        addr: String,
+    },
+    Handle {
+        addr: String,
+    },
+}
+
+/// Mailbox handle expressions used by assignments and identity comparisons.
+#[derive(Clone, Debug, PartialEq)]
+pub enum IrMailboxExpr {
+    Null,
+    Read(IrChandleExpr),
+    New {
+        bound: IrExpr,
+        element: IrMailboxElement,
+    },
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum IrProcessControl {
     Kill,
@@ -295,6 +357,17 @@ pub enum IrObjectQuery {
     StringPacked(IrStringExpr),
     ChandleEq(IrChandleExpr, IrChandleExpr),
     SemaphoreTryGet(IrChandleExpr, IrExpr),
+    MailboxNum(IrChandleExpr),
+    MailboxTryPut {
+        mailbox: IrChandleExpr,
+        value: IrMailboxValue,
+    },
+    MailboxTryGet {
+        mailbox: IrChandleExpr,
+        target: IrMailboxTarget,
+        peek: bool,
+    },
+    MailboxEq(IrMailboxExpr, IrMailboxExpr),
     ProcessEq(IrProcessExpr, IrProcessExpr),
     ProcessStatus(IrProcessExpr),
     ArrayQuery(IrArrayQuery),
@@ -318,6 +391,16 @@ pub enum IrObjectStmt {
     ChandleAssignLocal(String, IrChandleExpr),
     SemaphorePut(IrChandleExpr, IrExpr),
     SemaphoreGet(IrChandleExpr, IrExpr),
+    MailboxAssign(usize, IrMailboxExpr),
+    MailboxAssignLocal(String, IrMailboxExpr),
+    MailboxPut(usize, IrChandleExpr, IrMailboxValue, bool),
+    MailboxPutLocal(String, IrChandleExpr, IrMailboxValue, bool),
+    MailboxTryPut(usize, IrChandleExpr, IrMailboxValue),
+    MailboxTryPutLocal(String, IrChandleExpr, IrMailboxValue),
+    MailboxGet(usize, IrChandleExpr, IrMailboxTarget, bool),
+    MailboxGetLocal(String, IrChandleExpr, IrMailboxTarget, bool),
+    MailboxTryGet(usize, IrChandleExpr, IrMailboxTarget, bool),
+    MailboxTryGetLocal(String, IrChandleExpr, IrMailboxTarget, bool),
     /// Declare an automatic process handle local. The optional initializer is
     /// restricted to `null` or `process::self()` by lowering.
     ProcessDeclareLocal(String, Option<IrProcessExpr>),
@@ -787,6 +870,110 @@ impl IrProcessExpr {
     }
 }
 
+impl IrMailboxValue {
+    pub(in crate::sim) fn validate(
+        &self,
+        model: &super::IrModel,
+        formals: &[super::IrFormal],
+        chandle_return: Option<bool>,
+        string_return: Option<bool>,
+    ) -> Result<(), super::IrValidationError> {
+        match self {
+            Self::Packed { value, .. } if value.is_real() => Err(super::IrValidationError::new(
+                "mailbox value",
+                "packed mailbox value cannot be real",
+            )),
+            Self::Packed { .. } => Ok(()),
+            Self::Real { value, .. } if !value.is_real() => Err(super::IrValidationError::new(
+                "mailbox value",
+                "real mailbox value must be real",
+            )),
+            Self::Real { .. } => Ok(()),
+            Self::String(value) => value.validate(model, string_return),
+            Self::Handle(value) => value.validate(model, formals, chandle_return),
+        }
+    }
+
+    pub(in crate::sim) fn expressions(&self, visit: &mut impl FnMut(&IrExpr)) {
+        match self {
+            Self::Packed { value, .. } | Self::Real { value, .. } => visit(value),
+            Self::String(value) => value.expressions(visit),
+            Self::Handle(value) => value.expressions(visit),
+        }
+    }
+
+    pub(in crate::sim) fn expressions_mut(&mut self, visit: &mut impl FnMut(&mut IrExpr)) {
+        match self {
+            Self::Packed { value, .. } | Self::Real { value, .. } => visit(value),
+            Self::String(value) => value.expressions_mut(visit),
+            Self::Handle(value) => value.expressions_mut(visit),
+        }
+    }
+}
+
+impl IrMailboxTarget {
+    pub(in crate::sim) fn validate(&self) -> Result<(), super::IrValidationError> {
+        let (addr, width) = match self {
+            Self::Packed { addr, width, .. } => (addr, Some(*width)),
+            Self::Real { addr, .. } | Self::String { addr } | Self::Handle { addr } => (addr, None),
+        };
+        if addr.is_empty() || width == Some(0) {
+            return Err(super::IrValidationError::new(
+                "mailbox target",
+                "writable target address and packed width must be non-empty",
+            ));
+        }
+        Ok(())
+    }
+}
+
+impl IrMailboxExpr {
+    pub(in crate::sim) fn validate(
+        &self,
+        model: &super::IrModel,
+        formals: &[super::IrFormal],
+        chandle_return: Option<bool>,
+    ) -> Result<(), super::IrValidationError> {
+        match self {
+            Self::Null => Ok(()),
+            Self::Read(value) => value.validate(model, formals, chandle_return),
+            Self::New { bound, element } => {
+                if bound.is_real() {
+                    return Err(super::IrValidationError::new(
+                        "mailbox constructor",
+                        "mailbox bound must be integral",
+                    ));
+                }
+                if let IrMailboxElement::Packed { width, .. } = element {
+                    if *width == 0 {
+                        return Err(super::IrValidationError::new(
+                            "mailbox constructor",
+                            "mailbox packed element width must be non-zero",
+                        ));
+                    }
+                }
+                Ok(())
+            }
+        }
+    }
+
+    pub(in crate::sim) fn expressions(&self, visit: &mut impl FnMut(&IrExpr)) {
+        match self {
+            Self::Read(value) => value.expressions(visit),
+            Self::New { bound, .. } => visit(bound),
+            Self::Null => {}
+        }
+    }
+
+    pub(in crate::sim) fn expressions_mut(&mut self, visit: &mut impl FnMut(&mut IrExpr)) {
+        match self {
+            Self::Read(value) => value.expressions_mut(visit),
+            Self::New { bound, .. } => visit(bound),
+            Self::Null => {}
+        }
+    }
+}
+
 impl IrObjectQuery {
     pub(in crate::sim) fn validate(
         &self,
@@ -842,6 +1029,21 @@ impl IrObjectQuery {
                     Ok(())
                 }
             }
+            Self::MailboxNum(mailbox) => mailbox.validate(model, formals, chandle_return),
+            Self::MailboxTryPut { mailbox, value } => {
+                mailbox.validate(model, formals, chandle_return)?;
+                value.validate(model, formals, chandle_return, string_return)
+            }
+            Self::MailboxTryGet {
+                mailbox, target, ..
+            } => {
+                mailbox.validate(model, formals, chandle_return)?;
+                target.validate()
+            }
+            Self::MailboxEq(a, b) => {
+                a.validate(model, formals, chandle_return)?;
+                b.validate(model, formals, chandle_return)
+            }
             Self::ProcessEq(a, b) => {
                 a.validate(model, formals)?;
                 b.validate(model, formals)
@@ -884,6 +1086,16 @@ impl IrObjectQuery {
                 receiver.expressions(visit);
                 visit(keys);
             }
+            Self::MailboxNum(mailbox) => mailbox.expressions(visit),
+            Self::MailboxTryPut { mailbox, value } => {
+                mailbox.expressions(visit);
+                value.expressions(visit);
+            }
+            Self::MailboxTryGet { mailbox, .. } => mailbox.expressions(visit),
+            Self::MailboxEq(a, b) => {
+                a.expressions(visit);
+                b.expressions(visit);
+            }
             Self::ProcessEq(_, _) => {}
             Self::ProcessStatus(_) => {}
             Self::ArrayQuery(query) => query.expressions(visit),
@@ -922,6 +1134,16 @@ impl IrObjectQuery {
             Self::SemaphoreTryGet(receiver, keys) => {
                 receiver.expressions_mut(visit);
                 visit(keys);
+            }
+            Self::MailboxNum(mailbox) => mailbox.expressions_mut(visit),
+            Self::MailboxTryPut { mailbox, value } => {
+                mailbox.expressions_mut(visit);
+                value.expressions_mut(visit);
+            }
+            Self::MailboxTryGet { mailbox, .. } => mailbox.expressions_mut(visit),
+            Self::MailboxEq(a, b) => {
+                a.expressions_mut(visit);
+                b.expressions_mut(visit);
             }
             Self::ProcessEq(_, _) => {}
             Self::ProcessStatus(_) => {}
@@ -1035,6 +1257,79 @@ impl IrObjectStmt {
                     Ok(())
                 }
             }
+            Self::MailboxAssign(index, value) => {
+                object_type(model, *index, IrObjectType::Chandle)?;
+                value.validate(model, formals, chandle_return)
+            }
+            Self::MailboxAssignLocal(name, value) => {
+                if name.is_empty() {
+                    return Err(super::IrValidationError::new(
+                        "mailbox local",
+                        "local name must not be empty",
+                    ));
+                }
+                value.validate(model, formals, chandle_return)
+            }
+            Self::MailboxPut(index, mailbox, value, _try) => {
+                object_type(model, *index, IrObjectType::Chandle)?;
+                mailbox.validate(model, formals, chandle_return)?;
+                value.validate(model, formals, chandle_return, string_return)
+            }
+            Self::MailboxTryPut(index, mailbox, value) => {
+                object_type(model, *index, IrObjectType::Chandle)?;
+                mailbox.validate(model, formals, chandle_return)?;
+                value.validate(model, formals, chandle_return, string_return)
+            }
+            Self::MailboxGet(index, mailbox, target, _try) => {
+                object_type(model, *index, IrObjectType::Chandle)?;
+                mailbox.validate(model, formals, chandle_return)?;
+                target.validate()
+            }
+            Self::MailboxTryGet(index, mailbox, target, _peek) => {
+                object_type(model, *index, IrObjectType::Chandle)?;
+                mailbox.validate(model, formals, chandle_return)?;
+                target.validate()
+            }
+            Self::MailboxPutLocal(name, mailbox, value, _try) => {
+                if name.is_empty() {
+                    return Err(super::IrValidationError::new(
+                        "mailbox local",
+                        "local name must not be empty",
+                    ));
+                }
+                mailbox.validate(model, formals, chandle_return)?;
+                value.validate(model, formals, chandle_return, string_return)
+            }
+            Self::MailboxTryPutLocal(name, mailbox, value) => {
+                if name.is_empty() {
+                    return Err(super::IrValidationError::new(
+                        "mailbox local",
+                        "local name must not be empty",
+                    ));
+                }
+                mailbox.validate(model, formals, chandle_return)?;
+                value.validate(model, formals, chandle_return, string_return)
+            }
+            Self::MailboxGetLocal(name, mailbox, target, _try) => {
+                if name.is_empty() {
+                    return Err(super::IrValidationError::new(
+                        "mailbox local",
+                        "local name must not be empty",
+                    ));
+                }
+                mailbox.validate(model, formals, chandle_return)?;
+                target.validate()
+            }
+            Self::MailboxTryGetLocal(name, mailbox, target, _peek) => {
+                if name.is_empty() {
+                    return Err(super::IrValidationError::new(
+                        "mailbox local",
+                        "local name must not be empty",
+                    ));
+                }
+                mailbox.validate(model, formals, chandle_return)?;
+                target.validate()
+            }
             Self::ProcessDeclareLocal(name, value) => {
                 if name.is_empty() {
                     return Err(super::IrValidationError::new(
@@ -1088,11 +1383,29 @@ impl IrObjectStmt {
             Self::ChandleDeclareLocal(_, None)
             | Self::ChandleAssign(..)
             | Self::ChandleAssignLocal(..)
+            | Self::MailboxGet(..)
+            | Self::MailboxGetLocal(..)
             | Self::ProcessDeclareLocal(..)
             | Self::ProcessAssign(..)
             | Self::ProcessAssignLocal(..)
             | Self::ProcessControl { .. }
             | Self::ProcessAwait(..) => {}
+            Self::MailboxAssign(_, value) | Self::MailboxAssignLocal(_, value) => {
+                value.expressions(visit)
+            }
+            Self::MailboxPut(_, mailbox, value, _)
+            | Self::MailboxPutLocal(_, mailbox, value, _) => {
+                mailbox.expressions(visit);
+                value.expressions(visit);
+            }
+            Self::MailboxTryPut(_, mailbox, value)
+            | Self::MailboxTryPutLocal(_, mailbox, value) => {
+                mailbox.expressions(visit);
+                value.expressions(visit);
+            }
+            Self::MailboxTryGet(_, mailbox, _, _) | Self::MailboxTryGetLocal(_, mailbox, _, _) => {
+                mailbox.expressions(visit)
+            }
         }
     }
     pub(in crate::sim) fn expressions_mut(&mut self, visit: &mut impl FnMut(&mut IrExpr)) {
@@ -1118,11 +1431,29 @@ impl IrObjectStmt {
             Self::ChandleDeclareLocal(_, None)
             | Self::ChandleAssign(..)
             | Self::ChandleAssignLocal(..)
+            | Self::MailboxGet(..)
+            | Self::MailboxGetLocal(..)
             | Self::ProcessDeclareLocal(..)
             | Self::ProcessAssign(..)
             | Self::ProcessAssignLocal(..)
             | Self::ProcessControl { .. }
             | Self::ProcessAwait(..) => {}
+            Self::MailboxAssign(_, value) | Self::MailboxAssignLocal(_, value) => {
+                value.expressions_mut(visit)
+            }
+            Self::MailboxPut(_, mailbox, value, _)
+            | Self::MailboxPutLocal(_, mailbox, value, _) => {
+                mailbox.expressions_mut(visit);
+                value.expressions_mut(visit);
+            }
+            Self::MailboxTryPut(_, mailbox, value)
+            | Self::MailboxTryPutLocal(_, mailbox, value) => {
+                mailbox.expressions_mut(visit);
+                value.expressions_mut(visit);
+            }
+            Self::MailboxTryGet(_, mailbox, _, _) | Self::MailboxTryGetLocal(_, mailbox, _, _) => {
+                mailbox.expressions_mut(visit)
+            }
         }
     }
 }

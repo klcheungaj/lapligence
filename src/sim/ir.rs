@@ -32,10 +32,10 @@ pub use containers::{
 };
 pub use objects::{
     IrArrayDimension, IrArrayQuery, IrArrayQueryKind, IrArrayQueryTarget, IrChandleExpr, IrClass,
-    IrClassField, IrClassFieldType, IrDisplayArg, IrObject, IrObjectQuery, IrObjectStmt,
-    IrObjectType, IrProcessControl, IrProcessExpr, IrStringExpr, IrStringInsideItem,
-    IrVirtualInterface, IrVirtualInterfaceInstance, IrVirtualInterfaceMember,
-    IrVirtualInterfaceMethod,
+    IrClassField, IrClassFieldType, IrDisplayArg, IrMailboxElement, IrMailboxExpr, IrMailboxTarget,
+    IrMailboxValue, IrObject, IrObjectQuery, IrObjectStmt, IrObjectType, IrProcessControl,
+    IrProcessExpr, IrStringExpr, IrStringInsideItem, IrVirtualInterface,
+    IrVirtualInterfaceInstance, IrVirtualInterfaceMember, IrVirtualInterfaceMethod,
 };
 
 pub use validate::IrValidationError;

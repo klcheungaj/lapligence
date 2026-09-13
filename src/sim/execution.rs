@@ -8,9 +8,9 @@ use std::collections::HashSet;
 
 use crate::sim::ir::{
     IrArrayQueryTarget, IrCallArg, IrChandleExpr, IrContainerExpr, IrDependency, IrDisplayArg,
-    IrElemSel, IrExpr, IrExprKind, IrInsideItem, IrJoinKind, IrLhs, IrModel, IrObjectQuery,
-    IrObjectStmt, IrShape, IrStmt, IrStochasticStmt, IrStreamSelector, IrStreamTarget,
-    IrStringExpr, IrStringInsideItem, IrSysFunc, IrValidationError,
+    IrElemSel, IrExpr, IrExprKind, IrInsideItem, IrJoinKind, IrLhs, IrMailboxExpr, IrMailboxValue,
+    IrModel, IrObjectQuery, IrObjectStmt, IrShape, IrStmt, IrStochasticStmt, IrStreamSelector,
+    IrStreamTarget, IrStringExpr, IrStringInsideItem, IrSysFunc, IrValidationError,
 };
 use crate::sim::semantic::{ExtensionRef, Origin};
 
@@ -1459,6 +1459,34 @@ fn collect_object_statement_effects(
             collect_chandle_effects(ir, receiver, effects, visited_calls);
             collect_expression_effects(ir, keys, effects, visited_calls);
         }
+        IrObjectStmt::MailboxAssign(_, value) | IrObjectStmt::MailboxAssignLocal(_, value) => {
+            collect_mailbox_expr_effects(ir, value, effects, visited_calls)
+        }
+        IrObjectStmt::MailboxPut(_, mailbox, value, try_put)
+        | IrObjectStmt::MailboxPutLocal(_, mailbox, value, try_put) => {
+            collect_chandle_effects(ir, mailbox, effects, visited_calls);
+            collect_mailbox_value_effects(ir, value, effects, visited_calls);
+            if !*try_put {
+                effects.push(ExecutionEffect::Suspend);
+            }
+        }
+        IrObjectStmt::MailboxTryPut(_, mailbox, value)
+        | IrObjectStmt::MailboxTryPutLocal(_, mailbox, value) => {
+            collect_chandle_effects(ir, mailbox, effects, visited_calls);
+            collect_mailbox_value_effects(ir, value, effects, visited_calls);
+        }
+        IrObjectStmt::MailboxGet(_, mailbox, _, _)
+        | IrObjectStmt::MailboxGetLocal(_, mailbox, _, _) => {
+            collect_chandle_effects(ir, mailbox, effects, visited_calls);
+            // Both get and peek are blocking mailbox tasks when their queue
+            // is empty; peek only changes whether the delivered message is
+            // removed after the wait succeeds.
+            effects.push(ExecutionEffect::Suspend);
+        }
+        IrObjectStmt::MailboxTryGet(_, mailbox, _, _)
+        | IrObjectStmt::MailboxTryGetLocal(_, mailbox, _, _) => {
+            collect_chandle_effects(ir, mailbox, effects, visited_calls);
+        }
         IrObjectStmt::ProcessDeclareLocal(_, _)
         | IrObjectStmt::ProcessAssign(_, _)
         | IrObjectStmt::ProcessAssignLocal(_, _)
@@ -1513,6 +1541,23 @@ fn collect_object_query_effects(
             collect_chandle_effects(ir, receiver, effects, visited_calls);
             collect_expression_effects(ir, keys, effects, visited_calls);
         }
+        IrObjectQuery::MailboxNum(mailbox) => {
+            collect_chandle_effects(ir, mailbox, effects, visited_calls);
+            effects.push(ExecutionEffect::RuntimeService);
+        }
+        IrObjectQuery::MailboxTryPut { mailbox, value } => {
+            collect_chandle_effects(ir, mailbox, effects, visited_calls);
+            collect_mailbox_value_effects(ir, value, effects, visited_calls);
+            effects.push(ExecutionEffect::RuntimeService);
+        }
+        IrObjectQuery::MailboxTryGet { mailbox, .. } => {
+            collect_chandle_effects(ir, mailbox, effects, visited_calls);
+            effects.push(ExecutionEffect::RuntimeService);
+        }
+        IrObjectQuery::MailboxEq(a, b) => {
+            collect_mailbox_expr_effects(ir, a, effects, visited_calls);
+            collect_mailbox_expr_effects(ir, b, effects, visited_calls);
+        }
         IrObjectQuery::ProcessEq(_, _) | IrObjectQuery::ProcessStatus(_) => {}
         IrObjectQuery::ArrayQuery(query) => {
             effects.push(ExecutionEffect::RuntimeService);
@@ -1520,6 +1565,36 @@ fn collect_object_query_effects(
                 collect_string_effects(ir, value, effects, visited_calls);
             }
         }
+    }
+}
+
+fn collect_mailbox_value_effects(
+    ir: &IrModel,
+    value: &IrMailboxValue,
+    effects: &mut Vec<ExecutionEffect>,
+    visited_calls: &mut HashSet<usize>,
+) {
+    match value {
+        IrMailboxValue::Packed { value, .. } | IrMailboxValue::Real { value, .. } => {
+            collect_expression_effects(ir, value, effects, visited_calls)
+        }
+        IrMailboxValue::String(value) => collect_string_effects(ir, value, effects, visited_calls),
+        IrMailboxValue::Handle(value) => collect_chandle_effects(ir, value, effects, visited_calls),
+    }
+}
+
+fn collect_mailbox_expr_effects(
+    ir: &IrModel,
+    value: &IrMailboxExpr,
+    effects: &mut Vec<ExecutionEffect>,
+    visited_calls: &mut HashSet<usize>,
+) {
+    match value {
+        IrMailboxExpr::Read(value) => collect_chandle_effects(ir, value, effects, visited_calls),
+        IrMailboxExpr::New { bound, .. } => {
+            collect_expression_effects(ir, bound, effects, visited_calls)
+        }
+        IrMailboxExpr::Null => {}
     }
 }
 

@@ -1155,6 +1155,29 @@ impl EmitCtx<'_, '_> {
                 if self.func.is_none() {
                     for child in &children {
                         if matches!(self.cg.kind(*child), NodeKind::Var { .. }) {
+                            if self.cg.is_mailbox_expr(&self.path, *child) {
+                                if self.cg.db.variable_lifetime(*child) == VariableLifetime::Static
+                                {
+                                    self.cg.collect_mailbox_static_object(&self.path, *child)?;
+                                    continue;
+                                }
+                                let name = self.cg.collect_mailbox_local(&self.path, *child)?;
+                                body.push(IrStmt::Object(IrObjectStmt::ChandleDeclareLocal(
+                                    name.clone(),
+                                    None,
+                                )));
+                                if let Some(initializer) = self.cg.db.var_initializer(*child) {
+                                    let value = self.cg.lower_mailbox_expr(
+                                        &self.path,
+                                        initializer,
+                                        self.cg.mailbox_element_for_decl(*child),
+                                    )?;
+                                    body.push(IrStmt::Object(IrObjectStmt::MailboxAssignLocal(
+                                        name, value,
+                                    )));
+                                }
+                                continue;
+                            }
                             if matches!(
                                 self.cg.kind(*child),
                                 NodeKind::Var { ty }
@@ -1231,6 +1254,15 @@ impl EmitCtx<'_, '_> {
                         self.cg.kind(*s),
                         NodeKind::Var { .. } | NodeKind::FuncArg { .. }
                     ) {
+                        // Native mailbox locals are emitted as object
+                        // statements rather than function-entry packed
+                        // storage. Nested blocks still need that declaration
+                        // at their lexical entry.
+                        if matches!(self.cg.kind(*s), NodeKind::Var { .. })
+                            && self.cg.is_mailbox_expr(&self.path, *s)
+                        {
+                            body.extend(self.lower_variable_decl(*s)?);
+                        }
                         continue;
                     }
                     body.extend(self.lower_stmt(*s)?);
@@ -1611,6 +1643,23 @@ impl EmitCtx<'_, '_> {
                     }
                     self.saw_wait = true;
                 }
+                if matches!(name.as_str(), "put" | "get" | "peek")
+                    && self.cg.is_mailbox_expr(&self.path, *receiver)
+                {
+                    if self.in_final {
+                        return Err(format!(
+                            "blocking mailbox method `{name}` inside a final block in `{}` is not allowed",
+                            self.path
+                        ));
+                    }
+                    if self.timing_forbidden() {
+                        return Err(format!(
+                            "blocking mailbox method `{name}` inside a function body in `{}` is not supported",
+                            self.path
+                        ));
+                    }
+                    self.saw_wait = true;
+                }
                 if let Some(statement) = self.cg.lower_container_method(&self.path, h)? {
                     Ok(vec![statement])
                 } else if let Some((_, _, ft, _, _)) = self.cg.virtual_interface_method_info(h)? {
@@ -1625,6 +1674,8 @@ impl EmitCtx<'_, '_> {
                     }
                     let _ = (receiver, callee);
                     Ok(vec![self.lower_task_call(h, name, is_task, None)?])
+                } else if self.cg.is_mailbox_expr(&self.path, *receiver) {
+                    Ok(vec![self.cg.lower_mailbox_method(&self.path, h)?])
                 } else if self.cg.is_class_method_call(h) {
                     let is_task = matches!(
                         callee.map(|callee| self.cg.kind(callee)),
@@ -1694,6 +1745,44 @@ impl EmitCtx<'_, '_> {
                         return Ok(vec![IrStmt::Object(IrObjectStmt::ProcessDeclareLocal(
                             name, init,
                         ))]);
+                    }
+                    if matches!(self.cg.kind(declaration), NodeKind::Var { ty } if ty.kind == "class")
+                        && self.cg.is_mailbox_expr(&self.path, declaration)
+                    {
+                        let name = self
+                            .func
+                            .as_ref()
+                            .and_then(|function| function.chandle_read.get(&declaration))
+                            .and_then(|value| match value {
+                                IrChandleExpr::LocalRead(name) => Some(name.clone()),
+                                _ => None,
+                            })
+                            .ok_or_else(|| {
+                                format!(
+                                    "automatic mailbox variable `{}` has no local storage",
+                                    self.cg.node(declaration).name
+                                )
+                            })?;
+                        let init = self
+                            .cg
+                            .db
+                            .var_initializer(declaration)
+                            .map(|initializer| {
+                                self.cg.lower_mailbox_expr(
+                                    &self.path,
+                                    initializer,
+                                    self.cg.mailbox_element_for_decl(declaration),
+                                )
+                            })
+                            .transpose()?;
+                        let mut statements = vec![IrStmt::Object(
+                            IrObjectStmt::ChandleDeclareLocal(name.clone(), None),
+                        )];
+                        if let Some(init) = init {
+                            statements
+                                .push(IrStmt::Object(IrObjectStmt::MailboxAssignLocal(name, init)));
+                        }
+                        return Ok(statements);
                     }
                     if matches!(self.cg.kind(declaration), NodeKind::Var { ty } if is_handle_kind(&ty.kind))
                     {
@@ -1838,6 +1927,35 @@ impl EmitCtx<'_, '_> {
                 )],
                 ChandleTarget::Object(_) => Vec::new(),
             });
+        }
+
+        if self.cg.is_mailbox_expr(&self.path, declaration) {
+            if self.cg.db.variable_lifetime(declaration) == VariableLifetime::Static {
+                self.cg
+                    .collect_mailbox_static_object(&self.path, declaration)?;
+                return Ok(Vec::new());
+            }
+            let name = self.cg.collect_mailbox_local(&self.path, declaration)?;
+            let init = self
+                .cg
+                .db
+                .var_initializer(declaration)
+                .map(|initializer| {
+                    self.cg.lower_mailbox_expr(
+                        &self.path,
+                        initializer,
+                        self.cg.mailbox_element_for_decl(declaration),
+                    )
+                })
+                .transpose()?;
+            let mut statements = vec![IrStmt::Object(IrObjectStmt::ChandleDeclareLocal(
+                name.clone(),
+                None,
+            ))];
+            if let Some(init) = init {
+                statements.push(IrStmt::Object(IrObjectStmt::MailboxAssignLocal(name, init)));
+            }
+            return Ok(statements);
         }
 
         let info = self.cg.collect_loop_var(&self.path, declaration)?;
