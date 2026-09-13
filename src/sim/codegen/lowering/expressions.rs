@@ -1355,6 +1355,18 @@ impl<'a> Codegen<'a> {
                 reordered,
                 assignment,
                 operands,
+            }) if !*reordered
+                && !*assignment
+                && matches!(op, Operation::LogicalAnd | Operation::LogicalOr)
+                && operands.len() == 2 =>
+            {
+                self.lower_logical_chain(scope_path, *op, operands)
+            }
+            NodeKind::Expr(ExprKind::Operation {
+                op,
+                reordered,
+                assignment,
+                operands,
             }) => self.lower_operation(scope_path, *op, *reordered, *assignment, operands),
             NodeKind::Expr(ExprKind::Cast {
                 operand,
@@ -1932,6 +1944,40 @@ impl<'a> Codegen<'a> {
 
     /// Lower one operation, mirroring the pre-IR emitter's operand shapes,
     /// result widths/signedness and error strings arm-for-arm.
+    fn lower_logical_chain(
+        &mut self,
+        scope_path: &str,
+        operation: Operation,
+        operands: &[NodeId],
+    ) -> Result<IrExpr, String> {
+        let mut pending = operands.iter().rev().copied().collect::<Vec<_>>();
+        let mut values = Vec::new();
+        while let Some(node) = pending.pop() {
+            match self.kind(node) {
+                NodeKind::Expr(ExprKind::Operation {
+                    op,
+                    reordered: false,
+                    assignment: false,
+                    operands,
+                }) if *op == operation && operands.len() == 2 => {
+                    pending.push(operands[1]);
+                    pending.push(operands[0]);
+                }
+                _ => values.push(self.lower_expr(scope_path, node)?),
+            }
+        }
+        let mut values = values.into_iter();
+        let first = values
+            .next()
+            .ok_or_else(|| format!("logical operation has no operands in `{scope_path}`"))?;
+        let ir_operation = if operation == Operation::LogicalAnd {
+            IrBinOp::LogAnd
+        } else {
+            IrBinOp::LogOr
+        };
+        Ok(values.fold(first, |left, right| cmp_expr_ir(ir_operation, left, right)))
+    }
+
     fn lower_operation(
         &mut self,
         scope_path: &str,
@@ -4972,10 +5018,10 @@ impl<'a> Codegen<'a> {
     }
 
     fn unwrap_assignment_pattern_cast(&self, node: NodeId) -> NodeId {
-        let NodeKind::Expr(ExprKind::Cast { operand, .. }) = self.kind(node) else {
-            return node;
-        };
-        let operand = self.unwrap_assignment_pattern_cast(*operand);
+        let mut operand = node;
+        while let NodeKind::Expr(ExprKind::Cast { operand: next, .. }) = self.kind(operand) {
+            operand = *next;
+        }
         if matches!(
             self.kind(operand),
             NodeKind::Expr(ExprKind::Operation { op, .. })
