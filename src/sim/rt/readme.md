@@ -81,13 +81,15 @@
   the standalone service is also suitable for future class-object streams.
 - **Concurrent assertions:** Registrations retain per-instance FIFO attempts;
   predicates read immutable Preponed packed snapshots in Observed, asynchronous
-  `disable iff` clears pending attempts at writes, and pass/fail actions queue
-  in Reactive. Vacuous implication successes are counted separately, while
-  pending attempts are discarded at end of simulation. Sequence graphs carry
-  bounded local-variable descriptors, per-thread four-state snapshots, local
-  input-formal initializers, and ordered match-item callbacks; branch joins
-  deduplicate only equivalent local snapshots, so overlapping attempts and
-  distinct sequence threads do not share mutable state.
+  `disable iff` and abort controls clear pending attempts at writes, and
+  pass/fail actions queue in Reactive. Vacuous implication successes are
+  counted separately, while pending attempts are discarded at end of
+  simulation. Sequence graphs carry bounded local-variable descriptors,
+  per-thread four-state snapshots, local input-formal initializers, ordered
+  match-item callbacks, and owned per-transition clock/edge descriptors for
+  legal multiclock `##0`/`##1` boundaries; branch joins deduplicate only
+  equivalent local snapshots, so overlapping attempts and distinct sequence
+  threads do not share mutable state.
 - **Real dependencies:** scalar `real`/`shortreal` storage uses typed double
   dependencies for `wait`, any-change `@` controls, combinational links, and
   scalar ports. Writes notify only when the IEEE representation changes:

@@ -35,8 +35,8 @@
   database and process IR. Initial processes launch in Reactive, while
   prohibited always/continuous/primitive/generate/nested-instance members
   fail before lowering; `$exit` is admitted only from a program process.
-- **Concurrent assertions:** Single-clock packed `|->`/`|=>` properties and
-  sequence assertions lower to dedicated IR assertion instances. A shared NFA
+- **Concurrent assertions:** Packed `|->`/`|=>` properties and sequence
+  assertions lower to dedicated IR assertion instances. A shared NFA
   retains `##` fixed/ranged delays, consecutive/nonconsecutive/goto repetition
   (including unbounded endpoints), `or`, direct one-cycle `and`/`intersect`,
   `throughout`/`within`, and `first_match` endpoint selection. Named
@@ -47,12 +47,15 @@
   input formals (including declaration defaults) are initialized at attempt
   entry, and
   ordered whole-local assignments, increments, and void subroutine calls are
-  evaluated at match endpoints. Predicates use immutable sampled values;
-  asynchronous `disable iff`, overlap mode, labels, and action callbacks
-  remain explicit. Output/inout/ref formal copy-out, selected-local lvalues,
-  repeated match-item bodies, conflicting clock or disable metadata, and
-  temporal property operators outside this bounded subset remain
-  source-located fail-closed boundaries.
+  evaluated at match endpoints. Legal multiclocked `##0`/`##1` sequence
+  boundaries retain each segment's owned clock and edge, while default clocking
+  metadata supplies an omitted property clock. Predicates use immutable sampled
+  values; asynchronous `disable iff`, bounded `accept_on`/`reject_on` controls,
+  synchronous variants, overlap mode, labels, and action callbacks remain
+  explicit. Output/inout/ref formal copy-out, selected-local lvalues, repeated
+  match-item bodies, conflicting clock or disable metadata, unsupported
+  cross-clock delay/combinator forms, and temporal property operators outside
+  this bounded subset remain source-located fail-closed boundaries.
 - **Evaluated events:** Explicit event expressions retain only their expression
   and qualifier dependencies. Read-only input/`const ref` function calls are
   checked transitively for disallowed effects, and automatic locals/formals are

@@ -372,8 +372,11 @@ static void event_triggered_unlink(llg_wait_t* w);
 static void mailbox_unlink_wait(llg_wait_t* w);
 static void mailbox_value_destroy(llg_mailbox_value_t* value);
 static void assertion_disable_signal_changed(sv4_t* signal);
+static void assertion_abort_condition_changed(void);
 static void assertion_clock_signal_changed(sv4_t* signal, sv4_t old,
                                            sv4_t value);
+struct llg_concurrent_assertion;
+static void free_assertion_clock_events(struct llg_concurrent_assertion* assertion);
 static void wake_proc(llg_proc_t* p);
 static void semaphore_waiter_unlink(llg_wait_t* wait);
 static void semaphore_wake_available(llg_semaphore_t* semaphore);
@@ -749,6 +752,11 @@ typedef struct llg_sequence_token {
     struct llg_sequence_token* next;
     uint32_t state;
     uint64_t entered_cycle;
+    uint64_t entered_time;
+    uint64_t entered_order;
+    uint64_t entered_tick;
+    sv4_t* entered_clock;
+    int entered_edge;
     /* A sequence thread carries its own local assertion state.  Keeping this
      * on the token prevents `or`/repetition joins from merging distinct
      * match-item histories merely because their automaton state is equal. */
@@ -766,6 +774,19 @@ typedef struct llg_sequence_attempt {
     sv4_t* locals;
 } llg_sequence_attempt_t;
 
+/* A sequence can advance on a clock other than its leading assertion clock.
+ * Keep each observed edge until the Observed pass consumes it so separate
+ * clocks toggling in one time slot cannot be collapsed into one root-clock
+ * boolean. */
+typedef struct llg_assertion_clock_event {
+    struct llg_assertion_clock_event* next;
+    sv4_t* signal;
+    int edge;
+    uint64_t time;
+    uint64_t order;
+    uint64_t tick;
+} llg_assertion_clock_event_t;
+
 typedef struct llg_concurrent_assertion {
     struct llg_concurrent_assertion* next;
     sv4_t* clock;
@@ -773,11 +794,14 @@ typedef struct llg_concurrent_assertion {
     sv4_t* disable;
     llg_concurrent_assertion_predicate_fn antecedent;
     llg_concurrent_assertion_predicate_fn consequent;
+    llg_concurrent_assertion_predicate_fn abort_condition;
     llg_concurrent_assertion_action_fn pass_action;
     llg_concurrent_assertion_action_fn fail_action;
     void* data;
     int kind;
     int overlapped;
+    int abort_reject;
+    int abort_sync;
     uint64_t identity;
     const char* label;
     const char* location;
@@ -790,6 +814,8 @@ typedef struct llg_concurrent_assertion {
     llg_sequence_attempt_t* sequence_antecedents_tail;
     llg_sequence_attempt_t* sequence_consequents;
     llg_sequence_attempt_t* sequence_consequents_tail;
+    llg_assertion_clock_event_t* clock_events;
+    llg_assertion_clock_event_t* clock_events_tail;
     uint64_t sequence_cycle;
 } llg_concurrent_assertion_t;
 
@@ -810,6 +836,8 @@ typedef struct llg_clocking_edge {
     uint64_t any_time;
     uint64_t posedge_time;
     uint64_t negedge_time;
+    uint64_t posedge_count;
+    uint64_t negedge_count;
 } llg_clocking_edge_t;
 
 // A synchronous drive issued away from its clocking event retains its
@@ -1099,6 +1127,7 @@ static uint64_t llg_severity_counts[4];
 static uint64_t llg_assertion_failure_counts[2];
 static uint64_t llg_assertion_cover_count;
 static uint64_t llg_assertion_vacuous_total;
+static uint64_t llg_assertion_event_order;
 // Event objects are generated as file-scope storage and therefore survive
 // `llg_rt_cleanup`. Bump this generation at each teardown so their persistent
 // same-slot state cannot leak into a later runtime initialization without
@@ -3406,12 +3435,27 @@ static void clocking_record_edge(sv4_t* signal, sv4_t old, sv4_t value) {
         edge->any_time = UINT64_MAX;
         edge->posedge_time = UINT64_MAX;
         edge->negedge_time = UINT64_MAX;
+        edge->posedge_count = 0;
+        edge->negedge_count = 0;
         edge->next = g.clocking_edges;
         g.clocking_edges = edge;
     }
     edge->any_time = g.now;
-    if (ev_matches(old, value, LLG_EV_POSEDGE)) edge->posedge_time = g.now;
-    if (ev_matches(old, value, LLG_EV_NEGEDGE)) edge->negedge_time = g.now;
+    if (ev_matches(old, value, LLG_EV_POSEDGE)) {
+        edge->posedge_time = g.now;
+        if (edge->posedge_count != UINT64_MAX) edge->posedge_count++;
+    }
+    if (ev_matches(old, value, LLG_EV_NEGEDGE)) {
+        edge->negedge_time = g.now;
+        if (edge->negedge_count != UINT64_MAX) edge->negedge_count++;
+    }
+}
+
+static uint64_t assertion_clock_tick(sv4_t* signal, int edge_kind) {
+    llg_clocking_edge_t* edge = find_clocking_edge(signal);
+    if (!edge) return 0;
+    return edge_kind == LLG_EV_POSEDGE ? edge->posedge_count
+                                       : edge->negedge_count;
 }
 
 static int clocking_event_current(const llg_wait_src_t* srcs, int n) {
@@ -3700,12 +3744,19 @@ static void sig_write(sv4_t* target, sv4_t value) {
     clocking_drive_signal_match(target, old, value);
     *target = value;
     sampled_record_write(target);
-    assertion_clock_signal_changed(target, old, value);
     sampled_domain_clock_signal_changed(target, old, value);
     // `disable iff` is an asynchronous, unsampled control. Abort pending
     // attempts at the write boundary, before any waiter or later region can
     // observe the changed value.
     assertion_disable_signal_changed(target);
+    // Ordinary accept_on/reject_on controls are also asynchronous. Their
+    // predicate is evaluated only after the write is visible, while the
+    // synchronous variants are checked at the sampled assertion edge below.
+    assertion_abort_condition_changed();
+    // Queue the clock event after asynchronous controls have seen the new
+    // value. This keeps a clock that also changes an accept/reject condition
+    // from being discarded before its sampled control can resolve it.
+    assertion_clock_signal_changed(target, old, value);
     if (g.mon.active) {
         for (int i = 0; i < g.mon.n_reads; i++) {
             if (g.mon.reads[i] == target) {
@@ -4346,7 +4397,17 @@ static void free_sampled_values(void) {
     }
 }
 
+static void free_assertion_clock_events(llg_concurrent_assertion_t* assertion) {
+    while (assertion && assertion->clock_events) {
+        llg_assertion_clock_event_t* next = assertion->clock_events->next;
+        free(assertion->clock_events);
+        assertion->clock_events = next;
+    }
+    if (assertion) assertion->clock_events_tail = NULL;
+}
+
 static void free_assertion_attempts(llg_concurrent_assertion_t* assertion) {
+    free_assertion_clock_events(assertion);
     while (assertion->attempts) {
         llg_assertion_attempt_t* next = assertion->attempts->next;
         free(assertion->attempts);
@@ -4549,6 +4610,7 @@ void llg_rt_init_with_args_and_precision(int argc, char** argv,
     memset(llg_assertion_failure_counts, 0, sizeof(llg_assertion_failure_counts));
     llg_assertion_cover_count = 0;
     llg_assertion_vacuous_total = 0;
+    llg_assertion_event_order = 0;
     llg_n_finals = 0; // a fresh run never inherits final registrations
     if (precision_fs == 0) {
         fprintf(stderr, "llg: runtime precision must be non-zero\n");
@@ -5351,8 +5413,10 @@ int llg_sampled_domain_status(uint64_t identity, int kind) {
 
 static void sample_preponed_values(void) {
     for (llg_concurrent_assertion_t* assertion = g.assertions; assertion;
-         assertion = assertion->next)
+         assertion = assertion->next) {
         assertion->edge_pending = 0;
+        free_assertion_clock_events(assertion);
+    }
     // The scheduler revisits PREPONED for zero-delay deltas in the same time
     // slot. #1step samples are fixed at the slot boundary and must not observe
     // values written by later active/NBA iterations.
@@ -9314,9 +9378,16 @@ static sv4_t* sequence_locals_clone(const llg_sequence_graph_t* graph,
 static int sequence_token_present(const llg_sequence_graph_t* graph,
                                   const llg_sequence_token_t* list,
                                   uint32_t state, uint64_t entered_cycle,
-                                  const sv4_t* locals) {
+                                  uint64_t entered_time, uint64_t entered_order,
+                                  uint64_t entered_tick, sv4_t* entered_clock,
+                                  int entered_edge, const sv4_t* locals) {
     for (const llg_sequence_token_t* token = list; token; token = token->next)
         if (token->state == state && token->entered_cycle == entered_cycle &&
+            token->entered_time == entered_time &&
+            token->entered_order == entered_order &&
+            token->entered_tick == entered_tick &&
+            token->entered_clock == entered_clock &&
+            token->entered_edge == entered_edge &&
             sequence_locals_same(token->locals, locals, graph->local_count))
             return 1;
     return 0;
@@ -9324,13 +9395,23 @@ static int sequence_token_present(const llg_sequence_graph_t* graph,
 
 static int sequence_token_add(const llg_sequence_graph_t* graph,
                               llg_sequence_token_t** list, uint32_t state,
-                              uint64_t entered_cycle, const sv4_t* locals) {
-    if (sequence_token_present(graph, *list, state, entered_cycle, locals))
+                              uint64_t entered_cycle, uint64_t entered_time,
+                              uint64_t entered_order, uint64_t entered_tick,
+                              sv4_t* entered_clock, int entered_edge,
+                              const sv4_t* locals) {
+    if (sequence_token_present(graph, *list, state, entered_cycle, entered_time,
+                               entered_order, entered_tick, entered_clock,
+                               entered_edge, locals))
         return 0;
     llg_sequence_token_t* token = (llg_sequence_token_t*)llg_checked_calloc(
         1, sizeof(*token), "concurrent assertion sequence token");
     token->state = state;
     token->entered_cycle = entered_cycle;
+    token->entered_time = entered_time;
+    token->entered_order = entered_order;
+    token->entered_tick = entered_tick;
+    token->entered_clock = entered_clock;
+    token->entered_edge = entered_edge;
     token->locals = sequence_locals_clone(graph, locals);
     if (graph->local_count != 0 && !token->locals) {
         free(token);
@@ -9372,13 +9453,19 @@ static void sequence_match_items(const llg_sequence_graph_t* graph,
         graph->match(start + index, attempt);
 }
 
-/* Advance one sequence NFA by one sampled clock edge.  Epsilon edges with a
- * zero delay are closed in the same worklist as atom edges, so ##0 and empty
- * repetitions do not accidentally consume an extra edge.  Every state and
- * entry-cycle pair is processed once per edge; this is the termination guard
- * for zero-delay cycles, while unbounded ranges remain genuinely unbounded. */
+/* Advance one sequence NFA by one observed sequence-clock edge.  Epsilon
+ * edges with a zero delay are closed in the same worklist as atom edges, so
+ * ##0 and empty repetitions do not accidentally consume an extra edge. Every
+ * state and entry-cycle pair is processed once per edge; this is the
+ * termination guard for zero-delay cycles, while unbounded ranges remain
+ * genuinely unbounded. A token whose next transition belongs to another
+ * clock is retained for that clock's event. */
 static int sequence_attempt_step(llg_sequence_attempt_t* attempt,
-                                uint64_t cycle, int* accepted) {
+                                uint64_t cycle, sv4_t* event_clock,
+                                int event_edge, uint64_t event_time,
+                                uint64_t event_order, uint64_t event_tick,
+                                sv4_t* root_clock, int root_edge,
+                                int* accepted) {
     const llg_sequence_graph_t* graph = attempt->graph;
     llg_sequence_token_t* work = NULL;
     llg_sequence_token_t* processed = NULL;
@@ -9387,9 +9474,21 @@ static int sequence_attempt_step(llg_sequence_attempt_t* attempt,
     *accepted = 0;
     for (llg_sequence_token_t* token = attempt->tokens; token;
          token = token->next) {
+        if (!token->entered_clock) {
+            token->entered_time = event_time;
+            token->entered_order = event_order;
+            token->entered_tick = event_tick;
+            token->entered_clock = event_clock;
+            token->entered_edge = event_edge;
+        }
+    }
+    for (llg_sequence_token_t* token = attempt->tokens; token;
+         token = token->next) {
         if (token->state == graph->accept) *accepted = 1;
         sequence_token_add(graph, &work, token->state, token->entered_cycle,
-                           token->locals);
+                           token->entered_time, token->entered_order,
+                           token->entered_tick, token->entered_clock,
+                           token->entered_edge, token->locals);
     }
     if (*accepted) attempt->matched = 1;
     if (*accepted && graph->first_match) {
@@ -9400,8 +9499,10 @@ static int sequence_attempt_step(llg_sequence_attempt_t* attempt,
     while (work) {
         llg_sequence_token_t* token = work;
         work = token->next;
-        if (sequence_token_present(graph, processed, token->state,
-                                   token->entered_cycle, token->locals)) {
+        if (sequence_token_present(
+                graph, processed, token->state, token->entered_cycle,
+                token->entered_time, token->entered_order, token->entered_tick,
+                token->entered_clock, token->entered_edge, token->locals)) {
             free(token->locals);
             free(token);
             continue;
@@ -9409,6 +9510,7 @@ static int sequence_attempt_step(llg_sequence_attempt_t* attempt,
         token->next = processed;
         processed = token;
         int token_is_first_match = sequence_is_first_match_state(graph, token->state);
+        int matched_clock = 0;
         if (token_is_first_match && !first_match_boundary) {
             sequence_tokens_free(work);
             sequence_tokens_free(next);
@@ -9419,23 +9521,58 @@ static int sequence_attempt_step(llg_sequence_attempt_t* attempt,
         for (uint32_t index = 0; index < graph->transition_count; index++) {
             const llg_sequence_transition_t* transition = &graph->transitions[index];
             if (transition->from != token->state) continue;
-            if (cycle < token->entered_cycle) {
-                fprintf(stderr,
-                        "llg: concurrent assertion sequence cycle overflow\n");
-                llg_last_failure = 1;
-                g.finish = 1;
-                sequence_tokens_free(work);
-                sequence_tokens_free(processed);
-                sequence_tokens_free(next);
-                return 0;
+            sv4_t* expected_clock =
+                transition->clock ? transition->clock : root_clock;
+            int expected_edge = transition->clock ? transition->edge : root_edge;
+            if (expected_clock != event_clock || expected_edge != event_edge)
+                continue;
+            matched_clock = 1;
+            uint64_t elapsed;
+            if (token->entered_clock == expected_clock &&
+                token->entered_edge == expected_edge) {
+                if (event_tick < token->entered_tick) {
+                    fprintf(stderr,
+                            "llg: concurrent assertion sequence clock tick overflow\n");
+                    llg_last_failure = 1;
+                    g.finish = 1;
+                    sequence_tokens_free(work);
+                    sequence_tokens_free(processed);
+                    sequence_tokens_free(next);
+                    return 0;
+                }
+                elapsed = event_tick - token->entered_tick;
+            } else if (transition->clock && transition->min_delay == 0 &&
+                       transition->max_delay == 0) {
+                if (event_time != token->entered_time ||
+                    event_order <= token->entered_order)
+                    continue;
+                elapsed = 0;
+            } else if (transition->clock && transition->min_delay == 1 &&
+                       transition->max_delay == 1) {
+                if (event_order <= token->entered_order) continue;
+                elapsed = 1;
+            } else {
+                if (cycle < token->entered_cycle) {
+                    fprintf(stderr,
+                            "llg: concurrent assertion sequence cycle overflow\n");
+                    llg_last_failure = 1;
+                    g.finish = 1;
+                    sequence_tokens_free(work);
+                    sequence_tokens_free(processed);
+                    sequence_tokens_free(next);
+                    return 0;
+                }
+                elapsed = cycle - token->entered_cycle;
             }
-            uint64_t elapsed = cycle - token->entered_cycle;
             if (transition->max_delay != LLG_SEQUENCE_UNBOUNDED &&
                 elapsed > transition->max_delay)
                 continue;
             if (elapsed < transition->min_delay) {
                 sequence_token_add(graph, &next, token->state,
-                                   token->entered_cycle, token->locals);
+                                   token->entered_cycle, token->entered_time,
+                                   token->entered_order, token->entered_tick,
+                                   token->entered_clock, token->entered_edge,
+                                   token->locals);
                 continue;
             }
             sv4_t* branch_locals = sequence_locals_clone(graph, token->locals);
@@ -9453,7 +9590,10 @@ static int sequence_attempt_step(llg_sequence_attempt_t* attempt,
                     if (transition->max_delay == LLG_SEQUENCE_UNBOUNDED ||
                         elapsed < transition->max_delay)
                         sequence_token_add(graph, &next, token->state,
-                                           token->entered_cycle, token->locals);
+                                           token->entered_cycle, token->entered_time,
+                                           token->entered_order, token->entered_tick,
+                                           token->entered_clock, token->entered_edge,
+                                           token->locals);
                     free(branch_locals);
                     attempt->locals = NULL;
                     continue;
@@ -9489,20 +9629,32 @@ static int sequence_attempt_step(llg_sequence_attempt_t* attempt,
                     sequence_tokens_free(next);
                     return 0;
                 }
-            } else if (sequence_token_add(graph, &next, transition->to, cycle,
-                                          branch_locals)) {
+            } else if (sequence_token_add(
+                           graph, &next, transition->to, cycle, event_time,
+                           event_order, event_tick, event_clock, event_edge,
+                           branch_locals)) {
                 sequence_token_add(graph, &work, transition->to, cycle,
-                                   branch_locals);
+                                   event_time, event_order, event_tick,
+                                   event_clock, event_edge, branch_locals);
             }
             if (!token_is_first_match && !destination_is_first_match &&
                 (transition->max_delay == LLG_SEQUENCE_UNBOUNDED ||
                  elapsed < transition->max_delay))
                 sequence_token_add(graph, &next, token->state,
-                                   token->entered_cycle, token->locals);
+                                   token->entered_cycle, token->entered_time,
+                                   token->entered_order, token->entered_tick,
+                                   token->entered_clock, token->entered_edge,
+                                   token->locals);
             free(branch_locals);
             attempt->locals = NULL;
             if (destination_is_first_match) break;
         }
+        if (!matched_clock)
+            sequence_token_add(graph, &next, token->state,
+                               token->entered_cycle, token->entered_time,
+                               token->entered_order, token->entered_tick,
+                               token->entered_clock, token->entered_edge,
+                               token->locals);
     }
     sequence_tokens_free(processed);
     sequence_tokens_free(attempt->tokens);
@@ -9530,8 +9682,8 @@ static llg_sequence_attempt_t* sequence_attempt_new(
         }
     }
     if (graph->init) graph->init(attempt);
-    sequence_token_add(graph, &attempt->tokens, graph->start, due_cycle,
-                       attempt->locals);
+    sequence_token_add(graph, &attempt->tokens, graph->start, due_cycle, 0, 0,
+                       0, NULL, 0, attempt->locals);
     free(attempt->locals);
     attempt->locals = NULL;
     return attempt;
@@ -9641,24 +9793,136 @@ static void assertion_disable_signal_changed(sv4_t* signal) {
     }
 }
 
+static void assertion_abort_attempts(llg_concurrent_assertion_t* assertion) {
+    if (!assertion || !assertion->abort_condition) return;
+    free_assertion_clock_events(assertion);
+    const int success = assertion->abort_reject ? 0 : 1;
+    while (assertion->attempts) {
+        llg_assertion_attempt_t* attempt = assertion->attempts;
+        assertion->attempts = attempt->next;
+        if (!assertion->attempts) assertion->attempts_tail = NULL;
+        assertion_result(assertion, success, assertion->abort_reject ? 0 : 1);
+        free(attempt);
+        if (g.finish) return;
+    }
+    llg_sequence_attempt_t** lists[] = {
+        &assertion->sequence_antecedents,
+        &assertion->sequence_consequents,
+    };
+    llg_sequence_attempt_t** tails[] = {
+        &assertion->sequence_antecedents_tail,
+        &assertion->sequence_consequents_tail,
+    };
+    for (size_t list_index = 0; list_index < sizeof(lists) / sizeof(lists[0]);
+         list_index++) {
+        while (*lists[list_index]) {
+            llg_sequence_attempt_t* attempt = *lists[list_index];
+            *lists[list_index] = attempt->next;
+            assertion_result(assertion, success, assertion->abort_reject ? 0 : 1);
+            sequence_attempt_discard(attempt);
+            if (g.finish) return;
+        }
+        *tails[list_index] = NULL;
+    }
+}
+
+static void assertion_abort_condition_changed(void) {
+    for (llg_concurrent_assertion_t* assertion = g.assertions; assertion;
+         assertion = assertion->next) {
+        if (assertion->abort_condition && !assertion->abort_sync &&
+            assertion->abort_condition(assertion->data)) {
+            assertion_abort_attempts(assertion);
+            if (g.finish) return;
+        }
+    }
+}
+
+static int sequence_graph_uses_clock(const llg_sequence_graph_t* graph,
+                                     sv4_t* signal, int edge) {
+    if (!graph || !signal) return 0;
+    for (uint32_t index = 0; index < graph->transition_count; index++) {
+        const llg_sequence_transition_t* transition = &graph->transitions[index];
+        if (transition->clock == signal && transition->edge == edge) return 1;
+    }
+    return 0;
+}
+
+static int assertion_sequence_uses_clock(llg_concurrent_assertion_t* assertion,
+                                         sv4_t* signal, int edge) {
+    return assertion &&
+           (sequence_graph_uses_clock(assertion->antecedent_sequence, signal,
+                                      edge) ||
+            sequence_graph_uses_clock(assertion->consequent_sequence, signal,
+                                      edge));
+}
+
+static void assertion_clock_event_append(llg_concurrent_assertion_t* assertion,
+                                         sv4_t* signal, int edge,
+                                         uint64_t order) {
+    llg_assertion_clock_event_t* event = (llg_assertion_clock_event_t*)llg_checked_calloc(
+        1, sizeof(*event), "concurrent assertion clock event");
+    event->signal = signal;
+    event->edge = edge;
+    event->time = g.now;
+    event->order = order;
+    event->tick = assertion_clock_tick(signal, edge);
+    if (assertion->clock_events_tail)
+        assertion->clock_events_tail->next = event;
+    else
+        assertion->clock_events = event;
+    assertion->clock_events_tail = event;
+}
+
 static void assertion_clock_signal_changed(sv4_t* signal, sv4_t old,
                                            sv4_t value) {
     if (!signal) return;
+    if (llg_assertion_event_order == UINT64_MAX) {
+        fprintf(stderr, "llg: concurrent assertion event-order overflow\n");
+        llg_last_failure = 1;
+        g.finish = 1;
+        return;
+    }
+    uint64_t order = llg_assertion_event_order++;
     for (llg_concurrent_assertion_t* assertion = g.assertions; assertion;
          assertion = assertion->next) {
+        if (assertion->disable && sv4_to_bool(*assertion->disable)) continue;
         if (assertion->clock == signal &&
-            ev_matches(old, value, assertion->edge))
-            assertion->edge_pending = 1;
+            ev_matches(old, value, assertion->edge)) {
+            if (assertion->consequent_sequence)
+                assertion_clock_event_append(assertion, signal, assertion->edge,
+                                             order);
+            else
+                assertion->edge_pending = 1;
+            continue;
+        }
+        if (assertion->consequent_sequence &&
+            ev_matches(old, value, LLG_EV_POSEDGE) &&
+            assertion_sequence_uses_clock(assertion, signal, LLG_EV_POSEDGE)) {
+            assertion_clock_event_append(assertion, signal, LLG_EV_POSEDGE,
+                                         order);
+        } else if (assertion->consequent_sequence &&
+                   ev_matches(old, value, LLG_EV_NEGEDGE) &&
+                   assertion_sequence_uses_clock(assertion, signal,
+                                                 LLG_EV_NEGEDGE)) {
+            assertion_clock_event_append(assertion, signal, LLG_EV_NEGEDGE,
+                                         order);
+        }
     }
 }
 
 static int run_sequence_concurrent_assertion(llg_concurrent_assertion_t* assertion,
-                                             uint64_t cycle) {
+                                             uint64_t cycle,
+                                             sv4_t* event_clock,
+                                             int event_edge, uint64_t event_time,
+                                             uint64_t event_order,
+                                             uint64_t event_tick, int root_event) {
     llg_sequence_attempt_t** antecedent_link = &assertion->sequence_antecedents;
     while (*antecedent_link) {
         llg_sequence_attempt_t* attempt = *antecedent_link;
         int accepted = 0;
-        int alive = sequence_attempt_step(attempt, cycle, &accepted);
+        int alive = sequence_attempt_step(
+            attempt, cycle, event_clock, event_edge, event_time, event_order,
+            event_tick, assertion->clock, assertion->edge, &accepted);
         if (accepted && !sequence_spawn_consequent(assertion, cycle)) return 0;
         if (!alive) {
             *antecedent_link = attempt->next;
@@ -9677,11 +9941,13 @@ static int run_sequence_concurrent_assertion(llg_concurrent_assertion_t* asserti
             assertion->sequence_antecedents_tail = item;
     }
 
-    if (assertion->antecedent_sequence) {
+    if (root_event && assertion->antecedent_sequence) {
         llg_sequence_attempt_t* attempt = sequence_attempt_new(
             assertion->antecedent_sequence, cycle);
         int accepted = 0;
-        int alive = sequence_attempt_step(attempt, cycle, &accepted);
+        int alive = sequence_attempt_step(
+            attempt, cycle, event_clock, event_edge, event_time, event_order,
+            event_tick, assertion->clock, assertion->edge, &accepted);
         if (accepted && !sequence_spawn_consequent(assertion, cycle)) {
             sequence_attempt_discard(attempt);
             return 0;
@@ -9693,7 +9959,7 @@ static int run_sequence_concurrent_assertion(llg_concurrent_assertion_t* asserti
             if (!attempt->matched) assertion_result(assertion, 1, 1);
             sequence_attempt_discard(attempt);
         }
-    } else {
+    } else if (root_event) {
         llg_sequence_attempt_t* attempt = sequence_attempt_new(
             assertion->consequent_sequence, cycle);
         sequence_attempt_append(&assertion->sequence_consequents,
@@ -9708,7 +9974,9 @@ static int run_sequence_concurrent_assertion(llg_concurrent_assertion_t* asserti
             continue;
         }
         int accepted = 0;
-        int alive = sequence_attempt_step(attempt, cycle, &accepted);
+        int alive = sequence_attempt_step(
+            attempt, cycle, event_clock, event_edge, event_time, event_order,
+            event_tick, assertion->clock, assertion->edge, &accepted);
         if (accepted || !alive) {
             *consequent_link = attempt->next;
             if (assertion->sequence_consequents_tail == attempt)
@@ -9731,18 +9999,61 @@ static int run_sequence_concurrent_assertion(llg_concurrent_assertion_t* asserti
 static void run_concurrent_assertion(llg_concurrent_assertion_t* assertion) {
     // A clock transition is observed after Active/NBA writes, while every
     // predicate reads the immutable Preponed snapshot from this time slot.
-    int edge = assertion->edge_pending;
-    assertion->edge_pending = 0;
     if (assertion->disable && sv4_to_bool(*assertion->disable)) {
         free_assertion_attempts(assertion);
         return;
     }
+    if (assertion->consequent_sequence) {
+        while (assertion->clock_events) {
+            llg_assertion_clock_event_t* event = assertion->clock_events;
+            assertion->clock_events = event->next;
+            if (!assertion->clock_events) assertion->clock_events_tail = NULL;
+            int root_event = event->signal == assertion->clock &&
+                             event->edge == assertion->edge;
+            uint64_t cycle = 0;
+            if (!sequence_cycle_next(assertion, &cycle)) {
+                free(event);
+                return;
+            }
+            if (root_event && assertion->abort_condition &&
+                assertion->abort_condition(assertion->data)) {
+                int had_pending = assertion->attempts != NULL ||
+                                  assertion->sequence_antecedents != NULL ||
+                                  assertion->sequence_consequents != NULL;
+                assertion_abort_attempts(assertion);
+                // A synchronous accept/reject control also controls the new
+                // attempt begun at this sampled leading-clock edge.
+                if (!had_pending && !g.finish)
+                    assertion_result(assertion, assertion->abort_reject ? 0 : 1,
+                                     assertion->abort_reject ? 0 : 1);
+                free(event);
+                if (g.finish) return;
+                continue;
+            }
+            (void)run_sequence_concurrent_assertion(
+                assertion, cycle, event->signal, event->edge, event->time,
+                event->order, event->tick, root_event);
+            free(event);
+            if (g.finish) return;
+        }
+        return;
+    }
+
+    int edge = assertion->edge_pending;
+    assertion->edge_pending = 0;
     if (!edge) return;
 
-    if (assertion->consequent_sequence) {
-        uint64_t cycle = 0;
-        if (!sequence_cycle_next(assertion, &cycle)) return;
-        (void)run_sequence_concurrent_assertion(assertion, cycle);
+    if (assertion->abort_condition && assertion->abort_condition(assertion->data)) {
+        int had_pending = assertion->attempts != NULL ||
+                          assertion->sequence_antecedents != NULL ||
+                          assertion->sequence_consequents != NULL;
+        assertion_abort_attempts(assertion);
+        // A synchronous accept/reject control also controls the new attempt
+        // begun at this sampled edge. Emit one result even when no older
+        // attempt was pending, matching the per-clock evaluation contract.
+        if (!had_pending && !g.finish)
+            assertion_result(assertion, assertion->abort_reject ? 0 : 1,
+                             assertion->abort_reject ? 0 : 1);
         return;
     }
 
@@ -9783,17 +10094,22 @@ static void flush_assertion_attempts(void) {
         free_assertion_attempts(assertion);
 }
 
-int llg_assertion_register(
+int llg_assertion_register_control(
     sv4_t* clock, int edge, sv4_t* disable,
     llg_concurrent_assertion_predicate_fn antecedent,
     llg_concurrent_assertion_predicate_fn consequent,
+    llg_concurrent_assertion_predicate_fn abort_condition,
     llg_concurrent_assertion_action_fn pass_action,
     llg_concurrent_assertion_action_fn fail_action, void* data, int kind,
-    int overlapped, uint64_t identity, const char* label, const char* location) {
+    int overlapped, int abort_reject, int abort_sync, uint64_t identity,
+    const char* label, const char* location) {
     if (!g.main_co || g.running || g.config_error || !clock || !consequent ||
         (edge != LLG_EV_POSEDGE && edge != LLG_EV_NEGEDGE) ||
         kind < LLG_ASSERTION_ASSERT || kind > LLG_ASSERTION_COVER ||
-        (overlapped != 0 && overlapped != 1)) {
+        (overlapped != 0 && overlapped != 1) ||
+        (abort_reject != 0 && abort_reject != 1) ||
+        (abort_sync != 0 && abort_sync != 1) ||
+        ((abort_reject || abort_sync) && !abort_condition)) {
         fprintf(stderr, "llg: invalid concurrent assertion registration\n");
         llg_last_failure = 1;
         g.finish = 1;
@@ -9807,11 +10123,14 @@ int llg_assertion_register(
     assertion->disable = disable;
     assertion->antecedent = antecedent;
     assertion->consequent = consequent;
+    assertion->abort_condition = abort_condition;
     assertion->pass_action = pass_action;
     assertion->fail_action = fail_action;
     assertion->data = data;
     assertion->kind = kind;
     assertion->overlapped = overlapped;
+    assertion->abort_reject = abort_reject;
+    assertion->abort_sync = abort_sync;
     assertion->identity = identity;
     assertion->label = label;
     assertion->location = location;
@@ -9822,6 +10141,18 @@ int llg_assertion_register(
     }
     g.assertion_tail = assertion;
     return 1;
+}
+
+int llg_assertion_register(
+    sv4_t* clock, int edge, sv4_t* disable,
+    llg_concurrent_assertion_predicate_fn antecedent,
+    llg_concurrent_assertion_predicate_fn consequent,
+    llg_concurrent_assertion_action_fn pass_action,
+    llg_concurrent_assertion_action_fn fail_action, void* data, int kind,
+    int overlapped, uint64_t identity, const char* label, const char* location) {
+    return llg_assertion_register_control(
+        clock, edge, disable, antecedent, consequent, NULL, pass_action,
+        fail_action, data, kind, overlapped, 0, 0, identity, label, location);
 }
 
 void llg_deferred_assertion(int kind, int passed, uint64_t identity,
@@ -9878,7 +10209,8 @@ void llg_deferred_assertion(int kind, int passed, uint64_t identity,
     g.deferred_assertion_tail = report;
 }
 
-static int valid_sequence_graph(const llg_sequence_graph_t* graph) {
+static int valid_sequence_graph(const llg_sequence_graph_t* graph,
+                                sv4_t* root_clock, int root_edge) {
     if (!graph || graph->states == 0 || graph->start >= graph->states ||
         graph->accept >= graph->states ||
         (graph->transition_count != 0 && !graph->transitions) ||
@@ -9899,6 +10231,15 @@ static int valid_sequence_graph(const llg_sequence_graph_t* graph) {
             transition->max_delay < transition->min_delay ||
             (transition->atom != LLG_SEQUENCE_EPSILON && !graph->atom))
             return 0;
+        if ((transition->clock && transition->edge != LLG_EV_POSEDGE &&
+             transition->edge != LLG_EV_NEGEDGE) ||
+            (!transition->clock && transition->edge != 0))
+            return 0;
+        if (transition->clock &&
+            (transition->clock != root_clock || transition->edge != root_edge) &&
+            !((transition->min_delay == 0 && transition->max_delay == 0) ||
+              (transition->min_delay == 1 && transition->max_delay == 1)))
+            return 0;
         if (transition->match_count > graph->match_item_count ||
             transition->match_start > graph->match_item_count -
                 transition->match_count ||
@@ -9908,19 +10249,24 @@ static int valid_sequence_graph(const llg_sequence_graph_t* graph) {
     return 1;
 }
 
-int llg_assertion_register_sequence(
+int llg_assertion_register_sequence_control(
     sv4_t* clock, int edge, sv4_t* disable,
     const llg_sequence_graph_t* antecedent,
     const llg_sequence_graph_t* consequent,
+    llg_concurrent_assertion_predicate_fn abort_condition,
     llg_concurrent_assertion_action_fn pass_action,
     llg_concurrent_assertion_action_fn fail_action, void* data, int kind,
-    int overlapped, uint64_t identity, const char* label, const char* location) {
+    int overlapped, int abort_reject, int abort_sync, uint64_t identity,
+    const char* label, const char* location) {
     if (!g.main_co || g.running || g.config_error || !clock ||
-        !valid_sequence_graph(consequent) ||
-        (antecedent && !valid_sequence_graph(antecedent)) ||
+        !valid_sequence_graph(consequent, clock, edge) ||
+        (antecedent && !valid_sequence_graph(antecedent, clock, edge)) ||
         (edge != LLG_EV_POSEDGE && edge != LLG_EV_NEGEDGE) ||
         kind < LLG_ASSERTION_ASSERT || kind > LLG_ASSERTION_COVER ||
-        (overlapped != 0 && overlapped != 1)) {
+        (overlapped != 0 && overlapped != 1) ||
+        (abort_reject != 0 && abort_reject != 1) ||
+        (abort_sync != 0 && abort_sync != 1) ||
+        ((abort_reject || abort_sync) && !abort_condition)) {
         fprintf(stderr, "llg: invalid concurrent sequence assertion registration\n");
         llg_last_failure = 1;
         g.finish = 1;
@@ -9934,9 +10280,12 @@ int llg_assertion_register_sequence(
     assertion->disable = disable;
     assertion->pass_action = pass_action;
     assertion->fail_action = fail_action;
+    assertion->abort_condition = abort_condition;
     assertion->data = data;
     assertion->kind = kind;
     assertion->overlapped = overlapped;
+    assertion->abort_reject = abort_reject;
+    assertion->abort_sync = abort_sync;
     assertion->identity = identity;
     assertion->label = label;
     assertion->location = location;
@@ -9948,6 +10297,18 @@ int llg_assertion_register_sequence(
         g.assertions = assertion;
     g.assertion_tail = assertion;
     return 1;
+}
+
+int llg_assertion_register_sequence(
+    sv4_t* clock, int edge, sv4_t* disable,
+    const llg_sequence_graph_t* antecedent,
+    const llg_sequence_graph_t* consequent,
+    llg_concurrent_assertion_action_fn pass_action,
+    llg_concurrent_assertion_action_fn fail_action, void* data, int kind,
+    int overlapped, uint64_t identity, const char* label, const char* location) {
+    return llg_assertion_register_sequence_control(
+        clock, edge, disable, antecedent, consequent, NULL, pass_action,
+        fail_action, data, kind, overlapped, 0, 0, identity, label, location);
 }
 
 static int llg_fmt_arg_same(const llg_fmt_arg_t* a, const llg_fmt_arg_t* b) {

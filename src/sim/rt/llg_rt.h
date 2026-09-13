@@ -488,6 +488,11 @@ typedef struct {
     uint32_t to;
     uint64_t min_delay;
     uint64_t max_delay;
+    /* Generated model storage owns the pointer. NULL inherits the registered
+     * assertion clock; a present pointer identifies this segment's direct
+     * sampled clock and `edge`. */
+    sv4_t* clock;
+    int edge;
     uint32_t atom;
     uint32_t match_start;
     uint32_t match_count;
@@ -528,6 +533,20 @@ int llg_assertion_register(
     llg_concurrent_assertion_action_fn pass_action,
     llg_concurrent_assertion_action_fn fail_action, void* data, int kind,
     int overlapped, uint64_t identity, const char* label, const char* location);
+/* Extended concurrent-assertion registration with bounded accept_on /
+ * reject_on controls. `abort_condition` is evaluated from the live value
+ * domain for asynchronous controls and from the immutable sampled domain for
+ * synchronous controls. The legacy registration entry point above remains a
+ * source-compatible wrapper with no abort control. */
+int llg_assertion_register_control(
+    sv4_t* clock, int edge, sv4_t* disable,
+    llg_concurrent_assertion_predicate_fn antecedent,
+    llg_concurrent_assertion_predicate_fn consequent,
+    llg_concurrent_assertion_predicate_fn abort_condition,
+    llg_concurrent_assertion_action_fn pass_action,
+    llg_concurrent_assertion_action_fn fail_action, void* data, int kind,
+    int overlapped, int abort_reject, int abort_sync, uint64_t identity,
+    const char* label, const char* location);
 // Queue one deferred immediate-assertion result. The condition result and
 // selected action are fixed at statement execution; the runtime matures the
 // report in Reactive and owns `frame` until the callback (or teardown).
@@ -543,6 +562,15 @@ int llg_assertion_register_sequence(
     llg_concurrent_assertion_action_fn pass_action,
     llg_concurrent_assertion_action_fn fail_action, void* data, int kind,
     int overlapped, uint64_t identity, const char* label, const char* location);
+int llg_assertion_register_sequence_control(
+    sv4_t* clock, int edge, sv4_t* disable,
+    const llg_sequence_graph_t* antecedent,
+    const llg_sequence_graph_t* consequent,
+    llg_concurrent_assertion_predicate_fn abort_condition,
+    llg_concurrent_assertion_action_fn pass_action,
+    llg_concurrent_assertion_action_fn fail_action, void* data, int kind,
+    int overlapped, int abort_reject, int abort_sync, uint64_t identity,
+    const char* label, const char* location);
 
 // ── Command-line plusargs ───────────────────────────────────────────────────
 //

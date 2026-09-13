@@ -1,6 +1,6 @@
-//! File-based acceptance tests for H20/H22/H23 concurrent assertion sampling,
-//! sequence/property composition, and attempt scheduling. Each fixture is run
-//! through both optimizer modes.
+//! File-based acceptance tests for H20/H22/H23/H24/H25 concurrent assertion
+//! sampling, sequence/property composition, clock/control flow, and attempt
+//! scheduling. Each fixture is run through both optimizer modes.
 
 #[path = "support/sim_cli.rs"]
 mod sim_cli;
@@ -192,5 +192,63 @@ fn concurrent_assertions_reject_conflicting_named_property_clocks() {
         "concurrent_assertions",
         "unsupported_clock_instance",
         "multiple clocks in concurrent assertion",
+    );
+}
+
+#[test]
+fn concurrent_assertions_apply_bounded_abort_and_conditional_controls() {
+    sim_cli::run_case(
+        "concurrent_assertions",
+        "h25_controls",
+        "H25_CONDITIONAL_PASS\nH25_ABORT_ACCEPT\nH25_ABORT_ACCEPT\nH25_CONDITIONAL_PASS\nH25_ABORT_ACCEPT\nH25_CONDITIONAL_PASS\n",
+        "",
+        &[],
+    );
+}
+
+#[test]
+fn concurrent_assertions_inherit_default_clocking() {
+    sim_cli::run_case(
+        "concurrent_assertions",
+        "h25_default_clock",
+        "H25_DEFAULT_CLOCK_PASS\n",
+        "",
+        &[],
+    );
+}
+
+#[test]
+fn concurrent_assertions_advance_legal_multiclock_sequence_boundaries() {
+    sim_cli::run_case(
+        "concurrent_assertions",
+        "h25_multiclock",
+        "H25_MULTICLOCK_PASS\nH25_MULTICLOCK_ZERO_PASS\n",
+        "",
+        &[],
+    );
+}
+
+#[test]
+fn concurrent_assertions_resolve_abort_control_variants() {
+    sim_cli::run_case(
+        "concurrent_assertions",
+        "h25_abort_variants",
+        "H25_SYNC_ACCEPT\nH25_SYNC_ACCEPT\n",
+        "",
+        &[],
+    );
+}
+
+#[test]
+fn concurrent_assertions_execute_reject_control_variants() {
+    sim_cli::run_case("concurrent_assertions", "h25_reject_controls", "", "", &[]);
+}
+
+#[test]
+fn concurrent_assertions_reject_unbounded_cross_clock_delay() {
+    sim_cli::reject_case(
+        "concurrent_assertions",
+        "h25_unsupported_multiclock",
+        "multiclocked sequence",
     );
 }

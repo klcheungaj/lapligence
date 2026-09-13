@@ -905,6 +905,9 @@ fn walk_model_exprs_mut(model: &mut IrModel, f: &mut impl FnMut(&mut IrExpr)) {
         }
     }
     for assertion in &mut model.assertions {
+        if let Some(condition) = &mut assertion.abort_condition {
+            walk_expr_mut(condition, f);
+        }
         if let Some(antecedent) = &mut assertion.antecedent {
             walk_expr_mut(antecedent, f);
         }
@@ -1967,6 +1970,9 @@ fn mark_unused_storage(model: &mut IrModel, execution: Option<&[ExecutionProcess
         if let Some(disable) = assertion.disable_signal {
             rw.read(disable);
         }
+        if let Some(condition) = &assertion.abort_condition {
+            collect_expr_reads(condition, model, &mut rw);
+        }
         if let Some(antecedent) = &assertion.antecedent {
             collect_expr_reads(antecedent, model, &mut rw);
         }
@@ -1980,6 +1986,11 @@ fn mark_unused_storage(model: &mut IrModel, execution: Option<&[ExecutionProcess
         .into_iter()
         .flatten()
         {
+            for transition in &sequence.transitions {
+                if let Some(clock) = transition.clock_signal {
+                    rw.read(clock);
+                }
+            }
             for atom in &sequence.atoms {
                 collect_expr_reads(atom, model, &mut rw);
             }

@@ -713,6 +713,17 @@ impl Validator<'_> {
                     );
                 }
             }
+            if let Some(condition) = &assertion.abort_condition {
+                self.validate_expr(condition, &[], &format!("{path}.abort_condition"))?;
+                if condition.is_real() {
+                    return self.fail(
+                        format!("{path}.abort_condition"),
+                        "assertion abort condition must be packed",
+                    );
+                }
+            } else if assertion.abort_reject || assertion.abort_sync {
+                return self.fail(&path, "assertion abort flags require an abort condition");
+            }
             if let Some(antecedent) = &assertion.antecedent {
                 self.validate_expr(antecedent, &[], &format!("{path}.antecedent"))?;
                 if antecedent.is_real() {
@@ -792,6 +803,37 @@ impl Validator<'_> {
                             format!("{path}.{name}.transitions[{transition_index}].delay"),
                             "sequence transition delay range is inverted",
                         );
+                    }
+                    if let Some(clock_signal) = transition.clock_signal {
+                        let Some(clock) = self.model.signals.get(clock_signal) else {
+                            return self.fail(
+                                format!(
+                                    "{path}.{name}.transitions[{transition_index}].clock_signal"
+                                ),
+                                "sequence transition clock signal is out of bounds",
+                            );
+                        };
+                        if clock.omit || clock.ty.width() == 0 {
+                            return self.fail(
+                                format!(
+                                    "{path}.{name}.transitions[{transition_index}].clock_signal"
+                                ),
+                                "sequence transition clock must be active packed storage",
+                            );
+                        }
+                        let different_domain = clock_signal != assertion.clock_signal
+                            || transition.clock_posedge != assertion.posedge;
+                        if different_domain
+                            && !matches!(
+                                (transition.delay.min, transition.delay.max),
+                                (0, Some(0)) | (1, Some(1))
+                            )
+                        {
+                            return self.fail(
+                                format!("{path}.{name}.transitions[{transition_index}].delay"),
+                                "cross-clock sequence boundaries require an exact ##0 or ##1 delay",
+                            );
+                        }
                     }
                     if transition
                         .atom

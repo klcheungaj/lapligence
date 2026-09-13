@@ -107,7 +107,7 @@ coverage for the same rule IDs.
   passes each file to `llg` in both optimizer modes, isolates child working
   directories, compares specification-derived output and asserts diagnostics.
   Both suites require CMake and run in the sanitizer job.
-- `sim_concurrent_assertions.rs` covers the H20/H24 concurrent-assertion
+- `sim_concurrent_assertions.rs` covers the H20/H25 concurrent-assertion
   subset: Preponed sampling across NBA updates, asynchronous `disable iff`
   cancellation and restart, FIFO overlapping attempts, vacuity accounting,
   end-of-simulation pending-attempt disposal, sequence concatenation and
@@ -116,7 +116,10 @@ coverage for the same rule IDs.
   sequence/property instances, declaration argument expansion, and one-cycle
   property boolean composition. H24 fixtures additionally cover per-attempt
   sequence locals, local input-formal defaults, ordered match-item assignments,
-  increments and subroutine calls, and branch-thread local-state isolation. HDL
+  increments and subroutine calls, and branch-thread local-state isolation. H25
+  fixtures additionally cover legal `##0`/`##1` multiclock sequence boundaries,
+  default-clock inheritance, conditional properties, and accept/reject controls
+  including synchronous variants. HDL
   lives in
   `fixtures/sim/concurrent_assertions/`; the shared CLI harness runs every
   fixture through `llg` and `llg --no-opt` with exact stdout and diagnostics.

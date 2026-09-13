@@ -445,11 +445,12 @@ fn render_assertion_predicate(
     index: usize,
     role: &str,
     expression: &crate::sim::ir::IrExpr,
+    sampled: bool,
 ) -> Result<String, String> {
     let ctx = RCtx {
         model,
         func: None,
-        sampled: true,
+        sampled,
         activation_label: None,
     };
     let rendered = super::expressions::render_expr_impl(&ctx, expression)?;
@@ -554,6 +555,19 @@ fn render_assertion_sequence(
             .max
             .map(|value| format!("{value}ULL"))
             .unwrap_or_else(|| "LLG_SEQUENCE_UNBOUNDED".to_owned());
+        let clock = transition
+            .clock_signal
+            .map(|signal| format!("&{}", model.signal(signal).c_name()))
+            .unwrap_or_else(|| "NULL".to_owned());
+        let edge = if transition.clock_signal.is_some() {
+            if transition.clock_posedge {
+                "LLG_EV_POSEDGE"
+            } else {
+                "LLG_EV_NEGEDGE"
+            }
+        } else {
+            "0"
+        };
         let atom = transition
             .atom
             .map(|value| format!("{value}u"))
@@ -563,7 +577,7 @@ fn render_assertion_sequence(
             .map(|value| format!("{value}u"))
             .unwrap_or_else(|| "0u".to_owned());
         out.push_str(&format!(
-            "    {{{}u, {}u, {}ULL, {max}, {atom}, {match_start}, {}u}},\n",
+            "    {{{}u, {}u, {}ULL, {max}, {clock}, {edge}, {atom}, {match_start}, {}u}},\n",
             transition.from, transition.to, transition.delay.min, transition.match_count,
         ));
     }
@@ -677,6 +691,7 @@ fn render_assertion_callbacks(model: &IrModel) -> Result<String, String> {
                 index,
                 "antecedent",
                 antecedent,
+                true,
             )?);
         }
         if let Some(consequent) = assertion.consequent() {
@@ -685,6 +700,16 @@ fn render_assertion_callbacks(model: &IrModel) -> Result<String, String> {
                 index,
                 "consequent",
                 consequent,
+                true,
+            )?);
+        }
+        if let Some(condition) = assertion.abort_condition() {
+            out.push_str(&render_assertion_predicate(
+                model,
+                index,
+                "abort",
+                condition,
+                assertion.abort_sync(),
             )?);
         }
         if let Some(sequence) = assertion.antecedent_sequence() {
@@ -2385,6 +2410,10 @@ fn render_main(execution: &ExecutionModel) -> Result<String, String> {
             .antecedent()
             .map(|_| assertion_predicate_name(index, "antecedent"))
             .unwrap_or_else(|| "NULL".to_owned());
+        let abort_condition = assertion
+            .abort_condition()
+            .map(|_| assertion_predicate_name(index, "abort"))
+            .unwrap_or_else(|| "NULL".to_owned());
         let pass_action = assertion.pass_action().unwrap_or("NULL");
         let fail_action = assertion.fail_action().unwrap_or("NULL");
         let kind = match assertion.kind() {
@@ -2403,41 +2432,83 @@ fn render_main(execution: &ExecutionModel) -> Result<String, String> {
                 .map(|_| format!("&{}", assertion_sequence_name(index, "antecedent")))
                 .unwrap_or_else(|| "NULL".to_owned());
             let consequent = format!("&{}", assertion_sequence_name(index, "consequent"));
-            out.push_str(&format!(
-                "    if (!llg_assertion_register_sequence(&{}, {}, {}, {}, {}, {}, {}, NULL, {}, {}, {}ULL, {}, {})) return 1;\n",
-                clock,
-                edge,
-                disable,
-                antecedent,
-                consequent,
-                pass_action,
-                fail_action,
-                kind,
-                assertion.overlapped() as u8,
-                assertion.identity(),
-                c_string_literal(assertion.label()),
-                c_string_literal(assertion.location()),
-            ));
+            if assertion.abort_condition().is_some() {
+                out.push_str(&format!(
+                    "    if (!llg_assertion_register_sequence_control(&{}, {}, {}, {}, {}, {}, {}, {}, NULL, {}, {}, {}, {}, {}ULL, {}, {})) return 1;\n",
+                    clock,
+                    edge,
+                    disable,
+                    antecedent,
+                    consequent,
+                    abort_condition,
+                    pass_action,
+                    fail_action,
+                    kind,
+                    assertion.overlapped() as u8,
+                    assertion.abort_reject() as u8,
+                    assertion.abort_sync() as u8,
+                    assertion.identity(),
+                    c_string_literal(assertion.label()),
+                    c_string_literal(assertion.location()),
+                ));
+            } else {
+                out.push_str(&format!(
+                    "    if (!llg_assertion_register_sequence(&{}, {}, {}, {}, {}, {}, {}, NULL, {}, {}, {}ULL, {}, {})) return 1;\n",
+                    clock,
+                    edge,
+                    disable,
+                    antecedent,
+                    consequent,
+                    pass_action,
+                    fail_action,
+                    kind,
+                    assertion.overlapped() as u8,
+                    assertion.identity(),
+                    c_string_literal(assertion.label()),
+                    c_string_literal(assertion.location()),
+                ));
+            }
         } else {
             if assertion.consequent().is_none() {
                 return Err(format!("assertion {index} has no consequent"));
             }
             let consequent = assertion_predicate_name(index, "consequent");
-            out.push_str(&format!(
-                "    if (!llg_assertion_register(&{}, {}, {}, {}, {}, {}, {}, NULL, {}, {}, {}ULL, {}, {})) return 1;\n",
-                clock,
-                edge,
-                disable,
-                antecedent,
-                consequent,
-                pass_action,
-                fail_action,
-                kind,
-                assertion.overlapped() as u8,
-                assertion.identity(),
-                c_string_literal(assertion.label()),
-                c_string_literal(assertion.location()),
-            ));
+            if assertion.abort_condition().is_some() {
+                out.push_str(&format!(
+                    "    if (!llg_assertion_register_control(&{}, {}, {}, {}, {}, {}, {}, {}, NULL, {}, {}, {}, {}, {}ULL, {}, {})) return 1;\n",
+                    clock,
+                    edge,
+                    disable,
+                    antecedent,
+                    consequent,
+                    abort_condition,
+                    pass_action,
+                    fail_action,
+                    kind,
+                    assertion.overlapped() as u8,
+                    assertion.abort_reject() as u8,
+                    assertion.abort_sync() as u8,
+                    assertion.identity(),
+                    c_string_literal(assertion.label()),
+                    c_string_literal(assertion.location()),
+                ));
+            } else {
+                out.push_str(&format!(
+                    "    if (!llg_assertion_register(&{}, {}, {}, {}, {}, {}, {}, NULL, {}, {}, {}ULL, {}, {})) return 1;\n",
+                    clock,
+                    edge,
+                    disable,
+                    antecedent,
+                    consequent,
+                    pass_action,
+                    fail_action,
+                    kind,
+                    assertion.overlapped() as u8,
+                    assertion.identity(),
+                    c_string_literal(assertion.label()),
+                    c_string_literal(assertion.location()),
+                ));
+            }
         }
     }
     out.push_str(&format!(

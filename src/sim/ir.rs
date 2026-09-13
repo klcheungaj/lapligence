@@ -2278,6 +2278,12 @@ pub struct IrSequenceTransition {
     pub from: u32,
     pub to: u32,
     pub delay: IrSequenceRange,
+    /// Optional sampled clock for this edge. `None` inherits the assertion's
+    /// leading clock; a present value is the owned direct clocking event of a
+    /// multiclocked sequence segment.
+    pub clock_signal: Option<usize>,
+    /// Edge qualifier for `clock_signal`; ignored when that clock is absent.
+    pub clock_posedge: bool,
     /// Index into [`IrSequence::atoms`]. `None` is an epsilon edge.
     pub atom: Option<u32>,
     /// Start and length of the match-item range evaluated when this edge is
@@ -2483,6 +2489,12 @@ pub struct IrAssertion {
     pub(in crate::sim) antecedent_sequence: Option<IrSequence>,
     pub(in crate::sim) consequent_sequence: Option<IrSequence>,
     pub(in crate::sim) overlapped: bool,
+    /// Optional accept_on/reject_on control. The expression is evaluated
+    /// asynchronously for ordinary forms and in the assertion's sampled
+    /// domain for the synchronous variants.
+    pub(in crate::sim) abort_condition: Option<IrExpr>,
+    pub(in crate::sim) abort_reject: bool,
+    pub(in crate::sim) abort_sync: bool,
     pub(in crate::sim) pass_action: Option<String>,
     pub(in crate::sim) fail_action: Option<String>,
 }
@@ -2516,6 +2528,9 @@ impl IrAssertion {
             antecedent_sequence: None,
             consequent_sequence: None,
             overlapped,
+            abort_condition: None,
+            abort_reject: false,
+            abort_sync: false,
             pass_action,
             fail_action,
         }
@@ -2549,6 +2564,9 @@ impl IrAssertion {
             antecedent_sequence: antecedent,
             consequent_sequence: Some(consequent),
             overlapped,
+            abort_condition: None,
+            abort_reject: false,
+            abort_sync: false,
             pass_action,
             fail_action,
         }
@@ -2600,6 +2618,33 @@ impl IrAssertion {
 
     pub fn overlapped(&self) -> bool {
         self.overlapped
+    }
+
+    pub fn abort_condition(&self) -> Option<&IrExpr> {
+        self.abort_condition.as_ref()
+    }
+
+    pub fn abort_reject(&self) -> bool {
+        self.abort_reject
+    }
+
+    pub fn abort_sync(&self) -> bool {
+        self.abort_sync
+    }
+
+    /// Attach one validated accept_on/reject_on control to the assertion.
+    /// The lowering layer rejects nested controls before calling this method,
+    /// so a boolean flag is sufficient in the execution IR.
+    pub(in crate::sim) fn with_abort_control(
+        mut self,
+        condition: IrExpr,
+        reject: bool,
+        sync: bool,
+    ) -> Self {
+        self.abort_condition = Some(condition);
+        self.abort_reject = reject;
+        self.abort_sync = sync;
+        self
     }
 
     pub fn pass_action(&self) -> Option<&str> {
