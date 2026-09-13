@@ -9,8 +9,8 @@ fn stop_resumes_nested_call_and_preserves_future_work_and_finals() {
             "CHECK: nested before\n",
             "CHECK: nested after t=0\n",
             "CHECK: resumed t=0\n",
-            "CHECK: pending value=90 t=2\n",
-            "CHECK: final value=5a t=3\n",
+            "CHECK: pending value=90 t=2000\n",
+            "CHECK: final value=5a t=3000\n",
         ),
     );
 }
