@@ -44,6 +44,12 @@
   and qualifier dependencies. Read-only input/`const ref` function calls are
   checked transitively for disallowed effects, and automatic locals/formals are
   copied into typed evaluator frames before suspension.
+- **Clocking controls:** Owned clocking metadata drives input/inout sample
+  storage, captured output/inout Re-NBA writes with constant skews, selected
+  packed targets, and default-clock-bound `##N` event repetitions. A drive
+  issued away from its event retains its captured value until the next event.
+  Dynamic skews, sequence/property cycle timing, and frontend-rejected concatenated
+  clockvar lvalues remain explicit boundaries.
 - **Reference arguments:** Formal modes and `const ref` qualification are
   preserved in `IrFormal`; lowering rejects non-lvalues and incompatible
   packed/state shapes, and emits canonical alias descriptors without

@@ -174,6 +174,7 @@ fn contains_nested_control(db: &Db, root: NodeId) -> bool {
         db.node_kind(root),
         NodeKind::Stmt(
             StmtKind::DelayControl { .. }
+                | StmtKind::CycleDelayControl { .. }
                 | StmtKind::EventControl { .. }
                 | StmtKind::Wait { .. }
                 | StmtKind::WaitFork
@@ -306,6 +307,7 @@ fn analyze_stmt(db: &Db, root: NodeId, incoming: &HashSet<NodeId>) -> DefiniteAs
         NodeKind::Stmt(
             StmtKind::EventControl { .. }
             | StmtKind::DelayControl { .. }
+            | StmtKind::CycleDelayControl { .. }
             | StmtKind::Wait { .. }
             | StmtKind::Fork { .. }
             | StmtKind::Foreach { .. }

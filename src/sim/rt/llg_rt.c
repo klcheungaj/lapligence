@@ -130,6 +130,8 @@ typedef enum {
 typedef struct llg_nba {
     struct llg_nba* next;
     sv4_t* target;
+    llg_net_t* net_target;
+    int net_slot;
     llg_event_object_t* event_target;
     sv4_t value;
     sv4_t mask;
@@ -311,6 +313,7 @@ struct llg_proc {
 
 static int region_can_mutate(const char* action);
 static llg_nba_t* new_nba(uint64_t ticks);
+static llg_nba_t* new_clocking_nba(uint64_t ticks);
 static void enqueue_nba(llg_nba_t* n);
 static void deferred_trigger_source_change(sv4_t* sig, double* real);
 static void deferred_trigger_event(llg_event_object_t* ev);
@@ -698,6 +701,42 @@ typedef struct {
     llg_string_t suffix;
 } llg_timeformat_state_t;
 
+// The cycle-delay zero case distinguishes an event that already occurred in
+// the current time slot from one that is still in the future. Keep only the
+// latest transition timestamp per signal and edge kind; this registry is
+// rebuilt with each runtime generation and never crosses the model boundary.
+typedef struct llg_clocking_edge {
+    struct llg_clocking_edge* next;
+    sv4_t* signal;
+    uint64_t any_time;
+    uint64_t posedge_time;
+    uint64_t negedge_time;
+} llg_clocking_edge_t;
+
+// A synchronous drive issued away from its clocking event retains its
+// issue-time value and waits for the next matching event. The target storage,
+// resolved net slot, and optional packed mask are all stable model objects;
+// only the source descriptor array is copied here because it may be a
+// generated process-local array.
+typedef struct llg_clocking_drive {
+    struct llg_clocking_drive* next;
+    llg_wait_src_t* specs;
+    int n_specs;
+    sv4_t* target;
+    llg_net_t* net_target;
+    int net_slot;
+    double* real_target;
+    sv4_t value;
+    sv4_t mask;
+    int has_mask;
+    int is_real;
+    double real_value;
+    uint64_t ticks;
+} llg_clocking_drive_t;
+
+static void clocking_drive_signal_match(sv4_t* signal, sv4_t old, sv4_t value);
+static void clocking_drive_event_match(llg_event_object_t* event);
+
 // An event-controlled `->>` is not a suspended process.  Its source
 // descriptors and snapshots live here until one source matches, then the
 // target is submitted to the ordinary NBA queue.
@@ -761,6 +800,9 @@ typedef struct {
     llg_sampled_value_t* sampled;
     llg_sampled_domain_t* sampled_domains;
     uint64_t sampled_domain_sequence;
+    llg_clocking_edge_t* clocking_edges;
+    llg_clocking_drive_t* clocking_drives;
+    llg_clocking_drive_t* clocking_drives_tail;
     uint64_t sampled_time;
     int sampled_time_valid;
     llg_concurrent_assertion_t* assertions;
@@ -2618,6 +2660,125 @@ static int ev_matches(sv4_t old, sv4_t new, int kind) {
            (sv4_is_unknown(old) && sv4_is_zero(new));
 }
 
+static llg_clocking_edge_t* find_clocking_edge(sv4_t* signal) {
+    for (llg_clocking_edge_t* edge = g.clocking_edges; edge; edge = edge->next) {
+        if (edge->signal == signal) return edge;
+    }
+    return NULL;
+}
+
+static void clocking_record_edge(sv4_t* signal, sv4_t old, sv4_t value) {
+    if (!signal || sv4_same(old, value)) return;
+    llg_clocking_edge_t* edge = find_clocking_edge(signal);
+    if (!edge) {
+        edge = (llg_clocking_edge_t*)llg_checked_malloc(
+            1, sizeof(*edge), "clocking event history");
+        edge->signal = signal;
+        edge->any_time = UINT64_MAX;
+        edge->posedge_time = UINT64_MAX;
+        edge->negedge_time = UINT64_MAX;
+        edge->next = g.clocking_edges;
+        g.clocking_edges = edge;
+    }
+    edge->any_time = g.now;
+    if (ev_matches(old, value, LLG_EV_POSEDGE)) edge->posedge_time = g.now;
+    if (ev_matches(old, value, LLG_EV_NEGEDGE)) edge->negedge_time = g.now;
+}
+
+static int clocking_event_current(const llg_wait_src_t* srcs, int n) {
+    if (!srcs || n <= 0) return 0;
+    for (int i = 0; i < n; i++) {
+        if (srcs[i].sig) {
+            llg_clocking_edge_t* edge = find_clocking_edge(srcs[i].sig);
+            if (!edge) continue;
+            uint64_t time = srcs[i].kind == LLG_EV_POSEDGE
+                                ? edge->posedge_time
+                                : srcs[i].kind == LLG_EV_NEGEDGE
+                                      ? edge->negedge_time
+                                      : edge->any_time;
+            if (time == g.now) return 1;
+        } else if (srcs[i].ev && llg_event_triggered(srcs[i].ev)) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static void free_clocking_drive(llg_clocking_drive_t* drive) {
+    if (!drive) return;
+    free(drive->specs);
+    free(drive);
+}
+
+static void clocking_drive_enqueue(const llg_clocking_drive_t* drive) {
+    llg_nba_t* n = new_clocking_nba(drive->ticks);
+    if (!n) return;
+    n->target = drive->target;
+    n->net_target = drive->net_target;
+    n->net_slot = drive->net_slot;
+    n->value = drive->value;
+    n->mask = drive->mask;
+    n->has_mask = drive->has_mask;
+    n->is_real = drive->is_real;
+    n->real_target = drive->real_target;
+    n->real_value = drive->real_value;
+    enqueue_nba(n);
+}
+
+static int clocking_drive_source_matches_signal(
+    const llg_clocking_drive_t* drive, sv4_t* signal, sv4_t old, sv4_t value) {
+    for (int i = 0; i < drive->n_specs; i++) {
+        const llg_wait_src_t* source = &drive->specs[i];
+        if (source->sig == signal && ev_matches(old, value, source->kind)) return 1;
+    }
+    return 0;
+}
+
+static int clocking_drive_source_matches_event(
+    const llg_clocking_drive_t* drive, llg_event_object_t* event) {
+    for (int i = 0; i < drive->n_specs; i++) {
+        const llg_wait_src_t* source = &drive->specs[i];
+        if (source->ev && source->ev->object == event) return 1;
+    }
+    return 0;
+}
+
+static void clocking_drive_signal_match(sv4_t* signal, sv4_t old, sv4_t value) {
+    llg_clocking_drive_t** slot = &g.clocking_drives;
+    while (*slot) {
+        llg_clocking_drive_t* drive = *slot;
+        if (!clocking_drive_source_matches_signal(drive, signal, old, value)) {
+            slot = &drive->next;
+            continue;
+        }
+        *slot = drive->next;
+        drive->next = NULL;
+        clocking_drive_enqueue(drive);
+        free_clocking_drive(drive);
+    }
+    g.clocking_drives_tail = g.clocking_drives;
+    while (g.clocking_drives_tail && g.clocking_drives_tail->next)
+        g.clocking_drives_tail = g.clocking_drives_tail->next;
+}
+
+static void clocking_drive_event_match(llg_event_object_t* event) {
+    llg_clocking_drive_t** slot = &g.clocking_drives;
+    while (*slot) {
+        llg_clocking_drive_t* drive = *slot;
+        if (!clocking_drive_source_matches_event(drive, event)) {
+            slot = &drive->next;
+            continue;
+        }
+        *slot = drive->next;
+        drive->next = NULL;
+        clocking_drive_enqueue(drive);
+        free_clocking_drive(drive);
+    }
+    g.clocking_drives_tail = g.clocking_drives;
+    while (g.clocking_drives_tail && g.clocking_drives_tail->next)
+        g.clocking_drives_tail = g.clocking_drives_tail->next;
+}
+
 static int real_same(double old, double new) {
     uint64_t old_bits;
     uint64_t new_bits;
@@ -2806,6 +2967,8 @@ static void sig_write(sv4_t* target, sv4_t value) {
     }
     if (target->width == value.width && sv4_same(*target, value)) return;
     sv4_t old = *target;
+    clocking_record_edge(target, old, value);
+    clocking_drive_signal_match(target, old, value);
     *target = value;
     sampled_record_write(target);
     assertion_clock_signal_changed(target, old, value);
@@ -3469,6 +3632,23 @@ static void free_assertions(void) {
     g.assertion_tail = NULL;
 }
 
+static void free_clocking_edges(void) {
+    while (g.clocking_edges) {
+        llg_clocking_edge_t* next = g.clocking_edges->next;
+        free(g.clocking_edges);
+        g.clocking_edges = next;
+    }
+}
+
+static void free_clocking_drives(void) {
+    while (g.clocking_drives) {
+        llg_clocking_drive_t* next = g.clocking_drives->next;
+        free_clocking_drive(g.clocking_drives);
+        g.clocking_drives = next;
+    }
+    g.clocking_drives_tail = NULL;
+}
+
 static void free_q_queues(void) {
     while (g.q_queues) {
         llg_q_queue_t* queue = g.q_queues;
@@ -3538,6 +3718,8 @@ void llg_rt_cleanup(void) {
     free_region_callbacks();
     free_sampled_values();
     free_assertions();
+    free_clocking_edges();
+    free_clocking_drives();
     free_q_queues();
     llg_string_destroy(&g.time_format.suffix);
 
@@ -4792,6 +4974,7 @@ static void event_trigger_object(llg_event_object_t* ev) {
     ev->triggered = 1;
     ev->triggered_time = g.now;
     ev->triggered_generation = llg_event_generation;
+    clocking_drive_event_match(ev);
 
     int n_triggered = ev->n_triggered_waiters;
     llg_proc_t* triggered[LLG_MAX_EVENT_WAITERS];
@@ -5004,6 +5187,19 @@ void llg_wait_mixed(llg_wait_src_t* srcs, int n) {
     aco_yield();
 }
 
+void llg_wait_clocking_cycles(llg_wait_src_t* srcs, int n, sv4_t count) {
+    if (!srcs || n <= 0 || !region_can_mutate("clocking cycle wait")) return;
+    sv4_t remaining = sv4_repeat_count(count);
+    if (!sv4_to_bool(remaining)) {
+        if (!clocking_event_current(srcs, n)) llg_wait_mixed(srcs, n);
+        return;
+    }
+    while (sv4_to_bool(remaining)) {
+        llg_wait_mixed(srcs, n);
+        remaining = sv4_sub(remaining, sv4_from_u64(1, remaining.width, 0));
+    }
+}
+
 void llg_wait_expressions(const llg_expr_event_spec_t* specs, int n) {
     if (n < 0) abort();
     llg_proc_t* p = llg_current();
@@ -5191,7 +5387,7 @@ void llg_nba_event_assign_when(const llg_expr_event_spec_t* specs, int n,
     register_deferred_trigger(specs, n, repeat, NULL, action, frame);
 }
 
-static llg_nba_t* new_nba(uint64_t ticks) {
+static llg_nba_t* new_nba_in_region(uint64_t ticks, llg_region_t region) {
     if (!region_can_mutate("nonblocking scheduling")) return NULL;
     llg_proc_t* owner = g.in_deferred_action ? NULL : llg_current();
     if (ticks > UINT64_MAX - g.now || g.nba_sequence == UINT64_MAX) {
@@ -5200,6 +5396,8 @@ static llg_nba_t* new_nba(uint64_t ticks) {
     }
     llg_nba_t* n = (llg_nba_t*)llg_checked_malloc(1, sizeof(llg_nba_t), "nonblocking assignment");
     n->target = NULL;
+    n->net_target = NULL;
+    n->net_slot = -1;
     n->event_target = NULL;
     n->is_real = 0;
     n->is_event = 0;
@@ -5211,12 +5409,20 @@ static llg_nba_t* new_nba(uint64_t ticks) {
     n->string_value = (llg_string_t){0};
     n->time = g.now + ticks;
     n->sequence = g.nba_sequence++;
-    n->region = region_is_reactive(g.current_region)
-                    ? LLG_REGION_RE_NBA
-                    : LLG_REGION_NBA;
+    n->region = region;
     n->owner = owner;
     n->next = NULL;
     return n;
+}
+
+static llg_nba_t* new_nba(uint64_t ticks) {
+    return new_nba_in_region(
+        ticks,
+        region_is_reactive(g.current_region) ? LLG_REGION_RE_NBA : LLG_REGION_NBA);
+}
+
+static llg_nba_t* new_clocking_nba(uint64_t ticks) {
+    return new_nba_in_region(ticks, LLG_REGION_RE_NBA);
 }
 
 static void enqueue_nba(llg_nba_t* n) {
@@ -5240,6 +5446,90 @@ void llg_nba_after(sv4_t* target, sv4_t value, uint64_t ticks) {
     n->target = target;
     n->value = value;
     enqueue_nba(n);
+}
+
+static void clocking_drive_schedule(const llg_clocking_drive_t* drive,
+                                    const llg_wait_src_t* specs, int n_specs) {
+    if (!specs || n_specs <= 0 || !region_can_mutate("clocking drive scheduling"))
+        return;
+    if (clocking_event_current(specs, n_specs)) {
+        clocking_drive_enqueue(drive);
+        return;
+    }
+    llg_clocking_drive_t* pending = (llg_clocking_drive_t*)llg_checked_calloc(
+        1, sizeof(*pending), "pending clocking drive");
+    pending->specs = (llg_wait_src_t*)llg_checked_malloc(
+        (size_t)n_specs, sizeof(*pending->specs), "clocking drive event sources");
+    memcpy(pending->specs, specs, (size_t)n_specs * sizeof(*specs));
+    pending->n_specs = n_specs;
+    pending->target = drive->target;
+    pending->net_target = drive->net_target;
+    pending->net_slot = drive->net_slot;
+    pending->real_target = drive->real_target;
+    pending->value = drive->value;
+    pending->mask = drive->mask;
+    pending->has_mask = drive->has_mask;
+    pending->is_real = drive->is_real;
+    pending->real_value = drive->real_value;
+    pending->ticks = drive->ticks;
+    if (g.clocking_drives_tail) g.clocking_drives_tail->next = pending;
+    else g.clocking_drives = pending;
+    g.clocking_drives_tail = pending;
+}
+
+void llg_clocking_nba_sync_after(sv4_t* target, sv4_t value, uint64_t ticks,
+                                 const llg_wait_src_t* specs, int n_specs) {
+    llg_clocking_drive_t drive = {0};
+    drive.target = target;
+    drive.value = value;
+    drive.ticks = ticks;
+    clocking_drive_schedule(&drive, specs, n_specs);
+}
+
+void llg_clocking_nba_net_sync_after(llg_net_t* net, int slot, sv4_t value,
+                                     uint64_t ticks,
+                                     const llg_wait_src_t* specs, int n_specs) {
+    llg_clocking_drive_t drive = {0};
+    drive.net_target = net;
+    drive.net_slot = slot;
+    drive.value = value;
+    drive.ticks = ticks;
+    clocking_drive_schedule(&drive, specs, n_specs);
+}
+
+void llg_clocking_nba_sync_masked_after(
+    sv4_t* target, sv4_t value, sv4_t mask, uint64_t ticks,
+    const llg_wait_src_t* specs, int n_specs) {
+    llg_clocking_drive_t drive = {0};
+    drive.target = target;
+    drive.value = value;
+    drive.mask = mask;
+    drive.has_mask = 1;
+    drive.ticks = ticks;
+    clocking_drive_schedule(&drive, specs, n_specs);
+}
+
+void llg_clocking_nba_net_sync_masked_after(
+    llg_net_t* net, int slot, sv4_t value, sv4_t mask, uint64_t ticks,
+    const llg_wait_src_t* specs, int n_specs) {
+    llg_clocking_drive_t drive = {0};
+    drive.net_target = net;
+    drive.net_slot = slot;
+    drive.value = value;
+    drive.mask = mask;
+    drive.has_mask = 1;
+    drive.ticks = ticks;
+    clocking_drive_schedule(&drive, specs, n_specs);
+}
+
+void llg_clocking_nba_d_sync_after(double* target, double value, uint64_t ticks,
+                                   const llg_wait_src_t* specs, int n_specs) {
+    llg_clocking_drive_t drive = {0};
+    drive.real_target = target;
+    drive.real_value = value;
+    drive.is_real = 1;
+    drive.ticks = ticks;
+    clocking_drive_schedule(&drive, specs, n_specs);
 }
 
 void llg_nba_event_after(llg_event_t* ev, uint64_t ticks) {
@@ -6039,6 +6329,22 @@ static void apply_nba(llg_nba_t* next) {
     else if (next->is_real) {
         if (!llg_is_real_forced(next->real_target) && !pca_real_active(next->real_target))
             real_write(next->real_target, next->real_value);
+    } else if (next->net_target) {
+        llg_net_t* net = next->net_target;
+        if (next->net_slot < 0 || next->net_slot >= net->n_drivers) return;
+        sv4_t value = next->value;
+        sv4_t* current = net->drivers[next->net_slot];
+        if (!current) return;
+        if (next->has_mask) {
+            value = *current;
+            for (uint32_t i = 0; i < (value.width + 63u) / 64u; i++) {
+                uint64_t mask = next->mask.bits[i];
+                value.bits[i] = (value.bits[i] & ~mask) | (next->value.bits[i] & mask);
+                value.x[i] = (value.x[i] & ~mask) | (next->value.x[i] & mask);
+                value.z[i] = (value.z[i] & ~mask) | (next->value.z[i] & mask);
+            }
+        }
+        llg_net_write(net, next->net_slot, value);
     } else if (!llg_is_forced(next->target) && !pca_active(next->target)) {
         sv4_t value = next->value;
         if (next->has_mask) {

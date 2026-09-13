@@ -59,6 +59,11 @@
 //!   read goes through the shared resolution cell with each driver's strength
 //!   endpoints. Inout ports emit no link; unsupported groups reject code
 //!   generation rather than silently disconnecting their members;
+//! - clocking input/inout members allocate owned sampled storage, while
+//!   output/inout synchronous drives capture values and enqueue Re-NBA updates
+//!   after their constant output skew. `##N` waits repeat the resolved default
+//!   clocking event, so irregular clocks are counted by edges rather than by
+//!   an assumed period;
 //! - interface ports use the actual interface instance's resolved storage;
 //!   scope/modport connection metadata is consumed during elaboration, not
 //!   executed as a value expression or copied through per-port storage;
@@ -129,9 +134,10 @@
 //! IR/value widths that exceed the runtime model capacity,
 //! hierarchical WRITES whose final path element does not resolve to a
 //! per-instance signal, hierarchical write targets with variable or
-//! expression select indices/bounds, select LHS or
+//! expression select indices/bounds, ordinary select LHS or
 //! nonblocking assignment on a collapsed inout-net member (the group scan
-//! rejects these before emission), unsupported aggregate/non-static declaration
+//! rejects these before emission; clocking inout drives use their dedicated
+//! resolved-net NBA path), unsupported aggregate/non-static declaration
 //! initializer forms, unsupported resolved-net classes, aggregate pattern
 //! display values, and unknown `$display`/`$monitor`/`$strobe` format
 //! specifiers.  Structural primitives outside the supported builtin
@@ -1089,6 +1095,35 @@ impl<'a> Codegen<'a> {
         self.clocking_samples.get(&id).map(|sample| &sample.sample)
     }
 
+    fn clocking_var_source_info(&self, target: NodeId) -> Option<&SignalInfo> {
+        let source = self.db.clocking_var(target)?.source;
+        self.signal_of(source)
+    }
+
+    fn clocking_var_read_source_info(&self, target: NodeId) -> Result<Option<&SignalInfo>, String> {
+        let Some(target) = self
+            .clocking_var_target(target)
+            .or_else(|| self.db.is_clocking_var(target).then_some(target))
+        else {
+            return Ok(None);
+        };
+        let Some(var) = self.db.clocking_var(target) else {
+            return Ok(None);
+        };
+        if matches!(var.direction, DbDirection::Output) {
+            return Err(format!(
+                "clocking output member `{}` is write-only",
+                self.node(target).name
+            ));
+        }
+        Ok(self.clocking_var_source_info(target))
+    }
+
+    fn ensure_clocking_readable(&self, node: NodeId) -> Result<(), String> {
+        let _ = self.clocking_var_read_source_info(node)?;
+        Ok(())
+    }
+
     fn clocking_var_target(&self, node: NodeId) -> Option<NodeId> {
         if let Some(target) = self.db.resolve_clocking_member(node) {
             return self.db.is_clocking_var(target).then_some(target);
@@ -1108,6 +1143,108 @@ impl<'a> Codegen<'a> {
                 .copied(),
             _ => None,
         }
+    }
+
+    /// Collect clocking variables covered by an assignment target. A target
+    /// containing any clocking member must consist entirely of clocking
+    /// members; mixing ordinary and clocking destinations would require
+    /// different scheduling rules within one concatenation.
+    fn clocking_lhs_targets(&self, node: NodeId, targets: &mut Vec<NodeId>) -> bool {
+        if let Some(target) = self.clocking_var_target(node) {
+            targets.push(target);
+            return true;
+        }
+        match self.kind(node) {
+            NodeKind::Expr(
+                ExprKind::BitSelect { base, .. }
+                | ExprKind::PartSelect { base, .. }
+                | ExprKind::IndexedPartSelect { base, .. }
+                | ExprKind::ArraySelect { base, .. },
+            ) => self.clocking_lhs_targets(*base, targets),
+            NodeKind::Expr(ExprKind::Operation {
+                op: Operation::Concat,
+                operands,
+                ..
+            }) => {
+                let mut all_clocking = true;
+                for operand in operands {
+                    if !self.clocking_lhs_targets(*operand, targets) {
+                        all_clocking = false;
+                    }
+                }
+                all_clocking
+            }
+            NodeKind::Expr(ExprKind::Streaming { streams, .. }) => {
+                let mut all_clocking = true;
+                for stream in streams {
+                    if !self.clocking_lhs_targets(stream.value, targets) {
+                        all_clocking = false;
+                    }
+                }
+                all_clocking
+            }
+            _ => false,
+        }
+    }
+
+    fn default_clocking_block(&self, inst: NodeId) -> Option<NodeId> {
+        let mut current = Some(inst);
+        while let Some(scope) = current {
+            if let Some(block) = self.node(scope).children.iter().copied().find(|child| {
+                self.db
+                    .clocking_block(*child)
+                    .is_some_and(|info| info.is_default)
+            }) {
+                return Some(block);
+            }
+            current = self.node(scope).parent;
+        }
+        None
+    }
+
+    fn clocking_output_skew(&self, target: NodeId, path: &str) -> Result<ClockingSkew, String> {
+        let var = self.db.clocking_var(target).ok_or_else(|| {
+            format!(
+                "clocking member `{}` is not available in `{path}`",
+                self.node(target).name
+            )
+        })?;
+        let block = self.db.clocking_block(var.block).ok_or_else(|| {
+            format!(
+                "clocking member `{}` has no owning block in `{path}`",
+                self.node(target).name
+            )
+        })?;
+        let skew = if var.output.delay.is_some() || !matches!(var.output.edge, ClockingEdge::None) {
+            &var.output
+        } else {
+            &block.default_output
+        };
+        Ok(skew.clone())
+    }
+
+    fn clocking_output_edge(&self, target: NodeId, path: &str) -> Result<ClockingEdge, String> {
+        Ok(self.clocking_output_skew(target, path)?.edge)
+    }
+
+    fn clocking_output_delay(&mut self, target: NodeId, path: &str) -> Result<IrDelay, String> {
+        let skew = self.clocking_output_skew(target, path)?;
+        let Some(delay) = skew.delay else {
+            // An omitted clocking output skew is the LRM default `#0`.
+            return Ok(IrDelay::Constant(0));
+        };
+        if self.db.semantic_detail(delay) == Some("OneStepDelay") {
+            return Ok(IrDelay::Constant(1));
+        }
+        let expression = skew.delay_expression.ok_or_else(|| {
+            format!(
+                "clocking output skew for `{}` in `{path}` is not a constant timing control",
+                self.node(target).name
+            )
+        })?;
+        Ok(IrDelay::Constant(
+            self.procedural_delay_ticks(delay, expression)?,
+        ))
     }
 
     /// Resolve a module-reference signal to its final typed lvalue.  The
@@ -1826,9 +1963,17 @@ impl<'a> Codegen<'a> {
         if let Some(info) = self.sampled_signal_of(node) {
             return Some(info);
         }
+        if let Some(target) = self.clocking_var_target(node) {
+            if let Some(info) = self.clocking_var_source_info(target) {
+                return Some(info);
+            }
+        }
         if let NodeKind::Expr(ExprKind::HierPath { parts, refs }) = self.kind(node) {
             if let Some(t) = refs.last().copied().flatten() {
                 if let Some(info) = self.sampled_signal_of(t) {
+                    return Some(info);
+                }
+                if let Some(info) = self.clocking_var_source_info(t) {
                     return Some(info);
                 }
                 if let Some(info) = self.signal_of(t) {
@@ -1837,7 +1982,9 @@ impl<'a> Codegen<'a> {
             }
             let (target, base_index) = self.hier_path_signal_target(parts, refs)?;
             if base_index + 1 == parts.len() {
-                return self.signal_of(target);
+                return self
+                    .clocking_var_source_info(target)
+                    .or_else(|| self.signal_of(target));
             }
         }
         None
@@ -1856,7 +2003,10 @@ impl<'a> Codegen<'a> {
             .enumerate()
             .find_map(|(index, target)| target.map(|target| (index, target)))
         {
-            if self.sampled_signal_of(target).is_some() || self.signal_of(target).is_some() {
+            if self.sampled_signal_of(target).is_some()
+                || self.clocking_var_source_info(target).is_some()
+                || self.signal_of(target).is_some()
+            {
                 return Some((target, index));
             }
         }
@@ -2269,9 +2419,18 @@ impl<'a> Codegen<'a> {
             NodeKind::Expr(ExprKind::HierPath { refs, .. }) => refs.last().copied().flatten(),
             _ => None,
         };
-        let Some(target) = target else {
+        let Some(target) = target
+            .and_then(|target| self.clocking_var_target(target).or(Some(target)))
+            .or_else(|| self.clocking_var_target(base))
+        else {
             return Ok(None);
         };
+        let target = self
+            .db
+            .is_clocking_var(target)
+            .then(|| self.db.clocking_var(target).map(|var| var.source))
+            .flatten()
+            .unwrap_or(target);
         let Some(dimensions) = self.db.packed_dimensions(target) else {
             return Ok(None);
         };
@@ -2287,6 +2446,11 @@ impl<'a> Codegen<'a> {
     }
 
     fn packed_range_for_base(&self, base: NodeId) -> Option<crate::core::db::PackedRange> {
+        let base = self
+            .clocking_var_target(base)
+            .or_else(|| self.db.is_clocking_var(base).then_some(base))
+            .and_then(|target| self.db.clocking_var(target).map(|var| var.source))
+            .unwrap_or(base);
         if let Some([range]) = self.db.packed_dimensions(base) {
             return Some(*range);
         }

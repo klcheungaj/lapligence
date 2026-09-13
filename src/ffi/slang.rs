@@ -604,6 +604,7 @@ pub const SEMANTIC_ASSERTION_DEFERRED: u64 = 1 << 0;
 pub const SEMANTIC_ASSERTION_FINAL: u64 = 1 << 1;
 
 /// Clocking metadata tags defined by the repository-owned semantic ABI.
+pub const SEMANTIC_TIMING_CYCLE_DELAY: u32 = 117;
 pub const SEMANTIC_TIMING_ONE_STEP_DELAY: u32 = 118;
 pub const SEMANTIC_SCOPE_CLOCKING_BLOCK: u32 = 230;
 pub const SEMANTIC_VARIABLE_CLOCKING: u32 = 231;

@@ -4,7 +4,8 @@ use super::constants::round_shortreal;
 use super::context::{RCtx, RenderedExpr};
 use super::expressions::{array_guard, coerce_two_state, render_expr_impl};
 use crate::sim::ir::{
-    IrElemSel, IrExpr, IrExprKind, IrLhs, IrStreamDirection, IrTransitionDelay, IrType,
+    IrEdge, IrElemSel, IrExpr, IrExprKind, IrLhs, IrStreamDirection, IrTransitionDelay, IrType,
+    IrWaitSrc,
 };
 
 enum Select {
@@ -247,8 +248,12 @@ fn render_selected_array(
     ))
 }
 
-fn store(target: &str, value: &str, ticks: &str) -> String {
-    if ticks == "0ULL" {
+fn store(target: &str, value: &str, ticks: &str, clocking: bool) -> String {
+    if clocking {
+        format!(
+            "llg_clocking_nba_sync_after({target}, {value}, {ticks}, _clocking_drive_sources, _clocking_drive_source_count);"
+        )
+    } else if ticks == "0ULL" {
         format!("llg_nba({target}, {value});")
     } else {
         format!("llg_nba_after({target}, {value}, {ticks});")
@@ -261,6 +266,8 @@ fn selected_store(
     selected: Select,
     value: &str,
     ticks: &str,
+    net: Option<(&str, usize)>,
+    clocking: bool,
 ) -> String {
     let (index, width, update_value, update_mask) = match selected {
         Select::Bit(index) => (
@@ -280,7 +287,27 @@ fn selected_store(
             format!("sv4_idx_part_select_set_value(&_mask, _index, {width}, {}, sv4_fill(1, {width}, 0));", negative as u8),
         ),
     };
-    format!("{{ sv4_t _rhs=sv4_cast({value}, {width}, 0); {index} sv4_t _value=sv4_fill(0, {storage_width}, 0); sv4_t _mask=_value; {update_value} {update_mask} llg_nba_masked({target}, _value, _mask, {ticks}); }}")
+    let call = net.map_or_else(
+        || {
+            if clocking {
+                format!(
+                    "llg_clocking_nba_sync_masked_after({target}, _value, _mask, {ticks}, _clocking_drive_sources, _clocking_drive_source_count)"
+                )
+            } else {
+                format!("llg_nba_masked({target}, _value, _mask, {ticks})")
+            }
+        },
+        |(net, slot)| {
+            if clocking {
+                format!(
+                    "llg_clocking_nba_net_sync_masked_after(&{net}, {slot}, _value, _mask, {ticks}, _clocking_drive_sources, _clocking_drive_source_count)"
+                )
+            } else {
+                unreachable!("ordinary nonblocking assignments cannot target net drivers")
+            }
+        },
+    );
+    format!("{{ sv4_t _rhs=sv4_cast({value}, {width}, 0); {index} sv4_t _value=sv4_fill(0, {storage_width}, 0); sv4_t _mask=_value; {update_value} {update_mask} {call}; }}")
 }
 
 pub(super) fn render_nba(
@@ -288,6 +315,67 @@ pub(super) fn render_nba(
     lhs: &IrLhs,
     rhs: &IrExpr,
     ticks: &str,
+) -> Result<String, String> {
+    render_nba_inner(ctx, lhs, rhs, ticks, false)
+}
+
+fn clocking_drive_sources_text(
+    ctx: &RCtx<'_>,
+    specs: &[(IrWaitSrc, IrEdge)],
+) -> Result<String, String> {
+    if specs.is_empty() {
+        return Err("clocking drive has no associated clocking event".to_owned());
+    }
+    let edge_kind = |edge: &IrEdge| match edge {
+        IrEdge::Posedge => "LLG_EV_POSEDGE",
+        IrEdge::Negedge => "LLG_EV_NEGEDGE",
+        IrEdge::Any => "LLG_EV_ANY",
+    };
+    let entries = specs
+        .iter()
+        .map(|(source, edge)| match source {
+            IrWaitSrc::Sig(name) => Ok(format!(
+                "{{ .sig = &{name}, .kind = {}, .ev = NULL }}",
+                edge_kind(edge)
+            )),
+            IrWaitSrc::Event(event) => Ok(format!(
+                "{{ .sig = NULL, .kind = {}, .ev = {} }}",
+                edge_kind(edge),
+                super::statements::event_ref_code(ctx, event)?
+            )),
+            IrWaitSrc::Evaluated { .. }
+            | IrWaitSrc::EvaluatedReal { .. }
+            | IrWaitSrc::FilteredEvent { .. }
+            | IrWaitSrc::Real(_) => {
+                Err("clocking drive requires a simple signal or named-event clocking event".into())
+            }
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    Ok(format!(
+        "llg_wait_src_t _clocking_drive_sources[] = {{{}}}; int _clocking_drive_source_count = {};",
+        entries.join(", "),
+        entries.len()
+    ))
+}
+
+pub(super) fn render_clocking_nba(
+    ctx: &RCtx<'_>,
+    lhs: &IrLhs,
+    rhs: &IrExpr,
+    ticks: &str,
+    specs: &[(IrWaitSrc, IrEdge)],
+) -> Result<String, String> {
+    let sources = clocking_drive_sources_text(ctx, specs)?;
+    let assignment = render_nba_inner(ctx, lhs, rhs, ticks, true)?;
+    Ok(format!("{{ {sources} {assignment} }}"))
+}
+
+fn render_nba_inner(
+    ctx: &RCtx<'_>,
+    lhs: &IrLhs,
+    rhs: &IrExpr,
+    ticks: &str,
+    allow_net: bool,
 ) -> Result<String, String> {
     if matches!(lhs, IrLhs::Ref { .. }) {
         return Err("nonblocking assignment through a ref formal is not supported".into());
@@ -318,7 +406,7 @@ pub(super) fn render_nba(
                 false,
                 None,
             );
-            text.push_str(&render_nba(ctx, part, &expression, ticks)?);
+            text.push_str(&render_nba_inner(ctx, part, &expression, ticks, allow_net)?);
             cursor = right;
         }
         text.push('}');
@@ -348,12 +436,26 @@ pub(super) fn render_nba(
             };
             let real = super::constants::round_shortreal(real, array.shortreal);
             let call = if ticks == "0ULL" {
-                format!("llg_nba_d(&{}[({linear})], {real});", array.c_name)
+                if allow_net {
+                    format!(
+                        "llg_clocking_nba_d_sync_after(&{}[({linear})], {real}, {ticks}, _clocking_drive_sources, _clocking_drive_source_count);",
+                        array.c_name
+                    )
+                } else {
+                    format!("llg_nba_d(&{}[({linear})], {real});", array.c_name)
+                }
             } else {
-                format!(
-                    "llg_nba_d_after(&{}[({linear})], {real}, {ticks});",
-                    array.c_name
-                )
+                if allow_net {
+                    format!(
+                        "llg_clocking_nba_d_sync_after(&{}[({linear})], {real}, {ticks}, _clocking_drive_sources, _clocking_drive_source_count);",
+                        array.c_name
+                    )
+                } else {
+                    format!(
+                        "llg_nba_d_after(&{}[({linear})], {real}, {ticks});",
+                        array.c_name
+                    )
+                }
             };
             return Ok(format!("{{ {decls} if ({condition}) {{ {call} }} }}"));
         }
@@ -372,13 +474,15 @@ pub(super) fn render_nba(
             array_guard(array, &indices).unwrap_or_else(|| (String::new(), "1".into(), "0".into()));
         let target = format!("&{}[({linear})]", array.c_name);
         let assignment = match elem_sel {
-            IrElemSel::Whole => store(&target, "_array_rhs", ticks),
+            IrElemSel::Whole => store(&target, "_array_rhs", ticks, allow_net),
             IrElemSel::Part(left, right) => selected_store(
                 &target,
                 array.elem_width,
                 Select::Part(*left, *right),
                 "_array_rhs",
                 ticks,
+                None,
+                allow_net,
             ),
             IrElemSel::Bit(index) => selected_store(
                 &target,
@@ -386,6 +490,8 @@ pub(super) fn render_nba(
                 Select::Bit(render_expr_impl(ctx, index)?.code),
                 "_array_rhs",
                 ticks,
+                None,
+                allow_net,
             ),
             IrElemSel::Indexed {
                 base,
@@ -397,6 +503,8 @@ pub(super) fn render_nba(
                 Select::Indexed(render_expr_impl(ctx, base)?.code, *width, *negative),
                 "_array_rhs",
                 ticks,
+                None,
+                allow_net,
             ),
         };
         return Ok(format!(
@@ -418,7 +526,11 @@ pub(super) fn render_nba(
                 format!("sv4_to_real({})", value.code)
             };
             let real = super::constants::round_shortreal(real, *shortreal);
-            return Ok(if ticks == "0ULL" {
+            return Ok(if allow_net {
+                format!(
+                    "llg_clocking_nba_d_sync_after({addr}, {real}, {ticks}, _clocking_drive_sources, _clocking_drive_source_count);"
+                )
+            } else if ticks == "0ULL" {
                 format!("llg_nba_d({addr}, {real});")
             } else {
                 format!("llg_nba_d_after({addr}, {real}, {ticks});")
@@ -428,6 +540,7 @@ pub(super) fn render_nba(
             addr,
             &packed_value(&value, *width, *signed, *two_state),
             ticks,
+            allow_net,
         ));
     }
     let (index, select, width, selected_two_state) = match lhs {
@@ -457,7 +570,10 @@ pub(super) fn render_nba(
         _ => unreachable!("other assignment targets handled above"),
     };
     let signal = ctx.model.signal(index);
-    if signal.net_driver.is_some() {
+    let net = signal
+        .net_driver
+        .map(|(group, slot)| (ctx.model.net_group(group).c_name.as_str(), slot));
+    if net.is_some() && !allow_net {
         return Err("nonblocking assignment to a net member is not supported".into());
     }
     let target = format!("&{}", signal.c_name);
@@ -468,10 +584,21 @@ pub(super) fn render_nba(
             format!("sv4_to_real({})", value.code)
         };
         let value = round_shortreal(value, shortreal);
-        return Ok(if ticks == "0ULL" {
-            format!("llg_nba_d({target}, {value});")
+        let call = if allow_net {
+            "llg_clocking_nba_d_sync_after"
+        } else if ticks == "0ULL" {
+            "llg_nba_d"
         } else {
-            format!("llg_nba_d_after({target}, {value}, {ticks});")
+            "llg_nba_d_after"
+        };
+        return Ok(if allow_net {
+            format!(
+                "{call}({target}, {value}, {ticks}, _clocking_drive_sources, _clocking_drive_source_count);"
+            )
+        } else if ticks != "0ULL" {
+            format!("{call}({target}, {value}, {ticks});")
+        } else {
+            format!("{call}({target}, {value});")
         });
     }
     let signed = select.is_none() && signal.ty.signed();
@@ -481,8 +608,38 @@ pub(super) fn render_nba(
         signed,
         signal.ty.two_state() || selected_two_state,
     );
+    if let Some((net, slot)) = net {
+        return Ok(match select {
+            None => {
+                if allow_net {
+                    format!(
+                        "llg_clocking_nba_net_sync_after(&{net}, {slot}, {value}, {ticks}, _clocking_drive_sources, _clocking_drive_source_count);"
+                    )
+                } else {
+                    unreachable!("ordinary nonblocking assignments cannot target net drivers")
+                }
+            }
+            Some(select) => selected_store(
+                &target,
+                signal.ty.width(),
+                select,
+                &value,
+                ticks,
+                Some((net, slot)),
+                allow_net,
+            ),
+        });
+    }
     Ok(match select {
-        None => store(&target, &value, ticks),
-        Some(select) => selected_store(&target, signal.ty.width(), select, &value, ticks),
+        None => store(&target, &value, ticks, allow_net),
+        Some(select) => selected_store(
+            &target,
+            signal.ty.width(),
+            select,
+            &value,
+            ticks,
+            net,
+            allow_net,
+        ),
     })
 }

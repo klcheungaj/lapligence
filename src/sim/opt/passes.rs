@@ -576,11 +576,13 @@ fn walk_stmt_mut(s: &mut IrStmt, f: &mut impl FnMut(&mut IrExpr)) {
             walk_expr_mut(count, f);
             walk_stmts_mut(body, f);
         }
+        IrStmt::ClockingCycleWait { count, .. } => walk_expr_mut(count, f),
         IrStmt::DeclLocal {
             init: Some(init), ..
         } => walk_expr_mut(init, f),
         IrStmt::Assign { lhs, rhs, .. }
         | IrStmt::DelayedAssign { lhs, rhs, .. }
+        | IrStmt::ClockingDrive { lhs, rhs, .. }
         | IrStmt::InertialAssign { lhs, rhs, .. } => {
             walk_lhs_mut(lhs, f);
             walk_expr_mut(rhs, f);
@@ -2063,7 +2065,7 @@ fn sens_lists_of(s: &IrStmt, out: &mut Vec<IrDependency>) {
                 sens_lists_of(x, out);
             }
         }
-        IrStmt::WaitEvents { specs } => {
+        IrStmt::WaitEvents { specs } | IrStmt::ClockingCycleWait { specs, .. } => {
             for (src, _) in specs {
                 match src {
                     IrWaitSrc::Sig(name) => out.push(IrDependency::scalar(name)),
@@ -2183,6 +2185,7 @@ fn collect_stmt_rw(s: &IrStmt, model: &IrModel, rw: &mut Rw) {
         } => collect_expr_reads(init, model, rw),
         IrStmt::Assign { lhs, rhs, .. }
         | IrStmt::DelayedAssign { lhs, rhs, .. }
+        | IrStmt::ClockingDrive { lhs, rhs, .. }
         | IrStmt::InertialAssign { lhs, rhs, .. } => {
             collect_lhs_rw(lhs, model, rw);
             collect_expr_reads(rhs, model, rw);
@@ -2348,6 +2351,25 @@ fn collect_stmt_rw(s: &IrStmt, model: &IrModel, rw: &mut Rw) {
         // Named-event entries (`IrWaitSrc::Event`) are NOT storage — the
         // event globals are always emitted, so they are simply skipped.
         IrStmt::WaitEvents { specs } => {
+            for (src, _) in specs {
+                match src {
+                    IrWaitSrc::Sig(name) => {
+                        mark_dependency_read(&IrDependency::scalar(name), model, rw)
+                    }
+                    IrWaitSrc::Real(name) => {
+                        mark_dependency_read(&IrDependency::real(name), model, rw)
+                    }
+                    IrWaitSrc::Evaluated { reads, .. } | IrWaitSrc::EvaluatedReal { reads, .. } => {
+                        for dependency in reads {
+                            mark_dependency_read(dependency, model, rw);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        IrStmt::ClockingCycleWait { count, specs } => {
+            collect_expr_reads(count, model, rw);
             for (src, _) in specs {
                 match src {
                     IrWaitSrc::Sig(name) => {

@@ -6991,6 +6991,7 @@ impl<'a> Codegen<'a> {
             }
             NodeKind::Stmt(
                 StmtKind::DelayControl { .. }
+                | StmtKind::CycleDelayControl { .. }
                 | StmtKind::EventControl { .. }
                 | StmtKind::Wait { .. }
                 | StmtKind::WaitOrder { .. }
@@ -7330,6 +7331,7 @@ impl<'a> Codegen<'a> {
         match self.kind(node) {
             NodeKind::Stmt(
                 StmtKind::DelayControl { .. }
+                | StmtKind::CycleDelayControl { .. }
                 | StmtKind::EventControl { .. }
                 | StmtKind::Wait { .. }
                 | StmtKind::WaitOrder { .. },
@@ -11401,7 +11403,7 @@ impl<'a> Codegen<'a> {
         match self.kind(node) {
             NodeKind::FuncCall { .. } if self.is_process_self_call(node) => return Ok(()),
             NodeKind::Stmt(StmtKind::EventControl { .. }) => scan.event_controls.push(node),
-            NodeKind::Stmt(StmtKind::DelayControl { .. })
+            NodeKind::Stmt(StmtKind::DelayControl { .. } | StmtKind::CycleDelayControl { .. })
             | NodeKind::Stmt(StmtKind::Wait { .. })
             | NodeKind::Stmt(StmtKind::WaitOrder { .. })
             | NodeKind::Stmt(StmtKind::WaitFork) => {
@@ -12921,6 +12923,14 @@ impl<'a> Codegen<'a> {
         _scope_path: &str,
         base: NodeId,
     ) -> Result<(String, SignalInfo), String> {
+        if let Some(target) = self
+            .clocking_var_target(base)
+            .or_else(|| self.db.is_clocking_var(base).then_some(base))
+        {
+            if let Some(info) = self.clocking_var_source_info(target) {
+                return Ok((info.global.clone(), info.clone()));
+            }
+        }
         match self.kind(base) {
             NodeKind::Net { .. } | NodeKind::Var { .. } => {
                 if let Some(info) = self.signal_of(base) {
@@ -12952,6 +12962,14 @@ impl<'a> Codegen<'a> {
         target: Option<NodeId>,
     ) -> Result<(String, SignalInfo), String> {
         if let Some(t) = target {
+            if let Some(clocking_target) = self
+                .clocking_var_target(t)
+                .or_else(|| self.db.is_clocking_var(t).then_some(t))
+            {
+                if let Some(info) = self.clocking_var_source_info(clocking_target) {
+                    return Ok((info.global.clone(), info.clone()));
+                }
+            }
             if let Some(info) = self.signal_of(t) {
                 return Ok((info.global.clone(), info.clone()));
             }
@@ -13050,6 +13068,21 @@ impl<'a> Codegen<'a> {
     }
 
     pub(super) fn analyze_lhs(&mut self, path: &str, lhs: NodeId) -> Result<Lhs, String> {
+        if let Some(target) = self
+            .clocking_var_target(lhs)
+            .or_else(|| self.db.is_clocking_var(lhs).then_some(lhs))
+        {
+            let info = self
+                .clocking_var_source_info(target)
+                .cloned()
+                .ok_or_else(|| {
+                    format!(
+                        "clocking member `{}` has no writable source in `{path}`",
+                        self.node(target).name
+                    )
+                })?;
+            return Ok(Lhs::Whole(info));
+        }
         match self.kind(lhs) {
             NodeKind::Expr(ExprKind::Streaming {
                 direction,

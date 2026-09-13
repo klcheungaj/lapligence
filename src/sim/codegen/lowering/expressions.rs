@@ -984,6 +984,8 @@ impl<'a> Codegen<'a> {
             NodeKind::Expr(ExprKind::ScopeRef { target }) => {
                 if let Some(info) = self.sampled_signal_of(*target) {
                     self.signal_read_expr(info)
+                } else if let Some(info) = self.clocking_var_read_source_info(*target)? {
+                    self.signal_read_expr(info)
                 } else {
                     Err(format!(
                         "clocking block scope `{}` is not a value in `{scope_path}`",
@@ -993,6 +995,7 @@ impl<'a> Codegen<'a> {
             }
             NodeKind::Expr(ExprKind::Ref { target }) => self.lower_ref_expr(scope_path, h, *target),
             NodeKind::Expr(ExprKind::BitSelect { base, index }) => {
+                self.ensure_clocking_readable(*base)?;
                 if let Some(ai) = self.array_of(*base).cloned() {
                     if ai.real {
                         return Err(format!(
@@ -1071,6 +1074,7 @@ impl<'a> Codegen<'a> {
                 ))
             }
             NodeKind::Expr(ExprKind::ArraySelect { base, indices }) => {
+                self.ensure_clocking_readable(*base)?;
                 if let Some((_target, _kind, member_info)) = self.unpacked_member_info(h) {
                     let member = member_info.member;
                     let signal = member_info.signal.ok_or_else(|| {
@@ -1220,6 +1224,7 @@ impl<'a> Codegen<'a> {
                 ))
             }
             NodeKind::Expr(ExprKind::PartSelect { base, left, right }) => {
+                self.ensure_clocking_readable(*base)?;
                 let base_value = self.lower_expr(scope_path, *base)?;
                 if base_value.is_real() {
                     return Err(format!(
@@ -1282,6 +1287,7 @@ impl<'a> Codegen<'a> {
                 width_expr,
                 neg,
             }) => {
+                self.ensure_clocking_readable(*base)?;
                 let base_value = self.lower_expr(scope_path, *base)?;
                 if base_value.is_real() {
                     return Err(format!(
@@ -1723,6 +1729,9 @@ impl<'a> Codegen<'a> {
                 ));
             }
             if let Some(info) = self.sampled_signal_of(t) {
+                return self.signal_read_expr(info);
+            }
+            if let Some(info) = self.clocking_var_read_source_info(t)? {
                 return self.signal_read_expr(info);
             }
             if let Some(info) = self.signal_of(t) {
@@ -4464,10 +4473,24 @@ impl<'a> Codegen<'a> {
     /// converted to [`IrLhs`] (identical by construction during the seam
     /// transition; sub-expression codes ride along verbatim).
     pub(super) fn lower_lhs(&mut self, path: &str, lhs: NodeId) -> Result<IrLhs, String> {
-        if self.clocking_var_target(lhs).is_some() {
-            return Err(
-                "clocking input members are read-only sampled values in `".to_owned() + path + "`",
-            );
+        let mut clocking_targets = Vec::new();
+        let all_clocking = self.clocking_lhs_targets(lhs, &mut clocking_targets);
+        if !clocking_targets.is_empty() {
+            if !all_clocking {
+                return Err(format!(
+                    "clocking output/inout concatenations cannot mix ordinary targets in `{path}`"
+                ));
+            }
+            if let Some(target) = clocking_targets.iter().find(|target| {
+                self.db
+                    .clocking_var(**target)
+                    .is_some_and(|var| matches!(var.direction, DbDirection::Input))
+            }) {
+                return Err(format!(
+                    "clocking input member `{}` is read-only in `{path}`",
+                    self.node(*target).name
+                ));
+            }
         }
         if let Some(target) = self.capture_target(lhs) {
             let binding = self

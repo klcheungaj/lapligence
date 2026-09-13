@@ -890,9 +890,10 @@ fn classify_statement(db: &Db, id: NodeId, statement: &StmtKind) -> Option<Synth
         {
             None
         }
-        StmtKind::EventControl { .. } | StmtKind::DelayControl { .. } | StmtKind::Wait { .. } => {
-            Some(SynthesisIssueKind::TimingControl)
-        }
+        StmtKind::EventControl { .. }
+        | StmtKind::DelayControl { .. }
+        | StmtKind::CycleDelayControl { .. }
+        | StmtKind::Wait { .. } => Some(SynthesisIssueKind::TimingControl),
         StmtKind::EventTrigger { .. } => Some(SynthesisIssueKind::EventOperation),
         StmtKind::Force { .. }
         | StmtKind::Release { .. }

@@ -10,8 +10,8 @@ use super::expressions::{
 use super::EmitError;
 use crate::sim::execution::ScheduleRegion;
 use crate::sim::ir::{
-    IrCallArg, IrClockingSampleMode, IrDependency, IrDisplayArg, IrExpr, IrExprKind, IrFileOp,
-    IrImmediateAssertionKind, IrLhs, IrMemoryRadix, IrSeverityLevel, IrStochasticStmt,
+    IrCallArg, IrClockingSampleMode, IrDependency, IrDisplayArg, IrEdge, IrExpr, IrExprKind,
+    IrFileOp, IrImmediateAssertionKind, IrLhs, IrMemoryRadix, IrSeverityLevel, IrStochasticStmt,
     IrStreamDirection, IrStreamSelector, IrStreamTarget, IrType, IrUniquePriorityCheck, IrWaitSrc,
     StorageKind,
 };
@@ -423,6 +423,18 @@ fn render_stmt_scoped(
             let assignment = super::assignments::render_nba(ctx, lhs, rhs, "_nba_delay")?;
             format!("{{ uint64_t _nba_delay={delay}; {assignment} }}\n")
         }
+        IrStmt::ClockingDrive {
+            lhs,
+            rhs,
+            ticks,
+            specs,
+        } => {
+            let delay = render_delay(ctx, ticks)?;
+            let assignment =
+                super::assignments::render_clocking_nba(ctx, lhs, rhs, "_clocking_skew", specs)?;
+            format!("{{ uint64_t _clocking_skew={delay}; {assignment} }}\n")
+        }
+        IrStmt::ClockingCycleWait { count, specs } => clocking_cycle_wait_text(ctx, count, specs)?,
         IrStmt::InertialAssign { lhs, rhs, delay } => {
             super::assignments::render_inertial(ctx, lhs, rhs, *delay)?
         }
@@ -2325,6 +2337,44 @@ fn wait_events_text(
          llg_wait_mixed(src, {});\n    }}\n",
         entries.join(", "),
         specs.len()
+    ))
+}
+
+fn clocking_cycle_wait_text(
+    ctx: &RCtx<'_>,
+    count: &IrExpr,
+    specs: &[(crate::sim::ir::IrWaitSrc, crate::sim::ir::IrEdge)],
+) -> Result<String, String> {
+    if specs.is_empty() {
+        return Err("clocking cycle wait requires at least one event source".into());
+    }
+    let count = render_expr(ctx, count)?.code;
+    let edge_kind = |edge: &IrEdge| match edge {
+        IrEdge::Posedge => "LLG_EV_POSEDGE",
+        IrEdge::Negedge => "LLG_EV_NEGEDGE",
+        IrEdge::Any => "LLG_EV_ANY",
+    };
+    let entries = specs
+        .iter()
+        .map(|(source, edge)| match source {
+            IrWaitSrc::Sig(name) => Ok(format!(
+                "{{ .sig = &{name}, .kind = {}, .ev = NULL }}",
+                edge_kind(edge)
+            )),
+            IrWaitSrc::Event(event) => Ok(format!(
+                "{{ .sig = NULL, .kind = {}, .ev = {} }}",
+                edge_kind(edge),
+                event_ref_code(ctx, event)?
+            )),
+            _ => Err("clocking cycle wait has an unsupported event source".into()),
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    Ok(format!(
+        "{{ llg_wait_src_t _clocking_cycle_sources[] = {{{}}}; \
+         llg_wait_clocking_cycles(_clocking_cycle_sources, {}, {}); }}\n",
+        entries.join(", "),
+        entries.len(),
+        count
     ))
 }
 

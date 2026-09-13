@@ -2499,6 +2499,7 @@ impl Validator<'_> {
     fn validate_stmt(&self, stmt: &IrStmt, formals: &[IrFormal], path: &str) -> ValidationResult {
         if let IrStmt::Delay { ticks }
         | IrStmt::DelayedAssign { ticks, .. }
+        | IrStmt::ClockingDrive { ticks, .. }
         | IrStmt::DelayedStringAssign { ticks, .. } = stmt
         {
             if let IrDelay::Runtime {
@@ -2852,6 +2853,50 @@ impl Validator<'_> {
                     );
                 }
             }
+            IrStmt::ClockingDrive {
+                lhs, rhs, specs, ..
+            } => {
+                if specs.is_empty() {
+                    return self.fail(path, "clocking drive requires an associated event");
+                }
+                for (index, (source, _)) in specs.iter().enumerate() {
+                    match source {
+                        IrWaitSrc::Sig(name) => {
+                            if !self.valid_dependency(&IrDependency::scalar(name)) {
+                                return self.fail(
+                                    format!("{path}.specs[{index}]"),
+                                    "clocking drive event must name active packed storage",
+                                );
+                            }
+                        }
+                        IrWaitSrc::Event(event) => self.validate_event_ref(
+                            event,
+                            formals,
+                            &format!("{path}.specs[{index}].event"),
+                        )?,
+                        _ => {
+                            return self.fail(
+                                format!("{path}.specs[{index}]"),
+                                "clocking drive event must be a signal or named event",
+                            )
+                        }
+                    }
+                }
+                fn persistent(lhs: &IrLhs) -> bool {
+                    match lhs {
+                        IrLhs::WholeRef { .. } | IrLhs::Ref { .. } => false,
+                        IrLhs::Stream { parts, .. } => {
+                            parts.iter().all(|(part, _)| persistent(part))
+                        }
+                        _ => true,
+                    }
+                }
+                if !persistent(lhs) {
+                    return self.fail(path, "clocking drive requires persistent target storage");
+                }
+                self.validate_lhs(lhs, formals, &format!("{path}.lhs"))?;
+                self.validate_expr(rhs, formals, &format!("{path}.rhs"))?;
+            }
             IrStmt::Assign { lhs, rhs, .. }
             | IrStmt::DelayedAssign { lhs, rhs, .. }
             | IrStmt::InertialAssign { lhs, rhs, .. } => {
@@ -3065,6 +3110,38 @@ impl Validator<'_> {
                                     "event dependency must name active storage",
                                 );
                             }
+                        }
+                    }
+                }
+            }
+            IrStmt::ClockingCycleWait { count, specs } => {
+                if specs.is_empty() {
+                    return self.fail(path, "clocking cycle wait requires at least one event");
+                }
+                self.validate_expr(count, formals, &format!("{path}.count"))?;
+                if count.is_real() {
+                    return self.fail(path, "clocking cycle wait count must be packed");
+                }
+                for (index, (source, _)) in specs.iter().enumerate() {
+                    match source {
+                        IrWaitSrc::Sig(name) => {
+                            if !self.valid_dependency(&IrDependency::scalar(name)) {
+                                return self.fail(
+                                    format!("{path}.specs[{index}]"),
+                                    "clocking cycle signal must name active packed storage",
+                                );
+                            }
+                        }
+                        IrWaitSrc::Event(event) => self.validate_event_ref(
+                            event,
+                            formals,
+                            &format!("{path}.specs[{index}].event"),
+                        )?,
+                        _ => {
+                            return self.fail(
+                                format!("{path}.specs[{index}]"),
+                                "clocking cycle wait source must be a signal or named event",
+                            )
                         }
                     }
                 }

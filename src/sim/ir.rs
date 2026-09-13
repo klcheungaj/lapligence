@@ -2566,6 +2566,26 @@ pub enum IrStmt {
         sample: usize,
         mode: IrClockingSampleMode,
     },
+    /// Capture a clocking output/inout value now and commit it as an NBA after
+    /// the resolved output skew. The target is the underlying signal lvalue;
+    /// preserving it here keeps selector evaluation and collision ordering in
+    /// the normal NBA machinery.
+    ClockingDrive {
+        lhs: IrLhs,
+        rhs: IrExpr,
+        ticks: IrDelay,
+        /// The clocking event of the target clockvar. A synchronous drive
+        /// issued off-event is held until the next matching event before its
+        /// output skew is applied.
+        specs: Vec<(IrWaitSrc, IrEdge)>,
+    },
+    /// Wait for a bounded number of resolved clocking events. A zero count
+    /// waits for the current-slot event only when that event has not already
+    /// occurred; the runtime owns that same-slot distinction.
+    ClockingCycleWait {
+        count: IrExpr,
+        specs: Vec<(IrWaitSrc, IrEdge)>,
+    },
     /// `@(posedge a or ev …)` — ONE atomic wait call; sources are
     /// [`IrWaitSrc`] entries (signal wait-address C names or named-event
     /// indices), edges per entry.
@@ -2896,6 +2916,7 @@ impl IrStmt {
         match self {
             Self::Delay { ticks }
             | Self::DelayedAssign { ticks, .. }
+            | Self::ClockingDrive { ticks, .. }
             | Self::DelayedStringAssign { ticks, .. }
             | Self::NonblockingEventTrigger {
                 ticks: Some(ticks), ..
@@ -2908,6 +2929,7 @@ impl IrStmt {
         match self {
             Self::Delay { ticks }
             | Self::DelayedAssign { ticks, .. }
+            | Self::ClockingDrive { ticks, .. }
             | Self::NonblockingEventTrigger {
                 ticks: Some(ticks), ..
             } => ticks.expression_mut(),

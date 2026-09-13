@@ -35,6 +35,12 @@
   and character pushback, and declaration-order binary reads are kept separate
   from scheduler state. File-input target descriptors are borrowed for one
   call; packed X/Z state and native string ownership remain explicit.
+  Clocking input samples use the preponed/observed history services, while
+  procedural clocking output/inout drives enqueue captured Re-NBA values after
+  their constant output skew; an off-event drive is retained until the next
+  matching clocking event, and net drives retain their resolved driver slot.
+  Clocking-bound `##N` waits are lowered as repeated event waits, so they count
+  resolved clocking edges instead of assuming a clock period.
   Memory-file tasks parse four-state binary/hex words, comments and address
   jumps into bounded fixed packed memories, and write the same consumable
   format in declaration/range order; resizable, multidimensional and real

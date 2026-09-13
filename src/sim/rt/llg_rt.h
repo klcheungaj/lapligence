@@ -822,6 +822,12 @@ typedef struct {
 // entry is triggered.
 void llg_wait_mixed(llg_wait_src_t* srcs, int n);
 
+// Suspend for a cycle count over simple clocking signal/named-event sources.
+// `##0` returns immediately if one source already fired in this time slot;
+// otherwise it waits for the next matching event. Positive counts always
+// wait for that many future events.
+void llg_wait_clocking_cycles(llg_wait_src_t* srcs, int n, sv4_t count);
+
 // Evaluators and dependencies refer to model storage. The runtime copies
 // every descriptor and dependency array before suspending the caller.
 // Callbacks must not suspend or mutate scheduler-observed storage. When a
@@ -910,11 +916,27 @@ void llg_nba(sv4_t* target, sv4_t value);
 // Capture values now, retaining target storage through the future NBA commit.
 // A zero tick delay stays in the current time slot's NBA region.
 void llg_nba_after(sv4_t* target, sv4_t value, uint64_t ticks);
+// Synchronous drives use the target clocking event. If the event has not
+// occurred in the current time slot, the runtime retains the captured value
+// until the next matching event before applying the output skew.
+void llg_clocking_nba_sync_after(sv4_t* target, sv4_t value, uint64_t ticks,
+                                 const llg_wait_src_t* specs, int n_specs);
+void llg_clocking_nba_net_sync_after(llg_net_t* net, int slot, sv4_t value,
+                                     uint64_t ticks,
+                                     const llg_wait_src_t* specs, int n_specs);
 void llg_nba_d_after(double* target, double value, uint64_t ticks);
+void llg_clocking_nba_d_sync_after(double* target, double value, uint64_t ticks,
+                                   const llg_wait_src_t* specs, int n_specs);
 void llg_string_nba_after(llg_string_t* target, llg_string_t value,
                           uint64_t ticks);
 // Merge only known-one mask positions into the target at commit time.
 void llg_nba_masked(sv4_t* target, sv4_t value, sv4_t mask, uint64_t ticks);
+void llg_clocking_nba_sync_masked_after(
+    sv4_t* target, sv4_t value, sv4_t mask, uint64_t ticks,
+    const llg_wait_src_t* specs, int n_specs);
+void llg_clocking_nba_net_sync_masked_after(
+    llg_net_t* net, int slot, sv4_t value, sv4_t mask, uint64_t ticks,
+    const llg_wait_src_t* specs, int n_specs);
 void llg_ba(sv4_t* target, sv4_t value);
 // Commit a write through a canonical `ref` descriptor immediately. Selected
 // aliases update the original storage once, preserving normal wakeups and

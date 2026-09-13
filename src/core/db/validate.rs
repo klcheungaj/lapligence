@@ -177,6 +177,77 @@ impl Validator<'_> {
             self.node(*init, &format!("vars_init[{}]", variable.0))?;
         }
 
+        for (block, metadata) in self.db.clocking_blocks() {
+            let path = format!("clocking_blocks[{}]", block.0);
+            let node = self.node(*block, &path)?;
+            if !matches!(node.kind, NodeKind::Stmt(super::StmtKind::Begin)) {
+                return self.fail(path, "metadata key is not a clocking-block scope");
+            }
+            self.node(
+                metadata.event,
+                &format!("clocking_blocks[{}].event", block.0),
+            )?;
+            for (index, spec) in metadata.event_specs.iter().enumerate() {
+                let mut refs = Vec::new();
+                spec.referenced_nodes(&mut refs);
+                for (ref_index, reference) in refs.into_iter().enumerate() {
+                    self.node(
+                        reference,
+                        &format!(
+                            "clocking_blocks[{}].event_specs[{index}][{ref_index}]",
+                            block.0
+                        ),
+                    )?;
+                }
+            }
+            for (name, skew) in [
+                ("default_input", &metadata.default_input),
+                ("default_output", &metadata.default_output),
+            ] {
+                if let Some(delay) = skew.delay {
+                    self.node(delay, &format!("clocking_blocks[{}].{name}.delay", block.0))?;
+                }
+                if let Some(expression) = skew.delay_expression {
+                    self.node(
+                        expression,
+                        &format!("clocking_blocks[{}].{name}.delay_expression", block.0),
+                    )?;
+                }
+            }
+        }
+
+        for (variable, metadata) in self.db.clocking_vars() {
+            let path = format!("clocking_vars[{}]", variable.0);
+            let node = self.node(*variable, &path)?;
+            if !matches!(node.kind, NodeKind::Var { .. }) {
+                return self.fail(path, "metadata key is not a clocking-variable declaration");
+            }
+            if !self.db.clocking_blocks().contains_key(&metadata.block) {
+                return self.fail(
+                    format!("clocking_vars[{}].block", variable.0),
+                    "clocking variable references an unknown clocking block",
+                );
+            }
+            self.node(
+                metadata.source,
+                &format!("clocking_vars[{}].source", variable.0),
+            )?;
+            for (name, skew) in [("input", &metadata.input), ("output", &metadata.output)] {
+                if let Some(delay) = skew.delay {
+                    self.node(
+                        delay,
+                        &format!("clocking_vars[{}].{name}.delay", variable.0),
+                    )?;
+                }
+                if let Some(expression) = skew.delay_expression {
+                    self.node(
+                        expression,
+                        &format!("clocking_vars[{}].{name}.delay_expression", variable.0),
+                    )?;
+                }
+            }
+        }
+
         for call in self.db.method_calls_with_clause_nodes() {
             let node = self.node(*call, &format!("method_calls_with_clause[{}]", call.0))?;
             if !matches!(node.kind, NodeKind::MethodCall { .. }) {
@@ -471,6 +542,7 @@ fn statement_refs(statement: &StmtKind, refs: &mut Vec<NodeId>) {
             }
         }
         StmtKind::DelayControl { delay } => refs.push(*delay),
+        StmtKind::CycleDelayControl { count } => refs.push(*count),
         StmtKind::VariableDecl { declaration } => refs.push(*declaration),
         StmtKind::Case { items, .. } => {
             for item in items {

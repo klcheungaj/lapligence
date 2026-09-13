@@ -111,6 +111,7 @@ fn body_is_trustworthy(db: &Db, root: NodeId) -> bool {
         | NodeKind::Stmt(StmtKind::Unsupported { .. } | StmtKind::Foreach { .. }) => return false,
         NodeKind::Stmt(
             StmtKind::DelayControl { .. }
+            | StmtKind::CycleDelayControl { .. }
             | StmtKind::EventControl { .. }
             | StmtKind::Wait { .. }
             | StmtKind::WaitFork,

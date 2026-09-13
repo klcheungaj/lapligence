@@ -360,6 +360,7 @@ fn stmt_temp_slots(stmt: &IrStmt) -> Result<u64, String> {
         }
         IrStmt::Assign { lhs, rhs, .. }
         | IrStmt::DelayedAssign { lhs, rhs, .. }
+        | IrStmt::ClockingDrive { lhs, rhs, .. }
         | IrStmt::InertialAssign { lhs, rhs, .. } => checked_add(
             lhs_slots(lhs)?,
             expr_slots(rhs)?,
@@ -464,6 +465,7 @@ fn stmt_temp_slots(stmt: &IrStmt) -> Result<u64, String> {
             [1, expr_slots(count)?, stmt_temp_frame_slots(body)?],
             "repeat temporary slots",
         ),
+        IrStmt::ClockingCycleWait { count, .. } => expr_slots(count),
         IrStmt::For {
             init,
             cond,
@@ -610,8 +612,8 @@ fn stmt_temp_slots(stmt: &IrStmt) -> Result<u64, String> {
             }
             Ok(slots)
         }
-        IrStmt::Delay { .. }
-        | IrStmt::ClockingSample { .. }
+        IrStmt::Delay { .. } => Ok(0),
+        IrStmt::ClockingSample { .. }
         | IrStmt::WaitEvents { .. }
         | IrStmt::EventTrigger { .. }
         | IrStmt::NonblockingEventTrigger { .. }

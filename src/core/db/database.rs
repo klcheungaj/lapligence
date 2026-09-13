@@ -28,7 +28,7 @@ use crate::ffi::slang::{
     SEMANTIC_EXPR_CLOCKING_EVENT, SEMANTIC_SCOPE_CLOCKING_BLOCK, SEMANTIC_STMT_CONCURRENT_ASSERT,
     SEMANTIC_STMT_CONCURRENT_ASSUME, SEMANTIC_STMT_CONCURRENT_COVER,
     SEMANTIC_STMT_IMMEDIATE_ASSERT, SEMANTIC_STMT_IMMEDIATE_ASSUME, SEMANTIC_STMT_IMMEDIATE_COVER,
-    SEMANTIC_TIMING_ONE_STEP_DELAY, SEMANTIC_VARIABLE_CLOCKING,
+    SEMANTIC_TIMING_CYCLE_DELAY, SEMANTIC_TIMING_ONE_STEP_DELAY, SEMANTIC_VARIABLE_CLOCKING,
 };
 use std::collections::{HashMap, HashSet};
 use std::error::Error;
@@ -1074,6 +1074,10 @@ pub enum StmtKind {
     DelayControl {
         delay: NodeId,
     },
+    /// `##count` waits for events of the resolved default clocking block.
+    CycleDelayControl {
+        count: NodeId,
+    },
     EventTrigger {
         blocking: bool,
         target: Option<NodeId>,
@@ -1179,6 +1183,9 @@ pub enum IntraControl {
         count: NodeId,
         event: Box<IntraControl>,
     },
+    /// A cycle delay in an assignment timing control. The count is resolved
+    /// against the owning scope's default clocking event during lowering.
+    Cycle { control: NodeId, count: NodeId },
     /// A timing form known to the frontend but not yet executable by the
     /// simulator.  Keeping its identity gives consumers a source-located
     /// diagnostic instead of silently treating it as an untimed assignment.
@@ -1203,6 +1210,7 @@ impl IntraControl {
                 nodes.extend([*control, *count]);
                 event.referenced_nodes(nodes);
             }
+            Self::Cycle { control, count } => nodes.extend([*control, *count]),
             Self::Unsupported { control } => nodes.push(*control),
         }
     }
@@ -3215,6 +3223,15 @@ fn intra_control_timing(
                 event: Box::new(intra_control_timing(snapshot, event, ids)?),
             })
         }
+        SEMANTIC_TIMING_CYCLE_DELAY => {
+            let count = edge_target(ids, edges, SemanticEdgeRole::Delay)?.ok_or_else(|| {
+                DbError::InvalidSnapshot("cycle-delay assignment has no count".into())
+            })?;
+            Ok(IntraControl::Cycle {
+                control: timing_id,
+                count,
+            })
+        }
         _ => Ok(IntraControl::Unsupported { control: timing_id }),
     }
 }
@@ -3236,6 +3253,11 @@ fn timing_statement(
         let delay = edge_target(ids, timing_edges, SemanticEdgeRole::Delay)?
             .ok_or_else(|| DbError::InvalidSnapshot("delay control has no expression".into()))?;
         return Ok(StmtKind::DelayControl { delay });
+    }
+    if timing.subkind == SEMANTIC_TIMING_CYCLE_DELAY {
+        let count = edge_target(ids, timing_edges, SemanticEdgeRole::Delay)?
+            .ok_or_else(|| DbError::InvalidSnapshot("cycle-delay control has no count".into()))?;
+        return Ok(StmtKind::CycleDelayControl { count });
     }
     let (specs, implicit) = event_specs(snapshot, timing, ids)?;
     Ok(StmtKind::EventControl {
@@ -4834,6 +4856,16 @@ impl Db {
     /// block variable.
     pub fn clocking_var(&self, id: NodeId) -> Option<&ClockingVarInfo> {
         self.clocking_vars.get(&id)
+    }
+
+    /// All owned clocking-block metadata keyed by declaration identity.
+    pub fn clocking_blocks(&self) -> &HashMap<NodeId, ClockingBlockInfo> {
+        &self.clocking_blocks
+    }
+
+    /// All owned clocking-variable metadata keyed by declaration identity.
+    pub fn clocking_vars(&self) -> &HashMap<NodeId, ClockingVarInfo> {
+        &self.clocking_vars
     }
 
     pub fn is_clocking_block(&self, id: NodeId) -> bool {

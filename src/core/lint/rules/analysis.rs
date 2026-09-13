@@ -37,8 +37,12 @@ pub fn is_signal(db: &Db, id: NodeId) -> bool {
 /// expression is not (or cannot be resolved to) a net/var/array.
 pub fn signal_of_ref(db: &Db, id: NodeId) -> Option<NodeId> {
     match db.node_kind(id) {
-        NodeKind::Net { .. } | NodeKind::Var { .. } | NodeKind::Array { .. } => Some(id),
-        NodeKind::Expr(ExprKind::Ref { target }) => target.filter(|t| is_signal(db, *t)),
+        NodeKind::Net { .. } | NodeKind::Var { .. } | NodeKind::Array { .. } => {
+            Some(db.clocking_var(id).map_or(id, |var| var.source))
+        }
+        NodeKind::Expr(ExprKind::Ref { target }) => {
+            target.and_then(|target| signal_of_ref(db, target))
+        }
         NodeKind::Expr(ExprKind::BitSelect { base, .. })
         | NodeKind::Expr(ExprKind::PartSelect { base, .. })
         | NodeKind::Expr(ExprKind::IndexedPartSelect { base, .. }) => signal_of_ref(db, *base),
@@ -267,6 +271,11 @@ fn walk_reads(db: &Db, node: NodeId, seen: &mut HashSet<NodeId>, out: &mut Vec<N
             delay: Some(IntraControl::Delay(delay)),
             ..
         }) => walk_reads(db, *delay, seen, out),
+        NodeKind::Stmt(StmtKind::CycleDelayControl { count })
+        | NodeKind::Stmt(StmtKind::Assign {
+            delay: Some(IntraControl::Cycle { count, .. }),
+            ..
+        }) => walk_reads(db, *count, seen, out),
         _ => {}
     }
     match db.node_kind(node) {
@@ -334,13 +343,17 @@ fn walk_lhs_select_reads(db: &Db, lhs: NodeId, seen: &mut HashSet<NodeId>, out: 
 fn add_read(db: &Db, node: NodeId, seen: &mut HashSet<NodeId>, out: &mut Vec<NodeId>) {
     match db.node_kind(node) {
         NodeKind::Net { .. } | NodeKind::Var { .. } | NodeKind::Array { .. } => {
-            if seen.insert(node) {
-                out.push(node);
+            if let Some(signal) = signal_of_ref(db, node) {
+                if seen.insert(signal) {
+                    out.push(signal);
+                }
             }
         }
         NodeKind::Expr(ExprKind::Ref { target: Some(t) }) => {
-            if is_signal(db, *t) && seen.insert(*t) {
-                out.push(*t);
+            if let Some(signal) = signal_of_ref(db, *t) {
+                if seen.insert(signal) {
+                    out.push(signal);
+                }
             }
         }
         NodeKind::Expr(ExprKind::HierPath { refs, .. }) => {
@@ -350,8 +363,10 @@ fn add_read(db: &Db, node: NodeId, seen: &mut HashSet<NodeId>, out: &mut Vec<Nod
                 .flatten()
                 .find(|target| is_signal(db, **target))
             {
-                if seen.insert(*t) {
-                    out.push(*t);
+                if let Some(signal) = signal_of_ref(db, *t) {
+                    if seen.insert(signal) {
+                        out.push(signal);
+                    }
                 }
             }
         }
@@ -903,7 +918,9 @@ pub fn has_implicit_event(db: &Db, root: NodeId) -> bool {
 /// (timed/edge) event control; such processes are not purely combinational.
 pub fn has_timing_control(db: &Db, root: NodeId) -> bool {
     match db.node_kind(root) {
-        NodeKind::Stmt(StmtKind::DelayControl { .. }) => return true,
+        NodeKind::Stmt(StmtKind::DelayControl { .. } | StmtKind::CycleDelayControl { .. }) => {
+            return true
+        }
         NodeKind::Stmt(StmtKind::EventControl { implicit, .. }) => return !*implicit,
         _ => {}
     }

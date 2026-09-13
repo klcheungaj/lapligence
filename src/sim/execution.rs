@@ -496,6 +496,9 @@ fn collect_effects(
             | IrStmt::DelayedStringAssign { .. } => effects.push(ExecutionEffect::EnqueueUpdate(
                 ScheduleRegion::NonblockingAssign,
             )),
+            IrStmt::ClockingDrive { .. } => effects.push(ExecutionEffect::EnqueueUpdate(
+                ScheduleRegion::ReNonblockingAssign,
+            )),
             IrStmt::Assign { nba: false, .. }
             | IrStmt::EventAssign { .. }
             | IrStmt::EventCapture { .. }
@@ -532,6 +535,7 @@ fn collect_effects(
                 }
             }
             IrStmt::Delay { .. }
+            | IrStmt::ClockingCycleWait { .. }
             | IrStmt::WaitEvents { .. }
             | IrStmt::WaitAny { .. }
             | IrStmt::WaitCond { .. }
@@ -748,8 +752,12 @@ fn collect_statement_expression_effects(
         IrStmt::DeclLocal {
             init: Some(init), ..
         } => collect_expression_effects(ir, init, effects, visited_calls),
+        IrStmt::ClockingCycleWait { count, .. } => {
+            collect_expression_effects(ir, count, effects, visited_calls)
+        }
         IrStmt::Assign { lhs, rhs, .. }
         | IrStmt::DelayedAssign { lhs, rhs, .. }
+        | IrStmt::ClockingDrive { lhs, rhs, .. }
         | IrStmt::InertialAssign { lhs, rhs, .. } => {
             collect_expression_effects(ir, rhs, effects, visited_calls);
             collect_lhs_expression_effects(ir, lhs, effects, visited_calls);
