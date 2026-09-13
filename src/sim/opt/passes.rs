@@ -99,7 +99,10 @@ fn prune_model_control(model: &mut IrModel) {
     for process in &mut model.processes {
         prune_stmt_list(&mut process.body);
         for pre in &mut process.pre_fns {
-            if let IrPreFn::Branch { body, .. } | IrPreFn::CapturedBranch { body, .. } = pre {
+            if let IrPreFn::Branch { body, .. }
+            | IrPreFn::CapturedBranch { body, .. }
+            | IrPreFn::DeferredAssertion { body, .. } = pre
+            {
                 prune_stmt_list(body);
             }
         }
@@ -108,7 +111,10 @@ fn prune_model_control(model: &mut IrModel) {
         // `-Wall` clean.
         strip_unreferenced_labels(&mut process.body);
         for pre in &mut process.pre_fns {
-            if let IrPreFn::Branch { body, .. } | IrPreFn::CapturedBranch { body, .. } = pre {
+            if let IrPreFn::Branch { body, .. }
+            | IrPreFn::CapturedBranch { body, .. }
+            | IrPreFn::DeferredAssertion { body, .. } = pre
+            {
                 strip_unreferenced_labels(body);
             }
         }
@@ -116,13 +122,19 @@ fn prune_model_control(model: &mut IrModel) {
     for function in &mut model.funcs {
         prune_stmt_list(&mut function.body);
         for pre in &mut function.pre_fns {
-            if let IrPreFn::Branch { body, .. } | IrPreFn::CapturedBranch { body, .. } = pre {
+            if let IrPreFn::Branch { body, .. }
+            | IrPreFn::CapturedBranch { body, .. }
+            | IrPreFn::DeferredAssertion { body, .. } = pre
+            {
                 prune_stmt_list(body);
             }
         }
         strip_unreferenced_labels(&mut function.body);
         for pre in &mut function.pre_fns {
-            if let IrPreFn::Branch { body, .. } | IrPreFn::CapturedBranch { body, .. } = pre {
+            if let IrPreFn::Branch { body, .. }
+            | IrPreFn::CapturedBranch { body, .. }
+            | IrPreFn::DeferredAssertion { body, .. } = pre
+            {
                 strip_unreferenced_labels(body);
             }
         }
@@ -653,6 +665,19 @@ fn walk_stmt_mut(s: &mut IrStmt, f: &mut impl FnMut(&mut IrExpr)) {
                 walk_stmts_mut(if_false, f);
             }
         }
+        IrStmt::DeferredImmediateAssertion {
+            condition,
+            if_true,
+            if_false,
+            ..
+        } => {
+            walk_expr_mut(condition, f);
+            for action in if_true.iter_mut().chain(if_false.iter_mut()) {
+                for capture in action.captures_mut() {
+                    walk_expr_mut(capture.initial_mut(), f);
+                }
+            }
+        }
         IrStmt::While { cond, body } => {
             walk_expr_mut(cond, f);
             walk_stmts_mut(body, f);
@@ -793,6 +818,12 @@ fn walk_pre_fn_mut(pre: &mut IrPreFn, f: &mut impl FnMut(&mut IrExpr)) {
             }
             walk_lhs_mut(lhs, f);
             walk_expr_mut(rhs, f);
+        }
+        IrPreFn::DeferredAssertion { captures, body, .. } => {
+            for capture in captures {
+                walk_expr_mut(capture.initial_mut(), f);
+            }
+            walk_stmts_mut(body, f);
         }
         IrPreFn::DisplayEval { args, .. } => {
             for arg in args {
@@ -1479,6 +1510,7 @@ fn prune_nested_in_place(s: &mut IrStmt) {
                 prune_stmt_list(if_false);
             }
         }
+        IrStmt::DeferredImmediateAssertion { .. } => {}
         // A qualified conditional may contain an else-if ladder. Keep its
         // source-level shape intact: pruning a constant nested condition can
         // turn an else-if into an apparent default and suppress a required
@@ -1575,6 +1607,7 @@ fn collect_goto_names(stmts: &[IrStmt], out: &mut HashSet<String>) {
                     collect_goto_names(if_false, out);
                 }
             }
+            IrStmt::DeferredImmediateAssertion { .. } => {}
             IrStmt::While { body: b, .. } | IrStmt::Repeat { body: b, .. } => {
                 collect_goto_names(b, out)
             }
@@ -1637,6 +1670,7 @@ fn strip_labels_in(stmts: &mut Vec<IrStmt>, referenced: &HashSet<String>) {
                     strip_labels_in(if_false, referenced);
                 }
             }
+            IrStmt::DeferredImmediateAssertion { .. } => {}
             IrStmt::While { body: b, .. } | IrStmt::Repeat { body: b, .. } => {
                 strip_labels_in(b, referenced)
             }
@@ -1932,6 +1966,12 @@ fn collect_pre_fns_rw(pre_fns: &[IrPreFn], model: &IrModel, rw: &mut Rw) {
                 collect_lhs_rw(lhs, model, rw);
                 collect_expr_reads(rhs, model, rw);
             }
+            IrPreFn::DeferredAssertion { captures, body, .. } => {
+                for capture in captures {
+                    collect_expr_reads(capture.initial(), model, rw);
+                }
+                collect_stmts_rw(body, model, rw);
+            }
             IrPreFn::DisplayEval { args, .. } => {
                 for arg in args {
                     arg.expressions(&mut |expression| collect_expr_reads(expression, model, rw));
@@ -2015,6 +2055,7 @@ fn sens_lists_of(s: &IrStmt, out: &mut Vec<IrDependency>) {
                 }
             }
         }
+        IrStmt::DeferredImmediateAssertion { .. } => {}
         IrStmt::For {
             init, incr, body, ..
         } => {
@@ -2193,6 +2234,19 @@ fn collect_stmt_rw(s: &IrStmt, model: &IrModel, rw: &mut Rw) {
             }
             if let Some(if_false) = if_false {
                 collect_stmts_rw(if_false, model, rw);
+            }
+        }
+        IrStmt::DeferredImmediateAssertion {
+            condition,
+            if_true,
+            if_false,
+            ..
+        } => {
+            collect_expr_reads(condition, model, rw);
+            for action in if_true.iter().chain(if_false.iter()) {
+                for capture in action.captures() {
+                    collect_expr_reads(capture.initial(), model, rw);
+                }
             }
         }
         IrStmt::While { cond, body } | IrStmt::Repeat { count: cond, body } => {

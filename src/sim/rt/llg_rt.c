@@ -276,6 +276,7 @@ struct llg_proc {
     int program_live;              // still counted toward program completion
     uint64_t budget_steps;         // loop back-edges at `budget_time`
     uint64_t budget_time;          // time step for the process budget
+    uint64_t assertion_owner;      // stable per-run identity for deferred reports
 };
 
 static int region_can_mutate(const char* action);
@@ -293,6 +294,9 @@ static void wake_proc(llg_proc_t* p);
 static void llg_kill_proc_tree(llg_proc_t* p);
 static void llg_kill_proc_tree_internal(llg_proc_t* p, int notify_parent);
 static void llg_fork_group_child_done(llg_fork_group_t* grp);
+static void flush_deferred_assertions(void);
+static void run_deferred_assertions_now(void);
+static llg_proc_t* llg_current(void);
 
 static llg_frame_slot_t* frame_slot(llg_frame_t* frame, size_t slot) {
     if (!frame || slot >= frame->nslots) {
@@ -575,6 +579,25 @@ typedef struct llg_region_callback {
     void* data;
 } llg_region_callback_t;
 
+// One deferred immediate-assertion result remains pending until the
+// Observed-to-Reactive handoff. Repeated evaluations of one assertion from
+// one process in a single time slot replace this record, suppressing transient
+// glitches while retaining the last sampled condition/action. The owner is a
+// stable per-run process identity rather than a process pointer, because a
+// completed process can be reclaimed before the Reactive callback runs.
+typedef struct llg_deferred_assertion_report {
+    struct llg_deferred_assertion_report* next;
+    uint64_t owner;
+    uint64_t time;
+    int kind;
+    int passed;
+    uint64_t identity;
+    const char* label;
+    const char* location;
+    llg_deferred_assertion_fn action;
+    llg_frame_t* frame;
+} llg_deferred_assertion_report_t;
+
 typedef struct llg_sampled_value {
     struct llg_sampled_value* next;
     sv4_t* signal;
@@ -682,6 +705,9 @@ typedef struct {
     llg_concurrent_assertion_t* assertion_tail;
     llg_deferred_trigger_t* deferred_triggers;
     llg_deferred_trigger_t* deferred_trigger_tail;
+    llg_deferred_assertion_report_t* deferred_assertions;
+    llg_deferred_assertion_report_t* deferred_assertion_tail;
+    uint64_t next_process_identity;
     int in_deferred_action;
     int running;
     int finish;
@@ -1025,6 +1051,11 @@ static int llg_in_finals;
 static uint64_t llg_final_time;
 
 static void register_proc(llg_proc_t* p) {
+    if (!p || g.next_process_identity == UINT64_MAX) {
+        fprintf(stderr, "llg: process identity overflow\n");
+        abort();
+    }
+    p->assertion_owner = ++g.next_process_identity;
     for (int i = 0; i < g.n_procs; i++) {
         if (g.all_procs[i] == NULL) {
             g.all_procs[i] = p;
@@ -1447,6 +1478,123 @@ static void free_deferred_triggers(void) {
         g.deferred_triggers = next;
     }
     g.deferred_trigger_tail = NULL;
+}
+
+static void free_deferred_assertion_report(
+    llg_deferred_assertion_report_t* report) {
+    if (!report) return;
+    llg_frame_release(report->frame);
+    free(report);
+}
+
+static void free_deferred_assertions(void) {
+    while (g.deferred_assertions) {
+        llg_deferred_assertion_report_t* next = g.deferred_assertions->next;
+        free_deferred_assertion_report(g.deferred_assertions);
+        g.deferred_assertions = next;
+    }
+    g.deferred_assertion_tail = NULL;
+}
+
+static void deferred_assertion_callback(void* data) {
+    llg_deferred_assertion_report_t* report =
+        (llg_deferred_assertion_report_t*)data;
+    if (!report) return;
+    llg_frame_t* frame = report->frame;
+    report->frame = NULL;
+    if (report->passed) {
+        if (report->kind == LLG_ASSERTION_COVER)
+            llg_assertion_cover(report->identity, report->label, report->location);
+        if (report->action) {
+            int saved = g.in_deferred_action;
+            g.in_deferred_action = 1;
+            report->action(frame);
+            g.in_deferred_action = saved;
+        }
+    } else if (report->kind != LLG_ASSERTION_COVER) {
+        if (report->action) {
+            int saved = g.in_deferred_action;
+            g.in_deferred_action = 1;
+            report->action(frame);
+            g.in_deferred_action = saved;
+        } else {
+            llg_assertion_failure(report->kind, report->identity,
+                                  report->label, report->location);
+        }
+    }
+    llg_frame_release(frame);
+    free(report);
+}
+
+// Transfer queued reports to the Reactive region while the scheduler is at
+// the Observed-to-Reactive handoff. Region callback ordering preserves source
+// issue order after same-assertion coalescing.
+static void flush_deferred_assertions(void) {
+    while (g.deferred_assertions) {
+        llg_deferred_assertion_report_t* report = g.deferred_assertions;
+        g.deferred_assertions = report->next;
+        report->next = NULL;
+        if (!llg_schedule_region_callback(LLG_REGION_REACTIVE,
+                                          deferred_assertion_callback, report)) {
+            free_deferred_assertion_report(report);
+            break;
+        }
+    }
+    if (!g.deferred_assertions) g.deferred_assertion_tail = NULL;
+}
+
+// A finish request from a later read-only callback can stop the normal
+// scheduler before the Reactive queue gets a turn. Deferred assertion
+// callbacks are still mature reports and must run before teardown; unrelated
+// callbacks remain subject to the ordinary finish discard rule.
+static llg_region_callback_t* take_deferred_assertion_callback_now(void) {
+    llg_region_callback_t** slot = &g.callbacks;
+    while (*slot && (*slot)->time <= g.now) {
+        llg_region_callback_t* entry = *slot;
+        if (entry->time == g.now && entry->callback == deferred_assertion_callback) {
+            *slot = entry->next;
+            entry->next = NULL;
+            return entry;
+        }
+        slot = &entry->next;
+    }
+    return NULL;
+}
+
+static int deferred_assertion_callback_pending_now(void) {
+    for (llg_region_callback_t* entry = g.callbacks;
+         entry && entry->time <= g.now; entry = entry->next) {
+        if (entry->time == g.now && entry->callback == deferred_assertion_callback)
+            return 1;
+    }
+    return 0;
+}
+
+// Finish/deadlock teardown can occur before the normal Observed handoff (for
+// example, a process executes `$finish` immediately after `assert #0`). Run
+// those reports in the Reactive context before releasing the scheduler.
+static void run_deferred_assertions_now(void) {
+    if (!g.deferred_assertions && !deferred_assertion_callback_pending_now()) return;
+    llg_region_t saved_region = g.current_region;
+    int saved_action = g.in_deferred_action;
+    g.current_region = LLG_REGION_REACTIVE;
+    for (;;) {
+        while (g.deferred_assertions) {
+            llg_deferred_assertion_report_t* report = g.deferred_assertions;
+            g.deferred_assertions = report->next;
+            report->next = NULL;
+            deferred_assertion_callback(report);
+        }
+        g.deferred_assertion_tail = NULL;
+        llg_region_callback_t* callback = take_deferred_assertion_callback_now();
+        if (!callback) break;
+        llg_region_callback_fn fn = callback->callback;
+        void* data = callback->data;
+        free(callback);
+        fn(data);
+    }
+    g.in_deferred_action = saved_action;
+    g.current_region = saved_region;
 }
 
 static int expression_qualifies(const llg_expr_event_spec_t* spec) {
@@ -3142,6 +3290,9 @@ static void free_proc_storage(llg_proc_t* p) {
 static void free_region_callbacks(void) {
     while (g.callbacks) {
         llg_region_callback_t* next = g.callbacks->next;
+        if (g.callbacks->callback == deferred_assertion_callback)
+            free_deferred_assertion_report(
+                (llg_deferred_assertion_report_t*)g.callbacks->data);
         free(g.callbacks);
         g.callbacks = next;
     }
@@ -3208,6 +3359,7 @@ void llg_rt_cleanup(void) {
         g.delayed_nbas = next;
     }
     free_deferred_triggers();
+    free_deferred_assertions();
     // Groups own only child-list nodes; process objects are owned once by
     // all_procs and are released separately below.
     for (int i = 0; i < g.n_procs; i++) {
@@ -3759,6 +3911,7 @@ _Noreturn void llg_rt_finish_with_level(int verbosity, const char* location) {
         fprintf(stderr, "llg runtime fatal: invalid $finish verbosity %d\n", verbosity);
         abort();
     }
+    run_deferred_assertions_now();
     report_finish(verbosity, location);
     g.finish = 1;
     llg_proc_done(llg_current());
@@ -7661,6 +7814,60 @@ int llg_assertion_register(
     return 1;
 }
 
+void llg_deferred_assertion(int kind, int passed, uint64_t identity,
+                            const char* label, const char* location,
+                            llg_deferred_assertion_fn action,
+                            llg_frame_t* frame) {
+    if (kind < LLG_ASSERTION_ASSERT || kind > LLG_ASSERTION_COVER ||
+        (passed != 0 && passed != 1)) {
+        fprintf(stderr, "llg runtime fatal: invalid deferred assertion result\n");
+        llg_frame_release(frame);
+        abort();
+    }
+    if (!action && frame) {
+        // A frame is meaningful only for a selected action. This also keeps
+        // malformed embedding calls from leaking an owned capture.
+        llg_frame_release(frame);
+        frame = NULL;
+    }
+    llg_proc_t* current = llg_current();
+    uint64_t owner = g.in_deferred_action || !current
+                         ? 0
+                         : current->assertion_owner;
+    for (llg_deferred_assertion_report_t* report = g.deferred_assertions;
+         report; report = report->next) {
+        if (report->owner == owner && report->time == g.now &&
+            report->identity == identity) {
+            llg_frame_release(report->frame);
+            report->kind = kind;
+            report->passed = passed;
+            report->label = label;
+            report->location = location;
+            report->action = action;
+            report->frame = frame;
+            return;
+        }
+    }
+    llg_deferred_assertion_report_t* report =
+        (llg_deferred_assertion_report_t*)llg_checked_calloc(
+            1, sizeof(*report), "deferred assertion report");
+    report->owner = owner;
+    report->time = g.now;
+    report->kind = kind;
+    report->passed = passed;
+    report->identity = identity;
+    report->label = label;
+    report->location = location;
+    report->action = action;
+    report->frame = frame;
+    if (g.deferred_assertion_tail) {
+        g.deferred_assertion_tail->next = report;
+    } else {
+        g.deferred_assertions = report;
+    }
+    g.deferred_assertion_tail = report;
+}
+
 static int llg_fmt_arg_same(const llg_fmt_arg_t* a, const llg_fmt_arg_t* b) {
     if (a->kind != b->kind) return 0;
     if (a->kind == LLG_FMT_PACKED) return sv4_same(a->value.packed, b->value.packed);
@@ -8071,6 +8278,8 @@ static int run_observed_set(void) {
     if (!run_region_queue(LLG_REGION_PRE_OBSERVED)) return 0;
     if (!run_region_queue(LLG_REGION_OBSERVED)) return 0;
     if (!run_concurrent_assertions()) return 0;
+    flush_deferred_assertions();
+    if (g.finish) return 0;
     if (!run_region_queue(LLG_REGION_POST_OBSERVED)) return 0;
     return run_region_queue(LLG_REGION_POST_OBSERVED_PLI);
 }
@@ -8092,6 +8301,14 @@ static int drain_reactive_set(void) {
             }
         }
         if (g.finish) return 0;
+        // A deferred assertion can itself be evaluated by a Reactive
+        // callback. Keep that newly coalesced report in the same Reactive
+        // fixed-point pass, after the current queue has drained.
+        if (g.deferred_assertions) {
+            flush_deferred_assertions();
+            if (g.finish) return 0;
+            continue;
+        }
         if (g.zero_waits[LLG_REGION_RE_INACTIVE].head ||
             region_pending(LLG_REGION_RE_INACTIVE)) {
             if (g.zero_waits[LLG_REGION_RE_INACTIVE].head)
@@ -8299,6 +8516,7 @@ void llg_rt_run(void) {
         g.running = 0;
         return;
     }
+    run_deferred_assertions_now();
     flush_assertion_attempts();
     // Finals ($time inside them) report when the scheduler loop ended.
     llg_final_time = g.now;

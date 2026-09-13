@@ -3249,6 +3249,55 @@ impl Validator<'_> {
                     self.validate_stmts(if_false, formals, &format!("{path}.if_false"))?;
                 }
             }
+            IrStmt::DeferredImmediateAssertion {
+                condition,
+                if_true,
+                if_false,
+                location,
+                ..
+            } => {
+                if location.is_empty() {
+                    return self.fail(path, "assertion source location must not be empty");
+                }
+                self.validate_expr(condition, formals, &format!("{path}.condition"))?;
+                for (arm, arm_name) in [(if_true, "if_true"), (if_false, "if_false")] {
+                    let Some(arm) = arm else { continue };
+                    if arm.c_name().is_empty() {
+                        return self.fail(
+                            format!("{path}.{arm_name}"),
+                            "deferred assertion callback name must not be empty",
+                        );
+                    }
+                    let callback = self
+                        .model
+                        .processes
+                        .iter()
+                        .flat_map(|process| &process.pre_fns)
+                        .chain(
+                            self.model
+                                .funcs
+                                .iter()
+                                .flat_map(|function| &function.pre_fns),
+                        )
+                        .find(|pre| {
+                            matches!(
+                                pre,
+                                IrPreFn::DeferredAssertion {
+                                    c_name,
+                                    frame,
+                                    ..
+                                } if c_name == arm.c_name()
+                                    && *frame == arm.frame()
+                            )
+                        });
+                    if callback.is_none() {
+                        return self.fail(
+                            format!("{path}.{arm_name}"),
+                            "deferred assertion callback is not declared",
+                        );
+                    }
+                }
+            }
             IrStmt::WaveLimit(expr) => {
                 self.validate_expr(expr, formals, &format!("{path}.limit"))?;
             }
@@ -3413,6 +3462,34 @@ impl Validator<'_> {
                     }
                     self.validate_lhs(lhs, branch_formals, &format!("{path}.pre_fns[{idx}].lhs"))?;
                     self.validate_expr(rhs, branch_formals, &format!("{path}.pre_fns[{idx}].rhs"))?;
+                }
+                IrPreFn::DeferredAssertion {
+                    frame: pre_frame,
+                    captures,
+                    body,
+                    ..
+                } => {
+                    let mut slots = HashSet::new();
+                    for (capture_idx, capture) in captures.iter().enumerate() {
+                        if capture.storage().frame() != *pre_frame
+                            || !slots.insert(capture.storage().slot())
+                        {
+                            return self.fail(
+                                format!("{path}.pre_fns[{idx}].captures[{capture_idx}]"),
+                                "deferred assertion captures must use unique slots in their frame",
+                            );
+                        }
+                        self.validate_expr(
+                            capture.initial(),
+                            formals,
+                            &format!("{path}.pre_fns[{idx}].captures[{capture_idx}].initial"),
+                        )?;
+                    }
+                    self.validate_stmts(
+                        body,
+                        branch_formals,
+                        &format!("{path}.pre_fns[{idx}].body"),
+                    )?;
                 }
                 IrPreFn::DisplayEval { args, .. } => {
                     for (arg_idx, arg) in args.iter().enumerate() {

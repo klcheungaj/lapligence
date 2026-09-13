@@ -359,6 +359,7 @@ fn collect_control_labels<'a>(
                     collect_control_labels(if_false, labels, gotos)?;
                 }
             }
+            IrStmt::DeferredImmediateAssertion { .. } => {}
             IrStmt::For {
                 init, incr, body, ..
             } => {
@@ -581,6 +582,7 @@ fn collect_effects(
             | IrStmt::DisplayTyped { .. }
             | IrStmt::Severity { .. }
             | IrStmt::ImmediateAssertion { .. }
+            | IrStmt::DeferredImmediateAssertion { .. }
             | IrStmt::MonitorSet { .. }
             | IrStmt::FileControl { .. }
             | IrStmt::MonitorEnable(_)
@@ -639,6 +641,7 @@ fn collect_effects(
                     collect_effects(ir, if_false, effects, visited_calls);
                 }
             }
+            IrStmt::DeferredImmediateAssertion { .. } => {}
             IrStmt::For {
                 init, incr, body, ..
             } => {
@@ -821,6 +824,19 @@ fn collect_statement_expression_effects(
         | IrStmt::WaveLimit(rhs) => collect_expression_effects(ir, rhs, effects, visited_calls),
         IrStmt::ImmediateAssertion { condition, .. } => {
             collect_expression_effects(ir, condition, effects, visited_calls)
+        }
+        IrStmt::DeferredImmediateAssertion {
+            condition,
+            if_true,
+            if_false,
+            ..
+        } => {
+            collect_expression_effects(ir, condition, effects, visited_calls);
+            for action in if_true.iter().chain(if_false.iter()) {
+                for capture in action.captures() {
+                    collect_expression_effects(ir, capture.initial(), effects, visited_calls);
+                }
+            }
         }
         IrStmt::WaitEventTriggered { body, .. } => {
             collect_effects(ir, body, effects, visited_calls)

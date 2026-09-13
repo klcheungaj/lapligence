@@ -190,6 +190,7 @@ fn enclosed_labels(stmts: &[crate::sim::ir::IrStmt], labels: &mut HashSet<String
                     enclosed_labels(if_false, labels);
                 }
             }
+            IrStmt::DeferredImmediateAssertion { .. } => {}
             IrStmt::For {
                 init, incr, body, ..
             } => {
@@ -1079,6 +1080,26 @@ fn render_stmt_scoped(
                 scopes,
             },
         )?,
+        IrStmt::DeferredImmediateAssertion {
+            kind,
+            condition,
+            if_true,
+            if_false,
+            label,
+            location,
+            identity,
+        } => render_deferred_immediate_assertion(
+            ctx,
+            DeferredImmediateAssertionRender {
+                kind: *kind,
+                condition,
+                if_true: if_true.as_ref(),
+                if_false: if_false.as_ref(),
+                label,
+                location,
+                identity: *identity,
+            },
+        )?,
         IrStmt::MonitorSet {
             strobe,
             fmt,
@@ -1696,6 +1717,95 @@ fn render_immediate_assertion(
         ));
     }
     out.push_str("    }\n}\n");
+    Ok(out)
+}
+
+struct DeferredImmediateAssertionRender<'a> {
+    kind: IrImmediateAssertionKind,
+    condition: &'a IrExpr,
+    if_true: Option<&'a crate::sim::ir::IrDeferredAction>,
+    if_false: Option<&'a crate::sim::ir::IrDeferredAction>,
+    label: &'a str,
+    location: &'a str,
+    identity: u64,
+}
+
+fn render_deferred_immediate_assertion(
+    ctx: &RCtx<'_>,
+    assertion: DeferredImmediateAssertionRender<'_>,
+) -> Result<String, String> {
+    let DeferredImmediateAssertionRender {
+        kind,
+        condition,
+        if_true,
+        if_false,
+        label,
+        location,
+        identity,
+    } = assertion;
+    let rendered = render_expr(ctx, condition)?;
+    let condition_name = "_llg_assert_condition";
+    let declaration = if rendered.width == 0 {
+        format!("double {condition_name} = {};", rendered.code)
+    } else {
+        format!("sv4_t {condition_name} = {};", rendered.code)
+    };
+    let condition_bool = if rendered.width == 0 {
+        format!("llg_real_to_bool({condition_name})")
+    } else {
+        format!("sv4_to_bool({condition_name})")
+    };
+    let kind = match kind {
+        IrImmediateAssertionKind::Assert => "LLG_ASSERTION_ASSERT",
+        IrImmediateAssertionKind::Assume => "LLG_ASSERTION_ASSUME",
+        IrImmediateAssertionKind::Cover => "LLG_ASSERTION_COVER",
+    };
+    let label = c_string_literal(label);
+    let location = c_string_literal(location);
+    let mut out = format!("{{\n    {declaration}\n    if ({condition_bool}) {{\n");
+    out.push_str(&deferred_assertion_enqueue_text(
+        ctx, kind, true, identity, &label, &location, if_true,
+    )?);
+    out.push_str("    } else {\n");
+    out.push_str(&deferred_assertion_enqueue_text(
+        ctx, kind, false, identity, &label, &location, if_false,
+    )?);
+    out.push_str("    }\n}\n");
+    Ok(out)
+}
+
+fn deferred_assertion_enqueue_text(
+    ctx: &RCtx<'_>,
+    kind: &str,
+    passed: bool,
+    identity: u64,
+    label: &str,
+    location: &str,
+    action: Option<&crate::sim::ir::IrDeferredAction>,
+) -> Result<String, String> {
+    let Some(action) = action else {
+        return Ok(format!(
+            "        llg_deferred_assertion({kind}, {}, {identity}ULL, {label}, {location}, NULL, NULL);\n",
+            passed as u8
+        ));
+    };
+    let frame = format!("_assertion_frame_{}", action.frame().index());
+    let mut out = format!(
+        "        {{\n            llg_frame_t* {frame} = llg_frame_new({}u);\n",
+        action.captures().len()
+    );
+    for capture in action.captures() {
+        let initial = render_expr(ctx, capture.initial())?.code;
+        out.push_str(
+            &format_frame_capture(&frame, capture.storage(), &initial)?
+                .replace("    ", "            "),
+        );
+    }
+    out.push_str(&format!(
+        "            llg_deferred_assertion({kind}, {}, {identity}ULL, {label}, {location}, {}, {frame});\n        }}\n",
+        passed as u8,
+        action.c_name(),
+    ));
     Ok(out)
 }
 
@@ -2480,6 +2590,39 @@ pub(super) fn render_pre_fn_impl(
             out.push_str("    ");
             out.push_str(&render_assign(ctx, lhs, rhs, true)?);
             out.push('\n');
+            out.push_str("}\n");
+            Ok(out)
+        }
+        crate::sim::ir::IrPreFn::DeferredAssertion {
+            c_name,
+            frame: _,
+            captures,
+            body,
+        } => {
+            let mut out = format!("static void {c_name}(llg_frame_t* frame) {{\n");
+            for capture in captures {
+                let local = format!(
+                    "_fc{}_{}",
+                    capture.storage().frame().index(),
+                    capture.storage().slot()
+                );
+                match capture.storage().kind() {
+                    StorageKind::Real => out.push_str(&format!(
+                        "    double {local} = llg_frame_read_real(frame, {}u);\n",
+                        capture.storage().slot()
+                    )),
+                    StorageKind::Packed | StorageKind::Opaque => out.push_str(&format!(
+                        "    sv4_t {local} = llg_frame_read_value(frame, {}u);\n",
+                        capture.storage().slot()
+                    )),
+                }
+            }
+            if captures.is_empty() {
+                out.push_str("    (void)frame;\n");
+            }
+            for stmt in body {
+                out.push_str(&render_stmt_impl(ctx, stmt)?);
+            }
             out.push_str("}\n");
             Ok(out)
         }

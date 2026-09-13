@@ -39,6 +39,11 @@
   jumps into bounded fixed packed memories, and write the same consumable
   format in declaration/range order; resizable, multidimensional and real
   memories remain an explicit lowering boundary.
+  Deferred immediate assertion actions use an owned per-time-slot report queue:
+  conditions and value arguments are sampled at issue time, legal references
+  are resolved by the Reactive callback, and same-process assertion identities
+  coalesce before the Observed-to-Reactive handoff. Finish/deadlock teardown
+  drains pending reports before releasing the scheduler.
   `LLG_ZERO_LOOP_LIMIT` bounds scheduler passes (default 10,000,000), while
   `LLG_PROCESS_STEP_LIMIT` bounds generated loop back-edges inside a coroutine
   (`LLG_NONCONVERGENCE_LIMIT` is an accepted alias). Both accept positive

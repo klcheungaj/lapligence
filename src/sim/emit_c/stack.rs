@@ -147,6 +147,11 @@ fn pre_fn_frame_slots(pre_fn: &IrPreFn) -> Result<u64, String> {
             ],
             "event assignment frame slots",
         ),
+        IrPreFn::DeferredAssertion { captures, body, .. } => checked_add(
+            usize_slots(captures.len(), "deferred assertion capture slots")?,
+            stmt_frame_slots(body)?,
+            "deferred assertion frame slots",
+        ),
         IrPreFn::DisplayEval { args, .. } => {
             let mut slots: u64 = 0;
             for arg in args {
@@ -221,6 +226,7 @@ fn decl_slots(stmts: &[IrStmt]) -> Result<u64, String> {
                 ],
                 "assertion declaration slots",
             )?,
+            IrStmt::DeferredImmediateAssertion { .. } => 0,
             IrStmt::While { body, .. }
             | IrStmt::Repeat { body, .. }
             | IrStmt::WaitCond { body, .. }
@@ -431,6 +437,24 @@ fn stmt_temp_slots(stmt: &IrStmt) -> Result<u64, String> {
             ],
             "assertion temporary slots",
         ),
+        IrStmt::DeferredImmediateAssertion {
+            condition,
+            if_true,
+            if_false,
+            ..
+        } => {
+            let mut slots = expr_slots(condition)?;
+            for action in if_true.iter().chain(if_false.iter()) {
+                for capture in action.captures() {
+                    slots = checked_add(
+                        slots,
+                        expr_slots(capture.initial())?,
+                        "deferred assertion capture initializer slots",
+                    )?;
+                }
+            }
+            Ok(slots)
+        }
         IrStmt::While { cond, body } => checked_add(
             expr_slots(cond)?,
             stmt_temp_frame_slots(body)?,

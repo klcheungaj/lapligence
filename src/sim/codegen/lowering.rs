@@ -247,14 +247,14 @@ use crate::sim::emit_c::{
 use crate::sim::ir::{
     FrameId, IrAssocKey, IrAssocTraversal, IrBinOp, IrBitQuery, IrCall, IrCallArg, IrCallExpr,
     IrCapture, IrCapturedBranch, IrCaseItem, IrCaseKind, IrChandleExpr, IrClockingSampleMode,
-    IrConst, IrContainer, IrContainerExpr, IrContainerKind, IrContainerStmt, IrDelay, IrDependency,
-    IrDepth, IrDisplayRadix, IrEdge, IrElemSel, IrEvent, IrEventCapture, IrEventContext,
-    IrEventRef, IrExpr, IrExprKind, IrFormal, IrImmediateAssertionKind, IrInitPhase, IrInitTarget,
-    IrInitialization, IrJoinKind, IrLhs, IrMemoryRadix, IrModel, IrNetAliasBinding, IrProcess,
-    IrProcessKind, IrRealBinOp, IrRealUnOp, IrSeverityLevel, IrShape, IrSignal, IrStmt,
-    IrStochasticStmt, IrStreamDirection, IrStreamTarget, IrSysFunc, IrTimeKind, IrTransitionDelay,
-    IrType, IrUnOp, IrUniquePriorityCheck, IrWaitSrc, StorageKind, StorageLifetime,
-    StorageOwnership, StorageRef, LLG_MAX_NET_DRIVERS,
+    IrConst, IrContainer, IrContainerExpr, IrContainerKind, IrContainerStmt, IrDeferredAction,
+    IrDelay, IrDependency, IrDepth, IrDisplayRadix, IrEdge, IrElemSel, IrEvent, IrEventCapture,
+    IrEventContext, IrEventRef, IrExpr, IrExprKind, IrFormal, IrImmediateAssertionKind,
+    IrInitPhase, IrInitTarget, IrInitialization, IrJoinKind, IrLhs, IrMemoryRadix, IrModel,
+    IrNetAliasBinding, IrProcess, IrProcessKind, IrRealBinOp, IrRealUnOp, IrSeverityLevel, IrShape,
+    IrSignal, IrStmt, IrStochasticStmt, IrStreamDirection, IrStreamTarget, IrSysFunc, IrTimeKind,
+    IrTransitionDelay, IrType, IrUnOp, IrUniquePriorityCheck, IrWaitSrc, StorageKind,
+    StorageLifetime, StorageOwnership, StorageRef, LLG_MAX_NET_DRIVERS,
 };
 
 mod assertions;

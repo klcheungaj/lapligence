@@ -17,6 +17,8 @@ static llg_event_object_t lifecycle_event_object;
 static llg_event_t lifecycle_event = { &lifecycle_event_object };
 static int lifecycle_triggered_inside_run;
 
+static int deferred_termination_seen;
+
 #define CHECK(cond)                                                        \
     do {                                                                   \
         if (!(cond)) {                                                     \
@@ -1818,6 +1820,33 @@ static void region_observed_callback(void* data) {
               LLG_REGION_REACTIVE, region_reactive_followup, NULL) == 1);
 }
 
+static void deferred_termination_action(llg_frame_t* frame) {
+    CHECK(llg_current_region() == LLG_REGION_REACTIVE);
+    CHECK(frame != NULL);
+    CHECK(sv4_same(llg_frame_read_value(frame, 0), SV4_C(1, 1)));
+    deferred_termination_seen++;
+}
+
+static void deferred_termination_issue(void* data) {
+    (void)data;
+    llg_frame_t* frame = llg_frame_new(1);
+    llg_frame_capture_value(frame, 0, SV4_C(1, 1));
+    llg_deferred_assertion(LLG_ASSERTION_ASSERT, 1, 0xD3, NULL,
+                           "selftest:deferred", deferred_termination_action,
+                           frame);
+    llg_rt_request_finish();
+}
+
+static void test_deferred_assertion_termination(void) {
+    llg_rt_init();
+    deferred_termination_seen = 0;
+    CHECK(llg_schedule_region_callback(LLG_REGION_POST_OBSERVED,
+                                       deferred_termination_issue, NULL) == 1);
+    llg_rt_run();
+    CHECK(deferred_termination_seen == 1);
+    CHECK(!llg_rt_failed());
+}
+
 static void region_resume_write(void* data) {
     (void)data;
     llg_ba(&region_resume_signal, SV4_C(1, 1));
@@ -1956,6 +1985,7 @@ int main(int argc, char** argv) {
     test_time_scaled_rounding();
     test_activation_frames();
     test_activation_frame_cancellation();
+    test_deferred_assertion_termination();
     if (failures == 0) {
         printf("llg_rt selftest: all ok\n");
         return 0;

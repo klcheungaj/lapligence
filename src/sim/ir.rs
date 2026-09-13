@@ -2003,6 +2003,43 @@ impl IrCapture {
     }
 }
 
+/// The callback and owned argument frame for one deferred immediate-assertion
+/// action. The action body itself lives on the owning [`IrPreFn`]; keeping the
+/// statement-side reference small avoids duplicating the callback tree in the
+/// executable IR.
+#[derive(Clone, Debug, PartialEq)]
+pub struct IrDeferredAction {
+    pub(in crate::sim) c_name: String,
+    pub(in crate::sim) frame: FrameId,
+    pub(in crate::sim) captures: Vec<IrCapture>,
+}
+
+impl IrDeferredAction {
+    pub fn new(c_name: String, frame: FrameId, captures: Vec<IrCapture>) -> Self {
+        Self {
+            c_name,
+            frame,
+            captures,
+        }
+    }
+
+    pub fn c_name(&self) -> &str {
+        &self.c_name
+    }
+
+    pub fn frame(&self) -> FrameId {
+        self.frame
+    }
+
+    pub fn captures(&self) -> &[IrCapture] {
+        &self.captures
+    }
+
+    pub(in crate::sim) fn captures_mut(&mut self) -> &mut [IrCapture] {
+        &mut self.captures
+    }
+}
+
 /// A fork branch carrying one independently-owned activation frame.
 #[derive(Clone, Debug, PartialEq)]
 pub struct IrCapturedBranch {
@@ -2580,6 +2617,20 @@ pub enum IrStmt {
         location: String,
         identity: u64,
     },
+    /// Deferred immediate `assert`, `assume` or `cover` (`assert #0`). The
+    /// condition is sampled when this statement executes; the selected action
+    /// is queued for the runtime's Reactive handoff. Action value arguments
+    /// are captured in the referenced frame, while legal ref arguments retain
+    /// their action-time descriptors.
+    DeferredImmediateAssertion {
+        kind: IrImmediateAssertionKind,
+        condition: IrExpr,
+        if_true: Option<IrDeferredAction>,
+        if_false: Option<IrDeferredAction>,
+        label: String,
+        location: String,
+        identity: u64,
+    },
     /// `$monitor`/`$strobe` — `eval` is the C name of the re-evaluation
     /// function attached to the owning process/function's `pre_fns`, and
     /// `n_args` its argument count. Monitor-only `reads` contains the stable
@@ -2797,6 +2848,15 @@ pub enum IrPreFn {
         c_name: String,
         value: IrExpr,
         context: Option<IrEventContext>,
+    },
+    /// `static void c_name(llg_frame_t* frame) { action; }` for one deferred
+    /// immediate-assertion action. The runtime owns and releases the frame
+    /// after invoking this callback.
+    DeferredAssertion {
+        c_name: String,
+        frame: FrameId,
+        captures: Vec<IrCapture>,
+        body: Vec<IrStmt>,
     },
     /// `static void c_name(sv4_t* out) { *out = value; }` (or the equivalent
     /// `double` callback when `real` is true). Force evaluators have no

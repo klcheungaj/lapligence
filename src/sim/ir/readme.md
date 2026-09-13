@@ -26,9 +26,10 @@ labels, and Reactive action identities are validated without becoming ordinary
 procedural blocks.
 
 Variable aliases identify canonical storage explicitly. Event-evaluation helpers,
-typed evaluator contexts, read dependencies, delayed NBA operations and real math
-functions are validated before optimization/emission; deferred updates remain
-distinct from suspension. Evaluator contexts carry activation-owned storage
+typed evaluator contexts, read dependencies, delayed NBA operations, deferred
+immediate-assertion action frames and real math functions are validated before
+optimization/emission; deferred updates remain distinct from suspension.
+Evaluator contexts and assertion actions carry activation-owned storage
 identities rather than transient C addresses.
 True-net aliases retain bit-level bindings to canonical resolved net groups so
 optimized storage pruning cannot disconnect alias reads, dependencies, force/

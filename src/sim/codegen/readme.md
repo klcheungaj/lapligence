@@ -53,6 +53,11 @@
   release, dependencies, and waveform registration use the shared resolved
   identities while dynamic selects, aggregate forms, and switch-level paths
   remain explicit boundaries.
+- **Deferred assertions:** `assert`/`assume`/`cover #0` conditions are lowered
+  as issue-time samples with owned value captures and Reactive action
+  callbacks. Actions remain within Slang's single-call contract; automatic or
+  dynamic `ref` actuals, timing/control actions, and unsupported opaque values
+  fail closed with source-linked diagnostics.
 
 See [`docs/sim_features.md`](../../../docs/sim_features.md) for the supported
 feature surface and rejection boundaries.

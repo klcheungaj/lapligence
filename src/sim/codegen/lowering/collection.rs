@@ -10420,6 +10420,23 @@ impl<'a> Codegen<'a> {
         };
         let is_initial = matches!(kind, ProcessKind::Initial);
         let is_final = matches!(kind, ProcessKind::Final);
+        // Slang represents a module-level assertion member as a synthetic
+        // `always` process. Its body is one assertion, not an unbounded
+        // user-written `always` loop; use the assertion condition as its
+        // implicit trigger set so a constant member runs once and a signal-
+        // driven member re-evaluates only when that condition changes.
+        let deferred_assertion_condition = match self.kind(stmt) {
+            NodeKind::Stmt(StmtKind::ImmediateAssertion {
+                cond,
+                deferred: true,
+                ..
+            }) if self.node(proc).line == self.node(stmt).line
+                && self.node(proc).col == self.node(stmt).col =>
+            {
+                Some(*cond)
+            }
+            _ => None,
+        };
         let always_type = match kind {
             ProcessKind::Always { always_type } => Some(*always_type),
             ProcessKind::Initial | ProcessKind::Final => None,
@@ -10507,6 +10524,13 @@ impl<'a> Codegen<'a> {
                 // `initial` and `final` bodies run exactly once (finals after
                 // the scheduler exits — the spawn phase is decided below).
                 IrShape::RunOnce
+            } else if let Some(condition) = deferred_assertion_condition {
+                let reads = ctx.cg.collect_read_signals(path, condition)?;
+                if reads.is_empty() {
+                    IrShape::RunOnce
+                } else {
+                    IrShape::SensLoop { reads }
+                }
             } else if !plain_always && !ctx.saw_wait {
                 // always_comb/always_latch/always_ff without any event or
                 // delay control use the existing sensitivity-driven shape.

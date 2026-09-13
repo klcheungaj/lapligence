@@ -397,6 +397,14 @@ int llg_assertion_register(
     llg_concurrent_assertion_action_fn pass_action,
     llg_concurrent_assertion_action_fn fail_action, void* data, int kind,
     int overlapped, uint64_t identity, const char* label, const char* location);
+// Queue one deferred immediate-assertion result. The condition result and
+// selected action are fixed at statement execution; the runtime matures the
+// report in Reactive and owns `frame` until the callback (or teardown).
+typedef void (*llg_deferred_assertion_fn)(llg_frame_t* frame);
+void llg_deferred_assertion(int kind, int passed, uint64_t identity,
+                            const char* label, const char* location,
+                            llg_deferred_assertion_fn action,
+                            llg_frame_t* frame);
 
 // ── Command-line plusargs ───────────────────────────────────────────────────
 //
