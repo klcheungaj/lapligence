@@ -14,7 +14,7 @@ use std::ptr;
 use std::slice;
 use std::str;
 
-const ABI_VERSION: u32 = 2;
+const ABI_VERSION: u32 = 3;
 const INVALID_ID: u64 = u64::MAX;
 
 const STATUS_OK: u32 = 0;
@@ -43,6 +43,7 @@ const MAX_DEFINES: usize = 4_096;
 const MAX_TOP_MODULES: usize = 4_096;
 const MAX_INCLUDE_DIRS: usize = 4_096;
 const MAX_PARAMETER_OVERRIDES: usize = 4_096;
+const MAX_SYSTEM_SUBROUTINES: usize = 4_096;
 const MAX_CONFIG_BYTES: u64 = 4 * 1024 * 1024;
 
 /// One admitted in-memory SystemVerilog compilation unit.
@@ -255,6 +256,10 @@ pub struct CompileOptions {
     pub include_dirs: Vec<String>,
     /// Top-level elaboration parameter overrides.
     pub parameter_overrides: Vec<ParameterOverride>,
+    /// User-defined system-task/function prototypes accepted by Slang. Each
+    /// entry uses the standard prototype spelling, for example
+    /// `function int $probe(input logic value)`.
+    pub system_subroutines: Vec<String>,
     /// Treat compilation units as library units so definitions are checked
     /// once without inferring and recursively elaborating design tops.
     pub library_units: bool,
@@ -984,6 +989,8 @@ struct RawCompileRequest {
     include_dir_count: u64,
     parameter_overrides: *const RawDefine,
     parameter_override_count: u64,
+    system_subroutines: *const RawString,
+    system_subroutine_count: u64,
     limits: RawLimits,
 }
 
@@ -1278,6 +1285,12 @@ pub fn compile(request: &CompileRequest<'_>) -> Result<Snapshot, SlangError> {
             reserved: 0,
         })
         .collect();
+    let raw_system_subroutines: Vec<_> = request
+        .options
+        .system_subroutines
+        .iter()
+        .map(|prototype| raw_string(prototype))
+        .collect();
     let limits = request.options.limits;
     let raw_request = RawCompileRequest {
         abi_version: ABI_VERSION,
@@ -1297,6 +1310,8 @@ pub fn compile(request: &CompileRequest<'_>) -> Result<Snapshot, SlangError> {
         include_dir_count: raw_include_dirs.len() as u64,
         parameter_overrides: raw_parameter_overrides.as_ptr(),
         parameter_override_count: raw_parameter_overrides.len() as u64,
+        system_subroutines: raw_system_subroutines.as_ptr(),
+        system_subroutine_count: raw_system_subroutines.len() as u64,
         limits: RawLimits {
             max_sources: limits.max_sources,
             max_source_bytes: limits.max_source_bytes,
@@ -1402,6 +1417,11 @@ fn validate_request(request: &CompileRequest<'_>) -> Result<(), SlangError> {
             "parameter override count exceeds the native limit",
         ));
     }
+    if request.options.system_subroutines.len() > MAX_SYSTEM_SUBROUTINES {
+        return Err(limit_exceeded(
+            "system subroutine count exceeds the native limit",
+        ));
+    }
     let mut config_bytes = 0_u64;
     for define in &request.options.defines {
         validate_name(&define.name, "define name")?;
@@ -1436,6 +1456,14 @@ fn validate_request(request: &CompileRequest<'_>) -> Result<(), SlangError> {
         }
         add_input_bytes(&mut config_bytes, parameter.name.len(), "configuration")?;
         add_input_bytes(&mut config_bytes, parameter.value.len(), "configuration")?;
+    }
+    for prototype in &request.options.system_subroutines {
+        if prototype.is_empty() || prototype.contains('\0') {
+            return Err(invalid_argument(
+                "system subroutine prototypes must be nonempty and contain no NUL bytes",
+            ));
+        }
+        add_input_bytes(&mut config_bytes, prototype.len(), "configuration")?;
     }
     if !request
         .sources

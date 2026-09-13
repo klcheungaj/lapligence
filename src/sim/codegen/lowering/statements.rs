@@ -2,7 +2,10 @@
 
 use super::objects::object_query;
 use super::*;
-use crate::sim::ir::{IrContainerElement, IrObjectQuery, IrObjectStmt, IrStringExpr};
+use crate::sim::ir::{
+    IrContainerElement, IrObjectQuery, IrObjectStmt, IrStringExpr, IrVpiCompileArg,
+    IrVpiCompileCall,
+};
 
 fn default_real_local_initializer(width: u32) -> Option<Box<IrExpr>> {
     (width == 0).then(|| {
@@ -5078,6 +5081,36 @@ impl EmitCtx<'_, '_> {
                     .warnings
                     .push(format!("{name} in `{}` skipped (not supported)", self.path));
                 Ok(vec![])
+            }
+            _ if name.starts_with('$') => {
+                let args = args
+                    .into_iter()
+                    .map(|arg| self.cg.lower_expr(&self.path, arg))
+                    .collect::<Result<Vec<_>, _>>()?;
+                if let Some((index, _)) = args
+                    .iter()
+                    .enumerate()
+                    .find(|(_, arg)| arg.width > LLG_MAX_WIDTH)
+                {
+                    return Err(format!(
+                        "VPI system task `{name}` argument {index} exceeds the supported width in `{}`",
+                        self.path
+                    ));
+                }
+                self.cg.model.vpi_compile_calls.push(IrVpiCompileCall::new(
+                    name.to_owned(),
+                    args.iter()
+                        .map(|arg| IrVpiCompileArg {
+                            width: arg.width,
+                            signed: arg.signed,
+                            real: arg.is_real(),
+                        })
+                        .collect(),
+                ));
+                Ok(vec![IrStmt::VpiCall {
+                    name: name.to_owned(),
+                    args,
+                }])
             }
             _ => Err(format!("unsupported system task {name} in `{}`", self.path)),
         }

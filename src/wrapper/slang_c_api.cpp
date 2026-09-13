@@ -37,6 +37,7 @@
 #include "slang/diagnostics/AnalysisDiags.h"
 #include "slang/diagnostics/DiagnosticEngine.h"
 #include "slang/diagnostics/DiagnosticClient.h"
+#include "slang/driver/UserDefinedSubroutine.h"
 #include "slang/numeric/ConstantValue.h"
 #include "slang/parsing/Parser.h"
 #include "slang/parsing/Preprocessor.h"
@@ -113,6 +114,7 @@ constexpr uint64_t kHardMaxDefines = 4096;
 constexpr uint64_t kHardMaxTopModules = 4096;
 constexpr uint64_t kHardMaxIncludeDirs = 4096;
 constexpr uint64_t kHardMaxParameterOverrides = 4096;
+constexpr uint64_t kHardMaxSystemSubroutines = 4096;
 constexpr uint64_t kHardMaxConfigBytes = 4 * 1024 * 1024;
 
 class BridgeFailure final : public std::runtime_error {
@@ -3738,6 +3740,9 @@ std::unique_ptr<LlgSlangSnapshot> compileImpl(const LlgSlangCompileRequest& requ
   if (request.parameter_override_count != 0 && request.parameter_overrides == nullptr)
     throw BridgeFailure(LLG_SLANG_STATUS_INVALID_ARGUMENT,
                         "parameter_overrides has a null pointer");
+  if (request.system_subroutine_count != 0 && request.system_subroutines == nullptr)
+    throw BridgeFailure(LLG_SLANG_STATUS_INVALID_ARGUMENT,
+                        "system_subroutines has a null pointer");
 
   const uint64_t maxSources = effectiveLimit(request.limits.max_sources,
       kDefaultMaxSources, kHardMaxSources);
@@ -3755,6 +3760,9 @@ std::unique_ptr<LlgSlangSnapshot> compileImpl(const LlgSlangCompileRequest& requ
   if (request.parameter_override_count > kHardMaxParameterOverrides)
     throw BridgeFailure(LLG_SLANG_STATUS_LIMIT_EXCEEDED,
                         "parameter override count limit exceeded");
+  if (request.system_subroutine_count > kHardMaxSystemSubroutines)
+    throw BridgeFailure(LLG_SLANG_STATUS_LIMIT_EXCEEDED,
+                        "system subroutine count limit exceeded");
 
   uint64_t sourceBytes = 0;
   uint64_t configBytes = 0;
@@ -3877,6 +3885,22 @@ std::unique_ptr<LlgSlangSnapshot> compileImpl(const LlgSlangCompileRequest& requ
   sourceManager.setDisableProximatePaths(true);
   sourceManager.setCacheOnlyReads(true);
 
+  std::vector<std::shared_ptr<driver::UserDefinedSubroutine>> userDefinedSubroutines;
+  userDefinedSubroutines.reserve(static_cast<size_t>(request.system_subroutine_count));
+  for (uint64_t i = 0; i < request.system_subroutine_count; i++) {
+    const std::string_view prototype = checkedView(
+        request.system_subroutines[i], "system subroutine prototype");
+    if (prototype.empty() || prototype.find('\0') != std::string_view::npos)
+      throw BridgeFailure(LLG_SLANG_STATUS_INVALID_ARGUMENT,
+                          "system subroutine prototypes must be nonempty and contain no NUL bytes");
+    addChecked(configBytes, prototype.size(), kHardMaxConfigBytes,
+               "configuration byte");
+    auto result = driver::UserDefinedSubroutine::create(prototype, sourceManager);
+    if (!result)
+      throw BridgeFailure(LLG_SLANG_STATUS_INVALID_ARGUMENT, result.error());
+    userDefinedSubroutines.emplace_back(std::move(*result));
+  }
+
   std::vector<SourceBuffer> buffers;
   buffers.reserve(static_cast<size_t>(request.source_count));
   for (uint64_t i = 0; i < request.source_count; i++)
@@ -3900,6 +3924,8 @@ std::unique_ptr<LlgSlangSnapshot> compileImpl(const LlgSlangCompileRequest& requ
   Bag compileOptions;
   compileOptions.set(std::move(compilationOptions));
   Compilation compilation(compileOptions);
+  for (const auto& subroutine : userDefinedSubroutines)
+    compilation.addSystemSubroutine(subroutine);
   bool anyCompilationUnit = false;
   if ((request.flags & LLG_SLANG_COMPILE_MERGED_COMPILATION_UNITS) != 0) {
     std::vector<SourceBuffer> compilationBuffers;

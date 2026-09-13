@@ -42,6 +42,8 @@ pub use validate::IrValidationError;
 
 /// Maximum contributions stored by one generated `llg_net_t`.
 pub const LLG_MAX_NET_DRIVERS: usize = 16;
+/// Maximum number of arguments exposed through one generated VPI call.
+pub const LLG_MAX_VPI_ARGS: usize = 256;
 
 fn validate_width(path: &str, width: u32) -> Result<(), IrValidationError> {
     if width != 0 {
@@ -937,6 +939,11 @@ pub enum IrSysFunc {
     /// status. `None` preserves the standard's omitted-argument
     /// `system(NULL)` query, distinct from `Some(Literal(Vec::new()))`.
     System(Option<IrStringExpr>),
+    /// A user-registered VPI system function.  Arguments are evaluated in
+    /// source order and passed as bounded packed/real values to the generated
+    /// model bridge; unsupported aggregate/string values are rejected while
+    /// lowering rather than being silently coerced.
+    VpiCall { name: String, args: Vec<IrExpr> },
     /// Verilog-2001 `$random` and the seven legacy probabilistic distribution
     /// functions.  Distribution seeds are writable packed lvalues; keeping
     /// the lvalue in IR lets emission evaluate it once, update it after the
@@ -2408,6 +2415,12 @@ pub enum IrStmt {
     /// once when the statement executes and its host status is discarded.
     /// `None` means the standard's omitted-argument `system(NULL)` query.
     System(Option<IrStringExpr>),
+    /// A user-registered VPI system task. Arguments are evaluated in source
+    /// order and exposed through the active `vpiSysTfCall` handle.
+    VpiCall {
+        name: String,
+        args: Vec<IrExpr>,
+    },
     /// `process::self().srandom(seed)` (and equivalent object stream seed).
     RandomSeed {
         seed: IrExpr,
@@ -3770,6 +3783,96 @@ pub struct IrArray {
     pub(in crate::sim) total: u64,
 }
 
+/// Object kinds admitted to the generated model's bounded VPI catalog.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IrVpiObjectKind {
+    Module,
+    Net,
+    Reg,
+    RealVar,
+    RegArray,
+}
+
+impl IrVpiObjectKind {
+    pub const fn c_type(self) -> &'static str {
+        match self {
+            Self::Module => "vpiModule",
+            Self::Net => "vpiNet",
+            Self::Reg => "vpiReg",
+            Self::RealVar => "vpiRealVar",
+            Self::RegArray => "vpiRegArray",
+        }
+    }
+}
+
+/// Owned source and storage metadata for one generated VPI object.
+///
+/// Paths use the same unit-separator hierarchy encoding as [`IrSignal`].
+/// `signal`/`array` refer to stable model-table indices; the emitter resolves
+/// those indices to C storage only after optimization has completed.
+#[derive(Clone, Debug, PartialEq)]
+pub struct IrVpiObject {
+    pub(in crate::sim) full_name: String,
+    pub(in crate::sim) name: String,
+    pub(in crate::sim) definition_name: Option<String>,
+    pub(in crate::sim) file: Option<String>,
+    pub(in crate::sim) line: u32,
+    pub(in crate::sim) kind: IrVpiObjectKind,
+    pub(in crate::sim) width: u32,
+    pub(in crate::sim) signed: bool,
+    pub(in crate::sim) real: bool,
+    pub(in crate::sim) net: bool,
+    pub(in crate::sim) signal: Option<usize>,
+    pub(in crate::sim) array: Option<usize>,
+}
+
+/// Type-only descriptor for one source-level VPI call site.  It is kept
+/// separate from [`IrVpiObject`] because compiletf/sizetf receives argument
+/// shapes before any runtime value exists.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct IrVpiCompileCall {
+    pub(in crate::sim) name: String,
+    pub(in crate::sim) args: Vec<IrVpiCompileArg>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct IrVpiCompileArg {
+    pub(in crate::sim) width: u32,
+    pub(in crate::sim) signed: bool,
+    pub(in crate::sim) real: bool,
+}
+
+impl IrVpiCompileCall {
+    pub fn new(name: String, args: Vec<IrVpiCompileArg>) -> Self {
+        Self { name, args }
+    }
+}
+
+impl IrVpiObject {
+    pub fn module(
+        full_name: String,
+        name: String,
+        definition_name: String,
+        file: Option<String>,
+        line: u32,
+    ) -> Self {
+        Self {
+            full_name,
+            name,
+            definition_name: Some(definition_name),
+            file,
+            line,
+            kind: IrVpiObjectKind::Module,
+            width: 0,
+            signed: false,
+            real: false,
+            net: false,
+            signal: None,
+            array: None,
+        }
+    }
+}
+
 impl IrArray {
     pub fn new(
         c_name: String,
@@ -3941,6 +4044,12 @@ pub struct IrModel {
     /// `llg_spawn_final` and runs them with `llg_rt_run_finals()` AFTER
     /// `llg_rt_run()` returns ($finish / deadlock / no future events).
     pub(in crate::sim) final_spawns: Vec<String>,
+    /// Stable owned VPI object identities captured before lowering storage is
+    /// optimized. Empty for hand-built IR fixtures that do not enable VPI.
+    pub(in crate::sim) vpi_objects: Vec<IrVpiObject>,
+    /// Type-only VPI call sites run through compiletf/sizetf before the
+    /// generated scheduler starts. Empty for hand-built IR fixtures.
+    pub(in crate::sim) vpi_compile_calls: Vec<IrVpiCompileCall>,
 }
 
 /// Staging tables for constructing an [`IrModel`].
@@ -4006,6 +4115,8 @@ impl IrModel {
             init_steps: parts.init_steps,
             spawns: parts.spawns,
             final_spawns: parts.final_spawns,
+            vpi_objects: Vec::new(),
+            vpi_compile_calls: Vec::new(),
         };
         model.validate()?;
         Ok(model)
@@ -4059,6 +4170,14 @@ impl IrModel {
     }
     pub fn final_spawns(&self) -> &[String] {
         &self.final_spawns
+    }
+
+    pub fn vpi_objects(&self) -> &[IrVpiObject] {
+        &self.vpi_objects
+    }
+
+    pub fn vpi_compile_calls(&self) -> &[IrVpiCompileCall] {
+        &self.vpi_compile_calls
     }
 
     pub fn signal(&self, idx: usize) -> &IrSignal {

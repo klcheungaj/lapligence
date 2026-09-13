@@ -62,6 +62,9 @@ pub struct CompileOpts {
     /// bounded macro-expanded includes through Rust reads before entering
     /// cache-only Slang.
     pub include_dirs: Vec<String>,
+    /// Standard SystemVerilog prototypes for user-defined `$` tasks/functions
+    /// made available to the elaborator and simulator plugin bridge.
+    pub system_subroutines: Vec<String>,
     /// Check every definition as an uninstantiated library unit instead of
     /// recursively elaborating inferred top-level designs.
     pub library_units: bool,
@@ -308,6 +311,7 @@ fn preflight_options(opts: &CompileOpts) -> Result<(), StartupError> {
     if opts.defines.len() > MAX_OPTIONS
         || opts.param_overrides.len() > MAX_OPTIONS
         || opts.include_dirs.len() > MAX_OPTIONS
+        || opts.system_subroutines.len() > MAX_OPTIONS
     {
         return Err(StartupError::new(
             StartupErrorKind::InvalidArgument,
@@ -319,6 +323,7 @@ fn preflight_options(opts: &CompileOpts) -> Result<(), StartupError> {
         .iter()
         .chain(&opts.param_overrides)
         .chain(&opts.include_dirs)
+        .chain(&opts.system_subroutines)
         .map(|value| value.len() as u64)
         .chain(opts.top.iter().map(|value| value.len() as u64))
         .try_fold(0_u64, u64::checked_add)
@@ -368,6 +373,7 @@ fn compile_source_groups(
             .iter()
             .map(|value| parse_override(value))
             .collect::<Result<_, _>>()?,
+        system_subroutines: opts.system_subroutines.clone(),
         library_units: opts.library_units,
         compilation_unit_mode: opts.compilation_unit_mode,
         edition: opts.edition,

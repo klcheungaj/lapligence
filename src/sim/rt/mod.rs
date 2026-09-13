@@ -5,6 +5,8 @@
 //! scheduler-independent legacy probabilistic functions (`llg_random.h` /
 //! `llg_random.c`), [`rng_sources`] the
 //! scheduler-independent random-stream service (`llg_rng.h` / `llg_rng.c`),
+//! [`vpi_sources`] the bounded public VPI declarations and plugin bridge
+//! (`vpi_user.h` / `llg_vpi.c`),
 //! [`container_sources`] and [`string_sources`] the dynamically sized value
 //! stores, [`runtime_sources`] the event scheduler (`llg_rt.h` / `llg_rt.c`),
 //! [`libaco_sources`] the vendored coroutine
@@ -17,6 +19,18 @@
 //!
 //! See `llg_value.h` for value semantics and `llg_rt.h` for the scheduler API;
 //! correctness of the 4-state math mirrors `core::elab`.
+
+/// The bounded public VPI declarations and generated-model bridge.
+pub fn vpi_sources() -> (&'static str, &'static str) {
+    (include_str!("vpi_user.h"), include_str!("llg_vpi.c"))
+}
+
+/// Internal bridge header included by generated models.  The public plugin
+/// header is emitted as `vpi_user.h`; keeping this header separate avoids
+/// exposing model metadata structures to applications.
+pub fn vpi_bridge_header() -> &'static str {
+    include_str!("llg_vpi.h")
+}
 
 /// Scheduler-independent deterministic random-stream service.  It owns the
 /// PCG stream, hierarchy derivation, unbiased ranges, and state serialization.

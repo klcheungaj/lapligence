@@ -579,7 +579,9 @@ fn collect_effects(
             IrStmt::DisableFork | IrStmt::DisableTarget { .. } | IrStmt::ActivationScope { .. } => {
                 effects.push(ExecutionEffect::RuntimeService)
             }
-            IrStmt::System(_) => effects.push(ExecutionEffect::RuntimeService),
+            IrStmt::System(_) | IrStmt::VpiCall { .. } => {
+                effects.push(ExecutionEffect::RuntimeService)
+            }
             IrStmt::Memory { .. } | IrStmt::RandomSeed { .. } | IrStmt::RandomStateSet { .. } => {
                 effects.push(ExecutionEffect::RuntimeService)
             }
@@ -700,6 +702,11 @@ fn collect_statement_expression_effects(
     match statement {
         IrStmt::System(Some(command)) => {
             collect_string_effects(ir, command, effects, visited_calls);
+        }
+        IrStmt::VpiCall { args, .. } => {
+            for arg in args {
+                collect_expression_effects(ir, arg, effects, visited_calls);
+            }
         }
         IrStmt::RandomSeed { seed } => {
             collect_expression_effects(ir, seed, effects, visited_calls);
@@ -1244,6 +1251,13 @@ fn collect_expression_effects(
                 effects.push(ExecutionEffect::RuntimeService);
                 if let Some(command) = command {
                     collect_string_effects(ir, command, effects, visited_calls);
+                }
+            }
+            IrSysFunc::VpiCall { args, .. } => {
+                effects.push(ExecutionEffect::RuntimeService);
+                effects.push(ExecutionEffect::ImmediateStore);
+                for arg in args {
+                    collect_expression_effects(ir, arg, effects, visited_calls);
                 }
             }
             IrSysFunc::LegacyRandom { seed, args, .. } => {

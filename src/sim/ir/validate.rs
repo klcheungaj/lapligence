@@ -393,6 +393,90 @@ impl Validator<'_> {
             return self.fail("precision_fs", "scheduler precision must be non-zero");
         }
 
+        for (idx, object) in self.model.vpi_objects.iter().enumerate() {
+            let path = format!("vpi_objects[{idx}]");
+            if object.full_name.is_empty() || object.name.is_empty() {
+                return self.fail(path, "VPI object names must be non-empty");
+            }
+            if object.full_name.contains('\0')
+                || object.name.contains('\0')
+                || object
+                    .definition_name
+                    .as_deref()
+                    .is_some_and(|name| name.contains('\0'))
+                || object
+                    .file
+                    .as_deref()
+                    .is_some_and(|file| file.contains('\0'))
+            {
+                return self.fail(path, "VPI object metadata must not contain NUL bytes");
+            }
+            if object.signal.is_some() && object.array.is_some() {
+                return self.fail(
+                    path,
+                    "VPI object cannot reference both signal and array storage",
+                );
+            }
+            match object.kind {
+                IrVpiObjectKind::Module => {
+                    if object.signal.is_some() || object.array.is_some() {
+                        return self.fail(path, "VPI module cannot reference value storage");
+                    }
+                }
+                IrVpiObjectKind::RegArray => {
+                    let Some(array) = object.array else {
+                        return self.fail(path, "VPI array is missing array storage");
+                    };
+                    if array >= self.model.arrays.len() {
+                        return self.fail(path, "VPI array references an out-of-bounds IR array");
+                    }
+                    if object.signal.is_some() {
+                        return self.fail(path, "VPI array cannot reference signal storage");
+                    }
+                    self.validate_width(object.width, &format!("{path}.width"))?;
+                }
+                IrVpiObjectKind::Net | IrVpiObjectKind::Reg | IrVpiObjectKind::RealVar => {
+                    let Some(signal) = object.signal else {
+                        return self.fail(path, "VPI value object is missing signal storage");
+                    };
+                    if signal >= self.model.signals.len() {
+                        return self.fail(path, "VPI object references an out-of-bounds IR signal");
+                    }
+                    if object.array.is_some() {
+                        return self.fail(path, "VPI value object cannot reference array storage");
+                    }
+                    if !object.real {
+                        self.validate_width(object.width, &format!("{path}.width"))?;
+                    }
+                }
+            }
+        }
+
+        for (idx, call) in self.model.vpi_compile_calls.iter().enumerate() {
+            let path = format!("vpi_compile_calls[{idx}]");
+            if !call.name.starts_with('$') || call.name.len() < 2 {
+                return self.fail(path, "VPI compile-call name must start with `$`");
+            }
+            if call.args.len() > LLG_MAX_VPI_ARGS {
+                return self.fail(path, "VPI compile-call exceeds the argument limit");
+            }
+            if call.name.contains('\0') {
+                return self.fail(path, "VPI compile-call name must not contain NUL bytes");
+            }
+            for (arg_idx, arg) in call.args.iter().enumerate() {
+                if arg.real {
+                    if arg.width != 0 {
+                        return self.fail(
+                            format!("{path}.args[{arg_idx}]"),
+                            "real VPI compile-call arguments must have zero width",
+                        );
+                    }
+                } else {
+                    self.validate_width(arg.width, &format!("{path}.args[{arg_idx}].width"))?;
+                }
+            }
+        }
+
         let mut storage_names = HashSet::new();
         for (idx, container) in self.model.containers.iter().enumerate() {
             if !storage_names.insert(container.c_name.as_str()) {
@@ -1454,6 +1538,26 @@ impl Validator<'_> {
                     }
                     if expr.width != 32 || !expr.signed {
                         return self.fail(path, "$system requires a signed int result");
+                    }
+                }
+                IrSysFunc::VpiCall { name, args } => {
+                    if !name.starts_with('$') || name.len() < 2 {
+                        return self.fail(path, "VPI system-function name must start with `$`");
+                    }
+                    if expr.fill.is_some() {
+                        return self.fail(
+                            path,
+                            "VPI system-function result cannot carry a fill marker",
+                        );
+                    }
+                    if expr.width != 0 {
+                        self.validate_width(expr.width, &format!("{path}.width"))?;
+                    }
+                    if args.len() > LLG_MAX_VPI_ARGS {
+                        return self.fail(path, "VPI system-function exceeds the argument limit");
+                    }
+                    for (index, arg) in args.iter().enumerate() {
+                        self.validate_expr(arg, formals, &format!("{path}.args[{index}]"))?;
                     }
                 }
                 IrSysFunc::LegacyRandom { kind, seed, args } => {
@@ -2526,6 +2630,17 @@ impl Validator<'_> {
                             .and_then(|_| self.validate_expr(child, formals, path));
                     });
                     result?;
+                }
+            }
+            IrStmt::VpiCall { name, args } => {
+                if !name.starts_with('$') || name.len() < 2 {
+                    return self.fail(path, "VPI system-task name must start with `$`");
+                }
+                if args.len() > LLG_MAX_VPI_ARGS {
+                    return self.fail(path, "VPI system-task exceeds the argument limit");
+                }
+                for (index, arg) in args.iter().enumerate() {
+                    self.validate_expr(arg, formals, &format!("{path}.args[{index}]"))?;
                 }
             }
             IrStmt::RandomSeed { seed } => {

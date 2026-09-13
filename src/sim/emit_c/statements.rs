@@ -320,6 +320,40 @@ fn render_memory(
     ))
 }
 
+fn render_vpi_call(ctx: &RCtx<'_>, name: &str, args: &[IrExpr]) -> Result<String, String> {
+    let mut declarations = String::new();
+    let mut values = Vec::with_capacity(args.len());
+    for (index, arg) in args.iter().enumerate() {
+        let rendered = render_expr(ctx, arg)?;
+        if rendered.width == 0 {
+            let value_name = format!("_llg_vpi_arg{index}_real");
+            declarations.push_str(&format!("double {value_name} = {}; ", rendered.code));
+            values.push(format!(
+                "{{ LLG_FMT_REAL, 0, {}, 1, sv4_x(1, 0), {value_name} }}",
+                rendered.signed as u8
+            ));
+        } else {
+            let value_name = format!("_llg_vpi_arg{index}_packed");
+            declarations.push_str(&format!("sv4_t {value_name} = {}; ", rendered.code));
+            values.push(format!(
+                "{{ LLG_FMT_PACKED, {}, {}, 0, {value_name}, 0.0 }}",
+                rendered.width, rendered.signed as u8
+            ));
+        }
+    }
+    let array_len = args.len().max(1);
+    let initializers = if values.is_empty() {
+        "{ 0 }".to_owned()
+    } else {
+        values.join(", ")
+    };
+    Ok(format!(
+        "{{ {declarations} llg_vpi_arg_t _llg_vpi_args[{array_len}] = {{ {initializers} }}; (void)llg_vpi_call_task({}, _llg_vpi_args, {}); }}\n",
+        c_string_literal(name),
+        args.len()
+    ))
+}
+
 fn render_stmt_scoped(
     ctx: &RCtx<'_>,
     st: &crate::sim::ir::IrStmt,
@@ -346,6 +380,7 @@ fn render_stmt_scoped(
             };
             format!("    (void)llg_system({command}, {has_command});\n")
         }
+        IrStmt::VpiCall { name, args } => render_vpi_call(ctx, name, args)?,
         IrStmt::RandomSeed { seed } => {
             format!(
                 "    llg_process_srandom({});\n",

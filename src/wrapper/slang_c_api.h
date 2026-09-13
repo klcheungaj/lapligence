@@ -13,7 +13,7 @@
 extern "C" {
 #endif
 
-#define LLG_SLANG_ABI_VERSION 2u
+#define LLG_SLANG_ABI_VERSION 3u
 #define LLG_SLANG_INVALID_ID UINT64_MAX
 
 typedef struct LlgSlangSnapshot LlgSlangSnapshot;
@@ -89,6 +89,9 @@ typedef struct {
   uint64_t include_dir_count;
   const LlgSlangDefine* parameter_overrides;
   uint64_t parameter_override_count;
+  /* Standard SystemVerilog prototypes for user-defined $ system tasks/functions. */
+  const LlgSlangString* system_subroutines;
+  uint64_t system_subroutine_count;
   LlgSlangLimits limits;
 } LlgSlangCompileRequest;
 

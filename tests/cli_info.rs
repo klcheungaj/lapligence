@@ -60,6 +60,7 @@ fn simulator_information_exits_without_compiling_or_installing_memory_limits() {
     );
     assert!(String::from_utf8_lossy(&output.stdout).contains("--include-dir <path>"));
     assert!(String::from_utf8_lossy(&output.stdout).contains("--define <NAME[=VALUE]>"));
+    assert!(String::from_utf8_lossy(&output.stdout).contains("--define-system-task <prototype>"));
     assert!(String::from_utf8_lossy(&output.stdout).contains("--stop-policy <resume|exit>"));
 }
 
@@ -138,6 +139,10 @@ fn simulator_include_and_define_options_require_values() {
         ("-I", "--include-dir requires a path"),
         ("--define", "--define requires NAME or NAME=VALUE"),
         ("-D", "--define requires NAME or NAME=VALUE"),
+        (
+            "--define-system-task",
+            "--define-system-task requires a prototype",
+        ),
     ] {
         let output = invoke(env!("CARGO_BIN_EXE_llg"), &[flag]);
         assert_eq!(output.status.code(), Some(2), "{output:?}");

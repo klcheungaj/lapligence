@@ -44,7 +44,7 @@ use std::sync::OnceLock;
 
 /// The generated project file.  `{SOURCES}` is replaced with the actual
 /// source list (`model.c llg_value.c llg_container.c llg_string.c llg_rt.c
-/// llg_random.c llg_rng.c
+/// llg_random.c llg_rng.c llg_vpi.c
 /// aco.c acosw.S`, plus waveform/libfst C
 /// files when enabled); everything else is fixed.
 /// ASM is enabled because libaco's context switch lives in `acosw.S`.
@@ -60,8 +60,12 @@ include_directories(${CMAKE_SOURCE_DIR})
 add_executable(sim {SOURCES})
 target_compile_definitions(sim PRIVATE LLG_MODEL_MAX_WIDTH={MODEL_WIDTH})
 target_compile_definitions(sim PRIVATE LLG_MODEL_STACK_VALUES={STACK_VALUES})
+set_target_properties(sim PROPERTIES ENABLE_EXPORTS ON)
 if(NOT MSVC)
   target_link_libraries(sim PRIVATE m)
+  if(UNIX AND NOT APPLE)
+    target_link_libraries(sim PRIVATE dl)
+  endif()
 endif()
 {WAVE_SETUP}
 {DPI_LINK}
@@ -282,7 +286,7 @@ pub fn generate_model_sources_with_opts(
 
 /// File names [`super::write_sim_sources`] always writes (must mirror its
 /// fixed list there) plus this module's own `CMakeLists.txt`.
-const FIXED_SOURCE_NAMES: [&str; 18] = [
+const FIXED_SOURCE_NAMES: [&str; 21] = [
     "llg_rt.h",
     "llg_rt.c",
     "llg_value.h",
@@ -291,6 +295,9 @@ const FIXED_SOURCE_NAMES: [&str; 18] = [
     "llg_random.c",
     "llg_rng.h",
     "llg_rng.c",
+    "vpi_user.h",
+    "llg_vpi.h",
+    "llg_vpi.c",
     "llg_container.h",
     "llg_container.c",
     "llg_string.h",
@@ -381,6 +388,7 @@ fn write_cmakelists(
         "llg_rng.c",
         "llg_rt.c",
         "llg_random.c",
+        "llg_vpi.c",
         "aco.c",
         "acosw.S",
         "llg_container.c",

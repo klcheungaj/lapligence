@@ -260,8 +260,8 @@ use crate::sim::ir::{
     IrInitPhase, IrInitTarget, IrInitialization, IrJoinKind, IrLhs, IrMemoryRadix, IrModel,
     IrNetAliasBinding, IrProcess, IrProcessKind, IrRealBinOp, IrRealUnOp, IrSeverityLevel, IrShape,
     IrSignal, IrStmt, IrStochasticStmt, IrStreamDirection, IrStreamTarget, IrSysFunc, IrTimeKind,
-    IrTransitionDelay, IrType, IrUnOp, IrUniquePriorityCheck, IrWaitSrc, StorageKind,
-    StorageLifetime, StorageOwnership, StorageRef, LLG_MAX_NET_DRIVERS,
+    IrTransitionDelay, IrType, IrUnOp, IrUniquePriorityCheck, IrVpiObject, IrVpiObjectKind,
+    IrWaitSrc, StorageKind, StorageLifetime, StorageOwnership, StorageRef, LLG_MAX_NET_DRIVERS,
 };
 
 mod assertions;
@@ -431,6 +431,7 @@ fn generate_from_db_with_opts_impl(
             .expect("the default timescale has non-zero precision"),
     );
     cg.build_init_steps(&mut model)?;
+    cg.populate_vpi_metadata(&mut model, &tops)?;
     // Final-block processes render like any other but spawn into the
     // post-simulation phase: they run after `llg_rt_run` returns, not at
     // t=0.
@@ -455,6 +456,139 @@ fn generate_from_db_with_opts_impl(
         model_c,
         warnings: cg.warnings,
     })
+}
+
+impl<'a> Codegen<'a> {
+    /// Capture the source-owned hierarchy and storage identities used by the
+    /// generated VPI catalog.  This runs after collection has assigned stable
+    /// IR indices but before optimization can prune any otherwise dead signal.
+    fn populate_vpi_metadata(&self, model: &mut IrModel, tops: &[NodeId]) -> Result<(), String> {
+        use std::collections::BTreeMap;
+
+        fn reachable(db: &Db, node: NodeId, tops: &[NodeId]) -> bool {
+            let mut current = Some(node);
+            while let Some(id) = current {
+                if tops.contains(&id) {
+                    return true;
+                }
+                current = db.node(id).parent;
+            }
+            false
+        }
+
+        fn components(path: &str) -> impl Iterator<Item = &str> {
+            path.split('\u{1f}')
+        }
+
+        let mut objects = BTreeMap::<String, IrVpiObject>::new();
+        for id in self.db.node_ids() {
+            if !reachable(self.db, id, tops) {
+                continue;
+            }
+            let node = self.node(id);
+            match self.kind(id) {
+                NodeKind::ModuleInst { def_name, .. } => {
+                    let full_name = self.waveform_name_for(id);
+                    let name = components(&full_name)
+                        .last()
+                        .unwrap_or(&node.name)
+                        .to_owned();
+                    objects.entry(full_name.clone()).or_insert_with(|| {
+                        IrVpiObject::module(
+                            full_name,
+                            name,
+                            def_name.clone(),
+                            node.file.clone(),
+                            node.line,
+                        )
+                    });
+                }
+                NodeKind::Net { .. } | NodeKind::Var { .. } => {
+                    let Some(info) = self.sig_globals.get(&id) else {
+                        continue;
+                    };
+                    let Some(signal) = model.signals.get(info.ir) else {
+                        return Err(format!(
+                            "VPI signal metadata references missing IR signal {} for `{}`",
+                            info.ir, node.full_name
+                        ));
+                    };
+                    let Some(full_name) = signal.hdl_name.clone() else {
+                        continue;
+                    };
+                    let name = components(&full_name)
+                        .last()
+                        .unwrap_or(&node.name)
+                        .to_owned();
+                    let (width, signed, real) = match signal.ty {
+                        IrType::Packed { width, signed, .. } => (width, signed, false),
+                        IrType::Real { .. } => (0, false, true),
+                    };
+                    let net = matches!(self.kind(id), NodeKind::Net { .. })
+                        || signal.net_driver.is_some()
+                        || !signal.net_alias.is_empty();
+                    let kind = if real {
+                        IrVpiObjectKind::RealVar
+                    } else if net {
+                        IrVpiObjectKind::Net
+                    } else {
+                        IrVpiObjectKind::Reg
+                    };
+                    objects
+                        .entry(full_name.clone())
+                        .or_insert_with(|| IrVpiObject {
+                            full_name,
+                            name,
+                            definition_name: None,
+                            file: node.file.clone(),
+                            line: node.line,
+                            kind,
+                            width,
+                            signed,
+                            real,
+                            net,
+                            signal: Some(info.ir),
+                            array: None,
+                        });
+                }
+                NodeKind::Array { .. } => {
+                    let Some(info) = self.array_globals.get(&id) else {
+                        continue;
+                    };
+                    let Some(array) = model.arrays.get(info.ir) else {
+                        return Err(format!(
+                            "VPI array metadata references missing IR array {} for `{}`",
+                            info.ir, node.full_name
+                        ));
+                    };
+                    let full_name = array.hdl_name.clone();
+                    let name = components(&full_name)
+                        .last()
+                        .unwrap_or(&node.name)
+                        .to_owned();
+                    objects
+                        .entry(full_name.clone())
+                        .or_insert_with(|| IrVpiObject {
+                            full_name,
+                            name,
+                            definition_name: None,
+                            file: node.file.clone(),
+                            line: node.line,
+                            kind: IrVpiObjectKind::RegArray,
+                            width: array.elem_width,
+                            signed: array.signed,
+                            real: array.real,
+                            net: false,
+                            signal: None,
+                            array: Some(info.ir),
+                        });
+                }
+                _ => {}
+            }
+        }
+        model.vpi_objects = objects.into_values().collect();
+        Ok(())
+    }
 }
 
 // ── Collected model info ──────────────────────────────────────────────────────

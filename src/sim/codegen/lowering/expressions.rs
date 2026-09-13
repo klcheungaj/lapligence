@@ -7,7 +7,7 @@ use crate::sim::ir::{
     IrArrayDimension, IrArrayQuery, IrArrayQueryKind, IrArrayQueryTarget, IrBinOp, IrChandleExpr,
     IrConst, IrContainerExpr, IrContainerKind, IrFileInput, IrFileInputTarget, IrFileReadTarget,
     IrInsideItem, IrObjectQuery, IrObjectStmt, IrObjectType, IrPlusArgTarget, IrPlusArgText,
-    IrStreamSelector, IrStringExpr, IrStringInsideItem,
+    IrStreamSelector, IrStringExpr, IrStringInsideItem, IrVpiCompileArg, IrVpiCompileCall,
 };
 
 fn inside_array_index_vectors(dims: &[(i32, i32)]) -> Vec<Vec<i32>> {
@@ -4299,6 +4299,72 @@ impl<'a> Codegen<'a> {
                 let s = name == "$signed";
                 let w = a.width;
                 Ok(IrExpr::resize_to(a, w, s))
+            }
+            _ if name.starts_with('$') => {
+                let (width, signed) = match self.query_descriptor(call) {
+                    Some(descriptor) => match descriptor.shape {
+                        TypeShape::Real { .. } => (0, true),
+                        TypeShape::PackedAtom { .. } | TypeShape::Aggregate(_) => {
+                            let width = descriptor.fixed_size_bits().ok_or_else(|| {
+                                format!(
+                                    "VPI system function `{name}` has an unsupported non-packed result in `{scope_path}`"
+                                )
+                            })?;
+                            let width = u32::try_from(width).map_err(|_| {
+                                format!(
+                                    "VPI system function `{name}` result is wider than 32 bits in `{scope_path}`"
+                                )
+                            })?;
+                            if width == 0 || width > LLG_MAX_WIDTH {
+                                return Err(format!(
+                                    "VPI system function `{name}` result width {width} is outside the supported range in `{scope_path}`"
+                                ));
+                            }
+                            (width, descriptor.info.signed)
+                        }
+                        _ => {
+                            return Err(format!(
+                                "VPI system function `{name}` has an unsupported result type in `{scope_path}`"
+                            ));
+                        }
+                    },
+                    // Slang does not always attach a descriptor to an
+                    // unregistered system call. VPI's default integer result
+                    // remains useful until the plugin's sizetf is consulted.
+                    None => (32, true),
+                };
+                let args = args
+                    .into_iter()
+                    .map(|arg| self.lower_expr(scope_path, arg))
+                    .collect::<Result<Vec<_>, _>>()?;
+                if let Some((index, _)) = args
+                    .iter()
+                    .enumerate()
+                    .find(|(_, arg)| arg.width > LLG_MAX_WIDTH)
+                {
+                    return Err(format!(
+                        "VPI system function `{name}` argument {index} exceeds the supported width in `{scope_path}`"
+                    ));
+                }
+                self.model.vpi_compile_calls.push(IrVpiCompileCall::new(
+                    name.to_owned(),
+                    args.iter()
+                        .map(|arg| IrVpiCompileArg {
+                            width: arg.width,
+                            signed: arg.signed,
+                            real: arg.is_real(),
+                        })
+                        .collect(),
+                ));
+                Ok(IrExpr::new(
+                    IrExprKind::SysFunc(IrSysFunc::VpiCall {
+                        name: name.to_owned(),
+                        args,
+                    }),
+                    width,
+                    signed,
+                    None,
+                ))
             }
             _ => Err(format!(
                 "unsupported system function {name} in `{scope_path}`"

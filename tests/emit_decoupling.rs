@@ -38,7 +38,7 @@ fn collect_rust_sources(path: &Path, sources: &mut Vec<(PathBuf, String)>) {
 #[test]
 fn emit_c_consumes_only_ir() {
     for (path, source) in sim_sources("emit_c") {
-        for banned in ["core::db", "crate::ffi", "vpi", "unsafe", "VpiHandle"] {
+        for banned in ["core::db", "crate::ffi", "unsafe", "VpiHandle"] {
             assert!(
                 !source.contains(banned),
                 "{} must not reference `{banned}`: the C11 backend consumes only IR types",

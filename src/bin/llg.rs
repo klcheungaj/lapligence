@@ -4,7 +4,7 @@
 //!
 //! ```text
 //! llg [generate options] [build options] <file.sv>... [-- <plusargs>...]
-//! generate: --top <module>  --edition <2001|2009>  --compilation-units <separate|merged>  --include-dir <path>  --define <NAME[=VALUE]>  --lint  --lint-json [<path>]  --lint-config <file>  --gen-only  --no-opt  --stop-policy <resume|exit>
+//! generate: --top <module>  --edition <2001|2009>  --compilation-units <separate|merged>  --include-dir <path>  --define <NAME[=VALUE]>  --define-system-task <prototype>  --lint  --lint-json [<path>]  --lint-config <file>  --gen-only  --no-opt  --stop-policy <resume|exit>
 //! build:    --generator <backend>  --dpi-lib <path>...  # CMake generator and DPI-C libraries
 //! ```
 //!
@@ -59,6 +59,7 @@ struct DriverOptions {
     compilation_unit_mode: compile::CompilationUnitMode,
     include_dirs: Vec<String>,
     defines: Vec<String>,
+    system_subroutines: Vec<String>,
     files: Vec<String>,
     runtime_args: Vec<String>,
     lint_mode: bool,
@@ -111,7 +112,7 @@ fn parse_args(args: Vec<String>) -> Result<DriverOptions, i32> {
     if args.is_empty() {
         eprintln!(
             "usage: llg [generate options] [build options] <file.sv>... [-- <plusargs>...]\n\
-             generate: --top <module>  --edition <2001|2009>  --compilation-units <separate|merged>  --include-dir <path>  --define <NAME[=VALUE]>  --lint  --lint-json [<path>]  --lint-config <file>  --gen-only  --no-opt\n\
+             generate: --top <module>  --edition <2001|2009>  --compilation-units <separate|merged>  --include-dir <path>  --define <NAME[=VALUE]>  --define-system-task <prototype>  --lint  --lint-json [<path>]  --lint-config <file>  --gen-only  --no-opt\n\
              build:    --generator <backend>  --dpi-lib <path>...  # CMake generator and DPI-C libraries
              stop:     --stop-policy <resume|exit>  # `$stop` handling (default: resume)"
         );
@@ -123,6 +124,7 @@ fn parse_args(args: Vec<String>) -> Result<DriverOptions, i32> {
     let mut compilation_unit_mode = compile::CompilationUnitMode::default();
     let mut include_dirs: Vec<String> = Vec::new();
     let mut defines: Vec<String> = Vec::new();
+    let mut system_subroutines: Vec<String> = Vec::new();
     let mut files: Vec<String> = Vec::new();
     let mut runtime_args: Vec<String> = Vec::new();
     let mut lint_mode = false;
@@ -156,6 +158,8 @@ Options:
                               Select compilation-unit grouping (default: separate)
   -I, --include-dir <path>   Add an include-search directory
   -D, --define <NAME[=VALUE]> Define a preprocessor macro
+      --define-system-task <prototype>
+                              Define a VPI system task/function prototype
       --lint                 Run lint before simulation
       --lint-json [<path>]   Report lint as JSON and exit
       --lint-config <file>   Load lint configuration
@@ -211,6 +215,13 @@ Options:
                 Some(define) if !define.is_empty() => defines.push(define),
                 _ => {
                     eprintln!("llg: --define requires NAME or NAME=VALUE");
+                    return Err(2);
+                }
+            },
+            "--define-system-task" => match it.next() {
+                Some(prototype) if !prototype.is_empty() => system_subroutines.push(prototype),
+                _ => {
+                    eprintln!("llg: --define-system-task requires a prototype");
                     return Err(2);
                 }
             },
@@ -276,6 +287,7 @@ Options:
         compilation_unit_mode,
         include_dirs,
         defines,
+        system_subroutines,
         files,
         runtime_args,
         lint_mode,
@@ -297,6 +309,7 @@ fn run(options: DriverOptions) -> i32 {
         compilation_unit_mode,
         include_dirs,
         defines,
+        system_subroutines,
         files,
         runtime_args,
         lint_mode,
@@ -337,6 +350,7 @@ fn run(options: DriverOptions) -> i32 {
         compilation_unit_mode,
         include_dirs,
         defines,
+        system_subroutines,
         ..Default::default()
     }) {
         Ok(out) => out,

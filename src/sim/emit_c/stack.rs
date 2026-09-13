@@ -277,6 +277,7 @@ fn stmt_temp_frame_slots(stmts: &[IrStmt]) -> Result<u64, String> {
 fn stmt_temp_slots(stmt: &IrStmt) -> Result<u64, String> {
     let slots = match stmt {
         IrStmt::System(command) => command.as_ref().map_or(Ok(0), string_expr_slots),
+        IrStmt::VpiCall { args, .. } => expr_sum(args, "VPI system-task arguments"),
         IrStmt::RandomSeed { seed } => expr_slots(seed),
         IrStmt::RandomStateSet { state } => string_expr_slots(state),
         IrStmt::Memory {
@@ -901,6 +902,7 @@ fn system_expr_slots(system: &IrSysFunc) -> Result<u64, String> {
             )
         }
         IrSysFunc::System(command) => command.as_ref().map_or(Ok(0), string_expr_slots),
+        IrSysFunc::VpiCall { args, .. } => expr_sum(args, "VPI system-function arguments"),
         IrSysFunc::LegacyRandom { seed, args, .. } => {
             let seed_slots = seed.as_deref().map(lhs_slots).transpose()?.unwrap_or(0);
             let arg_slots = args.iter().try_fold(0, |total, arg| {

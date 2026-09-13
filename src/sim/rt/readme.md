@@ -64,6 +64,10 @@
   `$realtime`. Fine-grain `process` handles use a reference-counted identity
   separate from coroutine storage; `self`, status, kill, suspend, resume and
   await retain terminal state and clean wait/frame/descendant ownership.
+- **VPI bridge:** `llg_vpi.c` and the emitted `vpi_user.h` expose a bounded,
+  generation-checked object/iteration/value API, startup-loaded system-task and
+  function plugins, compiletf/sizetf/calltf dispatch, and start/end callbacks;
+  unsupported standard properties fail through `vpi_chk_error`.
 - **Random streams:** `llg_rng.h/.c` provides deterministic PCG streams with
   stable process/fork derivation, unbiased inclusive ranges, and versioned
   state snapshots. The scheduler binds one stream to each generated process;

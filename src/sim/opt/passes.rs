@@ -453,6 +453,11 @@ fn walk_expr_mut(e: &mut IrExpr, f: &mut impl FnMut(&mut IrExpr)) {
                 command.expressions_mut(&mut |child| walk_expr_mut(child, f));
             }
             IrSysFunc::System(None) => {}
+            IrSysFunc::VpiCall { args, .. } => {
+                for arg in args {
+                    walk_expr_mut(arg, f);
+                }
+            }
             IrSysFunc::LegacyRandom { seed, args, .. } => {
                 if let Some(seed) = seed {
                     walk_lhs_mut(seed, f);
@@ -528,6 +533,11 @@ fn walk_stmt_mut(s: &mut IrStmt, f: &mut impl FnMut(&mut IrExpr)) {
     match s {
         IrStmt::System(Some(command)) => {
             command.expressions_mut(&mut |child| walk_expr_mut(child, f));
+        }
+        IrStmt::VpiCall { args, .. } => {
+            for arg in args {
+                walk_expr_mut(arg, f);
+            }
         }
         IrStmt::Memory {
             path,
@@ -1291,6 +1301,11 @@ fn ident_children(e: &mut IrExpr) {
                 command.expressions_mut(&mut |child| ident_expr(child));
             }
             IrSysFunc::System(None) => {}
+            IrSysFunc::VpiCall { args, .. } => {
+                for arg in args {
+                    ident_expr(arg);
+                }
+            }
             IrSysFunc::LegacyRandom { seed, args, .. } => {
                 if let Some(seed) = seed {
                     ident_lhs(seed);
@@ -1972,7 +1987,12 @@ fn mark_unused_storage(model: &mut IrModel, execution: Option<&[ExecutionProcess
         .iter()
         .enumerate()
         .map(|(i, sig)| {
+            let vpi_visible = model
+                .vpi_objects
+                .iter()
+                .any(|object| object.signal == Some(i));
             !(waveform && sig.hdl_name.is_some())
+                && !vpi_visible
                 && !rw.reads.contains(&i)
                 && !rw.writes.contains(&i)
         })
@@ -2141,6 +2161,11 @@ fn collect_stmt_rw(s: &IrStmt, model: &IrModel, rw: &mut Rw) {
         collect_expr_reads(value, model, rw);
     }
     match s {
+        IrStmt::VpiCall { args, .. } => {
+            for arg in args {
+                collect_expr_reads(arg, model, rw);
+            }
+        }
         IrStmt::Memory {
             path,
             start,
@@ -2748,6 +2773,11 @@ fn collect_children_reads(e: &IrExpr, model: &IrModel, rw: &mut Rw) {
                 command.expressions(&mut |child| collect_expr_reads(child, model, rw));
             }
             IrSysFunc::System(None) => {}
+            IrSysFunc::VpiCall { args, .. } => {
+                for arg in args {
+                    collect_expr_reads(arg, model, rw);
+                }
+            }
             IrSysFunc::LegacyRandom { seed, args, .. } => {
                 if let Some(seed) = seed {
                     collect_lhs_rw(seed, model, rw);
@@ -3100,6 +3130,8 @@ mod tests {
             init_steps: Vec::new(),
             spawns: Vec::new(),
             final_spawns: Vec::new(),
+            vpi_objects: Vec::new(),
+            vpi_compile_calls: Vec::new(),
         }
     }
 
