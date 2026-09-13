@@ -470,6 +470,15 @@ struct ClockingSampleInfo {
     sample: SignalInfo,
 }
 
+/// Clock inferred from an enclosing property or supplied as a sampled-value
+/// clocking event. The optional gate is evaluated in the same sampled domain.
+#[derive(Clone, Copy)]
+pub(super) struct SampledClock {
+    pub(super) signal: usize,
+    pub(super) posedge: bool,
+    pub(super) gate: Option<NodeId>,
+}
+
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 struct DriverId(u32);
 
@@ -914,6 +923,8 @@ struct Codegen<'a> {
     /// Assertion action helpers are registered by the runtime and must not
     /// also be spawned as ordinary design processes at time zero.
     assertion_action_procs: HashSet<String>,
+    /// Clock inferred while lowering a property or its Reactive action.
+    sampled_clock: Option<SampledClock>,
 }
 
 /// Runtime-visible bindings for one array-method `with` expression. A zero
@@ -1006,6 +1017,7 @@ impl<'a> Codegen<'a> {
             structural_driver_terminal_sites: HashMap::new(),
             final_procs: Vec::new(),
             assertion_action_procs: HashSet::new(),
+            sampled_clock: None,
         }
     }
 

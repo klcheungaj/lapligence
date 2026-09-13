@@ -2181,7 +2181,22 @@ impl EmitCtx<'_, '_> {
         // The body may be a `Stmt(Empty)` placeholder for a bare
         // `@(posedge clk);`; skip it.
         if !matches!(self.cg.kind(body), NodeKind::Stmt(StmtKind::Empty)) {
-            out.extend(self.lower_stmt(body)?);
+            // A sampled-value call without its fourth clocking argument may
+            // use a process's single direct edge control. Keep this context
+            // only while lowering the controlled body; nested controls save
+            // and restore their own inferred domain.
+            let previous_clock = self.cg.sampled_clock;
+            if let Some(clock) = self
+                .cg
+                .lower_sampled_clock_spec(&self.path, specs)
+                .ok()
+                .flatten()
+            {
+                self.cg.sampled_clock = Some(clock);
+            }
+            let body_result = self.lower_stmt(body);
+            self.cg.sampled_clock = previous_clock;
+            out.extend(body_result?);
         }
         Ok(out)
     }

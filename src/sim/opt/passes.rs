@@ -503,6 +503,7 @@ fn walk_expr_mut(e: &mut IrExpr, f: &mut impl FnMut(&mut IrExpr)) {
             IrSysFunc::FileInput(input) => {
                 input.expressions_mut(&mut |expression| walk_expr_mut(expression, f));
             }
+            IrSysFunc::Sampled(call) => walk_expr_mut(&mut call.argument, f),
         },
         _ => {}
     }
@@ -881,6 +882,12 @@ fn walk_model_exprs_mut(model: &mut IrModel, f: &mut impl FnMut(&mut IrExpr)) {
             walk_expr_mut(antecedent, f);
         }
         walk_expr_mut(&mut assertion.consequent, f);
+    }
+    for domain in &mut model.sampled_domains {
+        walk_expr_mut(&mut domain.sample, f);
+        if let Some(gate) = &mut domain.gate {
+            walk_expr_mut(gate, f);
+        }
     }
 }
 
@@ -1324,6 +1331,7 @@ fn ident_children(e: &mut IrExpr) {
             IrSysFunc::FileInput(input) => {
                 input.expressions_mut(&mut |expression| ident_expr(expression));
             }
+            IrSysFunc::Sampled(call) => ident_expr(&mut call.argument),
         },
         _ => {}
     }
@@ -1904,6 +1912,13 @@ fn mark_unused_storage(model: &mut IrModel, execution: Option<&[ExecutionProcess
             collect_expr_reads(antecedent, model, &mut rw);
         }
         collect_expr_reads(&assertion.consequent, model, &mut rw);
+    }
+    for domain in &model.sampled_domains {
+        rw.read(domain.clock_signal);
+        collect_expr_reads(&domain.sample, model, &mut rw);
+        if let Some(gate) = &domain.gate {
+            collect_expr_reads(gate, model, &mut rw);
+        }
     }
     for dependency in &sens {
         mark_dependency_read(dependency, model, &mut rw);
@@ -2759,6 +2774,7 @@ fn collect_children_reads(e: &IrExpr, model: &IrModel, rw: &mut Rw) {
                     | crate::sim::ir::IrFileInput::Ungetc { .. } => {}
                 }
             }
+            IrSysFunc::Sampled(call) => collect_expr_reads(&call.argument, model, rw),
         },
         _ => {}
     }
@@ -3003,6 +3019,7 @@ mod tests {
             events: Vec::new(),
             funcs: Vec::new(),
             assertions: Vec::new(),
+            sampled_domains: Vec::new(),
             processes: vec![IrProcess {
                 c_name: "p_t_proc_0".to_string(),
                 label: "t.always".to_string(),

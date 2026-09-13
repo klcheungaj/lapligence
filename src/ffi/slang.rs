@@ -586,6 +586,8 @@ pub const SEMANTIC_ASSERTION_STRONG: u64 = 1 << 2;
 pub const SEMANTIC_ASSERTION_ABORT_REJECT: u64 = 1 << 3;
 pub const SEMANTIC_ASSERTION_ABORT_SYNC: u64 = 1 << 4;
 pub const SEMANTIC_EXPR_ASSERTION_INSTANCE: u32 = 90;
+/// Expression tag for a sampled-value `@(event)` argument.
+pub const SEMANTIC_EXPR_CLOCKING_EVENT: u32 = 91;
 
 /// Immediate assertion metadata carried in [`SemanticNode::auxiliary`].
 pub const SEMANTIC_ASSERTION_DEFERRED: u64 = 1 << 0;
@@ -2077,7 +2079,7 @@ fn validate_semantic_subkind(kind: u32, subkind: u32) -> Result<(), SlangError> 
         14 => matches!(subkind, 0 | 228),
         15 => matches!(subkind, 0 | 160..=164 | 200..=227),
         18 => matches!(subkind, 0 | 32..=66),
-        19 => matches!(subkind, 0 | 64..=78 | 80..=90),
+        19 => matches!(subkind, 0 | 64..=78 | 80..=91),
         25 => matches!(subkind, 0 | 194 | SEMANTIC_SCOPE_CLOCKING_BLOCK),
         26 => matches!(subkind, 0 | 112..=118),
         28 => matches!(subkind, 0..=13),
@@ -3211,6 +3213,7 @@ mod tests {
         assert!(validate_semantic_subkind(19, 86).is_ok());
         assert!(validate_semantic_subkind(19, 89).is_ok());
         assert!(validate_semantic_subkind(19, SEMANTIC_EXPR_ASSERTION_INSTANCE).is_ok());
+        assert!(validate_semantic_subkind(19, SEMANTIC_EXPR_CLOCKING_EVENT).is_ok());
         assert!(validate_semantic_subkind(9, 229).is_ok());
         assert!(validate_semantic_subkind(25, SEMANTIC_SCOPE_CLOCKING_BLOCK).is_ok());
         assert!(validate_semantic_subkind(9, SEMANTIC_VARIABLE_CLOCKING).is_ok());

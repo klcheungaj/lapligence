@@ -1470,7 +1470,9 @@ impl<'a> Codegen<'a> {
                 ..
             } if name == "triggered" => {
                 let target = self.event_target_of(*receiver).ok_or_else(|| {
-                    format!("event triggered property has an unresolved receiver in `{scope_path}`")
+                    format!(
+                        "sequence `.triggered` status is not supported for an unresolved receiver in `{scope_path}`"
+                    )
                 })?;
                 let event = self.event_ref_of(&target, scope_path)?;
                 Ok(IrExpr::new(
@@ -1480,6 +1482,12 @@ impl<'a> Codegen<'a> {
                     None,
                 ))
             }
+            NodeKind::MethodCall { name, .. } if name == "matched" => Err(format!(
+                "sequence `.matched` status is not supported in `{scope_path}`"
+            )),
+            NodeKind::MethodCall { name, .. } if name == "triggered" => Err(format!(
+                "sequence `.triggered` status is not supported in `{scope_path}`"
+            )),
             NodeKind::Expr(ExprKind::HierPath { .. }) => {
                 if let Some((_target, _kind, member_info)) = self.unpacked_member_info(h) {
                     let member = member_info.member;
@@ -3212,6 +3220,183 @@ impl<'a> Codegen<'a> {
         }
     }
 
+    fn lower_sampled_func_expr(
+        &mut self,
+        scope_path: &str,
+        name: &str,
+        args: &[NodeId],
+    ) -> Result<IrExpr, String> {
+        use crate::sim::ir::{IrSampledCall, IrSampledFunc};
+
+        if name == "$sampled" {
+            let [argument] = args else {
+                return Err(format!(
+                    "$sampled requires exactly one argument in `{scope_path}`"
+                ));
+            };
+            let argument = self.lower_expr(scope_path, *argument)?;
+            if argument.is_real() || !super::assertions::sampled_compatible(&argument) {
+                return Err(format!(
+                    "$sampled argument must be a static packed expression in `{scope_path}`"
+                ));
+            }
+            return Ok(IrExpr::new(
+                IrExprKind::SysFunc(IrSysFunc::Sampled(IrSampledCall::new(
+                    IrSampledFunc::Sampled,
+                    argument.clone(),
+                    None,
+                    0,
+                ))),
+                argument.width,
+                argument.signed,
+                None,
+            ));
+        }
+
+        let (kind, global, future) = match name {
+            "$rose" => (IrSampledFunc::Rose, false, false),
+            "$fell" => (IrSampledFunc::Fell, false, false),
+            "$stable" => (IrSampledFunc::Stable, false, false),
+            "$changed" => (IrSampledFunc::Changed, false, false),
+            "$past" => (IrSampledFunc::Past, false, false),
+            "$past_gclk" => (IrSampledFunc::Past, true, false),
+            "$rose_gclk" => (IrSampledFunc::Rose, true, false),
+            "$fell_gclk" => (IrSampledFunc::Fell, true, false),
+            "$stable_gclk" => (IrSampledFunc::Stable, true, false),
+            "$changed_gclk" => (IrSampledFunc::Changed, true, false),
+            "$future_gclk" | "$rising_gclk" | "$falling_gclk" | "$steady_gclk"
+            | "$changing_gclk" => (IrSampledFunc::Past, true, true),
+            _ => return Err(format!("unsupported sampled-value function `{name}`")),
+        };
+        if future {
+            return Err(format!(
+                "future global sampled-value function `{name}` is not supported; future values are never read from live storage in `{scope_path}`"
+            ));
+        }
+
+        let expected = if kind == IrSampledFunc::Past && !global {
+            1..=4
+        } else if global {
+            1..=1
+        } else {
+            1..=2
+        };
+        if !expected.contains(&args.len()) {
+            return Err(format!(
+                "{name} has invalid argument count in `{scope_path}`"
+            ));
+        }
+        let argument = self.lower_expr(scope_path, args[0])?;
+        if argument.is_real() || !super::assertions::sampled_compatible(&argument) {
+            return Err(format!(
+                "{name} argument must be a static packed expression in `{scope_path}`"
+            ));
+        }
+
+        let mut ticks = 0;
+        let mut gate = None;
+        let mut explicit_clock = None;
+        if kind == IrSampledFunc::Past && !global {
+            if let Some(node) = args.get(1) {
+                if !matches!(self.kind(*node), NodeKind::Expr(ExprKind::Other)) {
+                    let value = self.eval_bound_i128(*node).map_err(|_| {
+                        format!("$past tick count must be a positive constant in `{scope_path}`")
+                    })?;
+                    ticks = u64::try_from(value).map_err(|_| {
+                        format!("$past tick count is outside the supported range in `{scope_path}`")
+                    })?;
+                    if ticks == 0 {
+                        return Err(format!(
+                            "$past tick count must be positive in `{scope_path}`"
+                        ));
+                    }
+                }
+            }
+            if ticks == 0 {
+                ticks = 1;
+            }
+            if let Some(node) = args.get(2) {
+                if !matches!(self.kind(*node), NodeKind::Expr(ExprKind::Other)) {
+                    gate = Some(self.lower_boolean_expr(scope_path, *node)?);
+                }
+            }
+            explicit_clock = args.get(3).copied();
+        } else if !global {
+            explicit_clock = args.get(1).copied();
+        }
+        if global && kind == IrSampledFunc::Past {
+            ticks = 1;
+        }
+
+        let mut clock = if global {
+            self.lower_global_sampled_clock(scope_path)?
+        } else if let Some(node) = explicit_clock {
+            self.lower_sampled_clock_event(scope_path, node)?
+        } else {
+            self.sampled_clock
+                .or(self.lower_default_sampled_clock(scope_path)?)
+                .ok_or_else(|| {
+                    format!(
+                        "{name} requires an explicit clocking event outside a clocked assertion in `{scope_path}`"
+                    )
+                })?
+        };
+        if let Some(event_gate) = clock.gate.take() {
+            let event_gate = self.lower_boolean_expr(scope_path, event_gate)?;
+            if !super::assertions::sampled_compatible(&event_gate) {
+                return Err(format!(
+                    "sampled clock gate must be a static packed expression in `{scope_path}`"
+                ));
+            }
+            gate = Some(match gate {
+                Some(gate) => IrExpr::new(
+                    IrExprKind::Bin {
+                        op: IrBinOp::LogAnd,
+                        a: Box::new(gate),
+                        b: Box::new(event_gate),
+                    },
+                    1,
+                    false,
+                    None,
+                ),
+                None => event_gate,
+            });
+        }
+        if let Some(gate) = &gate {
+            if !super::assertions::sampled_compatible(gate) {
+                return Err(format!(
+                    "$past gate must be a static packed expression in `{scope_path}`"
+                ));
+            }
+        }
+        let domain = self.lower_sampled_domain(
+            scope_path,
+            SampledClock {
+                signal: clock.signal,
+                posedge: clock.posedge,
+                gate: None,
+            },
+            argument.clone(),
+            gate,
+        )?;
+        let (width, signed) = if kind == IrSampledFunc::Past {
+            (argument.width, argument.signed)
+        } else {
+            (1, false)
+        };
+        Ok(IrExpr::new(
+            IrExprKind::SysFunc(IrSysFunc::Sampled(IrSampledCall::new(
+                kind,
+                argument,
+                Some(domain),
+                ticks,
+            ))),
+            width,
+            signed,
+            None,
+        ))
+    }
+
     /// Lower system-function expressions ($system/$clog2/$time/$stime/$bits/
     /// $signed/$unsigned); timescale scaling happens here.
     pub(super) fn lower_sys_func_expr(
@@ -3221,6 +3406,27 @@ impl<'a> Codegen<'a> {
         call: NodeId,
     ) -> Result<IrExpr, String> {
         let args: Vec<NodeId> = self.node(call).children.clone();
+        if matches!(
+            name,
+            "$sampled"
+                | "$rose"
+                | "$fell"
+                | "$stable"
+                | "$changed"
+                | "$past"
+                | "$past_gclk"
+                | "$rose_gclk"
+                | "$fell_gclk"
+                | "$stable_gclk"
+                | "$changed_gclk"
+                | "$future_gclk"
+                | "$rising_gclk"
+                | "$falling_gclk"
+                | "$steady_gclk"
+                | "$changing_gclk"
+        ) {
+            return self.lower_sampled_func_expr(scope_path, name, &args);
+        }
         if name == "$q_full" {
             let [q_id, status] = args.as_slice() else {
                 return Err(format!(

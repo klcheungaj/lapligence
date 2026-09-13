@@ -633,6 +633,32 @@ impl Validator<'_> {
             }
         }
 
+        for (idx, domain) in self.model.sampled_domains.iter().enumerate() {
+            let path = format!("sampled_domains[{idx}]");
+            let Some(clock) = self.model.signals.get(domain.clock_signal) else {
+                return self.fail(
+                    format!("{path}.clock_signal"),
+                    "sampled clock signal index is out of bounds",
+                );
+            };
+            if clock.omit || clock.ty.width() == 0 {
+                return self.fail(
+                    format!("{path}.clock_signal"),
+                    "sampled clock must be an active packed signal",
+                );
+            }
+            self.validate_expr(&domain.sample, &[], &format!("{path}.sample"))?;
+            if domain.sample.is_real() {
+                return self.fail(format!("{path}.sample"), "sampled value must be packed");
+            }
+            if let Some(gate) = &domain.gate {
+                self.validate_expr(gate, &[], &format!("{path}.gate"))?;
+                if gate.is_real() {
+                    return self.fail(format!("{path}.gate"), "sampled gate must be packed");
+                }
+            }
+        }
+
         for (idx, array) in self.model.arrays.iter().enumerate() {
             let path = format!("arrays[{idx}]");
             if array.real {
@@ -1525,6 +1551,51 @@ impl Validator<'_> {
                             path,
                             "bit query requires a packed argument and its declared result type",
                         );
+                    }
+                }
+                IrSysFunc::Sampled(call) => {
+                    self.validate_expr(&call.argument, formals, &format!("{path}.argument"))?;
+                    if call.argument.is_real() {
+                        return self.fail(path, "sampled-value argument must be packed");
+                    }
+                    match call.kind {
+                        crate::sim::ir::IrSampledFunc::Sampled => {
+                            if call.domain.is_some() || call.ticks != 0 {
+                                return self.fail(path, "$sampled cannot carry a history domain");
+                            }
+                            if (expr.width, expr.signed)
+                                != (call.argument.width, call.argument.signed)
+                            {
+                                return self
+                                    .fail(path, "$sampled result shape disagrees with argument");
+                            }
+                        }
+                        crate::sim::ir::IrSampledFunc::Past => {
+                            let Some(domain) = call.domain else {
+                                return self.fail(path, "$past requires a sampled domain");
+                            };
+                            if domain >= self.model.sampled_domains.len() || call.ticks == 0 {
+                                return self.fail(path, "$past history metadata is invalid");
+                            }
+                            if (expr.width, expr.signed)
+                                != (call.argument.width, call.argument.signed)
+                            {
+                                return self
+                                    .fail(path, "$past result shape disagrees with argument");
+                            }
+                        }
+                        IrSampledFunc::Rose
+                        | IrSampledFunc::Fell
+                        | IrSampledFunc::Stable
+                        | IrSampledFunc::Changed => {
+                            if call.domain.is_none() || call.ticks != 0 {
+                                return self.fail(path, "sampled status requires a valid domain");
+                            }
+                            if expr.width != 1 || expr.signed {
+                                return self
+                                    .fail(path, "sampled status result must be one-bit unsigned");
+                            }
+                        }
                     }
                 }
                 IrSysFunc::Clog2(arg) | IrSysFunc::Bits(arg) => {

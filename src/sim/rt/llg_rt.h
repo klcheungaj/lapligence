@@ -888,6 +888,15 @@ int llg_register_pli_callback(llg_region_t region,
 void llg_sampled_register(sv4_t* signal);
 const sv4_t* llg_sampled_value(const sv4_t* signal);
 int llg_sampled_copy(const sv4_t* signal, sv4_t* out);
+/// One explicit sampled clock/history domain. The callback is evaluated at a
+/// matching clock edge using the immutable Preponed signal snapshots.
+typedef sv4_t (*llg_sampled_domain_eval_fn)(void* data);
+int llg_sampled_domain_register(uint64_t identity, sv4_t* clock, int edge,
+                                llg_sampled_domain_eval_fn value,
+                                llg_sampled_domain_eval_fn gate, void* data);
+sv4_t llg_sampled_domain_past(uint64_t identity, uint64_t ticks);
+/// `kind`: 0 rose, 1 fell, 2 stable, 3 changed.
+int llg_sampled_domain_status(uint64_t identity, int kind);
 // Clocking input copies. Observed copies are queued into the current time
 // slot's observed region; history copies read the preponed sample at or before
 // `ticks` simulation ticks in the past.

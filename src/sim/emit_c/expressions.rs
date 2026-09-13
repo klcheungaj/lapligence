@@ -818,6 +818,61 @@ pub(super) fn render_expr_impl(ctx: &RCtx<'_>, e: &IrExpr) -> Result<RenderedExp
         }
         IrExprKind::SysFunc(f) => match f {
             IrSysFunc::TestPlusArgs { pattern } => render_test_plusargs(ctx, pattern)?,
+            IrSysFunc::Sampled(call) => {
+                use crate::sim::ir::IrSampledFunc;
+                match call.kind {
+                    IrSampledFunc::Sampled => {
+                        let sampled_ctx = RCtx {
+                            model: ctx.model,
+                            func: ctx.func,
+                            sampled: true,
+                            activation_label: ctx.activation_label.clone(),
+                        };
+                        let argument = render_expr_impl(&sampled_ctx, &call.argument)?;
+                        RenderedExpr {
+                            code: argument.code,
+                            width: argument.width,
+                            signed: argument.signed,
+                            fill: argument.fill,
+                        }
+                    }
+                    IrSampledFunc::Past => {
+                        let domain = call
+                            .domain
+                            .ok_or_else(|| "sampled past call has no domain".to_string())?;
+                        RenderedExpr {
+                            code: format!("llg_sampled_domain_past({}, {}ULL)", domain, call.ticks),
+                            width: e.width,
+                            signed: e.signed,
+                            fill: None,
+                        }
+                    }
+                    IrSampledFunc::Rose
+                    | IrSampledFunc::Fell
+                    | IrSampledFunc::Stable
+                    | IrSampledFunc::Changed => {
+                        let domain = call
+                            .domain
+                            .ok_or_else(|| "sampled status call has no domain".to_string())?;
+                        let status = match call.kind {
+                            IrSampledFunc::Rose => 0,
+                            IrSampledFunc::Fell => 1,
+                            IrSampledFunc::Stable => 2,
+                            IrSampledFunc::Changed => 3,
+                            _ => unreachable!(),
+                        };
+                        RenderedExpr {
+                            code: format!(
+                                "sv4_from_u64((uint64_t)llg_sampled_domain_status({}, {}), 1, 0)",
+                                domain, status
+                            ),
+                            width: 1,
+                            signed: false,
+                            fill: None,
+                        }
+                    }
+                }
+            }
             IrSysFunc::ValuePlusArgs { format, target } => {
                 render_value_plusargs(ctx, format, target, e.width, e.signed)?
             }

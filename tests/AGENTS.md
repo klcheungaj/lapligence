@@ -113,6 +113,12 @@ coverage for the same rule IDs.
   and end-of-simulation pending-attempt disposal. HDL lives in
   `fixtures/sim/concurrent_assertions/`; the shared CLI harness runs every
   fixture through `llg` and `llg --no-opt` with exact stdout and diagnostics.
+- `sim_sampled_values.rs` covers H21 sampled-value domains: preponed
+  `$sampled`, explicit and default clocks, initial/gated `$past` history,
+  global-clock history/status functions, packed status values and LSB/X/Z edge
+  transitions. Future global forms are checked for fail-closed diagnostics in
+  both optimizer modes. HDL lives in `fixtures/sim/concurrent_assertions/`;
+  the shared CLI harness compares exact output and diagnostics.
 - `sim_procedural_assign.rs` covers procedural continuous-assignment priority,
   replacement, deassign retention, function dependencies and PCA/force
   layering. HDL lives in `fixtures/sim/procedural_assign/`; the shared CLI

@@ -641,8 +641,29 @@ typedef struct llg_sampled_history {
     sv4_t value;
 } llg_sampled_history_t;
 
+typedef struct llg_sampled_domain_history {
+    struct llg_sampled_domain_history* next;
+    uint64_t time;
+    uint64_t sequence;
+    sv4_t value;
+} llg_sampled_domain_history_t;
+
+typedef struct llg_sampled_domain {
+    struct llg_sampled_domain* next;
+    uint64_t identity;
+    sv4_t* clock;
+    int edge;
+    llg_sampled_domain_eval_fn value;
+    llg_sampled_domain_eval_fn gate;
+    void* data;
+    sv4_t initial;
+    llg_sampled_domain_history_t* history;
+} llg_sampled_domain_t;
+
 static llg_sampled_value_t* find_sampled_value(const sv4_t* signal);
 static void sampled_record_write(sv4_t* signal);
+static void sampled_domain_clock_signal_changed(sv4_t* signal, sv4_t old,
+                                                sv4_t value);
 
 typedef struct llg_assertion_attempt {
     struct llg_assertion_attempt* next;
@@ -738,6 +759,8 @@ typedef struct {
     uint64_t callback_sequence;
     llg_region_callback_t* callbacks; // sorted by time, region, issue order
     llg_sampled_value_t* sampled;
+    llg_sampled_domain_t* sampled_domains;
+    uint64_t sampled_domain_sequence;
     uint64_t sampled_time;
     int sampled_time_valid;
     llg_concurrent_assertion_t* assertions;
@@ -2786,6 +2809,7 @@ static void sig_write(sv4_t* target, sv4_t value) {
     *target = value;
     sampled_record_write(target);
     assertion_clock_signal_changed(target, old, value);
+    sampled_domain_clock_signal_changed(target, old, value);
     // `disable iff` is an asynchronous, unsampled control. Abort pending
     // attempts at the write boundary, before any waiter or later region can
     // observe the changed value.
@@ -3413,6 +3437,16 @@ static void free_sampled_values(void) {
         }
         free(g.sampled);
         g.sampled = next;
+    }
+    while (g.sampled_domains) {
+        llg_sampled_domain_t* next = g.sampled_domains->next;
+        while (g.sampled_domains->history) {
+            llg_sampled_domain_history_t* history = g.sampled_domains->history;
+            g.sampled_domains->history = history->next;
+            free(history);
+        }
+        free(g.sampled_domains);
+        g.sampled_domains = next;
     }
 }
 
@@ -4238,6 +4272,117 @@ int llg_sampled_copy(const sv4_t* signal, sv4_t* out) {
     if (!value) return 0;
     *out = *value;
     return 1;
+}
+
+static llg_sampled_domain_t* find_sampled_domain(uint64_t identity) {
+    for (llg_sampled_domain_t* domain = g.sampled_domains; domain;
+         domain = domain->next) {
+        if (domain->identity == identity) return domain;
+    }
+    return NULL;
+}
+
+static void report_missing_sampled_domain(uint64_t identity) {
+    fprintf(stderr, "llg: sampled-value domain %llu is not registered\n",
+            (unsigned long long)identity);
+    llg_last_failure = 1;
+    g.finish = 1;
+}
+
+int llg_sampled_domain_register(uint64_t identity, sv4_t* clock, int edge,
+                                llg_sampled_domain_eval_fn value,
+                                llg_sampled_domain_eval_fn gate, void* data) {
+    if (!clock || !value || (edge != LLG_EV_POSEDGE && edge != LLG_EV_NEGEDGE)) {
+        fprintf(stderr, "llg: invalid sampled-value domain registration\n");
+        llg_last_failure = 1;
+        g.finish = 1;
+        return 0;
+    }
+    if (find_sampled_domain(identity)) {
+        fprintf(stderr, "llg: duplicate sampled-value domain %llu\n",
+                (unsigned long long)identity);
+        llg_last_failure = 1;
+        g.finish = 1;
+        return 0;
+    }
+    llg_sampled_domain_t* domain = (llg_sampled_domain_t*)llg_checked_malloc(
+        1, sizeof(*domain), "sampled-value domain");
+    domain->identity = identity;
+    domain->clock = clock;
+    domain->edge = edge;
+    domain->value = value;
+    domain->gate = gate;
+    domain->data = data;
+    domain->initial = value(data);
+    domain->history = NULL;
+    domain->next = g.sampled_domains;
+    g.sampled_domains = domain;
+    return 1;
+}
+
+static void sampled_domain_clock_signal_changed(sv4_t* signal, sv4_t old,
+                                                sv4_t value) {
+    if (!signal) return;
+    for (llg_sampled_domain_t* domain = g.sampled_domains; domain;
+         domain = domain->next) {
+        if (domain->clock != signal || !ev_matches(old, value, domain->edge))
+            continue;
+        if (domain->gate && !sv4_to_bool(domain->gate(domain->data))) continue;
+        llg_sampled_domain_history_t* history =
+            (llg_sampled_domain_history_t*)llg_checked_malloc(
+                1, sizeof(*history), "sampled-value domain history");
+        history->time = g.now;
+        history->sequence = g.sampled_domain_sequence++;
+        history->value = domain->value(domain->data);
+        history->next = domain->history;
+        domain->history = history;
+    }
+}
+
+sv4_t llg_sampled_domain_past(uint64_t identity, uint64_t ticks) {
+    llg_sampled_domain_t* domain = find_sampled_domain(identity);
+    if (!domain) {
+        report_missing_sampled_domain(identity);
+        return sv4_x(1, 0);
+    }
+    if (ticks == 0) return domain->initial;
+    llg_sampled_domain_history_t* history = domain->history;
+    for (uint64_t index = 0; history && index < ticks; index++)
+        history = history->next;
+    return history ? history->value : domain->initial;
+}
+
+static int sampled_domain_lsb_one(sv4_t value) {
+    if (value.width == 0 || value.x[0] & 1ULL || value.z[0] & 1ULL) return 0;
+    return (value.bits[0] & 1ULL) != 0;
+}
+
+static int sampled_domain_lsb_zero(sv4_t value) {
+    if (value.width == 0 || value.x[0] & 1ULL || value.z[0] & 1ULL) return 0;
+    return (value.bits[0] & 1ULL) == 0;
+}
+
+int llg_sampled_domain_status(uint64_t identity, int kind) {
+    llg_sampled_domain_t* domain = find_sampled_domain(identity);
+    if (!domain) {
+        report_missing_sampled_domain(identity);
+        return 0;
+    }
+    sv4_t current = domain->history ? domain->history->value : domain->initial;
+    sv4_t previous = domain->history && domain->history->next
+                         ? domain->history->next->value
+                         : domain->initial;
+    switch (kind) {
+        case 0: return sampled_domain_lsb_one(current) && !sampled_domain_lsb_one(previous);
+        case 1: return sampled_domain_lsb_zero(current) && !sampled_domain_lsb_zero(previous);
+        case 2: return sv4_same(current, previous);
+        case 3: return !sv4_same(current, previous);
+        default:
+            fprintf(stderr, "llg: invalid sampled-value status kind %d\n", kind);
+            llg_last_failure = 1;
+            g.finish = 1;
+            return 0;
+    }
 }
 
 static void sample_preponed_values(void) {

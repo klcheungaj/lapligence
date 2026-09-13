@@ -1215,6 +1215,7 @@ uint32_t semanticExpressionKind(ExpressionKind kind) {
     case ExpressionKind::MinTypMax: return LLG_SLANG_EXPR_MIN_TYP_MAX;
     case ExpressionKind::ValueRange: return LLG_SLANG_EXPR_VALUE_RANGE;
     case ExpressionKind::AssertionInstance: return LLG_SLANG_EXPR_ASSERTION_INSTANCE;
+    case ExpressionKind::ClockingEvent: return LLG_SLANG_EXPR_CLOCKING_EVENT;
     default: return LLG_SLANG_SUBKIND_NONE;
   }
 }

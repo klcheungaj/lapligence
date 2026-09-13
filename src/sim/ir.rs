@@ -846,6 +846,70 @@ pub enum IrRealUnOp {
     Neg,
 }
 
+/// Sampled-value operation lowered against one explicit clock/history domain.
+/// `$sampled` is the only operation without a domain; it reads the immutable
+/// Preponed value of each signal in its argument directly.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IrSampledFunc {
+    Sampled,
+    Rose,
+    Fell,
+    Stable,
+    Changed,
+    Past,
+}
+
+/// One sampled-value call. `ticks` is meaningful only for [`IrSampledFunc::Past`].
+#[derive(Clone, Debug, PartialEq)]
+pub struct IrSampledCall {
+    pub(in crate::sim) kind: IrSampledFunc,
+    pub(in crate::sim) argument: Box<IrExpr>,
+    pub(in crate::sim) domain: Option<usize>,
+    pub(in crate::sim) ticks: u64,
+}
+
+impl IrSampledCall {
+    pub(in crate::sim) fn new(
+        kind: IrSampledFunc,
+        argument: IrExpr,
+        domain: Option<usize>,
+        ticks: u64,
+    ) -> Self {
+        Self {
+            kind,
+            argument: Box::new(argument),
+            domain,
+            ticks,
+        }
+    }
+}
+
+/// One explicit sampled clock and its gated expression history. The callback
+/// expression is rendered in a Preponed context by the C backend.
+#[derive(Clone, Debug, PartialEq)]
+pub struct IrSampledDomain {
+    pub(in crate::sim) clock_signal: usize,
+    pub(in crate::sim) posedge: bool,
+    pub(in crate::sim) gate: Option<IrExpr>,
+    pub(in crate::sim) sample: IrExpr,
+}
+
+impl IrSampledDomain {
+    pub(in crate::sim) fn new(
+        clock_signal: usize,
+        posedge: bool,
+        gate: Option<IrExpr>,
+        sample: IrExpr,
+    ) -> Self {
+        Self {
+            clock_signal,
+            posedge,
+            gate,
+            sample,
+        }
+    }
+}
+
 /// System-function expressions that stay symbolic until emission ($clog2,
 /// $time) or carry a folded width ($bits).
 #[derive(Clone, Debug, PartialEq)]
@@ -897,6 +961,9 @@ pub enum IrSysFunc {
     },
     /// `$bits(x)` → `SV4_C(width, 32)` (32-bit signed).
     Bits(Box<IrExpr>),
+    /// Sampled-value/status functions. Their explicit domains are registered
+    /// in [`IrModel::sampled_domains`].
+    Sampled(IrSampledCall),
     /// A packed bit-vector query; X/Z never contribute to the one count.
     BitQuery { kind: IrBitQuery, arg: Box<IrExpr> },
     /// `$rtoi(real)` truncates toward zero and returns a signed 32-bit integer.
@@ -3790,6 +3857,8 @@ pub struct IrModel {
     pub(in crate::sim) funcs: Vec<IrFunc>,
     /// Concurrent assertion instances, kept outside ordinary process IR.
     pub(in crate::sim) assertions: Vec<IrAssertion>,
+    /// Explicit sampled-value clock/history domains used by system functions.
+    pub(in crate::sim) sampled_domains: Vec<IrSampledDomain>,
     /// Comb drivers, then links, then always/initial processes — push order
     /// equals spawn order.
     pub(in crate::sim) processes: Vec<IrProcess>,
@@ -3823,6 +3892,7 @@ pub struct IrModelParts {
     pub events: Vec<IrEvent>,
     pub funcs: Vec<IrFunc>,
     pub assertions: Vec<IrAssertion>,
+    pub sampled_domains: Vec<IrSampledDomain>,
     pub processes: Vec<IrProcess>,
     pub init_steps: Vec<IrInitStep>,
     pub spawns: Vec<String>,
@@ -3860,6 +3930,7 @@ impl IrModel {
             events: parts.events,
             funcs: parts.funcs,
             assertions: parts.assertions,
+            sampled_domains: parts.sampled_domains,
             processes: parts.processes,
             init_steps: parts.init_steps,
             spawns: parts.spawns,
@@ -3898,6 +3969,9 @@ impl IrModel {
     }
     pub fn assertions(&self) -> &[IrAssertion] {
         &self.assertions
+    }
+    pub fn sampled_domains(&self) -> &[IrSampledDomain] {
+        &self.sampled_domains
     }
     pub fn processes(&self) -> &[IrProcess] {
         &self.processes

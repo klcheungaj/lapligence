@@ -527,6 +527,10 @@ fn expression_refs(expression: &ExprKind, refs: &mut Vec<NodeId>) {
                     .flat_map(|binding| [binding.formal, binding.actual]),
             );
         }
+        ExprKind::ClockingEvent { signal, gate, .. } => {
+            refs.push(*signal);
+            refs.extend(*gate);
+        }
         ExprKind::Streaming { streams, .. } => {
             for stream in streams {
                 refs.push(stream.value);

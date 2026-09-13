@@ -977,6 +977,7 @@ fn system_expr_slots(system: &IrSysFunc) -> Result<u64, String> {
             });
             slots
         }
+        IrSysFunc::Sampled(call) => expr_slots(&call.argument),
     }
 }
 

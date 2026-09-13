@@ -1392,6 +1392,9 @@ fn collect_expression_effects(
                     }
                 }
             }
+            IrSysFunc::Sampled(call) => {
+                collect_expression_effects(ir, &call.argument, effects, visited_calls);
+            }
         },
         IrExprKind::Const(_)
         | IrExprKind::SigRead(_)

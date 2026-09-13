@@ -164,6 +164,7 @@ fn render_model(execution: &ExecutionModel, capacity: u32) -> Result<String, Str
         }
         out.push_str(&render_process_fn(&ctx, p, executable)?);
     }
+    out.push_str(&render_sampled_domain_callbacks(model)?);
     out.push_str(&render_assertion_callbacks(model)?);
     out.push_str(&render_main(execution)?);
     Ok(out)
@@ -229,6 +230,45 @@ fn render_assertion_predicate(
         assertion_predicate_name(index, role),
         value
     ))
+}
+
+fn sampled_domain_callback_name(index: usize, role: &str) -> String {
+    format!("llg_sampled_domain_{index}_{role}")
+}
+
+fn render_sampled_domain_callbacks(model: &IrModel) -> Result<String, String> {
+    let mut out = String::new();
+    for (index, domain) in model.sampled_domains().iter().enumerate() {
+        let ctx = RCtx {
+            model,
+            func: None,
+            sampled: true,
+            activation_label: None,
+        };
+        let value = super::expressions::render_expr_impl(&ctx, &domain.sample)?;
+        if value.width == 0 {
+            return Err(format!(
+                "sampled domain {index} callback must return a packed expression"
+            ));
+        }
+        out.push_str(&format!(
+            "static sv4_t {}(void* data) {{\n    (void)data;\n    return {};\n}}\n\n",
+            sampled_domain_callback_name(index, "value"),
+            value.code
+        ));
+        if let Some(gate) = &domain.gate {
+            let gate = super::expressions::render_expr_impl(&ctx, gate)?;
+            if gate.width == 0 {
+                return Err(format!("sampled domain {index} gate must be packed"));
+            }
+            out.push_str(&format!(
+                "static sv4_t {}(void* data) {{\n    (void)data;\n    return {};\n}}\n\n",
+                sampled_domain_callback_name(index, "gate"),
+                gate.code
+            ));
+        }
+    }
+    Ok(out)
 }
 
 fn render_assertion_callbacks(model: &IrModel) -> Result<String, String> {
@@ -1392,6 +1432,27 @@ fn render_main(execution: &ExecutionModel) -> Result<String, String> {
         if !signal.omit && matches!(signal.ty, IrType::Packed { .. }) {
             out.push_str(&format!("    llg_sampled_register(&{});\n", signal.c_name));
         }
+    }
+    for (index, domain) in model.sampled_domains().iter().enumerate() {
+        let clock = model.signal(domain.clock_signal).c_name();
+        let edge = if domain.posedge {
+            "LLG_EV_POSEDGE"
+        } else {
+            "LLG_EV_NEGEDGE"
+        };
+        let gate = if domain.gate.is_some() {
+            sampled_domain_callback_name(index, "gate")
+        } else {
+            "NULL".to_owned()
+        };
+        out.push_str(&format!(
+            "    if (!llg_sampled_domain_register({}ULL, &{}, {}, {}, {}, NULL)) return 1;\n",
+            index,
+            clock,
+            edge,
+            sampled_domain_callback_name(index, "value"),
+            gate,
+        ));
     }
     for (index, assertion) in model.assertions().iter().enumerate() {
         let clock = model.signal(assertion.clock_signal()).c_name();

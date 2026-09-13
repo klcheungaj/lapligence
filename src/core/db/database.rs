@@ -25,7 +25,7 @@ use crate::ffi::slang::{
     CLOCKING_OUTPUT_EDGE_SHIFT, CLOCKING_VAR_OUTPUT_EDGE_SHIFT, SEMANTIC_ASSERTION_ABORT_REJECT,
     SEMANTIC_ASSERTION_ABORT_SYNC, SEMANTIC_ASSERTION_DEFERRED, SEMANTIC_ASSERTION_FINAL,
     SEMANTIC_ASSERTION_RANGE, SEMANTIC_ASSERTION_REPETITION, SEMANTIC_ASSERTION_STRONG,
-    SEMANTIC_SCOPE_CLOCKING_BLOCK, SEMANTIC_STMT_CONCURRENT_ASSERT,
+    SEMANTIC_EXPR_CLOCKING_EVENT, SEMANTIC_SCOPE_CLOCKING_BLOCK, SEMANTIC_STMT_CONCURRENT_ASSERT,
     SEMANTIC_STMT_CONCURRENT_ASSUME, SEMANTIC_STMT_CONCURRENT_COVER,
     SEMANTIC_STMT_IMMEDIATE_ASSERT, SEMANTIC_STMT_IMMEDIATE_ASSUME, SEMANTIC_STMT_IMMEDIATE_COVER,
     SEMANTIC_TIMING_ONE_STEP_DELAY, SEMANTIC_VARIABLE_CLOCKING,
@@ -1409,6 +1409,13 @@ pub enum ExprKind {
         target: NodeId,
         body: NodeId,
         bindings: Vec<AssertionBinding>,
+    },
+    /// A direct signal event used as an explicit sampled-value clock. Complex
+    /// event lists and named events remain `Other` and fail closed in lowering.
+    ClockingEvent {
+        signal: NodeId,
+        posedge: bool,
+        gate: Option<NodeId>,
     },
     Other,
 }
@@ -3523,6 +3530,37 @@ fn expression_from_slang(
                 target,
                 body,
                 bindings,
+            }
+        }
+        SEMANTIC_EXPR_CLOCKING_EVENT => {
+            let control = required(SemanticEdgeRole::Operand, "clocking event control")?;
+            let timing = snapshot
+                .semantic_nodes
+                .get(control.index())
+                .ok_or_else(|| {
+                    DbError::InvalidSnapshot("clocking event control is missing".into())
+                })?;
+            if timing.kind != SemanticKind::TimingControl
+                || timing.subkind != 113
+                || (!timing.is_posedge && !timing.is_negedge)
+            {
+                ExprKind::Other
+            } else {
+                let timing_edges = semantic_edges(snapshot, timing)?;
+                let signal =
+                    edge_target(ids, timing_edges, SemanticEdgeRole::Event)?.ok_or_else(|| {
+                        DbError::InvalidSnapshot("clocking event has no signal".into())
+                    })?;
+                if is_named_event_expression(snapshot, ids, signal)? {
+                    ExprKind::Other
+                } else {
+                    let gate = edge_target(ids, timing_edges, SemanticEdgeRole::Condition)?;
+                    ExprKind::ClockingEvent {
+                        signal,
+                        posedge: timing.is_posedge,
+                        gate,
+                    }
+                }
             }
         }
         81..=84 => {
