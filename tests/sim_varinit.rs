@@ -8,9 +8,6 @@
 //! test runs with the CWD pointed at a fresh temp dir (serialized through a
 //! mutex, to avoid process-wide CWD races).
 
-use llg::core::compile;
-use llg::sim;
-
 #[path = "support/sim.rs"]
 mod sim_harness;
 
@@ -146,40 +143,22 @@ endmodule
     assert_eq!(stdout, "signed=ff unsigned=0f\n");
 }
 
-/// A variable declaration initializer whose RHS is not a constant expression
-/// (it references a signal) must be rejected with the variable-initializer
-/// error, not silently mis-emitted (v1 is constant-only).
+/// A variable declaration initializer may read a runtime signal in
+/// SystemVerilog. It evaluates before ordinary processes, so a later t=0
+/// write does not retroactively change the initialized value.
 #[test]
-fn sim_var_init_nonconst_rejected() {
+fn sim_var_init_nonconst_runs_before_processes() {
     let sv = r#"module tb;
     reg a;
     logic z = a;
-    initial $finish;
+    initial begin
+        a = 1'b1;
+        $display("a=%b z=%b", a, z);
+        $finish;
+    end
 endmodule
 "#;
 
-    let result = sim_harness::with_frontend_temp_cwd("varnc", |dir| {
-        let source = dir.join("var_nonconst.sv");
-        std::fs::write(&source, sv).map_err(|error| format!("write source: {error}"))?;
-        let out = compile::compile(&compile::CompileOpts {
-            files: vec![source.to_string_lossy().into_owned()],
-            top: Some("tb".to_string()),
-            ..Default::default()
-        })
-        .map_err(|e| format!("compile: {e}"))?;
-        if !out.ok() {
-            return Err(format!("compile diagnostics: {:?}", out.diagnostics));
-        }
-        let db =
-            llg::core::db::Db::from_slang(&out.snapshot).map_err(|error| format!("db: {error}"))?;
-        sim::codegen::generate(&db)
-            .map(|_| ())
-            .map_err(|error| error.to_string())
-    });
-
-    let err = result.expect_err("codegen must reject non-constant variable initializers");
-    assert!(
-        err.contains("variable initializer is not a constant expression"),
-        "unexpected error: {err}"
-    );
+    let stdout = run_sim(sv, "varnonconst").expect("simulation should run");
+    assert_eq!(stdout, "a=1 z=x\n");
 }

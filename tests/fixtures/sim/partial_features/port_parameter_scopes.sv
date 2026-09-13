@@ -12,6 +12,6 @@ module tb;
     end
     initial begin
         #1 $display("%h %h %h %h",a,b,g[0].y,g[1].y);
-        $finish;
+        $finish(0);
     end
 endmodule

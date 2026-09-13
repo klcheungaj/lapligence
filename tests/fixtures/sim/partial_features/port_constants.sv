@@ -10,6 +10,6 @@ module tb;
     child unknown_value(8'b10xz01zx,e);
     initial begin
         #1 $display("%h %h %h %h %b",a,b,c,d,e);
-        $finish;
+        $finish(0);
     end
 endmodule

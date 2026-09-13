@@ -7,7 +7,7 @@ module tb;
         #1 source = 1;
         #1 source = 0;
         #1 $display("pending %b", result);
-        $finish;
+        $finish(0);
     end
     final $display("final %0d", $time);
 endmodule

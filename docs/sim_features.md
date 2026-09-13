@@ -35,7 +35,10 @@ Numeric limits: packed-vector capacity is selected per generated model;
 and runtime widths are `uint32_t`. Division/modulo/power and packed/real
 conversions use the model-sized limb capacity; the IR has no separate 1024/64
 bit semantic cap. Function/task recursion depth ≤ 256;
-zero-delay loop guard = 10M scheduler passes; resolved net drivers ≤ 16 per group;
+zero-time scheduler and per-process loop guards default to 10M steps and are
+configurable with `LLG_ZERO_LOOP_LIMIT` and `LLG_PROCESS_STEP_LIMIT` (the
+`LLG_NONCONVERGENCE_LIMIT` alias is also accepted);
+resolved net drivers ≤ 16 per group;
 force slots ≤ 64; processes ≤ 4096; named-event waiters ≤ 64 per event;
 final blocks ≤ 1024.
 
@@ -44,6 +47,40 @@ final blocks ≤ 1024.
 - Supported markers describe the bounded behavior on each row, not unrestricted IEEE conformance.
 - The [remaining-work inventory](#remaining-work-inventory) groups known missing forms and correctness gaps; it is not an IEEE-defined feature count.
 - Testing methods, limits and commands are in [tests/readme.md](../tests/readme.md).
+
+## Target language editions
+
+`llg` selects one compilation-wide language policy with `--edition 2001` or
+`--edition 2009`. The default is SystemVerilog-2009. The native frontend keeps
+that policy separate from lexical `` `begin_keywords ``/`` `end_keywords ``
+regions: those directives may select a local keyword table, but cannot change
+the owned model's edition or the simulator's edition-sensitive rules.
+
+The 2001/2009 policy currently covers frontend parsing and the simulator's
+time-literal boundary. The tested ledger is intentionally narrow: under
+`--edition 2001`, SV-only syntax is rejected by the global policy; a
+`` `begin_keywords "1800-2009" `` region changes lexical keywords only and
+does not change the owned edition; under `--edition 2009`, local
+`timeunit`/`timeprecision` and signed/sub-femtosecond unit-suffixed literals
+use exact femtosecond boundary rounding; scientific delay spellings are covered
+separately. Initialization rules, accepted
+type/operator families, function restrictions, and legacy compatibility APIs
+remain separately tracked in the feature rows below; selecting an edition does
+not claim that those later boundaries are complete. The pinned Slang frontend
+exposes SystemVerilog semantic checks starting at its 2017 API level, so the
+2009 policy uses its exact 2009 keyword table and Lapligence's 2009 time rules
+while those later semantic boundaries remain an explicit inventory item.
+
+### Compilation-unit grouping
+
+The driver accepts `--compilation-units separate|merged` (default `separate`)
+and the compile APIs expose the same typed choice. Separate mode gives every
+admitted source buffer its own preprocessor and `$unit` scope. Merged mode
+passes all admitted compilation-unit buffers, in caller order, to one Slang
+syntax tree; source buffers remain distinct for diagnostics and owned source
+identity. Include-only buffers are never promoted to compilation units and
+remain owned by the source that includes them. The choice is recorded in the
+owned snapshot, so cached results cannot be mistaken across modes.
 
 ---
 
@@ -59,13 +96,13 @@ Verilog era:
 - ✅ **Attributes** `(* full_case *)` parsed+ignored — §1364-2001 2.8 **[2001]** consumed by frontend, no sim effect
 - ✅ **`` `define ``/`` `undef `` macros incl. arguments** — §1364-2001 19.3 **[1995]** expanded pre-elaboration
 - ✅ **`` `ifdef `` family incl. `` `elsif ``/`` `ifndef ``** — §1364-2001 19.4 **[1995]** (`elsif`/`ifndef` are [2001])
-- ✅ **`` `include ``** — §1364-2001 19.5 **[1995]** resolved by frontend
-- ✅ **`` `timescale `` honored** scales `#N` and `$time` with Slang's resolved owning-module time unit and precision — §1364-2001 19.8 **[1995]** compilation-unit/declaration inheritance is resolved by the frontend; fs clamps to the runtime's 1ps floor (sim_timescale.rs pins ns/ps scaling)
+- ✅ **`` `include ``** — §1364-2001 19.5 **[1995]** literal and bounded object/function-like macro-expanded filenames are admitted through canonical source/include roots in both compilation-unit modes; missing, dynamic, and unauthorized paths remain frontend diagnostics
+- ✅ **`` `timescale `` honored** scales `#N` and rounded integer `$time`/`$stime` with Slang's resolved owning-module time unit and precision — §1364-2001 19.8 **[1995]** compilation-unit/declaration inheritance is resolved by the frontend; scheduler ticks use checked femtoseconds across 1fs through 100s (sim_physical_time.rs and sim_timescale.rs)
 
 SystemVerilog era:
 
 - ✅ **Fill literals** `'0/'1/'x/'z` — §1800-2009 5.7.1 **[SV-2005]** context sizing in supported packed arithmetic/bitwise expressions, comparisons, conditional branches, assignments, function arguments, and case/casez/casex; self-determined concatenation/replication operands remain one bit (sim_fill_literals.rs, optimization on/off)
-- 🟨 **Time literals** `2.1ns` — §1800-2009 5.8 **[SV-2005]** the owned semantic model retains Slang's typed unit and unrounded module-scaled `real` value. Ordinary expression evaluation preserves that value, following Slang v11's IEEE 1800-2023 behavior; conversion of a complete procedural delay expression rounds once to the local time precision. Runtime scheduling remains bounded to 64-bit ticks and a minimum 1ps design precision
+- ✅ **Time literals** `2.1ns` — §1800-2009 5.8 **[SV-2005]** the owned semantic model retains Slang's typed unit and source provenance. In the default 2009 policy, ordinary expression use rounds the scope-scaled value to the owning precision (including arithmetic, parameters, and initializers); a complete procedural delay expression is converted and rounded separately once at its delay boundary. Local `timeunit`/`timeprecision`, signed/sub-femtosecond unit suffixes, exact femtosecond boundary values, and scientific delay spellings are covered; runtime scheduling uses checked 64-bit femtosecond ticks, including 1fs precision
 
 ## 2. Data types
 
@@ -80,14 +117,14 @@ Verilog era:
 - ✅ **time variables** 64-bit unsigned storage — §1364-2001 3.9 **[1995]** (sim_counter.rs)
 - ✅ **wire/tri nets** — §1364-2001 3.7 **[1995]** tri resolution inside inout net groups and ordinary per-continuous-assignment driver groups; plain tri behaves like wire (sim_inout.rs, sim_net_resolution.rs)
 - 🟨 **memories/unpacked arrays N-D** element bit/part/indexed-part selects with declared packed ranges, two-state assignment conversion, guarded invalid indices and masked delayed NBAs — §1364-2001 3.10 **[1995]** (sim_memory.rs, sim_partial_features.rs); whole-array procedural assignment, slices and general element types remain unsupported
-- ✅ **Net declaration assignment** `wire w = expr;` — §1364-2001 3.6 **[1995]** behaves as a continuous driver for constant and dynamic RHS expressions, using the same event-driven run-once/sensitivity-loop IR as an explicit `assign` (sim_net_decl.rs); dynamic reads of unpacked arrays and unsupported resolved-net classes are rejected explicitly
-- ✅ **Variable declaration initializers** scalar `reg x = 0;`, `logic l = 1'b0;`, `int x = P+1;` — §1364-2001 6.2.1 **[2001]** constant RHS only, non-constant rejected (sim_varinit.rs, sim_geninit.rs)
+- ✅ **Net declaration assignment** `wire w = expr;` — §1364-2001 3.6 **[1995]** behaves as a continuous driver for constant and dynamic RHS expressions, using the same event-driven run-once/sensitivity-loop IR as an explicit `assign` (sim_net_decl.rs); fixed-array and resizable-container reads use stable dependency markers, while unsupported resolved-net classes remain rejected explicitly
+- 🟨 **Variable declaration initializers and procedural lifetimes** scalar `reg x = 0;`, `logic l = 1'b0;`, `int x = P+1;` — §1364-2001 6.2.1 / §1800-2009 6.8, 6.21, 10.5 **[2001/SV-2005]** owned declaration identity and resolved static/automatic lifetime are preserved. Scalar runtime initializers execute before processes in the selected 2009 policy and may race in explicitly selected Verilog-2001; static block/subprogram locals initialize once, automatic locals initialize on each activation, including mixed recursive routines, timed tasks, and per-instance storage (sim_varinit.rs, sim_geninit.rs, sim_variable_lifetime.rs, sim_edition.rs). Recursive aggregate and general subprogram initializers remain outside this bounded claim.
 - ✅ **Parameters** override + propagation — §1364-2001 3.11.1 **[1995]** (elab_resolve.rs)
 - ✅ **localparam** — §1364-2001 3.11.2 **[2001]**
-- 🟨 **real/realtime** — §1364-2001 3.9 **[1995]** scalar procedural vars/params subset only (sim_real.rs)
-- 🟨 **wand/wor/triand/trior wired resolution** — §1364-2001 3.7 **[1995]** standalone packed nets resolve equal-strength whole-net continuous/declaration assignments with one slot per driver site (≤16); Z is neutral, 0 dominates X for wired-AND and 1 dominates X for wired-OR (sim_net_resolution.rs, runtime_values.rs); port/interface/array nets, hierarchical/select/procedural writes, force/release, gate/function/task-output drivers, and explicit strengths are rejected
+- 🟨 **real/realtime/shortreal** — §1364-2001 3.9 **[1995]** scalar and fixed-unpacked-array procedural storage and parameters, scalar real/shortreal ports, real-returning value-formal subroutines, continuous assignments, mixed arithmetic, ordinary real `case`, combinational reads, `wait` conditions, any-change event controls, and retained captures of automatic real locals in detached forks are covered; aggregate/container/reference-real subprogram storage and monitor/strobe arguments remain outside the bounded subset (sim_real.rs, sim_partial_features.rs)
+- 🟨 **wand/wor/triand/trior wired resolution** — §1364-2001 3.7 **[1995]** standalone packed nets and bounded same-kind collapsed inout groups resolve per-site drivers with ordered strength endpoints, including scalar continuous, gate and port-derived sources. Z is neutral, stronger endpoints dominate, and equal-strength ties use the wired-AND/OR rule (sim_net_resolution.rs, runtime_values.rs). Interface/array nets, hierarchical/procedural writes and function/task-output drivers remain rejected; explicit vector continuous-assignment strengths remain illegal.
 - 🟨 **tri0/tri1/trireg/supply0/supply1 pull semantics** — §1364-2001 3.7 **[1995]** standalone `tri0/tri1` apply implicit pulls only to all-Z bits after ordinary-driver resolution; `supply0/supply1` dominate ordinary drivers, with correct initial defaults (sim_net_defaults.rs, runtime_values.rs); same bounded standalone-driver restrictions as wired nets; `trireg` charge storage and resistive propagation remain unsupported
-- 🟨 **drive strength / charge strength** — §1364-2001 3.4 **[1995]** explicit drive-strength resolution is covered for standalone scalar `wire`/`tri` continuous-assignment drivers; vector/gate/inout/wired-strength cases and `trireg` charge storage remain unsupported
+- 🟨 **drive strength / charge strength** — §1364-2001 3.4 **[1995]** scalar continuous, gate, wired and collapsed-inout drivers preserve ordered supply/strong/pull/weak/high-Z endpoints, with implicit tri and supply defaults; explicit vector continuous-assignment strengths remain prohibited by §10.3.4, and `trireg` charge storage/resistive propagation remain unsupported
 - ❌ **specparam** — §1364-2001 3.11.3 **[1995]** specify blocks unsupported
 - ❌ **vectored/scalared hints** — §1364-2001 3.3 **[1995]** no dedicated handling
 
@@ -99,11 +136,11 @@ SystemVerilog era:
 - ✅ **typedef simple/packed-vector aliases** — §1800-2009 6.18 **[SV-2005]** resolved by frontend (probed)
 - ✅ **Array declaration initializers** `'{…}` patterns applied element-wise in linear-index order — §1800-2009 10.9.1 **[SV-2005]** constant elements only (sim_memory.rs)
 - ✅ **enum-typed scalar variables** — §1800-2009 6.19 **[SV-2005]** stored at the elaborated packed base width; enum constants fold through the frontend. Base-state and signedness behavior pass at both exercised widths (sim_operator_semantics.rs)
-- 🟨 **packed/unpacked struct and union aggregates** — §1800-2009 7.2–7.3, 7.4 **[SV-2005]** packed/unpacked struct assignment patterns support positional, named, default, built-in, and packed-integral typedef keys with exact range/state/signedness matching and member overrides. Packed unions support direct width-matched initialization, and packed/unpacked unions support selected-member writes over the tested fixed packed members. Nested recursive defaults, nominal type keys, nested unpacked/object members, aggregate ports/nets/subprogram storage, tagged unions, and general aggregate slices remain unsupported; the bounded `sim_data_types_next` and `sim_data_types_completion` inventories are not an exhaustive conformance claim
+- 🟨 **packed/unpacked struct and union aggregates** — §1800-2009 7.2–7.3, 7.4 **[SV-2005]** packed/unpacked struct assignment patterns support positional, named, default, built-in, and packed-integral typedef keys with exact range/state/signedness matching and member overrides. Packed unions support direct width-matched initialization, overlapping views, and nested multidimensional member reads/writes with ascending/descending ranges across wide vectors. Fixed nested unpacked structs/arrays with packed, real, and string leaves support recursive initialization, deep value copy, member updates, and unequal-width untagged-union storage (`sim_data_types_completion`). Recursive defaults, resizable/object members, aggregate ports/nets/subprogram storage, tagged unions, and general aggregate slices remain unsupported; the bounded `sim_data_types_next` and `sim_data_types_completion` inventories are not an exhaustive conformance claim
 - 🟨 **string type/signals/params** — §1800-2009 6.16 **[SV-2005]** focused basic declaration, cast/copy, display-extra, automatic string-return-with-packed-input, and 128/512-bit `.atoreal`/`.realtoa` conversion cases are covered in both modes; string formals are not supported. Module/generate storage and other core methods remain bounded; string subroutine forms, ports, continuous-assignment/sensitivity paths, and unverified formatted/real methods remain outside this claim
-- 🟨 **event data type** scalar `event ev;` declarations and direct references are captured — §1800-2009 6.17 **[SV-2005]**; event arrays and hierarchical event references are not yet projected into the owned semantic database
+- 🟨 **event data type** scalar and fixed unpacked `event` declarations, runtime-indexed selects, hierarchical references, null/default handles, and task-formal aliases preserve stable event-object identity — §1800-2009 6.17 **[SV-2005]**; dynamic/associative/queue event storage remains outside the bounded subset
 - 🟨 **dynamic arrays / associative arrays / queues** — §1800-2009 7.5/7.8/7.10 **[SV-2005]** bounded dynamic-array, queue, and integral/string-key associative cases cover element reductions and positional assignment patterns; legal reductions with width-changing `with` clauses are explicitly diagnosed unsupported rather than silently dropping the clause. Containers are bounded to 1-D packed elements, not general nested/object-member forms
-- 🟨 **chandle** — §1800-2009 6.14 **[SV-2005]** focused native-chandle call cases are reported passing in both modes, limited to null/copy/compare/Boolean operations and chandle-input→chandle-return functions
+- 🟨 **chandle** — §1800-2009 6.14 **[SV-2005]** focused native-chandle storage and call cases pass in both modes: null/default and identity-preserving copy, compare/Boolean operations, automatic/static locals, represented aggregate members, mixed packed-plus-chandle signatures, input/output/inout/ref/const-ref aliases, delayed tasks, and chandle-input→chandle-return functions. Ports, packed containment, arithmetic, continuous assignment, and sensitivity remain unsupported
 
 ## 3. Modules, ports, parameters, hierarchy
 
@@ -126,7 +163,7 @@ SystemVerilog era:
 - ✅ **Interfaces + modports** actuals and member references bind directly to concrete interface storage; interface-body processes emit on the actual instance — §1800-2009 25.3/25.5 **[SV-2005]** (sim_interface.rs, sim_interface_body.rs)
 - 🟨 **Packages** params/types via frontend folding — §1800-2009 26 **[SV-2005]** package subprograms not lowered ("return type has no width", probed)
 - ✅ **`.name` / `.*` connection shorthands** — §1800-2009 23.3.2.3–4 **[SV-2005]** expanded by the frontend and preserved through port-link lowering (sim_hier.rs)
-- 🟨 **ref ports / default port values** — §1800-2009 23.2.2.2/23.2.2.4 **[SV-2005]** matching whole packed-variable references share storage through nested instances; constants, expressions and omitted defaults work for packed input ports. Selected/aggregate/object reference actuals remain unsupported (sim_partial_features.rs, both optimizer modes)
+- 🟨 **ref ports / default port values** — §1800-2009 23.2.2.2/23.2.2.4 **[SV-2005]** matching packed-variable references, legal packed selections, fixed arrays, recursive aggregate leaves and string/chandle objects share storage through nested instances; constants, expressions and omitted defaults remain value-port behavior. Resizable containers and ordinary aggregate copy ports remain unsupported (sim_partial_features.rs, both optimizer modes)
 - ⬜ **extern / nested modules** — §1800-2009 23.4–23.5 **[SV-2005]** out of scope
 
 ## 4. Scheduling & processes
@@ -139,20 +176,20 @@ Verilog era:
 - ✅ **Continuous assigns as comb processes** re-evaluated on RHS read set — §1364-2001 6.1 **[1995]** Verilator-style semantics
 - ✅ **fork/join parallel blocks** — §1364-2001 9.8.2 **[1995]** (sim_fork.rs)
 - ✅ **Named forks/blocks** `fork : name … join` — §1364-2001 9.8.3 **[1995]**
-- ✅ **wait(cond)** level-sensitive, re-evaluated on condition reads — §1364-2001 9.7.6 **[1995]** false/unknown constants stay suspended while other processes and timed events continue (sim_wait.rs, sim_partial_features.rs)
-- 🟨 **Wait-free always treated as combinational** — §1364-2001 9.9.2 **[1995]** documented approximation; warns when it reads nothing
-- ✅ **disable `<label>` / task early return** — §1364-2001 ch11 **[1995]** Slang's resolved target identity drives same-process named/nested block exits and inlined task early return; cross-process and named-fork targets remain explicit rejects (sim_disable.rs)
+- ✅ **wait(cond)** level-sensitive, re-evaluated on typed packed or real condition reads — §1364-2001 9.7.6 **[1995]** false/unknown constants stay suspended while other processes and timed events continue (sim_wait.rs, sim_partial_features.rs)
+- ✅ **Wait-free ordinary `always` repeats** — §1364-2001 9.9.2 **[1995]** a generated loop remains a procedure even without timing control; cooperative zero-time budgets report nonconvergence with the process source location instead of silently accepting combinational/run-once behavior
+- 🟨 **disable `<label>` / task** — §1364-2001 ch11 **[1995]** uses resolved declaration/instance activation identity. Self-disable is not an early return: it cancels all active invocations of the target. Lexical exits clean up activation records. P18 remains partial; this source review does not establish complete cross-process cancellation support.
 
 SystemVerilog era:
 
-- ✅ **always_comb** sensitivity synthesized from body read set — §1800-2009 9.2.2.2 **[SV-2005]**
-- ✅ **always_ff** lowered like always+event control — §1800-2009 9.2.2.4 **[SV-2005]** lint rules distinguish it
-- ✅ **always_latch** generic lowering — §1800-2009 9.2.2.3 **[SV-2005]** correct on transparent-latch pattern (probed)
+- 🟨 **always_comb** time-zero execution and typed implicit sensitivity — §1800-2009 9.2.2.2 **[SV-2005]** retains called-function reads and excludes written variables, including admitted fixed-array elements. Blocking timing controls and forks are rejected; nonblocking delayed assignments are not rejected merely for their delay. P12 remains partial outside the admitted storage paths (sim_process_semantics.rs).
+- 🟨 **always_ff** typed process kind and semantic contracts — §1800-2009 9.2.2.4 **[SV-2005]** requires one event control and prohibits blocking timing controls, forks, and extra writers; blocking data assignments and delayed nonblocking data assignments are legal. Rejections retain source locations (sim_process_semantics.rs).
+- 🟨 **always_latch** time-zero execution and typed implicit sensitivity — §1800-2009 9.2.2.3 **[SV-2005]** uses the same timing restrictions as always_comb and retains called-function diagnostics. P12 remains partial outside the admitted storage paths (sim_process_semantics.rs).
 - ✅ **join_any/join_none** — §1800-2009 9.3.2 **[SV-2005]** (sim_fork.rs)
 - ✅ **wait fork** — §1800-2009 9.6.1 **[SV-2005]**
 - ✅ **disable fork** — §1800-2009 9.6.3 **[SV-2005]**
 - ✅ **final blocks at end of simulation** — §1800-2009 9.2.3 **[SV-2005]** (sim_final.rs) are captured as typed final processes independent of file extension and run ONCE after the scheduler exits ($finish, deadlock or no future events); they see values committed before simulation ended and `$time` reports the end-of-run time. Nonblocking assignments, task calls, deferred `$strobe`/`$monitor`, and timing controls (`#`/`@`/`wait`/fork) are clean codegen rejects because finals permit function statements only and no scheduled events execute afterward. `$finish` inside a final terminates that final immediately and skips all remaining finals
-- 🟨 **Observe/reactive/preponed regions** — §1800-2009 4.4 **[SV-2005]** absent; single monitor region, no program/clocking contexts to trigger them
+- 🟨 **Observe/reactive/preponed regions** — §1800-2009 4.4 **[SV-2005]** typed runtime regions, explicit sensitivity-wait migration, fixed-point re-entry and immutable observation views are present; assertion, program, clocking and public VPI constructs remain unsupported
 - ❌ **$exit** program control task — §1800-2009 24.7 **[SV-2005]** unsupported system task
 - ⬜ **Fine-grain process control** `process::self()` — §1800-2009 9.7 **[SV-2005]** class-based tier
 
@@ -171,15 +208,15 @@ Verilog era:
 - ✅ **while** — §1364-2001 9.6 **[1995]**
 - ✅ **repeat** non-constant count runtime-evaluated — §1364-2001 9.6 **[1995]**
 - ✅ **forever** — §1364-2001 9.6 **[1995]**
-- 🟨 **Event control @** — §1364-2001 9.7.2/9.7.4 **[1995]** packed expression-change events, LSB edges, trigger-time `iff` and atomic mixed named-event lists work; array dependencies, function calls and evaluator captures of local/formal storage remain restricted (sim_events.rs, sim_partial_features.rs)
-- ✅ **force** `force sig = expr;` whole signals, wakes waiters — §1364-2001 9.3.2 **[1995]** (sim_force.rs); ordinary single-driver nets retain this path, while resolved multidriver/wired-net force is explicitly unsupported
-- ✅ **release** restores pre-force value — §1364-2001 9.3.2 **[1995]**
-- 🟨 **force/release driver re-evaluation** — §1364-2001 9.3.2 **[1995]** drivers changed while forced are not re-evaluated (documented approximation)
-- 🟨 **Condition event expressions** `@(a && b)` — §1364-2001 9.7.2 **[1995]** wait on body read set instead of condition operands
+- 🟨 **Event control @** — §1364-2001 9.7.2/9.7.4 **[1995]** packed and scalar real/shortreal expression-change events, fixed-array/resizable-container dependencies, LSB edges, trigger-time `iff`, legal input/const-ref function calls, automatic local/formal evaluator captures and atomic mixed named-event lists work; real edge descriptors and functions with disallowed effects remain rejected (sim_events.rs, sim_partial_features.rs)
+- 🟨 **force** `force lhs = expr;` live whole packed/real variables plus constant-selected, concatenated and resolved wire/wired/inout targets, with waiter wakeups, strength-preserving release and explicit RHS dependencies — §1364-2001 9.3.2 **[1995]** (sim_force.rs, sim_net_resolution.rs); variable selects, arrays, automatic/local references and other unsupported net contexts are rejected
+- ✅ **release** — §1364-2001 9.3.2 **[1995]** removes the matching force driver; variables retain the forced value unless an active PCA resumes, while nets immediately resolve their current driver slots
+- ✅ **force/release driver re-evaluation** — §1364-2001 9.3.2 **[1995]** force RHS changes propagate while active; procedural and structural writes remain underneath according to object kind, including four-state and two-state conversion
+- 🟨 **Condition event expressions** `@(a && b)` — §1364-2001 9.7.2 **[1995]** expression operands and legal called-function dependencies drive reevaluation; the controlled body's unrelated read set does not
 - 🟨 **Intra-assignment timing** `a = #5 b;` / `a <= #5 b;` — §1364-2001 9.7.7 **[1995]** packed/real/shortreal RHS values are captured immediately; blocking writes suspend, while constant/runtime-delay NBAs capture destinations and continue immediately. Selected NBAs preserve disjoint updates at commit; event/repeat forms remain unsupported (sim_delay.rs, sim_partial_features.rs)
 - ❌ **Repeat event control** `repeat (n) @ev` — §1364-2001 9.7.7 **[1995]** clean codegen rejection
-- 🟨 **Named events** `event ev; -> ev; @ ev;` — §1364-1995 §9.7.3 **[1995]** the runtime wakes all current waiters in registration order and mixed or-lists lower to one atomic wait; the Slang importer currently captures direct named-event declarations/references but does not retain the `->>` distinction, event arrays, or hierarchical event resolution, so those forms remain explicit semantic-import gaps
-- ✅ **Procedural continuous assign/deassign** — §1364-2001 9.3.1 **[1995]** (sim_force.rs) `assign <reg> = expr;` lowers to a per-site enable-guarded process plus an immediate blocking write; `deassign` clears the enable only (the variable KEEPS its last value); RHS changes propagate while assigned and re-executing the same `assign` statement re-enables the site; while assigned, ordinary procedural writes to the target (blocking AND non-blocking) still take effect immediately, and the guard re-drives from the CURRENT rhs on its next wake (an RHS-read or enable change — it never wakes on changes of the target itself); sites are pre-scanned over every process body before any body lowers, so a `deassign` resolves its site regardless of process/source order; `force` keeps priority over an active PCA, `release` restores it. Clean rejects: net targets, selects/part-selects/array elements, hierarchical targets, real variables, and multiple active sites on one variable (deterministic static reject — reuse one site through control flow)
+- 🟨 **Named events** `event ev; -> ev; ->> ev; @ ev;` — §1364-1995 §9.7.3 / §1800-2009 15.5.1 **[1995/SV-2005]** immediate triggers wake current waiters; untimed and delay-controlled `->>` queue a captured event in NBA without suspending the issuer. Fixed event arrays, hierarchy, null/default handles, reassignment, and task-formal aliases resolve the same persistent object identity while existing waiters remain attached to their original object. Same-slot `.triggered` waits and ordered `wait_order` success/failure arms are supported (§1800-2009 15.5.2–15.5.4); dynamic/associative/queue event storage and event-controlled/repeated-event `->>` remain explicit boundaries.
+- ✅ **Procedural continuous assign/deassign** — §1364-2001 9.3.1 **[1995]** (sim_force.rs, sim_procedural_assign.rs) `assign <reg> = expr;` creates one replaceable target binding with a live RHS evaluator and an immediate drive; whole real/shortreal variables and ordinary packed concatenations are also supported; `deassign` removes each binding while retaining the last driven value; RHS and called-function dependencies propagate while assigned; blocking and non-blocking procedural writes cannot override an active PCA or wake its evaluator; a later textual assign site replaces the earlier binding at runtime, and pre-scanned sites make deassign-before-assign order independent; `force` keeps priority over an active PCA and `release` returns to its latest live RHS. Clean rejects: net targets, selects/part-selects/array elements, hierarchical and streaming targets, and recursive aggregate values.
 
 SystemVerilog era:
 
@@ -187,19 +224,19 @@ SystemVerilog era:
 - 🟨 **unique/priority/unique0 if & case** — §1800-2009 12.4.2/12.5.3 **[SV-2005]** lowered as plain case; no violation reports (probed)
 - ✅ **case … inside** wildcard matching — §1800-2009 12.5.4 **[SV-2005]** scalar wildcard items, inclusive ranges, first-match/default behavior, and single selector evaluation (sim_wildcard_eq.rs, optimization on/off)
 - ✅ **do-while** — §1800-2009 12.7.5 **[SV-2005]** post-test execution plus break/continue semantics (sim_disable.rs)
-- 🟨 **foreach** — §1800-2009 12.7.3 **[SV-2005]** fixed unpacked arrays with an explicit iterator for every dimension, declared range direction, break/continue, and nested shadowing (sim_loops.rs); omitted indices, fork/deferred-output capture, and nonblocking writes to iterators remain rejected
+- 🟨 **foreach** — §1800-2009 12.7.3 **[SV-2005]** fixed unpacked arrays with an explicit iterator for every dimension, declared range direction, break/continue, nested shadowing, and legal fork captures of packed lexical iterators (sim_loops.rs, sim_partial_features.rs); omitted indices and nonblocking writes to iterators remain rejected
 - ✅ **break/continue** — §1800-2009 12.8 **[SV-2005]** (sim_disable.rs) for/while/repeat/forever; continue lands on the increment (for) or back-edge condition test, break exits the innermost loop; nesting pinned
-- 🟨 **Inline loop-var declarations** `for (int i…)` — §1800-2009 12.7.1 **[SV-2005]** packed integral loop variables with lexical shadowing and break/continue (sim_loops.rs); real loop variables, fork/deferred-output capture, and nonblocking writes to loop locals are rejected
+- 🟨 **Inline loop-var declarations** `for (int i…)` — §1800-2009 12.7.1 **[SV-2005]** packed integral loop variables with lexical shadowing, break/continue, and legal fork/deferred-output value capture (sim_loops.rs, sim_partial_features.rs); real loop variables and nonblocking writes to loop locals are rejected
 
 ## 6. Timing controls
 
 Verilog era:
 
 - ✅ **#delay integer literal**, timescale-scaled — §1364-2001 9.7.1 **[1995]** (sim_timescale.rs)
-- ✅ **@\* / @(\*) implicit sensitivity** from body read set — §1364-2001 9.7.5 **[2001]**
-- 🟨 **Comb sensitivity to array elements** — §1364-2001 9.7.5 **[2001]** wakes on index signals only, not array writes
-- 🟨 **Fractional delays** `#0.5` — §1364-2001 9.7.1 **[1995]** typed integer, real, scientific, and unit-suffixed values in statement and intra-assignment delays round once to the local time precision before conversion to design scheduler ticks; constant fractional continuous/gate delays use the same scaling with inertial scheduling; sub-ps scheduling remains unsupported
-- 🟨 **Expression/parameter delays** `#(expr)` / `#P`, underscored `#10_000` and unit-suffixed `#5ns` literals — §1364-2001 9.7.1 **[1995]** constant and runtime packed/real expressions, function results and task inputs work in statement and intra-assignment delays. Each delay is evaluated once; real values round to local precision, X/Z means zero, and negative packed values convert to unsigned 64-bit time before checked scaling (sim_delay.rs, sim_time_literals.rs, sim_partial_features.rs). Negative/nonfinite real delays and values exceeding 64-bit scheduler ticks are rejected; sub-ps scheduling and unsupported expression forms remain gaps
+- ✅ **@\* / @(\*) implicit sensitivity** from call-site body read set — §1364-2001 9.7.5 **[2001]** distinct from `always_comb` called-function sensitivity (sim_process_semantics.rs)
+- ✅ **Comb sensitivity to array elements** — §1364-2001 9.7.5 **[2001]** fixed-array element/contents and resizable-container contents/shape dependencies wake implicit and explicit readers without retaining reallocatable element addresses (sim_array_sensitivity.rs)
+- 🟨 **Fractional delays** `#0.5` — §1364-2001 9.7.1 **[1995]** typed integer, real, scientific, and unit-suffixed values in statement and intra-assignment delays round once to the local time precision before conversion to design scheduler ticks; constant fractional continuous/gate delays use the same scaling with inertial scheduling; values below the selected precision round to zero
+- 🟨 **Expression/parameter delays** `#(expr)` / `#P`, underscored `#10_000` and unit-suffixed `#5ns` literals — §1364-2001 9.7.1 **[1995]** constant and runtime packed/real expressions, function results and task inputs work in statement and intra-assignment delays. Each delay is evaluated once; real values round to local precision, X/Z means zero, and negative packed values convert to unsigned 64-bit time before checked scaling (sim_delay.rs, sim_time_literals.rs, sim_physical_time.rs, sim_partial_features.rs). Negative/nonfinite real delays and values exceeding 64-bit femtosecond scheduler ticks are rejected; unsupported expression forms remain gaps
 
 SystemVerilog era:
 
@@ -228,12 +265,12 @@ Verilog era:
 - ✅ **$signed/$unsigned** — §1364-2001 4.5 **[2001]**
 - ✅ **Signedness/self-determined width rules** mirrored by runtime — §1364-2001 4.4–4.5 **[1995]** pinned by property_elab.rs
 - ✅ **X/Z expression semantics** Z=X except identity/copy ops — §1364-2001 3.1 **[1995]** proptests + C vector table
-- 🟨 **Operators on real operands** `+ - * / %`, relational/logical/`?:`, casts — §1364-2001 4.1.1 **[1995]** within real subset; bitwise/reduction/shift/concat/case-eq on reals rejected
+- 🟨 **Operators on real operands** `+ - * / %`, relational/logical/`?:`, casts and ordinary `case` equality — §1364-2001 4.1.1 **[1995]** within real subset; bitwise/reduction/shift/concat/case-eq and real selects are rejected
 
 SystemVerilog era:
 
 - 🟨 **Static casts** `int'(e)`, `signed'()`, `unsigned'()`, size casts `n'(e)` — §1800-2009 6.24.1 **[SV-2005]** Slang retains explicit/implicit conversion identity and resolved target width, signedness, and state domain. Scalar/vector typed and numeric size casts are covered through declaration, runtime-expression, and function contexts; unsupported aggregate/net paths remain outside this claim (sim_data_types.rs, sim_data_type_edges.rs, sim_data_types_next.rs)
-- 🟨 **Increment/decrement** `++ --` — §1800-2009 11.4.2 **[SV-2005]** statement-position pre/post forms on whole scalar variables, including `for` increments, are supported; expression-valued and select/array-element forms remain unsupported (sim_operator_semantics.rs)
+- 🟨 **Increment/decrement** `++ --` — §1800-2009 11.4.2 **[SV-2005]** statement-position pre/post forms on whole scalar variables plus expression-valued forms over packed selects/members, fixed-array elements, and real targets are supported; non-lvalues and unsupported aggregate/object targets remain rejected (sim_operator_semantics.rs)
 - 🟨 **Assignment operators** `+= -= *= /= %= &= |= ^= <<= >>= <<<= >>>=` — §1800-2009 11.4.1 **[SV-2005]** whole scalar variables are supported; select and array-element targets are cleanly rejected until LHS index evaluation can be preserved exactly once (sim_operator_semantics.rs)
 - ✅ **Wildcard equality** `==? !=?` — §1800-2009 11.4.6 **[SV-2005]** RHS X/Z bits are wildcards; remaining LHS unknown bits yield X unless a known mismatch decides the result. Common-width/signed extension and model-sized operands are covered with optimization on/off (sim_wildcard_eq.rs).
 - 🟨 **Set membership** `inside {…}` — §1800-2009 11.4.13 **[SV-2005]** scalar/range/wildcard cases are reported passing in both modes; aggregate and broader contextual forms remain outside the focused claim
@@ -246,9 +283,9 @@ Verilog era:
 
 - ✅ **Continuous assignment** `assign lhs = rhs;` — §1364-2001 6.1.2 **[1995]** comb process on RHS read set
 - ✅ **Multiple/comma-form continuous assigns** — §1364-2001 6.1.2 **[1995]**
-- 🟨 **Multiple drivers on one net** — §1364-2001 6.1 **[1995]** bounded ordinary standalone scalar `wire`/`tri` continuous-assignment drivers resolve with explicit strengths and high-Z endpoints; port/inout, vector-strength, gate, wired-net, and charge-storage contexts remain outside this claim
+- 🟨 **Multiple drivers on one net** — §1364-2001 6.1 **[1995]** bounded ordinary and collapsed scalar net groups resolve continuous, gate and port-derived drivers with explicit strengths and high-Z endpoints; vector-strength, interface/array, and charge-storage contexts remain outside this claim
 - 🟨 **Delay on continuous assign** `assign #d lhs = rhs;` — §1364-2001 6.1.3 **[1995]** whole packed drivers capture RHS values and schedule active-region inertial updates. Changed pending values cancel, unchanged results retain their original deadlines, and a return to the driver's current value cancels without replacement. Constant/parameter/fractional delays, 129-bit four-state vectors, independent drivers, scalar strengths, output-port initialization and zero-delay/NBA ordering are tested (`sim_delay.rs`, `sim_partial_features.rs`, both optimizer modes). Selected/array targets remain unsupported; separate rise/fall/turn-off delays are explicitly rejected with all expressions retained in the owned database
-- 🟨 **Strength on continuous assign/gates** — §1364-2001 6.1.4/7.1.2 **[1995]** explicit strengths are reported passing for standalone scalar `wire`/`tri` continuous-assignment drivers in both modes; vector strengths are prohibited by §10.3.4, and gate/inout/wired-strength/trireg contexts remain unsupported
+- 🟨 **Strength on continuous assign/gates** — §1364-2001 6.1.4/7.1.2 **[1995]** explicit scalar strengths flow through continuous assignments, logic/pull gates, wired nets and collapsed inout groups in both optimizer modes; vector continuous strengths remain prohibited by §10.3.4, and switch-level/resistive/trireg behavior remains unsupported
 - ✅ **Logic gates** `and nand or nor xor xnor buf not` — §1364-2001 7.2–7.3 **[1995]** (sim_gates.rs) one comb process per gate, SensLoop over the input read set; n-input gates reduce left-to-right, nand/nor/xnor negate after the full reduce; vector gates are bitwise; the current backend requires equal terminal widths
 - ✅ **Tri-state buffers** `bufif0 bufif1 notif0 notif1` — §1364-2001 7.4 Table 7-5 **[1995]** (sim_gates.rs) lowered to `sv4_mux(en, data|data, Z)` / `sv4_mux(en, Z, ~(data|data))` — the passing arm is z→x-normalized with `data|data` (per-bit), so an ENABLED gate turns a data-Z into X like buf/not while known bits pass unchanged; a DISABLED gate drives Z; unknown enable yields all-X unless both branches match
 - ❌ **MOS/CMOS switches** `nmos pmos cmos rnmos rpmos rcmos` — §1364-2001 7.5–7.7 **[1995]** rejected with a clear message ("switch/transistor primitive … not supported")
@@ -275,13 +312,13 @@ below retain their documented boundaries.
 
 Verilog era:
 
-- ✅ **Function declaration/return value/call in expressions** — §1364-2001 10.3 **[1995]** recursion depth guard 256 reports an error and returns the type's default beyond the guard (sim_function.rs pins within-limit recursion); static functions with output/inout formals in expression position explicitly reject until their persistent copy-out storage is supported
+- ✅ **Function declaration/return value/call in expressions** — §1364-2001 10.3 **[1995]** recursion depth guard 256 reports an error and returns the type's default beyond the guard (sim_function.rs pins within-limit recursion); static output/inout formals use typed persistent copy-in/copy-out storage, including packed and real/shortreal values, and selected actual indices are captured once at the call boundary
 - ✅ **Tasks incl. output/inout args**; delay-bearing tasks inlined at call sites — §1364-2001 10.2 **[1995]** wait-bearing tasks inlined (sim_function.rs). Focused static local/formal persistence and static-task NBA copy-out cases pass; delay-free static task outputs/inouts retain storage across calls and copy out at return, including values from earlier NBAs. NBAs to automatic subroutine storage or aggregate/unpacked subprogram storage remain explicitly rejected instead of queuing dangling targets
 - ✅ **automatic reentrant functions/tasks** — §1364-2001 10.2.3/10.3.1 **[2001]** recursion supported
 - ✅ **Constant functions in parameter expressions** — §1364-2001 10.3.5 **[2001]** evaluated by elab Resolver; typed parameters required (probed)
 - ❌ **Task calls inside function bodies** — §1364-2001 10.3.4 **[1995]** rejected
-- ❌ **fork/join inside function/task bodies** — §1364-2001 9.8.2 **[1995]** rejected
-- ❌ **Timing controls in function bodies** `#`/`@`/`wait` inside a function rejected — §1364-2001 10.3.4 **[1995]** nonblocking assignments are not policed: accepted and committed on the caller's NBA list (probed)
+- 🟨 **fork/join inside function/task bodies** — §1364-2001 9.8.2 / §1800-2009 9.3.2 **[1995/SV-2005]** detached `join_none` branches capture automatic packed locals and formals in owned activation frames; ordinary blocking timing in functions, recursive timed tasks, and richer subroutine activation forms remain rejected
+- ❌ **Timing controls in function bodies** `#`/`@`/`wait` inside a function rejected — §1364-2001 10.3.4 **[1995]** direct function timing remains rejected; timing controls in a legal detached `join_none` branch use that branch's retained frame. Nonblocking assignments to automatic storage remain rejected
 - ❌ **Recursive delay-bearing tasks** — §1364-2001 10.2.3 **[2001]** rejected
 - ❌ **Cross-instance hierarchical subprogram calls** — §1364-2001 12.4 **[1995]** rejected
 
@@ -290,7 +327,7 @@ SystemVerilog era:
 - ✅ **void functions** `function void f();` — §1800-2009 13.4.1 **[SV-2005]**
 - ✅ **Default argument values** incl. references to earlier formals — §1800-2009 13.5.3 **[SV-2005]**
 - ✅ **Named argument binding** `f(.b(x), .a(y))` order-independent — §1800-2009 13.5.4 **[SV-2005]** (probed)
-- ❌ **ref arguments** pass-by-reference — §1800-2009 13.5.2 **[SV-2005]** pass-by-value only
+- 🟨 **ref arguments** typed `ref`/`const ref` descriptors cover whole packed variables and runtime-selected elements of fixed unpacked arrays, with one-time index binding, immediate aliasing, forwarded nested calls and suspension observation — §1800-2009 13.5.2 **[SV-2005]**. Packed bit/part-select actuals are language-illegal in the 2009 target and are rejected by the frontend; aggregate and resizable-array reference lifetimes remain incomplete (sim_reference_args.rs)
 
 ## 10. System tasks & functions relevant to simulation
 
@@ -300,8 +337,8 @@ Verilog era — display family:
 - ✅ **$write** — §1364-2001 17.1.1 **[1995]** same formatting as `$display`, without an appended newline (sim_monitor.rs)
 - ✅ **Format specs** `%d/%h/%b/%o/%t` + width.precision; `%s` for `$display`/`$write` (not monitor/strobe) — §1364-2001 17.1.1.2 **[1995]** unknown specifiers/`%m` rejected
 - ✅ **$strobe** observes settled values after active/inactive/NBA iteration, including zero-delay drivers triggered by NBAs — §1364-2001 17.1.2 **[1995]** (sim_monitor.rs, sim_partial_features.rs)
-- 🟨 **$monitor/$monitoron/$monitoroff** one active monitor; change checks run after active/inactive/NBA settling — §1364-2001 17.1.3 **[1995]** (sim_monitor.rs). Initial registration still prints immediately, resume only prints changed values, and time-query arguments can spuriously trigger reports; those scheduling/trigger details remain gaps
-- ❌ **b/o/h task variants** `$displayb/o/h $fwriteb…` — §1364-2001 17.1.1 **[1995]** base names only recognized
+- 🟨 **$monitor/$monitoron/$monitoroff** one active monitor; registration and re-enabling queue one report at the settled observation point, same-slot changes coalesce, and only signal-valued arguments trigger later reports — §1364-2001 17.1.3 **[1995]** (sim_monitor.rs, sim_inout.rs). Broader formatting limitations remain
+- ✅ **b/o/h console task variants** `$displayb/o/h`, `$writeb/o/h`, `$strobeb/o/h`, `$monitorb/o/h` — §1364-2001 17.1.1–17.1.3 **[1995]** unformatted integral arguments use the variant radix, while explicit format directives retain their own conversion (sim_monitor.rs)
 
 File IO:
 
@@ -316,14 +353,14 @@ Memory load/store:
 
 Time:
 
-- ✅ **$time** module-unit scaled, `%t` consumes it — §1364-2001 17.7.1 **[1995]**
-- ✅ **$stime/$realtime** — §1364-2001 17.7.2–17.7.3 **[1995]** `$stime` returns the module-unit-scaled low 32 bits; `$realtime` preserves fractional module-unit time (sim_timescale.rs, sim_partial_features.rs)
+- ✅ **$time** module-unit scaled and rounded, `%t` consumes it — §1364-2001 17.7.1 **[1995]** using checked femtosecond-to-unit conversion
+- ✅ **$stime/$realtime** — §1364-2001 17.7.2–17.7.3 **[1995]** `$stime` rounds in the calling module's unit before returning the low 32 bits; `$realtime` preserves fractional module-unit time (sim_timescale.rs, sim_physical_time.rs, sim_partial_features.rs)
 - ✅ **$printtimescale** — §1364-2001 17.3.1 **[1995]**
 - ❌ **$timeformat** — §1364-2001 17.3.2 **[1995]** unsupported-task reject
 
 Control / misc:
 
-- ✅ **$finish** exit code propagates to driver — §1364-2001 17.4.1 **[1995]**
+- ✅ **$finish** is a nonreturning termination control with default level 1 and explicit level 0/1/2 diagnostics plus exactly-once final-block handoff; the optional target-edition `finish_number` is a constant integral 0, 1, or 2, so runtime, real, unknown, and out-of-range arguments reject before model emission; its argument never becomes the generated model's OS exit status — §1364-2001 17.4.1 / §1800-2009 20.2 **[1995]**
 - ❌ **$stop** — §1364-2001 17.4.2 **[1995]** unsupported-task reject (probed)
 - ❌ **PLA modeling tasks** `$async$and$array …` — §1364-2001 17.5 **[1995]**
 - ❌ **Stochastic tasks** `$q_initialize $q_add …` — §1364-2001 17.6 **[1995]**
@@ -335,7 +372,7 @@ Control / misc:
 
 Waveforms:
 
-- 🟨 **$dumpfile/$dumpvars/$dumpon/$dumpoff/$dumplimit** to VCD or FST — §1364-2001 ch18 **[1995]** `$dumpfile` selects the format by `.vcd`/`.fst`; packed signals, unpacked-array elements, real values, X/Z, aliases, hierarchy, timescale, dump activation, and size limits are emitted by a separate OS writer thread through a bounded lossless SPSC ring (sim_waveform.rs). `$dumpvars` currently warns and dumps all registered storage because depth/scope/variable filtering is not yet implemented; array elements use stable flattened linear indices.
+- 🟨 **$dumpfile/$dumpvars/$dumpon/$dumpoff/$dumplimit** to VCD or FST — §1364-2001 ch18 **[1995]** `$dumpfile` selects the format by `.vcd`/`.fst`; packed signals, unpacked-array elements, real values, X/Z, aliases, hierarchy, exact femtosecond timestamps, dump activation, and size limits are emitted by a separate OS writer thread through a bounded lossless SPSC ring (sim_waveform.rs, sim_physical_time.rs). `$dumpvars` carries owned depth/scope/variable identities into the catalog, and declared array bounds are retained in element names; `$dumpports` remains a separate unsupported extended-VCD family.
 - ✅ **$dumpall/$dumpflush** — §1364-2001 ch18 **[1995]** snapshots and synchronous flush barriers work for both VCD and FST (sim_waveform.rs; runtime self-test)
 - ❌ **$dumpports extended VCD** — §1364-2001 18.3 **[2001]** unsupported-task reject
 
@@ -365,7 +402,7 @@ Verilog era:
 
 SystemVerilog era:
 
-- ✅ **`` `begin_keywords ``/`` `end_keywords ``** keyword-set selection — §1800-2009 22.14 **[SV-2005]** (`begin_keywords` first in [1364-2005]) consumed by frontend
+- ✅ **`` `begin_keywords ``/`` `end_keywords ``** keyword-set selection — §1800-2009 22.14 **[SV-2005]** (`begin_keywords` first in [1364-2005]) consumed by the frontend as lexical state only; it does not override the selected global edition
 - ✅ **`` `pragma ``** — §1800-2009 22.11 **[SV-2009]** consumed by frontend
 - ✅ **`` `undefineall ``** — §1800-2009 22.5.3 **[SV-2009]** consumed by frontend
 - ✅ **`` `__FILE__ ``/`` `__LINE__ `` predefined macros** — §1800-2009 22.13 **[SV-2009]** consumed by frontend
@@ -379,7 +416,7 @@ Tracked so nothing is lost; all de-prioritized behind RTL-simulation support.
 | Classes | class/new/handles, properties/methods, inheritance, virtual methods, static/local, `::` | §1800-2009 ch8 | [SV-2005] |
 | Programs | `program … endprogram`, race-elimination region, `$exit` | §1800-2009 ch24 | [SV-2005] |
 | Clocking blocks | clocking decl/default/global, skews, synchronous drives, `##` delays | §1800-2009 ch14 | [SV-2005] |
-| Interprocess sync | semaphores, mailboxes, process suspend/resume/kill, `.triggered`, `->>`, `wait_order` | §1800-2009 ch15 | [SV-2005] |
+| Interprocess sync | semaphores, mailboxes, process suspend/resume/kill | §1800-2009 ch15 | [SV-2005] |
 | Assertions | immediate/deferred/concurrent assert-assume-cover, sequences/properties, assertion control tasks | §1800-2009 ch16, 20.11 | [SV-2005] |
 | Checkers | `checker … endchecker` | §1800-2009 ch17 | [SV-2009] |
 | Coverage | covergroups, coverpoints, cross | §1800-2009 ch18 | [SV-2005] |
@@ -413,17 +450,17 @@ capabilities, not individual keywords, system functions or standard clauses.
 |---:|---|---|---|
 | 1 | Missing | Charge-storage nets | `trireg`, charge strengths, charge decay and charge sharing. |
 | 2 | Missing | Tagged unions | Tagged storage, construction and matching. |
-| 3 | Partial | Real types | General `real`/`realtime`/`shortreal` ports, arrays, subroutine storage, continuous/combinational use, event/wait controls, and real monitor/strobe arguments. |
+| 3 | Partial | Real types | Scalar `real`/`realtime`/`shortreal` ports, combinational reads, event/wait controls and typed changed-write notifications are covered. General ports, arrays, subroutine storage, continuous assignments, and real monitor/strobe arguments remain. |
 | 4 | Partial | Strings | General string ports, formals, locals, static string-returning functions, continuous assignments and sensitivity. |
-| 5 | Partial | Chandles | General chandle locals, output/inout or mixed signatures, ports and delay-bearing tasks; the implemented subset is null/copy/comparison and bounded input/return functions. |
-| 6 | Partial | Structures and untagged unions | Nested unpacked/object members, recursive defaults and nominal type keys, anonymous copies without type identity, unequal-width unpacked unions, aggregate ports/nets and general subroutine storage. |
-| 7 | Partial | Fixed unpacked arrays | Whole-array procedural assignment and concatenation, slices/partial indexing, general element types, multidimensional port forms and runtime-indexed port actuals. Element indexed part-selects now have file-based read/write, range, state-conversion, wide/invalid-index and delayed-NBA coverage. |
+| 5 | Partial | Chandles | Ports, packed containment, arithmetic, continuous assignment and sensitivity remain unsupported; the bounded implementation covers null/copy/comparison and Boolean operations, automatic/static locals, represented aggregate members, mixed signatures, output/inout/ref/const-ref aliases, delay-bearing tasks and chandle-input→chandle-return functions. |
+| 6 | Partial | Structures and untagged unions | Nested unpacked/object members, recursive defaults and nominal type keys, anonymous copies without type identity, unequal-width unpacked unions, ordinary aggregate copy ports/nets and general subroutine storage. |
+| 7 | Partial | Fixed unpacked arrays | Whole-array procedural assignment and concatenation, slices/partial indexing, general element types, multidimensional copy-port forms and runtime-indexed copy-port actuals. Fixed-array reference ports and element indexed part-selects now have file-based read/write, range, state-conversion, wide/invalid-index and delayed-NBA coverage. |
 | 8 | Partial | Resizable containers and array methods | General nested/multidimensional or object elements, declaration initializers, keyed/default patterns, subroutine/port storage, reduction `with` clauses, locator methods (`find*`, `min/max`, `unique*`) and ordering methods (`sort/rsort/reverse/shuffle`). |
 | 9 | Missing | Runtime enum methods | Enum `.first()`, `.last()`, `.next()`, `.prev()`, `.num()` and `.name()` have no general runtime lowering; `.next()` fails in a fresh probe. |
 | 10 | Partial | Casts | Dynamic `$cast` and general aggregate/bit-stream conversion paths; scalar/vector static casts and the tested numeric conversions already work. |
 | 11 | Partial | Data and array queries | Executed `$typename`, `$isunbounded`, `$left/$right/$low/$high/$increment/$size/$dimensions/$unpacked_dimensions`; some parameter-context queries are folded successfully by Slang. |
-| 12 | Partial | Initialization and storage lifetimes | Nonconstant declaration initializers, runtime-dependent static subroutine initializers and opposite/ambiguous local lifetime overrides. |
-| 13 | Partial | Net resolution and strengths | General gate/mixed-driver, port/inout/interface, wired/pull/supply-net, force and selected delayed-driver contexts. Standalone scalar wire/tri strength resolution already exists; explicit vector continuous-assignment strengths are language-illegal and are not counted. |
+| 12 | Partial | Initialization and storage lifetimes | Scalar nonconstant declaration initializers and runtime-dependent static subroutine initializers are lowered with declaration identity, static/automatic storage lifetime, source origin, and edition-specific scheduling (SV2009 pre-process initialization versus Verilog-2001 active-region initialization). Automatic activations and explicit static locals are supported for the packed scalar subset; recursive aggregate defaults, general aggregate/subroutine storage, and ambiguous lifetime provenance remain outside the boundary. |
+| 13 | Partial | Net resolution and strengths | Continuous, gate, packed port and collapsed-inout drivers retain per-source strength endpoints across wire/tri, wand/wor, tri0/tri1 and supply nets, including implicit pull/supply defaults and constant selected/disjoint writes. Heterogeneous/aggregate connectivity, selected delayed drivers and switch-level/resistive propagation remain; explicit vector continuous-assignment strengths are language-illegal and are not counted. |
 | 14 | Missing | Switch-level primitives | `nmos`, `pmos`, `cmos`, `rnmos`, `rpmos`, `rcmos`, `tran`, `tranif0/1`, `rtran`, `rtranif0/1`, including resistive strength propagation. |
 | 15 | Missing | Primitive instance arrays | Arrays of gate and UDP instances. |
 | 16 | Missing | User-defined primitives | Combinational and sequential UDP tables, state/edge behavior and instances. |
@@ -432,37 +469,37 @@ capabilities, not individual keywords, system functions or standard clauses.
 | 19 | Missing | SDF annotation | `$sdf_annotate` and application of annotated delays/checks. |
 | 20 | Partial | Gate terminal forms | Selected, expression and hierarchical terminals; unequal terminal widths; multiple-output `buf`/`not`; more than 64 terminals. |
 | 21 | Partial | Continuous and gate delays | Whole packed continuous/gate drivers now capture values, cancel pulses and commit in the active region without suspending evaluation. Delayed selected/array targets, separate rise/fall/turn-off delays, net-declaration propagation delays and unsupported gate terminal contexts remain. Multi-delay lists are retained and explicitly rejected rather than silently using their first expression. |
-| 22 | Partial | Delay expressions | Negative real delays, sub-picosecond scheduling and unsupported expression forms remain. Runtime packed/real procedural delays, X/Z-to-zero delays, negative packed time conversion and local-precision rounding are tested in both optimizer modes; overflow is diagnosed. |
-| 23 | Partial | Time precision and literal semantics | Sub-picosecond scheduling is clamped to 1 ps. Ordinary time-literal values follow the frontend's newer unrounded semantics rather than the targeted 2009 rounding semantics. |
-| 24 | Partial | Port connections | Constants, input expressions, omitted defaults, selected output targets and whole packed-variable reference aliases now work. General aggregate/real/string/container ports, selected reference actuals and links involving resolved groups remain restricted. |
+| 22 | Partial | Delay expressions | Negative real delays and unsupported expression forms remain. Runtime packed/real procedural delays, X/Z-to-zero delays, negative packed time conversion, femtosecond precision, local-precision rounding and checked overflow are tested in both optimizer modes. |
+| 23 | Partial | Time precision and literal semantics | Physical scheduler ticks are checked femtoseconds across the standard 1fs–100s range. Ordinary time-literal values, source spelling, local `timeunit`/`timeprecision`, signed/scientific unit suffixes, and direct-delay rounding follow the selected 2009 policy; broader edition-sensitive literal semantics remain separately tracked. |
+| 24 | Partial | Port connections | Constants, input expressions, omitted defaults, selected output targets, packed/fixed-array reference aliases, recursive aggregate/object reference leaves, resolved packed net links and scalar real/shortreal links now work. Resizable containers, ordinary aggregate copy ports and heterogeneous links remain restricted. |
 | 25 | Missing | Libraries and configurations | The standard library/configuration selection flow is not provided as a supported simulator feature. |
 | 26 | Partial | Packages | Runtime package variables and package subroutine calls; parameter/type use via frontend elaboration already works. |
 | 27 | Missing | Net aliases | `alias a = b` does not provide net aliasing: a fresh probe drives `a=1` but observes `b=z`. |
-| 28 | Partial | SystemVerilog scheduling regions | Full preponed, observed, reactive and associated verification-region semantics; the existing active/inactive/NBA scheduler is narrower. |
-| 29 | Partial | Zero-delay process behavior | Wait-free `always` is still approximated as combinational. Constant-false/unknown `wait` now remains suspended without preventing time advancement. |
-| 30 | Partial | Conditional event controls | Packed expression changes, LSB edge semantics and trigger-time `iff` qualification now work, including mixed named events. Array dependencies and evaluator captures of procedural/subroutine locals or formals remain unsupported; function calls in evaluated event expressions/qualifiers are explicitly rejected pending reentrant effect handling. |
-| 31 | Partial | Named-event references | Event arrays and hierarchical references are not generally projected; direct scalar named events already work. Advanced event operations are in item 65. |
-| 32 | Partial | Array/container sensitivity | Combinational array reads do not reliably wake on element writes; resizable-container sensitivity/wait dependencies are unsupported. |
+| 28 | Partial | SystemVerilog scheduling regions | The runtime has typed Preponed, Active, Inactive, Pre-NBA/NBA/Post-NBA, Pre-Observed/Observed/Post-Observed, Reactive/Re-Inactive/Re-NBA, Pre-Postponed/Postponed, and explicit PLI callback queues with fixed-point re-entry and immutable observation views. Assertions, clocking blocks, program blocks, and public VPI registration remain later feature work. |
+| 29 | Partial | Zero-delay process behavior | Ordinary wait-free `always` repeats with a cooperative, configurable zero-time budget; exhausted budgets produce a source-bearing nonconvergence diagnostic and nonzero simulator status. `always_comb`/`always_latch` keep their time-zero and sensitivity shaping. Constant-false/unknown `wait` remains suspended without preventing time advancement. |
+| 30 | Partial | Conditional event controls | Packed and scalar real expression changes, LSB edge semantics, trigger-time `iff`, fixed-array/container dependencies, legal input/const-ref calls, and evaluator captures of automatic procedural/subroutine locals and formals work, including mixed named events. Real edge descriptors and functions with output/inout/ref writes or other disallowed effects remain rejected. |
+| 31 | Partial | Named-event references | Direct scalar and fixed-array named events, qualified/hierarchical event-control sources, runtime array selects, reassignment/null identity, and task-formal aliases are tested. Dynamic/associative/queue event storage remains outside this boundary; advanced event operations are in item 65. |
+| 32 | Partial | Array/container sensitivity | Fixed-array element/contents and resizable-container contents/shape dependencies wake continuous, explicit/implicit combinational, event, wait, NBA, copy, resize, and supported method readers; whole-array representation, nested/object elements, and later container methods remain outside this claim. |
 | 33 | Partial | Intra-assignment timing | Event/repeat timing forms and repeat event controls are rejected. Constant/runtime-delay NBAs capture values/destinations without suspending, preserve issue order and outlive their issuer. Selected NBAs merge into current storage at commit. Blocking packed/real/shortreal captures are tested. |
-| 34 | Partial | Force and release | Driver re-evaluation after release and general selected, real, array and resolved-multidriver targets; the present release path restores a saved value. |
-| 35 | Partial | Procedural assign/deassign | Driver priority is incomplete: ordinary procedural writes still affect an assigned variable. General selected/hierarchical/array/real targets and multiple assignment sites are unsupported. |
-| 36 | Partial | Named disable | Cross-process disables, named-fork targets and some outer inlined-task targets. |
-| 37 | Partial | Loop forms and captures | General container/omitted-index `foreach`, real loop locals, and legal fork/deferred-output captures of lexical loop variables. |
+| 34 | Partial | Force and release | General array/automatic targets and some advanced hierarchical/net-driver contexts remain unsupported; live RHS evaluation, persistent hierarchical/static-subroutine targets, object-correct variable/net release, PCA precedence, selected net targets and bounded resolved-driver overlays are implemented. |
+| 35 | Partial | Procedural assign/deassign | Whole packed and real/shortreal variable targets plus ordinary packed concatenations have PCA priority, runtime site replacement, dependency-driven reevaluation and deassign retention, including the active-PCA/force layer. Selected/hierarchical/array/streaming and recursive aggregate targets remain unsupported. |
+| 36 | Partial | Named disable | Declaration/instance-resolved cross-process block/task disables, named-fork targets, simultaneous task activations, hierarchical instance selection, inactive-target no-ops, and retained nested-descendant cleanup are tested. Broader recursive and advanced subroutine-storage interactions remain outside this boundary. |
+| 37 | Partial | Loop forms and captures | General container/omitted-index `foreach` and real for-loop locals remain; legal fork/deferred-output captures of packed lexical loop variables now retain per-activation values. |
 | 38 | Missing | Uniqueness and priority checking | Runtime violation checks for `unique`, `unique0` and `priority`; ordinary branch execution alone is implemented. |
 | 39 | Missing | Pattern matching | General `case ... matches` and conditional pattern matching; the probed packed-struct case produced no required branch output. |
 | 40 | Partial | Side-effecting operators | Expression-valued `++/--`, selected/array-element increment/decrement and selected/array-element compound assignments. |
 | 41 | Partial | Set membership | General aggregate/contextual `inside` forms; tested scalar/range/wildcard forms work. |
 | 42 | Partial | Streaming | General aggregate packing/unpacking and streaming `with` selectors; tested packed streaming works. |
-| 43 | Missing | Reference subroutine arguments | True `ref`/`const ref` semantics; an automatic function's write through `ref` did not reach the caller in the probe. |
+| 43 | Partial | Reference subroutine arguments | Typed `ref`/`const ref` descriptors alias whole packed variables and runtime-selected elements of fixed unpacked arrays, including one-time index binding, forwarded aliases, bounded automatic calls and suspension observation. Aggregate and resizable-array lifetimes remain incomplete. Packed bit/part-select actuals are language-illegal for 2009; they must not be listed as supported. |
 | 44 | Missing | Recursive timed tasks | Recursion through delay/wait-bearing tasks. |
-| 45 | Missing | Parallel subroutine bodies | Fork constructs in task bodies and the permitted detached-process function forms; ordinary blocking timing in functions is illegal and is not a missing feature. |
+| 45 | Partial | Parallel subroutine bodies | Detached `join_none` branches in packed subroutine bodies retain automatic formals/locals; resumable timed task activations, full ref/copy-out semantics and broader detached-function forms remain. Ordinary blocking timing in functions is illegal. |
 | 46 | Missing | Cross-instance subroutine calls | Hierarchical calls to tasks/functions outside the calling instance, including interface/package subroutine contexts. |
-| 47 | Partial | Subroutine copy-out and storage | Static functions with output/inout arguments used in expressions, general unpacked/aggregate subroutine storage and legal NBAs to persistent unpacked subroutine storage. NBAs to automatic variables are language-illegal and excluded. |
+| 47 | Partial | Subroutine copy-out and storage | General unpacked/aggregate storage plus string/event output/inout call paths and legal NBAs to persistent unpacked subroutine storage remain. Chandle output/inout/ref/const-ref aliases and bounded delayed-task lifetime are covered. Packed and scalar real/shortreal static function output/inout expression copy-out is covered; NBAs to automatic variables are language-illegal and excluded. |
 | 48 | Missing | File I/O | `$fopen/$fclose/$fdisplay/$fwrite/$fstrobe/$fmonitor`, `$fscanf/$sscanf/$fread/$fgets/$fgetc/$ungetc`, and `$ftell/$fseek/$rewind/$fflush/$ferror/$feof`. |
-| 49 | Partial | Display families and formatting | `b/o/h` task variants, unsupported format specifiers such as `%m`, string/real formatting in monitor/strobe contexts, and monitor registration/resume/time-query trigger semantics. Strobe and change-driven monitor checks now wait for active/inactive/NBA settling. |
+| 49 | Partial | Display families and formatting | Typed display/write/strobe/monitor formatting now preserves packed, real, and owned string values, supports `%m`, width/flag/base/precision directives, exact `%%` escaping, and HDL hierarchy names. Deferred string/real snapshots retain safe ownership and monitor real dependencies trigger settled reports; file tasks, strength/aggregate conversions, and `$sformat*` remain separate features. |
 | 50 | Missing | String formatting tasks/functions | `$sformat`, `$swrite` and `$sformatf`, including their applicable base variants. |
 | 51 | Missing | Memory file loading and writing | `$readmemh/$readmemb/$writememh/$writememb`. |
-| 52 | Partial | Real-time reporting and time formatting | `$timeformat` remains missing. `$realtime` now returns fractional time in the calling module's units; `$time` and `$stime` already work. |
+| 52 | Partial | Real-time reporting and time formatting | `$timeformat` remains missing. `$realtime` returns fractional time in the calling module's units; `$time` and `$stime` round to the nearest local unit (exact halves upward) before `$stime` applies its low-32-bit result width. |
 | 53 | Missing | Simulation suspension | `$stop`. |
 | 54 | Missing | PLA modeling | Synchronous/asynchronous AND/NAND/OR/NOR array/plane system tasks. |
 | 55 | Missing | Stochastic queues | `$q_initialize/$q_add/$q_remove/$q_full/$q_exam`. |
@@ -475,7 +512,7 @@ capabilities, not individual keywords, system functions or standard clauses.
 | 62 | Missing | Classes | Class objects/handles, construction, properties, methods, inheritance, virtual dispatch and access/lifetime rules. |
 | 63 | Missing | Program blocks | Program execution semantics, reactive scheduling and `$exit`. |
 | 64 | Missing | Clocking blocks | Clocking declarations, default/global clocking, input/output skews, synchronous drives and `##` cycle delays. |
-| 65 | Missing | Advanced interprocess synchronization | Semaphores, mailboxes, process handles/status/suspend/resume/kill/await, event `.triggered`, nonblocking `->>` and `wait_order`. |
+| 65 | Missing | Advanced interprocess synchronization | Semaphores, mailboxes, process handles/status/suspend/resume/kill/await; event `.triggered` and `wait_order` are covered in the named-events row, as are direct nonblocking named-event triggers. |
 | 66 | Missing | Assertions and sampled values | Immediate/deferred/concurrent assert/assume/cover, sequences/properties, `expect`, assertion-control tasks and sampled-value functions including `$sampled/$rose/$fell/$stable/$changed/$past` and the 2009 global-clocking forms. |
 | 67 | Missing | Checkers | Checker declarations, instances and checker execution. |
 | 68 | Missing | Functional coverage | Covergroups, coverpoints, bins, crosses, sampling, coverage queries/control and coverage database system tasks. |

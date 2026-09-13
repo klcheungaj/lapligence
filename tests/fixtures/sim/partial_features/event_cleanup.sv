@@ -12,6 +12,6 @@ module tb;
         en=1; clk=1; ->ev;
         #1 ->ev;
         #1 $display("%0d",count);
-        $finish;
+        $finish(0);
     end
 endmodule

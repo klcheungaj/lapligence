@@ -14,6 +14,6 @@ module tb;
         memory[2]<=#2 8'hff;
         base=0;
         #3 $display("%b %b %h %h",a[64:60],a[3:0],memory[0],memory[1]);
-        $finish;
+        $finish(0);
     end
 endmodule

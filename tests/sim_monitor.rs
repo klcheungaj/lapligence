@@ -5,11 +5,24 @@
 //! Each test
 //! runs with the CWD pointed at a fresh temp dir (serialized through a mutex).
 
+#[path = "support/sim_cli.rs"]
+mod sim_cli;
 #[path = "support/sim.rs"]
 mod sim_harness;
 use std::sync::Mutex;
 
 static CWD_LOCK: Mutex<()> = Mutex::new(());
+
+#[test]
+fn sim_console_display_base_variants() {
+    sim_cli::run_case(
+        "monitor",
+        "display_base_variants",
+        "00101010\n052\n2a\n001010100522a-3\n1x0z\nx\n3c\n074\n00111100\n00111100\n00010101\n025\n15\n",
+        "",
+        &[],
+    );
+}
 
 fn assert_stdout(tag: &str, sv: &str, expected: &str) {
     let _guard = CWD_LOCK.lock().unwrap();
@@ -17,13 +30,69 @@ fn assert_stdout(tag: &str, sv: &str, expected: &str) {
     assert_eq!(stdout, expected);
 }
 
-/// (a) $monitor of a counter: prints at registration (t=0) and then only when
-/// the displayed value changes.
+#[test]
+fn sim_monitor_registration_is_postponed() {
+    sim_cli::run_case(
+        "monitor",
+        "monitor_registration_postponed",
+        "CHECK: q=2\n",
+        "",
+        &[],
+    );
+}
+
+#[test]
+fn sim_monitor_time_alone_does_not_trigger() {
+    sim_cli::run_case(
+        "monitor",
+        "monitor_time_alone_no_trigger",
+        "CHECK: time=0 q=7\n",
+        "",
+        &[],
+    );
+}
+
+#[test]
+fn sim_monitor_replacement_coalesces_same_slot_changes() {
+    sim_cli::run_case(
+        "monitor",
+        "monitor_replacement_coalesced",
+        "NEW: q=3\n",
+        "",
+        &[],
+    );
+}
+
+#[test]
+fn sim_monitor_off_on_coalesces_same_slot_changes() {
+    sim_cli::run_case(
+        "monitor",
+        "monitor_off_on_coalesced",
+        "CHECK: q=0\nCHECK: q=4\n",
+        "",
+        &[],
+    );
+}
+
+#[test]
+fn sim_monitor_reenable_forces_equal_values() {
+    sim_cli::run_case(
+        "monitor",
+        "monitor_reenable_forces_equal",
+        "CHECK: q=9\nCHECK: q=9\n",
+        "",
+        &[],
+    );
+}
+
+/// (a) $monitor of a counter: queues a report at registration (printed at the
+/// settled t=0 observation point) and then prints only when the displayed
+/// value changes.
 ///
 /// Hand-simulation:
 ///   t=0  clk=X count=X.  Spawn order: always@(posedge clk) registers its
 ///        waiter (last-seen clk=X), always#5 waits t=5, initial: clk=0,
-///        count=0, $monitor prints "count=0" (registration, snapshot=0), #30.
+///        count=0, $monitor queues "count=0" (snapshot=0), #30.
 ///   t=5  always#5: clk=1 -> 0->1 POSEDGE -> counter wakes; count<=1 commits
 ///        in the NBA region; monitor check: 1 != 0 -> "count=1".
 ///   t=10 clk=0 (negedge).
@@ -63,7 +132,8 @@ endmodule
 /// re-prints when the value changed while suspended.
 ///
 /// Hand-simulation:
-///   t=0  registration prints "count=0"; #10.
+///   t=0  registration queues "count=0"; the settled observation prints it;
+///        #10.
 ///   t=5  posedge -> count=1 -> "count=1".
 ///   t=10 initial: $monitoroff; #10.
 ///   t=15 posedge -> count=2 (monitor off -> no print).

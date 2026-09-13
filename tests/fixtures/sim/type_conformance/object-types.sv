@@ -18,6 +18,6 @@ module tb;
         if (s != "-125" || t.atoi() !== 0) $display("FAIL negative integer string");
         h=null; k=h;
         if (h != k || h != null) $display("FAIL chandle copy");
-        $display("PASS object types"); $finish;
+        $display("PASS object types"); $finish(0);
     end
 endmodule

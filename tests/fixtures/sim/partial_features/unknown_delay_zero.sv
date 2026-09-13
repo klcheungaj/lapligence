@@ -11,6 +11,6 @@ module tb;
         #(1'bx) $display("literal %0d %b",$time,q);
         delay_value=1;
         #delay_value $display("later %0d %b",$time,q);
-        $finish;
+        $finish(0);
     end
 endmodule

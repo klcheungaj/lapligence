@@ -68,10 +68,10 @@ module tb;
     end
 endmodule
 "#;
-    // Slang v11 follows the IEEE 1800-2023 clarification: an ordinary time
-    // literal value is scaled to the local unit without precision rounding.
-    // Assignment to `time` still applies integral conversion.
-    let expected = "values=2.14 3 0 2.54\n";
+    // IEEE 1800-2009 §5.8 rounds each time literal to the local precision
+    // before ordinary expression use. Assignment to `time` still applies
+    // integral conversion after that local rounding.
+    let expected = "values=2.10 3 0 2.50\n";
     let (optimized, unoptimized) = run_optimized_and_unoptimized(source, "time-values");
     assert_eq!(optimized, expected);
     assert_eq!(unoptimized, expected);

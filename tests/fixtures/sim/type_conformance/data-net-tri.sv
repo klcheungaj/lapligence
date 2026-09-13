@@ -305,4 +305,4 @@ $display("%0d/%0d/22/====%b", a,b,v_22 === n);
 $display("%0d/%0d/22/!===%b", a,b,v_22 !== n);
 $display("%0d/%0d/22/+=%b", a,b,v_22 + n);
 $display("%0d/%0d/22/cast=%b", a,b,t_22'(n));
-end end $finish; end endmodule
+end end $finish(0); end endmodule

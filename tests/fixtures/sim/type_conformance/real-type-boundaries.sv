@@ -18,6 +18,6 @@ module tb;
         if (wide !== -(129'sd1 << 100)) $display("FAIL negative wide roundtrip");
         r=-0.0; rt=0.0;
         if (r != rt || !r !== 1'b1 || !rt !== 1'b1) $display("FAIL zero");
-        $display("PASS real boundaries"); $finish;
+        $display("PASS real boundaries"); $finish(0);
     end
 endmodule

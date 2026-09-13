@@ -13,6 +13,6 @@ module tb;
         a[15:12]=4'hc;
         #3 a[3:0]<=4'hd;
         #1 $display("%0t %h %h %h",$time,a,memory[0],memory[1]);
-        $finish;
+        $finish(0);
     end
 endmodule

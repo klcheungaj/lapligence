@@ -6,6 +6,6 @@ module tb;
         a[15:12]=4'hd;
         #0 $display("inactive %h",a);
         $strobe("postponed %h",a);
-        #1 $finish;
+        #1 $finish(0);
     end
 endmodule

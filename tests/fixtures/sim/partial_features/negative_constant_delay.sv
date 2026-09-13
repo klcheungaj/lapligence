@@ -3,6 +3,6 @@ module tb;
     parameter integer DELAY=-2;
     initial begin
         #DELAY $display("%0d",$time);
-        $finish;
+        $finish(0);
     end
 endmodule

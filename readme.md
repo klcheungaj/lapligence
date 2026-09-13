@@ -104,12 +104,18 @@ C with `--gen-only`, but it cannot build and run that emitted model yet.
 All platforms require:
 
 - A recursive Git checkout: `git submodule update --init --recursive`.
-- Stable Rust and Cargo from [rustup](https://rustup.rs/).
+- Rust and Cargo 1.98.0 from [rustup](https://rustup.rs/), as pinned in
+  [`rust-toolchain.toml`](rust-toolchain.toml).
 - CMake 3.20 or newer.
 - A C and C++ compiler with the platform's standard build tools.
 - Python 3 for Slang's syntax and diagnostic generators.
 - `patch`, or Git with `git apply` support.
 - zlib development files for waveform-enabled generated models.
+
+`Cargo.lock` pins the Rust dependency graph. Use Cargo's `--locked` option for
+reproducible builds and tests; the root commit's gitlinks pin `vendor/slang`
+and `vendor/libaco`. The serialized U05 baseline and per-patch workflow is
+documented in [`tests/readme.md`](tests/readme.md).
 
 ### Linux
 
@@ -123,7 +129,7 @@ sudo apt-get install build-essential cmake patch python3 zlib1g-dev
 Build both programs:
 
 ```sh
-cargo build --release --bin llg --bin llg_ls
+cargo build --locked --release --bin llg --bin llg_ls
 ```
 
 For a fully static Linux x86_64 build, the included Docker image provides the
@@ -134,7 +140,7 @@ docker build --platform linux/amd64 --build-arg UID=$(id -u) \
   --build-arg GID=$(id -g) -t llg-dev .
 mkdir -p target
 docker run --rm --platform linux/amd64 -v "$(pwd)":/workspace \
-  llg-dev cargo build --release --bin llg --bin llg_ls \
+  llg-dev cargo build --locked --release --bin llg --bin llg_ls \
   --target x86_64-unknown-linux-musl
 ```
 
@@ -153,7 +159,7 @@ Rebuild the image with the arguments above if its user does not match yours.
 
 ```sh
 rustup target add aarch64-apple-darwin
-cargo build --release --bin llg --bin llg_ls \
+cargo build --locked --release --bin llg --bin llg_ls \
   --target aarch64-apple-darwin
 ```
 
@@ -161,14 +167,14 @@ cargo build --release --bin llg --bin llg_ls \
 
 - Install Visual Studio Build Tools with the **Desktop development with C++**
   workload and the Windows SDK.
-- Install CMake, Python 3, Git, and stable Rust.
+- Install CMake, Python 3, Git, and Rust 1.98.0.
 - Run the build from a matching MSVC Developer PowerShell.
 
 Build for x86_64:
 
 ```powershell
 rustup target add x86_64-pc-windows-msvc
-cargo build --release --bin llg --bin llg_ls `
+cargo build --locked --release --bin llg --bin llg_ls `
   --target x86_64-pc-windows-msvc
 ```
 
@@ -184,6 +190,7 @@ llg [options] <file.sv>...
 Common options:
 
 - `--top <module>`: select the top-level module.
+- `--edition <2001|2009>`: select the compilation language edition (default `2009`).
 - `--lint`: lint before simulation; lint errors stop the build.
 - `--lint-json [<path>]`: write a JSON lint report and exit.
 - `--lint-config <file>`: load rule settings from a TOML file.
@@ -293,17 +300,20 @@ cargo install cargo-nextest --locked
 Run the same serialized test command used by CI:
 
 ```sh
-cargo test --all-features -- --test-threads=1
+cargo test --locked --all-features -- --test-threads=1
 ```
 
 Before submitting a change, run the main checks:
 
 ```sh
 cargo fmt --check
-cargo check --all-targets --all-features
-cargo check --lib --no-default-features
-cargo clippy --all-targets --all-features -- -D warnings
-cargo test --all-features -- --test-threads=1
+cargo check --locked --all-targets --all-features
+cargo check --locked --lib --no-default-features
+cargo clippy --locked --all-targets --all-features -- -D warnings
+
+cargo test --locked --all-features
+or 
+cargo nextest run --all-features
 ```
 
 ## Build cleanup

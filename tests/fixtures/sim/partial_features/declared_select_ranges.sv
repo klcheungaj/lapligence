@@ -16,6 +16,6 @@ module tb;
         wide_index=129'd1<<128; down[wide_index]<=1; up[wide_index]<=1;
         #1 $display("write %h %h",down,up);
         $display("reverse %b %b",down[12-:3],up[-1-:3]);
-        $finish;
+        $finish(0);
     end
 endmodule

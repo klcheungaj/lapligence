@@ -13,6 +13,6 @@ module tb;
         #1 $display("fall %0d %0d",changes,rises);
         b=0;
         #1 $display("same %0d %0d",changes,rises);
-        $finish;
+        $finish(0);
     end
 endmodule

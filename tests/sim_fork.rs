@@ -131,9 +131,10 @@ endmodule
 
 // Hand-simulation:
 //
-//   t=0  initial forks b0 (#5 a=1) and b1 (#10 b=2); `join_none` returns
+//   t=0  initial creates b0 (#5 a=1) and b1 (#10 b=2); `join_none` returns
 //        immediately; $display("after join_none at t=0"); `wait fork;`
-//        suspends the parent (its group is still live).
+//        is the first parent suspension, making both children eligible before
+//        the parent waits on their live group.
 //        b0 waits #5, b1 waits #10.
 //   t=5  b0 wakes: a=1, proc_done (group stays live: b1 pending).
 //   t=10 b1 wakes: b=2, proc_done -> group done -> parent woken.
@@ -182,9 +183,10 @@ endmodule
 
 // Hand-simulation:
 //
-//   t=0  initial forks one child (enqueued ready); `join_none` returns.
-//        parent registers @(posedge ev) with last-seen ev=X and suspends.
-//        child runs (same active pass): records NBA a<=7, writes ev=1
+//   t=0  initial creates one pending child; `join_none` returns.  The parent
+//        registers @(posedge ev) with last-seen ev=X and suspends, making the
+//        child eligible.  The child runs (same active pass): records NBA a<=7,
+//        writes ev=1
 //        (X->1 = posedge, wakes the parent), then waits #10.
 //        parent runs (same pass): `disable fork;` kills the child while it
 //        is suspended — llg_kill_proc frees the child's pending NBA list,

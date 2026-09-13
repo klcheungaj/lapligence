@@ -9,6 +9,6 @@ module tb;
         v=0;
         $display("issued %0t",$time);
         #3 $display("%.1f %.1f %h",r,s,b);
-        $finish;
+        $finish(0);
     end
 endmodule

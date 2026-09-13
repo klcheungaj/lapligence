@@ -861,4 +861,4 @@ v_21=signed_source; $display("assign/5/true/21=%b", v_21);
 $display("cast/5/true/22=%b", t_22'(signed_source));
 $display("shift/5/true/22=%b", t_22'(signed_source) >>> 1);
 v_22=signed_source; $display("assign/5/true/22=%b", v_22);
-$finish; end endmodule
+$finish(0); end endmodule

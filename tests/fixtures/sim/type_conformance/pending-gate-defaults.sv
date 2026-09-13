@@ -15,6 +15,6 @@ module tb;
         if (direct_value !== '1 || linked_value !== '1) $display("FAIL pending transition");
         #2;
         if (direct_value !== '0 || linked_value !== '0) $display("FAIL second update");
-        $display("PASS pending gates"); $finish;
+        $display("PASS pending gates"); $finish(0);
     end
 endmodule

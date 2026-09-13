@@ -738,4 +738,4 @@ $display("mixed/tri0=%b", n_tri0);
 $display("mixed/tri1=%b", n_tri1);
 $display("mixed/supply0=%b", n_supply0);
 $display("mixed/supply1=%b", n_supply1);
-$finish; end endmodule
+$finish(0); end endmodule

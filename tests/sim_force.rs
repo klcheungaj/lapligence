@@ -9,59 +9,24 @@
 //! non-blocking write to a forced target is dropped at NBA commit;
 //! assign/deassign lifecycle (value holds after deassign), RHS propagation
 //! while assigned, re-assign after deassign re-enables, force overriding an
-//! active PCA with release restoring it, clean codegen rejects (net
-//! target, select target, multiple sites), a `deassign` whose process
+//! active PCA with release resuming it, clean codegen rejects (net
+//! target and select target), a `deassign` whose process
 //! LOWERS before the process carrying the matching `assign` (two-phase site
 //! discovery), and a loop revisiting an earlier `deassign`.
 //!
 //! Tests run with the CWD pointed at a fresh temp dir and serialize process-CWD
 //! changes with the other native integration tests.
 
+#[path = "support/sim_cli.rs"]
+mod sim_cli;
 #[path = "support/sim.rs"]
 mod sim_harness;
 
 use std::sync::Mutex;
 
-use llg::core::compile;
 use llg::ffi::slang::DiagnosticSeverity;
-use llg::sim;
 
 static CWD_LOCK: Mutex<()> = Mutex::new(());
-
-/// Compile + codegen `sv`, returning the codegen error message (`Err` for
-/// unsupported constructs like a PCA on a net target).
-fn codegen_error(sv: &str, top: &str, tag: &str) -> Result<String, String> {
-    match codegen_result(sv, top, tag) {
-        Ok(Ok(_)) => panic!("codegen should reject the design ({tag})"),
-        Ok(Err(e)) => Ok(e),
-        Err(e) => Err(e),
-    }
-}
-
-/// Compile + codegen `sv`, returning the codegen result itself (`Err` for
-/// unsupported constructs).
-fn codegen_result(
-    sv: &str,
-    top: &str,
-    tag: &str,
-) -> Result<Result<sim::codegen::GeneratedModel, String>, String> {
-    sim_harness::with_temp_cwd(tag, |dir| {
-        let src = dir.join("tb.sv");
-        std::fs::write(&src, sv).map_err(|error| format!("write source: {error}"))?;
-        let out = compile::compile(&compile::CompileOpts {
-            files: vec![src.to_string_lossy().into_owned()],
-            top: Some(top.to_string()),
-            ..Default::default()
-        })
-        .map_err(|e| format!("compile: {e}"))?;
-        if !out.ok() {
-            return Err(format!("compile diagnostics: {:?}", out.diagnostics));
-        }
-        let db =
-            llg::core::db::Db::from_slang(&out.snapshot).map_err(|error| format!("db: {error}"))?;
-        Ok(sim::codegen::generate(&db).map_err(|error| error.to_string()))
-    })
-}
 
 /// Compile, generate, build, and run one design.
 fn run_sim(sv: &str, top: &str, tag: &str) -> Result<(String, Vec<String>, String), String> {
@@ -70,9 +35,8 @@ fn run_sim(sv: &str, top: &str, tag: &str) -> Result<(String, Vec<String>, Strin
 }
 
 /// (a) Force overrides a process write: a blocking write to a forced reg is
-/// ignored, and `release` restores the value saved at force time (the write
-/// that was ignored is NOT applied — the backend saves the pre-force value and does
-/// not re-evaluate drivers that changed while forced).
+/// ignored, and `release` leaves the variable at its forced value until a
+/// later ordinary write.
 #[test]
 fn sim_force_overrides_process_write() {
     if !llg::sim::build::cmake_available() {
@@ -97,26 +61,23 @@ endmodule
 "#;
 
     // Hand-simulation:
-    //   t=0  x = 1 (blocking).  force x = ff -> x=ff; the runtime saves the
-    //        pre-force value 1.  The initial delays #2.
+    //   t=0  x = 1 (blocking).  force x = ff -> x=ff.  The initial delays #2.
     //   t=2  x = 2 is a procedural write to a FORCED signal -> dropped (LRM
-    //        10.6.2).  $display reads x -> "x=ff".  release x restores the
-    //        saved value 1.  $display -> "x=01".
+    //        10.6.2).  $display reads x -> "x=ff".  release x retains the
+    //        forced value, so the second display is also "x=ff".
     //   t=20 $finish.
     //
     // Expected stdout (exactly):
     //   x=ff
-    //   x=01
+    //   x=ff
 
     let (stdout, _warnings, _model) =
         run_sim(sv, "tb", "procwrite").expect("simulation should run");
-    assert_eq!(stdout, "x=ff\nx=01\n");
+    assert_eq!(stdout, "x=ff\nx=ff\n");
 }
 
 /// (b) Force overrides a continuous assign: the wire reads the forced value
-/// while forced; `release` restores the value the assign had produced at
-/// force time (a=1 did not change during the force, so the assign's
-/// re-evaluation would produce the same value anyway).
+/// while forced; `release` resolves the current value the assign has produced.
 #[test]
 fn sim_force_overrides_continuous_assign() {
     if !llg::sim::build::cmake_available() {
@@ -141,9 +102,8 @@ endmodule
 
     // Hand-simulation:
     //   t=0  the continuous-assign comb process evaluates w = a = 1.
-    //   t=1  force w = 0 -> w=0 (saved value: 1, the value a's driver had
-    //        produced at force time).
-    //   t=2  $display -> "w=0".  release w restores the saved 1 -> "w=1".
+    //   t=1  force w = 0 -> w=0 while the driver's current value remains 1.
+    //   t=2  $display -> "w=0".  release w resolves the current driver -> "w=1".
     //   t=3  $finish.
     //
     // Expected stdout (exactly):
@@ -155,7 +115,8 @@ endmodule
 }
 
 /// (c) Force wakes waiters: writing the forced value through the normal write
-/// path fires an `@(w)` event; `release` (which also writes) fires it again.
+/// path fires an `@(w)` event; releasing a variable retains the forced value
+/// and therefore does not create a second change.
 #[test]
 fn sim_force_wakes_waiters() {
     if !llg::sim::build::cmake_available() {
@@ -183,16 +144,13 @@ endmodule
     //        delays #2.
     //   t=2  force w = 1: 0->1, the change wakes the always process, which
     //        prints "consumer at 2 w=1" and re-registers on w.
-    //   t=4  release w: 1->0 (restored to the saved 0), wakes it again, prints
-    //        "consumer at 4 w=0".
+    //   t=4  release w retains 1, so no second event is generated.
     //   t=6  $finish.
     //
     // Expected stdout (exactly):
     //   consumer at 2 w=1
-    //   consumer at 4 w=0
-
     let (stdout, _warnings, _model) = run_sim(sv, "tb", "wake").expect("simulation should run");
-    assert_eq!(stdout, "consumer at 2 w=1\nconsumer at 4 w=0\n");
+    assert_eq!(stdout, "consumer at 2 w=1\n");
 }
 
 /// (d) An NBA to a forced target is dropped at commit: `x <= 8'h5a` on a
@@ -221,8 +179,8 @@ endmodule
 "#;
 
     // Hand-simulation:
-    //   t=0  force x = ff (saved: 0 from the declaration initializer).  The
-    //        clock toggler and the posedge waiter suspend; the initial delays
+    //   t=0  force x = ff.  The clock toggler and the posedge waiter suspend;
+    //        the initial delays
     //        #4.
     //   t=1  clk 0->1 wakes the posedge process, which records x <= 5a.  The
     //        NBA commit drops it because x is forced: x stays ff.
@@ -297,9 +255,9 @@ endmodule
 
 /// (f) force/release priority over an active procedural continuous
 /// assignment (LRM 1800-2005 §10.6.2): while x is forced, the PCA's writes
-/// are dropped like any other procedural write; `release` restores the
-/// pre-force saved value, and the next RHS change shows the continuous
-/// assignment driving again.
+/// are dropped like any other procedural write; `release` resumes the latest
+/// live PCA value, and the next RHS change shows the continuous assignment
+/// driving again.
 #[test]
 fn sim_pca_force_overrides_and_release_restores() {
     if !llg::sim::build::cmake_available() {
@@ -327,10 +285,10 @@ endmodule
 
     // Hand-simulation:
     //   t=0  src=01; `assign x = src` writes x=01 and enables the site.
-    //   t=2  force x=ff (runtime saves the pre-force value 01).
+    //   t=2  force x=ff (the live PCA remains underneath).
     //   t=4  src=02: the PCA guard wakes and issues llg_ba(x, 02), which
     //        is DROPPED because x is forced.  x stays ff.
-    //   t=6  display -> "x=ff".  release x restores the saved 01.
+    //   t=6  display -> "x=ff".  release x resumes the latest PCA value 02.
     //   t=8  src=04: the PCA drives again -> x=04.
     //   t=10 display -> "x=04".  $finish.
     //
@@ -386,12 +344,10 @@ endmodule
     );
 }
 
-/// (i) Clean codegen rejects: two active PCA sites on ONE variable (a second
-/// textual `assign` targeting the same variable anywhere in the design —
-/// deterministic static reject even though dynamic deassign-between-sites
-/// would be legal Verilog).
+/// (i) Two textual PCA sites targeting one variable replace each other when
+/// they execute, and deassign leaves the replacement site's last value.
 #[test]
-fn sim_pca_multi_site_rejected() {
+fn sim_pca_multi_site_replaced() {
     if !llg::sim::build::cmake_available() {
         eprintln!("SKIP: cmake not available");
         return;
@@ -399,22 +355,20 @@ fn sim_pca_multi_site_rejected() {
     let _guard = CWD_LOCK.lock().unwrap();
     let sv = r#"module tb;
     reg [7:0] x;
-    reg c;
     initial begin
         assign x = 8'h01;
+        #1 $display("first=%h", x);
+        assign x = 8'h02;
+        #1 $display("second=%h", x);
+        deassign x;
+        x = 8'h03;
+        $display("deassigned=%h", x);
+        $finish;
     end
-    always @(c) begin
-        if (c) assign x = 8'h02;
-        else deassign x;
-    end
-    initial #5 $finish;
 endmodule
 "#;
-    let err = codegen_error(sv, "tb", "pcamulti").expect("compile should succeed");
-    assert!(
-        err.contains("multiple active PCA sites"),
-        "unexpected codegen error: {err}"
-    );
+    let (stdout, _warnings, _model) = run_sim(sv, "tb", "pcamulti").expect("simulation should run");
+    assert_eq!(stdout, "first=01\nsecond=02\ndeassigned=03\n");
 }
 
 /// (j) Order independence of site discovery: the `deassign` process LOWERS
@@ -543,5 +497,89 @@ endmodule
     assert!(
         !warnings.iter().any(|w| w.contains("has no effect")),
         "the revisited deassign must resolve its pre-scanned site, got warnings: {warnings:?}"
+    );
+}
+
+#[test]
+fn sim_force_rhs_re_evaluates_from_checked_in_fixture() {
+    sim_cli::run_case(
+        "force",
+        "Force_RHS_Reevaluation",
+        "CHECK: initial=1\nCHECK: follows=0\n",
+        "",
+        &[],
+    );
+}
+
+#[test]
+fn sim_release_variable_retains_forced_value_from_fixture() {
+    sim_cli::run_case(
+        "force",
+        "Release_Variable_Retains_Forced_Value",
+        "CHECK: retained=1\nCHECK: next_write=0\n",
+        "",
+        &[],
+    );
+}
+
+#[test]
+fn sim_release_net_resolves_current_driver_from_fixture() {
+    sim_cli::run_case(
+        "force",
+        "Release_Net_Resolves_Current_Driver",
+        "CHECK: resolved=1\n",
+        "",
+        &[],
+    );
+}
+
+#[test]
+fn sim_force_advanced_contexts_and_real_nba() {
+    sim_cli::run_case(
+        "force",
+        "Force_Advanced_Contexts",
+        "hier_initial=01\n\
+hier_live=03\n\
+hier_replaced=06\n\
+hier_released=06\n\
+hier_write=04\n\
+real_nba=1.0\n\
+real_live=3.0\n\
+real_release=3.0\n",
+        "",
+        &[],
+    );
+}
+
+#[test]
+fn sim_force_selected_net_overlay_and_resolution() {
+    sim_cli::run_case(
+        "force",
+        "Force_Selected_Net_Overlay",
+        "forced=0010\n\
+upper_release=1110\n\
+all_release=1100\n\
+conflict=xxxx\n\
+z_release=0011\n",
+        "",
+        &[],
+    );
+}
+
+#[test]
+fn sim_force_rejects_automatic_targets() {
+    sim_cli::reject_case(
+        "force",
+        "Force_Illegal_Automatic_Target",
+        "automatic variable",
+    );
+}
+
+#[test]
+fn sim_force_rejects_variable_selects() {
+    sim_cli::reject_case(
+        "force",
+        "Force_Illegal_Variable_Select",
+        "non-constant variable",
     );
 }

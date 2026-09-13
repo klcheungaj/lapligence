@@ -17,6 +17,6 @@ module tb;
         two[0] = '0;
         two[0][4 +: 4] = 4'bxz10;
         $display("write %h %h %h %h %h", down[0], up[1][-1], up[0][0], down[1], two[0]);
-        $finish;
+        $finish(0);
     end
 endmodule

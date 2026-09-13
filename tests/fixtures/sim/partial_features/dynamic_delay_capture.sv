@@ -12,7 +12,7 @@ module tb;
         #(delay_value+1) $display("second %0d",$time);
         #(next_delay()) $display("call %0d %0d",$time,calls);
         pause(2);
-        $finish;
+        $finish(0);
     end
     initial #1 delay_value=9;
 endmodule

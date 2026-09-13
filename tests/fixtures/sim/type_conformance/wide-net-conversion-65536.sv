@@ -16,6 +16,6 @@ module tb;
             $display("FAIL wide conversion");
         source='z; #1;
         if (net_value !== 'z || two_t'(net_value) !== '0) $display("FAIL wide release");
-        $display("PASS wide net conversion"); $finish;
+        $display("PASS wide net conversion"); $finish(0);
     end
 endmodule

@@ -28,6 +28,6 @@ module tb;
         expected='1; expected[65 -: 4]=4'b0000;
         #1;
         if (value !== expected) $display("FAIL selected NBA");
-        $display("PASS state boundaries"); $finish;
+        $display("PASS state boundaries"); $finish(0);
     end
 endmodule

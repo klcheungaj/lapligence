@@ -13,6 +13,6 @@ module tb;
         #1 $display("event %0d",count);
         en=1; ->ev;
         #1 $display("filtered %0d",count);
-        $finish;
+        $finish(0);
     end
 endmodule

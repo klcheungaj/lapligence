@@ -120,43 +120,24 @@ endmodule
     assert_eq!(unoptimized, optimized);
 }
 
-fn codegen_error(source: &str, tag: &str) -> Result<String, String> {
-    sim_harness::with_frontend_temp_cwd(tag, |dir| {
-        let source_path = dir.join("tb.sv");
-        std::fs::write(&source_path, source).map_err(|error| error.to_string())?;
-        let compiled = compile::compile_checked(&compile::CompileOpts {
-            files: vec![source_path.to_string_lossy().into_owned()],
-            top: Some("tb".to_owned()),
-            ..Default::default()
-        })
-        .map_err(|error| error.to_string())?;
-        let database =
-            db::Db::from_slang(&compiled.snapshot).map_err(|error| format!("db: {error}"))?;
-        match sim::codegen::generate(&database) {
-            Ok(_) => Err("codegen unexpectedly succeeded".to_owned()),
-            Err(error) => Ok(error.to_string()),
-        }
-    })
-}
-
 #[test]
-fn inline_loop_variable_fork_capture_is_rejected() {
-    let error = codegen_error(
-        r#"module tb;
+fn inline_loop_variable_fork_capture_is_independent() {
+    if !sim::build::cmake_available() {
+        eprintln!("SKIP: cmake not available");
+        return;
+    }
+    let source = r#"module tb;
 initial begin
     for (int i = 0; i < 2; i++) fork
         $display("%0d", i);
     join
 end
 endmodule
-"#,
-        "loop_fork_capture",
-    )
-    .expect("fork capture should reach codegen rejection");
-    assert!(
-        error.contains("fork branch capture of inline loop variable `i`"),
-        "{error}"
-    );
+"#;
+    let (optimized, unoptimized) =
+        run_variants(source, "loop_fork_capture").expect("fork capture should run");
+    assert_eq!(optimized, "0\n1\n");
+    assert_eq!(unoptimized, optimized);
 }
 
 #[test]

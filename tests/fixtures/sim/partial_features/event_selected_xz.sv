@@ -13,6 +13,6 @@ module tb;
         #1 a[1]=1'bz;
         #1 a[1]=0;
         #1 $display("%0d %0d %0d",rises,falls,changes);
-        $finish;
+        $finish(0);
     end
 endmodule

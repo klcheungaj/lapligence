@@ -46,6 +46,48 @@ fn run_sim(sv: &str, top: &str, tag: &str) -> Result<(String, Vec<String>), Stri
     })
 }
 
+fn run_source_both_opts(
+    sv: &str,
+    top: &str,
+    tag: &str,
+    expected: &str,
+) -> Result<(), String> {
+    sim_harness::with_temp_cwd(tag, |dir| {
+        let source = dir.join("tb.sv");
+        std::fs::write(&source, sv).map_err(|error| format!("write source: {error}"))?;
+        let compiled = compile::compile(&compile::CompileOpts {
+            files: vec![source.to_string_lossy().into_owned()],
+            top: Some(top.to_owned()),
+            ..Default::default()
+        })
+        .map_err(|error| format!("compile: {error}"))?;
+        if !compiled.ok() {
+            return Err(format!("frontend diagnostics: {:?}", compiled.diagnostics));
+        }
+        let database =
+            Db::from_slang(&compiled.snapshot).map_err(|error| format!("database: {error}"))?;
+        for (variant, options) in [
+            ("unoptimized", OptConfig::none()),
+            ("optimized", OptConfig::default()),
+        ] {
+            let model = sim::codegen::generate_from_db_with_opts(&database, &options)
+                .map_err(|error| format!("{variant} codegen: {error}"))?;
+            let executable = sim::build::build_model_cmake(
+                &dir.join(variant),
+                &[("model.c", model.model_c.as_str())],
+            )
+            .map_err(|error| format!("{variant} cmake: {error}"))?;
+            let actual = sim_harness::run_executable(&executable)?;
+            if actual != expected {
+                return Err(format!(
+                    "{variant}: expected {expected:?}, got {actual:?}"
+                ));
+            }
+        }
+        Ok(())
+    })
+}
+
 fn fixture_rejection(file: &str, tag: &str) -> Result<String, String> {
     let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/sim/function")
@@ -309,6 +351,51 @@ fn sim_task_nba_static_input_and_local_targets_persist() {
 }
 
 #[test]
+fn sim_static_function_output_inout_expression_copyout_and_real() {
+    if !llg::sim::build::cmake_available() {
+        eprintln!("SKIP: cmake not available");
+        return;
+    }
+    let _guard = CWD_LOCK.lock().unwrap();
+    run_fixture_both_opts(
+        "static_function_output_inout_expr.sv",
+        "static_function_output_inout_expr",
+        "packed=6 side=5 inout=8 side2=8 real=3.5 rside=2.5\n",
+    )
+    .expect("static function output/inout expression copy-out must match in both modes");
+}
+
+#[test]
+fn sim_subroutine_inout_selected_actual_evaluates_index_once() {
+    if !llg::sim::build::cmake_available() {
+        eprintln!("SKIP: cmake not available");
+        return;
+    }
+    let _guard = CWD_LOCK.lock().unwrap();
+    run_fixture_both_opts(
+        "subroutine_inout_index_once.sv",
+        "subroutine_inout_index_once",
+        "value=5 index_calls=1\n",
+    )
+    .expect("inout selected actual must bind its index once in both modes");
+}
+
+#[test]
+fn sim_disabled_delayed_task_skips_output_copyout() {
+    if !llg::sim::build::cmake_available() {
+        eprintln!("SKIP: cmake not available");
+        return;
+    }
+    let _guard = CWD_LOCK.lock().unwrap();
+    run_fixture_both_opts(
+        "disabled_delayed_output_copyout.sv",
+        "disabled_delayed_output_copyout",
+        "PASS disabled_delayed_output_copyout\n",
+    )
+    .expect("disabled delayed tasks must not run output copy-out");
+}
+
+#[test]
 fn sim_task_nba_rejects_automatic_input_and_local_targets() {
     let _guard = CWD_LOCK.lock().unwrap();
     for (file, tag) in [
@@ -333,6 +420,23 @@ fn sim_task_nba_rejects_automatic_input_and_local_targets() {
             "{file}: unexpected diagnostic: {error}"
         );
     }
+}
+
+#[test]
+fn sim_string_const_ref_mutation_is_rejected() {
+    let _guard = CWD_LOCK.lock().unwrap();
+    let error = fixture_rejection(
+        "reference_string_const_mutation_rejected.sv",
+        "reference_string_const_mutation_rejected",
+    )
+    .expect("string const-ref mutation must be explicitly rejected");
+    let normalized = error.to_ascii_lowercase();
+    assert!(
+        normalized.contains("const")
+            && normalized.contains("string")
+            && (normalized.contains("mutat") || normalized.contains("writ")),
+        "unexpected diagnostic: {error}"
+    );
 }
 
 /// (e) always_comb calling a function that reads a module signal (regression:
@@ -654,4 +758,132 @@ endmodule
 
     let (stdout, _warnings) = run_sim(sv, "tb", "retctx").expect("simulation should run");
     assert_eq!(stdout, "ret=256\n");
+}
+
+#[test]
+fn sim_hierarchical_subroutine_instances_and_parent_dispatch() {
+    if !llg::sim::build::cmake_available() {
+        eprintln!("SKIP: cmake not available");
+        return;
+    }
+    let _guard = CWD_LOCK.lock().unwrap();
+    let sv = r#"module child #(parameter integer OFFSET = 0);
+    integer state = 0;
+
+    task bump(input integer amount, output integer result);
+        state = state + amount + OFFSET;
+        result = state;
+    endtask
+
+    function integer read(input integer amount);
+        read = state + amount + OFFSET;
+    endfunction
+
+    initial begin
+        #1 top.parent_bump(3);
+    end
+endmodule
+
+module top;
+    integer state = 0;
+    integer a;
+    integer b;
+    child #(1) c0();
+    child #(10) c1();
+
+    task parent_bump(input integer amount);
+        state = state + amount;
+    endtask
+
+    initial begin
+        c0.bump(1, a);
+        c1.bump(2, b);
+        #2 $display("hier=%0d,%0d,%0d,%0d,%0d", state, a, b,
+                    c0.read(3), c1.read(3));
+        $finish;
+    end
+endmodule
+"#;
+
+    run_source_both_opts(
+        sv,
+        "top",
+        "hierarchical-subroutine-instances",
+        "hier=3,2,12,6,25\n",
+    )
+    .expect("hierarchical and per-instance subroutine dispatch should agree");
+}
+
+#[test]
+fn sim_package_subroutine_state_is_shared_across_users() {
+    if !llg::sim::build::cmake_available() {
+        eprintln!("SKIP: cmake not available");
+        return;
+    }
+    let _guard = CWD_LOCK.lock().unwrap();
+    let sv = r#"package counter_pkg;
+    integer count = 0;
+    function integer add(input integer delta);
+        count = count + delta;
+        add = count;
+    endfunction
+endpackage
+
+module user #(parameter integer DELTA = 1)(output integer result);
+    initial result = counter_pkg::add(DELTA);
+endmodule
+
+module top;
+    integer first;
+    integer second;
+    user #(1) u0(first);
+    user #(2) u1(second);
+
+    initial begin
+        #1 $display("pkg=%0d,%0d", first, second);
+        $finish;
+    end
+endmodule
+"#;
+
+    run_source_both_opts(sv, "top", "package-subroutine-state", "pkg=1,3\n")
+        .expect("package subroutine state should be shared");
+}
+
+#[test]
+fn sim_interface_modport_subroutine_uses_parameterized_instance() {
+    if !llg::sim::build::cmake_available() {
+        eprintln!("SKIP: cmake not available");
+        return;
+    }
+    let _guard = CWD_LOCK.lock().unwrap();
+    let sv = r#"interface channel #(parameter integer W = 4);
+    logic [W-1:0] data;
+
+    task set(input logic [W-1:0] value);
+        data = value;
+    endtask
+
+    modport master(import task set, output data);
+endinterface
+
+module user #(parameter integer VALUE = 1)(channel.master ch);
+    initial ch.set(VALUE);
+endmodule
+
+module top;
+    channel #(4) c0();
+    channel #(8) c1();
+    user #(5) u0(c0);
+    user #(9) u1(c1);
+
+    initial begin
+        #1 $display("if=%0d,%0d", c0.data, c1.data);
+        $finish;
+    end
+endmodule
+"#;
+
+    run_source_both_opts(sv, "top", "interface-modport-subroutine", "if=5,9\n")
+        .expect("interface modport subroutine dispatch should preserve widths");
 }

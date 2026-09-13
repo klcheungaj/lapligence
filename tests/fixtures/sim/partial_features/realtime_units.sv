@@ -10,6 +10,6 @@ module tb;
         #0.125 t=$realtime;
         $display("parent %.3f",t);
         #0.25 $display("parent %.3f",$realtime);
-        $finish;
+        $finish(0);
     end
 endmodule

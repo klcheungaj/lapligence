@@ -5,6 +5,6 @@ module tb;
     initial begin
         source = 0;
         #5 source = 1;
-        #5 $finish;
+        #5 $finish(0);
     end
 endmodule

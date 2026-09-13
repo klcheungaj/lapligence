@@ -1,5 +1,5 @@
 // IEEE 1800-2009 6.16: strings resize dynamically, index from the left at
-// zero, ignore NUL character writes, and provide deterministic core methods.
+// zero, preserve arbitrary byte values, and provide deterministic core methods.
 module tb;
     string value;
     string slice;
@@ -23,7 +23,9 @@ module tb;
         value.putc(1, 8'h5a);
         value[2] = 8'h59;
         value[3] = 8'h00;
-        if (value != "aZYd") begin
+        if (value.len() !== 4 || value[0] !== 8'h61 ||
+            value[1] !== 8'h5a || value[2] !== 8'h59 ||
+            value.getc(3) !== 8'h00) begin
             $display("FAIL string character_write");
             $finish;
         end

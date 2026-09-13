@@ -13,6 +13,6 @@ module tb;
         #1 strong_source = 0;
         #1 strong_source = 1'bz;
         #3 $strobe("canceled %b", result);
-        #1 $finish;
+        #1 $finish(0);
     end
 endmodule

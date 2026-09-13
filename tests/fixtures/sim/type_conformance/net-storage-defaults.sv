@@ -16,6 +16,6 @@ module tb;
             s.w !== 1'bz || s.t !== 1'bz || s.u !== 1'bz ||
             array_w[0] !== 'z || array_w[1] !== 'z ||
             array_u[0] !== 'z || array_u[1] !== 'z) $display("FAIL net defaults");
-        $display("PASS net defaults"); $finish;
+        $display("PASS net defaults"); $finish(0);
     end
 endmodule

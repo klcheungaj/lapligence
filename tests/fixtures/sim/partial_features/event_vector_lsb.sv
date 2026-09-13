@@ -13,6 +13,6 @@ module tb;
         #1 a=4'bxxxz;
         #1 a=4'bxxx1;
         #1 $display("%0d %0d %0d",rises,filtered,falls);
-        $finish;
+        $finish(0);
     end
 endmodule

@@ -126,6 +126,33 @@ fn region_nba_visibility() {
     );
 }
 
+/// NBA updates issued by one process retain source issue order at commit. The
+/// final write wins without relying on any ordering between racing processes.
+const NBA_ISSUE_ORDER_SV: &str = r#"`timescale 1ns/1ns
+module tb;
+    reg [7:0] a;
+    initial begin
+        a <= 8'd1;
+        a <= 8'd2;
+        a <= 8'd3;
+        #1 $display("a=%0d", a);
+        $finish;
+    end
+endmodule
+"#;
+
+#[test]
+fn region_nba_issue_order_within_process() {
+    if !llg::sim::build::cmake_available() {
+        eprintln!("SKIP: cmake not available");
+        return;
+    }
+    let _guard = CWD_LOCK.lock().unwrap();
+    let (stdout, _stderr) =
+        run_design(NBA_ISSUE_ORDER_SV, "nba_issue_order").expect("simulation should run");
+    assert_eq!(stdout, "a=3\n");
+}
+
 /// 2. `#0` must move the continuation to the INACTIVE region, which runs
 ///    BETWEEN the active region and the NBA region.  A `#0` process must
 ///    therefore read the PRE-NBA value of a signal NBA-assigned earlier in the
@@ -376,7 +403,7 @@ fn region_wait_edge_nba_commit() {
 ///    the runtime's zero-loop guard (LLG_ZERO_LOOP_LIMIT region passes within
 ///    one time step), not hang the simulation.  The runtime prints
 ///    "llg: zero-delay loop detected at time 0" to stderr, breaks out of the
-///    region loop and main returns 0 (exit success).
+///    region loop and main returns a controlled nonzero status.
 const ZERO_DELAY_LOOP_GUARD_SV: &str = r#"`timescale 1ns/1ns
 module tb;
     always begin
@@ -394,7 +421,7 @@ endmodule
 //
 // Expected stdout: (empty)
 // Expected stderr contains: "llg: zero-delay loop detected at time 0"
-// Expected exit: success (0)
+// Expected exit: failure (1), because the simulation did not converge.
 
 #[test]
 fn region_zero_delay_loop_guard() {
@@ -403,9 +430,12 @@ fn region_zero_delay_loop_guard() {
         return;
     }
     let _guard = CWD_LOCK.lock().unwrap();
-    let (stdout, stderr) =
-        run_design(ZERO_DELAY_LOOP_GUARD_SV, "zeroloop").expect("simulation should terminate");
-    assert_eq!(stdout, "");
+    let run =
+        sim_harness::run_generated_sim_allow_failure(ZERO_DELAY_LOOP_GUARD_SV, "tb", "zeroloop")
+            .expect("simulation should terminate");
+    assert_eq!(run.status.code(), Some(1));
+    assert!(run.stdout.is_empty());
+    let stderr = run.stderr;
     assert!(
         stderr.contains("llg: zero-delay loop detected at time 0"),
         "stderr did not contain the zero-delay loop guard message: {stderr}"
@@ -431,7 +461,8 @@ module tb;
         join
         $display("after join (active): a=%0d b=%0d", a, b);
         $strobe("after join (strobe): a=%0d b=%0d", a, b);
-        $finish;
+        // A new time slot lets the NBA and Postponed regions complete.
+        #1 $finish(0);
     end
 endmodule
 "#;
@@ -446,9 +477,10 @@ endmodule
 //          c2: records NBA b<=2; proc_done (remaining 1->0 -> parent woken).
 //          parent resumes in the SAME active pass, BEFORE the NBA region:
 //          $display reads a=0 b=0 (the children's NBAs are still pending);
-//          $strobe queued; $finish.
+//          $strobe queued; parent suspends for one time unit.
 //        NBA region: commits a=1, b=2.
 //        $strobe flush: prints with the committed values a=1 b=2.
+//   t=1  parent resumes and finishes; no pending t=0 work is discarded.
 //
 // Expected stdout (exactly):
 //   after join (active): a=0 b=0

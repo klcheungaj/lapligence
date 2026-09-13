@@ -53,3 +53,87 @@ fn scheduler_time_overflow_fails_with_a_diagnostic() {
         String::from_utf8_lossy(&output.stderr)
     );
 }
+
+#[test]
+fn process_budget_probes_cover_exact_limit_and_invalid_configuration() {
+    if !sim::build::cmake_available() {
+        eprintln!("SKIP: cmake not available");
+        return;
+    }
+    let dir = sim_harness::TempDir::new("runtime-process-budget")
+        .expect("create process-budget directory");
+    let executable = sim::build::build_model_cmake(
+        dir.path(),
+        &[("llg_rt_selftest.c", sim::rt::selftest_source())],
+    )
+    .expect("process-budget probe should compile");
+
+    let exact = sim_harness::run_command(
+        Command::new(&executable)
+            .arg("--budget-finite-probe")
+            .env("LLG_PROCESS_STEP_LIMIT", "4"),
+        Duration::from_secs(10),
+    )
+    .expect("exact process-budget probe should start");
+    assert!(exact.status.success(), "exact limit failed: {exact:?}");
+    assert!(exact.stdout.is_empty());
+    assert!(
+        exact.stderr.is_empty(),
+        "unexpected exact-limit output: {exact:?}"
+    );
+
+    let below = sim_harness::run_command(
+        Command::new(&executable)
+            .arg("--budget-finite-probe")
+            .env("LLG_PROCESS_STEP_LIMIT", "3"),
+        Duration::from_secs(10),
+    )
+    .expect("below-limit probe should start");
+    assert_eq!(
+        below.status.code(),
+        Some(1),
+        "below limit unexpectedly succeeded"
+    );
+    assert!(
+        String::from_utf8_lossy(&below.stderr)
+            .contains("nonconvergent zero-time execution in process `selftest.sv:1:1`"),
+        "missing below-limit diagnostic: {:?}",
+        below
+    );
+
+    let infinite = sim_harness::run_command(
+        Command::new(&executable)
+            .arg("--budget-infinite-probe")
+            .env("LLG_PROCESS_STEP_LIMIT", "4"),
+        Duration::from_secs(10),
+    )
+    .expect("infinite process-budget probe should start");
+    assert!(
+        infinite.status.success(),
+        "infinite probe did not report failure: {infinite:?}"
+    );
+    assert!(
+        String::from_utf8_lossy(&infinite.stderr)
+            .contains("nonconvergent zero-time execution in process `selftest.sv:2:1`"),
+        "missing infinite-loop diagnostic: {:?}",
+        infinite
+    );
+
+    let invalid = sim_harness::run_command(
+        Command::new(&executable)
+            .arg("--budget-finite-probe")
+            .env("LLG_PROCESS_STEP_LIMIT", "0"),
+        Duration::from_secs(10),
+    )
+    .expect("invalid process-budget probe should start");
+    assert_eq!(
+        invalid.status.code(),
+        Some(1),
+        "invalid limit unexpectedly succeeded"
+    );
+    assert!(
+        String::from_utf8_lossy(&invalid.stderr).contains("invalid LLG_PROCESS_STEP_LIMIT"),
+        "missing invalid-limit diagnostic: {:?}",
+        invalid
+    );
+}

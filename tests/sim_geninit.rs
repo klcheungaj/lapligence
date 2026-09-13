@@ -242,41 +242,23 @@ endmodule
     assert_eq!(stdout, "w=1 r=a v=0\nw=1 r=a v=1\n");
 }
 
-/// A scalar variable declaration initializer whose RHS is not a constant
-/// expression must still be rejected. Unlike a true-net declaration
-/// assignment, this is initialization rather than a continuous driver.
+/// A scalar variable declaration initializer may read a runtime signal. It is
+/// evaluated once before ordinary SystemVerilog processes, unlike a true-net
+/// declaration assignment, which remains a continuous driver.
 #[test]
-fn sim_variable_decl_init_nonconst_rejected() {
+fn sim_variable_decl_init_nonconst_runs_once() {
     let sv = r#"// llg-test-fixture: tests/sim_geninit.rs/nonconst.sv
 module tb;
     reg a;
     reg w = a;
-    initial $finish;
+    initial begin
+        a = 1'b1;
+        $display("a=%b w=%b", a, w);
+        $finish;
+    end
 endmodule
 "#;
 
-    let result = sim_harness::with_frontend_temp_cwd("declnc", |dir| {
-        let source = dir.join("nonconst.sv");
-        std::fs::write(&source, sv).map_err(|error| format!("write source: {error}"))?;
-        let out = compile::compile(&compile::CompileOpts {
-            files: vec![source.to_string_lossy().into_owned()],
-            top: Some("tb".to_string()),
-            ..Default::default()
-        })
-        .map_err(|e| format!("compile: {e}"))?;
-        if !out.ok() {
-            return Err(format!("compile diagnostics: {:?}", out.diagnostics));
-        }
-        let db =
-            llg::core::db::Db::from_slang(&out.snapshot).map_err(|error| format!("db: {error}"))?;
-        sim::codegen::generate(&db)
-            .map(|_| ())
-            .map_err(|error| error.to_string())
-    });
-
-    let err = result.expect_err("codegen must reject non-constant variable initializers");
-    assert!(
-        err.contains("variable initializer is not a constant expression"),
-        "unexpected error: {err}"
-    );
+    let stdout = run_sim(sv, "declnonconst").expect("simulation should run");
+    assert_eq!(stdout, "a=1 w=x\n");
 }

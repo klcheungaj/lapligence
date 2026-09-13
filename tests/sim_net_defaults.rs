@@ -129,15 +129,18 @@ endmodule
 }
 
 #[test]
-fn pull_and_supply_nets_reject_explicit_drive_strengths() {
-    for (tag, declaration) in [("tri0", "tri0 w;"), ("supply1", "supply1 w;")] {
+fn pull_and_supply_nets_reject_vector_drive_strengths() {
+    for (tag, declaration) in [
+        ("tri0", "tri0 [1:0] w;"),
+        ("supply1", "supply1 [1:0] w;"),
+    ] {
         let source = format!(
             "// llg-test-fixture: tests/sim_net_defaults.rs/{tag}_strength.sv\n\
-             module tb; logic a; {declaration} assign (strong0, strong1) w=a; endmodule\n"
+             module tb; logic [1:0] a; {declaration} assign (strong0, strong1) w=a; endmodule\n"
         );
         let error = generate_error(&format!("{tag}_strength"), &source);
         assert!(
-            error.contains("drive-strength continuous assignment"),
+            error.contains("drive strength on non-scalar net"),
             "{tag}: {error}"
         );
     }

@@ -21,6 +21,6 @@ module tb;
         if (whole !== 'x || declared !== 'x || selected[64] !== 1'bz) $display("FAIL unknown");
         source='z; #1;
         if (whole !== 'z || selected !== 'z || declared !== 'z || g.declared !== 'z) $display("FAIL released");
-        $display("PASS uwire"); $finish;
+        $display("PASS uwire"); $finish(0);
     end
 endmodule

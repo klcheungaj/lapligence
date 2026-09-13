@@ -12,6 +12,6 @@ module tb;
         $display("active %b", delayed);
         $strobe("settled %b %b", delayed, zero);
         #2 $strobe("later %b", delayed);
-        #1 $finish;
+        #1 $finish(0);
     end
 endmodule

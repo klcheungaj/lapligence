@@ -12,6 +12,6 @@ module tb;
             wires[1] !== 'z || tris[1] !== 'z || singles[1] !== 'z) $display("FAIL array drivers");
         source='z; #1;
         if (wires[0] !== 'z || tris[0] !== 'z || singles[0] !== 'z) $display("FAIL array release");
-        $display("PASS net arrays"); $finish;
+        $display("PASS net arrays"); $finish(0);
     end
 endmodule

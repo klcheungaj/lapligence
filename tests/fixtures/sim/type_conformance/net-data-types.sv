@@ -23,6 +23,6 @@ module tb;
         source='z; #1;
         if (i !== 'z || t !== 'z || vector_value !== 'z ||
             packed_value !== 'z || enum_value !== 'z) $display("FAIL typed net release");
-        $display("PASS net datatypes"); $finish;
+        $display("PASS net datatypes"); $finish(0);
     end
 endmodule

@@ -249,6 +249,69 @@ static int check_net_resolution(void) {
     return 0;
 }
 
+static int check_strength_resolution(void) {
+    sv4_t zero = sv4_fill(0, 1, 0);
+    sv4_t one = sv4_fill(1, 1, 0);
+    sv4_t unknown = sv4_fill(2, 1, 0);
+    const sv4_t* drivers[2] = {&zero, &one};
+
+    /* Unequal strengths choose the stronger known endpoint, while equal
+     * endpoints retain the ordinary wire conflict. */
+    uint8_t strength0[2] = {LLG_STRENGTH_STRONG, LLG_STRENGTH_PULL};
+    uint8_t strength1[2] = {LLG_STRENGTH_PULL, LLG_STRENGTH_PULL};
+    sv4_t result = sv4_resolve_strengths(
+        drivers, strength0, strength1, 2, 1, 0, LLG_RESOLVE_WIRE);
+    CHECK(state_at(result, 0) == 0);
+    strength0[0] = LLG_STRENGTH_PULL;
+    strength1[1] = LLG_STRENGTH_PULL;
+    result = sv4_resolve_strengths(
+        drivers, strength0, strength1, 2, 1, 0, LLG_RESOLVE_WIRE);
+    CHECK(state_at(result, 0) == 2);
+
+    /* Wired ties use the net-specific dominant value at equal strength. */
+    strength0[0] = strength1[0] = LLG_STRENGTH_STRONG;
+    strength0[1] = strength1[1] = LLG_STRENGTH_STRONG;
+    result = sv4_resolve_strengths(
+        drivers, strength0, strength1, 2, 1, 0, LLG_RESOLVE_WAND);
+    CHECK(state_at(result, 0) == 0);
+    result = sv4_resolve_strengths(
+        drivers, strength0, strength1, 2, 1, 0, LLG_RESOLVE_WOR);
+    CHECK(state_at(result, 0) == 1);
+
+    /* X retains a weaker opposite possibility, but a stronger known value
+     * can dominate it. */
+    const sv4_t* x_driver[2] = {&unknown, &zero};
+    strength0[0] = LLG_STRENGTH_STRONG;
+    strength1[0] = LLG_STRENGTH_WEAK;
+    strength0[1] = strength1[1] = LLG_STRENGTH_STRONG;
+    result = sv4_resolve_strengths(
+        x_driver, strength0, strength1, 2, 1, 0, LLG_RESOLVE_WIRE);
+    CHECK(state_at(result, 0) == 0);
+    strength1[0] = LLG_STRENGTH_STRONG;
+    result = sv4_resolve_strengths(
+        x_driver, strength0, strength1, 2, 1, 0, LLG_RESOLVE_WIRE);
+    CHECK(state_at(result, 0) == 2);
+
+    /* Pull and supply net defaults are implicit strength-bearing sources. */
+    uint8_t default_strength[1] = {LLG_STRENGTH_STRONG};
+    result = sv4_resolve_strengths(
+        NULL, default_strength, default_strength, 0, 1, 0, LLG_RESOLVE_TRI0);
+    CHECK(state_at(result, 0) == 0);
+    result = sv4_resolve_strengths(
+        NULL, default_strength, default_strength, 0, 1, 0, LLG_RESOLVE_TRI1);
+    CHECK(state_at(result, 0) == 1);
+    const sv4_t* one_driver[1] = {&one};
+    uint8_t pull[1] = {LLG_STRENGTH_PULL};
+    result = sv4_resolve_strengths(
+        one_driver, pull, pull, 1, 1, 0, LLG_RESOLVE_TRI0);
+    CHECK(state_at(result, 0) == 2);
+    result = sv4_resolve_strengths(
+        one_driver, default_strength, default_strength, 1, 1, 0,
+        LLG_RESOLVE_SUPPLY0);
+    CHECK(state_at(result, 0) == 0);
+    return 0;
+}
+
 static int check_numeric_conversions(void) {
     uint64_t wide_bits[LLG_LIMBS] = {0};
     wide_bits[2] = 1;
@@ -351,6 +414,7 @@ int main(void) {
     CHECK(check_signed_resize() == 0);
     CHECK(check_queries() == 0);
     CHECK(check_net_resolution() == 0);
+    CHECK(check_strength_resolution() == 0);
     CHECK(check_numeric_conversions() == 0);
     CHECK(check_negative_powers() == 0);
     CHECK(check_partial_selects() == 0);

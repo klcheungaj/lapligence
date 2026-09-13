@@ -4,6 +4,6 @@ module tb;
         argument=-1.0;
         delay_value=$sqrt(argument);
         #delay_value;
-        $finish;
+        $finish(0);
     end
 endmodule

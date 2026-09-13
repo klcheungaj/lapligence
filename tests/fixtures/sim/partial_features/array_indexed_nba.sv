@@ -23,6 +23,6 @@ module tb;
         #1 memory[0][4 +: 3] = 3'b101;
         #0 $strobe("early %0d %h %h %0d", $time, memory[0], memory[1], calls);
         #1 $strobe("late %0d %h %h %0d", $time, memory[0], memory[1], calls);
-        #1 $finish;
+        #1 $finish(0);
     end
 endmodule

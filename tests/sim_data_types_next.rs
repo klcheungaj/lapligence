@@ -161,6 +161,43 @@ endmodule
     .expect("distinct unpacked typedefs must remain nominally incompatible");
 }
 
+#[test]
+fn packed_nominal_type_key_mismatch_is_rejected() {
+    let source = r#"module tb;
+    typedef struct packed { logic [7:0] value; } left_lane_t;
+    typedef struct packed { logic [7:0] value; } right_lane_t;
+    typedef struct packed { left_lane_t lane; } holder_t;
+    holder_t value = '{right_lane_t: 8'hff, default: '0};
+endmodule
+"#;
+    sim_harness::with_frontend_temp_cwd("packed-nominal-key-mismatch", |dir| {
+        let source_path = dir.join("tb.sv");
+        std::fs::write(&source_path, source).map_err(|error| error.to_string())?;
+        let options = compile::CompileOpts {
+            files: vec![source_path.to_string_lossy().into_owned()],
+            top: Some("tb".to_owned()),
+            ..Default::default()
+        };
+        let compiled = compile::compile_checked(&options).map_err(|error| error.to_string())?;
+        let database = Db::from_slang(&compiled.snapshot).map_err(|error| error.to_string())?;
+        for (variant, options) in [
+            ("unoptimized", OptConfig::none()),
+            ("optimized", OptConfig::default()),
+        ] {
+            let error = sim::codegen::generate_from_db_with_opts(&database, &options)
+                .map(|_| "generated successfully".to_owned())
+                .unwrap_or_else(|error| error.to_string());
+            if !error.contains("no matching member or type") {
+                return Err(format!(
+                    "{variant}: distinct same-width nominal key was not rejected: {error}"
+                ));
+            }
+        }
+        Ok(())
+    })
+    .expect("same-width packed nominal type keys must not match by width");
+}
+
 macro_rules! datatype_case {
     ($name:ident, $file:literal, $label:literal) => {
         #[test]
@@ -174,6 +211,11 @@ datatype_case!(
     packed_union_member_aliasing,
     "packed_union.sv",
     "packed_union"
+);
+datatype_case!(
+    packed_aggregate_nested_selections,
+    "packed_aggregate_selections.sv",
+    "packed_aggregate_selections"
 );
 datatype_case!(
     packed_streaming_slice_order,
@@ -195,24 +237,23 @@ datatype_case!(
     "static_function_executable_assignments.sv",
     "static_function_executable_assignments"
 );
+datatype_case!(
+    mixed_subprogram_lifetimes_are_reentrant,
+    "mixed_subprogram_lifetimes.sv",
+    "mixed_subprogram_lifetimes"
+);
 #[test]
-fn static_function_initializer_is_once_only_or_explicitly_unsupported() {
-    fn explicit_nonconstant_initializer_rejection(error: &str) -> bool {
-        let normalized = error.to_ascii_lowercase();
-        normalized.contains("static")
-            && normalized.contains("initial")
-            && (normalized.contains("unsupported") || normalized.contains("not supported"))
-            && (normalized.contains("nonconstant")
-                || normalized.contains("non-constant")
-                || normalized.contains("runtime"))
-    }
-
-    run_fixture_bytes_with_codegen_rejection(
+fn static_function_runtime_initializer_runs_once_before_processes() {
+    run_fixture(
         "static_function_runtime_initializer.sv",
-        b"PASS static_function_runtime_initializer\n",
-        explicit_nonconstant_initializer_rejection,
+        "static_function_runtime_initializer",
     );
 }
+datatype_case!(
+    static_local_storage_is_per_instance,
+    "static_local_multiple_instances.sv",
+    "static_local_multiple_instances"
+);
 datatype_case!(
     static_task_output_nba_persists,
     "static_task_nba.sv",
@@ -239,13 +280,42 @@ datatype_case!(
     "associative_array"
 );
 datatype_case!(queue_order_and_methods, "queue.sv", "queue");
+datatype_case!(executed_data_and_array_queries, "query_functions.sv", "query_functions");
 datatype_case!(string_value_and_methods, "string.sv", "string");
+datatype_case!(string_subroutine_forms, "string_subroutine_forms.sv", "string_subroutine_forms");
+datatype_case!(string_delayed_nba, "string_delayed_nba.sv", "string_delayed_nba");
 datatype_case!(
     string_function_early_return_and_self_copy,
     "string_return_packed_input.sv",
     "string_return_packed_input"
 );
 datatype_case!(chandle_null_assignment_and_calls, "chandle.sv", "chandle");
+
+#[test]
+fn array_query_invalid_dimension_is_rejected_as_one_frontend_fault() {
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/sim/data_types_next")
+        .join("query_functions_invalid_dimension.sv");
+    sim_harness::with_frontend_temp_cwd("data-types-next-query-rejection", |dir| {
+        let source = dir.join("query_functions_invalid_dimension.sv");
+        std::fs::copy(&fixture, &source).map_err(|error| format!("copy fixture: {error}"))?;
+        let compiled = compile::compile(&compile::CompileOpts {
+            files: vec![source.to_string_lossy().into_owned()],
+            top: Some("tb".to_owned()),
+            ..Default::default()
+        })
+        .map_err(|error| format!("compile: {error}"))?;
+        if compiled.ok() {
+            return Err("invalid array-query dimension was accepted".to_owned());
+        }
+        let diagnostic = format!("{:?}", compiled.diagnostics).to_ascii_lowercase();
+        if !diagnostic.contains("dimension") || !diagnostic.contains("invalid") {
+            return Err(format!("unexpected array-query diagnostic: {diagnostic}"));
+        }
+        Ok(())
+    })
+    .expect("invalid array-query dimension must be rejected");
+}
 datatype_case!(
     continuous_assignment_drive_strength_resolution,
     "continuous_assignment_strengths.sv",

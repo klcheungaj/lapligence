@@ -6,6 +6,6 @@ module tb;
         source = 0;
         enable = 1;
         #5 source = 1;
-        #5 $finish;
+        #5 $finish(0);
     end
 endmodule

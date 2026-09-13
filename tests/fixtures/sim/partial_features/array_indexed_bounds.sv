@@ -19,6 +19,6 @@ module tb;
         #1;
         $display("bounds %h %b %b", memory[0], memory[0][6 +: 4], memory[0][-2 +: 4]);
         $display("wide %0d %b %b", $countones(wide[0]), wide[0][128], wide[0][62]);
-        $finish;
+        $finish(0);
     end
 endmodule

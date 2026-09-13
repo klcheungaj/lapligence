@@ -18,6 +18,6 @@ module tb;
         $display("hyper %.6f %.6f %.6f %.6f %.6f %.6f",$sinh(c),$cosh(c),$tanh(c),$asinh(c),$acosh(a),$atanh(c));
         c=-2.25;
         $display("round %.6f %.6f",$floor(c),$ceil(c));
-        $finish;
+        $finish(0);
     end
 endmodule

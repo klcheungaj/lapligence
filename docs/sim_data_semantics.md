@@ -201,11 +201,14 @@ and other string subroutine forms, ports, continuous-assignment or
 sensitivity paths, and unverified formatted/real conversion methods are not
 implied; `.atoreal`/`.realtoa` have focused 128-/512-bit conversion coverage.
 Native `chandle` handling is limited to null/copy/compare/Boolean operations
-and chandle-input to chandle-return functions. Static subprogram initializers
-must be constant/provenance-supported; runtime-dependent initializers are
-explicitly rejected rather than evaluated on first call. Same-lifetime
-qualifiers are accepted when owned capture is available, while ambiguous or
-opposite-lifetime overrides are rejected. These boundaries describe the
+and chandle-input to chandle-return functions. Scalar static subprogram
+initializers use typed declaration operations: SystemVerilog 2009 evaluates
+them before ordinary processes, while Verilog-2001 preserves active-region
+ordering; neither form is lazily evaluated on first call (§§6.8, 6.21, 10.5,
+13.4.2). Explicit static locals remain shared and explicit automatic locals
+are recreated per activation in the supported packed scalar subset. Recursive
+aggregate defaults, general aggregate/subprogram storage, and ambiguous
+lifetime provenance remain outside the profile. These boundaries describe the
 implementation work queue, not changes to IEEE semantics.
 
 ## Net-resolution truth tables

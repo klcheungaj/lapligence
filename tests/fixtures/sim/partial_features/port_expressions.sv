@@ -15,6 +15,6 @@ module tb;
         #1 $display("%h %h %h",a,b,c);
         i=0; x=8'h14;
         #1 $display("%h %h %h",a,b,c);
-        $finish;
+        $finish(0);
     end
 endmodule

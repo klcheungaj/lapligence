@@ -602,4 +602,4 @@ $display("15/22/%0d/>==%b", iteration, a >= b);
 $display("15/22/%0d/&&=%b", iteration, a && b);
 $display("15/22/%0d/||=%b", iteration, a || b);
 end end
-$finish; end endmodule
+$finish(0); end endmodule

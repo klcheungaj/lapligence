@@ -13,6 +13,6 @@ module tb;
         #3 $strobe("canceled %b %b", result, gate_result);
         a = 1;
         #3 $strobe("propagated %b %b", result, gate_result);
-        #1 $finish;
+        #1 $finish(0);
     end
 endmodule

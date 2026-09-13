@@ -15,6 +15,6 @@ module tb;
         #delay_value $display("third %.3f",$realtime);
         delay_value=0.049;
         #delay_value $display("zero %.3f",$realtime);
-        $finish;
+        $finish(0);
     end
 endmodule

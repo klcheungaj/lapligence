@@ -9,6 +9,6 @@ module tb;
         nan_value=$sqrt(a);
         infinity=$ln(0.0);
         $display("domain %b %b",nan_value!=nan_value,infinity < -1.0e300);
-        $finish;
+        $finish(0);
     end
 endmodule

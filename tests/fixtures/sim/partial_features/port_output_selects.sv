@@ -11,6 +11,6 @@ module tb;
         #1 $display("%h",bus);
         x=4'hc; y=4'h3;
         #1 $display("%h",bus);
-        $finish;
+        $finish(0);
     end
 endmodule

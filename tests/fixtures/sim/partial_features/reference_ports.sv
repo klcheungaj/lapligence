@@ -16,6 +16,6 @@ module tb;
         $display("parent %h %h",m.a,m.l.a);
         #2 a[3:0]=4'hf;
         $display("updated %h %h",m.a,m.l.a);
-        $finish;
+        $finish(0);
     end
 endmodule

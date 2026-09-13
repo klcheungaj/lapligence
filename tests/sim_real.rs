@@ -4,8 +4,9 @@
 //! mixed real/integer conditional typing, shortreal rounding, `$display`'s
 //! real format precision, implicit real-to-integer rounding, and real-valued
 //! non-blocking assignment timing and wide packed conversion. The rejection
-//! cases retain unsupported procedural contexts: combinational processes,
-//! waits, monitors, arrays, ports/links, and functions.
+//! cases retain unsupported procedural contexts such as monitors while the
+//! supported real-array, continuous-assignment, and function paths are tested
+//! below.
 //!
 //! Each
 //! test uses a fresh temp directory and the process-wide mutex serializes
@@ -15,11 +16,33 @@ mod sim_harness;
 
 use std::sync::Mutex;
 
-use llg::core::compile;
+use llg::core::{compile, db::Db};
 use llg::ffi::slang::DiagnosticSeverity;
-use llg::sim;
+use llg::sim::{self, opt::OptConfig};
 
 static CWD_LOCK: Mutex<()> = Mutex::new(());
+
+const REAL_ARRAY_FUNCTION_SOURCE: &str = r#"module tb;
+    real values [0:1];
+    shortreal rounded [0:0];
+    real result;
+
+    function real twice(input real value);
+        twice = value * 2.0;
+    endfunction
+
+    assign result = values[1] + 0.5;
+
+    initial begin
+        values[0] = 1.25;
+        values[1] = twice(values[0]);
+        rounded[0] = values[1] + 0.0000001;
+        #1;
+        $display("v0=%f v1=%f result=%f rounded=%f", values[0], values[1], result, rounded[0]);
+        $finish;
+    end
+endmodule
+"#;
 
 fn run_sim(sv: &str, tag: &str) -> Result<String, String> {
     sim_harness::run_sim(sv, "tb", tag)
@@ -364,16 +387,56 @@ endmodule
         "real net must report InvalidNetType: {diagnostics:?}"
     );
 
-    let cases = [
+    let invalid_real_expressions = [
         (
-            "comb",
+            "select",
             r#"module tb;
     real r;
-    always_comb r = 1.0;
+    initial begin
+        r = 1.0;
+        r[0] = 1'b1;
+    end
 endmodule
 "#,
-            "comb",
+            "cannot be indexed",
         ),
+        (
+            "bitwise",
+            r#"module tb;
+    real r;
+    initial begin
+        r = 1.0;
+        r = r & 1.0;
+    end
+endmodule
+"#,
+            "invalid operands",
+        ),
+        (
+            "edge",
+            r#"module tb;
+    real r;
+    initial begin
+        @(posedge r);
+    end
+endmodule
+"#,
+            "not integral",
+        ),
+    ];
+    for (tag, source, expected) in invalid_real_expressions {
+        let diagnostics =
+            sim_harness::frontend_diagnostics(source, "tb").expect("compile invalid real form");
+        assert!(
+            diagnostics.iter().any(|diagnostic| {
+                diagnostic.severity == DiagnosticSeverity::Error
+                    && diagnostic.message.to_ascii_lowercase().contains(expected)
+            }),
+            "{tag} real form must remain a diagnostic: {diagnostics:?}"
+        );
+    }
+
+    let cases = [
         (
             "repeat",
             r#"module tb;
@@ -387,15 +450,6 @@ endmodule
             "repeat",
         ),
         (
-            "wait",
-            r#"module tb;
-    real r;
-    initial wait (r);
-endmodule
-"#,
-            "wait",
-        ),
-        (
             "monitor",
             r#"module tb;
     real r;
@@ -406,41 +460,6 @@ endmodule
 endmodule
 "#,
             "monitor",
-        ),
-        (
-            "array",
-            r#"module tb;
-    real values [0:1];
-    initial values[0] = 1.0;
-endmodule
-"#,
-            "array",
-        ),
-        (
-            "port",
-            r#"module child(input real in_value);
-endmodule
-
-module tb;
-    real value;
-    child u_child(.in_value(value));
-endmodule
-"#,
-            "port",
-        ),
-        (
-            "function",
-            r#"module tb;
-    real r;
-
-    function real twice(input logic value);
-        twice = value;
-    endfunction
-
-    initial r = twice(1'b1);
-endmodule
-"#,
-            "function",
         ),
     ];
 
@@ -456,4 +475,60 @@ endmodule
             "{tag} rejection was not clear enough: {err}"
         );
     }
+}
+
+#[test]
+fn sim_real_arrays_and_function_returns_preserve_fractional_values() {
+    if !llg::sim::build::cmake_available() {
+        eprintln!("SKIP: cmake not available");
+        return;
+    }
+    let _guard = CWD_LOCK.lock().unwrap();
+    let stdout = run_sim(REAL_ARRAY_FUNCTION_SOURCE, "arrays_function_continuous")
+        .expect("real arrays/function/continuous assignment should run");
+    assert_eq!(
+        stdout,
+        "v0=1.250000 v1=2.500000 result=3.000000 rounded=2.500000\n"
+    );
+}
+
+#[test]
+fn sim_real_arrays_function_and_continuous_assignment_match_optimizer_modes() {
+    if !sim::build::cmake_available() {
+        eprintln!("SKIP: cmake not available");
+        return;
+    }
+    let _guard = CWD_LOCK.lock().unwrap();
+    sim_harness::with_frontend_temp_cwd("arrays_function_continuous_parity", |dir| {
+        let source = dir.join("tb.sv");
+        std::fs::write(&source, REAL_ARRAY_FUNCTION_SOURCE)
+            .map_err(|error| format!("write source: {error}"))?;
+        let compiled = compile::compile_checked(&compile::CompileOpts {
+            files: vec![source.to_string_lossy().into_owned()],
+            top: Some("tb".to_owned()),
+            ..Default::default()
+        })
+        .map_err(|error| format!("compile: {error}"))?;
+        let db = Db::from_slang(&compiled.snapshot).map_err(|error| format!("database: {error}"))?;
+        let expected = "v0=1.250000 v1=2.500000 result=3.000000 rounded=2.500000\n";
+        for (variant, options) in [
+            ("optimized", OptConfig::default()),
+            ("unoptimized", OptConfig::none()),
+        ] {
+            let model = sim::codegen::generate_from_db_with_opts(&db, &options)
+                .map_err(|error| format!("codegen {variant}: {error}"))?;
+            let executable = sim::build::build_model_cmake(
+                &dir.join(variant),
+                &[("model.c", model.model_c.as_str())],
+            )
+            .map_err(|error| format!("cmake {variant}: {error}"))?;
+            assert_eq!(
+                sim_harness::run_executable(&executable)?,
+                expected,
+                "{variant} output"
+            );
+        }
+        Ok(())
+    })
+    .expect("real array/function optimizer parity");
 }

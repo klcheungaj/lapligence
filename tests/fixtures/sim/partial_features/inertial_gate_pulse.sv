@@ -11,6 +11,6 @@ module tb;
         #1 source = 1;
         #2 $strobe("6 %b", result);
         #1 $strobe("7 %b", result);
-        #1 $finish;
+        #1 $finish(0);
     end
 endmodule

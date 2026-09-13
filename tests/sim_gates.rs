@@ -1,9 +1,8 @@
 //! End-to-end simulator tests for structural gate primitives
 //! (IEEE 1364-1995 ch. 7 §7.1–7.2): n-input gates (`and`/`or`/`nand`/`nor`/
 //! `xor`/`xnor`), `buf`/`not`, enable gates (`bufif0/1`, `notif0/1`),
-//! `pullup`/`pulldown`, optional gate delays, and the documented v1 rejects
-//! (UDP instances, switch/transistor primitives, gate arrays, strengths,
-//! width mismatches).
+//! `pullup`/`pulldown`, optional gate delays, strength-aware gate drivers, and
+//! the documented v1 rejects (UDP instances and switch/transistor primitives).
 //!
 //! Expected traces are hand-computed from the LRM gate tables and the
 //! runtime's `sv4_*` X/Z semantics: Z behaves as X in every expression
@@ -302,40 +301,24 @@ endmodule
 
 #[test]
 fn sim_gates_comb_process_wakes_on_gate_write() {
-    if !llg::sim::build::cmake_available() {
-        eprintln!("SKIP: cmake not available");
-        return;
-    }
-    let _guard = CWD_LOCK.lock().unwrap();
-    let sv = r#"module tb;
-    reg a;
-    wire y;
-    logic [2:0] hist;
-    int idx = 0;
-    not g(y, a);
-    always_comb begin
-        hist[idx] = y;
-        idx = idx + 1;
-    end
-    initial begin
-        hist = 3'b000;
-        a = 0;              // gate writes y=1 -> comb records hist[1]=1
-        #1 ;
-        a = 1;              // gate writes y=0 -> comb records hist[2]=0
-        #1 $display("%b %0d", hist, idx);
-        $finish;
-    end
-endmodule
-"#;
-    let stdout = run_sim(sv, "combwake").expect("simulation should run");
-    // Spawn order pins determinism: the gate comb process (Comb pass) runs
-    // and settles before the always_comb (Procs pass) spawns, so the
-    // always_comb's spawn-time evaluation records hist[0] = x (y = ~a with
-    // a = x); the initial's own `hist = 3'b000` then overwrites that slot
-    // with 0.  Each later gate write re-triggers the always_comb (it also
-    // wakes on its `idx` reads): hist[1] = 1 after `a = 0`, hist[2] = 0
-    // after `a = 1`.
-    assert_eq!(stdout, "010 3\n");
+    // Observe settled values, not an implementation-specific number/order of
+    // time-zero activations. The always_comb is the only writer of sampled.
+    sim_cli::run_case(
+        "regression_81",
+        "gate_comb_wake",
+        "sampled=1\nsampled=0\nsampled=1\n",
+        "",
+        &[],
+    );
+}
+
+#[test]
+fn sim_gates_comb_reader_rejects_another_procedural_writer() {
+    sim_cli::reject_case(
+        "regression_81",
+        "gate_comb_multiple_writers",
+        "multiple writers",
+    );
 }
 
 // ── Gate delay lags the write behind input changes (%t timestamps) ──────────
@@ -442,7 +425,7 @@ endmodule
     assert_eq!(stdout, "g0 1_0\ng1 0_1\n");
 }
 
-// ── Rejections ───────────────────────────────────────────────────────────────
+// ── Unsupported primitives ──────────────────────────────────────────────────
 
 #[test]
 fn sim_gates_reject_udp_instance() {
@@ -501,23 +484,21 @@ endmodule
 }
 
 #[test]
-fn sim_gates_reject_gate_array() {
+fn sim_gates_gate_array_distributes_bits() {
     let _guard = CWD_LOCK.lock().unwrap();
     let sv = r#"module tb;
-    reg a, b;
+    reg [3:0] a, b;
     wire [3:0] y;
     and g[3:0] (y, a, b);
     initial begin
-        a = 1; b = 1;
+        a = 4'b1010; b = 4'b1100;
+        #1 $display("%b", y);
         $finish;
     end
 endmodule
 "#;
-    let err = codegen_error(sv, "array").expect("compile should succeed");
-    assert!(
-        err.contains("primitive array") && err.contains("not supported"),
-        "unexpected error: {err}"
-    );
+    let stdout = run_sim(sv, "array").expect("simulation should run");
+    assert_eq!(stdout, "1000\n");
 }
 
 // ── Gate output drives a collapsed inout-net member ─────────────────────────
@@ -555,29 +536,29 @@ endmodule
 }
 
 #[test]
-fn sim_gates_reject_select_terminal() {
+fn sim_gates_selected_terminals() {
     let _guard = CWD_LOCK.lock().unwrap();
-    // Select-connected terminals are a clean v1 reject: gates drive/read
-    // whole signals only.
     let sv = r#"module tb;
     reg [3:0] wide;
+    reg b;
     wire y;
-    and g(y, wide[1], wide[3]);
+    and g(y, wide[1], b);
     initial begin
-        wide = 4'b1010;
+        wide = 4'b0010;
+        b = 1'b1;
+        #1 $display("%b", y);
+        b = 1'b0;
+        #1 $display("%b", y);
         $finish;
     end
 endmodule
 "#;
-    let err = codegen_error(sv, "bitsel").expect("compile should succeed");
-    assert!(
-        err.contains("whole plain signals"),
-        "unexpected error: {err}"
-    );
+    let stdout = run_sim(sv, "bitsel").expect("simulation should run");
+    assert_eq!(stdout, "1\n0\n");
 }
 
 #[test]
-fn sim_gates_reject_mixed_width_terminals() {
+fn sim_gates_mixed_width_terminals_use_scalar_rules() {
     let _guard = CWD_LOCK.lock().unwrap();
     let sv = r#"module tb;
     reg a;
@@ -586,13 +567,14 @@ fn sim_gates_reject_mixed_width_terminals() {
     and g(y, a, wide);
     initial begin
         a = 1;
+        wide = 4'b0010;
+        #1 $display("%b", y);
+        wide = 4'b0001;
+        #1 $display("%b", y);
         $finish;
     end
 endmodule
 "#;
-    let err = codegen_error(sv, "widthmix").expect("compile should succeed");
-    assert!(
-        err.contains("different widths") && err.contains("equal terminal widths"),
-        "unexpected error: {err}"
-    );
+    let stdout = run_sim(sv, "widthmix").expect("simulation should run");
+    assert_eq!(stdout, "0\n1\n");
 }

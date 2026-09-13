@@ -80,16 +80,17 @@ fn delayed_driver_updates_preserve_strength_and_release_semantics() {
 }
 
 #[test]
-fn separate_transition_delays_are_rejected_without_dropping_expressions() {
+fn separate_transition_delays_select_rise_fall_and_turn_off() {
+    run_case(
+        "inertial_transition_delays",
+        "t6 0 00 zz00 0000 zz00\nt9 1 11 zz11 1111 zz11\nt12 x xx zzxx xxxx zzxx\nt19 z xx zzxx zzzz zzzz\n",
+    );
     for fixture in [
         "inertial_continuous_two_delays",
         "inertial_continuous_three_delays",
         "inertial_gate_two_delays",
         "inertial_gate_three_delays",
     ] {
-        reject_case(
-            fixture,
-            "separate rise/fall/turn-off driver delays are not supported",
-        );
+        run_case(fixture, "");
     }
 }

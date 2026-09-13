@@ -15,6 +15,6 @@ module tb;
         #1 $display("%h %b %h",so,bo,sumo);
         negative=-128; four='z; a=128; b=128;
         #1 $display("%h %b %h",so,bo,sumo);
-        $finish;
+        $finish(0);
     end
 endmodule

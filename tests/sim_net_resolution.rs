@@ -1,7 +1,9 @@
-//! Equal-strength standalone wired-net resolution and explicit subset bounds.
+//! Strength-aware standalone wired-net resolution and explicit subset bounds.
 
 #[path = "support/sim.rs"]
 mod sim_harness;
+#[path = "support/sim_cli.rs"]
+mod sim_cli;
 
 use llg::core::{compile, db::Db};
 use llg::ffi::slang::DiagnosticSeverity;
@@ -194,11 +196,6 @@ fn ordinary_wire_continuous_assignment_rejects_variable_target_select() {
 fn wired_nets_reject_unimplemented_driver_paths() {
     let lowering_cases = [
         (
-            "select",
-            "module tb; logic a; wand [1:0] w; assign w[0]=a; endmodule",
-            "select of wired net",
-        ),
-        (
             "hierarchical",
             "module tb; logic a; wand w; assign tb.w=a; endmodule",
             "hierarchical continuous assignment",
@@ -207,26 +204,6 @@ fn wired_nets_reject_unimplemented_driver_paths() {
             "concat_lhs",
             "module tb; logic x; wand w; assign {w,x}=2'b11; endmodule",
             "concatenated/complex continuous-assignment LHS",
-        ),
-        (
-            "force",
-            "module tb; wand w; initial force w=1'b1; endmodule",
-            "force of wired net",
-        ),
-        (
-            "release",
-            "module tb; wand w; initial release w; endmodule",
-            "release of wired net",
-        ),
-        (
-            "gate",
-            "module tb; logic a; wand w; buf g(w,a); endmodule",
-            "gate output driving wired net",
-        ),
-        (
-            "port",
-            "module child(inout wand w); endmodule module tb; wand w; child c(w); endmodule",
-            "used as a module port",
         ),
         (
             "interface",
@@ -239,9 +216,14 @@ fn wired_nets_reject_unimplemented_driver_paths() {
             "unpacked wired-net array",
         ),
         (
-            "strength",
-            "module tb; logic a; wand w; assign (strong0, strong1) w=a; endmodule",
-            "drive-strength continuous assignment",
+            "strength_vector",
+            "module tb; logic [1:0] a; wand [1:0] w; assign (strong0, strong1) w=a; endmodule",
+            "drive strength on non-scalar net",
+        ),
+        (
+            "highz_strength",
+            "module tb; logic a; wand w; assign (highz0, highz1) w=a; endmodule",
+            "high impedance for both logic values",
         ),
     ];
     for (tag, source, expected) in lowering_cases {
@@ -291,6 +273,184 @@ fn wired_nets_reject_unimplemented_driver_paths() {
 }
 
 #[test]
+fn mixed_structural_drivers_and_selected_cross_hierarchy_resolve_with_optimizer_parity() {
+    if !sim::build::cmake_available() {
+        eprintln!("SKIP: cmake not available");
+        return;
+    }
+    let source = r#"// llg-test-fixture: tests/sim_net_resolution.rs/mixed_structural.sv
+module source(
+    input wire i,
+    output wire out_wire,
+    output wand out_wand,
+    output wor out_wor
+);
+    assign out_wire = i;
+    assign out_wand = i;
+    assign out_wor = i;
+endmodule
+
+module selected_source(input wire en, output wire [7:0] out);
+    assign out[3:0] = en ? 4'hf : 4'hz;
+endmodule
+
+module tb;
+    reg drive, gate_drive, port_drive, en;
+    wire w;
+    wand wa;
+    wor wo;
+    tri0 t0;
+    tri1 t1;
+    supply0 s0;
+    supply1 s1;
+    wire [7:0] selected;
+
+    assign w = drive;
+    buf gw(w, gate_drive);
+    assign wa = drive;
+    buf ga(wa, gate_drive);
+    assign wo = drive;
+    buf go(wo, gate_drive);
+    source u(.i(port_drive), .out_wire(w), .out_wand(wa), .out_wor(wo));
+    assign t0 = 1'bz;
+    assign t1 = 1'bz;
+    assign s0 = 1'bz;
+    assign s1 = 1'bz;
+    assign selected[7:4] = 4'h0;
+    selected_source us(.en(en), .out(selected));
+
+    initial begin
+        drive = 1'b1;
+        gate_drive = 1'b0;
+        port_drive = 1'b1;
+        en = 1'b1;
+        #1 $display("mixed=%b%b%b/%b%b%b%b", w, wa, wo, t0, t1, s0, s1);
+        $display("selected=%h", selected);
+        drive = 1'b0;
+        gate_drive = 1'b1;
+        port_drive = 1'b0;
+        en = 1'b0;
+        #1 $display("mixed=%b%b%b/%b%b%b%b", w, wa, wo, t0, t1, s0, s1);
+        $display("selected=%h", selected);
+        drive = 1'bz;
+        gate_drive = 1'bz;
+        port_drive = 1'bz;
+        #1 $display("mixed=%b%b%b/%b%b%b%b", w, wa, wo, t0, t1, s0, s1);
+        $finish(0);
+    end
+endmodule
+"#;
+    let expected = "mixed=x01/0101\nselected=0f\n\
+mixed=x01/0101\nselected=00\n\
+mixed=zzz/0101\n";
+    sim_harness::with_frontend_temp_cwd("mixed_structural", |dir| {
+        let path = dir.join("tb.sv");
+        std::fs::write(&path, source).map_err(|error| error.to_string())?;
+        let compiled = compile::compile_checked(&compile::CompileOpts {
+            files: vec![path.to_string_lossy().into_owned()],
+            top: Some("tb".to_owned()),
+            ..Default::default()
+        })
+        .map_err(|error| error.to_string())?;
+        let db = Db::from_slang(&compiled.snapshot).map_err(|error| error.to_string())?;
+        for (variant, opts) in [
+            ("unoptimized", OptConfig::none()),
+            ("optimized", OptConfig::default()),
+        ] {
+            let model = sim::codegen::generate_from_db_with_opts(&db, &opts)
+                .map_err(|error| format!("{variant} lowering: {error}"))?;
+            let executable = sim::build::build_model_cmake(
+                &dir.join(variant),
+                &[("model.c", model.model_c.as_str())],
+            )
+            .map_err(|error| format!("{variant} C model build: {error}"))?;
+            assert_eq!(
+                sim_harness::run_executable(&executable)?,
+                expected,
+                "{variant}"
+            );
+        }
+        Ok(())
+    })
+    .expect("mixed structural-driver simulation");
+}
+
+#[test]
+fn unequal_strength_gate_wired_and_collapsed_inout_drivers_resolve_with_optimizer_parity() {
+    if !sim::build::cmake_available() {
+        eprintln!("SKIP: cmake not available");
+        return;
+    }
+    let source = r#"// llg-test-fixture: tests/sim_net_resolution.rs/strength_structural.sv
+module child(inout wire p, input wire d);
+    assign (weak0, weak1) p = d;
+endmodule
+
+module tb;
+    logic a, b;
+    wire w;
+    wand wa;
+    tri0 pulled;
+    wire collapsed;
+    wand forced;
+
+    assign (pull0, pull1) w = a;
+    buf (strong0, strong1) gw(w, b);
+    assign (strong0, strong1) wa = a;
+    buf (pull0, pull1) ga(wa, b);
+    assign (strong0, strong1) collapsed = a;
+    child c(.p(collapsed), .d(b));
+    assign (pull0, pull1) pulled = a;
+    assign (strong0, strong1) forced = a;
+
+    initial begin
+        a = 0; b = 1; #1;
+        $display("first=%b%b%b%b", w, wa, collapsed, pulled);
+        a = 1; b = 0; #1;
+        $display("second=%b%b%b%b", w, wa, collapsed, pulled);
+        a = 1'bz; b = 1'bz; #1;
+        $display("released=%b%b%b%b", w, wa, collapsed, pulled);
+        force forced = 1'b1;
+        #1;
+        $display("forced=%b", forced);
+        a = 1'b0;
+        #1;
+        release forced;
+        $display("restored=%b", forced);
+        $finish;
+    end
+endmodule
+"#;
+    let expected = "first=1100\nsecond=001x\nreleased=zzz0\nforced=1\nrestored=0\n";
+    sim_harness::with_frontend_temp_cwd("strength_structural", |dir| {
+        let path = dir.join("tb.sv");
+        std::fs::write(&path, source).map_err(|error| error.to_string())?;
+        let compiled = compile::compile_checked(&compile::CompileOpts {
+            files: vec![path.to_string_lossy().into_owned()],
+            top: Some("tb".to_owned()),
+            ..Default::default()
+        })
+        .map_err(|error| error.to_string())?;
+        let db = Db::from_slang(&compiled.snapshot).map_err(|error| error.to_string())?;
+        for (variant, opts) in [
+            ("unoptimized", OptConfig::none()),
+            ("optimized", OptConfig::default()),
+        ] {
+            let model = sim::codegen::generate_from_db_with_opts(&db, &opts)
+                .map_err(|error| format!("{variant} lowering: {error}"))?;
+            let executable = sim::build::build_model_cmake(
+                &dir.join(variant),
+                &[("model.c", model.model_c.as_str())],
+            )
+            .map_err(|error| format!("{variant} C model build: {error}"))?;
+            assert_eq!(sim_harness::run_executable(&executable)?, expected, "{variant}");
+        }
+        Ok(())
+    })
+    .expect("strength-aware structural-driver simulation");
+}
+
+#[test]
 fn wired_nets_reject_more_than_sixteen_driver_sites() {
     let mut source = String::from(
         "// llg-test-fixture: tests/sim_net_resolution.rs/driver_limit.sv\nmodule tb; wand w;\n",
@@ -303,5 +463,27 @@ fn wired_nets_reject_more_than_sixteen_driver_sites() {
     assert!(
         error.contains("17 continuous driver sites") && error.contains("16 driver-slot limit"),
         "{error}"
+    );
+}
+
+#[test]
+fn homogeneous_wired_inout_ports_preserve_resolution() {
+    sim_cli::run_case(
+        "regression_81",
+        "wired_inout_resolution",
+        "resolved=11\nresolved=01\nresolved=zz\nresolved=x1\nresolved=0x\n",
+        "",
+        &[],
+    );
+}
+
+#[test]
+fn force_release_of_a_variable_does_not_target_an_unrelated_wired_net() {
+    sim_cli::run_case(
+        "regression_81",
+        "force_unrelated_to_wired_net",
+        "forced=1 wired=1\nreleased=1 wired=1\nassigned=0\n",
+        "",
+        &[],
     );
 }

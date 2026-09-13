@@ -15,6 +15,6 @@ module tb;
         $display("issued %0d %b",$time,q);
         #2 $display("early %0d %b %.1f",$time,q,result);
         #2 $display("late %0d %b",$time,q);
-        $finish;
+        $finish(0);
     end
 endmodule

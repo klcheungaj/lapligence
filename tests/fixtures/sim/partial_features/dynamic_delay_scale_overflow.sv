@@ -4,6 +4,6 @@ module tb;
     initial begin
         delay_value=64'hffffffffffffffff;
         #delay_value;
-        $finish;
+        $finish(0);
     end
 endmodule

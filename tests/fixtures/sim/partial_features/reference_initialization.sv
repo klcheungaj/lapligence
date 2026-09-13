@@ -10,6 +10,6 @@ module tb;
     initial begin
         @(posedge a);
         $display("edge %0t %h %h",$time,a,c.a);
-        $finish;
+        $finish(0);
     end
 endmodule

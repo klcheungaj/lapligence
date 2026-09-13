@@ -15,6 +15,9 @@ execution contracts and one explicit unsupported-boundary contract:
   selected-member writes, and shared 128-/512-bit representation.
 - `unpacked_aggregate_assignment_patterns.sv`: unpacked struct patterns and
   unpacked-union selected-member writes over fixed packed integral members.
+- `recursive_unpacked_aggregates.sv`: nested fixed unpacked struct/array
+  members with packed, real, and string leaves, deep value copy/member
+  updates, and unequal-width untagged-union storage.
 - `dynamic_array_reductions.sv`, `queue_reductions.sv`, and
   `associative_array_reductions.sv`: typed wide reductions, modular arithmetic,
   X/Z behavior, order independence, and empty identities.
@@ -31,20 +34,24 @@ Original contract table and local LRM basis:
 | `packed_struct_assignment_patterns.sv` | Positive: 128-/512-bit positional, named, default, simple-type, and named-type declaration patterns, including mixed two-/four-state members and generate scope | §7.2.1, §10.9.2 |
 | `packed_union_assignment_patterns.sv` | Positive: direct packed initialization, selected-member writes, two-state conversion, and shared 128-/512-bit representation | §7.3.1 |
 | `unpacked_aggregate_assignment_patterns.sv` | Positive: unpacked struct declaration patterns and unpacked-union selected-member writes over fixed packed integral members | §7.2, §7.3, §10.9.2 |
+| `recursive_unpacked_aggregates.sv` | Positive: nested fixed unpacked structs/arrays with packed, real, and string leaves, deep copy/member updates, and unequal-width untagged-union storage | §7.2, §7.3 |
 | `dynamic_array_reductions.sv` | Positive: element-typed 128-bit reductions, modular arithmetic, X/Z propagation, and empty identities | §7.12.3 |
 | `queue_reductions.sv` | Positive: signed 512-bit reductions and empty identities | §7.12.3 |
 | `associative_array_reductions.sv` | Positive: order-independent 128-bit reductions retaining high bits and empty identities | §7.12.3 |
 | `reduction_with_unsupported.sv` | Explicit unsupported boundary: a legal width-changing reduction `with` clause must fail codegen with a clause-specific diagnostic, never execute after silently dropping the clause | §7.12.3 |
 
-Tagged unions, classes, virtual interfaces, nominal type keys, nested
-recursive defaults, nested unpacked/object members, and aggregate
-ports/nets/subprogram storage remain outside the support contract. Root-run
-normal and ASan/UBSan/leak validation reports all nine cases passing in both
-optimization modes; this is bounded evidence, not exhaustive conformance.
+Tagged unions, classes, virtual interfaces, nominal type keys, recursive
+defaults, resizable/object members, and aggregate ports/nets/subprogram
+storage remain outside the support contract. Root-run normal validation covers
+all ten cases in both optimization modes; ASan/UBSan/leak validation for the
+new recursive fixture remains a separate gate. This is bounded evidence, not
+exhaustive conformance.
 
 The supported aggregate contracts require exact range, state, and signedness
-matching and use packed-integral typedef keys. These contracts do not establish
-support for nominal type keys or the other excluded nested/object and aggregate
+matching for packed leaves and use packed-integral typedef keys. Fixed nested
+aggregate paths additionally cover recursive value copy and member updates for
+packed, real, and string leaves. These contracts do not establish support for
+nominal type keys or the other excluded recursive/default/object and aggregate
 storage forms.
 
 Local specification anchors verified in `docs/specification/spec-reference-sv.md`:

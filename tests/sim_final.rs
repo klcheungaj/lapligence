@@ -157,9 +157,11 @@ endmodule
         }),
         "final nonblocking assignment must report NonblockingInFinal: {diagnostics:?}"
     );
-    let error = codegen_error(sv, "final-nba").expect("final NBA should reach lowering");
+    // Slang leaves an Invalid statement after the diagnostic above. The
+    // executable coverage gate must reject it before statement lowering.
+    let error = codegen_error(sv, "final-nba").expect("final NBA must be rejected");
     assert!(
-        error.contains("unsupported executable statement kind UnsupportedStatement"),
+        error.contains("unsupported executable node `Invalid`"),
         "unexpected codegen error: {error}"
     );
 }

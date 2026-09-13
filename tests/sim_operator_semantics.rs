@@ -193,65 +193,64 @@ endmodule
 }
 
 #[test]
-fn sim_increment_and_compound_assignment_reject_unsupported_positions() {
+fn sim_expression_increment_and_compound_assignment() {
+    if !sim::build::cmake_available() {
+        eprintln!("SKIP: cmake not available");
+        return;
+    }
     let _guard = CWD_LOCK
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
 
-    let select_error = codegen_error(
-        r#"module tb;
+    let sv = r#"module tb;
+    typedef struct packed { logic [1:0] low; logic [1:0] high; } pair_t;
     logic [3:0] value;
+    logic [3:0] memory [0:1];
+    pair_t pair;
+    integer idx;
+    integer old_bit;
+    integer old_array;
+    integer old_member;
+    integer assigned;
+    real real_value;
+    real old_real;
     initial begin
-        value = 0;
-        value[1:0] += 1;
+        value = 4'b0011;
+        pair = '0;
+        idx = 0;
+        old_bit = value[idx++]++;
+        old_member = pair.low++;
+        memory[0] = 4;
+        idx = 0;
+        old_array = memory[idx++] += 3;
+        assigned = (value = 4'b1010);
+        real_value = 1.5;
+        old_real = real_value++;
+        $display("value=%0d old_bit=%0d old_array=%0d old_member=%0d idx=%0d assigned=%0d real=%0.1f/%0.1f",
+            value, old_bit, old_array, old_member, idx, assigned, old_real, real_value);
         $finish;
     end
 endmodule
-"#,
-        "compound_select_reject",
-    )
-    .expect("compound select must be rejected");
-    assert!(
-        select_error.contains("compound assignment to a select or array element"),
-        "unexpected select error: {select_error}"
+"#;
+    assert_stdout(
+        "expression_increment_compound",
+        sv,
+        "value=10 old_bit=1 old_array=7 old_member=0 idx=1 assigned=10 real=1.5/2.5\n",
     );
 
-    let increment_select_error = codegen_error(
+    let error = codegen_error(
         r#"module tb;
-    logic [3:0] value;
-    initial begin
-        value = 0;
-        value[0]++;
-        $finish;
-    end
-endmodule
-"#,
-        "inc_select_reject",
-    )
-    .expect("increment select must be rejected");
-    assert!(
-        increment_select_error.contains("increment/decrement of a select or array element"),
-        "unexpected increment-select error: {increment_select_error}"
-    );
-
-    let expression_error = codegen_error(
-        r#"module tb;
-    integer value;
     integer result;
     initial begin
-        value = 0;
-        result = value++;
+        result = (1 + 2)++;
         $finish;
     end
 endmodule
 "#,
-        "inc_expression_reject",
+        "inc_non_lvalue",
     )
-    .expect("expression-valued increment must be rejected");
-    assert!(
-        expression_error.contains("unsupported operation op type"),
-        "unexpected increment-expression error: {expression_error}"
-    );
+    .expect("increment of a non-lvalue must remain rejected");
+    assert!(!error.is_empty(), "non-lvalue diagnostic must not be empty");
 }
 
 #[test]

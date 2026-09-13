@@ -18,6 +18,14 @@ fn run_waveform(
     sv: &str,
     tag: &str,
 ) -> Result<(sim_harness::TempDir, String, Vec<String>), String> {
+    run_waveform_with_opts(sv, tag, &sim::opt::OptConfig::default())
+}
+
+fn run_waveform_with_opts(
+    sv: &str,
+    tag: &str,
+    opts: &sim::opt::OptConfig,
+) -> Result<(sim_harness::TempDir, String, Vec<String>), String> {
     let dir = sim_harness::TempDir::new(tag)?;
     let src = dir.path().join("tb.sv");
     std::fs::write(&src, sv).map_err(|error| format!("write source: {error}"))?;
@@ -31,7 +39,8 @@ fn run_waveform(
         .map_err(|error| format!("compile: {error}"))?;
         let db = llg::core::db::Db::from_slang(&output.snapshot)
             .map_err(|error| format!("db: {error}"))?;
-        let generated = sim::codegen::generate(&db).map_err(|error| format!("codegen: {error}"))?;
+        let generated = sim::codegen::generate_with_opts(&db, opts)
+            .map_err(|error| format!("codegen: {error}"))?;
         if !generated.model_c.contains("#define LLG_WAVEFORM 1") {
             return Err("waveform controls did not enable generated runtime support".to_string());
         }
@@ -92,7 +101,7 @@ module tb;
         value = 4'b1100;
         #1 $dumpall;
         $dumpflush;
-        #1 $finish;
+        #1 $finish(0);
     end
 
     final begin
@@ -104,13 +113,9 @@ endmodule
     let (dir, stderr, warnings) =
         run_waveform(sv, "vcd_controls").expect("VCD simulation should run");
     assert!(stderr.is_empty(), "unexpected simulator stderr: {stderr}");
-    assert_eq!(
-        warnings
-            .iter()
-            .filter(|warning| warning.contains("$dumpvars depth/scope filtering"))
-            .count(),
-        1,
-        "a model should report the conservative dump selection exactly once: {warnings:?}"
+    assert!(
+        warnings.is_empty(),
+        "explicit dump selection should not emit a filtering warning: {warnings:?}"
     );
     let vcd = std::fs::read_to_string(dir.path().join("trace.vcd")).expect("read generated VCD");
 
@@ -140,6 +145,108 @@ endmodule
 }
 
 #[test]
+fn vcd_dumpvars_selection_uses_depth_names_and_declared_indices_in_both_modes() {
+    if !sim::build::cmake_available() {
+        eprintln!("SKIP: cmake not available");
+        return;
+    }
+    let _guard = CWD_LOCK.lock().unwrap();
+    let sv = r#"`timescale 1ns/1ps
+module child;
+    reg child_value;
+    initial child_value = 1'b1;
+endmodule
+
+module tb;
+    reg [3:0] selected;
+    reg [3:0] omitted;
+    reg [7:0] memory [3:2];
+    child u();
+
+    initial begin
+        $dumpfile("trace.vcd");
+        selected = 4'h1;
+        omitted = 4'h2;
+        memory[3] = 8'ha3;
+        memory[2] = 8'ha2;
+        $dumpvars(1, tb);
+        #1 selected = 4'hf;
+        #1 $dumpflush;
+        #1 $finish(0);
+    end
+endmodule
+"#;
+
+    for (optimized, opts) in [
+        (true, sim::opt::OptConfig::default()),
+        (false, sim::opt::OptConfig::none()),
+    ] {
+        let tag = if optimized {
+            "vcd_dumpvars_depth_opt"
+        } else {
+            "vcd_dumpvars_depth_no_opt"
+        };
+        let (dir, stderr, warnings) =
+            run_waveform_with_opts(sv, tag, &opts).expect("selected VCD simulation should run");
+        assert!(stderr.is_empty(), "unexpected simulator stderr: {stderr}");
+        assert!(warnings.is_empty(), "unexpected lowering warnings: {warnings:?}");
+        let vcd = std::fs::read_to_string(dir.path().join("trace.vcd"))
+            .expect("read selected VCD");
+        assert!(vcd.contains(" selected $end"), "selected signal missing: {vcd}");
+        assert!(vcd.contains(" omitted $end"), "direct signal missing: {vcd}");
+        assert!(vcd.contains("memory$5B3$5D $end"), "declared index 3 missing: {vcd}");
+        assert!(vcd.contains("memory$5B2$5D $end"), "declared index 2 missing: {vcd}");
+        assert!(
+            !vcd.contains("$scope module u $end") && !vcd.contains(" child_value $end"),
+            "finite depth must exclude the child hierarchy: {vcd}"
+        );
+    }
+}
+
+#[test]
+fn vcd_dumpvars_named_storage_excludes_unselected_catalog_entries() {
+    if !sim::build::cmake_available() {
+        eprintln!("SKIP: cmake not available");
+        return;
+    }
+    let _guard = CWD_LOCK.lock().unwrap();
+    let sv = r#"`timescale 1ns/1ps
+module tb;
+    reg [3:0] selected;
+    reg [3:0] omitted;
+    initial begin
+        $dumpfile("trace.vcd");
+        selected = 4'h1;
+        omitted = 4'h2;
+        $dumpvars(0, tb.selected);
+        #1 selected = 4'he;
+        #1 $dumpflush;
+        #1 $finish(0);
+    end
+endmodule
+"#;
+
+    for (optimized, opts) in [
+        (true, sim::opt::OptConfig::default()),
+        (false, sim::opt::OptConfig::none()),
+    ] {
+        let tag = if optimized {
+            "vcd_dumpvars_named_opt"
+        } else {
+            "vcd_dumpvars_named_no_opt"
+        };
+        let (dir, stderr, warnings) =
+            run_waveform_with_opts(sv, tag, &opts).expect("named VCD simulation should run");
+        assert!(stderr.is_empty(), "unexpected simulator stderr: {stderr}");
+        assert!(warnings.is_empty(), "unexpected lowering warnings: {warnings:?}");
+        let vcd = std::fs::read_to_string(dir.path().join("trace.vcd"))
+            .expect("read named VCD");
+        assert!(vcd.contains(" selected $end"), "named signal missing: {vcd}");
+        assert!(!vcd.contains(" omitted $end"), "unselected signal was dumped: {vcd}");
+    }
+}
+
+#[test]
 fn fst_is_written_by_the_generated_model() {
     if !sim::build::cmake_available() {
         eprintln!("SKIP: cmake not available");
@@ -149,32 +256,42 @@ fn fst_is_written_by_the_generated_model() {
     let sv = r#"`timescale 10ps/1ps
 module tb;
     reg [7:0] value;
+    reg [7:0] omitted;
     initial begin
         $dumpfile("trace.fst");
         value = 8'h00;
-        $dumpvars;
+        omitted = 8'hff;
+        $dumpvars(0, tb.value);
         #1 value = 8'ha5;
         #1 value = 8'h5a;
         $dumpflush;
-        #1 $finish;
+        #1 $finish(0);
     end
 endmodule
 "#;
 
-    let (dir, stderr, warnings) = run_waveform(sv, "fst").expect("FST simulation should run");
-    assert!(stderr.is_empty(), "unexpected simulator stderr: {stderr}");
-    assert!(
-        warnings.is_empty(),
-        "unexpected codegen warnings: {warnings:?}"
-    );
-    let metadata = std::fs::metadata(dir.path().join("trace.fst")).expect("generated FST metadata");
-    assert!(
-        metadata.len() > 64,
-        "generated FST should contain hierarchy and values"
-    );
+    for (optimized, opts) in [
+        (true, sim::opt::OptConfig::default()),
+        (false, sim::opt::OptConfig::none()),
+    ] {
+        let tag = if optimized { "fst_opt" } else { "fst_no_opt" };
+        let (dir, stderr, warnings) = run_waveform_with_opts(sv, tag, &opts)
+            .expect("FST simulation should run");
+        assert!(stderr.is_empty(), "unexpected simulator stderr: {stderr}");
+        assert!(
+            warnings.is_empty(),
+            "unexpected codegen warnings: {warnings:?}"
+        );
+        let metadata = std::fs::metadata(dir.path().join("trace.fst"))
+            .expect("generated FST metadata");
+        assert!(
+            metadata.len() > 64,
+            "generated FST should contain hierarchy and values"
+        );
 
-    validate_generated_fst(dir.path())
-        .expect("official FST reader should validate generated contents");
+        validate_generated_fst(dir.path())
+            .expect("official FST reader should validate generated contents");
+    }
 }
 
 #[cfg(not(windows))]

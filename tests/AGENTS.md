@@ -106,6 +106,10 @@ coverage for the same rule IDs.
   passes each file to `llg` in both optimizer modes, isolates child working
   directories, compares specification-derived output and asserts diagnostics.
   Both suites require CMake and run in the sanitizer job.
+- `sim_procedural_assign.rs` covers procedural continuous-assignment priority,
+  replacement, deassign retention, function dependencies and PCA/force
+  layering. HDL lives in `fixtures/sim/procedural_assign/`; the shared CLI
+  harness runs every fixture through `llg` and `llg --no-opt`.
 - `elab_resolve.rs` exercises resolved Slang parameter values; `config_effect.rs` observes
   configured defines and top-level parameter overrides driving
   generate branches through the owned `DesignModel`.
@@ -130,6 +134,14 @@ coverage for the same rule IDs.
   it and asserts the exact stdout.  Model-building suites require cmake and
   skip gracefully (`SKIP: cmake not available`) when
   `sim::build::cmake_available()` is false.
+- `sim_array_sensitivity.rs` runs checked-in fixed-array, dynamic-array, and
+  queue fixtures through `llg` and `llg --no-opt`, asserting continuous,
+  implicit/explicit combinational, and level-sensitive readers wake after
+  element, resize, push, and delete changes.
+- `sim_process_semantics.rs` runs checked-in always-family fixtures through
+  `llg` and `llg --no-opt`, asserting implicit sensitivity, time-zero
+  execution, function dependencies, writer/timing contracts, and legal
+  latch/flip-flop controls.
 - `emit_decoupling.rs` pins the pipeline shape with architectural greps:
   `sim::emit_c` consumes only the execution IR, while `sim::codegen` lowers
   the semantic model without emitting runtime C calls directly.
@@ -137,9 +149,12 @@ coverage for the same rule IDs.
   `OptConfig::default()` (all passes) and once with `OptConfig::none()` —
   building both models via `sim::build::build_model_cmake` and asserting
   byte-identical stdout.
-- `sim_variable_lifetime.rs` runs an in-memory Slang design with optimization
-  enabled and disabled, proving that resolved static procedural locals retain
-  storage across block reentry while automatic locals are recreated.
+- `sim_variable_lifetime.rs` runs in-memory Slang designs with optimization
+  enabled and disabled, proving resolved static procedural locals retain
+  storage across block/subroutine reentry while automatic locals are
+  recreated, static storage is per elaborated instance, declaration
+  initializers preserve ordering, and the selected edition's initialization
+  race boundary is respected.
 - `sim_cmake.rs` covers the build path (5 cases: library-level
   end-to-end CMake build, explicit `CmakeBuildOpts` generator backend,
   invalid-generator configure error, driver default, missing-cmake
@@ -174,8 +189,9 @@ coverage for the same rule IDs.
   parameter delays, lexical shadowing, and rounding of completed delays to the
   local precision before global scheduling, with optimizer parity.
   `sim_time_values.rs` covers Slang's typed time-literal values, module-unit
-  scaling without local precision rounding, integral assignment conversion,
-  and ownership after admitted source buffers are removed.
+  scaling with local precision rounding, integral assignment conversion, and
+  ownership after admitted source buffers are removed. `sim_edition.rs` adds
+  checked-in 2009 rounding and 2001 keyword/edition CLI probes.
   `sim_fill_literals.rs` checks context-determined fills through expressions
   and case operands, self-determined boundaries, and wide-operation rejection.
 

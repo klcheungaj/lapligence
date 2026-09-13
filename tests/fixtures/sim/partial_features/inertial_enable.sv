@@ -13,6 +13,6 @@ module tb;
         #2 $strobe("unknown %b", result);
         #1 enable = 1;
         #2 $strobe("enabled %b", result);
-        #1 $finish;
+        #1 $finish(0);
     end
 endmodule

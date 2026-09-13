@@ -23,13 +23,20 @@ for the boundaries these tests do not cover.
 | Files | Behavior checked |
 |---|---|
 | `port_*.sv` | Constants, omitted/default inputs, expression dependencies, conversion and selected outputs |
-| `reference_*.sv` | Nested packed reference aliases, initialization and edge visibility |
-| `event_*.sv`, `mixed_iff_events.sv` | Trigger-time qualification, expression changes, LSB/four-state edges and waiter cleanup |
+| `reference_*.sv` | Nested packed aliases, selected lvalues, recursive aggregate/object identity, initialization and edge visibility |
+| `reference_resizable_rejected.sv` | Explicit rejection of detached/resizable reference storage |
+| `event_*.sv`, `mixed_iff_events.sv`, `nonblocking_event_triggers.sv`, `nonblocking_event_repeat_dynamic.sv` | Trigger-time qualification, expression changes, LSB/four-state edges, waiter cleanup, deferred named-event triggers and source-located detached-count rejection |
+| `event_activation_capture.sv`, `event_pure_functions.sv` | Per-activation locals/formals, trigger-time `iff`, legal input/const-ref function calls and expression-only dependencies |
 | `wait_constant_false.sv` | False and unknown waits suspend without preventing time advancement |
 | `delayed_nba*.sv`, `nba_*.sv` | Value/index capture, future commit, issue ordering, disjoint selections and state conversion |
+| `activation_frames.sv` | Reentrant automatic subroutines, per-iteration loop captures, shadowed declarations and retained fork activations |
+| `real_activation_capture.sv` | Typed retained-frame capture of automatic real locals after the declaring block continues |
 | `inertial_*.sv` | Pulse cancellation, captured driver values, unchanged deadlines, net strengths, region settling, module precision, lifetime, overflow and explicit multiple-delay rejection |
 | `dynamic_delay_*.sv`, `blocking_real_delay.sv`, `unknown_delay_zero.sv`, `negative_*delay*.sv` | Runtime delay capture, module precision, real blocking captures, X/Z and negative packed delays, overflow diagnostics |
 | `*select_ranges.sv` | Ascending/nonzero ranges, array-element selection and invalid indices |
 | `array_indexed_*.sv` | Multidimensional element indexed selections, two-state/real conversion, limb boundaries and captured NBA masks |
 | `math_*.sv` | Runtime real math, numeric conversion, one-time argument evaluation and C domain results |
-| `realtime_*.sv` | Fractional time in each module's time unit |
+| `real_sensitivity.sv` | Typed real/shortreal wait and event changes, combinational propagation through real ports, unchanged-write suppression, signed zero and NaN policy |
+| `realtime_*.sv`, `time_query_*.sv` | Fractional time, rounded integer queries, mixed scopes, half-unit boundaries and `$stime` wrap |
+| `time_literal_exact_2009.sv` | SystemVerilog 2009 local `timeunit`/`timeprecision`, signed/sub-femtosecond unit-suffixed literals, and exact femtosecond delay rounding |
+| `finish_*.sv` | Nonreturning termination, pending-work discard, final-block boundary, forked-coroutine exit, diagnostic levels, and source-bearing argument rejection |

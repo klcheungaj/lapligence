@@ -486,9 +486,9 @@ endmodule
     //   t=4   x=22 (assigned)
     //   t=6   x=22 (deassigned: held)
     //   t=8   x=33 (re-assigned)
-    //   t=10  force wins (saved value: 33); the PCA write after src=44 at
-    //         t=12 is DROPPED while forced
-    //   t=14  forced x=ff displayed; release restores the saved 33
+    //   t=10  force wins while the PCA remains underneath; the PCA write after
+    //         src=44 at t=12 is DROPPED while forced
+    //   t=14  forced x=ff displayed; release resumes the latest PCA value 44
     //   t=16  src=55 re-drives x=55 through the still-enabled site
     //   t=18  released-then-driven x=55 displayed
     let expected = "x=22 t=4\nx=22 t=6\nx=33 t=8\nforced x=ff t=14\n\

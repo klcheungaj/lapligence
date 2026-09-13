@@ -29,3 +29,30 @@ fn realtime_preserves_fractional_time_in_the_calling_module_unit() {
         "parent 0.125\nchild 0.025\nparent 0.375\n",
     );
 }
+
+#[test]
+fn time_queries_round_in_the_calling_module_unit() {
+    run_case(
+        "time_query_rounding",
+        "slow time=2 stime=2 realtime=1.600\n\
+         fast time=16 stime=16 realtime=16.000\n",
+    );
+}
+
+#[test]
+fn time_queries_round_half_units_in_both_directions() {
+    run_case(
+        "time_query_boundaries",
+        "below time=1 stime=1 realtime=1.49\n\
+         half time=2 stime=2 realtime=1.50\n\
+         above time=2 stime=2 realtime=1.51\n",
+    );
+}
+
+#[test]
+fn time_queries_preserve_large_values_before_stime_wrap() {
+    run_case(
+        "time_query_wrap",
+        "large time=4294967298 stime=2 realtime=4294967298\n",
+    );
+}

@@ -14,6 +14,6 @@ module tb;
         a = 1; b = 1;
         #2 $strobe("10 %b", result);
         #2 $strobe("12 %b", result);
-        #1 $finish;
+        #1 $finish(0);
     end
 endmodule

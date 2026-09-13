@@ -59,6 +59,6 @@ module tb;
         dynamic_two.delete(); dynamic_four.delete(); keyed_two.delete(); keyed_four.delete();
         if (dynamic_two.size() !== 0 || dynamic_four.size() !== 0 ||
             keyed_two.num() !== 0 || keyed_four.num() !== 0) $display("FAIL deletion");
-        $display("PASS state storage"); $finish;
+        $display("PASS state storage"); $finish(0);
     end
 endmodule

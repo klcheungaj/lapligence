@@ -10,6 +10,6 @@ module tb;
         up[0][-4:-1]<=4'ha;
         up[0][3]<=1;
         #1 $display("write %h %h",down[0],up[0]);
-        $finish;
+        $finish(0);
     end
 endmodule

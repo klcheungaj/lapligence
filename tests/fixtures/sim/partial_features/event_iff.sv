@@ -12,6 +12,6 @@ module tb;
         clk=0; en=1'bx;
         #1 clk=1;
         #1 $display("unknown %0d",count);
-        $finish;
+        $finish(0);
     end
 endmodule

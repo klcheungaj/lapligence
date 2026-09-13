@@ -3,7 +3,7 @@
 
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output, Stdio};
+use std::process::{Command, ExitStatus, Output, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::thread;
@@ -195,6 +195,7 @@ pub(crate) fn run_executable_output(executable: &Path) -> Result<Output, String>
 }
 
 pub(crate) struct SimRun {
+    pub(crate) status: ExitStatus,
     pub(crate) stdout: String,
     pub(crate) stderr: String,
     pub(crate) warnings: Vec<String>,
@@ -202,6 +203,23 @@ pub(crate) struct SimRun {
 }
 
 pub(crate) fn run_generated_sim(sv: &str, top: &str, tag: &str) -> Result<SimRun, String> {
+    run_generated_sim_inner(sv, top, tag, true)
+}
+
+pub(crate) fn run_generated_sim_allow_failure(
+    sv: &str,
+    top: &str,
+    tag: &str,
+) -> Result<SimRun, String> {
+    run_generated_sim_inner(sv, top, tag, false)
+}
+
+fn run_generated_sim_inner(
+    sv: &str,
+    top: &str,
+    tag: &str,
+    require_success: bool,
+) -> Result<SimRun, String> {
     let _guard = lock_process_cwd();
     with_temp_cwd(tag, |dir| {
         let source = dir.join("tb.sv");
@@ -222,8 +240,16 @@ pub(crate) fn run_generated_sim(sv: &str, top: &str, tag: &str) -> Result<SimRun
         let executable =
             sim::build::build_model_cmake(dir, &[("model.c", generated.model_c.as_str())])
                 .map_err(|error| format!("cmake: {error}"))?;
-        let output = run_executable_output(&executable)?;
+        let output = run_command(&mut Command::new(&executable), MODEL_TIMEOUT)?;
+        if require_success && !output.status.success() {
+            return Err(format!(
+                "simulation exited with {:?}, stderr: {}",
+                output.status,
+                String::from_utf8_lossy(&output.stderr)
+            ));
+        }
         Ok(SimRun {
+            status: output.status,
             stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
             stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
             warnings: generated.warnings,

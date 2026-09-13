@@ -8,6 +8,6 @@ module tb;
     initial begin
         t(1);
         t(2);
-        $finish;
+        $finish(0);
     end
 endmodule

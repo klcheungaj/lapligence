@@ -9,7 +9,7 @@
 //! inlined wait-bearing expansion), break/continue in for/while/repeat/forever
 //! with pinned iteration counts, nesting rules (break exits the innermost
 //! loop only; disable exits the named level across any nesting), the clean
-//! codegen reject for cross-process disables, and optimization parity.
+//! cross-process block and named-fork cancellation, and optimization parity.
 //! Post-test loops are pinned for execute-once behavior and for `continue`
 //! evaluating the condition before the next iteration.
 //!
@@ -17,6 +17,8 @@
 //! tests run with the CWD pointed at a fresh temp dir (serialized through a
 //! mutex, to avoid process-wide CWD races).
 
+#[path = "support/sim_cli.rs"]
+mod sim_cli;
 #[path = "support/sim.rs"]
 mod sim_harness;
 
@@ -420,61 +422,77 @@ endmodule
     assert_eq!(stdout, "hits=4 out=32\n");
 }
 
-/// (f) Cross-process disable is rejected cleanly at codegen time naming the
-/// unsupported case (never mis-lowered into a same-function goto).  The
-/// target block belongs to ANOTHER initial, so it cannot be matched against
-/// the disabling process's enclosing scopes and codegen fails before any C
-/// is emitted.
+/// A cross-process disable must resume the victim after its named block,
+/// cancel the old timed wakeup, and leave the disabling process running.
 #[test]
-fn cross_process_disable_rejected() {
-    if !llg::sim::build::cmake_available() {
-        eprintln!("SKIP: cmake not available");
-        return;
-    }
-    let _guard = CWD_LOCK.lock().unwrap();
-    let sv = r#"module tb;
-    reg done;
-    initial begin : victim
-        done = 1'b1;
-    end
-    initial begin
-        disable victim;   // targets ANOTHER initial's block: not supported
-        $finish;
-    end
-endmodule
-"#;
-
-    let err = codegen_error(sv, "tb", "crossproc").expect("codegen should fail");
-    assert!(
-        err.contains("disable") && err.contains("not supported"),
-        "unexpected error message: {err}"
+fn cross_process_disable_resumes_after_target_block() {
+    sim_cli::run_case(
+        "regression_81",
+        "cross_process_disable",
+        "continued=1\nstill=1\n",
+        "",
+        &[],
     );
 }
 
-/// Disabling a named fork would require terminating a separate child
-/// coroutine, so the v1 codegen contract rejects it instead of lowering it as
-/// a same-process block jump.
+/// A child started from an inner named block may outlive that lexical scope
+/// through `join_none`. Disabling the still-active outer block must cancel the
+/// retained descendant as well, rather than losing the parent link at the
+/// inner block's normal exit.
 #[test]
-fn named_fork_disable_rejected() {
-    let _guard = CWD_LOCK.lock().unwrap();
-    let sv = r#"module tb;
-    initial begin
-        fork : workers
-            begin
-                #5 $display("WRONG: worker ran");
-            end
-        join_none
-        disable workers;
-        $display("after disable");
-        $finish;
-    end
-endmodule
-"#;
+fn cross_process_disable_cancels_detached_nested_descendant() {
+    sim_cli::run_case(
+        "regression_81",
+        "nested_detached_disable",
+        "child=0\n",
+        "",
+        &[],
+    );
+}
 
-    let err = codegen_error(sv, "tb", "namedfork").expect("codegen should fail");
-    assert!(
-        err.contains("disable of `workers`") && err.contains("named forks"),
-        "unexpected error message: {err}"
+/// Disabling a task target cancels every active invocation selected by its
+/// declaration/instance identity, while each caller continues immediately
+/// after its own task activation.
+#[test]
+fn cross_process_disable_cancels_multiple_task_activations() {
+    sim_cli::run_case(
+        "regression_81",
+        "multiple_task_disable",
+        "completed=2 body=0\nlate=2 body=0\n",
+        "",
+        &[],
+    );
+}
+
+/// A resolved target that has already returned is a no-op and must not stop
+/// the process that issued the disable.
+#[test]
+fn disable_inactive_target_is_noop() {
+    sim_cli::run_case("regression_81", "inactive_disable", "count=2\n", "", &[]);
+}
+
+/// Hierarchical disable uses the resolved module-instance identity: equal
+/// source names in two child instances must not alias one another.
+#[test]
+fn hierarchical_disable_selects_one_instance() {
+    sim_cli::run_case(
+        "regression_81",
+        "hierarchical_disable",
+        "u0=0 u1=1\n",
+        "",
+        &[],
+    );
+}
+
+/// A named-fork cancellation also covers children pending their first run.
+#[test]
+fn named_fork_disable_cancels_pending_child() {
+    sim_cli::run_case(
+        "regression_81",
+        "named_fork_disable",
+        "after disable\nno late worker\n",
+        "",
+        &[],
     );
 }
 

@@ -12,6 +12,6 @@ module tb;
         #1 $strobe("5 %b %b", result[128], result[0]);
         #1 source[65:62] = 4'b1xz0;
         #3 $strobe("states %b %b %b", result[128], result[65:62], result[0]);
-        #1 $finish;
+        #1 $finish(0);
     end
 endmodule
