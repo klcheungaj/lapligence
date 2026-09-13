@@ -93,7 +93,8 @@ typedef enum {
     W_EXPR,  // expressions and trigger-time qualifiers
     W_LEVEL,
     W_FORK,    // llg_join: waiting for a fork group
-    W_FORK_ALL // llg_wait_fork: waiting for all of the current proc's groups
+    W_FORK_ALL, // llg_wait_fork: waiting for all of the current proc's groups
+    W_PROCESS  // process::await: waiting for one stable process handle
 } llg_wait_kind_t;
 
 typedef struct llg_nba {
@@ -160,6 +161,7 @@ typedef struct llg_wait {
     sv4_t level_val;              // W_LEVEL
     llg_fork_group_t* grp;       // W_FORK: group being joined
     llg_proc_t* parent;          // W_FORK_ALL: the waiting proc itself
+    llg_process_handle_t* process_target; // W_PROCESS: retained await target
 } llg_wait_t;
 
 typedef struct llg_fork_child {
@@ -171,6 +173,7 @@ struct llg_fork_group {
     int join_kind;                // LLG_JOIN / LLG_JOIN_NONE / LLG_JOIN_ANY
     int remaining;                // live children; decremented on done AND on kill
     int resumed;                  // join_any: parent already woken
+    int terminal;                 // group was moved to the zombie list
     int started;                  // join_none children became eligible to run
     llg_proc_t* parent;          // spawning proc
     llg_fork_child_t* children;  // for disable_fork
@@ -225,6 +228,25 @@ struct llg_activation {
     int detached;
 };
 
+// Process handles intentionally outlive the coroutine they identify. The
+// runtime owns one reference while `proc` is live; HDL variables and await
+// registrations add their own references. `linked` is cleared during runtime
+// teardown so a handle released by generated model cleanup never touches a
+// zeroed scheduler context.
+struct llg_process_handle {
+    size_t refs;
+    llg_proc_t* proc;
+    int status;
+    int linked;
+    struct llg_process_handle* next;
+};
+
+typedef struct llg_process_local_ref {
+    llg_process_handle_t** slot;
+    llg_process_handle_t* value;
+    struct llg_process_local_ref* next;
+} llg_process_local_ref_t;
+
 struct llg_proc {
     aco_t* co;
     const char* name;
@@ -238,6 +260,12 @@ struct llg_proc {
     int has_wait_resume_region;
     int completed;
     int killed;
+    int suspended;
+    int wake_pending;
+    int queued;
+    int status;
+    llg_process_handle_t* handle;
+    llg_process_local_ref_t* process_locals;
     llg_proc_t* next_retired;
     llg_fork_group_t* fork_groups; // live groups spawned by this proc
     llg_fork_group_t* grp;         // group this proc belongs to (NULL top-level)
@@ -255,11 +283,16 @@ static llg_nba_t* new_nba(uint64_t ticks);
 static void enqueue_nba(llg_nba_t* n);
 static void deferred_trigger_source_change(sv4_t* sig, double* real);
 static void deferred_trigger_event(llg_event_object_t* ev);
+static void process_local_release_all(llg_proc_t* proc);
 static void start_pending_fork_children(llg_proc_t* parent);
 static void event_triggered_unlink(llg_wait_t* w);
 static void assertion_disable_signal_changed(sv4_t* signal);
 static void assertion_clock_signal_changed(sv4_t* signal, sv4_t old,
                                            sv4_t value);
+static void wake_proc(llg_proc_t* p);
+static void llg_kill_proc_tree(llg_proc_t* p);
+static void llg_kill_proc_tree_internal(llg_proc_t* p, int notify_parent);
+static void llg_fork_group_child_done(llg_fork_group_t* grp);
 
 static llg_frame_slot_t* frame_slot(llg_frame_t* frame, size_t slot) {
     if (!frame || slot >= frame->nslots) {
@@ -666,6 +699,7 @@ typedef struct {
     int program_processes;          // live program processes, including forks
     int program_completion_pending; // finish after current-slot work drains
     llg_proc_t* retired_procs; // cancelled coroutines awaiting a safe destroy point
+    llg_process_handle_t* process_handles; // stable identities for live/exited procs
     llg_fork_group_t* zombie_groups; // completed/killed groups awaiting teardown
     llg_activation_t* activations; // active named block/task invocations
     llg_monitor_state_t mon;   // the active $monitor (at most one)
@@ -686,6 +720,40 @@ typedef struct {
 } llg_rt_ctx_t;
 
 static llg_rt_ctx_t g;
+
+static void process_status_set(llg_proc_t* proc, int status) {
+    if (!proc) return;
+    proc->status = status;
+    if (proc->handle) proc->handle->status = status;
+}
+
+static void process_handle_unlink(llg_process_handle_t* handle) {
+    if (!handle || !handle->linked) return;
+    llg_process_handle_t** slot = &g.process_handles;
+    while (*slot) {
+        if (*slot == handle) {
+            *slot = handle->next;
+            handle->next = NULL;
+            handle->linked = 0;
+            return;
+        }
+        slot = &(*slot)->next;
+    }
+    handle->linked = 0;
+    handle->next = NULL;
+}
+
+static llg_process_handle_t* process_handle_new(llg_proc_t* proc) {
+    llg_process_handle_t* handle = (llg_process_handle_t*)llg_checked_calloc(
+        1, sizeof(*handle), "process handle");
+    handle->refs = 1; // process ownership
+    handle->proc = proc;
+    handle->status = LLG_PROCESS_RUNNING;
+    handle->linked = 1;
+    handle->next = g.process_handles;
+    g.process_handles = handle;
+    return handle;
+}
 
 // File descriptors deliberately live outside the scheduler context.  They
 // are ordinary host resources, while the generated model only carries the
@@ -1217,8 +1285,10 @@ static void enqueue_region(llg_proc_t* p, llg_region_t region) {
         g.finish = 1;
         return;
     }
+    if (p->queued) return;
     p->region = region;
     p->next_region = NULL;
+    p->queued = 1;
     llg_proc_queue_t* queue = &g.process_queues[region];
     if (queue->tail) {
         queue->tail->next_region = p;
@@ -1295,6 +1365,7 @@ static llg_proc_t* dequeue_region(llg_region_t region) {
     queue->head = p->next_region;
     if (!queue->head) queue->tail = NULL;
     p->next_region = NULL;
+    p->queued = 0;
     return p;
 }
 
@@ -1311,6 +1382,7 @@ static void remove_region_entry(llg_proc_t* p) {
                         queue->tail = q;
                 }
                 p->next_region = NULL;
+                p->queued = 0;
                 return;
             }
             pp = &(*pp)->next_region;
@@ -1405,6 +1477,7 @@ static void wake_proc(llg_proc_t* p) {
     free(w->real_last);
     free(w->evs);
     free(w->order_sequence);
+    llg_process_handle_t* process_target = w->process_target;
     w->specs = NULL;
     w->dependencies = NULL;
     w->last = NULL;
@@ -1414,11 +1487,22 @@ static void wake_proc(llg_proc_t* p) {
     w->n = 0;
     w->n_evs = 0;
     w->triggered_ev = NULL;
+    w->process_target = NULL;
     w->n_order = 0;
     w->order_next = 0;
     w->kind = W_NONE;
     g.wait_count--;
-    enqueue_region(p, w->resume_region);
+    if (process_target) llg_process_release(process_target);
+    if (p->suspended) {
+        // A suspended waiter keeps its condition registered until it fires;
+        // once it fires, retain only a pending wake so resume cannot enqueue
+        // the same continuation twice.
+        p->wake_pending = 1;
+        process_status_set(p, LLG_PROCESS_SUSPENDED);
+    } else {
+        process_status_set(p, LLG_PROCESS_RUNNING);
+        enqueue_region(p, w->resume_region);
+    }
 }
 
 static void register_wait(void) {
@@ -1439,6 +1523,7 @@ static void register_wait(void) {
     w->next = g.waiters;
     g.waiters = w;
     g.wait_count++;
+    if (!p->suspended) process_status_set(p, LLG_PROCESS_WAITING);
 }
 
 // ── Named events ──────────────────────────────────────────────────────────────
@@ -1505,13 +1590,49 @@ static void event_triggered_unlink(llg_wait_t* w) {
 static void llg_kill_proc_tree(llg_proc_t* p); // mutual recursion below
 static void llg_proc_entry(void);               // defined in the public API section
 
+static void process_handle_terminal(llg_proc_t* proc, int status) {
+    llg_process_handle_t* handle = proc ? proc->handle : NULL;
+    if (!handle) return;
+    proc->handle = NULL;
+    proc->status = status;
+    handle->proc = NULL;
+    handle->status = status;
+    // Awaiters are ordinary scheduler waiters. Snapshotting is unnecessary:
+    // wake_proc unlinks each matching entry from the head-linked list.
+    llg_wait_t* wait = g.waiters;
+    while (wait) {
+        llg_wait_t* next = wait->next;
+        if (wait->kind == W_PROCESS && wait->process_target == handle)
+            wake_proc(wait->proc);
+        wait = next;
+    }
+    // Drop the process-owned reference after all awaiters have been woken;
+    // each awaiter holds its own reference until wake/cancellation.
+    llg_process_release(handle);
+}
+
+static void process_handle_shutdown(llg_proc_t* proc) {
+    llg_process_handle_t* handle = proc ? proc->handle : NULL;
+    if (!handle) return;
+    proc->handle = NULL;
+    proc->status = handle->status == LLG_PROCESS_FINISHED
+                       ? LLG_PROCESS_FINISHED
+                       : LLG_PROCESS_KILLED;
+    handle->proc = NULL;
+    if (handle->status != LLG_PROCESS_FINISHED)
+        handle->status = LLG_PROCESS_KILLED;
+    llg_process_release(handle);
+}
+
 // Unlink a suspended or queued proc from every scheduler queue, free its
 // pending NBA list, and retire its storage. A named disable may cancel the
 // executing coroutine; its destruction is deferred until the scheduler resumes.
-static void llg_kill_proc(llg_proc_t* p) {
+static void llg_kill_proc(llg_proc_t* p, int notify_parent) {
     if (!p || p->killed) return;
     p->killed = 1;
     release_program_process(p);
+    p->suspended = 0;
+    p->wake_pending = 0;
     llg_nba_t* n = p->nba_head;
     while (n) {
         llg_nba_t* nx = n->next;
@@ -1539,6 +1660,7 @@ static void llg_kill_proc(llg_proc_t* p) {
         free(w->real_last);
         free(w->evs);
         free(w->order_sequence);
+        llg_process_handle_t* process_target = w->process_target;
         w->specs = NULL;
         w->dependencies = NULL;
         w->last = NULL;
@@ -1548,17 +1670,34 @@ static void llg_kill_proc(llg_proc_t* p) {
         w->n = 0;
         w->n_evs = 0;
         w->triggered_ev = NULL;
+        w->process_target = NULL;
         w->n_order = 0;
         w->order_next = 0;
         w->order_result_value = 0;
         w->kind = W_NONE;
         g.wait_count--;
+        if (process_target) llg_process_release(process_target);
     }
     remove_region_entry(p);
 
+    llg_fork_group_t* parent_group = p->grp;
+    if (parent_group) {
+        for (llg_fork_child_t* child = parent_group->children; child;
+             child = child->next) {
+            if (child->proc == p) {
+                child->proc = NULL;
+                break;
+            }
+        }
+        p->grp = NULL;
+    }
     activation_unwind_proc(p);
     llg_frame_release(p->frame);
     p->frame = NULL;
+    process_local_release_all(p);
+    process_handle_terminal(p, LLG_PROCESS_KILLED);
+    if (notify_parent && parent_group && !parent_group->terminal)
+        llg_fork_group_child_done(parent_group);
     unregister_proc(p);
     p->next_retired = g.retired_procs;
     g.retired_procs = p;
@@ -1593,12 +1732,13 @@ static void llg_kill_proc_groups(llg_proc_t* p) {
         while (c) {
             llg_fork_child_t* next_c = c->next;
             if (c->proc) {
-                llg_kill_proc_tree(c->proc);
+                llg_kill_proc_tree_internal(c->proc, 0);
                 c->proc = NULL; // freed inline; teardown skips it
             }
             c = next_c;
         }
         grp->remaining = 0;
+        grp->terminal = 1;
         grp->next_g = g.zombie_groups;
         g.zombie_groups = grp;
         grp = next_g;
@@ -1608,14 +1748,160 @@ static void llg_kill_proc_groups(llg_proc_t* p) {
 
 // Kill `p` and all of its descendants.
 static void llg_kill_proc_tree(llg_proc_t* p) {
+    llg_kill_proc_tree_internal(p, 1);
+}
+
+static void llg_kill_proc_tree_internal(llg_proc_t* p, int notify_parent) {
     llg_kill_proc_groups(p);
-    llg_kill_proc(p);
+    llg_kill_proc(p, notify_parent);
+}
+
+llg_process_handle_t* llg_process_self(void) {
+    llg_proc_t* proc = llg_current();
+    return proc ? proc->handle : NULL;
+}
+
+int llg_process_status(const llg_process_handle_t* handle) {
+    return handle ? handle->status : LLG_PROCESS_KILLED;
+}
+
+void llg_process_retain(llg_process_handle_t* handle) {
+    if (!handle) return;
+    if (handle->refs == SIZE_MAX) {
+        fprintf(stderr, "llg: process handle reference count overflow\n");
+        abort();
+    }
+    handle->refs++;
+}
+
+void llg_process_release(llg_process_handle_t* handle) {
+    if (!handle) return;
+    if (handle->refs == 0) {
+        fprintf(stderr, "llg: process handle reference count underflow\n");
+        abort();
+    }
+    handle->refs--;
+    if (handle->refs != 0) return;
+    process_handle_unlink(handle);
+    free(handle);
+}
+
+static llg_process_local_ref_t* process_local_find(llg_proc_t* proc,
+                                                    llg_process_handle_t** slot) {
+    for (llg_process_local_ref_t* local = proc ? proc->process_locals : NULL;
+         local; local = local->next) {
+        if (local->slot == slot) return local;
+    }
+    return NULL;
+}
+
+void llg_process_local_register(llg_process_handle_t** slot) {
+    llg_proc_t* proc = llg_current();
+    if (!proc || !slot || !region_can_mutate("process local registration")) return;
+    llg_process_local_ref_t* local = process_local_find(proc, slot);
+    if (local) {
+        // A repeated declaration is a fresh automatic lifetime (for example,
+        // an always-loop iteration). Drop the previous reference and clear
+        // the caller's slot before a declaration initializer assigns again.
+        llg_process_release(local->value);
+        local->value = NULL;
+        *slot = NULL;
+        return;
+    }
+    local = (llg_process_local_ref_t*)llg_checked_calloc(
+        1, sizeof(*local), "process local reference");
+    local->slot = slot;
+    local->next = proc->process_locals;
+    proc->process_locals = local;
+}
+
+static void process_local_release_all(llg_proc_t* proc) {
+    while (proc && proc->process_locals) {
+        llg_process_local_ref_t* local = proc->process_locals;
+        proc->process_locals = local->next;
+        llg_process_release(local->value);
+        free(local);
+    }
+}
+
+void llg_process_assign(llg_process_handle_t** target,
+                        llg_process_handle_t* source) {
+    if (!target || !region_can_mutate("process handle write")) return;
+    if (source) llg_process_retain(source);
+    if (*target) llg_process_release(*target);
+    *target = source;
+    llg_proc_t* proc = llg_current();
+    llg_process_local_ref_t* local = process_local_find(proc, target);
+    if (local) local->value = source;
+}
+
+void llg_process_kill(llg_process_handle_t* handle) {
+    if (!handle || !handle->proc || !region_can_mutate("process control")) return;
+    llg_proc_t* target = handle->proc;
+    llg_proc_t* current = llg_current();
+    llg_kill_proc_tree(target);
+    reap_retired_procs();
+    if (target == current) {
+        // The current coroutine cannot be destroyed until control returns to
+        // the scheduler; the retired list handles that safe-point teardown.
+        aco_exit();
+        abort();
+    }
+}
+
+void llg_process_suspend(llg_process_handle_t* handle) {
+    if (!handle || !handle->proc || !region_can_mutate("process suspension")) return;
+    llg_proc_t* target = handle->proc;
+    if (target->suspended || target->killed || target->completed) return;
+    target->suspended = 1;
+    target->wake_pending = 0;
+    remove_region_entry(target);
+    process_status_set(target, LLG_PROCESS_SUSPENDED);
+    if (target == llg_current()) {
+        // Suspending is a blocking control for join_none eligibility, but the
+        // wait itself is represented by the stable handle state rather than a
+        // second scheduler waiter.
+        start_pending_fork_children(target);
+        aco_yield();
+    }
+}
+
+void llg_process_resume(llg_process_handle_t* handle) {
+    if (!handle || !handle->proc || !region_can_mutate("process resumption")) return;
+    llg_proc_t* target = handle->proc;
+    if (!target->suspended || target->killed || target->completed) return;
+    target->suspended = 0;
+    if (target->wait.kind != W_NONE) {
+        // The outstanding condition remains registered and must be satisfied
+        // before this process becomes runnable again.
+        process_status_set(target, LLG_PROCESS_WAITING);
+        return;
+    }
+    if (target->wake_pending) target->wake_pending = 0;
+    process_status_set(target, LLG_PROCESS_RUNNING);
+    enqueue_region(target, target->region);
+}
+
+void llg_process_await(llg_process_handle_t* handle) {
+    llg_proc_t* current = llg_current();
+    if (!current || !region_can_mutate("process await scheduling")) return;
+    if (!handle || !handle->proc || handle->proc == current) return;
+    llg_wait_t* wait = &current->wait;
+    wait->kind = W_PROCESS;
+    wait->resume_region = region_is_reactive(current->region)
+                              ? LLG_REGION_REACTIVE
+                              : LLG_REGION_ACTIVE;
+    wait->process_target = handle;
+    llg_process_retain(handle);
+    register_wait();
+    aco_yield();
 }
 
 // One child of `grp` finished (llg_proc_done).  Decrement the live count,
 // wake a join/wait_fork waiter whose condition is now met, and move the group
 // to the zombie list once the last child is done.
 static void llg_fork_group_child_done(llg_fork_group_t* grp) {
+    if (!grp || grp->terminal || grp->remaining <= 0) return;
     llg_proc_t* parent = grp->parent;
     grp->remaining--;
     int wake = 0;
@@ -1631,6 +1917,7 @@ static void llg_fork_group_child_done(llg_fork_group_t* grp) {
         wake_proc(parent);
     }
     if (grp->remaining == 0) {
+        grp->terminal = 1;
         // Unlink from the parent's live-group list; the group and its child
         // list are freed by process_zombie_groups at the next safe point.
         // join_any / join_none groups stay live until the last child finishes
@@ -1728,6 +2015,8 @@ static llg_proc_t* llg_fork_impl(void (*fn)(llg_proc_t*), const char* name,
     p->fn = fn;
     p->grp = grp;
     p->frame = frame;
+    p->handle = process_handle_new(p);
+    p->status = LLG_PROCESS_RUNNING;
     llg_frame_retain(frame);
     llg_rng_state_child(&grp->parent->rng, &p->rng);
     p->program = grp->parent->program;
@@ -1769,6 +2058,7 @@ void llg_join(llg_fork_group_t* grp) {
         llg_fork_group_t** pp = &grp->parent->fork_groups;
         while (*pp && *pp != grp) pp = &(*pp)->next_g;
         if (*pp) *pp = grp->next_g;
+        grp->terminal = 1;
         grp->next_g = g.zombie_groups;
         g.zombie_groups = grp;
         return;
@@ -1851,12 +2141,15 @@ static void llg_kill_named_group(llg_fork_group_t* grp) {
     llg_fork_child_t* child = grp->children;
     while (child) {
         if (child->proc) {
-            llg_kill_proc_tree(child->proc);
+            // The group is being cancelled as a unit. Suppress per-child
+            // completion accounting until the group is detached below.
+            llg_kill_proc_tree_internal(child->proc, 0);
             child->proc = NULL;
         }
         child = child->next;
     }
     grp->remaining = 0;
+    grp->terminal = 1;
     llg_fork_group_t** pp = &parent->fork_groups;
     while (*pp && *pp != grp) pp = &(*pp)->next_g;
     if (*pp == grp) *pp = grp->next_g;
@@ -2835,9 +3128,13 @@ static void free_proc_storage(llg_proc_t* p) {
     free(p->wait.real_last);
     free(p->wait.evs);
     free(p->wait.order_sequence);
+    llg_process_release(p->wait.process_target);
+    p->wait.process_target = NULL;
     activation_unwind_proc(p);
     llg_frame_release(p->frame);
     p->frame = NULL;
+    process_local_release_all(p);
+    process_handle_shutdown(p);
     if (p->co) aco_destroy(p->co);
     free(p);
 }
@@ -2956,6 +3253,16 @@ void llg_rt_cleanup(void) {
         if (g.all_procs[i]) free_proc_storage(g.all_procs[i]);
     }
     reap_retired_procs();
+    // External HDL references may keep terminal process identities alive, but
+    // no handle may retain a pointer into the context being reset below.
+    llg_process_handle_t* handle = g.process_handles;
+    while (handle) {
+        llg_process_handle_t* next = handle->next;
+        handle->linked = 0;
+        handle->next = NULL;
+        handle = next;
+    }
+    g.process_handles = NULL;
     if (g.share_stack) aco_share_stack_destroy(g.share_stack);
     if (g.main_co) aco_destroy(g.main_co);
     aco_gtls_co = NULL;
@@ -3784,6 +4091,8 @@ static llg_proc_t* spawn_in_region(void (*fn)(llg_proc_t*), const char* name,
     p->program = program;
     p->program_live = program;
     if (program) g.program_processes++;
+    p->handle = process_handle_new(p);
+    p->status = LLG_PROCESS_RUNNING;
     llg_rng_state_child(&g.rng_root, &p->rng);
     p->budget_time = g.now;
     p->region = region;
@@ -3829,9 +4138,12 @@ _Noreturn void llg_proc_done(llg_proc_t* self) {
     // and frame; their copied captures remain retained by the child process.
     start_pending_fork_children(self);
     self->completed = 1;
+    process_status_set(self, LLG_PROCESS_FINISHED);
+    process_handle_terminal(self, LLG_PROCESS_FINISHED);
     activation_unwind_proc(self);
     llg_frame_release(self->frame);
     self->frame = NULL;
+    process_local_release_all(self);
     if (self->grp) llg_fork_group_child_done(self->grp);
     release_program_process(self);
     aco_exit(); // never returns
@@ -7886,6 +8198,8 @@ void llg_rt_run_finals(void) {
             1, sizeof(llg_proc_t), "final process");
         p->name = llg_finals[i].name;
         p->fn = llg_finals[i].fn;
+        p->handle = process_handle_new(p);
+        p->status = LLG_PROCESS_RUNNING;
         p->budget_time = g.now;
         p->region = LLG_REGION_POSTPONED;
         p->co = aco_create(g.main_co, g.share_stack, 1u << 20, llg_proc_entry, p);

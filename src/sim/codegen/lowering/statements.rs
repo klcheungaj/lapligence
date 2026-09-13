@@ -529,6 +529,20 @@ impl EmitCtx<'_, '_> {
                 if self.func.is_none() {
                     for child in &children {
                         if matches!(self.cg.kind(*child), NodeKind::Var { .. }) {
+                            if matches!(
+                                self.cg.kind(*child),
+                                NodeKind::Var { ty }
+                                    if ty.kind == "class"
+                                        && ty.type_name.as_deref() == Some("process")
+                            ) {
+                                match self.cg.collect_process_local(&self.path, *child)? {
+                                    ProcessTarget::Local(name) => body.push(IrStmt::Object(
+                                        IrObjectStmt::ProcessDeclareLocal(name, None),
+                                    )),
+                                    ProcessTarget::Object(_) => {}
+                                }
+                                continue;
+                            }
                             if matches!(self.cg.kind(*child), NodeKind::Var { ty } if ty.kind == "string")
                                 && self.cg.is_foreach_iterator(*child)
                             {
@@ -902,6 +916,23 @@ impl EmitCtx<'_, '_> {
                 callee,
                 ..
             } => {
+                if matches!(name.as_str(), "suspend" | "await")
+                    && self.cg.is_process_expr(&self.path, *receiver)
+                {
+                    if self.in_final {
+                        return Err(format!(
+                            "process method `{name}` inside a final block in `{}` is not allowed",
+                            self.path
+                        ));
+                    }
+                    if self.timing_forbidden() {
+                        return Err(format!(
+                            "process method `{name}` inside a function body in `{}` is not supported",
+                            self.path
+                        ));
+                    }
+                    self.saw_wait = true;
+                }
                 if let Some(statement) = self.cg.lower_container_method(&self.path, h)? {
                     Ok(vec![statement])
                 } else if self.cg.is_class_method_call(h) {
@@ -943,6 +974,37 @@ impl EmitCtx<'_, '_> {
             return match self.cg.db.variable_lifetime(declaration) {
                 VariableLifetime::Static => Ok(Vec::new()),
                 VariableLifetime::Automatic => {
+                    if matches!(
+                        self.cg.kind(declaration),
+                        NodeKind::Var { ty }
+                            if ty.kind == "class" && ty.type_name.as_deref() == Some("process")
+                    ) {
+                        let name = self
+                            .func
+                            .as_ref()
+                            .and_then(|function| function.process_read.get(&declaration))
+                            .and_then(|value| match value {
+                                crate::sim::ir::IrProcessExpr::LocalRead(name) => {
+                                    Some(name.clone())
+                                }
+                                _ => None,
+                            })
+                            .ok_or_else(|| {
+                                format!(
+                                    "automatic process variable `{}` has no local storage",
+                                    self.cg.node(declaration).name
+                                )
+                            })?;
+                        let init = self
+                            .cg
+                            .db
+                            .var_initializer(declaration)
+                            .map(|initializer| self.cg.lower_process(&self.path, initializer))
+                            .transpose()?;
+                        return Ok(vec![IrStmt::Object(IrObjectStmt::ProcessDeclareLocal(
+                            name, init,
+                        ))]);
+                    }
                     if matches!(self.cg.kind(declaration), NodeKind::Var { ty } if is_handle_kind(&ty.kind))
                     {
                         let name = self
@@ -1044,6 +1106,28 @@ impl EmitCtx<'_, '_> {
                     self.path
                 )),
             };
+        }
+
+        if matches!(
+            self.cg.kind(declaration),
+            NodeKind::Var { ty }
+                if ty.kind == "class" && ty.type_name.as_deref() == Some("process")
+        ) {
+            let target = self.cg.collect_process_local(&self.path, declaration)?;
+            let init = self
+                .cg
+                .db
+                .var_initializer(declaration)
+                .map(|initializer| self.cg.lower_process(&self.path, initializer))
+                .transpose()?;
+            return Ok(match target {
+                ProcessTarget::Local(name) => vec![IrStmt::Object(
+                    IrObjectStmt::ProcessDeclareLocal(name, init),
+                )],
+                ProcessTarget::Object(index) => init
+                    .map(|value| vec![IrStmt::Object(IrObjectStmt::ProcessAssign(index, value))])
+                    .unwrap_or_default(),
+            });
         }
 
         let info = self.cg.collect_loop_var(&self.path, declaration)?;
@@ -5090,6 +5174,7 @@ impl EmitCtx<'_, '_> {
         // model-global storage below even in an automatic task.
         let mut locals: HashMap<NodeId, (String, u32, bool, bool, bool)> = HashMap::new();
         let mut chandle_locals: HashMap<NodeId, String> = HashMap::new();
+        let mut process_locals: HashMap<NodeId, String> = HashMap::new();
         let mut local_seq = 0usize;
         let prefix = format!("_i{}", h.0);
         self.cg.collect_func_locals(
@@ -5097,6 +5182,7 @@ impl EmitCtx<'_, '_> {
             callee_inst,
             &mut locals,
             &mut chandle_locals,
+            &mut process_locals,
             &mut local_seq,
             &prefix,
         )?;
@@ -5113,6 +5199,8 @@ impl EmitCtx<'_, '_> {
         let mut persistent = HashMap::new();
         let mut chandle_read = HashMap::new();
         let mut chandle_write = HashMap::new();
+        let mut process_read = HashMap::new();
+        let mut process_write = HashMap::new();
         let mut string_read = HashMap::new();
         let mut string_write = HashMap::new();
         let mut string_addr = HashMap::new();
@@ -5608,6 +5696,14 @@ impl EmitCtx<'_, '_> {
             }
         }
 
+        for (local, cname) in &process_locals {
+            process_read.insert(
+                *local,
+                crate::sim::ir::IrProcessExpr::LocalRead(cname.clone()),
+            );
+            process_write.insert(*local, ProcessTarget::Local(cname.clone()));
+        }
+
         for (local, (cname, ..)) in &locals {
             if matches!(self.cg.kind(*local), NodeKind::Var { ty } if ty.kind == "string")
                 && self.cg.db.variable_lifetime(*local) == VariableLifetime::Automatic
@@ -5715,6 +5811,8 @@ impl EmitCtx<'_, '_> {
             persistent,
             chandle_read,
             chandle_write,
+            process_read,
+            process_write,
             string_read,
             string_write,
             string_addr,

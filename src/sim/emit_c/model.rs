@@ -86,6 +86,7 @@ fn render_model(execution: &ExecutionModel, capacity: u32) -> Result<String, Str
         let ty = match object.ty {
             crate::sim::ir::IrObjectType::String => "llg_string_t",
             crate::sim::ir::IrObjectType::Chandle => "void *",
+            crate::sim::ir::IrObjectType::Process => "llg_process_handle_t *",
         };
         out.push_str(&format!("static {ty} {} = {{0}};\n", object.c_name));
     }
@@ -1090,8 +1091,15 @@ fn render_main(execution: &ExecutionModel) -> Result<String, String> {
     }
     out.push_str("    }\n");
     for object in &model.objects {
-        if object.ty == crate::sim::ir::IrObjectType::String {
-            out.push_str(&format!("    llg_string_destroy(&{});\n", object.c_name));
+        match object.ty {
+            crate::sim::ir::IrObjectType::String => {
+                out.push_str(&format!("    llg_string_destroy(&{});\n", object.c_name));
+            }
+            crate::sim::ir::IrObjectType::Process => {
+                out.push_str(&format!("    llg_process_release({});\n", object.c_name));
+                out.push_str(&format!("    {} = NULL;\n", object.c_name));
+            }
+            crate::sim::ir::IrObjectType::Chandle => {}
         }
     }
     for container in &model.containers {

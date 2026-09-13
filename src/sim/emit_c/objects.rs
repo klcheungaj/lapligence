@@ -286,6 +286,30 @@ pub(super) fn chandle(ctx: &RCtx<'_>, value: &IrChandleExpr) -> Result<String, S
     })
 }
 
+pub(super) fn process(ctx: &RCtx<'_>, value: &IrProcessExpr) -> Result<String, String> {
+    Ok(match value {
+        IrProcessExpr::Null => "NULL".to_owned(),
+        IrProcessExpr::SelfHandle => "llg_process_self()".to_owned(),
+        IrProcessExpr::Read(index) => ctx.model.objects[*index].c_name.clone(),
+        IrProcessExpr::LocalRead(name) => name.clone(),
+        IrProcessExpr::FormalRead(index) => {
+            let Some(function) = ctx.func else {
+                return Ok(format!("a{index}"));
+            };
+            let Some(formal) = function.formals.get(*index) else {
+                return Ok(format!("a{index}"));
+            };
+            if formal.is_ref() {
+                format!("*r{index}")
+            } else if formal.is_out {
+                format!("*o{index}")
+            } else {
+                format!("a{index}")
+            }
+        }
+    })
+}
+
 fn string_inside(
     ctx: &RCtx<'_>,
     value: &IrStringExpr,
@@ -365,6 +389,16 @@ pub(super) fn query(
             "sv4_from_u64({} == {}, 1, 0)",
             chandle(ctx, a)?,
             chandle(ctx, b)?
+        ),
+        IrObjectQuery::ProcessEq(a, b) => format!(
+            "sv4_from_u64({} == {}, 1, 0)",
+            process(ctx, a)?,
+            process(ctx, b)?
+        ),
+        IrObjectQuery::ProcessStatus(value) => format!(
+            "sv4_from_u64((uint64_t)llg_process_status({}), {width}, {})",
+            process(ctx, value)?,
+            u8::from(signed)
         ),
         IrObjectQuery::ArrayQuery(query) => array_query(ctx, query, width, signed)?,
     })
@@ -596,6 +630,38 @@ pub(super) fn statement(ctx: &RCtx<'_>, operation: &IrObjectStmt) -> Result<Stri
         ),
         IrObjectStmt::ChandleAssignLocal(target, value) => {
             format!("    {target} = {};\n", chandle(ctx, value)?)
+        }
+        IrObjectStmt::ProcessDeclareLocal(name, value) => {
+            let mut out = format!(
+                "    llg_process_handle_t *{name} = NULL;\n    llg_process_local_register(&{name});\n"
+            );
+            if let Some(value) = value {
+                out.push_str(&format!(
+                    "    llg_process_assign(&{name}, {});\n",
+                    process(ctx, value)?
+                ));
+            }
+            out
+        }
+        IrObjectStmt::ProcessAssign(index, value) => format!(
+            "    llg_process_assign(&{}, {});\n",
+            ctx.model.objects[*index].c_name,
+            process(ctx, value)?
+        ),
+        IrObjectStmt::ProcessAssignLocal(target, value) => format!(
+            "    llg_process_assign(&{target}, {});\n",
+            process(ctx, value)?
+        ),
+        IrObjectStmt::ProcessControl { op, target } => {
+            let function = match op {
+                IrProcessControl::Kill => "llg_process_kill",
+                IrProcessControl::Suspend => "llg_process_suspend",
+                IrProcessControl::Resume => "llg_process_resume",
+            };
+            format!("    {function}({});\n", process(ctx, target)?)
+        }
+        IrObjectStmt::ProcessAwait(target) => {
+            format!("    llg_process_await({});\n", process(ctx, target)?)
         }
     })
 }

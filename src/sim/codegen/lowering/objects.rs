@@ -2,7 +2,7 @@
 use super::*;
 use crate::sim::ir::{
     IrChandleExpr, IrDisplayArg, IrEnumMember, IrEnumMethod, IrEnumQuery, IrExpr, IrObject,
-    IrObjectQuery, IrObjectStmt, IrObjectType, IrStringExpr,
+    IrObjectQuery, IrObjectStmt, IrObjectType, IrProcessControl, IrProcessExpr, IrStringExpr,
 };
 
 impl Codegen<'_> {
@@ -427,6 +427,7 @@ impl Codegen<'_> {
             NodeKind::Var { ty } => match ty.kind.as_str() {
                 "string" => IrObjectType::String,
                 "chandle" => IrObjectType::Chandle,
+                "class" if ty.type_name.as_deref() == Some("process") => IrObjectType::Process,
                 "class" => IrObjectType::Chandle,
                 _ => return Ok(false),
             },
@@ -460,6 +461,11 @@ impl Codegen<'_> {
                             .push((node, index, init, path.to_owned()));
                     } else if self.lower_chandle(path, init)? != IrChandleExpr::Null {
                         return Err("chandle declaration initializer must be null".to_owned());
+                    }
+                }
+                IrObjectType::Process => {
+                    if self.lower_process(path, init)? != IrProcessExpr::Null {
+                        return Err("process declaration initializer must be null".to_owned());
                     }
                 }
             }
@@ -652,6 +658,193 @@ impl Codegen<'_> {
                 .is_some_and(|meta| meta.ret_chandle);
         }
         false
+    }
+
+    /// Return whether an expression denotes a SystemVerilog `process`
+    /// handle. Process values are intentionally kept out of packed lowering;
+    /// callers must route them through [`lower_process`].
+    pub(super) fn is_process_expr(&self, path: &str, node: NodeId) -> bool {
+        if matches!(
+            self.kind(node),
+            NodeKind::Expr(ExprKind::Constant {
+                const_type: ConstantType::Null,
+                ..
+            })
+        ) || self.is_process_self_call(node)
+        {
+            return true;
+        }
+        let target = match self.kind(node) {
+            NodeKind::Expr(ExprKind::Ref { target }) => *target,
+            _ => Some(node),
+        };
+        if let Some(function) = &self.func {
+            if target.is_some_and(|target| function.process_read.contains_key(&target)) {
+                return true;
+            }
+            if matches!(
+                self.kind(node),
+                NodeKind::Expr(ExprKind::Ref { target: None })
+            ) && function
+                .process_read
+                .keys()
+                .any(|target| self.node(*target).name == self.node(node).name)
+            {
+                return true;
+            }
+        }
+        if self.lexical_proc_process_decl(node).is_some() {
+            return true;
+        }
+        if target.is_some_and(|target| {
+            matches!(
+                self.kind(target),
+                NodeKind::Var { ty }
+                    if ty.kind == "class" && ty.type_name.as_deref() == Some("process")
+            )
+        }) {
+            return true;
+        }
+        self.object_of(path, node)
+            .is_some_and(|index| self.model.objects[index].ty == IrObjectType::Process)
+    }
+
+    fn process_target_node(&self, node: NodeId) -> Option<NodeId> {
+        match self.kind(node) {
+            NodeKind::Expr(ExprKind::Ref { target }) => *target,
+            _ => Some(node),
+        }
+    }
+
+    /// Lower a process handle expression while preserving its stable runtime
+    /// identity. Only null, self, declared process objects and mapped locals
+    /// are legal sources at this stage.
+    pub(super) fn lower_process(
+        &mut self,
+        path: &str,
+        node: NodeId,
+    ) -> Result<IrProcessExpr, String> {
+        if matches!(
+            self.kind(node),
+            NodeKind::Expr(ExprKind::Constant {
+                const_type: ConstantType::Null,
+                ..
+            })
+        ) {
+            return Ok(IrProcessExpr::Null);
+        }
+        if self.is_process_self_call(node) {
+            return Ok(IrProcessExpr::SelfHandle);
+        }
+        let target = self.process_target_node(node);
+        if let Some(function) = &self.func {
+            if let Some(value) = target.and_then(|target| function.process_read.get(&target)) {
+                return Ok(value.clone());
+            }
+            if matches!(
+                self.kind(node),
+                NodeKind::Expr(ExprKind::Ref { target: None })
+            ) {
+                if let Some((_, value)) = function
+                    .process_read
+                    .iter()
+                    .find(|(target, _)| self.node(**target).name == self.node(node).name)
+                {
+                    return Ok(value.clone());
+                }
+            }
+        }
+        if let Some(variable) = self.lexical_proc_process_decl(node) {
+            if let Some(name) = self.proc_process_local_name(variable) {
+                return Ok(IrProcessExpr::LocalRead(name.to_owned()));
+            }
+            if self.db.variable_lifetime(variable) == VariableLifetime::Static {
+                let index = self.collect_process_static_object(path, variable)?;
+                return Ok(IrProcessExpr::Read(index));
+            }
+        }
+        if let Some(index) = self.object_of(path, node) {
+            if self.model.objects[index].ty == IrObjectType::Process {
+                return Ok(IrProcessExpr::Read(index));
+            }
+        }
+        if let Some(variable) = target.filter(|target| {
+            matches!(
+                self.kind(*target),
+                NodeKind::Var { ty }
+                    if ty.kind == "class" && ty.type_name.as_deref() == Some("process")
+            )
+        }) {
+            if let Some(name) = self.proc_process_local_name(variable) {
+                return Ok(IrProcessExpr::LocalRead(name.to_owned()));
+            }
+            if self.db.variable_lifetime(variable) == VariableLifetime::Static {
+                let index = self.collect_process_static_object(path, variable)?;
+                return Ok(IrProcessExpr::Read(index));
+            }
+        }
+        Err(format!(
+            "process handle `{}` cannot be resolved in `{path}`",
+            self.node(node).name
+        ))
+    }
+
+    /// Resolve a process lvalue and retain the same storage identity for
+    /// assignment, method control, and later status/await operations.
+    pub(super) fn lower_process_lvalue(
+        &mut self,
+        path: &str,
+        node: NodeId,
+    ) -> Result<(ProcessTarget, IrProcessExpr), String> {
+        let read = self.lower_process(path, node)?;
+        let target = self.process_target_node(node);
+        if let Some(function) = &self.func {
+            if let Some(value) = target.and_then(|target| function.process_write.get(&target)) {
+                return Ok((value.clone(), read));
+            }
+            if matches!(
+                self.kind(node),
+                NodeKind::Expr(ExprKind::Ref { target: None })
+            ) {
+                if let Some((_, value)) = function
+                    .process_write
+                    .iter()
+                    .find(|(target, _)| self.node(**target).name == self.node(node).name)
+                {
+                    return Ok((value.clone(), read));
+                }
+            }
+        }
+        if let Some(variable) = self.lexical_proc_process_decl(node) {
+            if let Some(name) = self.proc_process_local_name(variable) {
+                return Ok((ProcessTarget::Local(name.to_owned()), read));
+            }
+            if self.db.variable_lifetime(variable) == VariableLifetime::Static {
+                let index = self.collect_process_static_object(path, variable)?;
+                return Ok((ProcessTarget::Object(index), read));
+            }
+        }
+        if let Some(index) = self.object_of(path, node) {
+            if self.model.objects[index].ty == IrObjectType::Process {
+                return Ok((ProcessTarget::Object(index), read));
+            }
+        }
+        if let Some(variable) = target.filter(|target| {
+            matches!(
+                self.kind(*target),
+                NodeKind::Var { ty }
+                    if ty.kind == "class" && ty.type_name.as_deref() == Some("process")
+            )
+        }) {
+            if let Some(name) = self.proc_process_local_name(variable) {
+                return Ok((ProcessTarget::Local(name.to_owned()), read));
+            }
+            if self.db.variable_lifetime(variable) == VariableLifetime::Static {
+                let index = self.collect_process_static_object(path, variable)?;
+                return Ok((ProcessTarget::Object(index), read));
+            }
+        }
+        Err("process output/ref actual must be a named process lvalue".to_owned())
     }
 
     /// Return the owned metadata for an expression whose resolved type is an
@@ -1380,6 +1573,22 @@ impl Codegen<'_> {
                 name,
                 receiver: Some(receiver),
                 ..
+            } if name == "status" && self.is_process_expr(path, *receiver) => {
+                let receiver = *receiver;
+                let args = self.node(node).children.get(1..).unwrap_or_default();
+                if !args.is_empty() {
+                    return Err(format!("process status takes no arguments in `{path}`"));
+                }
+                return Ok(Some(object_query(
+                    IrObjectQuery::ProcessStatus(self.lower_process(path, receiver)?),
+                    32,
+                    false,
+                )));
+            }
+            NodeKind::MethodCall {
+                name,
+                receiver: Some(receiver),
+                ..
             } if self.is_string_expr(path, *receiver) => {
                 let name = name.clone();
                 let receiver = *receiver;
@@ -1430,6 +1639,41 @@ impl Codegen<'_> {
             {
                 let op = *op;
                 let (a, b) = (operands[0], operands[1]);
+                let is_process = [a, b].iter().any(|node| self.is_process_expr(path, *node));
+                if is_process {
+                    if !matches!(
+                        op,
+                        Operation::Equal
+                            | Operation::NotEqual
+                            | Operation::CaseEqual
+                            | Operation::CaseNotEqual
+                    ) {
+                        return Err("operator is not valid for process handle".to_owned());
+                    }
+                    let value = object_query(
+                        IrObjectQuery::ProcessEq(
+                            self.lower_process(path, a)?,
+                            self.lower_process(path, b)?,
+                        ),
+                        1,
+                        false,
+                    );
+                    return Ok(Some(
+                        if matches!(op, Operation::NotEqual | Operation::CaseNotEqual) {
+                            IrExpr::new(
+                                IrExprKind::Un {
+                                    op: IrUnOp::LogNot,
+                                    a: Box::new(value),
+                                },
+                                1,
+                                false,
+                                None,
+                            )
+                        } else {
+                            value
+                        },
+                    ));
+                }
                 let is_chandle = [a, b].iter().any(|node| self.is_chandle_expr(path, *node));
                 if is_chandle {
                     if matches!(op, Operation::LogicalAnd | Operation::LogicalOr) {
@@ -1546,6 +1790,10 @@ impl Codegen<'_> {
             NodeKind::Expr(ExprKind::Ref { target }) => *target,
             _ => Some(object_node),
         };
+        let process_target = self
+            .is_process_expr(path, object_node)
+            .then(|| self.lower_process_lvalue(path, object_node))
+            .transpose()?;
         let chandle_target = self.func.as_ref().and_then(|function| {
             target_node
                 .and_then(|target| function.chandle_write.get(&target).cloned())
@@ -1600,7 +1848,11 @@ impl Codegen<'_> {
         if string_const_ref && string_target.is_none() {
             return Err("cannot mutate a const-ref string formal".to_owned());
         }
-        if index.is_none() && chandle_target.is_none() && string_target.is_none() {
+        if index.is_none()
+            && process_target.is_none()
+            && chandle_target.is_none()
+            && string_target.is_none()
+        {
             return Ok(None);
         }
         if !blocking {
@@ -1611,6 +1863,17 @@ impl Codegen<'_> {
         }
         if op != Operation::Assignment {
             return Err("compound assignment to non-integral storage is unsupported".to_owned());
+        }
+        if let Some((target, _)) = process_target {
+            if indexed.is_some() {
+                return Err("process handle cannot be indexed".to_owned());
+            }
+            let value = self.lower_process(path, rhs)?;
+            let operation = match target {
+                ProcessTarget::Object(index) => IrObjectStmt::ProcessAssign(index, value),
+                ProcessTarget::Local(name) => IrObjectStmt::ProcessAssignLocal(name, value),
+            };
+            return Ok(Some(IrStmt::Object(operation)));
         }
         if let Some(target) = chandle_target {
             if indexed.is_some() {
@@ -1651,6 +1914,12 @@ impl Codegen<'_> {
                 }
                 IrObjectStmt::ChandleAssign(index, self.lower_chandle(path, rhs)?)
             }
+            IrObjectType::Process => {
+                if indexed.is_some() {
+                    return Err("process handle cannot be indexed".to_owned());
+                }
+                IrObjectStmt::ProcessAssign(index, self.lower_process(path, rhs)?)
+            }
         };
         Ok(Some(IrStmt::Object(operation)))
     }
@@ -1668,6 +1937,40 @@ impl Codegen<'_> {
             } => (name.clone(), *receiver),
             _ => return Err("object method has no receiver".to_owned()),
         };
+        if self.is_process_expr(path, receiver)
+            && matches!(name.as_str(), "kill" | "suspend" | "resume" | "await")
+        {
+            let args = self.node(node).children.get(1..).unwrap_or_default();
+            if !args.is_empty() {
+                return Err(format!(
+                    "process method `{name}` takes no arguments in `{path}`"
+                ));
+            }
+            if matches!(name.as_str(), "suspend" | "await")
+                && self.func.as_ref().is_some_and(|function| !function.is_task)
+            {
+                return Err(format!(
+                    "process method `{name}` inside a function body in `{path}` is not supported"
+                ));
+            }
+            let target = self.lower_process(path, receiver)?;
+            return match name.as_str() {
+                "kill" => Ok(IrStmt::Object(IrObjectStmt::ProcessControl {
+                    op: IrProcessControl::Kill,
+                    target,
+                })),
+                "suspend" => Ok(IrStmt::Object(IrObjectStmt::ProcessControl {
+                    op: IrProcessControl::Suspend,
+                    target,
+                })),
+                "resume" => Ok(IrStmt::Object(IrObjectStmt::ProcessControl {
+                    op: IrProcessControl::Resume,
+                    target,
+                })),
+                "await" => Ok(IrStmt::Object(IrObjectStmt::ProcessAwait(target))),
+                _ => Err(format!("unsupported process method: {name}")),
+            };
+        }
         if self.is_process_rng_receiver(receiver) {
             let args = self.node(node).children.get(1..).unwrap_or_default();
             return match (name.as_str(), args) {

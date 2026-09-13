@@ -7,6 +7,9 @@ use super::{IrCallArg, IrEnumMember, IrExpr};
 pub enum IrObjectType {
     String,
     Chandle,
+    /// Stable SystemVerilog `process` class handle. The pointed-to identity
+    /// remains valid after coroutine completion until all copies release it.
+    Process,
 }
 
 /// C layout of one nominal SystemVerilog class. Handles are represented by a
@@ -209,6 +212,25 @@ pub enum IrChandleExpr {
     },
 }
 
+/// A process-class handle expression. Process identities are deliberately
+/// distinct from chandles: they carry reference-counted lifecycle state and
+/// are never converted to packed values or arbitrary native pointers.
+#[derive(Clone, Debug, PartialEq)]
+pub enum IrProcessExpr {
+    Null,
+    SelfHandle,
+    Read(usize),
+    LocalRead(String),
+    FormalRead(usize),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IrProcessControl {
+    Kill,
+    Suspend,
+    Resume,
+}
+
 /// Queries produce packed or real values, never integer encodings of objects.
 #[derive(Clone, Debug, PartialEq)]
 pub enum IrObjectQuery {
@@ -223,6 +245,8 @@ pub enum IrObjectQuery {
     StringAtoreal(IrStringExpr),
     StringPacked(IrStringExpr),
     ChandleEq(IrChandleExpr, IrChandleExpr),
+    ProcessEq(IrProcessExpr, IrProcessExpr),
+    ProcessStatus(IrProcessExpr),
     ArrayQuery(IrArrayQuery),
 }
 
@@ -242,6 +266,16 @@ pub enum IrObjectStmt {
     ChandleDeclareLocal(String, Option<IrChandleExpr>),
     ChandleAssign(usize, IrChandleExpr),
     ChandleAssignLocal(String, IrChandleExpr),
+    /// Declare an automatic process handle local. The optional initializer is
+    /// restricted to `null` or `process::self()` by lowering.
+    ProcessDeclareLocal(String, Option<IrProcessExpr>),
+    ProcessAssign(usize, IrProcessExpr),
+    ProcessAssignLocal(String, IrProcessExpr),
+    ProcessControl {
+        op: IrProcessControl,
+        target: IrProcessExpr,
+    },
+    ProcessAwait(IrProcessExpr),
 }
 
 impl IrStringExpr {
@@ -678,6 +712,29 @@ impl IrArrayQuery {
     }
 }
 
+impl IrProcessExpr {
+    pub(in crate::sim) fn validate(
+        &self,
+        model: &super::IrModel,
+        formals: &[super::IrFormal],
+    ) -> Result<(), super::IrValidationError> {
+        match self {
+            Self::Null | Self::SelfHandle => Ok(()),
+            Self::Read(index) => object_type(model, *index, IrObjectType::Process),
+            Self::LocalRead(name) if !name.is_empty() => Ok(()),
+            Self::LocalRead(_) => Err(super::IrValidationError::new(
+                "process local",
+                "local name must not be empty",
+            )),
+            Self::FormalRead(index) if *index < formals.len() => Ok(()),
+            Self::FormalRead(_) => Err(super::IrValidationError::new(
+                "process formal",
+                "formal index is out of bounds",
+            )),
+        }
+    }
+}
+
 impl IrObjectQuery {
     pub(in crate::sim) fn validate(
         &self,
@@ -722,6 +779,11 @@ impl IrObjectQuery {
                 a.validate(model, formals, chandle_return)?;
                 b.validate(model, formals, chandle_return)
             }
+            Self::ProcessEq(a, b) => {
+                a.validate(model, formals)?;
+                b.validate(model, formals)
+            }
+            Self::ProcessStatus(value) => value.validate(model, formals),
             Self::ArrayQuery(query) => query.validate(model, string_return),
         }
     }
@@ -755,6 +817,8 @@ impl IrObjectQuery {
                 a.expressions(visit);
                 b.expressions(visit);
             }
+            Self::ProcessEq(_, _) => {}
+            Self::ProcessStatus(_) => {}
             Self::ArrayQuery(query) => query.expressions(visit),
         }
     }
@@ -788,6 +852,8 @@ impl IrObjectQuery {
                 a.expressions_mut(visit);
                 b.expressions_mut(visit);
             }
+            Self::ProcessEq(_, _) => {}
+            Self::ProcessStatus(_) => {}
             Self::ArrayQuery(query) => query.expressions_mut(visit),
         }
     }
@@ -887,6 +953,34 @@ impl IrObjectStmt {
                 }
                 value.validate(model, formals, chandle_return)
             }
+            Self::ProcessDeclareLocal(name, value) => {
+                if name.is_empty() {
+                    return Err(super::IrValidationError::new(
+                        "process local",
+                        "local name must not be empty",
+                    ));
+                }
+                value
+                    .as_ref()
+                    .map(|value| value.validate(model, formals))
+                    .unwrap_or(Ok(()))
+            }
+            Self::ProcessAssign(index, value) => {
+                object_type(model, *index, IrObjectType::Process)?;
+                value.validate(model, formals)
+            }
+            Self::ProcessAssignLocal(name, value) => {
+                if name.is_empty() {
+                    return Err(super::IrValidationError::new(
+                        "process local",
+                        "local name must not be empty",
+                    ));
+                }
+                value.validate(model, formals)
+            }
+            Self::ProcessControl { target, .. } | Self::ProcessAwait(target) => {
+                target.validate(model, formals)
+            }
         }
     }
     pub(in crate::sim) fn expressions(&self, visit: &mut impl FnMut(&IrExpr)) {
@@ -907,7 +1001,12 @@ impl IrObjectStmt {
             Self::ChandleDeclareLocal(_, Some(value)) => value.expressions(visit),
             Self::ChandleDeclareLocal(_, None)
             | Self::ChandleAssign(..)
-            | Self::ChandleAssignLocal(..) => {}
+            | Self::ChandleAssignLocal(..)
+            | Self::ProcessDeclareLocal(..)
+            | Self::ProcessAssign(..)
+            | Self::ProcessAssignLocal(..)
+            | Self::ProcessControl { .. }
+            | Self::ProcessAwait(..) => {}
         }
     }
     pub(in crate::sim) fn expressions_mut(&mut self, visit: &mut impl FnMut(&mut IrExpr)) {
@@ -928,7 +1027,12 @@ impl IrObjectStmt {
             Self::ChandleDeclareLocal(_, Some(value)) => value.expressions_mut(visit),
             Self::ChandleDeclareLocal(_, None)
             | Self::ChandleAssign(..)
-            | Self::ChandleAssignLocal(..) => {}
+            | Self::ChandleAssignLocal(..)
+            | Self::ProcessDeclareLocal(..)
+            | Self::ProcessAssign(..)
+            | Self::ProcessAssignLocal(..)
+            | Self::ProcessControl { .. }
+            | Self::ProcessAwait(..) => {}
         }
     }
 }

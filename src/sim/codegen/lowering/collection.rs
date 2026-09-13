@@ -324,6 +324,122 @@ impl<'a> Codegen<'a> {
         self.proc_string_locals.get(&node).map(String::as_str)
     }
 
+    /// Register a process handle declared in a procedural body. Automatic
+    /// handles live in the activation's C frame; static handles use a model
+    /// object so their identity survives repeated activations.
+    pub(super) fn collect_process_local(
+        &mut self,
+        path: &str,
+        node: NodeId,
+    ) -> Result<ProcessTarget, String> {
+        if let Some(name) = self.proc_process_locals.get(&node) {
+            return Ok(ProcessTarget::Local(name.clone()));
+        }
+        if let Some(index) = self.proc_process_static_objects.get(&(self.inst, node)) {
+            return Ok(ProcessTarget::Object(*index));
+        }
+        let is_process = matches!(
+            self.kind(node),
+            NodeKind::Var { ty } if ty.kind == "class" && ty.type_name.as_deref() == Some("process")
+        );
+        if !is_process {
+            return Err(format!(
+                "procedural process declaration `{}` in `{path}` has a non-process type",
+                self.node(node).name
+            ));
+        }
+        match self.db.variable_lifetime(node) {
+            VariableLifetime::Automatic => {
+                let name = format!("_lp{}", node.index());
+                self.proc_process_locals.insert(node, name.clone());
+                Ok(ProcessTarget::Local(name))
+            }
+            VariableLifetime::Static => {
+                let index = self.collect_process_static_object(path, node)?;
+                Ok(ProcessTarget::Object(index))
+            }
+            VariableLifetime::Unavailable => Err(format!(
+                "resolved lifetime is unavailable for process handle `{}` in `{path}`",
+                self.node(node).name
+            )),
+        }
+    }
+
+    pub(super) fn collect_process_static_object(
+        &mut self,
+        path: &str,
+        node: NodeId,
+    ) -> Result<usize, String> {
+        if let Some(index) = self.proc_process_static_objects.get(&(self.inst, node)) {
+            return Ok(*index);
+        }
+        let is_process = matches!(
+            self.kind(node),
+            NodeKind::Var { ty }
+                if ty.kind == "class" && ty.type_name.as_deref() == Some("process")
+        );
+        if !is_process {
+            return Err(format!(
+                "procedural process declaration `{}` in `{path}` has a non-process type",
+                self.node(node).name
+            ));
+        }
+        if self.db.variable_lifetime(node) != VariableLifetime::Static {
+            return Err(format!(
+                "process handle `{}` in `{path}` is not static",
+                self.node(node).name
+            ));
+        }
+        let index = self.model.objects.len();
+        self.model.objects.push(crate::sim::ir::IrObject {
+            c_name: format!("O_P{}_L{}", self.inst.index(), node.index()),
+            ty: crate::sim::ir::IrObjectType::Process,
+            initial: None,
+        });
+        self.proc_process_static_objects
+            .insert((self.inst, node), index);
+        Ok(index)
+    }
+
+    pub(super) fn proc_process_local_name(&self, node: NodeId) -> Option<&str> {
+        self.proc_process_locals.get(&node).map(String::as_str)
+    }
+
+    /// Resolve a process declaration through begin/loop lexical scopes,
+    /// including static declarations whose storage is model-backed.
+    pub(super) fn lexical_proc_process_decl(&self, reference: NodeId) -> Option<NodeId> {
+        let name = self.node(reference).name.as_str();
+        let mut parent = self.node(reference).parent;
+        while let Some(scope) = parent {
+            if matches!(self.kind(scope), NodeKind::Stmt(StmtKind::Begin)) {
+                if let Some(variable) = self.node(scope).children.iter().find(|child| {
+                    matches!(self.kind(**child), NodeKind::Var { ty } if ty.kind == "class" && ty.type_name.as_deref() == Some("process"))
+                        && self.node(**child).name == name
+                }) {
+                    return Some(*variable);
+                }
+            }
+            if let NodeKind::Stmt(StmtKind::For { vars, .. }) = self.kind(scope) {
+                if let Some(variable) = vars.iter().find(|variable| {
+                    matches!(self.kind(**variable), NodeKind::Var { ty } if ty.kind == "class" && ty.type_name.as_deref() == Some("process"))
+                        && self.node(**variable).name == name
+                }) {
+                    return Some(*variable);
+                }
+            }
+            if let NodeKind::Stmt(StmtKind::Foreach { vars, .. }) = self.kind(scope) {
+                if let Some(variable) = vars.iter().flatten().find(|variable| {
+                    matches!(self.kind(**variable), NodeKind::Var { ty } if ty.kind == "class" && ty.type_name.as_deref() == Some("process"))
+                        && self.node(**variable).name == name
+                }) {
+                    return Some(*variable);
+                }
+            }
+            parent = self.node(scope).parent;
+        }
+        None
+    }
+
     pub(super) fn is_foreach_iterator(&self, node: NodeId) -> bool {
         self.db.node_ids().any(|id| match self.kind(id) {
             NodeKind::Stmt(StmtKind::Foreach { vars, .. }) => {
@@ -1609,6 +1725,12 @@ impl<'a> Codegen<'a> {
                                 aggregate_path_suffix(&member_path)
                             ));
                         }
+                    }
+                    crate::sim::ir::IrObjectType::Process => {
+                        return Err(format!(
+                            "process aggregate initializer `{}` is not supported",
+                            aggregate_path_suffix(&member_path)
+                        ));
                     }
                 }
                 continue;
@@ -4689,12 +4811,14 @@ impl<'a> Codegen<'a> {
                         .ok_or_else(|| format!("task `{}` without a body", self.node(*c).name))?;
                     let mut locals = HashMap::new();
                     let mut chandle_locals = HashMap::new();
+                    let mut process_locals = HashMap::new();
                     let mut local_seq = 0;
                     self.collect_func_locals(
                         body,
                         inst,
                         &mut locals,
                         &mut chandle_locals,
+                        &mut process_locals,
                         &mut local_seq,
                         "",
                     )?;
@@ -5148,6 +5272,7 @@ impl<'a> Codegen<'a> {
 
         let mut locals: HashMap<NodeId, (String, u32, bool, bool, bool)> = HashMap::new();
         let mut chandle_locals: HashMap<NodeId, String> = HashMap::new();
+        let mut process_locals: HashMap<NodeId, String> = HashMap::new();
         let mut local_seq = 0usize;
         let local_prefix = format!("_f{}_{}_", inst.index(), ft.index());
         self.collect_func_locals(
@@ -5155,6 +5280,7 @@ impl<'a> Codegen<'a> {
             inst,
             &mut locals,
             &mut chandle_locals,
+            &mut process_locals,
             &mut local_seq,
             &local_prefix,
         )?;
@@ -5183,6 +5309,8 @@ impl<'a> Codegen<'a> {
         let mut persistent = HashMap::new();
         let mut chandle_read = HashMap::new();
         let mut chandle_write = HashMap::new();
+        let mut process_read = HashMap::new();
+        let mut process_write = HashMap::new();
         let mut string_read = HashMap::new();
         let mut string_write = HashMap::new();
         let mut string_addr = HashMap::new();
@@ -5212,6 +5340,13 @@ impl<'a> Codegen<'a> {
                 chandle_read.insert(*local, IrChandleExpr::LocalRead(name.clone()));
                 chandle_write.insert(*local, ChandleTarget::Local(name.clone()));
             }
+        }
+        for (local, name) in &process_locals {
+            process_read.insert(
+                *local,
+                crate::sim::ir::IrProcessExpr::LocalRead(name.clone()),
+            );
+            process_write.insert(*local, ProcessTarget::Local(name.clone()));
         }
         for (local, (name, ..)) in &locals {
             if matches!(self.kind(*local), NodeKind::Var { ty } if ty.kind == "string") {
@@ -5503,6 +5638,8 @@ impl<'a> Codegen<'a> {
             persistent,
             chandle_read,
             chandle_write,
+            process_read,
+            process_write,
             string_read,
             string_write,
             string_addr,
@@ -5624,24 +5761,42 @@ impl<'a> Codegen<'a> {
     /// `prefix` disambiguates the C local names across inline sites (each
     /// inlined task body gets its own prefix); pass `""` for C function
     /// bodies, whose locals are scoped per function.
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn collect_func_locals(
         &self,
         node: NodeId,
         inst: NodeId,
         locals: &mut HashMap<NodeId, (String, u32, bool, bool, bool)>,
         chandle_locals: &mut HashMap<NodeId, String>,
+        process_locals: &mut HashMap<NodeId, String>,
         seq: &mut usize,
         prefix: &str,
     ) -> Result<(), String> {
         if let NodeKind::Stmt(StmtKind::For { body, .. }) = self.kind(node) {
             // For-declaration variables have loop-entry lifetime and are
             // collected by `lower_for`; they are not function-entry locals.
-            return self.collect_func_locals(*body, inst, locals, chandle_locals, seq, prefix);
+            return self.collect_func_locals(
+                *body,
+                inst,
+                locals,
+                chandle_locals,
+                process_locals,
+                seq,
+                prefix,
+            );
         }
         if let NodeKind::Stmt(StmtKind::Foreach { body, .. }) = self.kind(node) {
             // Foreach iterator variables have the same loop-entry lifetime;
             // omitted slots carry no declaration and are skipped naturally.
-            return self.collect_func_locals(*body, inst, locals, chandle_locals, seq, prefix);
+            return self.collect_func_locals(
+                *body,
+                inst,
+                locals,
+                chandle_locals,
+                process_locals,
+                seq,
+                prefix,
+            );
         }
         if self.is_foreach_iterator(node) {
             // Foreach iterators are declared by `lower_foreach` at loop entry,
@@ -5653,6 +5808,20 @@ impl<'a> Codegen<'a> {
             if is_handle_kind(&ty.kind) {
                 chandle_locals.entry(node).or_insert_with(|| {
                     let cname = format!("{prefix}_l{seq}");
+                    *seq += 1;
+                    cname
+                });
+                return Ok(());
+            }
+            if ty.kind == "class" && ty.type_name.as_deref() == Some("process") {
+                if self.db.variable_lifetime(node) != VariableLifetime::Automatic {
+                    return Err(format!(
+                        "static process handle `{}` in subprogram is not supported",
+                        self.node(node).name
+                    ));
+                }
+                process_locals.entry(node).or_insert_with(|| {
+                    let cname = format!("{prefix}_p{seq}");
                     *seq += 1;
                     cname
                 });
@@ -5702,7 +5871,15 @@ impl<'a> Codegen<'a> {
             return Ok(());
         }
         for c in &self.node(node).children {
-            self.collect_func_locals(*c, inst, locals, chandle_locals, seq, prefix)?;
+            self.collect_func_locals(
+                *c,
+                inst,
+                locals,
+                chandle_locals,
+                process_locals,
+                seq,
+                prefix,
+            )?;
         }
         Ok(())
     }
@@ -6141,6 +6318,15 @@ impl<'a> Codegen<'a> {
                 | StmtKind::Wait { .. }
                 | StmtKind::WaitOrder { .. },
             ) => true,
+            NodeKind::MethodCall {
+                name,
+                receiver: Some(receiver),
+                ..
+            } if matches!(name.as_str(), "suspend" | "await")
+                && self.is_process_expr(&self.instance_path_of(inst), *receiver) =>
+            {
+                true
+            }
             NodeKind::FuncCall {
                 is_task: true,
                 callee,
@@ -6354,6 +6540,8 @@ impl<'a> Codegen<'a> {
                 persistent: HashMap::new(),
                 chandle_read: HashMap::new(),
                 chandle_write: HashMap::new(),
+                process_read: HashMap::new(),
+                process_write: HashMap::new(),
                 string_read: HashMap::new(),
                 string_write: HashMap::new(),
                 string_addr: HashMap::new(),

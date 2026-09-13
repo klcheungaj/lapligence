@@ -904,10 +904,12 @@ impl Validator<'_> {
                 )?;
                 let expected = match query.as_ref() {
                     IrObjectQuery::ChandleEq(..) => Some((1, false)),
+                    IrObjectQuery::ProcessEq(..) => Some((1, false)),
                     IrObjectQuery::StringGetc(..) => Some((8, true)),
                     IrObjectQuery::StringAtoreal(..) => Some((0, true)),
                     IrObjectQuery::StringInside { .. } => Some((1, false)),
                     IrObjectQuery::StringPacked(..) => None,
+                    IrObjectQuery::ProcessStatus(..) => Some((32, false)),
                     IrObjectQuery::ArrayQuery(query) => Some(query.result_type(self.model)),
                     _ => Some((32, true)),
                 };

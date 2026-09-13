@@ -47,7 +47,9 @@
   exhaustion emits its process source location and makes the generated model
   exit nonzero. Scheduler ticks are exact femtoseconds; the generated model
   supplies checked local-unit conversions for `$time`, `$stime`, and
-  `$realtime`.
+  `$realtime`. Fine-grain `process` handles use a reference-counted identity
+  separate from coroutine storage; `self`, status, kill, suspend, resume and
+  await retain terminal state and clean wait/frame/descendant ownership.
 - **Random streams:** `llg_rng.h/.c` provides deterministic PCG streams with
   stable process/fork derivation, unbiased inclusive ranges, and versioned
   state snapshots. The scheduler binds one stream to each generated process;

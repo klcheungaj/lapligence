@@ -4458,6 +4458,11 @@ impl<'a> Codegen<'a> {
                             index,
                             self.lower_chandle(path, value_node)?,
                         ),
+                        IrObjectType::Process => {
+                            return Err(format!(
+                                "process aggregate member assignment is not supported in `{path}`"
+                            ));
+                        }
                     };
                     assignments.push(IrStmt::Object(operation));
                     continue;
@@ -4630,6 +4635,11 @@ impl<'a> Codegen<'a> {
                     }
                     IrObjectType::Chandle => {
                         IrObjectStmt::ChandleAssign(lhs_object, IrChandleExpr::Read(rhs_object))
+                    }
+                    IrObjectType::Process => {
+                        return Err(format!(
+                            "process aggregate member assignment is not supported in `{path}`"
+                        ));
                     }
                 };
                 assignments.push(IrStmt::Object(operation));

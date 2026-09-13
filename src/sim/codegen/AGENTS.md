@@ -213,7 +213,10 @@ See `tests/sim_net_defaults.rs`.
   automatic packed subroutines. Captured branch values use owned activation
   frames and are released on completion or cancellation; blocking function
   joins, recursive timed tasks, richer subroutine storage, and cross-process
-  `disable <label>;` remain rejected.
+  `disable <label>;` remain rejected. The bounded process-class path lowers
+  `process::self()`, status/equality, kill/suspend/resume/await, and automatic
+  or static handle storage; process formals, arrays and the broader class API
+  remain rejected explicitly.
 - Inline `for` declarations use lexical packed or real locals, with unique
   names for nested/shadowed declarations. `foreach` traverses fixed unpacked
   arrays in declared dimension order, preserves omitted dimensions, and also

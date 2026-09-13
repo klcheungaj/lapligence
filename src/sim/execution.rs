@@ -516,9 +516,19 @@ fn collect_effects(
             }
             // Object statements can mutate storage, print, or evaluate a
             // string call. Keep the summary conservative across those forms.
-            IrStmt::Object(_) => {
+            IrStmt::Object(statement) => {
                 effects.push(ExecutionEffect::ImmediateStore);
                 effects.push(ExecutionEffect::RuntimeService);
+                if matches!(
+                    statement,
+                    IrObjectStmt::ProcessAwait(_)
+                        | IrObjectStmt::ProcessControl {
+                            op: crate::sim::ir::IrProcessControl::Suspend,
+                            ..
+                        }
+                ) {
+                    effects.push(ExecutionEffect::Suspend);
+                }
             }
             IrStmt::Delay { .. }
             | IrStmt::WaitEvents { .. }
@@ -1376,6 +1386,11 @@ fn collect_object_statement_effects(
         IrObjectStmt::ChandleAssign(_, value) | IrObjectStmt::ChandleAssignLocal(_, value) => {
             collect_chandle_effects(ir, value, effects, visited_calls)
         }
+        IrObjectStmt::ProcessDeclareLocal(_, _)
+        | IrObjectStmt::ProcessAssign(_, _)
+        | IrObjectStmt::ProcessAssignLocal(_, _)
+        | IrObjectStmt::ProcessControl { .. }
+        | IrObjectStmt::ProcessAwait(_) => {}
         IrObjectStmt::StringPutc(..)
         | IrObjectStmt::StringItoa(..)
         | IrObjectStmt::StringRealtoa(..)
@@ -1421,6 +1436,7 @@ fn collect_object_query_effects(
             collect_chandle_effects(ir, a, effects, visited_calls);
             collect_chandle_effects(ir, b, effects, visited_calls);
         }
+        IrObjectQuery::ProcessEq(_, _) | IrObjectQuery::ProcessStatus(_) => {}
         IrObjectQuery::ArrayQuery(query) => {
             effects.push(ExecutionEffect::RuntimeService);
             if let IrArrayQueryTarget::String { value, .. } = &query.target {

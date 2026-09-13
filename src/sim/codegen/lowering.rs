@@ -84,7 +84,9 @@
 //! tasks become C functions with a recursion depth guard; delay-bearing tasks
 //! are inlined at their call sites; defaults — including defaults referencing
 //! earlier formals — are supported), `fork … join`/`join_any`/`join_none` (named
-//! forks included), `wait fork;`, `disable fork;`, `$display`/`$write` and
+//! forks included), `wait fork;`, `disable fork;`, bounded process-handle
+//! control (`process::self()`, `status()`, `kill()`, `suspend()`, `resume()`,
+//! and `await()`), `$display`/`$write` and
 //! their b/o/h variants, `$monitor`/`$monitoron`/`$monitoroff`/`$strobe` and
 //! their b/o/h variants, `$finish`, and the typed severity tasks
 //! `$info`/`$warning`/`$error`/`$fatal`.  Supported
@@ -103,7 +105,9 @@
 //! write targets may carry a trailing select (`top.u0.sig[3:0]`,
 //! `top.u0.sig[2]`, `top.u0.sig[3 +: 4]`) with constant integer
 //! indices/bounds only (the trailing select is recovered from the node name or
-//! admitted source when the semantic snapshot omits its bounds).
+//! admitted source when the semantic snapshot omits its bounds). Process
+//! status/equality queries remain pointer-identity operations, not packed
+//! value conversions.
 //!
 //! The supported real subset covers procedural scalar variables, fixed unpacked
 //! real and shortreal arrays, scalar real and shortreal ports, real and
@@ -772,6 +776,13 @@ struct Codegen<'a> {
     /// strings have a distinct C representation and therefore do not fit the
     /// packed/real `ProcLocalInfo` table.
     proc_string_locals: HashMap<NodeId, String>,
+    /// Automatic process handles declared inside a process body. Process
+    /// identities use the runtime's reference-counted handle ABI rather than
+    /// packed/real process-local storage.
+    proc_process_locals: HashMap<NodeId, String>,
+    /// Persistent process-handle objects for static procedural declarations,
+    /// keyed by elaborated instance and declaration identity.
+    proc_process_static_objects: HashMap<(NodeId, NodeId), usize>,
     /// Hidden static process-local storage keyed by elaborated instance and
     /// declaration. A declaration node is shared by module instances, while
     /// its static lifetime is per elaborated instance.
@@ -947,6 +958,8 @@ impl<'a> Codegen<'a> {
             aggregate_objects: HashMap::new(),
             proc_locals: HashMap::new(),
             proc_string_locals: HashMap::new(),
+            proc_process_locals: HashMap::new(),
+            proc_process_static_objects: HashMap::new(),
             proc_local_instances: HashMap::new(),
             capture_locals: HashMap::new(),
             net_inits: Vec::new(),
@@ -3252,6 +3265,12 @@ enum ChandleTarget {
     Local(String),
 }
 
+#[derive(Clone)]
+enum ProcessTarget {
+    Object(usize),
+    Local(String),
+}
+
 /// Context for emitting a function/task definition body (or an inlined task
 /// body at a call site): formals mapped to their C expressions, locals to C
 /// locals, and the return variable.
@@ -3299,6 +3318,11 @@ struct FuncCtx {
     /// than being encoded as packed integers.
     chandle_read: HashMap<NodeId, IrChandleExpr>,
     chandle_write: HashMap<NodeId, ChandleTarget>,
+    /// Process handles remain runtime-owned identities rather than packed
+    /// values. Automatic locals use direct C locals; object-backed handles
+    /// use the model object table.
+    process_read: HashMap<NodeId, crate::sim::ir::IrProcessExpr>,
+    process_write: HashMap<NodeId, ProcessTarget>,
     string_read: HashMap<NodeId, crate::sim::ir::IrStringExpr>,
     string_write: HashMap<NodeId, String>,
     /// Native address for a string binding, including const-ref aliases.

@@ -247,6 +247,35 @@ impl<'db> SemanticModel<'db> {
                 placeholders[callee.index()] = true;
             }
         }
+        for owner in self.db.node_ids() {
+            let NodeKind::MethodCall {
+                name,
+                receiver: Some(receiver),
+                callee: Some(callee),
+            } = self.db.node_kind(owner)
+            else {
+                continue;
+            };
+            if matches!(
+                name.as_str(),
+                "status"
+                    | "kill"
+                    | "suspend"
+                    | "resume"
+                    | "await"
+                    | "srandom"
+                    | "get_randstate"
+                    | "set_randstate"
+            ) && process_reference(self.db, *receiver)
+                && matches!(self.db.node_kind(*callee), NodeKind::Other)
+                && self.db.semantic_kind(*callee) == Some(CapturedSemanticKind::Unsupported)
+            {
+                // Slang represents built-in process method callees with the
+                // same unowned placeholder used by process::self(). The typed
+                // receiver and method name fully consume that metadata.
+                placeholders[callee.index()] = true;
+            }
+        }
         // A captured ArbitrarySymbol is not generally executable. Admit only
         // typed interface actuals and $dumpvars scope/storage arguments, and
         // require every use of a shared expression node to be a metadata use.
@@ -498,6 +527,24 @@ fn assignment_pattern_metadata_node(db: &Db, id: NodeId) -> bool {
         };
         value != &Some(id) && db.node(owner).children().contains(&id)
     })
+}
+
+fn process_reference(db: &Db, id: NodeId) -> bool {
+    let mut current = id;
+    for _ in 0..db.nodes().len() {
+        match db.node_kind(current) {
+            NodeKind::Expr(ExprKind::Ref {
+                target: Some(target),
+            }) => current = *target,
+            NodeKind::Expr(ExprKind::Cast { operand, .. }) => current = *operand,
+            NodeKind::Var { ty } | NodeKind::FuncArg { ty, .. } => {
+                return ty.kind == "class" && ty.type_name.as_deref() == Some("process");
+            }
+            NodeKind::FuncCall { name, .. } => return name == "self",
+            _ => return false,
+        }
+    }
+    false
 }
 
 fn scope_reference_is_metadata(db: &Db, owner: NodeId, reference: NodeId, target: NodeId) -> bool {

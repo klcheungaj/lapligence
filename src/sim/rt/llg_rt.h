@@ -168,6 +168,7 @@ void llg_inertial_selected_net(llg_inertial_t** handle, llg_net_t* net,
 // ── Scheduler ─────────────────────────────────────────────────────────────────
 
 typedef struct llg_proc llg_proc_t;
+typedef struct llg_process_handle llg_process_handle_t;
 typedef struct llg_frame llg_frame_t;
 typedef struct llg_activation llg_activation_t;
 typedef struct { sv4_t* sig; int kind; } llg_event_spec_t;
@@ -217,6 +218,17 @@ typedef enum {
 #define LLG_REGION_RE_NONBLOCKING_ASSIGN LLG_REGION_RE_NBA
 
 #define LLG_MAX_PROCS 4096
+
+// Stable SystemVerilog process states. The numeric order is the declaration
+// order of the LRM `process::state` enum and is part of the generated-model
+// ABI: FINISHED=0, RUNNING=1, WAITING=2, SUSPENDED=3, KILLED=4.
+enum {
+    LLG_PROCESS_FINISHED = 0,
+    LLG_PROCESS_RUNNING = 1,
+    LLG_PROCESS_WAITING = 2,
+    LLG_PROCESS_SUSPENDED = 3,
+    LLG_PROCESS_KILLED = 4,
+};
 
 // Event kinds used by llg_event_spec_t.
 enum {
@@ -538,6 +550,27 @@ _Noreturn void llg_proc_done(llg_proc_t* self);
 // Terminate all program processes and descendants, then perform the implicit
 // `$finish` transition.  Lowering only emits this call inside a program.
 _Noreturn void llg_program_exit(void);
+
+// ── Fine-grain process handles (IEEE 1800-2009 §9.7) ─────────────────────────
+//
+// A handle is a stable identity independent of the coroutine allocation. It
+// remains queryable after the process has completed or been killed, until all
+// HDL references and outstanding await registrations release it. `self` is a
+// borrowed handle; assignment/capture operations retain the value explicitly.
+llg_process_handle_t* llg_process_self(void);
+int llg_process_status(const llg_process_handle_t* handle);
+void llg_process_retain(llg_process_handle_t* handle);
+void llg_process_release(llg_process_handle_t* handle);
+void llg_process_assign(llg_process_handle_t** target,
+                        llg_process_handle_t* source);
+// Register an automatic process-handle slot before its first assignment. The
+// runtime retains the slot's value until the owning process is completed or
+// killed, even when the C block that declared the slot has already unwound.
+void llg_process_local_register(llg_process_handle_t** slot);
+void llg_process_kill(llg_process_handle_t* handle);
+void llg_process_suspend(llg_process_handle_t* handle);
+void llg_process_resume(llg_process_handle_t* handle);
+void llg_process_await(llg_process_handle_t* handle);
 // Cooperative generated-loop interruption point.  It returns while the
 // current process remains within its zero-time budget; on exhaustion it emits
 // a source-bearing diagnostic and exits that coroutine without returning.

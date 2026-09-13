@@ -33,7 +33,7 @@ pub use containers::{
 pub use objects::{
     IrArrayDimension, IrArrayQuery, IrArrayQueryKind, IrArrayQueryTarget, IrChandleExpr, IrClass,
     IrClassField, IrClassFieldType, IrDisplayArg, IrObject, IrObjectQuery, IrObjectStmt,
-    IrObjectType, IrStringExpr, IrStringInsideItem,
+    IrObjectType, IrProcessControl, IrProcessExpr, IrStringExpr, IrStringInsideItem,
 };
 
 pub use validate::IrValidationError;

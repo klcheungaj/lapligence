@@ -27,6 +27,9 @@
 - [Process semantic regressions](fixtures/sim/process_semantics/readme.md):
   always-family sensitivity, time-zero execution, writer/timing contracts and
   legal latch/flip-flop controls.
+- `sim_process_control`: process-class identity/status observations,
+  suspended waits, terminal awaits, recursive kill cleanup and independent
+  delayed NBA ownership in both optimizer modes.
 - [Physical-time regressions](fixtures/sim/physical_time/readme.md): 1fs–100s
   scheduling, checked overflow, and femtosecond waveform timestamps.
 - [Waveform regressions](fixtures/sim/waveform/readme.md): file-backed VCD/FST
