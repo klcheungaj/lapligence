@@ -21,10 +21,11 @@ module tb;
     $fclose(default_fd);
     $fclose(owned_fd);
     final_fd = $fopen("final_output.txt", "w");
-    $display("fd=%0d", fd);
+    $display("fd_is_tagged=%0d", fd[31]);
     $fdisplay(fd, "line=%0d", 7);
     $fwrite(fd, "tail=%0h", value);
-    $fdisplay(fd | 1, " fanout=%0d", 9);
+    $fdisplay(fd, " fanout=%0d", 9);
+    $fdisplay(32'h8000_0001, " fanout=%0d", 9);
     $fdisplayh(fd, value);
     $fflush(fd);
     $fflush();
@@ -40,7 +41,7 @@ module tb;
     $fclose(fd);
     status = $ferror(fd, message);
     $display("closed=%0d message=%s", status, message);
-    $finish;
+    $finish(0);
   end
 
   final begin

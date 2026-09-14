@@ -321,9 +321,55 @@ static int check_recursive_values(void) {
     return 0;
 }
 
+static int check_retained_queue_cells(void) {
+    llg_queue_t queue;
+    llg_queue_init(&queue, 32, 1, 1, UINT64_MAX);
+    llg_queue_push_back(&queue, sv4_from_i64(10, 32));
+    llg_queue_push_back(&queue, sv4_from_i64(20, 32));
+    void* first = llg_queue_ref_acquire(&queue, 0);
+    void* alias = llg_queue_ref_acquire(&queue, 0);
+    CHECK(first == alias);
+    CHECK(llg_queue_cell_write(first, sv4_from_i64(11, 32)));
+    CHECK(sv4_to_u64(llg_queue_cell_read(alias)) == 11);
+    llg_queue_method(&queue, LLG_CONTAINER_METHOD_REVERSE, NULL, NULL);
+    CHECK(sv4_to_u64(llg_queue_cell_read(first)) == 11);
+    CHECK(sv4_to_u64(llg_queue_get(&queue, sv4_from_u64(1, 32, 0))) == 11);
+    CHECK(llg_queue_delete_index(&queue, sv4_from_u64(1, 32, 0)));
+    CHECK(queue.references == NULL);
+    CHECK(llg_queue_cell_write(alias, sv4_from_i64(12, 32)));
+    CHECK(sv4_to_u64(llg_queue_cell_read(first)) == 12);
+    llg_queue_push_back(&queue, sv4_from_i64(99, 32));
+    CHECK(sv4_to_u64(llg_queue_back(&queue)) == 99);
+    llg_queue_ref_release(first);
+    CHECK(sv4_to_u64(llg_queue_cell_read(alias)) == 12);
+    llg_queue_ref_release(alias);
+
+    void* replaced = llg_queue_ref_acquire(&queue, 0);
+    llg_queue_copy(&queue, &queue);
+    CHECK(queue.references == NULL);
+    CHECK(llg_queue_cell_write(replaced, sv4_from_i64(42, 32)));
+    CHECK(sv4_to_u64(llg_queue_cell_read(replaced)) == 42);
+    CHECK(sv4_to_u64(llg_queue_front(&queue)) == 20);
+    llg_queue_ref_release(replaced);
+
+    void* popped = llg_queue_ref_acquire(&queue, 0);
+    CHECK(sv4_to_u64(llg_queue_pop_front(&queue)) == 20);
+    CHECK(llg_queue_cell_write(popped, sv4_from_i64(55, 32)));
+    CHECK(sv4_to_u64(llg_queue_cell_read(popped)) == 55);
+    llg_queue_ref_release(popped);
+    void* destroyed = llg_queue_ref_acquire(&queue, 0);
+    llg_queue_destroy(&queue);
+    CHECK(sv4_to_u64(llg_queue_cell_read(destroyed)) == 99);
+    CHECK(llg_queue_cell_write(destroyed, sv4_from_i64(77, 32)));
+    CHECK(sv4_to_u64(llg_queue_cell_read(destroyed)) == 77);
+    llg_queue_ref_release(destroyed);
+    return 0;
+}
+
 int main(void) {
     CHECK(check_packed_conversions() == 0);
     CHECK(check_queue_references() == 0);
+    CHECK(check_retained_queue_cells() == 0);
     CHECK(check_array_methods() == 0);
     CHECK(check_recursive_values() == 0);
     puts("runtime container isolation ok");

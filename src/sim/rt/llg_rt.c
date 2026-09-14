@@ -159,6 +159,7 @@ struct llg_inertial {
     llg_inertial_t** handle;
     sv4_t* target;
     llg_net_t* net;
+    llg_net_t* publication_net; // net-delay commit, not a driver contribution
     int slot;
     int pending;
     uint64_t time;
@@ -222,6 +223,7 @@ struct llg_semaphore {
     uint64_t available;
     llg_semaphore_wait_t* wait_head;
     llg_semaphore_wait_t* wait_tail;
+    int cancelled_waiter;        // FIFO service deferred until cancellation ends
     llg_semaphore_t* next_all;
 };
 
@@ -330,6 +332,14 @@ typedef struct llg_process_local_ref {
     struct llg_process_local_ref* next;
 } llg_process_local_ref_t;
 
+typedef struct llg_program {
+    uint64_t instance;
+    size_t live_initials;
+    int had_initial;
+    int closed;
+    struct llg_program* next;
+} llg_program_t;
+
 struct llg_proc {
     aco_t* co;
     const char* name;
@@ -354,12 +364,15 @@ struct llg_proc {
     llg_fork_group_t* grp;         // group this proc belongs to (NULL top-level)
     llg_frame_t* frame;            // retained activation storage, when captured
     llg_activation_t* activation_top; // innermost named block/task scope
+    llg_ref_scope_t* reference_top; // retained call-argument cells
     llg_rng_state_t rng;           // process-local random stream
-    int program;                   // process belongs to a program block
-    int program_live;              // still counted toward program completion
+    llg_program_t* program;         // runtime-owned originating program instance
+    int program_live;              // counted initial, never a fork descendant
     uint64_t budget_steps;         // loop back-edges at `budget_time`
     uint64_t budget_time;          // time step for the process budget
     uint64_t assertion_owner;      // stable per-run identity for deferred reports
+    uint64_t action_assertion;     // assertion whose Reactive action spawned us
+    int is_assertion_action;
 };
 
 static int region_can_mutate(const char* action);
@@ -704,9 +717,20 @@ typedef struct llg_deferred_assertion_report {
     uint64_t identity;
     const char* label;
     const char* location;
+    const char* scope;
     llg_deferred_assertion_fn action;
     llg_frame_t* frame;
 } llg_deferred_assertion_report_t;
+
+// Deferred assertions can be controlled before their first execution. Retain
+// selector rules, not only entries for reports that happen to exist already.
+typedef struct llg_assertion_rule {
+    struct llg_assertion_rule* next;
+    char* scope; // NULL means the whole design
+    uint64_t assertion_type, directive_type;
+    int enabled;
+} llg_assertion_rule_t;
+static llg_assertion_rule_t* llg_assertion_rules;
 
 typedef struct llg_sampled_value {
     struct llg_sampled_value* next;
@@ -751,10 +775,32 @@ typedef struct llg_assertion_attempt {
     uint64_t due;
 } llg_assertion_attempt_t;
 
+typedef struct llg_sequence_scope {
+    struct llg_sequence_scope* parent;
+    size_t refs;
+    uint32_t identity;
+    int matched;
+    uint64_t time, tick;
+    sv4_t* clock;
+    int edge;
+} llg_sequence_scope_t;
+
+typedef struct llg_sequence_endpoint {
+    struct llg_sequence_endpoint* next;
+    sv4_t* locals;
+    sv4_t* clock;
+    int edge;
+    uint64_t time, order, tick;
+    int empty;
+} llg_sequence_endpoint_t;
+
 typedef struct llg_sequence_token {
     struct llg_sequence_token* next;
     uint32_t state;
-    uint64_t entered_cycle;
+    uint32_t transition; /* UINT32_MAX expands this state; otherwise one pending edge. */
+    llg_sequence_scope_t* scope;
+    int checked;
+    uint64_t last_order;
     uint64_t entered_time;
     uint64_t entered_order;
     uint64_t entered_tick;
@@ -770,10 +816,15 @@ typedef struct llg_sequence_attempt {
     struct llg_sequence_attempt* next;
     const llg_sequence_graph_t* graph;
     llg_sequence_token_t* tokens;
-    /* Sequence attempts created by a non-overlapped implication are not
-     * eligible until this sampled-clock ordinal. */
+    /* Diagnostic creation ordinal; launch uses the endpoint's clock/time. */
     uint64_t due_cycle;
     int matched;
+    int started;
+    int launch_pending;
+    int launch_strict;
+    llg_sequence_endpoint_t launch;
+    llg_sequence_endpoint_t* endpoints;
+    uint8_t* inherited;
     sv4_t* locals;
 } llg_sequence_attempt_t;
 
@@ -822,6 +873,9 @@ typedef struct llg_concurrent_assertion {
     llg_sequence_attempt_t* sequence_consequents_tail;
     llg_assertion_clock_event_t* clock_events;
     llg_assertion_clock_event_t* clock_events_tail;
+    /* Retain this slot's edges, even when delivered before the source edge. */
+    llg_assertion_clock_event_t* clock_history;
+    llg_assertion_clock_event_t* clock_history_tail;
     uint64_t sequence_cycle;
 } llg_concurrent_assertion_t;
 
@@ -959,8 +1013,9 @@ typedef struct {
     const char* last_process_name; // survives completed-process reclamation
     llg_proc_t* all_procs[LLG_MAX_PROCS];
     int n_procs;
-    int program_processes;          // live program processes, including forks
-    int program_completion_pending; // finish after current-slot work drains
+    size_t program_processes;       // live program initial procedures only
+    llg_program_t* programs;        // stable origins, owned until runtime cleanup
+    int program_completion_pending; // service after the full cancellation batch
     llg_proc_t* retired_procs; // cancelled coroutines awaiting a safe destroy point
     llg_process_handle_t* process_handles; // stable identities for live/exited procs
     llg_semaphore_t* semaphores; // all semaphore objects owned by this run
@@ -1020,13 +1075,17 @@ static llg_process_handle_t* process_handle_new(llg_proc_t* proc) {
     return handle;
 }
 
-// File descriptors deliberately live outside the scheduler context.  They
-// are ordinary host resources, while the generated model only carries the
-// portable 32-bit mask returned by `$fopen`.  Slots 0 and 1 borrow stdout and
-// stderr; slots 2..31 own one ordinary FILE each.
-#define LLG_FILE_SLOTS 32
-#define LLG_FILE_STDOUT 0u
-#define LLG_FILE_STDERR 1u
+// File descriptors live outside the scheduler so final procedures can use them.
+// FD values have bit 31 set; MCD values are independent channel masks. Keep
+// distinct banks so a bit mask can never select an ordinary FD by accident.
+#define LLG_FILE_SLOTS 64u
+#define LLG_FILE_STDIN 0u
+#define LLG_FILE_STDOUT 1u
+#define LLG_FILE_STDERR 2u
+#define LLG_FILE_MCD_FIRST 3u
+#define LLG_FILE_MCD_END 33u
+#define LLG_FILE_FD_FIRST 33u
+#define LLG_FILE_FD_TAG UINT32_C(0x80000000)
 #define LLG_FILE_PUSHBACK 256u
 
 typedef struct {
@@ -1391,19 +1450,46 @@ static llg_proc_t* llg_current(void) {
                ? (llg_proc_t*)aco_get_arg() : NULL;
 }
 
-// A program process is counted until it naturally completes or is cancelled.
-// The transition to zero is the implicit `$finish` boundary required after
-// every program process (including inherited fork children) has terminated.
+// Do not recurse into cancellation while a tree is being unlinked. The
+// caller services completed programs after finishing the cancellation batch.
 static void release_program_process(llg_proc_t* process) {
     if (!process || !process->program_live) return;
     process->program_live = 0;
-    if (g.program_processes > 0) g.program_processes--;
-    if (g.program_processes == 0 && !g.finish && !g.config_error) {
-        // A just-completed process may still own a same-slot Re-NBA. Defer
-        // the implicit finish until the scheduler drains all current-slot
-        // design/reactive work and postponed output.
-        g.program_completion_pending = 1;
+    if (!process->program || process->program->live_initials == 0 ||
+        g.program_processes == 0) {
+        fprintf(stderr, "llg: program initial accounting underflow\n");
+        abort();
     }
+    process->program->live_initials--;
+    g.program_processes--;
+    g.program_completion_pending = 1;
+}
+
+static void service_program_completions(void) {
+    if (!g.program_completion_pending || g.finish || g.config_error) return;
+    g.program_completion_pending = 0;
+    for (llg_program_t* program = g.programs; program; program = program->next) {
+        if (!program->had_initial || program->live_initials || program->closed)
+            continue;
+        program->closed = 1;
+        // Restart after cancellation: it changes the process and group lists.
+        for (;;) {
+            llg_proc_t* victim = NULL;
+            for (int i = 0; i < g.n_procs; i++) {
+                llg_proc_t* proc = g.all_procs[i];
+                if (proc && proc->program == program && !proc->completed &&
+                    !proc->killed) {
+                    victim = proc;
+                    break;
+                }
+            }
+            if (!victim) break;
+            llg_kill_proc_tree(victim);
+        }
+    }
+    // This is an immediate finish boundary, not a request to drain Re-NBAs
+    // or execute detached descendants before entering final procedures.
+    if (g.program_processes == 0) g.finish = 1;
 }
 
 /* Calls made while a generated process is running use that process's stream.
@@ -1527,7 +1613,62 @@ static void activation_detach(llg_activation_t* activation) {
     activation->detached = 1;
 }
 
+typedef struct llg_ref_binding {
+    llg_ref_t descriptor;
+    struct llg_ref_binding* next;
+} llg_ref_binding_t;
+
+struct llg_ref_scope {
+    llg_proc_t* proc;
+    llg_ref_scope_t* parent;
+    llg_ref_binding_t* bindings;
+};
+
+static llg_ref_scope_t* root_reference_top;
+
+llg_ref_scope_t* llg_ref_scope_begin(void) {
+    llg_proc_t* proc = llg_current();
+    llg_ref_scope_t** top = proc ? &proc->reference_top : &root_reference_top;
+    llg_ref_scope_t* scope = llg_checked_calloc(1, sizeof(*scope), "reference scope");
+    scope->proc = proc;
+    scope->parent = *top;
+    *top = scope;
+    return scope;
+}
+
+void llg_ref_scope_end(llg_ref_scope_t* scope) {
+    if (!scope) return;
+    llg_ref_scope_t** top = scope->proc ? &scope->proc->reference_top : &root_reference_top;
+    if (*top != scope) { fprintf(stderr, "llg: unbalanced reference scopes\n"); abort(); }
+    *top = scope->parent;
+    while (scope->bindings) {
+        llg_ref_binding_t* binding = scope->bindings;
+        scope->bindings = binding->next;
+        llg_queue_ref_release(binding->descriptor.retained);
+        free(binding);
+    }
+    free(scope);
+}
+
+llg_ref_t* llg_ref_queue(llg_queue_t* queue, uint64_t index) {
+    llg_proc_t* proc = llg_current();
+    llg_ref_scope_t* scope = proc ? proc->reference_top : root_reference_top;
+    if (!scope || !queue) { fprintf(stderr, "llg: queue reference without call scope\n"); abort(); }
+    llg_ref_binding_t* binding = llg_checked_calloc(1, sizeof(*binding), "queue reference");
+    binding->descriptor.width = queue->element_width;
+    binding->descriptor.is_signed = queue->element_signed;
+    binding->descriptor.two_state = queue->element_two_state;
+    binding->descriptor.kind = LLG_REF_QUEUE;
+    binding->descriptor.retained = llg_queue_ref_acquire(queue, index);
+    binding->descriptor.retained_read = llg_queue_cell_read;
+    binding->descriptor.retained_write = llg_queue_cell_write;
+    binding->next = scope->bindings;
+    scope->bindings = binding;
+    return &binding->descriptor;
+}
+
 static void activation_unwind_proc(llg_proc_t* proc) {
+    while (proc && proc->reference_top) llg_ref_scope_end(proc->reference_top);
     while (proc && proc->activation_top) {
         llg_activation_t* activation = proc->activation_top;
         activation_detach(activation);
@@ -1764,6 +1905,7 @@ static void semaphore_waiter_unlink(llg_wait_t* wait) {
         while (*slot && *slot != node) slot = &(*slot)->next;
         if (*slot == node) {
             *slot = node->next;
+            semaphore->cancelled_waiter = 1;
             if (semaphore->wait_tail == node) {
                 semaphore->wait_tail = NULL;
                 for (llg_semaphore_wait_t* item = semaphore->wait_head; item;
@@ -1800,6 +1942,19 @@ static void semaphore_wake_available(llg_semaphore_t* semaphore) {
         wait->semaphore_waiter = NULL;
         wait->semaphore_keys = 0;
         wake_proc(proc);
+    }
+}
+
+// Finish the entire cancellation batch before granting keys. Servicing from
+// unlink would let a sibling that is about to be killed consume a grant.
+// Teardown only unlinks requests; it must never schedule new work.
+static void semaphore_service_cancelled_waiters(void) {
+    if (g.finish) return;
+    for (llg_semaphore_t* semaphore = g.semaphores; semaphore;
+         semaphore = semaphore->next_all) {
+        if (!semaphore->cancelled_waiter) continue;
+        semaphore->cancelled_waiter = 0;
+        semaphore_wake_available(semaphore);
     }
 }
 
@@ -1863,6 +2018,15 @@ static void free_deferred_assertion_report(
     if (!report) return;
     llg_frame_release(report->frame);
     free(report);
+}
+
+static void free_assertion_rules(void) {
+    while (llg_assertion_rules) {
+        llg_assertion_rule_t* next = llg_assertion_rules->next;
+        free(llg_assertion_rules->scope);
+        free(llg_assertion_rules);
+        llg_assertion_rules = next;
+    }
 }
 
 static void free_deferred_assertions(void) {
@@ -2081,6 +2245,28 @@ static void mailbox_value_destroy(llg_mailbox_value_t* value) {
     memset(value, 0, sizeof(*value));
 }
 
+llg_mailbox_value_t llg_mailbox_typed_value(llg_mailbox_value_t value, uint64_t type_id) {
+    value.type_id = type_id;
+    return value;
+}
+
+llg_mailbox_target_t llg_mailbox_typed_target(llg_mailbox_target_t target, uint64_t type_id) {
+    target.type_id = type_id;
+    return target;
+}
+
+llg_mailbox_target_t llg_mailbox_target_ref(llg_ref_t* ref) {
+    llg_mailbox_target_t target = {0};
+    target.kind = LLG_MAILBOX_PACKED;
+    target.reference = ref;
+    if (ref) {
+        target.width = ref->width;
+        target.is_signed = ref->is_signed;
+        target.two_state = ref->two_state;
+    }
+    return target;
+}
+
 llg_mailbox_value_t llg_mailbox_value_packed(sv4_t value, uint32_t width,
                                               int is_signed, int two_state) {
     llg_mailbox_value_t result = {0};
@@ -2169,13 +2355,29 @@ static int mailbox_message_kind_matches(const llg_mailbox_t* mailbox,
 
 static int mailbox_target_matches(const llg_mailbox_value_t* value,
                                   const llg_mailbox_target_t* target) {
-    return value && target && value->kind == target->kind;
+    if (!value || !target || value->kind != target->kind ||
+        value->type_id != target->type_id) return 0;
+    switch (value->kind) {
+    case LLG_MAILBOX_PACKED:
+        return value->width == target->width &&
+               value->is_signed == target->is_signed &&
+               value->two_state == target->two_state;
+    case LLG_MAILBOX_REAL:
+        return value->shortreal == target->shortreal;
+    case LLG_MAILBOX_STRING:
+        return 1;
+    case LLG_MAILBOX_HANDLE:
+        // The declared nominal type was checked above, even for null values.
+        return 1;
+    default:
+        return 0;
+    }
 }
 
 static void mailbox_deliver(const llg_mailbox_value_t* value,
                             const llg_mailbox_target_t* target) {
     if (!mailbox_target_matches(value, target)) return;
-    if (!target->target.packed && target->kind == LLG_MAILBOX_PACKED) return;
+    if (!target->target.packed && !target->reference && target->kind == LLG_MAILBOX_PACKED) return;
     if (!target->target.real && target->kind == LLG_MAILBOX_REAL) return;
     if (!target->target.string && target->kind == LLG_MAILBOX_STRING) return;
     if (!target->target.handle && target->kind == LLG_MAILBOX_HANDLE) return;
@@ -2184,7 +2386,8 @@ static void mailbox_deliver(const llg_mailbox_value_t* value,
         sv4_t converted = sv4_cast(value->value.packed, target->width,
                                    target->is_signed);
         if (target->two_state) converted = sv4_to_two_state(converted);
-        llg_ba(target->target.packed, converted);
+        if (target->reference) llg_ref_write(target->reference, converted);
+        else llg_ba(target->target.packed, converted);
         break;
     }
     case LLG_MAILBOX_REAL:
@@ -2268,13 +2471,12 @@ static void mailbox_append_wait(llg_mailbox_t* mailbox, llg_wait_t* wait,
     *tail = wait;
 }
 
-static llg_wait_t* mailbox_compatible_get_waiter(llg_mailbox_t* mailbox,
-                                                  const llg_mailbox_value_t* value) {
-    for (llg_wait_t* wait = mailbox->get_head; wait;
-         wait = wait->mailbox_next) {
-        if (mailbox_target_matches(value, &wait->mailbox_target)) return wait;
-    }
-    return NULL;
+static void mailbox_type_error(void) {
+    fprintf(stderr, "llg: mailbox retrieval type mismatch\n");
+    llg_last_failure = 1;
+    g.finish = 1;
+    llg_proc_t* current = llg_current();
+    if (current) llg_proc_done(current);
 }
 
 static void mailbox_remove_and_wake(llg_wait_t* wait) {
@@ -2284,35 +2486,36 @@ static void mailbox_remove_and_wake(llg_wait_t* wait) {
     wake_proc(wait->proc);
 }
 
-static int mailbox_take_value(llg_mailbox_t* mailbox,
-                              llg_mailbox_target_t target, int peek);
-static void mailbox_service_get_waiters(llg_mailbox_t* mailbox);
-
-static void mailbox_service_put_waiters(llg_mailbox_t* mailbox) {
-    while (mailbox && mailbox->put_head &&
-           (mailbox->bound == 0 || mailbox->length < mailbox->bound)) {
-        llg_wait_t* wait = mailbox->put_head;
-        llg_mailbox_value_t value = wait->mailbox_value;
-        memset(&wait->mailbox_value, 0, sizeof(wait->mailbox_value));
-        if (!mailbox->head) {
-            llg_wait_t* get = mailbox_compatible_get_waiter(mailbox, &value);
-            if (get) {
-                if (get->mailbox_peek) {
-                    mailbox_message_append(mailbox, value);
-                    (void)mailbox_take_value(mailbox, get->mailbox_target, 1);
-                } else {
-                    mailbox_deliver(&value, &get->mailbox_target);
-                    mailbox_value_destroy(&value);
-                }
-                mailbox_remove_and_wake(get);
-            } else {
-                mailbox_message_append(mailbox, value);
+// Service only FIFO heads. Unlinking/granting cannot execute a resumed
+// continuation inline, so list ownership stays with this service loop.
+static void mailbox_service_waiters(llg_mailbox_t* mailbox) {
+    while (mailbox && !g.finish) {
+        if (mailbox->head && mailbox->get_head) {
+            llg_wait_t* get = mailbox->get_head;
+            llg_mailbox_message_t* message = mailbox->head;
+            if (!mailbox_target_matches(&message->value, &get->mailbox_target)) {
+                mailbox_type_error();
+                return;
             }
-        } else {
-            mailbox_message_append(mailbox, value);
+            mailbox_deliver(&message->value, &get->mailbox_target);
+            if (!get->mailbox_peek) {
+                message = mailbox_message_pop(mailbox);
+                mailbox_value_destroy(&message->value);
+                free(message);
+            }
+            mailbox_remove_and_wake(get);
+            continue;
         }
-        mailbox_remove_and_wake(wait);
-        mailbox_service_get_waiters(mailbox);
+        if (mailbox->put_head &&
+            (mailbox->bound == 0 || mailbox->length < mailbox->bound)) {
+            llg_wait_t* put = mailbox->put_head;
+            llg_mailbox_value_t value = put->mailbox_value;
+            memset(&put->mailbox_value, 0, sizeof(put->mailbox_value));
+            mailbox_message_append(mailbox, value);
+            mailbox_remove_and_wake(put);
+            continue;
+        }
+        break;
     }
 }
 
@@ -2386,24 +2589,9 @@ void llg_mailbox_put_value(llg_mailbox_t* mailbox, llg_mailbox_value_t value) {
         mailbox_value_destroy(&value);
         return;
     }
-    if (!mailbox->head) {
-        llg_wait_t* get = mailbox_compatible_get_waiter(mailbox, &value);
-        if (get) {
-            if (get->mailbox_peek) {
-                mailbox_message_append(mailbox, value);
-                (void)mailbox_take_value(mailbox, get->mailbox_target, 1);
-            } else {
-                mailbox_deliver(&value, &get->mailbox_target);
-                mailbox_value_destroy(&value);
-            }
-            mailbox_remove_and_wake(get);
-            mailbox_service_get_waiters(mailbox);
-            return;
-        }
-    }
     if (mailbox->bound == 0 || mailbox->length < mailbox->bound) {
         mailbox_message_append(mailbox, value);
-        mailbox_service_get_waiters(mailbox);
+        mailbox_service_waiters(mailbox);
         return;
     }
     llg_proc_t* proc = llg_current();
@@ -2434,65 +2622,30 @@ int llg_mailbox_try_put_value(llg_mailbox_t* mailbox,
         mailbox_value_destroy(&value);
         return 0;
     }
-    if (!mailbox->head) {
-        llg_wait_t* get = mailbox_compatible_get_waiter(mailbox, &value);
-        if (get) {
-            int peek = get->mailbox_peek;
-            if (peek) {
-                mailbox_message_append(mailbox, value);
-                (void)mailbox_take_value(mailbox, get->mailbox_target, 1);
-            } else {
-                mailbox_deliver(&value, &get->mailbox_target);
-                mailbox_value_destroy(&value);
-            }
-            mailbox_remove_and_wake(get);
-            mailbox_service_get_waiters(mailbox);
-            return 1;
-        }
-    }
     if (mailbox->bound != 0 && mailbox->length >= mailbox->bound) {
         mailbox_value_destroy(&value);
         return 0;
     }
     mailbox_message_append(mailbox, value);
-    mailbox_service_get_waiters(mailbox);
+    mailbox_service_waiters(mailbox);
     return 1;
 }
 
+// 0 is empty, -1 is a type mismatch, and 1 is a successful transfer.
+// A failed conversion never changes either the message or the destination.
 static int mailbox_take_value(llg_mailbox_t* mailbox,
                               llg_mailbox_target_t target, int peek) {
-    if (!mailbox || !mailbox->head ||
-        !mailbox_target_matches(&mailbox->head->value, &target))
-        return 0;
+    if (!mailbox || !mailbox->head) return 0;
+    if (!mailbox_target_matches(&mailbox->head->value, &target)) return -1;
     llg_mailbox_message_t* message = mailbox->head;
     mailbox_deliver(&message->value, &target);
     if (!peek) {
         message = mailbox_message_pop(mailbox);
         mailbox_value_destroy(&message->value);
         free(message);
-        mailbox_service_put_waiters(mailbox);
     }
+    mailbox_service_waiters(mailbox);
     return 1;
-}
-
-// Wake compatible waiting getters in FIFO waiter order. A peek does not remove
-// the front message, so every compatible peek waiter may observe that message;
-// a consuming getter then removes it for the remaining queue.
-static void mailbox_service_get_waiters(llg_mailbox_t* mailbox) {
-    while (mailbox && mailbox->head) {
-        llg_wait_t* get =
-            mailbox_compatible_get_waiter(mailbox, &mailbox->head->value);
-        if (!get) return;
-        llg_mailbox_message_t* message = mailbox->head;
-        int peek = get->mailbox_peek;
-        mailbox_deliver(&message->value, &get->mailbox_target);
-        if (!peek) {
-            message = mailbox_message_pop(mailbox);
-            mailbox_value_destroy(&message->value);
-            free(message);
-        }
-        mailbox_remove_and_wake(get);
-    }
 }
 
 static void llg_mailbox_wait_get(llg_mailbox_t* mailbox,
@@ -2516,7 +2669,12 @@ void llg_mailbox_get_value(llg_mailbox_t* mailbox, llg_mailbox_target_t target,
                            int peek) {
     mailbox = mailbox_require(mailbox, "get");
     if (!mailbox) return;
-    if (mailbox_take_value(mailbox, target, peek)) return;
+    int result = mailbox_take_value(mailbox, target, peek);
+    if (result < 0) {
+        mailbox_type_error();
+        return;
+    }
+    if (result > 0) return;
     llg_mailbox_wait_get(mailbox, target, peek);
 }
 
@@ -2859,13 +3017,16 @@ void llg_process_kill(llg_process_handle_t* handle) {
     llg_proc_t* target = handle->proc;
     llg_proc_t* current = llg_current();
     llg_kill_proc_tree(target);
+    service_program_completions();
+    semaphore_service_cancelled_waiters();
     reap_retired_procs();
-    if (target == current) {
-        // The current coroutine cannot be destroyed until control returns to
-        // the scheduler; the retired list handles that safe-point teardown.
+    if (current && current->killed) {
+        // Killing an ancestor also kills the caller and releases its activation.
+        // Never return to generated code; only the scheduler can reap this stack.
         aco_exit();
         abort();
     }
+    if (g.finish && current) llg_proc_done(current);
 }
 
 void llg_process_suspend(llg_process_handle_t* handle) {
@@ -3041,22 +3202,6 @@ static void llg_fork_group_child_done(llg_fork_group_t* grp) {
     }
 }
 
-// `$exit` may be issued by a program fork child.  Detach that active child
-// before cancelling its program parent; otherwise the ordinary tree-kill path
-// would recurse into the coroutine that is currently executing.
-static void detach_current_from_fork_group(llg_proc_t* process) {
-    if (!process || !process->grp) return;
-    llg_fork_group_t* grp = process->grp;
-    for (llg_fork_child_t* child = grp->children; child; child = child->next) {
-        if (child->proc != process) continue;
-        child->proc = NULL;
-        process->grp = NULL;
-        llg_fork_group_child_done(grp);
-        return;
-    }
-    process->grp = NULL;
-}
-
 static llg_fork_group_t* llg_fork_group_new_impl(int join_kind,
                                                   int has_target,
                                                   uint32_t declaration,
@@ -3122,8 +3267,9 @@ static llg_proc_t* llg_fork_impl(void (*fn)(llg_proc_t*), const char* name,
     llg_frame_retain(frame);
     llg_rng_state_child(&grp->parent->rng, &p->rng);
     p->program = grp->parent->program;
-    p->program_live = p->program;
-    if (p->program) g.program_processes++;
+    p->action_assertion = grp->parent->action_assertion;
+    p->is_assertion_action = grp->parent->is_assertion_action;
+    p->program_live = 0;
     p->budget_time = g.now;
     // aco_create from inside a coroutine is safe (mallocs/zeroes an aco_t and
     // sets registers only; no global state).  Children yield to g.main_co, the
@@ -3197,37 +3343,38 @@ void llg_disable_fork(void) {
     llg_proc_t* current = llg_current();
     if (!current) return;
     llg_kill_proc_groups(current);
+    service_program_completions();
+    semaphore_service_cancelled_waiters();
     reap_retired_procs();
 }
 
-_Noreturn void llg_program_exit(void) {
+void llg_program_exit(void) {
     llg_proc_t* current = llg_current();
-    if (!current || !current->program) {
-        fprintf(stderr, "llg: $exit is only valid in a program process\n");
-        llg_last_failure = 1;
-        g.finish = 1;
-        abort();
-    }
-
-    // `$exit` terminates every program initial thread and its descendants.
-    // Cancel current descendants first, then detach the active caller from an
-    // enclosing program fork group before walking all remaining program trees.
-    llg_kill_proc_groups(current);
-    detach_current_from_fork_group(current);
+    if (!current || !current->program) return;
+    if (!region_can_mutate("program exit")) return;
+    llg_program_t* origin = current->program;
+    // Mark closed before cancellation; recursive unlinking only adjusts counts.
+    origin->closed = 1;
     for (;;) {
         llg_proc_t* victim = NULL;
         for (int i = 0; i < g.n_procs; i++) {
-            llg_proc_t* process = g.all_procs[i];
-            if (process && process != current && process->program) {
-                victim = process;
+            llg_proc_t* proc = g.all_procs[i];
+            if (proc && proc->program == origin && !proc->killed &&
+                !proc->completed) {
+                victim = proc;
                 break;
             }
         }
         if (!victim) break;
         llg_kill_proc_tree(victim);
     }
-    g.finish = 1;
-    llg_proc_done(current);
+    service_program_completions();
+    semaphore_service_cancelled_waiters();
+    reap_retired_procs();
+    // Ancestor cancellation may already have retired current. Its stack is
+    // still alive, but none of its activation storage may be accessed again.
+    aco_exit();
+    abort();
 }
 
 static int activation_has_disabled_ancestor(llg_activation_t* activation) {
@@ -3315,6 +3462,7 @@ void llg_disable_target(uint32_t declaration, uint32_t instance) {
             }
         }
     }
+    semaphore_service_cancelled_waiters();
     reap_retired_procs();
     if (current && current->killed) {
         // Group accounting was already completed by cancellation. Do not call
@@ -3815,9 +3963,14 @@ static void sig_write(sv4_t* target, sv4_t value) {
             }
         } else if (w->kind == W_DEPS) {
             for (int i = 0; i < w->n; i++) {
-                if (w->dependencies[i].sig == target) {
-                    wake = 1;
-                    break;
+                const llg_wait_dependency_t* dependency = &w->dependencies[i];
+                if (dependency->sig == target) {
+                    if (dependency->width) {
+                        sv4_t value = sv4_part_select(dependency->value ? *dependency->value : *target,
+                            (int64_t)dependency->lsb + dependency->width - 1, dependency->lsb);
+                        if (!sv4_same(w->last[i], value)) wake = 1;
+                        w->last[i] = value;
+                    } else wake = 1;
                 }
             }
         } else if (w->kind == W_EXPR) {
@@ -4389,12 +4542,16 @@ static void free_proc_storage(llg_proc_t* p) {
     free(p);
 }
 
+static void clocking_copy_observed(void* data);
+
 static void free_region_callbacks(void) {
     while (g.callbacks) {
         llg_region_callback_t* next = g.callbacks->next;
         if (g.callbacks->callback == deferred_assertion_callback)
             free_deferred_assertion_report(
                 (llg_deferred_assertion_report_t*)g.callbacks->data);
+        else if (g.callbacks->callback == clocking_copy_observed)
+            free(g.callbacks->data);
         free(g.callbacks);
         g.callbacks = next;
     }
@@ -4429,8 +4586,18 @@ static void free_assertion_clock_events(llg_concurrent_assertion_t* assertion) {
         free(assertion->clock_events);
         assertion->clock_events = next;
     }
-    if (assertion) assertion->clock_events_tail = NULL;
+    if (assertion) {
+        assertion->clock_events_tail = NULL;
+        while (assertion->clock_history) {
+            llg_assertion_clock_event_t* next = assertion->clock_history->next;
+            free(assertion->clock_history);
+            assertion->clock_history = next;
+        }
+        assertion->clock_history_tail = NULL;
+    }
 }
+
+static void sequence_attempt_discard(llg_sequence_attempt_t* attempt);
 
 static void free_assertion_attempts(llg_concurrent_assertion_t* assertion) {
     free_assertion_clock_events(assertion);
@@ -4453,14 +4620,7 @@ static void free_assertion_attempts(llg_concurrent_assertion_t* assertion) {
         while (*lists[list_index]) {
             llg_sequence_attempt_t* attempt = *lists[list_index];
             *lists[list_index] = attempt->next;
-            while (attempt->tokens) {
-                llg_sequence_token_t* token = attempt->tokens;
-                attempt->tokens = token->next;
-                free(token->locals);
-                free(token);
-            }
-            free(attempt->locals);
-            free(attempt);
+            sequence_attempt_discard(attempt);
         }
         *tails[list_index] = NULL;
     }
@@ -4520,6 +4680,7 @@ static void free_mailboxes(void) {
 }
 
 void llg_rt_cleanup(void) {
+    while (root_reference_top) llg_ref_scope_end(root_reference_top);
     for (int i = 0; i < g.force_count; i++) force_free_entry(&g.force_table[i]);
     while (g.inertial_drivers) {
         llg_inertial_t* driver = g.inertial_drivers;
@@ -4536,6 +4697,7 @@ void llg_rt_cleanup(void) {
     }
     free_deferred_triggers();
     free_deferred_assertions();
+    free_assertion_rules();
     // Groups own only child-list nodes; process objects are owned once by
     // all_procs and are released separately below.
     for (int i = 0; i < g.n_procs; i++) {
@@ -4585,6 +4747,11 @@ void llg_rt_cleanup(void) {
     }
     free_mailboxes();
     reap_retired_procs();
+    while (g.programs) {
+        llg_program_t* next = g.programs->next;
+        free(g.programs);
+        g.programs = next;
+    }
     while (g.semaphores) {
         llg_semaphore_t* semaphore = g.semaphores;
         g.semaphores = semaphore->next_all;
@@ -5523,6 +5690,8 @@ int llg_clocking_sample_history(sv4_t* source, sv4_t* sample, uint64_t ticks) {
     return 1;
 }
 
+uint64_t llg_time_precision_fs(void) { return g.design_precision_fs; }
+
 uint64_t llg_time_scaled(uint64_t precision_fs, uint64_t unit_fs) {
     if (unit_fs == 0) {
         fprintf(stderr, "llg runtime fatal: zero time unit\n");
@@ -5617,16 +5786,25 @@ int llg_rt_process_count(void) {
 }
 
 static llg_proc_t* spawn_in_region(void (*fn)(llg_proc_t*), const char* name,
-                                   llg_region_t region, int program) {
+                                   llg_region_t region, llg_program_t* program,
+                                   int is_initial) {
     if (g.config_error || !fn || !region_valid(region)) return NULL;
     if (!callback_region_allowed(region, 0)) return NULL;
     llg_proc_t* p = (llg_proc_t*)llg_checked_calloc(
         1, sizeof(llg_proc_t), "process");
     p->name = name;
     p->fn = fn;
-    p->program = program;
-    p->program_live = program;
-    if (program) g.program_processes++;
+    p->program = is_initial ? program : NULL;
+    p->program_live = program && is_initial;
+    if (p->program_live) {
+        if (program->live_initials == SIZE_MAX || g.program_processes == SIZE_MAX) {
+            fprintf(stderr, "llg: program initial accounting overflow\n");
+            abort();
+        }
+        program->had_initial = 1;
+        program->live_initials++;
+        g.program_processes++;
+    }
     p->handle = process_handle_new(p);
     p->status = LLG_PROCESS_RUNNING;
     llg_rng_state_child(&g.rng_root, &p->rng);
@@ -5640,12 +5818,13 @@ static llg_proc_t* spawn_in_region(void (*fn)(llg_proc_t*), const char* name,
 
 llg_proc_t* llg_spawn_in_region(void (*fn)(llg_proc_t*), const char* name,
                                 llg_region_t region) {
-    return spawn_in_region(fn, name, region, 0);
+    return spawn_in_region(fn, name, region, NULL, 0);
 }
 
 llg_proc_t* llg_spawn_program_in_region(void (*fn)(llg_proc_t*),
                                          const char* name,
-                                         llg_region_t region) {
+                                         llg_region_t region,
+                                         uint64_t instance, int is_initial) {
     if (region != LLG_REGION_REACTIVE) {
         fprintf(stderr,
                 "llg: program process must be spawned in a reactive region\n");
@@ -5653,7 +5832,21 @@ llg_proc_t* llg_spawn_program_in_region(void (*fn)(llg_proc_t*),
         g.finish = 1;
         return NULL;
     }
-    return spawn_in_region(fn, name, region, 1);
+    llg_program_t* program = g.programs;
+    while (program && program->instance != instance) program = program->next;
+    if (!program) {
+        program = llg_checked_calloc(1, sizeof(*program), "program origin");
+        program->instance = instance;
+        program->next = g.programs;
+        g.programs = program;
+    }
+    if (program->closed) {
+        fprintf(stderr, "llg: cannot spawn into a completed program\n");
+        llg_last_failure = 1;
+        g.finish = 1;
+        return NULL;
+    }
+    return spawn_in_region(fn, name, region, program, is_initial);
 }
 
 llg_proc_t* llg_spawn(void (*fn)(llg_proc_t*), const char* name) {
@@ -5682,6 +5875,8 @@ _Noreturn void llg_proc_done(llg_proc_t* self) {
     process_local_release_all(self);
     if (self->grp) llg_fork_group_child_done(self->grp);
     release_program_process(self);
+    service_program_completions();
+    semaphore_service_cancelled_waiters();
     aco_exit(); // never returns
 }
 
@@ -5771,12 +5966,21 @@ void llg_wait_any_dependencies(const llg_wait_dependency_t* deps, int n) {
     w->n = n;
     w->dependencies = (llg_wait_dependency_t*)llg_checked_malloc(
         (size_t)n, sizeof(llg_wait_dependency_t), "typed event dependencies");
+    w->last = (sv4_t*)llg_checked_calloc((size_t)n, sizeof(sv4_t), "packed-prefix wait snapshots");
     for (int i = 0; i < n; i++) {
         if ((deps[i].sig == NULL) == (deps[i].real == NULL)) {
             fprintf(stderr, "llg: typed wait dependency must name one storage kind\n");
             abort();
         }
         w->dependencies[i] = deps[i];
+        if (deps[i].width) {
+            sv4_t* value = deps[i].value ? deps[i].value : deps[i].sig;
+            if (!value || deps[i].real || deps[i].lsb >= value->width ||
+                deps[i].width > value->width - deps[i].lsb) {
+                fprintf(stderr, "llg: invalid packed-prefix wait dependency\n"); abort();
+            }
+            w->last[i] = sv4_part_select(*value, (int64_t)deps[i].lsb + deps[i].width - 1, deps[i].lsb);
+        }
     }
     register_wait();
     aco_yield();
@@ -5845,8 +6049,7 @@ static int event_order_match(llg_wait_t* w, llg_event_object_t* ev) {
     return -1;
 }
 
-static void event_trigger_object(llg_event_object_t* ev) {
-    if (!region_can_mutate("event scheduling")) return;
+static void event_trigger_object_unchecked(llg_event_object_t* ev) {
     if (!ev) return;
 
     // The state is tied to both the current simulation time and this runtime
@@ -5898,6 +6101,23 @@ static void event_trigger_object(llg_event_object_t* ev) {
         else event_list_add(ev, wake[i]);
     }
     deferred_trigger_event(ev);
+}
+
+static void event_trigger_object(llg_event_object_t* ev) {
+    if (!region_can_mutate("event scheduling")) return;
+    event_trigger_object_unchecked(ev);
+}
+
+static void clocking_event_callback(void* data) {
+    llg_event_t* event = data;
+    event_trigger_object_unchecked(event ? event->object : NULL);
+}
+
+int llg_clocking_event_observed(llg_event_t* event) {
+    if (!event) return 0;
+    // Event handles are runtime-owned until cleanup. Earlier Observed sample
+    // callbacks are FIFO, so this callback sees the complete block publication.
+    return llg_schedule_region_callback(LLG_REGION_OBSERVED, clocking_event_callback, event);
 }
 
 void llg_event_trigger(llg_event_t* ev) {
@@ -6810,6 +7030,10 @@ void llg_ref_write(llg_ref_t* ref, sv4_t value) {
     sv4_t converted = sv4_cast(value, ref->width, ref->is_signed);
     if (ref->two_state) converted = sv4_to_two_state(converted);
     if ((llg_ref_kind_t)ref->kind == LLG_REF_QUEUE) {
+        if (ref->retained_write) {
+            (void)ref->retained_write(ref->retained, converted);
+            return;
+        }
         if (ref->queue_write)
             (void)ref->queue_write(ref->queue, ref->queue_identity, converted);
         return;
@@ -6887,10 +7111,11 @@ static void llg_net_publish(llg_net_t* net, sv4_t resolved) {
         llg_inertial_assign(&net->propagation, &net->resolved, resolved,
                             net->propagation_rise, net->propagation_fall,
                             net->propagation_turn_off);
+        if (net->propagation) net->propagation->publication_net = net;
     } else {
         sig_write(&net->resolved, resolved);
+        llg_net_alias_refresh_all(net);
     }
-    llg_net_alias_refresh_all(net);
 }
 
 void llg_net_resolve(llg_net_t* net) {
@@ -6934,7 +7159,8 @@ void llg_net_alias_bind(llg_net_alias_t* alias) {
 }
 
 sv4_t llg_net_alias_read(llg_net_alias_t* alias) {
-    llg_net_alias_refresh(alias);
+    // Driver/force/propagation commits publish this view before readers run.
+    // Observing it, including from Postponed, must never perform a write.
     return alias ? alias->visible : sv4_from_u64(0, 1, 0);
 }
 
@@ -7095,6 +7321,7 @@ static void inertial_update(llg_inertial_t** handle, sv4_t* target,
         inertial_unlink_pending(driver);
         driver->target = target;
         driver->net = net;
+        driver->publication_net = NULL;
         driver->slot = slot;
         driver->current = *target;
     }
@@ -7201,6 +7428,10 @@ static void commit_inertial(llg_region_t region) {
         if (driver->net) llg_net_write(driver->net, driver->slot, driver->value);
         else llg_ba(driver->target, driver->value);
     }
+    // A net declaration delay publishes the resolved net, not a new driver.
+    // Its aliases must change now, not when the propagation was scheduled.
+    if (driver->publication_net)
+        llg_net_alias_refresh_all(driver->publication_net);
 }
 
 static int nba_due(llg_region_t region) {
@@ -7942,26 +8173,48 @@ static void llg_file_slot_failure(llg_file_slot_t* slot, const char* message) {
 static void llg_file_init_table(void) {
     if (llg_files_initialized) return;
     memset(llg_file_slots, 0, sizeof(llg_file_slots));
+    llg_file_slots[LLG_FILE_STDIN].stream = stdin;
     llg_file_slots[LLG_FILE_STDOUT].stream = stdout;
-    llg_file_slots[LLG_FILE_STDOUT].open = 1;
     llg_file_slots[LLG_FILE_STDERR].stream = stderr;
-    llg_file_slots[LLG_FILE_STDERR].open = 1;
+    for (unsigned i = 0; i < 3u; ++i) llg_file_slots[i].open = 1;
     llg_files_initialized = 1;
     llg_file_global_error = 0;
     llg_file_global_message[0] = 0;
 }
 
+static uint32_t llg_file_mcd_bit(unsigned slot) {
+    if (slot == LLG_FILE_STDOUT) return 1u;
+    if (slot >= LLG_FILE_MCD_FIRST && slot < LLG_FILE_MCD_END)
+        return UINT32_C(1) << (slot - 2u);
+    return 0;
+}
+
+static int llg_file_selected(uint32_t descriptor, unsigned slot) {
+    if (descriptor & LLG_FILE_FD_TAG)
+        return (descriptor & ~LLG_FILE_FD_TAG) == slot;
+    return (descriptor & llg_file_mcd_bit(slot)) != 0;
+}
+
 static int llg_file_mask_valid(uint32_t descriptor) {
-    if (descriptor == 0) {
+    llg_file_init_table();
+    if (!descriptor) {
         llg_file_global_failure("invalid file descriptor");
         return 0;
     }
-    llg_file_init_table();
-    for (unsigned i = 0; i < LLG_FILE_SLOTS; i++) {
-        uint32_t bit = 1u << i;
-        if ((descriptor & bit) &&
-            (!llg_file_slots[i].open || !llg_file_slots[i].stream)) {
+    if (descriptor & LLG_FILE_FD_TAG) {
+        uint32_t index = descriptor & ~LLG_FILE_FD_TAG;
+        if (index >= LLG_FILE_SLOTS ||
+            (index >= 3u && index < LLG_FILE_FD_FIRST) ||
+            !llg_file_slots[index].open || !llg_file_slots[index].stream) {
             llg_file_global_failure("invalid or closed file descriptor");
+            return 0;
+        }
+        return 1;
+    }
+    for (unsigned i = 0; i < LLG_FILE_SLOTS; i++) {
+        if (llg_file_selected(descriptor, i) &&
+            (!llg_file_slots[i].open || !llg_file_slots[i].stream)) {
+            llg_file_global_failure("invalid or closed multichannel descriptor");
             return 0;
         }
     }
@@ -7969,26 +8222,18 @@ static int llg_file_mask_valid(uint32_t descriptor) {
 }
 
 static int llg_file_single_ordinary(uint32_t descriptor, llg_file_slot_t** out) {
-    if (!llg_file_mask_valid(descriptor) ||
-        (descriptor & (descriptor - 1u)) != 0 || descriptor <= 2u) {
-        llg_file_global_failure("file operation requires one ordinary descriptor");
+    if (!(descriptor & LLG_FILE_FD_TAG) || !llg_file_mask_valid(descriptor)) {
+        llg_file_global_failure("file input/position operation requires an FD, not an MCD");
         return 0;
     }
-    unsigned index = 0;
-    while (((descriptor >> index) & 1u) == 0u) index++;
-    if (index < 2u || index >= LLG_FILE_SLOTS) {
-        llg_file_global_failure("invalid ordinary file descriptor");
-        return 0;
-    }
-    *out = &llg_file_slots[index];
+    *out = &llg_file_slots[descriptor & ~LLG_FILE_FD_TAG];
     return 1;
 }
 
 uint32_t llg_file_descriptor(sv4_t value) {
-    if (value.width == 0 || value.width > 32 || sv4_is_unknown(value) ||
-        (value.is_signed && value.width > 0 &&
-         ((value.bits[(value.width - 1u) / 64u] >> ((value.width - 1u) % 64u)) & 1u))) {
-        llg_file_global_failure("file descriptor is not a known non-negative 32-bit value");
+    // A descriptor is a 32-bit bit pattern, not a nonnegative signed integer.
+    if (value.width == 0 || value.width > 32 || sv4_is_unknown(value)) {
+        llg_file_global_failure("file descriptor is not a known 32-bit value");
         return 0;
     }
     uint32_t descriptor = (uint32_t)sv4_to_u64(value);
@@ -8011,7 +8256,8 @@ uint32_t llg_file_open(llg_string_t path, llg_string_t mode, int has_mode) {
     llg_string_destroy(&mode);
 
     unsigned slot_index = LLG_FILE_SLOTS;
-    for (unsigned i = 2; i < LLG_FILE_SLOTS; i++) {
+    for (unsigned i = has_mode ? LLG_FILE_FD_FIRST : LLG_FILE_MCD_FIRST;
+         i < (has_mode ? LLG_FILE_SLOTS : LLG_FILE_MCD_END); i++) {
         if (!llg_file_slots[i].open) {
             slot_index = i;
             break;
@@ -8026,7 +8272,7 @@ uint32_t llg_file_open(llg_string_t path, llg_string_t mode, int has_mode) {
 
     static const char* const valid_modes[] = {
         "r", "w", "a", "r+", "w+", "a+",
-        "rb", "wb", "ab", "r+b", "w+b", "a+b",
+        "rb", "wb", "ab", "r+b", "w+b", "a+b", "rb+", "wb+", "ab+",
     };
     int mode_valid = 0;
     for (size_t i = 0; i < sizeof(valid_modes) / sizeof(valid_modes[0]); i++) {
@@ -8059,16 +8305,27 @@ uint32_t llg_file_open(llg_string_t path, llg_string_t mode, int has_mode) {
     llg_file_slots[slot_index].eof = 0;
     llg_file_slots[slot_index].pushback_len = 0;
     llg_file_slots[slot_index].message[0] = 0;
-    return 1u << slot_index;
+    return has_mode ? LLG_FILE_FD_TAG | slot_index : llg_file_mcd_bit(slot_index);
+}
+
+// Cancel deferred output before the slot can be reused by a later fopen.
+static uint32_t llg_file_without_slot(uint32_t descriptor, unsigned slot) {
+    if (descriptor & LLG_FILE_FD_TAG)
+        return llg_file_selected(descriptor, slot) ? 0 : descriptor;
+    return descriptor & ~llg_file_mcd_bit(slot);
 }
 
 void llg_file_close(uint32_t descriptor) {
     if (!llg_file_mask_valid(descriptor)) return;
-    for (unsigned i = 2; i < LLG_FILE_SLOTS; i++) {
-        uint32_t bit = 1u << i;
-        if (!(descriptor & bit)) continue;
+    for (unsigned i = 0; i < LLG_FILE_SLOTS; i++) {
+        if (!llg_file_selected(descriptor, i)) continue;
+        if (g.mon.typed) g.mon.descriptor = llg_file_without_slot(g.mon.descriptor, i);
+        for (llg_strobe_t* e = g.strobes; e; e = e->next)
+            if (e->typed) e->descriptor = llg_file_without_slot(e->descriptor, i);
         llg_file_slot_t* slot = &llg_file_slots[i];
-        int result = fclose(slot->stream);
+        // Preopened streams are borrowed from the host. Invalidate their HDL
+        // descriptors without closing the host's diagnostic/output channel.
+        int result = slot->owned ? fclose(slot->stream) : 0;
         slot->stream = NULL;
         slot->open = 0;
         slot->owned = 0;
@@ -8079,12 +8336,11 @@ void llg_file_close(uint32_t descriptor) {
 
 int llg_file_flush(uint32_t descriptor, int all) {
     llg_file_init_table();
-    if (all) descriptor = UINT32_MAX;
     if (!all && !llg_file_mask_valid(descriptor)) return -1;
     int result = 0;
     for (unsigned i = 0; i < LLG_FILE_SLOTS; i++) {
-        uint32_t bit = 1u << i;
-        if (all ? !llg_file_slots[i].open : !(descriptor & bit)) continue;
+        if (all ? (!llg_file_slots[i].open || i == LLG_FILE_STDIN)
+                : !llg_file_selected(descriptor, i)) continue;
         if (!llg_file_slots[i].open || !llg_file_slots[i].stream) {
             llg_file_global_failure("invalid or closed file descriptor");
             result = -1;
@@ -8116,7 +8372,11 @@ int64_t llg_file_tell(uint32_t descriptor) {
         llg_file_slot_failure(slot, "file tell failed");
         return -1;
     }
-    return (int64_t)position;
+    if ((uint64_t)position < slot->pushback_len) {
+        llg_file_slot_failure(slot, "file tell position precedes pushed-back characters");
+        return -1;
+    }
+    return (int64_t)position - (int64_t)slot->pushback_len;
 }
 
 int llg_file_seek(uint32_t descriptor, sv4_t offset, sv4_t operation) {
@@ -8129,6 +8389,13 @@ int llg_file_seek(uint32_t descriptor, sv4_t offset, sv4_t operation) {
         return -1;
     }
     int whence = (int)sv4_to_u64(operation);
+    if (whence == SEEK_CUR) {
+        if (signed_offset < INT64_MIN + (int64_t)slot->pushback_len) {
+            llg_file_slot_failure(slot, "file seek offset underflow");
+            return -1;
+        }
+        signed_offset -= (int64_t)slot->pushback_len;
+    }
     if (signed_offset < (int64_t)LONG_MIN || signed_offset > (int64_t)LONG_MAX ||
         fseek(slot->stream, (long)signed_offset, whence) != 0) {
         llg_file_slot_failure(slot, "file seek failed");
@@ -8147,8 +8414,7 @@ int llg_file_error(uint32_t descriptor, llg_string_t* message) {
         text = llg_file_global_message;
     } else {
         for (unsigned i = 0; i < LLG_FILE_SLOTS; i++) {
-            uint32_t bit = 1u << i;
-            if (!(descriptor & bit)) continue;
+            if (!llg_file_selected(descriptor, i)) continue;
             llg_file_slot_t* slot = &llg_file_slots[i];
             if (ferror(slot->stream)) llg_file_slot_failure(slot, "host stream error");
             if (slot->error) {
@@ -8163,15 +8429,9 @@ int llg_file_error(uint32_t descriptor, llg_string_t* message) {
 }
 
 int llg_file_eof(uint32_t descriptor) {
-    if (!llg_file_mask_valid(descriptor)) return -1;
-    int result = 0;
-    for (unsigned i = 0; i < LLG_FILE_SLOTS; i++) {
-        uint32_t bit = 1u << i;
-        if ((descriptor & bit) && llg_file_slots[i].eof) {
-            result = 1;
-        }
-    }
-    return result;
+    llg_file_slot_t* slot;
+    if (!llg_file_single_ordinary(descriptor, &slot)) return -1;
+    return slot->eof != 0;
 }
 
 // ── File input ──────────────────────────────────────────────────────────────
@@ -8388,6 +8648,72 @@ static int llg_scan_digit(unsigned char value, unsigned base) {
     return -1;
 }
 
+// Read only this conversion's input item. In particular, a comma or colon
+// belongs to the next directive, not to an all-or-nothing whitespace token.
+static int llg_scan_numeric(llg_scan_input_t* input, char conversion, size_t limit,
+                            unsigned char** result, size_t* length) {
+    size_t capacity = 64u, used = 0;
+    unsigned char* bytes = (unsigned char*)llg_checked_malloc(capacity, 1, "numeric input");
+    int real = conversion == 'f' || conversion == 'e' || conversion == 'g';
+    unsigned base = conversion == 'b' ? 2u : conversion == 'o' ? 8u :
+                    conversion == 'h' || conversion == 'x' ? 16u : 10u;
+    int digits = 0, dot = 0, exponent = 0, exponent_digits = 0;
+    int decimal_unknown = 0;
+    while (used < limit) {
+        int c = llg_scan_get(input);
+        if (c == EOF) {
+            if (!used) input->input_failure = 1;
+            break;
+        }
+        int accept = 0;
+        if (used == 0 && (c == '+' || c == '-') &&
+            (real || base == 10u)) accept = 1;
+        else if (real) {
+            if (c >= '0' && c <= '9') {
+                accept = 1;
+                if (exponent) exponent_digits = 1; else digits = 1;
+            } else if (c == '.' && !dot && !exponent) {
+                accept = 1; dot = 1;
+            } else if ((c == 'e' || c == 'E') && digits && !exponent) {
+                accept = 1; exponent = 1;
+            } else if ((c == '+' || c == '-') && used &&
+                       (bytes[used - 1u] == 'e' || bytes[used - 1u] == 'E')) accept = 1;
+        } else {
+            size_t start = used && (bytes[0] == '+' || bytes[0] == '-') ? 1u : 0u;
+            // Preserve the existing C-style auto-radix %i extension only.
+            if (conversion == 'i' && used == start + 1u && bytes[start] == '0' &&
+                (c == 'x' || c == 'X' || c == 'b' || c == 'B' || c == 'o' || c == 'O')) {
+                base = c == 'x' || c == 'X' ? 16u : c == 'b' || c == 'B' ? 2u : 8u;
+                digits = 0; accept = 1;
+            } else {
+                if (conversion == 'i' && used == start + 1u && bytes[start] == '0') base = 8u;
+                if (c == '_' && digits) accept = 1;
+                else if (!decimal_unknown && llg_scan_digit((unsigned char)c, base) >= 0) {
+                    accept = 1; digits = 1;
+                } else if (c == 'x' || c == 'X' || c == 'z' || c == 'Z' || c == '?') {
+                    if (base != 10u || (!digits && used == start)) {
+                        accept = 1; digits = 1;
+                        if (base == 10u) decimal_unknown = 1;
+                    }
+                }
+            }
+        }
+        if (!accept) { (void)llg_scan_unget(input, c); break; }
+        if (used == capacity) {
+            if (capacity > SIZE_MAX / 2u) llg_fatal_allocation("numeric input", capacity, 2u);
+            capacity *= 2u;
+            unsigned char* next = (unsigned char*)realloc(bytes, capacity);
+            if (!next) llg_fatal_allocation("numeric input", capacity, 1u);
+            bytes = next;
+        }
+        bytes[used++] = (unsigned char)c;
+    }
+    if (!digits || (real && exponent && !exponent_digits)) { free(bytes); return 0; }
+    *result = bytes;
+    *length = used;
+    return 1;
+}
+
 static void llg_scan_set_bit(sv4_t* value, uint32_t bit, int state) {
     if (bit >= value->width) return;
     uint32_t limb = bit / 64u;
@@ -8422,39 +8748,6 @@ static int llg_scan_integer(const unsigned char* bytes, size_t length,
         else if (prefix == 'b' || prefix == 'B') { base = 2u; begin += 2u; }
         else if (prefix == 'o' || prefix == 'O') { base = 8u; begin += 2u; }
         else base = 8u;
-    } else if ((base == 16u || base == 2u || base == 8u) &&
-               begin + 2u <= length && bytes[begin] == '0') {
-        unsigned char prefix = bytes[begin + 1u];
-        if ((base == 16u && (prefix == 'x' || prefix == 'X')) ||
-            (base == 8u && (prefix == 'o' || prefix == 'O')) ||
-            (base == 2u && (prefix == 'b' || prefix == 'B'))) begin += 2u;
-    }
-    size_t quote = begin;
-    while (quote < length && isdigit(bytes[quote])) quote++;
-    if (quote < length && bytes[quote] == '\'') {
-        size_t designator = quote + 1u;
-        if (designator < length && (bytes[designator] == 's' || bytes[designator] == 'S'))
-            designator++;
-        if (designator < length) {
-            unsigned char base_char = bytes[designator];
-            if (base_char == 'b' || base_char == 'B') {
-                base = 2u;
-                begin = designator + 1u;
-            } else if (base_char == 'o' || base_char == 'O') {
-                base = 8u;
-                begin = designator + 1u;
-            } else if (base_char == 'h' || base_char == 'H') {
-                base = 16u;
-                begin = designator + 1u;
-            } else if (base_char == 'd' || base_char == 'D') {
-                base = 10u;
-                begin = designator + 1u;
-            }
-        }
-    }
-    if (begin < length && (bytes[begin] == '+' || bytes[begin] == '-')) {
-        negative = bytes[begin] == '-';
-        begin++;
     }
     if (begin == length) return 0;
     int unknown = 0;
@@ -8572,10 +8865,13 @@ static int llg_scan_conversion(llg_scan_input_t* input, char conversion,
         ok = llg_scan_chars(input, width ? width : 1u, &bytes, &length);
     } else {
         if (!llg_scan_skip_space(input)) return 0;
-        ok = llg_scan_token(input, width ? width : SIZE_MAX, &bytes, &length);
+        ok = conversion == 's'
+            ? llg_scan_token(input, width ? width : SIZE_MAX, &bytes, &length)
+            : llg_scan_numeric(input, conversion, width ? width : SIZE_MAX, &bytes, &length);
     }
     if (!ok) return input->input_failure ? -1 : 0;
     if (suppressed) {
+        // The lexical conversion above still runs; only assignment is suppressed.
         free(bytes);
         return 2;
     }
@@ -8758,8 +9054,7 @@ static void llg_file_write_typed(uint32_t descriptor, const char* output,
                                  size_t length, int newline) {
     if (!llg_file_mask_valid(descriptor)) return;
     for (unsigned i = 0; i < LLG_FILE_SLOTS; i++) {
-        uint32_t bit = 1u << i;
-        if (!(descriptor & bit)) continue;
+        if (!llg_file_selected(descriptor, i)) continue;
         llg_file_slot_t* slot = &llg_file_slots[i];
         if (fwrite(output, 1, length, slot->stream) != length ||
             (newline && fputc('\n', slot->stream) == EOF) ||
@@ -9227,8 +9522,8 @@ void llg_memory_write(llg_string_t path, sv4_t* memory, uint64_t total,
 
 static void llg_file_cleanup(void) {
     if (!llg_files_initialized) return;
-    for (unsigned i = 2; i < LLG_FILE_SLOTS; i++) {
-        if (llg_file_slots[i].open && llg_file_slots[i].stream)
+    for (unsigned i = 0; i < LLG_FILE_SLOTS; i++) {
+        if (llg_file_slots[i].owned && llg_file_slots[i].open && llg_file_slots[i].stream)
             fclose(llg_file_slots[i].stream);
     }
     memset(llg_file_slots, 0, sizeof(llg_file_slots));
@@ -9308,21 +9603,21 @@ static const char* llg_assertion_name(int kind) {
     }
 }
 
-void llg_assertion_failure(int kind, uint64_t identity, const char* label,
-                           const char* location) {
-    if (kind < LLG_ASSERTION_ASSERT || kind > LLG_ASSERTION_EXPECT) {
-        fprintf(stderr, "llg runtime fatal: invalid assertion kind %d\n", kind);
+static void assertion_record_failure(int kind) {
+    if (kind < LLG_ASSERTION_ASSERT || kind > LLG_ASSERTION_EXPECT ||
+        llg_assertion_failure_counts[kind] == UINT64_MAX) {
+        fprintf(stderr, "llg runtime fatal: invalid assertion kind or counter overflow\n");
         abort();
     }
-    if (llg_assertion_failure_counts[kind] == UINT64_MAX ||
-        llg_severity_counts[LLG_SEVERITY_ERROR] == UINT64_MAX) {
-        fprintf(stderr, "llg runtime fatal: assertion counter overflow\n");
-        abort();
-    }
-    // Keep the semantic identity in the ABI now; a later coverage/control
-    // registry can use it without changing generated call sites.
-    (void)identity;
     llg_assertion_failure_counts[kind]++;
+}
+
+static void assertion_report_failure(int kind, const char* label,
+                                      const char* location) {
+    if (llg_severity_counts[LLG_SEVERITY_ERROR] == UINT64_MAX) {
+        fprintf(stderr, "llg runtime fatal: severity counter overflow\n");
+        abort();
+    }
     llg_severity_counts[LLG_SEVERITY_ERROR]++;
     fprintf(stderr, "llg: assertion %s failed: %s",
             llg_assertion_name(kind),
@@ -9330,6 +9625,13 @@ void llg_assertion_failure(int kind, uint64_t identity, const char* label,
     if (label && label[0]) fprintf(stderr, " (%s)", label);
     fputc('\n', stderr);
     fflush(stderr);
+}
+
+void llg_assertion_failure(int kind, uint64_t identity, const char* label,
+                           const char* location) {
+    (void)identity;
+    assertion_record_failure(kind);
+    assertion_report_failure(kind, label, location);
 }
 
 void llg_assertion_cover(uint64_t identity, const char* label, const char* location) {
@@ -9428,6 +9730,123 @@ static int assertion_control_arg(const sv4_t* value, uint64_t* result) {
     return 1;
 }
 
+static int assertion_has_attempts(const llg_concurrent_assertion_t* assertion) {
+    return assertion->attempts || assertion->sequence_antecedents ||
+           assertion->sequence_consequents;
+}
+
+static int deferred_selected(int kind, const char* label, const char* scope,
+                              uint64_t types, uint64_t directives,
+                              const char* const* scopes, int count) {
+    uint64_t directive = kind == LLG_ASSERTION_COVER ? 2u :
+                         kind == LLG_ASSERTION_ASSUME ? 4u : 1u;
+    if (!(types & 4u) || !(directives & directive)) return 0; // #0 deferred
+    if (!count) return 1;
+    llg_concurrent_assertion_t view = {0};
+    view.scope = scope;
+    view.label = label;
+    for (int i = 0; i < count; ++i)
+        if (assertion_matches_scope(&view, scopes[i])) return 1;
+    return 0;
+}
+
+int llg_deferred_assertion_enabled(int kind, const char* label, const char* scope) {
+    for (llg_assertion_rule_t* rule = llg_assertion_rules; rule; rule = rule->next) {
+        const char* selectors[] = {rule->scope};
+        if (deferred_selected(kind, label, scope, rule->assertion_type,
+                              rule->directive_type, selectors, rule->scope ? 1 : 0))
+            return rule->enabled;
+    }
+    return 1;
+}
+
+static void assertion_remember_control(int enabled, uint64_t types,
+                                       uint64_t directives, const char* scope) {
+    // Replace equal selector/mask rules; repeated control in a loop must not
+    // retain an unbounded history of identical commands.
+    llg_assertion_rule_t** link = &llg_assertion_rules;
+    llg_assertion_rule_t* rule = NULL;
+    while (*link) {
+        if ((*link)->assertion_type == types && (*link)->directive_type == directives &&
+            ((!scope && !(*link)->scope) ||
+             (scope && (*link)->scope && strcmp(scope, (*link)->scope) == 0))) {
+            rule = *link;
+            *link = rule->next;
+            break;
+        }
+        link = &(*link)->next;
+    }
+    if (!rule) {
+        rule = llg_checked_calloc(1, sizeof(*rule), "assertion control rule");
+        if (scope) {
+            size_t length = strlen(scope);
+            rule->scope = llg_checked_malloc(length + 1u, 1, "assertion control scope");
+            memcpy(rule->scope, scope, length + 1u);
+        }
+        rule->assertion_type = types;
+        rule->directive_type = directives;
+    }
+    rule->enabled = enabled;
+    rule->next = llg_assertion_rules;
+    llg_assertion_rules = rule;
+}
+
+static void assertion_default_failure_action(void* data);
+
+static void assertion_kill_actions(llg_concurrent_assertion_t* assertion) {
+    // Cancellation changes the process table; restart each scan.
+    for (;;) {
+        llg_proc_t* victim = NULL;
+        for (int i = 0; i < g.n_procs; ++i) {
+            llg_proc_t* p = g.all_procs[i];
+            if (p && p->is_assertion_action &&
+                p->action_assertion == assertion->identity && !p->killed && !p->completed) {
+                victim = p;
+                break;
+            }
+        }
+        if (!victim) break;
+        llg_kill_proc_tree(victim);
+    }
+    llg_region_callback_t** link = &g.callbacks;
+    while (*link) {
+        llg_region_callback_t* entry = *link;
+        if (entry->callback == assertion_default_failure_action && entry->data == assertion) {
+            *link = entry->next;
+            free(entry);
+        } else link = &entry->next;
+    }
+}
+
+static void assertion_kill_deferred(uint64_t types, uint64_t directives,
+                                    const char* const* scopes, int count) {
+    llg_deferred_assertion_report_t** link = &g.deferred_assertions;
+    g.deferred_assertion_tail = NULL;
+    while (*link) {
+        llg_deferred_assertion_report_t* report = *link;
+        if (deferred_selected(report->kind, report->label, report->scope,
+                              types, directives, scopes, count)) {
+            *link = report->next;
+            free_deferred_assertion_report(report);
+        } else {
+            g.deferred_assertion_tail = report;
+            link = &report->next;
+        }
+    }
+    llg_region_callback_t** callback = &g.callbacks;
+    while (*callback) {
+        llg_region_callback_t* entry = *callback;
+        llg_deferred_assertion_report_t* report = entry->data;
+        if (entry->callback == deferred_assertion_callback && report &&
+            deferred_selected(report->kind, report->label, report->scope,
+                              types, directives, scopes, count)) {
+            *callback = entry->next;
+            free_deferred_assertion_report(report);
+            free(entry);
+        } else callback = &entry->next;
+    }
+}
+
 int llg_assertion_control(int kind, const sv4_t* args, int n_args,
                           const char* const* scopes, int n_scopes) {
     if (!region_can_mutate("assertion control")) return 0;
@@ -9435,6 +9854,10 @@ int llg_assertion_control(int kind, const sv4_t* args, int n_args,
         n_args < 0 || n_args > 4 || n_scopes < 0 ||
         (n_args != 0 && !args) || (n_scopes != 0 && !scopes))
         return assertion_control_failure("invalid control argument shape");
+
+    for (int i = 0; i < n_scopes; ++i)
+        if (!scopes[i] || !scopes[i][0])
+            return assertion_control_failure("empty assertion scope selector");
 
     uint64_t values[4] = {0, 0, 0, 0};
     for (int index = 0; index < n_args; index++) {
@@ -9467,6 +9890,15 @@ int llg_assertion_control(int kind, const sv4_t* args, int n_args,
         return assertion_control_failure("bounded assertion control supports only level 0");
     }
 
+    if (n_scopes == 0)
+        assertion_remember_control(operation == LLG_ASSERTION_CONTROL_ON,
+                                   assertion_type, directive_type, NULL);
+    for (int i = 0; i < n_scopes; ++i)
+        assertion_remember_control(operation == LLG_ASSERTION_CONTROL_ON,
+                                   assertion_type, directive_type, scopes[i]);
+    if (operation == LLG_ASSERTION_CONTROL_KILL)
+        assertion_kill_deferred(assertion_type, directive_type, scopes, n_scopes);
+
     for (llg_concurrent_assertion_t* assertion = g.assertions; assertion;
          assertion = assertion->next) {
         if (kind == LLG_ASSERTION_CONTROL_FULL &&
@@ -9484,6 +9916,8 @@ int llg_assertion_control(int kind, const sv4_t* args, int n_args,
                 assertion->enabled = 0;
                 break;
             case LLG_ASSERTION_CONTROL_KILL:
+                assertion->enabled = 0;
+                assertion_kill_actions(assertion);
                 free_assertion_attempts(assertion);
                 assertion->edge_pending = 0;
                 if (assertion->kind == LLG_ASSERTION_EXPECT &&
@@ -9495,6 +9929,14 @@ int llg_assertion_control(int kind, const sv4_t* args, int n_args,
             default:
                 return assertion_control_failure("invalid assertion control operation");
         }
+    }
+    if (operation == LLG_ASSERTION_CONTROL_KILL) {
+        llg_proc_t* current = llg_current();
+        service_program_completions();
+        semaphore_service_cancelled_waiters();
+        reap_retired_procs();
+        if (current && current->killed) { aco_exit(); abort(); }
+        if (current && g.finish) llg_proc_done(current);
     }
     return 1;
 }
@@ -9585,372 +10027,411 @@ static sv4_t* sequence_locals_clone(const llg_sequence_graph_t* graph,
     return copy;
 }
 
-static int sequence_token_present(const llg_sequence_graph_t* graph,
-                                  const llg_sequence_token_t* list,
-                                  uint32_t state, uint64_t entered_cycle,
-                                  uint64_t entered_time, uint64_t entered_order,
-                                  uint64_t entered_tick, sv4_t* entered_clock,
-                                  int entered_edge, const sv4_t* locals) {
-    for (const llg_sequence_token_t* token = list; token; token = token->next)
-        if (token->state == state && token->entered_cycle == entered_cycle &&
-            token->entered_time == entered_time &&
-            token->entered_order == entered_order &&
-            token->entered_tick == entered_tick &&
-            token->entered_clock == entered_clock &&
-            token->entered_edge == entered_edge &&
-            sequence_locals_same(token->locals, locals, graph->local_count))
-            return 1;
+static void sequence_scope_retain(llg_sequence_scope_t* scope) {
+    if (scope) {
+        if (scope->refs == SIZE_MAX) { fprintf(stderr, "llg: sequence scope reference overflow\n"); abort(); }
+        scope->refs++;
+    }
+}
+
+static void sequence_scope_release(llg_sequence_scope_t* scope) {
+    while (scope && --scope->refs == 0) {
+        llg_sequence_scope_t* parent = scope->parent;
+        free(scope);
+        scope = parent;
+    }
+}
+
+static int sequence_scope_closed(const llg_sequence_scope_t* scope) {
+    for (; scope; scope = scope->parent) if (scope->matched) return 1;
     return 0;
 }
 
-static int sequence_token_add(const llg_sequence_graph_t* graph,
-                              llg_sequence_token_t** list, uint32_t state,
-                              uint64_t entered_cycle, uint64_t entered_time,
-                              uint64_t entered_order, uint64_t entered_tick,
-                              sv4_t* entered_clock, int entered_edge,
-                              const sv4_t* locals) {
-    if (sequence_token_present(graph, *list, state, entered_cycle, entered_time,
-                               entered_order, entered_tick, entered_clock,
-                               entered_edge, locals))
-        return 0;
-    llg_sequence_token_t* token = (llg_sequence_token_t*)llg_checked_calloc(
-        1, sizeof(*token), "concurrent assertion sequence token");
-    token->state = state;
-    token->entered_cycle = entered_cycle;
-    token->entered_time = entered_time;
-    token->entered_order = entered_order;
-    token->entered_tick = entered_tick;
-    token->entered_clock = entered_clock;
-    token->entered_edge = entered_edge;
-    token->locals = sequence_locals_clone(graph, locals);
-    if (graph->local_count != 0 && !token->locals) {
-        free(token);
-        return 0;
+static int sequence_scope_allows(const llg_sequence_scope_t* scope,
+                                 const llg_assertion_clock_event_t* event) {
+    for (; scope; scope = scope->parent) {
+        if (!scope->matched) continue;
+        if (scope->time != event->time || scope->clock != event->signal ||
+            scope->edge != event->edge || scope->tick != event->tick) return 0;
     }
-    token->next = *list;
-    *list = token;
     return 1;
+}
+
+static void sequence_token_free(llg_sequence_token_t* token) {
+    if (!token) return;
+    sequence_scope_release(token->scope);
+    free(token->locals);
+    free(token);
 }
 
 static void sequence_tokens_free(llg_sequence_token_t* tokens) {
     while (tokens) {
         llg_sequence_token_t* next = tokens->next;
-        free(tokens->locals);
-        free(tokens);
+        sequence_token_free(tokens);
         tokens = next;
     }
 }
 
-static int sequence_is_first_match_state(const llg_sequence_graph_t* graph,
-                                         uint32_t state) {
-    for (uint32_t index = 0; index < graph->first_match_state_count; index++)
-        if (graph->first_match_states[index] == state) return 1;
-    return 0;
+static llg_sequence_token_t* sequence_token_copy(
+    const llg_sequence_graph_t* graph, const llg_sequence_token_t* source) {
+    llg_sequence_token_t* token = llg_checked_calloc(1, sizeof(*token), "sequence token");
+    *token = *source;
+    token->next = NULL;
+    token->locals = sequence_locals_clone(graph, source->locals);
+    sequence_scope_retain(token->scope);
+    return token;
+}
+
+static int sequence_token_same(const llg_sequence_graph_t* graph,
+                               const llg_sequence_token_t* a,
+                               const llg_sequence_token_t* b) {
+    return a->state == b->state && a->transition == b->transition &&
+        a->scope == b->scope && a->entered_time == b->entered_time &&
+        a->entered_tick == b->entered_tick && a->entered_clock == b->entered_clock &&
+        a->entered_edge == b->entered_edge && a->entered_order == b->entered_order &&
+        sequence_locals_same(a->locals, b->locals, graph->local_count);
+}
+
+/* Takes ownership, including the scope reference and local snapshot. */
+static void sequence_token_push(const llg_sequence_graph_t* graph,
+                                llg_sequence_token_t** list,
+                                llg_sequence_token_t* token) {
+    for (llg_sequence_token_t* old = *list; old; old = old->next) {
+        if (!sequence_token_same(graph, old, token)) continue;
+        if (token->checked && (!old->checked || old->last_order < token->last_order)) {
+            old->checked = 1;
+            old->last_order = token->last_order;
+        }
+        sequence_token_free(token);
+        return;
+    }
+    token->next = *list;
+    *list = token;
+}
+
+static void sequence_endpoints_free(llg_sequence_endpoint_t* endpoint) {
+    while (endpoint) {
+        llg_sequence_endpoint_t* next = endpoint->next;
+        free(endpoint->locals);
+        free(endpoint);
+        endpoint = next;
+    }
+}
+
+static void sequence_endpoint_add(llg_sequence_attempt_t* attempt,
+                                   const llg_sequence_token_t* token, int empty) {
+    llg_sequence_endpoint_t* endpoint = llg_checked_calloc(1, sizeof(*endpoint), "sequence endpoint");
+    endpoint->locals = sequence_locals_clone(attempt->graph, token->locals);
+    endpoint->clock = token->entered_clock;
+    endpoint->edge = token->entered_edge;
+    endpoint->time = token->entered_time;
+    endpoint->tick = token->entered_tick;
+    endpoint->order = token->entered_order;
+    endpoint->empty = empty;
+    endpoint->next = attempt->endpoints;
+    attempt->endpoints = endpoint;
+    if (!empty) attempt->matched = 1;
 }
 
 static void sequence_match_items(const llg_sequence_graph_t* graph,
                                  llg_sequence_attempt_t* attempt,
                                  uint32_t start, uint32_t count) {
     if (count == 0) return;
-    if (!graph->match || start > graph->match_item_count ||
-        count > graph->match_item_count - start) {
+    if (!graph->match || start > graph->match_item_count || count > graph->match_item_count - start) {
         fprintf(stderr, "llg runtime fatal: invalid sequence match-item range\n");
         llg_last_failure = 1;
         g.finish = 1;
         return;
     }
-    for (uint32_t index = 0; index < count; index++)
-        graph->match(start + index, attempt);
+    for (uint32_t index = 0; index < count && !g.finish; index++) graph->match(start + index, attempt);
 }
 
-/* Advance one sequence NFA by one observed sequence-clock edge.  Epsilon
- * edges with a zero delay are closed in the same worklist as atom edges, so
- * ##0 and empty repetitions do not accidentally consume an extra edge. Every
- * state and entry-cycle pair is processed once per edge; this is the
- * termination guard for zero-delay cycles, while unbounded ranges remain
- * genuinely unbounded. A token whose next transition belongs to another
- * clock is retained for that clock's event. */
-static int sequence_attempt_step(llg_sequence_attempt_t* attempt,
-                                uint64_t cycle, sv4_t* event_clock,
-                                int event_edge, uint64_t event_time,
-                                uint64_t event_order, uint64_t event_tick,
-                                sv4_t* root_clock, int root_edge,
-                                int* accepted) {
-    const llg_sequence_graph_t* graph = attempt->graph;
-    llg_sequence_token_t* work = NULL;
-    llg_sequence_token_t* processed = NULL;
-    llg_sequence_token_t* next = NULL;
-    int first_match_boundary = 0;
-    *accepted = 0;
-    for (llg_sequence_token_t* token = attempt->tokens; token;
-         token = token->next) {
-        if (!token->entered_clock) {
-            token->entered_time = event_time;
-            token->entered_order = event_order;
-            token->entered_tick = event_tick;
-            token->entered_clock = event_clock;
-            token->entered_edge = event_edge;
+static void sequence_token_anchor(llg_sequence_token_t* token,
+                                   const llg_assertion_clock_event_t* event) {
+    token->entered_time = event->time;
+    token->entered_tick = event->tick;
+    token->entered_order = event->order;
+    token->entered_clock = event->signal;
+    token->entered_edge = event->edge;
+    token->checked = 0;
+    token->last_order = 0;
+}
+
+/* A coincident destination edge is usable even when delivered before the
+ * source. History is bounded to one physical time slot, not the whole run. */
+static const llg_assertion_clock_event_t* sequence_coincident(
+    const llg_concurrent_assertion_t* assertion, sv4_t* clock, int edge, uint64_t time) {
+    for (const llg_assertion_clock_event_t* event = assertion->clock_history;
+         event; event = event->next)
+        if (event->signal == clock && event->edge == edge && event->time == time) return event;
+    return NULL;
+}
+
+static int sequence_choose_event(const llg_concurrent_assertion_t* assertion,
+                                  const llg_sequence_token_t* token,
+                                  const llg_sequence_transition_t* transition,
+                                  const llg_assertion_clock_event_t* current,
+                                  llg_assertion_clock_event_t* selected,
+                                  uint64_t* elapsed) {
+    sv4_t* clock = transition->clock ? transition->clock : assertion->clock;
+    int edge = transition->clock ? transition->edge : assertion->edge;
+    int same = clock == token->entered_clock && edge == token->entered_edge;
+    if (same) {
+        if (!token->checked && transition->min_delay == 0 && token->entered_time == current->time) {
+            *selected = (llg_assertion_clock_event_t){ .signal = clock, .edge = edge,
+                .time = token->entered_time, .tick = token->entered_tick, .order = token->entered_order };
+            *elapsed = 0;
+            return 1;
         }
+        if (current->signal != clock || current->edge != edge || current->tick < token->entered_tick) return 0;
+        *selected = *current;
+        *elapsed = current->tick - token->entered_tick;
+        return 1;
     }
-    for (llg_sequence_token_t* token = attempt->tokens; token;
-         token = token->next) {
-        if (token->state == graph->accept) *accepted = 1;
-        sequence_token_add(graph, &work, token->state, token->entered_cycle,
-                           token->entered_time, token->entered_order,
-                           token->entered_tick, token->entered_clock,
-                           token->entered_edge, token->locals);
+    if (!((transition->min_delay == 0 && transition->max_delay == 0) ||
+          (transition->min_delay == 1 && transition->max_delay == 1))) {
+        fprintf(stderr, "llg: invalid cross-clock sequence boundary\n");
+        llg_last_failure = 1; g.finish = 1; return 0;
     }
-    if (*accepted) attempt->matched = 1;
-    if (*accepted && graph->first_match) {
-        attempt->locals = NULL;
-        sequence_tokens_free(work);
-        return 0;
-    }
-    while (work) {
-        llg_sequence_token_t* token = work;
-        work = token->next;
-        if (sequence_token_present(
-                graph, processed, token->state, token->entered_cycle,
-                token->entered_time, token->entered_order, token->entered_tick,
-                token->entered_clock, token->entered_edge, token->locals)) {
-            free(token->locals);
-            free(token);
-            continue;
-        }
-        token->next = processed;
-        processed = token;
-        int token_is_first_match = sequence_is_first_match_state(graph, token->state);
-        int matched_clock = 0;
-        if (token_is_first_match && !first_match_boundary) {
-            sequence_tokens_free(work);
-            sequence_tokens_free(next);
-            work = NULL;
-            next = NULL;
-            first_match_boundary = 1;
-        }
-        for (uint32_t index = 0; index < graph->transition_count; index++) {
-            const llg_sequence_transition_t* transition = &graph->transitions[index];
-            if (transition->from != token->state) continue;
-            sv4_t* expected_clock =
-                transition->clock ? transition->clock : root_clock;
-            int expected_edge = transition->clock ? transition->edge : root_edge;
-            if (expected_clock != event_clock || expected_edge != event_edge)
-                continue;
-            matched_clock = 1;
-            uint64_t elapsed;
-            if (token->entered_clock == expected_clock &&
-                token->entered_edge == expected_edge) {
-                if (event_tick < token->entered_tick) {
-                    fprintf(stderr,
-                            "llg: concurrent assertion sequence clock tick overflow\n");
-                    llg_last_failure = 1;
-                    g.finish = 1;
-                    sequence_tokens_free(work);
-                    sequence_tokens_free(processed);
-                    sequence_tokens_free(next);
-                    return 0;
-                }
-                elapsed = event_tick - token->entered_tick;
-            } else if (transition->clock && transition->min_delay == 0 &&
-                       transition->max_delay == 0) {
-                if (event_time != token->entered_time ||
-                    event_order <= token->entered_order)
-                    continue;
-                elapsed = 0;
-            } else if (transition->clock && transition->min_delay == 1 &&
-                       transition->max_delay == 1) {
-                if (event_order <= token->entered_order) continue;
-                elapsed = 1;
-            } else {
-                if (cycle < token->entered_cycle) {
-                    fprintf(stderr,
-                            "llg: concurrent assertion sequence cycle overflow\n");
-                    llg_last_failure = 1;
-                    g.finish = 1;
-                    sequence_tokens_free(work);
-                    sequence_tokens_free(processed);
-                    sequence_tokens_free(next);
-                    return 0;
-                }
-                elapsed = cycle - token->entered_cycle;
-            }
-            if (transition->max_delay != LLG_SEQUENCE_UNBOUNDED &&
-                elapsed > transition->max_delay)
-                continue;
-            if (elapsed < transition->min_delay) {
-                sequence_token_add(graph, &next, token->state,
-                                   token->entered_cycle, token->entered_time,
-                                   token->entered_order, token->entered_tick,
-                                   token->entered_clock, token->entered_edge,
-                                   token->locals);
-                continue;
-            }
-            sv4_t* branch_locals = sequence_locals_clone(graph, token->locals);
-            if (graph->local_count != 0 && !branch_locals) {
-                sequence_tokens_free(work);
-                sequence_tokens_free(processed);
-                sequence_tokens_free(next);
-                attempt->locals = NULL;
-                return 0;
-            }
-            attempt->locals = branch_locals;
-            if (transition->atom != LLG_SEQUENCE_EPSILON) {
-                if (!graph->atom ||
-                    !graph->atom(transition->atom, attempt)) {
-                    if (transition->max_delay == LLG_SEQUENCE_UNBOUNDED ||
-                        elapsed < transition->max_delay)
-                        sequence_token_add(graph, &next, token->state,
-                                           token->entered_cycle, token->entered_time,
-                                           token->entered_order, token->entered_tick,
-                                           token->entered_clock, token->entered_edge,
-                                           token->locals);
-                    free(branch_locals);
-                    attempt->locals = NULL;
-                    continue;
-                }
-            }
-            sequence_match_items(graph, attempt, transition->match_start,
-                                 transition->match_count);
-            if (g.finish) {
-                free(branch_locals);
-                attempt->locals = NULL;
-                sequence_tokens_free(work);
-                sequence_tokens_free(processed);
-                sequence_tokens_free(next);
-                return 0;
-            }
-            int destination_is_first_match =
-                sequence_is_first_match_state(graph, transition->to);
-            if (destination_is_first_match && !first_match_boundary) {
-                sequence_tokens_free(work);
-                sequence_tokens_free(next);
-                work = NULL;
-                next = NULL;
-                first_match_boundary = 1;
-            }
-            if (transition->to == graph->accept) {
-                *accepted = 1;
-                attempt->matched = 1;
-                if (graph->first_match) {
-                    free(branch_locals);
-                    attempt->locals = NULL;
-                    sequence_tokens_free(work);
-                    sequence_tokens_free(processed);
-                    sequence_tokens_free(next);
-                    return 0;
-                }
-            } else if (sequence_token_add(
-                           graph, &next, transition->to, cycle, event_time,
-                           event_order, event_tick, event_clock, event_edge,
-                           branch_locals)) {
-                sequence_token_add(graph, &work, transition->to, cycle,
-                                   event_time, event_order, event_tick,
-                                   event_clock, event_edge, branch_locals);
-            }
-            if (!token_is_first_match && !destination_is_first_match &&
-                (transition->max_delay == LLG_SEQUENCE_UNBOUNDED ||
-                 elapsed < transition->max_delay))
-                sequence_token_add(graph, &next, token->state,
-                                   token->entered_cycle, token->entered_time,
-                                   token->entered_order, token->entered_tick,
-                                   token->entered_clock, token->entered_edge,
-                                   token->locals);
-            free(branch_locals);
-            attempt->locals = NULL;
-            if (destination_is_first_match) break;
-        }
-        if (!matched_clock)
-            sequence_token_add(graph, &next, token->state,
-                               token->entered_cycle, token->entered_time,
-                               token->entered_order, token->entered_tick,
-                               token->entered_clock, token->entered_edge,
-                               token->locals);
-    }
-    sequence_tokens_free(processed);
-    sequence_tokens_free(attempt->tokens);
-    attempt->locals = NULL;
-    attempt->tokens = next;
-    if (*accepted) attempt->matched = 1;
-    return attempt->tokens != NULL;
+    const llg_assertion_clock_event_t* candidate = NULL;
+    if (transition->min_delay == 0 && current->time == token->entered_time)
+        candidate = sequence_coincident(assertion, clock, edge, token->entered_time);
+    if (!candidate && current->signal == clock && current->edge == edge &&
+        (transition->min_delay == 0 ? current->time >= token->entered_time : current->time > token->entered_time))
+        candidate = current;
+    if (!candidate) return 0;
+    *selected = *candidate;
+    *elapsed = transition->min_delay;
+    return 1;
+}
+
+int llg_sequence_local_inherited(void* data, uint32_t slot) {
+    llg_sequence_attempt_t* attempt = sequence_attempt_from_data(data);
+    return attempt && attempt->graph && slot < attempt->graph->local_count &&
+        attempt->inherited && attempt->inherited[slot];
 }
 
 static llg_sequence_attempt_t* sequence_attempt_new(
-    const llg_sequence_graph_t* graph, uint64_t due_cycle) {
-    llg_sequence_attempt_t* attempt = (llg_sequence_attempt_t*)llg_checked_calloc(
-        1, sizeof(*attempt), "concurrent assertion sequence attempt");
+    const llg_sequence_graph_t* graph, uint64_t due_cycle,
+    const llg_sequence_graph_t* source, const sv4_t* values) {
+    llg_sequence_attempt_t* attempt = llg_checked_calloc(1, sizeof(*attempt), "sequence attempt");
     attempt->graph = graph;
     attempt->due_cycle = due_cycle;
-    if (graph->local_count != 0) {
-        attempt->locals = (sv4_t*)llg_checked_calloc(
-            graph->local_count, sizeof(*attempt->locals),
-            "concurrent assertion sequence locals");
-        for (uint32_t index = 0; index < graph->local_count; index++) {
-            const llg_sequence_local_t* local = &graph->locals[index];
-            sv4_t value = sv4_x(local->width, local->is_signed);
-            if (local->two_state) value = sv4_to_two_state(value);
-            attempt->locals[index] = value;
+    if (graph->local_count) {
+        attempt->locals = llg_checked_calloc(graph->local_count, sizeof(*attempt->locals), "sequence locals");
+        attempt->inherited = llg_checked_calloc(graph->local_count, 1, "sequence inherited locals");
+        for (uint32_t i = 0; i < graph->local_count; i++) {
+            const llg_sequence_local_t* local = &graph->locals[i];
+            attempt->locals[i] = sv4_x(local->width, local->is_signed);
+            if (local->two_state) attempt->locals[i] = sv4_to_two_state(attempt->locals[i]);
+            if (!source || !values || !local->declaration) continue;
+            for (uint32_t j = 0; j < source->local_count; j++) {
+                const llg_sequence_local_t* from = &source->locals[j];
+                if (from->declaration != local->declaration) continue;
+                if (from->width != local->width || from->is_signed != local->is_signed || from->two_state != local->two_state) {
+                    fprintf(stderr, "llg: inconsistent assertion local type across implication\n");
+                    llg_last_failure = 1; g.finish = 1; break;
+                }
+                attempt->locals[i] = values[j];
+                attempt->inherited[i] = 1;
+                break;
+            }
         }
     }
-    if (graph->init) graph->init(attempt);
-    sequence_token_add(graph, &attempt->tokens, graph->start, due_cycle, 0, 0,
-                       0, NULL, 0, attempt->locals);
-    free(attempt->locals);
-    attempt->locals = NULL;
     return attempt;
+}
+
+static int sequence_start(llg_sequence_attempt_t* attempt,
+                           const llg_concurrent_assertion_t* assertion,
+                           const llg_assertion_clock_event_t* current) {
+    llg_assertion_clock_event_t event = *current;
+    if (attempt->launch_pending) {
+        llg_sequence_token_t source = { .entered_time = attempt->launch.time,
+            .entered_tick = attempt->launch.tick, .entered_order = attempt->launch.order,
+            .entered_clock = attempt->launch.clock, .entered_edge = attempt->launch.edge };
+        llg_sequence_transition_t boundary = { .clock = attempt->graph->leading_clock,
+            .edge = attempt->graph->leading_edge, .min_delay = attempt->launch_strict,
+            .max_delay = attempt->launch_strict };
+        uint64_t elapsed = 0;
+        if (!sequence_choose_event(assertion, &source, &boundary, current, &event, &elapsed)) return 0;
+        if (elapsed < boundary.min_delay) return 0;
+    }
+    // Consequent-private initializers run when that consequent actually starts;
+    // inherited declaration cells have already been copied from its endpoint.
+    if (attempt->graph->init) attempt->graph->init(attempt);
+    if (g.finish) return 0;
+    llg_sequence_token_t seed = { .state = attempt->graph->start,
+        .transition = UINT32_MAX, .locals = attempt->locals };
+    sequence_token_anchor(&seed, &event);
+    if (attempt->graph->admits_empty) sequence_endpoint_add(attempt, &seed, 1);
+    attempt->tokens = sequence_token_copy(attempt->graph, &seed);
+    free(attempt->locals);
+    free(attempt->inherited);
+    attempt->locals = NULL;
+    attempt->inherited = NULL;
+    attempt->started = 1;
+    return 1;
+}
+
+/* Pending tokens own ONE outgoing edge. This prevents replaying an already
+ * consumed cross-clock boundary just because a sibling edge remains pending.
+ * Zero-delay closure consumes no tick and first_match cancellation is scoped
+ * to the dynamic invocation, leaving tied endpoints and outer alternatives. */
+static int sequence_attempt_step(llg_sequence_attempt_t* attempt,
+                                  const llg_concurrent_assertion_t* assertion,
+                                  uint64_t cycle, sv4_t* event_clock, int event_edge,
+                                  uint64_t event_time, uint64_t event_order,
+                                  uint64_t event_tick, int* accepted) {
+    const llg_sequence_graph_t* graph = attempt->graph;
+    llg_assertion_clock_event_t current = { .signal = event_clock, .edge = event_edge,
+        .time = event_time, .order = event_order, .tick = event_tick };
+    (void)cycle;
+    sequence_endpoints_free(attempt->endpoints);
+    attempt->endpoints = NULL;
+    *accepted = 0;
+    if (!attempt->started && !sequence_start(attempt, assertion, &current)) return !g.finish;
+    llg_sequence_token_t* work = attempt->tokens;
+    llg_sequence_token_t* processed = NULL;
+    llg_sequence_token_t* next = NULL;
+    attempt->tokens = NULL;
+    while (work && !g.finish) {
+        llg_sequence_token_t* token = work;
+        work = token->next;
+        token->next = NULL;
+        int duplicate = 0;
+        for (llg_sequence_token_t* old = processed; old; old = old->next)
+            if (sequence_token_same(graph, old, token)) { duplicate = 1; break; }
+        if (duplicate) { sequence_token_free(token); continue; }
+        token->next = processed;
+        processed = token;
+        if (token->transition == UINT32_MAX) {
+            if (token->state == graph->accept) { sequence_endpoint_add(attempt, token, 0); continue; }
+            for (uint32_t i = 0; i < graph->transition_count; i++) {
+                if (graph->transitions[i].from != token->state) continue;
+                llg_sequence_token_t* edge = sequence_token_copy(graph, token);
+                edge->transition = i;
+                sequence_token_push(graph, &work, edge);
+            }
+            continue;
+        }
+        const llg_sequence_transition_t* edge = &graph->transitions[token->transition];
+        llg_assertion_clock_event_t event;
+        uint64_t elapsed = 0;
+        if (!sequence_choose_event(assertion, token, edge, &current, &event, &elapsed)) {
+            if (!sequence_scope_closed(token->scope)) sequence_token_push(graph, &next, sequence_token_copy(graph, token));
+            continue;
+        }
+        if (!sequence_scope_allows(token->scope, &event)) continue;
+        if (edge->max_delay != LLG_SEQUENCE_UNBOUNDED && elapsed > edge->max_delay) continue;
+        if (elapsed < edge->min_delay || (token->checked && token->last_order == event.order)) {
+            if (!sequence_scope_closed(token->scope) &&
+                (edge->max_delay == LLG_SEQUENCE_UNBOUNDED || elapsed < edge->max_delay))
+                sequence_token_push(graph, &next, sequence_token_copy(graph, token));
+            continue;
+        }
+        token->checked = 1;
+        token->last_order = event.order;
+        if (edge->max_delay == LLG_SEQUENCE_UNBOUNDED || elapsed < edge->max_delay)
+            sequence_token_push(graph, &next, sequence_token_copy(graph, token));
+        llg_sequence_token_t* destination = sequence_token_copy(graph, token);
+        destination->state = edge->to;
+        destination->transition = UINT32_MAX;
+        sequence_token_anchor(destination, &event);
+        attempt->locals = destination->locals;
+        int matches = edge->atom == LLG_SEQUENCE_EPSILON || (graph->atom && graph->atom(edge->atom, attempt));
+        if (matches && edge->exit_scope) {
+            llg_sequence_scope_t* scope = destination->scope;
+            if (!scope || scope->identity != edge->exit_scope) {
+                fprintf(stderr, "llg: unbalanced first_match scope\n");
+                llg_last_failure = 1; g.finish = 1; matches = 0;
+            } else if (scope->matched && (scope->time != event.time || scope->tick != event.tick ||
+                       scope->clock != event.signal || scope->edge != event.edge)) matches = 0;
+            else {
+                scope->matched = 1; scope->time = event.time; scope->tick = event.tick;
+                scope->clock = event.signal; scope->edge = event.edge;
+                destination->scope = scope->parent;
+                sequence_scope_retain(destination->scope);
+                sequence_scope_release(scope);
+            }
+        }
+        if (matches && edge->enter_scope) {
+            llg_sequence_scope_t* scope = llg_checked_calloc(1, sizeof(*scope), "first_match invocation");
+            scope->refs = 1;
+            scope->identity = edge->enter_scope;
+            scope->parent = destination->scope; // transfer the token's parent reference
+            destination->scope = scope;
+        }
+        if (matches) sequence_match_items(graph, attempt, edge->match_start, edge->match_count);
+        attempt->locals = NULL;
+        if (matches && !g.finish) sequence_token_push(graph, &work, destination);
+        else sequence_token_free(destination);
+    }
+    sequence_tokens_free(work);
+    sequence_tokens_free(processed);
+    llg_sequence_token_t** link = &next;
+    while (*link) {
+        llg_sequence_token_t* token = *link;
+        if (sequence_scope_closed(token->scope) || (graph->first_match && attempt->endpoints)) {
+            *link = token->next;
+            sequence_token_free(token);
+        } else link = &token->next;
+    }
+    attempt->tokens = next;
+    *accepted = attempt->endpoints != NULL;
+    return !g.finish && next != NULL;
 }
 
 static void sequence_attempt_append(llg_sequence_attempt_t** head,
                                     llg_sequence_attempt_t** tail,
                                     llg_sequence_attempt_t* attempt) {
-    if (*tail)
-        (*tail)->next = attempt;
-    else
-        *head = attempt;
+    if (*tail) (*tail)->next = attempt;
+    else *head = attempt;
     *tail = attempt;
 }
 
 static void sequence_attempt_discard(llg_sequence_attempt_t* attempt) {
     if (!attempt) return;
     sequence_tokens_free(attempt->tokens);
+    sequence_endpoints_free(attempt->endpoints);
     free(attempt->locals);
+    free(attempt->inherited);
     free(attempt);
 }
 
-static int sequence_cycle_next(llg_concurrent_assertion_t* assertion,
-                               uint64_t* cycle) {
+static int sequence_cycle_next(llg_concurrent_assertion_t* assertion, uint64_t* cycle) {
     if (assertion->sequence_cycle == UINT64_MAX) {
-        fprintf(stderr,
-                "llg: concurrent assertion sequence clock-cycle counter overflow\n");
-        llg_last_failure = 1;
-        g.finish = 1;
-        return 0;
+        fprintf(stderr, "llg: concurrent assertion sequence clock-cycle counter overflow\n");
+        llg_last_failure = 1; g.finish = 1; return 0;
     }
     *cycle = assertion->sequence_cycle++;
     return 1;
 }
 
-static int sequence_attempt_due(uint64_t due_cycle, uint64_t cycle) {
-    return due_cycle <= cycle;
-}
-
-static int sequence_spawn_consequent(llg_concurrent_assertion_t* assertion,
-                                     uint64_t cycle) {
-    uint64_t due = cycle;
-    if (!assertion->overlapped) {
-        if (cycle == UINT64_MAX) {
-            fprintf(stderr,
-                    "llg: non-overlapped sequence endpoint cycle overflow\n");
-            llg_last_failure = 1;
-            g.finish = 1;
-            return 0;
+static int sequence_spawn_consequents(llg_concurrent_assertion_t* assertion,
+                                      llg_sequence_attempt_t* antecedent, uint64_t cycle) {
+    llg_sequence_endpoint_t* endpoint = antecedent->endpoints;
+    antecedent->endpoints = NULL;
+    while (endpoint) {
+        llg_sequence_endpoint_t* next = endpoint->next;
+        if (!(endpoint->empty && assertion->overlapped)) {
+            antecedent->matched = 1;
+            llg_sequence_attempt_t* consequent = sequence_attempt_new(
+                assertion->consequent_sequence, cycle, antecedent->graph, endpoint->locals);
+            consequent->launch_pending = 1;
+            consequent->launch = *endpoint;
+            consequent->launch.next = NULL;
+            consequent->launch.locals = NULL;
+            // An empty endpoint is before its start; |=> then starts at that
+            // start, not at the next clock. Nonempty endpoints consume one tick.
+            consequent->launch_strict = !assertion->overlapped && !endpoint->empty;
+            sequence_attempt_append(&assertion->sequence_consequents,
+                                    &assertion->sequence_consequents_tail, consequent);
         }
-        due++;
+        free(endpoint->locals);
+        free(endpoint);
+        endpoint = next;
     }
-    llg_sequence_attempt_t* attempt = sequence_attempt_new(
-        assertion->consequent_sequence, due);
-    sequence_attempt_append(&assertion->sequence_consequents,
-                            &assertion->sequence_consequents_tail, attempt);
-    return 1;
+    return !g.finish;
 }
 
 static void assertion_action(llg_concurrent_assertion_t* assertion,
@@ -9959,7 +10440,11 @@ static void assertion_action(llg_concurrent_assertion_t* assertion,
     const char* name = assertion->label && assertion->label[0]
                            ? assertion->label
                            : "concurrent assertion action";
-    (void)llg_spawn_in_region(action, name, LLG_REGION_REACTIVE);
+    llg_proc_t* proc = llg_spawn_in_region(action, name, LLG_REGION_REACTIVE);
+    if (proc) {
+        proc->is_assertion_action = 1;
+        proc->action_assertion = assertion->identity;
+    }
 }
 
 static void assertion_vacuous(void) {
@@ -9968,6 +10453,13 @@ static void assertion_vacuous(void) {
         abort();
     }
     llg_assertion_vacuous_total++;
+}
+
+static void assertion_default_failure_action(void* data) {
+    // Assertion records outlive callbacks; cleanup discards callbacks first.
+    llg_concurrent_assertion_t* assertion = data;
+    assertion_report_failure(assertion->kind, assertion->label,
+                              assertion->location);
 }
 
 static void assertion_result(llg_concurrent_assertion_t* assertion, int success,
@@ -9987,9 +10479,15 @@ static void assertion_result(llg_concurrent_assertion_t* assertion, int success,
         if (assertion->kind == LLG_ASSERTION_COVER) {
             assertion_action(assertion, assertion->fail_action);
         } else {
-            llg_assertion_failure(assertion->kind, assertion->identity,
-                                  assertion->label, assertion->location);
-            assertion_action(assertion, assertion->fail_action);
+            assertion_record_failure(assertion->kind);
+            if (assertion->fail_action) {
+                // Even an explicit null else is a generated action function.
+                assertion_action(assertion, assertion->fail_action);
+            } else {
+                (void)llg_schedule_region_callback(
+                    LLG_REGION_REACTIVE, assertion_default_failure_action,
+                    assertion);
+            }
         }
     }
     if (assertion->kind == LLG_ASSERTION_EXPECT && assertion->expect_active) {
@@ -10043,7 +10541,7 @@ static void assertion_abort_attempts(llg_concurrent_assertion_t* assertion) {
 static void assertion_abort_condition_changed(void) {
     for (llg_concurrent_assertion_t* assertion = g.assertions; assertion;
          assertion = assertion->next) {
-        if (assertion->enabled &&
+        if ((assertion->enabled || assertion_has_attempts(assertion)) &&
             (assertion->kind != LLG_ASSERTION_EXPECT || assertion->expect_active) &&
             assertion->abort_condition && !assertion->abort_sync &&
             assertion->abort_condition(assertion->data)) {
@@ -10087,6 +10585,20 @@ static void assertion_clock_event_append(llg_concurrent_assertion_t* assertion,
     else
         assertion->clock_events = event;
     assertion->clock_events_tail = event;
+    if (assertion->clock_history && assertion->clock_history->time != g.now) {
+        while (assertion->clock_history) {
+            llg_assertion_clock_event_t* next = assertion->clock_history->next;
+            free(assertion->clock_history);
+            assertion->clock_history = next;
+        }
+        assertion->clock_history_tail = NULL;
+    }
+    llg_assertion_clock_event_t* saved = llg_checked_calloc(1, sizeof(*saved), "sequence clock history");
+    *saved = *event;
+    saved->next = NULL;
+    if (assertion->clock_history_tail) assertion->clock_history_tail->next = saved;
+    else assertion->clock_history = saved;
+    assertion->clock_history_tail = saved;
 }
 
 static void assertion_clock_signal_changed(sv4_t* signal, sv4_t old,
@@ -10101,7 +10613,7 @@ static void assertion_clock_signal_changed(sv4_t* signal, sv4_t old,
     uint64_t order = llg_assertion_event_order++;
     for (llg_concurrent_assertion_t* assertion = g.assertions; assertion;
          assertion = assertion->next) {
-        if (!assertion->enabled ||
+        if ((!assertion->enabled && !assertion_has_attempts(assertion)) ||
             (assertion->kind == LLG_ASSERTION_EXPECT && !assertion->expect_active))
             continue;
         if (assertion->disable && sv4_to_bool(*assertion->disable)) continue;
@@ -10140,9 +10652,9 @@ static int run_sequence_concurrent_assertion(llg_concurrent_assertion_t* asserti
         llg_sequence_attempt_t* attempt = *antecedent_link;
         int accepted = 0;
         int alive = sequence_attempt_step(
-            attempt, cycle, event_clock, event_edge, event_time, event_order,
-            event_tick, assertion->clock, assertion->edge, &accepted);
-        if (accepted && !sequence_spawn_consequent(assertion, cycle)) return 0;
+            attempt, assertion, cycle, event_clock, event_edge, event_time, event_order,
+            event_tick, &accepted);
+        if (accepted && !sequence_spawn_consequents(assertion, attempt, cycle)) return 0;
         if (!alive) {
             *antecedent_link = attempt->next;
             if (assertion->sequence_antecedents_tail == attempt)
@@ -10162,14 +10674,14 @@ static int run_sequence_concurrent_assertion(llg_concurrent_assertion_t* asserti
             assertion->sequence_antecedents_tail = item;
     }
 
-    if (root_event && assertion->antecedent_sequence) {
+    if (root_event && assertion->enabled && assertion->antecedent_sequence) {
         llg_sequence_attempt_t* attempt = sequence_attempt_new(
-            assertion->antecedent_sequence, cycle);
+            assertion->antecedent_sequence, cycle, NULL, NULL);
         int accepted = 0;
         int alive = sequence_attempt_step(
-            attempt, cycle, event_clock, event_edge, event_time, event_order,
-            event_tick, assertion->clock, assertion->edge, &accepted);
-        if (accepted && !sequence_spawn_consequent(assertion, cycle)) {
+            attempt, assertion, cycle, event_clock, event_edge, event_time, event_order,
+            event_tick, &accepted);
+        if (accepted && !sequence_spawn_consequents(assertion, attempt, cycle)) {
             sequence_attempt_discard(attempt);
             return 0;
         }
@@ -10182,9 +10694,9 @@ static int run_sequence_concurrent_assertion(llg_concurrent_assertion_t* asserti
             if (assertion->kind == LLG_ASSERTION_EXPECT && !assertion->expect_active)
                 return 1;
         }
-    } else if (root_event) {
+    } else if (root_event && assertion->enabled) {
         llg_sequence_attempt_t* attempt = sequence_attempt_new(
-            assertion->consequent_sequence, cycle);
+            assertion->consequent_sequence, cycle, NULL, NULL);
         sequence_attempt_append(&assertion->sequence_consequents,
                                 &assertion->sequence_consequents_tail, attempt);
     }
@@ -10192,14 +10704,10 @@ static int run_sequence_concurrent_assertion(llg_concurrent_assertion_t* asserti
     llg_sequence_attempt_t** consequent_link = &assertion->sequence_consequents;
     while (*consequent_link) {
         llg_sequence_attempt_t* attempt = *consequent_link;
-        if (!sequence_attempt_due(attempt->due_cycle, cycle)) {
-            consequent_link = &attempt->next;
-            continue;
-        }
         int accepted = 0;
         int alive = sequence_attempt_step(
-            attempt, cycle, event_clock, event_edge, event_time, event_order,
-            event_tick, assertion->clock, assertion->edge, &accepted);
+            attempt, assertion, cycle, event_clock, event_edge, event_time, event_order,
+            event_tick, &accepted);
         if (accepted || !alive) {
             *consequent_link = attempt->next;
             if (assertion->sequence_consequents_tail == attempt)
@@ -10224,7 +10732,7 @@ static int run_sequence_concurrent_assertion(llg_concurrent_assertion_t* asserti
 static void run_concurrent_assertion(llg_concurrent_assertion_t* assertion) {
     // A clock transition is observed after Active/NBA writes, while every
     // predicate reads the immutable Preponed snapshot from this time slot.
-    if (!assertion->enabled ||
+    if ((!assertion->enabled && !assertion_has_attempts(assertion)) ||
         (assertion->kind == LLG_ASSERTION_EXPECT && !assertion->expect_active)) {
         assertion->edge_pending = 0;
         free_assertion_clock_events(assertion);
@@ -10255,7 +10763,7 @@ static void run_concurrent_assertion(llg_concurrent_assertion_t* assertion) {
                 assertion_abort_attempts(assertion);
                 // A synchronous accept/reject control also controls the new
                 // attempt begun at this sampled leading-clock edge.
-                if (!had_pending && !g.finish)
+                if (!had_pending && assertion->enabled && !g.finish)
                     assertion_result(assertion, assertion->abort_reject ? 0 : 1,
                                      assertion->abort_reject ? 0 : 1);
                 free(event);
@@ -10283,7 +10791,7 @@ static void run_concurrent_assertion(llg_concurrent_assertion_t* assertion) {
         // A synchronous accept/reject control also controls the new attempt
         // begun at this sampled edge. Emit one result even when no older
         // attempt was pending, matching the per-clock evaluation contract.
-        if (!had_pending && !g.finish)
+        if (!had_pending && assertion->enabled && !g.finish)
             assertion_result(assertion, assertion->abort_reject ? 0 : 1,
                              assertion->abort_reject ? 0 : 1);
         return;
@@ -10298,6 +10806,9 @@ static void run_concurrent_assertion(llg_concurrent_assertion_t* assertion) {
         free(attempt);
         if (g.finish) return;
     }
+
+    if (!assertion->enabled ||
+        (assertion->kind == LLG_ASSERTION_EXPECT && !assertion->expect_active)) return;
 
     int antecedent = assertion->antecedent == NULL ||
                      assertion->antecedent(assertion->data) != 0;
@@ -10392,8 +10903,8 @@ int llg_assertion_register(
         scope);
 }
 
-void llg_deferred_assertion(int kind, int passed, uint64_t identity,
-                            const char* label, const char* location,
+void llg_deferred_assertion_scoped(int kind, int passed, uint64_t identity,
+                            const char* label, const char* location, const char* scope,
                             llg_deferred_assertion_fn action,
                             llg_frame_t* frame) {
     if (kind < LLG_ASSERTION_ASSERT || kind > LLG_ASSERTION_COVER ||
@@ -10401,6 +10912,10 @@ void llg_deferred_assertion(int kind, int passed, uint64_t identity,
         fprintf(stderr, "llg runtime fatal: invalid deferred assertion result\n");
         llg_frame_release(frame);
         abort();
+    }
+    if (!llg_deferred_assertion_enabled(kind, label, scope)) {
+        llg_frame_release(frame);
+        return;
     }
     if (!action && frame) {
         // A frame is meaningful only for a selected action. This also keeps
@@ -10421,6 +10936,7 @@ void llg_deferred_assertion(int kind, int passed, uint64_t identity,
             report->passed = passed;
             report->label = label;
             report->location = location;
+            report->scope = scope;
             report->action = action;
             report->frame = frame;
             return;
@@ -10436,6 +10952,7 @@ void llg_deferred_assertion(int kind, int passed, uint64_t identity,
     report->identity = identity;
     report->label = label;
     report->location = location;
+    report->scope = scope;
     report->action = action;
     report->frame = frame;
     if (g.deferred_assertion_tail) {
@@ -10446,12 +10963,19 @@ void llg_deferred_assertion(int kind, int passed, uint64_t identity,
     g.deferred_assertion_tail = report;
 }
 
+// Compatibility entrypoint for embedding callers without hierarchy metadata.
+void llg_deferred_assertion(int kind, int passed, uint64_t identity,
+                            const char* label, const char* location,
+                            llg_deferred_assertion_fn action, llg_frame_t* frame) {
+    llg_deferred_assertion_scoped(kind, passed, identity, label, location, "", action, frame);
+}
+
 static int valid_sequence_graph(const llg_sequence_graph_t* graph,
                                 sv4_t* root_clock, int root_edge) {
     if (!graph || graph->states == 0 || graph->start >= graph->states ||
         graph->accept >= graph->states ||
         (graph->transition_count != 0 && !graph->transitions) ||
-        (graph->first_match_state_count != 0 && !graph->first_match_states) ||
+        graph->first_match_state_count != 0 ||
         (graph->local_count != 0 && !graph->locals))
         return 0;
     for (uint32_t index = 0; index < graph->local_count; index++) {
@@ -10472,11 +10996,23 @@ static int valid_sequence_graph(const llg_sequence_graph_t* graph,
              transition->edge != LLG_EV_NEGEDGE) ||
             (!transition->clock && transition->edge != 0))
             return 0;
-        if (transition->clock &&
-            (transition->clock != root_clock || transition->edge != root_edge) &&
-            !((transition->min_delay == 0 && transition->max_delay == 0) ||
-              (transition->min_delay == 1 && transition->max_delay == 1)))
-            return 0;
+        sv4_t* destination = transition->clock ? transition->clock : root_clock;
+        int destination_edge = transition->clock ? transition->edge : root_edge;
+        int exact_boundary = (transition->min_delay == 0 && transition->max_delay == 0) ||
+                             (transition->min_delay == 1 && transition->max_delay == 1);
+        if (!exact_boundary) {
+            sv4_t* initial = graph->leading_clock ? graph->leading_clock : root_clock;
+            int initial_edge = graph->leading_clock ? graph->leading_edge : root_edge;
+            if (transition->from == graph->start &&
+                (destination != initial || destination_edge != initial_edge)) return 0;
+            for (uint32_t j = 0; j < graph->transition_count; j++) {
+                const llg_sequence_transition_t* previous = &graph->transitions[j];
+                if (previous->to != transition->from) continue;
+                sv4_t* source = previous->clock ? previous->clock : root_clock;
+                int source_edge = previous->clock ? previous->edge : root_edge;
+                if (source != destination || source_edge != destination_edge) return 0;
+            }
+        }
         if (transition->match_count > graph->match_item_count ||
             transition->match_start > graph->match_item_count -
                 transition->match_count ||
@@ -10713,6 +11249,7 @@ static void check_monitor(void) {
     if (!g.mon.active || !g.mon.enabled) return;
     if (!g.mon.dirty && !g.mon.force_report) return;
     if (g.mon.typed) {
+        if (!g.mon.descriptor) return;
         llg_fmt_args_destroy(g.mon.typed_work, g.mon.n);
         g.mon.typed_eval(g.mon.typed_work, NULL);
         int changed = g.mon.force_report;
@@ -10760,9 +11297,11 @@ static void flush_strobes(void) {
         g.strobes = e->next;
         if (!g.strobes) g.strobe_tail = NULL;
         if (e->typed) {
-            e->typed_eval(e->typed_work, NULL);
-            llg_print_typed_to(e->descriptor, e->fmt, e->typed_work, e->n,
+            if (e->descriptor) {
+                e->typed_eval(e->typed_work, NULL);
+                llg_print_typed_to(e->descriptor, e->fmt, e->typed_work, e->n,
                                e->scope, 1);
+            }
             llg_fmt_args_destroy(e->typed_work, e->n);
             free(e->typed_work);
             free(e->scope);
@@ -11159,11 +11698,6 @@ void llg_rt_run(void) {
         if (g.finish) break;
         if (!run_postponed_set()) break;
         if (g.finish) break;
-        if (g.program_completion_pending && g.program_processes == 0) {
-            g.finish = 1;
-            break;
-        }
-
         int have_future_event = g.timed_head || g.delayed_nbas ||
                                 g.inertial_pending || g.callbacks;
         uint64_t t = g.timed_head ? g.timed_head->time : UINT64_MAX;

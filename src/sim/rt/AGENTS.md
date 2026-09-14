@@ -67,8 +67,11 @@ the generated `model.c` into a standalone executable and is deliberately
   named-event NBA triggers, net resolution,
   force/release, region callbacks, sampled-value views, and
   `$display`/`$monitor`/`$strobe`/`$finish`/`$exit`/`$time`. Program processes
-  are launched in Reactive and counted through natural completion or `$exit`
-  before the implicit finish; fork children inherit that program lifecycle.
+  are launched in Reactive with an elaborated program-instance origin. Count
+  initial procedures separately from fork descendants: last-initial completion
+  cancels that origin's detached descendants, and all-program completion ends
+  the simulation immediately. `$exit` cancels only its thread's originating
+  program; calls without a program-initial origin return without terminating.
   Generated loop back-edges call a cooperative budget point so a coroutine
   that never yields cannot monopolize the host; the diagnostic retains the
   process source location.
@@ -235,3 +238,27 @@ selected range contributes; lowering rejects dynamic net selectors.
   `sim::build`), `tests/sim_counter.rs` (`sim_rt_selftest`).
 - Below: `vendor/libaco` (coroutine library, embedded and compiled with the
   model, never linked into Rust).
+
+
+## Retained references and sequence endpoints
+
+- Packed queue reference descriptors created by generated calls belong to a
+  LIFO `llg_ref_scope_t`. Keep the descriptor and its shared cell alive until
+  call copy-out completes; process cancellation unwinds all surviving scopes.
+  Queue structural operations snapshot/disconnect removed identities before
+  changing storage. Queue destruction must not free a cell still pinned by a
+  call. The queue's reference list is borrowed, not an extra owning reference.
+- Pending sequence tokens own one transition, a local-value snapshot, and a
+  retained first-match scope chain. An entered scope belongs to one invocation;
+  completing it must not discard an outer sibling or suffix. Keep all earliest
+  tied endpoints, not whichever work-list node happens to be visited first.
+- Empty-word alternatives use `admits_empty` and normalized concatenations,
+  not a normal epsilon at the current tick. Negative repetition guards are
+  evaluated using normal four-state expression truth.
+- Consequents inherit endpoint locals by owned declaration ID, not slot number.
+  Initialize only consequent-private cells. Snapshot ownership must be released
+  by the common attempt-discard path, including abort and shutdown.
+- Cross-clock zero delay chooses the nearest destination at-or-after source
+  physical time; one delay requires strictly later physical time. Preserve
+  current-slot edge history until all relevant endpoints can consume it. A
+  callback ordering index is only a replay guard, never a cross-clock delay.

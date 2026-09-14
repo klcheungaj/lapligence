@@ -495,13 +495,11 @@ impl<'a> Codegen<'a> {
                         .unwrap_or(&node.name)
                         .to_owned();
                     objects.entry(full_name.clone()).or_insert_with(|| {
-                        IrVpiObject::module(
-                            full_name,
-                            name,
-                            def_name.clone(),
-                            node.file.clone(),
-                            node.line,
-                        )
+                        let mut object = IrVpiObject::module(
+                            full_name, name, def_name.clone(), node.file.clone(), node.line,
+                        );
+                        object.time_unit_fs = self.timescale_of_node(id).unit_fs;
+                        object
                     });
                 }
                 NodeKind::Net { .. } | NodeKind::Var { .. } => {
@@ -538,6 +536,7 @@ impl<'a> Codegen<'a> {
                     objects
                         .entry(full_name.clone())
                         .or_insert_with(|| IrVpiObject {
+                            time_unit_fs: self.timescale_of_node(id).unit_fs,
                             full_name,
                             name,
                             definition_name: None,
@@ -570,6 +569,7 @@ impl<'a> Codegen<'a> {
                     objects
                         .entry(full_name.clone())
                         .or_insert_with(|| IrVpiObject {
+                            time_unit_fs: self.timescale_of_node(id).unit_fs,
                             full_name,
                             name,
                             definition_name: None,
@@ -3068,6 +3068,8 @@ impl<'a> Codegen<'a> {
                 .map(|parent| self.instance_path_of(parent))
                 .unwrap_or_else(|| self.design_name.clone());
             let block_name = ident(&self.node(block).name);
+            let event = self.new_event_info(format!("E_clocking_{}", block.index()));
+            self.event_globals.insert(block, event);
             for var in self.node(block).children.iter().copied() {
                 let Some(var_info) = self.db.clocking_var(var) else {
                     continue;
@@ -3161,7 +3163,8 @@ impl<'a> Codegen<'a> {
     }
 
     /// Emit one synthetic sampler process per clocking block. The process
-    /// waits on the block event, then updates each input member independently;
+    /// waits on the underlying edge, updates input members, then publishes the
+    /// distinct block event after its Observed samples;
     /// input skews override block defaults and an omitted skew means #1step.
     fn emit_clocking_processes(&mut self) -> Result<(), String> {
         let blocks: Vec<NodeId> = self
@@ -3215,6 +3218,9 @@ impl<'a> Codegen<'a> {
                     mode,
                 });
             }
+            body.push(IrStmt::ClockingEventTrigger {
+                ev: IrEventRef::Static(self.event_globals[&block].ir),
+            });
             self.model.processes.push(IrProcess::new_with_origin(
                 process_name,
                 format!("{}.clocking", path),

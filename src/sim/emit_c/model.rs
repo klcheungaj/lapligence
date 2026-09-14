@@ -12,7 +12,8 @@ use super::statements::{
 use super::EmitError;
 use crate::sim::execution::{ExecutionModel, ExecutionTerminator, ScheduleRegion, TriggerPlan};
 use crate::sim::ir::{
-    IrConcurrentAssertionKind, IrFunc, IrModel, IrNetKind, IrSequence, IrType, IrVpiObjectKind,
+    IrConcurrentAssertionKind, IrFunc, IrModel, IrNetKind, IrProcessKind, IrSequence, IrType,
+    IrVpiObjectKind,
 };
 
 // ── Model rendering ───────────────────────────────────────────────────────────
@@ -521,8 +522,8 @@ fn render_assertion_sequence(
         for (initializer_index, initializer) in sequence.initializers().iter().enumerate() {
             let rendered = super::expressions::render_expr_impl(&ctx, initializer)?;
             out.push_str(&format!(
-                "    (void)({}); /* local formal initializer {initializer_index} */\n",
-                rendered.code
+                "    if (!llg_sequence_local_inherited(data, {}u)) (void)({}); /* local initializer {initializer_index} */\n",
+                sequence.initializer_slots[initializer_index], rendered.code
             ));
         }
         out.push_str("}\n\n");
@@ -547,8 +548,9 @@ fn render_assertion_sequence(
     );
     out.push_str(&format!(
         "static const llg_sequence_transition_t {transition_name}[{}] = {{\n",
-        sequence.transitions().len()
+        sequence.transitions().len().max(1)
     ));
+    if sequence.transitions().is_empty() { out.push_str("    {0},\n"); }
     for transition in sequence.transitions() {
         let max = transition
             .delay
@@ -577,8 +579,9 @@ fn render_assertion_sequence(
             .map(|value| format!("{value}u"))
             .unwrap_or_else(|| "0u".to_owned());
         out.push_str(&format!(
-            "    {{{}u, {}u, {}ULL, {max}, {clock}, {edge}, {atom}, {match_start}, {}u}},\n",
+            "    {{{}u, {}u, {}ULL, {max}, {clock}, {edge}, {atom}, {match_start}, {}u, {}u, {}u}},\n",
             transition.from, transition.to, transition.delay.min, transition.match_count,
+            transition.enter_scope.unwrap_or(0), transition.exit_scope.unwrap_or(0),
         ));
     }
     out.push_str("};\n");
@@ -608,8 +611,8 @@ fn render_assertion_sequence(
         ));
         for local in sequence.locals() {
             out.push_str(&format!(
-                "    {{{}u, {}, {}}},\n",
-                local.width, local.signed as u8, local.two_state as u8
+                "    {{{}u, {}, {}, {}ULL}},\n",
+                local.width, local.signed as u8, local.two_state as u8, local.declaration
             ));
         }
         out.push_str("};\n");
@@ -629,8 +632,12 @@ fn render_assertion_sequence(
     } else {
         init_name
     };
+    let leading_clock = sequence.leading_clock
+        .map(|signal| format!("&{}", model.signal(signal).c_name()))
+        .unwrap_or_else(|| "NULL".to_owned());
+    let leading_edge = if sequence.leading_posedge { "LLG_EV_POSEDGE" } else { "LLG_EV_NEGEDGE" };
     out.push_str(&format!(
-        "static const llg_sequence_graph_t {sequence_name} = {{ {}u, {}u, {}u, {}u, {transition_name}, {}u, {first_match_states_ptr}, {atom_name}, NULL, {init_ptr}, {}, {}u, {locals_ptr}, {}u, {match_ptr} }};\n\n",
+        "static const llg_sequence_graph_t {sequence_name} = {{ {}u, {}u, {}u, {}u, {transition_name}, {}u, {first_match_states_ptr}, {atom_name}, NULL, {init_ptr}, {}, {}u, {locals_ptr}, {}u, {match_ptr}, {}, {leading_clock}, {leading_edge} }};\n\n",
         sequence.states(),
         sequence.start(),
         sequence.accept(),
@@ -639,6 +646,7 @@ fn render_assertion_sequence(
         sequence.first_match() as u8,
         sequence.locals().len(),
         sequence.match_items().len(),
+        sequence.admits_empty as u8,
     ));
     Ok(out)
 }
@@ -1207,6 +1215,7 @@ fn render_owned_vpi_metadata(model: &IrModel, out: &mut String) {
         net: bool,
         packed: String,
         real_value: String,
+        time_unit_fs: u64,
     }
 
     fn split_name(name: &str) -> Vec<&str> {
@@ -1264,6 +1273,7 @@ fn render_owned_vpi_metadata(model: &IrModel, out: &mut String) {
                 net: object.net,
                 packed,
                 real_value,
+                time_unit_fs: object.time_unit_fs,
             },
         );
     }
@@ -1289,6 +1299,7 @@ fn render_owned_vpi_metadata(model: &IrModel, out: &mut String) {
                 net: false,
                 packed: "NULL".to_owned(),
                 real_value: "NULL".to_owned(),
+                time_unit_fs: 0,
             });
         }
     }
@@ -1314,6 +1325,7 @@ fn render_owned_vpi_metadata(model: &IrModel, out: &mut String) {
                 net: false,
                 packed: "NULL".to_owned(),
                 real_value: "NULL".to_owned(),
+                time_unit_fs: 0,
             },
         );
     }
@@ -1345,7 +1357,7 @@ fn render_owned_vpi_metadata(model: &IrModel, out: &mut String) {
             .map(c_string_literal)
             .unwrap_or_else(|| "NULL".to_owned());
         out.push_str(&format!(
-            "    {{ {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {} }},\n",
+            "    {{ {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}ULL }},\n",
             entry.kind.c_type(),
             c_string_literal(&entry.name),
             c_string_literal(&entry.full.replace('\u{1f}', ".")),
@@ -1359,6 +1371,7 @@ fn render_owned_vpi_metadata(model: &IrModel, out: &mut String) {
             entry.packed,
             entry.real_value,
             parent,
+            entry.time_unit_fs,
         ));
     }
     out.push_str("};\n");
@@ -1796,6 +1809,25 @@ fn render_dpi_thunk(f: &IrFunc) -> Result<String, String> {
     } else {
         out.push_str(&format!("    {call};\n"));
     }
+    // Foreign string results can alias inputs or each other. Snapshot every
+    // returned buffer before any copy-out can destroy an aliased destination.
+    if matches!(ret_scalar, Some(DpiScalar::String)) {
+        out.push_str(
+            "    llg_string_t _dpi_string_ret = _dpi_ret ? llg_string_bytes(_dpi_ret, strlen(_dpi_ret)) : llg_string_bytes(\"\", 0);\n",
+        );
+    }
+    for (idx, form) in f
+        .formals
+        .iter()
+        .enumerate()
+        .filter(|(_, form)| form.is_address())
+    {
+        if matches!(dpi_scalar(form)?, DpiScalar::String) {
+            out.push_str(&format!(
+                "    llg_string_t _dpi_s{idx} = _dpi_o{idx} ? llg_string_bytes(_dpi_o{idx}, strlen(_dpi_o{idx})) : llg_string_bytes(\"\", 0);\n"
+            ));
+        }
+    }
     for (idx, form) in f
         .formals
         .iter()
@@ -1825,16 +1857,9 @@ fn render_dpi_thunk(f: &IrFunc) -> Result<String, String> {
             DpiScalar::Real { .. } => out.push_str(&format!("    *o{idx} = (double)_dpi_o{idx};\n")),
             DpiScalar::Chandle => out.push_str(&format!("    *o{idx} = _dpi_o{idx};\n")),
             DpiScalar::String => out.push_str(&format!(
-                "    {{ llg_string_t _dpi_s{idx} = _dpi_o{idx} ? llg_string_bytes(_dpi_o{idx}, strlen(_dpi_o{idx})) : llg_string_bytes(\"\", 0); llg_string_move(o{idx}, _dpi_s{idx}); }}\n"
+                "    llg_string_move(o{idx}, _dpi_s{idx});\n"
             )),
         }
-    }
-    if matches!(ret_scalar, Some(DpiScalar::String)) {
-        // A C string return may alias an input string (a common identity
-        // helper). Copy it before consuming the internal owned input slots.
-        out.push_str(
-            "    llg_string_t _dpi_string_ret = _dpi_ret ? llg_string_bytes(_dpi_ret, strlen(_dpi_ret)) : llg_string_bytes(\"\", 0);\n",
-        );
     }
     for (idx, _form) in f
         .formals
@@ -2526,13 +2551,14 @@ fn render_main(execution: &ExecutionModel) -> Result<String, String> {
     ));
     for (index, call) in model.vpi_compile_calls.iter().enumerate() {
         out.push_str(&format!(
-            "    if (!llg_vpi_compile_call({}, llg_vpi_compile_args_{index}, {})) {{\n\
+            "    if (!llg_vpi_compile_call_site({index}ULL, {}, llg_vpi_compile_args_{index}, {}, {}ULL)) {{\n\
              \x20       llg_vpi_shutdown();\n\
              \x20       llg_rt_cleanup();\n\
              \x20       return 1;\n\
              \x20   }}\n",
             c_string_literal(&call.name),
-            call.args.len()
+            call.args.len(),
+            call.time_unit_fs,
         ));
     }
     out.push_str("    llg_vpi_start_simulation();\n");
@@ -2557,13 +2583,15 @@ fn render_main(execution: &ExecutionModel) -> Result<String, String> {
         let region = process
             .map(|process| process.region)
             .unwrap_or(ScheduleRegion::Active);
-        let is_program =
-            process.is_some_and(|process| model.processes[process.semantic_process].is_program());
-        if is_program {
+        let semantic_process = process.map(|process| &model.processes[process.semantic_process]);
+        if let Some(instance) = semantic_process.and_then(|process| process.program) {
+            let is_initial =
+                semantic_process.is_some_and(|process| process.kind() == IrProcessKind::Initial);
             out.push_str(&format!(
-                "    llg_spawn_program_in_region({fname}, {}, {});\n",
+                "    llg_spawn_program_in_region({fname}, {}, {}, {instance}ULL, {});\n",
                 c_string_literal(&runtime_name),
-                region.runtime_symbol()
+                region.runtime_symbol(),
+                u8::from(is_initial)
             ));
         } else if region == ScheduleRegion::Active {
             out.push_str(&format!(
@@ -2688,6 +2716,62 @@ mod tests {
     }
 
     #[test]
+    fn dpi_string_snapshots_precede_all_copyouts_and_input_destruction() {
+        use crate::sim::ir::{IrDpiImport, IrFormal, IrFormalMode};
+
+        for return_kind in 0..3 {
+            let mut input = IrFormal::new(false, 1, false).unwrap();
+            input.string = true;
+            let mut inout = IrFormal::new(true, 1, false).unwrap();
+            inout.string = true;
+            inout.mode = IrFormalMode::Inout;
+            let mut output = inout;
+            output.mode = IrFormalMode::Output;
+            let mut function = IrFunc::new(
+                "string_alias_thunk".to_owned(),
+                if return_kind == 1 {
+                    Some(IrType::Packed {
+                        width: 32,
+                        signed: true,
+                        two_state: true,
+                    })
+                } else {
+                    None
+                },
+                vec![input, inout, output, inout],
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+            );
+            function.ret_string = return_kind == 0;
+            function.dpi = Some(IrDpiImport {
+                c_name: "foreign_alias".to_owned(),
+                context: false,
+                pure: false,
+            });
+            let c = render_dpi_thunk(&function).unwrap();
+            let call = c.find("foreign_alias(").unwrap();
+            let first_copyout = c.find("llg_string_move(o1, _dpi_s1)").unwrap();
+            for idx in 1..=3 {
+                let declaration = format!("llg_string_t _dpi_s{idx} =");
+                assert_eq!(c.matches(declaration.as_str()).count(), 1, "{c}");
+                let snapshot = c.find(declaration.as_str()).unwrap();
+                assert!(call < snapshot && snapshot < first_copyout, "{c}");
+            }
+            let last_copyout = c.find("llg_string_move(o3, _dpi_s3)").unwrap();
+            let destroy_input = c.find("llg_string_destroy(&a0)").unwrap();
+            assert!(last_copyout < destroy_input, "{c}");
+            if function.ret_string {
+                let snapshot = c.find("llg_string_t _dpi_string_ret =").unwrap();
+                assert!(call < snapshot && snapshot < first_copyout, "{c}");
+                assert!(c.contains("return _dpi_string_ret;"), "{c}");
+            } else {
+                assert!(!c.contains("_dpi_string_ret"), "{c}");
+            }
+        }
+    }
+
+    #[test]
     fn non_waveform_model_has_no_waveform_integration() {
         let model = IrModel::new("plain".to_string(), 1).unwrap();
         let execution = ExecutionModel::lower(model).unwrap();
@@ -2793,7 +2877,7 @@ mod tests {
             writes: Vec::new(),
             pre_fns: Vec::new(),
             body: controls,
-            program: false,
+            program: None,
             origin: crate::sim::semantic::Origin::Synthetic {
                 reason: "emitter fixture".to_owned(),
             },

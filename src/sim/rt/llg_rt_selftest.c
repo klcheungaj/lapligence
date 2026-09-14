@@ -871,7 +871,7 @@ static void real_expression_eval(double* out, void* context) {
 
 static void real_dependency_waiter(llg_proc_t* self) {
     for (int i = 0; i < 3; i++) {
-        llg_wait_dependency_t dependency = { NULL, &real_dependency_value };
+        llg_wait_dependency_t dependency = { .real = &real_dependency_value };
         llg_wait_any_dependencies(&dependency, 1);
         real_dependency_wakes++;
     }
@@ -879,7 +879,7 @@ static void real_dependency_waiter(llg_proc_t* self) {
 }
 
 static void real_expression_waiter(llg_proc_t* self) {
-    llg_wait_dependency_t dependency = { NULL, &real_dependency_value };
+    llg_wait_dependency_t dependency = { .real = &real_dependency_value };
     llg_expr_event_spec_t expression = {
         .real_eval = real_expression_eval,
         .kind = LLG_EV_ANY,

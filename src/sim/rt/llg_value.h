@@ -82,6 +82,9 @@ typedef struct {
     uint64_t queue_identity;
     llg_queue_ref_read_fn queue_read;
     llg_queue_ref_write_fn queue_write;
+    void* retained;
+    sv4_t (*retained_read)(const void*);
+    int (*retained_write)(void*, sv4_t);
 } llg_ref_t;
 
 sv4_t llg_ref_read(const llg_ref_t* ref);

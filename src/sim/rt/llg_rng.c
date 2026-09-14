@@ -34,9 +34,8 @@ void llg_rng_state_derive(llg_rng_state_t* child,
                           const llg_rng_state_t* parent,
                           uint64_t ordinal) {
     if (!child || !parent) rng_fail("deriving a stream from null state");
-    /* Derive from the parent's identity, not its mutable draw state.  This is
-     * what makes independent sibling streams stable when a parent draws an
-     * unrelated number before creating another child. */
+    /* Explicit ordinal-based stream splitting. Dynamic HDL children use
+     * llg_rng_state_child instead, which consumes the parent's next draw. */
     uint64_t material = parent->increment ^
                         (ordinal * UINT64_C(0x9e3779b97f4a7c15));
     uint64_t seed = splitmix64(material ^ UINT64_C(0xa4093822299f31d0));
@@ -44,9 +43,14 @@ void llg_rng_state_derive(llg_rng_state_t* child,
 }
 
 void llg_rng_state_child(llg_rng_state_t* parent, llg_rng_state_t* child) {
-    if (!parent) rng_fail("creating a child from a null stream");
-    uint64_t ordinal = parent->child_count++;
-    llg_rng_state_derive(child, parent, ordinal);
+    if (!parent || !child || parent == child)
+        rng_fail("creating a child requires two distinct streams");
+    if (parent->child_count == UINT64_MAX) rng_fail("child counter overflow");
+    /* IEEE 1800-2009 18.14: creation consumes exactly one parent draw.
+     * Draws in an already-created child never advance the parent or siblings. */
+    uint32_t seed = llg_rng_state_next(parent);
+    parent->child_count++;
+    llg_rng_state_seed(child, seed);
 }
 
 uint32_t llg_rng_state_next(llg_rng_state_t* state) {

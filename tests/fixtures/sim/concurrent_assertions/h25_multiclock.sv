@@ -38,6 +38,7 @@ module tb;
         end
         #1 clk_a = 1'b0;
         #1 clk_b = 1'b0;
+        #1 clk_b = 1'b1;
         #1 $finish(0);
     end
 endmodule

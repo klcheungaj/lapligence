@@ -1,6 +1,6 @@
 // llg-test-fixture: tests/fixtures/sim/program_blocks/program_exit.sv
-// IEEE 1800-2009 §§24.3 and 24.7: `$exit` terminates every program process,
-// including detached children, then runs final procedures once.
+// IEEE 1800-2009 24.3 and 24.7: $exit terminates only its originating
+// program. The other program's initial remains live until time 1.
 program exit_program;
     initial begin
         $display("exit start");

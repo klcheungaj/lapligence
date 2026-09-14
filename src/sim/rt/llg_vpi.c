@@ -33,13 +33,21 @@ typedef enum {
 typedef struct llg_vpi_registration {
     s_vpi_systf_data data;
     char* name;
-    int compiled;
-    int compile_failed;
+    vpiHandle public_handle;
+} llg_vpi_registration_t;
+
+typedef struct llg_vpi_callsite {
+    uint64_t id;
+    uint64_t time_unit_fs;
+    llg_vpi_registration_t* registration;
     uint32_t result_width;
     int8_t result_signed;
     int8_t result_real;
-    vpiHandle public_handle;
-} llg_vpi_registration_t;
+    int valid;
+    int arg_count;
+    llg_vpi_compile_arg_t* args;
+    struct llg_vpi_callsite* next;
+} llg_vpi_callsite_t;
 
 typedef struct llg_vpi_call {
     const char* name;
@@ -50,6 +58,7 @@ typedef struct llg_vpi_call {
     double real_return;
     int has_real_return;
     int is_function;
+    uint64_t time_unit_fs;
 } llg_vpi_call_t;
 
 typedef struct llg_vpi_handle {
@@ -107,6 +116,10 @@ typedef struct {
 #endif
     int plugin_count;
     llg_vpi_call_t* active_call;
+    llg_vpi_callsite_t* callsites;
+    size_t callsite_count;
+    s_vpi_vecval* value_vector;   /* Simulator-owned vpi_get_value result. */
+    size_t value_vector_capacity;
 } llg_vpi_state_t;
 
 static llg_vpi_state_t g_vpi;
@@ -623,6 +636,7 @@ vpiHandle vpi_iterate(PLI_INT32 type, vpiHandle ref_handle) {
         if (!call || call->arg_count <= 0) return NULL;
         llg_vpi_handle_t* iterator = make_handle(LLG_VPI_ITERATOR, 1);
         if (!iterator) return NULL;
+        iterator->owner_call = call;
         iterator->items = (vpiHandle*)calloc((size_t)call->arg_count, sizeof(*iterator->items));
         if (!iterator->items) {
             destroy_dynamic_handle(iterator);
@@ -639,6 +653,7 @@ vpiHandle vpi_iterate(PLI_INT32 type, vpiHandle ref_handle) {
                 return NULL;
             }
             argument->argument = &call->args[i];
+            argument->owner_call = call;
             argument->argument_index = i;
             iterator->items[i] = argument;
         }
@@ -903,13 +918,33 @@ void vpi_get_value(vpiHandle handle, p_vpi_value output) {
         case vpiIntVal:
             output->value.integer = (PLI_INT32)sv4_to_i64(value);
             break;
-        case vpiVectorVal:
-            if (!output->value.vector) {
-                vpi_set_error(vpiPLI, vpiError, "LLG_VPI_ARGUMENT", "null vector destination");
+        case vpiVectorVal: {
+            /* The request supplies only a format, not a writable vector pointer.
+             * Keep the result alive until the next get-value call or shutdown. */
+            output->value.vector = NULL;
+            if (value.width == 0 || value.width > LLG_MAX_WIDTH) {
+                vpi_set_error(vpiPLI, vpiError, "LLG_VPI_VALUE", "invalid packed value width");
                 return;
             }
-            copy_to_vector(value, output->value.vector);
+            size_t words = ((size_t)value.width - 1u) / 32u + 1u;
+            if (words > SIZE_MAX / sizeof(*g_vpi.value_vector)) {
+                vpi_set_error(vpiPLI, vpiError, "LLG_VPI_NOMEM", "VPI vector size overflow");
+                return;
+            }
+            if (words > g_vpi.value_vector_capacity) {
+                s_vpi_vecval* vector = (s_vpi_vecval*)realloc(
+                    g_vpi.value_vector, words * sizeof(*vector));
+                if (!vector) {
+                    vpi_set_error(vpiPLI, vpiError, "LLG_VPI_NOMEM", "VPI vector allocation failed");
+                    return;
+                }
+                g_vpi.value_vector = vector;
+                g_vpi.value_vector_capacity = words;
+            }
+            copy_to_vector(value, g_vpi.value_vector);
+            output->value.vector = g_vpi.value_vector;
             break;
+        }
         case vpiBinStrVal:
         case vpiOctStrVal:
         case vpiDecStrVal:
@@ -1022,11 +1057,31 @@ void vpi_get_time(vpiHandle object, p_vpi_time time) {
         vpi_set_error(vpiPLI, vpiError, "LLG_VPI_ARGUMENT", "null VPI time output");
         return;
     }
+    if (time->type == vpiSuppressTime) return;
+    if (time->type != vpiSimTime && time->type != vpiScaledRealTime) {
+        vpi_set_error(vpiPLI, vpiError, "LLG_VPI_TIME", "unsupported VPI time format");
+        return;
+    }
     uint64_t now = llg_time();
-    time->type = vpiSimTime;
-    time->high = (PLI_UINT32)(now >> 32);
-    time->low = (PLI_UINT32)now;
-    time->real = (double)now;
+    if (time->type == vpiSimTime) {
+        time->high = (PLI_UINT32)(now >> 32);
+        time->low = (PLI_UINT32)now;
+        return;
+    }
+    uint64_t precision = llg_time_precision_fs();
+    uint64_t unit = 0;
+    if (valid_handle(object, LLG_VPI_OBJECT)) {
+        llg_vpi_model_object_t* scope = ((llg_vpi_handle_t*)object)->object;
+        for (; scope && !unit; scope = scope->parent) unit = scope->time_unit_fs;
+    } else if (valid_handle(object, LLG_VPI_CALL)) {
+        unit = ((llg_vpi_handle_t*)object)->call->time_unit_fs;
+    } else if (valid_handle(object, LLG_VPI_ARGUMENT)) {
+        llg_vpi_call_t* call = ((llg_vpi_handle_t*)object)->owner_call;
+        if (call) unit = call->time_unit_fs;
+    }
+    if (!precision) precision = 1;
+    if (!unit) unit = precision;
+    time->real = (double)((long double)now * precision / unit);
 }
 
 PLI_INT32 vpi_compare_objects(vpiHandle object1, vpiHandle object2) {
@@ -1145,6 +1200,7 @@ static void invoke_callbacks(int reason) {
         if (!valid_handle(cursor, LLG_VPI_CALLBACK) || cursor->callback.reason != reason) continue;
         s_vpi_time time;
         memset(&time, 0, sizeof(time));
+        time.type = vpiSimTime;
         vpi_get_time(NULL, &time);
         s_cb_data data = cursor->callback;
         data.time = &time;
@@ -1210,7 +1266,6 @@ static void invoke_compiletf(llg_vpi_call_t* call) {
         invalidate_call_handles(call);
         g_vpi.active_call = NULL;
         if (result != 0) {
-            registration->compile_failed = 1;
             vpi_set_errorf(vpiCompile, vpiError, "LLG_VPI_COMPILETf", "compiletf rejected `%s`", call->name);
         }
     }
@@ -1220,6 +1275,8 @@ static void invoke_compiletf(llg_vpi_call_t* call) {
         llg_vpi_handle_t* handle = call_handle();
         PLI_INT32 width = registration->data.sizetf(registration->data.user_data);
         vpi_release_handle(handle);
+        // sizetf can create borrowed argument and iterator handles too.
+        invalidate_call_handles(call);
         g_vpi.active_call = NULL;
         if (width <= 0 || (uint32_t)width > LLG_MAX_WIDTH) {
             vpi_set_errorf(vpiCompile, vpiError, "LLG_VPI_SIZETF", "sizetf for `%s` returned invalid width %d", call->name, width);
@@ -1227,11 +1284,7 @@ static void invoke_compiletf(llg_vpi_call_t* call) {
             call->return_value = sv4_x((uint32_t)width, registration->data.sysfunctype == vpiSizedSignedFunc);
         }
     }
-    registration->result_real = (int8_t)call->has_real_return;
-    registration->result_width = call->has_real_return ? 0 : call->return_value.width;
-    registration->result_signed = call->return_value.is_signed;
-    registration->compiled = !g_vpi.error_pending;
-    registration->compile_failed = !registration->compiled;
+
 }
 
 int llg_vpi_compile_call(const char* name, const llg_vpi_compile_arg_t* args, int count) {
@@ -1250,6 +1303,57 @@ int llg_vpi_compile_call(const char* name, const llg_vpi_compile_arg_t* args, in
     return !g_vpi.error_pending;
 }
 
+static llg_vpi_callsite_t* find_callsite(uint64_t id) {
+    for (llg_vpi_callsite_t* site = g_vpi.callsites; site; site = site->next)
+        if (site->id == id) return site;
+    return NULL;
+}
+
+int llg_vpi_compile_call_site(uint64_t id, const char* name,
+    const llg_vpi_compile_arg_t* args, int count, uint64_t time_unit_fs) {
+    if (id == UINT64_MAX || find_callsite(id) || !name || count < 0 ||
+        count > LLG_VPI_MAX_ARGS || (count && !args) ||
+        g_vpi.callsite_count >= LLG_VPI_MAX_HANDLES) {
+        vpi_set_error(vpiCompile, vpiError, "LLG_VPI_CALLSITE", "invalid or duplicate VPI callsite");
+        return 0;
+    }
+    llg_vpi_callsite_t* site = (llg_vpi_callsite_t*)calloc(1, sizeof(*site));
+    if (!site) {
+        vpi_set_error(vpiCompile, vpiError, "LLG_VPI_NOMEM", "VPI callsite allocation failed");
+        return 0;
+    }
+    if (count) {
+        site->args = (llg_vpi_compile_arg_t*)malloc((size_t)count * sizeof(*args));
+        if (!site->args) {
+            free(site);
+            vpi_set_error(vpiCompile, vpiError, "LLG_VPI_NOMEM", "VPI argument shape allocation failed");
+            return 0;
+        }
+        memcpy(site->args, args, (size_t)count * sizeof(*args));
+    }
+    site->id = id;
+    site->time_unit_fs = time_unit_fs;
+    site->arg_count = count;
+    site->next = g_vpi.callsites;
+    g_vpi.callsites = site;
+    g_vpi.callsite_count++;
+    llg_vpi_call_t call;
+    make_compile_call(&call, name, args, count);
+    call.time_unit_fs = time_unit_fs;
+    if (count && !call.args) {
+        vpi_set_error(vpiCompile, vpiError, "LLG_VPI_NOMEM", "VPI compile-call allocation failed");
+        return 0;
+    }
+    invoke_compiletf(&call);
+    site->registration = call.registration;
+    site->result_real = (int8_t)call.has_real_return;
+    site->result_width = call.has_real_return ? 0 : call.return_value.width;
+    site->result_signed = call.return_value.is_signed;
+    site->valid = !g_vpi.error_pending && call.registration != NULL;
+    release_compile_call(&call);
+    return site->valid;
+}
+
 int llg_vpi_compile_calls(const char* const* names,
                           const llg_vpi_compile_arg_t* const* args,
                           const int* counts, int call_count) {
@@ -1263,7 +1367,7 @@ int llg_vpi_compile_calls(const char* const* names,
     return 1;
 }
 
-static int prepare_runtime_call(llg_vpi_call_t* call, const char* name,
+static int prepare_runtime_call(llg_vpi_call_t* call, uint64_t id, const char* name,
                                 llg_vpi_arg_t* args, int count, int function) {
     llg_vpi_registration_t* registration = find_registration(name);
     if (!registration || (function != registration_type_is_function(registration))) {
@@ -1280,16 +1384,28 @@ static int prepare_runtime_call(llg_vpi_call_t* call, const char* name,
     call->arg_count = count;
     call->registration = registration;
     call->is_function = function;
-    call->has_real_return = registration->result_real;
-    call->return_value = sv4_x(registration->result_width ? registration->result_width : 32,
-                               registration->result_signed);
-    if (!registration->compiled) {
+    if (id == UINT64_MAX) {
+        // Legacy embedding entry points lack source identity. Recompute this
+        // invocation's descriptor rather than reuse another call's return size.
         invoke_compiletf(call);
-        if (!registration->compiled) return 0;
+        return !g_vpi.error_pending;
     }
-    call->has_real_return = registration->result_real;
-    call->return_value = sv4_x(registration->result_width ? registration->result_width : 32,
-                               registration->result_signed);
+    llg_vpi_callsite_t* site = find_callsite(id);
+    if (!site || !site->valid || site->registration != registration || site->arg_count != count) {
+        vpi_set_error(vpiRun, vpiError, "LLG_VPI_CALLSITE", "uncompiled or inconsistent VPI callsite");
+        return 0;
+    }
+    for (int i = 0; i < count; i++) {
+        if (site->args[i].width != args[i].width ||
+            site->args[i].is_signed != args[i].is_signed ||
+            site->args[i].is_real != args[i].is_real) {
+            vpi_set_error(vpiRun, vpiError, "LLG_VPI_CALLSITE", "VPI argument shape changed after compilation");
+            return 0;
+        }
+    }
+    call->time_unit_fs = site->time_unit_fs;
+    call->has_real_return = site->result_real;
+    call->return_value = sv4_x(site->result_width ? site->result_width : 1, site->result_signed);
     return 1;
 }
 
@@ -1307,38 +1423,46 @@ static int invoke_calltf(llg_vpi_call_t* call) {
     return 1;
 }
 
-int llg_vpi_call_task(const char* name, llg_vpi_arg_t* args, int count) {
+int llg_vpi_call_task_site(uint64_t site, const char* name, llg_vpi_arg_t* args, int count) {
     llg_vpi_call_t call;
-    if (!prepare_runtime_call(&call, name, args, count, 0)) return 0;
+    if (!prepare_runtime_call(&call, site, name, args, count, 0)) return 0;
     return invoke_calltf(&call);
 }
 
-sv4_t llg_vpi_call_function(const char* name, llg_vpi_arg_t* args, int count,
+sv4_t llg_vpi_call_function_site(uint64_t site, const char* name, llg_vpi_arg_t* args, int count,
                             uint32_t fallback_width, int8_t fallback_signed) {
     llg_vpi_call_t call;
-    if (!prepare_runtime_call(&call, name, args, count, 1)) {
+    if (!prepare_runtime_call(&call, site, name, args, count, 1)) {
         return sv4_x(fallback_width ? fallback_width : 1, fallback_signed);
     }
     if (call.has_real_return) {
         vpi_fail_runtime("VPI real function used in a packed expression");
         return sv4_x(fallback_width ? fallback_width : 1, fallback_signed);
     }
-    if (!call.registration->result_width) {
-        call.return_value = sv4_x(fallback_width ? fallback_width : 32, fallback_signed);
-    }
     if (!invoke_calltf(&call)) return call.return_value;
     return call.return_value;
 }
 
-double llg_vpi_call_real_function(const char* name, llg_vpi_arg_t* args, int count) {
+double llg_vpi_call_real_function_site(uint64_t site, const char* name, llg_vpi_arg_t* args, int count) {
     llg_vpi_call_t call;
-    if (!prepare_runtime_call(&call, name, args, count, 1)) return 0.0;
+    if (!prepare_runtime_call(&call, site, name, args, count, 1)) return 0.0;
     if (!call.has_real_return) {
         vpi_fail_runtime("VPI packed function used in a real expression");
         return 0.0;
     }
     if (!invoke_calltf(&call)) return 0.0;
     return call.real_return;
+}
+
+int llg_vpi_call_task(const char* name, llg_vpi_arg_t* args, int count) {
+    return llg_vpi_call_task_site(UINT64_MAX, name, args, count);
+}
+sv4_t llg_vpi_call_function(const char* name, llg_vpi_arg_t* args, int count,
+                          uint32_t width, int8_t sign) {
+    return llg_vpi_call_function_site(UINT64_MAX, name, args, count, width, sign);
+}
+double llg_vpi_call_real_function(const char* name, llg_vpi_arg_t* args, int count) {
+    return llg_vpi_call_real_function_site(UINT64_MAX, name, args, count);
 }
 
 int llg_vpi_failed(void) { return g_vpi.failed || g_vpi.error_pending; }
@@ -1358,6 +1482,13 @@ void llg_vpi_shutdown(void) {
     g_vpi.callbacks = NULL;
     for (int i = 0; i < g_vpi.registration_count; ++i) free(g_vpi.registrations[i].name);
     free(g_vpi.object_handles);
+    while (g_vpi.callsites) {
+        llg_vpi_callsite_t* site = g_vpi.callsites;
+        g_vpi.callsites = site->next;
+        free(site->args);
+        free(site);
+    }
+    free(g_vpi.value_vector);
 #if defined(_WIN32)
     for (int i = 0; i < g_vpi.plugin_count; ++i) FreeLibrary(g_vpi.plugin_handles[i]);
 #else

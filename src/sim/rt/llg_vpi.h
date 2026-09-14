@@ -23,6 +23,7 @@ typedef struct llg_vpi_model_object {
     sv4_t* packed;
     double* real;
     struct llg_vpi_model_object* parent;
+    uint64_t time_unit_fs; /* 0 inherits the parent or simulation time unit. */
 } llg_vpi_model_object_t;
 
 typedef struct {
@@ -60,6 +61,14 @@ sv4_t llg_vpi_call_function(const char* name, llg_vpi_arg_t* args,
                             int8_t fallback_signed);
 double llg_vpi_call_real_function(const char* name, llg_vpi_arg_t* args,
                                   int arg_count);
+/* Generated calls have stable per-model identities; return shape and scope
+ * survive independently of the name-level registration. */
+int llg_vpi_compile_call_site(uint64_t site, const char* name,
+    const llg_vpi_compile_arg_t* args, int count, uint64_t time_unit_fs);
+int llg_vpi_call_task_site(uint64_t site, const char* name, llg_vpi_arg_t* args, int count);
+sv4_t llg_vpi_call_function_site(uint64_t site, const char* name, llg_vpi_arg_t* args,
+    int count, uint32_t fallback_width, int8_t fallback_signed);
+double llg_vpi_call_real_function_site(uint64_t site, const char* name, llg_vpi_arg_t* args, int count);
 int llg_vpi_failed(void);
 
 #ifdef __cplusplus

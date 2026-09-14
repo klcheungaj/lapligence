@@ -162,3 +162,72 @@ suite and generated-runtime matrix are the evidence for simulator execution.
 The inventory diff makes added, removed, or renamed tests visible alongside
 the phase-status comparison; any expected-output change still requires a
 feature/clause justification in the patch.
+
+## Priority-review regression sources
+
+- `sim_process_control::a_child_killing_its_ancestor_never_returns_to_released_locals`
+  covers ancestor kill with live automatic locals and nested descendants.
+- The `semaphore/cancel_{head,tree,named,fork}.sv` fixtures distinguish live
+  FIFO reservice from mid-cancellation grants and cover the public cancellation
+  entrypoints. No extra `put` is used to make the waiting request runnable.
+- `sim_vpi` adds vector-ownership and callback-borrow-lifetime plugins. They
+  exercise zeroed, format-only, poisoned and caller-buffer vector requests,
+  multiword X/Z results, and stale call/argument/iterator handles across all
+  three system-task callback kinds. Permanent model handles remain valid.
+- `sim_dpi::dpi_string_results_are_snapshotted_before_aliased_copyout` covers
+  an inout echo, swapped buffers, a void return, and shared output/return
+  pointers. The C emitter has a separate ordering regression for string,
+  integral and void returns.
+
+These regression sources were added by static review; their addition is not
+recorded test-execution evidence.
+
+
+## Follow-up review regression sources
+
+`sim_review_batch2.rs` contains origin-specific program exit/completion cases,
+postponed alias reads, delayed-alias event/level waiters, scalar mailbox mismatch
+and FIFO cases, and independent assertion-failure/severity accounting. The
+program fixtures use multiple instances of the same definition and multiple
+initials, with a module-defined task invoked from both program and module
+origins. Mailbox mismatch tests preserve the queued message and the target;
+nominal enum/handle type equivalence is exercised separately by the batch-04 source regressions.
+
+`runtime_rng.rs` checks exact parent seed consumption, state replay and the
+independence of already-created children. Prior draws in a parent are allowed
+(and required) to affect a subsequently created child's seed. Existing program
+and mailbox expectations are updated to those specified contracts rather than
+weakening stdout/stderr checks. These additions and changes were inspected
+statically only; no build or test execution is claimed.
+
+
+## Ten-finding review batch 03
+
+`sim_review_batch3.rs` supplies focused cases for Observed clocking-block
+publication, inheritance-layer construction, factory receiver binding,
+non-packed property initializers, assertion off/kill and property truth,
+numeric-prefix scanning, and the FD/MCD bit contract. The dedicated VPI suite
+adds requested time-format/scaling coverage; `runtime_review_batch3.rs` uses
+two different sized-function call descriptors so frontend argument coercions
+cannot conceal shared return-width state. Existing I/O oracles now distinguish
+FDs from MCDs instead of asserting implementation-assigned slot numbers.
+
+These test sources were added by static inspection only. No new passing-test
+result is recorded, and shared stdout/stderr comparisons are unchanged.
+
+
+## Review batch 04
+
+- `sim_review_batch4.rs` supplies unexecuted regressions for retained outdated
+  queue refs (including aliases, self-assignment, suspension and cancellation),
+  nominal and structurally equivalent mailbox types, ref mailbox destinations,
+  empty sequence boundaries, guarded repetition, nested/tied `first_match`,
+  coincident/noncoincident multiclock boundaries and inherited clock flow,
+  implication-local snapshots, and disjoint/overlapping packed-prefix analysis.
+- `runtime_containers.rs` adds direct retained-cell lifetime assertions,
+  including sharing, queue destruction, reorder identity, and final release.
+- The H25 multiclock fixture now distinguishes a same-time destination from a
+  strictly later edge; its expected output follows that distinction. The batch-03
+  CLI harness imports the shared simulation helper required by `sim_cli`.
+- No compiler, simulator, runtime probe, sanitizer, or Cargo command was run for
+  these changes. Shared stdout/stderr comparisons remain unchanged.

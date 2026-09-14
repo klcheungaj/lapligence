@@ -320,7 +320,7 @@ fn render_memory(
     ))
 }
 
-fn render_vpi_call(ctx: &RCtx<'_>, name: &str, args: &[IrExpr]) -> Result<String, String> {
+fn render_vpi_call(ctx: &RCtx<'_>, site: usize, name: &str, args: &[IrExpr]) -> Result<String, String> {
     let mut declarations = String::new();
     let mut values = Vec::with_capacity(args.len());
     for (index, arg) in args.iter().enumerate() {
@@ -348,7 +348,7 @@ fn render_vpi_call(ctx: &RCtx<'_>, name: &str, args: &[IrExpr]) -> Result<String
         values.join(", ")
     };
     Ok(format!(
-        "{{ {declarations} llg_vpi_arg_t _llg_vpi_args[{array_len}] = {{ {initializers} }}; (void)llg_vpi_call_task({}, _llg_vpi_args, {}); }}\n",
+        "{{ {declarations} llg_vpi_arg_t _llg_vpi_args[{array_len}] = {{ {initializers} }}; (void)llg_vpi_call_task_site({site}ULL, {}, _llg_vpi_args, {}); }}\n",
         c_string_literal(name),
         args.len()
     ))
@@ -435,7 +435,7 @@ fn render_stmt_scoped(
             };
             format!("    (void)llg_system({command}, {has_command});\n")
         }
-        IrStmt::VpiCall { name, args } => render_vpi_call(ctx, name, args)?,
+        IrStmt::VpiCall { site, name, args } => render_vpi_call(ctx, *site, name, args)?,
         IrStmt::RandomSeed { seed } => {
             format!(
                 "    llg_process_srandom({});\n",
@@ -934,6 +934,9 @@ fn render_stmt_scoped(
             }
         }
         IrStmt::WaitEvents { specs } => wait_events_text(ctx, specs)?,
+        IrStmt::ClockingEventTrigger { ev } => {
+            format!("    (void)llg_clocking_event_observed({});\n", event_ref_code(ctx, ev)?)
+        }
         IrStmt::EventTrigger { ev } => {
             format!("    llg_event_trigger({});\n", event_ref_code(ctx, ev)?)
         }
@@ -1206,6 +1209,7 @@ fn render_stmt_scoped(
             if_false,
             label,
             location,
+            scope,
             identity,
         } => render_deferred_immediate_assertion(
             ctx,
@@ -1216,6 +1220,7 @@ fn render_stmt_scoped(
                 if_false: if_false.as_ref(),
                 label,
                 location,
+                scope,
                 identity: *identity,
             },
         )?,
@@ -1486,7 +1491,7 @@ fn render_stmt_scoped(
                     }
                 }
             }
-            out
+            super::expressions::with_ref_scope(out, &call.args, None)
         }
         IrStmt::Return { value } => {
             let f = ctx.func.ok_or_else(|| {
@@ -1573,7 +1578,7 @@ pub(super) fn wait_any_text(ctx: &RCtx<'_>, sens: &[IrDependency]) -> String {
         return "    llg_wait_any(NULL, 0);\n".to_string();
     }
     if sens.iter().any(|dependency| match dependency {
-        IrDependency::Real(_) => true,
+        IrDependency::Real(_) | IrDependency::PackedRange { .. } => true,
         IrDependency::ArrayElement { array, .. } => ctx.model.array(*array).real,
         _ => false,
     }) {
@@ -1616,6 +1621,7 @@ pub(super) fn wait_any_text_in_region(
 
 fn dependency_pointer(ctx: &RCtx<'_>, dependency: &IrDependency) -> String {
     match dependency {
+        IrDependency::PackedRange { storage, .. } => dependency_pointer(ctx, storage),
         IrDependency::Scalar(name) => format!("&{name}"),
         IrDependency::Real(_) => {
             unreachable!("real dependency requires typed wait entries")
@@ -1870,6 +1876,7 @@ struct DeferredImmediateAssertionRender<'a> {
     if_false: Option<&'a crate::sim::ir::IrDeferredAction>,
     label: &'a str,
     location: &'a str,
+    scope: &'a str,
     identity: u64,
 }
 
@@ -1884,6 +1891,7 @@ fn render_deferred_immediate_assertion(
         if_false,
         label,
         location,
+        scope,
         identity,
     } = assertion;
     let rendered = render_expr(ctx, condition)?;
@@ -1905,13 +1913,14 @@ fn render_deferred_immediate_assertion(
     };
     let label = c_string_literal(label);
     let location = c_string_literal(location);
-    let mut out = format!("{{\n    {declaration}\n    if ({condition_bool}) {{\n");
+    let scope = c_string_literal(scope);
+    let mut out = format!("if (llg_deferred_assertion_enabled({kind}, {label}, {scope})) {{\n    {declaration}\n    if ({condition_bool}) {{\n");
     out.push_str(&deferred_assertion_enqueue_text(
-        ctx, kind, true, identity, &label, &location, if_true,
+        ctx, kind, true, identity, &label, &location, &scope, if_true,
     )?);
     out.push_str("    } else {\n");
     out.push_str(&deferred_assertion_enqueue_text(
-        ctx, kind, false, identity, &label, &location, if_false,
+        ctx, kind, false, identity, &label, &location, &scope, if_false,
     )?);
     out.push_str("    }\n}\n");
     Ok(out)
@@ -1924,11 +1933,12 @@ fn deferred_assertion_enqueue_text(
     identity: u64,
     label: &str,
     location: &str,
+    scope: &str,
     action: Option<&crate::sim::ir::IrDeferredAction>,
 ) -> Result<String, String> {
     let Some(action) = action else {
         return Ok(format!(
-            "        llg_deferred_assertion({kind}, {}, {identity}ULL, {label}, {location}, NULL, NULL);\n",
+            "        llg_deferred_assertion_scoped({kind}, {}, {identity}ULL, {label}, {location}, {scope}, NULL, NULL);\n",
             passed as u8
         ));
     };
@@ -1945,7 +1955,7 @@ fn deferred_assertion_enqueue_text(
         );
     }
     out.push_str(&format!(
-        "            llg_deferred_assertion({kind}, {}, {identity}ULL, {label}, {location}, {}, {frame});\n        }}\n",
+        "            llg_deferred_assertion_scoped({kind}, {}, {identity}ULL, {label}, {location}, {scope}, {}, {frame});\n        }}\n",
         passed as u8,
         action.c_name(),
     ));
@@ -1994,30 +2004,39 @@ fn render_severity_call(
 
 fn dependency_entry(ctx: &RCtx<'_>, dependency: &IrDependency) -> String {
     match dependency {
-        IrDependency::Scalar(name) => format!("{{ &{name}, 0 }}"),
-        IrDependency::Real(name) => format!("{{ 0, &{name} }}"),
+        IrDependency::PackedRange { storage, lsb, width } => {
+            let trigger = dependency_pointer(ctx, storage);
+            let value = match storage.as_ref() {
+                IrDependency::Scalar(name) => format!("&{name}"),
+                IrDependency::ArrayElement { array, index } => format!("&{}[{index}]", ctx.model.array(*array).c_name()),
+                _ => unreachable!("validated packed-prefix storage"),
+            };
+            format!("{{ .sig = {trigger}, .value = {value}, .lsb = {lsb}u, .width = {width}u }}")
+        }
+        IrDependency::Scalar(name) => format!("{{ .sig = &{name} }}"),
+        IrDependency::Real(name) => format!("{{ .real = &{name} }}"),
         IrDependency::ArrayElement { array, index } => {
             let array = ctx.model.array(*array);
             if array.real {
-                format!("{{ 0, &{}[{}] }}", array.c_name(), index)
+                format!("{{ .real = &{}[{}] }}", array.c_name(), index)
             } else {
-                format!("{{ &{}_llg_element_deps[{}], 0 }}", array.c_name(), index)
+                format!("{{ .sig = &{}_llg_element_deps[{}] }}", array.c_name(), index)
             }
         }
         IrDependency::ArrayContents(array) => format!(
-            "{{ &{}_llg_contents_dep, 0 }}",
+            "{{ .sig = &{}_llg_contents_dep }}",
             ctx.model.array(*array).c_name()
         ),
         IrDependency::ContainerContents(container) => format!(
-            "{{ &{}_llg_contents_dep, 0 }}",
+            "{{ .sig = &{}_llg_contents_dep }}",
             ctx.model.containers[*container].c_name
         ),
         IrDependency::ContainerShape(container) => format!(
-            "{{ &{}_llg_shape_dep, 0 }}",
+            "{{ .sig = &{}_llg_shape_dep }}",
             ctx.model.containers[*container].c_name
         ),
         IrDependency::Object(object) => {
-            format!("{{ &{}_llg_dep, 0 }}", ctx.model.objects[*object].c_name)
+            format!("{{ .sig = &{}_llg_dep }}", ctx.model.objects[*object].c_name)
         }
     }
 }

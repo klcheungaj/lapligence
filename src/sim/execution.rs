@@ -380,6 +380,7 @@ fn collect_control_labels<'a>(
 
 fn is_emitted_trigger_storage(ir: &IrModel, dependency: &IrDependency) -> bool {
     match dependency {
+        IrDependency::PackedRange { storage, .. } => is_emitted_trigger_storage(ir, storage),
         IrDependency::Scalar(name) => {
             let alias_index = name
                 .strip_prefix("llg_net_alias_")
@@ -557,6 +558,7 @@ fn collect_effects(
                 collect_effects(ir, failure, effects, visited_calls);
             }
             IrStmt::EventTrigger { .. }
+            | IrStmt::ClockingEventTrigger { .. }
             | IrStmt::NonblockingEventTrigger { .. }
             | IrStmt::NonblockingEventTriggerWhen { .. }
             | IrStmt::NonblockingEventAssignWhen { .. } => effects.push(ExecutionEffect::Trigger),
@@ -1590,6 +1592,7 @@ fn collect_mailbox_value_effects(
         }
         IrMailboxValue::String(value) => collect_string_effects(ir, value, effects, visited_calls),
         IrMailboxValue::Handle(value) => collect_chandle_effects(ir, value, effects, visited_calls),
+        IrMailboxValue::Typed { value, .. } => collect_mailbox_value_effects(ir, value, effects, visited_calls),
     }
 }
 
@@ -1615,14 +1618,20 @@ fn collect_string_effects(
     visited_calls: &mut HashSet<usize>,
 ) {
     match value {
-        IrStringExpr::Call { function, args, .. } => {
+        IrStringExpr::Call { function, args, receiver, .. } => {
+            if let Some(receiver) = receiver {
+                collect_chandle_effects(ir, receiver, effects, visited_calls);
+            }
             effects.push(ExecutionEffect::RuntimeService);
             collect_callee_effects(ir, *function, effects, visited_calls);
             for argument in args {
                 collect_expression_effects(ir, argument, effects, visited_calls);
             }
         }
-        IrStringExpr::TypedCall { function, args, .. } => {
+        IrStringExpr::TypedCall { function, args, receiver, .. } => {
+            if let Some(receiver) = receiver {
+                collect_chandle_effects(ir, receiver, effects, visited_calls);
+            }
             effects.push(ExecutionEffect::RuntimeService);
             collect_callee_effects(ir, *function, effects, visited_calls);
             for argument in args {
@@ -1722,7 +1731,10 @@ fn collect_chandle_effects(
         IrChandleExpr::AssociativeGet { key, .. } => {
             collect_string_effects(ir, key, effects, visited_calls)
         }
-        IrChandleExpr::Call { function, args, .. } => {
+        IrChandleExpr::Call { function, args, receiver, .. } => {
+            if let Some(receiver) = receiver {
+                collect_chandle_effects(ir, receiver, effects, visited_calls);
+            }
             effects.push(ExecutionEffect::RuntimeService);
             collect_callee_effects(ir, *function, effects, visited_calls);
             for argument in args {

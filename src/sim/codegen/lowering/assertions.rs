@@ -37,6 +37,7 @@ struct PropertyParts {
 
 struct SequenceBuilder {
     next_state: u32,
+    next_scope: u32,
     transitions: Vec<IrSequenceTransition>,
     atoms: Vec<IrExpr>,
     first_match: bool,
@@ -45,6 +46,8 @@ struct SequenceBuilder {
 }
 
 struct SequenceFragment {
+    /// Empty-word alternative, separate from the nonempty NFA paths.
+    empty: bool,
     start: u32,
     accept: u32,
     leading_clock: Option<SampledClock>,
@@ -55,6 +58,7 @@ impl SequenceBuilder {
     fn new() -> Self {
         Self {
             next_state: 0,
+            next_scope: 1,
             transitions: Vec::new(),
             atoms: Vec::new(),
             first_match: false,
@@ -100,6 +104,8 @@ impl SequenceBuilder {
             atom,
             match_start: None,
             match_count: 0,
+            enter_scope: None,
+            exit_scope: None,
         });
         Ok(())
     }
@@ -166,6 +172,7 @@ impl SequenceBuilder {
         fragment: SequenceFragment,
         locals: Vec<IrSequenceLocal>,
         initializers: Vec<IrExpr>,
+        initializer_slots: Vec<u32>,
     ) -> Result<IrSequence, String> {
         IrSequence::new(
             self.next_state,
@@ -178,15 +185,80 @@ impl SequenceBuilder {
             locals,
             self.match_items,
             initializers,
+            initializer_slots,
+            fragment.empty,
+            fragment.leading_clock.map(|clock| clock.signal),
+            fragment.leading_clock.is_some_and(|clock| clock.posedge),
+            fragment.trailing_clock.map(|clock| clock.signal),
+            fragment.trailing_clock.is_some_and(|clock| clock.posedge),
         )
         .map_err(|error| error.to_string())
     }
 
-    fn mark_first_match(&mut self, state: u32) {
-        if !self.first_match_states.contains(&state) {
-            self.first_match_states.push(state);
+    fn concatenate(
+        &mut self,
+        left: SequenceFragment,
+        right: SequenceFragment,
+        delay: AssertionRange,
+    ) -> Result<SequenceFragment, String> {
+        let start = self.state()?;
+        let accept = self.state()?;
+        let clock = right.leading_clock.or(left.trailing_clock);
+        if let (Some(a), Some(b)) = (left.trailing_clock, right.leading_clock) {
+            if a.signal != b.signal || a.posedge != b.posedge {
+                if !matches!((delay.min, delay.max), (0, Some(0)) | (1, Some(1))) {
+                    return Err("cross-clock sequence boundaries require an exact ##0 or ##1".to_owned());
+                }
+                if left.empty || right.empty {
+                    return Err("multiclock sequence segments must not admit empty matches".to_owned());
+                }
+            }
         }
+        self.epsilon_with_clock(start, left.start, zero_range(), left.leading_clock)?;
+        self.epsilon_with_clock(left.accept, right.start, delay.clone(), clock)?;
+        self.epsilon_with_clock(right.accept, accept, zero_range(), right.trailing_clock)?;
+        // Empty endpoints lie before the starting tick. Normalize them before
+        // emission, so no runtime token must travel backwards in sampled time.
+        if delay.max.is_none_or(|max| max >= 1) {
+            let reduced = AssertionRange { min: delay.min.max(1) - 1,
+                max: delay.max.map(|max| max - 1) };
+            if left.empty {
+                self.epsilon_with_clock(start, right.start, reduced.clone(), clock)?;
+            }
+            if right.empty {
+                self.epsilon_with_clock(left.accept, accept, reduced, left.trailing_clock)?;
+            }
+        }
+        if left.empty && right.empty && delay.max.is_none_or(|max| max >= 2) {
+            self.epsilon_with_clock(start, accept,
+                AssertionRange { min: delay.min.max(2) - 2,
+                    max: delay.max.map(|max| max - 2) }, clock)?;
+        }
+        Ok(SequenceFragment {
+            empty: left.empty && right.empty && delay.min <= 1 && delay.max.is_none_or(|max| max >= 1),
+            start, accept,
+            leading_clock: left.leading_clock.or(right.leading_clock),
+            trailing_clock: right.trailing_clock.or(left.trailing_clock),
+        })
     }
+
+    fn first_match(&mut self, inner: SequenceFragment) -> Result<SequenceFragment, String> {
+        let start = self.state()?;
+        let accept = self.state()?;
+        if !inner.empty {
+            let scope = self.next_scope;
+            self.next_scope = scope.checked_add(1)
+                .ok_or_else(|| "too many first_match scopes".to_owned())?;
+            self.epsilon_with_clock(start, inner.start, zero_range(), inner.leading_clock)?;
+            self.transitions.last_mut().unwrap().enter_scope = Some(scope);
+            self.epsilon_with_clock(inner.accept, accept, zero_range(), inner.trailing_clock)?;
+            self.transitions.last_mut().unwrap().exit_scope = Some(scope);
+        }
+        // An admitted empty alternative is always the earliest endpoint.
+        Ok(SequenceFragment { empty: inner.empty, start, accept,
+            leading_clock: inner.leading_clock, trailing_clock: inner.trailing_clock })
+    }
+
 }
 
 fn zero_range() -> AssertionRange {
@@ -196,35 +268,32 @@ fn zero_range() -> AssertionRange {
     }
 }
 
-fn one_or_more_range(kind: AssertionRepetitionKind) -> AssertionRange {
-    match kind {
-        AssertionRepetitionKind::Consecutive => AssertionRange {
-            min: 1,
-            max: Some(1),
-        },
-        AssertionRepetitionKind::Nonconsecutive | AssertionRepetitionKind::GoTo => {
-            AssertionRange { min: 1, max: None }
-        }
+fn repetition_step(builder: &mut SequenceBuilder, from: u32, to: u32,
+    delay: AssertionRange, atom: &IrExpr, negative: &IrExpr,
+    kind: AssertionRepetitionKind, clock: Option<SampledClock>) -> Result<(), String> {
+    builder.edge_with_clock(from, to, delay.clone(), Some(atom.clone()), clock)?;
+    if kind != AssertionRepetitionKind::Consecutive {
+        let waiting = builder.state()?;
+        let unit = AssertionRange { min: 1, max: Some(1) };
+        builder.edge_with_clock(from, waiting, delay, Some(negative.clone()), clock)?;
+        builder.edge_with_clock(waiting, waiting, unit.clone(), Some(negative.clone()), clock)?;
+        builder.edge_with_clock(waiting, to, unit, Some(atom.clone()), clock)?;
     }
+    Ok(())
 }
 
-fn repetition_first_range(kind: AssertionRepetitionKind) -> AssertionRange {
-    match kind {
-        AssertionRepetitionKind::Consecutive => zero_range(),
-        AssertionRepetitionKind::Nonconsecutive | AssertionRepetitionKind::GoTo => {
-            AssertionRange { min: 0, max: None }
-        }
+fn repetition_accept(builder: &mut SequenceBuilder, from: u32, accept: u32,
+    negative: &IrExpr, kind: AssertionRepetitionKind,
+    clock: Option<SampledClock>) -> Result<(), String> {
+    builder.epsilon_with_clock(from, accept, zero_range(), clock)?;
+    if kind == AssertionRepetitionKind::Nonconsecutive {
+        let tail = builder.state()?;
+        let unit = AssertionRange { min: 1, max: Some(1) };
+        builder.edge_with_clock(from, tail, unit.clone(), Some(negative.clone()), clock)?;
+        builder.edge_with_clock(tail, tail, unit, Some(negative.clone()), clock)?;
+        builder.epsilon_with_clock(tail, accept, zero_range(), clock)?;
     }
-}
-
-fn repetition_endpoint_range(kind: AssertionRepetitionKind) -> AssertionRange {
-    match kind {
-        AssertionRepetitionKind::Consecutive | AssertionRepetitionKind::GoTo => zero_range(),
-        // Nonconsecutive repetition may complete at or after its final
-        // occurrence; retaining this endpoint range lets a following
-        // concatenation choose any later sampled tick.
-        AssertionRepetitionKind::Nonconsecutive => AssertionRange { min: 0, max: None },
-    }
+    Ok(())
 }
 
 impl Codegen<'_> {
@@ -516,6 +585,13 @@ impl Codegen<'_> {
                 let antecedent = antecedent_node
                     .map(|node| self.lower_sequence(path, node, "antecedent"))
                     .transpose()?;
+                if let Some(antecedent) = &antecedent {
+                    if let Some(signal) = antecedent.trailing_clock {
+                        self.sampled_clock = Some(SampledClock {
+                            signal, posedge: antecedent.trailing_posedge, gate: None,
+                        });
+                    }
+                }
                 let consequent = self.lower_sequence(path, consequent_node, "consequent")?;
                 Ok::<_, String>((None, None, antecedent, Some(consequent)))
             } else {
@@ -944,12 +1020,13 @@ impl Codegen<'_> {
                     .assertion_local_bindings
                     .as_ref()
                     .into_iter()
-                    .flat_map(|bindings| bindings.values().copied())
+                    .flat_map(|bindings| bindings.iter().map(|(node, binding)| (*node, *binding)))
                     .collect::<Vec<_>>();
-                local_bindings.sort_by_key(|binding| binding.slot);
+                local_bindings.sort_by_key(|(_, binding)| binding.slot);
                 let locals = local_bindings
                     .iter()
-                    .map(|binding| IrSequenceLocal {
+                    .map(|(node, binding)| IrSequenceLocal {
+                        declaration: node.index() as u64 + 1,
                         width: binding.width,
                         signed: binding.signed,
                         two_state: binding.two_state,
@@ -969,11 +1046,12 @@ impl Codegen<'_> {
                     }
                 }
                 initializers.sort_by_key(|(slot, _)| *slot);
+                let initializer_slots = initializers.iter().map(|(slot, _)| *slot as u32).collect();
                 let initializers = initializers
                     .into_iter()
                     .map(|(_, initializer)| initializer)
                     .collect();
-                builder.finish(fragment, locals, initializers)
+                builder.finish(fragment, locals, initializers, initializer_slots)
             });
         self.assertion_local_bindings = previous_locals;
         self.assertion_local_initializers = previous_initializers;
@@ -1060,6 +1138,7 @@ impl Codegen<'_> {
                     let clock = self.sampled_clock;
                     builder.edge_with_clock(start, accept, zero_range(), Some(atom), clock)?;
                     Ok(SequenceFragment {
+                        empty: false,
                         start,
                         accept,
                         leading_clock: clock,
@@ -1068,53 +1147,32 @@ impl Codegen<'_> {
                 }
             }
             NodeKind::AssertionExpr(AssertionExprKind::SequenceConcat { elements, delays }) => {
-                if elements.is_empty() {
-                    let start = builder.state()?;
-                    let accept = builder.state()?;
-                    let clock = self.sampled_clock;
-                    builder.epsilon_with_clock(start, accept, zero_range(), clock)?;
-                    return Ok(SequenceFragment {
-                        start,
-                        accept,
-                        leading_clock: clock,
-                        trailing_clock: clock,
+                let mut result: Option<SequenceFragment> = None;
+                for (index, element) in elements.iter().enumerate() {
+                    let previous_clock = self.sampled_clock;
+                    self.sampled_clock = result.as_ref().and_then(|fragment| fragment.trailing_clock)
+                        .or(previous_clock);
+                    let fragment = self.lower_sequence_fragment(path, *element, builder, role);
+                    self.sampled_clock = previous_clock;
+                    let fragment = fragment?;
+                    let delay = delays.get(index).cloned().unwrap_or_else(zero_range);
+                    result = Some(if let Some(left) = result {
+                        builder.concatenate(left, fragment, delay)?
+                    } else if delay.min == 0 && delay.max == Some(0) {
+                        fragment
+                    } else {
+                        let start = builder.state()?;
+                        let accept = builder.state()?;
+                        builder.epsilon_with_clock(start, accept, zero_range(), self.sampled_clock)?;
+                        builder.concatenate(SequenceFragment { empty: false, start, accept,
+                            leading_clock: self.sampled_clock, trailing_clock: self.sampled_clock },
+                            fragment, delay)?
                     });
                 }
-                let start = builder.state()?;
-                let accept = builder.state()?;
-                let mut cursor = start;
-                let mut leading_clock: Option<SampledClock> = None;
-                let mut trailing_clock: Option<SampledClock> = None;
-                for (index, element) in elements.iter().enumerate() {
-                    let fragment = self.lower_sequence_fragment(path, *element, builder, role)?;
-                    let delay = delays.get(index).cloned().unwrap_or_else(zero_range);
-                    let clock = fragment.leading_clock.or(self.sampled_clock);
-                    if let (Some(previous), Some(next)) = (trailing_clock, clock) {
-                        let different_domain = previous.signal != next.signal
-                            || previous.posedge != next.posedge;
-                        if different_domain
-                            && !matches!((delay.min, delay.max), (0, Some(0)) | (1, Some(1)))
-                        {
-                            return Err(format!(
-                                "cross-clock sequence boundaries require an exact ##0 or ##1 delay in concurrent assertion {role} at {path}"
-                            ));
-                        }
-                    }
-                    builder.epsilon_with_clock(cursor, fragment.start, delay, clock)?;
-                    if leading_clock.is_none() {
-                        leading_clock = clock;
-                    }
-                    trailing_clock = fragment.trailing_clock.or(clock);
-                    cursor = fragment.accept;
+                if let Some(result) = result { Ok(result) } else {
+                    Ok(SequenceFragment { empty: true, start: builder.state()?, accept: builder.state()?,
+                        leading_clock: self.sampled_clock, trailing_clock: self.sampled_clock })
                 }
-                let final_clock = trailing_clock.or(self.sampled_clock);
-                builder.epsilon_with_clock(cursor, accept, zero_range(), final_clock)?;
-                Ok(SequenceFragment {
-                    start,
-                    accept,
-                    leading_clock: leading_clock.or(self.sampled_clock),
-                    trailing_clock: final_clock,
-                })
             }
             NodeKind::AssertionExpr(AssertionExprKind::SequenceWithMatch {
                 expr,
@@ -1131,6 +1189,7 @@ impl Codegen<'_> {
                     let clock = self.sampled_clock;
                     builder.edge_with_clock(start, accept, zero_range(), Some(atom), clock)?;
                     SequenceFragment {
+                        empty: false,
                         start,
                         accept,
                         leading_clock: clock,
@@ -1145,6 +1204,9 @@ impl Codegen<'_> {
                     .collect::<Result<Vec<_>, _>>();
                 self.sampled_clock = previous_clock;
                 let lowered_match_items = lowered_match_items?;
+                if fragment.empty && !lowered_match_items.is_empty() {
+                    return Err("sequence match items cannot attach to an empty match".to_owned());
+                }
                 if !lowered_match_items.is_empty() {
                     builder.attach_match_items(fragment.accept, lowered_match_items)?;
                 }
@@ -1178,8 +1240,6 @@ impl Codegen<'_> {
                 match_items,
             }) => {
                 let fragment = self.lower_sequence_fragment(path, *sequence, builder, role)?;
-                builder.first_match = true;
-                builder.mark_first_match(fragment.accept);
                 let previous_clock = self.sampled_clock;
                 self.sampled_clock = fragment.trailing_clock.or(previous_clock);
                 let lowered = match_items
@@ -1188,8 +1248,11 @@ impl Codegen<'_> {
                     .collect::<Result<Vec<_>, _>>();
                 self.sampled_clock = previous_clock;
                 let lowered = lowered?;
+                if fragment.empty && !lowered.is_empty() {
+                    return Err("sequence match items cannot attach to an empty match".to_owned());
+                }
                 builder.attach_match_items(fragment.accept, lowered)?;
-                Ok(fragment)
+                builder.first_match(fragment)
             }
             NodeKind::AssertionExpr(AssertionExprKind::Unary {
                 op: AssertionUnaryOp::Not,
@@ -1217,6 +1280,7 @@ impl Codegen<'_> {
                     clock,
                 )?;
                 Ok(SequenceFragment {
+                    empty: false,
                     start,
                     accept,
                     leading_clock: clock,
@@ -1230,6 +1294,7 @@ impl Codegen<'_> {
                 let clock = self.sampled_clock;
                 builder.edge_with_clock(start, accept, zero_range(), Some(atom), clock)?;
                 Ok(SequenceFragment {
+                    empty: false,
                     start,
                     accept,
                     leading_clock: clock,
@@ -1268,6 +1333,7 @@ impl Codegen<'_> {
                             right.trailing_clock.or(self.sampled_clock),
                         )?;
                         Ok(SequenceFragment {
+                            empty: left.empty || right.empty,
                             start,
                             accept,
                             leading_clock: left
@@ -1301,6 +1367,7 @@ impl Codegen<'_> {
                         let clock = self.sampled_clock;
                         builder.edge_with_clock(start, accept, zero_range(), Some(atom), clock)?;
                         Ok(SequenceFragment {
+                            empty: false,
                             start,
                             accept,
                             leading_clock: clock,
@@ -1314,6 +1381,7 @@ impl Codegen<'_> {
                         let clock = self.sampled_clock;
                         builder.edge_with_clock(start, accept, zero_range(), Some(atom), clock)?;
                         Ok(SequenceFragment {
+                            empty: false,
                             start,
                             accept,
                             leading_clock: clock,
@@ -1393,7 +1461,7 @@ impl Codegen<'_> {
                 expr,
                 repeated: false,
                 repetition: None,
-            }) => self.lower_sequence_atom(path, *expr, role),
+            }) => self.lower_sequence_atom(path, *expr, role).map(property_truth),
             NodeKind::AssertionExpr(AssertionExprKind::Clocking {
                 signal,
                 posedge,
@@ -1467,7 +1535,7 @@ impl Codegen<'_> {
                 if_expr,
                 else_expr,
             }) => {
-                let condition = self.lower_boolean_expr(path, *condition)?;
+                let condition = property_truth(self.lower_boolean_expr(path, *condition)?);
                 let if_value = self.lower_one_cycle_assertion(path, *if_expr, role)?;
                 let else_value = else_expr
                     .map(|expr| self.lower_one_cycle_assertion(path, expr, role))
@@ -1577,111 +1645,43 @@ impl Codegen<'_> {
         clock: Option<SampledClock>,
     ) -> Result<SequenceFragment, String> {
         let min = repetition.range.min;
-        if repetition.range.max.is_some_and(|max| max < min) {
+        let max = repetition.range.max;
+        if max.is_some_and(|max| max < min) {
             return Err("sequence repetition range is inverted".to_owned());
         }
         let start = builder.state()?;
         let accept = builder.state()?;
-        if repetition.kind == AssertionRepetitionKind::GoTo {
-            // Goto repetition ends at the first endpoint that satisfies its
-            // occurrence count; retaining the waiting source would create
-            // later endpoints that the LRM's goto form does not admit.
-            builder.mark_first_match(accept);
-        }
-        if min == 0 {
-            builder.epsilon_with_clock(
-                start,
-                accept,
-                repetition_endpoint_range(repetition.kind),
-                clock,
-            )?;
-        }
+        let negative = IrExpr::new(IrExprKind::Un {
+            op: IrUnOp::LogNot, a: Box::new(atom.clone()) }, 1, false, None);
+        let unit = AssertionRange { min: 1, max: Some(1) };
         let mut cursor = start;
-        for count in 0..min {
+        let mut count = 0u32;
+        // Positive paths only. An empty match is carried by the fragment,
+        // never by an ordinary current-tick epsilon transition.
+        let finite = max.unwrap_or(min.max(1));
+        while count < finite {
             let next = builder.state()?;
-            builder.edge_with_clock(
-                cursor,
-                next,
-                if count == 0 {
-                    repetition_first_range(repetition.kind)
-                } else {
-                    one_or_more_range(repetition.kind)
-                },
-                Some(atom.clone()),
-                clock,
-            )?;
+            let delay = if count == 0 { zero_range() } else { unit.clone() };
+            repetition_step(builder, cursor, next, delay, &atom, &negative,
+                repetition.kind, clock)?;
+            count += 1;
             cursor = next;
-        }
-        match repetition.range.max {
-            Some(max) => {
-                for count in min..max {
-                    builder.epsilon_with_clock(
-                        cursor,
-                        accept,
-                        repetition_endpoint_range(repetition.kind),
-                        clock,
-                    )?;
-                    let next = builder.state()?;
-                    builder.edge_with_clock(
-                        cursor,
-                        next,
-                        if count == 0 {
-                            repetition_first_range(repetition.kind)
-                        } else {
-                            one_or_more_range(repetition.kind)
-                        },
-                        Some(atom.clone()),
-                        clock,
-                    )?;
-                    cursor = next;
-                }
-                builder.epsilon_with_clock(
-                    cursor,
-                    accept,
-                    repetition_endpoint_range(repetition.kind),
-                    clock,
-                )?;
-            }
-            None => {
-                builder.epsilon_with_clock(
-                    cursor,
-                    accept,
-                    repetition_endpoint_range(repetition.kind),
-                    clock,
-                )?;
-                let loop_state = builder.state()?;
-                builder.edge_with_clock(
-                    cursor,
-                    loop_state,
-                    if min == 0 {
-                        repetition_first_range(repetition.kind)
-                    } else {
-                        one_or_more_range(repetition.kind)
-                    },
-                    Some(atom.clone()),
-                    clock,
-                )?;
-                builder.edge_with_clock(
-                    loop_state,
-                    loop_state,
-                    one_or_more_range(repetition.kind),
-                    Some(atom),
-                    clock,
-                )?;
-                builder.epsilon_with_clock(
-                    loop_state,
-                    accept,
-                    repetition_endpoint_range(repetition.kind),
-                    clock,
-                )?;
+            if count >= min {
+                repetition_accept(builder, cursor, accept, &negative, repetition.kind, clock)?;
             }
         }
-        Ok(SequenceFragment {
-            start,
-            accept,
-            leading_clock: clock,
-            trailing_clock: clock,
-        })
+        if max.is_none() {
+            repetition_step(builder, cursor, cursor, unit.clone(), &atom, &negative,
+                repetition.kind, clock)?;
+        }
+        if min == 0 && repetition.kind == AssertionRepetitionKind::Nonconsecutive {
+            let tail = builder.state()?;
+            builder.edge_with_clock(start, tail, zero_range(), Some(negative.clone()), clock)?;
+            builder.edge_with_clock(tail, tail, unit, Some(negative), clock)?;
+            builder.epsilon_with_clock(tail, accept, zero_range(), clock)?;
+        }
+        Ok(SequenceFragment { empty: min == 0, start, accept,
+            leading_clock: clock, trailing_clock: clock })
     }
 
     fn lower_assertion_action(
@@ -1792,4 +1792,25 @@ fn flatten_clock_spec(spec: &EventSpec) -> Option<(NodeId, bool, Option<NodeId>)
         }
         EventSpec::AnyChange { .. } | EventSpec::Named(_) => None,
     }
+}
+
+/// A Boolean sequence atom succeeds only when its expression is logically true.
+/// Normalize before property composition: property `not X` succeeds, unlike `!X`.
+fn property_truth(value: IrExpr) -> IrExpr {
+    let negated = IrExpr::new(
+        IrExprKind::Un { op: IrUnOp::LogNot, a: Box::new(value) },
+        1, false, None,
+    );
+    let logical = IrExpr::new(
+        IrExprKind::Un { op: IrUnOp::LogNot, a: Box::new(negated) },
+        1, false, None,
+    );
+    IrExpr::new(
+        IrExprKind::Bin {
+            op: IrBinOp::CaseEq,
+            a: Box::new(logical),
+            b: Box::new(IrExpr::resize_to(lhs_integer_expr(1), 1, false)),
+        },
+        1, false, None,
+    )
 }

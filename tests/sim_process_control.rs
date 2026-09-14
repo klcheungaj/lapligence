@@ -52,3 +52,14 @@ fn static_block_handles_keep_their_identity_until_completion() {
         &[],
     );
 }
+
+#[test]
+fn a_child_killing_its_ancestor_never_returns_to_released_locals() {
+    sim_cli::run_case(
+        "process_control",
+        "kill_ancestor",
+        "ancestor=4 caller=4 escaped=0 owner_after=0 descendant=0\n",
+        "",
+        &[],
+    );
+}

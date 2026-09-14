@@ -1946,6 +1946,37 @@ static void llg_queue_reserve(llg_queue_t* queue, size_t needed) {
     queue->capacity = capacity;
 }
 
+struct llg_queue_cell {
+    llg_queue_t* owner;
+    struct llg_queue_cell* next;
+    uint64_t identity;
+    size_t refs;
+    sv4_t value;
+    uint8_t two_state;
+};
+
+/* Snapshot before storage is overwritten, and disconnect only the removed
+ * identities. Surviving element references follow insertions and reorders. */
+static void llg_queue_disconnect(llg_queue_t* queue, uint64_t identity) {
+    struct llg_queue_cell** link = &queue->references;
+    while (*link) {
+        struct llg_queue_cell* cell = *link;
+        if (identity && cell->identity != identity) {
+            link = &cell->next;
+            continue;
+        }
+        for (size_t i = 0; i < queue->size; ++i) {
+            if (queue->element_ids[i] == cell->identity) {
+                cell->value = queue->data[i];
+                break;
+            }
+        }
+        *link = cell->next;
+        cell->next = NULL;
+        cell->owner = NULL;
+    }
+}
+
 void llg_queue_init(llg_queue_t* queue, uint32_t element_width,
                     int8_t element_signed, int element_two_state,
                     uint64_t maximum_elements) {
@@ -1961,12 +1992,14 @@ void llg_queue_init(llg_queue_t* queue, uint32_t element_width,
 }
 
 void llg_queue_destroy(llg_queue_t* queue) {
+    llg_queue_disconnect(queue, 0);
     free(queue->data);
     free(queue->element_ids);
     memset(queue, 0, sizeof(*queue));
 }
 
 void llg_queue_delete(llg_queue_t* queue) {
+    llg_queue_disconnect(queue, 0);
     int changed = queue->size != 0;
     queue->size = 0;
     llg_notify(queue->notify, queue->contents_dependency,
@@ -1977,7 +2010,7 @@ void llg_queue_delete(llg_queue_t* queue) {
 }
 
 void llg_queue_copy(llg_queue_t* dst, const llg_queue_t* src) {
-    if (dst == src) return;
+    llg_queue_disconnect(dst, 0);
     size_t count = src->size < dst->limit ? src->size : dst->limit;
     int shape_changed = dst->size != count;
     int contents_changed = shape_changed;
@@ -2030,6 +2063,7 @@ void llg_queue_assign_values(llg_queue_t* dst, const sv4_t* values,
     llg_container_notify_fn notify = dst->notify;
     sv4_t* contents_dependency = dst->contents_dependency;
     sv4_t* shape_dependency = dst->shape_dependency;
+    llg_queue_disconnect(dst, 0);
     free(dst->data);
     free(dst->element_ids);
     dst->data = data;
@@ -2212,6 +2246,7 @@ void llg_queue_assign_sources(llg_queue_t* dst,
     llg_container_notify_fn notify = dst->notify;
     sv4_t* contents_dependency = dst->contents_dependency;
     sv4_t* shape_dependency = dst->shape_dependency;
+    llg_queue_disconnect(dst, 0);
     free(dst->data);
     free(dst->element_ids);
     dst->data = data;
@@ -2277,6 +2312,7 @@ void llg_queue_push_front(llg_queue_t* queue, sv4_t value) {
         llg_queue_reserve(queue, queue->size + 1);
         ++queue->size;
     } else {
+        llg_queue_disconnect(queue, queue->element_ids[queue->size - 1]);
         llg_container_warning("bounded queue push_front discarded tail element");
     }
     if (queue->size > 1) {
@@ -2346,6 +2382,7 @@ int llg_queue_insert(llg_queue_t* queue, sv4_t index, sv4_t value) {
         llg_queue_reserve(queue, queue->size + 1);
         ++queue->size;
     } else {
+        llg_queue_disconnect(queue, queue->element_ids[queue->size - 1]);
         llg_container_warning("bounded queue insert discarded tail element");
     }
     if (native + 1 < queue->size) {
@@ -2367,6 +2404,7 @@ int llg_queue_insert(llg_queue_t* queue, sv4_t index, sv4_t value) {
 int llg_queue_delete_index(llg_queue_t* queue, sv4_t index) {
     size_t native;
     if (!llg_index(index, queue->size, 0, &native)) return 0;
+    llg_queue_disconnect(queue, queue->element_ids[native]);
     if (native + 1 < queue->size) {
         memmove(queue->data + native, queue->data + native + 1,
                 (queue->size - native - 1) * sizeof(*queue->data));
@@ -2384,6 +2422,7 @@ int llg_queue_delete_index(llg_queue_t* queue, sv4_t index) {
 sv4_t llg_queue_pop_front(llg_queue_t* queue) {
     sv4_t result = llg_queue_front(queue);
     if (queue->size) {
+        llg_queue_disconnect(queue, queue->element_ids[0]);
         if (queue->size > 1) {
             memmove(queue->data, queue->data + 1,
                     (queue->size - 1) * sizeof(*queue->data));
@@ -2402,6 +2441,7 @@ sv4_t llg_queue_pop_front(llg_queue_t* queue) {
 sv4_t llg_queue_pop_back(llg_queue_t* queue) {
     sv4_t result = llg_queue_back(queue);
     if (queue->size) {
+        llg_queue_disconnect(queue, queue->element_ids[queue->size - 1]);
         --queue->size;
         llg_notify(queue->notify, queue->contents_dependency,
                    queue->shape_dependency,
@@ -2790,6 +2830,65 @@ int llg_queue_ref_write(llg_queue_t* queue, uint64_t identity, sv4_t value) {
     queue->data[index] = assigned;
     llg_notify(queue->notify, queue->contents_dependency,
                queue->shape_dependency, LLG_CONTAINER_CHANGED_CONTENTS);
+    return 1;
+}
+
+void* llg_queue_ref_acquire(llg_queue_t* queue, uint64_t index) {
+    if (!queue) llg_container_fatal("null queue reference source");
+    uint64_t identity = llg_queue_ref_identity(queue, index);
+    for (struct llg_queue_cell* cell = queue->references; cell; cell = cell->next) {
+        if (cell->identity == identity && identity) {
+            if (cell->refs == SIZE_MAX) llg_container_fatal("queue reference count overflow");
+            ++cell->refs;
+            return cell;
+        }
+    }
+    struct llg_queue_cell* cell = llg_alloc_items(1, sizeof(*cell));
+    memset(cell, 0, sizeof(*cell));
+    cell->refs = 1;
+    cell->identity = identity;
+    cell->two_state = queue->element_two_state;
+    cell->value = identity ? queue->data[index] : llg_element_default(
+        queue->element_width, queue->element_signed, queue->element_two_state);
+    if (identity) {
+        cell->owner = queue;
+        cell->next = queue->references;
+        queue->references = cell;
+    }
+    return cell;
+}
+
+void llg_queue_ref_release(void* ptr) {
+    struct llg_queue_cell* cell = ptr;
+    if (!cell) return;
+    if (!cell->refs) llg_container_fatal("queue reference count underflow");
+    if (--cell->refs) return;
+    if (cell->owner) {
+        struct llg_queue_cell** link = &cell->owner->references;
+        while (*link && *link != cell) link = &(*link)->next;
+        if (*link) *link = cell->next;
+    }
+    free(cell);
+}
+
+sv4_t llg_queue_cell_read(const void* ptr) {
+    const struct llg_queue_cell* cell = ptr;
+    if (!cell) llg_container_fatal("null retained queue reference");
+    if (cell->owner) {
+        size_t index = llg_queue_ref_index(cell->owner, cell->identity);
+        if (index == SIZE_MAX) llg_container_fatal("queue reference was not disconnected");
+        return cell->owner->data[index];
+    }
+    return cell->value;
+}
+
+int llg_queue_cell_write(void* ptr, sv4_t value) {
+    struct llg_queue_cell* cell = ptr;
+    if (!cell) llg_container_fatal("null retained queue reference");
+    if (!cell->identity) return 0; // invalid actual, not a removed valid element
+    if (cell->owner) return llg_queue_ref_write(cell->owner, cell->identity, value);
+    cell->value = llg_element_assign(value, cell->value.width,
+                                     cell->value.is_signed, cell->two_state);
     return 1;
 }
 

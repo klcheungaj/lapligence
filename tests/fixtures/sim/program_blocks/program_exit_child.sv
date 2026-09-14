@@ -1,6 +1,6 @@
 // llg-test-fixture: tests/fixtures/sim/program_blocks/program_exit_child.sv
 // IEEE 1800-2009 §§24.3 and 24.7: `$exit` from a detached program child
-// terminates its parent and every other program process without recursion.
+// terminates its originating program without cancelling the survivor.
 program child_exit;
     initial begin
         fork

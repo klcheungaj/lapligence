@@ -26,7 +26,7 @@ fn file_output_and_controls_match_in_both_optimizer_modes() {
         })
         .map_err(|error| error.to_string())?;
         let db = Db::from_slang(&compiled.snapshot).map_err(|error| error.to_string())?;
-        let expected_stdout = "fd=4\n fanout=9\ntell=27\nseek=0\nrewound=0\nerror=0 message= eof=0\nclosed=1 message=invalid or closed file descriptor\n";
+        let expected_stdout = "fd_is_tagged=1\n fanout=9\ntell=27\nseek=0\nrewound=0\nerror=0 message= eof=0\nclosed=1 message=invalid or closed file descriptor\n";
         let expected_file = "line=7\ntail=ab fanout=9\nab\n";
         for (name, options) in [("optimized", OptConfig::default()), ("unoptimized", OptConfig::none())] {
             let output_dir = dir.join(name);

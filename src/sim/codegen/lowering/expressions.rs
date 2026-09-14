@@ -4360,6 +4360,7 @@ impl<'a> Codegen<'a> {
                         "VPI system function `{name}` argument {index} exceeds the supported width in `{scope_path}`"
                     ));
                 }
+                let site = self.model.vpi_compile_calls.len();
                 self.model.vpi_compile_calls.push(IrVpiCompileCall::new(
                     name.to_owned(),
                     args.iter()
@@ -4370,8 +4371,10 @@ impl<'a> Codegen<'a> {
                         })
                         .collect(),
                 ));
+                self.model.vpi_compile_calls[site].time_unit_fs = self.timescale_of_node(call).unit_fs;
                 Ok(IrExpr::new(
                     IrExprKind::SysFunc(IrSysFunc::VpiCall {
+                        site,
                         name: name.to_owned(),
                         args,
                     }),

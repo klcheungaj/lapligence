@@ -211,6 +211,8 @@ impl StorageRef {
 /// retaining pointers into allocations that a resize or delete may replace.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum IrDependency {
+    /// Static bit interval within a packed scalar or fixed-array element.
+    PackedRange { storage: Box<IrDependency>, lsb: u32, width: u32 },
     /// A scalar packed value (the string is the generated C storage name).
     Scalar(String),
     /// A scalar real/shortreal value (the string is the generated C storage
@@ -246,6 +248,7 @@ impl IrDependency {
     pub fn scalar_name(&self) -> Option<&str> {
         match self {
             Self::Scalar(name) => Some(name),
+            Self::PackedRange { storage, .. } => storage.scalar_name(),
             _ => None,
         }
     }
@@ -943,7 +946,7 @@ pub enum IrSysFunc {
     /// source order and passed as bounded packed/real values to the generated
     /// model bridge; unsupported aggregate/string values are rejected while
     /// lowering rather than being silently coerced.
-    VpiCall { name: String, args: Vec<IrExpr> },
+    VpiCall { site: usize, name: String, args: Vec<IrExpr> },
     /// Verilog-2001 `$random` and the seven legacy probabilistic distribution
     /// functions.  Distribution seeds are writable packed lvalues; keeping
     /// the lvalue in IR lets emission evaluate it once, update it after the
@@ -2305,6 +2308,10 @@ pub struct IrSequenceTransition {
     /// consumed. A zero length means that the edge has no side effects.
     pub match_start: Option<u32>,
     pub match_count: u32,
+    /// Enter or leave one dynamic first_match invocation. IDs are graph-local;
+    /// zero is reserved by the runtime ABI. At most one action occurs per edge.
+    pub enter_scope: Option<u32>,
+    pub exit_scope: Option<u32>,
 }
 
 /// Shape metadata for one local assertion variable. Storage is allocated per
@@ -2312,6 +2319,8 @@ pub struct IrSequenceTransition {
 /// signal table.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct IrSequenceLocal {
+    /// Owned declaration identity shared across an implication's two graphs.
+    pub declaration: u64,
     pub width: u32,
     pub signed: bool,
     pub two_state: bool,
@@ -2335,6 +2344,12 @@ pub struct IrSequence {
     /// Per-attempt writes used to initialize local input formals before the
     /// first sampled atom. Each expression targets one sequence-local slot.
     pub(in crate::sim) initializers: Vec<IrExpr>,
+    pub(in crate::sim) initializer_slots: Vec<u32>,
+    pub(in crate::sim) admits_empty: bool,
+    pub(in crate::sim) leading_clock: Option<usize>,
+    pub(in crate::sim) leading_posedge: bool,
+    pub(in crate::sim) trailing_clock: Option<usize>,
+    pub(in crate::sim) trailing_posedge: bool,
 }
 
 impl IrSequence {
@@ -2353,6 +2368,12 @@ impl IrSequence {
         locals: Vec<IrSequenceLocal>,
         match_items: Vec<IrExpr>,
         initializers: Vec<IrExpr>,
+        initializer_slots: Vec<u32>,
+        admits_empty: bool,
+        leading_clock: Option<usize>,
+        leading_posedge: bool,
+        trailing_clock: Option<usize>,
+        trailing_posedge: bool,
     ) -> Result<Self, IrValidationError> {
         if states == 0 || start >= states || accept >= states {
             return Err(IrValidationError::new(
@@ -2409,13 +2430,35 @@ impl IrSequence {
                 ));
             }
         }
-        if first_match_states.iter().any(|state| *state >= states) {
+        if !first_match_states.is_empty() {
             return Err(IrValidationError::new(
                 "sequence.first_match_states",
-                "first_match endpoint state is out of bounds",
+                "first_match requires scoped enter/exit transitions, not global endpoint states",
             ));
         }
+        let mut scope_entries = std::collections::HashSet::new();
+        let mut scope_exits = std::collections::HashSet::new();
+        for transition in &transitions {
+            if transition.enter_scope.is_some() && transition.exit_scope.is_some() {
+                return Err(IrValidationError::new("sequence.scope", "one edge cannot both enter and exit a scope"));
+            }
+            for (scope, scopes) in [(transition.enter_scope, &mut scope_entries), (transition.exit_scope, &mut scope_exits)] {
+                if let Some(scope) = scope {
+                    if scope == 0 {
+                        return Err(IrValidationError::new("sequence.scope", "scope identity zero is reserved"));
+                    }
+                    scopes.insert(scope);
+                }
+            }
+        }
+        if scope_entries != scope_exits {
+            return Err(IrValidationError::new("sequence.scope", "unpaired first_match scope"));
+        }
+        let mut declarations = std::collections::HashSet::new();
         for (index, local) in locals.iter().enumerate() {
+            if local.declaration == 0 || !declarations.insert(local.declaration) {
+                return Err(IrValidationError::new(format!("sequence.locals[{index}]"), "invalid or duplicate local declaration identity"));
+            }
             if local.width == 0 {
                 return Err(IrValidationError::new(
                     format!("sequence.locals[{index}].width"),
@@ -2429,7 +2472,11 @@ impl IrSequence {
                 "sequence local initializer has no local storage",
             ));
         }
+        if initializer_slots.len() != initializers.len() || initializer_slots.iter().any(|slot| *slot as usize >= locals.len()) {
+            return Err(IrValidationError::new("sequence.initializer_slots", "invalid initializer local slot"));
+        }
         Ok(Self {
+            initializer_slots, admits_empty, leading_clock, leading_posedge, trailing_clock, trailing_posedge,
             states,
             start,
             accept,
@@ -2733,6 +2780,7 @@ pub enum IrStmt {
     /// A user-registered VPI system task. Arguments are evaluated in source
     /// order and exposed through the active `vpiSysTfCall` handle.
     VpiCall {
+        site: usize,
         name: String,
         args: Vec<IrExpr>,
     },
@@ -2925,6 +2973,10 @@ pub enum IrStmt {
     EventTrigger {
         ev: IrEventRef,
     },
+    /// Publish a named clocking-block event in Observed after its sample copies.
+    ClockingEventTrigger {
+        ev: IrEventRef,
+    },
     /// `->> ev` — queue the named-event trigger in NBA without suspending
     /// the issuing process. An optional delay is evaluated at issue time.
     NonblockingEventTrigger {
@@ -3103,6 +3155,7 @@ pub enum IrStmt {
         if_false: Option<IrDeferredAction>,
         label: String,
         location: String,
+        scope: String,
         identity: u64,
     },
     /// `$monitor`/`$strobe` — `eval` is the C name of the re-evaluation
@@ -3154,8 +3207,9 @@ pub enum IrStmt {
         verbosity: u8,
         location: String,
     },
-    /// `$exit` terminates all program processes and requests the implicit
-    /// `$finish` transition.  Lowering admits it only in a program process.
+    /// `$exit` cancels the current thread's originating program instance.
+    /// Calls without a program-initial origin are ignored at runtime; the
+    /// declaration scope of a called task is not the process origin.
     ProgramExit,
     /// `$stop` with its validated diagnostic level and source call site.
     /// Unlike [`Self::FinishControl`], this yields the issuing coroutine and
@@ -3404,10 +3458,9 @@ pub struct IrProcess {
     pub(in crate::sim) writes: Vec<IrDependency>,
     pub(in crate::sim) pre_fns: Vec<IrPreFn>,
     pub(in crate::sim) body: Vec<IrStmt>,
-    /// `true` for a process declared in an elaborated SystemVerilog program
-    /// block.  Program processes are launched in Reactive and retain their
-    /// identity through optimization and C emission for lifecycle accounting.
-    pub(in crate::sim) program: bool,
+    /// Elaborated program-instance identity, independent of the process label.
+    /// Descendants inherit this origin at runtime, even in module-defined tasks.
+    pub(in crate::sim) program: Option<u32>,
     pub(in crate::sim) origin: crate::sim::semantic::Origin,
 }
 
@@ -3487,7 +3540,7 @@ impl IrProcess {
             writes,
             pre_fns,
             body,
-            program: false,
+            program: None,
             origin,
         }
     }
@@ -3518,14 +3571,13 @@ impl IrProcess {
 
     /// Whether this process belongs to a SystemVerilog program block.
     pub fn is_program(&self) -> bool {
-        self.program
+        self.program.is_some()
     }
 
-    /// Mark this process as owned by a program block.  The code generator is
-    /// the only production caller; synthetic IR remains module/Active by
-    /// default.
-    pub(in crate::sim) fn set_program(&mut self, program: bool) {
-        self.program = program;
+    /// Preserve elaborated program ownership; synthetic processes default to
+    /// module/Active scheduling and do not participate in program completion.
+    pub(in crate::sim) fn set_program(&mut self, instance: Option<u32>) {
+        self.program = instance;
     }
 
     pub fn origin(&self) -> &crate::sim::semantic::Origin {
@@ -4141,6 +4193,7 @@ impl IrVpiObjectKind {
 /// those indices to C storage only after optimization has completed.
 #[derive(Clone, Debug, PartialEq)]
 pub struct IrVpiObject {
+    pub(in crate::sim) time_unit_fs: u64,
     pub(in crate::sim) full_name: String,
     pub(in crate::sim) name: String,
     pub(in crate::sim) definition_name: Option<String>,
@@ -4160,6 +4213,7 @@ pub struct IrVpiObject {
 /// shapes before any runtime value exists.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct IrVpiCompileCall {
+    pub(in crate::sim) time_unit_fs: u64,
     pub(in crate::sim) name: String,
     pub(in crate::sim) args: Vec<IrVpiCompileArg>,
 }
@@ -4173,7 +4227,7 @@ pub struct IrVpiCompileArg {
 
 impl IrVpiCompileCall {
     pub fn new(name: String, args: Vec<IrVpiCompileArg>) -> Self {
-        Self { name, args }
+        Self { name, args, time_unit_fs: 0 }
     }
 }
 
@@ -4186,6 +4240,7 @@ impl IrVpiObject {
         line: u32,
     ) -> Self {
         Self {
+            time_unit_fs: 0,
             full_name,
             name,
             definition_name: Some(definition_name),

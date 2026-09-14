@@ -1887,6 +1887,10 @@ impl Rw {
 }
 
 fn mark_dependency_read(dependency: &IrDependency, model: &IrModel, rw: &mut Rw) {
+    if let IrDependency::PackedRange { storage, .. } = dependency {
+        mark_dependency_read(storage, model, rw);
+        return;
+    }
     if let IrDependency::Scalar(name) | IrDependency::Real(name) = dependency {
         let alias_index = name
             .strip_prefix("llg_net_alias_")
@@ -3186,7 +3190,7 @@ mod tests {
                 writes: Vec::new(),
                 pre_fns: Vec::new(),
                 body,
-                program: false,
+                program: None,
                 origin: crate::sim::semantic::Origin::Synthetic {
                     reason: "optimizer fixture".to_owned(),
                 },

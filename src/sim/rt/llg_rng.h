@@ -12,8 +12,8 @@ extern "C" {
 /*
  * One deterministic pseudo-random stream.  `state` advances on every draw;
  * `increment` identifies the stream and is deliberately immutable between
- * explicit seeding operations.  `child_count` is part of the hierarchy, not
- * the draw state, so random calls in a parent cannot perturb a later sibling.
+ * explicit seeding operations. Child creation consumes the next parent draw;
+ * `child_count` records creation count and is preserved by state save/restore.
  */
 typedef struct {
     uint64_t state;

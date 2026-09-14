@@ -194,6 +194,9 @@ typedef struct { sv4_t* sig; int kind; } llg_event_spec_t;
 typedef struct {
     sv4_t* sig;
     double* real;
+    sv4_t* value; /* Optional value behind a change-marker signal. */
+    uint32_t lsb;
+    uint32_t width; /* Zero selects the whole storage. */
 } llg_wait_dependency_t;
 
 // ── Mailboxes (IEEE 1800-2009 §15.4) ────────────────────────────────────────
@@ -211,6 +214,7 @@ enum {
 
 typedef struct {
     int kind;
+    uint64_t type_id; // zero: structural scalar; otherwise canonical nominal type
     uint32_t width;
     int8_t is_signed;
     int8_t two_state;
@@ -225,10 +229,12 @@ typedef struct {
 
 typedef struct {
     int kind;
+    uint64_t type_id; // zero: structural scalar; otherwise canonical nominal type
     uint32_t width;
     int8_t is_signed;
     int8_t two_state;
     int8_t shortreal;
+    llg_ref_t* reference; // optional packed destination descriptor
     union {
         sv4_t* packed;
         double* real;
@@ -237,6 +243,9 @@ typedef struct {
     } target;
 } llg_mailbox_target_t;
 
+llg_mailbox_value_t llg_mailbox_typed_value(llg_mailbox_value_t value, uint64_t type_id);
+llg_mailbox_target_t llg_mailbox_typed_target(llg_mailbox_target_t target, uint64_t type_id);
+llg_mailbox_target_t llg_mailbox_target_ref(llg_ref_t* target);
 llg_mailbox_value_t llg_mailbox_value_packed(sv4_t value, uint32_t width,
                                               int is_signed, int two_state);
 llg_mailbox_value_t llg_mailbox_value_real(double value, int shortreal);
@@ -385,6 +394,8 @@ uint64_t llg_time(void);              // current tick count
 // Current time rounded to the nearest local unit; exact half units round up.
 // The caller applies any result-width conversion (for example, $stime's
 // low-32-bit result) after this operation.
+/* Physical femtoseconds represented by one scheduler tick. */
+uint64_t llg_time_precision_fs(void);
 uint64_t llg_time_scaled(uint64_t precision_fs, uint64_t unit_fs);
 // Set the design-wide `$timeformat` state. The suffix is consumed by the
 // runtime on both success and controlled failure. Arguments are evaluated by
@@ -508,6 +519,8 @@ typedef struct {
     uint32_t atom;
     uint32_t match_start;
     uint32_t match_count;
+    uint32_t enter_scope;
+    uint32_t exit_scope;
 } llg_sequence_transition_t;
 typedef struct {
     uint32_t states;
@@ -525,16 +538,21 @@ typedef struct {
     const struct llg_sequence_local* locals;
     uint32_t match_item_count;
     llg_sequence_match_fn match;
+    int admits_empty;
+    sv4_t* leading_clock;
+    int leading_edge;
 } llg_sequence_graph_t;
 typedef struct llg_sequence_local {
     uint32_t width;
     int8_t is_signed;
     uint8_t two_state;
+    uint64_t declaration;
 } llg_sequence_local_t;
 /* Match-item callbacks use these helpers to address storage owned by their
  * current sequence attempt. The runtime validates the opaque attempt/slot
  * pair before returning a pointer, so generated callbacks cannot escape the
  * attempt's lifetime. */
+int llg_sequence_local_inherited(void* attempt, uint32_t slot);
 sv4_t* llg_sequence_local_addr(void* attempt, uint32_t slot);
 sv4_t llg_sequence_local_read(void* attempt, uint32_t slot);
 void llg_sequence_local_write(sv4_t* target, sv4_t value);
@@ -564,6 +582,10 @@ int llg_assertion_register_control(
 // selected action are fixed at statement execution; the runtime matures the
 // report in Reactive and owns `frame` until the callback (or teardown).
 typedef void (*llg_deferred_assertion_fn)(llg_frame_t* frame);
+int llg_deferred_assertion_enabled(int kind, const char* label, const char* scope);
+void llg_deferred_assertion_scoped(int kind, int passed, uint64_t identity,
+    const char* label, const char* location, const char* scope,
+    llg_deferred_assertion_fn action, llg_frame_t* frame);
 void llg_deferred_assertion(int kind, int passed, uint64_t identity,
                             const char* label, const char* location,
                             llg_deferred_assertion_fn action,
@@ -610,9 +632,11 @@ int llg_value_plusargs_string(const char* format, llg_string_t* out);
 sv4_t llg_system(llg_string_t command, int has_command);
 
 // ── File descriptors and output ─────────────────────────────────────────────
-// Descriptors are 32-bit masks: bit 0 is stdout, bit 1 is stderr, and each
-// ordinary opened file receives one higher bit.  The runtime owns ordinary
-// FILE objects and closes them during cleanup; standard streams are borrowed.
+// A mode-string fopen returns a bit-31-tagged FD. Preopened FDs 0x80000000,
+// 0x80000001 and 0x80000002 name stdin, stdout and stderr. A one-argument
+// fopen returns an MCD with bit 31 clear; MCD bit 0 is stdout and other bits
+// are independently allocated output channels. Only MCDs may be combined.
+// Runtime-owned FILE objects close at cleanup; host standard streams are borrowed.
 uint32_t llg_file_descriptor(sv4_t value);
 // Consumes the owned path/mode strings; an omitted mode selects write mode.
 uint32_t llg_file_open(llg_string_t path, llg_string_t mode, int has_mode);
@@ -724,20 +748,21 @@ llg_proc_t* llg_spawn(void (*fn)(llg_proc_t*), const char* name);
 // processes use llg_spawn (ACTIVE), while programs use the typed entry below.
 llg_proc_t* llg_spawn_in_region(void (*fn)(llg_proc_t*), const char* name,
                                 llg_region_t region);
-// Spawn a program process into a reactive region and account for its
-// completion.  `$exit` and natural termination use that accounting to stop
-// the simulation after all program processes (including fork children) end.
+// Spawn in Reactive with a stable elaborated program-instance identity.
+// Only initial procedures count toward natural completion; fork descendants
+// inherit the origin but never extend the lifetime of their program.
 llg_proc_t* llg_spawn_program_in_region(void (*fn)(llg_proc_t*),
                                         const char* name,
-                                        llg_region_t region);
+                                        llg_region_t region,
+                                        uint64_t instance, int is_initial);
 // Return the activation frame retained by a process, or NULL for ordinary
 // static-storage processes. The returned pointer is borrowed from `self`.
 llg_frame_t* llg_proc_frame(llg_proc_t* self);
 // Terminate the current process (wraps aco_exit; never returns).
 _Noreturn void llg_proc_done(llg_proc_t* self);
-// Terminate all program processes and descendants, then perform the implicit
-// `$finish` transition.  Lowering only emits this call inside a program.
-_Noreturn void llg_program_exit(void);
+// Terminate the originating program's initials and descendants. Calls from
+// a non-program origin are ignored and return normally (IEEE 1800 24.7).
+void llg_program_exit(void);
 
 // ── Fine-grain process handles (IEEE 1800-2009 §9.7) ─────────────────────────
 //
@@ -960,6 +985,8 @@ void llg_event_assign(llg_event_t* target, const llg_event_t* source);
 void llg_event_assign_null(llg_event_t* target);
 
 // Wake every current waiter of `ev` and clear its waiter list.
+/* Internal clocking-block publication, not an ordinary HDL trigger. */
+int llg_clocking_event_observed(llg_event_t* event);
 void llg_event_trigger(llg_event_t* ev);
 // Return whether the synchronization object was triggered in the current
 // simulation time slot. A null handle is never triggered.
@@ -1115,6 +1142,12 @@ void llg_ba(sv4_t* target, sv4_t value);
 // Commit a write through a canonical `ref` descriptor immediately. Selected
 // aliases update the original storage once, preserving normal wakeups and
 // force/continuous-assignment checks.
+// Every generated call with packed refs owns one pin scope, entered before
+// actual evaluation. Normal return releases it; process teardown unwinds it.
+typedef struct llg_ref_scope llg_ref_scope_t;
+llg_ref_scope_t* llg_ref_scope_begin(void);
+void llg_ref_scope_end(llg_ref_scope_t* scope);
+llg_ref_t* llg_ref_queue(llg_queue_t* queue, uint64_t index);
 void llg_ref_write(llg_ref_t* ref, sv4_t value);
 void llg_nba_d(double* target, double value);
 void llg_ba_d(double* target, double value);

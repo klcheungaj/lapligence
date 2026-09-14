@@ -115,3 +115,47 @@ fn semaphore_automatic_task_locals_are_constructed_and_released() {
 fn semaphore_null_initializers_preserve_a_null_handle() {
     sim_cli::run_case("semaphore", "null", "null=1\n", "", &[]);
 }
+
+#[test]
+fn cancelling_the_head_grants_existing_keys_without_another_put() {
+    sim_cli::run_case(
+        "semaphore",
+        "cancel_head",
+        "acquired=1 cancelled_after=0 remaining=0\n",
+        "",
+        &[],
+    );
+}
+
+#[test]
+fn tree_cancellation_does_not_grant_keys_to_another_cancelled_child() {
+    sim_cli::run_case(
+        "semaphore",
+        "cancel_tree",
+        "survivor=1 escaped=0 remaining=0\n",
+        "",
+        &[],
+    );
+}
+
+#[test]
+fn named_disable_services_the_next_semaphore_waiter() {
+    sim_cli::run_case(
+        "semaphore",
+        "cancel_named",
+        "named acquired=1 continued=1 escaped=0 remaining=0\n",
+        "",
+        &[],
+    );
+}
+
+#[test]
+fn disable_fork_services_unrelated_semaphore_waiters() {
+    sim_cli::run_case(
+        "semaphore",
+        "cancel_fork",
+        "fork acquired=1 escaped=0 remaining=0\n",
+        "",
+        &[],
+    );
+}

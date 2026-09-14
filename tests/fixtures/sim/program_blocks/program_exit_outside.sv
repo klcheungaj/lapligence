@@ -1,5 +1,8 @@
-// llg-test-fixture: tests/fixtures/sim/program_blocks/program_exit_outside.sv
-// IEEE 1800-2009 §24.7: `$exit` is a program control task, not a module task.
+// IEEE 1800-2009 24.7: a module-origin call is ignored.
 module tb;
-    initial $exit;
+    initial begin
+        $exit;
+        $display("module survived exit");
+        $finish(0);
+    end
 endmodule

@@ -27,6 +27,7 @@ static int consume_arguments(const char* label) {
 
 static PLI_INT32 start_callback(struct t_cb_data* data) {
     s_vpi_time now = {0};
+    now.type = vpiSimTime;
     vpi_get_time(NULL, &now);
     vpi_printf("vpi-start=%u:%u\n", now.high, now.low);
     (void)data;

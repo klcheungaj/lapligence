@@ -26,7 +26,7 @@ fn multiple_programs_finish_naturally_and_run_finals_once() {
     sim_cli::run_case(
         "program_blocks",
         "program_natural",
-        "first program\nsecond program\nsecond child\nmodule saw natural nba=1\nsecond child done\nmodule final\nfirst final\nsecond final\n",
+        "first program\nsecond program\nmodule final\nfirst final\nsecond final\n",
         "",
         &[],
     );
@@ -37,18 +37,18 @@ fn program_exit_cleans_up_children_and_runs_finals_once() {
     sim_cli::run_case(
         "program_blocks",
         "program_exit",
-        "exit start\nother start\nother child start\nexit before\nmodule final\nexit final\nother final\n",
+        "exit start\nother start\nother child start\nexit before\nother parent after\nmodule final\nexit final\nother final\n",
         "",
         &[],
     );
 }
 
 #[test]
-fn program_child_exit_detaches_before_parent_cleanup() {
+fn program_child_exit_preserves_unrelated_program_work() {
     sim_cli::run_case(
         "program_blocks",
         "program_exit_child",
-        "survivor start\nexit child start\nmodule final\nexit child final\nsurvivor final\n",
+        "survivor start\nexit child start\nsurvivor after\nmodule final\nexit child final\nsurvivor final\n",
         "",
         &[],
     );
@@ -60,6 +60,12 @@ fn prohibited_program_process_is_rejected() {
 }
 
 #[test]
-fn exit_outside_program_is_rejected() {
-    sim_cli::reject_case("program_blocks", "program_exit_outside", "$exit");
+fn exit_outside_program_is_ignored() {
+    sim_cli::run_case(
+        "program_blocks",
+        "program_exit_outside",
+        "module survived exit\n",
+        "",
+        &[],
+    );
 }

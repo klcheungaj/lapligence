@@ -1,7 +1,7 @@
 //! Lower non-integral values without encoding their storage as packed bits.
 use super::*;
 use crate::sim::ir::{
-    IrChandleExpr, IrDisplayArg, IrEnumMember, IrEnumMethod, IrEnumQuery, IrExpr, IrMailboxElement,
+    IrChandleExpr, IrClassFieldType, IrDisplayArg, IrEnumMember, IrEnumMethod, IrEnumQuery, IrExpr, IrMailboxElement,
     IrMailboxExpr, IrMailboxTarget, IrMailboxValue, IrObject, IrObjectQuery, IrObjectStmt,
     IrObjectType, IrProcessControl, IrProcessExpr, IrStringExpr,
 };
@@ -258,10 +258,11 @@ impl Codegen<'_> {
         if let Some(explicit) = explicit {
             return self.lower_chandle("class method call", explicit).map(Some);
         }
-        self.func
-            .as_ref()
-            .and_then(|function| function.class_receiver.clone())
-            .or_else(|| self.class_init_receiver.clone())
+        self.class_init_receiver
+            .clone()
+            .or_else(|| {
+                self.func.as_ref().and_then(|function| function.class_receiver.clone())
+            })
             .map(Some)
             .ok_or_else(|| "class method call has no receiver".to_owned())
     }
@@ -539,10 +540,11 @@ impl Codegen<'_> {
                 return self.lower_chandle(path, *base);
             }
         }
-        self.func
-            .as_ref()
-            .and_then(|function| function.class_receiver.clone())
-            .or_else(|| self.class_init_receiver.clone())
+        self.class_init_receiver
+            .clone()
+            .or_else(|| {
+                self.func.as_ref().and_then(|function| function.class_receiver.clone())
+            })
             .ok_or_else(|| {
                 format!(
                     "class property `{}` has no receiver in `{path}`",
@@ -580,7 +582,7 @@ impl Codegen<'_> {
         }
     }
 
-    fn node_contains_super_constructor(&self, root: NodeId) -> bool {
+    pub(super) fn node_contains_super_constructor(&self, root: NodeId) -> bool {
         let mut pending = vec![root];
         let mut visited = HashSet::new();
         while let Some(node) = pending.pop() {
@@ -630,7 +632,7 @@ impl Codegen<'_> {
                 self.node(field).name
             ));
         }
-        if matches!(self.kind(field), NodeKind::Var { ty } if is_handle_kind(&ty.kind)) {
+        if matches!(self.kind(field), NodeKind::Var { ty } if is_handle_kind(&ty.kind) || ty.kind == "string") {
             return Ok(None);
         }
         let Some((class, _index, class_field)) = self.class_field_layout(field) else {
@@ -671,7 +673,7 @@ impl Codegen<'_> {
         if self.class_static_objects.contains_key(&field) {
             return Ok(None);
         }
-        if matches!(self.kind(field), NodeKind::Var { ty } if is_handle_kind(&ty.kind)) {
+        if matches!(self.kind(field), NodeKind::Var { ty } if is_handle_kind(&ty.kind) || ty.kind == "string") {
             return Ok(None);
         }
         let Some((class, _index, class_field)) = self.class_field_layout(field) else {
@@ -720,6 +722,28 @@ impl Codegen<'_> {
         Ok(Some(format!(
             "((llg_class_{class}_t*)llg_class_require({receiver}, \"{}\"))->{}",
             field_full_name, field_name
+        )))
+    }
+
+    pub(super) fn class_field_string_lvalue(
+        &mut self,
+        path: &str,
+        node: NodeId,
+    ) -> Result<Option<String>, String> {
+        let Some(field) = self.class_field_target(node) else {
+            return Ok(None);
+        };
+        if !matches!(self.kind(field), NodeKind::Var { ty } if ty.kind == "string") {
+            return Ok(None);
+        }
+        let Some((class, _, layout)) = self.class_field_layout(field) else {
+            return Ok(None);
+        };
+        let name = layout.c_name.clone();
+        let receiver = self.class_receiver_for(path, node, field)?;
+        Ok(Some(format!(
+            "((llg_class_{class}_t*)llg_class_require({}, \"string property\"))->{}",
+            self.class_receiver_code(&receiver), name,
         )))
     }
 
@@ -787,146 +811,28 @@ impl Codegen<'_> {
             .get(&class_node)
             .copied()
             .ok_or_else(|| format!("class `{name}` has no captured layout in `{path}`"))?;
-        let layout = self
-            .model
-            .classes
-            .get(class)
-            .ok_or_else(|| format!("class `{name}` has no execution layout"))?
-            .clone();
+        // Actual arguments remain in the caller's environment. Each constructor
+        // initializes its own layer after calling super; allocation initializes no
+        // language properties ahead of that sequence.
+        let object_name = format!("_llg_obj_{}", node.index());
+        let receiver = IrChandleExpr::LocalRead(object_name.clone());
         let mut code = format!(
-            "({{ llg_class_{}_t *_llg_obj = (llg_class_{}_t*)calloc(1, sizeof(llg_class_{}_t)); ",
-            class, class, class
+            "({{ llg_class_{class}_t *{object_name} = (llg_class_{class}_t*)calloc(1, sizeof(llg_class_{class}_t)); "
         );
-        code.push_str(
-            "if (!_llg_obj) { fprintf(stderr, \"llg: class allocation failed\\n\"); exit(EXIT_FAILURE); } ",
-        );
-        code.push_str(&format!("_llg_obj->_llg_class_id = {class}; "));
-        // Preserve an enclosing constructor's receiver while lowering a
-        // nested `new` expression.  Class-valued locals are legal even though
-        // class-valued properties remain outside this bounded layout, and a
-        // nested allocation must not make subsequent outer `this` accesses
-        // receiver-less.
-        let previous_class_init_receiver = self
-            .class_init_receiver
-            .replace(IrChandleExpr::LocalRead("_llg_obj".to_owned()));
-        let mut class_chain = Vec::new();
-        let mut current = Some(class_node);
-        while let Some(current_class) = current {
-            class_chain.push(self.class_nodes[&current_class]);
-            current = self
-                .db
-                .class_metadata(current_class)
-                .and_then(|metadata| metadata.base);
-        }
-        class_chain.reverse();
-        let mut class_fields = class_chain
-            .into_iter()
-            .flat_map(|owner| {
-                self.class_fields
-                    .iter()
-                    .filter(move |(_, (class_index, _))| *class_index == owner)
-                    .map(|(field_node, (_, field_index))| (*field_node, *field_index))
-            })
-            .collect::<Vec<_>>();
-        class_fields.sort_by_key(|(_, field_index)| *field_index);
-        for (field_node, field_index) in class_fields {
-            let field = &layout.fields[field_index];
-            match field.ty {
-                crate::sim::ir::IrClassFieldType::Packed {
-                    width,
-                    signed,
-                    two_state,
-                } => {
-                    let value = self
-                        .db
-                        .var_initializer(field_node)
-                        .map(|initializer| self.lower_expr(path, initializer))
-                        .transpose()?;
-                    let value = value
-                        .map(|value| {
-                            ir_to_storage(value, width, signed, two_state)
-                                .and_then(|value| self.render_ir_code(&value))
-                        })
-                        .transpose()?
-                        .unwrap_or_else(|| {
-                            if two_state {
-                                format!("sv4_from_u64(0, {width}, {})", signed as u8)
-                            } else {
-                                format!("sv4_x({width}, {})", signed as u8)
-                            }
-                        });
-                    code.push_str(&format!("_llg_obj->{} = {}; ", field.c_name, value));
-                }
-                crate::sim::ir::IrClassFieldType::Real { shortreal } => {
-                    let value = self
-                        .db
-                        .var_initializer(field_node)
-                        .map(|initializer| self.lower_expr(path, initializer))
-                        .transpose()?
-                        .map(|value| {
-                            self.render_ir_code(&IrExpr::new(
-                                IrExprKind::CastToReal {
-                                    a: Box::new(value),
-                                    shortreal,
-                                },
-                                0,
-                                true,
-                                None,
-                            ))
-                        })
-                        .transpose()?
-                        .unwrap_or_else(|| "0.0".to_owned());
-                    code.push_str(&format!("_llg_obj->{} = {}; ", field.c_name, value));
-                }
-                crate::sim::ir::IrClassFieldType::String
-                | crate::sim::ir::IrClassFieldType::Chandle => {}
-            }
-        }
-        let explicit_base = constructor
-            .and_then(|constructor| match self.kind(constructor) {
-                NodeKind::FuncCall { callee, .. } => *callee,
-                _ => None,
-            })
-            .and_then(|constructor| self.func_body(constructor))
-            .is_some_and(|body| self.node_contains_super_constructor(body));
-        if !explicit_base {
-            let base_constructor = self
-                .db
-                .class_metadata(class_node)
-                .and_then(|metadata| metadata.base_constructor)
-                .and_then(|base_call| match self.kind(base_call) {
-                    NodeKind::FuncCall { callee, .. } => Some((base_call, *callee)),
-                    _ => None,
-                })
-                .or_else(|| {
-                    self.db
-                        .class_metadata(class_node)
-                        .and_then(|metadata| metadata.base)
-                        .and_then(|base| self.class_constructor(base))
-                        .map(|constructor| (node, Some(constructor)))
-                });
-            if let Some((base_call, base_constructor)) = base_constructor {
-                let Some(base_constructor) = base_constructor else {
-                    return Err(format!(
-                        "base constructor for `{name}` is unresolved in `{path}`"
-                    ));
-                };
-                let mut call = if base_call == node {
-                    self.lower_func_call_expr_with_args(
-                        path,
-                        base_call,
-                        "new",
-                        Some(base_constructor),
-                        &[],
-                    )?
+        code.push_str(&format!(
+            "if (!{object_name}) {{ fprintf(stderr, \"llg: class allocation failed\\n\"); exit(EXIT_FAILURE); }} {object_name}->_llg_class_id = {class}; "
+        ));
+        // Initialize representation metadata, not explicit language defaults.
+        // Base constructors may access as-yet uninitialized derived properties;
+        // those reads must never encounter a zero-width/unallocated sv4 cell.
+        for field in &self.model.classes[class].fields {
+            if let IrClassFieldType::Packed { width, signed, two_state } = field.ty {
+                let value = if two_state {
+                    format!("sv4_from_u64(0, {width}, {})", signed as u8)
                 } else {
-                    self.lower_func_call_expr(path, base_call, "new", Some(base_constructor))?
+                    format!("sv4_x({width}, {})", signed as u8)
                 };
-                if let IrExprKind::CallFn(call_expr) = &mut call.kind {
-                    call_expr.receiver = Some(IrChandleExpr::LocalRead("_llg_obj".to_owned()));
-                    call_expr.virtual_dispatch = false;
-                }
-                code.push_str(&format!("{}; ", self.render_ir_code(&call)?));
+                code.push_str(&format!("{object_name}->{} = {value}; ", field.c_name));
             }
         }
         if let Some(constructor) = constructor {
@@ -936,14 +842,130 @@ impl Codegen<'_> {
             };
             let mut call = self.lower_func_call_expr(path, constructor, &name, callee)?;
             if let IrExprKind::CallFn(call) = &mut call.kind {
-                call.receiver = Some(IrChandleExpr::LocalRead("_llg_obj".to_owned()));
+                call.receiver = Some(receiver);
+                call.virtual_dispatch = false;
             }
             code.push_str(&format!("{}; ", self.render_ir_code(&call)?));
+        } else {
+            let statements = self.lower_implicit_class_construction(path, class_node, receiver)?;
+            for statement in statements {
+                code.push_str(&crate::sim::emit_c::render_stmt(&self.render_ctx(), &statement)?);
+            }
         }
-        code.push_str("(void*)_llg_obj; })");
-        self.class_init_receiver = previous_class_init_receiver;
-        let _ = node;
+        code.push_str(&format!("(void*){object_name}; }})"));
         Ok(IrChandleExpr::Verbatim(code))
+    }
+
+    /// Property defaults belong to the new instance, not an enclosing factory
+    /// method. Only fields declared by this inheritance layer are initialized.
+    pub(super) fn lower_class_initializers(
+        &mut self,
+        path: &str,
+        class_node: NodeId,
+        receiver: IrChandleExpr,
+    ) -> Result<Vec<IrStmt>, String> {
+        let previous = self.class_init_receiver.replace(receiver.clone());
+        let result = (|| {
+            let class = self.class_nodes[&class_node];
+            let mut fields = self.class_fields.iter()
+                .filter(|(_, (owner, _))| *owner == class)
+                .map(|(node, (_, index))| (*node, *index))
+                .collect::<Vec<_>>();
+            fields.sort_by_key(|(_, index)| *index);
+            let mut statements = Vec::new();
+            for (node, index) in fields {
+                let field = self.model.classes[class].fields[index].clone();
+                let target = format!("((llg_class_{class}_t*)({}))->{}",
+                    self.class_receiver_code(&receiver), field.c_name);
+                let initializer = self.db.var_initializer(node);
+                match field.ty {
+                    IrClassFieldType::Packed { width, signed, two_state } => {
+                        let value = if let Some(initializer) = initializer {
+                            let value = self.lower_expr(path, initializer)?;
+                            ir_to_storage(value, width, signed, two_state)?
+                        } else {
+                            IrExpr::new(IrExprKind::Verbatim {
+                                code: if two_state { format!("sv4_from_u64(0, {width}, {})", signed as u8) }
+                                      else { format!("sv4_x({width}, {})", signed as u8) },
+                                width, signed,
+                            }, width, signed, None)
+                        };
+                        statements.push(IrStmt::Assign {
+                            lhs: IrLhs::WholeRef { addr: format!("&({target})"),
+                                width, signed, two_state, shortreal: false },
+                            rhs: value,
+                            nba: false,
+                        });
+                    }
+                    IrClassFieldType::Real { shortreal } => {
+                        let value = initializer.map(|node| self.lower_expr(path, node)).transpose()?
+                            .unwrap_or_else(|| IrExpr::new(IrExprKind::Verbatim { code: "0.0".to_owned(), width: 0, signed: true }, 0, true, None));
+                        statements.push(IrStmt::Assign {
+                            lhs: IrLhs::WholeRef { addr: format!("&({target})"),
+                                width: 0, signed: false, two_state: false, shortreal },
+                            rhs: IrExpr::new(IrExprKind::CastToReal { a: Box::new(value), shortreal }, 0, true, None),
+                            nba: false,
+                        });
+                    }
+                    IrClassFieldType::String => {
+                        if let Some(initializer) = initializer {
+                            let value = self.lower_string(path, initializer)?;
+                            statements.push(IrStmt::Object(IrObjectStmt::StringAssignLocal(target, value)));
+                        }
+                    }
+                    IrClassFieldType::Chandle => {
+                        if let Some(initializer) = initializer {
+                            let value = self.lower_chandle(path, initializer)?;
+                            statements.push(IrStmt::Object(IrObjectStmt::ChandleAssignLocal(target, value)));
+                        }
+                    }
+                }
+            }
+            Ok(statements)
+        })();
+        self.class_init_receiver = previous;
+        result
+    }
+
+    /// An implicit constructor still performs every inherited construction layer.
+    pub(super) fn lower_implicit_class_construction(
+        &mut self,
+        path: &str,
+        class: NodeId,
+        receiver: IrChandleExpr,
+    ) -> Result<Vec<IrStmt>, String> {
+        let mut statements = self.lower_class_base_construction(path, class, receiver.clone())?;
+        statements.extend(self.lower_class_initializers(path, class, receiver)?);
+        Ok(statements)
+    }
+
+    pub(super) fn lower_class_base_construction(
+        &mut self,
+        path: &str,
+        class: NodeId,
+        receiver: IrChandleExpr,
+    ) -> Result<Vec<IrStmt>, String> {
+        let Some(metadata) = self.db.class_metadata(class) else { return Ok(Vec::new()); };
+        let Some(base) = metadata.base else { return Ok(Vec::new()); };
+        let captured_call = metadata.base_constructor;
+        let constructor = captured_call.and_then(|call| match self.kind(call) {
+            NodeKind::FuncCall { callee, .. } => *callee,
+            _ => None,
+        }).or_else(|| self.class_constructor(base));
+        if let Some(constructor) = constructor {
+            let mut call = if let Some(call) = captured_call {
+                self.lower_func_call_expr(path, call, "new", Some(constructor))?
+            } else {
+                self.lower_func_call_expr_with_args(path, class, "new", Some(constructor), &[])?
+            };
+            if let IrExprKind::CallFn(call) = &mut call.kind {
+                call.receiver = Some(receiver);
+                call.virtual_dispatch = false;
+            }
+            Ok(vec![IrStmt::PlusArg(call)])
+        } else {
+            self.lower_implicit_class_construction(path, base, receiver)
+        }
     }
 
     fn object_int_argument(
@@ -1234,28 +1256,50 @@ impl Codegen<'_> {
                     })
                 }
             }
-            IrLhs::Ref {
-                addr,
-                width,
-                signed,
-                two_state,
-                const_ref,
-            } => {
+            IrLhs::Ref { addr, const_ref, .. } => {
                 if *const_ref {
                     return Err("mailbox output/ref target cannot be const-ref".to_owned());
                 }
-                Ok(IrMailboxTarget::Packed {
-                    addr: addr.clone(),
-                    width: *width,
-                    signed: *signed,
-                    two_state: *two_state,
-                })
+                Ok(IrMailboxTarget::Ref { addr: addr.clone() })
             }
             _ => Err("mailbox output/ref target must be a whole scalar lvalue".to_owned()),
         }
     }
 
-    fn lower_mailbox_target(
+    /// Canonical type IDs come from the owned snapshot. Typedefs already
+    /// resolve to their canonical type; no source-name search participates.
+    fn mailbox_nominal_type(&self, node: NodeId) -> Result<Option<u64>, String> {
+        let descriptor = self.query_descriptor(node)
+            .ok_or_else(|| "mailbox actual has no owned type descriptor".to_owned())?;
+        let nominal = self.db.enum_type_metadata(descriptor.id).is_some()
+            || matches!(descriptor.shape, TypeShape::Opaque { .. });
+        if nominal {
+            Ok(Some(descriptor.id.0.checked_add(1)
+                .ok_or_else(|| "mailbox nominal type identity overflow".to_owned())?))
+        } else {
+            Ok(None)
+        }
+    }
+
+    fn lower_mailbox_target(&mut self, path: &str, node: NodeId) -> Result<IrMailboxTarget, String> {
+        let nominal = self.mailbox_nominal_type(node)?;
+        let target = self.lower_mailbox_target_storage(path, node)?;
+        Ok(match nominal {
+            Some(type_id) => IrMailboxTarget::Typed { type_id, target: Box::new(target) },
+            None => target,
+        })
+    }
+
+    fn lower_mailbox_value(&mut self, path: &str, node: NodeId) -> Result<IrMailboxValue, String> {
+        let nominal = self.mailbox_nominal_type(node)?;
+        let value = self.lower_mailbox_value_storage(path, node)?;
+        Ok(match nominal {
+            Some(type_id) => IrMailboxValue::Typed { type_id, value: Box::new(value) },
+            None => value,
+        })
+    }
+
+    fn lower_mailbox_target_storage(
         &mut self,
         path: &str,
         node: NodeId,
@@ -1281,7 +1325,7 @@ impl Codegen<'_> {
         self.mailbox_target_from_lhs(&lhs)
     }
 
-    fn lower_mailbox_value(&mut self, path: &str, node: NodeId) -> Result<IrMailboxValue, String> {
+    fn lower_mailbox_value_storage(&mut self, path: &str, node: NodeId) -> Result<IrMailboxValue, String> {
         if self.is_string_expr(path, node) {
             return Ok(IrMailboxValue::String(self.lower_string(path, node)?));
         }
@@ -2324,14 +2368,14 @@ impl Codegen<'_> {
                 return Ok(IrChandleExpr::Read(index));
             }
         }
-        if let NodeKind::FuncCall {
-            is_task: false,
-            callee,
-            ..
-        } = self.kind(node)
-        {
+        let callable = match self.kind(node) {
+            NodeKind::FuncCall { is_task: false, callee, .. } => Some(*callee),
+            NodeKind::MethodCall { callee, .. } if self.is_class_method_call(node) => Some(*callee),
+            _ => None,
+        };
+        if let Some(callee) = callable {
             let (ft, _callee_inst) =
-                self.resolve_callee_env(self.inst, &self.node(node).name, false, *callee)?;
+                self.resolve_callee_env(self.inst, &self.node(node).name, false, callee)?;
             let meta = self
                 .func_meta
                 .get(&ft)
@@ -2343,7 +2387,7 @@ impl Codegen<'_> {
                     self.node(ft).name
                 ));
             }
-            let args = self.node(node).children.clone();
+            let args = self.call_argument_nodes(node);
             let bound = self.bind_call_args(self.inst, &meta.formals, &args)?;
             let mut out_args = Vec::new();
             let mut in_args = Vec::new();
@@ -2393,6 +2437,8 @@ impl Codegen<'_> {
             }
             out_args.extend(in_args);
             return Ok(IrChandleExpr::Call {
+                receiver: self.class_method_receiver(node)?.map(Box::new),
+                virtual_dispatch: self.class_method_virtual_dispatch(node),
                 function: meta.ir,
                 args: out_args,
                 depth: parse_depth(&self.depth_arg),
@@ -2410,6 +2456,9 @@ impl Codegen<'_> {
         path: &str,
         node: NodeId,
     ) -> Result<IrStringExpr, String> {
+        if let Some(target) = self.class_field_string_lvalue(path, node)? {
+            return Ok(IrStringExpr::LocalRead(target));
+        }
         if let NodeKind::MethodCall {
             name,
             receiver: Some(receiver),
@@ -2450,14 +2499,14 @@ impl Codegen<'_> {
                 }
             }
         }
-        if let NodeKind::FuncCall {
-            is_task: false,
-            callee,
-            ..
-        } = self.kind(node)
-        {
+        let callable = match self.kind(node) {
+            NodeKind::FuncCall { is_task: false, callee, .. } => Some(*callee),
+            NodeKind::MethodCall { callee, .. } if self.is_class_method_call(node) => Some(*callee),
+            _ => None,
+        };
+        if let Some(callee) = callable {
             let (ft, _) =
-                self.resolve_callee_env(self.inst, &self.node(node).name, false, *callee)?;
+                self.resolve_callee_env(self.inst, &self.node(node).name, false, callee)?;
             let meta = self
                 .func_meta
                 .get(&ft)
@@ -2470,7 +2519,7 @@ impl Codegen<'_> {
                 ));
             }
             let formals = meta.formals.clone();
-            let actuals = self.node(node).children.clone();
+            let actuals = self.call_argument_nodes(node);
             let bound = self.bind_call_args(self.inst, &formals, &actuals)?;
             let mut arg_codes = vec![None; formals.len()];
             let mut arg_irs = vec![None; formals.len()];
@@ -2573,12 +2622,16 @@ impl Codegen<'_> {
                     })
                     .collect::<Result<Vec<_>, _>>()?;
                 return Ok(IrStringExpr::Call {
+                    receiver: self.class_method_receiver(node)?.map(Box::new),
+                    virtual_dispatch: self.class_method_virtual_dispatch(node),
                     function: meta.ir,
                     args,
                     depth: parse_depth(&self.depth_arg),
                 });
             }
             return Ok(IrStringExpr::TypedCall {
+                receiver: self.class_method_receiver(node)?.map(Box::new),
+                virtual_dispatch: self.class_method_virtual_dispatch(node),
                 function: meta.ir,
                 args: out_args,
                 depth: parse_depth(&self.depth_arg),
@@ -2592,7 +2645,7 @@ impl Codegen<'_> {
         }
         match self.kind(node) {
             NodeKind::SysCall { name } if name == "$sformatf" => {
-                let args = self.node(node).children.clone();
+                let args = self.call_argument_nodes(node);
                 let Some((format, values)) = args.split_first() else {
                     return Err(format!("$sformatf requires a format argument in `{path}`"));
                 };
@@ -3203,6 +3256,10 @@ impl Codegen<'_> {
             self.lexical_proc_string_local(object_node)
                 .map(|(_, name)| name.to_owned())
         });
+        let string_target = match string_target {
+            Some(target) => Some(target),
+            None => self.class_field_string_lvalue(path, object_node)?,
+        };
         let string_const_ref = self.func.as_ref().is_some_and(|function| {
             target_node.is_some_and(|target| {
                 function.string_read.contains_key(&target)

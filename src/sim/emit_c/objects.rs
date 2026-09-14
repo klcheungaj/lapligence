@@ -82,8 +82,13 @@ pub(super) fn string(ctx: &RCtx<'_>, value: &IrStringExpr) -> Result<String, Str
             function,
             args,
             depth,
+            receiver,
+            virtual_dispatch,
         } => {
-            let mut rendered = Vec::with_capacity(args.len() + 1);
+            let mut rendered = Vec::with_capacity(args.len() + 2);
+            if let Some(receiver) = receiver {
+                rendered.push(format!("llg_class_require({}, \"string method\")", chandle(ctx, receiver)?));
+            }
             for (arg, formal) in args.iter().zip(&ctx.model.funcs[*function].formals) {
                 let code = render_expr_impl(ctx, arg)?.code;
                 rendered.push(super::expressions::coerce_two_state(code, formal.two_state));
@@ -91,7 +96,7 @@ pub(super) fn string(ctx: &RCtx<'_>, value: &IrStringExpr) -> Result<String, Str
             rendered.push(depth.code());
             format!(
                 "{}({})",
-                ctx.model.funcs[*function].c_name,
+                super::function_call_name(&ctx.model.funcs[*function], *virtual_dispatch),
                 rendered.join(", ")
             )
         }
@@ -99,7 +104,12 @@ pub(super) fn string(ctx: &RCtx<'_>, value: &IrStringExpr) -> Result<String, Str
             function,
             args,
             depth,
-        } => render_typed_call(ctx, *function, args, *depth)?,
+            receiver,
+            virtual_dispatch,
+        } => super::expressions::with_ref_scope(
+            render_typed_call(ctx, *function, args, *depth, receiver.as_deref(), *virtual_dispatch)?,
+            args, Some("llg_string_t"),
+        ),
         IrStringExpr::Concat(parts) => {
             let mut value = "llg_string_bytes(\"\", 0)".to_owned();
             for part in parts {
@@ -262,7 +272,10 @@ pub(super) fn chandle(ctx: &RCtx<'_>, value: &IrChandleExpr) -> Result<String, S
             function,
             args,
             depth,
+            receiver,
+            virtual_dispatch,
         } => {
+            let source_args = args;
             let mut args = args
                 .iter()
                 .map(|arg| match arg {
@@ -280,8 +293,14 @@ pub(super) fn chandle(ctx: &RCtx<'_>, value: &IrChandleExpr) -> Result<String, S
                     }
                 })
                 .collect::<Result<Vec<_>, String>>()?;
+            if let Some(receiver) = receiver {
+                args.insert(0, format!("llg_class_require({}, \"handle method\")", chandle(ctx, receiver)?));
+            }
             args.push(depth.code());
-            format!("{}({})", ctx.model.funcs[*function].c_name, args.join(", "))
+            super::expressions::with_ref_scope(
+                format!("{}({})", super::function_call_name(&ctx.model.funcs[*function], *virtual_dispatch), args.join(", ")),
+                source_args, Some("void *"),
+            )
         }
     })
 }
@@ -312,6 +331,8 @@ fn mailbox_expr(ctx: &RCtx<'_>, value: &IrMailboxExpr) -> Result<String, String>
 
 fn mailbox_value(ctx: &RCtx<'_>, value: &IrMailboxValue) -> Result<String, String> {
     Ok(match value {
+        IrMailboxValue::Typed { type_id, value } => format!(
+            "llg_mailbox_typed_value({}, {type_id}ULL)", mailbox_value(ctx, value)?),
         IrMailboxValue::Packed { value, two_state } => format!(
             "llg_mailbox_value_packed({}, {}, {}, {})",
             render_expr_impl(ctx, value)?.code,
@@ -335,6 +356,9 @@ fn mailbox_value(ctx: &RCtx<'_>, value: &IrMailboxValue) -> Result<String, Strin
 
 fn mailbox_target(target: &IrMailboxTarget) -> String {
     match target {
+        IrMailboxTarget::Typed { type_id, target } => format!(
+            "llg_mailbox_typed_target({}, {type_id}ULL)", mailbox_target(target)),
+        IrMailboxTarget::Ref { addr } => format!("llg_mailbox_target_ref({addr})"),
         IrMailboxTarget::Packed {
             addr,
             width,
@@ -862,6 +886,8 @@ fn render_typed_call(
     function: usize,
     args: &[IrCallArg],
     depth: IrDepth,
+    receiver: Option<&IrChandleExpr>,
+    virtual_dispatch: bool,
 ) -> Result<String, String> {
     let f = ctx.model.func(function);
     let order = f
@@ -876,6 +902,9 @@ fn render_typed_call(
                 .filter(|(_, formal)| !formal.is_address()),
         );
     let mut rendered = Vec::new();
+    if let Some(receiver) = receiver {
+        rendered.push(format!("llg_class_require({}, \"string method\")", chandle(ctx, receiver)?));
+    }
     let mut temps = Vec::new();
     for ((idx, _formal), arg) in order.zip(args) {
         let value = match arg {
@@ -909,7 +938,7 @@ fn render_typed_call(
         let _ = idx;
     }
     rendered.push(depth.code());
-    let call = format!("{}({})", f.c_name, rendered.join(", "));
+    let call = format!("{}({})", super::function_call_name(f, virtual_dispatch), rendered.join(", "));
     if temps.is_empty() {
         return Ok(call);
     }

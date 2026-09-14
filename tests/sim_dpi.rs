@@ -261,3 +261,33 @@ fn dpi_library_options_are_explicit_and_prevalidated() {
         sim::build::BuildError::InvalidDpiLibrary { path, .. } if path == missing
     ));
 }
+
+#[test]
+fn dpi_string_results_are_snapshotted_before_aliased_copyout() {
+    if !sim::build::cmake_available() {
+        eprintln!("SKIP: cmake not available");
+        return;
+    }
+    let directory = sim_harness::TempDir::new("dpi-string-alias").expect("temporary directory");
+    let Some(library) = compile_shared_library(
+        directory.path(),
+        &fixture("string_alias.c"),
+        "dpi_string_alias",
+    ) else {
+        return;
+    };
+    for no_opt in [true, false] {
+        let output = run_llg(
+            directory.path(),
+            &fixture("string_alias.sv"),
+            Some(&library),
+            no_opt,
+        );
+        assert!(output.status.success(), "no_opt={no_opt}: {output:?}");
+        assert_eq!(
+            String::from_utf8_lossy(&output.stdout),
+            "echo=one/one\nswap=left/right/left\nvoid=left/right\nshare=source/replaced/Source/source\n"
+        );
+        assert!(output.stderr.is_empty(), "no_opt={no_opt}: {output:?}");
+    }
+}

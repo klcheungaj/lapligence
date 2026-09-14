@@ -11,10 +11,15 @@
 - **Reference layer:** `llg_ref_t` describes a whole packed value or legal
   packed/array selection; `llg_ref_read` and `llg_ref_write` preserve immediate
   alias visibility while routing writes through normal force/PCA notifications.
+  Packed queue refs retain shared element cells: removals detach a snapshot,
+  while surviving refs follow element identities through shifts and reorders.
+  Generated call scopes release pins on return; cancellation/teardown unwinds
+  the remaining scopes. Detached writes do not notify or modify the queue.
 - **True-net aliases:** generated `llg_net_alias_t` descriptors project each
   aliased bit from its canonical resolved net group into visible storage;
-  net publication refreshes dependencies and waveform observations for every
-  alias name.
+  driver/force commits and delayed net-publication commits refresh dependencies
+  and waveform observations for every alias name. Reading an alias is pure;
+  postponed observers never refresh storage as a side effect of a read.
 - **Simulation layer:** `llg_rt.h/.c` implements typed IEEE event-region
   scheduling, signal/driver updates, process services, simulator system tasks,
   region callback hooks, immutable sampled views, nonreturning `$finish`
@@ -30,20 +35,29 @@
   formatted results own their bytes independently of source arguments.
   Semaphores (§1800-2009 15.3) keep runtime-owned key counts and a specified
   FIFO waiter queue; blocking `get` registrations are removed on process
-  cancellation and all semaphore storage is reclaimed at runtime cleanup.
+  cancellation. After a live cancellation batch, newly satisfiable FIFO
+  heads are granted existing keys without requiring another `put`; teardown
+  only removes waiters and never grants new requests. All semaphore storage
+  is reclaimed at runtime cleanup.
   Hosted C targets are required; freestanding targets are unsupported.
-  File output uses an owned 32-slot descriptor table: stdout/stderr masks,
-  ordinary host files, multichannel fan-out, typed deferred output, checked
+  File output keeps separate ordinary-FD and MCD banks. Ordinary FDs carry
+  bit 31; the three preopened FDs name stdin/stdout/stderr. MCD bit 0 names
+  stdout and bits 1..30 name reusable output channels. Only MCDs fan out.
+  Closing a channel cancels its pending deferred output before slot reuse.
+  Ordinary host files, typed deferred output, checked
   seek/rewind/flush/error/EOF controls, an HDL-aware formatted scanner, line
   and character pushback, and declaration-order binary reads are kept separate
   from scheduler state. File-input target descriptors are borrowed for one
   call; packed X/Z state and native string ownership remain explicit.
-  Clocking input samples use the preponed/observed history services, while
+  Numeric scanning stops at the conversion-specific prefix and leaves a
+  delimiter unread; suppression skips storage but still validates conversion.
+  Clocking input samples use the preponed/observed history services. Named
+  clocking-block events are published in Observed after all block samples, while
   procedural clocking output/inout drives enqueue captured Re-NBA values after
   their constant output skew; an off-event drive is retained until the next
   matching clocking event, and net drives retain their resolved driver slot.
   Clocking-bound `##N` waits are lowered as repeated event waits, so they count
-  resolved clocking edges instead of assuming a clock period.
+  published clocking-block events instead of assuming a clock period.
   Memory-file tasks parse four-state binary/hex words, comments and address
   jumps into bounded fixed packed memories, and write the same consumable
   format in declaration/range order; resizable, multidimensional and real
@@ -51,7 +65,10 @@
   Deferred immediate assertion actions use an owned per-time-slot report queue:
   conditions and value arguments are sampled at issue time, legal references
   are resolved by the Reactive callback, and same-process assertion identities
-  coalesce before the Observed-to-Reactive handoff. Finish/deadlock teardown
+  coalesce before the Observed-to-Reactive handoff. Off prevents new checks
+  without stopping existing concurrent attempts or flushing deferred reports;
+  kill cancels attempts, reports and queued actions and disables new checks.
+  Finish/deadlock teardown
   drains pending reports before releasing the scheduler.
   `LLG_ZERO_LOOP_LIMIT` bounds scheduler passes (default 10,000,000), while
   `LLG_PROCESS_STEP_LIMIT` bounds generated loop back-edges inside a coroutine
@@ -68,28 +85,63 @@
   generation-checked object/iteration/value API, startup-loaded system-task and
   function plugins, compiletf/sizetf/calltf dispatch, and start/end callbacks;
   unsupported standard properties fail through `vpi_chk_error`.
+  `vpi_get_value(vpiVectorVal)` returns simulator-owned scratch storage, valid
+  until the next value query or shutdown; the caller supplies no vector buffer.
+  Call/argument handles and argument iterators borrow one callback's call
+  record. They are tagged with its owner and invalidated at every `compiletf`,
+  `sizetf`, and `calltf` exit before the borrowed storage can be released.
 - **Mailboxes:**
   Typed and untyped mailbox handles use owned FIFO message nodes with optional
   bounds (`new(0)` is unbounded), exact `num`/`put`/`get`/`peek` and
   `try_*` operations, native string ownership, four-state packed copies, and
   class/chandle pointer identity. Blocking producers and consumers have FIFO
   wait lists; process cancellation removes waiters and destroys pending
-  string messages before mailbox teardown.
+  string messages before mailbox teardown. Retrieval distinguishes empty from
+  mismatch: try-get/peek return -1 on mismatch without consuming or assigning;
+  blocking mismatch reports an error and stops the current run. Waiter service
+  only considers FIFO heads. Packed width, sign and state domain, and
+  real/shortreal are checked. Each admitted message and destination also retain
+  the declared nominal enum/handle type identity, independent of the handle's
+  dynamic value (including null). Typedef aliases share identity; equivalent
+  virtual-interface types are interned at the owned frontend boundary. Packed
+  ref destinations use the reference write operation, not a value-pointer cast.
+- **Program origins:** the spawn ABI carries a stable elaborated instance ID
+  and an initial-procedure flag. Only initials are counted; their descendants
+  inherit the origin without extending program lifetime. Last-initial completion
+  cancels remaining descendants of that origin, and all-program completion is
+  immediate. `$exit` consults the executing thread's origin, not the lexical
+  scope of a called task. A non-program origin returns without terminating.
 - **Random streams:** `llg_rng.h/.c` provides deterministic PCG streams with
-  stable process/fork derivation, unbiased inclusive ranges, and versioned
-  state snapshots. The scheduler binds one stream to each generated process;
-  the standalone service is also suitable for future class-object streams.
+  next-parent-draw dynamic child seeding, unbiased inclusive ranges, and
+  versioned state snapshots. Creating a child consumes exactly one parent draw;
+  draws in an already-created child never perturb its parent or siblings.
+  Per-instance/package initialization RNGs and full class-object RNG ownership
+  still require integration; the dynamic-child fix alone does not close H07.
 - **Concurrent assertions:** Registrations retain per-instance FIFO attempts;
   predicates read immutable Preponed packed snapshots in Observed, asynchronous
   `disable iff` and abort controls clear pending attempts at writes, and
-  pass/fail actions queue in Reactive. Vacuous implication successes are
+  pass/fail actions queue in Reactive. Failed-attempt accounting is separate
+  from severity reporting: explicit failure actions (including `else ;`) replace
+  the default, and an absent failure action reports the default error in
+  Reactive. Vacuous implication successes are
   counted separately, while pending attempts are discarded at end of
   simulation. Sequence graphs carry bounded local-variable descriptors,
   per-thread four-state snapshots, local input-formal initializers, ordered
   match-item callbacks, and owned per-transition clock/edge descriptors for
   legal multiclock `##0`/`##1` boundaries; branch joins deduplicate only
   equivalent local snapshots, so overlapping attempts and distinct sequence
-  threads do not share mutable state.
+  threads do not share mutable state. Empty alternatives are represented
+  separately and concatenations are normalized before emission. Repetition gaps
+  explicitly require a false operand; first-match scopes cancel only their own
+  invocation's later alternatives while retaining tied endpoints. Multiclock
+  boundaries use endpoint physical time and current-slot clock history, not
+  callback order. Accepted antecedent endpoints carry owned local snapshots
+  keyed by declaration identity into each consequent; inherited locals are not
+  reinitialized. All tokens, scope records and snapshots are reclaimed on
+  termination, disable or teardown.
+- **Packed dependencies:** longest-static-prefix intervals survive lowering and
+  writer checks. Typed waits compare the selected bits, including packed slices
+  behind fixed-array change markers; unrelated bit updates do not wake them.
 - **Real dependencies:** scalar `real`/`shortreal` storage uses typed double
   dependencies for `wait`, any-change `@` controls, combinational links, and
   scalar ports. Writes notify only when the IEEE representation changes:

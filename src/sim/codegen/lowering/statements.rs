@@ -537,6 +537,7 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
                 if_false,
                 label: label.clone(),
                 location: self.finish_location(h),
+                scope: self.path.clone(),
                 identity: h.index() as u64,
             }]);
         }
@@ -909,16 +910,9 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
                 self.path
             ));
         }
-        let specs = self.lower_event_specs(&block_info.event_specs)?;
-        if specs
-            .iter()
-            .any(|(source, _)| !matches!(source, IrWaitSrc::Sig(_) | IrWaitSrc::Event(_)))
-        {
-            return Err(format!(
-                "`##` cycle delay in `{}` requires a simple signal or named-event clocking event",
-                self.path
-            ));
-        }
+        let event = self.cg.event_globals.get(&block).ok_or_else(||
+            "default clocking block has no published event".to_owned())?;
+        let specs = vec![(IrWaitSrc::Event(IrEventRef::Static(event.ir)), IrEdge::Any)];
         Ok(IrStmt::ClockingCycleWait { count, specs })
     }
 
@@ -1617,12 +1611,18 @@ impl EmitCtx<'_, '_> {
                     } => (name.clone(), *is_task, *callee),
                     _ => return Err("super constructor edge is not a function call".to_owned()),
                 };
-                Ok(vec![self.lower_task_call(
-                    *constructor,
-                    &name,
-                    is_task,
-                    callee,
-                )?])
+                let mut statements = vec![self.lower_task_call(
+                    *constructor, &name, is_task, callee,
+                )?];
+                let function = self.func.as_ref().and_then(|function| function.def_node);
+                if function.is_some_and(|function| matches!(self.cg.kind(function),
+                    NodeKind::FuncTask { is_constructor: true, .. }))
+                {
+                    statements.extend(self.cg.lower_class_initializers(
+                        &self.path, self.inst, IrChandleExpr::LocalRead("_this".to_owned()),
+                    )?);
+                }
+                Ok(statements)
             }
             NodeKind::SysCall { name } => self.lower_sys_call(h, name),
             NodeKind::FuncCall {
@@ -5257,12 +5257,8 @@ impl EmitCtx<'_, '_> {
                         self.path
                     ));
                 }
-                if !self.cg.db.is_program_instance(self.inst) {
-                    return Err(format!(
-                        "$exit is only valid in a program block in `{}`",
-                        self.path
-                    ));
-                }
+                // The caller's process origin determines $exit semantics, not
+                // the declaration scope of a task containing the call.
                 Ok(vec![IrStmt::ProgramExit])
             }
             "$stop" => {
@@ -5361,6 +5357,7 @@ impl EmitCtx<'_, '_> {
                         self.path
                     ));
                 }
+                let site = self.cg.model.vpi_compile_calls.len();
                 self.cg.model.vpi_compile_calls.push(IrVpiCompileCall::new(
                     name.to_owned(),
                     args.iter()
@@ -5371,7 +5368,9 @@ impl EmitCtx<'_, '_> {
                         })
                         .collect(),
                 ));
+                self.cg.model.vpi_compile_calls[site].time_unit_fs = self.cg.timescale_of_node(h).unit_fs;
                 Ok(vec![IrStmt::VpiCall {
+                    site,
                     name: name.to_owned(),
                     args,
                 }])

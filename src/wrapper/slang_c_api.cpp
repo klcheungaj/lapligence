@@ -302,6 +302,10 @@ struct Capture {
   const LlgSlangLimits& limits;
   std::vector<std::pair<BufferID, uint64_t>> fileIds;
   std::unordered_map<const Type*, uint64_t> typeIds;
+  // Independently declared equivalent virtual-interface types need one owned
+  // identity. Canonical pointers alone are only unique for nominal classes.
+  std::unordered_map<const DefinitionSymbol*, std::vector<const VirtualInterfaceType*>>
+      virtualInterfaceTypes;
   std::unordered_map<const void*, uint64_t> semanticIds;
   std::vector<std::vector<LlgSlangSemanticEdge>> pendingEdges;
   std::vector<LexicalBinding> lexicalBindings;
@@ -513,6 +517,17 @@ struct Capture {
     const Type& canonical = input.getCanonicalType();
     if (auto it = typeIds.find(&canonical); it != typeIds.end())
       return it->second;
+    if (canonical.kind == SymbolKind::VirtualInterfaceType) {
+      const auto& vif = canonical.as<VirtualInterfaceType>();
+      auto& candidates = virtualInterfaceTypes[&vif.iface.getDefinition()];
+      for (const auto* candidate : candidates) {
+        if (canonical.isEquivalent(*candidate)) {
+          const uint64_t id = typeIds.at(candidate);
+          typeIds.emplace(&canonical, id);
+          return id;
+        }
+      }
+    }
     if (output.types.size() >= maxTypes())
       throw BridgeFailure(LLG_SLANG_STATUS_LIMIT_EXCEEDED, "type limit exceeded");
 
@@ -565,6 +580,10 @@ struct Capture {
 
     const uint64_t id = output.types.size();
     typeIds.emplace(&canonical, id);
+    if (canonical.kind == SymbolKind::VirtualInterfaceType) {
+      const auto& vif = canonical.as<VirtualInterfaceType>();
+      virtualInterfaceTypes[&vif.iface.getDefinition()].push_back(&vif);
+    }
     chargeRecord(output, sizeof(LlgSlangType));
     output.types.push_back({id, kind, flags, canonical.getBitWidth(),
                             storeString(output, input.toString()),

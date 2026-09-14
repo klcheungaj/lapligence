@@ -96,6 +96,7 @@ fn render_enum_query(ctx: &RCtx<'_>, query: &IrEnumQuery) -> Result<String, Stri
 
 fn render_vpi_call(
     ctx: &RCtx<'_>,
+    site: usize,
     name: &str,
     args: &[IrExpr],
     result_width: u32,
@@ -125,13 +126,13 @@ fn render_vpi_call(
     let array_len = args.len().max(1);
     let call = if result_width == 0 {
         format!(
-            "llg_vpi_call_real_function({}, {args_name}, {})",
+            "llg_vpi_call_real_function_site({site}ULL, {}, {args_name}, {})",
             c_string_literal(name),
             args.len()
         )
     } else {
         format!(
-            "llg_vpi_call_function({}, {args_name}, {}, {}, {})",
+            "llg_vpi_call_function_site({site}ULL, {}, {args_name}, {}, {}, {})",
             c_string_literal(name),
             args.len(),
             result_width,
@@ -244,7 +245,12 @@ pub(super) fn render_expr_impl(ctx: &RCtx<'_>, e: &IrExpr) -> Result<RenderedExp
                 fill: None,
             }
         }
-        IrExprKind::CallFn(call) => render_call_expr(ctx, call)?,
+        IrExprKind::CallFn(call) => {
+            let mut rendered = render_call_expr(ctx, call)?;
+            let result_type = if rendered.width == 0 { "double" } else { "sv4_t" };
+            rendered.code = with_ref_scope(rendered.code, &call.args, Some(result_type));
+            rendered
+        },
         IrExprKind::EventTriggered(event) => {
             let event = super::statements::event_ref_code(ctx, event)?;
             RenderedExpr {
@@ -949,8 +955,8 @@ pub(super) fn render_expr_impl(ctx: &RCtx<'_>, e: &IrExpr) -> Result<RenderedExp
                     fill: None,
                 }
             }
-            IrSysFunc::VpiCall { name, args } => {
-                render_vpi_call(ctx, name, args, e.width, e.signed)?
+            IrSysFunc::VpiCall { site, name, args } => {
+                render_vpi_call(ctx, *site, name, args, e.width, e.signed)?
             }
             IrSysFunc::LegacyRandom { kind, seed, args } => {
                 render_legacy_random(ctx, *kind, seed.as_deref(), args)?
@@ -2777,6 +2783,22 @@ pub(super) fn render_assign(
 /// Render an expression-position function call with output-formal temps:
 /// either a plain call or one GNU statement expression carrying the temps,
 /// the writebacks and the result.
+/// Bind queue actuals before any callee code, then release their shared cells
+/// after copy-out. The runtime also unwinds this scope on process cancellation.
+pub(super) fn with_ref_scope(code: String, args: &[IrCallArg], result: Option<&str>) -> String {
+    if !args.iter().any(|arg| matches!(arg, IrCallArg::RefAddr { .. })) {
+        return code;
+    }
+    match result {
+        Some(ty) => format!(
+            "({{ llg_ref_scope_t *_llg_ref_scope = llg_ref_scope_begin(); {ty} _llg_ref_result = {code}; llg_ref_scope_end(_llg_ref_scope); _llg_ref_result; }})"
+        ),
+        None => format!(
+            "    {{ llg_ref_scope_t *_llg_ref_scope = llg_ref_scope_begin();\n{code}        llg_ref_scope_end(_llg_ref_scope);\n    }}\n"
+        ),
+    }
+}
+
 fn render_call_expr(
     ctx: &RCtx<'_>,
     call: &crate::sim::ir::IrCallExpr,

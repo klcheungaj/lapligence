@@ -141,3 +141,75 @@ fn vpi_registration_and_callback_errors_are_reported() {
     })
     .expect("VPI negative fixture should complete");
 }
+
+#[test]
+fn vpi_vectors_are_simulator_owned_even_with_unspecified_request_storage() {
+    if !sim::build::cmake_available() {
+        eprintln!("SKIP: cmake not available");
+        return;
+    }
+    sim_harness::with_frontend_temp_cwd("vpi-vector-ownership", |dir| {
+        let executable = build_model(
+            dir,
+            "vpi_vector_ownership.sv",
+            &fixture("vpi_vector_ownership.sv"),
+            &["task $vpi_vector_probe(input logic [69:0] value)"],
+        );
+        let plugin = compile_plugin(dir, "vpi_vector_ownership.c");
+        let output = run_plugin(dir, &executable, &plugin);
+        assert!(output.status.success(), "VPI vector probe failed: {output:?}");
+        assert_eq!(
+            String::from_utf8_lossy(&output.stdout),
+            "vpi vector ownership ok\n"
+        );
+        assert!(output.stderr.is_empty(), "unexpected VPI stderr: {output:?}");
+        Ok(())
+    })
+    .expect("VPI vector ownership fixture should complete");
+}
+
+#[test]
+fn vpi_borrowed_handles_expire_at_compile_size_and_call_callback_exit() {
+    if !sim::build::cmake_available() {
+        eprintln!("SKIP: cmake not available");
+        return;
+    }
+    sim_harness::with_frontend_temp_cwd("vpi-call-lifetime", |dir| {
+        let executable = build_model(
+            dir,
+            "vpi_call_lifetime.sv",
+            &fixture("vpi_call_lifetime.sv"),
+            &["function logic [7:0] $vpi_lifetime(input logic [7:0] value)"],
+        );
+        let plugin = compile_plugin(dir, "vpi_call_lifetime.c");
+        let output = run_plugin(dir, &executable, &plugin);
+        assert!(output.status.success(), "VPI lifetime probe failed: {output:?}");
+        assert_eq!(
+            String::from_utf8_lossy(&output.stdout),
+            "vpi borrowed handles ok 1\nresult=17\nvpi borrowed handles ok 2\nresult=17\n"
+        );
+        assert!(output.stderr.is_empty(), "unexpected VPI stderr: {output:?}");
+        Ok(())
+    })
+    .expect("VPI callback lifetime fixture should complete");
+}
+
+#[test]
+fn vpi_time_query_honors_requested_format_and_scope() {
+    if !sim::build::cmake_available() {
+        eprintln!("SKIP: cmake not available");
+        return;
+    }
+    sim_harness::with_frontend_temp_cwd("vpi-time-formats", |dir| {
+        let executable = build_model(
+            dir, "vpi_time_formats.sv", &fixture("vpi_time_formats.sv"),
+            &["task $vpi_time_formats()"],
+        );
+        let plugin = compile_plugin(dir, "vpi_time_formats.c");
+        let output = run_plugin(dir, &executable, &plugin);
+        assert!(output.status.success(), "VPI time fixture failed: {output:?}");
+        assert_eq!(output.stdout, b"vpi time formats ok\n");
+        assert!(output.stderr.is_empty(), "unexpected VPI stderr: {output:?}");
+        Ok(())
+    }).expect("VPI time format fixture");
+}

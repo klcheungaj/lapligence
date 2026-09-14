@@ -261,7 +261,7 @@ fn concurrent_assertions_advance_legal_multiclock_sequence_boundaries() {
     sim_cli::run_case(
         "concurrent_assertions",
         "h25_multiclock",
-        "H25_MULTICLOCK_PASS\nH25_MULTICLOCK_ZERO_PASS\n",
+        "H25_MULTICLOCK_ZERO_PASS\nH25_MULTICLOCK_PASS\n",
         "",
         &[],
     );

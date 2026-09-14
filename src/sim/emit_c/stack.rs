@@ -619,6 +619,7 @@ fn stmt_temp_slots(stmt: &IrStmt) -> Result<u64, String> {
         IrStmt::ClockingSample { .. }
         | IrStmt::WaitEvents { .. }
         | IrStmt::EventTrigger { .. }
+        | IrStmt::ClockingEventTrigger { .. }
         | IrStmt::NonblockingEventTrigger { .. }
         | IrStmt::WaitAny { .. }
         | IrStmt::Fork { .. }

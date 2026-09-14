@@ -3444,26 +3444,10 @@ fn event_specs(
         113 => {
             let sig = edge_target(ids, edges, SemanticEdgeRole::Event)?
                 .ok_or_else(|| DbError::InvalidSnapshot("signal event has no expression".into()))?;
-            if let Some(block) = clocking_block_from_expression(snapshot, ids, sig, 0)? {
-                let block_node = snapshot
-                    .semantic_nodes
-                    .get(block.index())
-                    .ok_or_else(|| DbError::InvalidSnapshot("clocking block is missing".into()))?;
-                let block_event = edge_target(
-                    ids,
-                    semantic_edges(snapshot, block_node)?,
-                    SemanticEdgeRole::Event,
-                )?
-                .ok_or_else(|| DbError::InvalidSnapshot("clocking block has no event".into()))?;
-                let event_node = snapshot
-                    .semantic_nodes
-                    .get(block_event.index())
-                    .ok_or_else(|| {
-                        DbError::InvalidSnapshot("clocking block event is missing".into())
-                    })?;
-                return event_specs(snapshot, event_node, ids);
-            }
-            let named_event = is_named_event_expression(snapshot, ids, sig)?;
+            // A clocking block event is not its raw clock expression: input
+            // samples are published before the named event wakes observers.
+            let named_event = clocking_block_from_expression(snapshot, ids, sig, 0)?.is_some()
+                || is_named_event_expression(snapshot, ids, sig)?;
             let specs = if timing.is_both_edges {
                 vec![
                     EventSpec::Edge { sig, posedge: true },

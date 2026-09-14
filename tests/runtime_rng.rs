@@ -28,28 +28,35 @@ static int same_state(const llg_rng_state_t* left,
            left->child_count == right->child_count;
 }
 
-static int check_sibling_stability(void) {
-    llg_rng_state_t with_draw;
-    llg_rng_state_t without_draw;
-    llg_rng_state_t with_draw_first;
-    llg_rng_state_t with_draw_second;
-    llg_rng_state_t without_draw_first;
-    llg_rng_state_t without_draw_second;
-    llg_rng_state_seed(&with_draw, UINT64_C(0x12345678));
-    llg_rng_state_seed(&without_draw, UINT64_C(0x12345678));
-    llg_rng_state_child(&with_draw, &with_draw_first);
-    (void)llg_rng_state_next(&with_draw);
-    llg_rng_state_child(&with_draw, &with_draw_second);
-    llg_rng_state_child(&without_draw, &without_draw_first);
-    llg_rng_state_child(&without_draw, &without_draw_second);
+static int check_hierarchical_seed_consumption(void) {
+    llg_rng_state_t parent, oracle, child, expected_child, first_copy;
+    llg_rng_state_seed(&parent, UINT64_C(0x12345678));
+    oracle = parent;
+    uint32_t first_seed = llg_rng_state_next(&oracle);
+    oracle.child_count++;
+    llg_rng_state_seed(&expected_child, first_seed);
+    llg_rng_state_child(&parent, &child);
+    CHECK(same_state(&parent, &oracle));
+    CHECK(same_state(&child, &expected_child));
+    first_copy = child;
 
-    /* Parent draws are not part of stream identity, so child ordinal one is
-     * unchanged even when an unrelated parent draw happens first. */
+    /* A parent draw before a later child changes the source seed. Child
+     * creation must use that next draw, not a hash of immutable identity. */
+    CHECK(llg_rng_state_next(&parent) == llg_rng_state_next(&oracle));
+    uint32_t second_seed = llg_rng_state_next(&oracle);
+    oracle.child_count++;
+    llg_rng_state_t second;
+    llg_rng_state_seed(&expected_child, second_seed);
+    llg_rng_state_child(&parent, &second);
+    CHECK(same_state(&parent, &oracle));
+    CHECK(same_state(&second, &expected_child));
+
+    /* Neither parent draws nor another child's draws alter a child that
+     * already exists. Independence starts at creation, not before it. */
     for (unsigned i = 0; i < 8; ++i) {
-        CHECK(llg_rng_state_next(&with_draw_first) ==
-              llg_rng_state_next(&without_draw_first));
-        CHECK(llg_rng_state_next(&with_draw_second) ==
-              llg_rng_state_next(&without_draw_second));
+        (void)llg_rng_state_next(&second);
+        CHECK(llg_rng_state_next(&child) == llg_rng_state_next(&first_copy));
+        CHECK(same_state(&parent, &oracle));
     }
     return 0;
 }
@@ -115,7 +122,7 @@ static int check_inclusive_ranges(void) {
 }
 
 int main(void) {
-    CHECK(check_sibling_stability() == 0);
+    CHECK(check_hierarchical_seed_consumption() == 0);
     CHECK(check_sibling_streams() == 0);
     CHECK(check_state_replay() == 0);
     CHECK(check_inclusive_ranges() == 0);

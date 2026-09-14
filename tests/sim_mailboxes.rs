@@ -26,7 +26,7 @@ fn typed_and_untyped_mailboxes_preserve_fifo_values_and_handle_identity() {
             "str=mailbox n=0\n",
             "objput=1\n",
             "objget=1 same=1 id=77 n=0\n",
-            "mismatch=0 n=1\n",
+            "mismatch=-1 n=1\n",
             "preserved=99 n=0\n",
         ),
         "llg: $finish at time 0 at tb:48:9\n",

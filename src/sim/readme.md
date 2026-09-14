@@ -52,3 +52,8 @@
 
 See [`docs/sim_features.md`](../../docs/sim_features.md) for the simulator
 support matrix.
+
+DPI-C string thunks snapshot the foreign return and all string output/inout
+buffers before committing any output or destroying owned input strings. This
+preserves returned and cross-output aliases without extending the lifetime of
+foreign buffers beyond the call boundary.

@@ -341,6 +341,7 @@ struct llg_queue_t {
     sv4_t* shape_dependency;
     llg_container_notify_fn notify;
     uint64_t next_element_id;
+    struct llg_queue_cell* references; // borrowed list; reference holders own the cells
 };
 
 typedef struct llg_queue_source_t {
@@ -391,6 +392,13 @@ void llg_queue_method_assign(llg_queue_t* dst, const llg_queue_t* src,
                              void* context);
 void llg_queue_method(llg_queue_t* queue, int method,
                       llg_container_eval_fn eval, void* context);
+/* Retain an element independently of queue membership. Acquisitions of the
+ * same live element share one cell. Release once per acquisition, including
+ * cancellation; deleting/replacing/destroying the queue only disconnects it. */
+void* llg_queue_ref_acquire(llg_queue_t* queue, uint64_t index);
+void llg_queue_ref_release(void* cell);
+sv4_t llg_queue_cell_read(const void* cell);
+int llg_queue_cell_write(void* cell, sv4_t value);
 uint64_t llg_queue_ref_identity(const llg_queue_t* queue, uint64_t index);
 sv4_t llg_queue_ref_read(const llg_queue_t* queue, uint64_t identity);
 int llg_queue_ref_write(llg_queue_t* queue, uint64_t identity, sv4_t value);

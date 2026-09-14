@@ -126,6 +126,8 @@ pub enum IrStringExpr {
         key: Box<IrStringExpr>,
     },
     Call {
+        receiver: Option<Box<IrChandleExpr>>,
+        virtual_dispatch: bool,
         function: usize,
         args: Vec<IrExpr>,
         depth: super::IrDepth,
@@ -134,6 +136,8 @@ pub enum IrStringExpr {
     /// (or when an object-valued output/ref formal needs call-boundary
     /// ownership). Arguments use the same ABI order as [`IrCall`].
     TypedCall {
+        receiver: Option<Box<IrChandleExpr>>,
+        virtual_dispatch: bool,
         function: usize,
         args: Vec<super::IrCallArg>,
         depth: super::IrDepth,
@@ -252,6 +256,8 @@ pub enum IrChandleExpr {
         key: Box<IrStringExpr>,
     },
     Call {
+        receiver: Option<Box<IrChandleExpr>>,
+        virtual_dispatch: bool,
         function: usize,
         /// Arguments are stored in the generated C parameter order.  The
         /// typed variants preserve packed arguments and pointer addresses
@@ -296,6 +302,9 @@ pub enum IrMailboxElement {
 /// value.
 #[derive(Clone, Debug, PartialEq)]
 pub enum IrMailboxValue {
+    /// Canonical nominal identity of the expression's declared type, never
+    /// the dynamic type of its handle value. Structural scalars need no tag.
+    Typed { type_id: u64, value: Box<IrMailboxValue> },
     Packed { value: IrExpr, two_state: bool },
     Real { value: IrExpr, shortreal: bool },
     String(IrStringExpr),
@@ -306,6 +315,8 @@ pub enum IrMailboxValue {
 /// (for example `&G_x` or `o0`) and remains valid across a suspended call.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum IrMailboxTarget {
+    Typed { type_id: u64, target: Box<IrMailboxTarget> },
+    Ref { addr: String },
     Packed {
         addr: String,
         width: u32,
@@ -458,6 +469,8 @@ impl IrStringExpr {
                 function,
                 args,
                 depth,
+                receiver,
+                ..
             } => {
                 if depth.func_base && string_return.is_none() {
                     return Err(super::IrValidationError::new(
@@ -468,6 +481,10 @@ impl IrStringExpr {
                 let callee = model.funcs.get(*function).ok_or_else(|| {
                     super::IrValidationError::new("string call", "function index is out of bounds")
                 })?;
+                if callee.receiver_class.is_some() != receiver.is_some() {
+                    return Err(super::IrValidationError::new("object call", "receiver does not match callee ABI"));
+                }
+                if let Some(receiver) = receiver { receiver.validate(model, &[], string_return.map(|_| false))?; }
                 if !callee.ret_string
                     || callee.formals.len() != args.len()
                     || callee
@@ -496,6 +513,8 @@ impl IrStringExpr {
                 function,
                 args,
                 depth,
+                receiver,
+                ..
             } => {
                 if depth.func_base && string_return.is_none() {
                     return Err(super::IrValidationError::new(
@@ -506,6 +525,10 @@ impl IrStringExpr {
                 let callee = model.funcs.get(*function).ok_or_else(|| {
                     super::IrValidationError::new("string call", "function index is out of bounds")
                 })?;
+                if callee.receiver_class.is_some() != receiver.is_some() {
+                    return Err(super::IrValidationError::new("object call", "receiver does not match callee ABI"));
+                }
+                if let Some(receiver) = receiver { receiver.validate(model, &[], string_return.map(|_| false))?; }
                 if !callee.ret_string || callee.formals.len() != args.len() {
                     return Err(super::IrValidationError::new(
                         "string call",
@@ -628,8 +651,12 @@ impl IrStringExpr {
             Self::ContainerGet { index, .. } => visit(index),
             Self::ContainerGetNested { indices, .. } => indices.iter().for_each(visit),
             Self::AssociativeGet { key, .. } => key.expressions(visit),
-            Self::Call { args, .. } => args.iter().for_each(visit),
-            Self::TypedCall { args, .. } => {
+            Self::Call { args, receiver, .. } => {
+                if let Some(receiver) = receiver { receiver.expressions(visit); }
+                args.iter().for_each(visit);
+            },
+            Self::TypedCall { args, receiver, .. } => {
+                if let Some(receiver) = receiver { receiver.expressions(visit); }
                 for arg in args {
                     match arg {
                         super::IrCallArg::StringVal(value) => value.expressions(visit),
@@ -680,8 +707,12 @@ impl IrStringExpr {
             Self::ContainerGet { index, .. } => visit(index),
             Self::ContainerGetNested { indices, .. } => indices.iter_mut().for_each(visit),
             Self::AssociativeGet { key, .. } => key.expressions_mut(visit),
-            Self::Call { args, .. } => args.iter_mut().for_each(visit),
-            Self::TypedCall { args, .. } => {
+            Self::Call { args, receiver, .. } => {
+                if let Some(receiver) = receiver { receiver.expressions_mut(visit); }
+                args.iter_mut().for_each(visit);
+            },
+            Self::TypedCall { args, receiver, .. } => {
+                if let Some(receiver) = receiver { receiver.expressions_mut(visit); }
                 for arg in args {
                     match arg {
                         super::IrCallArg::StringVal(value) => value.expressions_mut(visit),
@@ -891,6 +922,11 @@ impl IrMailboxValue {
             Self::Real { .. } => Ok(()),
             Self::String(value) => value.validate(model, string_return),
             Self::Handle(value) => value.validate(model, formals, chandle_return),
+            Self::Typed { type_id, value } => {
+                if *type_id == 0 { return Err(super::IrValidationError::new(
+                    "mailbox value", "nominal identity must be nonzero")); }
+                value.validate(model, formals, chandle_return, string_return)
+            },
         }
     }
 
@@ -899,6 +935,7 @@ impl IrMailboxValue {
             Self::Packed { value, .. } | Self::Real { value, .. } => visit(value),
             Self::String(value) => value.expressions(visit),
             Self::Handle(value) => value.expressions(visit),
+            Self::Typed { value, .. } => value.expressions(visit),
         }
     }
 
@@ -907,14 +944,22 @@ impl IrMailboxValue {
             Self::Packed { value, .. } | Self::Real { value, .. } => visit(value),
             Self::String(value) => value.expressions_mut(visit),
             Self::Handle(value) => value.expressions_mut(visit),
+            Self::Typed { value, .. } => value.expressions_mut(visit),
         }
     }
 }
 
 impl IrMailboxTarget {
     pub(in crate::sim) fn validate(&self) -> Result<(), super::IrValidationError> {
+        if let Self::Typed { type_id, target } = self {
+            if *type_id == 0 { return Err(super::IrValidationError::new(
+                "mailbox target", "nominal identity must be nonzero")); }
+            return target.validate();
+        }
         let (addr, width) = match self {
             Self::Packed { addr, width, .. } => (addr, Some(*width)),
+            Self::Ref { addr } => (addr, None),
+            Self::Typed { .. } => unreachable!("handled above"),
             Self::Real { addr, .. } | Self::String { addr } | Self::Handle { addr } => (addr, None),
         };
         if addr.is_empty() || width == Some(0) {
@@ -1567,6 +1612,8 @@ impl IrChandleExpr {
                 function,
                 args,
                 depth,
+                receiver,
+                ..
             } => {
                 if depth.func_base && chandle_return.is_none() {
                     return Err(super::IrValidationError::new(
@@ -1577,6 +1624,10 @@ impl IrChandleExpr {
                 let callee = model.funcs.get(*function).ok_or_else(|| {
                     super::IrValidationError::new("chandle call", "function index is out of bounds")
                 })?;
+                if callee.receiver_class.is_some() != receiver.is_some() {
+                    return Err(super::IrValidationError::new("object call", "receiver does not match callee ABI"));
+                }
+                if let Some(receiver) = receiver { receiver.validate(model, formals, chandle_return)?; }
                 if !callee.ret_chandle || callee.formals.len() != args.len() {
                     return Err(super::IrValidationError::new(
                         "chandle call",
@@ -1645,7 +1696,8 @@ impl IrChandleExpr {
         match self {
             Self::ContainerGet { index, .. } => visit(index),
             Self::ContainerGetNested { indices, .. } => indices.iter().for_each(visit),
-            Self::Call { args, .. } => {
+            Self::Call { args, receiver, .. } => {
+                if let Some(receiver) = receiver { receiver.expressions(visit); }
                 for arg in args {
                     match arg {
                         IrCallArg::Val(value) => visit(value),
@@ -1662,7 +1714,8 @@ impl IrChandleExpr {
         match self {
             Self::ContainerGet { index, .. } => visit(index),
             Self::ContainerGetNested { indices, .. } => indices.iter_mut().for_each(visit),
-            Self::Call { args, .. } => {
+            Self::Call { args, receiver, .. } => {
+                if let Some(receiver) = receiver { receiver.expressions_mut(visit); }
                 for arg in args {
                     match arg {
                         IrCallArg::Val(value) => visit(value),
