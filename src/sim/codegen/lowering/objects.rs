@@ -1474,6 +1474,11 @@ impl Codegen<'_> {
     }
 
     pub(super) fn is_string_expr(&self, path: &str, node: NodeId) -> bool {
+        if self.class_field_target(node).is_some_and(|field| {
+            matches!(self.kind(field), NodeKind::Var { ty } if ty.kind == "string")
+        }) {
+            return true;
+        }
         let target = match self.kind(node) {
             NodeKind::Expr(ExprKind::Ref { target }) => *target,
             _ => Some(node),
@@ -1569,6 +1574,11 @@ impl Codegen<'_> {
     /// to be backed by a model-global object. Function formals, automatic
     /// locals, and chandle-returning calls all live in the function context.
     pub(super) fn is_chandle_expr(&self, path: &str, node: NodeId) -> bool {
+        if self.class_field_target(node).is_some_and(|field| {
+            matches!(self.kind(field), NodeKind::Var { ty } if is_handle_kind(&ty.kind))
+        }) {
+            return true;
+        }
         if self.is_mailbox_expr(path, node) {
             return false;
         }

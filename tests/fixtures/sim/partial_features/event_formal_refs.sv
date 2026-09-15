@@ -11,12 +11,12 @@ module tb;
         level = source;
     endfunction
 
-    task automatic wait_ref(ref logic source, input logic tag);
+    task automatic wait_ref(ref logic source, input int tag);
         @(posedge source);
         ref_wakes = ref_wakes + tag;
     endtask
 
-    task automatic wait_function(ref logic source, input logic tag);
+    task automatic wait_function(ref logic source, input int tag);
         @(posedge level(source));
         function_wakes = function_wakes + tag;
     endtask

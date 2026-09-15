@@ -151,7 +151,7 @@ fn human_lint_reuses_delay_metadata_for_codegen() {
     let out = run_llg(&dir.path, &["--lint", "--top", "delayed", "design.sv"]);
     let err = stderr(&out);
     assert!(out.status.success(), "stderr: {err}");
-    assert_eq!(String::from_utf8_lossy(&out.stdout), "value=1 time=3\n");
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "value=1 time=3000\n");
 }
 
 #[test]

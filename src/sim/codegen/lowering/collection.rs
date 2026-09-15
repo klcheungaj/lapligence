@@ -6117,6 +6117,13 @@ impl<'a> Codegen<'a> {
                 && self.func_names.contains_key(c)
                 && self.db.dpi_import(*c).is_none()
             {
+                if matches!(self.kind(*c), NodeKind::FuncTask { is_task: true, .. })
+                    && self.task_requires_event_inline(*c, inst)
+                {
+                    // Calls take the inline path; do not build a detached
+                    // evaluator containing an unbound FormalRead.
+                    continue;
+                }
                 let path = self.instance_path_of(inst);
                 self.emit_func_task(&path, inst, *c)?;
             }
@@ -7469,6 +7476,39 @@ impl<'a> Codegen<'a> {
     pub(super) fn task_has_wait(&self, ft: NodeId, inst: NodeId) -> bool {
         let mut seen: HashSet<NodeId> = HashSet::new();
         self.task_has_wait_inner(ft, inst, &mut seen)
+    }
+
+    /// Event-controlled tasks need caller-bound evaluator frames. Delay-only
+    /// tasks can suspend as native C calls; event callbacks cannot read their
+    /// C formals directly after returning to the scheduler.
+    pub(super) fn task_requires_event_inline(&self, ft: NodeId, inst: NodeId) -> bool {
+        fn visit(cg: &Codegen<'_>, node: NodeId, inst: NodeId, seen: &mut HashSet<NodeId>) -> bool {
+            if !seen.insert(node) {
+                return false;
+            }
+            match cg.kind(node) {
+                NodeKind::FuncTask { .. } => {
+                    if cg.func_formals(node).iter().any(|formal| {
+                        matches!(cg.kind(*formal), NodeKind::FuncArg { ty, .. } if ty.kind == "event")
+                    }) {
+                        return true;
+                    }
+                    return cg.func_body(node).is_some_and(|body| visit(cg, body, inst, seen));
+                }
+                NodeKind::Stmt(StmtKind::EventControl { .. }) => return true,
+                NodeKind::FuncArg { ty, .. } if ty.kind == "event" => return true,
+                NodeKind::FuncCall { name, is_task: true, callee, .. } => {
+                    if let Ok((function, owner)) = cg.resolve_callee_env(inst, name, true, *callee) {
+                        if visit(cg, function, owner, seen) {
+                            return true;
+                        }
+                    }
+                }
+                _ => {}
+            }
+            cg.node(node).children.iter().any(|child| visit(cg, *child, inst, seen))
+        }
+        visit(self, ft, inst, &mut HashSet::new())
     }
 
     /// Whether a task can cancel its activation through a named `disable`.
@@ -11873,6 +11913,7 @@ impl<'a> Codegen<'a> {
         // it through the sampled assertion path and do not manufacture a
         // process that would try to execute the assertion as a statement.
         let (concurrent_assertions, assertion_only_body) = match self.kind(stmt) {
+            NodeKind::Stmt(StmtKind::ConcurrentAssertion { .. }) => (vec![stmt], true),
             NodeKind::Stmt(StmtKind::Begin) => {
                 let children = &self.node(stmt).children;
                 let assertions = children

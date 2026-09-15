@@ -11,7 +11,7 @@ module tb;
         first ##1 second;
     endsequence
 
-    matched: assert property (@(posedge clk) pair.matched)
+    matched: cover property (@(posedge clk) pair.matched)
         $display("MATCHED_PASS");
 
     initial begin

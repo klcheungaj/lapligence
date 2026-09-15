@@ -491,8 +491,9 @@ endmodule
     //   t=14  forced x=ff displayed; release resumes the latest PCA value 44
     //   t=16  src=55 re-drives x=55 through the still-enabled site
     //   t=18  released-then-driven x=55 displayed
-    let expected = "x=22 t=4\nx=22 t=6\nx=33 t=8\nforced x=ff t=14\n\
-                    released-then-driven x=55 t=18\n";
+    // Default %t formatting uses the design precision (1 ps), not 1 ns units.
+    let expected = "x=22 t=4000\nx=22 t=6000\nx=33 t=8000\nforced x=ff t=14000\n\
+                    released-then-driven x=55 t=18000\n";
     let both = {
         let _guard = CWD_LOCK.lock().unwrap();
         run_both(sv, "tb", "pca")

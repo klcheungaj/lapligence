@@ -9,9 +9,9 @@ module tb;
         #1;
         if (y !== 1'b1) begin
             $display("FAIL gate_strength");
-            $finish;
+            $finish(0);
         end
         $display("PASS gate_strength");
-        $finish;
+        $finish(0);
     end
 endmodule

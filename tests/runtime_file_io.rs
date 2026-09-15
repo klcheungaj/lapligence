@@ -29,7 +29,7 @@ int main(void) {
     uint32_t descriptor = llg_file_open(
         llg_string_bytes("boundary.txt", 12), llg_string_bytes("w+", 2), 1);
     if (!(descriptor & 0x80000000u)) return fail("ordinary FD tag");
-    llg_fmt_arg_t arg = { LLG_FMT_PACKED, { .packed = sv4_from_u64(7, 32, 1) } };
+    llg_fmt_arg_t arg = { LLG_FMT_PACKED, 0, { .packed = sv4_from_u64(7, 32, 1) } };
     llg_file_display_typed(descriptor, "probe=%0d", &arg, 1, "probe", 1);
     if (llg_file_flush(descriptor, 0) != 0) return fail("flush");
     if (llg_file_tell(descriptor) != 8) return fail("tell");

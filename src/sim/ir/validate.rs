@@ -446,7 +446,17 @@ impl Validator<'_> {
                     if object.signal.is_some() {
                         return self.fail(path, "VPI array cannot reference signal storage");
                     }
-                    self.validate_width(object.width, &format!("{path}.width"))?;
+                    let storage = &self.model.arrays[array];
+                    if object.real != storage.real || object.width != storage.elem_width {
+                        return self.fail(path, "VPI array element type disagrees with its storage");
+                    }
+                    if object.real {
+                        if object.width != 0 {
+                            return self.fail(path, "real VPI array elements must use zero width");
+                        }
+                    } else {
+                        self.validate_width(object.width, &format!("{path}.width"))?;
+                    }
                 }
                 IrVpiObjectKind::Net | IrVpiObjectKind::Reg | IrVpiObjectKind::RealVar => {
                     let Some(signal) = object.signal else {

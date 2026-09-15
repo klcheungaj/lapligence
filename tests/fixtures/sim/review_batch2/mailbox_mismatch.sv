@@ -7,7 +7,7 @@ module tb;
     integer four_state = -1;
     byte narrow = -2;
     string text = "unchanged";
-    shortreal small = 3.5;
+    shortreal small_value = 3.5;
     real wide = 1.25, copy;
     initial begin
         status = box.try_get(value);
@@ -24,7 +24,7 @@ module tb;
         status = box.try_get(equivalent);
         $display("get=%0d value=%0d n=%0d", status, equivalent, box.num());
         box.put(wide);
-        status = box.try_peek(small);
+        status = box.try_peek(small_value);
         $display("real_kind=%0d n=%0d", status, box.num());
         box.get(copy);
         $display("real=%0.2f n=%0d", copy, box.num());

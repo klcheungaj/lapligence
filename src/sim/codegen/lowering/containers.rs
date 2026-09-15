@@ -2701,7 +2701,7 @@ impl<'a> Codegen<'a> {
             let target_is_fixed = self
                 .query_descriptor(rhs)
                 .is_some_and(|descriptor| matches!(descriptor.shape, TypeShape::FixedArray { .. }));
-            if target_is_fixed {
+            if target_is_fixed && !self.db.is_implicit_conversion(rhs) {
                 if let Some(source) = self.container_of(*operand) {
                     return Ok(Some(self.lower_p30_bitstream_container_cast(
                         path,

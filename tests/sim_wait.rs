@@ -166,7 +166,7 @@ endmodule
 /// call site (the wait loop appears inside the caller's coroutine) and must
 /// NOT get a standalone C function.
 #[test]
-fn sim_wait_task_inlined() {
+fn sim_wait_task_uses_native_coroutine_call() {
     if !llg::sim::build::cmake_available() {
         eprintln!("SKIP: cmake not available");
         return;
@@ -211,7 +211,7 @@ endmodule
         "inlined wait loop not found in generated C"
     );
     assert!(
-        !model.contains("fn_tb_wait_for"),
+        model.contains("fn_tb_wait_for"),
         "wait-bearing task must not become a standalone C function"
     );
 }

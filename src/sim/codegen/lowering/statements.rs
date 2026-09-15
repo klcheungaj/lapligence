@@ -1599,6 +1599,18 @@ impl EmitCtx<'_, '_> {
             }
             NodeKind::Expr(ExprKind::NewClass {
                 is_super_class: true,
+                constructor: None,
+                ..
+            }) => {
+                // An implicit base constructor has no call-expression edge.
+                // It still constructs every base layer before this layer's defaults.
+                let receiver = self.func.as_ref()
+                    .and_then(|function| function.class_receiver.clone())
+                    .ok_or_else(|| format!("super constructor has no receiver in `{}`", self.path))?;
+                self.cg.lower_implicit_class_construction(&self.path, self.inst, receiver)
+            }
+            NodeKind::Expr(ExprKind::NewClass {
+                is_super_class: true,
                 constructor: Some(constructor),
                 ..
             }) => {
@@ -2260,7 +2272,7 @@ impl EmitCtx<'_, '_> {
             }
         };
         let lhs = self.cg.lower_lhs(&self.path, operand)?;
-        if !matches!(lhs, IrLhs::Whole(_) | IrLhs::WholeRef { .. }) {
+        if !matches!(lhs, IrLhs::Whole(_) | IrLhs::WholeRef { .. } | IrLhs::Ref { .. }) {
             return Err(format!(
                 "increment/decrement of a select or array element in `{}` is not supported yet",
                 self.path
@@ -6060,7 +6072,7 @@ impl EmitCtx<'_, '_> {
         callee: Option<NodeId>,
     ) -> Result<IrStmt, String> {
         if let Some(f) = &self.func {
-            if !f.is_task
+            if is_task && !f.is_task
                 // A constructor invocation is a task-shaped call in Slang's
                 // snapshot, but it is legal while lowering a class
                 // constructor function.  Use the active receiver rather
@@ -6139,7 +6151,7 @@ impl EmitCtx<'_, '_> {
                 self.path
             ));
         }
-        if has_event_formal {
+        if has_event_formal || (is_task && self.cg.task_requires_event_inline(ft, callee_inst)) {
             return self.lower_task_inline(
                 ft,
                 callee_inst,
@@ -6150,10 +6162,12 @@ impl EmitCtx<'_, '_> {
             );
         }
         if is_task
+            && self.cg.task_has_wait(ft, callee_inst)
             && (self.cg.task_has_disable(ft, callee_inst) || self.cg.task_is_disable_target(ft))
         {
-            // Named disable must unwind the callee's activation before any
-            // caller-side copy-out. Keep that path inline until task returns
+            // Timed cancellation must unwind the callee before caller-side
+            // copy-out. Delay-free calls use their native activation scope,
+            // including recursive calls. Keep the timed path inline until task returns
             // carry an explicit cancellation result in the C ABI. The
             // declaration-level target check covers callers that disable a
             // task externally rather than from inside the task body.
@@ -7202,6 +7216,24 @@ impl EmitCtx<'_, '_> {
                     IrStmt::Object(crate::sim::ir::IrObjectStmt::StringAssignLocal(
                         "_ret".to_string(),
                         self.cg.lower_string(&self.path, value)?,
+                    )),
+                    IrStmt::Return { value: None },
+                ])),
+                None => Ok(IrStmt::Return { value: None }),
+            };
+        }
+        let returns_chandle = self.func.as_ref().is_some_and(|function| {
+            function.ret_node.is_some_and(|node| {
+                matches!(function.chandle_write.get(&node),
+                    Some(ChandleTarget::Local(name)) if name == "_ret")
+            })
+        });
+        if returns_chandle {
+            return match value {
+                Some(value) => Ok(IrStmt::Block(vec![
+                    IrStmt::Object(IrObjectStmt::ChandleAssignLocal(
+                        "_ret".to_owned(),
+                        self.cg.lower_chandle(&self.path, value)?,
                     )),
                     IrStmt::Return { value: None },
                 ])),

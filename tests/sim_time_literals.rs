@@ -1,9 +1,11 @@
+
 //! End-to-end simulator coverage for real and unit-suffixed procedural
 //! delays. IEEE 1800-2009 §3.14.1 requires delay values to be rounded to the
 //! calling design element's time precision before simulation; §5.8 applies
 //! that rule to time literals. Statement and intra-assignment forms are run
 //! with optimization enabled and disabled against one owned frontend model.
 
+mod support;
 #[path = "support/sim_cli.rs"]
 mod sim_cli;
 #[path = "support/sim.rs"]
@@ -175,12 +177,8 @@ endmodule
 
 #[test]
 fn sim_local_variable_shadows_real_delay_parameter() {
-    let source = include_str!("fixtures/sim/time_literals/shadowed_real_delay_local.sv");
-    let error = codegen_error(source, "shadowed-real-delay");
-    assert!(
-        error.contains("real/shortreal procedural variable `P` is not supported in `tb`"),
-        "{error}"
-    );
+    // A supported local real delay must bind to the local, not parameter P.
+    sim_cli::run_case("time_literals", "shadowed_real_delay_local", "DELAY=1.5\n", "", &[]);
 }
 
 #[test]

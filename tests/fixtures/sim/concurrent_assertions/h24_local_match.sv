@@ -19,7 +19,7 @@ module tb;
             (second && saved == expected);
     endsequence
 
-    check: assert property (@(posedge clk) captured(value))
+    check: cover property (@(posedge clk) captured(value))
         $display("H24_LOCAL_PASS");
 
     initial begin

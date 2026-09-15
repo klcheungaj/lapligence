@@ -780,6 +780,9 @@ fn classify_simulation_node(
         }
         NodeKind::Stmt(StmtKind::Unsupported { .. }) => SimulationNodeClass::Unsupported,
         NodeKind::Var { .. } if db.is_clocking_var(id) => SimulationNodeClass::ElaborationConsumed,
+        NodeKind::Expr(ExprKind::ScopeRef { .. }) if elaboration_placeholder => {
+            SimulationNodeClass::ElaborationConsumed
+        }
         NodeKind::Expr(ExprKind::ScopeRef { .. }) if db.is_virtual_interface_initializer(id) => {
             SimulationNodeClass::ElaborationConsumed
         }
@@ -944,7 +947,7 @@ fn is_simulation_gate(
     strength0: Strength,
     strength1: Strength,
 ) -> bool {
-    class == PrimClass::Gate
+    matches!(class, PrimClass::Gate | PrimClass::Array)
         && supported_gate_strength(strength0)
         && supported_gate_strength(strength1)
         && matches!(
