@@ -99,7 +99,9 @@ explicit link files; copy `svdpi.h` into generated trees.
 Reject double quotes in flags; missing CMake must name installation guidance.
 `cmake_available()` probes once per process. Cache runtime archives by packed
 width, source content, toolchain, flags, generator, launcher, platform and
-waveform support; `LLG_RUNTIME_CACHE_DIR` overrides the platform cache root.
+waveform support. The default cache is `<workspace>/target/llg-runtime-cache`;
+`LLG_RUNTIME_CACHE_DIR` overrides it, with relative paths resolved from the
+workspace root.
 Prune stale model sources, discard incompatible/partial build trees, and retry
 a failed configure once cleanly.
 

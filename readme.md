@@ -205,10 +205,12 @@ Common options:
 - `--`: pass the remaining arguments to the generated simulator for
   `$test$plusargs`/`$value$plusargs` (for example, `llg tb.sv -- +mode=fast`).
 
-Normal builds cache compatible C runtime archives in the platform user cache,
-so generated models usually compile only their model-specific C file. Set
-`LLG_RUNTIME_CACHE_DIR` to choose a different cache root. `--gen-only` output
-remains self-contained and does not require that cache.
+Normal builds cache compatible C runtime archives under
+`target/llg-runtime-cache` in the repository, so generated models usually
+compile only their model-specific C file. Set `LLG_RUNTIME_CACHE_DIR` to choose
+a different cache root; relative override paths are resolved from the
+repository root. `--gen-only` output remains self-contained and does not require
+that cache.
 
 Exit status is `0` on success, `1` on compile/lint/build errors, and `2` for
 invalid command-line usage. A completed simulator's exit status is propagated.

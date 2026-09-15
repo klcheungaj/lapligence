@@ -24,8 +24,8 @@
 //! none (cmake picks its default generator for the host). The optional
 //! [`CmakeBuildOpts::launcher`] is forwarded without selecting a default.
 //!
-//! Normal builds compile the runtime into a process-shared user/build cache
-//! (override with `LLG_RUNTIME_CACHE_DIR`) and
+//! Normal builds compile the runtime into the repository-local
+//! `target/llg-runtime-cache` (override with `LLG_RUNTIME_CACHE_DIR`) and
 //! link each generated model against the cached static archive. The cache key
 //! covers the packed-value ABI, sources, toolchain, flags, generator, launcher,
 //! platform, and waveform support. `--gen-only` output remains self-contained.
@@ -41,15 +41,17 @@
 //! - `LLG_CMAKE` — explicit cmake program override; default `cmake`
 //!   (also used by [`cmake_available`]).
 //! - `LLG_RUNTIME_CACHE_DIR` — shared static-runtime cache root; defaults to
-//!   the platform user cache directory, or Cargo's build output directory.
+//!   `target/llg-runtime-cache` under the Cargo workspace. Relative overrides
+//!   are resolved from the workspace root.
 
 use std::error::Error;
 use std::fmt;
+use std::fs::{File, OpenOptions, TryLockError};
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::OnceLock;
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Duration, Instant};
 
 /// The generated project file. Cached builds compile only the model sources;
 /// self-contained `--gen-only` output retains the runtime and libaco sources.
@@ -104,7 +106,6 @@ const RUNTIME_WAVE_DEFINITION: &str =
     "target_compile_definitions(llg_runtime PRIVATE LLG_WAVEFORM=1 FST_CONFIG_INCLUDE=\\\"fst_config.h\\\")";
 
 const RUNTIME_CACHE_LOCK_TIMEOUT: Duration = Duration::from_secs(300);
-const RUNTIME_CACHE_STALE_AFTER: Duration = Duration::from_secs(3600);
 const RUNTIME_CACHE_LOCK_POLL: Duration = Duration::from_millis(25);
 
 /// Options for [`build_model_cmake_with_opts`].
@@ -702,24 +703,16 @@ fn runtime_source_names(waveform: bool) -> Vec<&'static str> {
 }
 
 fn runtime_cache_root() -> PathBuf {
-    if let Some(path) = std::env::var_os("LLG_RUNTIME_CACHE_DIR") {
-        return PathBuf::from(path);
+    runtime_cache_root_with_override(std::env::var_os("LLG_RUNTIME_CACHE_DIR").map(PathBuf::from))
+}
+
+fn runtime_cache_root_with_override(override_root: Option<PathBuf>) -> PathBuf {
+    let workspace = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    match override_root {
+        Some(path) if path.is_absolute() => path,
+        Some(path) => workspace.join(path),
+        None => workspace.join("target/llg-runtime-cache"),
     }
-    if let Some(path) = std::env::var_os("XDG_CACHE_HOME") {
-        return PathBuf::from(path).join("lapligence/runtime");
-    }
-    if let Some(path) = std::env::var_os("LOCALAPPDATA") {
-        return PathBuf::from(path).join("Lapligence/runtime");
-    }
-    if let Some(path) = std::env::var_os("HOME") {
-        let path = PathBuf::from(path);
-        return if cfg!(target_os = "macos") {
-            path.join("Library/Caches/Lapligence/runtime")
-        } else {
-            path.join(".cache/lapligence/runtime")
-        };
-    }
-    PathBuf::from(env!("OUT_DIR")).join("sim-runtime-cache")
 }
 
 fn runtime_cache_key(
@@ -809,47 +802,49 @@ fn cached_runtime_library(entry: &Path) -> Option<PathBuf> {
         .flatten()
 }
 
+/// Process-owned lock for one cache key.
+///
+/// The file stays in the cache so waiters always open the same inode. The OS
+/// releases the lock when its process exits, including abrupt test shutdowns.
 struct RuntimeCacheLock {
-    path: PathBuf,
+    _file: File,
 }
 
 impl RuntimeCacheLock {
     fn acquire(entry: &Path) -> Result<Self, BuildError> {
         let path = entry.with_extension("lock");
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(&path)
+            .map_err(|source| BuildError::Io {
+                action: "open runtime cache lock",
+                path: path.clone(),
+                source,
+            })?;
         let started = Instant::now();
         loop {
-            match std::fs::create_dir(&path) {
-                Ok(()) => return Ok(Self { path }),
-                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
-                    let stale = std::fs::metadata(&path)
-                        .and_then(|metadata| metadata.modified())
-                        .ok()
-                        .and_then(|modified| SystemTime::now().duration_since(modified).ok())
-                        .is_some_and(|age| age > RUNTIME_CACHE_STALE_AFTER);
-                    if stale {
-                        remove_dir_all_quiet(&path);
-                        continue;
-                    }
+            match file.try_lock() {
+                Ok(()) => return Ok(Self { _file: file }),
+                Err(TryLockError::WouldBlock) => {
                     if started.elapsed() > RUNTIME_CACHE_LOCK_TIMEOUT {
-                        return Err(BuildError::RuntimeCacheLock { directory: path });
+                        return Err(BuildError::RuntimeCacheLock {
+                            directory: path.clone(),
+                        });
                     }
                     std::thread::sleep(RUNTIME_CACHE_LOCK_POLL);
                 }
-                Err(source) => {
+                Err(TryLockError::Error(source)) => {
                     return Err(BuildError::Io {
                         action: "lock runtime cache",
-                        path,
+                        path: path.clone(),
                         source,
                     });
                 }
             }
         }
-    }
-}
-
-impl Drop for RuntimeCacheLock {
-    fn drop(&mut self) {
-        remove_dir_all_quiet(&self.path);
     }
 }
 
@@ -1094,6 +1089,48 @@ mod tests {
         assert_ne!(
             base,
             runtime_cache_key(64, false, "cc", "-O2", "cmake", &launched)
+        );
+    }
+
+    #[test]
+    fn runtime_cache_lock_file_can_be_reused_after_release() {
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        let unique = NEXT.fetch_add(1, Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!(
+            "llg-runtime-cache-lock-{}-{unique}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let entry = dir.join("entry");
+
+        let first = RuntimeCacheLock::acquire(&entry).unwrap();
+        let lock_path = entry.with_extension("lock");
+        assert!(lock_path.is_file());
+        drop(first);
+
+        let second = RuntimeCacheLock::acquire(&entry).unwrap();
+        drop(second);
+        assert!(lock_path.is_file());
+
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn runtime_cache_defaults_to_workspace_target_and_accepts_override() {
+        let workspace_default =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/llg-runtime-cache");
+        assert_eq!(runtime_cache_root_with_override(None), workspace_default);
+
+        let relative_override = PathBuf::from("custom/runtime-cache");
+        assert_eq!(
+            runtime_cache_root_with_override(Some(relative_override.clone())),
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(relative_override)
+        );
+
+        let absolute_override = std::env::temp_dir().join("llg-custom-runtime-cache");
+        assert_eq!(
+            runtime_cache_root_with_override(Some(absolute_override.clone())),
+            absolute_override
         );
     }
 

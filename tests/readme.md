@@ -89,6 +89,9 @@
 - `cargo-nextest` (`cargo install cargo-nextest --locked`).
 - CMake and a C compiler; the file-based conformance suites require both.
 - Run commands from the repository root.
+- Generated-runtime archives are shared under `target/llg-runtime-cache` by
+  default; set `LLG_RUNTIME_CACHE_DIR` to override the location. Relative
+  override paths are resolved from the repository root.
 - Nextest runs 8 tests concurrently by default; use
   `--profile max-threads` to opt in to 32 on a sufficiently large host.
 
