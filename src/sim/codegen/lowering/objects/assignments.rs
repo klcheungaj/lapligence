@@ -3,7 +3,6 @@
 use super::*;
 
 impl Codegen<'_> {
-
     pub(in super::super) fn lower_object_assignment(
         &mut self,
         path: &str,

@@ -515,7 +515,11 @@ pub enum IrSysFunc {
     /// source order and passed as bounded packed/real values to the generated
     /// model bridge; unsupported aggregate/string values are rejected while
     /// lowering rather than being silently coerced.
-    VpiCall { site: usize, name: String, args: Vec<IrExpr> },
+    VpiCall {
+        site: usize,
+        name: String,
+        args: Vec<IrExpr>,
+    },
     /// Verilog-2001 `$random` and the seven legacy probabilistic distribution
     /// functions.  Distribution seeds are writable packed lvalues; keeping
     /// the lvalue in IR lets emission evaluate it once, update it after the

@@ -3,7 +3,6 @@
 use super::*;
 
 impl Codegen<'_> {
-
     /// Return the owned metadata for an expression whose resolved type is an
     /// enum. This uses only the captured descriptor/type tables.
     pub(in super::super) fn enum_metadata_for_expr(

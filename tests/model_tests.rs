@@ -356,6 +356,56 @@ fn packed_ranges_distinguish_same_named_locals_in_unnamed_blocks() {
 }
 
 #[test]
+fn instance_containers_normalize_gate_arrays_and_reject_cycles() {
+    let compiled = compile::compile_checked(&compile::CompileOpts {
+        sources: vec![compile::OwnedSource::compilation_unit(
+            "gate_arrays.sv",
+            include_str!("fixtures/sim/gates/array_scopes.sv"),
+        )],
+        top: Some("tb".to_owned()),
+        ..Default::default()
+    })
+    .expect("valid primitive instance arrays");
+    let database = db::Db::from_slang(&compiled.snapshot).expect("normalized instance arrays");
+    let scope_gates = database
+        .node_ids()
+        .filter(|id| {
+            matches!(
+                database.node_kind(*id),
+                db::NodeKind::ModuleInst { .. } | db::NodeKind::GenScope
+            )
+        })
+        .map(|id| {
+            database
+                .node(id)
+                .children
+                .iter()
+                .filter(|child| matches!(database.node_kind(**child), db::NodeKind::Gate { .. }))
+                .count()
+        })
+        .filter(|count| *count != 0)
+        .collect::<Vec<_>>();
+    assert_eq!(scope_gates, vec![4, 4]);
+
+    let mut snapshot = compiled.snapshot;
+    let array = snapshot
+        .semantic_nodes
+        .iter()
+        .find(|node| node.kind == llg::ffi::slang::SemanticKind::Instance && node.subkind == 193)
+        .expect("primitive array container");
+    let edges = array.edge_start as usize..(array.edge_start + array.edge_count) as usize;
+    let child = snapshot.semantic_edges[edges]
+        .iter_mut()
+        .find(|edge| edge.role == llg::ffi::slang::SemanticEdgeRole::Child)
+        .expect("array child edge");
+    child.target_id = array.id;
+    assert!(matches!(
+        db::Db::from_slang(&snapshot),
+        Err(db::DbError::InvalidSnapshot(message)) if message.contains("instance container")
+    ));
+}
+
+#[test]
 fn db_owns_dynamic_net_declaration_assignment_shape() {
     in_temp_dir(|| {
         let source = PathBuf::from("net_decl_shape.sv");

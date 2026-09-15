@@ -3,7 +3,6 @@
 use super::*;
 
 impl Db {
-
     /// Build the owned semantic database from a validated Slang snapshot.
     ///
     /// This conversion never reads source files and retains no native owner.
@@ -176,34 +175,41 @@ impl Db {
                     children.push(high_expression);
                 }
             }
-            if semantic.kind == SemanticKind::Instance {
+            if matches!(
+                semantic.kind,
+                SemanticKind::Instance | SemanticKind::Scope | SemanticKind::GenerateScope
+            ) && semantic.subkind != 194
+            {
                 let mut flattened = Vec::new();
-                for child in children {
+                let mut expanded = HashSet::new();
+                let mut pending = children;
+                pending.reverse();
+                while let Some(child) = pending.pop() {
                     let child_semantic = &snapshot.semantic_nodes[child.index()];
-                    if child_semantic.kind == SemanticKind::Scope && child_semantic.subkind == 194 {
-                        flattened.extend(
+                    let instance_body =
+                        child_semantic.kind == SemanticKind::Scope && child_semantic.subkind == 194;
+                    let instance_array = child_semantic.kind == SemanticKind::Instance
+                        && child_semantic.subkind == 193;
+                    if instance_body || instance_array {
+                        if !expanded.insert(child) {
+                            return Err(DbError::InvalidSnapshot(
+                                "cyclic or repeated instance container".to_owned(),
+                            ));
+                        }
+                        // Arrays can occur inside the implicit instance body
+                        // or another array dimension. Expand every container
+                        // before exposing concrete children to consumers.
+                        pending.extend(
                             semantic_edges(snapshot, child_semantic)?
                                 .iter()
-                                .filter(|edge| edge.role != SemanticEdgeRole::Reference)
+                                .rev()
                                 .filter(|edge| {
-                                    snapshot
-                                        .semantic_nodes
-                                        .get(edge.target_id as usize)
-                                        .is_some_and(|node| {
-                                            !node.is_uninstantiated
-                                                && node.kind != SemanticKind::Definition
-                                        })
+                                    if instance_array {
+                                        edge.role == SemanticEdgeRole::Child
+                                    } else {
+                                        edge.role != SemanticEdgeRole::Reference
+                                    }
                                 })
-                                .map(|edge| semantic_id(&ids, edge.target_id))
-                                .collect::<Result<Vec<_>, _>>()?,
-                        );
-                    } else if child_semantic.kind == SemanticKind::Instance
-                        && child_semantic.subkind == 193
-                    {
-                        flattened.extend(
-                            semantic_edges(snapshot, child_semantic)?
-                                .iter()
-                                .filter(|edge| edge.role == SemanticEdgeRole::Child)
                                 .filter(|edge| {
                                     snapshot
                                         .semantic_nodes

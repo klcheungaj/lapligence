@@ -129,5 +129,11 @@ fn concurrent_failures_do_not_duplicate_explicit_actions() {
 
 #[test]
 fn fork_creation_uses_the_next_parent_draw() {
-    sim_cli::run_case("review_batch2", "rng_creation", "child seeding ok\n", "", &[]);
+    sim_cli::run_case(
+        "review_batch2",
+        "rng_creation",
+        "child seeding ok\n",
+        "",
+        &[],
+    );
 }

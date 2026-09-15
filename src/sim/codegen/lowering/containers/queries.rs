@@ -3,7 +3,6 @@
 use super::*;
 
 impl<'a> Codegen<'a> {
-
     pub(in super::super) fn is_container_string_expr(&self, node: NodeId) -> bool {
         if let Some((container, _)) = self.associative_string_element(node) {
             return self.model.containers[container].element.is_string();

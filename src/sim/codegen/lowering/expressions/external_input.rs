@@ -3,7 +3,6 @@
 use super::*;
 
 impl<'a> Codegen<'a> {
-
     fn packed_plusarg_text(constant: &IrConst, context: &str) -> Result<String, String> {
         if constant.real.is_some() || constant.width == 0 {
             return Err(format!(

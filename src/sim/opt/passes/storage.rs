@@ -777,7 +777,11 @@ fn collect_lhs_rw(l: &IrLhs, model: &IrModel, rw: &mut Rw) {
     match l {
         IrLhs::Whole(i) => rw.write(*i),
         IrLhs::WholeRef { .. } => {}
-        IrLhs::Ref { .. } => {}
+        IrLhs::Ref { bit, .. } => {
+            if let Some(index) = bit {
+                collect_expr_reads(index, model, rw);
+            }
+        }
         IrLhs::Bit(i, idx, _) => {
             rw.write(*i);
             collect_expr_reads(idx, model, rw);
@@ -835,7 +839,12 @@ fn collect_lhs_read(l: &IrLhs, model: &IrModel, rw: &mut Rw) {
                 collect_lhs_read(part, model, rw);
             }
         }
-        IrLhs::WholeRef { .. } | IrLhs::Ref { .. } => {}
+        IrLhs::Ref { bit, .. } => {
+            if let Some(index) = bit {
+                collect_expr_reads(index, model, rw);
+            }
+        }
+        IrLhs::WholeRef { .. } => {}
     }
 }
 

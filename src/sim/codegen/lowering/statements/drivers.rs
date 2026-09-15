@@ -3,7 +3,6 @@
 use super::*;
 
 impl EmitCtx<'_, '_> {
-
     /// Lower `force lhs = rhs;` into a live runtime binding. The target keeps
     /// its canonical assignment shape so selected and concatenated net
     /// targets can be overlaid without losing their underlying drivers.

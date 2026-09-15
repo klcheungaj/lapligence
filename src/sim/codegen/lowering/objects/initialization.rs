@@ -3,7 +3,6 @@
 use super::*;
 
 impl Codegen<'_> {
-
     /// Lower class-valued declaration initializers into run-once processes.
     /// They are inserted before user processes so allocation, property
     /// defaults, and constructors have completed at time zero.

@@ -3,7 +3,6 @@
 use super::*;
 
 impl EmitCtx<'_, '_> {
-
     /// Lower a `task_call` statement (or a function call used as a statement).
     /// Delay-bearing tasks are inlined at the call site; delay-free tasks (and
     /// functions) become IR calls with caller-side temps for output formals.
@@ -104,10 +103,9 @@ impl EmitCtx<'_, '_> {
                 call_receiver.class,
             );
         }
-        if is_task
-            && self.cg.task_has_wait(ft, callee_inst)
-            && (self.cg.task_has_disable(ft, callee_inst) || self.cg.task_is_disable_target(ft))
-        {
+        let can_be_disabled = is_task
+            && (self.cg.task_has_disable(ft, callee_inst) || self.cg.task_is_disable_target(ft));
+        if can_be_disabled && self.cg.task_has_wait(ft, callee_inst) {
             // Timed cancellation must unwind the callee before caller-side
             // copy-out. Delay-free calls use their native activation scope,
             // including recursive calls. Keep the timed path inline until task returns
@@ -122,7 +120,19 @@ impl EmitCtx<'_, '_> {
                 .get(&ft)
                 .map(|m| m.ir)
                 .ok_or_else(|| format!("task `{name}` has no C name"))?;
-            self.lower_call_stmts(fidx, callee_inst, h, &formals, &bound, call_receiver)
+            let call =
+                self.lower_call_stmts(fidx, callee_inst, h, &formals, &bound, call_receiver)?;
+            if can_be_disabled && !self.cg.class_nodes.contains_key(&callee_inst) {
+                // Keep cancellation visible after the callee retires its own
+                // activation, until caller-side output copy-out has finished.
+                Ok(IrStmt::ActivationScope {
+                    target: self.cg.activation_target(ft)?,
+                    exit: self.new_label("call_exit"),
+                    body: vec![call],
+                })
+            } else {
+                Ok(call)
+            }
         }
     }
 

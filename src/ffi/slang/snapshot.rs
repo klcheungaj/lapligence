@@ -2,7 +2,10 @@
 
 use super::*;
 
-pub(super) fn decode_snapshot(owner: &SnapshotOwner, limits: &Limits) -> Result<Snapshot, SlangError> {
+pub(super) fn decode_snapshot(
+    owner: &SnapshotOwner,
+    limits: &Limits,
+) -> Result<Snapshot, SlangError> {
     let mut view = RawSnapshotView {
         abi_version: 0,
         flags: 0,

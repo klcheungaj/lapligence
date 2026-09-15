@@ -7,8 +7,15 @@ use super::*;
 /// the writebacks and the result.
 /// Bind queue actuals before any callee code, then release their shared cells
 /// after copy-out. The runtime also unwinds this scope on process cancellation.
-pub(in super::super) fn with_ref_scope(code: String, args: &[IrCallArg], result: Option<&str>) -> String {
-    if !args.iter().any(|arg| matches!(arg, IrCallArg::RefAddr { .. })) {
+pub(in super::super) fn with_ref_scope(
+    code: String,
+    args: &[IrCallArg],
+    result: Option<&str>,
+) -> String {
+    if !args
+        .iter()
+        .any(|arg| matches!(arg, IrCallArg::RefAddr { .. }))
+    {
         return code;
     }
     match result {
@@ -136,7 +143,10 @@ pub(super) fn render_call_expr(
         }
     }
     let call_name = if let Some(virtual_call) = &call.virtual_call {
-        call_args.insert(0, super::super::objects::chandle(ctx, &virtual_call.receiver)?);
+        call_args.insert(
+            0,
+            super::super::objects::chandle(ctx, &virtual_call.receiver)?,
+        );
         format!(
             "llg_vif_call_{}_{}",
             virtual_call.interface, virtual_call.method

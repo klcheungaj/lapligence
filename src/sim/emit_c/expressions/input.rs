@@ -54,6 +54,9 @@ fn render_file_lhs_ref_with_prefix(
             "&(llg_ref_t){{ .base = {}, .width = {}, .is_signed = {}, .two_state = {}, .kind = LLG_REF_WHOLE }}",
             addr, width, signed as u8, two_state as u8
         ),
+        IrLhs::Ref { bit: Some(_), .. } => {
+            return Err("file input through a selected ref formal is not supported".to_owned());
+        }
         IrLhs::Ref { addr, const_ref, .. } => {
             if const_ref {
                 return Err("file input target cannot be a const ref".to_owned());
@@ -210,7 +213,10 @@ fn render_file_input_targets(
     Ok((declarations, array))
 }
 
-pub(super) fn render_file_input(ctx: &RCtx<'_>, input: &IrFileInput) -> Result<RenderedExpr, String> {
+pub(super) fn render_file_input(
+    ctx: &RCtx<'_>,
+    input: &IrFileInput,
+) -> Result<RenderedExpr, String> {
     let result = |code: String| RenderedExpr {
         code,
         width: 32,
@@ -350,7 +356,10 @@ pub(super) fn render_file_input(ctx: &RCtx<'_>, input: &IrFileInput) -> Result<R
     Ok(result(code))
 }
 
-pub(super) fn render_test_plusargs(ctx: &RCtx<'_>, pattern: &IrPlusArgText) -> Result<RenderedExpr, String> {
+pub(super) fn render_test_plusargs(
+    ctx: &RCtx<'_>,
+    pattern: &IrPlusArgText,
+) -> Result<RenderedExpr, String> {
     let (pattern, setup, cleanup) = render_plusarg_text(ctx, pattern, "_llg_plusarg_pattern")?;
     let code = if setup.is_empty() {
         format!("sv4_from_u64((uint64_t)llg_test_plusargs({pattern}), 32, 1)")

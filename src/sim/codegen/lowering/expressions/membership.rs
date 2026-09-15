@@ -3,7 +3,6 @@
 use super::*;
 
 impl<'a> Codegen<'a> {
-
     pub(in super::super) fn lower_inside_items(
         &mut self,
         path: &str,

@@ -3,7 +3,6 @@
 use super::*;
 
 impl<'a> Codegen<'a> {
-
     pub(super) fn sampled_signal_of(&self, id: NodeId) -> Option<&SignalInfo> {
         let id = self.db.resolve_clocking_member(id).unwrap_or(id);
         self.clocking_samples.get(&id).map(|sample| &sample.sample)
@@ -14,7 +13,10 @@ impl<'a> Codegen<'a> {
         self.signal_of(source)
     }
 
-    pub(super) fn clocking_var_read_source_info(&self, target: NodeId) -> Result<Option<&SignalInfo>, String> {
+    pub(super) fn clocking_var_read_source_info(
+        &self,
+        target: NodeId,
+    ) -> Result<Option<&SignalInfo>, String> {
         let Some(target) = self
             .clocking_var_target(target)
             .or_else(|| self.db.is_clocking_var(target).then_some(target))
@@ -137,11 +139,19 @@ impl<'a> Codegen<'a> {
         Ok(skew.clone())
     }
 
-    pub(super) fn clocking_output_edge(&self, target: NodeId, path: &str) -> Result<ClockingEdge, String> {
+    pub(super) fn clocking_output_edge(
+        &self,
+        target: NodeId,
+        path: &str,
+    ) -> Result<ClockingEdge, String> {
         Ok(self.clocking_output_skew(target, path)?.edge)
     }
 
-    pub(super) fn clocking_output_delay(&mut self, target: NodeId, path: &str) -> Result<IrDelay, String> {
+    pub(super) fn clocking_output_delay(
+        &mut self,
+        target: NodeId,
+        path: &str,
+    ) -> Result<IrDelay, String> {
         let skew = self.clocking_output_skew(target, path)?;
         let Some(delay) = skew.delay else {
             // An omitted clocking output skew is the LRM default `#0`.

@@ -3,7 +3,6 @@
 use super::*;
 
 impl<'c, 'a> EmitCtx<'c, 'a> {
-
     /// Lower a loop body under a break/continue scope.  The continue label
     /// is appended to the body's END — for every loop shape that lands on
     /// the next-iteration point (for: the increment step; while/repeat/
@@ -133,7 +132,6 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
 }
 
 impl EmitCtx<'_, '_> {
-
     pub(super) fn lower_case(&mut self, h: NodeId) -> Result<Vec<IrStmt>, String> {
         let (case_type, check, items) = match self.cg.kind(h) {
             NodeKind::Stmt(StmtKind::Case {

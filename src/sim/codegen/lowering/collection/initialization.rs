@@ -3,7 +3,6 @@
 use super::*;
 
 impl<'a> Codegen<'a> {
-
     /// Fold every declaration initializer of a scalar VARIABLE whose init
     /// is attached to the variable (`logic l = 1'b0;`, `int x = 5;` —
     /// captured in [`Db::vars_init`]) into a constant and queue it for
@@ -620,7 +619,11 @@ impl<'a> Codegen<'a> {
         Ok(Some((target, vals)))
     }
 
-    pub(super) fn collect_scalar_decl_init(&mut self, path: &str, ca: NodeId) -> Result<(), String> {
+    pub(super) fn collect_scalar_decl_init(
+        &mut self,
+        path: &str,
+        ca: NodeId,
+    ) -> Result<(), String> {
         let target = self.cont_assign_decl_target(ca).ok_or_else(|| {
             format!("variable declaration initializer in `{path}` has no scalar target")
         })?;

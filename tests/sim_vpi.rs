@@ -157,12 +157,18 @@ fn vpi_vectors_are_simulator_owned_even_with_unspecified_request_storage() {
         );
         let plugin = compile_plugin(dir, "vpi_vector_ownership.c");
         let output = run_plugin(dir, &executable, &plugin);
-        assert!(output.status.success(), "VPI vector probe failed: {output:?}");
+        assert!(
+            output.status.success(),
+            "VPI vector probe failed: {output:?}"
+        );
         assert_eq!(
             String::from_utf8_lossy(&output.stdout),
             "vpi vector ownership ok\n"
         );
-        assert!(output.stderr.is_empty(), "unexpected VPI stderr: {output:?}");
+        assert!(
+            output.stderr.is_empty(),
+            "unexpected VPI stderr: {output:?}"
+        );
         Ok(())
     })
     .expect("VPI vector ownership fixture should complete");
@@ -183,12 +189,18 @@ fn vpi_borrowed_handles_expire_at_compile_size_and_call_callback_exit() {
         );
         let plugin = compile_plugin(dir, "vpi_call_lifetime.c");
         let output = run_plugin(dir, &executable, &plugin);
-        assert!(output.status.success(), "VPI lifetime probe failed: {output:?}");
+        assert!(
+            output.status.success(),
+            "VPI lifetime probe failed: {output:?}"
+        );
         assert_eq!(
             String::from_utf8_lossy(&output.stdout),
             "vpi borrowed handles ok 1\nresult=17\nvpi borrowed handles ok 2\nresult=17\n"
         );
-        assert!(output.stderr.is_empty(), "unexpected VPI stderr: {output:?}");
+        assert!(
+            output.stderr.is_empty(),
+            "unexpected VPI stderr: {output:?}"
+        );
         Ok(())
     })
     .expect("VPI callback lifetime fixture should complete");
@@ -202,14 +214,42 @@ fn vpi_time_query_honors_requested_format_and_scope() {
     }
     sim_harness::with_frontend_temp_cwd("vpi-time-formats", |dir| {
         let executable = build_model(
-            dir, "vpi_time_formats.sv", &fixture("vpi_time_formats.sv"),
+            dir,
+            "vpi_time_formats.sv",
+            &fixture("vpi_time_formats.sv"),
             &["task $vpi_time_formats()"],
         );
         let plugin = compile_plugin(dir, "vpi_time_formats.c");
         let output = run_plugin(dir, &executable, &plugin);
-        assert!(output.status.success(), "VPI time fixture failed: {output:?}");
+        assert!(
+            output.status.success(),
+            "VPI time fixture failed: {output:?}"
+        );
         assert_eq!(output.stdout, b"vpi time formats ok\n");
-        assert!(output.stderr.is_empty(), "unexpected VPI stderr: {output:?}");
+        assert!(
+            output.stderr.is_empty(),
+            "unexpected VPI stderr: {output:?}"
+        );
         Ok(())
-    }).expect("VPI time format fixture");
+    })
+    .expect("VPI time format fixture");
+}
+
+#[test]
+fn vpi_array_metadata_validates_packed_and_real_element_shapes() {
+    if !sim::build::cmake_available() {
+        eprintln!("SKIP: cmake not available");
+        return;
+    }
+    sim_harness::with_frontend_temp_cwd("vpi-array-metadata", |dir| {
+        let source = include_str!("fixtures/sim/vpi/vpi_array_metadata.c");
+        let executable = sim::build::build_model_cmake(dir, &[("vpi_array_metadata.c", source)])
+            .map_err(|error| error.to_string())?;
+        let output = sim_harness::run_executable_output(&executable)?;
+        assert!(output.status.success(), "{output:?}");
+        assert_eq!(output.stdout, b"vpi array metadata ok\n");
+        assert!(output.stderr.is_empty(), "{output:?}");
+        Ok(())
+    })
+    .expect("VPI array metadata validation");
 }

@@ -239,7 +239,10 @@ impl<'a> Codegen<'a> {
     /// Resolve a process-local mailbox through lexical begin/loop scopes.
     /// Owned references normally carry a target declaration; the name walk is
     /// retained for frontend references whose target was not captured.
-    pub(in super::super) fn lexical_proc_mailbox_local(&self, reference: NodeId) -> Option<(NodeId, &str)> {
+    pub(in super::super) fn lexical_proc_mailbox_local(
+        &self,
+        reference: NodeId,
+    ) -> Option<(NodeId, &str)> {
         if let NodeKind::Expr(ExprKind::Ref {
             target: Some(target),
         }) = self.kind(reference)
@@ -470,7 +473,10 @@ impl<'a> Codegen<'a> {
 
     /// Resolve a procedural semaphore declaration through lexical begin/loop
     /// scopes, mirroring the process-handle resolver.
-    pub(in super::super) fn lexical_proc_semaphore_decl(&self, reference: NodeId) -> Option<NodeId> {
+    pub(in super::super) fn lexical_proc_semaphore_decl(
+        &self,
+        reference: NodeId,
+    ) -> Option<NodeId> {
         let name = self.node(reference).name.as_str();
         let mut parent = self.node(reference).parent;
         while let Some(scope) = parent {
@@ -567,7 +573,10 @@ impl<'a> Codegen<'a> {
     /// Resolve a string loop iterator through its lexical statement scopes.
     /// This mirrors `lexical_proc_local` while keeping native-string storage
     /// out of packed expression paths.
-    pub(in super::super) fn lexical_proc_string_local(&self, reference: NodeId) -> Option<(NodeId, &str)> {
+    pub(in super::super) fn lexical_proc_string_local(
+        &self,
+        reference: NodeId,
+    ) -> Option<(NodeId, &str)> {
         let name = self.node(reference).name.as_str();
         let mut parent = self.node(reference).parent;
         while let Some(scope) = parent {
@@ -645,7 +654,10 @@ impl<'a> Codegen<'a> {
         }
     }
 
-    pub(in super::super) fn lexical_proc_local(&self, reference: NodeId) -> Option<(NodeId, &ProcLocalInfo)> {
+    pub(in super::super) fn lexical_proc_local(
+        &self,
+        reference: NodeId,
+    ) -> Option<(NodeId, &ProcLocalInfo)> {
         let name = self.node(reference).name.as_str();
         let mut parent = self.node(reference).parent;
         while let Some(scope) = parent {

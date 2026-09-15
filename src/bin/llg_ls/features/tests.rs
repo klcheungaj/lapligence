@@ -5,29 +5,28 @@ use llg::core::elab::{Val, Value};
 use llg::core::model::{GenScopeModel, TypeInfo};
 use llg::core::tokens;
 
-mod module_graph;
-mod recovery;
-mod coordinates;
-mod hover;
 mod bindings;
-mod connection_tokens;
-mod references;
-mod document_symbols;
 mod completion;
+mod connection_tokens;
+mod coordinates;
 mod diagnostics;
-mod semantic_tokens;
+mod document_symbols;
+mod hover;
+mod module_graph;
 mod pipeline;
+mod recovery;
+mod references;
+mod semantic_tokens;
 use pipeline::settings_obj;
 mod configuration;
 mod cross_file;
 use cross_file::{cross_file_analysis, multiline_port_analysis};
 mod port_connections;
 use port_connections::pos_of;
-mod parameter_connections;
-mod packages;
 mod classes;
+mod packages;
+mod parameter_connections;
 mod shadow_paths;
-
 
 /// Serializes tests that temporarily change the process working directory.
 static ANALYSIS_CWD_LOCK: Mutex<()> = Mutex::new(());

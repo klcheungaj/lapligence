@@ -15,6 +15,7 @@ build-cache/
 
 docs/*
 !docs/AGENTS.md
+!docs/source_layout.md
 /persistence/
 !.cargo
 !sim_features.md

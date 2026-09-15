@@ -31,6 +31,9 @@ immediate-assertion action frames and real math functions are validated before
 optimization/emission; deferred updates remain distinct from suspension.
 Evaluator contexts and assertion actions carry activation-owned storage
 identities rather than transient C addresses.
+Packed bit writes through subroutine references retain a typed index on the
+reference lvalue. Validation, operand traversal, optimization and stack sizing
+include that index; selected references cannot be forwarded as ref actuals.
 True-net aliases retain bit-level bindings to canonical resolved net groups so
 optimized storage pruning cannot disconnect alias reads, dependencies, force/
 release descriptors, or waveform observations.

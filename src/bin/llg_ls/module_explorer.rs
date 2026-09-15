@@ -26,39 +26,44 @@ use llg::core::model::{
 
 mod catalog;
 use catalog::{
-    GraphCatalog, GraphResolution, mapped_source_identity, graph_topology,
-    SourceElaborationLookup,
+    graph_topology, mapped_source_identity, GraphCatalog, GraphResolution, SourceElaborationLookup,
 };
 mod budget;
+#[cfg(test)]
+use budget::GUARANTEED_HIERARCHY_ROOT_SLOTS;
 use budget::{
-    collect_budgeted, take_module_record, compatibility_module, MAX_INSTANCE_NODES,
-    GUARANTEED_HIERARCHY_ROOT_SLOTS, MAX_SAFE_HIERARCHY_DEPTH, COMPATIBILITY_TERMINAL_SLOTS,
-    GRAPH_TERMINAL_SLOTS,
+    collect_budgeted, compatibility_module, take_module_record, COMPATIBILITY_TERMINAL_SLOTS,
+    GRAPH_TERMINAL_SLOTS, MAX_INSTANCE_NODES, MAX_SAFE_HIERARCHY_DEPTH,
 };
 pub(crate) use budget::{new_response_budget, InstanceBudget};
 mod content;
 use content::{
-    graph_module, graph_port, graph_parameter, instance_signals, instance_signals_with_source,
-    graph_signals, definition_port, definition_parameter,
+    definition_parameter, definition_port, graph_module, graph_parameter, graph_port,
+    graph_signals, instance_signals, instance_signals_with_source,
 };
 mod hierarchy;
 use hierarchy::{
-    graph_cycle_root, graph_definition_children, graph_instance_node, graph_elaborated_scope,
-    merge_source_scope, graph_hierarchy_name,
+    graph_cycle_root, graph_definition_children, graph_hierarchy_name, graph_instance_node,
 };
+#[cfg(test)]
+use hierarchy::{graph_elaborated_scope, merge_source_scope};
 mod compatibility;
 use compatibility::{collect_instances_bounded, instance_node};
 mod presentation;
-use presentation::{remap_instance_uris, remap_content_uris, remap_uri};
+use presentation::{remap_content_uris, remap_instance_uris, remap_uri};
 mod types;
 use types::{
-    module_id, instance_id, generate_scope_id, find_definition_id, same_name, clean_name,
-    source_uri, source_range, instance_range, explorer_type_with_context, direction, port,
-    signal, parameter, port_with_source, signal_with_source, parameter_with_source,
-    explorer_location, resolved_type_display, normalize_type_display,
-    normalize_symbolic_expression, bracket_spans,
+    bracket_spans, clean_name, direction, explorer_location, explorer_type_with_context,
+    find_definition_id, generate_scope_id, instance_id, instance_range, module_id, parameter,
+    parameter_with_source, port, port_with_source, same_name, signal, signal_with_source,
+    source_range, source_uri,
 };
+#[cfg(test)]
+use types::{normalize_symbolic_expression, normalize_type_display, resolved_type_display};
 
+fn is_false(value: &bool) -> bool {
+    !value
+}
 
 /// A source range in the LSP's zero-based coordinate space.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]

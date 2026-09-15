@@ -60,7 +60,12 @@ pub(super) fn render_memory(
     ))
 }
 
-pub(super) fn render_vpi_call(ctx: &RCtx<'_>, site: usize, name: &str, args: &[IrExpr]) -> Result<String, String> {
+pub(super) fn render_vpi_call(
+    ctx: &RCtx<'_>,
+    site: usize,
+    name: &str,
+    args: &[IrExpr],
+) -> Result<String, String> {
     let mut declarations = String::new();
     let mut values = Vec::with_capacity(args.len());
     for (index, arg) in args.iter().enumerate() {

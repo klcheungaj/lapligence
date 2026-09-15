@@ -468,10 +468,15 @@ impl EmitCtx<'_, '_> {
             }) => {
                 // An implicit base constructor has no call-expression edge.
                 // It still constructs every base layer before this layer's defaults.
-                let receiver = self.func.as_ref()
+                let receiver = self
+                    .func
+                    .as_ref()
                     .and_then(|function| function.class_receiver.clone())
-                    .ok_or_else(|| format!("super constructor has no receiver in `{}`", self.path))?;
-                self.cg.lower_implicit_class_construction(&self.path, self.inst, receiver)
+                    .ok_or_else(|| {
+                        format!("super constructor has no receiver in `{}`", self.path)
+                    })?;
+                self.cg
+                    .lower_implicit_class_construction(&self.path, self.inst, receiver)
             }
             NodeKind::Expr(ExprKind::NewClass {
                 is_super_class: true,
@@ -487,15 +492,22 @@ impl EmitCtx<'_, '_> {
                     } => (name.clone(), *is_task, *callee),
                     _ => return Err("super constructor edge is not a function call".to_owned()),
                 };
-                let mut statements = vec![self.lower_task_call(
-                    *constructor, &name, is_task, callee,
-                )?];
+                let mut statements =
+                    vec![self.lower_task_call(*constructor, &name, is_task, callee)?];
                 let function = self.func.as_ref().and_then(|function| function.def_node);
-                if function.is_some_and(|function| matches!(self.cg.kind(function),
-                    NodeKind::FuncTask { is_constructor: true, .. }))
-                {
+                if function.is_some_and(|function| {
+                    matches!(
+                        self.cg.kind(function),
+                        NodeKind::FuncTask {
+                            is_constructor: true,
+                            ..
+                        }
+                    )
+                }) {
                     statements.extend(self.cg.lower_class_initializers(
-                        &self.path, self.inst, IrChandleExpr::LocalRead("_this".to_owned()),
+                        &self.path,
+                        self.inst,
+                        IrChandleExpr::LocalRead("_this".to_owned()),
                     )?);
                 }
                 Ok(statements)

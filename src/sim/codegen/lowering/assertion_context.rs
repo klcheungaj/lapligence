@@ -3,7 +3,6 @@
 use super::*;
 
 impl<'a> Codegen<'a> {
-
     /// Allocate (or retrieve) the bounded runtime slot for a Slang local
     /// assertion variable. Returning `None` keeps ordinary reference
     /// resolution unchanged when no assertion graph is active.

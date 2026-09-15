@@ -3,7 +3,6 @@
 use super::*;
 
 impl<'a> Codegen<'a> {
-
     fn lower_sampled_func_expr(
         &mut self,
         scope_path: &str,
@@ -1036,7 +1035,8 @@ impl<'a> Codegen<'a> {
                         })
                         .collect(),
                 ));
-                self.model.vpi_compile_calls[site].time_unit_fs = self.timescale_of_node(call).unit_fs;
+                self.model.vpi_compile_calls[site].time_unit_fs =
+                    self.timescale_of_node(call).unit_fs;
                 Ok(IrExpr::new(
                     IrExprKind::SysFunc(IrSysFunc::VpiCall {
                         site,

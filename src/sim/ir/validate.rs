@@ -18,7 +18,6 @@ mod statements;
 mod tables;
 mod values;
 
-
 /// A structural IR invariant violation detected between simulator phases.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct IrValidationError {

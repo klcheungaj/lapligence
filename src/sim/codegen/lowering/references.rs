@@ -3,7 +3,6 @@
 use super::*;
 
 impl<'a> Codegen<'a> {
-
     /// Resolve a module-reference signal to its final typed lvalue.  The
     /// lvalue is intentionally composed only for legal direct selections;
     /// an already-selected reference cannot be selected again unless its

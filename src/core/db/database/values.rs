@@ -136,7 +136,10 @@ pub(super) fn operation_from_slang(operation: SemanticOperation, unary: bool) ->
     }
 }
 
-pub(super) fn time_exponent(scale: Option<SemanticTimeScale>, precision: bool) -> Result<i32, DbError> {
+pub(super) fn time_exponent(
+    scale: Option<SemanticTimeScale>,
+    precision: bool,
+) -> Result<i32, DbError> {
     let Some(scale) = scale else {
         return Ok(if precision { -12 } else { -9 });
     };

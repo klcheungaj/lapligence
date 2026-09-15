@@ -3,7 +3,6 @@
 use super::*;
 
 impl Codegen<'_> {
-
     pub(in super::super) fn lower_string(
         &mut self,
         path: &str,
@@ -53,7 +52,11 @@ impl Codegen<'_> {
             }
         }
         let callable = match self.kind(node) {
-            NodeKind::FuncCall { is_task: false, callee, .. } => Some(*callee),
+            NodeKind::FuncCall {
+                is_task: false,
+                callee,
+                ..
+            } => Some(*callee),
             NodeKind::MethodCall { callee, .. } if self.is_class_method_call(node) => Some(*callee),
             _ => None,
         };

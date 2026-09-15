@@ -3,7 +3,6 @@
 use super::*;
 
 impl<'a> Codegen<'a> {
-
     pub(in super::super) fn query_descriptor(&self, node: NodeId) -> Option<&TypeDescriptor> {
         self.db
             .type_descriptor(node)

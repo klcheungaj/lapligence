@@ -3,7 +3,6 @@
 use super::*;
 
 impl<'a> Codegen<'a> {
-
     // ── PCA site pre-scan (two-phase discovery, phase 1) ─────────────────────
 
     /// Allocate every procedural continuous assignment site in the instance
@@ -16,7 +15,11 @@ impl<'a> Codegen<'a> {
     /// permanent no-op). Function/task definition bodies are not scanned
     /// here: they always lower before any process body, so sites inside them
     /// still allocate ahead of every process-body deassign.
-    pub(in super::super) fn prescan_pca_sites(&mut self, inst: NodeId, path: &str) -> Result<(), String> {
+    pub(in super::super) fn prescan_pca_sites(
+        &mut self,
+        inst: NodeId,
+        path: &str,
+    ) -> Result<(), String> {
         for c in &self.node(inst).children {
             if matches!(self.kind(*c), NodeKind::Process { .. }) {
                 self.prescan_pca_proc(inst, path, *c)?;
@@ -706,7 +709,11 @@ impl<'a> Codegen<'a> {
     pub(in super::super) fn dependency_label(&self, dependency: &IrDependency) -> String {
         match dependency {
             IrDependency::Scalar(name) | IrDependency::Real(name) => name.clone(),
-            IrDependency::PackedRange { storage, lsb, width } => format!("{}[{lsb} +: {width}]", self.dependency_label(storage)),
+            IrDependency::PackedRange {
+                storage,
+                lsb,
+                width,
+            } => format!("{}[{lsb} +: {width}]", self.dependency_label(storage)),
             IrDependency::ArrayElement { array, index } => {
                 format!("array[{array}] element {index}")
             }

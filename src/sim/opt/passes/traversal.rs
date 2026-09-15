@@ -696,7 +696,10 @@ pub(super) fn walk_model_exprs_mut(model: &mut IrModel, f: &mut impl FnMut(&mut 
     }
 }
 
-pub(super) fn walk_execution_exprs_mut(processes: &mut [ExecutionProcess], f: &mut impl FnMut(&mut IrExpr)) {
+pub(super) fn walk_execution_exprs_mut(
+    processes: &mut [ExecutionProcess],
+    f: &mut impl FnMut(&mut IrExpr),
+) {
     for process in processes {
         for block in &mut process.blocks {
             walk_stmts_mut(&mut block.operations, f);

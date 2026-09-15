@@ -22,38 +22,38 @@ use support::lsp::{default_init_options, file_uri, LspProcess};
 
 use serde_json::{json, Value};
 
-#[path = "lsp_stdio/diagnostics.rs"]
-mod diagnostics;
-#[path = "lsp_stdio/workspace.rs"]
-mod workspace;
 #[path = "lsp_stdio/configuration.rs"]
 mod configuration;
+#[path = "lsp_stdio/definitions.rs"]
+mod definitions;
 #[path = "lsp_stdio/dependencies.rs"]
 mod dependencies;
+#[path = "lsp_stdio/diagnostics.rs"]
+mod diagnostics;
+#[path = "lsp_stdio/hover_completion.rs"]
+mod hover_completion;
+#[path = "lsp_stdio/lifecycle.rs"]
+mod lifecycle;
+#[path = "lsp_stdio/limits.rs"]
+mod limits;
 #[path = "lsp_stdio/recovery.rs"]
 mod recovery;
 #[path = "lsp_stdio/semantic_tokens.rs"]
 mod semantic_tokens;
-#[path = "lsp_stdio/limits.rs"]
-mod limits;
-#[path = "lsp_stdio/lifecycle.rs"]
-mod lifecycle;
-#[path = "lsp_stdio/hover_completion.rs"]
-mod hover_completion;
-#[path = "lsp_stdio/definitions.rs"]
-mod definitions;
+#[path = "lsp_stdio/workspace.rs"]
+mod workspace;
 use definitions::single_location;
 #[path = "lsp_stdio/connections.rs"]
 mod connections;
-#[path = "lsp_stdio/tokens.rs"]
-mod tokens;
-#[path = "lsp_stdio/module_graph.rs"]
-mod module_graph;
 #[path = "lsp_stdio/lint.rs"]
 mod lint;
+#[path = "lsp_stdio/module_graph.rs"]
+mod module_graph;
 #[path = "lsp_stdio/rename.rs"]
 mod rename;
-use rename::{TempDirCleanup, rename_workspace, edits_for, start_key};
+#[path = "lsp_stdio/tokens.rs"]
+mod tokens;
+use rename::{edits_for, rename_workspace, start_key, TempDirCleanup};
 #[path = "lsp_stdio/performance.rs"]
 mod performance;
 use performance::memo_cache_stats;
@@ -64,7 +64,6 @@ use parameter_hover::{param_hover_markup, value_line};
 mod inactive_ranges;
 #[path = "lsp_stdio/macro_hover.rs"]
 mod macro_hover;
-
 
 const FIXTURE_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/lsp");
 const MODULE_EXPLORER_FIXTURE_DIR: &str = concat!(

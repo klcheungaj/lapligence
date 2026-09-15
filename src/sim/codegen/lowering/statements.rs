@@ -22,7 +22,6 @@ mod forks;
 mod formatting;
 mod system_tasks;
 
-
 fn default_real_local_initializer(width: u32) -> Option<Box<IrExpr>> {
     (width == 0).then(|| {
         Box::new(IrExpr::new(

@@ -3,7 +3,6 @@
 use super::*;
 
 impl<'a> Codegen<'a> {
-
     /// Lower a fixed-width bit-stream cast into a packed-element dynamic
     /// array or queue.  The target size is derived from the source width, so
     /// the existing value-assignment runtime can replace the destination in a

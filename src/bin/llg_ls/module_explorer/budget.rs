@@ -139,10 +139,6 @@ pub(crate) fn new_response_budget() -> InstanceBudget {
     )
 }
 
-fn is_false(value: &bool) -> bool {
-    !value
-}
-
 /// The serialized instance budget is shared by one complete snapshot.  Keep
 /// terminal slots available so a cycle can still be represented when the
 /// ordinary expansion slots have been consumed; a budget marker uses one of

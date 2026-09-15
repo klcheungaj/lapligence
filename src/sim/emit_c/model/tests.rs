@@ -1,7 +1,5 @@
 use super::*;
-use crate::sim::ir::{
-    IrArray, IrConst, IrExpr, IrExprKind, IrProcess, IrShape, IrSignal, IrStmt,
-};
+use crate::sim::ir::{IrArray, IrConst, IrExpr, IrExprKind, IrProcess, IrShape, IrSignal, IrStmt};
 
 fn packed_const(value: u64) -> IrExpr {
     IrExpr::new(
@@ -203,9 +201,7 @@ fn waveform_model_emits_controls_hierarchy_and_final_time_close() {
     assert!(c.contains("llg_wave_flush(llg_time());"));
     assert!(c.contains("llg_wave_limit(sv4_to_u64("));
     assert!(c.contains("llg_wave_model_init(10ULL)"));
-    assert!(
-        c.contains("llg_wave_register_sv4(\"top\\037g[0]\\037value\", &G_top_g_0__value, 12)")
-    );
+    assert!(c.contains("llg_wave_register_sv4(\"top\\037g[0]\\037value\", &G_top_g_0__value, 12)"));
     assert!(c.contains("llg_wave_register_sv4(\"top\\037alias\", &g_net_0.resolved, 1)"));
     assert!(c.contains("llg_wave_register_real(\"top\\037r\", &D_top_r)"));
     assert!(!c.contains("llg_wave_register_sv4(\"G_top_pca$0_en"));

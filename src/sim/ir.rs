@@ -44,42 +44,40 @@ mod constants;
 pub use constants::IrConst;
 mod expressions;
 pub use expressions::{
-    IrEnumMember, IrEnumMethod, IrEnumQuery, IrExprKind, IrExpr, IrMutationExpr, IrDynamicCast,
-    IrBinOp, IrUnOp, IrRealBinOp, IrRealUnOp, IrSampledFunc, IrSampledCall, IrSampledDomain,
-    IrSysFunc, IrFileInputTarget, IrFileReadTarget, IrFileInput, IrRandomFunc, IrPlusArgText,
-    IrPlusArgTarget, IrMathFunc, IrBitQuery, IrTimeKind,
+    IrBinOp, IrBitQuery, IrDynamicCast, IrEnumMember, IrEnumMethod, IrEnumQuery, IrExpr,
+    IrExprKind, IrFileInput, IrFileInputTarget, IrFileReadTarget, IrMathFunc, IrMutationExpr,
+    IrPlusArgTarget, IrPlusArgText, IrRandomFunc, IrRealBinOp, IrRealUnOp, IrSampledCall,
+    IrSampledDomain, IrSampledFunc, IrSysFunc, IrTimeKind, IrUnOp,
 };
 mod lvalues;
-pub use lvalues::{IrElemSel, IrStreamDirection, IrInsideItem, IrLhs, IrStreamTarget};
+pub use lvalues::{IrElemSel, IrInsideItem, IrLhs, IrStreamDirection, IrStreamTarget};
 mod calls;
-pub use calls::{IrCallArg, IrCallExpr, IrCall, IrVirtualCall, IrDepth};
+pub use calls::{IrCall, IrCallArg, IrCallExpr, IrDepth, IrVirtualCall};
 mod statements;
 pub use statements::{
-    IrCaseKind, IrUniquePriorityCheck, IrCaseItem, IrDisplayRadix, IrMemoryRadix, IrFileOp,
-    IrActivationTarget, IrClockingSampleMode, IrStmt, IrStochasticStmt, IrWaveDumpVars,
+    IrActivationTarget, IrCaseItem, IrCaseKind, IrClockingSampleMode, IrDisplayRadix, IrFileOp,
+    IrMemoryRadix, IrStmt, IrStochasticStmt, IrUniquePriorityCheck, IrWaveDumpVars,
 };
 mod events;
 pub use events::{
-    IrEdge, IrEventRef, IrWaitSrc, IrJoinKind, IrDelay, IrTransitionDelay, IrCapture,
-    IrEventCapture, IrEventContext, IrDeferredAction, IrCapturedBranch, IrEvent,
+    IrCapture, IrCapturedBranch, IrDeferredAction, IrDelay, IrEdge, IrEvent, IrEventCapture,
+    IrEventContext, IrEventRef, IrJoinKind, IrTransitionDelay, IrWaitSrc,
 };
 mod assertions;
 pub use assertions::{
-    IrSeverityLevel, IrAssertionControlKind, IrImmediateAssertionKind,
-    IrConcurrentAssertionKind, IrSequenceRange, IrSequenceTransition, IrSequenceLocal,
-    IrSequence, IrAssertion,
+    IrAssertion, IrAssertionControlKind, IrConcurrentAssertionKind, IrImmediateAssertionKind,
+    IrSequence, IrSequenceLocal, IrSequenceRange, IrSequenceTransition, IrSeverityLevel,
 };
 mod processes;
-pub use processes::{IrPreFn, IrShape, IrProcessKind, IrProcess};
+pub use processes::{IrPreFn, IrProcess, IrProcessKind, IrShape};
 mod functions;
-pub use functions::{IrFormalMode, IrFormal, IrDpiImport, IrLocal, IrFunc};
+pub use functions::{IrDpiImport, IrFormal, IrFormalMode, IrFunc, IrLocal};
 mod initialization;
-pub use initialization::{IrInitPhase, IrInitTarget, IrInitialization, IrInitStep};
+pub use initialization::{IrInitPhase, IrInitStep, IrInitTarget, IrInitialization};
 mod storage;
-pub use storage::{IrSignal, IrNetAliasBinding, IrNetKind, IrNetGroup, IrArray};
+pub use storage::{IrArray, IrNetAliasBinding, IrNetGroup, IrNetKind, IrSignal};
 mod vpi;
-pub use vpi::{IrVpiObjectKind, IrVpiObject, IrVpiCompileCall, IrVpiCompileArg};
-
+pub use vpi::{IrVpiCompileArg, IrVpiCompileCall, IrVpiObject, IrVpiObjectKind};
 
 /// Maximum contributions stored by one generated `llg_net_t`.
 pub const LLG_MAX_NET_DRIVERS: usize = 16;
@@ -253,7 +251,11 @@ impl StorageRef {
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum IrDependency {
     /// Static bit interval within a packed scalar or fixed-array element.
-    PackedRange { storage: Box<IrDependency>, lsb: u32, width: u32 },
+    PackedRange {
+        storage: Box<IrDependency>,
+        lsb: u32,
+        width: u32,
+    },
     /// A scalar packed value (the string is the generated C storage name).
     Scalar(String),
     /// A scalar real/shortreal value (the string is the generated C storage

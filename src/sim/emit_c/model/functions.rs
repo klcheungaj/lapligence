@@ -89,10 +89,6 @@ pub(super) fn func_prototype(f: &IrFunc) -> Result<String, String> {
     ))
 }
 
-/// The recursion depth guard at the top of every emitted function; it returns
-/// the return type's default value (or nothing) after reporting excessive nesting.
-const LLG_MAX_FUNC_DEPTH: u32 = 256;
-
 pub(super) fn render_func_body(ctx: &RCtx<'_>, f: &IrFunc) -> Result<String, String> {
     if f.dpi_import().is_some() {
         return render_dpi_thunk(f);
@@ -210,7 +206,10 @@ pub(super) fn render_func_body(ctx: &RCtx<'_>, f: &IrFunc) -> Result<String, Str
     Ok(out)
 }
 
-pub(super) fn block_stmts_of(ctx: &RCtx<'_>, stmts: &[crate::sim::ir::IrStmt]) -> Result<String, String> {
+pub(super) fn block_stmts_of(
+    ctx: &RCtx<'_>,
+    stmts: &[crate::sim::ir::IrStmt],
+) -> Result<String, String> {
     let mut out = String::new();
     for s in stmts {
         out.push_str(&render_stmt(ctx, s)?);

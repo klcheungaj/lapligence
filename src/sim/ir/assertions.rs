@@ -211,24 +211,39 @@ impl IrSequence {
         let mut scope_exits = std::collections::HashSet::new();
         for transition in &transitions {
             if transition.enter_scope.is_some() && transition.exit_scope.is_some() {
-                return Err(IrValidationError::new("sequence.scope", "one edge cannot both enter and exit a scope"));
+                return Err(IrValidationError::new(
+                    "sequence.scope",
+                    "one edge cannot both enter and exit a scope",
+                ));
             }
-            for (scope, scopes) in [(transition.enter_scope, &mut scope_entries), (transition.exit_scope, &mut scope_exits)] {
+            for (scope, scopes) in [
+                (transition.enter_scope, &mut scope_entries),
+                (transition.exit_scope, &mut scope_exits),
+            ] {
                 if let Some(scope) = scope {
                     if scope == 0 {
-                        return Err(IrValidationError::new("sequence.scope", "scope identity zero is reserved"));
+                        return Err(IrValidationError::new(
+                            "sequence.scope",
+                            "scope identity zero is reserved",
+                        ));
                     }
                     scopes.insert(scope);
                 }
             }
         }
         if scope_entries != scope_exits {
-            return Err(IrValidationError::new("sequence.scope", "unpaired first_match scope"));
+            return Err(IrValidationError::new(
+                "sequence.scope",
+                "unpaired first_match scope",
+            ));
         }
         let mut declarations = std::collections::HashSet::new();
         for (index, local) in locals.iter().enumerate() {
             if local.declaration == 0 || !declarations.insert(local.declaration) {
-                return Err(IrValidationError::new(format!("sequence.locals[{index}]"), "invalid or duplicate local declaration identity"));
+                return Err(IrValidationError::new(
+                    format!("sequence.locals[{index}]"),
+                    "invalid or duplicate local declaration identity",
+                ));
             }
             if local.width == 0 {
                 return Err(IrValidationError::new(
@@ -243,11 +258,23 @@ impl IrSequence {
                 "sequence local initializer has no local storage",
             ));
         }
-        if initializer_slots.len() != initializers.len() || initializer_slots.iter().any(|slot| *slot as usize >= locals.len()) {
-            return Err(IrValidationError::new("sequence.initializer_slots", "invalid initializer local slot"));
+        if initializer_slots.len() != initializers.len()
+            || initializer_slots
+                .iter()
+                .any(|slot| *slot as usize >= locals.len())
+        {
+            return Err(IrValidationError::new(
+                "sequence.initializer_slots",
+                "invalid initializer local slot",
+            ));
         }
         Ok(Self {
-            initializer_slots, admits_empty, leading_clock, leading_posedge, trailing_clock, trailing_posedge,
+            initializer_slots,
+            admits_empty,
+            leading_clock,
+            leading_posedge,
+            trailing_clock,
+            trailing_posedge,
             states,
             start,
             accept,

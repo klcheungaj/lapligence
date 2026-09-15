@@ -18,31 +18,33 @@ use crate::sim::ir::{
 
 mod interfaces;
 use interfaces::{
-    render_virtual_interface_runtime, function_return_type,
-    render_virtual_interface_call_prototypes, render_virtual_interface_call_bodies,
+    function_return_type, render_virtual_interface_call_bodies,
+    render_virtual_interface_call_prototypes, render_virtual_interface_runtime,
 };
 mod classes;
 use classes::{
-    render_class_decls, render_virtual_dispatch_prototypes, render_virtual_dispatch_bodies,
+    render_class_decls, render_virtual_dispatch_bodies, render_virtual_dispatch_prototypes,
 };
 mod assertions;
 use assertions::{
-    assertion_predicate_name, assertion_sequence_name, sampled_domain_callback_name,
-    render_sampled_domain_callbacks, render_assertion_callbacks,
+    assertion_predicate_name, assertion_sequence_name, render_assertion_callbacks,
+    render_sampled_domain_callbacks, sampled_domain_callback_name,
 };
 mod storage;
 use storage::{render_signal_decls, render_static_local_decls};
 mod vpi;
-use vpi::{render_vpi_metadata, render_vpi_compile_calls};
+use vpi::{render_vpi_compile_calls, render_vpi_metadata};
 mod functions;
-use functions::{func_params, func_prototype, render_func_body, block_stmts_of};
+use functions::{block_stmts_of, func_params, func_prototype, render_func_body};
 mod dpi;
-use dpi::{internal_return_type, dpi_external_prototype, dpi_helpers, render_dpi_thunk};
+use dpi::{dpi_external_prototype, dpi_helpers, internal_return_type, render_dpi_thunk};
 mod processes;
 use processes::{process_runtime_name, render_process_fn};
 mod initialization;
 use initialization::render_main;
 
+/// The recursion depth guard shared by emitted functions and DPI thunks.
+const LLG_MAX_FUNC_DEPTH: u32 = 256;
 
 // ── Model rendering ───────────────────────────────────────────────────────────
 

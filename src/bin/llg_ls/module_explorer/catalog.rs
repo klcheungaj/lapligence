@@ -17,7 +17,11 @@ pub(super) enum GraphResolution {
 }
 
 impl<'a> GraphCatalog<'a> {
-    pub(super) fn new<F>(root_id: &str, graph: &'a crate::features::ModuleGraph, source_map: &F) -> Self
+    pub(super) fn new<F>(
+        root_id: &str,
+        graph: &'a crate::features::ModuleGraph,
+        source_map: &F,
+    ) -> Self
     where
         F: Fn(&Path) -> Option<PathBuf>,
     {

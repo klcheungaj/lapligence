@@ -3,7 +3,6 @@
 use super::*;
 
 impl EmitCtx<'_, '_> {
-
     /// Lower `@(…)`: explicit edge/any specs become ONE atomic
     /// `llg_wait_any_events`; implicit sensitivity waits on the body's read
     /// set.
@@ -81,7 +80,10 @@ impl EmitCtx<'_, '_> {
         Ok(body)
     }
 
-    pub(super) fn triggered_event_ref(&mut self, mut node: NodeId) -> Result<Option<IrEventRef>, String> {
+    pub(super) fn triggered_event_ref(
+        &mut self,
+        mut node: NodeId,
+    ) -> Result<Option<IrEventRef>, String> {
         loop {
             let operand = match self.cg.kind(node) {
                 NodeKind::Expr(ExprKind::Cast { operand, .. }) => Some(*operand),

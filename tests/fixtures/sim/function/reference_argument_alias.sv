@@ -61,6 +61,7 @@ module tb;
         set_element(memory[1]);
         $display("array-after=%0d", memory[1]);
         memory[1] = 8'd0;
+        selector_calls = 0;
         set_element(memory[next_slot()]);
         $display("dynamic-array-after=%0d calls=%0d", memory[1], selector_calls);
         recurse(value, 8'd2);

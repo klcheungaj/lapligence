@@ -40,6 +40,13 @@ void llg_ref_write(llg_ref_t* ref, sv4_t value) {
     llg_ba(ref->base, updated);
 }
 
+void llg_ref_write_bit(llg_ref_t* ref, uint64_t index, sv4_t value) {
+    if (!ref || index >= ref->width) return;
+    sv4_t updated = llg_ref_read(ref);
+    sv4_bit_select_set(&updated, index, value);
+    llg_ref_write(ref, updated);
+}
+
 void llg_nba_d(double* target, double value) {
     llg_nba_d_after(target, value, 0);
 }

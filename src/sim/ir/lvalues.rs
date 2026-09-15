@@ -72,6 +72,9 @@ pub enum IrLhs {
         /// Whether this descriptor is read-only because it names a `const
         /// ref` formal in the enclosing activation.
         const_ref: bool,
+        /// Optional runtime bit index, translated to the descriptor's packed
+        /// value coordinates. A selected reference has width one and is unsigned.
+        bit: Option<Box<IrExpr>>,
     },
     /// Bit-select `[idx]` of a signal.
     Bit(usize, IrExpr, bool),
@@ -119,6 +122,9 @@ pub enum IrStreamTarget {
 impl IrLhs {
     pub(in crate::sim) fn expressions(&self, visit: &mut impl FnMut(&IrExpr)) {
         match self {
+            Self::Ref {
+                bit: Some(index), ..
+            } => visit(index),
             Self::Bit(_, index, _) => visit(index),
             Self::IdxPart(_, base, width, ..) => {
                 visit(base);
@@ -147,6 +153,9 @@ impl IrLhs {
 
     pub(in crate::sim) fn expressions_mut(&mut self, visit: &mut impl FnMut(&mut IrExpr)) {
         match self {
+            Self::Ref {
+                bit: Some(index), ..
+            } => visit(index),
             Self::Bit(_, index, _) => visit(index),
             Self::IdxPart(_, base, width, ..) => {
                 visit(base);

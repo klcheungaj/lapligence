@@ -3,7 +3,6 @@
 use super::*;
 
 impl Validator<'_> {
-
     pub(super) fn validate(&self) -> ValidationResult {
         if self.model.precision_fs == 0 {
             return self.fail("precision_fs", "scheduler precision must be non-zero");
@@ -51,7 +50,8 @@ impl Validator<'_> {
                     }
                     let storage = &self.model.arrays[array];
                     if object.real != storage.real || object.width != storage.elem_width {
-                        return self.fail(path, "VPI array element type disagrees with its storage");
+                        return self
+                            .fail(path, "VPI array element type disagrees with its storage");
                     }
                     if object.real {
                         if object.width != 0 {
@@ -402,40 +402,77 @@ impl Validator<'_> {
                         "sequence automaton has invalid state or transition storage",
                     );
                 }
-                for (label, clock) in [("leading_clock", sequence.leading_clock), ("trailing_clock", sequence.trailing_clock)] {
+                for (label, clock) in [
+                    ("leading_clock", sequence.leading_clock),
+                    ("trailing_clock", sequence.trailing_clock),
+                ] {
                     if let Some(clock) = clock {
-                        if self.model.signals.get(clock).is_none_or(|signal| signal.omit || signal.ty.width() == 0) {
-                            return self.fail(format!("{path}.{name}.{label}"), "sequence clock must be active packed storage");
+                        if self
+                            .model
+                            .signals
+                            .get(clock)
+                            .is_none_or(|signal| signal.omit || signal.ty.width() == 0)
+                        {
+                            return self.fail(
+                                format!("{path}.{name}.{label}"),
+                                "sequence clock must be active packed storage",
+                            );
                         }
                     }
                 }
                 if sequence.initializer_slots.len() != sequence.initializers.len()
-                    || sequence.initializer_slots.iter().any(|slot| *slot as usize >= sequence.locals.len()) {
-                    return Err(IrValidationError::new(format!("{path}.{name}.initializer_slots"), "invalid initializer slot"));
+                    || sequence
+                        .initializer_slots
+                        .iter()
+                        .any(|slot| *slot as usize >= sequence.locals.len())
+                {
+                    return Err(IrValidationError::new(
+                        format!("{path}.{name}.initializer_slots"),
+                        "invalid initializer slot",
+                    ));
                 }
                 if !sequence.first_match_states.is_empty() {
-                    return self.fail(format!("{path}.{name}.first_match_states"), "first_match requires scoped transitions");
+                    return self.fail(
+                        format!("{path}.{name}.first_match_states"),
+                        "first_match requires scoped transitions",
+                    );
                 }
                 let mut declarations = std::collections::HashSet::new();
                 for local in &sequence.locals {
                     if local.declaration == 0 || !declarations.insert(local.declaration) {
-                        return self.fail(format!("{path}.{name}.locals"), "invalid or duplicate local declaration identity");
+                        return self.fail(
+                            format!("{path}.{name}.locals"),
+                            "invalid or duplicate local declaration identity",
+                        );
                     }
                 }
                 let mut entries = std::collections::HashSet::new();
                 let mut exits = std::collections::HashSet::new();
                 for transition in &sequence.transitions {
                     if transition.enter_scope.is_some() && transition.exit_scope.is_some() {
-                        return self.fail(format!("{path}.{name}.scope"), "one edge cannot both enter and exit a scope");
+                        return self.fail(
+                            format!("{path}.{name}.scope"),
+                            "one edge cannot both enter and exit a scope",
+                        );
                     }
-                    for (scope, set) in [(transition.enter_scope, &mut entries), (transition.exit_scope, &mut exits)] {
+                    for (scope, set) in [
+                        (transition.enter_scope, &mut entries),
+                        (transition.exit_scope, &mut exits),
+                    ] {
                         if let Some(scope) = scope {
-                            if scope == 0 { return self.fail(format!("{path}.{name}.scope"), "zero scope identity is reserved"); }
+                            if scope == 0 {
+                                return self.fail(
+                                    format!("{path}.{name}.scope"),
+                                    "zero scope identity is reserved",
+                                );
+                            }
                             set.insert(scope);
                         }
                     }
                 }
-                if entries != exits { return self.fail(format!("{path}.{name}.scope"), "unpaired first_match scope"); }
+                if entries != exits {
+                    return self.fail(format!("{path}.{name}.scope"), "unpaired first_match scope");
+                }
                 for (transition_index, transition) in sequence.transitions.iter().enumerate() {
                     if transition.from >= sequence.states || transition.to >= sequence.states {
                         return self.fail(
@@ -470,7 +507,6 @@ impl Validator<'_> {
                                 "sequence transition clock must be active packed storage",
                             );
                         }
-
                     }
                     if transition
                         .atom
@@ -529,23 +565,38 @@ impl Validator<'_> {
                     }
                 }
                 let root_domain = (assertion.clock_signal, assertion.posedge);
-                let leading_domain = sequence.leading_clock
-                    .map(|clock| (clock, sequence.leading_posedge)).unwrap_or(root_domain);
+                let leading_domain = sequence
+                    .leading_clock
+                    .map(|clock| (clock, sequence.leading_posedge))
+                    .unwrap_or(root_domain);
                 let mut outgoing = std::collections::HashMap::new();
                 for (index, transition) in sequence.transitions.iter().enumerate() {
-                    outgoing.entry(transition.from).or_insert_with(Vec::new).push((index, transition));
+                    outgoing
+                        .entry(transition.from)
+                        .or_insert_with(Vec::new)
+                        .push((index, transition));
                 }
                 let mut pending = vec![(sequence.start, leading_domain)];
                 let mut reached = std::collections::HashSet::new();
                 while let Some((state, from_domain)) = pending.pop() {
-                    if !reached.insert((state, from_domain)) { continue; }
+                    if !reached.insert((state, from_domain)) {
+                        continue;
+                    }
                     for (index, transition) in outgoing.get(&state).into_iter().flatten() {
-                        let to_domain = transition.clock_signal
-                            .map(|clock| (clock, transition.clock_posedge)).unwrap_or(root_domain);
-                        if from_domain != to_domain && !matches!(
-                            (transition.delay.min, transition.delay.max), (0, Some(0)) | (1, Some(1))) {
-                            return self.fail(format!("{path}.{name}.transitions[{index}].delay"),
-                                "cross-clock sequence boundaries require an exact ##0 or ##1 delay");
+                        let to_domain = transition
+                            .clock_signal
+                            .map(|clock| (clock, transition.clock_posedge))
+                            .unwrap_or(root_domain);
+                        if from_domain != to_domain
+                            && !matches!(
+                                (transition.delay.min, transition.delay.max),
+                                (0, Some(0)) | (1, Some(1))
+                            )
+                        {
+                            return self.fail(
+                                format!("{path}.{name}.transitions[{index}].delay"),
+                                "cross-clock sequence boundaries require an exact ##0 or ##1 delay",
+                            );
                         }
                         pending.push((transition.to, to_domain));
                     }

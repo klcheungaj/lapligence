@@ -3,7 +3,6 @@
 use super::*;
 
 impl<'a> Codegen<'a> {
-
     /// Lower one operation, mirroring the pre-IR emitter's operand shapes,
     /// result widths/signedness and error strings arm-for-arm.
     pub(super) fn lower_logical_chain(

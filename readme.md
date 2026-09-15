@@ -331,3 +331,9 @@ scripts/clean.sh --dry-run  # show removable build data
 scripts/clean.sh            # remove old frontend and simulator outputs
 scripts/clean.sh --all      # also remove the active frontend build
 ```
+
+## Source organization
+
+See [the source layout](docs/source_layout.md) for the Rust facade/domain map,
+private C runtime fragments, and test ownership. Use
+[Coding Practices](docs/coding_practices.md) when extending these boundaries.

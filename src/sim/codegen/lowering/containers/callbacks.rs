@@ -3,7 +3,6 @@
 use super::*;
 
 impl<'a> Codegen<'a> {
-
     pub(super) fn container_method_arguments(
         &self,
         path: &str,

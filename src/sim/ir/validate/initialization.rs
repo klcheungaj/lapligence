@@ -3,7 +3,6 @@
 use super::*;
 
 impl Validator<'_> {
-
     pub(super) fn validate_pre_fns(
         &self,
         pre_fns: &[IrPreFn],

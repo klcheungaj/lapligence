@@ -380,7 +380,8 @@ static int model_object_valid(const llg_vpi_model_object_t* object,
             return object->width == 0 && object->is_real && !object->is_net &&
                    !object->packed && object->real;
         case vpiRegArray:
-            return object->width != 0 && !object->is_net;
+            return (object->is_real ? object->width == 0 : object->width != 0) &&
+                   !object->is_net;
         default:
             return 0;
     }

@@ -3,7 +3,6 @@
 use super::*;
 
 impl<'a> Codegen<'a> {
-
     pub(super) fn collect_aggregate(&mut self, path: &str, node: NodeId) -> Result<bool, String> {
         let Some(layout) = self.db.aggregate_layout(node).cloned() else {
             return Ok(false);

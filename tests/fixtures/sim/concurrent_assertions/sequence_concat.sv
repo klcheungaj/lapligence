@@ -29,5 +29,4 @@ module tb;
         #1 clk = 1'b0;
         #1 $finish(0);
     end
-initial $assertvacuousoff(0);
 endmodule

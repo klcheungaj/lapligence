@@ -3,7 +3,6 @@
 use super::*;
 
 impl<'a> Codegen<'a> {
-
     /// Lower an assignment LHS: the pre-IR [`Self::analyze_lhs`] decisions
     /// converted to [`IrLhs`] (identical by construction during the seam
     /// transition; sub-expression codes ride along verbatim).
@@ -1139,10 +1138,9 @@ impl<'a> Codegen<'a> {
                     "array assignment pattern key `{key}` has no matching index or type in `{path}`"
                 ));
             }
-            if type_values
-                .iter()
-                .any(|(previous, _)| super::super::collection::pattern_key_types_equal(previous, key_type))
-            {
+            if type_values.iter().any(|(previous, _)| {
+                super::super::collection::pattern_key_types_equal(previous, key_type)
+            }) {
                 return Err(format!(
                     "duplicate array assignment pattern type key `{key}` in `{path}`"
                 ));
@@ -1228,6 +1226,7 @@ impl<'a> Codegen<'a> {
                 signed,
                 two_state,
                 const_ref,
+                bit: None,
             },
             Lhs::Canonical(lhs) => lhs,
             Lhs::Bit(info, index, two_state) => {

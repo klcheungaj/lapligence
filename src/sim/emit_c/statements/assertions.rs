@@ -13,7 +13,11 @@ fn diagnostic_location(origin: &crate::sim::semantic::Origin) -> String {
     }
 }
 
-pub(super) fn unique_priority_call(check: &IrUniquePriorityCheck, matched: &str, has_default: bool) -> String {
+pub(super) fn unique_priority_call(
+    check: &IrUniquePriorityCheck,
+    matched: &str,
+    has_default: bool,
+) -> String {
     let Some(kind) = check.kind_code() else {
         return String::new();
     };
@@ -205,6 +209,7 @@ pub(super) fn render_deferred_immediate_assertion(
     Ok(out)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn deferred_assertion_enqueue_text(
     ctx: &RCtx<'_>,
     kind: &str,

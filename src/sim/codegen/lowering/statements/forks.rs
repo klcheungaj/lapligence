@@ -3,7 +3,6 @@
 use super::*;
 
 impl EmitCtx<'_, '_> {
-
     /// Lower one `fork … join` site.  Each branch becomes its own coroutine
     /// function attached to the enclosing process's pre-functions; nested
     /// constructs inside a branch append their own pre-functions first,

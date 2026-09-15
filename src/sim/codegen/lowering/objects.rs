@@ -1,9 +1,9 @@
 //! Lower non-integral values without encoding their storage as packed bits.
 use super::*;
 use crate::sim::ir::{
-    IrChandleExpr, IrClassFieldType, IrDisplayArg, IrEnumMember, IrEnumMethod, IrEnumQuery, IrExpr, IrMailboxElement,
-    IrMailboxExpr, IrMailboxTarget, IrMailboxValue, IrObject, IrObjectQuery, IrObjectStmt,
-    IrObjectType, IrProcessControl, IrProcessExpr, IrStringExpr,
+    IrChandleExpr, IrClassFieldType, IrDisplayArg, IrEnumMember, IrEnumMethod, IrEnumQuery, IrExpr,
+    IrMailboxElement, IrMailboxExpr, IrMailboxTarget, IrMailboxValue, IrObject, IrObjectQuery,
+    IrObjectStmt, IrObjectType, IrProcessControl, IrProcessExpr, IrStringExpr,
 };
 
 mod assignments;
@@ -18,7 +18,6 @@ mod processes;
 mod queries;
 mod strings;
 mod virtual_interfaces;
-
 
 type VirtualInterfaceAccess = (IrChandleExpr, usize, usize, u32, bool, bool);
 

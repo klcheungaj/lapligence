@@ -3,7 +3,6 @@
 use super::*;
 
 impl<'a> Codegen<'a> {
-
     /// A call argument a frontend can synthesize for a *missing named* argument: a
     /// location-less `0` constant (genuine `0` literals carry a source line).
     fn is_synthetic_arg(&self, a: NodeId) -> bool {
@@ -334,6 +333,7 @@ impl<'a> Codegen<'a> {
             signed: info.signed,
             two_state: info.two_state,
             const_ref: true,
+            bit: None,
         })
     }
 
@@ -443,7 +443,8 @@ impl<'a> Codegen<'a> {
                 shortreal: false,
             };
             let descriptor = format!(
-                "llg_ref_queue(&{}, sv4_to_index({index_code}))", queue.c_name
+                "llg_ref_queue(&{}, sv4_to_index({index_code}))",
+                queue.c_name
             );
             return Ok(IrCallArg::RefAddr {
                 addr: descriptor,
@@ -509,6 +510,7 @@ impl<'a> Codegen<'a> {
                 signed,
                 two_state,
                 const_ref: actual_const,
+                bit: None,
             } => (
                 addr.clone(),
                 *width,
@@ -518,6 +520,9 @@ impl<'a> Codegen<'a> {
                 "LLG_REF_NESTED",
                 String::new(),
             ),
+            IrLhs::Ref { bit: Some(_), .. } => {
+                return Err("packed bit selects cannot be passed by reference".to_owned());
+            }
             IrLhs::Bit(index, bit, two_state) => {
                 let signal = self.model.signals.get(*index).ok_or_else(|| {
                     format!("reference actual signal {index} is out of bounds in `{scope_path}`")

@@ -115,7 +115,9 @@ fn render_assertion_sequence(
         "static const llg_sequence_transition_t {transition_name}[{}] = {{\n",
         sequence.transitions().len().max(1)
     ));
-    if sequence.transitions().is_empty() { out.push_str("    {0},\n"); }
+    if sequence.transitions().is_empty() {
+        out.push_str("    {0},\n");
+    }
     for transition in sequence.transitions() {
         let max = transition
             .delay
@@ -197,10 +199,15 @@ fn render_assertion_sequence(
     } else {
         init_name
     };
-    let leading_clock = sequence.leading_clock
+    let leading_clock = sequence
+        .leading_clock
         .map(|signal| format!("&{}", model.signal(signal).c_name()))
         .unwrap_or_else(|| "NULL".to_owned());
-    let leading_edge = if sequence.leading_posedge { "LLG_EV_POSEDGE" } else { "LLG_EV_NEGEDGE" };
+    let leading_edge = if sequence.leading_posedge {
+        "LLG_EV_POSEDGE"
+    } else {
+        "LLG_EV_NEGEDGE"
+    };
     out.push_str(&format!(
         "static const llg_sequence_graph_t {sequence_name} = {{ {}u, {}u, {}u, {}u, {transition_name}, {}u, {first_match_states_ptr}, {atom_name}, NULL, {init_ptr}, {}, {}u, {locals_ptr}, {}u, {match_ptr}, {}, {leading_clock}, {leading_edge} }};\n\n",
         sequence.states(),

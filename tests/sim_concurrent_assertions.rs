@@ -70,10 +70,12 @@ fn concurrent_assertions_lower_consecutive_repetition() {
 
 #[test]
 fn concurrent_assertions_lower_sequence_concatenation() {
+    // At the second edge the first attempt matches, and the new attempt
+    // succeeds vacuously because `first` is false. Both run the pass action.
     sim_cli::run_case(
         "concurrent_assertions",
         "sequence_concat",
-        "CONCAT_PASS\n",
+        "CONCAT_PASS\nCONCAT_PASS\n",
         "",
         &[],
     );
@@ -103,10 +105,12 @@ fn concurrent_assertions_preserve_sequence_combinator_endpoints() {
 
 #[test]
 fn concurrent_assertions_keep_first_match_following_endpoint() {
+    // One nonvacuous completion and false antecedents at the second and
+    // third edges each execute the assertion's pass action.
     sim_cli::run_case(
         "concurrent_assertions",
         "sequence_first_match",
-        "FIRST_MATCH_PASS\nFIRST_MATCH_PASS\n",
+        "FIRST_MATCH_PASS\nFIRST_MATCH_PASS\nFIRST_MATCH_PASS\n",
         "",
         &[],
     );
@@ -125,10 +129,12 @@ fn concurrent_assertions_allow_nonconsecutive_repetition_gaps() {
 
 #[test]
 fn concurrent_assertions_preserve_zero_and_ranged_delays() {
+    // The first edge matches `zero`. The second matches the pending ranged
+    // attempt and starts one vacuous success for each assertion.
     sim_cli::run_case(
         "concurrent_assertions",
         "sequence_ranges",
-        "ZERO_PASS\nRANGED_PASS\n",
+        "ZERO_PASS\nZERO_PASS\nRANGED_PASS\nRANGED_PASS\n",
         "",
         &[],
     );

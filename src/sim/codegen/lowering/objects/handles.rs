@@ -3,7 +3,6 @@
 use super::*;
 
 impl Codegen<'_> {
-
     /// Resolve a chandle lvalue to its native pointer identity and its
     /// caller-owned pointer slot. The address is never an integer encoding.
     pub(in super::super) fn lower_chandle_lvalue(
@@ -266,7 +265,11 @@ impl Codegen<'_> {
             }
         }
         let callable = match self.kind(node) {
-            NodeKind::FuncCall { is_task: false, callee, .. } => Some(*callee),
+            NodeKind::FuncCall {
+                is_task: false,
+                callee,
+                ..
+            } => Some(*callee),
             NodeKind::MethodCall { callee, .. } if self.is_class_method_call(node) => Some(*callee),
             _ => None,
         };

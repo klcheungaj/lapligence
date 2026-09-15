@@ -3,12 +3,16 @@
 use super::*;
 
 impl<'a> Codegen<'a> {
-
     /// Emit one static C function for a function/task definition.  The body
     /// statements are emitted with the io_decls mapped to the C parameters and
     /// the locals to C locals; the function-name variable maps to a local
     /// `_ret` that `return` reads.
-    pub(super) fn emit_func_task(&mut self, path: &str, inst: NodeId, ft: NodeId) -> Result<(), String> {
+    pub(super) fn emit_func_task(
+        &mut self,
+        path: &str,
+        inst: NodeId,
+        ft: NodeId,
+    ) -> Result<(), String> {
         let automatic = matches!(
             self.kind(ft),
             NodeKind::FuncTask {
@@ -480,11 +484,18 @@ impl<'a> Codegen<'a> {
                 false,
             );
             let mut body_stmts = static_input_copies;
-            if matches!(ctx.cg.kind(ft), NodeKind::FuncTask { is_constructor: true, .. })
-                && !ctx.cg.node_contains_super_constructor(body)
+            if matches!(
+                ctx.cg.kind(ft),
+                NodeKind::FuncTask {
+                    is_constructor: true,
+                    ..
+                }
+            ) && !ctx.cg.node_contains_super_constructor(body)
             {
                 body_stmts.extend(ctx.cg.lower_implicit_class_construction(
-                    path, inst, IrChandleExpr::LocalRead("_this".to_owned()),
+                    path,
+                    inst,
+                    IrChandleExpr::LocalRead("_this".to_owned()),
                 )?);
             }
             body_stmts.extend(ctx.lower_stmt(body)?);

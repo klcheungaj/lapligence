@@ -85,7 +85,10 @@ pub(super) fn guarded_array_read(ai: &crate::sim::ir::IrArray, index_codes: &[St
     }
 }
 
-pub(super) fn guarded_real_array_read(ai: &crate::sim::ir::IrArray, index_codes: &[String]) -> String {
+pub(super) fn guarded_real_array_read(
+    ai: &crate::sim::ir::IrArray,
+    index_codes: &[String],
+) -> String {
     match array_guard(ai, index_codes) {
         Some((decls, cond, lin)) => {
             format!("({{ {decls}({cond}) ? {}[({lin})] : 0.0; }})", ai.c_name)
@@ -208,13 +211,20 @@ pub(super) fn render_lhs_value(
             addr,
             width,
             signed,
+            bit,
             ..
         } => {
+            let code = if let Some(index) = bit {
+                let index = render_expr_impl(ctx, index)?.code;
+                format!("sv4_bit_select(llg_ref_read({addr}), sv4_to_index({index}))")
+            } else {
+                format!("llg_ref_read({addr})")
+            };
             return Ok(coerce_lhs_read(
                 ctx,
                 lhs,
                 RenderedExpr {
-                    code: format!("llg_ref_read({addr})"),
+                    code,
                     width: *width,
                     signed: *signed,
                     fill: None,
@@ -346,6 +356,11 @@ pub(super) fn capture_lhs_indices_with_prefix(
         index_prefix: &str,
     ) -> Result<(), String> {
         match lhs {
+            IrLhs::Ref {
+                bit: Some(index), ..
+            } => {
+                **index = capture(ctx, index, declarations, next, index_prefix)?;
+            }
             IrLhs::Bit(_, index, _) => {
                 *index = capture(ctx, index, declarations, next, index_prefix)?;
             }

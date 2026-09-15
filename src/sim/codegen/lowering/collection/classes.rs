@@ -3,7 +3,6 @@
 use super::*;
 
 impl<'a> Codegen<'a> {
-
     pub(super) fn collect_class_funcs(&mut self, class: NodeId) -> Result<(), String> {
         let class_index = self
             .class_nodes

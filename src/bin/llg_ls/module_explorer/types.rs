@@ -61,7 +61,12 @@ pub(super) fn source_uri(file: Option<&str>) -> Option<String> {
         .or_else(|| Some(file.to_owned()))
 }
 
-pub(super) fn source_range(line: u32, col: u32, end_line: u32, end_col: u32) -> Option<ExplorerRange> {
+pub(super) fn source_range(
+    line: u32,
+    col: u32,
+    end_line: u32,
+    end_col: u32,
+) -> Option<ExplorerRange> {
     if line == 0 || col == 0 {
         return None;
     }

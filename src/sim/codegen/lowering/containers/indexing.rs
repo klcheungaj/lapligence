@@ -3,7 +3,6 @@
 use super::*;
 
 impl<'a> Codegen<'a> {
-
     fn lower_queue_method_index(&mut self, path: &str, node: NodeId) -> Result<IrExpr, String> {
         let value = self.lower_expr(path, node)?;
         ir_to_storage(value, 32, true, true)
@@ -120,7 +119,11 @@ impl<'a> Codegen<'a> {
         }
     }
 
-    pub(super) fn lower_container_index(&mut self, path: &str, node: NodeId) -> Result<IrExpr, String> {
+    pub(super) fn lower_container_index(
+        &mut self,
+        path: &str,
+        node: NodeId,
+    ) -> Result<IrExpr, String> {
         let value = self.lower_expr(path, node)?;
         if value.is_real() {
             return Err(format!(
@@ -318,7 +321,11 @@ impl<'a> Codegen<'a> {
         .then_some((container.ir, key))
     }
 
-    pub(super) fn container_element_type(&self, container: usize, depth: usize) -> Option<IrContainerElement> {
+    pub(super) fn container_element_type(
+        &self,
+        container: usize,
+        depth: usize,
+    ) -> Option<IrContainerElement> {
         let mut element = self.model.containers[container].element.clone();
         for _ in 1..depth {
             let IrContainerElement::Container { element: next, .. } = element else {

@@ -3,7 +3,6 @@
 use super::*;
 
 impl<'a> Codegen<'a> {
-
     // ── Structural gate primitives ─────────────────────────────────────────
 
     /// Lower one structural primitive ([`NodeKind::Gate`]) into comb processes

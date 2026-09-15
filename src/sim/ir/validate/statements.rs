@@ -3,8 +3,12 @@
 use super::*;
 
 impl Validator<'_> {
-
-    pub(super) fn validate_stmt(&self, stmt: &IrStmt, formals: &[IrFormal], path: &str) -> ValidationResult {
+    pub(super) fn validate_stmt(
+        &self,
+        stmt: &IrStmt,
+        formals: &[IrFormal],
+        path: &str,
+    ) -> ValidationResult {
         if let IrStmt::Delay { ticks }
         | IrStmt::DelayedAssign { ticks, .. }
         | IrStmt::ClockingDrive { ticks, .. }
@@ -43,8 +47,9 @@ impl Validator<'_> {
                     return self.fail(path, "VPI callsite descriptor does not match instruction");
                 }
                 for (shape, argument) in call.args.iter().zip(args) {
-                    if (shape.width, shape.signed, shape.real) !=
-                        (argument.width, argument.signed, argument.is_real()) {
+                    if (shape.width, shape.signed, shape.real)
+                        != (argument.width, argument.signed, argument.is_real())
+                    {
                         return self.fail(path, "VPI callsite argument shape mismatch");
                     }
                 }

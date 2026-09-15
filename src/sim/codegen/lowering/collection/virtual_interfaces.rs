@@ -3,7 +3,6 @@
 use super::*;
 
 impl<'a> Codegen<'a> {
-
     /// Return the leaf virtual-interface spelling of a declaration. Fixed
     /// unpacked arrays retain their outer descriptor, so walk the owned type
     /// shape instead of parsing an array suffix from a display name.

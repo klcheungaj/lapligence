@@ -17,20 +17,19 @@ use system_functions::render_legacy_random;
 mod input;
 use input::{render_file_input, render_test_plusargs, render_value_plusargs};
 mod lvalues;
-pub(super) use lvalues::render_lhs_address;
 pub(crate) use lvalues::array_guard;
+pub(super) use lvalues::render_lhs_address;
 use lvalues::{
-    guarded_array_read, guarded_real_array_read, lhs_shape, render_lhs_value,
-    capture_lhs_indices, capture_lhs_indices_with_prefix, render_mutation_expr,
+    capture_lhs_indices, capture_lhs_indices_with_prefix, guarded_array_read,
+    guarded_real_array_read, lhs_shape, render_lhs_value, render_mutation_expr,
 };
 mod casts;
 use casts::render_dynamic_cast;
 mod assignments;
 pub(super) use assignments::render_assign;
 mod calls;
-pub(super) use calls::with_ref_scope;
 use calls::render_call_expr;
-
+pub(super) use calls::with_ref_scope;
 
 /// The real-value code of a rendered operand: bare for real expressions,
 /// `sv4_to_real(...)` for packed ones.
@@ -162,10 +161,14 @@ pub(super) fn render_expr_impl(ctx: &RCtx<'_>, e: &IrExpr) -> Result<RenderedExp
         }
         IrExprKind::CallFn(call) => {
             let mut rendered = render_call_expr(ctx, call)?;
-            let result_type = if rendered.width == 0 { "double" } else { "sv4_t" };
+            let result_type = if rendered.width == 0 {
+                "double"
+            } else {
+                "sv4_t"
+            };
             rendered.code = with_ref_scope(rendered.code, &call.args, Some(result_type));
             rendered
-        },
+        }
         IrExprKind::EventTriggered(event) => {
             let event = super::statements::event_ref_code(ctx, event)?;
             RenderedExpr {

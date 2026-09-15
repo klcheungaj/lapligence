@@ -14,18 +14,37 @@ impl Validator<'_> {
 
     pub(super) fn valid_dependency(&self, dependency: &IrDependency) -> bool {
         match dependency {
-            IrDependency::PackedRange { storage, lsb, width } => {
+            IrDependency::PackedRange {
+                storage,
+                lsb,
+                width,
+            } => {
                 let total = match storage.as_ref() {
-                    IrDependency::Scalar(name) => self.model.signals.iter().enumerate().find_map(|(index, signal)| {
-                        let alias = format!("llg_net_alias_{index}.visible");
-                        (signal.c_name == *name || (!signal.net_alias.is_empty() && alias == *name)).then_some(signal.ty.width())
-                    }),
-                    IrDependency::ArrayElement { array, .. } => self.model.arrays.get(*array)
-                        .filter(|array| !array.real).map(|array| array.elem_width),
+                    IrDependency::Scalar(name) => {
+                        self.model
+                            .signals
+                            .iter()
+                            .enumerate()
+                            .find_map(|(index, signal)| {
+                                let alias = format!("llg_net_alias_{index}.visible");
+                                (signal.c_name == *name
+                                    || (!signal.net_alias.is_empty() && alias == *name))
+                                    .then_some(signal.ty.width())
+                            })
+                    }
+                    IrDependency::ArrayElement { array, .. } => self
+                        .model
+                        .arrays
+                        .get(*array)
+                        .filter(|array| !array.real)
+                        .map(|array| array.elem_width),
                     _ => None,
                 };
-                self.valid_dependency(storage) && *width != 0 && total.is_some_and(|total|
-                    lsb.checked_add(*width).is_some_and(|end| end <= total))
+                self.valid_dependency(storage)
+                    && *width != 0
+                    && total.is_some_and(|total| {
+                        lsb.checked_add(*width).is_some_and(|end| end <= total)
+                    })
             }
             IrDependency::Scalar(name) => {
                 let alias_index = name

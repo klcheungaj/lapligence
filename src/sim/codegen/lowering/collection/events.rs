@@ -3,7 +3,6 @@
 use super::*;
 
 impl<'a> Codegen<'a> {
-
     // ── Signal resolution ──────────────────────────────────────────────────
 
     pub(super) fn collect_named_event(
@@ -82,17 +81,26 @@ impl<'a> Codegen<'a> {
     /// reassigned handle can be lowered separately from its synchronization
     /// object.
     pub(in super::super) fn event_target_of(&self, node: NodeId) -> Option<EventTarget> {
-        let clocking = self.db.resolve_clocking_member(node)
+        let clocking = self
+            .db
+            .resolve_clocking_member(node)
             .or_else(|| self.db.is_clocking_block(node).then_some(node))
             .or_else(|| match self.kind(node) {
-                NodeKind::Expr(ExprKind::Ref { target: Some(target) })
-                    if self.db.is_clocking_block(*target) => Some(*target),
-                NodeKind::Expr(ExprKind::HierPath { refs, .. }) => refs.iter()
-                    .flatten().copied().find(|target| self.db.is_clocking_block(*target)),
+                NodeKind::Expr(ExprKind::Ref {
+                    target: Some(target),
+                }) if self.db.is_clocking_block(*target) => Some(*target),
+                NodeKind::Expr(ExprKind::HierPath { refs, .. }) => refs
+                    .iter()
+                    .flatten()
+                    .copied()
+                    .find(|target| self.db.is_clocking_block(*target)),
                 _ => None,
             });
         if let Some(block) = clocking.filter(|block| self.db.is_clocking_block(*block)) {
-            return Some(EventTarget { declaration: block, indices: Vec::new() });
+            return Some(EventTarget {
+                declaration: block,
+                indices: Vec::new(),
+            });
         }
         match self.kind(node) {
             NodeKind::NamedEvent => Some(EventTarget {

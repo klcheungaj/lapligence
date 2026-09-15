@@ -3,10 +3,13 @@
 use super::*;
 
 impl EmitCtx<'_, '_> {
-
     /// Lower an assignment without intra-assignment delay (`force_blocking`
     /// pins blocking semantics for for-loop init/increment statements).
-    pub(super) fn lower_assignment(&mut self, h: NodeId, force_blocking: bool) -> Result<IrStmt, String> {
+    pub(super) fn lower_assignment(
+        &mut self,
+        h: NodeId,
+        force_blocking: bool,
+    ) -> Result<IrStmt, String> {
         let (blocking, op) = match self.cg.kind(h) {
             NodeKind::Stmt(StmtKind::Assign { blocking, op, .. }) => (*blocking, *op),
             _ => unreachable!("non-assignment passed to lower_assignment"),
@@ -251,7 +254,11 @@ impl EmitCtx<'_, '_> {
     /// the operation's value is discarded in statement position, pre and
     /// post forms have the same blocking-write behavior.  Expression-valued
     /// forms require a side-effecting expression IR and remain unsupported.
-    pub(super) fn lower_inc_dec(&mut self, op: Operation, operands: &[NodeId]) -> Result<IrStmt, String> {
+    pub(super) fn lower_inc_dec(
+        &mut self,
+        op: Operation,
+        operands: &[NodeId],
+    ) -> Result<IrStmt, String> {
         let operand = match operands {
             [operand] => *operand,
             _ => {
@@ -262,7 +269,10 @@ impl EmitCtx<'_, '_> {
             }
         };
         let lhs = self.cg.lower_lhs(&self.path, operand)?;
-        if !matches!(lhs, IrLhs::Whole(_) | IrLhs::WholeRef { .. } | IrLhs::Ref { .. }) {
+        if !matches!(
+            lhs,
+            IrLhs::Whole(_) | IrLhs::WholeRef { .. } | IrLhs::Ref { bit: None, .. }
+        ) {
             return Err(format!(
                 "increment/decrement of a select or array element in `{}` is not supported yet",
                 self.path

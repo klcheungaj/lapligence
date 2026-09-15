@@ -47,7 +47,7 @@ fn resource_limit_failures_log_errors_with_actionable_guidance() {
     let output = std::process::Command::new(std::env::current_exe().unwrap())
         .args([
             "--exact",
-            "features::tests::resource_limit_failures_log_errors_with_actionable_guidance",
+            "features::tests::recovery::resource_limit_failures_log_errors_with_actionable_guidance",
             "--nocapture",
         ])
         .env(CHILD, "1")

@@ -14,20 +14,17 @@ use std::{fmt, ptr, slice, str};
 mod snapshot;
 use snapshot::decode_snapshot;
 mod semantics;
-use semantics::{
-    decode_semantic_edges, decode_semantic_nodes, validate_semantic_subkind,
-    decode_semantic_operation,
-};
+use semantics::{decode_semantic_edges, decode_semantic_nodes};
+#[cfg(test)]
+use semantics::{decode_semantic_operation, validate_semantic_subkind};
 mod tokens;
 use tokens::decode_lexical_tokens;
 mod diagnostics;
-use diagnostics::{decode_related, decode_diagnostics};
+use diagnostics::{decode_diagnostics, decode_related};
 mod values;
 use values::{
-    decode_instances, decode_types, decode_constants, decode_parameters,
-    validate_parameter_windows,
+    decode_constants, decode_instances, decode_parameters, decode_types, validate_parameter_windows,
 };
-
 
 const ABI_VERSION: u32 = 3;
 const INVALID_ID: u64 = u64::MAX;

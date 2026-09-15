@@ -16,7 +16,6 @@ mod patterns;
 mod queries;
 mod streaming;
 
-
 /// A fixed-array view represented by complete coordinates in logical
 /// (declared left-to-right) order.
 #[derive(Clone)]

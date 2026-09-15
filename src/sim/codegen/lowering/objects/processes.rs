@@ -3,7 +3,6 @@
 use super::*;
 
 impl Codegen<'_> {
-
     fn process_target_node(&self, node: NodeId) -> Option<NodeId> {
         match self.kind(node) {
             NodeKind::Expr(ExprKind::Ref { target }) => *target,

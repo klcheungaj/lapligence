@@ -3,7 +3,6 @@
 use super::*;
 
 impl<'a> Codegen<'a> {
-
     // Fixed unpacked-array assignment (P30).
 
     /// A fixed-array view is represented by the complete coordinate list in

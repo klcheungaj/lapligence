@@ -3,7 +3,6 @@
 use super::*;
 
 impl<'a> Codegen<'a> {
-
     // ── Port links ─────────────────────────────────────────────────────────
 
     pub(in super::super) fn bind_reference_ports(&mut self) -> Result<(), String> {
@@ -718,7 +717,11 @@ impl<'a> Codegen<'a> {
         Ok(true)
     }
 
-    pub(super) fn emit_links(&mut self, parent_path: &str, child_inst: NodeId) -> Result<(), String> {
+    pub(super) fn emit_links(
+        &mut self,
+        parent_path: &str,
+        child_inst: NodeId,
+    ) -> Result<(), String> {
         let child_path = self.instance_path_of(child_inst);
         self.inst = self.owning_inst(child_inst).unwrap_or(child_inst);
         for c in &self.node(child_inst).children {

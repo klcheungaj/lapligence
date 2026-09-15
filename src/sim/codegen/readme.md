@@ -70,6 +70,8 @@
   preserved in `IrFormal`; lowering rejects non-lvalues and incompatible
   packed/state shapes, and emits canonical alias descriptors without
   copy-in/copy-out temporaries.
+  Packed bit writes within ref formals retain typed, range-translated indices
+  and write through the original descriptor, including retained queue aliases.
 - **True-net aliases:** Legal packed `alias` declarations are flattened into
   bit-level canonical net groups; structural drivers, packed links, force/
   release, dependencies, and waveform registration use the shared resolved

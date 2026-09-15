@@ -502,7 +502,6 @@ fn run(options: DriverOptions) -> i32 {
     let opts = sim::build::CmakeBuildOpts {
         generator,
         dpi_libraries,
-        ..Default::default()
     };
     let exe = match sim::build::build_model_cmake_with_opts(&out_dir, &model, &opts) {
         Ok(e) => e,

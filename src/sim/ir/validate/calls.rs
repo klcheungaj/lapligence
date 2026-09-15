@@ -3,7 +3,6 @@
 use super::*;
 
 impl Validator<'_> {
-
     pub(super) fn validate_call_expr(
         &self,
         call: &IrCallExpr,
@@ -333,7 +332,12 @@ impl Validator<'_> {
         path: &str,
     ) -> ValidationResult {
         match lhs {
-            IrLhs::Ref { addr, width, .. } => {
+            IrLhs::Ref {
+                addr, width, bit, ..
+            } => {
+                if bit.is_some() {
+                    return self.fail(path, "packed bit selects cannot be passed by reference");
+                }
                 if addr.is_empty() {
                     return self.fail(path, "reference descriptor address must not be empty");
                 }

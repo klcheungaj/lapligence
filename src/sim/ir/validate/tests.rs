@@ -57,6 +57,49 @@ fn rejects_out_of_bounds_signal_reference() {
 }
 
 #[test]
+fn reference_bit_targets_validate_shape_and_visit_the_index() {
+    let model = valid_model();
+    let mut lhs = IrLhs::Ref {
+        addr: "r0".to_owned(),
+        width: 1,
+        signed: false,
+        two_state: false,
+        const_ref: false,
+        bit: Some(Box::new(packed_const(0, 129))),
+    };
+    let statement = |lhs| IrStmt::Assign {
+        lhs,
+        rhs: packed_const(1, 1),
+        nba: false,
+    };
+    assert_eq!(
+        model
+            .statement_capacity(&statement(lhs.clone()), None)
+            .unwrap(),
+        129
+    );
+    let mut indices = 0;
+    lhs.expressions(&mut |_| indices += 1);
+    assert_eq!(indices, 1);
+    lhs.expressions_mut(&mut |index| {
+        *index = IrExpr::new(IrExprKind::SigRead(7), 1, false, None);
+    });
+    assert!(model
+        .validate_stmt(&statement(lhs.clone()), None)
+        .unwrap_err()
+        .detail()
+        .contains("signal index 7"));
+    if let IrLhs::Ref { width, .. } = &mut lhs {
+        *width = 2;
+    }
+    assert!(model
+        .validate_stmt(&statement(lhs), None)
+        .unwrap_err()
+        .detail()
+        .contains("one unsigned bit"));
+}
+
+#[test]
 fn rejects_array_total_that_disagrees_with_dimensions() {
     let mut model = valid_model();
     model.arrays.push(IrArray {
@@ -693,8 +736,7 @@ fn string_return_storage_requires_its_function_context() {
     let value = IrStringExpr::LocalRead("_ret".to_owned());
     let statement = IrStmt::Object(IrObjectStmt::StringAssignLocal("_ret".to_owned(), value));
     assert!(model.validate_stmt(&statement, None).is_err());
-    let mut function =
-        IrFunc::new("string_fn".to_owned(), None, vec![], vec![], vec![], vec![]);
+    let mut function = IrFunc::new("string_fn".to_owned(), None, vec![], vec![], vec![], vec![]);
     assert!(model.validate_stmt(&statement, Some(&function)).is_err());
     function.ret_string = true;
     model.validate_stmt(&statement, Some(&function)).unwrap();

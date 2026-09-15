@@ -3,7 +3,6 @@
 use super::*;
 
 impl<'a> Codegen<'a> {
-
     /// `lib@`-stripped name of a signal, with its scope path when available
     /// (`"tb.bus"`, `"tb.u0.bus"`).
     pub(super) fn display_name(&self, id: NodeId) -> String {

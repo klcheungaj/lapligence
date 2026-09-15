@@ -95,6 +95,7 @@ pub(in super::super) fn render_assign(
         signed,
         two_state,
         const_ref,
+        bit,
     } = lh
     {
         if *const_ref {
@@ -111,10 +112,13 @@ pub(in super::super) fn render_assign(
         } else {
             format!("sv4_cast({}, {width}, {})", rendered.code, *signed as u8)
         };
-        return Ok(format!(
-            "llg_ref_write({addr}, {});",
-            coerce_two_state(value, *two_state)
-        ));
+        let value = coerce_two_state(value, *two_state);
+        return Ok(if let Some(index) = bit {
+            let index = render_expr_impl(ctx, index)?.code;
+            format!("llg_ref_write_bit({addr}, sv4_to_index({index}), {value});")
+        } else {
+            format!("llg_ref_write({addr}, {value});")
+        });
     }
     // A real RHS is converted to the target's vector shape up front.
     let converted: Option<(String, u32, bool)> = if rhs.width == 0 {
@@ -380,20 +384,8 @@ pub(in super::super) fn render_assign(
             signed,
             ..
         } => format!("{addr}, {}", resize(&rhs_code, *width, *signed)),
-        IrLhs::Ref {
-            addr,
-            width,
-            signed,
-            const_ref,
-            ..
-        } => {
-            if *const_ref {
-                return Err("write through const ref formal is not supported".to_string());
-            }
-            return Ok(format!(
-                "llg_ref_write({addr}, {});",
-                resize(&rhs_code, *width, *signed)
-            ));
+        IrLhs::Ref { .. } => {
+            return Err("reference assignment bypassed reference emission".to_owned())
         }
         IrLhs::Bit(idx, ie, _) => {
             let sig = ctx.model.signal(*idx);

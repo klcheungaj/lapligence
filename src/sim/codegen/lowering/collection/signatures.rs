@@ -3,7 +3,6 @@
 use super::*;
 
 impl<'a> Codegen<'a> {
-
     // ── Functions and tasks ───────────────────────────────────────────────
 
     /// Emit a `static` prototype for every function/task in the instance

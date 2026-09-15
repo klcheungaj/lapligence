@@ -63,7 +63,11 @@ pub struct IrVpiCompileArg {
 
 impl IrVpiCompileCall {
     pub fn new(name: String, args: Vec<IrVpiCompileArg>) -> Self {
-        Self { name, args, time_unit_fs: 0 }
+        Self {
+            name,
+            args,
+            time_unit_fs: 0,
+        }
     }
 }
 

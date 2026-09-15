@@ -3,7 +3,6 @@
 use super::*;
 
 impl<'c, 'a> EmitCtx<'c, 'a> {
-
     fn lower_cycle_wait(&mut self, count_node: NodeId) -> Result<IrStmt, String> {
         let block = self.cg.default_clocking_block(self.inst).ok_or_else(|| {
             format!(
@@ -30,8 +29,11 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
                 self.path
             ));
         }
-        let event = self.cg.event_globals.get(&block).ok_or_else(||
-            "default clocking block has no published event".to_owned())?;
+        let event = self
+            .cg
+            .event_globals
+            .get(&block)
+            .ok_or_else(|| "default clocking block has no published event".to_owned())?;
         let specs = vec![(IrWaitSrc::Event(IrEventRef::Static(event.ir)), IrEdge::Any)];
         Ok(IrStmt::ClockingCycleWait { count, specs })
     }
@@ -106,7 +108,11 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
         Ok(specs)
     }
 
-    pub(super) fn lower_cycle_delay(&mut self, h: NodeId, count_node: NodeId) -> Result<Vec<IrStmt>, String> {
+    pub(super) fn lower_cycle_delay(
+        &mut self,
+        h: NodeId,
+        count_node: NodeId,
+    ) -> Result<Vec<IrStmt>, String> {
         if self.in_final {
             return Err(format!(
                 "`##` cycle delay inside a final block in `{}` is not allowed",

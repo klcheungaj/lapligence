@@ -43,7 +43,11 @@ impl Codegen<'_> {
         ir_to_storage(value, width, true, true)
     }
 
-    pub(super) fn semaphore_key_argument(&mut self, path: &str, node: NodeId) -> Result<IrExpr, String> {
+    pub(super) fn semaphore_key_argument(
+        &mut self,
+        path: &str,
+        node: NodeId,
+    ) -> Result<IrExpr, String> {
         let value = self.lower_expr(path, node)?;
         if value.is_real() {
             return Err(format!("semaphore key count must be integral in `{path}`"));
@@ -95,7 +99,11 @@ impl Codegen<'_> {
         }
         self.lower_expr(path, node)
     }
-    pub(in super::super) fn collect_object(&mut self, path: &str, node: NodeId) -> Result<bool, String> {
+    pub(in super::super) fn collect_object(
+        &mut self,
+        path: &str,
+        node: NodeId,
+    ) -> Result<bool, String> {
         let is_mailbox = self.is_mailbox_expr(path, node);
         let ty = match self.kind(node) {
             NodeKind::Var { ty } => match ty.kind.as_str() {
@@ -224,9 +232,9 @@ impl Codegen<'_> {
     }
 
     pub(in super::super) fn is_string_expr(&self, path: &str, node: NodeId) -> bool {
-        if self.class_field_target(node).is_some_and(|field| {
-            matches!(self.kind(field), NodeKind::Var { ty } if ty.kind == "string")
-        }) {
+        if self.class_field_target(node).is_some_and(
+            |field| matches!(self.kind(field), NodeKind::Var { ty } if ty.kind == "string"),
+        ) {
             return true;
         }
         let target = match self.kind(node) {
@@ -324,9 +332,9 @@ impl Codegen<'_> {
     /// to be backed by a model-global object. Function formals, automatic
     /// locals, and chandle-returning calls all live in the function context.
     pub(in super::super) fn is_chandle_expr(&self, path: &str, node: NodeId) -> bool {
-        if self.class_field_target(node).is_some_and(|field| {
-            matches!(self.kind(field), NodeKind::Var { ty } if is_handle_kind(&ty.kind))
-        }) {
+        if self.class_field_target(node).is_some_and(
+            |field| matches!(self.kind(field), NodeKind::Var { ty } if is_handle_kind(&ty.kind)),
+        ) {
             return true;
         }
         if self.is_mailbox_expr(path, node) {

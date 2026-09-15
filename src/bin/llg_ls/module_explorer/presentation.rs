@@ -2,7 +2,10 @@
 
 use super::*;
 
-pub(super) fn remap_instance_uris(instance: &mut ExplorerInstance, map: &impl Fn(&Path) -> Option<PathBuf>) {
+pub(super) fn remap_instance_uris(
+    instance: &mut ExplorerInstance,
+    map: &impl Fn(&Path) -> Option<PathBuf>,
+) {
     remap_uri(&mut instance.uri, map);
     remap_content_uris(
         &mut instance.ports,

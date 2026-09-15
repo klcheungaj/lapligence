@@ -164,8 +164,7 @@ fn serialized_response_work(snapshot: &ExplorerSnapshot) -> usize {
     while let Some(item) = work.pop() {
         match item {
             Work::Instance(instance) => {
-                total +=
-                    1 + instance.ports.len() + instance.params.len() + instance.signals.len();
+                total += 1 + instance.ports.len() + instance.params.len() + instance.signals.len();
                 work.extend(instance.children.iter().map(Work::Instance));
                 work.extend(instance.generated_scopes.iter().map(Work::Scope));
             }
@@ -464,12 +463,8 @@ fn response_budget_is_shared_across_independent_analysis_roots() {
     let mut budget = new_response_budget();
     budget.prepare_workspaces();
     budget.begin_workspace(2);
-    let first_snapshot = snapshot_analysis_with_budget(
-        "first-root",
-        &first_analysis,
-        identity_source,
-        &mut budget,
-    );
+    let first_snapshot =
+        snapshot_analysis_with_budget("first-root", &first_analysis, identity_source, &mut budget);
     budget.begin_workspace(1);
     let second_snapshot = snapshot_analysis_with_budget(
         "second-root",
@@ -735,8 +730,7 @@ fn configured_top_exact_match_beats_earlier_unmatched_same_type() {
         ty: ty("logic", Some(8)),
     });
 
-    let mut analysis =
-        graph_analysis(vec![parent, child], vec![unmatched, exact], Some("child"));
+    let mut analysis = graph_analysis(vec![parent, child], vec![unmatched, exact], Some("child"));
     analysis
         .module_graph
         .elaborated_types
@@ -929,12 +923,8 @@ fn fair_catalog_keeps_later_workspace_entries_after_earlier_hierarchy_exhaustion
     let mut budget = new_response_budget();
     budget.prepare_workspaces();
     budget.begin_workspace(2);
-    let first = snapshot_analysis_with_budget(
-        "first-root",
-        &first_analysis,
-        identity_source,
-        &mut budget,
-    );
+    let first =
+        snapshot_analysis_with_budget("first-root", &first_analysis, identity_source, &mut budget);
     budget.begin_workspace(1);
     let second = snapshot_analysis_with_budget(
         "second-root",
@@ -983,12 +973,8 @@ fn fair_budget_accounts_hierarchy_and_catalog_nodes_within_global_cap() {
     let mut budget = new_response_budget();
     budget.prepare_workspaces();
     budget.begin_workspace(2);
-    let first = snapshot_analysis_with_budget(
-        "first-root",
-        &first_analysis,
-        identity_source,
-        &mut budget,
-    );
+    let first =
+        snapshot_analysis_with_budget("first-root", &first_analysis, identity_source, &mut budget);
     budget.begin_workspace(1);
     let second = snapshot_analysis_with_budget(
         "second-root",
@@ -1061,12 +1047,8 @@ fn response_budget_keeps_later_workspace_roots_after_catalog_truncation() {
     let mut budget = new_response_budget();
     budget.prepare_workspaces();
     budget.begin_workspace(2);
-    let first = snapshot_analysis_with_budget(
-        "first-root",
-        &first_analysis,
-        identity_source,
-        &mut budget,
-    );
+    let first =
+        snapshot_analysis_with_budget("first-root", &first_analysis, identity_source, &mut budget);
     budget.begin_workspace(1);
     let second = snapshot_analysis_with_budget(
         "second-root",
@@ -1146,12 +1128,8 @@ fn exhausted_cycle_leaves_stay_accounted_and_preserve_later_workspace_root() {
     let mut budget = new_response_budget();
     budget.prepare_workspaces();
     budget.begin_workspace(2);
-    let first = snapshot_analysis_with_budget(
-        "first-root",
-        &first_analysis,
-        identity_source,
-        &mut budget,
-    );
+    let first =
+        snapshot_analysis_with_budget("first-root", &first_analysis, identity_source, &mut budget);
     budget.begin_workspace(1);
     let second = snapshot_analysis_with_budget(
         "second-root",
@@ -1479,12 +1457,8 @@ fn oversized_first_workspace_cannot_consume_later_workspace_catalog_or_root_quot
     let mut budget = new_response_budget();
     budget.prepare_workspaces();
     budget.begin_workspace(2);
-    let first = snapshot_analysis_with_budget(
-        "first-root",
-        &first_analysis,
-        identity_source,
-        &mut budget,
-    );
+    let first =
+        snapshot_analysis_with_budget("first-root", &first_analysis, identity_source, &mut budget);
     budget.begin_workspace(1);
     let second = snapshot_analysis_with_budget(
         "second-root",
@@ -1529,12 +1503,8 @@ fn response_budget_keeps_catalog_and_hierarchy_bounded_across_analysis_roots() {
     let mut budget = new_response_budget();
     budget.prepare_workspaces();
     budget.begin_workspace(2);
-    let first = snapshot_analysis_with_budget(
-        "first-root",
-        &first_analysis,
-        identity_source,
-        &mut budget,
-    );
+    let first =
+        snapshot_analysis_with_budget("first-root", &first_analysis, identity_source, &mut budget);
     budget.begin_workspace(1);
     let second = snapshot_analysis_with_budget(
         "second-root",
@@ -1893,8 +1863,7 @@ fn elaborated_types_resolve_parameters_for_nested_instances() {
             unpacked_dimensions: 0,
         },
     });
-    let mut analysis =
-        graph_analysis(vec![source_top, source_child, source_leaf], vec![top], None);
+    let mut analysis = graph_analysis(vec![source_top, source_child, source_leaf], vec![top], None);
     analysis.module_graph.elaborated_types = vec![
         ModuleGraphElaboratedType {
             instance: "top.u_child".to_owned(),

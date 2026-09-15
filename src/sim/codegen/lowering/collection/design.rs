@@ -3,7 +3,6 @@
 use super::*;
 
 impl<'a> Codegen<'a> {
-
     /// Walk the instance tree, collecting signals, parameters and gen-scope
     /// paths.  Returns the top module nodes.
     pub(in super::super) fn collect_design(&mut self) -> Result<Vec<NodeId>, String> {

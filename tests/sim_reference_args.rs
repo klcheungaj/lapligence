@@ -38,6 +38,25 @@ fn reference_argument_rejects_a_packed_bit_select_in_2009() {
 }
 
 #[test]
+fn reference_bit_writes_preserve_indices_state_and_queue_identity() {
+    if !llg::sim::build::cmake_available() {
+        eprintln!("SKIP: cmake not available");
+        return;
+    }
+    sim_cli::run_case(
+        "function",
+        "reference_bit_writes",
+        "value=000000x0 old=1 calls=1\n\
+         ascending=0100\n\
+         two-state=f7\n\
+         retained=84\n\
+         queue=01,84\n",
+        "",
+        &[],
+    );
+}
+
+#[test]
 fn reference_argument_rejects_const_mutation() {
     sim_cli::reject_case(
         "function",

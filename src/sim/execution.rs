@@ -1592,7 +1592,9 @@ fn collect_mailbox_value_effects(
         }
         IrMailboxValue::String(value) => collect_string_effects(ir, value, effects, visited_calls),
         IrMailboxValue::Handle(value) => collect_chandle_effects(ir, value, effects, visited_calls),
-        IrMailboxValue::Typed { value, .. } => collect_mailbox_value_effects(ir, value, effects, visited_calls),
+        IrMailboxValue::Typed { value, .. } => {
+            collect_mailbox_value_effects(ir, value, effects, visited_calls)
+        }
     }
 }
 
@@ -1618,7 +1620,12 @@ fn collect_string_effects(
     visited_calls: &mut HashSet<usize>,
 ) {
     match value {
-        IrStringExpr::Call { function, args, receiver, .. } => {
+        IrStringExpr::Call {
+            function,
+            args,
+            receiver,
+            ..
+        } => {
             if let Some(receiver) = receiver {
                 collect_chandle_effects(ir, receiver, effects, visited_calls);
             }
@@ -1628,7 +1635,12 @@ fn collect_string_effects(
                 collect_expression_effects(ir, argument, effects, visited_calls);
             }
         }
-        IrStringExpr::TypedCall { function, args, receiver, .. } => {
+        IrStringExpr::TypedCall {
+            function,
+            args,
+            receiver,
+            ..
+        } => {
             if let Some(receiver) = receiver {
                 collect_chandle_effects(ir, receiver, effects, visited_calls);
             }
@@ -1731,7 +1743,12 @@ fn collect_chandle_effects(
         IrChandleExpr::AssociativeGet { key, .. } => {
             collect_string_effects(ir, key, effects, visited_calls)
         }
-        IrChandleExpr::Call { function, args, receiver, .. } => {
+        IrChandleExpr::Call {
+            function,
+            args,
+            receiver,
+            ..
+        } => {
             if let Some(receiver) = receiver {
                 collect_chandle_effects(ir, receiver, effects, visited_calls);
             }

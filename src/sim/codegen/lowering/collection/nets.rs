@@ -3,7 +3,6 @@
 use super::*;
 
 impl<'a> Codegen<'a> {
-
     // ── Collapsed inout-net groups ────────────────────────────────────────
 
     /// Collapse inout-port net pairs (parent high connection + child low

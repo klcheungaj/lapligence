@@ -6,6 +6,7 @@
 #define _GNU_SOURCE
 
 #include "llg_rt.h"
+#include "llg_container.h"
 #include "aco.h"
 #ifdef LLG_WAVEFORM
 #include "llg_wave.h"

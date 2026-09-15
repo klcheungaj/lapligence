@@ -19,5 +19,6 @@ fn sized_vpi_function_keeps_per_callsite_metadata() {
         assert_eq!(output.stdout, b"vpi callsite sizes ok\n");
         assert!(output.stderr.is_empty(), "{output:?}");
         Ok(())
-    }).expect("sized VPI function callsite regression");
+    })
+    .expect("sized VPI function callsite regression");
 }

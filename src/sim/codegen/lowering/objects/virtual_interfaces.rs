@@ -3,7 +3,6 @@
 use super::*;
 
 impl Codegen<'_> {
-
     fn virtual_interface_handle_code(&self, handle: &IrChandleExpr) -> Result<String, String> {
         match handle {
             IrChandleExpr::Null => Ok("NULL".to_owned()),

@@ -22,7 +22,10 @@ impl Drop for TempDirCleanup {
 
 /// Create a single-root workspace under a fresh temp base with the given
 /// source files; returns (cleanup guard, workspace dir).
-pub(super) fn rename_workspace(dir_name: &str, files: &[(&str, &str)]) -> (TempDirCleanup, PathBuf) {
+pub(super) fn rename_workspace(
+    dir_name: &str,
+    files: &[(&str, &str)],
+) -> (TempDirCleanup, PathBuf) {
     let base =
         std::env::temp_dir().join(format!("llg-lsp-rename-{}-{dir_name}", std::process::id()));
     let ws = base.join("ws");

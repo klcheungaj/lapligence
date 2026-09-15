@@ -31,7 +31,6 @@ mod processes;
 mod signatures;
 mod virtual_interfaces;
 
-
 type VirtualInterfaceMemberEntries = Vec<(String, SignalInfo)>;
 type VirtualInterfaceMethodEntries = Vec<(String, usize)>;
 type VirtualInterfaceMethodInfo = (usize, usize, NodeId, NodeId, NodeId);

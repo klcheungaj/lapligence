@@ -3,7 +3,6 @@
 use super::*;
 
 impl<'a> Codegen<'a> {
-
     pub(in super::super) fn check_event_expression_effects(
         &self,
         expression: NodeId,
@@ -267,16 +266,24 @@ impl<'a> Codegen<'a> {
             match cg.kind(node) {
                 NodeKind::FuncTask { .. } => {
                     if cg.func_formals(node).iter().any(|formal| {
-                        matches!(cg.kind(*formal), NodeKind::FuncArg { ty, .. } if ty.kind == "event")
+                        matches!(cg.kind(formal.0), NodeKind::FuncArg { ty, .. } if ty.kind == "event")
                     }) {
                         return true;
                     }
-                    return cg.func_body(node).is_some_and(|body| visit(cg, body, inst, seen));
+                    return cg
+                        .func_body(node)
+                        .is_some_and(|body| visit(cg, body, inst, seen));
                 }
                 NodeKind::Stmt(StmtKind::EventControl { .. }) => return true,
                 NodeKind::FuncArg { ty, .. } if ty.kind == "event" => return true,
-                NodeKind::FuncCall { name, is_task: true, callee, .. } => {
-                    if let Ok((function, owner)) = cg.resolve_callee_env(inst, name, true, *callee) {
+                NodeKind::FuncCall {
+                    name,
+                    is_task: true,
+                    callee,
+                    ..
+                } => {
+                    if let Ok((function, owner)) = cg.resolve_callee_env(inst, name, true, *callee)
+                    {
                         if visit(cg, function, owner, seen) {
                             return true;
                         }
@@ -284,7 +291,10 @@ impl<'a> Codegen<'a> {
                 }
                 _ => {}
             }
-            cg.node(node).children.iter().any(|child| visit(cg, *child, inst, seen))
+            cg.node(node)
+                .children
+                .iter()
+                .any(|child| visit(cg, *child, inst, seen))
         }
         visit(self, ft, inst, &mut HashSet::new())
     }

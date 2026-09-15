@@ -37,64 +37,61 @@ use std::fmt;
 
 mod types;
 pub use types::{
-    PackedRange, TypeId, ClassMetadata, ValueCopySemantics, ValueDefaultSemantics,
-    ValueDestroySemantics, ValueEqualitySemantics, TypeShape, TypeDescriptor, EnumMember,
-    EnumTypeMetadata, ElaboratedTypeRanges, PackedMember, AggregateKind, AggregateMember,
-    AggregateLayout, AssignmentPatternKeyType, DpiImportInfo, ArrayMeta, ArrayKind,
-    AssociativeIndex,
+    AggregateKind, AggregateLayout, AggregateMember, ArrayKind, ArrayMeta,
+    AssignmentPatternKeyType, AssociativeIndex, ClassMetadata, DpiImportInfo, ElaboratedTypeRanges,
+    EnumMember, EnumTypeMetadata, PackedMember, PackedRange, TypeDescriptor, TypeId, TypeShape,
+    ValueCopySemantics, ValueDefaultSemantics, ValueDestroySemantics, ValueEqualitySemantics,
 };
 mod nodes;
-pub use nodes::{Node, NodeKind, ProcessKind, PrimClass, GateTerm, CaseItem};
+pub use nodes::{CaseItem, GateTerm, Node, NodeKind, PrimClass, ProcessKind};
 mod assertions;
 pub use assertions::{
-    ImmediateAssertionKind, ConcurrentAssertionKind, AssertionUnaryOp, AssertionBinaryOp,
-    AssertionRange, AssertionRepetitionKind, AssertionRepetition, AssertionCaseItem,
-    AssertionBinding, AssertionExprKind,
+    AssertionBinaryOp, AssertionBinding, AssertionCaseItem, AssertionExprKind, AssertionRange,
+    AssertionRepetition, AssertionRepetitionKind, AssertionUnaryOp, ConcurrentAssertionKind,
+    ImmediateAssertionKind,
 };
 mod statements;
 pub use statements::{
-    StmtKind, DriverDelay, IntraControl, EventTriggerTiming, EventSpec, ClockingEdge,
-    ClockingSkew, ClockingBlockInfo, ClockingVarInfo,
+    ClockingBlockInfo, ClockingEdge, ClockingSkew, ClockingVarInfo, DriverDelay, EventSpec,
+    EventTriggerTiming, IntraControl, StmtKind,
 };
 mod expressions;
 pub use expressions::{
-    ExprKind, StreamingDirection, StreamOperand, ConstantSource, TimeLiteralScale, TimeUnit,
-    VariableLifetimeQualifier, VariableLifetime,
+    ConstantSource, ExprKind, StreamOperand, StreamingDirection, TimeLiteralScale, TimeUnit,
+    VariableLifetime, VariableLifetimeQualifier,
 };
 mod references;
 use references::{
-    semantic_edges, semantic_id, canonical_reference_target, edge_target, edge_target_at,
-    edge_targets, resolved_edge_target, array_select_from_slang, member_path_from_slang,
-    expression_reference_target,
+    array_select_from_slang, canonical_reference_target, edge_target, edge_target_at, edge_targets,
+    expression_reference_target, member_path_from_slang, resolved_edge_target, semantic_edges,
+    semantic_id,
 };
 mod clocking;
 use clocking::{
-    virtual_interface_instance_from_slang, clocking_block_from_expression,
-    clocking_source_from_expression, clocking_skew_from_slang,
+    clocking_block_from_expression, clocking_skew_from_slang, clocking_source_from_expression,
+    virtual_interface_instance_from_slang,
 };
 mod connections;
 use connections::{
-    peel_gate_terminal, connection_source_expression, direction_from_slang, driver_delay,
+    connection_source_expression, direction_from_slang, driver_delay, peel_gate_terminal,
 };
 mod values;
 use values::{
-    value_data_from_slang, val_from_slang, operation_from_slang, time_exponent,
-    time_literal_scale, net_type_from_subkind, primitive_type_from_subkind, strength_from_slang,
+    net_type_from_subkind, operation_from_slang, primitive_type_from_subkind, strength_from_slang,
+    time_exponent, time_literal_scale, val_from_slang, value_data_from_slang,
 };
 mod assertion_import;
 use assertion_import::assertion_expr_from_slang;
 mod node_import;
 use node_import::node_kind_from_slang;
 mod statement_import;
-use statement_import::{statement_from_slang, event_specs, is_named_event_expression};
+use statement_import::{event_specs, is_named_event_expression, statement_from_slang};
 mod expression_import;
 use expression_import::{
-    expression_from_slang, source_position, semantic_full_name, enclosing_scope_name,
+    enclosing_scope_name, expression_from_slang, semantic_full_name, source_position,
 };
 
 mod capture;
-
-
 
 /// Arena index of one [`Node`].
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]

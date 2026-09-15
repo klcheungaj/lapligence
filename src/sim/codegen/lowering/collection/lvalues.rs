@@ -3,7 +3,6 @@
 use super::*;
 
 impl<'a> Codegen<'a> {
-
     /// Resolve a net/var/ref node to a global signal name (used by port
     /// links and event sensitivities).
     pub(in super::super) fn resolve_signal_id(
@@ -353,6 +352,29 @@ impl<'a> Codegen<'a> {
                 }))
             }
             NodeKind::Expr(ExprKind::BitSelect { base, index }) => {
+                let target = match self.kind(*base) {
+                    NodeKind::Expr(ExprKind::Ref {
+                        target: Some(target),
+                    }) => *target,
+                    _ => *base,
+                };
+                if let Some(Lhs::Ref {
+                    addr,
+                    two_state,
+                    const_ref,
+                    ..
+                }) = self.func_write_target(target, "")
+                {
+                    let index = self.lower_packed_index(path, *base, *index)?;
+                    return Ok(Lhs::Canonical(IrLhs::Ref {
+                        addr,
+                        width: 1,
+                        signed: false,
+                        two_state,
+                        const_ref,
+                        bit: Some(Box::new(index)),
+                    }));
+                }
                 if let Some(mut element) = self.array_element_lhs(path, *base)? {
                     if element.arr.real {
                         return Err(format!(

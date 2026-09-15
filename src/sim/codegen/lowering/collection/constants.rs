@@ -3,7 +3,6 @@
 use super::*;
 
 impl<'a> Codegen<'a> {
-
     // ── Constant-ish bound evaluation ──────────────────────────────────────
 
     /// Evaluate a constant expression node (part-select bound) to an integer.

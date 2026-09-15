@@ -3,7 +3,6 @@
 use super::*;
 
 impl Codegen<'_> {
-
     pub(super) fn class_field_target(&self, node: NodeId) -> Option<NodeId> {
         match self.kind(node) {
             NodeKind::Expr(ExprKind::Ref { target }) => target.filter(|target| {
@@ -125,7 +124,9 @@ impl Codegen<'_> {
         self.class_init_receiver
             .clone()
             .or_else(|| {
-                self.func.as_ref().and_then(|function| function.class_receiver.clone())
+                self.func
+                    .as_ref()
+                    .and_then(|function| function.class_receiver.clone())
             })
             .map(Some)
             .ok_or_else(|| "class method call has no receiver".to_owned())
@@ -180,7 +181,9 @@ impl Codegen<'_> {
         self.class_init_receiver
             .clone()
             .or_else(|| {
-                self.func.as_ref().and_then(|function| function.class_receiver.clone())
+                self.func
+                    .as_ref()
+                    .and_then(|function| function.class_receiver.clone())
             })
             .ok_or_else(|| {
                 format!(
@@ -269,7 +272,8 @@ impl Codegen<'_> {
                 self.node(field).name
             ));
         }
-        if matches!(self.kind(field), NodeKind::Var { ty } if is_handle_kind(&ty.kind) || ty.kind == "string") {
+        if matches!(self.kind(field), NodeKind::Var { ty } if is_handle_kind(&ty.kind) || ty.kind == "string")
+        {
             return Ok(None);
         }
         let Some((class, _index, class_field)) = self.class_field_layout(field) else {
@@ -310,7 +314,8 @@ impl Codegen<'_> {
         if self.class_static_objects.contains_key(&field) {
             return Ok(None);
         }
-        if matches!(self.kind(field), NodeKind::Var { ty } if is_handle_kind(&ty.kind) || ty.kind == "string") {
+        if matches!(self.kind(field), NodeKind::Var { ty } if is_handle_kind(&ty.kind) || ty.kind == "string")
+        {
             return Ok(None);
         }
         let Some((class, _index, class_field)) = self.class_field_layout(field) else {
@@ -380,7 +385,8 @@ impl Codegen<'_> {
         let receiver = self.class_receiver_for(path, node, field)?;
         Ok(Some(format!(
             "((llg_class_{class}_t*)llg_class_require({}, \"string property\"))->{}",
-            self.class_receiver_code(&receiver), name,
+            self.class_receiver_code(&receiver),
+            name,
         )))
     }
 
@@ -463,7 +469,12 @@ impl Codegen<'_> {
         // Base constructors may access as-yet uninitialized derived properties;
         // those reads must never encounter a zero-width/unallocated sv4 cell.
         for field in &self.model.classes[class].fields {
-            if let IrClassFieldType::Packed { width, signed, two_state } = field.ty {
+            if let IrClassFieldType::Packed {
+                width,
+                signed,
+                two_state,
+            } = field.ty
+            {
                 let value = if two_state {
                     format!("sv4_from_u64(0, {width}, {})", signed as u8)
                 } else {
@@ -486,7 +497,10 @@ impl Codegen<'_> {
         } else {
             let statements = self.lower_implicit_class_construction(path, class_node, receiver)?;
             for statement in statements {
-                code.push_str(&crate::sim::emit_c::render_stmt(&self.render_ctx(), &statement)?);
+                code.push_str(&crate::sim::emit_c::render_stmt(
+                    &self.render_ctx(),
+                    &statement,
+                )?);
             }
         }
         code.push_str(&format!("(void*){object_name}; }})"));
@@ -504,7 +518,9 @@ impl Codegen<'_> {
         let previous = self.class_init_receiver.replace(receiver.clone());
         let result = (|| {
             let class = self.class_nodes[&class_node];
-            let mut fields = self.class_fields.iter()
+            let mut fields = self
+                .class_fields
+                .iter()
                 .filter(|(_, (owner, _))| *owner == class)
                 .map(|(node, (_, index))| (*node, *index))
                 .collect::<Vec<_>>();
@@ -512,48 +528,99 @@ impl Codegen<'_> {
             let mut statements = Vec::new();
             for (node, index) in fields {
                 let field = self.model.classes[class].fields[index].clone();
-                let target = format!("((llg_class_{class}_t*)({}))->{}",
-                    self.class_receiver_code(&receiver), field.c_name);
+                let target = format!(
+                    "((llg_class_{class}_t*)({}))->{}",
+                    self.class_receiver_code(&receiver),
+                    field.c_name
+                );
                 let initializer = self.db.var_initializer(node);
                 match field.ty {
-                    IrClassFieldType::Packed { width, signed, two_state } => {
+                    IrClassFieldType::Packed {
+                        width,
+                        signed,
+                        two_state,
+                    } => {
                         let value = if let Some(initializer) = initializer {
                             let value = self.lower_expr(path, initializer)?;
                             ir_to_storage(value, width, signed, two_state)?
                         } else {
-                            IrExpr::new(IrExprKind::Verbatim {
-                                code: if two_state { format!("sv4_from_u64(0, {width}, {})", signed as u8) }
-                                      else { format!("sv4_x({width}, {})", signed as u8) },
-                                width, signed,
-                            }, width, signed, None)
+                            IrExpr::new(
+                                IrExprKind::Verbatim {
+                                    code: if two_state {
+                                        format!("sv4_from_u64(0, {width}, {})", signed as u8)
+                                    } else {
+                                        format!("sv4_x({width}, {})", signed as u8)
+                                    },
+                                    width,
+                                    signed,
+                                },
+                                width,
+                                signed,
+                                None,
+                            )
                         };
                         statements.push(IrStmt::Assign {
-                            lhs: IrLhs::WholeRef { addr: format!("&({target})"),
-                                width, signed, two_state, shortreal: false },
+                            lhs: IrLhs::WholeRef {
+                                addr: format!("&({target})"),
+                                width,
+                                signed,
+                                two_state,
+                                shortreal: false,
+                            },
                             rhs: value,
                             nba: false,
                         });
                     }
                     IrClassFieldType::Real { shortreal } => {
-                        let value = initializer.map(|node| self.lower_expr(path, node)).transpose()?
-                            .unwrap_or_else(|| IrExpr::new(IrExprKind::Verbatim { code: "0.0".to_owned(), width: 0, signed: true }, 0, true, None));
+                        let value = initializer
+                            .map(|node| self.lower_expr(path, node))
+                            .transpose()?
+                            .unwrap_or_else(|| {
+                                IrExpr::new(
+                                    IrExprKind::Verbatim {
+                                        code: "0.0".to_owned(),
+                                        width: 0,
+                                        signed: true,
+                                    },
+                                    0,
+                                    true,
+                                    None,
+                                )
+                            });
                         statements.push(IrStmt::Assign {
-                            lhs: IrLhs::WholeRef { addr: format!("&({target})"),
-                                width: 0, signed: false, two_state: false, shortreal },
-                            rhs: IrExpr::new(IrExprKind::CastToReal { a: Box::new(value), shortreal }, 0, true, None),
+                            lhs: IrLhs::WholeRef {
+                                addr: format!("&({target})"),
+                                width: 0,
+                                signed: false,
+                                two_state: false,
+                                shortreal,
+                            },
+                            rhs: IrExpr::new(
+                                IrExprKind::CastToReal {
+                                    a: Box::new(value),
+                                    shortreal,
+                                },
+                                0,
+                                true,
+                                None,
+                            ),
                             nba: false,
                         });
                     }
                     IrClassFieldType::String => {
                         if let Some(initializer) = initializer {
                             let value = self.lower_string(path, initializer)?;
-                            statements.push(IrStmt::Object(IrObjectStmt::StringAssignLocal(target, value)));
+                            statements.push(IrStmt::Object(IrObjectStmt::StringAssignLocal(
+                                target, value,
+                            )));
                         }
                     }
                     IrClassFieldType::Chandle => {
                         if let Some(initializer) = initializer {
                             let value = self.lower_chandle(path, initializer)?;
-                            statements.push(IrStmt::Object(IrObjectStmt::ChandleAssignLocal(target, value)));
+                            statements.push(IrStmt::Object(IrObjectStmt::ChandleAssignLocal(
+                                target, value,
+                            )));
                         }
                     }
                 }
@@ -582,13 +649,19 @@ impl Codegen<'_> {
         class: NodeId,
         receiver: IrChandleExpr,
     ) -> Result<Vec<IrStmt>, String> {
-        let Some(metadata) = self.db.class_metadata(class) else { return Ok(Vec::new()); };
-        let Some(base) = metadata.base else { return Ok(Vec::new()); };
+        let Some(metadata) = self.db.class_metadata(class) else {
+            return Ok(Vec::new());
+        };
+        let Some(base) = metadata.base else {
+            return Ok(Vec::new());
+        };
         let captured_call = metadata.base_constructor;
-        let constructor = captured_call.and_then(|call| match self.kind(call) {
-            NodeKind::FuncCall { callee, .. } => *callee,
-            _ => None,
-        }).or_else(|| self.class_constructor(base));
+        let constructor = captured_call
+            .and_then(|call| match self.kind(call) {
+                NodeKind::FuncCall { callee, .. } => *callee,
+                _ => None,
+            })
+            .or_else(|| self.class_constructor(base));
         if let Some(constructor) = constructor {
             let mut call = if let Some(call) = captured_call {
                 self.lower_func_call_expr(path, call, "new", Some(constructor))?

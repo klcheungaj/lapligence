@@ -3,7 +3,6 @@
 use super::*;
 
 impl<'c, 'a> EmitCtx<'c, 'a> {
-
     pub(super) fn lower_immediate_assertion(
         &mut self,
         h: NodeId,

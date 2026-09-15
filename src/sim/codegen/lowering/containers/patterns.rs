@@ -3,7 +3,6 @@
 use super::*;
 
 impl<'a> Codegen<'a> {
-
     pub(super) fn lower_container_pattern(
         &mut self,
         path: &str,
@@ -140,10 +139,9 @@ impl<'a> Codegen<'a> {
                     "resizable container assignment pattern key `{key}` has no matching index or type in `{path}`"
                 ));
             }
-            if type_values
-                .iter()
-                .any(|(previous, _)| super::super::collection::pattern_key_types_equal(previous, key_type))
-            {
+            if type_values.iter().any(|(previous, _)| {
+                super::super::collection::pattern_key_types_equal(previous, key_type)
+            }) {
                 return Err(format!(
                     "duplicate resizable container assignment pattern type key `{key}` in `{path}`"
                 ));

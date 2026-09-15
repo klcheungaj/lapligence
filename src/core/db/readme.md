@@ -24,6 +24,9 @@ Enumerated types retain a canonical `TypeId`-keyed declaration-order table of
 resolved values and owned names for runtime enum methods.
 Subroutine bodies are explicit arena references; consumers never infer a body
 from the order of declarations or auxiliary statement children.
+Instance-body and instance-array containers are expanded recursively in module
+and generate-scope child lists, so every elaborated primitive remains reachable.
+Container expansion rejects cyclic or repeated containers before traversal.
 
 Event controls retain their expression, edge and optional `iff` condition as
 validated owned node references, including mixed named-event lists and fixed

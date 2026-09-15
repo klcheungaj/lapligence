@@ -97,11 +97,17 @@ pub(super) fn display_dependency_pointer(ctx: &RCtx<'_>, dependency: &IrDependen
 
 fn dependency_entry(ctx: &RCtx<'_>, dependency: &IrDependency) -> String {
     match dependency {
-        IrDependency::PackedRange { storage, lsb, width } => {
+        IrDependency::PackedRange {
+            storage,
+            lsb,
+            width,
+        } => {
             let trigger = dependency_pointer(ctx, storage);
             let value = match storage.as_ref() {
                 IrDependency::Scalar(name) => format!("&{name}"),
-                IrDependency::ArrayElement { array, index } => format!("&{}[{index}]", ctx.model.array(*array).c_name()),
+                IrDependency::ArrayElement { array, index } => {
+                    format!("&{}[{index}]", ctx.model.array(*array).c_name())
+                }
                 _ => unreachable!("validated packed-prefix storage"),
             };
             format!("{{ .sig = {trigger}, .value = {value}, .lsb = {lsb}u, .width = {width}u }}")
@@ -113,7 +119,11 @@ fn dependency_entry(ctx: &RCtx<'_>, dependency: &IrDependency) -> String {
             if array.real {
                 format!("{{ .real = &{}[{}] }}", array.c_name(), index)
             } else {
-                format!("{{ .sig = &{}_llg_element_deps[{}] }}", array.c_name(), index)
+                format!(
+                    "{{ .sig = &{}_llg_element_deps[{}] }}",
+                    array.c_name(),
+                    index
+                )
             }
         }
         IrDependency::ArrayContents(array) => format!(
@@ -129,7 +139,10 @@ fn dependency_entry(ctx: &RCtx<'_>, dependency: &IrDependency) -> String {
             ctx.model.containers[*container].c_name
         ),
         IrDependency::Object(object) => {
-            format!("{{ .sig = &{}_llg_dep }}", ctx.model.objects[*object].c_name)
+            format!(
+                "{{ .sig = &{}_llg_dep }}",
+                ctx.model.objects[*object].c_name
+            )
         }
     }
 }
@@ -221,7 +234,10 @@ pub(in super::super) fn event_ref_code(
     }
 }
 
-pub(super) fn event_capture_code(code: &str, context: Option<&crate::sim::ir::IrEventContext>) -> String {
+pub(super) fn event_capture_code(
+    code: &str,
+    context: Option<&crate::sim::ir::IrEventContext>,
+) -> String {
     let Some(context) = context else {
         return code.to_owned();
     };
@@ -766,7 +782,10 @@ pub(super) fn nonblocking_event_assignment_when_text(
     ))
 }
 
-pub(super) fn render_delay(ctx: &RCtx<'_>, delay: &crate::sim::ir::IrDelay) -> Result<String, String> {
+pub(super) fn render_delay(
+    ctx: &RCtx<'_>,
+    delay: &crate::sim::ir::IrDelay,
+) -> Result<String, String> {
     use crate::sim::ir::IrDelay;
     Ok(match delay {
         IrDelay::Constant(ticks) => format!("{ticks}ULL"),

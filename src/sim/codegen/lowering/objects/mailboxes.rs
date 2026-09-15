@@ -3,7 +3,6 @@
 use super::*;
 
 impl Codegen<'_> {
-
     fn mailbox_descriptor_name(&self, node: NodeId) -> Option<&str> {
         self.query_descriptor(node).and_then(|descriptor| {
             descriptor
@@ -229,7 +228,12 @@ impl Codegen<'_> {
                     })
                 }
             }
-            IrLhs::Ref { addr, const_ref, .. } => {
+            IrLhs::Ref {
+                addr,
+                const_ref,
+                bit: None,
+                ..
+            } => {
                 if *const_ref {
                     return Err("mailbox output/ref target cannot be const-ref".to_owned());
                 }
@@ -242,32 +246,48 @@ impl Codegen<'_> {
     /// Canonical type IDs come from the owned snapshot. Typedefs already
     /// resolve to their canonical type; no source-name search participates.
     fn mailbox_nominal_type(&self, node: NodeId) -> Result<Option<u64>, String> {
-        let descriptor = self.query_descriptor(node)
+        let descriptor = self
+            .query_descriptor(node)
             .ok_or_else(|| "mailbox actual has no owned type descriptor".to_owned())?;
         let nominal = self.db.enum_type_metadata(descriptor.id).is_some()
             || matches!(descriptor.shape, TypeShape::Opaque { .. });
         if nominal {
-            Ok(Some(descriptor.id.0.checked_add(1)
-                .ok_or_else(|| "mailbox nominal type identity overflow".to_owned())?))
+            Ok(Some(descriptor.id.0.checked_add(1).ok_or_else(|| {
+                "mailbox nominal type identity overflow".to_owned()
+            })?))
         } else {
             Ok(None)
         }
     }
 
-    pub(super) fn lower_mailbox_target(&mut self, path: &str, node: NodeId) -> Result<IrMailboxTarget, String> {
+    pub(super) fn lower_mailbox_target(
+        &mut self,
+        path: &str,
+        node: NodeId,
+    ) -> Result<IrMailboxTarget, String> {
         let nominal = self.mailbox_nominal_type(node)?;
         let target = self.lower_mailbox_target_storage(path, node)?;
         Ok(match nominal {
-            Some(type_id) => IrMailboxTarget::Typed { type_id, target: Box::new(target) },
+            Some(type_id) => IrMailboxTarget::Typed {
+                type_id,
+                target: Box::new(target),
+            },
             None => target,
         })
     }
 
-    pub(super) fn lower_mailbox_value(&mut self, path: &str, node: NodeId) -> Result<IrMailboxValue, String> {
+    pub(super) fn lower_mailbox_value(
+        &mut self,
+        path: &str,
+        node: NodeId,
+    ) -> Result<IrMailboxValue, String> {
         let nominal = self.mailbox_nominal_type(node)?;
         let value = self.lower_mailbox_value_storage(path, node)?;
         Ok(match nominal {
-            Some(type_id) => IrMailboxValue::Typed { type_id, value: Box::new(value) },
+            Some(type_id) => IrMailboxValue::Typed {
+                type_id,
+                value: Box::new(value),
+            },
             None => value,
         })
     }
@@ -298,7 +318,11 @@ impl Codegen<'_> {
         self.mailbox_target_from_lhs(&lhs)
     }
 
-    fn lower_mailbox_value_storage(&mut self, path: &str, node: NodeId) -> Result<IrMailboxValue, String> {
+    fn lower_mailbox_value_storage(
+        &mut self,
+        path: &str,
+        node: NodeId,
+    ) -> Result<IrMailboxValue, String> {
         if self.is_string_expr(path, node) {
             return Ok(IrMailboxValue::String(self.lower_string(path, node)?));
         }

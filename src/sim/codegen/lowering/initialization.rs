@@ -3,7 +3,6 @@
 use super::*;
 
 impl<'a> Codegen<'a> {
-
     fn declaration_init_phase(&self) -> IrInitPhase {
         if self.db.edition() == LanguageEdition::SystemVerilog2009 {
             IrInitPhase::BeforeProcesses

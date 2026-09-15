@@ -1149,6 +1149,9 @@ llg_ref_scope_t* llg_ref_scope_begin(void);
 void llg_ref_scope_end(llg_ref_scope_t* scope);
 llg_ref_t* llg_ref_queue(llg_queue_t* queue, uint64_t index);
 void llg_ref_write(llg_ref_t* ref, sv4_t value);
+// Modify one packed bit through the original descriptor, preserving alias
+// notification and retained queue-element identity. Invalid indices no-op.
+void llg_ref_write_bit(llg_ref_t* ref, uint64_t index, sv4_t value);
 void llg_nba_d(double* target, double value);
 void llg_ba_d(double* target, double value);
 

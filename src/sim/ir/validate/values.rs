@@ -3,7 +3,6 @@
 use super::*;
 
 impl Validator<'_> {
-
     pub(super) fn validate_type(&self, ty: &IrType, path: &str) -> ValidationResult {
         if let IrType::Packed { width, .. } = ty {
             self.validate_width(*width, path)?;

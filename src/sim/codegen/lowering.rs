@@ -271,7 +271,6 @@ mod initialization;
 mod references;
 mod selections;
 
-
 mod assertions;
 mod collection;
 mod containers;
@@ -504,7 +503,11 @@ impl<'a> Codegen<'a> {
                         .to_owned();
                     objects.entry(full_name.clone()).or_insert_with(|| {
                         let mut object = IrVpiObject::module(
-                            full_name, name, def_name.clone(), node.file.clone(), node.line,
+                            full_name,
+                            name,
+                            def_name.clone(),
+                            node.file.clone(),
+                            node.line,
                         );
                         object.time_unit_fs = self.timescale_of_node(id).unit_fs;
                         object

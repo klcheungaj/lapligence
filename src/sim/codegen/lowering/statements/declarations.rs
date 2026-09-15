@@ -3,8 +3,10 @@
 use super::*;
 
 impl EmitCtx<'_, '_> {
-
-    pub(super) fn lower_variable_decl(&mut self, declaration: NodeId) -> Result<Vec<IrStmt>, String> {
+    pub(super) fn lower_variable_decl(
+        &mut self,
+        declaration: NodeId,
+    ) -> Result<Vec<IrStmt>, String> {
         if self.func.is_some() {
             return match self.cg.db.variable_lifetime(declaration) {
                 VariableLifetime::Static => Ok(Vec::new()),

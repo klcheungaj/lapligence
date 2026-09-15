@@ -124,7 +124,9 @@ fn graph_signal(signal: &crate::features::ModuleGraphSignal) -> ExplorerSignal {
     }
 }
 
-pub(super) fn graph_parameter(parameter: &crate::features::ModuleGraphParameter) -> ExplorerParameter {
+pub(super) fn graph_parameter(
+    parameter: &crate::features::ModuleGraphParameter,
+) -> ExplorerParameter {
     ExplorerParameter {
         name: parameter.name.clone(),
         ty: explorer_type_with_context(

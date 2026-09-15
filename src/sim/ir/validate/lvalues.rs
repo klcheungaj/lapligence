@@ -3,7 +3,6 @@
 use super::*;
 
 impl Validator<'_> {
-
     pub(super) fn validate_elem_sel(
         &self,
         sel: &IrElemSel,
@@ -21,7 +20,12 @@ impl Validator<'_> {
         }
     }
 
-    pub(super) fn validate_select_width(&self, left: i64, right: i64, _path: &str) -> ValidationResult {
+    pub(super) fn validate_select_width(
+        &self,
+        left: i64,
+        right: i64,
+        _path: &str,
+    ) -> ValidationResult {
         let width = (i128::from(left) - i128::from(right)).unsigned_abs() + 1;
         self.max_width.set(self.max_width.get().max(width));
         Ok(())
@@ -74,7 +78,12 @@ impl Validator<'_> {
         Ok(())
     }
 
-    pub(super) fn validate_lhs(&self, lhs: &IrLhs, formals: &[IrFormal], path: &str) -> ValidationResult {
+    pub(super) fn validate_lhs(
+        &self,
+        lhs: &IrLhs,
+        formals: &[IrFormal],
+        path: &str,
+    ) -> ValidationResult {
         match lhs {
             IrLhs::Whole(signal) | IrLhs::Part(signal, ..) => {
                 if *signal >= self.model.signals.len() {
@@ -93,6 +102,8 @@ impl Validator<'_> {
                 addr,
                 width,
                 const_ref,
+                bit,
+                signed,
                 ..
             } => {
                 if addr.is_empty() {
@@ -102,6 +113,12 @@ impl Validator<'_> {
                     return self.fail(path, "const reference cannot be an assignment target");
                 }
                 self.validate_width(*width, path)?;
+                if let Some(index) = bit {
+                    if *width != 1 || *signed {
+                        return self.fail(path, "reference bit select must be one unsigned bit");
+                    }
+                    self.validate_expr(index, formals, &format!("{path}.index"))?;
+                }
             }
             IrLhs::Bit(signal, index, _) => {
                 if *signal >= self.model.signals.len() {

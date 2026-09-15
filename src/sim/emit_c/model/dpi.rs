@@ -355,11 +355,13 @@ pub(super) fn render_dpi_thunk(f: &IrFunc) -> Result<String, String> {
                     )
                 }
             )),
-            DpiScalar::Real { .. } => out.push_str(&format!("    *o{idx} = (double)_dpi_o{idx};\n")),
+            DpiScalar::Real { .. } => {
+                out.push_str(&format!("    *o{idx} = (double)_dpi_o{idx};\n"))
+            }
             DpiScalar::Chandle => out.push_str(&format!("    *o{idx} = _dpi_o{idx};\n")),
-            DpiScalar::String => out.push_str(&format!(
-                "    llg_string_move(o{idx}, _dpi_s{idx});\n"
-            )),
+            DpiScalar::String => {
+                out.push_str(&format!("    llg_string_move(o{idx}, _dpi_s{idx});\n"))
+            }
         }
     }
     for (idx, _form) in f

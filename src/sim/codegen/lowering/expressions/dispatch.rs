@@ -3,10 +3,9 @@
 use super::*;
 
 impl<'a> Codegen<'a> {
-
     /// Render context for the IR built so far (the enclosing function, when
     /// any, resolves formal reads).
-    fn render_ctx(&self) -> RCtx<'_> {
+    pub(in super::super) fn render_ctx(&self) -> RCtx<'_> {
         RCtx {
             model: &self.model,
             func: self.cur_fn_ir.map(|i| &self.model.funcs[i]),
@@ -23,7 +22,11 @@ impl<'a> Codegen<'a> {
 
     /// Lower an expression node decision-for-decision like the pre-IR
     /// emitter: same widths, signednesses, fills, and error strings.
-    pub(in super::super) fn lower_expr(&mut self, scope_path: &str, h: NodeId) -> Result<IrExpr, String> {
+    pub(in super::super) fn lower_expr(
+        &mut self,
+        scope_path: &str,
+        h: NodeId,
+    ) -> Result<IrExpr, String> {
         if let Some(value) = self.lower_container_query(scope_path, h)? {
             return Ok(value);
         }

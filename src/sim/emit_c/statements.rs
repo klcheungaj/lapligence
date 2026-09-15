@@ -18,29 +18,28 @@ use crate::sim::ir::{
 
 mod assertions;
 use assertions::{
-    unique_priority_call, render_assertion_control, ImmediateAssertionRender,
-    render_immediate_assertion, DeferredImmediateAssertionRender,
-    render_deferred_immediate_assertion,
+    render_assertion_control, render_deferred_immediate_assertion, render_immediate_assertion,
+    unique_priority_call, DeferredImmediateAssertionRender, ImmediateAssertionRender,
 };
 mod system_tasks;
 use system_tasks::{render_memory, render_vpi_call};
 mod events;
 use events::activation_guard;
-pub(super) use events::{wait_any_text, wait_any_text_in_region};
 use events::display_dependency_pointer;
 pub(super) use events::event_ref_code;
 use events::{
-    event_capture_code, format_frame_capture, wait_events_text, clocking_cycle_wait_text,
-    nonblocking_event_trigger_when_text, nonblocking_event_assignment_when_text, render_delay,
+    clocking_cycle_wait_text, event_capture_code, format_frame_capture,
+    nonblocking_event_assignment_when_text, nonblocking_event_trigger_when_text, render_delay,
+    wait_events_text,
 };
+pub(super) use events::{wait_any_text, wait_any_text_in_region};
 mod formatting;
-use formatting::{render_typed_display, render_severity};
+use formatting::{render_severity, render_typed_display};
 mod callbacks;
 pub use callbacks::render_pre_fn;
 pub(super) use callbacks::render_pre_fn_impl;
 mod force;
 use force::{render_force, render_release};
-
 
 // ── Statement rendering ───────────────────────────────────────────────────────
 
@@ -1312,6 +1311,10 @@ fn render_stmt_scoped(
                 call_name,
                 call_args.join(", ")
             ));
+            let guard_copyout = ctx.activation_label.is_some();
+            if guard_copyout {
+                out.push_str("        if (!llg_activation_cancelled()) {\n");
+            }
             for (lh, tname, w, s) in &call.copyouts {
                 let rhs = IrExpr::new(IrExprKind::LocalRead(tname.clone()), *w, *s, None);
                 out.push_str(&format!(
@@ -1343,6 +1346,15 @@ fn render_stmt_scoped(
                         out.push_str(&format!("        llg_string_move({writeback}, {value});\n"));
                     }
                 }
+            }
+            if guard_copyout {
+                out.push_str("        } else {\n");
+                for arg in &call.args {
+                    if let IrCallArg::StringOutTemp { name, .. } = arg {
+                        out.push_str(&format!("        llg_string_destroy(&{name});\n"));
+                    }
+                }
+                out.push_str("        }\n");
             }
             super::expressions::with_ref_scope(out, &call.args, None)
         }

@@ -3,7 +3,6 @@
 use super::*;
 
 impl Validator<'_> {
-
     pub(super) fn validate_file_input(
         &self,
         input: &IrFileInput,

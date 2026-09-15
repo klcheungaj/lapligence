@@ -11,6 +11,8 @@
 - **Reference layer:** `llg_ref_t` describes a whole packed value or legal
   packed/array selection; `llg_ref_read` and `llg_ref_write` preserve immediate
   alias visibility while routing writes through normal force/PCA notifications.
+  `llg_ref_write_bit` updates one bit through that same descriptor; unknown or
+  out-of-range indices leave the value unchanged.
   Packed queue refs retain shared element cells: removals detach a snapshot,
   while surviving refs follow element identities through shifts and reorders.
   Generated call scopes release pins on return; cancellation/teardown unwinds
@@ -85,6 +87,8 @@
   generation-checked object/iteration/value API, startup-loaded system-task and
   function plugins, compiletf/sizetf/calltf dispatch, and start/end callbacks;
   unsupported standard properties fail through `vpi_chk_error`.
+  Array metadata distinguishes packed element widths from real elements, which
+  use zero packed-bit width; both remain discoverable in the object catalog.
   `vpi_get_value(vpiVectorVal)` returns simulator-owned scratch storage, valid
   until the next value query or shutdown; the caller supplies no vector buffer.
   Call/argument handles and argument iterators borrow one callback's call

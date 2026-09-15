@@ -3,7 +3,6 @@
 use super::*;
 
 impl<'a> Codegen<'a> {
-
     pub(in super::super) fn ref_lhs_type(&self, lhs: &IrLhs) -> Option<(u32, bool, bool, bool)> {
         match lhs {
             IrLhs::Whole(index) => match self.model.signal(*index).ty {
@@ -297,7 +296,9 @@ impl<'a> Codegen<'a> {
             {
                 (
                     self.class_init_receiver.clone().or_else(|| {
-                        self.func.as_ref().and_then(|function| function.class_receiver.clone())
+                        self.func
+                            .as_ref()
+                            .and_then(|function| function.class_receiver.clone())
                     }),
                     None,
                 )

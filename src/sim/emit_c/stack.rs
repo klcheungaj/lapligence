@@ -1008,6 +1008,9 @@ fn string_expr_slots(value: &IrStringExpr) -> Result<u64, String> {
 
 fn lhs_slots(lhs: &IrLhs) -> Result<u64, String> {
     match lhs {
+        IrLhs::Ref {
+            bit: Some(index), ..
+        } => expr_slots(index),
         IrLhs::Bit(_, index, _) => expr_slots(index),
         IrLhs::IdxPart(_, base, width_expr, _, _, _) => checked_add(
             expr_slots(base)?,

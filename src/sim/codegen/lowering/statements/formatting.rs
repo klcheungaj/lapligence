@@ -3,7 +3,6 @@
 use super::*;
 
 impl EmitCtx<'_, '_> {
-
     /// Collect the signal storage that can trigger a monitor. The format
     /// string is display metadata, and symbolic time queries have no signal
     /// reads, so only value arguments contribute to this list.
@@ -532,7 +531,11 @@ impl EmitCtx<'_, '_> {
 
     /// Recover a source string literal through the implicit string cast that
     /// Slang may insert at a system-task argument boundary.
-    pub(super) fn literal_string(&self, node: NodeId, context: &str) -> Result<Option<String>, String> {
+    pub(super) fn literal_string(
+        &self,
+        node: NodeId,
+        context: &str,
+    ) -> Result<Option<String>, String> {
         match self.cg.kind(node) {
             NodeKind::Expr(ExprKind::Constant {
                 const_type: ConstantType::String,

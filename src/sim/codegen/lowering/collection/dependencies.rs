@@ -3,7 +3,6 @@
 use super::*;
 
 impl<'a> Codegen<'a> {
-
     // ── Signal reads for sensitivity ───────────────────────────────────────
 
     /// Collect every storage dependency read anywhere in the
@@ -50,117 +49,205 @@ impl<'a> Codegen<'a> {
         };
         if matches!(process_kind, Some(AlwaysKind::Comb | AlwaysKind::Latch)) {
             let writes = self.collect_process_writes(root)?;
-            reads = reads.into_iter().flat_map(|read| self.exclude_written_prefixes(read, &writes)).collect();
+            reads = reads
+                .into_iter()
+                .flat_map(|read| self.exclude_written_prefixes(read, &writes))
+                .collect();
         }
         Ok(reads)
     }
 
     fn dependency_width(&self, dependency: &IrDependency) -> Option<u32> {
         match dependency {
-            IrDependency::Scalar(name) => self.model.signals.iter().enumerate()
-                .find(|(index, signal)| signal.c_name == *name || self.signal_dependency_name(*index) == *name)
-                .map(|(_, signal)| signal.ty.width()).filter(|width| *width != 0),
-            IrDependency::ArrayElement { array, .. } => self.model.arrays.get(*array)
-                .filter(|array| !array.real).map(|array| array.elem_width),
+            IrDependency::Scalar(name) => self
+                .model
+                .signals
+                .iter()
+                .enumerate()
+                .find(|(index, signal)| {
+                    signal.c_name == *name || self.signal_dependency_name(*index) == *name
+                })
+                .map(|(_, signal)| signal.ty.width())
+                .filter(|width| *width != 0),
+            IrDependency::ArrayElement { array, .. } => self
+                .model
+                .arrays
+                .get(*array)
+                .filter(|array| !array.real)
+                .map(|array| array.elem_width),
             IrDependency::PackedRange { width, .. } => Some(*width),
             _ => None,
         }
     }
 
     fn dependency_span(&self, dependency: &IrDependency) -> Option<(IrDependency, u32, u32)> {
-        if let IrDependency::PackedRange { storage, lsb, width } = dependency {
+        if let IrDependency::PackedRange {
+            storage,
+            lsb,
+            width,
+        } = dependency
+        {
             Some(((**storage).clone(), *lsb, *width))
         } else {
-            self.dependency_width(dependency).map(|width| (dependency.clone(), 0, width))
+            self.dependency_width(dependency)
+                .map(|width| (dependency.clone(), 0, width))
         }
     }
 
     fn slice_dependency(&self, storage: IrDependency, lsb: u32, width: u32) -> IrDependency {
-        if lsb == 0 && self.dependency_width(&storage) == Some(width) { storage }
-        else { IrDependency::PackedRange { storage: Box::new(storage), lsb, width } }
+        if lsb == 0 && self.dependency_width(&storage) == Some(width) {
+            storage
+        } else {
+            IrDependency::PackedRange {
+                storage: Box::new(storage),
+                lsb,
+                width,
+            }
+        }
     }
 
     /// Return the longest static packed prefix. Dynamic selectors keep their
     /// base prefix; they do not erase a preceding static field/dimension.
-    fn packed_storage_prefix_bound(&self, node: NodeId, bindings: &HashMap<NodeId, IrDependency>) -> Option<IrDependency> {
+    fn packed_storage_prefix_bound(
+        &self,
+        node: NodeId,
+        bindings: &HashMap<NodeId, IrDependency>,
+    ) -> Option<IrDependency> {
         if let NodeKind::Expr(ExprKind::HierPath { parts, refs }) = self.kind(node) {
             // A ref formal has no independent signal. Resolve its selected
             // field within the actual's prefix, not through global storage.
-            if let Some((base_index, target, prefix)) = refs.iter().enumerate().find_map(|(index, target)| {
-                let target = (*target)?;
-                bindings.get(&target).map(|prefix| (index, target, prefix))
-            }) {
+            if let Some((base_index, target, prefix)) =
+                refs.iter().enumerate().find_map(|(index, target)| {
+                    let target = (*target)?;
+                    bindings.get(&target).map(|prefix| (index, target, prefix))
+                })
+            {
                 let (storage, mut offset, _) = self.dependency_span(prefix)?;
-                if base_index + 1 == parts.len() { return Some(prefix.clone()); }
+                if base_index + 1 == parts.len() {
+                    return Some(prefix.clone());
+                }
                 let mut layout = self.db.aggregate_layout(target)?;
                 let mut selected = None;
                 for (part_index, name) in parts.iter().enumerate().skip(base_index + 1) {
-                    if !matches!(layout.kind, AggregateKind::PackedStruct | AggregateKind::PackedUnion) {
+                    if !matches!(
+                        layout.kind,
+                        AggregateKind::PackedStruct | AggregateKind::PackedUnion
+                    ) {
                         return None;
                     }
-                    let index = layout.members.iter().position(|member| member.name == *name)?;
+                    let index = layout
+                        .members
+                        .iter()
+                        .position(|member| member.name == *name)?;
                     let member = &layout.members[index];
                     if layout.kind == AggregateKind::PackedStruct {
-                        offset = offset.checked_add(layout.members[index + 1..].iter()
-                            .try_fold(0u32, |offset, member| offset.checked_add(member.ty.width?))?)?;
+                        offset = offset.checked_add(
+                            layout.members[index + 1..]
+                                .iter()
+                                .try_fold(0u32, |offset, member| {
+                                    offset.checked_add(member.ty.width?)
+                                })?,
+                        )?;
                     }
                     selected = Some(member.ty.width?);
-                    if part_index + 1 < parts.len() { layout = member.aggregate_layout()?; }
+                    if part_index + 1 < parts.len() {
+                        layout = member.aggregate_layout()?;
+                    }
                 }
                 return Some(self.slice_dependency(storage, offset, selected?));
             }
         }
         if let Some((info, member)) = self.packed_member_info(node) {
-            return Some(self.slice_dependency(self.signal_dependency(&info), member.lsb, member.width));
+            return Some(self.slice_dependency(
+                self.signal_dependency(&info),
+                member.lsb,
+                member.width,
+            ));
         }
         if let Some((_, _, member)) = self.unpacked_member_info(node) {
             if let Some(info) = member.signal.as_ref().filter(|info| !info.real) {
                 return Some(self.signal_dependency(info));
             }
         }
-        let (base, indices, bounds): (NodeId, Vec<NodeId>, Option<(NodeId, NodeId, Option<bool>)>) = match self.kind(node) {
+        let (base, indices, bounds) = match self.kind(node) {
             NodeKind::Expr(ExprKind::BitSelect { base, index }) => (*base, vec![*index], None),
-            NodeKind::Expr(ExprKind::ArraySelect { base, indices }) => (*base, indices.clone(), None),
-            NodeKind::Expr(ExprKind::PartSelect { base, left, right }) => (*base, vec![], Some((*left, *right, None))),
-            NodeKind::Expr(ExprKind::IndexedPartSelect { base, base_expr, width_expr, neg }) =>
-                (*base, vec![], Some((*base_expr, *width_expr, Some(*neg)))),
+            NodeKind::Expr(ExprKind::ArraySelect { base, indices }) => {
+                (*base, indices.clone(), None)
+            }
+            NodeKind::Expr(ExprKind::PartSelect { base, left, right }) => {
+                (*base, vec![], Some((*left, *right, None)))
+            }
+            NodeKind::Expr(ExprKind::IndexedPartSelect {
+                base,
+                base_expr,
+                width_expr,
+                neg,
+            }) => (*base, vec![], Some((*base_expr, *width_expr, Some(*neg)))),
             _ => {
                 let target = match self.kind(node) {
-                    NodeKind::Expr(ExprKind::Ref { target: Some(target) }) => *target,
+                    NodeKind::Expr(ExprKind::Ref {
+                        target: Some(target),
+                    }) => *target,
                     _ => node,
                 };
-                if let Some(prefix) = bindings.get(&target) { return Some(prefix.clone()); }
-                let info = self.signal_of(target).or_else(|| self.hier_path_signal(node));
-                return info.filter(|info| !info.real).map(|info| self.signal_dependency(info));
+                if let Some(prefix) = bindings.get(&target) {
+                    return Some(prefix.clone());
+                }
+                let info = self
+                    .signal_of(target)
+                    .or_else(|| self.hier_path_signal(node));
+                return info
+                    .filter(|info| !info.real)
+                    .map(|info| self.signal_dependency(info));
             }
         };
         if !indices.is_empty() {
             if let Some(array) = self.array_of(base).filter(|array| !array.real) {
                 let mut out = Vec::new();
                 self.add_fixed_array_dependency(array, &indices, &mut HashSet::new(), &mut out);
-                return out.into_iter().find(|dep| matches!(dep, IrDependency::ArrayElement { .. }));
+                return out
+                    .into_iter()
+                    .find(|dep| matches!(dep, IrDependency::ArrayElement { .. }));
             }
         }
         let prefix = self.packed_storage_prefix_bound(base, bindings)?;
         let (storage, offset, base_width) = self.dependency_span(&prefix)?;
-        let ranges = match self.query_descriptor(base).map(|descriptor| &descriptor.shape) {
+        let ranges = match self
+            .query_descriptor(base)
+            .map(|descriptor| &descriptor.shape)
+        {
             Some(TypeShape::PackedAtom { ranges }) if !ranges.is_empty() => ranges.clone(),
-            _ => vec![crate::core::db::PackedRange { left: i128::from(base_width) - 1, right: 0 }],
+            _ => vec![crate::core::db::PackedRange {
+                left: i128::from(base_width) - 1,
+                right: 0,
+            }],
         };
         let mut lsb = offset;
         let mut width = base_width;
         if let Some((a, b, indexed)) = bounds {
-            let Ok(a) = self.eval_bound_i128(a) else { return Some(prefix) };
-            let Ok(b) = self.eval_bound_i128(b) else { return Some(prefix) };
+            let Ok(a) = self.eval_bound_i128(a) else {
+                return Some(prefix);
+            };
+            let Ok(b) = self.eval_bound_i128(b) else {
+                return Some(prefix);
+            };
             let (left, right) = match indexed {
                 None => (a, b),
                 Some(neg) => {
                     let delta = b.checked_sub(1).filter(|delta| *delta >= 0)?;
-                    (a, if neg { a.checked_sub(delta)? } else { a.checked_add(delta)? })
+                    (
+                        a,
+                        if neg {
+                            a.checked_sub(delta)?
+                        } else {
+                            a.checked_add(delta)?
+                        },
+                    )
                 }
             };
             let range = ranges[0];
-            let stride = u128::from(base_width) / (range.left.abs_diff(range.right).checked_add(1)?);
+            let stride =
+                u128::from(base_width) / (range.left.abs_diff(range.right).checked_add(1)?);
             let x = self.packed_range_slot(range, left, "dependency").ok()?;
             let y = self.packed_range_slot(range, right, "dependency").ok()?;
             lsb = lsb.checked_add(u32::try_from(x.min(y).checked_mul(stride)?).ok()?)?;
@@ -180,47 +267,96 @@ impl<'a> Codegen<'a> {
         (width != 0).then(|| self.slice_dependency(storage, lsb, width))
     }
 
-    fn exclude_written_prefixes(&self, read: IrDependency, writes: &HashSet<IrDependency>) -> Vec<IrDependency> {
+    fn exclude_written_prefixes(
+        &self,
+        read: IrDependency,
+        writes: &HashSet<IrDependency>,
+    ) -> Vec<IrDependency> {
         if let IrDependency::ArrayContents(array) = &read {
             let whole_write = writes.contains(&read);
-            if whole_write { return vec![]; }
+            if whole_write {
+                return vec![];
+            }
             if writes.iter().any(|write| self.same_storage(&read, write)) {
-                return (0..self.model.arrays[*array].total()).flat_map(|index|
-                    self.exclude_written_prefixes(IrDependency::ArrayElement { array: *array, index }, writes)
-                ).collect();
+                return (0..self.model.arrays[*array].total())
+                    .flat_map(|index| {
+                        self.exclude_written_prefixes(
+                            IrDependency::ArrayElement {
+                                array: *array,
+                                index,
+                            },
+                            writes,
+                        )
+                    })
+                    .collect();
             }
         }
         let Some((storage, lsb, width)) = self.dependency_span(&read) else {
-            return if writes.iter().any(|write| self.same_storage(&read, write)) { vec![] } else { vec![read] };
+            return if writes.iter().any(|write| self.same_storage(&read, write)) {
+                vec![]
+            } else {
+                vec![read]
+            };
         };
-        let Some(end) = lsb.checked_add(width) else { return vec![read] };
+        let Some(end) = lsb.checked_add(width) else {
+            return vec![read];
+        };
         let mut intervals = vec![(lsb, end)];
         for write in writes {
             let Some((base, low, size)) = self.dependency_span(write) else {
-                if self.same_storage(&storage, write) { return vec![]; }
+                if self.same_storage(&storage, write) {
+                    return vec![];
+                }
                 continue;
             };
-            if base != storage { continue; }
+            if base != storage {
+                continue;
+            }
             let high = low.saturating_add(size);
-            intervals = intervals.into_iter().flat_map(|(a, b)| {
-                if high <= a || b <= low { return vec![(a, b)]; }
-                let mut pieces = Vec::new();
-                if a < low { pieces.push((a, low)); }
-                if high < b { pieces.push((high, b)); }
-                pieces
-            }).collect();
+            intervals = intervals
+                .into_iter()
+                .flat_map(|(a, b)| {
+                    if high <= a || b <= low {
+                        return vec![(a, b)];
+                    }
+                    let mut pieces = Vec::new();
+                    if a < low {
+                        pieces.push((a, low));
+                    }
+                    if high < b {
+                        pieces.push((high, b));
+                    }
+                    pieces
+                })
+                .collect();
         }
-        intervals.into_iter().map(|(a, b)| self.slice_dependency(storage.clone(), a, b - a)).collect()
+        intervals
+            .into_iter()
+            .map(|(a, b)| self.slice_dependency(storage.clone(), a, b - a))
+            .collect()
     }
 
     pub(super) fn same_storage(&self, read: &IrDependency, write: &IrDependency) -> bool {
-        if matches!(read, IrDependency::PackedRange { .. }) || matches!(write, IrDependency::PackedRange { .. }) {
-            if let (Some((a, x, n)), Some((b, y, m))) = (self.dependency_span(read), self.dependency_span(write)) {
-                return a == b && u64::from(x) < u64::from(y) + u64::from(m)
+        if matches!(read, IrDependency::PackedRange { .. })
+            || matches!(write, IrDependency::PackedRange { .. })
+        {
+            if let (Some((a, x, n)), Some((b, y, m))) =
+                (self.dependency_span(read), self.dependency_span(write))
+            {
+                return a == b
+                    && u64::from(x) < u64::from(y) + u64::from(m)
                     && u64::from(y) < u64::from(x) + u64::from(n);
             }
-            let a = if let IrDependency::PackedRange { storage, .. } = read { storage.as_ref() } else { read };
-            let b = if let IrDependency::PackedRange { storage, .. } = write { storage.as_ref() } else { write };
+            let a = if let IrDependency::PackedRange { storage, .. } = read {
+                storage.as_ref()
+            } else {
+                read
+            };
+            let b = if let IrDependency::PackedRange { storage, .. } = write {
+                storage.as_ref()
+            } else {
+                write
+            };
             return self.same_storage(a, b);
         }
         match (read, write) {
@@ -265,7 +401,9 @@ impl<'a> Codegen<'a> {
     }
 
     fn walk_process_writes(
-        &self, node: NodeId, writes: &mut HashSet<IrDependency>,
+        &self,
+        node: NodeId,
+        writes: &mut HashSet<IrDependency>,
         visited_functions: &mut HashSet<NodeId>,
     ) -> Result<(), String> {
         self.walk_process_writes_bound(node, writes, visited_functions, &HashMap::new())
@@ -312,7 +450,12 @@ impl<'a> Codegen<'a> {
                 // for implicit-sensitivity purposes. Its initializer can
                 // still call a side-effecting function.
                 if let Some(initializer) = self.db.var_initializer(*declaration) {
-                    self.walk_process_writes_bound(initializer, writes, visited_functions, bindings)?;
+                    self.walk_process_writes_bound(
+                        initializer,
+                        writes,
+                        visited_functions,
+                        bindings,
+                    )?;
                 }
                 return Ok(());
             }
@@ -349,22 +492,47 @@ impl<'a> Codegen<'a> {
                 let mut callee_bindings = HashMap::new();
                 let recursive = visited_functions.contains(&ft);
                 for ((formal, is_out), actual) in formals.iter().zip(&self.node(node).children) {
-                    let is_ref = matches!(self.kind(*formal), NodeKind::FuncArg {
-                        direction: DbDirection::Ref, .. });
+                    let is_ref = matches!(
+                        self.kind(*formal),
+                        NodeKind::FuncArg {
+                            direction: DbDirection::Ref,
+                            ..
+                        }
+                    );
                     let actual = self.unwrap_output_actual(*actual);
                     if is_ref && !recursive {
                         if let Some(prefix) = self.packed_storage_prefix_bound(actual, bindings) {
                             callee_bindings.insert(*formal, prefix);
-                        } else if !matches!(self.kind(*formal), NodeKind::FuncArg { const_ref: true, .. }) {
+                        } else if !matches!(
+                            self.kind(*formal),
+                            NodeKind::FuncArg {
+                                const_ref: true,
+                                ..
+                            }
+                        ) {
                             self.add_process_lhs_write_bound(actual, writes, bindings);
                         }
-                    } else if *is_out || (is_ref && !matches!(self.kind(*formal), NodeKind::FuncArg { const_ref: true, .. })) {
+                    } else if *is_out
+                        || (is_ref
+                            && !matches!(
+                                self.kind(*formal),
+                                NodeKind::FuncArg {
+                                    const_ref: true,
+                                    ..
+                                }
+                            ))
+                    {
                         self.add_process_lhs_write_bound(actual, writes, bindings);
                     }
                 }
                 if visited_functions.insert(ft) {
                     if let Some(body) = self.func_body(ft) {
-                        self.walk_process_writes_bound(body, writes, visited_functions, &callee_bindings)?;
+                        self.walk_process_writes_bound(
+                            body,
+                            writes,
+                            visited_functions,
+                            &callee_bindings,
+                        )?;
                     }
                     visited_functions.remove(&ft);
                 }
@@ -408,7 +576,12 @@ impl<'a> Codegen<'a> {
         self.add_process_lhs_write_bound(lhs, writes, &HashMap::new());
     }
 
-    fn add_process_lhs_write_bound(&self, lhs: NodeId, writes: &mut HashSet<IrDependency>, bindings: &HashMap<NodeId, IrDependency>) {
+    fn add_process_lhs_write_bound(
+        &self,
+        lhs: NodeId,
+        writes: &mut HashSet<IrDependency>,
+        bindings: &HashMap<NodeId, IrDependency>,
+    ) {
         if let Some(prefix) = self.packed_storage_prefix_bound(lhs, bindings) {
             writes.insert(prefix);
             return;
@@ -554,13 +727,26 @@ impl<'a> Codegen<'a> {
     }
 
     fn walk_read_signals_mode(
-        &self, scope_path: &str, node: NodeId, seen: &mut HashSet<IrDependency>,
-        visited: &mut HashSet<NodeId>, out: &mut Vec<IrDependency>, include_function_bodies: bool,
+        &self,
+        scope_path: &str,
+        node: NodeId,
+        seen: &mut HashSet<IrDependency>,
+        visited: &mut HashSet<NodeId>,
+        out: &mut Vec<IrDependency>,
+        include_function_bodies: bool,
     ) -> Result<(), String> {
-        self.walk_read_signals_bound(scope_path, node, seen, visited, out,
-            include_function_bodies, &HashMap::new())
+        self.walk_read_signals_bound(
+            scope_path,
+            node,
+            seen,
+            visited,
+            out,
+            include_function_bodies,
+            &HashMap::new(),
+        )
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn walk_read_signals_bound(
         &self,
         scope_path: &str,
@@ -571,7 +757,10 @@ impl<'a> Codegen<'a> {
         include_function_bodies: bool,
         bindings: &HashMap<NodeId, IrDependency>,
     ) -> Result<(), String> {
-        if let NodeKind::Expr(ExprKind::Ref { target: Some(target) }) = self.kind(node) {
+        if let NodeKind::Expr(ExprKind::Ref {
+            target: Some(target),
+        }) = self.kind(node)
+        {
             if let Some(prefix) = bindings.get(target) {
                 self.add_dependency(prefix.clone(), seen, out);
                 return Ok(());
@@ -588,7 +777,9 @@ impl<'a> Codegen<'a> {
                     seen,
                     visited,
                     out,
-                    include_function_bodies, bindings)?;
+                    include_function_bodies,
+                    bindings,
+                )?;
             }
             return Ok(());
         }
@@ -600,19 +791,36 @@ impl<'a> Codegen<'a> {
                     seen,
                     visited,
                     out,
-                    include_function_bodies, bindings)?;
+                    include_function_bodies,
+                    bindings,
+                )?;
             }
             return Ok(());
         }
         if self.object_of(scope_path, node).is_some() {
             return Err(format!("string/chandle changes cannot yet be used in sensitivity or wait expressions in `{scope_path}`"));
         }
-        if matches!(self.kind(node), NodeKind::Expr(
-            ExprKind::BitSelect { .. } | ExprKind::ArraySelect { .. } |
-            ExprKind::PartSelect { .. } | ExprKind::IndexedPartSelect { .. } | ExprKind::HierPath { .. })) {
+        if matches!(
+            self.kind(node),
+            NodeKind::Expr(
+                ExprKind::BitSelect { .. }
+                    | ExprKind::ArraySelect { .. }
+                    | ExprKind::PartSelect { .. }
+                    | ExprKind::IndexedPartSelect { .. }
+                    | ExprKind::HierPath { .. }
+            )
+        ) {
             if let Some(prefix) = self.packed_storage_prefix_bound(node, bindings) {
                 self.add_dependency(prefix, seen, out);
-                return self.walk_lhs_select_reads_bound(scope_path, node, seen, visited, out, include_function_bodies, bindings);
+                return self.walk_lhs_select_reads_bound(
+                    scope_path,
+                    node,
+                    seen,
+                    visited,
+                    out,
+                    include_function_bodies,
+                    bindings,
+                );
             }
         }
         match self.kind(node) {
@@ -625,7 +833,9 @@ impl<'a> Codegen<'a> {
                         seen,
                         visited,
                         out,
-                        include_function_bodies, bindings);
+                        include_function_bodies,
+                        bindings,
+                    );
                 }
                 if let Some(container) = self.container_of(*base) {
                     self.add_container_dependencies(container.ir, true, true, seen, out);
@@ -635,7 +845,9 @@ impl<'a> Codegen<'a> {
                         seen,
                         visited,
                         out,
-                        include_function_bodies, bindings);
+                        include_function_bodies,
+                        bindings,
+                    );
                 }
             }
             NodeKind::Expr(ExprKind::ArraySelect { base, indices }) => {
@@ -648,7 +860,9 @@ impl<'a> Codegen<'a> {
                             seen,
                             visited,
                             out,
-                            include_function_bodies, bindings)?;
+                            include_function_bodies,
+                            bindings,
+                        )?;
                     }
                     return Ok(());
                 }
@@ -661,7 +875,9 @@ impl<'a> Codegen<'a> {
                             seen,
                             visited,
                             out,
-                            include_function_bodies, bindings)?;
+                            include_function_bodies,
+                            bindings,
+                        )?;
                     }
                     return Ok(());
                 }
@@ -705,7 +921,9 @@ impl<'a> Codegen<'a> {
                                 seen,
                                 visited,
                                 out,
-                                include_function_bodies, bindings)?;
+                                include_function_bodies,
+                                bindings,
+                            )?;
                         }
                     }
                     return Ok(());
@@ -725,7 +943,9 @@ impl<'a> Codegen<'a> {
                         seen,
                         visited,
                         out,
-                        include_function_bodies, bindings)?;
+                        include_function_bodies,
+                        bindings,
+                    )?;
                 }
                 if let Some(lhs) = self.node(node).children.first() {
                     self.walk_lhs_select_reads_bound(
@@ -734,7 +954,9 @@ impl<'a> Codegen<'a> {
                         seen,
                         visited,
                         out,
-                        include_function_bodies, bindings)?;
+                        include_function_bodies,
+                        bindings,
+                    )?;
                 }
                 return Ok(());
             }
@@ -746,7 +968,9 @@ impl<'a> Codegen<'a> {
                         seen,
                         visited,
                         out,
-                        include_function_bodies, bindings)?;
+                        include_function_bodies,
+                        bindings,
+                    )?;
                 }
                 return Ok(());
             }
@@ -767,7 +991,9 @@ impl<'a> Codegen<'a> {
                         seen,
                         visited,
                         out,
-                        include_function_bodies, bindings)?;
+                        include_function_bodies,
+                        bindings,
+                    )?;
                 }
                 if let Some(lhs) = operands.first() {
                     self.walk_lhs_select_reads_bound(
@@ -776,7 +1002,9 @@ impl<'a> Codegen<'a> {
                         seen,
                         visited,
                         out,
-                        include_function_bodies, bindings)?;
+                        include_function_bodies,
+                        bindings,
+                    )?;
                 }
                 return Ok(());
             }
@@ -795,7 +1023,9 @@ impl<'a> Codegen<'a> {
                             seen,
                             visited,
                             out,
-                            include_function_bodies, bindings)?;
+                            include_function_bodies,
+                            bindings,
+                        )?;
                     }
                 }
                 for statement in init {
@@ -805,7 +1035,9 @@ impl<'a> Codegen<'a> {
                         seen,
                         visited,
                         out,
-                        include_function_bodies, bindings)?;
+                        include_function_bodies,
+                        bindings,
+                    )?;
                 }
                 self.walk_read_signals_bound(
                     scope_path,
@@ -813,14 +1045,18 @@ impl<'a> Codegen<'a> {
                     seen,
                     visited,
                     out,
-                    include_function_bodies, bindings)?;
+                    include_function_bodies,
+                    bindings,
+                )?;
                 self.walk_read_signals_bound(
                     scope_path,
                     *body,
                     seen,
                     visited,
                     out,
-                    include_function_bodies, bindings)?;
+                    include_function_bodies,
+                    bindings,
+                )?;
                 for statement in incr {
                     self.walk_read_signals_bound(
                         scope_path,
@@ -828,7 +1064,9 @@ impl<'a> Codegen<'a> {
                         seen,
                         visited,
                         out,
-                        include_function_bodies, bindings)?;
+                        include_function_bodies,
+                        bindings,
+                    )?;
                 }
                 return Ok(());
             }
@@ -842,7 +1080,9 @@ impl<'a> Codegen<'a> {
                         seen,
                         visited,
                         out,
-                        include_function_bodies, bindings)?;
+                        include_function_bodies,
+                        bindings,
+                    )?;
                 }
                 return Ok(());
             }
@@ -864,33 +1104,89 @@ impl<'a> Codegen<'a> {
                 let (_, _, formals) = self.func_info(ft, callee_inst)?;
                 let mut callee_bindings = HashMap::new();
                 for ((formal, is_out), actual) in formals.iter().zip(&self.node(node).children) {
-                    let is_ref = matches!(self.kind(*formal), NodeKind::FuncArg {
-                        direction: DbDirection::Ref, .. });
+                    let is_ref = matches!(
+                        self.kind(*formal),
+                        NodeKind::FuncArg {
+                            direction: DbDirection::Ref,
+                            ..
+                        }
+                    );
                     let actual = self.unwrap_output_actual(*actual);
-                    let prefix = is_ref.then(|| self.packed_storage_prefix_bound(actual, bindings)).flatten();
-                    if include_function_bodies && !visited.contains(&ft) && prefix.is_some() {
-                        callee_bindings.insert(*formal, prefix.unwrap());
-                        self.walk_lhs_select_reads_bound(scope_path, actual, seen, visited, out,
-                            include_function_bodies, bindings)?;
-                    } else if *is_out && matches!(self.kind(*formal), NodeKind::FuncArg { direction: DbDirection::Output, .. }) {
-                        self.walk_lhs_select_reads_bound(scope_path, actual, seen, visited, out,
-                            include_function_bodies, bindings)?;
+                    let prefix = is_ref
+                        .then(|| self.packed_storage_prefix_bound(actual, bindings))
+                        .flatten();
+                    if let Some(prefix) =
+                        prefix.filter(|_| include_function_bodies && !visited.contains(&ft))
+                    {
+                        callee_bindings.insert(*formal, prefix);
+                        self.walk_lhs_select_reads_bound(
+                            scope_path,
+                            actual,
+                            seen,
+                            visited,
+                            out,
+                            include_function_bodies,
+                            bindings,
+                        )?;
+                    } else if *is_out
+                        && matches!(
+                            self.kind(*formal),
+                            NodeKind::FuncArg {
+                                direction: DbDirection::Output,
+                                ..
+                            }
+                        )
+                    {
+                        self.walk_lhs_select_reads_bound(
+                            scope_path,
+                            actual,
+                            seen,
+                            visited,
+                            out,
+                            include_function_bodies,
+                            bindings,
+                        )?;
                     } else {
-                        self.walk_read_signals_bound(scope_path, actual, seen, visited, out,
-                            include_function_bodies, bindings)?;
+                        self.walk_read_signals_bound(
+                            scope_path,
+                            actual,
+                            seen,
+                            visited,
+                            out,
+                            include_function_bodies,
+                            bindings,
+                        )?;
                     }
                 }
                 if include_function_bodies && visited.insert(ft) {
                     if let Some(body) = self.func_body(ft) {
-                        self.walk_read_signals_bound(scope_path, body, seen, visited, out,
-                            include_function_bodies, &callee_bindings)?;
+                        self.walk_read_signals_bound(
+                            scope_path,
+                            body,
+                            seen,
+                            visited,
+                            out,
+                            include_function_bodies,
+                            &callee_bindings,
+                        )?;
                     }
                     visited.remove(&ft);
                 }
                 for (formal, _) in formals.iter().skip(self.node(node).children.len()) {
-                    if let NodeKind::FuncArg { default: Some(default), .. } = self.kind(*formal) {
-                        self.walk_read_signals_bound(scope_path, *default, seen, visited, out,
-                            include_function_bodies, bindings)?;
+                    if let NodeKind::FuncArg {
+                        default: Some(default),
+                        ..
+                    } = self.kind(*formal)
+                    {
+                        self.walk_read_signals_bound(
+                            scope_path,
+                            *default,
+                            seen,
+                            visited,
+                            out,
+                            include_function_bodies,
+                            bindings,
+                        )?;
                     }
                 }
                 return Ok(());
@@ -950,7 +1246,9 @@ impl<'a> Codegen<'a> {
                 seen,
                 visited,
                 out,
-                include_function_bodies, bindings)?;
+                include_function_bodies,
+                bindings,
+            )?;
         }
         Ok(())
     }
@@ -968,13 +1266,26 @@ impl<'a> Codegen<'a> {
     }
 
     fn walk_lhs_select_reads_mode(
-        &self, scope_path: &str, lhs: NodeId, seen: &mut HashSet<IrDependency>,
-        visited: &mut HashSet<NodeId>, out: &mut Vec<IrDependency>, include_function_bodies: bool,
+        &self,
+        scope_path: &str,
+        lhs: NodeId,
+        seen: &mut HashSet<IrDependency>,
+        visited: &mut HashSet<NodeId>,
+        out: &mut Vec<IrDependency>,
+        include_function_bodies: bool,
     ) -> Result<(), String> {
-        self.walk_lhs_select_reads_bound(scope_path, lhs, seen, visited, out,
-            include_function_bodies, &HashMap::new())
+        self.walk_lhs_select_reads_bound(
+            scope_path,
+            lhs,
+            seen,
+            visited,
+            out,
+            include_function_bodies,
+            &HashMap::new(),
+        )
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn walk_lhs_select_reads_bound(
         &self,
         scope_path: &str,
@@ -985,13 +1296,22 @@ impl<'a> Codegen<'a> {
         include_function_bodies: bool,
         bindings: &HashMap<NodeId, IrDependency>,
     ) -> Result<(), String> {
-        match self.kind(lhs) {
-            NodeKind::Expr(ExprKind::BitSelect { base, .. } | ExprKind::ArraySelect { base, .. }
-                | ExprKind::PartSelect { base, .. } | ExprKind::IndexedPartSelect { base, .. }) => {
-                self.walk_lhs_select_reads_bound(scope_path, *base, seen, visited, out,
-                    include_function_bodies, bindings)?;
-            }
-            _ => {}
+        if let NodeKind::Expr(
+            ExprKind::BitSelect { base, .. }
+            | ExprKind::ArraySelect { base, .. }
+            | ExprKind::PartSelect { base, .. }
+            | ExprKind::IndexedPartSelect { base, .. },
+        ) = self.kind(lhs)
+        {
+            self.walk_lhs_select_reads_bound(
+                scope_path,
+                *base,
+                seen,
+                visited,
+                out,
+                include_function_bodies,
+                bindings,
+            )?;
         }
         match self.kind(lhs) {
             NodeKind::Expr(ExprKind::BitSelect { index, .. }) => self.walk_read_signals_bound(
@@ -1000,7 +1320,9 @@ impl<'a> Codegen<'a> {
                 seen,
                 visited,
                 out,
-                include_function_bodies, bindings),
+                include_function_bodies,
+                bindings,
+            ),
             NodeKind::Expr(ExprKind::PartSelect { left, right, .. }) => {
                 self.walk_read_signals_bound(
                     scope_path,
@@ -1008,14 +1330,18 @@ impl<'a> Codegen<'a> {
                     seen,
                     visited,
                     out,
-                    include_function_bodies, bindings)?;
+                    include_function_bodies,
+                    bindings,
+                )?;
                 self.walk_read_signals_bound(
                     scope_path,
                     *right,
                     seen,
                     visited,
                     out,
-                    include_function_bodies, bindings)
+                    include_function_bodies,
+                    bindings,
+                )
             }
             NodeKind::Expr(ExprKind::IndexedPartSelect {
                 base_expr,
@@ -1028,14 +1354,18 @@ impl<'a> Codegen<'a> {
                     seen,
                     visited,
                     out,
-                    include_function_bodies, bindings)?;
+                    include_function_bodies,
+                    bindings,
+                )?;
                 self.walk_read_signals_bound(
                     scope_path,
                     *width_expr,
                     seen,
                     visited,
                     out,
-                    include_function_bodies, bindings)
+                    include_function_bodies,
+                    bindings,
+                )
             }
             NodeKind::Expr(ExprKind::ArraySelect { indices, .. }) => {
                 // The base is the array itself (not a read); only the index
@@ -1047,7 +1377,9 @@ impl<'a> Codegen<'a> {
                         seen,
                         visited,
                         out,
-                        include_function_bodies, bindings)?;
+                        include_function_bodies,
+                        bindings,
+                    )?;
                 }
                 Ok(())
             }

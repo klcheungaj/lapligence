@@ -3,7 +3,6 @@
 use super::*;
 
 impl<'a> Codegen<'a> {
-
     pub(super) fn lower_procedural_delay(
         &mut self,
         path: &str,

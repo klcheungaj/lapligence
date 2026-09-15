@@ -3,7 +3,6 @@
 use super::*;
 
 impl<'a> Codegen<'a> {
-
     /// Resolve a hierarchical reference read (`a.b.sig`, or the 2-part
     /// interface member `m.data`) to its signal, when the LAST path element
     /// resolves to a captured Net/Var (per-instance, via the db's refs).
@@ -157,7 +156,10 @@ impl<'a> Codegen<'a> {
         }
     }
 
-    pub(super) fn unpacked_aggregate_info(&self, node: NodeId) -> Option<(NodeId, UnpackedAggregateInfo)> {
+    pub(super) fn unpacked_aggregate_info(
+        &self,
+        node: NodeId,
+    ) -> Option<(NodeId, UnpackedAggregateInfo)> {
         let target = self.unpacked_aggregate_target(node)?;
         self.unpacked_aggregates
             .get(&target)
@@ -183,7 +185,10 @@ impl<'a> Codegen<'a> {
     /// declaration identity and canonical recursive path used by aggregate
     /// storage. Dynamic indices deliberately remain outside P28's fixed-value
     /// lowering boundary rather than being mistaken for a C address.
-    pub(super) fn unpacked_path_for_expr(&self, node: NodeId) -> Option<(NodeId, Vec<AggregatePathPart>)> {
+    pub(super) fn unpacked_path_for_expr(
+        &self,
+        node: NodeId,
+    ) -> Option<(NodeId, Vec<AggregatePathPart>)> {
         match self.kind(node) {
             NodeKind::Expr(ExprKind::ArraySelect { base, indices }) => {
                 let (target, mut path) =
@@ -494,7 +499,10 @@ impl<'a> Codegen<'a> {
         Ok(Some((info, lsb, width)))
     }
 
-    pub(super) fn packed_range_for_base(&self, base: NodeId) -> Option<crate::core::db::PackedRange> {
+    pub(super) fn packed_range_for_base(
+        &self,
+        base: NodeId,
+    ) -> Option<crate::core::db::PackedRange> {
         let base = self
             .clocking_var_target(base)
             .or_else(|| self.db.is_clocking_var(base).then_some(base))
@@ -609,7 +617,12 @@ impl<'a> Codegen<'a> {
         u32::try_from(left.abs_diff(right).checked_add(1)?).ok()
     }
 
-    pub(super) fn effective_decl_width(&self, declaration: NodeId, inst: NodeId, captured: u32) -> u32 {
+    pub(super) fn effective_decl_width(
+        &self,
+        declaration: NodeId,
+        inst: NodeId,
+        captured: u32,
+    ) -> u32 {
         self.declared_source_width(declaration, inst)
             .unwrap_or(captured)
     }

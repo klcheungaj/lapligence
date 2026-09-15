@@ -3,7 +3,6 @@
 use super::*;
 
 impl EmitCtx<'_, '_> {
-
     /// Lower system-task calls ($display/$monitor/$strobe/$finish/…).
     /// Skippable constructs warn here and produce no statements.
     fn lower_dumpvars(&mut self, args: &[NodeId]) -> Result<IrStmt, String> {
@@ -690,7 +689,8 @@ impl EmitCtx<'_, '_> {
                         })
                         .collect(),
                 ));
-                self.cg.model.vpi_compile_calls[site].time_unit_fs = self.cg.timescale_of_node(h).unit_fs;
+                self.cg.model.vpi_compile_calls[site].time_unit_fs =
+                    self.cg.timescale_of_node(h).unit_fs;
                 Ok(vec![IrStmt::VpiCall {
                     site,
                     name: name.to_owned(),

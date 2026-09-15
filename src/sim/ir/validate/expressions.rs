@@ -3,8 +3,12 @@
 use super::*;
 
 impl Validator<'_> {
-
-    pub(super) fn validate_expr(&self, expr: &IrExpr, formals: &[IrFormal], path: &str) -> ValidationResult {
+    pub(super) fn validate_expr(
+        &self,
+        expr: &IrExpr,
+        formals: &[IrFormal],
+        path: &str,
+    ) -> ValidationResult {
         self.max_width
             .set(self.max_width.get().max(u128::from(expr.width)));
         if expr.fill.is_some_and(|fill| fill > 3) {
@@ -601,11 +605,13 @@ impl Validator<'_> {
                         return self.fail(path, "VPI callsite index is out of bounds");
                     };
                     if call.name != *name || call.args.len() != args.len() {
-                        return self.fail(path, "VPI callsite descriptor does not match instruction");
+                        return self
+                            .fail(path, "VPI callsite descriptor does not match instruction");
                     }
                     for (shape, argument) in call.args.iter().zip(args) {
-                        if (shape.width, shape.signed, shape.real) !=
-                            (argument.width, argument.signed, argument.is_real()) {
+                        if (shape.width, shape.signed, shape.real)
+                            != (argument.width, argument.signed, argument.is_real())
+                        {
                             return self.fail(path, "VPI callsite argument shape mismatch");
                         }
                     }

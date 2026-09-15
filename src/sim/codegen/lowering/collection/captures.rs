@@ -3,7 +3,6 @@
 use super::*;
 
 impl<'a> Codegen<'a> {
-
     pub(in super::super) fn capture_source(&self, target: NodeId) -> Option<CaptureSource> {
         if let Some(binding) = self.capture_binding(target) {
             let info = binding.local.clone();

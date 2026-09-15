@@ -36,18 +36,19 @@ use crate::sim::ir::{
 };
 
 mod constants;
-use constants::{value_to_const, as_packed_const, real_of};
+use constants::{as_packed_const, real_of, value_to_const};
 mod traversal;
-use traversal::{walk_lhs_mut, walk_model_exprs_mut, walk_execution_exprs_mut};
+use traversal::{walk_execution_exprs_mut, walk_lhs_mut, walk_model_exprs_mut};
 mod folding;
 use folding::fold_expr;
 mod identities;
 use identities::ident_expr;
 mod control_flow;
-use control_flow::{truthy_const, prune_stmt_list, strip_unreferenced_labels};
+#[cfg(test)]
+use control_flow::truthy_const;
+use control_flow::{prune_stmt_list, strip_unreferenced_labels};
 mod storage;
 use storage::mark_unused_storage;
-
 
 /// Run the enabled passes over `model` in a fixed order.
 #[cfg(test)]
