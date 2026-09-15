@@ -43,3 +43,13 @@ with module-unit and precision scales. Validation, effect analysis, optimization
 and stack sizing traverse that expression like other statement operands.
 Inertial driver operations capture packed values for cancelable active-region
 updates; their validation requires persistent whole-driver storage.
+
+## Source organization
+
+`ir.rs` retains `IrModel` and re-exports the existing operation API from domain
+files for expressions, lvalues, calls, statements, events, assertions,
+processes, functions, initialization, storage and VPI. Existing container and
+object domains remain separate. `validate.rs` owns the validation context;
+its `validate/` children check individual domains against that shared context.
+
+See [the source map](../../../docs/source_layout.md).

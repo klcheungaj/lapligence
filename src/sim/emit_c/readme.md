@@ -22,3 +22,13 @@
 
 See [`docs/sim_data_semantics.md`](../../../docs/sim_data_semantics.md) for
 width and conversion semantics.
+
+## Source organization
+
+`model.rs` coordinates declarations and setup through `model/` domains for
+storage, classes, interfaces, assertions, VPI, DPI, functions, processes and
+initialization. `statements/` and `expressions/` hold their respective typed
+rendering domains. Each facade retains the existing renderer entry points;
+children do not acquire frontend access or make new lowering decisions.
+
+See [the source map](../../../docs/source_layout.md).

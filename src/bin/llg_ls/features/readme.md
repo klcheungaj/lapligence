@@ -13,3 +13,13 @@
 
 - Interaction: genvar and other source-level facts supplement elaborated data
   for navigation, rename, hover, and highlighting.
+
+## Test organization
+
+`tests.rs` keeps shared fixtures and helpers. The `tests/` children group
+regressions by module graphs, recovery, coordinates, hover, bindings,
+connections, references, symbols, completion, diagnostics, tokens, analysis
+pipeline, configuration, cross-file behavior, packages, classes and shadow
+paths. Production feature entry points remain unchanged.
+
+See [the source map](../../../../docs/source_layout.md).

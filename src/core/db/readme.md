@@ -33,3 +33,13 @@ named-event triggers retain their mode and supported delay/event/repeat timing.
 Unsupported timing or resizable event-storage nodes remain explicit owned
 references for source-located lowering rejection.
 Driver delays preserve single or separate rise/fall/turn-off expressions.
+
+## Source organization
+
+`database.rs` retains the arena owner and consumer facade. Its `database/`
+children separate owned types and records (`types`, `nodes`, `references`,
+`values`, `assertions`, `clocking`, `connections`) from snapshot projection
+(`capture`, `node_import`, `statement_import`, `expression_import`,
+`assertion_import`). `Db::from_slang` remains the single import entry point.
+
+See [the source map](../../../docs/source_layout.md) for the ownership boundaries.

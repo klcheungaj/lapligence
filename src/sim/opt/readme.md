@@ -9,3 +9,12 @@
 
 See [the simulator README](../readme.md) for this stage's place in the model
 pipeline.
+
+## Source organization
+
+`passes.rs` coordinates `passes/` domains: constant evaluation, traversal,
+folding, identities, control flow and storage. Unit tests live in
+`passes/tests.rs`. Public optimization entry points and validation boundaries
+remain in the existing facade.
+
+See [the source map](../../../docs/source_layout.md).

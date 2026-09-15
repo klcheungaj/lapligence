@@ -88,3 +88,14 @@
 
 See [`docs/sim_features.md`](../../../docs/sim_features.md) for the supported
 feature surface and rejection boundaries.
+
+## Source organization
+
+`lowering.rs` owns `Codegen` and coordinates domain modules in `lowering/`.
+Collection, statements, expressions, containers and objects each have a small
+facade with responsibility-named children. Assertion/clocking context,
+references, initialization, delays and selections are separate lowering
+concerns, not backend text-generation helpers.
+
+See [lowering domains](lowering/readme.md) and
+[the source map](../../../docs/source_layout.md).

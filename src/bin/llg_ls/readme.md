@@ -16,3 +16,12 @@
 - Boundary: the backend passes bounded, admitted source buffers to Slang and
   returns only owned snapshots and indexes to request handling. The transport
   keeps stdout exclusively for JSON-RPC.
+
+## Source organization
+
+`module_explorer.rs` coordinates `module_explorer/` domains for catalog,
+resource budgets, contents, hierarchy, compatibility, presentation and types.
+Its unit tests are in `module_explorer/tests.rs`. The feature-test facade and
+its domain suites live in `features/tests.rs` and `features/tests/`.
+
+See [the source map](../../../docs/source_layout.md).

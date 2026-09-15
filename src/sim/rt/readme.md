@@ -166,3 +166,18 @@
 
 See [`docs/sim_data_semantics.md`](../../../docs/sim_data_semantics.md) for
 language-level value semantics.
+
+## Source organization
+
+`llg_rt.c` is an ordered facade over `llg_rt_prelude.c` and `scheduler/*.c`;
+`llg_container.c` similarly owns `llg_container_prelude.c` and `container/*.c`.
+These are private fragments, not independent translation units. This keeps
+private state and declaration order with their existing owner.
+
+`mod.rs` concatenates each ordered fragment list into the original flat C
+implementation returned by `runtime_sources()` or `container_sources()`.
+Generated builds retain the existing filenames and CMake source lists. Keep
+both orders synchronized and do not compile the fragments separately.
+`tests.rs` checks embedding order against the source facades.
+
+See [the source map](../../../docs/source_layout.md).

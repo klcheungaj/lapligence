@@ -28,3 +28,12 @@
   and process safeguards.
 - Related: [C wrapper](../wrapper/readme.md) and
   [shared core](../core/readme.md).
+
+## Source organization
+
+`slang.rs` retains raw ABI declarations, native link attributes, resource
+ownership/cleanup and safe compile entry points. Its `slang/` children separate
+snapshot capture, semantic records, tokens, diagnostics and value decoding.
+They remain inside the same FFI safety boundary; consumers receive owned data.
+
+See [the source map](../../docs/source_layout.md).

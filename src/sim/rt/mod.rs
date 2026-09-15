@@ -41,7 +41,48 @@ pub fn rng_sources() -> (&'static str, &'static str) {
 /// (header, implementation) of the event scheduler and runtime facade.
 /// Compile together with [`value_sources`] and [`libaco_sources`].
 pub fn runtime_sources() -> (&'static str, &'static str) {
-    (include_str!("llg_rt.h"), include_str!("llg_rt.c"))
+    (
+        include_str!("llg_rt.h"),
+        concat!(
+            include_str!("llg_rt_prelude.c"),
+            include_str!("scheduler/storage.c"),
+            include_str!("scheduler/state.c"),
+            include_str!("scheduler/policy.c"),
+            include_str!("scheduler/process_registry.c"),
+            include_str!("scheduler/activations.c"),
+            include_str!("scheduler/wait_queues.c"),
+            include_str!("scheduler/deferred_assertions.c"),
+            include_str!("scheduler/wakeup.c"),
+            include_str!("scheduler/mailboxes.c"),
+            include_str!("scheduler/named_events.c"),
+            include_str!("scheduler/process_control.c"),
+            include_str!("scheduler/forks.c"),
+            include_str!("scheduler/dependencies.c"),
+            include_str!("scheduler/force.c"),
+            include_str!("scheduler/lifecycle.c"),
+            include_str!("scheduler/plusargs.c"),
+            include_str!("scheduler/simulation_control.c"),
+            include_str!("scheduler/sampling.c"),
+            include_str!("scheduler/time.c"),
+            include_str!("scheduler/process_waits.c"),
+            include_str!("scheduler/event_waits.c"),
+            include_str!("scheduler/nonblocking.c"),
+            include_str!("scheduler/stochastic.c"),
+            include_str!("scheduler/reference_writes.c"),
+            include_str!("scheduler/nets.c"),
+            include_str!("scheduler/nba_commit.c"),
+            include_str!("scheduler/formatting.c"),
+            include_str!("scheduler/file_io.c"),
+            include_str!("scheduler/scanning.c"),
+            include_str!("scheduler/memory_io.c"),
+            include_str!("scheduler/assertion_control.c"),
+            include_str!("scheduler/sequences.c"),
+            include_str!("scheduler/concurrent_assertions.c"),
+            include_str!("scheduler/monitors.c"),
+            include_str!("scheduler/scheduler.c"),
+            include_str!("scheduler/output.c"),
+        ),
+    )
 }
 
 /// (header, implementation) of scheduler-independent value operations and casts.
@@ -60,7 +101,20 @@ pub fn random_sources() -> (&'static str, &'static str) {
 pub fn container_sources() -> (&'static str, &'static str) {
     (
         include_str!("llg_container.h"),
-        include_str!("llg_container.c"),
+        concat!(
+            include_str!("llg_container_prelude.c"),
+            include_str!("container/value_descriptors.c"),
+            include_str!("container/dynamic_values.c"),
+            include_str!("container/queue_values.c"),
+            include_str!("container/queue_value_mutations.c"),
+            include_str!("container/dynamic_arrays.c"),
+            include_str!("container/queues.c"),
+            include_str!("container/methods.c"),
+            include_str!("container/queue_references.c"),
+            include_str!("container/associative_arrays.c"),
+            include_str!("container/associative_values.c"),
+            include_str!("container/associative_value_queries.c"),
+        ),
     )
 }
 
@@ -122,3 +176,6 @@ pub fn selftest_source() -> &'static str {
 pub fn waveform_selftest_source() -> &'static str {
     include_str!("llg_wave_selftest.c")
 }
+
+#[cfg(test)]
+mod tests;

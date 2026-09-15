@@ -1,136 +1,109 @@
-# sim — Verilog/SV → C11 simulator
+# sim — Verilog/SV to C11 simulator
 
-## Purpose
+## Pipeline and ownership
 
-Compiles elaborated designs into C11 models that run as standalone
-executables:
+The driver `src/bin/llg.rs` runs compile → lower → IR → optimize → emit →
+CMake build → execute. Read [codegen/AGENTS.md](codegen/AGENTS.md) for
+initialization, sensitivity, ports/interfaces, inout nets, tasks/forks,
+force/release, reals, timescales, arrays, supported forms and rejection
+boundaries; [rt/AGENTS.md](rt/AGENTS.md) owns value/scheduler/waveform contracts.
+The [source map](../../docs/source_layout.md) locates responsibility modules.
 
-- `codegen.rs` — public facade for db → IR lowering in `codegen/lowering/`.
-  `generate(&db)` and `generate_with_opts(&db, ...)` lower an already-owned
-  database through `SemanticModel` and `ExecutionModel`, then delegate to the
-  optimizer and C backend.
-  The lower-expression/statement/LHS families and process/link/function/init
-  builders live in the lowering modules. `GeneratedModel`
-  carries a `pub design_name: String` plus the emitted `model_c` and warnings.
-  The behavioral contracts below (inout nets, arrays, timescale, force/
-  release, interface bodies, …) are decided here, at lowering time.
-- `ir.rs` — validated typed-operation staging: signals, arrays, net groups,
-  functions, process descriptions, initialization, and `IrExpr`/`IrStmt`
-  trees. `ExecutionModel` moves process operations into owned executable
-  blocks before optimization or emission.
-- `opt.rs` — conservative optimization passes over executable operations, driven by
-  `OptConfig { fold_constants, identities, prune_branches, unused_storage }`
-  with `default()`/`none()` and per-pass toggling for bisection.  Constant
-  folding reuses `core::elab::Value` math (X/Z-correct; shortreal casts fold
-  through `f32` like the runtime; div/mod/pow preserve model-sized known
-  operands); identity simplifications are shape-guarded; branch/case pruning
-  follows strict provability rules (never prunes past non-const items, and to
-  default only when ALL items are proven unmatched); unused-storage
-  elimination uses an omit flag (no index remapping) with a read-collector
-  covering processes, funcs, init steps, spawns, monitor eval fns, links,
-  force targets, display args, statement waits, executable trigger plans, and
-  task-call temps.
-- `emit_c.rs` and `emit_c/` — the C11 backend, consuming ONLY IR types;
-  decoupled from `core::db`/`ffi`/`vpi` (enforced by
-  `tests/emit_decoupling.rs` greps, same spirit as the repo's
-  `unsafe`-confinement rule). Naming conventions
-  (G_/p_/D_ prefixes) and the `model.c` first-line header are unchanged.
-- `build.rs` — the CMake-only model builder (`build_model_cmake`), the only
-  supported build path, invoked automatically right after C emission.  It
-  writes sources via the shared helper, generates a `CMakeLists.txt`
-  (C11, Release default, exe under `<build>/bin/`, links `m`), runs
-  `<cmake> -S <out_dir> -B <out_dir>/build [-G <generator>]
-  -DCMAKE_C_COMPILER=<LLG_CC|$CC|cc> -DCMAKE_C_FLAGS:STRING="-O2 -Wall
-  -Wno-unused-function [$LLG_CFLAGS]"`, then `cmake --build --config Release`.
-  Generator selection: `CmakeBuildOpts.generator` (driver
-  `--generator <backend>` via `build_model_cmake_with_opts`) >
-  `$CMAKE_GENERATOR` passthrough > cmake's host default.
-  `CmakeBuildOpts.dpi_libraries` (driver `--dpi-lib <path>`, repeatable)
-  supplies validated, explicit DPI-C link files; `svdpi.h` is copied into
-  each generated source tree. `generate_model_sources` writes sources +
-  `CMakeLists.txt` only (driver `--gen-only`). Env vars: `LLG_CMAKE` (cmake program), `LLG_CC`/`CC`
-  compiler chain, `LLG_CFLAGS` appended.  Missing cmake → actionable error
-  naming install; flags containing double quotes are rejected;
-  `cmake_available()` probes for a usable cmake once per process.
-- `rt/` — embedded C runtime (`include_str!`): standalone `sv4_t` value
-  types/operations/conversions (`llg_value.h`/`llg_value.c`), legacy
-  probabilistic functions (`llg_random.h`/`llg_random.c`), and event scheduler
-  (`llg_rt.h`/`llg_rt.c`), plus libaco (`aco.c`/`acosw.S`)
-  and the C self-test.  The self-test carries a deterministic vector table
-  (`VECTORS[]` in `llg_rt_selftest.c`) whose expected values are generated
-  from `core::elab::Value` by `tests/property_elab.rs` (`gen_c_vectors`,
-  ignored test; regenerate with `cargo test --test property_elab
-  gen_c_vectors -- --ignored --nocapture > /tmp/vectors.inc`), so the C
-  `sv4_*` ops are cross-checked against the Rust 4-state math on identical
-  inputs.
-- `mod.rs` — the shared source-write helper `write_sim_sources` (writes
-  runtime + libaco + extra sources into a build dir; consumed by the
-  `build` module).
+- `codegen.rs` exposes `generate(&db)` and `generate_with_opts(&db, ...)` over
+  an owned DB. `codegen/lowering/` decides behavior and builds expressions,
+  statements/LHSs, processes, links, functions and initialization through
+  `SemanticModel` and `ExecutionModel`, then delegates optimization/emission.
+  `GeneratedModel` retains `pub design_name: String`, `model_c` and warnings.
+- `semantic::SemanticModel` wraps the frontend-neutral DB and owns synthesis
+  classification: return checked `SynthDesignView` or origin-linked reasons.
+- `ir.rs` and `ir/` stage validated typed signals, arrays, nets, functions,
+  processes, initialization and `IrExpr`/`IrStmt`. `execution::ExecutionModel`
+  owns executable operations/blocks, effects, suspend/resume plans and regions.
+  Optimization and whole-model emission consume only that model. Emit block
+  terminators directly, including distinct resume blocks; body-controlled
+  suspension must contain a validated waiting operation.
+- `opt.rs` uses `OptConfig { fold_constants, identities, prune_branches,
+  unused_storage }`, `default()`/`none()` and per-pass bisection. Constant
+  folding reuses X/Z-correct `core::elab::Value`; shortreal rounds through `f32`,
+  div/mod/pow retain model-sized known operands. Shape-guard identities; prune
+  only proven branches/cases, never past nonconstant items or to default unless
+  ALL items are proven unmatched. Omit unused storage without remapping indices.
+  Read collection covers processes, functions, init, spawns, monitor evaluators,
+  links, force targets, display, waits, trigger plans and task-call temporaries.
+- `emit_c.rs`/`emit_c/` consumes ONLY IR: no `core::db`/`ffi`/`vpi` dependency.
+  Preserve G_/p_/D_ naming and the `model.c` first-line header.
+  `tests/emit_decoupling.rs` enforces this like the repository's
+  `unsafe`-confinement rule.
+- `mod.rs::write_sim_sources` writes runtime/libaco/extra sources for `build`.
+  `rt/` embeds pure C with `include_str!` into `target/sim/<design>/`: independent
+  `llg_value.h`/`llg_value.c`, `llg_random.h`/`llg_random.c`, scheduler
+  `llg_rt.h`/`llg_rt.c`, libaco `aco.c`/`acosw.S`, and C self-tests. Scheduler
+  and container domain fragments assemble into their existing flat sources.
+  The runtime/libaco are never linked into Rust; `core::compile`, `core::db`
+  and `core::value` supply frontend data/values.
 
-The frontend-neutral owned database is wrapped by `semantic::SemanticModel`
-before simulator lowering. Synthesis classification belongs there and returns
-a checked `SynthDesignView` or origin-linked reasons. `execution::ExecutionModel`
-owns process operations, blocks, effects, suspend/resume plans and scheduling
-regions; optimization and whole-model C emission consume only that model. The
-C backend follows block terminators directly, including distinct resume
-blocks, and body-controlled suspension must contain a validated waiting
-operation.
+## Validation and capacity
 
-The typed-operation staging tables in `IrModelParts` are untrusted until
-`IrModel::from_parts` validates all table references, storage shapes, process
-registrations, and nested nodes. `IrModel::validate` and detached-node
-validation protect later optimization and emission indexing. The C emitter
-derives `LLG_MODEL_STACK_VALUES` from the largest validated function/process
-frames using `(max_function_frame * recursion_depth_256 +
-max_process_frame) * 8`, retaining the historical minimum for small models.
-Frame accounting includes typed expression storage across sequential statements
-and lexical control-flow arms because generated C compilers, especially with
-sanitizer instrumentation, can retain return-by-value temporaries for the
-whole function lifetime. Checked sizing errors stop emission. The generated
-CMake `sim` target defines both `LLG_MODEL_MAX_WIDTH` and
-`LLG_MODEL_STACK_VALUES` for every translation unit, including the standalone
-value runtime; runtime checks remain defensive at that ABI boundary.
+Treat `IrModelParts` as untrusted until `IrModel::from_parts` validates table
+references, storage shapes, registrations and nested nodes. Keep
+`IrModel::validate` and detached-node validation before optimizer/emitter
+indexing. Semantic and executable representations remain separately owned.
 
-Selected assignment targets retain typed index trees and their elaborated
-indexed-part extent. Capacity discovery includes intermediate index values even
-when they are wider than every stored signal. Indexed reads and writes use that
-static extent during C emission; a width expression's integer storage width is
-not the selected data width. Named packed-member writes preserve the member's
-two-state conversion independently of the enclosing storage type.
+Derive `LLG_MODEL_STACK_VALUES` from validated frames:
+`(max_function_frame * recursion_depth_256 + max_process_frame) * 8`, retaining
+the historical minimum. Account for typed expression storage across sequential
+statements and lexical arms: C compilers, especially sanitizers, may retain
+return-by-value temporaries for the whole function. Checked sizing failure
+stops emission. Define `LLG_MODEL_MAX_WIDTH` and `LLG_MODEL_STACK_VALUES` on
+every generated CMake `sim` translation unit, including standalone values;
+keep defensive runtime ABI checks.
 
-Driver: `src/bin/llg.rs` (compile → codegen(lowering → IR → opt → emit)
-→ build → run).
+Select packed capacity from the completed model; reject the exclusive `1 << 20`
+backend limit, not a fixed 1024-/64-bit IR semantic cap. Runtime `sv4_t` widths are
+`uint32_t`; div/mod/pow use model limbs. Preserve typed selected-index trees,
+elaborated indexed-part extents and capacity for intermediate indices wider
+than stored signals. Emit static extents, not a width expression's integer
+storage width. Named packed-member writes preserve member-specific two-state
+conversion. See [data semantics](../../docs/sim_data_semantics.md) for standard
+width/sign/X/Z rules.
 
-Packed-width capacity is selected per generated model. The codegen/backend
-emits `LLG_MODEL_MAX_WIDTH` from the completed design and rejects widths at the
-exclusive `1 << 20` backend limit; the IR itself has no fixed 1024/64-bit
-semantic cap. Runtime `sv4_t` widths are `uint32_t`, with defensive checks for
-the model capacity. Division, modulo, and power therefore use the model's
-wide limb capacity rather than a separate 64-bit operand limit. See
-[docs/sim_data_semantics.md](../../docs/sim_data_semantics.md) for the
-standard width/signedness and X/Z rules.
+`llg_rt_selftest.c::VECTORS[]` cross-checks C `sv4_*` against identical
+`core::elab::Value` inputs in `tests/property_elab.rs`. Regenerate with the
+ignored Rust generator:
 
-## Requirements
+```sh
+cargo test --test property_elab gen_c_vectors -- --ignored --nocapture > /tmp/vectors.inc
+```
 
-- **No `unsafe`** (all Slang access is copied through safe `core::db`).
-- **No direct frontend or FFI calls** in simulator code.
-- Library consumers comparing optimizer variants should build `core::db::Db`
-  once and call `generate_from_db_with_opts`. End-to-end tests instead pass
-  checked-in HDL fixtures to `llg` in both CLI modes, covering independent
-  frontend-to-executable runs as required by the test guide.
-- libaco is **not** a Rust dependency: it is compiled together with the
-  generated C model at model-build time.
-- CMake is the only supported model-build path. Source output is pruned to the
-  current model, incompatible or partial CMake build trees are discarded, and
-  a failed configure receives one clean retry. Generator selection is explicit
-  option, then `$CMAKE_GENERATOR`, then CMake's host default.
-- The root `build.rs` applies repository-owned Slang and libaco patches from
-  `patches/` before native sources are consumed. The submodule gitlinks stay at
-  their documented upstream bases; the portable preparer accepts only a clean
-  or fully-applied state and rejects partial/mismatched edits.
-- Read [codegen/AGENTS.md](codegen/AGENTS.md) for initialization, sensitivity,
-  ports/interfaces, inout nets, tasks/forks, force/release, real values,
-  timescale, arrays, supported forms and explicit rejection boundaries.
-- Read [rt/AGENTS.md](rt/AGENTS.md) for value/scheduler/waveform ownership.
-- The runtime is pure C, emitted into `target/sim/<design>/` with the model.
-  `core::compile`, `core::db`, and `core::value` supply frontend data and values.
+## Build contract
+
+CMake is the only model builder, automatically invoked after emission through
+`build_model_cmake`. It writes C11 sources and `CMakeLists.txt`, defaults to
+Release, emits the executable under `<build>/bin/`, and links `m`:
+
+```sh
+<cmake> -S <out_dir> -B <out_dir>/build [-G <generator>] -DCMAKE_C_COMPILER=<LLG_CC|$CC|cc> -DCMAKE_C_FLAGS:STRING="-O2 -Wall -Wno-unused-function [$LLG_CFLAGS]"
+cmake --build --config Release
+```
+
+Generator precedence: `CmakeBuildOpts.generator` (`--generator <backend>` via
+`build_model_cmake_with_opts`) > `$CMAKE_GENERATOR` > host default.
+`CmakeBuildOpts.dpi_libraries` (`--dpi-lib <path>`, repeatable) accepts validated
+explicit link files; copy `svdpi.h` into generated trees.
+`generate_model_sources` (`--gen-only`) writes sources and CMake without building.
+`LLG_CMAKE` selects CMake; `LLG_CC`/`CC` selects the compiler; append `LLG_CFLAGS`.
+Reject double quotes in flags; missing CMake must name installation guidance.
+`cmake_available()` probes once per process. Prune stale model sources, discard
+incompatible/partial build trees, and retry a failed configure once cleanly.
+
+Root `build.rs` applies repository Slang/libaco `patches/` before native source
+consumption. Keep upstream-base gitlinks; the portable preparer accepts clean
+or fully-applied states and rejects partial/mismatched edits.
+
+## Required boundaries
+
+No `unsafe`, direct frontend or FFI calls in simulator Rust: use owned safe
+`core::db`. Library optimizer comparisons build one `core::db::Db` and call
+`generate_from_db_with_opts`; end-to-end comparisons use checked-in HDL through
+both `llg` CLI modes, with independent frontend-to-executable runs. libaco is
+not a Rust dependency and compiles only with generated C models.

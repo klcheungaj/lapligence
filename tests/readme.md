@@ -231,3 +231,18 @@ result is recorded, and shared stdout/stderr comparisons are unchanged.
   CLI harness imports the shared simulation helper required by `sim_cli`.
 - No compiler, simulator, runtime probe, sanitizer, or Cargo command was run for
   these changes. Shared stdout/stderr comparisons remain unchanged.
+
+## Source organization
+
+`lsp_stdio.rs` retains the framed JSON-RPC client and shared process helpers;
+`lsp_stdio/` contains responsibility-named suites. The integration-test crate
+uses explicit `lsp_stdio/...` module paths so these suites are not discovered
+as independent Cargo test targets. Existing checked-in HDL fixtures and
+independent expected results remain with their original suite owners. The stdio
+and feature-test cases now have domain-qualified names; update exact-name
+filters to include that domain. Integration-test binary names are unchanged.
+
+Runtime source-assembly unit tests in `src/sim/rt/tests.rs` compare the C facade
+include order with the embedded flat implementation; they do not compile C or
+replace runtime execution tests. See [the source map](../docs/source_layout.md)
+for other unit-test and implementation domains.
