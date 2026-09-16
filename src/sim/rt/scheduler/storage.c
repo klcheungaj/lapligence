@@ -43,6 +43,14 @@ typedef struct llg_nba {
     llg_string_t string_value;
 } llg_nba_t;
 
+static void nba_destroy(llg_nba_t* nba) {
+    if (!nba) return;
+    sv4_destroy(&nba->value);
+    sv4_destroy(&nba->mask);
+    if (nba->is_string) llg_string_destroy(&nba->string_value);
+    free(nba);
+}
+
 struct llg_inertial {
     struct llg_inertial* next_all;
     struct llg_inertial* next_pending;
@@ -230,7 +238,16 @@ typedef struct llg_program {
     struct llg_program* next;
 } llg_program_t;
 
+struct llg_value_scope {
+    struct llg_value_scope* next;
+    llg_proc_t* owner;
+    size_t count;
+    sv4_t* values;
+};
+static llg_value_scope_t* root_value_scopes;
+
 struct llg_proc {
+    llg_value_scope_t* value_scopes;
     aco_t* co;
     const char* name;
     void (*fn)(llg_proc_t*);
@@ -314,6 +331,9 @@ static void frame_clear_alias(llg_frame_slot_t* entry) {
     if (entry->alias_kind == LLG_FRAME_ALIAS_SLOT) {
         llg_frame_release(entry->alias.slot.frame);
     }
+    if (entry->alias_kind == LLG_FRAME_ALIAS_NONE && entry->kind == LLG_FRAME_PACKED)
+        sv4_destroy(&entry->value.packed);
+    memset(&entry->value, 0, sizeof(entry->value));
     entry->alias_kind = LLG_FRAME_ALIAS_NONE;
     entry->alias.packed = NULL;
 }
@@ -365,9 +385,10 @@ void llg_frame_release(llg_frame_t* frame) {
 
 void llg_frame_capture_value(llg_frame_t* frame, size_t slot, sv4_t value) {
     llg_frame_slot_t* entry = frame_slot(frame, slot);
+    sv4_t copy = sv4_clone(&value);
     frame_clear_alias(entry);
     entry->kind = LLG_FRAME_PACKED;
-    entry->value.packed = value;
+    sv4_move(&entry->value.packed, &copy);
 }
 
 void llg_frame_capture_real(llg_frame_t* frame, size_t slot, double value) {
@@ -416,12 +437,12 @@ void llg_frame_alias_slot(llg_frame_t* frame, size_t slot,
     }
     (void)frame_slot_const(target, target_slot);
     llg_frame_slot_t* entry = frame_slot(frame, slot);
+    llg_frame_retain(target);
     frame_clear_alias(entry);
     entry->kind = llg_frame_slot_kind(target, target_slot);
     entry->alias_kind = LLG_FRAME_ALIAS_SLOT;
     entry->alias.slot.frame = target;
     entry->alias.slot.slot = target_slot;
-    llg_frame_retain(target);
 }
 
 llg_frame_slot_kind_t llg_frame_slot_kind(const llg_frame_t* frame,
@@ -442,8 +463,8 @@ sv4_t llg_frame_read_value(const llg_frame_t* frame, size_t slot) {
         frame_kind_error(LLG_FRAME_PACKED, llg_frame_slot_kind(frame, slot));
     }
     return entry->alias_kind == LLG_FRAME_ALIAS_PACKED
-               ? *entry->alias.packed
-               : entry->value.packed;
+               ? sv4_clone(entry->alias.packed)
+               : sv4_clone(&entry->value.packed);
 }
 
 void llg_frame_write_value(llg_frame_t* frame, size_t slot, sv4_t value) {
@@ -457,7 +478,7 @@ void llg_frame_write_value(llg_frame_t* frame, size_t slot, sv4_t value) {
         if (entry->kind != LLG_FRAME_PACKED) {
             frame_kind_error(LLG_FRAME_PACKED, entry->kind);
         }
-        entry->value.packed = value;
+        sv4_copy(&entry->value.packed, &value);
     }
 }
 

@@ -67,6 +67,7 @@ pub fn render_expr(ctx: &RCtx<'_>, e: &IrExpr) -> Result<RenderedExpr, EmitError
             .expression_capacity(e, ctx.func)
             .map_err(EmitError::InvalidIr)?,
     )?;
+    super::require_owned_emission()?;
     render_expr_impl(ctx, e).map_err(EmitError::new)
 }
 

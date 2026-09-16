@@ -3,7 +3,9 @@
 
 static void llg_q_set_status(sv4_t* status, int code) {
     if (!status) return;
-    llg_ba(status, sv4_from_i64((int64_t)code, status->width));
+    sv4_t value = sv4_from_i64((int64_t)code, status->width);
+    llg_ba(status, value);
+    sv4_destroy(&value);
 }
 
 static int llg_q_read_integer(sv4_t value, int64_t* result,
@@ -74,7 +76,9 @@ static int llg_q_write_stat(sv4_t* target, uint64_t value) {
         g.finish = 1;
         return 0;
     }
-    llg_ba(target, sv4_from_i64((int64_t)value, target->width));
+    sv4_t packed = sv4_from_i64((int64_t)value, target->width);
+    llg_ba(target, packed);
+    sv4_destroy(&packed);
     return 1;
 }
 
@@ -229,9 +233,16 @@ void llg_q_remove(sv4_t q_id_value, sv4_t* job_id, sv4_t* inform_id,
         previous->next = NULL;
         queue->tail = previous;
     }
-    if (job_id) llg_ba(job_id, sv4_from_i64(entry->job_id, job_id->width));
-    if (inform_id)
-        llg_ba(inform_id, sv4_from_i64(entry->inform_id, inform_id->width));
+    if (job_id) {
+        sv4_t value = sv4_from_i64(entry->job_id, job_id->width);
+        llg_ba(job_id, value);
+        sv4_destroy(&value);
+    }
+    if (inform_id) {
+        sv4_t value = sv4_from_i64(entry->inform_id, inform_id->width);
+        llg_ba(inform_id, value);
+        sv4_destroy(&value);
+    }
     if (queue->head == entry) queue->head = entry->next;
     if (queue->tail == entry) queue->tail = NULL;
     --queue->length;

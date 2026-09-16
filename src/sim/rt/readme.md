@@ -2,12 +2,11 @@
 
 - **Purpose:** embedded C11 runtime sources compiled into cached static archives
   for generated models; they are not linked into Rust binaries.
-- **Value layer:** `llg_value.h/.c` implements model-width four-state values,
-  operations, resolution, formatting, and numeric conversions. Its private
-  `value/` fragments separate allocation ownership from existing arithmetic.
-  `sv4_storage_t` supplies exact-width owned snapshots with explicit deep-copy,
-  move and destruction; the main `sv4_t` layout remains model-width during
-  the staged ownership migration.
+- **Value layer:** `llg_value.h/.c` implements dynamically allocated four-state
+  values, operations, resolution, formatting, and conversions. The private
+  `value/` fragments separate allocation ownership from arithmetic. `sv4_t` is
+  a unique owner, with exact-width payload storage independent of model-wide
+  capacity. See [the ownership contract](value/ownership.md).
 - **Legacy random layer:** `llg_random.h/.c` implements Verilog-2001
   `$random` and the seven `$dist_*` functions using the specified Annex N
   algorithms. It is scheduler-independent and can be compiled as a standalone
@@ -191,26 +190,33 @@ both orders synchronized and do not compile the fragments separately.
 
 See [the source map](../../../docs/source_layout.md).
 
-## Packed snapshot ownership
+## Dynamic value ownership and migration boundary
 
-Waveform events deep-copy their packed payload into one allocation containing
-three exact-width 64-bit planes. Queue publication moves that allocation to the
-writer, which destroys it after processing, including ignored events and output
-errors. Formatting scratch is dynamically sized and freed when the writer closes.
-The ring still has a fixed 1,024-byte path member per slot; the migration does
-not promise lower total memory use for every narrow/default-width model.
+`sv4_t` is now the sole dynamic packed representation. A value owns one allocation
+containing three `ceil(width / 64)`-limb planes; width zero owns nothing. The only
+value-width boundary is the exclusive `LLG_SUPPORTED_WIDTH_LIMIT`. Constructors
+and value-returning operations produce independent owners; input packed values
+are borrowed unless an API explicitly consumes them. Destination cells must be
+initialized. Container/scheduler destructors reclaim retained values, and
+registered value scopes handle coroutine completion and cancellation without
+compiler-specific stack unwinding.
 
-`sv4_storage_t` constructors accept widths below `LLG_SUPPORTED_WIDTH_LIMIT`,
-independently of the legacy model capacity. Zero-width storage allocates nothing.
-Initialize owners with `SV4_STORAGE_EMPTY` or a constructor; use
-`sv4_storage_clone`, `sv4_storage_copy`, `sv4_storage_move`, and
-`sv4_storage_destroy` rather than copying owning structs. Destruction is
-idempotent, and moves leave their source empty. Borrowed plane pointers must not
-survive replacement, move, or destruction. These operations use portable C11 and
-have no scheduler dependency.
+Waveform queues move independent snapshots between producer and writer. Both
+packed payloads and file-event paths are allocated for their actual content;
+slots no longer embed a 1,024-byte path. Writer scratch is dynamic and is released
+on close. Other formatting, parsing and VPI scratch is sized for the current
+request rather than the model maximum.
 
-This does not yet make generated expressions, model signals, containers, or
-scheduler values dynamically sized. Their existing `sv4_t` ownership and
-`LLG_MODEL_MAX_WIDTH` contract remain unchanged. See the
-[storage tests](../../../tests/runtime_value_storage/readme.md) for the isolated
-validation scope and native-platform limitations.
+**This is a staged runtime branch, not a working generated-model release.** The
+P05 emitter still needs named temporary cleanup, owned model initialization,
+copy-in/out and suspension/cancellation integration. Public C emission and model
+build entry points fail with an explicit migration diagnostic to prevent unsafe
+code generation. Old selftests with by-value/static-owner assumptions are fenced
+until migrated. P06 still removes obsolete emitter/cache/stack metadata; P07
+covers full generated simulations, Rust/C parity, native platforms and benchmarks.
+
+Use the [standalone owner tests](../../../tests/runtime_value_storage/readme.md)
+for this stage. They exercise actual runtime code without Rust or Slang. Native
+macOS/Windows, the full HDL pipeline and net performance are not certified by a
+Linux component test. Heap allocation and deep cloning can add costs; no speedup
+is assumed without measurement.

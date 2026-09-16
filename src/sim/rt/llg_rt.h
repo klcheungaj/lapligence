@@ -180,6 +180,15 @@ void llg_inertial_selected_net(llg_inertial_t** handle, llg_net_t* net,
 
 // ── Scheduler ─────────────────────────────────────────────────────────────────
 
+// Heap-backed owners scoped to a process (or the root runtime). Use these
+// for values live across suspension. Completion/cancellation drains remaining
+// scopes without touching a discarded coroutine stack. End scopes normally
+// as soon as their values die, not only during runtime teardown.
+typedef struct llg_value_scope llg_value_scope_t;
+llg_value_scope_t* llg_value_scope_begin(size_t count);
+sv4_t* llg_value_scope_values(llg_value_scope_t* scope);
+void llg_value_scope_end(llg_value_scope_t* scope);
+
 typedef struct llg_proc llg_proc_t;
 typedef struct llg_process_handle llg_process_handle_t;
 typedef struct llg_semaphore llg_semaphore_t;
@@ -469,17 +478,19 @@ void llg_dependency_notify(sv4_t* contents, sv4_t* shape, int change);
 
 void llg_display(const char* fmt, ...);  // formatted output followed by a newline
 void llg_write(const char* fmt, ...);    // formatted output without a newline
+// Typed formatting calls consume packed/string members, but not the argument
+// array allocation. Initialize each member as an independent owner.
 void llg_display_typed(const char* fmt, llg_fmt_arg_t* args, int n,
                        const char* scope);
 void llg_write_typed(const char* fmt, llg_fmt_arg_t* args, int n,
                      const char* scope);
 // Format into a newly-owned string. The format value and argument array are
-// consumed exactly once, including destruction of every owned string member.
+// consumed exactly once, including destruction of every owned packed/string member.
 llg_string_t llg_string_format_typed(llg_string_t format, llg_fmt_arg_t* args,
                                      int n, const char* scope);
 // Runtime severity tasks use the same typed formatter as display tasks and
 // write one source-context diagnostic to stderr. The argument array is
-// consumed exactly once, including destruction of owned strings.
+// consumed exactly once, including destruction of owned packed values and strings.
 void llg_rt_severity_typed(int severity, const char* fmt, llg_fmt_arg_t* args,
                            int n, const char* scope, const char* location);
 _Noreturn void llg_rt_fatal_typed(int finish_number, const char* fmt,
@@ -1122,6 +1133,8 @@ int llg_clocking_sample_history(sv4_t* source, sv4_t* sample,
 
 // Assignments.  llg_nba records on the current process's list and commits in
 // the NBA region; llg_ba writes immediately and notifies waiters.
+// Packed write/enqueue inputs are borrowed. Retained values/masks are cloned;
+// targets must be initialized stable cells that outlive pending writes.
 void llg_nba(sv4_t* target, sv4_t value);
 // Capture values now, retaining target storage through the future NBA commit.
 // A zero tick delay stays in the current time slot's NBA region.

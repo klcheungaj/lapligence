@@ -1,3 +1,16 @@
+// Checked size arithmetic for per-conversion formatting scratch.
+static size_t llg_format_size_add(size_t a, size_t b) {
+    if (b > SIZE_MAX - a) llg_fatal_allocation("format scratch", a, b);
+    return a + b;
+}
+
+static size_t llg_format_scratch_size(size_t payload, size_t precision) {
+    size_t cap = llg_format_size_add(payload, precision);
+    cap = llg_format_size_add(cap, (size_t)g.time_format.precision);
+    cap = llg_format_size_add(cap, g.time_format.suffix.len);
+    return llg_format_size_add(cap, 512u);
+}
+
 
 // ── $monitor / $strobe ────────────────────────────────────────────────────────
 
@@ -24,15 +37,16 @@ static void llg_format_array(char* out, size_t cap, const char* fmt,
                 llg_append(out, cap, &len, '%');
             } else if ((c == 'd' || c == 'h' || c == 'b' || c == 'o' || c == 't') &&
                        argi < n) {
-                char tmp[LLG_MAX_WIDTH * 2u + 256u];
+                size_t tmp_cap = llg_format_scratch_size(args[argi].width, 0);
+                char* tmp = llg_checked_malloc(tmp_cap, 1, "packed format");
                 size_t tmp_len;
                 if (c == 't') {
                     tmp_len = llg_format_time_integer(args[argi++],
                                                       g.design_precision_fs,
-                                                      tmp, sizeof(tmp));
+                                                      tmp, tmp_cap);
                     if (!has_width && !zero) width = g.time_format.minimum_field_width;
                 } else {
-                    sv4_format(c, args[argi++], tmp, sizeof(tmp));
+                    sv4_format(c, args[argi++], tmp, tmp_cap);
                     tmp_len = strlen(tmp);
                 }
                 while (width > 0 && (size_t)width > tmp_len && len + 1 < cap) {
@@ -41,6 +55,7 @@ static void llg_format_array(char* out, size_t cap, const char* fmt,
                 }
                 for (size_t i = 0; i < tmp_len && len + 1 < cap; i++)
                     out[len++] = tmp[i];
+                free(tmp);
             } else {
                 out[len++] = '%';
                 if (c && len + 1 < cap) out[len++] = c;
@@ -85,6 +100,8 @@ static void llg_fmt_args_destroy(llg_fmt_arg_t* args, int n) {
     if (!args) return;
     for (int i = 0; i < n; i++) {
         if (args[i].kind == LLG_FMT_STRING) llg_string_destroy(&args[i].value.string);
+        else if (args[i].kind == LLG_FMT_PACKED) sv4_destroy(&args[i].value.packed);
+        memset(&args[i], 0, sizeof(args[i]));
     }
 }
 
@@ -92,6 +109,8 @@ static llg_fmt_arg_t llg_fmt_arg_clone(const llg_fmt_arg_t* value) {
     llg_fmt_arg_t result = *value;
     if (value->kind == LLG_FMT_STRING)
         result.value.string = llg_string_clone(&value->value.string);
+    else if (value->kind == LLG_FMT_PACKED)
+        result.value.packed = sv4_clone(&value->value.packed);
     return result;
 }
 
@@ -174,17 +193,19 @@ static int llg_time_format_exponents(int* source, int* display) {
 // not pass through a host integer or floating-point type.
 static size_t llg_format_time_integer(sv4_t value, uint64_t source_unit_fs,
                                       char* raw, size_t cap) {
-    char decimal[LLG_MAX_WIDTH * 2u + 256u];
-    char scaled[LLG_MAX_WIDTH * 2u + 256u];
-    sv4_to_dec_string(value, decimal, sizeof(decimal));
+    size_t decimal_cap = (size_t)value.width + 3u;
+    size_t scaled_cap = llg_format_scratch_size(value.width, 0);
+    char* decimal = llg_checked_malloc(decimal_cap, 1, "time digits");
+    char* scaled = llg_checked_malloc(scaled_cap, 1, "scaled time digits");
+    sv4_to_dec_string(value, decimal, decimal_cap);
     size_t decimal_len = strlen(decimal);
     size_t len = 0;
-    if (decimal_len == 0) return 0;
+    if (decimal_len == 0) goto cleanup;
     if (decimal[0] == 'x') {
         llg_append_text(raw, cap, &len, decimal, decimal_len);
         llg_append_text(raw, cap, &len, g.time_format.suffix.data,
                         g.time_format.suffix.len);
-        return len;
+        goto cleanup;
     }
     int source_exponent;
     int display_exponent;
@@ -206,7 +227,7 @@ static size_t llg_format_time_integer(sv4_t value, uint64_t source_unit_fs,
             scaled[0] = '0';
             scaled_len = 1;
         } else {
-            size_t max_scaled = sizeof(scaled) - 1u;
+            size_t max_scaled = scaled_cap - 1u;
             if (digits_len > max_scaled || (size_t)scale > max_scaled - digits_len)
                 llg_fatal_allocation("formatted time", 1,
                                      digits_len + (size_t)scale + 1u);
@@ -225,7 +246,7 @@ static size_t llg_format_time_integer(sv4_t value, uint64_t source_unit_fs,
         // leading discarded decimal digits are zero (for example 7/10^9),
         // so inspect the first actually discarded digit only when it exists.
         int round_up = drop <= digits_len && digits[digits_len - drop] >= '5';
-        if (round_up) (void)llg_decimal_increment(scaled, &scaled_len, sizeof(scaled));
+        if (round_up) (void)llg_decimal_increment(scaled, &scaled_len, scaled_cap);
     }
     int precision = g.time_format.precision;
     if (negative) llg_append(raw, cap, &len, '-');
@@ -248,6 +269,9 @@ static size_t llg_format_time_integer(sv4_t value, uint64_t source_unit_fs,
     }
     llg_append_text(raw, cap, &len, g.time_format.suffix.data,
                     g.time_format.suffix.len);
+cleanup:
+    free(scaled);
+    free(decimal);
     return len;
 }
 
@@ -366,8 +390,8 @@ static size_t llg_format_char(sv4_t value, char* raw, size_t cap) {
 }
 
 static sv4_t llg_string_to_display_packed(const llg_string_t* value) {
-    size_t max_bytes = (size_t)LLG_MAX_WIDTH / 8u;
-    if (value->len > max_bytes || (value->len == 0 && LLG_MAX_WIDTH < 8u)) {
+    size_t max_bytes = (size_t)(LLG_SUPPORTED_WIDTH_LIMIT - 1u) / 8u;
+    if (value->len > max_bytes) {
         fprintf(stderr,
                 "llg runtime fatal: string display conversion exceeds packed width\n");
         abort();
@@ -377,7 +401,8 @@ static sv4_t llg_string_to_display_packed(const llg_string_t* value) {
 }
 
 static size_t llg_format_pattern_packed(sv4_t value, char* raw, size_t cap) {
-    char digits[LLG_MAX_WIDTH * 2u + 256u];
+    size_t digits_cap = (size_t)value.width + 3u;
+    char* digits = llg_checked_malloc(digits_cap, 1, "pattern digits");
     int has_unknown = sv4_is_unknown(value);
     int all_x = has_unknown;
     int all_z = has_unknown;
@@ -395,7 +420,7 @@ static size_t llg_format_pattern_packed(sv4_t value, char* raw, size_t cap) {
     } else {
         base = 'h';
     }
-    sv4_format((char)base, value, digits, sizeof(digits));
+    sv4_format((char)base, value, digits, digits_cap);
     size_t digits_len = strlen(digits);
     size_t len = 0;
     const char* digit_text = digits;
@@ -412,15 +437,18 @@ static size_t llg_format_pattern_packed(sv4_t value, char* raw, size_t cap) {
         if (written > 0) llg_append_text(raw, cap, &len, prefix, (size_t)written);
     }
     llg_append_text(raw, cap, &len, digit_text, digits_len);
+    free(digits);
     return len;
 }
 
 static void llg_emit_field(char* out, size_t cap, size_t* len,
                             const char* value, size_t value_len,
                             llg_fmt_spec_t spec, char conversion) {
-    char field[LLG_MAX_WIDTH * 2u + 256u];
+    size_t field_cap = llg_format_size_add(value_len, (size_t)spec.precision);
+    field_cap = llg_format_size_add(field_cap, 8u);
+    char* field = llg_checked_malloc(field_cap, 1, "formatted field");
     size_t n = value_len;
-    if (n > sizeof(field) - 1) n = sizeof(field) - 1;
+    if (n > field_cap - 1) n = field_cap - 1;
     memcpy(field, value, n);
     field[n] = 0;
     if (spec.has_precision && conversion == 's' && n > (size_t)spec.precision)
@@ -428,7 +456,7 @@ static void llg_emit_field(char* out, size_t cap, size_t* len,
     if (spec.has_precision && strchr("dhbox", conversion)) {
         size_t sign = n && field[0] == '-' ? 1u : 0u;
         size_t digits = n - sign;
-        while (digits < (size_t)spec.precision && n + 1 < sizeof(field)) {
+        while (digits < (size_t)spec.precision && n + 1 < field_cap) {
             memmove(field + sign + 1, field + sign, digits + 1);
             field[sign] = '0';
             n++;
@@ -439,7 +467,7 @@ static void llg_emit_field(char* out, size_t cap, size_t* len,
         !(n == 1 && (field[0] == 'x' || field[0] == 'z'))) {
         const char* prefix = conversion == 'h' ? "0x" : conversion == 'o' ? "0" : "0b";
         size_t prefix_len = strlen(prefix);
-        if (n + prefix_len < sizeof(field)) {
+        if (n + prefix_len < field_cap) {
             memmove(field + prefix_len, field, n + 1);
             memcpy(field, prefix, prefix_len);
             n += prefix_len;
@@ -447,13 +475,13 @@ static void llg_emit_field(char* out, size_t cap, size_t* len,
     }
     int numeric = strchr("dhbotxfeg", conversion) != NULL;
     if (numeric && n > 0 && field[0] != '-' && spec.plus) {
-        if (n + 1 < sizeof(field)) {
+        if (n + 1 < field_cap) {
             memmove(field + 1, field, n + 1);
             field[0] = '+';
             n++;
         }
     } else if (numeric && n > 0 && field[0] != '-' && spec.space) {
-        if (n + 1 < sizeof(field)) {
+        if (n + 1 < field_cap) {
             memmove(field + 1, field, n + 1);
             field[0] = ' ';
             n++;
@@ -476,12 +504,15 @@ static void llg_emit_field(char* out, size_t cap, size_t* len,
             llg_append_text(out, cap, len, field, prefix);
             for (size_t i = 0; i < pad; i++) llg_append(out, cap, len, '0');
             llg_append_text(out, cap, len, field + prefix, n - prefix);
+            free(field);
             return;
         }
     }
     if (!spec.left) for (size_t i = 0; i < pad; i++) llg_append(out, cap, len, pad_char);
     llg_append_text(out, cap, len, field, n);
     if (spec.left) for (size_t i = 0; i < pad; i++) llg_append(out, cap, len, pad_char);
+    free(field);
+
 }
 
 static size_t llg_format_typed(char* out, size_t cap, const char* fmt,
@@ -526,80 +557,91 @@ static size_t llg_format_typed(char* out, size_t cap, const char* fmt,
             continue;
         }
         const llg_fmt_arg_t* arg = &args[argi++];
-        char raw[LLG_MAX_WIDTH * 2u + 256u];
+        size_t payload = 0;
+        if (arg->kind == LLG_FMT_PACKED) payload = (size_t)arg->value.packed.width * 4u;
+        else if (arg->kind == LLG_FMT_STRING) {
+            if (arg->value.string.len > SIZE_MAX / 8u)
+                llg_fatal_allocation("string display", arg->value.string.len, 8u);
+            payload = arg->value.string.len * 8u;
+        }
+        size_t raw_cap = llg_format_scratch_size(payload, (size_t)spec.precision);
+        raw_cap = llg_format_size_add(raw_cap, (size_t)spec.width);
+        char* raw = llg_checked_malloc(raw_cap, 1, "typed format");
         size_t raw_len = 0;
         if (strchr("dhbox", conversion) && arg->kind == LLG_FMT_PACKED) {
             sv4_format(conversion == 'x' ? 'h' : conversion, arg->value.packed,
-                       raw, sizeof(raw));
+                       raw, raw_cap);
             raw_len = strlen(raw);
         } else if (strchr("dhbox", conversion) && arg->kind == LLG_FMT_STRING) {
             sv4_t packed = llg_string_to_display_packed(&arg->value.string);
-            sv4_format(conversion == 'x' ? 'h' : conversion, packed, raw, sizeof(raw));
+            sv4_format(conversion == 'x' ? 'h' : conversion, packed, raw, raw_cap);
             raw_len = strlen(raw);
+            sv4_destroy(&packed);
         } else if (conversion == 't' && arg->kind == LLG_FMT_PACKED) {
             raw_len = llg_format_time_integer(arg->value.packed,
-                                              arg->time_unit_fs, raw, sizeof(raw));
+                                              arg->time_unit_fs, raw, raw_cap);
             if (!spec.has_width && !spec.zero) {
                 spec.width = g.time_format.minimum_field_width;
                 spec.has_width = spec.width > 0;
             }
         } else if (conversion == 't' && arg->kind == LLG_FMT_REAL) {
             raw_len = llg_format_time_real(arg->value.real, arg->time_unit_fs,
-                                           raw, sizeof(raw));
+                                           raw, raw_cap);
             if (!spec.has_width && !spec.zero) {
                 spec.width = g.time_format.minimum_field_width;
                 spec.has_width = spec.width > 0;
             }
         } else if (conversion == 'c' && arg->kind == LLG_FMT_PACKED) {
-            raw_len = llg_format_char(arg->value.packed, raw, sizeof(raw));
+            raw_len = llg_format_char(arg->value.packed, raw, raw_cap);
         } else if (conversion == 'c' && arg->kind == LLG_FMT_STRING) {
             sv4_t packed = llg_string_to_display_packed(&arg->value.string);
-            raw_len = llg_format_char(packed, raw, sizeof(raw));
+            raw_len = llg_format_char(packed, raw, raw_cap);
+            sv4_destroy(&packed);
         } else if (conversion == 'u' && arg->kind == LLG_FMT_PACKED) {
-            raw_len = llg_format_raw2(arg->value.packed, raw, sizeof(raw));
+            raw_len = llg_format_raw2(arg->value.packed, raw, raw_cap);
         } else if (conversion == 'z' && arg->kind == LLG_FMT_PACKED) {
-            raw_len = llg_format_raw4(arg->value.packed, raw, sizeof(raw));
+            raw_len = llg_format_raw4(arg->value.packed, raw, raw_cap);
         } else if (conversion == 'v' && arg->kind == LLG_FMT_PACKED) {
-            raw_len = llg_format_strength(arg->value.packed, raw, sizeof(raw));
+            raw_len = llg_format_strength(arg->value.packed, raw, raw_cap);
         } else if (conversion == 'p' && arg->kind == LLG_FMT_PACKED) {
             // Aggregate pattern formatting is rejected by lowering until the
             // owned aggregate representation is available.  A packed scalar
             // follows ConstantValue::toString's base-selection and literal
             // prefix rules, which is the scalar case of Slang's pattern
             // visitor.
-            raw_len = llg_format_pattern_packed(arg->value.packed, raw, sizeof(raw));
+            raw_len = llg_format_pattern_packed(arg->value.packed, raw, raw_cap);
         } else if (strchr("feg", conversion) && arg->kind == LLG_FMT_REAL) {
             char real_fmt[128];
             size_t spec_len = (size_t)(p - start);
             if (spec_len >= sizeof(real_fmt) - 1) spec_len = sizeof(real_fmt) - 2;
             memcpy(real_fmt, start, spec_len);
             real_fmt[spec_len] = 0;
-            int written = snprintf(raw, sizeof(raw), real_fmt, arg->value.real);
-            raw_len = written < 0 ? 0 : (size_t)written < sizeof(raw)
+            int written = snprintf(raw, raw_cap, real_fmt, arg->value.real);
+            raw_len = written < 0 ? 0 : (size_t)written < raw_cap
                                            ? (size_t)written
-                                           : sizeof(raw) - 1;
+                                           : raw_cap - 1;
         } else if (conversion == 's' && arg->kind == LLG_FMT_PACKED) {
             llg_string_t value = llg_string_from_packed(arg->value.packed);
             raw_len = value.len;
-            if (raw_len > sizeof(raw)) raw_len = sizeof(raw);
+            if (raw_len > raw_cap) raw_len = raw_cap;
             if (raw_len) memcpy(raw, value.data, raw_len);
             llg_string_destroy(&value);
         } else if (conversion == 's' && arg->kind == LLG_FMT_STRING) {
             raw_len = arg->value.string.len;
-            if (raw_len > sizeof(raw)) raw_len = sizeof(raw);
+            if (raw_len > raw_cap) raw_len = raw_cap;
             if (raw_len) memcpy(raw, arg->value.string.data, raw_len);
         } else if (conversion == 'p' && arg->kind == LLG_FMT_STRING) {
             // Keep a string pattern visibly distinct from `%s`, matching the
             // quote-delimited form produced by Slang's pattern formatter.
             size_t value_len = arg->value.string.len;
-            if (value_len + 2u <= sizeof(raw)) {
+            if (value_len + 2u <= raw_cap) {
                 raw[0] = '"';
                 if (value_len) memcpy(raw + 1, arg->value.string.data, value_len);
                 raw[value_len + 1] = '"';
                 raw_len = value_len + 2u;
             } else {
                 raw[0] = '"';
-                raw_len = sizeof(raw);
+                raw_len = raw_cap;
                 if (raw_len > 1) {
                     size_t copy = raw_len - 2u;
                     memcpy(raw + 1, arg->value.string.data, copy);
@@ -607,10 +649,12 @@ static size_t llg_format_typed(char* out, size_t cap, const char* fmt,
                 }
             }
         } else {
+            free(raw);
             llg_append_text(out, cap, &len, start, (size_t)(p - start));
             continue;
         }
         llg_emit_field(out, cap, &len, raw, raw_len, spec, conversion);
+        free(raw);
     }
     out[len] = 0;
     return len;

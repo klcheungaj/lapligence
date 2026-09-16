@@ -18,6 +18,19 @@ pub const LLG_WIDTH_LIMIT: u32 = 1 << 20;
 /// Largest width supported by this C backend.
 pub const LLG_MAX_WIDTH: u32 = LLG_WIDTH_LIMIT - 1;
 
+/// P03/P04 use owning C values. The expression/activation emitter is the P05
+/// boundary and must not emit borrowed struct assignments or untracked owners.
+/// Remove this gate only with expression cleanup, cancellation cleanup, and
+/// owned static initialization in place; it has no runtime bypass.
+pub(crate) const OWNER_MIGRATION_DIAGNOSTIC: &str =
+    "dynamic sv4_t runtime migration P03/P04 is installed; C model emission/build \
+     is paused until P05 implements generated expression/activation cleanup and \
+     owned initialization. Use tests/runtime_value_storage for runtime validation";
+
+pub(crate) fn require_owned_emission() -> Result<(), EmitError> {
+    Err(EmitError::new(OWNER_MIGRATION_DIAGNOSTIC))
+}
+
 fn check_capacity(width: u128) -> Result<(), EmitError> {
     if width >= u128::from(LLG_WIDTH_LIMIT) {
         Err(EmitError::new(format!(

@@ -545,7 +545,7 @@ static int valid_sequence_graph(const llg_sequence_graph_t* graph,
         return 0;
     for (uint32_t index = 0; index < graph->local_count; index++) {
         const llg_sequence_local_t* local = &graph->locals[index];
-        if (local->width == 0 || local->width > LLG_MAX_WIDTH ||
+        if (local->width == 0 || local->width >= LLG_SUPPORTED_WIDTH_LIMIT ||
             (local->two_state != 0 && local->two_state != 1))
             return 0;
     }

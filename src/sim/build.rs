@@ -130,6 +130,8 @@ pub struct CmakeBuildOpts {
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum BuildError {
+    /// Owning runtime values require the P05 generated lifetime migration.
+    OwnerMigrationPending,
     /// A direct filesystem operation in this module failed.
     Io {
         action: &'static str,
@@ -170,6 +172,7 @@ impl BuildError {
 impl fmt::Display for BuildError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::OwnerMigrationPending => f.write_str(super::emit_c::OWNER_MIGRATION_DIAGNOSTIC),
             Self::Io {
                 action,
                 path,
@@ -334,6 +337,7 @@ pub fn generate_model_sources_with_opts(
     extra: &[(&str, &str)],
     opts: &CmakeBuildOpts,
 ) -> Result<(), BuildError> {
+    super::emit_c::require_owned_emission().map_err(|_| BuildError::OwnerMigrationPending)?;
     validate_dpi_libraries(opts)?;
     super::write_sim_sources(out_dir, extra)?;
     let waveform = waveform_enabled(extra);

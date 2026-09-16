@@ -215,6 +215,8 @@ int llg_queue_value_delete_index(llg_queue_value_array_t* queue, sv4_t index) {
         memmove(queue->data + native, queue->data + native + 1,
                 (queue->size - native - 1) * sizeof(*queue->data));
     --queue->size;
+    // Relocation transfers ownership; the unused tail must not retain an alias.
+    memset(&queue->data[queue->size], 0, sizeof(*queue->data));
     llg_queue_value_invalidate_refs(queue);
     llg_notify(queue->notify, queue->contents_dependency,
                queue->shape_dependency,

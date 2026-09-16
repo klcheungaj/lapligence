@@ -229,10 +229,10 @@ static int llg_scan_integer(const unsigned char* bytes, size_t length,
         if (llg_scan_digit(bytes[i], base) < 0) return 0;
     }
     if (unknown && base == 10u) {
-        *result = sv4_fill((uint8_t)(unknown == 3 ? 3 : 2), width, (int8_t)is_signed);
+        sv4_replace(result, sv4_fill((uint8_t)(unknown == 3 ? 3 : 2), width, (int8_t)is_signed));
         return 1;
     }
-    *result = sv4_from_u64(0, width, (int8_t)is_signed);
+    sv4_replace(result, sv4_zero(width, (int8_t)is_signed));
     if (base == 10u) {
         for (size_t i = begin; i < length; i++) {
             if (bytes[i] == '_') continue;
@@ -240,9 +240,10 @@ static int llg_scan_integer(const unsigned char* bytes, size_t length,
             uint64_t carry = digit;
             uint32_t limbs = (width + 63u) / 64u;
             for (uint32_t limb = 0; limb < limbs; limb++) {
-                __uint128_t product = (__uint128_t)result->bits[limb] * 10u + carry;
-                result->bits[limb] = (uint64_t)product;
-                carry = (uint64_t)(product >> 64);
+                uint64_t low = (result->bits[limb] & UINT32_MAX) * 10u + carry;
+                uint64_t high = (result->bits[limb] >> 32) * 10u + (low >> 32);
+                result->bits[limb] = (high << 32) | (low & UINT32_MAX);
+                carry = high >> 32;
             }
         }
     } else {
@@ -263,13 +264,14 @@ static int llg_scan_integer(const unsigned char* bytes, size_t length,
             if (bit <= UINT32_MAX - bits_per_digit) bit += bits_per_digit;
         }
     }
-    if (negative) *result = sv4_neg(*result);
+    llg_plusarg_mask_top(result);
+    if (negative) sv4_replace(result, sv4_neg(*result));
     return 1;
 }
 
 static int llg_scan_bytes_to_packed(const unsigned char* bytes, size_t length,
                                     uint32_t width, int is_signed, sv4_t* result) {
-    *result = sv4_from_u64(0, width, (int8_t)is_signed);
+    sv4_replace(result, sv4_zero(width, (int8_t)is_signed));
     size_t capacity = ((size_t)width + 7u) / 8u;
     size_t used = length < capacity ? length : capacity;
     for (size_t i = 0; i < used; i++) {
@@ -290,9 +292,10 @@ static int llg_scan_assign(const unsigned char* bytes, size_t length, char conve
             return 1;
         }
         if (target->kind == LLG_FILE_INPUT_PACKED && target->packed) {
-            sv4_t value;
+            sv4_t value = SV4_EMPTY;
             llg_scan_bytes_to_packed(bytes, length, width, is_signed, &value);
             llg_ref_write(target->packed, value);
+            sv4_destroy(&value);
             return 1;
         }
         return 0;
@@ -311,15 +314,18 @@ static int llg_scan_assign(const unsigned char* bytes, size_t length, char conve
             return 1;
         }
         if (target->kind == LLG_FILE_INPUT_PACKED && target->packed) {
-            llg_ref_write(target->packed, sv4_from_real(value, width, (int8_t)is_signed));
+            sv4_t packed = sv4_from_real(value, width, (int8_t)is_signed);
+            llg_ref_write(target->packed, packed);
+            sv4_destroy(&packed);
             return 1;
         }
         return 0;
     }
     if (target->kind != LLG_FILE_INPUT_PACKED || !target->packed) return 0;
-    sv4_t value;
+    sv4_t value = SV4_EMPTY;
     if (!llg_scan_integer(bytes, length, conversion, width, is_signed, &value)) return 0;
     llg_ref_write(target->packed, value);
+            sv4_destroy(&value);
     return 1;
 }
 
@@ -458,6 +464,7 @@ int llg_file_read_packed(uint32_t descriptor, llg_ref_t* target) {
         read++;
     }
     if (read) llg_ref_write(target, value);
+    sv4_destroy(&value);
     return read;
 }
 
@@ -498,7 +505,7 @@ int llg_file_read_array(uint32_t descriptor, sv4_t* values, uint32_t elem_width,
     size_t bytes_per_element = ((size_t)elem_width + 7u) / 8u;
     int result = 0;
     for (uint64_t element = 0; element < requested; element++) {
-        sv4_t value = values[offset + element];
+        sv4_t value = sv4_clone(&values[offset + element]);
         int read = 0;
         for (size_t index = 0; index < bytes_per_element; index++) {
             unsigned char byte;
@@ -508,10 +515,11 @@ int llg_file_read_array(uint32_t descriptor, sv4_t* values, uint32_t elem_width,
                 llg_scan_set_bit(&value, (uint32_t)(bit_base + bit), (byte >> bit) & 1u);
             read++;
         }
-        if (!read) break;
+        if (!read) { sv4_destroy(&value); break; }
         value.is_signed = (int8_t)elem_signed;
-        if (elem_two_state) value = sv4_to_two_state(value);
+        if (elem_two_state) sv4_replace(&value, sv4_to_two_state(value));
         llg_ba(&values[offset + element], value);
+        sv4_destroy(&value);
         result += read;
         if ((size_t)read < bytes_per_element) break;
     }
@@ -545,7 +553,9 @@ static char* llg_typed_line_alloc(const char* fmt, llg_fmt_arg_t* args, int n,
         if (args[i].kind == LLG_FMT_STRING) {
             if (args[i].value.string.len > SIZE_MAX - extra)
                 llg_fatal_allocation("typed formatted line", 1, SIZE_MAX);
-            extra += args[i].value.string.len;
+            if (args[i].value.string.len > (SIZE_MAX - extra) / 8u)
+                llg_fatal_allocation("formatted string", args[i].value.string.len, 8u);
+            extra += args[i].value.string.len * 8u;
         }
         if ((size_t)g.time_format.minimum_field_width > SIZE_MAX - extra)
             llg_fatal_allocation("typed formatted line", 1, SIZE_MAX);
@@ -558,6 +568,17 @@ static char* llg_typed_line_alloc(const char* fmt, llg_fmt_arg_t* args, int n,
         extra += g.time_format.suffix.len;
         if (extra > SIZE_MAX - cap) llg_fatal_allocation("typed formatted line", cap, extra);
         cap += extra;
+    }
+    // Include explicit field widths/precisions and repeated scope conversions.
+    for (const char* p = fmt; *p;) {
+        if (*p++ != '%') continue;
+        const char* start = p - 1;
+        llg_fmt_spec_t spec;
+        p = llg_parse_typed_spec(start, p, &spec);
+        cap = llg_format_size_add(cap, (size_t)spec.width);
+        cap = llg_format_size_add(cap, (size_t)spec.precision);
+        cap = llg_format_size_add(cap, scope ? strlen(scope) : 0);
+        if (*p) ++p;
     }
     char* out = llg_checked_malloc(cap, 1, "typed formatted line");
     *length = llg_format_typed(out, cap, fmt, args, n, scope);

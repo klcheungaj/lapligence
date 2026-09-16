@@ -1,3 +1,5 @@
+#error "Legacy owner fixtures require P05 migration; run tests/runtime_value_storage instead"
+
 // llg_rt_selftest.c — self-tests for the llg runtime: sv4 value semantics
 // (vectors mirrored from src/core/elab.rs unit tests) plus scheduler behavior
 // (delay ordering, NBA visibility, ping-pong via signal events).

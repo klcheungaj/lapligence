@@ -50,7 +50,9 @@ static int pca_real_active(double* target) {
 }
 
 static void pca_set_enable(sv4_t* enable, int active) {
-    sig_write(enable, sv4_from_u64(active ? 1 : 0, enable->width, enable->is_signed));
+    sv4_t value = sv4_from_u64(active ? 1 : 0, enable->width, enable->is_signed);
+    sig_write(enable, value);
+    sv4_destroy(&value);
 }
 
 void llg_pca_assign(sv4_t* target, sv4_t* enable, uint64_t site, sv4_t value) {
@@ -72,7 +74,7 @@ void llg_pca_assign(sv4_t* target, sv4_t* enable, uint64_t site, sv4_t value) {
     }
     binding->enable = enable;
     binding->site = site;
-    binding->value = sv4_resize(value, target->width, target->is_signed);
+    sv4_replace(&binding->value, sv4_resize(value, target->width, target->is_signed));
     binding->active = 1;
     pca_set_enable(enable, 1);
     if (!llg_is_forced(target)) sig_write(target, binding->value);
@@ -83,7 +85,7 @@ void llg_pca_drive(sv4_t* target, sv4_t* enable, uint64_t site, sv4_t value) {
     llg_pca_binding_t* binding = pca_binding(target);
     if (!binding || !binding->active || binding->enable != enable || binding->site != site)
         return;
-    binding->value = sv4_resize(value, target->width, target->is_signed);
+    sv4_replace(&binding->value, sv4_resize(value, target->width, target->is_signed));
     if (!llg_is_forced(target)) sig_write(target, binding->value);
 }
 
@@ -92,6 +94,7 @@ void llg_pca_deassign(sv4_t* target) {
     llg_pca_binding_t* binding = pca_binding(target);
     if (!binding || !binding->active) return;
     binding->active = 0;
+    sv4_destroy(&binding->value);
     pca_set_enable(binding->enable, 0);
 }
 
@@ -138,6 +141,8 @@ void llg_pca_deassign_d(double* target) {
 }
 
 static void force_free_entry(llg_force_entry_t* entry) {
+    sv4_destroy(&entry->value);
+    sv4_destroy_array(entry->masks, entry->masks ? (size_t)entry->n_parts : 0);
     free(entry->parts);
     free(entry->masks);
     free(entry->reads);
@@ -145,8 +150,8 @@ static void force_free_entry(llg_force_entry_t* entry) {
 }
 
 static sv4_t force_part_mask(const llg_force_part_t* part) {
-    if (!part->target || part->target->width > sizeof(part->target->bits) * 8u ||
-        part->width > sizeof(part->target->bits) * 8u) {
+    if (!part->target || part->target->width >= LLG_SUPPORTED_WIDTH_LIMIT ||
+        part->width >= LLG_SUPPORTED_WIDTH_LIMIT) {
         fprintf(stderr, "llg: invalid force target or width\n");
         abort();
     }
@@ -155,6 +160,7 @@ static sv4_t force_part_mask(const llg_force_part_t* part) {
     for (uint32_t bit = 0; bit < part->width; bit++)
         ones.bits[bit / 64u] |= UINT64_C(1) << (bit % 64u);
     sv4_part_select_set(&mask, part->left, part->right, ones);
+    sv4_destroy(&ones);
     return mask;
 }
 
@@ -170,8 +176,9 @@ static void force_remove_coverage(const llg_force_part_t* parts, int n_parts) {
             for (int k = 0; k < n_parts; k++) {
                 if (entry->parts[j].target != parts[k].target) continue;
                 sv4_t removed = force_part_mask(&parts[k]);
-                for (int limb = 0; limb < ((mask->width + 63u) / 64u); limb++)
+                for (uint32_t limb = 0; limb < ((mask->width + 63u) / 64u); limb++)
                     mask->bits[limb] &= ~removed.bits[limb];
+                sv4_destroy(&removed);
             }
             remains |= sv4_to_bool(*mask);
         }
@@ -243,15 +250,19 @@ static void force_apply_part(sv4_t* target, const llg_force_part_t* part,
                              const sv4_t* mask, const sv4_t* value) {
     if (part->width == 0 || !sv4_to_bool(*mask)) return;
     uint64_t high = (uint64_t)part->value_lsb + part->width - 1;
-    sv4_t selected = sv4_part_select(*value, (int64_t)high,
-                                     (int64_t)part->value_lsb);
-    if (part->two_state) selected = sv4_to_two_state(selected);
-    sv4_t updated = *target;
+    sv4_t selected = sv4_part_select(*value, (int64_t)high, (int64_t)part->value_lsb);
+    if (part->two_state) sv4_replace(&selected, sv4_to_two_state(selected));
+    sv4_t updated = sv4_clone(target);
     sv4_part_select_set(&updated, part->left, part->right, selected);
-    for (uint32_t bit = 0; bit < target->width; bit++) {
-        if ((mask->bits[bit / 64u] >> (bit % 64u)) & UINT64_C(1))
-            sv4_part_select_set(target, bit, bit, sv4_part_select(updated, bit, bit));
+    uint32_t count = (target->width + 63u) / 64u;
+    for (uint32_t i = 0; i < count; ++i) {
+        uint64_t bits = mask->bits[i];
+        target->bits[i] = (target->bits[i] & ~bits) | (updated.bits[i] & bits);
+        target->x[i] = (target->x[i] & ~bits) | (updated.x[i] & bits);
+        target->z[i] = (target->z[i] & ~bits) | (updated.z[i] & bits);
     }
+    sv4_destroy(&updated);
+    sv4_destroy(&selected);
 }
 
 static llg_net_t* force_net_for_target(sv4_t* target, llg_net_t* fallback) {
@@ -275,23 +286,24 @@ static void force_recompute_target(sv4_t* target, llg_net_t* net) {
         value = llg_net_compute(net);
     } else {
         llg_pca_binding_t* pca = pca_binding(target);
-        value = pca && pca->active ? pca->value : *target;
+        value = sv4_clone(pca && pca->active ? &pca->value : target);
     }
     for (int i = 0; i < g.force_count; i++) {
         llg_force_entry_t* entry = &g.force_table[i];
         if (!entry->active || entry->is_real) continue;
-        sv4_t streamed = entry->value;
-        if (entry->stream_slice)
-            streamed = sv4_unstream(streamed, entry->stream_slice,
-                                    entry->stream_right_to_left);
+        sv4_t streamed = entry->stream_slice
+            ? sv4_unstream(entry->value, entry->stream_slice, entry->stream_right_to_left)
+            : sv4_clone(&entry->value);
         for (int j = 0; j < entry->n_parts; j++) {
             llg_force_part_t* part = &entry->parts[j];
             if (part->target == target)
                 force_apply_part(&value, part, &entry->masks[j], &streamed);
         }
+        sv4_destroy(&streamed);
     }
     sig_write(target, value);
     if (net) llg_net_alias_refresh_all(net);
+    sv4_destroy(&value);
 }
 
 static void force_entry_targets(const llg_force_entry_t* entry) {
@@ -311,7 +323,11 @@ static void force_evaluate_entry(llg_force_entry_t* entry) {
         if (entry->real_eval) entry->real_eval(&entry->real_value);
         real_write(entry->real_target, entry->real_value);
     } else {
-        if (entry->eval) entry->eval(&entry->value);
+        if (entry->eval) {
+            sv4_t evaluated = SV4_EMPTY;
+            entry->eval(&evaluated);
+            sv4_move(&entry->value, &evaluated);
+        }
         force_entry_targets(entry);
     }
     entry->evaluating = 0;
@@ -428,7 +444,7 @@ void llg_force(sv4_t* sig, sv4_t value) {
         sig, NULL, (int64_t)sig->width - 1, 0, sig->width, 0, 0
     };
     llg_force_entry_t* entry = force_prepare_packed(&part, 1, 0, 0, NULL, NULL, 0);
-    entry->value = value;
+    sv4_copy(&entry->value, &value);
     force_entry_targets(entry);
 }
 

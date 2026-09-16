@@ -1,8 +1,8 @@
 
 // ── Signal writes and waiter scanning ─────────────────────────────────────────
 
-static int sv4_is_zero(sv4_t v) { return !sv4_is_unknown(v) && !sv4_to_bool(v); }
-static int sv4_is_one(sv4_t v) { return !sv4_is_unknown(v) && sv4_to_bool(v); }
+
+
 
 static void force_dependency_changed(sv4_t* sig, double* real, int is_real);
 static void sig_write(sv4_t* target, sv4_t value);
@@ -46,13 +46,10 @@ void llg_dependency_bind_real(double* target, sv4_t* dependency) {
 
 void llg_dependency_changed(sv4_t* dependency) {
     if (!dependency) return;
-    sv4_t value = *dependency;
-    value.width = 1;
-    value.is_signed = 0;
-    value.bits[0] ^= 1u;
-    value.x[0] = 0;
-    value.z[0] = 0;
+    uint64_t bit = dependency->width ? dependency->bits[0] & 1u : 0;
+    sv4_t value = sv4_from_u64(bit ^ 1u, 1, 0);
     sig_write(dependency, value);
+    sv4_destroy(&value);
 }
 
 void llg_dependency_notify(sv4_t* contents, sv4_t* shape, int change) {
@@ -64,16 +61,13 @@ void llg_dependency_notify(sv4_t* contents, sv4_t* shape, int change) {
 
 static int ev_matches(sv4_t old, sv4_t new, int kind) {
     if (kind == LLG_EV_ANY) return !sv4_same(old, new);
-    // IEEE 1800-2009 9.4.2: vector edge controls observe only the LSB.
-    old = sv4_bit_select(old, 0);
-    new = sv4_bit_select(new, 0);
-    if (kind == LLG_EV_POSEDGE) {
-        return (sv4_is_zero(old) && (!sv4_is_zero(new))) ||
-               (sv4_is_unknown(old) && sv4_is_one(new));
-    }
-    // negedge
-    return (sv4_is_one(old) && (!sv4_is_one(new))) ||
-           (sv4_is_unknown(old) && sv4_is_zero(new));
+    // Edge controls use only the LSB. Read without allocating one-bit values.
+    int a = !old.width || ((old.x[0] | old.z[0]) & 1u)
+        ? 2 : (int)(old.bits[0] & 1u);
+    int b = !new.width || ((new.x[0] | new.z[0]) & 1u)
+        ? 2 : (int)(new.bits[0] & 1u);
+    return kind == LLG_EV_POSEDGE ? (a == 0 && b != 0) || (a == 2 && b == 1)
+                                  : (a == 1 && b != 1) || (a == 2 && b == 0);
 }
 
 static llg_clocking_edge_t* find_clocking_edge(sv4_t* signal) {
@@ -137,6 +131,8 @@ static int clocking_event_current(const llg_wait_src_t* srcs, int n) {
 
 static void free_clocking_drive(llg_clocking_drive_t* drive) {
     if (!drive) return;
+    sv4_destroy(&drive->value);
+    sv4_destroy(&drive->mask);
     free(drive->specs);
     free(drive);
 }
@@ -147,8 +143,8 @@ static void clocking_drive_enqueue(const llg_clocking_drive_t* drive) {
     n->target = drive->target;
     n->net_target = drive->net_target;
     n->net_slot = drive->net_slot;
-    n->value = drive->value;
-    n->mask = drive->mask;
+    sv4_copy(&n->value, &drive->value);
+    sv4_copy(&n->mask, &drive->mask);
     n->has_mask = drive->has_mask;
     n->is_real = drive->is_real;
     n->real_target = drive->real_target;
@@ -260,12 +256,12 @@ static int expression_update(llg_wait_t* wait, int index, sv4_t* sig,
         wait->real_last[index] = value;
         return matched && expression_qualifies(spec);
     }
-    sv4_t value;
+    sv4_t value = SV4_EMPTY;
     if (spec->eval) spec->eval(&value, spec->eval_context);
-    else if (spec->sig) value = *spec->sig;
+    else if (spec->sig) sv4_copy(&value, spec->sig);
     else return 0;
     int matched = ev_matches(wait->last[index], value, spec->kind);
-    wait->last[index] = value;
+    sv4_move(&wait->last[index], &value);
     return matched && expression_qualifies(spec);
 }
 
@@ -282,12 +278,12 @@ static int deferred_expression_update(llg_deferred_trigger_t* trigger,
         trigger->real_last[index] = value;
         return matched && expression_qualifies(spec);
     }
-    sv4_t value;
+    sv4_t value = SV4_EMPTY;
     if (spec->eval) spec->eval(&value, spec->eval_context);
-    else if (spec->sig) value = *spec->sig;
+    else if (spec->sig) sv4_copy(&value, spec->sig);
     else return 0;
     int matched = ev_matches(trigger->last[index], value, spec->kind);
-    trigger->last[index] = value;
+    sv4_move(&trigger->last[index], &value);
     return matched && expression_qualifies(spec);
 }
 
@@ -389,18 +385,17 @@ static void deferred_trigger_event(llg_event_object_t* ev) {
 
 static void sig_write(sv4_t* target, sv4_t value) {
     if (!region_can_mutate("signal write")) return;
-    // Mask the written limbs to the vector's width before comparing/storing.
-    for (int i = 0; i < (int)LLG_LIMBS; i++) {
-        uint64_t m = llg_sv4_limb_mask(value.width, i);
-        value.bits[i] &= m;
-        value.x[i] &= m;
-        value.z[i] &= m;
+    // Own the proposed value across reentrant callbacks. Normalization must
+    // not mutate the caller's borrowed storage.
+    value = sv4_clone(&value);
+    if (target->width == value.width && sv4_same(*target, value)) {
+        sv4_destroy(&value);
+        return;
     }
-    if (target->width == value.width && sv4_same(*target, value)) return;
-    sv4_t old = *target;
+    sv4_t old = sv4_clone(target);
     clocking_record_edge(target, old, value);
     clocking_drive_signal_match(target, old, value);
-    *target = value;
+    sv4_copy(target, &value);
     sampled_record_write(target);
     sampled_domain_clock_signal_changed(target, old, value);
     // `disable iff` is an asynchronous, unsampled control. Abort pending
@@ -440,9 +435,8 @@ static void sig_write(sv4_t* target, sv4_t value) {
         if (w->kind == W_EVENTS || w->kind == W_MIXED) {
             for (int i = 0; i < w->n; i++) {
                 if (w->specs[i].sig == target) {
-                    sv4_t old = w->last[i];
-                    w->last[i] = *target;
-                    if (ev_matches(old, *target, w->specs[i].kind)) wake = 1;
+                    if (ev_matches(w->last[i], *target, w->specs[i].kind)) wake = 1;
+                    sv4_copy(&w->last[i], target);
                 }
             }
         } else if (w->kind == W_DEPS) {
@@ -453,7 +447,7 @@ static void sig_write(sv4_t* target, sv4_t value) {
                         sv4_t value = sv4_part_select(dependency->value ? *dependency->value : *target,
                             (int64_t)dependency->lsb + dependency->width - 1, dependency->lsb);
                         if (!sv4_same(w->last[i], value)) wake = 1;
-                        w->last[i] = value;
+                        sv4_move(&w->last[i], &value);
                     } else wake = 1;
                 }
             }
@@ -473,6 +467,8 @@ static void sig_write(sv4_t* target, sv4_t value) {
         if (binding->target == target) llg_dependency_changed(binding->dependency);
     }
     force_dependency_changed(target, NULL, 0);
+    sv4_destroy(&old);
+    sv4_destroy(&value);
 }
 
 // Real equality is bitwise: repeated NaNs with the same payload are

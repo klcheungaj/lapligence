@@ -9,7 +9,7 @@ static sv4_t llg_net_compute(const llg_net_t* net) {
 
 static void llg_net_alias_refresh(llg_net_alias_t* alias) {
     if (!alias || !alias->storage) return;
-    sv4_t value = *alias->storage;
+    sv4_t value = sv4_clone(alias->storage);
     for (uint32_t i = 0; i < alias->n_parts; i++) {
         const llg_net_alias_part_t* part = &alias->parts[i];
         if (!part->net || part->signal_bit >= value.width ||
@@ -17,11 +17,14 @@ static void llg_net_alias_refresh(llg_net_alias_t* alias) {
             continue;
         sv4_t bit = sv4_bit_select(part->net->resolved, part->group_bit);
         sv4_bit_select_set(&value, part->signal_bit, bit);
+        sv4_destroy(&bit);
     }
     // The visible cell is a first-class dependency/waveform target. Route
     // updates through the ordinary signal writer so waiters and waveform
     // callbacks observe canonical alias changes.
     sig_write(&alias->visible, value);
+    sv4_destroy(&value);
+
 }
 
 static void llg_net_alias_refresh_all(llg_net_t* net) {
@@ -43,25 +46,28 @@ static void llg_net_publish(llg_net_t* net, sv4_t resolved) {
 }
 
 void llg_net_resolve(llg_net_t* net) {
-    if (!region_can_mutate("net resolution")) return;
-    if (llg_is_forced(&net->resolved)) force_recompute_target(&net->resolved, net);
-    else llg_net_publish(net, llg_net_compute(net));
+    if (!net || !region_can_mutate("net resolution")) return;
+    if (llg_is_forced(&net->resolved)) {
+        force_recompute_target(&net->resolved, net);
+    } else {
+        sv4_t resolved = llg_net_compute(net);
+        llg_net_publish(net, resolved);
+        sv4_destroy(&resolved);
+    }
 }
 
 void llg_net_write(llg_net_t* net, int idx, sv4_t value) {
-    if (!region_can_mutate("net write")) return;
-    if (idx < 0 || idx >= net->n_drivers) return;
-    value = sv4_resize(value, net->width, net->is_signed);
+    if (!net || !region_can_mutate("net write")) return;
+    if (idx < 0 || idx >= net->n_drivers || !net->drivers[idx]) return;
+    sv4_t replacement = sv4_resize(value, net->width, net->is_signed);
     sv4_t* slot = net->drivers[idx];
-    if (!slot) return;
-    if (slot->width == value.width && sv4_same(*slot, value)) return;
-    *slot = value;
-    // Driver slots continue changing while a net is forced. Recompute the
-    // visible value underneath the override so release observes all current
-    // contributions.
-    sv4_t resolved = llg_net_compute(net);
-    if (llg_is_forced(&net->resolved)) force_recompute_target(&net->resolved, net);
-    else llg_net_publish(net, resolved);
+    if (sv4_same(*slot, replacement)) {
+        sv4_destroy(&replacement);
+        return;
+    }
+    sv4_move(slot, &replacement);
+    // Driver slots keep changing underneath a force; release must observe them.
+    llg_net_resolve(net);
 }
 
 void llg_net_alias_bind(llg_net_alias_t* alias) {
@@ -85,7 +91,7 @@ void llg_net_alias_bind(llg_net_alias_t* alias) {
 sv4_t llg_net_alias_read(llg_net_alias_t* alias) {
     // Driver/force/propagation commits publish this view before readers run.
     // Observing it, including from Postponed, must never perform a write.
-    return alias ? alias->visible : sv4_from_u64(0, 1, 0);
+    return alias ? sv4_clone(&alias->visible) : sv4_from_u64(0, 1, 0);
 }
 
 void llg_net_alias_write(llg_net_alias_t* alias, sv4_t value) {
@@ -108,12 +114,15 @@ void llg_net_alias_write(llg_net_alias_t* alias, sv4_t value) {
                 continue;
             sv4_t bit = sv4_bit_select(value, mapped->signal_bit);
             sv4_bit_select_set(&contribution, mapped->group_bit, bit);
+            sv4_destroy(&bit);
         }
         llg_net_write(part->net, part->slot, contribution);
+        sv4_destroy(&contribution);
     }
 }
 
 static int inertial_bit(const sv4_t* value, uint32_t bit) {
+    if (!value || bit >= value->width) return 0;
     uint64_t mask = 1ULL << (bit % 64u);
     uint32_t limb = bit / 64u;
     if (value->x[limb] & mask) return 2;
@@ -220,6 +229,10 @@ static void inertial_unlink_pending(llg_inertial_t* driver) {
     if (*entry) *entry = driver->next_pending;
     driver->pending = 0;
     driver->next_pending = NULL;
+    sv4_destroy(&driver->value);
+    sv4_destroy(&driver->mask);
+    driver->has_mask = 0;
+
 }
 
 static void inertial_update(llg_inertial_t** handle, sv4_t* target,
@@ -234,7 +247,7 @@ static void inertial_update(llg_inertial_t** handle, sv4_t* target,
         driver->target = target;
         driver->net = net;
         driver->slot = slot;
-        driver->current = *target;
+        sv4_copy(&driver->current, target);
         driver->region = region_is_reactive(g.current_region)
                              ? LLG_REGION_REACTIVE
                              : LLG_REGION_ACTIVE;
@@ -247,13 +260,13 @@ static void inertial_update(llg_inertial_t** handle, sv4_t* target,
         driver->net = net;
         driver->publication_net = NULL;
         driver->slot = slot;
-        driver->current = *target;
+        sv4_copy(&driver->current, target);
     }
     driver->region = region_is_reactive(g.current_region)
                          ? LLG_REGION_REACTIVE
                          : LLG_REGION_ACTIVE;
     value = sv4_resize(value, target->width, target->is_signed);
-    sv4_t selected_mask;
+    sv4_t selected_mask = SV4_EMPTY;
     if (mask) {
         selected_mask = sv4_resize(*mask, target->width, 0);
     }
@@ -263,14 +276,14 @@ static void inertial_update(llg_inertial_t** handle, sv4_t* target,
         if (driver->has_mask == (effective_mask != NULL) &&
             (!effective_mask || sv4_same(driver->mask, *effective_mask)) &&
             inertial_masked_same(&driver->value, &value, effective_mask))
-            return;
+            goto cleanup;
         inertial_unlink_pending(driver);
     }
     if (effective_mask ? inertial_masked_same(&driver->current, &value, effective_mask)
                        : sv4_same(driver->current, value))
-        return;
+        goto cleanup;
     driver->has_mask = effective_mask != NULL;
-    if (effective_mask) driver->mask = *effective_mask;
+    if (effective_mask) sv4_copy(&driver->mask, effective_mask);
     driver->rise = rise;
     driver->fall = fall;
     driver->turn_off = turn_off;
@@ -280,13 +293,17 @@ static void inertial_update(llg_inertial_t** handle, sv4_t* target,
         fprintf(stderr, "llg: fatal: simulation time overflow while scheduling an inertial update\n");
         abort();
     }
-    driver->value = value;
+    sv4_move(&driver->value, &value);
     driver->time = g.now + ticks;
     driver->pending = 1;
     llg_inertial_t** entry = &g.inertial_pending;
     while (*entry && (*entry)->time <= driver->time) entry = &(*entry)->next_pending;
     driver->next_pending = *entry;
     *entry = driver;
+cleanup:
+    sv4_destroy(&value);
+    sv4_destroy(&selected_mask);
+
 }
 
 void llg_inertial_assign(llg_inertial_t** handle, sv4_t* target,
@@ -341,19 +358,24 @@ static void commit_inertial(llg_region_t region) {
     *slot = driver->next_pending;
     driver->next_pending = NULL;
     driver->pending = 0;
-    if (driver->has_mask) {
-        sv4_t value = *driver->target;
-        inertial_merge(&value, &driver->value, &driver->mask);
-        driver->current = value;
-        if (driver->net) llg_net_write(driver->net, driver->slot, value);
-        else llg_ba(driver->target, value);
-    } else {
-        driver->current = driver->value;
-        if (driver->net) llg_net_write(driver->net, driver->slot, driver->value);
-        else llg_ba(driver->target, driver->value);
+
+    // Detach before publishing: callbacks may schedule another update on driver.
+    sv4_t value = SV4_EMPTY;
+    sv4_t mask = SV4_EMPTY;
+    sv4_move(&value, &driver->value);
+    sv4_move(&mask, &driver->mask);
+    int has_mask = driver->has_mask;
+    driver->has_mask = 0;
+    llg_net_t* publication_net = driver->publication_net;
+    if (has_mask) {
+        sv4_t merged = sv4_clone(driver->target);
+        inertial_merge(&merged, &value, &mask);
+        sv4_move(&value, &merged);
     }
-    // A net declaration delay publishes the resolved net, not a new driver.
-    // Its aliases must change now, not when the propagation was scheduled.
-    if (driver->publication_net)
-        llg_net_alias_refresh_all(driver->publication_net);
+    sv4_copy(&driver->current, &value);
+    if (driver->net) llg_net_write(driver->net, driver->slot, value);
+    else llg_ba(driver->target, value);
+    if (publication_net) llg_net_alias_refresh_all(publication_net);
+    sv4_destroy(&mask);
+    sv4_destroy(&value);
 }

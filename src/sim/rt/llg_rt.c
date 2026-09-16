@@ -7,6 +7,7 @@
 #include "scheduler/policy.c"
 #include "scheduler/process_registry.c"
 #include "scheduler/activations.c"
+#include "scheduler/value_scopes.c"
 #include "scheduler/wait_queues.c"
 #include "scheduler/deferred_assertions.c"
 #include "scheduler/wakeup.c"

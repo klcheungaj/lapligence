@@ -50,6 +50,7 @@ pub fn runtime_sources() -> (&'static str, &'static str) {
             include_str!("scheduler/policy.c"),
             include_str!("scheduler/process_registry.c"),
             include_str!("scheduler/activations.c"),
+            include_str!("scheduler/value_scopes.c"),
             include_str!("scheduler/wait_queues.c"),
             include_str!("scheduler/deferred_assertions.c"),
             include_str!("scheduler/wakeup.c"),
@@ -173,13 +174,13 @@ pub(crate) fn write_waveform_sources(
     Ok(())
 }
 
-/// The runtime's C self-test: sv4 value vectors (mirroring `core::elab` unit
+/// Fenced pre-migration C fixture (not runnable until P05): sv4 value vectors (mirroring `core::elab` unit
 /// tests) plus scheduler checks (delay ordering, NBA visibility, ping-pong).
 pub fn selftest_source() -> &'static str {
     include_str!("llg_rt_selftest.c")
 }
 
-/// Standalone C self-test for the waveform queue and VCD/FST writers.
+/// Fenced pre-migration waveform fixture; active tests are in runtime_value_storage.
 pub fn waveform_selftest_source() -> &'static str {
     include_str!("llg_wave_selftest.c")
 }

@@ -18,7 +18,7 @@ void llg_assoc_value_init_integral(llg_assoc_value_t* array,
                                    uint32_t key_width, int8_t key_signed,
                                    int key_two_state) {
     if (!element) llg_container_fatal("missing recursive associative value descriptor");
-    if (key_width > LLG_MAX_WIDTH)
+    if (key_width > (LLG_SUPPORTED_WIDTH_LIMIT - 1u))
         llg_container_fatal("invalid recursive associative key width");
     memset(array, 0, sizeof(*array));
     array->element = element;
@@ -41,6 +41,7 @@ void llg_assoc_value_init_string(llg_assoc_value_t* array,
 void llg_assoc_value_delete(llg_assoc_value_t* array) {
     int changed = array->size != 0;
     for (size_t i = 0; i < array->size; ++i) {
+        sv4_destroy(&array->entries[i].integral_key);
         free(array->entries[i].string_key);
         llg_value_drop(&array->entries[i].value);
     }
@@ -85,15 +86,8 @@ size_t llg_assoc_value_count(const llg_assoc_value_t* array) {
 static int llg_assoc_value_normalize_key(const llg_assoc_value_t* array,
                                          sv4_t input, sv4_t* output) {
     llg_assoc_value_check_kind(array, LLG_ASSOC_INTEGRAL);
-    if (sv4_is_unknown(input)) return 0;
-    if (array->key_width) {
-        *output = sv4_cast(input, array->key_width, array->key_signed);
-        if (array->key_two_state) *output = sv4_to_two_state(*output);
-    } else {
-        *output = sv4_cast(input, LLG_MAX_WIDTH, input.is_signed);
-        output->is_signed = 0;
-    }
-    return !sv4_is_unknown(*output);
+    return llg_normalize_integral_key(input, array->key_width, array->key_signed,
+                                      array->key_two_state, output);
 }
 
 static size_t llg_assoc_value_integral_position(
@@ -155,7 +149,7 @@ static int llg_assoc_value_set_source(llg_assoc_value_t* array,
                     (array->size - position) * sizeof(*array->entries));
         memset(&array->entries[position], 0, sizeof(*array->entries));
         array->entries[position].integral_key = integral_key
-            ? *integral_key : (sv4_t){0};
+            ? sv4_clone(integral_key) : (sv4_t)SV4_EMPTY;
         array->entries[position].string_key = key_copy;
         array->entries[position].string_length = string_length;
         ++array->size;
@@ -177,96 +171,121 @@ static llg_value_t llg_assoc_value_packed_source(
 }
 
 sv4_t llg_assoc_value_get_integral(const llg_assoc_value_t* array, sv4_t key) {
-    sv4_t normalized;
+    sv4_t normalized = SV4_EMPTY;
+    sv4_t result_value;
+
     int found = 0;
     if (llg_assoc_value_normalize_key(array, key, &normalized)) {
         size_t position = llg_assoc_value_integral_position(array, normalized,
                                                              &found);
         if (found && array->entries[position].value.desc->kind == LLG_VALUE_PACKED)
-            return array->entries[position].value.value.packed;
+            do { result_value = sv4_clone(&array->entries[position].value.value.packed); goto cleanup_key; } while (0);
     }
-    return array->default_value.desc &&
+    do { result_value = array->default_value.desc &&
                    array->default_value.desc->kind == LLG_VALUE_PACKED
-        ? array->default_value.value.packed
-        : sv4_from_u64(0, 1, 0);
+        ? sv4_clone(&array->default_value.value.packed)
+        : sv4_from_u64(0, 1, 0); goto cleanup_key; } while (0);
+cleanup_key:
+    sv4_destroy(&normalized);
+    return result_value;
 }
 
 double llg_assoc_value_get_integral_real(const llg_assoc_value_t* array,
                                          sv4_t key) {
-    sv4_t normalized;
+    sv4_t normalized = SV4_EMPTY;
+    double result_value;
+
     int found = 0;
     if (llg_assoc_value_normalize_key(array, key, &normalized)) {
         size_t position = llg_assoc_value_integral_position(array, normalized,
                                                              &found);
         if (found && array->entries[position].value.desc->kind == LLG_VALUE_REAL)
-            return array->entries[position].value.value.real;
+            do { result_value = array->entries[position].value.value.real; goto cleanup_key; } while (0);
     }
-    return array->default_value.desc &&
+    do { result_value = array->default_value.desc &&
                    array->default_value.desc->kind == LLG_VALUE_REAL
         ? array->default_value.value.real
-        : 0.0;
+        : 0.0; goto cleanup_key; } while (0);
+cleanup_key:
+    sv4_destroy(&normalized);
+    return result_value;
 }
 
 llg_string_t llg_assoc_value_get_integral_string(
     const llg_assoc_value_t* array, sv4_t key) {
-    sv4_t normalized;
+    sv4_t normalized = SV4_EMPTY;
+    llg_string_t result_value;
+
     int found = 0;
     if (llg_assoc_value_normalize_key(array, key, &normalized)) {
         size_t position = llg_assoc_value_integral_position(array, normalized,
                                                              &found);
         if (found && array->entries[position].value.desc->kind == LLG_VALUE_STRING)
-            return llg_string_clone(&array->entries[position].value.value.string);
+            do { result_value = llg_string_clone(&array->entries[position].value.value.string); goto cleanup_key; } while (0);
     }
-    return array->default_value.desc &&
+    do { result_value = array->default_value.desc &&
                    array->default_value.desc->kind == LLG_VALUE_STRING
         ? llg_string_clone(&array->default_value.value.string)
-        : (llg_string_t){0};
+        : (llg_string_t){0}; goto cleanup_key; } while (0);
+cleanup_key:
+    sv4_destroy(&normalized);
+    return result_value;
 }
 
 void* llg_assoc_value_get_integral_chandle(
     const llg_assoc_value_t* array, sv4_t key) {
-    sv4_t normalized;
+    sv4_t normalized = SV4_EMPTY;
+    void* result_value;
+
     int found = 0;
     if (llg_assoc_value_normalize_key(array, key, &normalized)) {
         size_t position = llg_assoc_value_integral_position(array, normalized,
                                                              &found);
         if (found && (array->entries[position].value.desc->kind == LLG_VALUE_CHANDLE ||
                       array->entries[position].value.desc->kind == LLG_VALUE_EVENT))
-            return array->entries[position].value.value.handle;
+            do { result_value = array->entries[position].value.value.handle; goto cleanup_key; } while (0);
     }
-    return array->default_value.desc &&
+    do { result_value = array->default_value.desc &&
                    (array->default_value.desc->kind == LLG_VALUE_CHANDLE ||
                     array->default_value.desc->kind == LLG_VALUE_EVENT)
         ? array->default_value.value.handle
-        : NULL;
+        : NULL; goto cleanup_key; } while (0);
+cleanup_key:
+    sv4_destroy(&normalized);
+    return result_value;
 }
 
 static llg_value_t* llg_assoc_value_nested_at_integral(
     const llg_assoc_value_t* array, const sv4_t* indices, size_t count) {
+    sv4_t normalized = SV4_EMPTY;
+    llg_value_t* result_value;
+
     if (!indices || count < 2 || array->key_kind != LLG_ASSOC_INTEGRAL)
-        return NULL;
-    sv4_t normalized;
+        do { result_value = NULL; goto cleanup_key; } while (0);
     int found = 0;
     if (!llg_assoc_value_normalize_key(array, indices[0], &normalized))
-        return NULL;
+        do { result_value = NULL; goto cleanup_key; } while (0);
     size_t position = llg_assoc_value_integral_position(array, normalized,
                                                          &found);
-    if (!found) return NULL;
+    if (!found) do { result_value = NULL; goto cleanup_key; } while (0);
     llg_value_t* value = &array->entries[position].value;
     for (size_t index = 1; value && index < count; ++index) {
         if (!value->desc || value->desc->kind != LLG_VALUE_CONTAINER ||
             !value->value.container)
-            return NULL;
+            do { result_value = NULL; goto cleanup_key; } while (0);
         value = llg_dyn_value_at(value->value.container, indices[index]);
     }
-    return value;
+    do { result_value = value; goto cleanup_key; } while (0);
+cleanup_key:
+    sv4_destroy(&normalized);
+    return result_value;
 }
 
 sv4_t llg_assoc_value_get_nested_integral(
     const llg_assoc_value_t* array, const sv4_t* indices, size_t count) {
     llg_value_t* value = llg_assoc_value_nested_at_integral(array, indices, count);
     return value && value->desc->kind == LLG_VALUE_PACKED
-        ? value->value.packed
+        ? sv4_clone(&value->value.packed)
         : sv4_from_u64(0, 1, 0);
 }
 
@@ -295,52 +314,74 @@ void* llg_assoc_value_get_nested_integral_chandle(
 
 int llg_assoc_value_set_integral(llg_assoc_value_t* array, sv4_t key,
                                  sv4_t value) {
-    sv4_t normalized;
-    if (!llg_assoc_value_normalize_key(array, key, &normalized)) return 0;
+    sv4_t normalized = SV4_EMPTY;
+    int result_value;
+
+    if (!llg_assoc_value_normalize_key(array, key, &normalized)) do { result_value = 0; goto cleanup_key; } while (0);
     llg_value_t source = llg_assoc_value_packed_source(array, value);
     int result = llg_assoc_value_set_source(array, &normalized, NULL, 0, &source);
     llg_value_drop(&source);
-    return result;
+    do { result_value = result; goto cleanup_key; } while (0);
+cleanup_key:
+    sv4_destroy(&normalized);
+    return result_value;
 }
 
 int llg_assoc_value_set_integral_real(llg_assoc_value_t* array, sv4_t key,
                                       double value) {
-    sv4_t normalized;
-    if (!llg_assoc_value_normalize_key(array, key, &normalized)) return 0;
+    sv4_t normalized = SV4_EMPTY;
+    int result_value;
+
+    if (!llg_assoc_value_normalize_key(array, key, &normalized)) do { result_value = 0; goto cleanup_key; } while (0);
     llg_value_t source = llg_value_from_real(array->element, value);
     int result = llg_assoc_value_set_source(array, &normalized, NULL, 0, &source);
     llg_value_drop(&source);
-    return result;
+    do { result_value = result; goto cleanup_key; } while (0);
+cleanup_key:
+    sv4_destroy(&normalized);
+    return result_value;
 }
 
 int llg_assoc_value_set_integral_string(llg_assoc_value_t* array, sv4_t key,
                                         llg_string_t value) {
-    sv4_t normalized;
+    sv4_t normalized = SV4_EMPTY;
+    int result_value;
+
     if (!llg_assoc_value_normalize_key(array, key, &normalized)) {
         llg_string_destroy(&value);
-        return 0;
+        do { result_value = 0; goto cleanup_key; } while (0);
     }
     llg_value_t source = llg_value_from_string(array->element, value);
     int result = llg_assoc_value_set_source(array, &normalized, NULL, 0, &source);
     llg_value_drop(&source);
-    return result;
+    do { result_value = result; goto cleanup_key; } while (0);
+cleanup_key:
+    sv4_destroy(&normalized);
+    return result_value;
 }
 
 int llg_assoc_value_set_integral_chandle(llg_assoc_value_t* array, sv4_t key,
                                          void* value) {
-    sv4_t normalized;
-    if (!llg_assoc_value_normalize_key(array, key, &normalized)) return 0;
+    sv4_t normalized = SV4_EMPTY;
+    int result_value;
+
+    if (!llg_assoc_value_normalize_key(array, key, &normalized)) do { result_value = 0; goto cleanup_key; } while (0);
     llg_value_t source = llg_value_from_chandle(array->element, value);
-    return llg_assoc_value_set_source(array, &normalized, NULL, 0, &source);
+    do { result_value = llg_assoc_value_set_source(array, &normalized, NULL, 0, &source); goto cleanup_key; } while (0);
+cleanup_key:
+    sv4_destroy(&normalized);
+    return result_value;
 }
 
 int llg_assoc_value_set_nested_integral_container(
     llg_assoc_value_t* array, const sv4_t* indices, size_t count,
     const llg_dyn_value_array_t* source) {
-    sv4_t normalized;
+    sv4_t normalized = SV4_EMPTY;
+    int result_value;
+
     if (!indices || count == 0 ||
         !llg_assoc_value_normalize_key(array, indices[0], &normalized))
-        return 0;
+        do { result_value = 0; goto cleanup_key; } while (0);
     llg_value_t* target = count == 1
         ? NULL
         : llg_assoc_value_nested_at_integral(array, indices, count);
@@ -351,7 +392,7 @@ int llg_assoc_value_set_nested_integral_container(
             : NULL;
     if (!target_desc || target_desc->kind != LLG_VALUE_CONTAINER || !source ||
         !llg_value_desc_compatible(target_desc->element, source->element))
-        return 0;
+        do { result_value = 0; goto cleanup_key; } while (0);
     llg_value_t value = llg_value_from_container(target_desc, source);
     int result;
     if (count == 1) {
@@ -369,15 +410,20 @@ int llg_assoc_value_set_nested_integral_container(
         }
     }
     llg_value_drop(&value);
-    return result;
+    do { result_value = result; goto cleanup_key; } while (0);
+cleanup_key:
+    sv4_destroy(&normalized);
+    return result_value;
 }
 
 int llg_assoc_value_set_nested_integral_container_from_packed(
     llg_assoc_value_t* array, const sv4_t* indices, size_t count,
     const llg_dyn_array_t* source) {
-    if (!indices || count == 0 || !source) return 0;
-    sv4_t normalized;
-    if (!llg_assoc_value_normalize_key(array, indices[0], &normalized)) return 0;
+    sv4_t normalized = SV4_EMPTY;
+    int result_value;
+
+    if (!indices || count == 0 || !source) do { result_value = 0; goto cleanup_key; } while (0);
+    if (!llg_assoc_value_normalize_key(array, indices[0], &normalized)) do { result_value = 0; goto cleanup_key; } while (0);
 
     const llg_value_desc_t* target_desc = NULL;
     if (count == 1) {
@@ -386,14 +432,14 @@ int llg_assoc_value_set_nested_integral_container_from_packed(
         llg_value_t* target = llg_assoc_value_nested_at_integral(array, indices,
                                                                   count);
         if (!target || target->desc->kind != LLG_VALUE_CONTAINER)
-            return 0;
+            do { result_value = 0; goto cleanup_key; } while (0);
         target_desc = target->desc;
     }
     if (!target_desc || target_desc->kind != LLG_VALUE_CONTAINER ||
         !target_desc->element ||
         (target_desc->element->kind != LLG_VALUE_PACKED &&
          target_desc->element->kind != LLG_VALUE_REAL))
-        return 0;
+        do { result_value = 0; goto cleanup_key; } while (0);
 
     llg_value_t value = llg_value_from_packed_container(target_desc, source);
     int result;
@@ -414,7 +460,10 @@ int llg_assoc_value_set_nested_integral_container_from_packed(
         }
     }
     llg_value_drop(&value);
-    return result;
+    do { result_value = result; goto cleanup_key; } while (0);
+cleanup_key:
+    sv4_destroy(&normalized);
+    return result_value;
 }
 
 int llg_assoc_value_set_nested_integral(
@@ -424,9 +473,12 @@ int llg_assoc_value_set_nested_integral(
     if (!target || target->desc->kind != LLG_VALUE_PACKED) return 0;
     sv4_t assigned = sv4_cast(value, target->desc->packed_width,
                               target->desc->packed_signed);
-    if (target->desc->packed_two_state) assigned = sv4_to_two_state(assigned);
-    if (sv4_same(target->value.packed, assigned)) return 1;
-    target->value.packed = assigned;
+    if (target->desc->packed_two_state) sv4_replace(&assigned, sv4_to_two_state(assigned));
+    if (sv4_same(target->value.packed, assigned)) {
+        sv4_destroy(&assigned);
+        return 1;
+    }
+    sv4_move(&target->value.packed, &assigned);
     llg_notify(array->notify, array->contents_dependency,
                array->shape_dependency, LLG_CONTAINER_CHANGED_CONTENTS);
     return 1;

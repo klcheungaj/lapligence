@@ -3,12 +3,9 @@
 //
 // Values
 // ------
-// `sv4_t` models a 4-state vector whose compile-time capacity is
-// LLG_MODEL_MAX_WIDTH bits, stored
-// as three parallel arrays of 64-bit limbs: bit i lives in `bits[i/64]` /
-// `x[i/64]` / `z[i/64]` at position `i%64`.  The invariant x & z == 0 holds:
-// bit i is X iff `(x[i/64] >> (i%64)) & 1`, Z iff `(z[i/64] >> (i%64)) & 1`,
-// otherwise its value is `(bits[i/64] >> (i%64)) & 1`.  For expression
+// `sv4_t` owns three exact-width planes in one allocation. Bit i lives in
+// bits[i/64], x[i/64], z[i/64] at position i%64. X and Z remain distinct
+// (x & z == 0). No model-wide capacity is embedded in a value. For expression
 // semantics Z behaves like X in every op that propagates unknown bits (LRM
 // 11.4.5); X and Z are only distinguished by `$display`, casez/casex wildcard
 // matching, `===`/`!==` and the identity/copy ops (mux with a known select,
@@ -29,64 +26,42 @@ extern "C" {
 
 #define LLG_SUPPORTED_WIDTH_LIMIT (1u << 20)
 
-// Exact-width owned storage used by retained snapshots. This is the dynamic
-// allocation building block; sv4_t below retains its legacy layout until all
-// runtime and generated-code ownership boundaries have been migrated.
+// A live value owns exactly one allocation, addressed by bits; x and z are
+// interior pointers. Width zero owns nothing. Width must be strictly less than
+// LLG_SUPPORTED_WIDTH_LIMIT. Every constructor and value-returning operation
+// returns an independent owner. By-value arguments are BORROWED, not consumed.
 //
-// bits owns one allocation; x and z point inside it. All three are NULL at
-// width zero. Widths are bounded ONLY by LLG_SUPPORTED_WIDTH_LIMIT (exclusive),
-// independently of LLG_MODEL_MAX_WIDTH. The top partial limb is masked.
-// Callers preserve the four-state invariant x & z == 0 when mutating planes.
-//
-// Initialize owners with SV4_STORAGE_EMPTY or a constructor. Never memcpy or
-// assign one live owner to another: use clone/copy/move. Borrowed plane pointers
-// expire when the owner is replaced, moved, or destroyed. Allocation failure
-// and unsupported widths produce a fatal diagnostic before any replacement.
+// Initialize destinations with SV4_EMPTY (or a constructor). Do not copy owners
+// with assignment/memcpy: use clone/copy/move. A plain descriptor copy is only a
+// temporary borrow and must never be destroyed or retained across replacement.
+// Destroy values at the end of their containing object's lifetime; destruction
+// resets to empty and is idempotent. No compiler cleanup extensions are used.
 typedef struct {
     uint64_t* bits;
     uint64_t* x;
     uint64_t* z;
     uint32_t width;
     int8_t is_signed;
-} sv4_storage_t;
-
-#define SV4_STORAGE_EMPTY {NULL, NULL, NULL, 0, 0}
-
-// Return an independent owner; the caller must eventually destroy or move it.
-sv4_storage_t sv4_storage_zero(uint32_t width, int8_t is_signed);
-// Non-NULL inputs each provide ceil(width / 64) limbs and are borrowed only
-// during this call. NULL planes are zero-filled; width zero reads no inputs.
-sv4_storage_t sv4_storage_from_limbs(const uint64_t* bits, const uint64_t* x,
-                                    const uint64_t* z, uint32_t width,
-                                    int8_t is_signed);
-sv4_storage_t sv4_storage_clone(const sv4_storage_t* source);
-// Destination must be initialized. Self-copy/self-move are no-ops. Copy
-// preserves source; move empties source. Neither operation leaves shared owners.
-void sv4_storage_copy(sv4_storage_t* destination, const sv4_storage_t* source);
-void sv4_storage_move(sv4_storage_t* destination, sv4_storage_t* source);
-// Accepts NULL or an initialized owner. Repeated destruction is safe.
-void sv4_storage_destroy(sv4_storage_t* storage);
-// Payload bytes, excluding the descriptor and the system allocator's overhead.
-size_t sv4_storage_bytes(const sv4_storage_t* storage);
-
-#ifndef LLG_MODEL_MAX_WIDTH
-#define LLG_MODEL_MAX_WIDTH 1024u
-#endif
-#if LLG_MODEL_MAX_WIDTH == 0 || LLG_MODEL_MAX_WIDTH >= LLG_SUPPORTED_WIDTH_LIMIT
-#error "LLG_MODEL_MAX_WIDTH must be in the range 1..1048575"
-#endif
-// Compatibility name used throughout the runtime.  The generated-model build
-// defines LLG_MODEL_MAX_WIDTH for every translation unit in the executable.
-#define LLG_MAX_WIDTH LLG_MODEL_MAX_WIDTH
-#define LLG_LIMBS ((LLG_MAX_WIDTH + 63u) / 64u)
-
-typedef struct {
-    uint64_t bits[LLG_LIMBS]; // known bits; valid where x/z bits are 0
-    uint64_t x[LLG_LIMBS];    // X bits (unknown)
-    uint64_t z[LLG_LIMBS];    // Z bits (high-impedance); x & z == 0
-    uint32_t width;            // vector width (0..LLG_MAX_WIDTH)
-    int8_t is_signed;          // signedness for resize/compare
 } sv4_t;
+
+#define SV4_EMPTY {NULL, NULL, NULL, 0, 0}
+
+sv4_t sv4_zero(uint32_t width, int8_t is_signed);
+sv4_t sv4_clone(const sv4_t* source);
+// Initialized destination; copy is deep and supports self-copy. Move releases
+// the previous destination, transfers ownership, and empties the source.
+void sv4_copy(sv4_t* destination, const sv4_t* source);
+void sv4_move(sv4_t* destination, sv4_t* source);
+// Consume a freshly returned owner. Use move for a named source so it is reset.
+void sv4_replace(sv4_t* destination, sv4_t owned);
+// Borrowed-value shorthand for copy; useful when the source is an expression.
+void sv4_assign(sv4_t* destination, sv4_t source);
+void sv4_destroy(sv4_t* value);
+void sv4_destroy_array(sv4_t* values, size_t count);
+size_t sv4_bytes(const sv4_t* value);
+// Masked one-limb constructor, including allocation-free width zero.
+sv4_t sv4_from_masks(uint64_t bits, uint64_t x, uint64_t z,
+                     uint32_t width, int8_t is_signed);
 
 typedef struct llg_queue_t llg_queue_t;
 typedef sv4_t (*llg_queue_ref_read_fn)(const llg_queue_t* queue,
@@ -159,25 +134,15 @@ enum {
 // Compile-time bit mask for a width literal (<= 64).
 #define LLG_MASK(w) ((w) >= 64 ? ~0ULL : ((1ULL << (w)) - 1))
 
-// Build a value from single-limb bit/x/z masks.  Limbs above limb 0 are zero.
-// These constant-initializer-compatible macros require widths <= 64; wider
-// values use `sv4_from_limbs` or `sv4_fill`.  The sizeof guard rejects invalid
-// literal widths at compile time without breaking file-scope initializers.
-#define LLG_NARROW_WIDTH(w) \
-    ((uint32_t)(w) + \
-     0u * (uint32_t)sizeof(char[((w) <= 64u && (w) <= LLG_MAX_WIDTH) ? 1 : -1]))
+// These are runtime constructors, NOT static initializers. Each invocation
+// creates an owner. Static model cells start SV4_EMPTY and are initialized by
+// generated startup code. Use from_limbs/fill for multi-limb literals.
 #define SV4_INIT(b, x, z, w, s) \
-    ((sv4_t){ { [0] = (uint64_t)(b) & LLG_MASK(LLG_NARROW_WIDTH(w)) }, \
-              { [0] = (uint64_t)(x) & LLG_MASK(LLG_NARROW_WIDTH(w)) }, \
-              { [0] = (uint64_t)(z) & LLG_MASK(LLG_NARROW_WIDTH(w)) }, \
-              LLG_NARROW_WIDTH(w), (int8_t)(s) })
-// Unsigned / signed clean value with `w` bits.
-#define SV4_C(b, w) SV4_INIT((b), 0, 0, (w), 0)
-#define SV4_S(b, w) SV4_INIT((b), 0, 0, (w), 1)
-// All-X value of `w` bits (constant expression for literal `w`).
-#define SV4_X(w) SV4_INIT(0, ~0ULL, 0, (w), 0)
-// All-Z value of `w` bits (constant expression for literal `w`).
-#define SV4_Z(w) SV4_INIT(0, 0, ~0ULL, (w), 0)
+    sv4_from_masks((uint64_t)(b), (uint64_t)(x), (uint64_t)(z), (w), (s))
+#define SV4_C(b, w) sv4_from_u64((uint64_t)(b), (w), 0)
+#define SV4_S(b, w) sv4_from_u64((uint64_t)(b), (w), 1)
+#define SV4_X(w) sv4_x((w), 0)
+#define SV4_Z(w) sv4_fill(3, (w), 0)
 
 // ── Value constructors / inspectors ───────────────────────────────────────────
 
@@ -194,8 +159,8 @@ sv4_t sv4_shortrealtobits(double v);
 double sv4_bitstoshortreal(sv4_t v);
 int llg_real_to_bool(double v);
 // Build from raw limb arrays (any may be NULL to zero-fill); the top partial
-// limb is masked to `width`.  A width exceeding this model's compile-time
-// capacity is a fatal runtime error rather than a silent truncation.
+// limb is masked to `width`. Widths reaching the supported limit fail rather
+// than silently truncating. Inputs are borrowed only for the duration of the call.
 sv4_t sv4_from_limbs(const uint64_t* bits, const uint64_t* x, const uint64_t* z,
                      uint32_t width, int8_t is_signed);
 sv4_t sv4_resize(sv4_t v, uint32_t width, int8_t is_signed);

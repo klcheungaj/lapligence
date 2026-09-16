@@ -18,7 +18,7 @@ static void llg_container_warning(const char* message) {
 }
 
 static void llg_check_element_type(uint32_t width) {
-    if (width == 0 || width > LLG_MAX_WIDTH)
+    if (width == 0 || width > (LLG_SUPPORTED_WIDTH_LIMIT - 1u))
         llg_container_fatal("invalid packed element width");
 }
 
@@ -58,7 +58,8 @@ static sv4_t llg_element_default(uint32_t width, int8_t is_signed,
 static sv4_t llg_element_assign(sv4_t value, uint32_t width, int8_t is_signed,
                                 uint8_t two_state) {
     sv4_t result = sv4_cast(value, width, is_signed);
-    return two_state ? sv4_to_two_state(result) : result;
+    if (two_state) sv4_replace(&result, sv4_to_two_state(result));
+    return result;
 }
 
 static sv4_t llg_reduce_identity(uint32_t width, int8_t is_signed,
@@ -92,7 +93,7 @@ static sv4_t llg_reduce_step(sv4_t accumulated, sv4_t value, int operation) {
             return sv4_xor(accumulated, value);
         default:
             llg_container_fatal("invalid container reduction operation");
-            return accumulated;
+            return sv4_clone(&accumulated);
     }
 }
 
@@ -101,14 +102,16 @@ static sv4_t llg_reduce_values(const sv4_t* values, size_t count,
                                int operation) {
     sv4_t result = llg_reduce_identity(width, is_signed, operation);
     for (size_t i = 0; i < count; ++i)
-        result = llg_reduce_step(result, values[i], operation);
+        sv4_replace(&result, llg_reduce_step(result, values[i], operation));
     return result;
 }
 
 static sv4_t llg_container_eval(llg_container_eval_fn eval, sv4_t item,
                                 sv4_t index, void* context) {
-    if (!eval) return item;
-    sv4_t result = item;
+    if (!eval) return sv4_clone(&item);
+    // Evaluators receive an empty output owner and must replace it explicitly.
+    // Their item/index arguments remain borrowed for this call only.
+    sv4_t result = SV4_EMPTY;
     eval(&result, item, index, context);
     return result;
 }
@@ -123,11 +126,13 @@ static sv4_t llg_reduce_values_with(const sv4_t* values, size_t count,
     for (size_t i = 0; i < count; ++i) {
         sv4_t index = sv4_from_u64((uint64_t)i, 32, 1);
         sv4_t value = llg_container_eval(eval, values[i], index, context);
-        value = llg_element_assign(value, result_width, result_signed,
-                                   result_two_state);
-        result = llg_element_assign(
-            llg_reduce_step(result, value, operation), result_width,
-            result_signed, result_two_state);
+        sv4_replace(&value, llg_element_assign(value, result_width,
+                                               result_signed, result_two_state));
+        sv4_replace(&result, llg_reduce_step(result, value, operation));
+        sv4_replace(&result, llg_element_assign(result, result_width,
+                                                result_signed, result_two_state));
+        sv4_destroy(&value);
+        sv4_destroy(&index);
     }
     return result;
 }
@@ -212,7 +217,7 @@ static void llg_stream_bounds(int selector_kind, sv4_t first, sv4_t second,
 
 uint32_t llg_stream_selector_width(int selector_kind, sv4_t first,
                                    sv4_t second, uint32_t element_width) {
-    if (element_width == 0 || element_width > LLG_MAX_WIDTH)
+    if (element_width == 0 || element_width > (LLG_SUPPORTED_WIDTH_LIMIT - 1u))
         llg_container_fatal("invalid streaming selector element width");
     int64_t left;
     int64_t right;
@@ -220,8 +225,8 @@ uint32_t llg_stream_selector_width(int selector_kind, sv4_t first,
     llg_stream_bounds(selector_kind, first, second, 0, &left, &right, &count);
     if (selector_kind == LLG_STREAM_SELECTOR_NONE)
         llg_container_fatal("whole streaming target has no selector width");
-    if (count > (size_t)(LLG_MAX_WIDTH / element_width))
-        llg_container_fatal("streaming selector exceeds model capacity");
+    if (count > (size_t)((LLG_SUPPORTED_WIDTH_LIMIT - 1u) / element_width))
+        llg_container_fatal("streaming selector reaches supported width limit");
     return (uint32_t)(count * element_width);
 }
 
@@ -243,15 +248,20 @@ static int64_t llg_stream_index_at(int64_t left, int64_t right,
 static sv4_t llg_pack_stream_values(const sv4_t* values, size_t count,
                                     uint32_t element_width, uint32_t slice,
                                     int right_to_left) {
-    if (element_width == 0 || element_width > LLG_MAX_WIDTH)
-        llg_container_fatal("invalid streaming element width");
-    if (count > (size_t)(LLG_MAX_WIDTH / element_width))
-        llg_container_fatal("streaming value exceeds model capacity");
-    sv4_t packed;
-    memset(&packed, 0, sizeof(packed));
-    for (size_t i = 0; i < count; ++i)
-        packed = sv4_concat(packed, values[i]);
-    return sv4_stream(packed, slice, right_to_left);
+    llg_check_element_type(element_width);
+    if (count > (size_t)((LLG_SUPPORTED_WIDTH_LIMIT - 1u) / element_width))
+        llg_container_fatal("streaming value reaches supported width limit");
+    uint32_t width = (uint32_t)(count * element_width);
+    sv4_t packed = sv4_zero(width, 0);
+    uint32_t cursor = width;
+    for (size_t i = 0; i < count; ++i) {
+        sv4_part_select_set(&packed, (int64_t)cursor - 1,
+                            (int64_t)(cursor - element_width), values[i]);
+        cursor -= element_width;
+    }
+    sv4_t result = sv4_stream(packed, slice, right_to_left);
+    sv4_destroy(&packed);
+    return result;
 }
 
 static void llg_notify(llg_container_notify_fn notify, sv4_t* contents,
@@ -280,12 +290,14 @@ void llg_dyn_init(llg_dyn_array_t* array, uint32_t element_width,
 }
 
 void llg_dyn_destroy(llg_dyn_array_t* array) {
+    sv4_destroy_array(array->data, array->size);
     free(array->data);
     memset(array, 0, sizeof(*array));
 }
 
 void llg_dyn_delete(llg_dyn_array_t* array) {
     int changed = array->size != 0;
+    sv4_destroy_array(array->data, array->size);
     free(array->data);
     array->data = NULL;
     array->size = 0;
@@ -297,7 +309,7 @@ void llg_dyn_delete(llg_dyn_array_t* array) {
 }
 
 static uint64_t llg_dynamic_size(sv4_t value) {
-    if (value.width == 0 || value.width > LLG_MAX_WIDTH)
+    if (value.width == 0 || value.width > (LLG_SUPPORTED_WIDTH_LIMIT - 1u))
         llg_container_fatal("malformed dynamic-array size value");
     if (sv4_is_unknown(value) || (value.is_signed &&
         ((value.bits[(value.width - 1) / 64] >> ((value.width - 1) % 64)) & 1u)))

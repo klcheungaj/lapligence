@@ -141,6 +141,7 @@ typedef struct llg_sequence_scope {
 } llg_sequence_scope_t;
 
 typedef struct llg_sequence_endpoint {
+    uint32_t local_count;
     struct llg_sequence_endpoint* next;
     sv4_t* locals;
     sv4_t* clock;
@@ -150,6 +151,7 @@ typedef struct llg_sequence_endpoint {
 } llg_sequence_endpoint_t;
 
 typedef struct llg_sequence_token {
+    uint32_t local_count;
     struct llg_sequence_token* next;
     uint32_t state;
     uint32_t transition; /* UINT32_MAX expands this state; otherwise one pending edge. */

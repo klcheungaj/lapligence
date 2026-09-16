@@ -24,10 +24,9 @@
 // Generated budgets include function frames through the recursion guard.
 #define LLG_DEFAULT_STACK_VALUES 256u
 
-// `%t` renders into the same bounded buffers as other display conversions.
-// Keep the runtime precision below that capacity so a runtime argument cannot
-// request an unbounded fixed-point expansion.
-#define LLG_TIMEFORMAT_MAX_PRECISION (LLG_MAX_WIDTH * 2u + 128u)
+// Formatting precision is a request limit, not a storage capacity.
+// Scratch allocations are sized for each value and requested conversion.
+#define LLG_TIMEFORMAT_MAX_PRECISION (2u * LLG_SUPPORTED_WIDTH_LIMIT + 128u)
 
 // ── Fatal boundary checks ────────────────────────────────────────────────────
 

@@ -18,13 +18,13 @@ static void sampled_record_write(sv4_t* signal) {
     if (!item) return;
     llg_sampled_history_t* last = item->history;
     if (last && last->time == g.now) {
-        last->value = *signal;
+        sv4_copy(&last->value, signal);
         return;
     }
     llg_sampled_history_t* history = (llg_sampled_history_t*)llg_checked_malloc(
         1, sizeof(*history), "sampled history");
     history->time = g.now;
-    history->value = *signal;
+    history->value = sv4_clone(signal);
     history->next = item->history;
     item->history = history;
 }
@@ -42,12 +42,12 @@ void llg_sampled_register(sv4_t* signal) {
     llg_sampled_value_t* item = (llg_sampled_value_t*)llg_checked_malloc(
         1, sizeof(*item), "sampled value");
     item->signal = signal;
-    item->value = *signal;
+    item->value = sv4_clone(signal);
     item->history = NULL;
     llg_sampled_history_t* history = (llg_sampled_history_t*)llg_checked_malloc(
         1, sizeof(*history), "sampled history");
     history->time = g.now;
-    history->value = *signal;
+    history->value = sv4_clone(signal);
     history->next = NULL;
     item->history = history;
     item->next = g.sampled;
@@ -65,7 +65,7 @@ int llg_sampled_copy(const sv4_t* signal, sv4_t* out) {
     if (!out) return 0;
     const sv4_t* value = llg_sampled_value(signal);
     if (!value) return 0;
-    *out = *value;
+    sv4_copy(out, value);
     return 1;
 }
 
@@ -122,7 +122,12 @@ static void sampled_domain_clock_signal_changed(sv4_t* signal, sv4_t old,
          domain = domain->next) {
         if (domain->clock != signal || !ev_matches(old, value, domain->edge))
             continue;
-        if (domain->gate && !sv4_to_bool(domain->gate(domain->data))) continue;
+        if (domain->gate) {
+            sv4_t gate = domain->gate(domain->data);
+            int enabled = sv4_to_bool(gate);
+            sv4_destroy(&gate);
+            if (!enabled) continue;
+        }
         llg_sampled_domain_history_t* history =
             (llg_sampled_domain_history_t*)llg_checked_malloc(
                 1, sizeof(*history), "sampled-value domain history");
@@ -140,11 +145,11 @@ sv4_t llg_sampled_domain_past(uint64_t identity, uint64_t ticks) {
         report_missing_sampled_domain(identity);
         return sv4_x(1, 0);
     }
-    if (ticks == 0) return domain->initial;
+    if (ticks == 0) return sv4_clone(&domain->initial);
     llg_sampled_domain_history_t* history = domain->history;
     for (uint64_t index = 0; history && index < ticks; index++)
         history = history->next;
-    return history ? history->value : domain->initial;
+    return sv4_clone(history ? &history->value : &domain->initial);
 }
 
 static int sampled_domain_lsb_one(sv4_t value) {
@@ -193,16 +198,16 @@ static void sample_preponed_values(void) {
     g.sampled_time = g.now;
     g.sampled_time_valid = 1;
     for (llg_sampled_value_t* item = g.sampled; item; item = item->next) {
-        item->value = *item->signal;
+        sv4_copy(&item->value, item->signal);
         llg_sampled_history_t* last = item->history;
         if (last && last->time == g.now) {
-            last->value = item->value;
+            sv4_copy(&last->value, &item->value);
             continue;
         }
         llg_sampled_history_t* history = (llg_sampled_history_t*)llg_checked_malloc(
             1, sizeof(*history), "sampled history");
         history->time = g.now;
-        history->value = item->value;
+        history->value = sv4_clone(&item->value);
         history->next = item->history;
         item->history = history;
     }
@@ -215,7 +220,7 @@ typedef struct {
 
 static void clocking_copy_observed(void* data) {
     llg_clocking_observed_t* copy = (llg_clocking_observed_t*)data;
-    *copy->sample = *copy->source;
+    sv4_copy(copy->sample, copy->source);
     free(copy);
 }
 
@@ -251,7 +256,6 @@ int llg_clocking_sample_history(sv4_t* source, sv4_t* sample, uint64_t ticks) {
         if (history->time > target) continue;
         if (!selected || selected->time < history->time) selected = history;
     }
-    if (selected) *sample = selected->value;
-    else *sample = item->value;
+    sv4_copy(sample, selected ? &selected->value : &item->value);
     return 1;
 }

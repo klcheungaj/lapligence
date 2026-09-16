@@ -1,9 +1,11 @@
 
 static int expression_qualifies(const llg_expr_event_spec_t* spec) {
     if (!spec->condition) return 1;
-    sv4_t result;
+    sv4_t result = SV4_EMPTY;
     spec->condition(&result, spec->condition_context);
-    return sv4_to_bool(result);
+    int qualifies = sv4_to_bool(result);
+    sv4_destroy(&result);
+    return qualifies;
 }
 
 // Wake a suspended process: clear its wait node and schedule it.
@@ -26,7 +28,9 @@ static void wake_proc(llg_proc_t* p) {
     free_expression_wait(w);
     free(w->specs);
     free(w->dependencies);
-    free(w->last);
+    sv4_destroy_array(w->last, w->last ? (size_t)w->n : 0);
+        sv4_destroy(&w->level_val);
+        free(w->last);
     free(w->real_last);
     free(w->evs);
     free(w->order_sequence);

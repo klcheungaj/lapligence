@@ -63,6 +63,7 @@ pub fn render(execution: &ExecutionModel) -> Result<String, EmitError> {
             super::LLG_WIDTH_LIMIT
         )));
     }
+    super::require_owned_emission()?;
     render_model(execution, capacity as u32).map_err(EmitError::new)
 }
 

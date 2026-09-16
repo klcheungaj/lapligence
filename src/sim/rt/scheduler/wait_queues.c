@@ -241,6 +241,7 @@ static void free_deferred_trigger(llg_deferred_trigger_t* trigger) {
         free(trigger->specs[i].dependencies);
     }
     free(trigger->specs);
+    sv4_destroy_array(trigger->last, trigger->last ? (size_t)trigger->n : 0);
     free(trigger->last);
     free(trigger->real_last);
     if (trigger->action_frame) llg_frame_release(trigger->action_frame);

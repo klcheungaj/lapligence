@@ -24,7 +24,7 @@ static size_t live_allocations;
 static size_t live_bytes;
 static size_t last_request;
 static int fail_next;
-static const sv4_storage_t* failure_destination;
+static const sv4_t* failure_destination;
 static uint64_t* failure_destination_bits;
 
 static void* tracked_malloc(size_t bytes) {
@@ -72,10 +72,10 @@ static void tracked_free(void* pointer) {
 #undef free
 #undef malloc
 
-static void check_empty(const sv4_storage_t* value) {
+static void check_empty(const sv4_t* value) {
     CHECK(value->bits == NULL && value->x == NULL && value->z == NULL);
     CHECK(value->width == 0 && value->is_signed == 0);
-    CHECK(sv4_storage_bytes(value) == 0);
+    CHECK(sv4_bytes(value) == 0);
 }
 
 static void check_widths(void) {
@@ -87,9 +87,9 @@ static void check_widths(void) {
         uint32_t width = widths[i];
         size_t limbs = (size_t)(width / 64u) + (width % 64u != 0);
         size_t before = allocation_calls;
-        sv4_storage_t value = sv4_storage_zero(width, 0);
+        sv4_t value = sv4_zero(width, 0);
         CHECK(value.width == width);
-        CHECK(sv4_storage_bytes(&value) == 3u * limbs * sizeof(uint64_t));
+        CHECK(sv4_bytes(&value) == 3u * limbs * sizeof(uint64_t));
         if (!width) {
             CHECK(allocation_calls == before);
             check_empty(&value);
@@ -103,15 +103,15 @@ static void check_widths(void) {
                 CHECK(value.x[j] == 0 && value.z[j] == 0);
             }
             value.bits[limbs - 1u] = UINT64_C(1) << ((width - 1u) % 64u);
-            sv4_storage_t copy = sv4_storage_clone(&value);
+            sv4_t copy = sv4_clone(&value);
             CHECK(copy.bits != value.bits);
             CHECK(copy.bits[limbs - 1u] == value.bits[limbs - 1u]);
             value.bits[limbs - 1u] = 0;
             CHECK(copy.bits[limbs - 1u] != 0);
-            sv4_storage_destroy(&copy);
+            sv4_destroy(&copy);
         }
-        sv4_storage_destroy(&value);
-        sv4_storage_destroy(&value);
+        sv4_destroy(&value);
+        sv4_destroy(&value);
         check_empty(&value);
         CHECK(live_allocations == 0 && live_bytes == 0);
     }
@@ -121,7 +121,7 @@ static void check_copies_and_moves(void) {
     uint64_t bits[2] = {UINT64_C(0x12345678), UINT64_MAX};
     uint64_t x[2] = {2, UINT64_MAX};
     uint64_t z[2] = {4, 0};
-    sv4_storage_t source = sv4_storage_from_limbs(bits, x, z, 65, -1);
+    sv4_t source = sv4_from_limbs(bits, x, z, 65, -1);
     CHECK(source.width == 65 && source.is_signed == 1);
     CHECK(source.bits[1] == 1 && source.x[1] == 1 && source.z[1] == 0);
     bits[0] = 0;
@@ -130,8 +130,8 @@ static void check_copies_and_moves(void) {
     CHECK(source.bits[0] == UINT64_C(0x12345678));
     CHECK(source.x[0] == 2 && source.z[0] == 4);
 
-    sv4_storage_t target = sv4_storage_zero(1024, 0);
-    sv4_storage_copy(&target, &source);
+    sv4_t target = sv4_zero(1024, 0);
+    sv4_copy(&target, &source);
     CHECK(live_allocations == 2);
     CHECK(live_bytes == 2u * 3u * 2u * sizeof(uint64_t));
     CHECK(target.width == 65 && target.is_signed == 1);
@@ -140,50 +140,50 @@ static void check_copies_and_moves(void) {
     CHECK(target.bits[0] == UINT64_C(0x12345678));
     size_t before = allocation_calls;
     uint64_t* pointer = target.bits;
-    sv4_storage_copy(&target, &target);
-    sv4_storage_move(&target, &target);
+    sv4_copy(&target, &target);
+    sv4_move(&target, &target);
     CHECK(target.bits == pointer && allocation_calls == before);
 
     pointer = source.bits;
-    sv4_storage_move(&target, &source);
+    sv4_move(&target, &source);
     CHECK(target.bits == pointer && target.bits[0] == 9);
     CHECK(live_allocations == 1);
     check_empty(&source);
-    sv4_storage_destroy(&source);
-    sv4_storage_t empty = SV4_STORAGE_EMPTY;
-    sv4_storage_move(&target, &empty);
+    sv4_destroy(&source);
+    sv4_t empty = SV4_EMPTY;
+    sv4_move(&target, &empty);
     check_empty(&target);
     check_empty(&empty);
     CHECK(live_allocations == 0 && live_bytes == 0);
 
-    target = sv4_storage_from_limbs(NULL, NULL, NULL, 129, 0);
+    target = sv4_from_limbs(NULL, NULL, NULL, 129, 0);
     for (size_t i = 0; i < 3; i++)
         CHECK(target.bits[i] == 0 && target.x[i] == 0 && target.z[i] == 0);
-    sv4_storage_copy(&target, &empty);
+    sv4_copy(&target, &empty);
     check_empty(&target);
     CHECK(live_allocations == 0);
-    sv4_storage_destroy(NULL);
+    sv4_destroy(NULL);
 
     uint64_t ignored = UINT64_MAX;
-    target = sv4_storage_from_limbs(&ignored, &ignored, &ignored, 0, 1);
+    target = sv4_from_limbs(&ignored, &ignored, &ignored, 0, 1);
     CHECK(target.width == 0 && target.is_signed == 1 && target.bits == NULL);
-    sv4_storage_destroy(&target);
+    sv4_destroy(&target);
     check_empty(&target);
 }
 
 static void check_replacement_cycles(void) {
-    sv4_storage_t retained = SV4_STORAGE_EMPTY;
+    sv4_t retained = SV4_EMPTY;
     for (uint32_t i = 0; i < 10000; i++) {
-        sv4_storage_t next = sv4_storage_zero(1u + i % 129u, 0);
+        sv4_t next = sv4_zero(1u + i % 129u, 0);
         next.bits[0] = 1;
-        sv4_storage_copy(&retained, &next);
+        sv4_copy(&retained, &next);
         CHECK(retained.bits != next.bits);
-        sv4_storage_move(&retained, &next);
+        sv4_move(&retained, &next);
         check_empty(&next);
         CHECK(live_allocations == 1);
-        CHECK(live_bytes == sv4_storage_bytes(&retained));
+        CHECK(live_bytes == sv4_bytes(&retained));
     }
-    sv4_storage_destroy(&retained);
+    sv4_destroy(&retained);
     CHECK(live_allocations == 0 && live_bytes == 0);
     CHECK(allocation_calls == free_calls);
 }
@@ -191,20 +191,20 @@ static void check_replacement_cycles(void) {
 int main(int argc, char** argv) {
     if (argc > 1) {
         if (strcmp(argv[1], "limit") == 0) {
-            (void)sv4_storage_zero(LLG_SUPPORTED_WIDTH_LIMIT, 0);
+            (void)sv4_zero(LLG_SUPPORTED_WIDTH_LIMIT, 0);
         } else if (strcmp(argv[1], "uint32-max") == 0) {
-            (void)sv4_storage_zero(UINT32_MAX, 0);
+            (void)sv4_zero(UINT32_MAX, 0);
         } else if (strcmp(argv[1], "oom") == 0) {
             fail_next = 1;
-            (void)sv4_storage_zero(65, 0);
+            (void)sv4_zero(65, 0);
         } else if (strcmp(argv[1], "oom-copy") == 0) {
-            sv4_storage_t destination = sv4_storage_zero(17, 0);
-            sv4_storage_t source = sv4_storage_zero(65, 0);
+            sv4_t destination = sv4_zero(17, 0);
+            sv4_t source = sv4_zero(65, 0);
             destination.bits[0] = 123;
             failure_destination = &destination;
             failure_destination_bits = destination.bits;
             fail_next = 1;
-            sv4_storage_copy(&destination, &source);
+            sv4_copy(&destination, &source);
         }
         CHECK(0);
     }

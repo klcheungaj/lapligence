@@ -12,14 +12,9 @@ size_t storage_test_released(void);
     } \
 } while (0)
 
-#if LLG_MAX_WIDTH < 65
-#error "waveform snapshot probe requires a legacy source capacity of at least 65 bits"
-#endif
-
 static void set_value(sv4_t* value, uint32_t width, uint64_t bits) {
-    memset(value, 0, sizeof(*value));
-    value->width = width;
-    value->bits[0] = bits;
+    sv4_replace(value, sv4_zero(width, 0));
+    if (width) value->bits[0] = bits;
 }
 
 static void check_released(void) {
@@ -43,9 +38,9 @@ static char* read_file(const char* path) {
 }
 
 static void check_queue_transfers(void) {
-    CHECK(sizeof(wave_event_t) < 2048u);
+    CHECK(sizeof(wave_event_t) < 128u);
     CHECK(llg_wave_model_init(1) == 0);
-    sv4_t source;
+    sv4_t source = SV4_EMPTY;
     for (uint32_t round = 0; round < 3; round++) {
         // Fill the entire ring before consuming: source mutation after capture
         // deterministically precedes reading every snapshot, independent of OS
@@ -81,6 +76,7 @@ static void check_queue_transfers(void) {
             event_destroy(&event);
             CHECK(event.payload.sv4.bits == NULL);
         }
+        sv4_destroy(&source);
         check_released();
     }
     CHECK(llg_wave_close(0) == 0);
@@ -89,7 +85,8 @@ static void check_queue_transfers(void) {
 
 static void check_vcd_snapshots(void) {
     const char* path = "snapshot-values.vcd";
-    sv4_t packed, wide, padded, empty;
+    sv4_t packed = SV4_EMPTY, wide = SV4_EMPTY;
+    sv4_t padded = SV4_EMPTY, empty = SV4_EMPTY;
     set_value(&packed, 8, 0x3c);
     set_value(&wide, 65, 0);
     wide.x[0] = 1;
@@ -132,13 +129,17 @@ static void check_vcd_snapshots(void) {
     free(text);
     CHECK(llg_wave_close(4096) == 0);
     CHECK(llg_wave_close(4096) == 0);
+    sv4_destroy(&packed);
+    sv4_destroy(&wide);
+    sv4_destroy(&padded);
+    sv4_destroy(&empty);
     check_released();
     CHECK(remove(path) == 0);
 }
 
 static void check_fst_snapshots(void) {
     const char* path = "snapshot-values.fst";
-    sv4_t packed;
+    sv4_t packed = SV4_EMPTY;
     set_value(&packed, 8, 0x3c);
     CHECK(llg_wave_model_init(1) == 0);
     CHECK(llg_wave_register_sv4("top\037packed", &packed, 8) == 0);
@@ -151,6 +152,7 @@ static void check_fst_snapshots(void) {
     llg_wave_off(8);
     llg_wave_on(9);
     CHECK(llg_wave_close(9) == 0);
+    sv4_destroy(&packed);
     check_released();
     void* reader = fstReaderOpen(path);
     CHECK(reader != NULL);
@@ -168,7 +170,7 @@ static void check_fst_snapshots(void) {
 }
 
 static void check_discard_and_close(void) {
-    sv4_t source;
+    sv4_t source = SV4_EMPTY;
     for (int cycle = 0; cycle < 6; cycle++) {
         int error_case = cycle % 3 == 0;
         const char* path = error_case ? "snapshot-error.unsupported" : "snapshot-close.vcd";
@@ -186,6 +188,7 @@ static void check_discard_and_close(void) {
         // Non-error cases deliberately close without a flush: queued owners
         // must drain before registration and writer storage are destroyed.
         CHECK(llg_wave_close(3000) == (error_case ? -1 : 0));
+        sv4_destroy(&source);
         check_released();
         if (!error_case) CHECK(remove(path) == 0);
     }
@@ -199,6 +202,6 @@ int main(void) {
     check_vcd_snapshots();
     check_fst_snapshots();
     check_discard_and_close();
-    puts("dynamic waveform snapshots: OK");
+    printf("dynamic waveform snapshots: OK (event=%zu bytes)\n", sizeof(wave_event_t));
     return 0;
 }

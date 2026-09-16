@@ -1,28 +1,40 @@
 
 int llg_assoc_value_exists_integral(const llg_assoc_value_t* array, sv4_t key) {
-    sv4_t normalized;
+    sv4_t normalized = SV4_EMPTY;
+    int result_value;
+
     int found = 0;
-    if (!llg_assoc_value_normalize_key(array, key, &normalized)) return 0;
+    if (!llg_assoc_value_normalize_key(array, key, &normalized)) do { result_value = 0; goto cleanup_key; } while (0);
     (void)llg_assoc_value_integral_position(array, normalized, &found);
-    return found;
+    do { result_value = found; goto cleanup_key; } while (0);
+cleanup_key:
+    sv4_destroy(&normalized);
+    return result_value;
 }
 
 int llg_assoc_value_delete_integral(llg_assoc_value_t* array, sv4_t key) {
-    sv4_t normalized;
+    sv4_t normalized = SV4_EMPTY;
+    int result_value;
+
     int found = 0;
-    if (!llg_assoc_value_normalize_key(array, key, &normalized)) return 0;
+    if (!llg_assoc_value_normalize_key(array, key, &normalized)) do { result_value = 0; goto cleanup_key; } while (0);
     size_t position = llg_assoc_value_integral_position(array, normalized, &found);
-    if (!found) return 0;
+    if (!found) do { result_value = 0; goto cleanup_key; } while (0);
+    sv4_destroy(&array->entries[position].integral_key);
     llg_value_drop(&array->entries[position].value);
     if (position + 1 < array->size)
         memmove(array->entries + position, array->entries + position + 1,
                 (array->size - position - 1) * sizeof(*array->entries));
     --array->size;
+    memset(&array->entries[array->size], 0, sizeof(*array->entries));
     llg_assoc_value_invalidate_refs(array);
     llg_notify(array->notify, array->contents_dependency,
                array->shape_dependency,
                LLG_CONTAINER_CHANGED_CONTENTS | LLG_CONTAINER_CHANGED_SHAPE);
-    return 1;
+    do { result_value = 1; goto cleanup_key; } while (0);
+cleanup_key:
+    sv4_destroy(&normalized);
+    return result_value;
 }
 
 static void llg_assoc_value_set_default_source(llg_assoc_value_t* array,
@@ -76,27 +88,32 @@ void llg_assoc_value_reset_default(llg_assoc_value_t* array) {
 
 static int llg_assoc_value_integral_traversal(
     const llg_assoc_value_t* array, sv4_t* key, int direction, int endpoint) {
+    sv4_t normalized = SV4_EMPTY;
+    int result_value;
+
     llg_assoc_value_check_kind(array, LLG_ASSOC_INTEGRAL);
     if (!array->key_width)
         llg_container_fatal("wildcard associative-array traversal is illegal");
-    if (!array->size) return 0;
+    if (!array->size) do { result_value = 0; goto cleanup_key; } while (0);
     if (endpoint) {
-        *key = array->entries[direction > 0 ? 0 : array->size - 1].integral_key;
-        return 1;
+        sv4_copy(key, &array->entries[direction > 0 ? 0 : array->size - 1].integral_key);
+        do { result_value = 1; goto cleanup_key; } while (0);
     }
-    sv4_t normalized;
-    if (!llg_assoc_value_normalize_key(array, *key, &normalized)) return 0;
+    if (!llg_assoc_value_normalize_key(array, *key, &normalized)) do { result_value = 0; goto cleanup_key; } while (0);
     int found;
     size_t position = llg_assoc_value_integral_position(array, normalized, &found);
     if (direction > 0) {
         if (found) ++position;
-        if (position >= array->size) return 0;
+        if (position >= array->size) do { result_value = 0; goto cleanup_key; } while (0);
     } else {
-        if (position == 0) return 0;
+        if (position == 0) do { result_value = 0; goto cleanup_key; } while (0);
         --position;
     }
-    *key = array->entries[position].integral_key;
-    return 1;
+    sv4_copy(key, &array->entries[position].integral_key);
+    do { result_value = 1; goto cleanup_key; } while (0);
+cleanup_key:
+    sv4_destroy(&normalized);
+    return result_value;
 }
 
 int llg_assoc_value_first_integral(const llg_assoc_value_t* a, sv4_t* key) {
@@ -241,11 +258,13 @@ int llg_assoc_value_delete_string(llg_assoc_value_t* array, const void* key,
                                                       &found);
     if (!found) return 0;
     free(array->entries[position].string_key);
+    sv4_destroy(&array->entries[position].integral_key);
     llg_value_drop(&array->entries[position].value);
     if (position + 1 < array->size)
         memmove(array->entries + position, array->entries + position + 1,
                 (array->size - position - 1) * sizeof(*array->entries));
     --array->size;
+    memset(&array->entries[array->size], 0, sizeof(*array->entries));
     llg_assoc_value_invalidate_refs(array);
     llg_notify(array->notify, array->contents_dependency,
                array->shape_dependency,
@@ -340,7 +359,7 @@ void llg_assoc_value_copy(llg_assoc_value_t* dst,
                                                         sizeof(*entries));
     if (src->size) memset(entries, 0, src->size * sizeof(*entries));
     for (size_t i = 0; i < src->size; ++i) {
-        entries[i].integral_key = src->entries[i].integral_key;
+        entries[i].integral_key = sv4_clone(&src->entries[i].integral_key);
         entries[i].string_length = src->entries[i].string_length;
         if (src->entries[i].string_length) {
             entries[i].string_key = llg_alloc_items(

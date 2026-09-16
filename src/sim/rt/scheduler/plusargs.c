@@ -123,11 +123,7 @@ static void llg_plusarg_mask_top(sv4_t* value) {
 }
 
 static void llg_plusarg_unknown(sv4_t* value) {
-    if (!value) return;
-    memset(value->bits, 0, sizeof(value->bits));
-    memset(value->x, 0xff, sizeof(value->x));
-    memset(value->z, 0, sizeof(value->z));
-    llg_plusarg_mask_top(value);
+    if (value) sv4_replace(value, sv4_x(value->width, value->is_signed));
 }
 
 static int llg_plusarg_digit(int c, int base) {
@@ -146,46 +142,35 @@ static int llg_plusarg_decimal(const char* text, size_t length, sv4_t* output) {
     size_t start = 0;
     int negative = 0;
     if (start < length && (text[start] == '+' || text[start] == '-')) {
-        negative = text[start] == '-';
-        ++start;
+        negative = text[start++] == '-';
     }
-    uint64_t limbs[LLG_LIMBS] = {0};
-    int digits = 0;
-    int unknown = 0;
+    int digits = 0, unknown = 0;
     for (size_t i = start; i < length; ++i) {
-        char c = text[i];
-        if (c == '_') continue;
-        if (llg_plusarg_unknown_digit(c)) {
-            unknown = 1;
-            digits = 1;
-            continue;
-        }
-        int digit = llg_plusarg_digit((unsigned char)c, 10);
-        if (digit < 0) return 0;
+        if (text[i] == '_') continue;
+        if (llg_plusarg_unknown_digit(text[i])) unknown = 1;
+        else if (llg_plusarg_digit((unsigned char)text[i], 10) < 0) return 0;
         digits = 1;
-        uint64_t carry = (uint64_t)digit;
-        for (int limb = 0; limb < (int)LLG_LIMBS; ++limb) {
-            uint64_t low = (limbs[limb] & UINT32_MAX) * 10ULL + carry;
-            uint64_t high = (limbs[limb] >> 32) * 10ULL + (low >> 32);
-            limbs[limb] = (high << 32) | (low & UINT32_MAX);
+    }
+    if (!digits) return 0;
+    if (unknown) { llg_plusarg_unknown(output); return 1; }
+    // The enclosing parser supplies a zeroed, exact-destination-width owner.
+    uint32_t n = (output->width + 63u) / 64u;
+    for (size_t i = start; i < length; ++i) {
+        if (text[i] == '_') continue;
+        uint64_t carry = (uint64_t)(text[i] - '0');
+        for (uint32_t limb = 0; limb < n; ++limb) {
+            uint64_t low = (output->bits[limb] & UINT32_MAX) * 10u + carry;
+            uint64_t high = (output->bits[limb] >> 32) * 10u + (low >> 32);
+            output->bits[limb] = (high << 32) | (low & UINT32_MAX);
             carry = high >> 32;
         }
     }
-    if (!digits) return 0;
-    if (unknown) {
-        llg_plusarg_unknown(output);
-        return 1;
-    }
-    memcpy(output->bits, limbs, sizeof(limbs));
-    memset(output->x, 0, sizeof(output->x));
-    memset(output->z, 0, sizeof(output->z));
     if (negative) {
         uint64_t carry = 1;
-        for (int limb = 0; limb < (int)LLG_LIMBS; ++limb) {
+        for (uint32_t limb = 0; limb < n; ++limb) {
             uint64_t inverted = ~output->bits[limb];
-            uint64_t sum = inverted + carry;
-            carry = sum < inverted;
-            output->bits[limb] = sum;
+            output->bits[limb] = inverted + carry;
+            carry = output->bits[limb] < inverted;
         }
     }
     llg_plusarg_mask_top(output);
@@ -239,7 +224,7 @@ static int llg_plusarg_based(const char* text, size_t length, int base,
     }
     if (negative) {
         uint64_t carry = 1;
-        for (int limb = 0; limb < (int)LLG_LIMBS; ++limb) {
+        for (int limb = 0; limb < (int)((output->width + 63u) / 64u); ++limb) {
             uint64_t inverted = ~output->bits[limb];
             uint64_t sum = inverted + carry;
             carry = sum < inverted;
@@ -269,7 +254,7 @@ static int llg_plusarg_real_value(const char* text, size_t length,
 
 static int llg_plusarg_packed_value(const char* text, size_t length,
                                      char conversion, sv4_t* output) {
-    *output = sv4_from_u64(0, output->width, output->is_signed);
+    sv4_replace(output, sv4_zero(output->width, output->is_signed));
     if (length == 0) return 1;
     switch (conversion) {
         case 'd': return llg_plusarg_decimal(text, length, output);
@@ -297,7 +282,7 @@ static int llg_plusarg_packed_value(const char* text, size_t length,
         case 'g': {
             double real = 0.0;
             if (!llg_plusarg_real_value(text, length, &real)) return 0;
-            *output = sv4_from_real(real, output->width, output->is_signed);
+            sv4_replace(output, sv4_from_real(real, output->width, output->is_signed));
             return 1;
         }
         default: return 0;
@@ -306,7 +291,7 @@ static int llg_plusarg_packed_value(const char* text, size_t length,
 
 static void llg_plusarg_to_two_state(sv4_t* value) {
     if (!value) return;
-    for (int limb = 0; limb < (int)LLG_LIMBS; ++limb) {
+    for (int limb = 0; limb < (int)((value->width + 63u) / 64u); ++limb) {
         value->bits[limb] &= ~(value->x[limb] | value->z[limb]);
         value->x[limb] = 0;
         value->z[limb] = 0;
@@ -326,7 +311,7 @@ int llg_test_plusargs(const char* pattern) {
 
 int llg_value_plusargs_packed(const char* format_text, sv4_t* out,
                               uint32_t width, int is_signed, int two_state) {
-    if (!out || width == 0 || width > LLG_MAX_WIDTH) return 0;
+    if (!out || width == 0 || width >= LLG_SUPPORTED_WIDTH_LIMIT) return 0;
     llg_plusarg_format_t format;
     if (!llg_plusarg_format_parse(format_text, &format)) return 0;
     const char* value = NULL;
@@ -344,10 +329,76 @@ int llg_value_plusargs_packed(const char* format_text, sv4_t* out,
             converted = 1;
         }
         if (two_state) llg_plusarg_to_two_state(&parsed);
-        *out = parsed;
+        sv4_move(out, &parsed);
     }
+    sv4_destroy(&parsed);
     llg_plusarg_format_free(&format);
     return converted;
+}
+
+// Parse only the magnitude required by this argument. Leading zeroes consume no
+// limb storage, and base-2 input does not reserve four bits for every digit.
+// Accumulate integers exactly before applying the packed-to-real rounding order.
+static int llg_plusarg_integral_real(const char* text, size_t length,
+                                     char conversion, double* output) {
+    unsigned base = conversion == 'b' ? 2u : conversion == 'o' ? 8u :
+                    conversion == 'h' ? 16u : 10u;
+    size_t start = 0;
+    int negative = length && text[0] == '-';
+    if (length && (text[0] == '-' || text[0] == '+')) ++start;
+    if (base != 10u && length - start >= 2 && text[start] == '0' &&
+        ((base == 2u && (text[start + 1] == 'b' || text[start + 1] == 'B')) ||
+         (base == 8u && (text[start + 1] == 'o' || text[start + 1] == 'O')) ||
+         (base == 16u && (text[start + 1] == 'x' || text[start + 1] == 'X'))))
+        start += 2;
+    int digits = 0, unknown = 0;
+    for (size_t i = start; i < length; ++i) {
+        if (text[i] == '_') continue;
+        if (llg_plusarg_unknown_digit((unsigned char)text[i])) unknown = 1;
+        else if (llg_plusarg_digit((unsigned char)text[i], (int)base) < 0) return 0;
+        digits = 1;
+    }
+    if (!digits) return 0;
+    if (unknown && (negative || base == 10u)) { *output = 0.0; return 1; }
+    uint64_t* limbs = NULL;
+    size_t used = 0, capacity = 0;
+    const size_t maximum = (LLG_SUPPORTED_WIDTH_LIMIT - 1u + 63u) / 64u;
+    for (size_t i = start; i < length; ++i) {
+        if (text[i] == '_') continue;
+        int digit = llg_plusarg_digit((unsigned char)text[i], (int)base);
+        uint64_t carry = digit < 0 ? 0u : (unsigned)digit;
+        for (size_t limb = 0; limb < used; ++limb) {
+            uint64_t low = (limbs[limb] & UINT32_MAX) * base + carry;
+            uint64_t high = (limbs[limb] >> 32) * base + (low >> 32);
+            limbs[limb] = (high << 32) | (low & UINT32_MAX);
+            carry = high >> 32;
+        }
+        if (carry) {
+            if (used == maximum) {
+                free(limbs);
+                llg_fatal_allocation("integral plusarg width", used + 1u, 64u);
+            }
+            if (used == capacity) {
+                size_t next = capacity ? capacity * 2u : 1u;
+                if (next > maximum) next = maximum;
+                uint64_t* replacement = llg_checked_malloc(next, sizeof(*limbs), "integral plusarg limbs");
+                if (used) memcpy(replacement, limbs, used * sizeof(*limbs));
+                free(limbs);
+                limbs = replacement;
+                capacity = next;
+            }
+            limbs[used++] = carry;
+        }
+        if (used == maximum && (limbs[used - 1u] >> 63u)) {
+            free(limbs);
+            llg_fatal_allocation("integral plusarg width", LLG_SUPPORTED_WIDTH_LIMIT, 1u);
+        }
+    }
+    double result = 0.0;
+    for (size_t i = used; i > 0; --i) result = ldexp(result, 64) + (double)limbs[i - 1u];
+    free(limbs);
+    *output = negative && result != 0.0 ? -result : result;
+    return 1;
 }
 
 int llg_value_plusargs_real(const char* format_text, double* out) {
@@ -373,12 +424,9 @@ int llg_value_plusargs_real(const char* format_text, double* out) {
                 converted = 1;
             }
         } else {
-            sv4_t parsed = sv4_from_u64(
-                0, LLG_MAX_WIDTH, value_len > 0 && value[0] == '-');
-            converted = llg_plusarg_packed_value(
-                value, value_len, format.conversion, &parsed);
-            if (converted) *out = sv4_to_real(parsed);
-            else *out = 0.0;
+            converted = llg_plusarg_integral_real(
+                value, value_len, format.conversion, out);
+            if (!converted) *out = 0.0;
             // A matching malformed integral conversion is represented as X
             // before assignment to real storage, which yields zero here.
             converted = 1;

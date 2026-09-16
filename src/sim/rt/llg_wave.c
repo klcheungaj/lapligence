@@ -2,7 +2,7 @@
 //
 // One simulation thread is the producer and one file-writer thread is the
 // consumer. The 1024-slot ring owns exact-width packed snapshots, not borrowed
-// model limbs. Each slot still reserves room for a 1023-byte path. Snapshot
+// model limbs. File events own only their actual path bytes. Snapshot
 // allocations move producer -> ring -> writer using release/acquire publication
 // and are destroyed after processing, including ignored/error-path events.
 // Mutexes and condition variables are used for full/empty and flush waits.
@@ -30,7 +30,6 @@
 #endif
 
 #define LLG_WAVE_QUEUE_CAP 1024u
-#define LLG_WAVE_PATH_CAP 1024u
 #define LLG_WAVE_NO_REG UINT32_MAX
 #define LLG_WAVE_HIER_SEP '\x1f'
 
@@ -56,9 +55,9 @@ typedef struct {
     uint32_t first_reg;
     uint8_t snapshot;
     union {
-        sv4_storage_t sv4;
+        sv4_t sv4;
         double real;
-        char path[LLG_WAVE_PATH_CAP];
+        char* path;
     } payload;
 } wave_event_t;
 
@@ -287,7 +286,8 @@ static uint32_t lookup_registration(const void* ptr) {
 
 static void event_destroy(wave_event_t* event) {
     if (event->kind == EV_CHANGE_SV4)
-        sv4_storage_destroy(&event->payload.sv4);
+        sv4_destroy(&event->payload.sv4);
+    else if (event->kind == EV_FILE) free(event->payload.path);
     *event = (wave_event_t){0};
 }
 
@@ -795,7 +795,7 @@ static void writer_time(writer_t* w, uint64_t now) {
     w->have_time = 1;
 }
 
-static void sv4_text(const sv4_storage_t* value, uint32_t width, char* out) {
+static void sv4_text(const sv4_t* value, uint32_t width, char* out) {
     for (uint32_t pos = 0; pos < width; pos++) {
         uint32_t bit = width - 1u - pos;
         // Registrations may request a wider view than the captured value. The
@@ -815,7 +815,7 @@ static void sv4_text(const sv4_storage_t* value, uint32_t width, char* out) {
 }
 
 static void writer_sv4_aliases(writer_t* w, uint32_t first,
-                               const sv4_storage_t* value) {
+                               const sv4_t* value) {
     for (uint32_t i = first; i != LLG_WAVE_NO_REG; i = g_wave.regs[i].next_alias) {
         const registration_t* reg = &g_wave.regs[i];
         if (!reg->selected) continue;
@@ -1031,15 +1031,14 @@ static void enqueue_simple(event_kind_t kind, uint64_t now, uint64_t arg) {
     queue_push(&event);
 }
 
-// Bridge from the legacy fixed-array value. Remove this legacy source-capacity
-// guard when sv4_t itself is converted; the storage constructor has no such cap.
+// Capture an independent snapshot before publishing it to the writer thread.
 // The destination event is newly initialized and owns no previous snapshot.
 static int capture_sv4(wave_event_t* event, const sv4_t* value) {
-    if (value->width > LLG_MAX_WIDTH) {
-        wave_error("packed source width exceeds legacy value capacity");
+    if (value->width >= LLG_SUPPORTED_WIDTH_LIMIT) {
+        wave_error("packed source width reaches supported limit");
         return 0;
     }
-    event->payload.sv4 = sv4_storage_from_limbs(
+    event->payload.sv4 = sv4_from_limbs(
         value->bits, value->x, value->z, value->width, value->is_signed);
     return 1;
 }
@@ -1104,7 +1103,7 @@ static int register_value(const char* name, void* ptr, uint32_t width,
         return -1;
     }
     if (!valid_hierarchy_name(name) || !ptr ||
-        (!is_real && (width == 0 || width > LLG_MAX_WIDTH))) {
+        (!is_real && (width == 0 || width >= LLG_SUPPORTED_WIDTH_LIMIT))) {
         wave_error("invalid waveform registration");
         return -1;
     }
@@ -1154,10 +1153,9 @@ void llg_wave_file(const char* path, uint64_t now) {
     event.kind = EV_FILE;
     event.now = now;
     size_t len = strlen(path);
-    if (len >= sizeof(event.payload.path)) {
-        wave_error("$dumpfile path exceeds %u bytes", LLG_WAVE_PATH_CAP - 1u);
-        return;
-    }
+    if (len == SIZE_MAX) { wave_error("$dumpfile path size overflow"); return; }
+    event.payload.path = malloc(len + 1u);
+    if (!event.payload.path) { wave_error("$dumpfile path allocation failed"); return; }
     memcpy(event.payload.path, path, len + 1u);
     queue_push(&event);
 }

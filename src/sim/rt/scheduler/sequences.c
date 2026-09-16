@@ -18,7 +18,7 @@ sv4_t* llg_sequence_local_addr(void* data, uint32_t slot) {
 
 sv4_t llg_sequence_local_read(void* data, uint32_t slot) {
     sv4_t* value = llg_sequence_local_addr(data, slot);
-    return value ? *value : sv4_x(1, 0);
+    return value ? sv4_clone(value) : sv4_x(1, 0);
 }
 
 void llg_sequence_local_write(sv4_t* target, sv4_t value) {
@@ -32,7 +32,7 @@ void llg_sequence_local_write(sv4_t* target, sv4_t value) {
      * waiters, force/PCA drivers, or scheduler-visible notifications, so the
      * match-item write is intentionally a direct value replacement even while
      * the enclosing assertion is being resolved in Observed. */
-    *target = value;
+    sv4_copy(target, &value);
 }
 
 static int sequence_locals_same(const sv4_t* left, const sv4_t* right,
@@ -55,7 +55,8 @@ static sv4_t* sequence_locals_clone(const llg_sequence_graph_t* graph,
     }
     sv4_t* copy = (sv4_t*)llg_checked_calloc(
         graph->local_count, sizeof(*copy), "concurrent assertion sequence thread locals");
-    memcpy(copy, locals, graph->local_count * sizeof(*copy));
+    for (uint32_t i = 0; i < graph->local_count; ++i)
+        copy[i] = sv4_clone(&locals[i]);
     return copy;
 }
 
@@ -92,6 +93,7 @@ static int sequence_scope_allows(const llg_sequence_scope_t* scope,
 static void sequence_token_free(llg_sequence_token_t* token) {
     if (!token) return;
     sequence_scope_release(token->scope);
+    sv4_destroy_array(token->locals, token->local_count);
     free(token->locals);
     free(token);
 }
@@ -109,6 +111,7 @@ static llg_sequence_token_t* sequence_token_copy(
     llg_sequence_token_t* token = llg_checked_calloc(1, sizeof(*token), "sequence token");
     *token = *source;
     token->next = NULL;
+    token->local_count = graph->local_count;
     token->locals = sequence_locals_clone(graph, source->locals);
     sequence_scope_retain(token->scope);
     return token;
@@ -144,6 +147,7 @@ static void sequence_token_push(const llg_sequence_graph_t* graph,
 static void sequence_endpoints_free(llg_sequence_endpoint_t* endpoint) {
     while (endpoint) {
         llg_sequence_endpoint_t* next = endpoint->next;
+        sv4_destroy_array(endpoint->locals, endpoint->local_count);
         free(endpoint->locals);
         free(endpoint);
         endpoint = next;
@@ -153,6 +157,7 @@ static void sequence_endpoints_free(llg_sequence_endpoint_t* endpoint) {
 static void sequence_endpoint_add(llg_sequence_attempt_t* attempt,
                                    const llg_sequence_token_t* token, int empty) {
     llg_sequence_endpoint_t* endpoint = llg_checked_calloc(1, sizeof(*endpoint), "sequence endpoint");
+    endpoint->local_count = attempt->graph->local_count;
     endpoint->locals = sequence_locals_clone(attempt->graph, token->locals);
     endpoint->clock = token->entered_clock;
     endpoint->edge = token->entered_edge;
@@ -255,7 +260,7 @@ static llg_sequence_attempt_t* sequence_attempt_new(
         for (uint32_t i = 0; i < graph->local_count; i++) {
             const llg_sequence_local_t* local = &graph->locals[i];
             attempt->locals[i] = sv4_x(local->width, local->is_signed);
-            if (local->two_state) attempt->locals[i] = sv4_to_two_state(attempt->locals[i]);
+            if (local->two_state) sv4_replace(&attempt->locals[i], sv4_to_two_state(attempt->locals[i]));
             if (!source || !values || !local->declaration) continue;
             for (uint32_t j = 0; j < source->local_count; j++) {
                 const llg_sequence_local_t* from = &source->locals[j];
@@ -264,7 +269,7 @@ static llg_sequence_attempt_t* sequence_attempt_new(
                     fprintf(stderr, "llg: inconsistent assertion local type across implication\n");
                     llg_last_failure = 1; g.finish = 1; break;
                 }
-                attempt->locals[i] = values[j];
+                sv4_copy(&attempt->locals[i], &values[j]);
                 attempt->inherited[i] = 1;
                 break;
             }
@@ -297,6 +302,7 @@ static int sequence_start(llg_sequence_attempt_t* attempt,
     sequence_token_anchor(&seed, &event);
     if (attempt->graph->admits_empty) sequence_endpoint_add(attempt, &seed, 1);
     attempt->tokens = sequence_token_copy(attempt->graph, &seed);
+    if (attempt->locals) sv4_destroy_array(attempt->locals, attempt->graph->local_count);
     free(attempt->locals);
     free(attempt->inherited);
     attempt->locals = NULL;
@@ -425,6 +431,7 @@ static void sequence_attempt_discard(llg_sequence_attempt_t* attempt) {
     if (!attempt) return;
     sequence_tokens_free(attempt->tokens);
     sequence_endpoints_free(attempt->endpoints);
+    if (attempt->locals) sv4_destroy_array(attempt->locals, attempt->graph->local_count);
     free(attempt->locals);
     free(attempt->inherited);
     free(attempt);
@@ -459,6 +466,7 @@ static int sequence_spawn_consequents(llg_concurrent_assertion_t* assertion,
             sequence_attempt_append(&assertion->sequence_consequents,
                                     &assertion->sequence_consequents_tail, consequent);
         }
+        sv4_destroy_array(endpoint->locals, endpoint->local_count);
         free(endpoint->locals);
         free(endpoint);
         endpoint = next;

@@ -17,15 +17,17 @@ static void llg_vprint(const char* fmt, va_list ap, int newline) {
                 fputc('%', stdout);
             } else if (c == 't') {
                 sv4_t v = va_arg(ap, sv4_t);
-                char tmp[LLG_MAX_WIDTH * 2u + 256u];
+                size_t tmp_cap = llg_format_scratch_size(v.width, 0);
+                char* tmp = llg_checked_malloc(tmp_cap, 1, "time output");
                 size_t len = llg_format_time_integer(v, g.design_precision_fs,
-                                                      tmp, sizeof(tmp));
+                                                      tmp, tmp_cap);
                 if (!has_width && !zero) width = g.time_format.minimum_field_width;
                 while (width > 0 && (size_t)width > len) {
                     fputc(' ', stdout);
                     width--;
                 }
                 fwrite(tmp, 1, len, stdout);
+                free(tmp);
             } else if (c == 's') {
                 const char* s = va_arg(ap, const char*);
                 if (s) {
@@ -34,9 +36,11 @@ static void llg_vprint(const char* fmt, va_list ap, int newline) {
             } else if (c == 'd' || c == 'h' || c == 'b' || c == 'o') {
                 sv4_t v = va_arg(ap, sv4_t);
                 // One complete packed value, including a possible minus sign.
-                char tmp[LLG_MAX_WIDTH + 2u];
-                sv4_format(c, v, tmp, sizeof(tmp));
+                size_t tmp_cap = (size_t)v.width + 3u;
+                char* tmp = llg_checked_malloc(tmp_cap, 1, "packed output");
+                sv4_format(c, v, tmp, tmp_cap);
                 fputs(tmp, stdout);
+                free(tmp);
             } else if (c == 'f' || c == 'e' || c == 'g') {
                 double v = va_arg(ap, double);
                 char real_fmt[128];

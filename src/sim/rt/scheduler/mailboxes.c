@@ -3,6 +3,7 @@
 
 static void mailbox_value_destroy(llg_mailbox_value_t* value) {
     if (!value) return;
+    if (value->kind == LLG_MAILBOX_PACKED) sv4_destroy(&value->value.packed);
     if (value->kind == LLG_MAILBOX_STRING)
         llg_string_destroy(&value->value.string);
     memset(value, 0, sizeof(*value));
@@ -37,7 +38,7 @@ llg_mailbox_value_t llg_mailbox_value_packed(sv4_t value, uint32_t width,
     result.width = width;
     result.is_signed = (int8_t)is_signed;
     result.two_state = (int8_t)two_state;
-    result.value.packed = value;
+    result.value.packed = sv4_clone(&value);
     return result;
 }
 
@@ -148,9 +149,10 @@ static void mailbox_deliver(const llg_mailbox_value_t* value,
     case LLG_MAILBOX_PACKED: {
         sv4_t converted = sv4_cast(value->value.packed, target->width,
                                    target->is_signed);
-        if (target->two_state) converted = sv4_to_two_state(converted);
+        if (target->two_state) sv4_replace(&converted, sv4_to_two_state(converted));
         if (target->reference) llg_ref_write(target->reference, converted);
         else llg_ba(target->target.packed, converted);
+        sv4_destroy(&converted);
         break;
     }
     case LLG_MAILBOX_REAL:

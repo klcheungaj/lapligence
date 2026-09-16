@@ -1,3 +1,5 @@
+#error "Legacy owner fixtures require P05 migration; run tests/runtime_value_storage instead"
+
 // llg_wave_selftest.c — bounded queue, flush barrier, VCD, and FST smoke test.
 #define LLG_WAVEFORM 1
 

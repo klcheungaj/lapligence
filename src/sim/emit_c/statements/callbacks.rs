@@ -10,6 +10,7 @@ pub fn render_pre_fn(ctx: &RCtx<'_>, pre: &crate::sim::ir::IrPreFn) -> Result<St
             .pre_fn_capacity(pre, ctx.func)
             .map_err(EmitError::InvalidIr)?,
     )?;
+    super::super::require_owned_emission()?;
     render_pre_fn_impl(ctx, pre).map_err(EmitError::new)
 }
 

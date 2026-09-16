@@ -12,6 +12,8 @@ static int llg_fmt_arg_same(const llg_fmt_arg_t* a, const llg_fmt_arg_t* b) {
 static void reset_monitor_state(void) {
     if (g.mon.active) {
         free(g.mon.fmt);
+        if (g.mon.last) sv4_destroy_array(g.mon.last, (size_t)g.mon.n);
+        if (g.mon.work) sv4_destroy_array(g.mon.work, (size_t)g.mon.n);
         free(g.mon.last);
         free(g.mon.work);
         free(g.mon.reads);
@@ -183,6 +185,7 @@ static void check_monitor(void) {
         llg_fmt_args_destroy(g.mon.typed_work, g.mon.n);
         return;
     }
+    sv4_destroy_array(g.mon.work, (size_t)g.mon.n);
     g.mon.eval(g.mon.work, NULL);
     int changed = g.mon.force_report;
     if (!changed) {
@@ -195,9 +198,14 @@ static void check_monitor(void) {
     }
     g.mon.dirty = 0;
     g.mon.force_report = 0;
-    if (!changed) return;
-    for (int i = 0; i < g.mon.n; i++) g.mon.last[i] = g.mon.work[i];
+    if (!changed) {
+        sv4_destroy_array(g.mon.work, (size_t)g.mon.n);
+        return;
+    }
+    for (int i = 0; i < g.mon.n; i++) sv4_copy(&g.mon.last[i], &g.mon.work[i]);
     llg_print_array(g.mon.fmt, g.mon.work, g.mon.n);
+    sv4_destroy_array(g.mon.work, (size_t)g.mon.n);
+
 }
 
 // Print queued $strobe lines after the current time step has settled.
@@ -218,6 +226,7 @@ static void flush_strobes(void) {
         } else {
             e->eval(e->work, NULL);
             llg_print_array(e->fmt, e->work, e->n);
+            sv4_destroy_array(e->work, (size_t)e->n);
             free(e->work);
         }
         free(e->fmt);

@@ -45,6 +45,12 @@ The [source map](../../docs/source_layout.md) locates responsibility modules.
 
 ## Validation and capacity
 
+Dynamic-runtime migration P03/P04 requires ownership-aware P05 emission before
+any C model is safe. Public render/model-build entry points are fail-closed until
+that migration and owned initialization are implemented; do not bypass the gate.
+See [runtime ownership](rt/value/ownership.md). Legacy selftests remain fenced
+pending fixture migration; the standalone owner suite is the active C check.
+
 Treat `IrModelParts` as untrusted until `IrModel::from_parts` validates table
 references, storage shapes, registrations and nested nodes. Keep
 `IrModel::validate` and detached-node validation before optimizer/emitter
@@ -55,21 +61,22 @@ Derive `LLG_MODEL_STACK_VALUES` from validated frames:
 the historical minimum. Account for typed expression storage across sequential
 statements and lexical arms: C compilers, especially sanitizers, may retain
 return-by-value temporaries for the whole function. Checked sizing failure
-stops emission. Define `LLG_MODEL_MAX_WIDTH` on the cached runtime and generated
-model. Pass `LLG_MODEL_STACK_VALUES` from generated `main` through
+stops emission. Runtime values now allocate by their own width; never reintroduce
+a model-maximum storage layout. P05/P06 must remove the old, currently gated
+emitter/cache width metadata before model generation is enabled again. Pass `LLG_MODEL_STACK_VALUES` from generated `main` through
 `llg_rt_init_with_args_precision_and_stack`, keeping stack headroom outside the
 compiled runtime ABI and retaining defensive runtime checks.
 
-Select packed capacity from the completed model; reject the exclusive `1 << 20`
-backend limit, not a fixed 1024-/64-bit IR semantic cap. Runtime `sv4_t` widths are
-`uint32_t`; div/mod/pow use model limbs. Preserve typed selected-index trees,
+Validate each packed width against the exclusive `1 << 20` backend limit, not
+a model-wide capacity or a fixed 1024-/64-bit IR semantic cap. Runtime `sv4_t`
+widths are `uint32_t`; div/mod/pow allocate operand-width scratch. Preserve typed selected-index trees,
 elaborated indexed-part extents and capacity for intermediate indices wider
 than stored signals. Emit static extents, not a width expression's integer
 storage width. Named packed-member writes preserve member-specific two-state
 conversion. See [data semantics](../../docs/sim_data_semantics.md) for standard
 width/sign/X/Z rules.
 
-`llg_rt_selftest.c::VECTORS[]` cross-checks C `sv4_*` against identical
+The pre-migration `llg_rt_selftest.c::VECTORS[]` cross-checks C `sv4_*` against identical
 `core::elab::Value` inputs in `tests/property_elab.rs`. Regenerate with the
 ignored Rust generator:
 

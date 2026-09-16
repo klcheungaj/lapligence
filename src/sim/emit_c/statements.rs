@@ -51,6 +51,7 @@ pub fn render_stmt(ctx: &RCtx<'_>, st: &crate::sim::ir::IrStmt) -> Result<String
             .statement_capacity(st, ctx.func)
             .map_err(EmitError::InvalidIr)?,
     )?;
+    super::require_owned_emission()?;
     render_stmt_impl(ctx, st).map_err(EmitError::new)
 }
 

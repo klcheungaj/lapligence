@@ -5,10 +5,11 @@
 static int sv4_nlimbs(uint32_t w) { return w == 0 ? 0 : (int)((w + 63u) / 64u); }
 
 static void sv4_require_width(uint64_t width, const char* operation) {
-    if (width <= LLG_MAX_WIDTH) return;
+    if (width < LLG_SUPPORTED_WIDTH_LIMIT) return;
     fprintf(stderr,
-            "llg runtime fatal: %s width %llu exceeds model capacity %u\n",
-            operation, (unsigned long long)width, (unsigned)LLG_MAX_WIDTH);
+            "llg runtime fatal: %s width %llu reaches supported limit %u\n",
+            operation, (unsigned long long)width,
+            (unsigned)LLG_SUPPORTED_WIDTH_LIMIT);
     abort();
 }
 
@@ -22,48 +23,50 @@ static uint64_t sv4_limb_mask(uint32_t w, int i) {
 }
 
 sv4_t sv4_x(uint32_t width, int8_t is_signed) {
-    sv4_require_width(width, "value");
-    sv4_t r;
-    for (int i = 0; i < (int)LLG_LIMBS; i++) {
-        r.bits[i] = 0;
-        r.x[i] = sv4_limb_mask(width, i);
-        r.z[i] = 0;
-    }
-    r.width = width;
-    r.is_signed = is_signed;
-    return r;
+    sv4_t result = sv4_zero(width, is_signed);
+    for (int i = 0; i < sv4_nlimbs(width); ++i)
+        result.x[i] = sv4_limb_mask(width, i);
+    return result;
 }
 
 sv4_t sv4_from_u64(uint64_t v, uint32_t width, int8_t is_signed) {
-    sv4_require_width(width, "value");
-    sv4_t r;
-    memset(&r, 0, sizeof(r));
-    r.bits[0] = v & LLG_MASK(width);
-    r.width = width;
-    r.is_signed = is_signed;
-    return r;
+    sv4_t result = sv4_zero(width, is_signed);
+    if (width) result.bits[0] = v & LLG_MASK(width);
+    return result;
 }
 
 sv4_t sv4_from_i64(int64_t v, uint32_t width) {
-    uint32_t source_width = width < 64 ? width : 64;
-    sv4_t result = sv4_from_u64((uint64_t)v, source_width, 1);
-    return sv4_resize(result, width, 1);
+    sv4_t result = sv4_from_u64((uint64_t)v, width, 1);
+    if (v < 0) {
+        for (int i = 1; i < sv4_nlimbs(width); ++i)
+            result.bits[i] = sv4_limb_mask(width, i);
+    }
+    return result;
 }
 
 double sv4_to_real(sv4_t v) {
     int limbs = sv4_nlimbs(v.width);
-    for (int i = 0; i < limbs; i++) {
-        v.bits[i] &= ~(v.x[i] | v.z[i]) & sv4_limb_mask(v.width, i);
-        v.x[i] = 0;
-        v.z[i] = 0;
+    int negative = v.is_signed && v.width &&
+        ((v.bits[(v.width - 1u) / 64u] &
+          ~(v.x[(v.width - 1u) / 64u] | v.z[(v.width - 1u) / 64u])) >>
+         ((v.width - 1u) % 64u) & 1u);
+    // In ~magnitude + 1, carry stops at the first nonzero low limb. Locate it
+    // first, then accumulate high-to-low to preserve the conversion's rounding
+    // order without allocating or modifying a borrowed operand.
+    int first_nonzero = 0;
+    if (negative) {
+        while (first_nonzero < limbs &&
+               !(v.bits[first_nonzero] & ~(v.x[first_nonzero] | v.z[first_nonzero])))
+            ++first_nonzero;
     }
-    int negative = v.is_signed && v.width > 0 &&
-        ((v.bits[(v.width - 1) / 64] >> ((v.width - 1) % 64)) & 1ULL);
-    if (negative) v = sv4_neg(v);
-    double out = 0.0;
-    for (int i = limbs - 1; i >= 0; i--)
-        out = ldexp(out, 64) + (double)v.bits[i];
-    return negative ? -out : out;
+    double result = 0.0;
+    for (int i = limbs - 1; i >= 0; --i) {
+        uint64_t word = v.bits[i] & ~(v.x[i] | v.z[i]);
+        if (negative) word = ~word + (uint64_t)(i <= first_nonzero);
+        word &= sv4_limb_mask(v.width, i);
+        result = ldexp(result, 64) + (double)word;
+    }
+    return negative ? -result : result;
 }
 
 sv4_t sv4_from_real(double v, uint32_t width, int8_t is_signed) {
@@ -72,8 +75,7 @@ sv4_t sv4_from_real(double v, uint32_t width, int8_t is_signed) {
     double rounded = round(v);
     const double modulus = 18446744073709551616.0;
     double magnitude = fabs(rounded);
-    sv4_t result;
-    memset(&result, 0, sizeof(result));
+    sv4_t result = sv4_zero(width, is_signed);
     result.width = width;
     result.is_signed = is_signed;
     for (int i = 0; i < sv4_nlimbs(width) && magnitude != 0.0; i++) {
@@ -83,7 +85,7 @@ sv4_t sv4_from_real(double v, uint32_t width, int8_t is_signed) {
     if (sv4_nlimbs(width) > 0)
         result.bits[sv4_nlimbs(width) - 1] &=
             sv4_limb_mask(width, sv4_nlimbs(width) - 1);
-    if (signbit(rounded)) result = sv4_neg(result);
+    if (signbit(rounded)) sv4_replace(&result, sv4_neg(result));
     return result;
 }
 
@@ -103,7 +105,7 @@ sv4_t sv4_realtobits(double v) {
 }
 
 double sv4_bitstoreal(sv4_t v) {
-    uint64_t bits = v.bits[0] & ~(v.x[0] | v.z[0]);
+    uint64_t bits = v.width ? v.bits[0] & ~(v.x[0] | v.z[0]) : 0;
     double result;
     memcpy(&result, &bits, sizeof(result));
     return result;
@@ -117,7 +119,7 @@ sv4_t sv4_shortrealtobits(double v) {
 }
 
 double sv4_bitstoshortreal(sv4_t v) {
-    uint32_t bits = (uint32_t)(v.bits[0] & ~(v.x[0] | v.z[0]));
+    uint32_t bits = v.width ? (uint32_t)(v.bits[0] & ~(v.x[0] | v.z[0])) : 0;
     float value;
     memcpy(&value, &bits, sizeof(value));
     return (double)value;
@@ -125,20 +127,7 @@ double sv4_bitstoshortreal(sv4_t v) {
 
 int llg_real_to_bool(double v) { return v != 0.0; }
 
-sv4_t sv4_from_limbs(const uint64_t* bits, const uint64_t* x, const uint64_t* z,
-                     uint32_t width, int8_t is_signed) {
-    sv4_require_width(width, "value");
-    sv4_t r;
-    for (int i = 0; i < (int)LLG_LIMBS; i++) {
-        uint64_t m = sv4_limb_mask(width, i);
-        r.bits[i] = (bits && m) ? bits[i] & m : 0;
-        r.x[i] = (x && m) ? x[i] & m : 0;
-        r.z[i] = (z && m) ? z[i] & m : 0;
-    }
-    r.width = width;
-    r.is_signed = is_signed;
-    return r;
-}
+
 
 int sv4_is_unknown(sv4_t v) {
     for (int i = 0; i < sv4_nlimbs(v.width); i++)
@@ -159,8 +148,14 @@ sv4_t sv4_countones(sv4_t v) {
 }
 
 sv4_t sv4_onehot(sv4_t v, int allow_zero) {
-    uint64_t count = sv4_countones(v).bits[0];
-    return sv4_from_u64(allow_zero ? count <= 1 : count == 1, 1, 0);
+    int found = 0;
+    for (int i = 0; i < sv4_nlimbs(v.width); ++i) {
+        uint64_t ones = v.bits[i] & ~(v.x[i] | v.z[i]) & sv4_limb_mask(v.width, i);
+        if (!ones) continue;
+        if (found || (ones & (ones - 1u))) return sv4_from_u64(0, 1, 0);
+        found = 1;
+    }
+    return sv4_from_u64(found || allow_zero, 1, 0);
 }
 
 int sv4_to_bool(sv4_t v) {
@@ -178,10 +173,10 @@ sv4_t sv4_repeat_count(sv4_t v) {
         ((v.bits[(v.width - 1) / 64] >> ((v.width - 1) % 64)) & 1ULL)))
         return sv4_from_u64(0, v.width, 0);
     v.is_signed = 0;
-    return v;
+    return sv4_clone(&v);
 }
 
-uint64_t sv4_to_u64(sv4_t v) { return v.bits[0] & LLG_MASK(v.width); }
+uint64_t sv4_to_u64(sv4_t v) { return v.width ? v.bits[0] & LLG_MASK(v.width) : 0; }
 
 static uint64_t checked_delay_product(uint64_t value, uint64_t scale) {
     if (!scale || value > UINT64_MAX / scale) {
@@ -265,17 +260,24 @@ uint32_t sv4_checked_width(sv4_t v) {
 }
 
 int sv4_same(sv4_t a, sv4_t b) {
-    for (int i = 0; i < (int)LLG_LIMBS; i++)
-        if (a.bits[i] != b.bits[i] || a.x[i] != b.x[i] || a.z[i] != b.z[i])
-            return 0;
+    int an = sv4_nlimbs(a.width), bn = sv4_nlimbs(b.width);
+    int count = an > bn ? an : bn;
+    for (int i = 0; i < count; ++i) {
+        uint64_t ab = i < an ? a.bits[i] : 0;
+        uint64_t ax = i < an ? a.x[i] : 0;
+        uint64_t az = i < an ? a.z[i] : 0;
+        uint64_t bb = i < bn ? b.bits[i] : 0;
+        uint64_t bx = i < bn ? b.x[i] : 0;
+        uint64_t bz = i < bn ? b.z[i] : 0;
+        if (ab != bb || ax != bx || az != bz) return 0;
+    }
     return 1;
 }
 
 sv4_t sv4_resolve(const sv4_t* const* drivers, int n_drivers,
                   uint32_t width, int8_t is_signed, int mode) {
     sv4_require_width(width, "net");
-    sv4_t r;
-    memset(&r, 0, sizeof(r));
+    sv4_t r = sv4_zero(width, is_signed);
     r.width = width;
     r.is_signed = is_signed;
     int nl = sv4_nlimbs(width);
@@ -288,10 +290,10 @@ sv4_t sv4_resolve(const sv4_t* const* drivers, int n_drivers,
         uint64_t any0 = 0, any1 = 0, anyx = 0;
         for (int d = 0; d < n_drivers; d++) {
             const sv4_t* v = drivers[d];
-            if (!v) continue;
+            if (!v || i >= sv4_nlimbs(v->width)) continue;
             uint64_t bits = v->bits[i] & m;
             uint64_t x = v->x[i] & m;
-            uint64_t z = v->z[i] & m;
+            uint64_t z = (v->z[i] | ~sv4_limb_mask(v->width, i)) & m;
             any0 |= (~bits) & ~(x | z) & m;
             any1 |= bits & ~(x | z) & m;
             anyx |= x;
@@ -328,8 +330,7 @@ sv4_t sv4_resolve_strengths(const sv4_t* const* drivers,
         return sv4_resolve(drivers, n_drivers, width, is_signed, mode);
 
     sv4_require_width(width, "strength-aware net");
-    sv4_t r;
-    memset(&r, 0, sizeof(r));
+    sv4_t r = sv4_zero(width, is_signed);
     r.width = width;
     r.is_signed = is_signed;
     int nl = sv4_nlimbs(width);
@@ -371,7 +372,7 @@ sv4_t sv4_resolve_strengths(const sv4_t* const* drivers,
 
         for (int d = 0; d < n_drivers; d++) {
             const sv4_t* v = drivers[d];
-            if (!v) continue;
+            if (!v || i >= sv4_nlimbs(v->width)) continue;
             uint8_t s0 = strength0[d];
             uint8_t s1 = strength1[d];
             if (s0 > LLG_STRENGTH_SUPPLY || s1 > LLG_STRENGTH_SUPPLY) {
@@ -379,7 +380,7 @@ sv4_t sv4_resolve_strengths(const sv4_t* const* drivers,
                 abort();
             }
             uint64_t x = v->x[i] & m;
-            uint64_t z = v->z[i] & m;
+            uint64_t z = (v->z[i] | ~sv4_limb_mask(v->width, i)) & m;
             uint64_t k0 = (~v->bits[i]) & ~(x | z) & m;
             uint64_t k1 = v->bits[i] & ~(x | z) & m;
             if (s0 != LLG_STRENGTH_HIGHZ) {
@@ -392,7 +393,6 @@ sv4_t sv4_resolve_strengths(const sv4_t* const* drivers,
             }
         }
 
-        uint64_t out0 = 0;
         uint64_t out1 = 0;
         uint64_t outx = 0;
         uint64_t outz = 0;
@@ -417,7 +417,7 @@ sv4_t sv4_resolve_strengths(const sv4_t* const* drivers,
                  * wired-AND gives a known 0 precedence over 1/X. */
                 if (best_k0 > best_p1
                     || (best_k0 >= 0 && best_k0 == best_p1)) {
-                    out0 |= bit;
+                    /* Known zero needs no bit in the cleared result. */
                 } else if (best_k1 > best_p0) {
                     out1 |= bit;
                 } else {
@@ -430,12 +430,12 @@ sv4_t sv4_resolve_strengths(const sv4_t* const* drivers,
                     || (best_k1 >= 0 && best_k1 == best_p0)) {
                     out1 |= bit;
                 } else if (best_k0 > best_p1) {
-                    out0 |= bit;
+                    /* Known zero needs no bit in the cleared result. */
                 } else {
                     outx |= bit;
                 }
             } else if (best_k0 > best_p1) {
-                out0 |= bit;
+                /* Known zero needs no bit in the cleared result. */
             } else if (best_k1 > best_p0) {
                 out1 |= bit;
             } else {
@@ -506,10 +506,9 @@ static sv4_t sv4_resize_ext(sv4_t v, uint32_t width, int8_t is_signed, int8_t ex
     sv4_require_width(width, "resize");
     if (v.width == width) {
         v.is_signed = is_signed;
-        return v;
+        return sv4_clone(&v);
     }
-    sv4_t r;
-    memset(&r, 0, sizeof(r));
+    sv4_t r = sv4_zero(width, is_signed);
     r.width = width;
     r.is_signed = is_signed;
     int oln = sv4_nlimbs(v.width), nln = sv4_nlimbs(width);
@@ -546,6 +545,7 @@ sv4_t sv4_cast(sv4_t v, uint32_t width, int8_t is_signed) {
 }
 
 sv4_t sv4_to_two_state(sv4_t v) {
+    v = sv4_clone(&v);
     for (int i = 0; i < sv4_nlimbs(v.width); i++) {
         v.bits[i] &= ~(v.x[i] | v.z[i]);
         v.x[i] = 0;
@@ -556,8 +556,8 @@ sv4_t sv4_to_two_state(sv4_t v) {
 
 sv4_t sv4_fill(uint8_t bit, uint32_t width, int8_t is_signed) {
     sv4_require_width(width, "fill");
-    sv4_t r;
-    for (int i = 0; i < (int)LLG_LIMBS; i++) {
+    sv4_t r = sv4_zero(width, is_signed);
+    for (int i = 0; i < sv4_nlimbs(width); i++) {
         uint64_t m = sv4_limb_mask(width, i);
         r.bits[i] = (bit == 1) ? m : 0;
         r.x[i] = (bit == 2) ? m : 0;
@@ -570,22 +570,27 @@ sv4_t sv4_fill(uint8_t bit, uint32_t width, int8_t is_signed) {
 
 // Highest set known bit, or -1 when the value is zero.
 static int sv4_msb(sv4_t v) {
-    for (int i = sv4_nlimbs(v.width) - 1; i >= 0; i--)
-        if (v.bits[i]) return i * 64 + (63 - __builtin_clzll(v.bits[i]));
+    for (int i = sv4_nlimbs(v.width) - 1; i >= 0; --i) {
+        uint64_t word = v.bits[i];
+        if (!word) continue;
+        int bit = 0;
+        while (word >>= 1u) ++bit;
+        return i * 64 + bit;
+    }
     return -1;
 }
 
 sv4_t sv4_clog2(sv4_t v) {
     if (sv4_is_unknown(v)) return sv4_x(32, 0);
-    if (sv4_msb(v) <= 0) return sv4_from_u64(0, 32, 0); // 0 or 1
-    // ceil(log2(x)) = msb(x-1) + 1
-    sv4_t xm1 = v;
-    for (int i = 0; i < (int)LLG_LIMBS; i++) {
-        uint64_t before = xm1.bits[i];
-        xm1.bits[i] -= 1;
-        if (before != 0) break;
+    int top = sv4_msb(v);
+    if (top <= 0) return sv4_from_u64(0, 32, 0);
+    int is_power_of_two = 1;
+    for (int i = 0; i < sv4_nlimbs(v.width); ++i) {
+        uint64_t word = v.bits[i];
+        if (i == top / 64) word &= ~(UINT64_C(1) << (top % 64));
+        if (word) { is_power_of_two = 0; break; }
     }
-    return sv4_from_u64((uint64_t)(sv4_msb(xm1) + 1), 32, 0);
+    return sv4_from_u64((uint64_t)(top + !is_power_of_two), 32, 0);
 }
 
 // ── sv4 arithmetic ────────────────────────────────────────────────────────────
@@ -594,21 +599,53 @@ static uint32_t sv4_maxw(sv4_t a, sv4_t b) {
     return a.width > b.width ? a.width : b.width;
 }
 
+static uint64_t sv4_extended_limb(sv4_t v, uint32_t width, int is_signed,
+                                  int limb, int plane) {
+    uint64_t mask = sv4_limb_mask(v.width, limb);
+    uint64_t result = 0;
+    if (mask) {
+        const uint64_t* data = plane == 0 ? v.bits : plane == 1 ? v.x : v.z;
+        result = data[limb] & mask;
+    }
+    if (is_signed && v.width && width > v.width) {
+        int sign = sv4_lsb_bit(v, (int)v.width - 1);
+        int fill = plane == 0 ? sign == 1 : plane == 1 ? sign == 2 : sign == 3;
+        if (fill) result |= ~mask;
+    }
+    return result & sv4_limb_mask(width, limb);
+}
+
+static int sv4_extended_bit(sv4_t v, int bit, int is_signed) {
+    if ((uint32_t)bit < v.width) return sv4_lsb_bit(v, bit);
+    return is_signed && v.width ? sv4_lsb_bit(v, (int)v.width - 1) : 0;
+}
+
+// Portable 64x64 -> 128-bit multiplication using base-2^32 partial products.
+static void sv4_multiply_words(uint64_t a, uint64_t b,
+                               uint64_t* low, uint64_t* high) {
+    uint64_t a0 = (uint32_t)a, a1 = a >> 32;
+    uint64_t b0 = (uint32_t)b, b1 = b >> 32;
+    uint64_t w0 = a0 * b0;
+    uint64_t t = a1 * b0 + (w0 >> 32);
+    uint64_t w1 = (uint32_t)t;
+    uint64_t w2 = t >> 32;
+    w1 += a0 * b1;
+    *high = a1 * b1 + w2 + (w1 >> 32);
+    *low = (w1 << 32) | (uint32_t)w0;
+}
+
 static void* sv4_scratch_alloc(size_t count);
 
 sv4_t sv4_add(sv4_t a, sv4_t b) {
     uint32_t w = sv4_maxw(a, b);
     int8_t s = a.is_signed && b.is_signed;
     if (sv4_is_unknown(a) || sv4_is_unknown(b)) return sv4_x(w, s);
-    a = sv4_resize(a, w, s);
-    b = sv4_resize(b, w, s);
-    sv4_t r;
-    memset(&r, 0, sizeof(r));
+    sv4_t r = sv4_zero(w, s);
     int nl = sv4_nlimbs(w);
     uint64_t carry = 0;
     for (int i = 0; i < nl; i++) {
-        uint64_t t = a.bits[i] + b.bits[i];
-        uint64_t c1 = t < a.bits[i] ? 1 : 0;
+        uint64_t t = sv4_extended_limb(a, w, s, i, 0) + sv4_extended_limb(b, w, s, i, 0);
+        uint64_t c1 = t < sv4_extended_limb(a, w, s, i, 0) ? 1 : 0;
         uint64_t u = t + carry;
         carry = c1 | (u < t ? 1 : 0);
         r.bits[i] = u;
@@ -623,17 +660,14 @@ sv4_t sv4_sub(sv4_t a, sv4_t b) {
     uint32_t w = sv4_maxw(a, b);
     int8_t s = a.is_signed && b.is_signed;
     if (sv4_is_unknown(a) || sv4_is_unknown(b)) return sv4_x(w, s);
-    a = sv4_resize(a, w, s);
-    b = sv4_resize(b, w, s);
-    sv4_t r;
-    memset(&r, 0, sizeof(r));
+    sv4_t r = sv4_zero(w, s);
     int nl = sv4_nlimbs(w);
     uint64_t borrow = 0;
     for (int i = 0; i < nl; i++) {
-        uint64_t t = b.bits[i] + borrow; // mod 2^64
-        uint64_t f = t < b.bits[i];      // b + borrow overflowed
-        r.bits[i] = a.bits[i] - t;       // mod 2^64
-        borrow = f || (a.bits[i] < t);
+        uint64_t t = sv4_extended_limb(b, w, s, i, 0) + borrow; // mod 2^64
+        uint64_t f = t < sv4_extended_limb(b, w, s, i, 0);      // b + borrow overflowed
+        r.bits[i] = sv4_extended_limb(a, w, s, i, 0) - t;       // mod 2^64
+        borrow = f || (sv4_extended_limb(a, w, s, i, 0) < t);
     }
     if (nl > 0) r.bits[nl - 1] &= sv4_limb_mask(w, nl - 1);
     r.width = w;
@@ -645,17 +679,16 @@ sv4_t sv4_mul(sv4_t a, sv4_t b) {
     uint32_t w = sv4_maxw(a, b);
     int8_t s = a.is_signed && b.is_signed;
     if (sv4_is_unknown(a) || sv4_is_unknown(b)) return sv4_x(w, s);
-    a = sv4_resize(a, w, s);
-    b = sv4_resize(b, w, s);
     int nl = sv4_nlimbs(w);
     // Schoolbook product modulo 2^w.  Terms at limb nl and above cannot affect
     // the truncated result, so avoid allocating or computing them.
-    uint64_t* acc = sv4_scratch_alloc((size_t)nl);
+    sv4_t r = sv4_zero(w, s);
+    uint64_t* acc = r.bits;
     for (int i = 0; i < nl; i++) {
         for (int j = 0; j < nl - i; j++) {
-            __uint128_t prod = (__uint128_t)a.bits[i] * b.bits[j];
-            uint64_t plo = (uint64_t)prod;
-            uint64_t phi = (uint64_t)(prod >> 64);
+            uint64_t plo, phi;
+            sv4_multiply_words(sv4_extended_limb(a, w, s, i, 0),
+                               sv4_extended_limb(b, w, s, j, 0), &plo, &phi);
             // add plo to acc[i+j], propagating the carry upward
             uint64_t t = acc[i + j] + plo;
             uint64_t carry = t < acc[i + j] ? 1 : 0;
@@ -677,10 +710,6 @@ sv4_t sv4_mul(sv4_t a, sv4_t b) {
             }
         }
     }
-    sv4_t r;
-    memset(&r, 0, sizeof(r));
-    for (int i = 0; i < nl; i++) r.bits[i] = acc[i];
-    free(acc);
     if (nl > 0) r.bits[nl - 1] &= sv4_limb_mask(w, nl - 1);
     r.width = w;
     r.is_signed = s;
@@ -705,6 +734,10 @@ static int sv4_raw_ucmp(const sv4_t* a, const sv4_t* b) {
 }
 
 static void* sv4_scratch_alloc(size_t count) {
+    if (count > SIZE_MAX / sizeof(uint64_t)) {
+        fputs("llg runtime fatal: value scratch size overflow\n", stderr);
+        abort();
+    }
     if (count == 0) count = 1;
     void* allocation = calloc(count, sizeof(uint64_t));
     if (allocation) return allocation;
@@ -712,129 +745,116 @@ static void* sv4_scratch_alloc(size_t count) {
     abort();
 }
 
-// Divide two known, unsigned, equal-width vectors using normalized base-2^64
-// long division.  Knuth's quotient estimate keeps the work proportional to
-// the populated limbs rather than to every individual bit.
+// Divide known unsigned equal-width vectors in base 2^32. Quotient estimates
+// use standard uint64_t intermediates, including on platforms without __int128.
+// Scratch size depends on populated operands, never on a model-wide capacity.
+static uint32_t sv4_word32(const sv4_t* value, int index) {
+    return (uint32_t)(value->bits[index / 2] >> ((index % 2) * 32));
+}
+
+static void sv4_set_word32(sv4_t* value, int index, uint32_t word) {
+    int shift = (index % 2) * 32;
+    uint64_t mask = (uint64_t)UINT32_MAX << shift;
+    value->bits[index / 2] = (value->bits[index / 2] & ~mask) |
+                            ((uint64_t)word << shift);
+}
+
 static void sv4_unsigned_divmod(const sv4_t* dividend, const sv4_t* divisor,
                                 int want_remainder, sv4_t* result) {
-    int dividend_limbs = sv4_raw_nlimbs(dividend);
-    int divisor_limbs = sv4_raw_nlimbs(divisor);
     if (sv4_raw_ucmp(dividend, divisor) < 0) {
-        if (want_remainder) *result = *dividend;
+        if (want_remainder) {
+            size_t bytes = (size_t)sv4_nlimbs(dividend->width) * sizeof(uint64_t);
+            if (bytes) memcpy(result->bits, dividend->bits, bytes);
+        }
         return;
     }
-
-    if (divisor_limbs == 1) {
+    int n = 2 * sv4_raw_nlimbs(dividend);
+    int m = 2 * sv4_raw_nlimbs(divisor);
+    while (n && !sv4_word32(dividend, n - 1)) --n;
+    while (m && !sv4_word32(divisor, m - 1)) --m;
+    if (m == 1) {
         uint64_t remainder = 0;
-        uint64_t divisor_word = divisor->bits[0];
-        for (int i = dividend_limbs - 1; i >= 0; i--) {
-            __uint128_t partial = ((__uint128_t)remainder << 64) |
-                                  dividend->bits[i];
-            uint64_t quotient_word = (uint64_t)(partial / divisor_word);
-            remainder = (uint64_t)(partial % divisor_word);
-            if (!want_remainder) result->bits[i] = quotient_word;
+        uint32_t denominator = sv4_word32(divisor, 0);
+        for (int i = n - 1; i >= 0; --i) {
+            uint64_t partial = (remainder << 32) | sv4_word32(dividend, i);
+            if (!want_remainder)
+                sv4_set_word32(result, i, (uint32_t)(partial / denominator));
+            remainder = partial % denominator;
         }
         if (want_remainder) result->bits[0] = remainder;
         return;
     }
 
-    size_t normalized_divisor_count = (size_t)divisor_limbs;
-    size_t normalized_dividend_count = (size_t)dividend_limbs + 1;
-    size_t quotient_count = (size_t)(dividend_limbs - divisor_limbs + 1);
-    size_t total = normalized_divisor_count + normalized_dividend_count;
-    if (!want_remainder) total += quotient_count;
-    uint64_t* scratch = sv4_scratch_alloc(total);
-    uint64_t* normalized_divisor = scratch;
-    uint64_t* normalized_dividend = normalized_divisor + normalized_divisor_count;
-    uint64_t* quotient = want_remainder
-        ? NULL
-        : normalized_dividend + normalized_dividend_count;
-
-    unsigned shift = (unsigned)__builtin_clzll(divisor->bits[divisor_limbs - 1]);
-    if (shift == 0) {
-        memcpy(normalized_divisor, divisor->bits,
-               normalized_divisor_count * sizeof(uint64_t));
-        memcpy(normalized_dividend, dividend->bits,
-               (size_t)dividend_limbs * sizeof(uint64_t));
-    } else {
-        for (int i = 0; i < divisor_limbs; i++) {
-            normalized_divisor[i] = divisor->bits[i] << shift;
-            if (i > 0) normalized_divisor[i] |= divisor->bits[i - 1] >> (64 - shift);
-        }
-        for (int i = 0; i < dividend_limbs; i++) {
-            normalized_dividend[i] = dividend->bits[i] << shift;
-            if (i > 0)
-                normalized_dividend[i] |= dividend->bits[i - 1] >> (64 - shift);
-        }
-        normalized_dividend[dividend_limbs] =
-            dividend->bits[dividend_limbs - 1] >> (64 - shift);
+    size_t count = (size_t)n + 1u + (size_t)m;
+    // Both lengths are bounded by the supported bit width. Check again here
+    // so the allocation contract remains local if that boundary ever changes.
+    if (count > SIZE_MAX / sizeof(uint32_t)) {
+        fputs("llg runtime fatal: division scratch size overflow\n", stderr);
+        abort();
     }
-
-    for (int j = dividend_limbs - divisor_limbs; j >= 0; j--) {
-        uint64_t quotient_digit;
-        uint64_t estimate_remainder;
-        uint64_t high = normalized_dividend[j + divisor_limbs];
-        uint64_t next = normalized_dividend[j + divisor_limbs - 1];
-        uint64_t divisor_high = normalized_divisor[divisor_limbs - 1];
-        int estimate_remainder_overflow = 0;
-        if (high == divisor_high) {
-            quotient_digit = UINT64_MAX;
-            estimate_remainder = next + divisor_high;
-            estimate_remainder_overflow = estimate_remainder < next;
+    uint32_t* scratch = (uint32_t*)calloc(count, sizeof(uint32_t));
+    if (!scratch) {
+        fputs("llg runtime fatal: division scratch allocation failed\n", stderr);
+        abort();
+    }
+    uint32_t* u = scratch;
+    uint32_t* v = u + n + 1;
+    unsigned shift = 0;
+    uint32_t top = sv4_word32(divisor, m - 1);
+    while (!(top & UINT32_C(0x80000000))) { top <<= 1; ++shift; }
+    for (int i = 0; i < m; ++i) {
+        v[i] = sv4_word32(divisor, i) << shift;
+        if (shift && i) v[i] |= sv4_word32(divisor, i - 1) >> (32u - shift);
+    }
+    for (int i = 0; i < n; ++i) {
+        u[i] = sv4_word32(dividend, i) << shift;
+        if (shift && i) u[i] |= sv4_word32(dividend, i - 1) >> (32u - shift);
+    }
+    if (shift) u[n] = sv4_word32(dividend, n - 1) >> (32u - shift);
+    const uint64_t radix = UINT64_C(1) << 32;
+    for (int j = n - m; j >= 0; --j) {
+        uint64_t q, rem;
+        if (u[j + m] == v[m - 1]) {
+            q = UINT32_MAX;
+            rem = (uint64_t)u[j + m - 1] + v[m - 1];
         } else {
-            __uint128_t numerator = ((__uint128_t)high << 64) | next;
-            quotient_digit = (uint64_t)(numerator / divisor_high);
-            estimate_remainder = (uint64_t)(numerator % divisor_high);
+            uint64_t numerator = ((uint64_t)u[j + m] << 32) | u[j + m - 1];
+            q = numerator / v[m - 1];
+            rem = numerator % v[m - 1];
         }
-        while (!estimate_remainder_overflow &&
-               (__uint128_t)quotient_digit *
-                   normalized_divisor[divisor_limbs - 2] >
-               (((__uint128_t)estimate_remainder << 64) |
-                normalized_dividend[j + divisor_limbs - 2])) {
-            quotient_digit--;
-            uint64_t previous = estimate_remainder;
-            estimate_remainder += divisor_high;
-            estimate_remainder_overflow = estimate_remainder < previous;
+        while (rem < radix && q * v[m - 2] >
+                                  (rem << 32) + u[j + m - 2]) {
+            --q;
+            rem += v[m - 1];
         }
-
         uint64_t borrow = 0;
-        for (int i = 0; i < divisor_limbs; i++) {
-            __uint128_t product = (__uint128_t)quotient_digit *
-                                      normalized_divisor[i] +
-                                  borrow;
-            uint64_t subtrahend = (uint64_t)product;
-            uint64_t previous = normalized_dividend[j + i];
-            normalized_dividend[j + i] = previous - subtrahend;
-            borrow = (uint64_t)(product >> 64) + (previous < subtrahend);
+        for (int i = 0; i < m; ++i) {
+            uint64_t product = q * v[i] + borrow;
+            uint32_t low = (uint32_t)product;
+            uint32_t before = u[j + i];
+            u[j + i] = before - low;
+            borrow = (product >> 32) + (before < low);
         }
-        uint64_t previous_high = normalized_dividend[j + divisor_limbs];
-        normalized_dividend[j + divisor_limbs] = previous_high - borrow;
-        if (previous_high < borrow) {
-            quotient_digit--;
+        uint32_t before = u[j + m];
+        u[j + m] = before - (uint32_t)borrow;
+        if ((uint64_t)before < borrow) {
+            --q;
             uint64_t carry = 0;
-            for (int i = 0; i < divisor_limbs; i++) {
-                __uint128_t sum = (__uint128_t)normalized_dividend[j + i] +
-                                  normalized_divisor[i] + carry;
-                normalized_dividend[j + i] = (uint64_t)sum;
-                carry = (uint64_t)(sum >> 64);
+            for (int i = 0; i < m; ++i) {
+                uint64_t sum = (uint64_t)u[j + i] + v[i] + carry;
+                u[j + i] = (uint32_t)sum;
+                carry = sum >> 32;
             }
-            normalized_dividend[j + divisor_limbs] += carry;
+            u[j + m] += (uint32_t)carry;
         }
-        if (quotient) quotient[j] = quotient_digit;
+        if (!want_remainder) sv4_set_word32(result, j, (uint32_t)q);
     }
-
     if (want_remainder) {
-        if (shift == 0) {
-            memcpy(result->bits, normalized_dividend,
-                   normalized_divisor_count * sizeof(uint64_t));
-        } else {
-            for (int i = 0; i < divisor_limbs; i++) {
-                result->bits[i] = normalized_dividend[i] >> shift;
-                result->bits[i] |= normalized_dividend[i + 1] << (64 - shift);
-            }
+        for (int i = 0; i < m; ++i) {
+            uint32_t word = u[i] >> shift;
+            if (shift) word |= u[i + 1] << (32u - shift);
+            sv4_set_word32(result, i, word);
         }
-    } else {
-        memcpy(result->bits, quotient, quotient_count * sizeof(uint64_t));
     }
     free(scratch);
 }
@@ -851,22 +871,27 @@ static sv4_t sv4_divmod(sv4_t a, sv4_t b, int want_remainder) {
         return sv4_x(width, is_signed);
     a = sv4_resize(a, width, is_signed);
     b = sv4_resize(b, width, is_signed);
-    if (sv4_raw_nlimbs(&b) == 0) return sv4_x(width, is_signed);
+    if (sv4_raw_nlimbs(&b) == 0) {
+        sv4_destroy(&a);
+        sv4_destroy(&b);
+        return sv4_x(width, is_signed);
+    }
 
     int dividend_negative = is_signed && sv4_is_negative(a);
     int divisor_negative = is_signed && sv4_is_negative(b);
-    if (dividend_negative) a = sv4_neg(a);
-    if (divisor_negative) b = sv4_neg(b);
+    if (dividend_negative) sv4_replace(&a, sv4_neg(a));
+    if (divisor_negative) sv4_replace(&b, sv4_neg(b));
 
-    sv4_t result;
-    memset(&result, 0, sizeof(result));
+    sv4_t result = sv4_zero(width, is_signed);
     result.width = width;
     result.is_signed = is_signed;
     sv4_unsigned_divmod(&a, &b, want_remainder, &result);
     if ((want_remainder && dividend_negative) ||
         (!want_remainder && dividend_negative != divisor_negative)) {
-        result = sv4_neg(result);
+        sv4_replace(&result, sv4_neg(result));
     }
+    sv4_destroy(&a);
+    sv4_destroy(&b);
     return result;
 }
 
@@ -893,7 +918,7 @@ sv4_t sv4_pow(sv4_t a, sv4_t b) {
         if (sv4_raw_nlimbs(&a) == 0) return sv4_x(width, is_signed);
         if (sv4_is_negative(a) && sv4_is_all_ones(a)) {
             return (b.bits[0] & 1ULL)
-                ? a
+                ? sv4_clone(&a)
                 : sv4_from_u64(1, width, is_signed);
         }
         if (sv4_raw_nlimbs(&a) == 1 && a.bits[0] == 1)
@@ -902,20 +927,20 @@ sv4_t sv4_pow(sv4_t a, sv4_t b) {
     }
 
     sv4_t result = sv4_from_u64(1, width, is_signed);
-    sv4_t base = a;
+    sv4_t base = sv4_clone(&a);
     int exponent_msb = sv4_msb(b);
     for (int bit = 0; bit <= exponent_msb; bit++) {
-        if (sv4_lsb_bit(b, bit) == 1) result = sv4_mul(result, base);
-        if (bit != exponent_msb) base = sv4_mul(base, base);
+        if (sv4_lsb_bit(b, bit) == 1) sv4_replace(&result, sv4_mul(result, base));
+        if (bit != exponent_msb) sv4_replace(&base, sv4_mul(base, base));
     }
+    sv4_destroy(&base);
     return result;
 }
 
 sv4_t sv4_neg(sv4_t a) {
     uint32_t w = a.width;
     if (sv4_is_unknown(a)) return sv4_x(w, a.is_signed);
-    sv4_t r;
-    memset(&r, 0, sizeof(r));
+    sv4_t r = sv4_zero(w, a.is_signed);
     int nl = sv4_nlimbs(w);
     uint64_t carry = 1; // two's complement: ~a + 1
     for (int i = 0; i < nl; i++) {
@@ -930,8 +955,8 @@ sv4_t sv4_neg(sv4_t a) {
 }
 
 sv4_t sv4_bitneg(sv4_t a) {
-    sv4_t r;
-    for (int i = 0; i < (int)LLG_LIMBS; i++) {
+    sv4_t r = sv4_zero(a.width, a.is_signed);
+    for (int i = 0; i < sv4_nlimbs(a.width); i++) {
         uint64_t m = sv4_limb_mask(a.width, i);
         // X stays X; Z degrades to X (IEEE 4-state NOT table: NOT z = x).
         uint64_t unk = (a.x[i] | a.z[i]) & m;
@@ -993,14 +1018,11 @@ sv4_t sv4_logequiv(sv4_t a, sv4_t b) {
 static sv4_t sv4_bitwise(sv4_t a, sv4_t b, int op) {
     uint32_t w = sv4_maxw(a, b);
     int8_t s = a.is_signed && b.is_signed;
-    sv4_t ra = sv4_resize(a, w, s);
-    sv4_t rb = sv4_resize(b, w, s);
-    sv4_t r;
-    memset(&r, 0, sizeof(r));
+    sv4_t r = sv4_zero(w, s);
     r.width = w;
     for (int i = 0; i < (int)w; i++) {
-        int ab = sv4_lsb_bit(ra, i), ax = ab >= 2; // Z behaves as X here (LRM 11.4.5)
-        int bb = sv4_lsb_bit(rb, i), bx = bb >= 2;
+        int ab = sv4_extended_bit(a, i, s), ax = ab >= 2; // Z behaves as X here (LRM 11.4.5)
+        int bb = sv4_extended_bit(b, i, s), bx = bb >= 2;
         int o_b = 0, o_x = 0;
         if (op == 0) { // AND: 0 dominates
             if ((!ax && !ab) || (!bx && !bb)) o_b = 0;
@@ -1095,8 +1117,7 @@ static sv4_t sv4_shift(sv4_t a, sv4_t b, int right, int arith) {
             return sv4_fill((uint8_t)sv4_lsb_bit(a, (int)w - 1), w, a.is_signed);
         return sv4_from_u64(0, w, a.is_signed);
     }
-    sv4_t r;
-    memset(&r, 0, sizeof(r));
+    sv4_t r = sv4_zero(w, a.is_signed);
     r.width = w;
     r.is_signed = a.is_signed;
     int nsh = (int)sh;
@@ -1127,9 +1148,12 @@ static sv4_t sv4_cmp_bit(int known, int val) {
 
 // Unsigned MSB-first limb compare of equal-width values: -1, 0 or +1.
 static int sv4_ucmp(sv4_t a, sv4_t b) {
-    int nl = sv4_nlimbs(a.width);
-    for (int i = nl - 1; i >= 0; i--) {
-        if (a.bits[i] != b.bits[i]) return a.bits[i] < b.bits[i] ? -1 : 1;
+    uint32_t width = sv4_maxw(a, b);
+    int is_signed = a.is_signed && b.is_signed;
+    for (int i = sv4_nlimbs(width) - 1; i >= 0; --i) {
+        uint64_t left = sv4_extended_limb(a, width, is_signed, i, 0);
+        uint64_t right = sv4_extended_limb(b, width, is_signed, i, 0);
+        if (left != right) return left < right ? -1 : 1;
     }
     return 0;
 }
@@ -1137,14 +1161,12 @@ static int sv4_ucmp(sv4_t a, sv4_t b) {
 sv4_t sv4_eq(sv4_t a, sv4_t b) {
     uint32_t w = sv4_maxw(a, b);
     int8_t s = a.is_signed && b.is_signed;
-    sv4_t ra = sv4_resize(a, w, s);
-    sv4_t rb = sv4_resize(b, w, s);
     int unknown = 0;
     for (int i = 0; i < sv4_nlimbs(w); i++) {
         uint64_t mask = sv4_limb_mask(w, i);
-        uint64_t either_unknown = (ra.x[i] | ra.z[i] | rb.x[i] | rb.z[i]) & mask;
+        uint64_t either_unknown = (sv4_extended_limb(a, w, s, i, 1) | sv4_extended_limb(a, w, s, i, 2) | sv4_extended_limb(b, w, s, i, 1) | sv4_extended_limb(b, w, s, i, 2)) & mask;
         uint64_t both_known = mask & ~either_unknown;
-        if (((ra.bits[i] ^ rb.bits[i]) & both_known) != 0) return SV4_C(0, 1);
+        if (((sv4_extended_limb(a, w, s, i, 0) ^ sv4_extended_limb(b, w, s, i, 0)) & both_known) != 0) return SV4_C(0, 1);
         unknown |= either_unknown != 0;
     }
     return unknown ? SV4_X(1) : SV4_C(1, 1);
@@ -1153,27 +1175,35 @@ sv4_t sv4_eq(sv4_t a, sv4_t b) {
 sv4_t sv4_neq(sv4_t a, sv4_t b) {
     sv4_t result = sv4_eq(a, b);
     if (sv4_is_unknown(result)) return result;
-    return SV4_C(1 - sv4_to_u64(result), 1);
+    result.bits[0] ^= 1u;
+    return result;
 }
 
 sv4_t sv4_case_eq(sv4_t a, sv4_t b) {
-    uint32_t w = sv4_maxw(a, b);
-    int8_t s = a.is_signed && b.is_signed;
-    sv4_t ra = sv4_resize(a, w, s);
-    sv4_t rb = sv4_resize(b, w, s);
-    return sv4_cmp_bit(1, sv4_same(ra, rb));
+    uint32_t width = sv4_maxw(a, b);
+    int is_signed = a.is_signed && b.is_signed;
+    for (int i = 0; i < sv4_nlimbs(width); ++i) {
+        for (int plane = 0; plane < 3; ++plane) {
+            if (sv4_extended_limb(a, width, is_signed, i, plane) !=
+                sv4_extended_limb(b, width, is_signed, i, plane))
+                return sv4_from_u64(0, 1, 0);
+        }
+    }
+    return sv4_from_u64(1, 1, 0);
 }
 
 sv4_t sv4_enum_navigate(sv4_t current, sv4_t step, const sv4_t* values,
                         uint32_t count, sv4_t default_value, int direction) {
-    if (!values || count == 0) return default_value;
+    if (!values || count == 0) return sv4_clone(&default_value);
     uint32_t found = count;
     for (uint32_t index = 0; index < count; ++index) {
         // Keep scanning after a match so aliases have one deterministic,
         // declaration-order policy: the last matching member wins.
-        if (sv4_to_bool(sv4_case_eq(current, values[index]))) found = index;
+        sv4_t match = sv4_case_eq(current, values[index]);
+        if (sv4_to_bool(match)) found = index;
+        sv4_destroy(&match);
     }
-    if (found == count) return default_value;
+    if (found == count) return sv4_clone(&default_value);
     // The lowering converts the optional int unsigned step to a 2-state
     // 32-bit value. Keep this defensive normalization for direct callers.
     uint64_t distance = sv4_is_unknown(step) ? 0 : sv4_to_u64(step);
@@ -1183,27 +1213,26 @@ sv4_t sv4_enum_navigate(sv4_t current, sv4_t step, const sv4_t* values,
         target = (found + count - offset) % count;
     else
         target = (found + offset) % count;
-    return values[target];
+    return sv4_clone(&values[target]);
 }
 
 sv4_t sv4_case_neq(sv4_t a, sv4_t b) {
     sv4_t r = sv4_case_eq(a, b);
-    return sv4_from_u64(1 - sv4_to_u64(r), 1, 0);
+    r.bits[0] ^= 1u;
+    return r;
 }
 
 sv4_t sv4_wild_eq(sv4_t lhs, sv4_t rhs) {
     uint32_t w = sv4_maxw(lhs, rhs);
     int8_t s = lhs.is_signed && rhs.is_signed;
-    sv4_t left = sv4_resize(lhs, w, s);
-    sv4_t right = sv4_resize(rhs, w, s);
     int unknown = 0;
     for (int i = 0; i < sv4_nlimbs(w); i++) {
         uint64_t mask = sv4_limb_mask(w, i);
-        uint64_t wildcard = (right.x[i] | right.z[i]) & mask;
+        uint64_t wildcard = (sv4_extended_limb(rhs, w, s, i, 1) | sv4_extended_limb(rhs, w, s, i, 2)) & mask;
         uint64_t care = mask & ~wildcard;
-        uint64_t left_unknown = (left.x[i] | left.z[i]) & care;
+        uint64_t left_unknown = (sv4_extended_limb(lhs, w, s, i, 1) | sv4_extended_limb(lhs, w, s, i, 2)) & care;
         uint64_t known = care & ~left_unknown;
-        if (((left.bits[i] ^ right.bits[i]) & known) != 0) return SV4_C(0, 1);
+        if (((sv4_extended_limb(lhs, w, s, i, 0) ^ sv4_extended_limb(rhs, w, s, i, 0)) & known) != 0) return SV4_C(0, 1);
         unknown |= left_unknown != 0;
     }
     return unknown ? SV4_X(1) : SV4_C(1, 1);
@@ -1212,7 +1241,8 @@ sv4_t sv4_wild_eq(sv4_t lhs, sv4_t rhs) {
 sv4_t sv4_wild_neq(sv4_t lhs, sv4_t rhs) {
     sv4_t result = sv4_wild_eq(lhs, rhs);
     if (sv4_is_unknown(result)) return result;
-    return SV4_C(1 - sv4_to_u64(result), 1);
+    result.bits[0] ^= 1u;
+    return result;
 }
 
 // casez per LRM 12.5.1: a z (or ?) bit in the case ITEM is a don't-care; an x
@@ -1221,12 +1251,10 @@ sv4_t sv4_wild_neq(sv4_t lhs, sv4_t rhs) {
 // zero-extended to max width before comparing, like `case`.
 sv4_t sv4_casez_eq(sv4_t sel, sv4_t item) {
     uint32_t w = sv4_maxw(sel, item);
-    sv4_t rs = sv4_resize(sel, w, 0);
-    sv4_t ri = sv4_resize(item, w, 0);
     for (int i = 0; i < (int)w; i++) {
-        int ib = sv4_lsb_bit(ri, i); // 0/1/2(x)/3(z)
+        int ib = sv4_extended_bit(item, i, 0); // 0/1/2(x)/3(z)
         if (ib == 3) continue;       // item z/? -> don't-care
-        int sb = sv4_lsb_bit(rs, i);
+        int sb = sv4_extended_bit(sel, i, 0);
         if (ib == 2) {               // item x matches selector x only
             if (sb != 2) return SV4_C(0, 1);
         } else if (sb != ib) {       // known item: selector must equal it
@@ -1241,12 +1269,10 @@ sv4_t sv4_casez_eq(sv4_t sel, sv4_t item) {
 // opposite known bit fails the match.
 sv4_t sv4_casex_eq(sv4_t sel, sv4_t item) {
     uint32_t w = sv4_maxw(sel, item);
-    sv4_t rs = sv4_resize(sel, w, 0);
-    sv4_t ri = sv4_resize(item, w, 0);
     for (int i = 0; i < (int)w; i++) {
-        int ib = sv4_lsb_bit(ri, i);
+        int ib = sv4_extended_bit(item, i, 0);
         if (ib >= 2) continue;       // item x/z -> don't-care
-        int sb = sv4_lsb_bit(rs, i);
+        int sb = sv4_extended_bit(sel, i, 0);
         if (sb == ib) continue;      // equal known bits match
         if (sb >= 2) continue;       // selector x/z is a don't-care in casex
         return SV4_C(0, 1);          // opposite known bit -> no match
@@ -1255,31 +1281,14 @@ sv4_t sv4_casex_eq(sv4_t sel, sv4_t item) {
 }
 
 static sv4_t sv4_cmp(sv4_t a, sv4_t b, int op) {
-    if (sv4_is_unknown(a) || sv4_is_unknown(b)) return SV4_X(1);
-    uint32_t w = sv4_maxw(a, b);
-    int8_t s = a.is_signed && b.is_signed;
-    sv4_t ra = sv4_resize(a, w, s);
-    sv4_t rb = sv4_resize(b, w, s);
-    int c;
-    if (s) {
-        // Flip the sign bit of both: the unsigned order then matches the
-        // two's-complement signed order.
-        if (w > 0) {
-            int l = (int)(w - 1) >> 6;
-            uint64_t m = 1ULL << ((w - 1) & 63);
-            ra.bits[l] ^= m;
-            rb.bits[l] ^= m;
-        }
-        c = sv4_ucmp(ra, rb);
-    } else {
-        c = sv4_ucmp(ra, rb);
+    if (sv4_is_unknown(a) || sv4_is_unknown(b)) return sv4_x(1, 0);
+    int c = sv4_ucmp(a, b);
+    if (a.is_signed && b.is_signed) {
+        int an = sv4_is_negative(a), bn = sv4_is_negative(b);
+        if (an != bn) c = an ? -1 : 1;
     }
-    int r;
-    if (op == 0) r = c < 0;
-    else if (op == 1) r = c <= 0;
-    else if (op == 2) r = c > 0;
-    else r = c >= 0;
-    return sv4_cmp_bit(1, r);
+    int result = op == 0 ? c < 0 : op == 1 ? c <= 0 : op == 2 ? c > 0 : c >= 0;
+    return sv4_cmp_bit(1, result);
 }
 
 sv4_t sv4_lt(sv4_t a, sv4_t b) { return sv4_cmp(a, b, 0); }
@@ -1288,23 +1297,25 @@ sv4_t sv4_gt(sv4_t a, sv4_t b) { return sv4_cmp(a, b, 2); }
 sv4_t sv4_ge(sv4_t a, sv4_t b) { return sv4_cmp(a, b, 3); }
 
 sv4_t sv4_inside_range(sv4_t value, sv4_t low, sv4_t high) {
-    return sv4_logand(sv4_ge(value, low), sv4_le(value, high));
+    sv4_t ge = sv4_ge(value, low);
+    sv4_t le = sv4_le(value, high);
+    sv4_t result = sv4_logand(ge, le);
+    sv4_destroy(&ge);
+    sv4_destroy(&le);
+    return result;
 }
 
 sv4_t sv4_mux(sv4_t sel, sv4_t a, sv4_t b) {
     uint32_t w = sv4_maxw(a, b);
     int8_t s = a.is_signed && b.is_signed;
-    sv4_t ra = sv4_resize(a, w, s);
-    sv4_t rb = sv4_resize(b, w, s);
     int truth = sv4_logical_truth(sel);
-    if (truth == 1) return ra;
-    if (truth == 0) return rb;
-    sv4_t r;
-    memset(&r, 0, sizeof(r));
+    if (truth == 1) return sv4_resize(a, w, s);
+    if (truth == 0) return sv4_resize(b, w, s);
+    sv4_t r = sv4_zero(w, s);
     r.width = w;
     r.is_signed = s;
     for (int i = 0; i < (int)w; i++) {
-        int ab = sv4_lsb_bit(ra, i), bb = sv4_lsb_bit(rb, i);
+        int ab = sv4_extended_bit(a, i, s), bb = sv4_extended_bit(b, i, s);
         sv4_lsb_bit_set(&r, i, ab == bb ? ab : 2);
     }
     return r;
@@ -1313,8 +1324,7 @@ sv4_t sv4_mux(sv4_t sel, sv4_t a, sv4_t b) {
 sv4_t sv4_concat(sv4_t hi, sv4_t lo) {
     uint64_t total = (uint64_t)hi.width + (uint64_t)lo.width;
     sv4_require_width(total, "concatenation");
-    sv4_t r;
-    memset(&r, 0, sizeof(r));
+    sv4_t r = sv4_zero((uint32_t)total, 0);
     r.width = (uint32_t)total;
     r.is_signed = 0;
     for (int i = 0; i < (int)lo.width; i++)
@@ -1331,8 +1341,7 @@ sv4_t sv4_repeat(sv4_t pat, uint64_t n) {
     uint64_t w_total64 = (uint64_t)pat.width * n;
     sv4_require_width(w_total64, "replication");
     uint32_t w_total = (uint32_t)w_total64;
-    sv4_t r;
-    memset(&r, 0, sizeof(r));
+    sv4_t r = sv4_zero(w_total, 0);
     r.width = w_total;
     r.is_signed = 0;
     for (uint64_t rep = 0; rep < n; rep++) {
@@ -1350,8 +1359,7 @@ sv4_t sv4_stream(sv4_t value, uint32_t slice, int right_to_left) {
         fprintf(stderr, "llg runtime fatal: zero streaming slice size\n");
         abort();
     }
-    sv4_t r;
-    memset(&r, 0, sizeof(r));
+    sv4_t r = sv4_zero(value.width, 0);
     r.width = value.width;
     r.is_signed = 0;
     if (!right_to_left || value.width == 0 || slice >= value.width) {
@@ -1380,8 +1388,7 @@ sv4_t sv4_unstream(sv4_t value, uint32_t slice, int right_to_left) {
         fprintf(stderr, "llg runtime fatal: zero streaming slice size\n");
         abort();
     }
-    sv4_t r;
-    memset(&r, 0, sizeof(r));
+    sv4_t r = sv4_zero(value.width, 0);
     r.width = value.width;
     r.is_signed = 0;
     if (!right_to_left || value.width == 0 || slice >= value.width) {
@@ -1429,8 +1436,7 @@ static uint32_t llg_part_select_width(int64_t left, int64_t right) {
 
 sv4_t sv4_part_select(sv4_t v, int64_t left, int64_t right) {
     uint32_t w = llg_part_select_width(left, right);
-    sv4_t r;
-    memset(&r, 0, sizeof(r));
+    sv4_t r = sv4_zero(w, 0);
     r.width = w;
     int64_t step = left > right ? -1 : 1;
     int out = 0;
@@ -1446,6 +1452,11 @@ sv4_t sv4_part_select(sv4_t v, int64_t left, int64_t right) {
 
 void sv4_part_select_set(sv4_t* tgt, int64_t left, int64_t right, sv4_t value) {
     (void)llg_part_select_width(left, right);
+    sv4_t snapshot = SV4_EMPTY;
+    if (tgt->bits && tgt->bits == value.bits) {
+        snapshot = sv4_clone(&value);
+        value = snapshot;
+    }
     int64_t step = left > right ? -1 : 1;
     int in = (int)value.width - 1; // value MSB maps to the first target index
     for (int64_t i = left; ; i += step) {
@@ -1458,12 +1469,12 @@ void sv4_part_select_set(sv4_t* tgt, int64_t left, int64_t right, sv4_t value) {
         in--;
         if (i == right) break;
     }
+    sv4_destroy(&snapshot);
 }
 
 sv4_t sv4_idx_part_select(sv4_t v, uint64_t base, uint32_t width, int neg) {
     sv4_require_width(width, "indexed part-select");
-    sv4_t r;
-    memset(&r, 0, sizeof(r));
+    sv4_t r = sv4_zero(width, 0);
     r.width = width;
     for (uint32_t output_bit = 0; output_bit < width; output_bit++) {
         uint64_t source_bit;
@@ -1485,6 +1496,12 @@ sv4_t sv4_idx_part_select(sv4_t v, uint64_t base, uint32_t width, int neg) {
 
 void sv4_idx_part_select_set(sv4_t* tgt, uint64_t base, uint32_t width, int neg,
                              sv4_t value) {
+    sv4_require_width(width, "indexed part-select");
+    sv4_t snapshot = SV4_EMPTY;
+    if (tgt->bits && tgt->bits == value.bits) {
+        snapshot = sv4_clone(&value);
+        value = snapshot;
+    }
     for (uint32_t value_bit = 0; value_bit < width; value_bit++) {
         uint64_t target_bit;
         int in_range;
@@ -1501,6 +1518,7 @@ void sv4_idx_part_select_set(sv4_t* tgt, uint64_t base, uint32_t width, int neg,
             sv4_lsb_bit_set(tgt, (int)target_bit,
                             sv4_lsb_bit(value, (int)value_bit));
     }
+    sv4_destroy(&snapshot);
 }
 
 static int sv4_indexed_source(int64_t base, uint32_t width,
@@ -1543,6 +1561,11 @@ void sv4_idx_part_select_set_value(sv4_t* tgt, sv4_t base, uint32_t width,
     sv4_require_width(width, "indexed part-select");
     int64_t signed_base;
     if (!sv4_to_index_i64(base, &signed_base)) return;
+    sv4_t snapshot = SV4_EMPTY;
+    if (tgt->bits && tgt->bits == value.bits) {
+        snapshot = sv4_clone(&value);
+        value = snapshot;
+    }
     for (uint32_t value_bit = 0; value_bit < width; value_bit++) {
         uint64_t target_bit;
         if (sv4_indexed_source(signed_base, width, value_bit, neg, &target_bit) &&
@@ -1551,6 +1574,7 @@ void sv4_idx_part_select_set_value(sv4_t* tgt, sv4_t base, uint32_t width,
                             sv4_lsb_bit(value, (int)value_bit));
         }
     }
+    sv4_destroy(&snapshot);
 }
 
 sv4_t llg_ref_read(const llg_ref_t* ref) {
@@ -1562,14 +1586,15 @@ sv4_t llg_ref_read(const llg_ref_t* ref) {
                        ? sv4_from_u64(0, ref->width, ref->is_signed)
                        : sv4_x(ref->width ? ref->width : 1, ref->is_signed);
         sv4_t value = ref->queue_read(ref->queue, ref->queue_identity);
-        value = sv4_cast(value, ref->width, ref->is_signed);
-        return ref->two_state ? sv4_to_two_state(value) : value;
+        sv4_replace(&value, sv4_cast(value, ref->width, ref->is_signed));
+        if (ref->two_state) sv4_replace(&value, sv4_to_two_state(value));
+        return value;
     }
     if (!ref->base) return sv4_x(1, 0);
     sv4_t value;
     switch ((llg_ref_kind_t)ref->kind) {
     case LLG_REF_WHOLE:
-        value = *ref->base;
+        value = sv4_clone(ref->base);
         break;
     case LLG_REF_BIT:
         value = sv4_bit_select(*ref->base, ref->index);
@@ -1586,13 +1611,14 @@ sv4_t llg_ref_read(const llg_ref_t* ref) {
         if (ref->index == UINT64_MAX || ref->index >= ref->array_size)
             return ref->two_state ? sv4_from_u64(0, ref->width, ref->is_signed)
                                   : sv4_x(ref->width ? ref->width : 1, ref->is_signed);
-        value = ref->base[ref->index];
+        value = sv4_clone(&ref->base[ref->index]);
         break;
     default:
         return sv4_x(ref->width ? ref->width : 1, ref->is_signed);
     }
-    value = sv4_cast(value, ref->width, ref->is_signed);
-    return ref->two_state ? sv4_to_two_state(value) : value;
+    sv4_replace(&value, sv4_cast(value, ref->width, ref->is_signed));
+    if (ref->two_state) sv4_replace(&value, sv4_to_two_state(value));
+    return value;
 }
 
 // ── Formatting ────────────────────────────────────────────────────────────────
@@ -1622,6 +1648,7 @@ void sv4_to_dec_string(sv4_t v, char* buf, size_t cap) {
         negative = 1;
         sv4_t mag = sv4_neg(v);
         for (int i = 0; i < nl; i++) tmp[i] = mag.bits[i];
+        sv4_destroy(&mag);
     } else {
         for (int i = 0; i < nl; i++) tmp[i] = v.bits[i];
     }
@@ -1641,9 +1668,10 @@ void sv4_to_dec_string(sv4_t v, char* buf, size_t cap) {
         if (!nonzero) break;
         uint64_t rem = 0;
         for (int i = nl - 1; i >= 0; i--) {
-            __uint128_t cur = ((__uint128_t)rem << 64) | tmp[i];
-            tmp[i] = (uint64_t)(cur / 10);
-            rem = (uint64_t)(cur % 10);
+            uint64_t high = (rem << 32) | (tmp[i] >> 32);
+            uint64_t low = ((high % 10u) << 32) | (uint32_t)tmp[i];
+            tmp[i] = ((high / 10u) << 32) | (low / 10u);
+            rem = low % 10u;
         }
         if (n < digit_capacity) digits[n++] = (char)('0' + (int)rem);
     }

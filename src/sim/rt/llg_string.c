@@ -123,6 +123,7 @@ llg_string_t llg_string_from_packed(sv4_t value) {
         unsigned char byte = (unsigned char)(value.bits[bit / 64] >> (bit % 64));
         if (byte) result.data[out++] = (char)byte;
     }
+    sv4_destroy(&value);
     return result;
 }
 
@@ -133,7 +134,8 @@ sv4_t llg_string_to_packed(llg_string_t value, uint32_t width, int is_signed) {
     for (size_t i = 0; i < bytes; ++i)
         result.bits[i / 8] |= (uint64_t)(unsigned char)value.data[value.len - 1 - i] << ((i % 8) * 8);
     llg_string_destroy(&value);
-    return sv4_resize(result, width, is_signed);
+    if (width % 64u) result.bits[(width - 1u) / 64u] &= UINT64_MAX >> (64u - width % 64u);
+    return result;
 }
 
 sv4_t llg_string_len(llg_string_t value) {
@@ -153,7 +155,8 @@ sv4_t llg_string_getc(llg_string_t value, sv4_t index) {
 
 void llg_string_putc(llg_string_t *value, sv4_t index, sv4_t character) {
     int64_t i;
-    unsigned char c = (unsigned char)sv4_to_two_state(character).bits[0];
+    unsigned char c = character.width
+        ? (unsigned char)(character.bits[0] & ~(character.x[0] | character.z[0])) : 0;
     if (c != 0 && sv4_to_index_i64(index, &i) && i >= 0 &&
         (uint64_t)i < value->len) {
         int changed = (unsigned char)value->data[(size_t)i] != c;
@@ -198,15 +201,17 @@ void llg_string_itoa(llg_string_t *target, sv4_t value, unsigned base) {
     if (sv4_is_unknown(value)) {
         sv4_format(base == 2 ? 'b' : base == 8 ? 'o' : base == 16 ? 'h' : 'd', value, buffer, sizeof(buffer));
         llg_string_move(target, llg_string_bytes(buffer, strlen(buffer)));
+        sv4_destroy(&value);
         return;
     }
-    uint32_t number = (uint32_t)sv4_to_two_state(value).bits[0];
+    uint32_t number = (uint32_t)value.bits[0];
     int negative = base == 10 && (number >> 31);
     if (negative) number = 0u - number;
     do { buffer[n++] = "0123456789abcdef"[number % base]; number /= base; } while (number);
     if (negative) buffer[n++] = '-';
     for (size_t i = 0; i < n / 2; ++i) { char c = buffer[i]; buffer[i] = buffer[n - 1 - i]; buffer[n - 1 - i] = c; }
     llg_string_move(target, llg_string_bytes(buffer, n));
+    sv4_destroy(&value);
 }
 
 void llg_string_print(llg_string_t value) {

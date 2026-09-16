@@ -106,7 +106,9 @@ void llg_dyn_value_new(llg_dyn_value_array_t* dst, sv4_t requested_size,
 void llg_dyn_value_copy(llg_dyn_value_array_t* dst,
                         const llg_dyn_value_array_t* src) {
     if (dst == src) return;
-    llg_dyn_value_new(dst, sv4_from_u64((uint64_t)src->size, 64, 0), src);
+    sv4_t size = sv4_from_u64((uint64_t)src->size, 64, 0);
+    llg_dyn_value_new(dst, size, src);
+    sv4_destroy(&size);
 }
 
 void llg_dyn_value_assign_reals(llg_dyn_value_array_t* dst,
@@ -183,7 +185,7 @@ sv4_t llg_dyn_value_get_nested(const llg_dyn_value_array_t* array,
                                const sv4_t* indices, size_t count) {
     llg_value_t* value = llg_dyn_value_nested_at(array, indices, count);
     if (value && value->desc->kind == LLG_VALUE_PACKED)
-        return value->value.packed;
+        return sv4_clone(&value->value.packed);
     const llg_value_desc_t* desc =
         llg_dyn_value_nested_desc(array->element, count);
     return desc && desc->kind == LLG_VALUE_PACKED
@@ -271,9 +273,12 @@ int llg_dyn_value_set_nested(llg_dyn_value_array_t* array,
     sv4_t assigned = sv4_cast(value, target->desc->packed_width,
                               target->desc->packed_signed);
     if (target->desc->packed_two_state)
-        assigned = sv4_to_two_state(assigned);
-    if (sv4_same(target->value.packed, assigned)) return 1;
-    target->value.packed = assigned;
+        sv4_replace(&assigned, sv4_to_two_state(assigned));
+    if (sv4_same(target->value.packed, assigned)) {
+        sv4_destroy(&assigned);
+        return 1;
+    }
+    sv4_move(&target->value.packed, &assigned);
     llg_notify(array->notify, array->contents_dependency,
                array->shape_dependency, LLG_CONTAINER_CHANGED_CONTENTS);
     return 1;
@@ -341,9 +346,9 @@ static void llg_dyn_value_replace_from_packed(
         if (dst->element->kind == LLG_VALUE_PACKED) {
             sv4_t value = sv4_cast(source->data[i], dst->element->packed_width,
                                    dst->element->packed_signed);
-            data[i].value.packed = dst->element->packed_two_state
-                ? sv4_to_two_state(value)
-                : value;
+            if (dst->element->packed_two_state)
+                sv4_replace(&value, sv4_to_two_state(value));
+            sv4_move(&data[i].value.packed, &value);
         } else {
             data[i].value.real = llg_value_real_convert(
                 dst->element, sv4_to_real(source->data[i]));

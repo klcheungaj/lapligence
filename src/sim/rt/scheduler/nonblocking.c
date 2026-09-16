@@ -6,7 +6,7 @@ static llg_nba_t* new_nba_in_region(uint64_t ticks, llg_region_t region) {
         fprintf(stderr, "llg: fatal: nonblocking assignment time or sequence overflow\n");
         abort();
     }
-    llg_nba_t* n = (llg_nba_t*)llg_checked_malloc(1, sizeof(llg_nba_t), "nonblocking assignment");
+    llg_nba_t* n = (llg_nba_t*)llg_checked_calloc(1, sizeof(llg_nba_t), "nonblocking assignment");
     n->target = NULL;
     n->net_target = NULL;
     n->net_slot = -1;
@@ -56,7 +56,7 @@ void llg_nba_after(sv4_t* target, sv4_t value, uint64_t ticks) {
     llg_nba_t* n = new_nba(ticks);
     if (!n) return;
     n->target = target;
-    n->value = value;
+    sv4_copy(&n->value, &value);
     enqueue_nba(n);
 }
 
@@ -78,8 +78,8 @@ static void clocking_drive_schedule(const llg_clocking_drive_t* drive,
     pending->net_target = drive->net_target;
     pending->net_slot = drive->net_slot;
     pending->real_target = drive->real_target;
-    pending->value = drive->value;
-    pending->mask = drive->mask;
+    sv4_copy(&pending->value, &drive->value);
+    sv4_copy(&pending->mask, &drive->mask);
     pending->has_mask = drive->has_mask;
     pending->is_real = drive->is_real;
     pending->real_value = drive->real_value;
@@ -165,8 +165,8 @@ void llg_nba_masked(sv4_t* target, sv4_t value, sv4_t mask, uint64_t ticks) {
     llg_nba_t* n = new_nba(ticks);
     if (!n) return;
     n->target = target;
-    n->value = value;
-    n->mask = mask;
+    sv4_copy(&n->value, &value);
+    sv4_copy(&n->mask, &mask);
     n->has_mask = 1;
     enqueue_nba(n);
 }

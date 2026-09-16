@@ -539,3 +539,9 @@ fn evaluated_event_emits_owned_context_and_contextual_callback() {
     assert!(rendered.contains(".eval_context = _event_frame_4"));
     assert!(rendered.contains("llg_wait_expressions(_events, 1);"));
 }
+
+#[test]
+fn dynamic_runtime_requires_generated_owner_lifetimes() {
+    let error = super::require_owned_emission().expect_err("P05 must gate generated C");
+    assert_eq!(error.detail(), super::OWNER_MIGRATION_DIAGNOSTIC);
+}

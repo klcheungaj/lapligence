@@ -23,10 +23,17 @@ enum {
 typedef void (*llg_container_notify_fn)(sv4_t* contents, sv4_t* shape,
                                         int change);
 
+/* Packed inputs/indices/keys are borrowed for the call. Packed return values
+ * are independent owners; destroy or move them. Init/destroy delimit each
+ * container lifetime; setters deep-copy and replacements destroy old elements.
+ * Pinned references own detached cells after removal and release them on the
+ * final reference drop. A borrowed interior pointer cannot survive mutation.
+ * Recursive value descriptors use llg_value_copy/llg_value_drop, never memcpy. */
+
 /* Evaluate one packed array element for an array-method `with` clause. The
- * callback receives the source element and its current index, then writes its
- * self-determined packed result to `out`; `context` is reserved for a future
- * captured environment. */
+ * callback borrows the source element/index and receives an initialized empty
+ * `out`. It must write an independent owner; the caller destroys that owner.
+ * `context` is borrowed for the callback. */
 typedef void (*llg_container_eval_fn)(sv4_t* out, sv4_t item, sv4_t index,
                                       void* context);
 
@@ -547,7 +554,7 @@ typedef struct {
     uint8_t element_two_state;
     uint8_t key_kind;
     // Zero denotes the wildcard integral index type. Wildcard keys are
-    // canonicalized to the model width; traversal is rejected because IEEE
+    // canonicalized to minimal significant width; traversal is rejected because IEEE
     // 1800-2009 7.8.1 forbids it.
     uint32_t key_width;
     int8_t key_signed;

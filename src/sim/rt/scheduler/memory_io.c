@@ -31,9 +31,9 @@ static char* llg_memory_path_copy(llg_string_t path) {
     return copy;
 }
 
-static void llg_memory_shift_limbs(uint64_t* limbs, unsigned shift) {
+static void llg_memory_shift_limbs(uint64_t* limbs, uint32_t count, unsigned shift) {
     uint64_t carry = 0;
-    for (int i = 0; i < LLG_LIMBS; ++i) {
+    for (uint32_t i = 0; i < count; ++i) {
         uint64_t old = limbs[i];
         limbs[i] = (old << shift) | carry;
         carry = old >> (64u - shift);
@@ -41,18 +41,29 @@ static void llg_memory_shift_limbs(uint64_t* limbs, unsigned shift) {
 }
 
 // Append one binary or hexadecimal digit, retaining the least significant
-// model-capacity bits. The caller diagnoses an over-width token separately.
+// token-capacity bits. The caller diagnoses an over-width token separately.
 static void llg_memory_append_digit(llg_memory_value_t* value, unsigned bits,
                                     int state, unsigned numeric) {
-    llg_memory_shift_limbs(value->value.bits, bits);
-    llg_memory_shift_limbs(value->value.x, bits);
-    llg_memory_shift_limbs(value->value.z, bits);
+    if (value->too_wide) return;
+    if (value->digits >= (LLG_SUPPORTED_WIDTH_LIMIT - 1u) / bits) {
+        value->too_wide = 1;
+        return;
+    }
+    uint32_t required = (uint32_t)((value->digits + 1u) * bits);
+    if (required > value->value.width) {
+        uint32_t capacity = value->value.width ? value->value.width * 2u : 64u;
+        if (capacity >= LLG_SUPPORTED_WIDTH_LIMIT) capacity = LLG_SUPPORTED_WIDTH_LIMIT - 1u;
+        sv4_replace(&value->value, sv4_resize(value->value, capacity, 0));
+    }
+    uint32_t count = (value->value.width + 63u) / 64u;
+    llg_memory_shift_limbs(value->value.bits, count, bits);
+    llg_memory_shift_limbs(value->value.x, count, bits);
+    llg_memory_shift_limbs(value->value.z, count, bits);
     uint64_t mask = bits == 1u ? 1u : 0xfu;
     if (state == 1) value->value.x[0] |= mask;
     else if (state == 2) value->value.z[0] |= mask;
     else value->value.bits[0] |= (uint64_t)numeric & mask;
-    value->digits++;
-    if (value->digits > (uint64_t)LLG_MAX_WIDTH / bits) value->too_wide = 1;
+    ++value->digits;
 }
 
 static int llg_memory_digit(int c, int radix, int* state, unsigned* numeric) {
@@ -158,14 +169,14 @@ static int llg_memory_parse_digits(FILE* stream, int radix, int first,
         c = fgetc(stream);
     }
     if (!saw_digit || malformed || value->too_wide) return LLG_MEMORY_TOKEN_ERROR;
-    value->value = sv4_from_limbs(value->value.bits, value->value.x,
-                                  value->value.z,
-                                  (uint32_t)(value->digits * bits), 0);
+    sv4_replace(&value->value, sv4_resize(value->value,
+                (uint32_t)(value->digits * bits), 0));
     return LLG_MEMORY_TOKEN_DATA;
 }
 
 static int llg_memory_next_token(FILE* stream, int radix,
                                  llg_memory_value_t* value) {
+    sv4_destroy(&value->value);
     memset(value, 0, sizeof(*value));
     int c = llg_memory_next_noncomment(stream);
     if (c == EOF) return LLG_MEMORY_TOKEN_EOF;
@@ -191,8 +202,8 @@ static int llg_memory_next_token(FILE* stream, int radix,
             c = fgetc(stream);
         }
         if (value->digits == 0 || value->too_wide) return LLG_MEMORY_TOKEN_ERROR;
-        value->value = sv4_from_limbs(value->value.bits, NULL, NULL,
-                                      (uint32_t)(value->digits * 4u), 0);
+        sv4_replace(&value->value, sv4_resize(value->value,
+                    (uint32_t)(value->digits * 4u), 0));
         return LLG_MEMORY_TOKEN_ADDRESS;
     }
     if (!llg_memory_digit(c, radix, &(int){0}, &(unsigned){0})) {
@@ -284,8 +295,8 @@ void llg_memory_read(llg_string_t path, sv4_t* memory, uint64_t total,
     int64_t step = first <= last ? 1 : -1;
     int warned_extra = 0;
     int warned_unknown = 0;
+    llg_memory_value_t token = {0};
     for (;;) {
-        llg_memory_value_t token;
         int kind = llg_memory_next_token(stream, radix, &token);
         if (kind == LLG_MEMORY_TOKEN_EOF) break;
         if (kind == LLG_MEMORY_TOKEN_ERROR) {
@@ -324,9 +335,10 @@ void llg_memory_read(llg_string_t path, sv4_t* memory, uint64_t total,
                         llg_memory_warning(filename, "X/Z memory data converted to a two-state element");
                         warned_unknown = 1;
                     }
-                    converted = sv4_to_two_state(converted);
+                    sv4_replace(&converted, sv4_to_two_state(converted));
                 }
                 llg_ba(&memory[index], converted);
+                sv4_destroy(&converted);
                 written++;
             }
         }
@@ -337,6 +349,7 @@ void llg_memory_read(llg_string_t path, sv4_t* memory, uint64_t total,
             current += step;
         }
     }
+    sv4_destroy(&token.value);
     if (written < expected) {
         llg_memory_warning(filename, "memory file contains too few words for the selected range");
     }
@@ -364,7 +377,7 @@ void llg_memory_write(llg_string_t path, sv4_t* memory, uint64_t total,
         free(filename);
         return;
     }
-    size_t capacity = (size_t)LLG_MAX_WIDTH + 2u;
+    size_t capacity = (size_t)elem_width + 2u;
     char* digits = (char*)llg_checked_malloc(capacity, 1, "memory file word");
     int64_t current = first;
     int64_t step = first <= last ? 1 : -1;

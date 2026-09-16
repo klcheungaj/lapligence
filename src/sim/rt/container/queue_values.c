@@ -74,12 +74,13 @@ static llg_value_t* llg_queue_value_nested_at(
 
 static llg_value_t llg_value_from_packed(const llg_value_desc_t* desc,
                                          sv4_t value) {
-    llg_value_t result = {0};
-    llg_value_default(&result, desc);
     if (desc->kind != LLG_VALUE_PACKED)
         llg_container_fatal("packed value used with a non-packed queue element");
-    value = sv4_cast(value, desc->packed_width, desc->packed_signed);
-    result.value.packed = desc->packed_two_state ? sv4_to_two_state(value) : value;
+    llg_value_t result = {0};
+    result.desc = desc;
+    result.value.packed = llg_element_assign(value, desc->packed_width,
+                                            desc->packed_signed,
+                                            desc->packed_two_state);
     return result;
 }
 
@@ -323,7 +324,7 @@ static sv4_t llg_queue_value_default_packed(
     llg_value_t value = {0};
     llg_value_default(&value, queue->element);
     sv4_t result = value.desc->kind == LLG_VALUE_PACKED
-        ? value.value.packed
+        ? sv4_clone(&value.value.packed)
         : sv4_from_u64(0, 1, 0);
     llg_value_drop(&value);
     return result;
@@ -332,7 +333,7 @@ static sv4_t llg_queue_value_default_packed(
 sv4_t llg_queue_value_get(const llg_queue_value_array_t* queue, sv4_t index) {
     llg_value_t* value = llg_queue_value_at(queue, index);
     return value && value->desc->kind == LLG_VALUE_PACKED
-        ? value->value.packed
+        ? sv4_clone(&value->value.packed)
         : llg_queue_value_default_packed(queue);
 }
 
@@ -430,7 +431,7 @@ sv4_t llg_queue_value_get_nested(const llg_queue_value_array_t* queue,
                                  const sv4_t* indices, size_t count) {
     llg_value_t* value = llg_queue_value_nested_at(queue, indices, count);
     return value && value->desc->kind == LLG_VALUE_PACKED
-        ? value->value.packed
+        ? sv4_clone(&value->value.packed)
         : sv4_from_u64(0, 1, 0);
 }
 

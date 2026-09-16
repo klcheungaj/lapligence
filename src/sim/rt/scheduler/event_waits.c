@@ -248,7 +248,7 @@ void llg_wait_mixed(llg_wait_src_t* srcs, int n) {
     w->n = nsig;
     w->specs = nsig ? (llg_event_spec_t*)llg_checked_malloc(
         (size_t)nsig, sizeof(llg_event_spec_t), "mixed wait specifications") : NULL;
-    w->last = nsig ? (sv4_t*)llg_checked_malloc(
+    w->last = nsig ? (sv4_t*)llg_checked_calloc(
         (size_t)nsig, sizeof(sv4_t), "mixed wait snapshots") : NULL;
     w->n_evs = nev;
     w->evs = nev ? (llg_event_object_t**)llg_checked_malloc(
@@ -259,7 +259,7 @@ void llg_wait_mixed(llg_wait_src_t* srcs, int n) {
         if (srcs[i].sig) {
             w->specs[si].sig = srcs[i].sig;
             w->specs[si].kind = srcs[i].kind;
-            w->last[si] = *srcs[i].sig;
+            w->last[si] = sv4_clone(srcs[i].sig);
             si++;
         } else {
             w->evs[ei] = srcs[i].ev ? srcs[i].ev->object : NULL;
@@ -272,16 +272,20 @@ void llg_wait_mixed(llg_wait_src_t* srcs, int n) {
 }
 
 void llg_wait_clocking_cycles(llg_wait_src_t* srcs, int n, sv4_t count) {
-    if (!srcs || n <= 0 || !region_can_mutate("clocking cycle wait")) return;
-    sv4_t remaining = sv4_repeat_count(count);
-    if (!sv4_to_bool(remaining)) {
+    if (!srcs || n <= 0 || !llg_current() || !region_can_mutate("clocking cycle wait")) return;
+    llg_value_scope_t* scope = llg_value_scope_begin(2);
+    sv4_t* values = llg_value_scope_values(scope);
+    sv4_replace(&values[0], sv4_repeat_count(count));
+    sv4_replace(&values[1], sv4_from_u64(1, values[0].width, 0));
+    if (!sv4_to_bool(values[0])) {
         if (!clocking_event_current(srcs, n)) llg_wait_mixed(srcs, n);
-        return;
+    } else {
+        while (sv4_to_bool(values[0])) {
+            llg_wait_mixed(srcs, n);
+            sv4_replace(&values[0], sv4_sub(values[0], values[1]));
+        }
     }
-    while (sv4_to_bool(remaining)) {
-        llg_wait_mixed(srcs, n);
-        remaining = sv4_sub(remaining, sv4_from_u64(1, remaining.width, 0));
-    }
+    llg_value_scope_end(scope);
 }
 
 void llg_wait_expressions(const llg_expr_event_spec_t* specs, int n) {
@@ -300,7 +304,7 @@ void llg_wait_expressions(const llg_expr_event_spec_t* specs, int n) {
     w->n_evs = 0;
     w->expressions = (llg_expr_event_spec_t*)llg_checked_calloc(
         (size_t)n, sizeof(llg_expr_event_spec_t), "expression event descriptors");
-    w->last = (sv4_t*)llg_checked_malloc((size_t)n, sizeof(sv4_t), "expression event snapshots");
+    w->last = (sv4_t*)llg_checked_calloc((size_t)n, sizeof(sv4_t), "expression event snapshots");
     w->real_last = (double*)llg_checked_malloc(
         (size_t)n, sizeof(double), "real expression event snapshots");
     w->evs = (llg_event_object_t**)llg_checked_malloc((size_t)n, sizeof(llg_event_object_t*), "expression named events");
@@ -345,7 +349,7 @@ void llg_wait_expressions(const llg_expr_event_spec_t* specs, int n) {
         } else if (specs[i].eval) {
             specs[i].eval(&w->last[i], specs[i].eval_context);
         } else if (specs[i].sig) {
-            w->last[i] = *specs[i].sig;
+            w->last[i] = sv4_clone(specs[i].sig);
         } else {
             abort();
         }
@@ -363,7 +367,9 @@ uint64_t llg_repeat_count(sv4_t value) {
             abort();
         }
     }
-    return sv4_to_u64(count);
+    uint64_t result = sv4_to_u64(count);
+    sv4_destroy(&count);
+    return result;
 }
 
 static void register_deferred_trigger(const llg_expr_event_spec_t* specs,
@@ -441,7 +447,7 @@ static void register_deferred_trigger(const llg_expr_event_spec_t* specs,
         } else if (specs[i].eval) {
             specs[i].eval(&trigger->last[i], specs[i].eval_context);
         } else if (specs[i].sig) {
-            trigger->last[i] = *specs[i].sig;
+            trigger->last[i] = sv4_clone(specs[i].sig);
         } else {
             abort();
         }

@@ -33,8 +33,7 @@ static void free_proc_storage(llg_proc_t* p) {
     llg_nba_t* n = p->nba_head;
     while (n) {
         llg_nba_t* next = n->next;
-        if (n->is_string) llg_string_destroy(&n->string_value);
-        free(n);
+        nba_destroy(n);
         n = next;
     }
     event_unlink(&p->wait);
@@ -46,12 +45,15 @@ static void free_proc_storage(llg_proc_t* p) {
     free_expression_wait(&p->wait);
     free(p->wait.specs);
     free(p->wait.dependencies);
+    sv4_destroy_array(p->wait.last, p->wait.last ? (size_t)p->wait.n : 0);
+    sv4_destroy(&p->wait.level_val);
     free(p->wait.last);
     free(p->wait.real_last);
     free(p->wait.evs);
     free(p->wait.order_sequence);
     llg_process_release(p->wait.process_target);
     p->wait.process_target = NULL;
+    value_scopes_unwind(p);
     activation_unwind_proc(p);
     llg_frame_release(p->frame);
     p->frame = NULL;
@@ -82,8 +84,10 @@ static void free_sampled_values(void) {
         while (g.sampled->history) {
             llg_sampled_history_t* history = g.sampled->history;
             g.sampled->history = history->next;
+            sv4_destroy(&history->value);
             free(history);
         }
+        sv4_destroy(&g.sampled->value);
         free(g.sampled);
         g.sampled = next;
     }
@@ -92,8 +96,10 @@ static void free_sampled_values(void) {
         while (g.sampled_domains->history) {
             llg_sampled_domain_history_t* history = g.sampled_domains->history;
             g.sampled_domains->history = history->next;
+            sv4_destroy(&history->value);
             free(history);
         }
+        sv4_destroy(&g.sampled_domains->initial);
         free(g.sampled_domains);
         g.sampled_domains = next;
     }
@@ -199,19 +205,22 @@ static void free_mailboxes(void) {
 }
 
 void llg_rt_cleanup(void) {
+    value_scopes_unwind(NULL);
+    for (int i = 0; i < g.pca_count; ++i) sv4_destroy(&g.pca_table[i].value);
     while (root_reference_top) llg_ref_scope_end(root_reference_top);
     for (int i = 0; i < g.force_count; i++) force_free_entry(&g.force_table[i]);
     while (g.inertial_drivers) {
         llg_inertial_t* driver = g.inertial_drivers;
         g.inertial_drivers = driver->next_all;
         *driver->handle = NULL;
+        sv4_destroy(&driver->current);
+        sv4_destroy(&driver->value);
+        sv4_destroy(&driver->mask);
         free(driver);
     }
     while (g.delayed_nbas) {
         llg_nba_t* next = g.delayed_nbas->next;
-        if (g.delayed_nbas->is_string)
-            llg_string_destroy(&g.delayed_nbas->string_value);
-        free(g.delayed_nbas);
+        nba_destroy(g.delayed_nbas);
         g.delayed_nbas = next;
     }
     free_deferred_triggers();
@@ -237,6 +246,7 @@ void llg_rt_cleanup(void) {
             free(g.strobes->typed_work);
             free(g.strobes->scope);
         } else {
+            sv4_destroy_array(g.strobes->work, (size_t)g.strobes->n);
             free(g.strobes->work);
         }
         free(g.strobes);
@@ -244,6 +254,8 @@ void llg_rt_cleanup(void) {
     }
     g.strobe_tail = NULL;
     free(g.mon.fmt);
+    if (g.mon.last) sv4_destroy_array(g.mon.last, (size_t)g.mon.n);
+    if (g.mon.work) sv4_destroy_array(g.mon.work, (size_t)g.mon.n);
     free(g.mon.last);
     free(g.mon.work);
     free(g.mon.reads);

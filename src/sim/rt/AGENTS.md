@@ -1,5 +1,14 @@
 # sim::rt — embedded C11 simulation runtime
 
+## Migration boundary
+
+P03/P04 switched runtime values to unique ownership. P05 generated temporaries,
+activation owners and static initialization are not migrated: public C emission
+and model-build entry points intentionally return an ownership-migration error.
+Do not bypass that gate. The old runtime/wave selftests are explicitly fenced;
+use `tests/runtime_value_storage` until their fixtures are migrated. Full C/Rust
+parity, native-platform and generated-model gates remain required.
+
 ## Purpose
 
 Compile the C11 runtime with generated `model.c` into a standalone executable; **never link it
@@ -8,19 +17,19 @@ into Rust binaries**:
 - `llg_value.h` / `llg_value.c` — scheduler-independent data types, operations, formatting, and
   numeric conversions, compiled as a standalone C11 translation unit with only standard C/math
   dependencies:
-  - `sv4_t` — up to the generated model's `LLG_MAX_WIDTH` bits (below the backend's exclusive `1
-    << 20` limit) stored as three parallel 64-bit limb arrays (`bits`/`x`/`z`), with X and Z
-    kept distinct (`x & z == 0`).  Z behaves as X in every unknown-propagating op (LRM 11.4.5)
-    but is carried through identity/copy ops and distinguished by `$display`, casez/casex
-    wildcards and `===`/`!==`.
-  - `sv4_storage_t` — exact-width, uniquely owned packed snapshots bounded only
-    by `LLG_SUPPORTED_WIDTH_LIMIT` (exclusive), including allocation-free width
-    zero. One allocation backs all three uint64_t planes; only `bits` is freed.
-    Constructors/clone return owners; copy replaces with a deep clone; move
-    empties the source; destroy resets to empty and is idempotent. Destinations
-    must already be initialized. Never retain raw copies of an owning descriptor
-    or interior plane pointers across replacement. This is the staged storage
-    building block, not a change to the legacy `sv4_t` arithmetic ABI yet.
+  - `sv4_t` — uniquely owned, exact-width storage bounded by the exclusive
+    `LLG_SUPPORTED_WIDTH_LIMIT` (`1 << 20`). One allocation contains three 64-bit
+    limb planes (`bits`/`x`/`z`); width zero allocates nothing. X/Z remain distinct,
+    with Z treated as X by unknown-propagating operations. Every value-returning
+    operation returns an independent owner; packed input parameters are borrowed
+    unless explicitly documented otherwise. Initialize owners with `SV4_EMPTY`,
+    then use clone/copy/move/replace/destroy instead of retaining struct copies.
+    Destroy only the allocation addressed by `bits`. Interior pointers expire on
+    replacement, movement, or destruction. See [ownership](value/ownership.md).
+    Containing runtime objects destroy their fields; coroutine-live owners use
+    registered `llg_value_scope_t` scopes, unwound on completion/cancellation.
+    No compiler cleanup attributes, VLAs, alloca, or C++ destructors are permitted.
+    The old fixed-array and separate snapshot representations are removed.
   - Value ops — arithmetic/logic/reduction/compare/wildcard-equality/casez/casex, mux, concat,
     declaration-ordered enum navigation, repeat, part/bit/indexed-part selects,
     resize/fill/clog2, format and decimal conversion; partially out-of-range part-select reads
@@ -35,8 +44,8 @@ into Rust binaries**:
     queries count known one bits across all limbs, ignore X/Z for
     `$countones`/`$onehot`/`$onehot0`, and detect either state for `$isunknown`.
   - Real-number hooks — packed-to-`double` conversion across all `sv4_t` limbs (X/Z bit
-    positions contribute zero), rounded `double`-to-packed conversion (targets up to the model
-    width), scalar truth conversion, wide division/modulo/power, and `%f`/`%e`/`%g` formatting
+    positions contribute zero), rounded `double`-to-packed conversion (targets below the supported
+    width limit), scalar truth conversion, wide division/modulo/power, and `%f`/`%e`/`%g` formatting
     support the procedural scalar real/shortreal contract. `shortreal` precision is enforced by
     codegen at assignments and initialization; typed double dependencies drive real `wait`,
     any-change `@` controls, scalar real ports, and combinational sensitivity without routing

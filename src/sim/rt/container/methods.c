@@ -40,14 +40,18 @@ static void llg_method_assign_values(llg_queue_t* dst, const sv4_t* values,
             size_t index = llg_method_is_last(method) ? count - 1 : 0;
             for (;;) {
                 sv4_t item_index = indices
-                    ? indices[index]
+                    ? sv4_clone(&indices[index])
                     : sv4_from_u64((uint64_t)index, 32, 1);
                 sv4_t selected = llg_container_eval(
                     eval, values[index], item_index, context);
-                if (sv4_to_bool(selected)) {
+                int selected_bool = sv4_to_bool(selected);
+                sv4_destroy(&selected);
+                sv4_destroy(&item_index);
+                if (selected_bool) {
                     result[result_count++] = llg_method_is_index(method)
-                        ? sv4_from_u64((uint64_t)index, 32, 1)
-                        : values[index];
+                        ? (indices ? sv4_clone(&indices[index])
+                                   : sv4_from_u64((uint64_t)index, 32, 1))
+                        : sv4_clone(&values[index]);
                     if (llg_method_is_first_only(method)) break;
                 }
                 if (llg_method_is_last(method)) {
@@ -63,12 +67,12 @@ static void llg_method_assign_values(llg_queue_t* dst, const sv4_t* values,
                method == LLG_CONTAINER_METHOD_MAX) {
         if (count) {
             size_t best = 0;
-            sv4_t best_index = indices ? indices[0] : sv4_from_u64(0, 32, 1);
+            sv4_t best_index = indices ? sv4_clone(&indices[0]) : sv4_from_u64(0, 32, 1);
             sv4_t best_key = llg_container_eval(
                 eval, values[0], best_index, context);
             for (size_t index = 1; index < count; ++index) {
                 sv4_t item_index = indices
-                    ? indices[index]
+                    ? sv4_clone(&indices[index])
                     : sv4_from_u64((uint64_t)index, 32, 1);
                 sv4_t key = llg_container_eval(
                     eval, values[index], item_index, context);
@@ -77,10 +81,15 @@ static void llg_method_assign_values(llg_queue_t* dst, const sv4_t* values,
                     : sv4_gt(key, best_key);
                 if (sv4_to_bool(comparison)) {
                     best = index;
-                    best_key = key;
+                    sv4_move(&best_key, &key);
                 }
+                sv4_destroy(&comparison);
+                sv4_destroy(&key);
+                sv4_destroy(&item_index);
             }
-            result[result_count++] = values[best];
+            result[result_count++] = sv4_clone(&values[best]);
+            sv4_destroy(&best_index);
+            sv4_destroy(&best_key);
         }
     } else if (method == LLG_CONTAINER_METHOD_UNIQUE ||
                method == LLG_CONTAINER_METHOD_UNIQUE_INDEX) {
@@ -88,7 +97,7 @@ static void llg_method_assign_values(llg_queue_t* dst, const sv4_t* values,
         size_t seen_count = 0;
         for (size_t index = 0; index < count; ++index) {
             sv4_t item_index = indices
-                ? indices[index]
+                ? sv4_clone(&indices[index])
                 : sv4_from_u64((uint64_t)index, 32, 1);
             sv4_t key = llg_container_eval(
                 eval, values[index], item_index, context);
@@ -100,17 +109,23 @@ static void llg_method_assign_values(llg_queue_t* dst, const sv4_t* values,
                 }
             }
             if (!duplicate) {
-                seen[seen_count++] = key;
+                seen[seen_count++] = key; // move into the new slot
+                key = (sv4_t)SV4_EMPTY;
                 result[result_count++] = method == LLG_CONTAINER_METHOD_UNIQUE_INDEX
-                    ? sv4_from_u64((uint64_t)index, 32, 1)
-                    : values[index];
+                    ? (indices ? sv4_clone(&indices[index])
+                               : sv4_from_u64((uint64_t)index, 32, 1))
+                    : sv4_clone(&values[index]);
             }
+            sv4_destroy(&item_index);
+            sv4_destroy(&key);
         }
+        sv4_destroy_array(seen, seen_count);
         free(seen);
     } else {
         llg_container_fatal("invalid queue-valued array method");
     }
     llg_queue_assign_values(dst, result, result_count);
+    sv4_destroy_array(result, result_count);
     free(result);
 }
 
@@ -138,62 +153,9 @@ void llg_assoc_method_assign(llg_queue_t* dst, const llg_assoc_t* src,
     if (method < LLG_CONTAINER_METHOD_FIND ||
         method > LLG_CONTAINER_METHOD_UNIQUE_INDEX)
         llg_container_fatal("invalid associative-array method");
-    if (method == LLG_CONTAINER_METHOD_FIND_INDEX ||
-        method == LLG_CONTAINER_METHOD_FIND_FIRST_INDEX ||
-        method == LLG_CONTAINER_METHOD_FIND_LAST_INDEX ||
-        method == LLG_CONTAINER_METHOD_UNIQUE_INDEX) {
-        if (src->key_kind != LLG_ASSOC_INTEGRAL)
-            llg_container_fatal(
-                "string-keyed associative index result requires a string queue");
-        sv4_t* result = llg_alloc_items(src->size, sizeof(*result));
-        size_t result_count = 0;
-        if (llg_method_is_locator(method)) {
-            if (src->size) {
-                size_t index = llg_method_is_last(method) ? src->size - 1 : 0;
-                for (;;) {
-                    sv4_t item_index = src->entries[index].integral_key;
-                    sv4_t selected = llg_container_eval(
-                        eval, src->entries[index].value, item_index, context);
-                    if (sv4_to_bool(selected)) {
-                        result[result_count++] =
-                            src->entries[index].integral_key;
-                        if (llg_method_is_first_only(method)) break;
-                    }
-                    if (llg_method_is_last(method)) {
-                        if (index == 0) break;
-                        --index;
-                    } else {
-                        ++index;
-                        if (index == src->size) break;
-                    }
-                }
-            }
-        } else {
-            sv4_t* seen = llg_alloc_items(src->size, sizeof(*seen));
-            size_t seen_count = 0;
-            for (size_t index = 0; index < src->size; ++index) {
-                sv4_t item_index = src->entries[index].integral_key;
-                sv4_t key = llg_container_eval(
-                    eval, src->entries[index].value, item_index, context);
-                int duplicate = 0;
-                for (size_t seen_index = 0; seen_index < seen_count;
-                     ++seen_index) {
-                    if (sv4_same(seen[seen_index], key)) {
-                        duplicate = 1;
-                        break;
-                    }
-                }
-                if (!duplicate) {
-                    seen[seen_count++] = key;
-                    result[result_count++] = src->entries[index].integral_key;
-                }
-            }
-            free(seen);
-        }
-        llg_queue_assign_values(dst, result, result_count);
-        free(result);
-        return;
-    }
+    if (llg_method_is_index(method) && src->key_kind != LLG_ASSOC_INTEGRAL)
+        llg_container_fatal(
+            "string-keyed associative index result requires a string queue");
 
     sv4_t* values = llg_alloc_items(src->size, sizeof(*values));
     sv4_t* indices = src->key_kind == LLG_ASSOC_INTEGRAL
@@ -231,9 +193,10 @@ static int llg_method_reorder(sv4_t* data, uint64_t* element_ids,
             if (!sv4_same(data[left], data[right]) ||
                 (element_ids && element_ids[left] != element_ids[right]))
                 changed = 1;
-            sv4_t value = data[left];
-            data[left] = data[right];
-            data[right] = value;
+            sv4_t value = SV4_EMPTY;
+            sv4_move(&value, &data[left]);
+            sv4_move(&data[left], &data[right]);
+            sv4_move(&data[right], &value);
             if (element_ids) {
                 uint64_t identity = element_ids[left];
                 element_ids[left] = element_ids[right];
@@ -254,9 +217,10 @@ static int llg_method_reorder(sv4_t* data, uint64_t* element_ids,
             if (!sv4_same(data[other], data[index - 1]) ||
                 (element_ids && element_ids[other] != element_ids[index - 1]))
                 changed = 1;
-            sv4_t value = data[other];
-            data[other] = data[index - 1];
-            data[index - 1] = value;
+            sv4_t value = SV4_EMPTY;
+            sv4_move(&value, &data[other]);
+            sv4_move(&data[other], &data[index - 1]);
+            sv4_move(&data[index - 1], &value);
             if (element_ids) {
                 uint64_t identity = element_ids[other];
                 element_ids[other] = element_ids[index - 1];
@@ -271,7 +235,8 @@ static int llg_method_reorder(sv4_t* data, uint64_t* element_ids,
     int descending = method == LLG_CONTAINER_METHOD_RSORT;
     int changed = 0;
     for (size_t index = 1; index < count; ++index) {
-        sv4_t value = data[index];
+        sv4_t value = SV4_EMPTY;
+        sv4_move(&value, &data[index]);
         uint64_t identity = element_ids ? element_ids[index] : 0;
         size_t position = index;
         while (position) {
@@ -285,13 +250,19 @@ static int llg_method_reorder(sv4_t* data, uint64_t* element_ids,
             sv4_t comparison = descending
                 ? sv4_lt(previous_key, value_key)
                 : sv4_lt(value_key, previous_key);
-            if (!sv4_to_bool(comparison)) break;
-            data[position] = data[position - 1];
+            int ordered = sv4_to_bool(comparison);
+            sv4_destroy(&comparison);
+            sv4_destroy(&value_key);
+            sv4_destroy(&previous_key);
+            sv4_destroy(&value_index);
+            sv4_destroy(&previous_index);
+            if (!ordered) break;
+            sv4_move(&data[position], &data[position - 1]);
             if (element_ids) element_ids[position] = element_ids[position - 1];
             position--;
             changed = 1;
         }
-        data[position] = value;
+        sv4_move(&data[position], &value);
         if (element_ids) element_ids[position] = identity;
     }
     return changed;

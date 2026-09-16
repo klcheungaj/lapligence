@@ -83,6 +83,7 @@ _Noreturn void llg_proc_done(llg_proc_t* self) {
     self->completed = 1;
     process_status_set(self, LLG_PROCESS_FINISHED);
     process_handle_terminal(self, LLG_PROCESS_FINISHED);
+    value_scopes_unwind(self);
     activation_unwind_proc(self);
     llg_frame_release(self->frame);
     self->frame = NULL;
@@ -160,12 +161,12 @@ void llg_wait_any(sv4_t** sigs, int n) {
     w->n = n;
     w->specs = (llg_event_spec_t*)llg_checked_malloc(
         (size_t)n, sizeof(llg_event_spec_t), "event wait specifications");
-    w->last = (sv4_t*)llg_checked_malloc(
+    w->last = (sv4_t*)llg_checked_calloc(
         (size_t)n, sizeof(sv4_t), "event wait snapshots");
     for (int i = 0; i < n; i++) {
         w->specs[i].sig = sigs[i];
         w->specs[i].kind = LLG_EV_ANY;
-        w->last[i] = *sigs[i];
+        w->last[i] = sv4_clone(sigs[i]);
     }
     register_wait();
     aco_yield();
@@ -211,12 +212,12 @@ void llg_wait_any_events(llg_event_spec_t* specs, int n) {
     w->n = n;
     w->specs = (llg_event_spec_t*)llg_checked_malloc(
         (size_t)n, sizeof(llg_event_spec_t), "edge wait specifications");
-    w->last = (sv4_t*)llg_checked_malloc(
+    w->last = (sv4_t*)llg_checked_calloc(
         (size_t)n, sizeof(sv4_t), "edge wait snapshots");
     for (int i = 0; i < n; i++) {
         w->specs[i].sig = specs[i].sig;
         w->specs[i].kind = specs[i].kind;
-        w->last[i] = *specs[i].sig;
+        w->last[i] = sv4_clone(specs[i].sig);
     }
     register_wait();
     aco_yield();
@@ -238,7 +239,7 @@ void llg_wait_level(sv4_t* sig, sv4_t value) {
                            ? LLG_REGION_REACTIVE
                            : LLG_REGION_ACTIVE;
     w->sig = sig;
-    w->level_val = value;
+    sv4_copy(&w->level_val, &value);
     register_wait();
     aco_yield();
 }

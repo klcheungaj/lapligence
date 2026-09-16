@@ -10,6 +10,9 @@ static void llg_value_drop(llg_value_t* value) {
     if (!value || !value->desc) return;
     const llg_value_desc_t* desc = value->desc;
     switch (desc->kind) {
+        case LLG_VALUE_PACKED:
+            sv4_destroy(&value->value.packed);
+            break;
         case LLG_VALUE_STRING:
             llg_string_destroy(&value->value.string);
             break;
@@ -112,10 +115,12 @@ static int llg_value_real_same(double left, double right) {
     return left_bits == right_bits;
 }
 
-static void llg_value_copy(llg_value_t* target,
+static void llg_value_copy(llg_value_t*, const llg_value_desc_t*,
+                           const llg_value_t*);
+
+static void llg_value_construct_copy(llg_value_t* target,
                            const llg_value_desc_t* target_desc,
                            const llg_value_t* source) {
-    llg_value_drop(target);
     memset(&target->value, 0, sizeof(target->value));
     target->desc = target_desc;
     const llg_value_desc_t* source_desc = source ? source->desc : NULL;
@@ -126,14 +131,12 @@ static void llg_value_copy(llg_value_t* target,
     switch (target_desc->kind) {
         case LLG_VALUE_PACKED: {
             sv4_t value = source_desc->kind == LLG_VALUE_PACKED
-                ? source->value.packed
-                : sv4_from_u64(0, target_desc->packed_width,
-                               target_desc->packed_signed);
-            value = sv4_cast(value, target_desc->packed_width,
-                             target_desc->packed_signed);
-            target->value.packed = target_desc->packed_two_state
-                ? sv4_to_two_state(value)
-                : value;
+                ? sv4_cast(source->value.packed, target_desc->packed_width,
+                           target_desc->packed_signed)
+                : sv4_zero(target_desc->packed_width, target_desc->packed_signed);
+            if (target_desc->packed_two_state)
+                sv4_replace(&value, sv4_to_two_state(value));
+            sv4_move(&target->value.packed, &value);
             break;
         }
         case LLG_VALUE_REAL:
@@ -185,6 +188,16 @@ static void llg_value_copy(llg_value_t* target,
         default:
             llg_container_fatal("invalid recursive container value kind");
     }
+}
+
+static void llg_value_copy(llg_value_t* target,
+                           const llg_value_desc_t* target_desc,
+                           const llg_value_t* source) {
+    // Construct before dropping target: source can be target or its descendant.
+    llg_value_t replacement = {0};
+    llg_value_construct_copy(&replacement, target_desc, source);
+    llg_value_drop(target);
+    *target = replacement; // exclusive ownership transfer, not a copy
 }
 
 static int llg_value_equal(const llg_value_t* a, const llg_value_t* b) {

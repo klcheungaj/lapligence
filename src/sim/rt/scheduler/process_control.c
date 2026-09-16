@@ -50,7 +50,7 @@ static void llg_kill_proc(llg_proc_t* p, int notify_parent) {
     llg_nba_t* n = p->nba_head;
     while (n) {
         llg_nba_t* nx = n->next;
-        free(n);
+        nba_destroy(n);
         n = nx;
     }
     p->nba_head = p->nba_tail = NULL;
@@ -81,6 +81,8 @@ static void llg_kill_proc(llg_proc_t* p, int notify_parent) {
         free_expression_wait(w);
         free(w->specs);
         free(w->dependencies);
+        sv4_destroy_array(w->last, w->last ? (size_t)w->n : 0);
+        sv4_destroy(&w->level_val);
         free(w->last);
         free(w->real_last);
         free(w->evs);
@@ -123,6 +125,7 @@ static void llg_kill_proc(llg_proc_t* p, int notify_parent) {
         }
         p->grp = NULL;
     }
+    value_scopes_unwind(p);
     activation_unwind_proc(p);
     llg_frame_release(p->frame);
     p->frame = NULL;
