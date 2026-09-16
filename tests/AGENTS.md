@@ -62,6 +62,14 @@ LSP publication/config coverage for the same rule IDs.
 
 ## Suite map
 
+- `runtime_value_storage.rs` runs the standalone CMake suite in
+  `runtime_value_storage/`: exact-width allocation accounting, copy/move/release,
+  zero and supported-limit boundaries, injected allocation failure, deterministic
+  waveform ring transfers, threaded VCD/FST snapshots, error disposal and close/
+  reinitialization. The same CMake project runs without Cargo or Slang. Keep its
+  legacy ABI/portability limitations explicit; it is not full generated-simulator
+  ownership coverage.
+
 Suites designated below as shared CLI suites use
 `support/sim_cli.rs`: run `llg` and `llg --no-opt` in separate temporary child directories,
 require CMake, compare independent exact stdout oracles, and assert expected lowering/runtime

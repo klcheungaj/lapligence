@@ -1,4 +1,4 @@
-use super::{container_sources, runtime_sources};
+use super::{container_sources, runtime_sources, value_sources};
 use std::path::Path;
 
 fn facade_source(facade: &str) -> String {
@@ -36,4 +36,9 @@ fn scheduler_embedding_matches_private_facade_order() {
 #[test]
 fn container_embedding_matches_private_facade_order() {
     assert_eq!(container_sources().1, facade_source("llg_container.c"));
+}
+
+#[test]
+fn value_embedding_matches_private_facade_order() {
+    assert_eq!(value_sources().1, facade_source("llg_value.c"));
 }

@@ -13,6 +13,14 @@ into Rust binaries**:
     kept distinct (`x & z == 0`).  Z behaves as X in every unknown-propagating op (LRM 11.4.5)
     but is carried through identity/copy ops and distinguished by `$display`, casez/casex
     wildcards and `===`/`!==`.
+  - `sv4_storage_t` — exact-width, uniquely owned packed snapshots bounded only
+    by `LLG_SUPPORTED_WIDTH_LIMIT` (exclusive), including allocation-free width
+    zero. One allocation backs all three uint64_t planes; only `bits` is freed.
+    Constructors/clone return owners; copy replaces with a deep clone; move
+    empties the source; destroy resets to empty and is idempotent. Destinations
+    must already be initialized. Never retain raw copies of an owning descriptor
+    or interior plane pointers across replacement. This is the staged storage
+    building block, not a change to the legacy `sv4_t` arithmetic ABI yet.
   - Value ops — arithmetic/logic/reduction/compare/wildcard-equality/casez/casex, mux, concat,
     declaration-ordered enum navigation, repeat, part/bit/indexed-part selects,
     resize/fill/clog2, format and decimal conversion; partially out-of-range part-select reads
@@ -147,8 +155,9 @@ selected range contributes; lowering rejects dynamic net selectors.
 
 ## Embedding
 
-- `mod.rs` embeds sources with `include_str!`. `llg_rt.c` and `llg_container.c` include ordered
-  private fragments (`scheduler/`, `container/`, and their root preludes); `concat!` assembles
+- `mod.rs` embeds sources with `include_str!`. `llg_value.c`, `llg_rt.c`, and
+  `llg_container.c` include ordered private fragments (`value/`, `scheduler/`,
+  `container/`, and their root preludes); `concat!` assembles
   that identical order into flat emitted C. Compile only the facades, never fragments
   independently; keep the facade and embedding orders synchronized. No shared-state export or
   runtime ABI changes.
@@ -179,6 +188,11 @@ selected range contributes; lowering rejects dynamic net selectors.
 - Value operations must not depend on scheduler state, libaco, or waveform output.
   `tests/runtime_values.rs` compiles this module alone and exercises its public
   operations/conversions; generated-model tests cover integration.
+  `tests/runtime_value_storage/` independently tests the dynamic storage
+  primitive, allocation failures, and waveform transfer/cleanup. It does not
+  establish that the remaining legacy value owners have been migrated. Preserve
+  `value_sources()` as a header/flat-implementation pair and keep the value facade
+  and embedded fragment order synchronized.
 - Waveform builds additionally require CMake's `Threads::Threads` and zlib. Thread calls are
   hidden behind a narrow POSIX/Win32 layer; do not use C11 `<threads.h>` as the Windows
   portability boundary. The overall generated simulator still has independent

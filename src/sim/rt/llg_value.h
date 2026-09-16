@@ -28,6 +28,47 @@ extern "C" {
 // ── 4-state values ────────────────────────────────────────────────────────────
 
 #define LLG_SUPPORTED_WIDTH_LIMIT (1u << 20)
+
+// Exact-width owned storage used by retained snapshots. This is the dynamic
+// allocation building block; sv4_t below retains its legacy layout until all
+// runtime and generated-code ownership boundaries have been migrated.
+//
+// bits owns one allocation; x and z point inside it. All three are NULL at
+// width zero. Widths are bounded ONLY by LLG_SUPPORTED_WIDTH_LIMIT (exclusive),
+// independently of LLG_MODEL_MAX_WIDTH. The top partial limb is masked.
+// Callers preserve the four-state invariant x & z == 0 when mutating planes.
+//
+// Initialize owners with SV4_STORAGE_EMPTY or a constructor. Never memcpy or
+// assign one live owner to another: use clone/copy/move. Borrowed plane pointers
+// expire when the owner is replaced, moved, or destroyed. Allocation failure
+// and unsupported widths produce a fatal diagnostic before any replacement.
+typedef struct {
+    uint64_t* bits;
+    uint64_t* x;
+    uint64_t* z;
+    uint32_t width;
+    int8_t is_signed;
+} sv4_storage_t;
+
+#define SV4_STORAGE_EMPTY {NULL, NULL, NULL, 0, 0}
+
+// Return an independent owner; the caller must eventually destroy or move it.
+sv4_storage_t sv4_storage_zero(uint32_t width, int8_t is_signed);
+// Non-NULL inputs each provide ceil(width / 64) limbs and are borrowed only
+// during this call. NULL planes are zero-filled; width zero reads no inputs.
+sv4_storage_t sv4_storage_from_limbs(const uint64_t* bits, const uint64_t* x,
+                                    const uint64_t* z, uint32_t width,
+                                    int8_t is_signed);
+sv4_storage_t sv4_storage_clone(const sv4_storage_t* source);
+// Destination must be initialized. Self-copy/self-move are no-ops. Copy
+// preserves source; move empties source. Neither operation leaves shared owners.
+void sv4_storage_copy(sv4_storage_t* destination, const sv4_storage_t* source);
+void sv4_storage_move(sv4_storage_t* destination, sv4_storage_t* source);
+// Accepts NULL or an initialized owner. Repeated destruction is safe.
+void sv4_storage_destroy(sv4_storage_t* storage);
+// Payload bytes, excluding the descriptor and the system allocator's overhead.
+size_t sv4_storage_bytes(const sv4_storage_t* storage);
+
 #ifndef LLG_MODEL_MAX_WIDTH
 #define LLG_MODEL_MAX_WIDTH 1024u
 #endif

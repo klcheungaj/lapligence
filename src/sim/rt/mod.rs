@@ -88,7 +88,14 @@ pub fn runtime_sources() -> (&'static str, &'static str) {
 /// (header, implementation) of scheduler-independent value operations and casts.
 /// This C11 module can be compiled independently, linking only the math library.
 pub fn value_sources() -> (&'static str, &'static str) {
-    (include_str!("llg_value.h"), include_str!("llg_value.c"))
+    (
+        include_str!("llg_value.h"),
+        concat!(
+            include_str!("llg_value_prelude.c"),
+            include_str!("value/storage.c"),
+            include_str!("value/operations.c"),
+        ),
+    )
 }
 
 /// Scheduler-independent legacy `$random` and `$dist_*` implementations.

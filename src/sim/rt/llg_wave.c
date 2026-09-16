@@ -1,10 +1,11 @@
 // llg_wave.c — bounded asynchronous VCD/FST waveform writer.
 //
 // One simulation thread is the producer and one file-writer thread is the
-// consumer.  The 1024-slot ring owns every event payload (about 1.1 MiB total,
-// including room for a 1023-byte path or full 1024-bit sv4_t in each slot),
-// using release/acquire publication.  Mutexes and condition variables are
-// used only when empty/full or waiting for a flush barrier.
+// consumer. The 1024-slot ring owns exact-width packed snapshots, not borrowed
+// model limbs. Each slot still reserves room for a 1023-byte path. Snapshot
+// allocations move producer -> ring -> writer using release/acquire publication
+// and are destroyed after processing, including ignored/error-path events.
+// Mutexes and condition variables are used for full/empty and flush waits.
 
 #ifndef _WIN32
 #define _POSIX_C_SOURCE 200809L
@@ -55,7 +56,7 @@ typedef struct {
     uint32_t first_reg;
     uint8_t snapshot;
     union {
-        sv4_t sv4;
+        sv4_storage_t sv4;
         double real;
         char path[LLG_WAVE_PATH_CAP];
     } payload;
@@ -163,6 +164,8 @@ typedef struct {
     wave_format_t format;
     char* path;
     fstHandle* fst_handles;
+    char* packed_text;
+    size_t packed_text_cap;
     uint64_t last_time;
     uint64_t bytes_written;
     uint64_t byte_limit;
@@ -282,7 +285,21 @@ static uint32_t lookup_registration(const void* ptr) {
     return LLG_WAVE_NO_REG;
 }
 
-static void queue_push(const wave_event_t* event) {
+static void event_destroy(wave_event_t* event) {
+    if (event->kind == EV_CHANGE_SV4)
+        sv4_storage_destroy(&event->payload.sv4);
+    *event = (wave_event_t){0};
+}
+
+// Destination is an empty ring slot or a new local. Clearing source is part of
+// the transfer; it must happen before publishing head/tail to the other thread.
+static void event_move(wave_event_t* destination, wave_event_t* source) {
+    *destination = *source;
+    *source = (wave_event_t){0};
+}
+
+// Consumes the event, including its snapshot allocation.
+static void queue_push(wave_event_t* event) {
     uint64_t head = atomic_u64_load(&g_wave.head);
     uint64_t tail = atomic_u64_load(&g_wave.tail);
     if (head - tail >= LLG_WAVE_QUEUE_CAP) {
@@ -296,7 +313,7 @@ static void queue_push(const wave_event_t* event) {
         mutex_unlock(&g_wave.mutex);
     }
 
-    g_wave.queue[head % LLG_WAVE_QUEUE_CAP] = *event;
+    event_move(&g_wave.queue[head % LLG_WAVE_QUEUE_CAP], event);
     atomic_u64_store(&g_wave.head, head + 1u);
     if (atomic_int_load(&g_wave.consumer_waiting)) {
         mutex_lock(&g_wave.mutex);
@@ -319,7 +336,8 @@ static wave_event_t queue_pop(void) {
         mutex_unlock(&g_wave.mutex);
     }
 
-    wave_event_t event = g_wave.queue[tail % LLG_WAVE_QUEUE_CAP];
+    wave_event_t event = {0};
+    event_move(&event, &g_wave.queue[tail % LLG_WAVE_QUEUE_CAP]);
     atomic_u64_store(&g_wave.tail, tail + 1u);
     if (atomic_int_load(&g_wave.producer_waiting)) {
         mutex_lock(&g_wave.mutex);
@@ -707,6 +725,9 @@ static void writer_close_file(writer_t* w) {
     w->fst_handles = NULL;
     free(w->path);
     w->path = NULL;
+    free(w->packed_text);
+    w->packed_text = NULL;
+    w->packed_text_cap = 0;
     w->format = FORMAT_NONE;
 }
 
@@ -774,11 +795,17 @@ static void writer_time(writer_t* w, uint64_t now) {
     w->have_time = 1;
 }
 
-static void sv4_text(const sv4_t* value, uint32_t width, char out[LLG_MAX_WIDTH + 1u]) {
-    if (width > LLG_MAX_WIDTH) width = LLG_MAX_WIDTH;
+static void sv4_text(const sv4_storage_t* value, uint32_t width, char* out) {
     for (uint32_t pos = 0; pos < width; pos++) {
         uint32_t bit = width - 1u - pos;
-        uint64_t mask = 1ULL << (bit & 63u);
+        // Registrations may request a wider view than the captured value. The
+        // legacy representation exposed zero padding there; never read past
+        // an exact-width allocation to provide that same zero extension.
+        if (bit >= value->width) {
+            out[pos] = '0';
+            continue;
+        }
+        uint64_t mask = UINT64_C(1) << (bit & 63u);
         uint32_t limb = bit >> 6u;
         if (value->x[limb] & mask) out[pos] = 'x';
         else if (value->z[limb] & mask) out[pos] = 'z';
@@ -787,20 +814,34 @@ static void sv4_text(const sv4_t* value, uint32_t width, char out[LLG_MAX_WIDTH 
     out[width] = 0;
 }
 
-static void writer_sv4_aliases(writer_t* w, uint32_t first, const sv4_t* value) {
-    char bits[LLG_MAX_WIDTH + 1u];
+static void writer_sv4_aliases(writer_t* w, uint32_t first,
+                               const sv4_storage_t* value) {
     for (uint32_t i = first; i != LLG_WAVE_NO_REG; i = g_wave.regs[i].next_alias) {
         const registration_t* reg = &g_wave.regs[i];
         if (!reg->selected) continue;
+        if (reg->width >= LLG_SUPPORTED_WIDTH_LIMIT) {
+            wave_error("packed waveform width exceeds supported limit");
+            return;
+        }
+        size_t required = (size_t)reg->width + 1u;
+        if (required > w->packed_text_cap) {
+            char* text = (char*)realloc(w->packed_text, required);
+            if (!text) {
+                wave_error("out of memory while formatting packed waveform value");
+                return;
+            }
+            w->packed_text = text;
+            w->packed_text_cap = required;
+        }
+        char* bits = w->packed_text;
+        sv4_text(value, reg->width, bits);
         if (w->format == FORMAT_VCD) {
             char id[8];
             compact_id(i, id);
-            sv4_text(value, reg->width, bits);
             if (reg->width == 1u) writer_printf(w, "%c%s\n", bits[0], id);
             else writer_printf(w, "b%s %s\n", bits, id);
             break; // aliases share the same VCD identifier
         }
-        sv4_text(value, reg->width, bits);
         fstWriterEmitValueChange(w->fst, w->fst_handles[i], bits);
         break; // libfst aliases share the canonical handle
     }
@@ -932,9 +973,13 @@ static WAVE_THREAD_RETURN writer_thread(void* unused) {
                     wave_error("FST seek/write failed for `%s`", writer.path);
             }
             writer_close_file(&writer);
+            event_destroy(&event);
             break;
         }
         process_event(&writer, &event);
+        // process_event can return early after an output error or ignore a
+        // disabled/unselected value; ownership ends here on every such path.
+        event_destroy(&event);
     }
     atomic_int_store(&g_wave.worker_alive, 0);
     mutex_lock(&g_wave.mutex);
@@ -979,12 +1024,24 @@ static void join_worker(void) {
 }
 
 static void enqueue_simple(event_kind_t kind, uint64_t now, uint64_t arg) {
-    wave_event_t event;
-    memset(&event, 0, sizeof(event));
+    wave_event_t event = {0};
     event.kind = kind;
     event.now = now;
     event.arg = arg;
     queue_push(&event);
+}
+
+// Bridge from the legacy fixed-array value. Remove this legacy source-capacity
+// guard when sv4_t itself is converted; the storage constructor has no such cap.
+// The destination event is newly initialized and owns no previous snapshot.
+static int capture_sv4(wave_event_t* event, const sv4_t* value) {
+    if (value->width > LLG_MAX_WIDTH) {
+        wave_error("packed source width exceeds legacy value capacity");
+        return 0;
+    }
+    event->payload.sv4 = sv4_storage_from_limbs(
+        value->bits, value->x, value->z, value->width, value->is_signed);
+    return 1;
 }
 
 static void enqueue_snapshot(uint64_t now, snapshot_kind_t kind) {
@@ -995,20 +1052,23 @@ static void enqueue_snapshot(uint64_t now, snapshot_kind_t kind) {
         if (lookup_registration(reg->ptr) != i) continue;
         uint32_t selected = selected_canonical(i);
         if (selected == LLG_WAVE_NO_REG) continue;
-        wave_event_t event;
-        memset(&event, 0, sizeof(event));
+        wave_event_t event = {0};
         event.kind = reg->is_real ? EV_CHANGE_REAL : EV_CHANGE_SV4;
         event.now = now;
         event.first_reg = selected;
         event.snapshot = 1;
         if (reg->is_real) event.payload.real = *(double*)reg->ptr;
-        else event.payload.sv4 = *(sv4_t*)reg->ptr;
+        else if (!capture_sv4(&event, (const sv4_t*)reg->ptr)) continue;
         queue_push(&event);
     }
     enqueue_simple(EV_SNAPSHOT_END, now, 0);
 }
 
 static void free_state(void) {
+    // The worker has joined (or never started). Normally every slot is already
+    // empty after queue_pop; retain this cleanup for any unconsumed owners.
+    for (uint32_t i = 0; i < LLG_WAVE_QUEUE_CAP; i++)
+        event_destroy(&g_wave.queue[i]);
     for (uint32_t i = 0; i < g_wave.reg_count; i++) free(g_wave.regs[i].name);
     free(g_wave.regs);
     free(g_wave.map);
@@ -1090,8 +1150,7 @@ int llg_wave_register_real(const char* name, double* value) {
 
 void llg_wave_file(const char* path, uint64_t now) {
     if (!require_producer("$dumpfile") || !path || !start_worker()) return;
-    wave_event_t event;
-    memset(&event, 0, sizeof(event));
+    wave_event_t event = {0};
     event.kind = EV_FILE;
     event.now = now;
     size_t len = strlen(path);
@@ -1157,12 +1216,11 @@ void llg_wave_changed_sv4(sv4_t* ptr, const sv4_t* value, uint64_t now) {
         !g_wave.producer_dumping || !require_producer("signal change")) return;
     uint32_t first = lookup_registration(ptr);
     if (first == LLG_WAVE_NO_REG) return;
-    wave_event_t event;
-    memset(&event, 0, sizeof(event));
+    wave_event_t event = {0};
     event.kind = EV_CHANGE_SV4;
     event.now = now;
     event.first_reg = first;
-    event.payload.sv4 = *value;
+    if (!capture_sv4(&event, value)) return;
     queue_push(&event);
 }
 
@@ -1171,8 +1229,7 @@ void llg_wave_changed_real(double* ptr, double value, uint64_t now) {
         !g_wave.producer_dumping || !require_producer("real change")) return;
     uint32_t first = lookup_registration(ptr);
     if (first == LLG_WAVE_NO_REG) return;
-    wave_event_t event;
-    memset(&event, 0, sizeof(event));
+    wave_event_t event = {0};
     event.kind = EV_CHANGE_REAL;
     event.now = now;
     event.first_reg = first;

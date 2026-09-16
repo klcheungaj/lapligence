@@ -35,9 +35,13 @@ with their types. Use ordinary module declarations in binary targets, not
 
 ## C runtime source organization
 
-The two large C implementations are **private source fragments of one translation
-unit each**, not independently linked modules:
+The value, scheduler and container implementations use **private source fragments
+of one translation unit each**, not independently linked modules:
 
+- [`llg_value.c`](../src/sim/rt/llg_value.c) includes
+  [`llg_value_prelude.c`](../src/sim/rt/llg_value_prelude.c) and
+  [`value/`](../src/sim/rt/value/) fragments for exact-width storage ownership
+  and the existing four-state operations.
 - [`llg_rt.c`](../src/sim/rt/llg_rt.c) includes
   [`llg_rt_prelude.c`](../src/sim/rt/llg_rt_prelude.c) and
   [`scheduler/`](../src/sim/rt/scheduler/) domains for state, process lifecycle,
@@ -54,7 +58,7 @@ header-relative lookup. Do not compile a fragment separately, add fragments to
 CMake source lists, or export scheduler globals to connect them.
 
 [`rt/mod.rs`](../src/sim/rt/mod.rs) embeds each ordered list with
-`concat!(include_str!(...), ...)`. `runtime_sources()` and
+`concat!(include_str!(...), ...)`. `value_sources()`, `runtime_sources()` and
 `container_sources()` still return a header and one flat implementation string.
 The generated build directory therefore needs only the established flat C
 filenames, not a copy of the fragment directories. Keep the facade include

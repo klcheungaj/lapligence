@@ -60,6 +60,10 @@
   10s/100s units, checked overflow rejection, and VCD femtosecond
   headers/timestamps.
 - `runtime_values`, `runtime_boundaries`, `region_conformance`: standalone C value checks, resource bounds and scheduling order.
+- [Dynamic packed storage](runtime_value_storage/readme.md): exact allocation
+  sizes, deep copies, moves, replacement, width boundaries, injected allocation
+  failure, and waveform snapshot transfer/cleanup. Runs directly through CMake
+  without Cargo/Slang, or through `runtime_value_storage.rs`.
 - `sim_random`, `runtime_random`: legacy `$random`/`$dist_*` Annex N vectors
   through generated models and standalone C runtime boundary checks, each at
   optimized and unoptimized levels.

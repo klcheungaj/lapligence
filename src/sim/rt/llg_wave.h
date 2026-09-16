@@ -23,8 +23,9 @@ void llg_wave_flush(uint64_t now);
 void llg_wave_limit(uint64_t bytes, uint64_t now);
 int llg_wave_close(uint64_t now);
 
-// Runtime-internal hooks. The producer passes committed values by copy; the
-// writer thread never reads mutable model storage.
+// Runtime-internal hooks. The packed input is borrowed only for this call and
+// deep-copied before return. The queue/consumer own the snapshot allocation;
+// the writer thread never reads mutable model storage or borrowed limb arrays.
 void llg_wave_changed_sv4(sv4_t* ptr, const sv4_t* value, uint64_t now);
 void llg_wave_changed_real(double* ptr, double value, uint64_t now);
 
