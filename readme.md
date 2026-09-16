@@ -351,3 +351,11 @@ scripts/clean.sh --all      # also remove the active frontend build
 See [the source layout](docs/source_layout.md) for the Rust facade/domain map,
 private C runtime fragments, and test ownership. Use
 [Coding Practices](docs/coding_practices.md) when extending these boundaries.
+
+
+### Dynamic-value migration validation
+
+See [dynamic ownership validation](tests/readme.md#dynamic-ownership-validation)
+for the component, generated-model and HDL acceptance commands. Scope and
+unexecuted prerequisites are recorded separately; a component pass is not full
+simulator acceptance.

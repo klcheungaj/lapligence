@@ -1,0 +1,101 @@
+name: Dynamic owner component validation
+
+on:
+  pull_request:
+    paths:
+      - 'src/sim/rt/**'
+      - 'src/sim/emit_c/**'
+      - 'tests/runtime_value_storage/**'
+      - 'tests/sim_dynamic_ownership.rs'
+      - 'tests/fixtures/sim/dynamic_ownership/**'
+      - '.github/workflows/dynamic-owners.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  components:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux GCC / Clang / component sanitizers
+            os: ubuntu-22.04
+            compiler: gcc
+            extra: --compiler clang --sanitizers
+          - name: macOS Clang components
+            os: macos-14
+            compiler: clang
+            extra: ''
+          - name: Windows MSVC value / container components only
+            os: windows-2022
+            compiler: cl
+            extra: --without-waveforms --without-scheduler
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: MSVC environment
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+      - name: Linux prerequisites
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake gcc clang zlib1g-dev
+      - name: macOS prerequisites
+        if: runner.os == 'macOS'
+        run: brew install cmake zlib
+      - name: Validate the requested host components
+        run: >-
+          python tests/runtime_value_storage/validate.py
+          --compiler ${{ matrix.compiler }} ${{ matrix.extra }}
+          --output target/p07-ci
+      - name: Print host evidence to workflow logs
+        if: always()
+        run: >-
+          python -c "from pathlib import Path; p=Path('target/p07-ci/report.json');
+          print(p.read_text(encoding='utf-8') if p.is_file() else 'No report was created');
+          [print('\n'+str(p)+'\n'+p.read_text(encoding='utf-8', errors='replace'))
+          for p in sorted(Path('target/p07-ci/logs').glob('*.log'))]"
+
+  full-host:
+    name: Full Linux host acceptance (manual, no migration bypasses)
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 180
+    env:
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_PROFILE_DEV_STRIP: debuginfo
+      CARGO_INCREMENTAL: '0'
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+      - uses: dtolnay/rust-toolchain@1.98.0
+        with:
+          components: rustfmt
+      - name: Native prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake g++ clang python3 zlib1g-dev
+      - name: Require Rust, emitted C, both HDL optimizer modes, and the full suite
+        run: >-
+          python3 tests/runtime_value_storage/validate.py --compiler gcc
+          --sanitizers --full --timeout 5400 --output target/p07-full-host
+      - name: Print full-host evidence to workflow logs
+        if: always()
+        run: >-
+          python3 -c "from pathlib import Path; p=Path('target/p07-full-host/report.json');
+          print(p.read_text(encoding='utf-8') if p.is_file() else 'No report was created');
+          [print('\n'+str(p)+'\n'+p.read_text(encoding='utf-8', errors='replace'))
+          for p in sorted(Path('target/p07-full-host/logs').glob('*.log'))]"

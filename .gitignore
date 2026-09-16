@@ -27,3 +27,5 @@ skills-lock.json
 temp
 reference
 /plan
+__pycache__/
+*.py[cod]

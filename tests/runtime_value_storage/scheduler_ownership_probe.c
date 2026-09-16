@@ -5,6 +5,28 @@
 
 static void never_run(llg_proc_t* proc) { (void)proc; abort(); }
 
+static void check_file_messages(void) {
+    char text[160];
+    char large[200];
+    memset(large, 'x', sizeof(large));
+    large[sizeof(large) - 1u] = 0;
+    llg_file_set_message(text, sizeof(text), large);
+    CHECK(strlen(text) == sizeof(text) - 1u);
+    CHECK(text[0] == 'x' && text[sizeof(text) - 2u] == 'x');
+    llg_file_set_message(text, sizeof(text), text);
+    CHECK(strlen(text) == sizeof(text) - 1u);
+    llg_file_set_message(text, sizeof(text), "prefix: diagnostic");
+    llg_file_set_message(text, sizeof(text), text + 8);
+    CHECK(strcmp(text, "diagnostic") == 0);
+    llg_file_set_message(text, sizeof(text), NULL);
+    CHECK(text[0] == 0);
+    text[1] = 's';
+    llg_file_set_message(text, 1, large);
+    CHECK(text[0] == 0 && text[1] == 's');
+    llg_file_set_message(text, 0, large);
+    CHECK(text[0] == 0 && text[1] == 's');
+}
+
 static void check_nba_and_scopes(void) {
     llg_rt_init();
     g.current_region = LLG_REGION_ACTIVE;
@@ -314,6 +336,7 @@ static void check_time_and_io(void) {
 }
 
 int main(void) {
+    check_file_messages();
     check_time_and_io();
     check_nba_and_scopes();
     check_frames();

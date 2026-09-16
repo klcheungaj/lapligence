@@ -7,6 +7,8 @@ parser = argparse.ArgumentParser(description="Independent integer checks and opt
 parser.add_argument("--dynamic", required=True, type=Path)
 parser.add_argument("--legacy", type=Path, help="Stage-01 value library built with LLG_MODEL_MAX_WIDTH=1024")
 options = parser.parse_args()
+if not __debug__:
+    parser.error("integer oracle requires assertions; disable Python -O/PYTHONOPTIMIZE")
 for path in (options.dynamic, options.legacy):
     if path is not None and not path.is_file():
         parser.error(f"Library does not exist: {path}")

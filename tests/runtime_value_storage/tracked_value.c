@@ -13,16 +13,32 @@ typedef union {
 } allocation_header_t;
 static size_t live_allocations;
 static size_t live_bytes;
+static size_t total_allocations;
+static size_t peak_bytes;
+static size_t peak_allocations;
 size_t value_test_live(void) { return live_allocations; }
 size_t value_test_bytes(void) { return live_bytes; }
+size_t value_test_allocations(void) { return total_allocations; }
+size_t value_test_peak_bytes(void) { return peak_bytes; }
+size_t value_test_peak_live(void) { return peak_allocations; }
+void value_test_reset_stats(void) {
+    total_allocations = 0;
+    peak_bytes = live_bytes;
+    peak_allocations = live_allocations;
+}
 
 static void* value_malloc(size_t bytes) {
-    if (bytes > SIZE_MAX - sizeof(allocation_header_t)) return NULL;
+    if (bytes > SIZE_MAX - sizeof(allocation_header_t) ||
+        bytes > SIZE_MAX - live_bytes || total_allocations == SIZE_MAX ||
+        live_allocations == SIZE_MAX) return NULL;
     allocation_header_t* header = malloc(sizeof(*header) + bytes);
     if (!header) return NULL;
     header->bytes = bytes;
     ++live_allocations;
     live_bytes += bytes;
+    ++total_allocations;
+    if (live_bytes > peak_bytes) peak_bytes = live_bytes;
+    if (live_allocations > peak_allocations) peak_allocations = live_allocations;
     return header + 1;
 }
 static void value_free(void* pointer) {

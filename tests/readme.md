@@ -257,3 +257,22 @@ Runtime source-assembly unit tests in `src/sim/rt/tests.rs` compare the C facade
 include order with the embedded flat implementation; they do not compile C or
 replace runtime execution tests. See [the source map](../docs/source_layout.md)
 for other unit-test and implementation domains.
+
+
+## Dynamic ownership validation
+
+- Run `python3 tests/runtime_value_storage/validate.py --compiler gcc --sanitizers`
+  for native Debug/Release components, strict flat C/ABI checks, independent
+  oracles and exact live-allocation plateau measurements.
+  - Add `--full` to require Rust checks, both opted-in emitted-model tests,
+    public HDL cases in both optimizer modes, and the repository suite.
+  - New or empty output directories retain `report.json` and actual command logs;
+    missing prerequisites and excluded platform components never count as passes.
+- [The component guide](runtime_value_storage/readme.md) describes portable and
+  native-fiber coverage, environment requirements, exit codes and memory metrics.
+- [HDL fixtures](fixtures/sim/dynamic_ownership/readme.md) are positive acceptance
+  tests, not claims that their migration-dependent generated paths already pass.
+- [Dynamic-owner CI](../.github/workflows/dynamic-owners.yml) configures scoped
+  Linux, macOS and Windows component checks plus a manual Linux full-host gate.
+  Reports and command logs are printed to workflow logs; it uploads no artifacts.
+  CI configuration is not native-platform execution evidence.

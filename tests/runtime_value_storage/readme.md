@@ -133,9 +133,77 @@ fenced runtime fixtures or unexecuted legacy golden tests as passing this ABI.
 
 The following standard-library Python helper verifies private fragment embedding
 order, compiles the three flat runtime translation units in strict C11, and
-checks current/stale ABI assertions. It requires GCC/Clang-style driver flags;
-it is not a Rust compiler or a native MSVC test.
+checks current/stale ABI assertions. It supports GCC/Clang and MSVC-style
+drivers; using it on Linux does not establish native MSVC compatibility.
 
 ```sh
 python tests/runtime_value_storage/check_flat_runtime.py --compiler gcc --compiler clang
 ```
+
+
+## P07 repeatable validation and measurements
+
+From the project root, run all available GCC/Clang native configurations and
+sanitizer-safe components:
+
+```sh
+python3 tests/runtime_value_storage/validate.py --compiler gcc --compiler clang --sanitizers
+```
+
+The default native configurations are **Debug and Release C builds**, not the
+HDL optimizer modes. The script creates a fresh `target/p07/<run>/` evidence
+directory with `report.json`, command logs and capability manifests. An explicit
+`--output` must be new or empty; it will not overwrite old evidence. A zero-test,
+missing-test, duplicate-test, disabled-test or stale-product result is rejected.
+Command timeouts terminate their process groups on POSIX or process trees on
+Windows. Python 3.10 or later and CMake/CTest are required.
+
+Add `--full` to require Cargo/Rust formatting and checking, structured emitter
+unit tests, ABI/cache tests, both ignored Rust-emitted C tests (numeric loop and
+16 start/advance/close cycles with a maximum-legal-width global), the public HDL
+ownership suite in both optimizer modes, and the full all-feature repository
+suite. Missing Rust is **blocked**, not passed; a successful Cargo command with
+zero executed tests is also rejected. Exit codes are 0 for requested checks
+passing, 1 for failures, and 2 for blocked prerequisites. The independent
+integer oracle refuses Python optimization modes that would disable its checks. The report remains
+host-scoped: it never certifies other operating systems or arbitrary coroutine
+sanitizer support.
+
+`--without-waveforms` and `--without-scheduler` are explicit component-only
+exclusions. CMake also records native libaco restrictions. The Windows MSVC CI
+lane deliberately covers values/containers only, without waveform or scheduler
+claims. The macOS lane records the actual architecture-dependent scheduler
+coverage. These CI jobs are configurations, not executed platform evidence.
+Full-host mode treats missing native waveform/scheduler/coroutine coverage as
+blocked. Its generated HDL execution is native, not an implicit sanitizer run.
+
+### New probes
+
+- `four_state_probe.c`: independent scalar four-state truth tables, exhaustive
+  one-bit states/signedness, seeded mixed-width values, X/Z conditionals,
+  equality, casts/resizing, aliasing selected writes, signed index extremes and
+  operand-independence checks. It runs under the component sanitizers as well.
+- `value_lifetime_benchmark.c`: dynamically allocated mixed-width descriptors,
+  one 1,048,575-bit sentinel, and repeated clone/replace/add/resize/move cycles.
+  Every completed cycle must return to the exact live-allocation/payload-byte
+  baseline; teardown must reach zero. JSON includes peak bytes, counts, CPU
+  time and checksum. The runner measures elapsed process time separately.
+- `test_validation_runner.py`: tests the runner's inventory, measurement,
+  process failure/timeout and artifact-selection checks.
+
+The tracked allocator measures allocations **inside the value implementation**,
+including its scratch allocations. It does not measure allocator metadata,
+whole-process RSS, all scheduler/container allocations or frontend memory.
+Sanitizers separately cover the exercised component lifecycles. The benchmark's
+`fixed_capacity_reference_bytes` is an analytical old-layout payload reference,
+not a measured run of the legacy simulator. CPU/elapsed numbers are observations
+for this value workload, not evidence of a whole-simulator speedup.
+
+```sh
+python3 -m unittest discover -s tests/runtime_value_storage -p test_validation_runner.py -v
+python3 tests/runtime_value_storage/check_flat_runtime.py --compiler gcc --compiler clang
+```
+
+The flat-source checker also accepts `cl`/`clang-cl` and
+`--without-scheduler` for portable value/container-only compilation. It first
+requires the current ABI to compile, then requires the stale ABI to fail.

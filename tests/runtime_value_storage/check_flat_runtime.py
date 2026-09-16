@@ -7,8 +7,8 @@ import tempfile
 from pathlib import Path
 
 
-def run(command: list[str], expect_success: bool = True) -> None:
-    result = subprocess.run(command, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+def run(command: list[str], expect_success: bool = True, cwd: Path | None = None) -> None:
+    result = subprocess.run(command, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, cwd=cwd, timeout=180)
     if (result.returncode == 0) != expect_success:
         raise RuntimeError(f"Unexpected compiler result: {' '.join(command)}\n{result.stdout}")
 
@@ -16,7 +16,9 @@ def run(command: list[str], expect_success: bool = True) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Compile flat runtime embeddings, not the Rust emitter.")
     parser.add_argument("--compiler", action="append", required=True,
-                        help="GCC/Clang-style compiler executable; repeat to test both")
+                        help="C compiler executable (GCC, Clang, cl, or clang-cl); repeat as needed")
+    parser.add_argument("--without-scheduler", action="store_true",
+                        help="Compile value/container only on hosts without native libaco support")
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[2]
     runtime = root / "src" / "sim" / "rt"
@@ -42,15 +44,26 @@ def main() -> int:
                  '_Static_assert(LLG_MODEL_VALUE_ABI == LLG_VALUE_ABI_VERSION, "ABI mismatch");\n')
         (output / "abi_probe.c").write_text(probe, encoding="utf-8")
         (output / "stale_abi.c").write_text(probe.replace("ABI 3", "ABI 2"), encoding="utf-8")
+        units = ["llg_value.c", "llg_container.c"]
+        if not args.without_scheduler:
+            units.append("llg_rt.c")
         for compiler in args.compiler:
-            common = [compiler, "-std=c11", "-Wall", "-Wextra", "-Werror", "-pedantic-errors",
-                      "-I", str(output)]
-            for name in ("llg_value.c", "llg_container.c", "llg_rt.c"):
-                run(common + ["-c", str(output / name), "-o", str(output / "probe.o")])
+            msvc = Path(compiler).stem.lower() in ("cl", "clang-cl")
+            common = ([compiler, "/nologo", "/std:c11", "/W4", "/WX", "/TC",
+                       "/D_CRT_SECURE_NO_WARNINGS", "/I" + str(output)] if msvc else
+                      [compiler, "-std=c11", "-Wall", "-Wextra", "-Werror", "-pedantic-errors",
+                       "-I", str(output)])
+            def command(name: str) -> list[str]:
+                return common + (["/c", str(output / name), "/Fo" + str(output / "probe.obj")]
+                                 if msvc else ["-c", str(output / name), "-o", str(output / "probe.o")])
+            for name in units:
+                run(command(name), cwd=output)
                 print(f"{compiler}: {name} PASS")
-            run(common + ["-fsyntax-only", str(output / "abi_probe.c")])
-            run(common + ["-fsyntax-only", str(output / "stale_abi.c")], expect_success=False)
+            run(command("abi_probe.c"), cwd=output)
+            run(command("stale_abi.c"), expect_success=False, cwd=output)
             print(f"{compiler}: accepted ABI 3 and rejected stale ABI 2")
+        if args.without_scheduler:
+            print("EXCLUDED: scheduler compilation (native libaco support not requested)")
     print("Runtime/ABI probes only; no Rust compilation or generated-HDL execution.")
     return 0
 
@@ -58,6 +71,6 @@ def main() -> int:
 if __name__ == "__main__":
     try:
         sys.exit(main())
-    except (OSError, ValueError, IndexError, RuntimeError) as error:
+    except (OSError, ValueError, IndexError, RuntimeError, subprocess.TimeoutExpired) as error:
         print(f"flat runtime check: {error}", file=sys.stderr)
         sys.exit(1)

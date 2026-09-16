@@ -1,18 +1,23 @@
 
-static void llg_file_set_message(char* target, const char* message) {
+static void llg_file_set_message(char* target, size_t capacity, const char* message) {
+    if (!capacity) return;
     const char* source = message ? message : "";
-    strncpy(target, source, sizeof(llg_file_global_message) - 1u);
-    target[sizeof(llg_file_global_message) - 1u] = 0;
+    size_t length = 0;
+    while (length < capacity - 1u && source[length]) ++length;
+    // Diagnostic text may be reused or shortened in place. Bound the read and
+    // accept overlap without strncpy's implicit padding/truncation contract.
+    memmove(target, source, length);
+    target[length] = 0;
 }
 
 static void llg_file_global_failure(const char* message) {
     llg_file_global_error = 1;
-    llg_file_set_message(llg_file_global_message, message);
+    llg_file_set_message(llg_file_global_message, sizeof(llg_file_global_message), message);
 }
 
 static void llg_file_slot_failure(llg_file_slot_t* slot, const char* message) {
     slot->error = 1;
-    llg_file_set_message(slot->message, message);
+    llg_file_set_message(slot->message, sizeof(slot->message), message);
 }
 
 static void llg_file_init_table(void) {

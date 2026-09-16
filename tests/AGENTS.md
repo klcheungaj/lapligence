@@ -62,6 +62,19 @@ LSP publication/config coverage for the same rule IDs.
 
 ## Suite map
 
+- `sim_dynamic_ownership.rs` is a positive P07 CLI gate: checked-in HDL fixtures
+  run through `llg` with and without optimization. Migration rejections fail the
+  test; never turn them into skips or expected successes. It covers numeric and
+  recursive results, branch side effects, wide intermediates, selected NBA
+  capture, task suspension/copy-out and finish cleanup.
+- `runtime_value_storage/validate.py` records host-scoped C, ABI, independent
+  oracle, allocation plateau and optional Rust/HDL evidence. It checks the exact
+  CTest inventory and distinguishes pass/failure/blocked/excluded results. A
+  component-only pass is not full P07 acceptance. `--full` requires Cargo, the
+  generated-model smoke/host tests, CLI acceptance and the repository suite.
+  The native stack-switch probes remain excluded from the component sanitizer
+  lane until the shared-stack sanitizer contract is validated.
+
 - `runtime_value_storage.rs` runs the standalone CMake suite in
   `runtime_value_storage/`: exact-width allocation accounting, copy/move/release,
   zero and supported-limit boundaries, injected allocation failure, deterministic

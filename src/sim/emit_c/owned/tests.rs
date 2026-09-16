@@ -2,6 +2,8 @@
 use super::*;
 use crate::sim::execution::ExecutionModel;
 
+mod toolchain;
+
 fn number(value: u64, width: u32) -> IrExpr {
     let count = ((width + 63) / 64) as usize;
     let mut bits = vec![0; count];
@@ -119,14 +121,68 @@ fn declaration_calls_remain_rejected_outside_coroutine_context() {
 #[test]
 #[ignore = "requires the Rust project build, a C compiler, and CMake"]
 fn structured_owned_model_executes_numeric_loop() {
-    use std::process::Command;
     let execution = ExecutionModel::lower(numeric_model()).unwrap();
     let source = super::super::model::render(&execution).unwrap();
-    let directory = std::env::temp_dir().join(format!("llg-owned-numeric-{}", std::process::id()));
-    std::fs::create_dir_all(&directory).unwrap();
-    let binary = crate::sim::build::build_model_cmake(&directory, &[("model.c", &source)]).unwrap();
-    let result = Command::new(&binary).output().unwrap();
+    let directory = toolchain::Directory::new("numeric");
+    let binary = crate::sim::build::build_model_cmake(directory.path(), &[("model.c", &source)]).unwrap();
+    let result = toolchain::execute(&binary);
     assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
     assert_eq!(String::from_utf8_lossy(&result.stdout).trim(), "1007");
-    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+#[ignore = "requires the Rust project build, a C compiler, and CMake"]
+fn structured_owned_model_reinitializes_with_host() {
+    let mut model = numeric_model();
+    model.signals.push(
+        IrSignal::new(
+            "G_wide".to_owned(),
+            None,
+            IrType::Packed {
+                width: (1 << 20) - 1,
+                signed: false,
+                two_state: false,
+            },
+            None,
+        )
+        .unwrap(),
+    );
+    let execution = ExecutionModel::lower(model).unwrap();
+    let source = super::super::model::render(&execution)
+        .unwrap()
+        .replacen(
+            "#define LLG_MODEL_VALUE_ABI 3",
+            "#define LLG_MODEL_VALUE_ABI 3\n#define LLG_MODEL_NO_MAIN 1",
+            1,
+        );
+    let host = r#"
+int llg_model_start(int argc, char** argv);
+int llg_model_advance(void);
+int llg_model_close(void);
+int main(void) {
+    if (llg_model_advance() != 1 || llg_model_close() != 0) return 10;
+    for (unsigned cycle = 0; cycle < 16; ++cycle) {
+        if (llg_model_start(0, 0) != 0) return 11;
+        if (llg_model_start(0, 0) != 1) return 12;
+        if (llg_model_advance() != 0) return 13;
+        if (llg_model_advance() != 0) return 14;
+        if (llg_model_close() != 0 || llg_model_close() != 0) return 15;
+    }
+    return 0;
+}
+"#;
+    let directory = toolchain::Directory::new("host");
+    let binary = crate::sim::build::build_model_cmake(
+        directory.path(),
+        &[("model.c", &source), ("host.c", host)],
+    )
+    .unwrap();
+    let result = toolchain::execute(&binary);
+    assert!(
+        result.status.success(),
+        "host status={:?}: {}",
+        result.status,
+        String::from_utf8_lossy(&result.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&result.stdout), "1007\n".repeat(16));
 }
