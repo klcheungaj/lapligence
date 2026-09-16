@@ -45,11 +45,15 @@ The [source map](../../docs/source_layout.md) locates responsibility modules.
 
 ## Validation and capacity
 
-Dynamic-runtime migration P03/P04 requires ownership-aware P05 emission before
-any C model is safe. Public render/model-build entry points are fail-closed until
-that migration and owned initialization are implemented; do not bypass the gate.
-See [runtime ownership](rt/value/ownership.md). Legacy selftests remain fenced
-pending fixture migration; the standalone owner suite is the active C check.
+Dynamic-runtime migration uses unique owners. Whole-model rendering now routes
+through `emit_c/owned/`: ordered numeric expressions, registered temporary/local
+scopes, and model startup/teardown. Unsupported storage, captures and callbacks
+must return a feature-specific error without falling back to legacy fragments.
+The detached expression/statement APIs remain fail-closed because a string alone
+cannot convey setup and cleanup. See [emitter coverage](emit_c/owned/readme.md)
+and [runtime ownership](rt/value/ownership.md). Legacy selftests remain fenced;
+the standalone owner suite is the active C check. The new Rust emitter still
+requires a Rust build and generated-model validation before acceptance.
 
 Treat `IrModelParts` as untrusted until `IrModel::from_parts` validates table
 references, storage shapes, registrations and nested nodes. Keep
@@ -62,8 +66,9 @@ the historical minimum. Account for typed expression storage across sequential
 statements and lexical arms: C compilers, especially sanitizers, may retain
 return-by-value temporaries for the whole function. Checked sizing failure
 stops emission. Runtime values now allocate by their own width; never reintroduce
-a model-maximum storage layout. P05/P06 must remove the old, currently gated
-emitter/cache width metadata before model generation is enabled again. Pass `LLG_MODEL_STACK_VALUES` from generated `main` through
+a model-maximum storage layout. `LLG_MODEL_VALUE_ABI` must match
+`LLG_VALUE_ABI_VERSION`; cache archives by this ownership ABI and runtime content,
+not a model width. Pass `LLG_MODEL_STACK_VALUES` from model startup through
 `llg_rt_init_with_args_precision_and_stack`, keeping stack headroom outside the
 compiled runtime ABI and retaining defensive runtime checks.
 
@@ -104,8 +109,8 @@ explicit link files; copy `svdpi.h` into generated trees.
 `generate_model_sources` (`--gen-only`) writes sources and CMake without building.
 `LLG_CMAKE` selects CMake; `LLG_CC`/`CC` selects the compiler; append `LLG_CFLAGS`.
 Reject double quotes in flags; missing CMake must name installation guidance.
-`cmake_available()` probes once per process. Cache runtime archives by packed
-width, source content, toolchain, flags, generator, launcher, platform and
+`cmake_available()` probes once per process. Cache runtime archives by ownership
+ABI, source content, toolchain, flags, generator, launcher, platform and
 waveform support. The default cache is `<workspace>/target/llg-runtime-cache`;
 `LLG_RUNTIME_CACHE_DIR` overrides it, with relative paths resolved from the
 workspace root.

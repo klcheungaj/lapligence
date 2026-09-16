@@ -17,7 +17,7 @@ const ABI_SAFETY_FACTOR: u64 = 8;
 /// Preserve the historical minimum headroom for small models.
 const MIN_VALUE_SLOTS: u64 = 256;
 
-/// Estimate the number of maximum-width `sv4_t` values that one coroutine
+/// Estimate the number of fixed-size `sv4_t` descriptors that one coroutine
 /// stack must accommodate.
 ///
 /// The estimate uses the largest function frame at every permitted recursion

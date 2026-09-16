@@ -2,12 +2,13 @@
 
 ## Migration boundary
 
-P03/P04 switched runtime values to unique ownership. P05 generated temporaries,
-activation owners and static initialization are not migrated: public C emission
-and model-build entry points intentionally return an ownership-migration error.
-Do not bypass that gate. The old runtime/wave selftests are explicitly fenced;
-use `tests/runtime_value_storage` until their fixtures are migrated. Full C/Rust
-parity, native-platform and generated-model gates remain required.
+Runtime values are unique owners. Whole-model rendering uses the structured
+numeric emitter and rejects unmigrated feature families; legacy fragment APIs
+and old runtime/wave selftests remain fenced. Do not bypass a feature guard or
+link stale generated C. The ABI marker is `LLG_VALUE_ABI_VERSION` (currently 3),
+not a model width. Use `tests/runtime_value_storage` for component checks;
+Rust-emitted model integration, full parity and native-platform gates remain.
+See [coverage](../emit_c/owned/readme.md) and [ownership](value/ownership.md).
 
 ## Purpose
 

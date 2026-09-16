@@ -9,23 +9,22 @@ mod expressions;
 mod model;
 mod names;
 mod objects;
+mod owned;
 mod stack;
 mod statements;
 
 /// Exclusive packed-width safeguard of the C runtime, not an IR restriction.
 /// Keep aligned with `LLG_SUPPORTED_WIDTH_LIMIT` in `rt/llg_value.h`.
 pub const LLG_WIDTH_LIMIT: u32 = 1 << 20;
+/// Generated model/runtime ownership ABI. Keep aligned with llg_value.h.
+pub const VALUE_ABI_VERSION: u32 = 3;
 /// Largest width supported by this C backend.
 pub const LLG_MAX_WIDTH: u32 = LLG_WIDTH_LIMIT - 1;
 
-/// P03/P04 use owning C values. The expression/activation emitter is the P05
-/// boundary and must not emit borrowed struct assignments or untracked owners.
-/// Remove this gate only with expression cleanup, cancellation cleanup, and
-/// owned static initialization in place; it has no runtime bypass.
+/// The legacy fragment APIs cannot represent ordered ownership setup/cleanup.
+/// Whole-model emission uses `owned::Frame` and rejects unmigrated features.
 pub(crate) const OWNER_MIGRATION_DIAGNOSTIC: &str =
-    "dynamic sv4_t runtime migration P03/P04 is installed; C model emission/build \
-     is paused until P05 implements generated expression/activation cleanup and \
-     owned initialization. Use tests/runtime_value_storage for runtime validation";
+    "legacy expression/statement fragments cannot manage dynamic sv4_t owners; use whole-model emission through the structured ownership emitter";
 
 pub(crate) fn require_owned_emission() -> Result<(), EmitError> {
     Err(EmitError::new(OWNER_MIGRATION_DIAGNOSTIC))

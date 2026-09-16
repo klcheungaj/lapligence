@@ -17,23 +17,8 @@ pub(super) fn render_signal_decls(model: &IrModel, out: &mut String) {
         }
         match sig.ty {
             IrType::Real { .. } => out.push_str(&format!("double {} = 0.0;\n", sig.c_name)),
-            IrType::Packed {
-                width,
-                signed,
-                two_state,
-            } => {
-                // `SV4_X` clamps to 64 bits, so init wide signals with an
-                // all-X brace initializer mirroring the runtime `sv4_x`.
-                let init = if two_state {
-                    emit_all_known_init(width, signed, false)
-                } else if width <= 64 {
-                    format!(
-                        "SV4_INIT(0, LLG_MASK({width}), 0, {width}, {})",
-                        signed as u8
-                    )
-                } else {
-                    emit_all_x_init(width, signed)
-                };
+            IrType::Packed { .. } => {
+                let init = "SV4_EMPTY";
                 out.push_str(&format!("sv4_t {} = {init};\n", sig.c_name));
             }
         }
@@ -43,16 +28,8 @@ pub(super) fn render_signal_decls(model: &IrModel, out: &mut String) {
         if !groups_emitted.insert(g.c_name.as_str()) {
             continue;
         }
-        let driver_init = if g.width <= 64 {
-            format!("SV4_Z({})", g.width)
-        } else {
-            emit_all_z_init(g.width)
-        };
-        let resolved_init = match g.kind {
-            IrNetKind::Tri0 | IrNetKind::Supply0 => emit_all_known_init(g.width, g.signed, false),
-            IrNetKind::Tri1 | IrNetKind::Supply1 => emit_all_known_init(g.width, g.signed, true),
-            IrNetKind::Wire | IrNetKind::Wand | IrNetKind::Wor => driver_init.clone(),
-        };
+        let driver_init = "SV4_EMPTY";
+        let resolved_init = "SV4_EMPTY";
         let mut driver_ptrs = Vec::with_capacity(g.n_drivers);
         for slot in 0..g.n_drivers {
             let cell = format!("{}_d{}", g.c_name, slot);
@@ -110,7 +87,7 @@ pub(super) fn render_signal_decls(model: &IrModel, out: &mut String) {
             })
             .collect::<Vec<_>>()
             .join(", ");
-        let visible = emit_all_x_init(sig.ty.width(), sig.ty.signed());
+        let visible = "SV4_EMPTY";
         out.push_str(&format!(
             "static const llg_net_alias_part_t llg_net_alias_{index}__parts[] = {{ {parts} }};\n\
              static llg_net_alias_t llg_net_alias_{index} = {{ &{}, {visible}, {}, {}, llg_net_alias_{index}__parts, {} }};\n",
@@ -183,18 +160,7 @@ pub(super) fn render_static_local_decls(model: &IrModel, out: &mut String) {
                 out.push_str(&format!("double {} = 0.0;\n", local.c_name()));
                 continue;
             }
-            let init = if local.two_state {
-                emit_all_known_init(local.width(), local.signed(), false)
-            } else if local.width() <= 64 {
-                format!(
-                    "SV4_INIT(0, LLG_MASK({}), 0, {}, {})",
-                    local.width(),
-                    local.width(),
-                    local.signed() as u8
-                )
-            } else {
-                emit_all_x_init(local.width(), local.signed())
-            };
+            let init = "SV4_EMPTY";
             out.push_str(&format!("sv4_t {} = {init};\n", local.c_name()));
         }
     }

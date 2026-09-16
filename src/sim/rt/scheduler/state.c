@@ -267,6 +267,7 @@ typedef struct llg_clocking_drive {
     llg_wait_src_t* specs;
     int n_specs;
     sv4_t* target;
+    llg_value_scope_t* target_scope;
     llg_net_t* net_target;
     int net_slot;
     double* real_target;

@@ -21,9 +21,13 @@ typedef enum {
     W_ASSERTION, // procedural expect waiting for one assertion endpoint
 } llg_wait_kind_t;
 
+static void value_scope_release(llg_value_scope_t* scope);
+static llg_value_scope_t* value_scope_retain_target(sv4_t* target);
+
 typedef struct llg_nba {
     struct llg_nba* next;
     sv4_t* target;
+    llg_value_scope_t* target_scope;
     llg_net_t* net_target;
     int net_slot;
     llg_event_object_t* event_target;
@@ -48,6 +52,7 @@ static void nba_destroy(llg_nba_t* nba) {
     sv4_destroy(&nba->value);
     sv4_destroy(&nba->mask);
     if (nba->is_string) llg_string_destroy(&nba->string_value);
+    value_scope_release(nba->target_scope);
     free(nba);
 }
 
@@ -240,11 +245,16 @@ typedef struct llg_program {
 
 struct llg_value_scope {
     struct llg_value_scope* next;
+    struct llg_value_scope* all_next;
+    struct llg_value_scope* all_prev;
+    size_t references;
+    int active;
     llg_proc_t* owner;
     size_t count;
     sv4_t* values;
 };
 static llg_value_scope_t* root_value_scopes;
+static llg_value_scope_t* all_value_scopes;
 
 struct llg_proc {
     llg_value_scope_t* value_scopes;

@@ -24,6 +24,7 @@ extern "C" {
 
 // ── 4-state values ────────────────────────────────────────────────────────────
 
+#define LLG_VALUE_ABI_VERSION 3u
 #define LLG_SUPPORTED_WIDTH_LIMIT (1u << 20)
 
 // A live value owns exactly one allocation, addressed by bits; x and z are

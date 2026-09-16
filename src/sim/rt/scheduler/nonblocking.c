@@ -56,7 +56,31 @@ void llg_nba_after(sv4_t* target, sv4_t value, uint64_t ticks) {
     llg_nba_t* n = new_nba(ticks);
     if (!n) return;
     n->target = target;
+    n->target_scope = value_scope_retain_target(target);
     sv4_copy(&n->value, &value);
+    enqueue_nba(n);
+}
+
+void llg_nba_net_after(llg_net_t* net, int slot, sv4_t value, uint64_t ticks) {
+    if (!net || slot < 0 || slot >= net->n_drivers || !net->drivers[slot]) return;
+    llg_nba_t* n = new_nba(ticks);
+    if (!n) return;
+    n->net_target = net;
+    n->net_slot = slot;
+    sv4_copy(&n->value, &value);
+    enqueue_nba(n);
+}
+
+void llg_nba_net_masked_after(llg_net_t* net, int slot, sv4_t value,
+                              sv4_t mask, uint64_t ticks) {
+    if (!net || slot < 0 || slot >= net->n_drivers || !net->drivers[slot]) return;
+    llg_nba_t* n = new_nba(ticks);
+    if (!n) return;
+    n->net_target = net;
+    n->net_slot = slot;
+    sv4_copy(&n->value, &value);
+    sv4_copy(&n->mask, &mask);
+    n->has_mask = 1;
     enqueue_nba(n);
 }
 
@@ -75,6 +99,7 @@ static void clocking_drive_schedule(const llg_clocking_drive_t* drive,
     memcpy(pending->specs, specs, (size_t)n_specs * sizeof(*specs));
     pending->n_specs = n_specs;
     pending->target = drive->target;
+    pending->target_scope = value_scope_retain_target(drive->target);
     pending->net_target = drive->net_target;
     pending->net_slot = drive->net_slot;
     pending->real_target = drive->real_target;
@@ -165,6 +190,7 @@ void llg_nba_masked(sv4_t* target, sv4_t value, sv4_t mask, uint64_t ticks) {
     llg_nba_t* n = new_nba(ticks);
     if (!n) return;
     n->target = target;
+    n->target_scope = value_scope_retain_target(target);
     sv4_copy(&n->value, &value);
     sv4_copy(&n->mask, &mask);
     n->has_mask = 1;

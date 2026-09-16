@@ -46,6 +46,8 @@ use initialization::render_main;
 /// The recursion depth guard shared by emitted functions and DPI thunks.
 const LLG_MAX_FUNC_DEPTH: u32 = 256;
 
+pub(super) fn owned_func_params(function: &IrFunc) -> String { func_params(function) }
+
 // ── Model rendering ───────────────────────────────────────────────────────────
 
 /// Render the complete `model.c` for a lowered (and optimized) IR model:
@@ -63,17 +65,17 @@ pub fn render(execution: &ExecutionModel) -> Result<String, EmitError> {
             super::LLG_WIDTH_LIMIT
         )));
     }
-    super::require_owned_emission()?;
-    render_model(execution, capacity as u32).map_err(EmitError::new)
+    super::owned::model::check_model(execution.ir()).map_err(EmitError::new)?;
+    render_model(execution).map_err(EmitError::new)
 }
 
-fn render_model(execution: &ExecutionModel, capacity: u32) -> Result<String, String> {
+fn render_model(execution: &ExecutionModel) -> Result<String, String> {
     let model = execution.ir();
     let mut out = format!(
         "// llg-generated C11 model for design `{}`\n",
         model.design_name
     );
-    out.push_str(&format!("#define LLG_MODEL_MAX_WIDTH {capacity}\n"));
+    out.push_str(&format!("#define LLG_MODEL_VALUE_ABI {}\n", super::VALUE_ABI_VERSION));
     out.push_str(&format!(
         "#define LLG_MODEL_STACK_VALUES {}\n",
         super::stack::execution_stack_value_slots(execution)?
@@ -84,6 +86,7 @@ fn render_model(execution: &ExecutionModel, capacity: u32) -> Result<String, Str
     out.push_str("#include \"llg_rt.h\"\n");
     out.push_str("#include \"llg_random.h\"\n");
     out.push_str("#include \"llg_vpi.h\"\n");
+    out.push_str("_Static_assert(LLG_MODEL_VALUE_ABI == LLG_VALUE_ABI_VERSION, \"regenerate model: incompatible value ownership ABI\");\n");
     if !model.containers.is_empty() {
         out.push_str("#include \"llg_container.h\"\n");
     }
@@ -113,13 +116,14 @@ fn render_model(execution: &ExecutionModel, capacity: u32) -> Result<String, Str
     render_vpi_metadata(model, &mut out);
     render_vpi_compile_calls(model, &mut out);
     render_static_local_decls(model, &mut out);
+    super::owned::model::persistent_returns(model, &mut out);
     for container in &model.containers {
         out.push_str(&super::containers::declaration_and_init(container)?.0);
     }
     for object in &model.objects {
         if object.ty == crate::sim::ir::IrObjectType::String {
             out.push_str(&format!(
-                "static sv4_t {}_llg_dep = SV4_C(0, 1);\n",
+                "static sv4_t {}_llg_dep = SV4_EMPTY;\n",
                 object.c_name
             ));
         }
@@ -142,15 +146,15 @@ fn render_model(execution: &ExecutionModel, capacity: u32) -> Result<String, Str
             a.total
         ));
         out.push_str(&format!(
-            "static sv4_t {}_llg_contents_dep = SV4_C(0, 1);\n\
+            "static sv4_t {}_llg_contents_dep = SV4_EMPTY;\n\
              static sv4_t {}_llg_element_deps[{}];\n",
             a.c_name, a.c_name, a.total
         ));
     }
     for container in &model.containers {
         out.push_str(&format!(
-            "static sv4_t {}_llg_contents_dep = SV4_C(0, 1);\n\
-             static sv4_t {}_llg_shape_dep = SV4_C(0, 1);\n",
+            "static sv4_t {}_llg_contents_dep = SV4_EMPTY;\n\
+             static sv4_t {}_llg_shape_dep = SV4_EMPTY;\n",
             container.c_name, container.c_name
         ));
     }
@@ -192,9 +196,9 @@ fn render_model(execution: &ExecutionModel, capacity: u32) -> Result<String, Str
             activation_label: None,
         };
         for pre in &f.pre_fns {
-            out.push_str(&render_pre_fn(&ctx, pre)?);
+            out.push_str(&super::owned::model::pre_function(&ctx, pre)?);
         }
-        out.push_str(&render_func_body(&fctx, f)?);
+        out.push_str(&super::owned::model::function(&fctx, f)?);
     }
     render_virtual_interface_call_bodies(model, &mut out);
     // Three passes lower comb drivers, links, then always/initial processes,
@@ -203,13 +207,12 @@ fn render_model(execution: &ExecutionModel, capacity: u32) -> Result<String, Str
     for executable in execution.processes() {
         let p = &model.processes[executable.semantic_process];
         for pre in &p.pre_fns {
-            out.push_str(&render_pre_fn(&ctx, pre)?);
+            out.push_str(&super::owned::model::pre_function(&ctx, pre)?);
         }
-        out.push_str(&render_process_fn(&ctx, p, executable)?);
+        out.push_str(&super::owned::model::process(&ctx, p, executable)?);
     }
-    out.push_str(&render_sampled_domain_callbacks(model)?);
-    out.push_str(&render_assertion_callbacks(model)?);
-    out.push_str(&render_main(execution)?);
+    super::owned::model::storage_lifecycle(model, &mut out)?;
+    out.push_str(&super::owned::model::main(execution)?);
     Ok(out)
 }
 

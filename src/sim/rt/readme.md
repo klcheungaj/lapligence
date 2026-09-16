@@ -1,5 +1,21 @@
 # `sim/rt`
 
+## Dynamic runtime integration status
+
+The main value is already dynamically owned. The structured numeric whole-model
+emitter now has explicit lifetime code; feature-specific gates still reject
+unmigrated paths. This is an intermediate migration, not restored full HDL
+simulation. See [ownership](value/ownership.md) and
+[emitter coverage](../emit_c/owned/readme.md). Runtime scopes support lexical
+marks and retained packed NBA/clocking target cells. The active model/cache ABI
+is version 3 and no longer depends on model maximum width.
+
+The new Rust emitter requires compilation/integration validation; standalone C
+probes are not proof that emitted source compiles. Any historical renderer
+capability descriptions below remain subject to the current feature gates.
+
+## Runtime components
+
 - **Purpose:** embedded C11 runtime sources compiled into cached static archives
   for generated models; they are not linked into Rust binaries.
 - **Value layer:** `llg_value.h/.c` implements dynamically allocated four-state
@@ -207,13 +223,14 @@ slots no longer embed a 1,024-byte path. Writer scratch is dynamic and is releas
 on close. Other formatting, parsing and VPI scratch is sized for the current
 request rather than the model maximum.
 
-**This is a staged runtime branch, not a working generated-model release.** The
-P05 emitter still needs named temporary cleanup, owned model initialization,
-copy-in/out and suspension/cancellation integration. Public C emission and model
-build entry points fail with an explicit migration diagnostic to prevent unsafe
-code generation. Old selftests with by-value/static-owner assumptions are fenced
-until migrated. P06 still removes obsolete emitter/cache/stack metadata; P07
-covers full generated simulations, Rust/C parity, native platforms and benchmarks.
+**This is a staged branch, not a validated generated-model release.** The
+structured numeric P05 emitter now implements temporary cleanup, owned model
+initialization, numeric calls and registered lifetime boundaries. Unmigrated
+features and legacy fragment APIs remain gated; no old by-value fallback is
+permitted. Old selftests with static-owner assumptions remain fenced. Active
+P06 metadata/cache sizing now uses ownership ABI 3 rather than model width.
+Rust compilation, generated simulations, complete P05 coverage, Rust/C parity,
+native platforms and benchmarks remain acceptance work.
 
 Use the [standalone owner tests](../../../tests/runtime_value_storage/readme.md)
 for this stage. They exercise actual runtime code without Rust or Slang. Native

@@ -91,10 +91,51 @@ separate. This is not the repository's Rust/C parity gate.
 
 ## Integration boundary
 
-Public C model emission/build is deliberately paused until P05 implements owned
-initialization, temporary cleanup and activation/cancellation lifetimes. The old
+The structured numeric whole-model path has owned initialization and cleanup,
+but unmigrated features and legacy fragment APIs still reject emission. The old
 runtime/wave selftests are explicitly fenced because their nested temporary and
 static-initializer assumptions are unsafe with owners. They must be migrated,
 not silently run without leak checks. Full generated HDL, complete Rust/C parity,
 native macOS/MSVC and performance benchmarks are still outstanding. A component
 suite passing does not certify unexecuted paths or prove a whole-runtime speedup.
+
+
+## P05/P06 increment
+
+`generated_scopes_probe.c` and `generated_coroutine_probe.c` are **hand-authored
+C output-shape probes**, not files produced by running the Rust emitter. They
+exercise registered expression scopes, short-lived cells retained by delayed
+NBA/clocking writes, clocking-to-NBA transfer, distinct repeated lexical cells,
+selected net masks/regions, recursive ownership patterns, yielding calls,
+process completion, nonreturning finish, cancellation and stop/resume/close.
+Allocation counters cover packed payloads; leak sanitizers additionally cover
+ordinary heap allocations in the non-fiber suite.
+
+Actual coroutine switching is native-only until libaco advertises sanitizer
+fiber-switch hooks. The sanitizer configuration excludes both coroutine probes;
+it still tests production scheduler queue/cleanup paths without stack switches.
+The C test suite does not compile or execute the new Rust emitter.
+
+New Rust tests are in `src/sim/emit_c/owned/tests.rs`. The ignored execution test
+renders a numeric `ExecutionModel`, builds its C and checks a 1,000-iteration
+result. It is not a frontend/HDL integration test. These tests and the new build
+ABI/cache tests were not run in the delivery environment (no Rust toolchain).
+
+```sh
+cargo test --lib --no-default-features sim::emit_c::owned::tests
+cargo test --lib --no-default-features structured_owned_model_executes_numeric_loop -- --ignored
+```
+
+The structured renderer keeps feature-specific guards until captured objects,
+callbacks and other outstanding ownership paths are implemented; see its
+[coverage matrix](../../src/sim/emit_c/owned/readme.md). Do not treat the old
+fenced runtime fixtures or unexecuted legacy golden tests as passing this ABI.
+
+The following standard-library Python helper verifies private fragment embedding
+order, compiles the three flat runtime translation units in strict C11, and
+checks current/stale ABI assertions. It requires GCC/Clang-style driver flags;
+it is not a Rust compiler or a native MSVC test.
+
+```sh
+python tests/runtime_value_storage/check_flat_runtime.py --compiler gcc --compiler clang
+```

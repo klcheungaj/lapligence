@@ -60,6 +60,7 @@ const CMAKELISTS_TEMPLATE: &str = r#"cmake_minimum_required(VERSION 3.16)
 project(llg_sim_model C ASM)
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
+set(CMAKE_C_EXTENSIONS OFF)
 if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Release)
 endif()
@@ -73,7 +74,6 @@ if(LLG_RUNTIME_LIBRARY)
 else()
   add_executable(sim {ALL_SOURCES})
 endif()
-target_compile_definitions(sim PRIVATE LLG_MODEL_MAX_WIDTH={MODEL_WIDTH})
 set_target_properties(sim PROPERTIES ENABLE_EXPORTS ON)
 if(NOT MSVC)
   target_link_libraries(sim PRIVATE m)
@@ -89,12 +89,12 @@ const RUNTIME_CMAKELISTS_TEMPLATE: &str = r#"cmake_minimum_required(VERSION 3.16
 project(llg_sim_runtime C ASM)
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
+set(CMAKE_C_EXTENSIONS OFF)
 if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Release)
 endif()
 add_library(llg_runtime STATIC {RUNTIME_SOURCES})
 target_include_directories(llg_runtime PRIVATE ${CMAKE_SOURCE_DIR})
-target_compile_definitions(llg_runtime PRIVATE LLG_MODEL_MAX_WIDTH={MODEL_WIDTH})
 {WAVE_DEFINITION}
 "#;
 
@@ -130,8 +130,6 @@ pub struct CmakeBuildOpts {
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum BuildError {
-    /// Owning runtime values require the P05 generated lifetime migration.
-    OwnerMigrationPending,
     /// A direct filesystem operation in this module failed.
     Io {
         action: &'static str,
@@ -140,8 +138,8 @@ pub enum BuildError {
     },
     /// One `LLG_CFLAGS` token cannot be represented safely in CMake's cache.
     InvalidCompilerFlag(String),
-    /// Generated source requested an invalid packed-value ABI capacity.
-    InvalidModelWidth(String),
+    /// Generated source is missing or has an incompatible value ownership ABI.
+    InvalidModelAbi(String),
     /// Generated source requested invalid coroutine stack metadata.
     InvalidModelStack(String),
     /// A user-supplied DPI-C library is missing or cannot be represented
@@ -172,7 +170,6 @@ impl BuildError {
 impl fmt::Display for BuildError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::OwnerMigrationPending => f.write_str(super::emit_c::OWNER_MIGRATION_DIAGNOSTIC),
             Self::Io {
                 action,
                 path,
@@ -182,7 +179,7 @@ impl fmt::Display for BuildError {
                 f,
                 "LLG_CFLAGS flag `{flag}` contains a double quote; quoted flags cannot be passed through the CMake cache"
             ),
-            Self::InvalidModelWidth(width) => write!(f, "invalid generated model packed width `{width}`; expected 1..{}", super::emit_c::LLG_WIDTH_LIMIT),
+            Self::InvalidModelAbi(value) => write!(f, "incompatible generated model value ABI `{value}`; regenerate the model with ABI {}", super::emit_c::VALUE_ABI_VERSION),
             Self::InvalidModelStack(value) => write!(f, "invalid generated model stack value count `{value}`"),
             Self::InvalidDpiLibrary { path, reason } => write!(
                 f,
@@ -246,9 +243,8 @@ pub fn build_model_cmake_with_opts(
     let flags = c_flags()?;
     let build_dir = out_dir.join("build");
     let cmake_prog = resolve_cmake();
-    let width = model_capacity(extra)?;
     let waveform = waveform_enabled(extra);
-    let runtime_library = prepare_runtime_cache(width, waveform, &cc, &flags, &cmake_prog, opts)?;
+    let runtime_library = prepare_runtime_cache(waveform, &cc, &flags, &cmake_prog, opts)?;
 
     // Drop an incompatible CMake build tree so configure starts clean: no
     // cache means a previous configure died midway; a generator mismatch
@@ -337,7 +333,7 @@ pub fn generate_model_sources_with_opts(
     extra: &[(&str, &str)],
     opts: &CmakeBuildOpts,
 ) -> Result<(), BuildError> {
-    super::emit_c::require_owned_emission().map_err(|_| BuildError::OwnerMigrationPending)?;
+    validate_model_abi(extra)?;
     validate_dpi_libraries(opts)?;
     super::write_sim_sources(out_dir, extra)?;
     let waveform = waveform_enabled(extra);
@@ -473,7 +469,6 @@ fn write_cmakelists(
     let cmakelists = CMAKELISTS_TEMPLATE
         .replace("{MODEL_SOURCES}", &model_sources.join(" "))
         .replace("{ALL_SOURCES}", &sources.join(" "))
-        .replace("{MODEL_WIDTH}", &model_capacity(extra)?.to_string())
         .replace("{WAVE_SETUP}", if waveform { WAVE_CMAKE } else { "" })
         .replace("{DPI_LINK}", &dpi_link_setup(opts)?);
     let cmakelists_path = out_dir.join("CMakeLists.txt");
@@ -554,18 +549,17 @@ fn dpi_link_setup(opts: &CmakeBuildOpts) -> Result<String, BuildError> {
 
 /// Build or reuse the immutable runtime archive for one value-layout ABI.
 ///
-/// The packed width remains part of `sv4_t`'s C layout, so it is necessarily
-/// part of the cache key. Stack headroom is deliberately absent: generated
+/// Packed widths do not affect the dynamic value layout or the cache key.
+/// Stack headroom is deliberately absent: generated
 /// model code passes that value to `llg_rt_init_with_stack` at runtime.
 fn prepare_runtime_cache(
-    width: u32,
     waveform: bool,
     cc: &str,
     flags: &str,
     cmake_prog: &str,
     opts: &CmakeBuildOpts,
 ) -> Result<PathBuf, BuildError> {
-    let key = runtime_cache_key(width, waveform, cc, flags, cmake_prog, opts);
+    let key = runtime_cache_key(waveform, cc, flags, cmake_prog, opts);
     let cache_root = runtime_cache_root();
     let entry = cache_root.join(key);
     if let Some(library) = cached_runtime_library(&entry) {
@@ -606,7 +600,6 @@ fn prepare_runtime_cache(
     let runtime_sources = runtime_source_names(waveform).join(" ");
     let cmakelists = RUNTIME_CMAKELISTS_TEMPLATE
         .replace("{RUNTIME_SOURCES}", &runtime_sources)
-        .replace("{MODEL_WIDTH}", &width.to_string())
         .replace(
             "{WAVE_DEFINITION}",
             if waveform {
@@ -720,7 +713,6 @@ fn runtime_cache_root_with_override(override_root: Option<PathBuf>) -> PathBuf {
 }
 
 fn runtime_cache_key(
-    width: u32,
     waveform: bool,
     cc: &str,
     flags: &str,
@@ -775,7 +767,7 @@ fn runtime_cache_key(
             }
         }
     }
-    format!("w{width}-wave{}-{hash:016x}", u8::from(waveform))
+    format!("owned-v{}-wave{}-{hash:016x}", super::emit_c::VALUE_ABI_VERSION, u8::from(waveform))
 }
 
 fn compiler_identity(cc: &str) -> String {
@@ -852,28 +844,29 @@ impl RuntimeCacheLock {
     }
 }
 
-fn model_capacity(extra: &[(&str, &str)]) -> Result<u32, BuildError> {
-    let mut capacity = None;
-    for (_, source) in extra {
+/// Hand-written C probes may omit model metadata. Generated model translation
+/// units must opt into the ownership ABI explicitly; old source is never guessed
+/// compatible from a default packed capacity.
+fn validate_model_abi(extra: &[(&str, &str)]) -> Result<(), BuildError> {
+    for (name, source) in extra {
+        let mut abi = None;
         for line in source.lines() {
-            if let Some(value) = line.strip_prefix("#define LLG_MODEL_MAX_WIDTH ") {
-                let width = value
-                    .trim()
-                    .parse::<u32>()
-                    .ok()
-                    .filter(|width| (1..super::emit_c::LLG_WIDTH_LIMIT).contains(width))
-                    .ok_or_else(|| BuildError::InvalidModelWidth(value.to_string()))?;
-                if capacity.is_some_and(|previous| previous != width) {
-                    return Err(BuildError::InvalidModelWidth(format!(
-                        "conflicting capacities {capacity:?} and {width}"
-                    )));
+            if let Some(value) = line.strip_prefix("#define LLG_MODEL_VALUE_ABI ") {
+                let value = value.trim();
+                let parsed = value.parse::<u32>().ok();
+                if parsed != Some(super::emit_c::VALUE_ABI_VERSION) || abi.is_some() {
+                    return Err(BuildError::InvalidModelAbi(value.to_owned()));
                 }
-                capacity = Some(width);
+                abi = parsed;
             }
         }
+        let generated = Path::new(name).file_name().is_some_and(|base| base == "model.c")
+            || source.starts_with("// llg-generated C11 model");
+        if generated && abi.is_none() {
+            return Err(BuildError::InvalidModelAbi(format!("missing in {name}")));
+        }
     }
-    // Standalone C runtime self-tests do not carry generated model metadata.
-    Ok(capacity.unwrap_or(1024))
+    Ok(())
 }
 
 fn model_stack_values(extra: &[(&str, &str)]) -> Result<u64, BuildError> {
@@ -1049,51 +1042,31 @@ mod tests {
     use std::sync::atomic::{AtomicU64, Ordering};
 
     #[test]
-    fn model_metadata_selects_one_consistent_runtime_abi() {
-        assert_eq!(model_capacity(&[]).unwrap(), 1024);
+    fn model_metadata_requires_current_ownership_abi() {
+        assert!(validate_model_abi(&[]).is_ok());
         assert_eq!(model_stack_values(&[]).unwrap(), 256);
-        let source = "#define LLG_MODEL_MAX_WIDTH 65536\n#define LLG_MODEL_STACK_VALUES 4096\n";
-        assert_eq!(model_capacity(&[("model.c", source)]).unwrap(), 65536);
-        assert_eq!(model_stack_values(&[("model.c", source)]).unwrap(), 4096);
-        for invalid in ["0", "1048576", "1048577", "4294967296", "(1 << 20)"] {
-            let source = format!("#define LLG_MODEL_MAX_WIDTH {invalid}\n");
-            assert!(matches!(
-                model_capacity(&[("model.c", &source)]),
-                Err(BuildError::InvalidModelWidth(_))
-            ));
+        let source = format!("#define LLG_MODEL_VALUE_ABI {}\n#define LLG_MODEL_STACK_VALUES 4096\n", super::super::emit_c::VALUE_ABI_VERSION);
+        assert!(validate_model_abi(&[("model.c", &source)]).is_ok());
+        assert_eq!(model_stack_values(&[("model.c", &source)]).unwrap(), 4096);
+        for invalid in ["", "#define LLG_MODEL_VALUE_ABI 0\n", "#define LLG_MODEL_VALUE_ABI 2\n"] {
+            assert!(matches!(validate_model_abi(&[("model.c", invalid)]), Err(BuildError::InvalidModelAbi(_))));
         }
-        assert!(model_capacity(&[
-            ("a.c", "#define LLG_MODEL_MAX_WIDTH 128\n"),
-            ("b.c", "#define LLG_MODEL_MAX_WIDTH 256\n")
-        ])
-        .is_err());
+        let duplicate = format!("{source}{source}");
+        assert!(validate_model_abi(&[("model.c", &duplicate)]).is_err());
         assert!(model_stack_values(&[("a.c", "#define LLG_MODEL_STACK_VALUES 0\n")]).is_err());
+        assert!(!CMAKELISTS_TEMPLATE.contains("MODEL_WIDTH"));
+        assert!(!RUNTIME_CMAKELISTS_TEMPLATE.contains("MODEL_WIDTH"));
     }
 
     #[test]
-    fn runtime_cache_key_varies_with_abi_and_toolchain_options() {
+    fn runtime_cache_key_varies_with_toolchain_and_waveforms_not_model_width() {
         let defaults = CmakeBuildOpts::default();
-        let base = runtime_cache_key(64, false, "cc", "-O2", "cmake", &defaults);
-        assert_eq!(
-            base,
-            runtime_cache_key(64, false, "cc", "-O2", "cmake", &defaults)
-        );
-        assert_ne!(
-            base,
-            runtime_cache_key(128, false, "cc", "-O2", "cmake", &defaults)
-        );
-        assert_ne!(
-            base,
-            runtime_cache_key(64, true, "cc", "-O2", "cmake", &defaults)
-        );
-        let launched = CmakeBuildOpts {
-            launcher: Some("ccache".to_owned()),
-            ..Default::default()
-        };
-        assert_ne!(
-            base,
-            runtime_cache_key(64, false, "cc", "-O2", "cmake", &launched)
-        );
+        let base = runtime_cache_key(false, "cc", "-O2", "cmake", &defaults);
+        assert_eq!(base, runtime_cache_key(false, "cc", "-O2", "cmake", &defaults));
+        assert!(base.starts_with("owned-v"));
+        assert_ne!(base, runtime_cache_key(true, "cc", "-O2", "cmake", &defaults));
+        let launched = CmakeBuildOpts { launcher: Some("ccache".to_owned()), ..Default::default() };
+        assert_ne!(base, runtime_cache_key(false, "cc", "-O2", "cmake", &launched));
     }
 
     #[test]

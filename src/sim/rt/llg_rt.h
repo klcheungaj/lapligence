@@ -188,6 +188,10 @@ typedef struct llg_value_scope llg_value_scope_t;
 llg_value_scope_t* llg_value_scope_begin(size_t count);
 sv4_t* llg_value_scope_values(llg_value_scope_t* scope);
 void llg_value_scope_end(llg_value_scope_t* scope);
+// A mark borrows the current active-scope head. It is valid until its enclosing
+// scope ends. End-since performs lexical return/goto cleanup, excluding mark.
+llg_value_scope_t* llg_value_scope_mark(void);
+void llg_value_scopes_end_since(llg_value_scope_t* mark);
 
 typedef struct llg_proc llg_proc_t;
 typedef struct llg_process_handle llg_process_handle_t;
@@ -347,7 +351,7 @@ void llg_rt_init_with_precision(uint64_t precision_fs);
 void llg_rt_init_with_args_and_precision(int argc, char** argv,
                                          uint64_t precision_fs);
 // Initialize with model-specific coroutine stack headroom. The value counts
-// maximum-width sv4_t slots and is kept out of the runtime's compiled ABI so
+// fixed-size sv4_t descriptor slots and is kept out of the runtime's compiled ABI so
 // one runtime archive can serve models with different frame requirements.
 void llg_rt_init_with_stack(size_t stack_values);
 // Combine command-line arguments, scheduler precision, and model-specific
@@ -1139,6 +1143,10 @@ void llg_nba(sv4_t* target, sv4_t value);
 // Capture values now, retaining target storage through the future NBA commit.
 // A zero tick delay stays in the current time slot's NBA region.
 void llg_nba_after(sv4_t* target, sv4_t value, uint64_t ticks);
+/* Model-owned net/driver descriptors outlive all queued writes. */
+void llg_nba_net_after(llg_net_t* net, int slot, sv4_t value, uint64_t ticks);
+void llg_nba_net_masked_after(llg_net_t* net, int slot, sv4_t value,
+                              sv4_t mask, uint64_t ticks);
 // Synchronous drives use the target clocking event. If the event has not
 // occurred in the current time slot, the runtime retains the captured value
 // until the next matching event before applying the output skew.

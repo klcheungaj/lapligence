@@ -133,6 +133,7 @@ static void free_clocking_drive(llg_clocking_drive_t* drive) {
     if (!drive) return;
     sv4_destroy(&drive->value);
     sv4_destroy(&drive->mask);
+    value_scope_release(drive->target_scope);
     free(drive->specs);
     free(drive);
 }
@@ -141,6 +142,7 @@ static void clocking_drive_enqueue(const llg_clocking_drive_t* drive) {
     llg_nba_t* n = new_clocking_nba(drive->ticks);
     if (!n) return;
     n->target = drive->target;
+    n->target_scope = value_scope_retain_target(drive->target);
     n->net_target = drive->net_target;
     n->net_slot = drive->net_slot;
     sv4_copy(&n->value, &drive->value);
