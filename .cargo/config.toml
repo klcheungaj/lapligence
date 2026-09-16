@@ -11,10 +11,10 @@ linker = "x86_64-linux-musl-gcc"
 rustflags = ["-C", "target-feature=+crt-static"]
 
 # Suppress libmimalloc-sys's own build-script link output on musl.
-# build.rs compiles mimalloc's C source together with mimalloc_shim.c into
-# one archive (libmimalloc_with_shim.a), so mi_malloc and __wrap_malloc are
-# in the same .a and the linker resolves them in a single pass — no
-# linker-ordering undefined-reference issue.
+# build.rs compiles mimalloc's C source together with mimalloc_shim.c and
+# links that combined archive through both library metadata and every final
+# package target. This avoids duplicate mimalloc implementations while covering
+# targets that do not import the llg library.
 [target.x86_64-unknown-linux-musl.mimalloc]
 rustc-link-lib = []
 rustc-link-search = []

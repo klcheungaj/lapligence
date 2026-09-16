@@ -97,6 +97,7 @@ RUN mkdir -p src/bin && \
 
 # Fetch all crates into the image (no cache mount – crates must live in the layer).
 RUN cargo fetch --locked --target x86_64-unknown-linux-musl
+RUN cargo install cargo-nextest --locked --target x86_64-unknown-linux-musl
 
 # Remove stubs; real sources are bind-mounted from the host at runtime.
 RUN rm -f src/main.rs src/bin/helloslang.rs

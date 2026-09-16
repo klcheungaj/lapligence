@@ -48,7 +48,10 @@ These modes print to stdout and exit successfully before installing memory
 guards, compiling, or serving. Version text uses `env!("CARGO_PKG_VERSION")`.
 
 `llg_ls` and `helloworld` set mimalloc's `#[global_allocator]`; musl builds
-also wrap C allocation for every binary in the root build script. Binaries may install
+also wrap C allocation for every binary in the root build script. The combined
+shim and mimalloc archive is carried through library metadata and passed to
+every final package target because the wrap flags also apply to tests that do
+not directly import `llg`. Binaries may install
 `llg::memory_limit::install[_with_logger]`; policy, defaults, native behavior,
 and generated-child limits are in [../AGENTS.md](../AGENTS.md).
 Platform calls stay in `ffi/process_memory.rs`. The LSP logger uses `LLG_LOG`

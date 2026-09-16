@@ -292,8 +292,10 @@ The `build` matrix in [ci.yml](../.github/workflows/ci.yml) is configured to pro
 binaries for Linux x86_64/arm64, Windows x86_64/arm64, and macOS arm64. It checks target
 architecture, fully static Linux linkage, static Windows CRT linkage, system-only Windows/macOS
 dynamic imports, and a driver startup smoke test before packaging both executables with
-checksums. On release publication, `release` waits for every test/audit/build job, checks the
-five package checksums, and attaches packages and checksum files to the existing GitHub Release.
+checksums. The Alpine legs also list `cli_info` tests from a small release test binary to catch
+allocator or libc startup failures before runtime tests execute. On release publication,
+`release` waits for every test/audit/build job, checks the five package checksums, and attaches
+packages and checksum files to the existing GitHub Release.
 Only that job receives `contents: write`. CI never creates or publishes a release or edits its
 metadata; reruns replace assets with matching names. Packages use
 `lapligence-<version>-<os>-<arch>.<ext>`, removing the tag's leading `v`, with

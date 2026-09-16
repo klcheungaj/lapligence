@@ -276,6 +276,9 @@ jobs:
                   ;;
               esac
               cargo build --locked --release --bin llg_ls --bin llg --target "$LLG_TARGET"
+              # A small test harness exposes accidental dynamic libc links
+              # that larger frontend binaries can mask by pulling libc.a first.
+              cargo test --locked --release --test cli_info --target "$LLG_TARGET" -- --list --format terse
             '
 
       - name: Build release executables

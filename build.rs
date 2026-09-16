@@ -218,15 +218,16 @@ fn build_slang(manifest_dir: &Path) {
     println!("cargo:rustc-link-lib=static=fmt");
 
     if is_musl {
-        build_mimalloc_shim(manifest_dir, &target);
+        let mimalloc_archive = build_mimalloc_shim(manifest_dir, &target);
         let drivers = collect_driver_candidates(&target);
-        let archives = find_static_archives(&drivers, &["stdc++"], &["supc++", "gcc_eh", "gcc"]);
+        let archives = find_static_archives(&drivers, &["stdc++", "gcc"], &["supc++", "gcc_eh"]);
         for archive in ["stdc++", "supc++", "gcc_eh", "gcc"] {
             if archives.contains(archive) {
                 println!("cargo:rustc-link-lib=static={archive}");
             }
         }
         println!("cargo:rustc-link-arg=-static");
+        emit_mimalloc_link_args(&mimalloc_archive, &archives);
     } else {
         match target_os.as_str() {
             "macos" => println!("cargo:rustc-link-lib=dylib=c++"),
@@ -239,7 +240,7 @@ fn build_slang(manifest_dir: &Path) {
     }
 }
 
-fn build_mimalloc_shim(manifest_dir: &Path, target: &str) {
+fn build_mimalloc_shim(manifest_dir: &Path, target: &str) -> PathBuf {
     let mimalloc = find_libmimalloc_sys_src(manifest_dir);
     let include = mimalloc.join("c_src/mimalloc/v3/include");
     let source_dir = mimalloc.join("c_src/mimalloc/v3/src");
@@ -247,6 +248,9 @@ fn build_mimalloc_shim(manifest_dir: &Path, target: &str) {
     println!("cargo:rerun-if-changed={}", source.display());
 
     cc::Build::new()
+        // Keep cc-rs metadata so downstream consumers of the Rust library get
+        // the allocator archive. Package tests and binaries can link without
+        // using that library, so they also receive its absolute path below.
         .compiler(target_tool("gcc", target, "CC"))
         .file(manifest_dir.join("src/wrapper/mimalloc_shim.c"))
         .file(source)
@@ -257,6 +261,24 @@ fn build_mimalloc_shim(manifest_dir: &Path, target: &str) {
         .flag_if_supported("-ftls-model=initial-exec")
         .compile("mimalloc_with_shim");
 
+    let out_dir = PathBuf::from(
+        std::env::var_os("OUT_DIR").expect("Cargo must set OUT_DIR for the build script"),
+    );
+    let archive = out_dir.join("libmimalloc_with_shim.a");
+    assert!(
+        archive.is_file(),
+        "cc did not produce the combined musl allocator archive {}",
+        archive.display()
+    );
+    archive.canonicalize().unwrap_or_else(|error| {
+        panic!(
+            "failed to canonicalize combined musl allocator archive {}: {error}",
+            archive.display()
+        )
+    })
+}
+
+fn emit_mimalloc_link_args(archive: &Path, available: &std::collections::BTreeSet<String>) {
     for symbol in [
         "malloc",
         "calloc",
@@ -267,6 +289,26 @@ fn build_mimalloc_shim(manifest_dir: &Path, target: &str) {
     ] {
         println!("cargo:rustc-link-arg=-Wl,--wrap={symbol}");
     }
+
+    // `rustc-link-arg` values appear after Rust's standard-library archives.
+    // The undefined wrapper symbol extracts the shim and mimalloc objects from
+    // the archive without making a repeated metadata link define them twice.
+    // Then rescan static libc and the compiler runtime for mimalloc's uses.
+    // rustc may have switched to dynamic library lookup before link args are
+    // appended; without this, small test binaries can pick libc.so and crash
+    // in the static PIE startup code before their test harness runs.
+    println!("cargo:rustc-link-arg=-Wl,--undefined=__wrap_malloc");
+    println!("cargo:rustc-link-arg=-Wl,-Bstatic");
+    println!("cargo:rustc-link-arg=-Wl,--start-group");
+    println!("cargo:rustc-link-arg={}", archive.display());
+    println!("cargo:rustc-link-arg=-lc");
+    if available.contains("gcc_eh") {
+        println!("cargo:rustc-link-arg=-lgcc_eh");
+    }
+    if available.contains("gcc") {
+        println!("cargo:rustc-link-arg=-lgcc");
+    }
+    println!("cargo:rustc-link-arg=-Wl,--end-group");
 }
 
 fn collect_driver_candidates(target: &str) -> Vec<String> {
