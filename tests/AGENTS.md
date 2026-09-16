@@ -127,6 +127,10 @@ diagnostics. Keep the existing per-suite frontend, skip, timeout, and sanitizer 
 - `sim_procedural_assign.rs` covers procedural continuous-assignment priority, replacement,
   deassign retention, function dependencies and PCA/force layering. HDL lives in
   `fixtures/sim/procedural_assign/`; use the shared CLI contract above.
+- `sim_imported_probes.rs` runs five supplied acceptance witnesses in both optimizer modes
+  with exact stdout and retains the unsupported net-alias witness as an ignored test.
+  The original inputs and separately reviewed counterexamples live in
+  `fixtures/sim/imported_probes/`; its READMEs map cases to active feature suites.
 - `elab_resolve.rs` exercises resolved Slang parameter values; `config_effect.rs` observes
   configured defines and top-level parameter overrides driving generate branches through the
   owned `DesignModel`.

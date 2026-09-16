@@ -192,6 +192,14 @@ recorded test-execution evidence.
 
 ## Follow-up review regression sources
 
+The supplied `test-to-be-added` sources now live under
+`fixtures/sim/imported_probes/`. `sim_imported_probes.rs` actively checks five
+additional acceptance witnesses in both optimizer modes. Eight other supplied
+acceptance inputs already have active feature-suite equivalents; net alias
+connectivity is retained as an ignored test. The review counterexamples are
+preserved with a suite mapping in their README, including the C integration
+fragments that cannot run as standalone designs.
+
 `sim_review_batch2.rs` contains origin-specific program exit/completion cases,
 postponed alias reads, delayed-alias event/level waiters, scalar mailbox mismatch
 and FIFO cases, and independent assertion-failure/severity accounting. The
